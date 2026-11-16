@@ -1,0 +1,682 @@
+/**
+ * The facade of the one-click migration orchestrator (P7 lane A): one method per REST route / MCP tool.
+ *
+ * Every method re-authorizes from the actor (creator-only ownership, team membership, `apps:config` + `databases` on the
+ * run's team for anything that acts, the token scope per route) and returns the fresh secret-free view. State changes are
+ * compare-and-set writes on the rows plus a `kick` of the engine; the engine, holding the run's lease, applies the
+ * transitions (pause, abort, cleanup, reverse), so there is exactly one writer of the state machine.
+ *
+ * Errors are the usual Nest HTTP exceptions whose message is a stable machine code (`plan-changed`, `run-past-ponr`, ...).
+ */
+import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, NotFoundException } from "@nestjs/common";
+import { scopeSatisfies, type Scope } from "../../api-tokens/scopes";
+import {
+  OwnerInputsSchema,
+  RunApplyInputSchema,
+  RunOptionsSchema,
+  RunReportSchema,
+  type AbortRunInput,
+  type AttachInput,
+  type CleanupRunInput,
+  type CreateMigrationRunInput,
+  type DecommissionRunInput,
+  type ListMigrationRunsQuery,
+  type MigrationRunSummary,
+  type MigrationRunView,
+  type OwnerInputs,
+  type ReverseRunInput,
+  type RunCommandInput,
+  type RunCommandResult,
+  type RunEventsPage,
+  type RunEventsQuery,
+  type RunReport,
+  type SetRunInputsInput,
+  type SourceSessionInput,
+  type SourceSessionResult,
+  type StartRunInput,
+  type StepApprovalRecord,
+  type StepApproveInput,
+  type StepEvidence,
+  type StepEvidenceInput,
+  type StepRetryInput,
+  type StepSkipInput,
+  type WaitSpec,
+} from "./dto";
+import {
+  EMPTY_STEP_EVIDENCE,
+  PONR_APPROVAL_TTL_SEC,
+  STEP_HANDLERS,
+  STEP_MANIFEST,
+  activeKeyFor,
+  stepKeysForMode,
+  type MigrationRunsFacade,
+  type RunActor,
+  type RunMode,
+  type RunStatus,
+  type StepHandlerRegistry,
+  type StepKey,
+  type StepStatus,
+} from "./run-contract";
+import { CLEANUP_REQUEST_KEY, RunEngineService, type CleanupRequest } from "./run-engine.service";
+import { ATTACH_STEPS, COMMAND_STEPS, OPEN_STATUSES, approvalExpiry, deriveStepAllowed, hashOf, isTerminal, isWaitingStep, stripSince } from "./run-logic";
+import { RUN_ENV, RUN_IMPORT, RUN_SINK, RUN_STORE, type RunEnvPort, type RunImportPort, type RunSessionInfo, type RunSinkPort } from "./run-ports";
+import { ServerHasLiveRunError, type EventRow, type RunRow, type RunStore, type StepRow } from "./run-store";
+import { buildReport, reportToMarkdown, runFacts, stepFacts, toSummary, toView } from "./run-view";
+
+const conflict = (code: string): ConflictException => new ConflictException(code);
+const bad = (code: string): BadRequestException => new BadRequestException(code);
+
+@Injectable()
+export class MigrationRunsService implements MigrationRunsFacade {
+  constructor(
+    @Inject(RUN_STORE) private readonly store: RunStore,
+    private readonly engine: RunEngineService,
+    @Inject(STEP_HANDLERS) private readonly registry: StepHandlerRegistry,
+    @Inject(RUN_ENV) private readonly env: RunEnvPort,
+    @Inject(RUN_SINK) private readonly sink: RunSinkPort,
+    @Inject(RUN_IMPORT) private readonly imp: RunImportPort,
+  ) {
+    this.engine.terminalHook = (runId) => this.persistReport(runId);
+  }
+
+  // ───────────────────────────── guards ─────────────────────────────
+
+  private scope(actor: RunActor, ...needed: Scope[]): void {
+    for (const s of needed) if (!scopeSatisfies(actor.scopes, s)) throw new ForbiddenException("insufficient-scope");
+  }
+
+  /** The actor's own run, or a 404 (a foreign / unknown run is indistinguishable). */
+  private async load(actor: RunActor, id: string): Promise<RunRow> {
+    const run = await this.store.get(id);
+    if (!run || run.actorId !== actor.userId) throw new NotFoundException("run-not-found");
+    const st = await this.env.standing(actor.userId, run.teamId);
+    if (!st.member) throw new NotFoundException("run-not-found");
+    return run;
+  }
+
+  /** Like {@link load} plus the permissions every acting call needs on the run's team. */
+  private async loadActing(actor: RunActor, id: string): Promise<RunRow> {
+    const run = await this.load(actor, id);
+    const st = await this.env.standing(actor.userId, run.teamId);
+    if (!st.appsConfig || !st.databases) throw new ForbiddenException("insufficient-permission");
+    return run;
+  }
+
+  private async view(run: RunRow): Promise<MigrationRunView> {
+    const fresh = (await this.store.get(run.id)) ?? run;
+    const [steps, server] = await Promise.all([this.store.steps(run.id), this.env.server(run.targetServerId)]);
+    return toView(fresh, steps, server?.name ?? null);
+  }
+
+  private async audit(actor: RunActor, action: string, runId: string, meta: Record<string, unknown> = {}): Promise<void> {
+    await this.sink.audit({ actor: actor.userId, action: `migration.run.${action}`, target: runId, meta: { channel: actor.channel, ...meta } }).catch(() => undefined);
+  }
+
+  private async event(runId: string, actor: RunActor | null, code: string, level: "info" | "warn" | "error", stepKey: StepKey | null, params: Record<string, unknown> | null = null): Promise<void> {
+    await this.store.appendEvent(runId, { stepKey, level, code, params, actorId: actor?.userId ?? null });
+  }
+
+  private requireOpen(run: RunRow): void {
+    if (!OPEN_STATUSES.includes(run.status as RunStatus)) throw conflict("run-not-open");
+  }
+
+  private stepOf(rows: readonly StepRow[], key: StepKey): StepRow {
+    const row = rows.find((r) => r.key === key);
+    if (!row) throw new NotFoundException("step-not-found");
+    return row;
+  }
+
+  // ───────────────────────────── create / start ─────────────────────────────
+
+  async create(actor: RunActor, body: CreateMigrationRunInput): Promise<MigrationRunView> {
+    this.scope(actor, "deploy", "read:secrets");
+    const server = await this.env.server(body.targetServerId);
+    if (!server) throw new NotFoundException("server-not-found");
+    const st = await this.env.standing(actor.userId, server.teamId);
+    if (!st.member) throw new NotFoundException("server-not-found");
+    if (!st.appsConfig || !st.databases) throw new ForbiddenException("insufficient-permission");
+    const session = await this.requireSession(actor, body.sessionId, body.sourceKind);
+
+    const applyInput = RunApplyInputSchema.parse(pickApply(body));
+    await this.assertPlanFresh(actor, session, applyInput);
+
+    const run = await this.insert(actor, {
+      teamId: server.teamId,
+      sourceKind: body.sourceKind,
+      sourceHost: session.host,
+      sessionId: session.id,
+      targetServerId: server.id,
+      planHash: body.planHash,
+      mode: body.mode,
+      topology: body.topology,
+      dryRun: body.dryRun,
+      promotedFromId: null,
+      applyInput,
+      options: RunOptionsSchema.parse(body.options),
+      inputs: stampInputs(body.inputs, actor.userId, this.engine.clock.now()),
+    });
+    await this.event(run.id, actor, "run.created", "info", null, { dryRun: run.dryRun, mode: run.mode, topology: run.topology });
+    await this.audit(actor, "create", run.id, { dryRun: run.dryRun, mode: run.mode, topology: run.topology, serverId: server.id, planHash: body.planHash });
+    if (run.dryRun) this.engine.kick(run.id, "enter");
+    return this.view(run);
+  }
+
+  private async insert(
+    actor: RunActor,
+    f: { teamId: string; sourceKind: string; sourceHost: string | null; sessionId: string | null; targetServerId: string; planHash: string; mode: string; topology: string; dryRun: boolean; promotedFromId: string | null; applyInput: unknown; options: unknown; inputs: unknown },
+  ): Promise<RunRow> {
+    const steps = stepKeysForMode(f.mode as RunMode).map((key) => ({ key, idx: STEP_MANIFEST[key].idx, kind: STEP_MANIFEST[key].kind, rollbackClass: STEP_MANIFEST[key].rollback }));
+    try {
+      return await this.store.create(
+        { ...f, actorId: actor.userId, activeKey: f.dryRun ? null : activeKeyFor(f.targetServerId) },
+        steps,
+        f.dryRun ? "RUNNING" : "QUEUED",
+      );
+    } catch (e) {
+      if (e instanceof ServerHasLiveRunError) throw conflict("server-has-live-run");
+      throw e;
+    }
+  }
+
+  private async requireSession(actor: RunActor, sessionId: string, kind: string): Promise<RunSessionInfo> {
+    const s = await this.env.session(actor.userId, sessionId);
+    if (!s || s.sourceKind !== kind) throw new NotFoundException("session-not-found");
+    if (s.state !== "active" || s.expiresAt.getTime() <= this.engine.clock.now().getTime()) throw bad("session-expired");
+    return s;
+  }
+
+  private async assertPlanFresh(actor: RunActor, session: RunSessionInfo, apply: { planHash: string; dbDataModes?: Record<string, "volume"> }): Promise<void> {
+    const live = await this.imp.planHash(actor.userId, { sessionId: session.id, sourceKind: session.sourceKind, ...(apply.dbDataModes ? { dbDataModes: apply.dbDataModes } : {}) });
+    if (live !== apply.planHash) throw conflict("plan-changed");
+  }
+
+  async start(actor: RunActor, id: string, body: StartRunInput): Promise<MigrationRunView> {
+    this.scope(actor, "deploy");
+    const run = await this.loadActing(actor, id);
+    if (run.status === "DRY_RUN_DONE") return this.promote(actor, run, body);
+    if (run.status !== "QUEUED" || run.dryRun) throw conflict("run-not-startable");
+    this.assertHandlers(run.mode as RunMode);
+    const ok = await this.store.updateRun(run.id, { statusIn: ["QUEUED"] }, { status: "RUNNING" });
+    if (!ok) throw conflict("run-not-startable");
+    await this.audit(actor, "start", run.id);
+    this.engine.kick(run.id, "enter");
+    return this.view(run);
+  }
+
+  private assertHandlers(mode: RunMode): void {
+    const missing = this.registry.missing(mode);
+    if (missing.length) throw new ConflictException({ statusCode: 409, message: "steps-unavailable", missing });
+  }
+
+  /** A dry-run becomes a NEW real run: frozen inputs copied, the plan hash re-validated against the live source. */
+  private async promote(actor: RunActor, from: RunRow, body: StartRunInput): Promise<MigrationRunView> {
+    const sessionId = body.sessionId ?? from.sessionId;
+    if (!sessionId) throw bad("session-required");
+    const session = await this.requireSession(actor, sessionId, from.sourceKind);
+    const apply = RunApplyInputSchema.parse(from.applyInput);
+    await this.assertPlanFresh(actor, session, apply);
+    this.assertHandlers(from.mode as RunMode);
+    const run = await this.insert(actor, {
+      teamId: from.teamId,
+      sourceKind: from.sourceKind,
+      sourceHost: session.host,
+      sessionId: session.id,
+      targetServerId: from.targetServerId,
+      planHash: from.planHash,
+      mode: from.mode,
+      topology: from.topology,
+      dryRun: false,
+      promotedFromId: from.id,
+      applyInput: apply,
+      options: from.options,
+      inputs: from.inputs,
+    });
+    await this.event(run.id, actor, "run.created", "info", null, { dryRun: false, mode: run.mode, topology: run.topology });
+    await this.event(run.id, actor, "run.promoted", "info", null, { fromRunId: from.id });
+    await this.store.updateRun(run.id, { statusIn: ["QUEUED"] }, { status: "RUNNING" });
+    await this.audit(actor, "promote", run.id, { fromRunId: from.id });
+    this.engine.kick(run.id, "enter");
+    return this.view(run);
+  }
+
+  // ───────────────────────────── reads ─────────────────────────────
+
+  async list(actor: RunActor, query: ListMigrationRunsQuery): Promise<MigrationRunSummary[]> {
+    const teamIds = await this.env.teamIds(actor.userId);
+    const rows = await this.store.list({
+      actorId: actor.userId,
+      teamIds,
+      ...(query.teamId ? { teamId: query.teamId } : {}),
+      ...(query.status ? { status: query.status } : {}),
+      ...(query.active === "true" ? { live: true } : {}),
+      limit: query.active === "false" ? 200 : query.limit,
+    });
+    const kept = query.active === "false" ? rows.filter((r) => !OPEN_OR_LIVE.has(r.status as RunStatus)).slice(0, query.limit) : rows;
+    const [steps, names] = await Promise.all([this.store.stepsOf(kept.map((r) => r.id)), this.env.servers(kept.map((r) => r.targetServerId))]);
+    return kept.map((r) =>
+      toSummary(
+        r,
+        steps.filter((s) => s.runId === r.id),
+        names.get(r.targetServerId) ?? null,
+      ),
+    );
+  }
+
+  async get(actor: RunActor, id: string): Promise<MigrationRunView> {
+    return this.view(await this.load(actor, id));
+  }
+
+  async events(actor: RunActor, id: string, query: RunEventsQuery): Promise<RunEventsPage> {
+    const run = await this.load(actor, id);
+    const rows = await this.store.events(run.id, query.afterSeq, query.limit + 1);
+    const page = rows.slice(0, query.limit);
+    return {
+      events: page.map(eventView),
+      lastSeq: page.length ? page[page.length - 1].seq : query.afterSeq,
+      hasMore: rows.length > query.limit,
+    };
+  }
+
+  // ───────────────────────────── step actions ─────────────────────────────
+
+  async approve(actor: RunActor, id: string, key: StepKey, body: StepApproveInput): Promise<MigrationRunView> {
+    this.scope(actor, "deploy");
+    const run = await this.loadActing(actor, id);
+    this.requireOpen(run);
+    const rows = await this.store.steps(run.id);
+    const step = this.stepOf(rows, key);
+    if (step.status !== "WAITING_APPROVAL") throw conflict("step-not-waiting-approval");
+
+    const stored = (step.wait as WaitSpec | null) ? (stripSince(step.wait as object) as WaitSpec) : null;
+    if (actor.channel === "mcp" && stored?.kind === "approval" && stored.binding.ponr) throw new ForbiddenException("human-confirmation-required");
+    let binding;
+    try {
+      binding = await this.engine.bindingFor(run.id, key);
+    } catch {
+      throw conflict("approval-unavailable");
+    }
+    if (!binding) throw conflict("approval-unavailable");
+    if (actor.channel === "mcp" && binding.ponr) throw new ForbiddenException("human-confirmation-required");
+    if (body.boundHash !== binding.inputHash) throw conflict("approval-stale");
+    if (body.acks.some((a) => !binding.ackable.includes(a))) throw bad("ack-not-allowed");
+    if (binding.requiredAcks.some((a) => !body.acks.includes(a))) throw bad("acks-required");
+    if (binding.requiresDataRisk && body.acceptDataRisk !== true) throw bad("data-risk-required");
+    const server = await this.env.server(run.targetServerId);
+    if (!confirmMatches(binding.confirm, body.confirmName, { runId: run.id, serverName: server?.name ?? null, sourceHost: run.sourceHost })) throw bad("bad-confirmation");
+
+    const now = this.engine.clock.now();
+    const ttlSec = binding.ponr ? Math.min(binding.ttlSec ?? PONR_APPROVAL_TTL_SEC, PONR_APPROVAL_TTL_SEC) : binding.ttlSec;
+    const record: StepApprovalRecord = {
+      byUserId: actor.userId,
+      at: now.toISOString(),
+      boundHash: binding.inputHash,
+      acks: [...body.acks],
+      confirmedName: body.confirmName ?? null,
+      acceptDataRisk: body.acceptDataRisk === true,
+      expiresAt: approvalExpiry({ ...binding, ttlSec }, now),
+    };
+    const ok = await this.store.updateStepIf(run.id, key, ["WAITING_APPROVAL"], { approval: record, inputHash: binding.inputHash });
+    if (!ok) throw conflict("step-not-waiting-approval");
+    await this.event(run.id, actor, "approval.accepted", "info", key, { ponr: binding.ponr, acks: record.acks });
+    await this.audit(actor, "approve", run.id, { step: key, ponr: binding.ponr, acks: record.acks, confirmedName: record.confirmedName, acceptDataRisk: record.acceptDataRisk });
+    this.engine.kick(run.id, "approve");
+    return this.view(run);
+  }
+
+  async retry(actor: RunActor, id: string, key: StepKey, _body: StepRetryInput): Promise<MigrationRunView> {
+    void _body;
+    this.scope(actor, "deploy");
+    const run = await this.loadActing(actor, id);
+    const rows = await this.store.steps(run.id);
+    const step = this.stepOf(rows, key);
+    const manual = STEP_MANIFEST[key].manual === true && run.status === "COMPLETED";
+    if (!manual) this.requireOpen(run);
+    if (run.dryRun) throw conflict("run-is-dry-run");
+    const allowed = deriveStepAllowed(runFacts(run), stepFacts(step));
+    if (manual) {
+      if (step.status !== "FAILED") throw conflict("step-not-retryable");
+    } else if (!allowed.retry) throw conflict("step-not-retryable");
+
+    if (step.status === "FAILED") {
+      if (!manual && !(run.status === "FAILED" && run.failureStep === key)) throw conflict("step-not-retryable");
+      const reset = await this.store.updateStepIf(run.id, key, ["FAILED"], { status: "RUNNING", lastError: null, gate: null, wait: null, notBefore: null, finishedAt: null });
+      if (!reset) throw conflict("step-not-retryable");
+      if (!manual) {
+        const moved = await this.store.updateRun(run.id, { statusIn: ["FAILED"] }, { status: "RUNNING", failureStep: null, failureCode: null });
+        if (!moved) throw conflict("run-not-open");
+      }
+    }
+    await this.event(run.id, actor, "step.retry", "info", key);
+    await this.audit(actor, "retry", run.id, { step: key });
+    if (manual) void this.engine.driveManual(run.id, key, "retry");
+    else this.engine.kick(run.id, "retry");
+    return this.view(run);
+  }
+
+  async skip(actor: RunActor, id: string, key: StepKey, body: StepSkipInput): Promise<MigrationRunView> {
+    this.scope(actor, "deploy");
+    const run = await this.loadActing(actor, id);
+    if (STEP_MANIFEST[key].skippable !== true) throw bad("step-not-skippable");
+    if (run.dryRun) throw conflict("run-is-dry-run");
+    if (!["RUNNING", "WAITING", "PAUSED", "FAILED"].includes(run.status)) throw conflict("run-not-open");
+    const rows = await this.store.steps(run.id);
+    const step = this.stepOf(rows, key);
+    const st = step.status as StepStatus;
+    if (!(st === "PENDING" || isWaitingStep(st) || st === "FAILED")) throw conflict("step-not-skippable");
+
+    await this.engine.exclusive(run.id, ["RUNNING", "WAITING", "PAUSED", "FAILED"], async () => {
+      if (st !== "PENDING") {
+        // the step has started: undo what the rehearsal did before it is skipped
+        const r = await this.engine.compensateOne(run.id, key, "abort");
+        if (r.outcome === "failed") throw conflict("compensation-failed");
+      }
+      const done = await this.store.updateStepIf(run.id, key, ["PENDING", "WAITING_OPERATOR", "WAITING_APPROVAL", "WAITING_TIMER", "FAILED", "RUNNING"], {
+        status: "SKIPPED",
+        lastError: "step.skipped-by-operator",
+        finishedAt: this.engine.clock.now(),
+        wait: null,
+        notBefore: null,
+      });
+      if (!done) throw conflict("step-not-skippable");
+      if (run.status === "FAILED" && run.failureStep === key) await this.store.updateRun(run.id, { statusIn: ["FAILED"] }, { status: "RUNNING", failureStep: null, failureCode: null });
+    });
+    await this.event(run.id, actor, "step.skipped", "info", key, { reason: "operator" });
+    await this.audit(actor, "skip", run.id, { step: key, reason: body.reason ?? null });
+    this.engine.kick(run.id, "tick");
+    return this.view(run);
+  }
+
+  async evidence(actor: RunActor, id: string, key: StepKey, body: StepEvidenceInput): Promise<MigrationRunView> {
+    this.scope(actor, "deploy");
+    const run = await this.loadActing(actor, id);
+    this.requireOpen(run);
+    const rows = await this.store.steps(run.id);
+    const step = this.stepOf(rows, key);
+    const wait = step.wait ? (stripSince(step.wait as object) as WaitSpec) : null;
+    if (step.status !== "WAITING_OPERATOR" || !wait || wait.kind !== "operator" || !wait.attest?.includes(body.checkId)) throw bad("attest-not-allowed");
+    const ev = (step.evidence as StepEvidence | null) ?? EMPTY_STEP_EVIDENCE;
+    if (ev.attestations.length >= 200) throw conflict("evidence-full");
+    const next: StepEvidence = {
+      ...ev,
+      attestations: [
+        ...ev.attestations,
+        { checkId: body.checkId, ...(body.subject ? { subject: body.subject } : {}), ...(body.note ? { note: body.note } : {}), byUserId: actor.userId, at: this.engine.clock.now().toISOString() },
+      ],
+    };
+    if (!(await this.store.updateStepIf(run.id, key, ["WAITING_OPERATOR"], { evidence: next }))) throw conflict("step-not-waiting-operator");
+    await this.event(run.id, actor, "step.evidence.added", "info", key, { checkId: body.checkId, ...(body.subject ? { subject: body.subject } : {}) });
+    await this.audit(actor, "evidence", run.id, { step: key, checkId: body.checkId });
+    this.engine.kick(run.id, "evidence");
+    return this.view(run);
+  }
+
+  async attach(actor: RunActor, id: string, key: StepKey, body: AttachInput): Promise<MigrationRunView> {
+    this.scope(actor, "deploy");
+    const run = await this.loadActing(actor, id);
+    this.requireOpen(run);
+    if (!ATTACH_STEPS.includes(key)) throw bad("step-not-attachable");
+    const rows = await this.store.steps(run.id);
+    const step = this.stepOf(rows, key);
+    const st = step.status as StepStatus;
+    if (!(st === "PENDING" || st === "RUNNING" || isWaitingStep(st))) throw conflict("step-not-attachable");
+    const res = await this.env.objectMigration(body.resourceId);
+    if (!res || res.teamId !== run.teamId) throw new NotFoundException("resource-not-found");
+    const ev = (step.evidence as StepEvidence | null) ?? EMPTY_STEP_EVIDENCE;
+    if (!ev.attachments.some((a) => a.kind === body.kind && a.resourceId === body.resourceId)) {
+      if (ev.attachments.length >= 50) throw conflict("evidence-full");
+      const next: StepEvidence = { ...ev, attachments: [...ev.attachments, { kind: body.kind, resourceId: body.resourceId, byUserId: actor.userId, at: this.engine.clock.now().toISOString() }] };
+      if (!(await this.store.updateStepIf(run.id, key, ["PENDING", "RUNNING", "WAITING_OPERATOR", "WAITING_APPROVAL", "WAITING_TIMER"], { evidence: next }))) throw conflict("step-not-attachable");
+      await this.event(run.id, actor, "step.attached", "info", key, { kind: body.kind, resourceId: body.resourceId });
+      await this.audit(actor, "attach", run.id, { step: key, kind: body.kind, resourceId: body.resourceId });
+    }
+    this.engine.kick(run.id, "attach");
+    return this.view(run);
+  }
+
+  async command(actor: RunActor, id: string, key: StepKey, body: RunCommandInput, hubBase: string): Promise<RunCommandResult> {
+    this.scope(actor, "deploy", "read:secrets");
+    const run = await this.loadActing(actor, id);
+    this.requireOpen(run);
+    if (!COMMAND_STEPS.includes(key)) throw bad("step-has-no-command");
+    const rows = await this.store.steps(run.id);
+    const step = this.stepOf(rows, key);
+    if (!deriveStepAllowed(runFacts(run), stepFacts(step)).command) throw conflict("step-not-waiting-command");
+    if (!run.opId) throw conflict("run-has-no-op");
+    const opts = RunOptionsSchema.parse(run.options);
+    const minted = await this.imp.mintCommand(actor.userId, run.opId, hubBase, { reissue: body.reissue, certs: opts.certs === "seed" });
+    await this.event(run.id, actor, "step.command.issued", "info", key, { reissue: body.reissue });
+    await this.audit(actor, "command", run.id, { step: key, reissue: body.reissue, expiresAt: minted.expiresAt.toISOString() });
+    return { stepKey: key, opId: run.opId, expiresAt: minted.expiresAt.toISOString(), command: minted.command, ...(minted.commands ? { commands: minted.commands } : {}), shownOnce: true };
+  }
+
+  async setInputs(actor: RunActor, id: string, body: SetRunInputsInput): Promise<MigrationRunView> {
+    this.scope(actor, "deploy");
+    const run = await this.loadActing(actor, id);
+    this.requireOpen(run);
+    const current = OwnerInputsSchema.parse(run.inputs ?? {});
+    const merged = { ...current, ...stampInputs(body, actor.userId, this.engine.clock.now()) } as OwnerInputs;
+    const ok = await this.store.updateRun(run.id, { statusIn: OPEN_STATUSES }, { inputs: OwnerInputsSchema.parse(merged) });
+    if (!ok) throw conflict("run-not-open");
+    for (const k of Object.keys(body)) await this.event(run.id, actor, "run.input.set", "info", null, { key: k });
+    await this.audit(actor, "inputs", run.id, { keys: Object.keys(body) });
+    this.engine.kick(run.id, "tick");
+    return this.view(run);
+  }
+
+  // ───────────────────────────── run actions ─────────────────────────────
+
+  async pause(actor: RunActor, id: string): Promise<MigrationRunView> {
+    this.scope(actor, "deploy");
+    const run = await this.loadActing(actor, id);
+    if (!(await this.store.updateRun(run.id, { statusIn: ["RUNNING", "WAITING"] }, { pauseRequested: true }))) throw conflict("run-not-pausable");
+    await this.audit(actor, "pause", run.id);
+    this.engine.interrupt(run.id);
+    this.engine.kick(run.id, "tick");
+    return this.view(run);
+  }
+
+  async resume(actor: RunActor, id: string): Promise<MigrationRunView> {
+    this.scope(actor, "deploy");
+    const run = await this.loadActing(actor, id);
+    if (!(await this.store.updateRun(run.id, { statusIn: ["PAUSED"] }, { status: "RUNNING", pauseRequested: false }))) throw conflict("run-not-paused");
+    await this.event(run.id, actor, "run.resumed", "info", null);
+    await this.audit(actor, "resume", run.id);
+    this.engine.kick(run.id, "tick");
+    return this.view(run);
+  }
+
+  async abort(actor: RunActor, id: string, body: AbortRunInput): Promise<MigrationRunView> {
+    this.scope(actor, "deploy");
+    const run = await this.loadActing(actor, id);
+    if (body.confirmName !== run.id) throw bad("bad-confirmation");
+    if (run.ponrAt) throw conflict("run-past-ponr");
+    this.requireOpen(run);
+    const ok = await this.store.updateRun(run.id, { statusIn: OPEN_STATUSES, ponrUnset: true }, { status: "ABORTING", abortRequested: true, pauseRequested: false });
+    if (!ok) {
+      const now = await this.store.get(run.id);
+      throw conflict(now?.ponrAt ? "run-past-ponr" : "run-not-open");
+    }
+    await this.event(run.id, actor, "run.abort.requested", "warn", null);
+    await this.audit(actor, "abort", run.id);
+    this.engine.interrupt(run.id);
+    this.engine.kick(run.id, "tick");
+    return this.view(run);
+  }
+
+  async cleanup(actor: RunActor, id: string, body: CleanupRunInput): Promise<MigrationRunView> {
+    this.scope(actor, "admin");
+    const run = await this.loadActing(actor, id);
+    if (body.confirmName !== run.id) throw bad("bad-confirmation");
+    if (run.status !== "ABORTED" || run.dryRun || (!run.opId && run.opHistory.length === 0)) throw conflict("run-not-cleanable");
+    const rows = await this.store.steps(run.id);
+    const importStep = this.stepOf(rows, "IMPORT");
+    const request: CleanupRequest = { includeData: body.includeData, dataConfirmNames: body.includeData ? [...body.dataConfirmNames] : [] };
+    await this.store.updateStep(run.id, "IMPORT", { compensation: { ...((importStep.compensation as Record<string, unknown> | null) ?? {}), [CLEANUP_REQUEST_KEY]: request } });
+    let ok: boolean;
+    try {
+      ok = await this.store.updateRun(run.id, { statusIn: ["ABORTED"] }, { status: "ROLLING_BACK", activeKey: activeKeyFor(run.targetServerId), finishedAt: null });
+    } catch (e) {
+      if (e instanceof ServerHasLiveRunError) throw conflict("server-has-live-run");
+      throw e;
+    }
+    if (!ok) throw conflict("run-not-cleanable");
+    await this.event(run.id, actor, "run.cleanup.started", "warn", null, { includeData: request.includeData });
+    await this.audit(actor, "cleanup", run.id, { includeData: request.includeData, dataConfirmNames: request.dataConfirmNames });
+    this.engine.kick(run.id, "tick");
+    return this.view(run);
+  }
+
+  async reverse(actor: RunActor, id: string, body: ReverseRunInput): Promise<MigrationRunView> {
+    this.scope(actor, "admin");
+    const run = await this.loadActing(actor, id);
+    if (body.confirmName !== run.id) throw bad("bad-confirmation");
+    if (!run.ponrAt) throw conflict("run-before-ponr");
+    if (isTerminal(run.status as RunStatus) || run.status === "QUEUED") throw conflict("run-not-reversible");
+    const ok = await this.store.updateRun(run.id, { statusIn: ["RUNNING", "WAITING", "PAUSED", "FAILED"], ponrUnset: false }, { status: "REVERSING", pauseRequested: false, failureStep: null, failureCode: null });
+    if (!ok) throw conflict("run-not-reversible");
+    await this.event(run.id, actor, "run.reverse.started", "warn", null);
+    await this.audit(actor, "reverse", run.id, { acknowledgeDataLoss: true });
+    this.engine.interrupt(run.id);
+    this.engine.kick(run.id, "tick");
+    return this.view(run);
+  }
+
+  async decommission(actor: RunActor, id: string, body: DecommissionRunInput): Promise<MigrationRunView> {
+    this.scope(actor, "admin");
+    if (actor.channel === "mcp") throw new ForbiddenException("human-confirmation-required");
+    const run = await this.loadActing(actor, id);
+    if (run.mode !== "takeover" || run.status !== "COMPLETED") throw conflict("run-not-decommissionable");
+    if (!run.sourceHost || body.confirmName !== run.sourceHost) throw bad("bad-confirmation");
+    const rows = await this.store.steps(run.id);
+    const step = this.stepOf(rows, "DECOMMISSION");
+    if (step.status !== "PENDING" && step.status !== "FAILED") throw conflict("run-not-decommissionable");
+    let binding;
+    try {
+      binding = await this.engine.bindingFor(run.id, "DECOMMISSION");
+    } catch {
+      throw conflict("decommission-unavailable");
+    }
+    const now = this.engine.clock.now();
+    const boundHash = binding?.inputHash ?? hashOf({ decommission: run.id });
+    const record: StepApprovalRecord = { byUserId: actor.userId, at: now.toISOString(), boundHash, acks: [], confirmedName: body.confirmName, acceptDataRisk: false, expiresAt: binding ? approvalExpiry(binding, now) : null };
+    const ok = await this.store.updateStepIf(run.id, "DECOMMISSION", ["PENDING", "FAILED"], {
+      approval: record,
+      inputHash: boundHash,
+      ...(step.status === "FAILED" ? { status: "RUNNING" as const, lastError: null, gate: null, wait: null, finishedAt: null } : {}),
+    });
+    if (!ok) throw conflict("run-not-decommissionable");
+    await this.event(run.id, actor, "approval.accepted", "warn", "DECOMMISSION");
+    await this.audit(actor, "decommission", run.id, { confirmedName: body.confirmName });
+    void this.engine.driveManual(run.id, "DECOMMISSION", "approve");
+    return this.view(run);
+  }
+
+  async sourceSession(actor: RunActor, id: string, body: SourceSessionInput): Promise<SourceSessionResult> {
+    this.scope(actor, "deploy", "read:secrets");
+    const run = await this.loadActing(actor, id);
+    this.requireOpen(run);
+    if (run.dryRun) throw conflict("run-is-dry-run");
+    const old = run.sessionId ? await this.env.session(actor.userId, run.sessionId) : null;
+    // A purged (expired) session row cannot tell us its URL any more: the run only kept the host, so fall back to https.
+    const baseUrl = old?.baseUrl ?? (run.sourceHost ? `https://${run.sourceHost}` : null);
+    if (!baseUrl) throw conflict("source-unknown");
+    const next = await this.env.connectSession(actor.userId, {
+      teamId: old?.teamId ?? run.teamId,
+      sourceKind: run.sourceKind as "coolify" | "dokploy",
+      baseUrl,
+      token: body.token,
+      ...(old?.scopeKey ? { scopeLabel: old.scopeKey } : {}),
+    });
+    const ok = await this.store.updateRun(run.id, { statusIn: OPEN_STATUSES }, { sessionId: next.sessionId });
+    if (!ok) throw conflict("run-not-open");
+    await this.event(run.id, actor, "run.session.refreshed", "info", null);
+    await this.audit(actor, "source-session", run.id, { sessionId: next.sessionId });
+    this.engine.kick(run.id, "tick");
+    return { sessionId: next.sessionId, expiresAt: next.expiresAt.toISOString() };
+  }
+
+  // ───────────────────────────── report ─────────────────────────────
+
+  async report(actor: RunActor, id: string): Promise<RunReport> {
+    const run = await this.load(actor, id);
+    return this.buildFor(run, true);
+  }
+
+  async reportMarkdown(actor: RunActor, id: string): Promise<string> {
+    return reportToMarkdown(await this.report(actor, id));
+  }
+
+  private async buildFor(run: RunRow, allowStored: boolean): Promise<RunReport> {
+    if (allowStored && isTerminal(run.status as RunStatus)) {
+      const stored = RunReportSchema.safeParse(run.report);
+      if (stored.success && stored.data.status === run.status) return stored.data;
+    }
+    const [steps, server, items] = await Promise.all([
+      this.store.steps(run.id),
+      this.env.server(run.targetServerId),
+      run.opId ? this.imp.opItems(run.actorId, run.opId).catch(() => []) : Promise.resolve([]),
+    ]);
+    return buildReport(run, steps, items, server?.name ?? null, this.engine.clock.now());
+  }
+
+  /** Persist the final report once a run settles (engine hook; best effort). */
+  async persistReport(runId: string): Promise<void> {
+    const run = await this.store.get(runId);
+    if (!run) return;
+    const report = await this.buildFor(run, false);
+    await this.store.updateRun(runId, {}, { report });
+  }
+}
+
+// ───────────────────────────── helpers ─────────────────────────────
+
+const OPEN_OR_LIVE = new Set<RunStatus>(["QUEUED", "RUNNING", "WAITING", "PAUSED", "ABORTING", "ROLLING_BACK", "REVERSING", "FAILED"]);
+
+function eventView(e: EventRow): RunEventsPage["events"][number] {
+  return {
+    seq: e.seq,
+    at: e.at.toISOString(),
+    stepKey: (e.stepKey as StepKey | null) ?? null,
+    level: e.level as "info" | "warn" | "error",
+    code: e.code,
+    params: (e.params as RunEventsPage["events"][number]["params"]) ?? null,
+    actorId: e.actorId,
+  };
+}
+
+/** The apply fields of a create body (the same names the importer's apply takes), without the undefined ones. */
+function pickApply(b: CreateMigrationRunInput): Record<string, unknown> {
+  const out: Record<string, unknown> = { sourceKind: b.sourceKind, targetServerId: b.targetServerId, planHash: b.planHash };
+  for (const k of ["environmentId", "acks", "serviceChoices", "mapping", "mappingHash", "reconcile", "ignoreStoredMapping", "saveMapping", "dbDataModes"] as const) {
+    if (b[k] !== undefined) out[k] = b[k];
+  }
+  return out;
+}
+
+/** Bare request values -> owner inputs with provenance. */
+function stampInputs(req: Partial<Record<string, unknown>>, userId: string, at: Date): OwnerInputs {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(req)) {
+    if (v === undefined) continue;
+    out[k] = { value: v, source: "request", setBy: userId, at: at.toISOString() };
+  }
+  return OwnerInputsSchema.parse(out);
+}
+
+/** Does the typed name match what the binding asks for? The combined takeover form is `"<server name> <source host>"`. */
+export function confirmMatches(kind: string, typed: string | undefined, ctx: { runId: string; serverName: string | null; sourceHost: string | null }): boolean {
+  switch (kind) {
+    case "none":
+      return true;
+    case "run-id":
+      return typed === ctx.runId;
+    case "target-server":
+      return !!ctx.serverName && typed === ctx.serverName;
+    case "source-host":
+      return !!ctx.sourceHost && typed === ctx.sourceHost;
+    case "target-server+source-host":
+      return !!ctx.serverName && !!ctx.sourceHost && typed === `${ctx.serverName} ${ctx.sourceHost}`;
+    default:
+      return false;
+  }
+}

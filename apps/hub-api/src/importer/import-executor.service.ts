@@ -72,6 +72,24 @@ const STRICT_ENV_KINDS = new Set<string>(["coolify"]);
 
 export { isAcked };
 
+/**
+ * Opt-in extensions of {@link ImportExecutorService.rollback} for a RUN-owned import (P7 guided migration). Absent = the
+ * original behaviour, byte for byte.
+ */
+export interface RollbackOptions {
+  /**
+   * Deployments whose idempotency key starts with `migrun:<runId>:` were created by this run's DEPLOY_DARK step, not by a
+   * person: they no longer count as "redeployed since import", so those apps are torn down like never-deployed ones.
+   */
+  runOwnedDeployments?: { runId: string };
+  /**
+   * Also remove DATA-BEARING resources (an app whose volume data was restored, a database that was started, restored or
+   * backed up) - but only those whose exact display name is listed in `dataConfirmNames` (typed by the operator).
+   */
+  includeData?: boolean;
+  dataConfirmNames?: readonly string[];
+}
+
 /** "KEY1, KEY2 (+M more)" — names only, never values. */
 const keyList = (keys: string[], cap: number): string => (keys.length > cap ? `${keys.slice(0, cap).join(", ")} (+${keys.length - cap} more)` : keys.join(", "));
 
@@ -1134,8 +1152,14 @@ export class ImportExecutorService {
    * coolify copy-mode removes each created app. Never while the fan-out is still running, and never an app the
    * user has (re)deployed since import — that is no longer in its as-imported state, so we leave it.
    */
-  async rollback(userId: string, opId: string) {
+  async rollback(userId: string, opId: string, opts: RollbackOptions = {}) {
     const op = await this.loadOwnedOp(userId, opId);
+    const taskName = (t: { result: unknown }): string | undefined => (typeof t.result === "object" && t.result ? (t.result as { name?: string }).name : undefined);
+    // A data-bearing resource is removed ONLY when the operator asked for data removal AND typed its exact name.
+    const dataAllowed = (t: { result: unknown }): boolean => {
+      const name = taskName(t);
+      return opts.includeData === true && !!name && (opts.dataConfirmNames ?? []).includes(name);
+    };
     if (deriveOpStatus(op.tasks.map((t) => t.status as TaskStatus)) === "RUNNING") {
       throw new ConflictException("the import is still running — cancel it and wait for it to stop before rolling back");
     }
@@ -1193,11 +1217,15 @@ export class ImportExecutorService {
         await this.prisma.bulkTask.update({ where: { id: t.id }, data: { status: "ROLLED_BACK", output: "app already removed", finishedAt: new Date() } });
         continue;
       }
-      if (t.itemRef && restoredDataApps.has(t.itemRef)) {
+      if (t.itemRef && restoredDataApps.has(t.itemRef) && !dataAllowed(t)) {
         await this.prisma.bulkTask.update({ where: { id: t.id }, data: { output: "rollback skipped: app volume data was restored by this migration — remove it manually if intended" } });
         continue;
       }
-      if ((await this.prisma.deployment.count({ where: { appId } })) > 0) {
+      const runPrefix = opts.runOwnedDeployments ? `migrun:${opts.runOwnedDeployments.runId}:` : null;
+      const foreignDeployments = await this.prisma.deployment.count({
+        where: runPrefix ? { appId, OR: [{ idempotencyKey: null }, { NOT: { idempotencyKey: { startsWith: runPrefix } } }] } : { appId },
+      });
+      if (foreignDeployments > 0) {
         await this.prisma.bulkTask.update({ where: { id: t.id }, data: { output: "rollback skipped: app has been (re)deployed since import — remove it manually if intended" } });
         continue;
       }
@@ -1227,7 +1255,7 @@ export class ImportExecutorService {
         await this.prisma.bulkTask.update({ where: { id: t.id }, data: { status: "ROLLED_BACK", output: "database already removed", finishedAt: new Date() } });
         continue;
       }
-      if (t.itemRef && restoredDataDbs.has(t.itemRef)) {
+      if (t.itemRef && restoredDataDbs.has(t.itemRef) && !dataAllowed(t)) {
         await this.prisma.bulkTask.update({ where: { id: t.id }, data: { output: "rollback skipped: database data was copied by this migration — remove it manually if intended" } });
         continue;
       }
@@ -1239,7 +1267,7 @@ export class ImportExecutorService {
         existing.status !== "NEW" ||
         (await this.prisma.restore.count({ where: { databaseId: dbId } })) > 0 ||
         (await this.prisma.backup.count({ where: { databaseId: dbId } })) > 0;
-      if (used) {
+      if (used && !dataAllowed(t)) {
         await this.prisma.bulkTask.update({ where: { id: t.id }, data: { output: "rollback skipped: database has been provisioned/restored since import — remove it manually if intended" } });
         continue;
       }

@@ -6,14 +6,14 @@ import request from "supertest";
 import { ApiAuthGuard } from "../api-tokens/api-auth.guard";
 import { configureApp } from "../app-config";
 import { ApiExceptionFilter } from "../common/api-exception.filter";
-import { NotImplementedMigrationRunsFacade } from "./core/not-implemented.facade";
-import { MIGRATION_RUNS_FACADE, STEP_HANDLERS, STEP_KEYS, type MigrationRunsFacade, type StepHandlerRegistry } from "./core/run-contract";
+import { MIGRATION_RUNS_FACADE, STEP_HANDLERS, STEP_KEYS, type StepHandlerRegistry } from "./core/run-contract";
 import { StepHandlerRegistryService } from "./core/step-handler.registry";
 import { StepRegistryModule } from "./core/step-registry.module";
 import { MigrationRunsController } from "./migration-runs.controller";
 import { MigrationRunsModule } from "./migration-runs.module";
 import { RunDataStepsModule } from "./steps/data/run-data-steps.module";
 import { RunCutoverStepsModule } from "./steps/cutover/run-cutover-steps.module";
+import { RunImportStepsModule } from "./steps/import/run-import-steps.module";
 
 /** Stands in for ApiAuthGuard: scopes (and PAT-ness) arrive in headers; the real ScopesGuard still runs. */
 @Injectable()
@@ -29,15 +29,19 @@ class FakeAuthGuard implements CanActivate {
 const H64 = "c".repeat(64);
 const H32 = "d".repeat(32);
 
-describe("MigrationRunsController (HTTP level, C0 stub facade)", () => {
+const FACADE_METHODS = ["create", "list", "get", "events", "start", "approve", "retry", "skip", "evidence", "attach", "command", "setInputs", "pause", "resume", "abort", "cleanup", "reverse", "decommission", "sourceSession", "report", "reportMarkdown"];
+
+describe("MigrationRunsController (HTTP level: auth, scopes and validation in front of the facade)", () => {
   let app: INestApplication;
   let baseUrl: string;
+  const stub: Record<string, jest.Mock> = Object.fromEntries(FACADE_METHODS.map((m) => [m, jest.fn().mockResolvedValue({ id: "r1" })]));
+  stub.reportMarkdown.mockResolvedValue("# r\n");
 
   beforeAll(async () => {
     const mod = await Test.createTestingModule({
       controllers: [MigrationRunsController],
       providers: [
-        { provide: MIGRATION_RUNS_FACADE, useClass: NotImplementedMigrationRunsFacade },
+        { provide: MIGRATION_RUNS_FACADE, useValue: stub },
         { provide: APP_FILTER, useClass: ApiExceptionFilter },
         { provide: ConfigService, useValue: { get: () => "x" } },
         Reflector,
@@ -88,10 +92,10 @@ describe("MigrationRunsController (HTTP level, C0 stub facade)", () => {
     expect(routes).toHaveLength(21);
   });
 
-  it.each(routes)("answers 501 behind a valid, sufficiently scoped request: $label", async ({ call, need }) => {
+  it.each(routes)("reaches the facade behind a valid, sufficiently scoped request: $label", async ({ call, need }) => {
     for (const ok of [need.join(","), "admin", "*"]) {
       const res = await call(ok);
-      expect(res.status).toBe(501);
+      expect([200, 201, 202]).toContain(res.status);
     }
   }, 20000);
 
@@ -102,7 +106,8 @@ describe("MigrationRunsController (HTTP level, C0 stub facade)", () => {
     if (need.includes("admin")) expect((await call("deploy,read:secrets")).status).toBe(403);
   }, 20000);
 
-  it("validation runs before the facade: bad bodies are 400, not 501", async () => {
+  it("validation runs before the facade: bad bodies are 400, never a facade call", async () => {
+    Object.values(stub).forEach((f) => f.mockClear());
     const a = api("*");
     expect((await a.post("/migration-runs").send({ ...create, topology: "side-by-side" })).status).toBe(400);
     expect((await a.post("/migration-runs").send({ ...create, planHash: "x" })).status).toBe(400);
@@ -114,24 +119,19 @@ describe("MigrationRunsController (HTTP level, C0 stub facade)", () => {
     expect((await a.post("/migration-runs/r1/inputs").send({})).status).toBe(400);
     expect((await a.get("/migration-runs/r1/events?afterSeq=-2")).status).toBe(400);
     expect((await a.get("/migration-runs/r1/report?format=pdf")).status).toBe(400);
+    for (const f of Object.values(stub)) expect(f).not.toHaveBeenCalled();
   });
 
   it("accepts every one of the 14 step keys in the step routes", async () => {
-    for (const k of STEP_KEYS) expect((await api("*").post(`/migration-runs/r1/steps/${k}/retry`).send({})).status).toBe(501);
+    for (const k of STEP_KEYS) expect((await api("*").post(`/migration-runs/r1/steps/${k}/retry`).send({})).status).toBe(200);
   }, 20000);
-
-  it("the stub facade covers every facade method (no method can be left un-stubbed)", () => {
-    const stub = new NotImplementedMigrationRunsFacade();
-    const methods: (keyof MigrationRunsFacade)[] = ["create", "list", "get", "events", "start", "approve", "retry", "skip", "evidence", "attach", "command", "setInputs", "pause", "resume", "abort", "cleanup", "reverse", "decommission", "sourceSession", "report", "reportMarkdown"];
-    for (const m of methods) expect(() => (stub[m] as () => unknown)()).toThrow(/not implemented/);
-  });
 });
 
 describe("MigrationRunsController maps the caller to a RunActor and forwards the parsed request", () => {
   let app: INestApplication;
   let baseUrl: string;
   const facade: Record<string, jest.Mock> = {};
-  for (const m of ["create", "list", "get", "events", "start", "approve", "retry", "skip", "evidence", "attach", "command", "setInputs", "pause", "resume", "abort", "cleanup", "reverse", "decommission", "sourceSession", "report", "reportMarkdown"]) facade[m] = jest.fn();
+  for (const m of FACADE_METHODS) facade[m] = jest.fn();
 
   beforeAll(async () => {
     const mod = await Test.createTestingModule({
@@ -216,9 +216,12 @@ describe("module wiring", () => {
     expect(reg.list()).toEqual([]);
     expect(reg.missing("copy")).toHaveLength(13);
   });
-  it("MigrationRunsModule declares the controller, the facade token and exports the registry", () => {
+  it("MigrationRunsModule declares the controller, binds the real facade and imports the three step modules", () => {
     expect(Reflect.getMetadata("controllers", MigrationRunsModule)).toEqual([MigrationRunsController]);
-    expect(Reflect.getMetadata("imports", MigrationRunsModule)).toEqual([StepRegistryModule, RunDataStepsModule, RunCutoverStepsModule]);
+    const imports = Reflect.getMetadata("imports", MigrationRunsModule) as unknown[];
+    for (const m of [StepRegistryModule, RunImportStepsModule, RunDataStepsModule, RunCutoverStepsModule]) expect(imports).toContain(m);
+    const providers = Reflect.getMetadata("providers", MigrationRunsModule) as Array<{ provide?: unknown }>;
+    expect(providers.some((p) => p.provide === MIGRATION_RUNS_FACADE)).toBe(true);
     expect(Reflect.getMetadata("path", MigrationRunsController)).toBe("migration-runs");
   });
 });
