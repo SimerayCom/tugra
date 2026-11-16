@@ -1,6 +1,6 @@
 /**
  * What the builds cost inside the downtime window (R27/C5), pure. The freeze window of the original design held only data
- * (size / speed / extract): with 74 Dockerfile builds on 2 CPU / 4 GB hosts the builds alone dwarf it. These numbers are
+ * (size / speed / extract): with dozens of Dockerfile builds on 2 CPU / 4 GB hosts the builds alone dwarf it. These numbers are
  * ASSUMPTIONS (nothing measures a build before the run does), and every place that shows them says "estimate".
  */
 /** `deployConcurrency` is 1..8 (the run options' schema); the arithmetic clamps to the same range. */

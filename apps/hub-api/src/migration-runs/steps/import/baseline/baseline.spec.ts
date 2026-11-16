@@ -99,7 +99,7 @@ describe("workers (R26/C13)", () => {
 describe("source health baseline (R28/R52/R66)", () => {
   const rows = [
     { kind: "app" as const, ref: "r1", serverRef: "s1", health: "healthy" as const, restartCount: 0 },
-    { kind: "app" as const, ref: "r2", serverRef: "s1", health: "exited" as const, restartCount: 126368 },
+    { kind: "app" as const, ref: "r2", serverRef: "s1", health: "exited" as const, restartCount: 90001 },
     { kind: "app" as const, ref: "r3", health: "unknown" as const, restartCount: 3 },
     { kind: "app" as const, ref: "r4", health: "unknown" as const, restartCount: 40 },
     { kind: "database" as const, ref: "d1", serverRef: "s2", health: "unhealthy" as const, restartCount: null },

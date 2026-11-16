@@ -1,8 +1,8 @@
 /**
  * The source health baseline (R28/R52/R66), pure. PREFLIGHT reads how every source app, database and service is doing before
  * anything changes; VERIFY and OBSERVE judge Tugra against THAT, not against perfection: an app that was crash-looping at the
- * source (126k restarts, exited for weeks) is not a regression when it fails on Tugra too, and an app with no health check
- * (62 of 78 on the real fleet) has a defined `unknown`, never a silent pass.
+ * source (90k restarts, exited for weeks) is not a regression when it fails on Tugra too, and an app with no health check
+ * (most of the apps of a real fleet) has a defined `unknown`, never a silent pass.
  */
 import type { SourceHealthRow } from "../../../../importer/import-source";
 import { ns } from "../../../../importer/import-planner";

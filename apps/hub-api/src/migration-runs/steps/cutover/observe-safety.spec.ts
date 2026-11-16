@@ -56,7 +56,7 @@ const observeWith = (rig: Rig, release?: PostPonrRelease) => new ObserveHandler(
 
 const BASELINE = buildSourceBaseline(
   [
-    { kind: "app", ref: "a1", health: "exited", restartCount: 126368 },
+    { kind: "app", ref: "a1", health: "exited", restartCount: 90001 },
     { kind: "app", ref: "a2", health: "healthy", restartCount: 0 },
     { kind: "app", ref: "a3", health: "unknown", restartCount: 2 },
   ],

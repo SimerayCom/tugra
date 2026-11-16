@@ -348,7 +348,7 @@ describe("PREFLIGHT source version gate (R4/C18)", () => {
 describe("PREFLIGHT source health baseline (R28/R52)", () => {
   type Rows = Array<{ kind: "app" | "database" | "service"; ref: string; serverRef?: string; health: "healthy" | "unhealthy" | "unknown" | "exited"; restartCount: number | null }>;
   const rows: Rows = [
-    { kind: "app", ref: "web", health: "exited", restartCount: 126368 },
+    { kind: "app", ref: "web", health: "exited", restartCount: 90001 },
     { kind: "app", ref: "static", health: "unknown", restartCount: 0 },
     { kind: "app", ref: "not-in-the-plan", health: "unhealthy", restartCount: 9 },
   ];

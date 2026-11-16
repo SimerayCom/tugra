@@ -40,7 +40,7 @@ describe("coolify health mapping", () => {
   });
 
   it("reads the restart counter as an integer or null, never 0 for garbage", () => {
-    expect(coolifyRestartCount(126368)).toBe(126368);
+    expect(coolifyRestartCount(90001)).toBe(90001);
     expect(coolifyRestartCount("3")).toBe(3);
     for (const v of [undefined, null, -1, 1.5, "x", "1.5", NaN, Number.MAX_SAFE_INTEGER + 2]) expect(coolifyRestartCount(v)).toBeNull();
   });
@@ -80,7 +80,7 @@ describe("CoolifySource version and health baseline", () => {
     "/servers/srv-b/resources": new Error("500"),
     "/applications": [
       { uuid: "app-1", status: "running:healthy", restart_count: 0 },
-      { uuid: "app-2", status: "exited:unhealthy", restart_count: 126368 },
+      { uuid: "app-2", status: "exited:unhealthy", restart_count: 90001 },
     ],
     "/databases": [{ uuid: "db-1", status: "running:healthy" }],
     "/services": [{ uuid: "svc-1", status: "running:unknown" }],
@@ -90,7 +90,7 @@ describe("CoolifySource version and health baseline", () => {
     const rows = await new CoolifySource(new Client(routes)).healthBaseline();
     expect(rows).toEqual([
       { kind: "app", ref: "app-1", serverRef: "srv-a", health: "healthy", restartCount: 0 },
-      { kind: "app", ref: "app-2", health: "exited", restartCount: 126368 }, // srv-b's list failed: no serverRef, not a throw
+      { kind: "app", ref: "app-2", health: "exited", restartCount: 90001 }, // srv-b's list failed: no serverRef, not a throw
       { kind: "database", ref: "db-1", serverRef: "srv-a", health: "healthy", restartCount: null },
       { kind: "service", ref: "svc-1", health: "unknown", restartCount: null },
     ]);
