@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -490,7 +490,7 @@ describe("database-script: the PostgreSQL data layout (16 / 17 / 18)", () => {
     const s = buildDatabaseRunScript(spec("POSTGRES", { image: "postgres:18", pgLayout: "legacy-anon" }));
     expect(mount(s)).toBe("/var/lib/postgresql/data");
     expect(s).toContain("PGANON=$(docker inspect -f '{{range .Mounts}}{{if eq .Destination \"/var/lib/postgresql\"}}{{.Name}}{{end}}{{end}}' tugra_db_db1 2>/dev/null || true)");
-    expect(s.indexOf("PGANON=$(")).toBeLessThan(s.indexOf("docker rm -f tugra_db_db1"));
+    expect(s.indexOf("PGANON=$(")).toBeLessThan(s.indexOf("docker rename tugra_db_db1 tugra_db_db1_prev"));
     expect(s).toContain("${PGANON:+-v ${PGANON}:/var/lib/postgresql}");
   });
 
@@ -545,35 +545,95 @@ describe("database-script: the PostgreSQL data layout (16 / 17 / 18)", () => {
     expect(pgDataLayout({ engine: "POSTGRES", version: "16", image: "postgres:16-alpine" })).toBe("data");
   });
 
-  describe("the legacy-anon script under a real shell (a fake docker on PATH)", () => {
-    function runArgs(anonName: string): string {
+  describe("the legacy-anon scripts under a real shell (a stateful fake docker on PATH)", () => {
+    // containers: name -> name of the anonymous volume mounted at /var/lib/postgresql ("" = none). `inspect -f` prints it, `rename`/`rm`/`run` move it.
+    const FAKE_DOCKER = [
+      "#!/bin/sh",
+      'echo "$*" >> "$FAKE/log"',
+      'C="$FAKE/c"',
+      'case "$1" in',
+      '  inspect) shift; f=0; if [ "$1" = -f ]; then f=1; shift 2; fi; n="$1"; [ -e "$C/$n" ] || exit 1; [ "$f" = 1 ] && cat "$C/$n"; exit 0;;',
+      '  rename) mv "$C/$2" "$C/$3" || exit 1;;',
+      '  rm) shift; n=""; for a in "$@"; do n="$a"; done; rm -f "$C/$n";;',
+      '  run) [ -z "$FAKE_RUN_FAIL" ] || exit 125; n=""; p=""; anon=""; for a in "$@"; do [ "$p" = --name ] && n="$a"; case "$a" in *:/var/lib/postgresql) anon="${a%%:*}";; esac; p="$a"; done; printf %s "$anon" > "$C/$n";;',
+      "esac",
+      "exit 0",
+      "",
+    ].join("\n");
+
+    function runFake(script: string, containers: Record<string, string>, opts: { runFails?: boolean } = {}) {
       const dir = mkdtempSync(join(tmpdir(), "tugra-pgl-"));
       try {
-        const fake = join(dir, "docker");
-        writeFileSync(fake, `#!/bin/sh\ncase "$1" in inspect) printf '%s' '${anonName}';; esac\necho "ARGS $*" >&2\nexit 0\n`);
-        chmodSync(fake, 0o755);
-        const script = join(dir, "run.sh");
-        writeFileSync(script, buildDatabaseRunScript(spec("POSTGRES", { image: "postgres:18", pgLayout: "legacy-anon" })));
-        const r = spawnSync("sh", [script], { env: { ...process.env, PATH: `${dir}:${process.env.PATH}` }, encoding: "utf8" });
-        return String(r.stderr);
+        mkdirSync(join(dir, "c"));
+        for (const [n, anon] of Object.entries(containers)) writeFileSync(join(dir, "c", n), anon);
+        writeFileSync(join(dir, "docker"), FAKE_DOCKER);
+        chmodSync(join(dir, "docker"), 0o755);
+        writeFileSync(join(dir, "run.sh"), script);
+        const env = { ...process.env, PATH: `${dir}:${process.env.PATH}`, FAKE: dir, FAKE_RUN_FAIL: opts.runFails ? "1" : "" };
+        const r = spawnSync("sh", [join(dir, "run.sh")], { env, encoding: "utf8" });
+        const log = readFileSync(join(dir, "log"), "utf8").split("\n").filter(Boolean);
+        const after: Record<string, string> = {};
+        for (const n of readdirSync(join(dir, "c"))) after[n] = readFileSync(join(dir, "c", n), "utf8");
+        return { status: r.status, log, after, runLine: log.find((l) => l.startsWith("run -d")) };
       } finally {
         rmSync(dir, { recursive: true, force: true });
       }
     }
+    const legacyRun = () => buildDatabaseRunScript(spec("POSTGRES", { image: "postgres:18", pgLayout: "legacy-anon" }));
+    const NAME = "tugra_db_db1";
+    const ANON = "0123456789abcdef".repeat(4);
 
-    it("passes the anonymous volume as its own -v argument when the old container has one", () => {
-      const err = runArgs("0123abcd");
-      const runLine = err.split("\n").find((l) => l.startsWith("ARGS run -d"));
-      expect(runLine).toBeDefined();
-      expect(runLine).toContain("-v tugra_dbv_db1:/var/lib/postgresql/data -v 0123abcd:/var/lib/postgresql ");
+    it("passes the anonymous volume as its own -v argument when the old container has one, and drops the old container only afterwards", () => {
+      const r = runFake(legacyRun(), { [NAME]: ANON });
+      expect(r.status).toBe(0);
+      expect(r.runLine).toContain(`-v tugra_dbv_db1:/var/lib/postgresql/data -v ${ANON}:/var/lib/postgresql `);
+      expect(r.after).toEqual({ [NAME]: ANON }); // the new container holds the volume, nothing is left under the aside name
+      expect(r.log.findIndex((l) => l.startsWith("run -d"))).toBeLessThan(r.log.indexOf(`rm -f ${NAME}_prev`, r.log.findIndex((l) => l.startsWith("run -d"))));
     });
 
     it("adds nothing when there is no old container (first start)", () => {
-      const err = runArgs("");
-      const runLine = err.split("\n").find((l) => l.startsWith("ARGS run -d"));
-      expect(runLine).toContain("-v tugra_dbv_db1:/var/lib/postgresql/data ");
-      expect(runLine).not.toContain("-v :");
-      expect(runLine).not.toMatch(/-v \S+:\/var\/lib\/postgresql /);
+      const r = runFake(legacyRun(), {});
+      expect(r.status).toBe(0);
+      expect(r.runLine).toContain("-v tugra_dbv_db1:/var/lib/postgresql/data ");
+      expect(r.runLine).not.toMatch(/-v \S+:\/var\/lib\/postgresql /);
+    });
+
+    it("a failed start puts the old container back instead of leaving its anonymous volume dangling", () => {
+      const r = runFake(legacyRun(), { [NAME]: ANON }, { runFails: true });
+      expect(r.status).toBe(125);
+      expect(r.after).toEqual({ [NAME]: ANON }); // the old container is back under its name, still holding the volume
+      expect(r.log).toContain(`start ${NAME}`);
+    });
+
+    it("an earlier recreate that died between the rename and the run is picked up: the aside container is the one re-attached", () => {
+      const r = runFake(legacyRun(), { [`${NAME}_prev`]: ANON });
+      expect(r.status).toBe(0);
+      expect(r.runLine).toContain(`-v ${ANON}:/var/lib/postgresql `);
+      expect(r.after).toEqual({ [NAME]: ANON });
+    });
+
+    it("another layout keeps the plain remove-then-run sequence (no aside name)", () => {
+      for (const pgLayout of ["data", "parent"] as const) {
+        expect(buildDatabaseRunScript(spec("POSTGRES", { image: "postgres:18", pgLayout }))).not.toContain("_prev");
+      }
+    });
+
+    const rmScript = (opts: Parameters<typeof buildDbRemoveScript>[1]) => buildDbRemoveScript({ id: "db1" }, opts);
+
+    it("deleting a legacy-anon database removes its anonymous volume with the data volume", () => {
+      const r = runFake(rmScript({ legacyAnon: true }), { [NAME]: ANON });
+      expect(r.status).toBe(0);
+      expect(r.log).toContain(`volume rm ${ANON}`);
+      expect(r.log).toContain("volume rm tugra_dbv_db1");
+      expect(r.log.findIndex((l) => l === `rm -f ${NAME}`)).toBeLessThan(r.log.indexOf(`volume rm ${ANON}`));
+    });
+
+    it("never removes a volume somebody named, keeps it with keepVolume, and is a no-op for other layouts", () => {
+      expect(runFake(rmScript({ legacyAnon: true }), { [NAME]: "my-own-volume" }).log.join("\n")).not.toContain("volume rm my-own-volume");
+      expect(runFake(rmScript({ legacyAnon: true }), { [NAME]: "" }).log.filter((l) => l.startsWith("volume rm "))).toEqual(["volume rm tugra_dbv_db1"]);
+      expect(runFake(rmScript({ legacyAnon: true, keepVolume: true }), { [NAME]: ANON }).log).not.toContain(`volume rm ${ANON}`);
+      expect(rmScript({})).not.toContain("PGANON");
+      expect(rmScript({})).toBe(buildDbRemoveScript({ id: "db1" }));
     });
   });
 });

@@ -267,24 +267,18 @@ export function pgDataLayout(db: { engine: string; version?: string | null; imag
   return pgWantsParentMount(db.version, db.image) ? "legacy-anon" : "data";
 }
 
-/** A row in one of these states may not have a cluster yet (a never-provisioned row, or a first provision that failed): its layout is settled at its next provision. */
+/**
+ * Only a row that was never provisioned (NEW) is known to have no cluster: its layout is settled at its first provision. A FAILED row is NOT
+ * unsettled: a provision that fails after the old container was removed leaves a cluster in a dangling anonymous volume, and a missing
+ * container proves nothing, so a started-or-failed row keeps the layout it was created with.
+ */
 export function pgLayoutUnsettled(status: string): boolean {
-  return status === "NEW" || status === "FAILED";
-}
-
-/** A shell probe whose last output line says whether the database container exists on the host (any state): `tugra-container-present` or `tugra-container-absent`. */
-export function buildDbContainerProbeScript(db: { id: string }): string {
-  return `if docker inspect -f '{{.Id}}' ${dbContainerName(db)} >/dev/null 2>&1; then echo tugra-container-present; else echo tugra-container-absent; fi`;
+  return status === "NEW";
 }
 
 /** The container path the managed data volume is mounted on. */
 export function dataMountFor(engine: DbEngine, layout?: PgDataLayout): string {
   return engine === "POSTGRES" && layout === "parent" ? PG_PARENT_MOUNT : ENGINES[engine].dataDir;
-}
-
-/** Where PGDATA sits inside the volume for a "parent" layout (the image default for that major). */
-export function pgDataDirParent(major: number): string {
-  return `${PG_PARENT_MOUNT}/${major}/docker`;
 }
 
 export function dbContainerName(db: { id: string }): string {
@@ -446,6 +440,30 @@ export function publicConnectionUri(db: DbSpec, publicHost: string, hostPort: nu
   return buildUri(db.engine, publicHost, hostPort, db.credentials);
 }
 
+/** Shell that sets PGANON to the name of the volume mounted at the PostgreSQL parent directory of container `c` (empty when there is none). */
+function pgAnonLookup(c: string): string {
+  return `docker inspect -f '{{range .Mounts}}{{if eq .Destination "${PG_PARENT_MOUNT}"}}{{.Name}}{{end}}{{end}}' ${c} 2>/dev/null`;
+}
+
+/**
+ * Recreate the container of a "legacy-anon" PostgreSQL 18+ database. Its cluster lives in the anonymous volume Docker created for the image's
+ * VOLUME, and that volume is referenced by nothing but the container: removing the container first and failing to start the new one would leave it
+ * dangling, and the next start would initialise an empty cluster beside it. So the old container is stopped and renamed aside, the new one is
+ * started with the same anonymous volume, the old one is removed only once the new one is up, and a failed start puts the old container back.
+ * An interrupted earlier recreate (the old container still named `<name>_prev`) is picked up first.
+ */
+function legacyAnonRecreate(name: string, runArgs: string): string[] {
+  const prev = `${name}_prev`;
+  return [
+    `if ! docker inspect ${name} >/dev/null 2>&1 && docker inspect ${prev} >/dev/null 2>&1; then docker rename ${prev} ${name}; fi`,
+    `docker rm -f ${prev} 2>/dev/null || true`,
+    `PGANON=$(${pgAnonLookup(name)} || true)`,
+    `if docker inspect ${name} >/dev/null 2>&1; then (docker stop -t 60 ${name} >/dev/null 2>&1 || docker kill ${name} >/dev/null 2>&1 || true); docker rename ${name} ${prev}; fi`,
+    `${runArgs} || { RC=$?; docker rm -f ${name} 2>/dev/null || true; if docker inspect ${prev} >/dev/null 2>&1; then docker rename ${prev} ${name} && docker start ${name} >/dev/null 2>&1 || true; fi; exit $RC; }`,
+    `docker rm -f ${prev} 2>/dev/null || true`,
+  ];
+}
+
 export function buildDatabaseRunScript(db: DbSpec): string {
   const name = dbContainerName(db);
   const vol = dbVolumeName(db);
@@ -530,11 +548,7 @@ export function buildDatabaseRunScript(db: DbSpec): string {
     ...(pitr ? [`mkdir -p ${walHostDir(db.id)} && chmod 700 ${walHostDir(db.id)}`] : []),
     ...(ssl ? [sslPrepareScript(db.id)] : []),
     `docker pull ${shq(db.image)}`,
-    // legacy-anon: the cluster of a PG >= 18 database provisioned before the parent mount lives in the anonymous volume Docker
-    // created for the image's VOLUME. Read its name BEFORE the old container goes and re-attach it, so a recreate keeps the data.
-    ...(legacyAnon ? [`PGANON=$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "${PG_PARENT_MOUNT}"}}{{.Name}}{{end}}{{end}}' ${name} 2>/dev/null || true)`] : []),
-    `docker rm -f ${name} 2>/dev/null || true`,
-    runArgs,
+    ...(legacyAnon ? legacyAnonRecreate(name, runArgs) : [`docker rm -f ${name} 2>/dev/null || true`, runArgs]),
     ...(pitr ? [`docker exec -u root ${name} chown postgres:postgres ${WAL_CONTAINER_DIR}`] : []),
     `docker ps --filter name=${name} --format '{{.Status}}'`,
   ].join("\n");
@@ -554,13 +568,19 @@ export function buildDbStopScript(db: { id: string }, opts: { graceSec?: number;
 /** Destroy: remove the container AND its volumes (the data is intentionally dropped). */
 export function buildDbRemoveScript(
   db: { id: string; volumes?: DbVolume[] | null },
-  opts: { keepVolume?: boolean; walSpool?: boolean; walRestore?: boolean; ssl?: boolean } = {},
+  opts: { keepVolume?: boolean; walSpool?: boolean; walRestore?: boolean; ssl?: boolean; legacyAnon?: boolean } = {},
 ): string {
-  const lines = [`docker rm -f ${dbContainerName(db)} 2>/dev/null || true`];
+  const lines: string[] = [];
+  // legacyAnon: the cluster of a PG >= 18 database created before the parent mount lives in an anonymous volume that only the container
+  // references (`docker rm -f` leaves it behind, so the full data copy would outlive the delete). Read its name BEFORE the container goes
+  // and drop it with the data volume. Only a Docker-generated name (64 hex characters) is ever removed, never a volume somebody named.
+  if (opts.legacyAnon) lines.push(`PGANON=$(${pgAnonLookup(dbContainerName(db))} || true)`);
+  lines.push(`docker rm -f ${dbContainerName(db)} 2>/dev/null || true`);
   // keepVolume: leave the data volume on the host (recreate the DB over it later, or copy it off). Default
   // removes it — a deleted database frees its disk, as before. Extra named volumes are dropped the same way
   // so a deleted database never orphans them.
   if (!opts.keepVolume) {
+    if (opts.legacyAnon) lines.push(`case "$PGANON" in *[!0-9a-f]*|"") ;; *) [ "\${#PGANON}" -eq 64 ] && docker volume rm "$PGANON" 2>/dev/null || true ;; esac`);
     lines.push(`docker volume rm ${dbVolumeName(db)} 2>/dev/null || true`);
     for (const v of db.volumes ?? []) lines.push(`docker volume rm ${dbExtraVolumeName(db, v.name)} 2>/dev/null || true`);
   }

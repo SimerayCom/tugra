@@ -30,7 +30,6 @@ import {
   publicConnectionUri,
   dbContainerName,
   dbVolumeName,
-  buildDbContainerProbeScript,
   dataMountFor,
   pgLayoutUnsettled,
   enginePort,
@@ -612,11 +611,10 @@ export class DatabasesService {
     // Claim the row as PROVISIONING before the slow (≤5 min) agent call: while it runs we are creating the
     // container + data volume on db.serverId, so a concurrent moveToServer (NEW-only) must be excluded —
     // otherwise the row's serverId could change under us and strand the volume on the old server.
-    // A PostgreSQL 18+ row created before the parent mount existed has no cluster to protect when none was ever started: give it the persistent
-    // layout now. Never-provisioned (NEW) is known from the row; a FAILED one (a first provision that
-    // failed, or a later one) is decided by evidence: no container on the host means no cluster in an anonymous volume to hide, so the mount can move safely.
-    // A RUNNING or STOPPED row provisioned successfully once, so its cluster exists and its layout is kept.
-    if (db.engine === "POSTGRES" && !db.pgParentMount && pgWantsParentMount(db.version, db.image) && (db.status === DbStatus.NEW || (db.status === DbStatus.FAILED && (await this.pgContainerAbsent(db))))) {
+    // A PostgreSQL 18+ row created before the parent mount existed has no cluster to protect only while it was never provisioned (NEW): give it the
+    // persistent layout now. Every other state keeps its layout, FAILED included: a provision that failed after the old container was removed
+    // leaves the cluster in a dangling anonymous volume, so a missing container does not mean there is nothing to protect.
+    if (db.engine === "POSTGRES" && !db.pgParentMount && pgWantsParentMount(db.version, db.image) && db.status === DbStatus.NEW) {
       db = { ...db, pgParentMount: true };
     }
     await this.prisma.database.update({ where: { id: db.id }, data: { status: DbStatus.PROVISIONING, ...(db.pgParentMount ? { pgParentMount: true } : {}) } });
@@ -652,16 +650,6 @@ export class DatabasesService {
     const row = await this.prisma.database.update({ where: { id: db.id }, data: { status } });
     await this.audit.log({ actor, action: "database.provision", target: db.id });
     return { row, exitCode, output, error };
-  }
-
-  /** True only when the host positively reports that this database's container does not exist; any doubt (agent offline, odd output) is false. */
-  private async pgContainerAbsent(db: Database): Promise<boolean> {
-    try {
-      const r = await this.agentWs.sendCommand(db.serverId, buildDbContainerProbeScript(db), "database", 30_000);
-      return r.exitCode === 0 && /tugra-container-absent\s*$/.test(r.output);
-    } catch {
-      return false;
-    }
   }
 
   async stop(userId: string, id: string): Promise<void> {
@@ -705,7 +693,7 @@ export class DatabasesService {
     await this.agentWs
       .sendCommand(
         db.serverId,
-        buildDbRemoveScript({ id: db.id, volumes: this.dbVolumes(db) }, { ...opts, walSpool: db.pitrEnabled, walRestore: opts.walRestore ?? db.engine === "POSTGRES", ssl: db.ssl }),
+        buildDbRemoveScript({ id: db.id, volumes: this.dbVolumes(db) }, { ...opts, walSpool: db.pitrEnabled, walRestore: opts.walRestore ?? db.engine === "POSTGRES", ssl: db.ssl, legacyAnon: pgDataLayout(db) === "legacy-anon" }),
         "database",
       )
       .catch(() => undefined);

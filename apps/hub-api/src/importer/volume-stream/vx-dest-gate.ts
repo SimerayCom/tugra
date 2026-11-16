@@ -68,8 +68,8 @@ export const PHYSICAL_DEST_PG18_TEXT =
  * Can the destination database keep what a streamed dump restores into it? A database that Tugra provisioned with the persistent
  * layout (every new PostgreSQL 18+ database: the volume is mounted at /var/lib/postgresql where that major keeps PGDATA) can, like
  * any pre-18 one. Refused only for a PostgreSQL 18+ row that was already started under the old mount: its cluster sits in an
- * anonymous volume, so pg_restore would succeed and the run would read DONE over data that is not persisted. A row with no cluster yet (status NEW, or
- * FAILED before it ever ran) is given the persistent layout when it is provisioned. Checked up front (before the first byte moves) and again before the restore.
+ * anonymous volume, so pg_restore would succeed and the run would read DONE over data that is not persisted. A row with no cluster yet (status NEW) is
+ * given the persistent layout when it is provisioned; a FAILED one keeps its layout, as a failed provision can leave a cluster in a dangling anonymous volume. Checked up front (before the first byte moves) and again before the restore.
  */
 export async function dumpDestLayout(prisma: Pick<PrismaService, "database">, resourceId: string): Promise<{ ok: true } | { ok: false; reason: string }> {
   const db = await prisma.database.findUnique({ where: { id: resourceId }, select: { engine: true, version: true, image: true, status: true, pgParentMount: true } });

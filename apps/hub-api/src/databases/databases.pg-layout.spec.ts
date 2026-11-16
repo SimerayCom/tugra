@@ -102,7 +102,7 @@ describe("DatabasesService: the PostgreSQL data layout", () => {
     const s = runScript(sendCommand);
     expect(mountOf(s)).toBe("/var/lib/postgresql/data");
     expect(s).toContain("PGANON=$(docker inspect");
-    expect(s.indexOf("PGANON=$(")).toBeLessThan(s.indexOf("docker rm -f tugra_db_db1"));
+    expect(s.indexOf("PGANON=$(")).toBeLessThan(s.indexOf("docker rename tugra_db_db1 tugra_db_db1_prev"));
     expect(s).toContain("${PGANON:+-v ${PGANON}:/var/lib/postgresql}");
     for (const c of update.mock.calls) expect(c[0].data).not.toHaveProperty("pgParentMount");
   });
@@ -135,32 +135,43 @@ describe("DatabasesService: the PostgreSQL data layout", () => {
     expect(s).toContain("PGANON=$(docker inspect");
   });
 
-  it("a FAILED PostgreSQL 18 row whose container does not exist moves to the parent mount at its next provision", async () => {
-    const { svc, sendCommand, update } = make(row({ version: "18", image: "postgres:18", pgParentMount: false, status: "FAILED" }));
-    sendCommand.mockImplementation((_s: string, script: string) =>
-      Promise.resolve(script.includes("docker inspect -f '{{.Id}}'") && !script.includes("docker run") ? { output: "tugra-container-absent\n", exitCode: 0 } : { output: "Up 1s", exitCode: 0 }),
-    );
-    await svc.provision("u1", "db1");
-    const run = sendCommand.mock.calls.map((c) => String(c[1])).find((s) => s.includes("docker run"))!;
-    expect(mountOf(run)).toBe("/var/lib/postgresql");
-    expect(run).not.toContain("PGANON");
-    expect(update.mock.calls[0][0].data).toMatchObject({ status: "PROVISIONING", pgParentMount: true });
-  });
-
-  it("a FAILED row whose container still exists, or whose host cannot be asked, keeps the old mount (the cluster may be in its anonymous volume)", async () => {
-    for (const probe of [() => Promise.resolve({ output: "tugra-container-present\n", exitCode: 0 }), () => Promise.reject(new Error("agent offline")), () => Promise.resolve({ output: "boom", exitCode: 1 })]) {
+  it("a FAILED PostgreSQL 18 row in the old layout keeps its mount whatever the host says about its container (a failed recreate leaves the cluster in a dangling anonymous volume)", async () => {
+    for (const probe of ["tugra-container-absent\n", "tugra-container-present\n", ""]) {
       const { svc, sendCommand, update } = make(row({ version: "18", image: "postgres:18", pgParentMount: false, status: "FAILED" }));
-      sendCommand.mockImplementation((_s: string, script: string) => (script.includes("docker run") ? Promise.resolve({ output: "Up", exitCode: 0 }) : probe()));
+      sendCommand.mockImplementation(() => Promise.resolve({ output: probe || "Up 1s", exitCode: 0 }));
       await svc.provision("u1", "db1");
-      const run = sendCommand.mock.calls.map((c) => String(c[1])).find((s) => s.includes("docker run"))!;
-      expect(mountOf(run)).toBe("/var/lib/postgresql/data");
+      const scripts = sendCommand.mock.calls.map((c) => String(c[1]));
+      expect(scripts).toHaveLength(1); // no probe: nothing is asked of the host before the run script
+      expect(mountOf(scripts[0])).toBe("/var/lib/postgresql/data");
+      expect(scripts[0]).toContain("PGANON=$(");
       for (const c of update.mock.calls) expect(c[0].data).not.toHaveProperty("pgParentMount");
     }
   });
 
-  it("the view does not warn about a FAILED PostgreSQL 18 row (no cluster is known to exist)", async () => {
-    const { svc } = make(row({ version: "18", image: "postgres:18", status: "FAILED" }));
-    expect((await svc.get("u1", "db1")).dataLayoutWarning).toBeNull();
+  it("a never-provisioned (NEW) PostgreSQL 18 row still moves to the parent mount at its first provision", async () => {
+    const { svc, sendCommand, update } = make(row({ version: "18", image: "postgres:18", pgParentMount: false, status: "NEW" }));
+    await svc.provision("u1", "db1");
+    expect(mountOf(runScript(sendCommand))).toBe("/var/lib/postgresql");
+    expect(update.mock.calls[0][0].data).toMatchObject({ status: "PROVISIONING", pgParentMount: true });
+  });
+
+  it("the view warns about a FAILED PostgreSQL 18 row in the old layout, not about a NEW one", async () => {
+    expect((await make(row({ version: "18", image: "postgres:18", status: "FAILED" })).svc.get("u1", "db1")).dataLayoutWarning).toBe("pg_anonymous_volume");
+    expect((await make(row({ version: "18", image: "postgres:18", status: "NEW" })).svc.get("u1", "db1")).dataLayoutWarning).toBeNull();
+  });
+
+  it("deleting an old-layout PostgreSQL 18 database also removes the anonymous volume that holds its cluster; other rows' scripts are unchanged", async () => {
+    const del = async (over: Record<string, unknown>, opts = {}) => {
+      const { svc, sendCommand } = make(row(over));
+      (svc as unknown as { prisma: { appDatabaseLink: unknown; database: Record<string, unknown> } }).prisma.appDatabaseLink = { findMany: jest.fn().mockResolvedValue([]) };
+      (svc as unknown as { prisma: { database: Record<string, unknown> } }).prisma.database.delete = jest.fn().mockResolvedValue({});
+      await svc.remove("u1", "db1", opts);
+      return String(sendCommand.mock.calls[0][1]);
+    };
+    expect(await del({ version: "18", image: "postgres:18", status: "RUNNING" })).toContain('docker volume rm "$PGANON"');
+    expect(await del({ version: "18", image: "postgres:18", status: "RUNNING", pgParentMount: true })).not.toContain("PGANON");
+    expect(await del({ version: "16", image: "postgres:16", status: "RUNNING" })).not.toContain("PGANON");
+    expect(await del({ version: "18", image: "postgres:18", status: "RUNNING" }, { keepVolume: true })).not.toContain('volume rm "$PGANON"');
   });
 
   it("PostgreSQL 16 and 17 databases keep the original mount and a script without any layout lines", async () => {

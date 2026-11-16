@@ -40,7 +40,7 @@
   "cloneTitle": "Clone database",
   "cloneHint": "Creates a new, un-deployed database with the same engine and settings. Data and backups are not copied.",
   "dataLayoutTitle": "This PostgreSQL 18 database is not stored in its data volume.",
-  "dataLayoutBody": "It was created before Tugra mounted the volume where PostgreSQL 18 keeps its cluster, so the data sits in an anonymous Docker volume. Tugra keeps re-attaching that volume when the container is recreated, but it is not covered by volume tools or cleanups. Back the database up, restore it into a new database (new PostgreSQL 18 databases are stored correctly) and switch your apps over.",
+  "dataLayoutBody": "It was created before Tugra mounted the volume where PostgreSQL 18 keeps its cluster, so the data sits in an anonymous Docker volume. Tugra keeps re-attaching that volume when the container is recreated and removes it when the database is deleted, but volume tools and cleanups do not cover it. Back the database up, restore it into a new database (new PostgreSQL 18 databases are stored correctly) and switch your apps over.",
   "cloneWarn_data_not_copied": "Clone created — its configuration was copied, but no data. Deploy it to start fresh.",
   "cloneWarn_host_port_reset": "The external port was cleared on the clone to avoid a conflict — set a new one if you need external access.",
   "env": "Environment variables",

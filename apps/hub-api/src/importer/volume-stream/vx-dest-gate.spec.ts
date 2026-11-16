@@ -21,8 +21,9 @@ describe("dumpDestLayout (the streamed dump into a PostgreSQL destination)", () 
     expect(await dumpDestLayout(prismaOf(db({ version: "latest", image: "postgres:19-alpine", status: "NEW" })), "d1")).toEqual({ ok: true });
   });
 
-  it("a FAILED PostgreSQL 18+ row is accepted: its next provision decides its layout from whether a container exists", async () => {
-    expect(await dumpDestLayout(prismaOf(db({ version: "18", image: "postgres:18", status: "FAILED" })), "d1")).toEqual({ ok: true });
+  it("a FAILED PostgreSQL 18+ row in the old layout is refused (a failed provision can leave a cluster in a dangling anonymous volume), one in the new layout is accepted", async () => {
+    expect(await dumpDestLayout(prismaOf(db({ version: "18", image: "postgres:18", status: "FAILED" })), "d1")).toEqual({ ok: false, reason: DUMP_DEST_PG_LAYOUT_TEXT });
+    expect(await dumpDestLayout(prismaOf(db({ version: "18", image: "postgres:18", status: "FAILED", pgParentMount: true })), "d1")).toEqual({ ok: true });
   });
 
   it("the major comes from the image: a version-16 row on a postgres:18, postgres:latest or postgis image is refused once started", async () => {
