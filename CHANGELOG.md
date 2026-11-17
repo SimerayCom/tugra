@@ -7,6 +7,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **Server patching explains Ubuntu's phased updates.** Packages Ubuntu is rolling out gradually are no longer counted as
+  pending: they appear in their own section ("installs automatically when this server's turn comes") with an Install now
+  button for one package, Update all never claims them, and the result says "deferred by Ubuntu's phased rollout" instead
+  of the generic "may be held back".
+
 - **In-app updates keep the install's git checkout clean.** After applying a release's compose file and scripts, the updater
   moves the checkout to the release tag when the files are byte-identical, so `git pull` and `git checkout <tag>` work
   again. Real local edits are backed up, reported and never discarded; local commits are never orphaned. `install.sh`
