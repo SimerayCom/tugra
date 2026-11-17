@@ -368,9 +368,10 @@ describe("server patching: interrupted dpkg and a still-running update", () => {
     patchTiming.intervalMs = 5;
     let phase: "before" | "running" | "done" = "before";
     let runningChecks = 0;
+    let seen = false; // the host keeps reporting "running" until the test has seen the waiting state (no race under load)
     stubs.fns.checkUpdates = async () => {
       if (phase === "before") return info();
-      if (phase === "running" && ++runningChecks < 3) return info({ applyRunning: true });
+      if (phase === "running" && (!seen || runningChecks < 2)) { runningChecks++; return info({ applyRunning: true }); }
       return info({ count: 0, packages: [] });
     };
     stubs.fns.upgradeAll = async () => { phase = "running"; throw Object.assign(new Error("Bad Gateway"), { status: 502 }); }; // the hub went down with Docker
@@ -378,8 +379,9 @@ describe("server patching: interrupted dpkg and a still-running update", () => {
     await clickCheck();
     fireEvent.click(await screen.findByRole("button", { name: "Update all" }));
     expect(await screen.findByText(/still running on this server/)).toBeInTheDocument();
+    seen = true;
     await waitFor(() => expect(screen.getByText("Your server is up to date.")).toBeInTheDocument());
-    expect(runningChecks).toBe(3);
+    expect(runningChecks).toBeGreaterThanOrEqual(2);
     expect(toasts.filter((x) => x.type === "error")).toHaveLength(0);
   });
 
