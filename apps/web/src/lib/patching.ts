@@ -27,7 +27,14 @@ export const patchTiming = {
 export function isTransientPatchError(e: unknown): boolean {
   const status = (e as { status?: unknown } | null)?.status;
   if (typeof status !== "number") return true; // fetch itself failed (network drop, proxy restarting)
+  if (status === 0) return true; // the API client's wrapped network failure (ApiError 0, hub_unreachable)
   return status >= 500;
+}
+
+/** Proxy/CDN statuses that mean "the upstream never answered" (bad gateway, gateway timeout, Cloudflare 52x) —
+ *  the hub's patching endpoints never produce these themselves. */
+function isGatewayStatus(status: number): boolean {
+  return status === 502 || status === 504 || (status >= 520 && status <= 530);
 }
 
 /** The apply request itself failed because the agent dropped (or never answered) mid-run — the typical sign that
@@ -36,9 +43,11 @@ export function isTransientPatchError(e: unknown): boolean {
  *  running) is a real failure, not a restart. */
 export function isAgentDropError(e: unknown): boolean {
   const status = (e as { status?: unknown } | null)?.status;
+  const code = (e as { code?: unknown } | null)?.code;
   const message = e instanceof Error ? e.message : "";
   if (typeof status !== "number") return true;
-  if (status === 504) return true;
+  if (status === 0 || code === "hub_unreachable") return true; // the API client's wrapped network failure / proxy-down answer
+  if (isGatewayStatus(status)) return true;
   return status === 503 && /disconnected|offline/i.test(message);
 }
 
@@ -60,4 +69,22 @@ export function summarizeApply(
   const still = new Set(after.packages.map((p) => p.name));
   const updated = before.filter((p) => !still.has(p.name)).length;
   return { updated, remaining: after.count };
+}
+
+/** Text to keep in the log panel once the apply request has settled: the hub's final output when it answered,
+ *  otherwise (the agent dropped mid-run) whatever was streamed live, so the log does not vanish exactly when the
+ *  Docker restart happens. Pure. */
+export function settledApplyLog(response: string | null, streamed: string): string {
+  return response && response.length > 0 ? response : streamed;
+}
+
+/** Whether to tell the owner "updates applied — reboot required". Only when this run succeeded and really changed
+ *  something and the host still wants a reboot: /var/run/reboot-required persists from earlier updates, so after a
+ *  failed or no-op run it would contradict the outcome toast (the banner already shows it). Pure. */
+export function shouldToastReboot(
+  exitCode: number,
+  sum: ApplySummary | null,
+  after: { supported: boolean; rebootRequired?: boolean },
+): boolean {
+  return exitCode === 0 && !!sum && sum.updated > 0 && after.supported && !!after.rebootRequired;
 }

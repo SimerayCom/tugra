@@ -37,7 +37,7 @@ import type { ProxyStatus } from "../../../../lib/types";
 import { PageHeader } from "../../../../components/page-header";
 import { Tabs } from "../../../../components/tabs-nav";
 import { RuntimeUpdateWarning } from "../../../../components/runtime-update-warning";
-import { containerRuntimeUpdates, isAgentDropError, isTransientPatchError, patchTiming, summarizeApply } from "../../../../lib/patching";
+import { containerRuntimeUpdates, isAgentDropError, isTransientPatchError, patchTiming, settledApplyLog, shouldToastReboot, summarizeApply } from "../../../../lib/patching";
 import { usePatchLogStream } from "../../../../hooks/useDeployLogStream";
 import { useMetricsStream } from "../../../../hooks/useMetricsStream";
 import { useServerReconnect } from "../../../../hooks/useServerReconnect";
@@ -581,6 +581,8 @@ function PatchCard({ id }: { id: string }) {
   const [output, setOutput] = useState("");
   const [applying, setApplying] = useState(false);
   const log = usePatchLogStream(id, applying);
+  const streamedRef = useRef("");
+  streamedRef.current = log.lines;
   const logText = applying ? log.lines : output;
   const logRef = useStickToBottom<HTMLPreElement>(logText); // follow the live apt output as it streams
   const toast = useToast();
@@ -627,10 +629,11 @@ function PatchCard({ id }: { id: string }) {
     try {
       const r = pkg ? await api.upgradeOne(id, pkg) : await api.upgradeAll(id);
       if (!alive.current) return;
-      setOutput(r.output);
+      setOutput(settledApplyLog(r.output, streamedRef.current));
       exitCode = r.exitCode;
     } catch (e) {
       if (!alive.current) return;
+      setOutput(settledApplyLog(null, streamedRef.current)); // keep the live apt output the owner was watching
       setApplying(false);
       if (!isAgentDropError(e)) {
         // The hub refused or the host couldn't be patched: nothing ran, the list is still true.
@@ -666,7 +669,7 @@ function PatchCard({ id }: { id: string }) {
     } else {
       toast(t(sum.updated > 0 ? "patching.appliedPartial" : "patching.appliedNone", sum), sum.updated > 0 ? "info" : "error");
     }
-    if (after.supported && after.rebootRequired) toast(t("patching.rebootRequiredToast"), "info");
+    if (shouldToastReboot(exitCode, sum, after)) toast(t("patching.rebootRequiredToast"), "info");
   };
   const runAll = () => { void apply(null); };
   const runOne = (pkg: string) => { void apply(pkg); };

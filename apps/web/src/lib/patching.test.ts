@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { containerRuntimeUpdates, isAgentDropError, isContainerRuntimePackage, isTransientPatchError, summarizeApply } from "./patching";
+import { ApiError } from "./api";
+import { HUB_UNREACHABLE_CODE } from "./hub-connection";
+import { containerRuntimeUpdates, isAgentDropError, isContainerRuntimePackage, isTransientPatchError, settledApplyLog, shouldToastReboot, summarizeApply } from "./patching";
 
 describe("containerRuntimeUpdates", () => {
   it("picks docker-ce, containerd.io and runc out of the pending list", () => {
@@ -50,5 +52,48 @@ describe("apply error classification", () => {
     expect(isTransientPatchError(new TypeError("Failed to fetch"))).toBe(true);
     expect(isTransientPatchError(e(403, "no"))).toBe(false);
     expect(isTransientPatchError(e(404, "gone"))).toBe(false);
+  });
+});
+
+describe("apply error classification with the real API client errors", () => {
+  it("treats a wrapped network failure (ApiError 0) as an agent drop and a transient re-check failure", () => {
+    const err = new ApiError(0, "Hub is restarting or unreachable", HUB_UNREACHABLE_CODE);
+    expect(isAgentDropError(err)).toBe(true);
+    expect(isTransientPatchError(err)).toBe(true);
+  });
+  it("treats proxy and Cloudflare gateway answers on the long apply as a drop", () => {
+    expect(isAgentDropError(new ApiError(502, "Hub is restarting or unreachable", HUB_UNREACHABLE_CODE))).toBe(true);
+    expect(isAgentDropError(new ApiError(524, "HTTP 524"))).toBe(true);
+    expect(isAgentDropError(new ApiError(522, "HTTP 522"))).toBe(true);
+    expect(isTransientPatchError(new ApiError(524, "HTTP 524"))).toBe(true);
+  });
+  it("still treats a definitive refusal as a real error", () => {
+    expect(isAgentDropError(new ApiError(403, "forbidden"))).toBe(false);
+    expect(isAgentDropError(new ApiError(409, "a patch is already running"))).toBe(false);
+    expect(isTransientPatchError(new ApiError(403, "forbidden"))).toBe(false);
+  });
+});
+
+describe("settledApplyLog", () => {
+  it("keeps the streamed lines when the agent dropped before the hub answered", () => {
+    expect(settledApplyLog(null, "Unpacking docker-ce\n")).toBe("Unpacking docker-ce\n");
+    expect(settledApplyLog("", "streamed")).toBe("streamed");
+  });
+  it("prefers the hub's final output", () => {
+    expect(settledApplyLog("final", "streamed")).toBe("final");
+  });
+});
+
+describe("shouldToastReboot", () => {
+  const sys = { supported: true, rebootRequired: true };
+  it("fires only after a successful run that updated something", () => {
+    expect(shouldToastReboot(0, { updated: 2, remaining: 0 }, sys)).toBe(true);
+  });
+  it("stays quiet after a failed run, a no-op run, an unknown outcome or no pending reboot", () => {
+    expect(shouldToastReboot(100, { updated: 2, remaining: 1 }, sys)).toBe(false);
+    expect(shouldToastReboot(0, { updated: 0, remaining: 1 }, sys)).toBe(false);
+    expect(shouldToastReboot(0, null, sys)).toBe(false);
+    expect(shouldToastReboot(0, { updated: 1, remaining: 0 }, { supported: true, rebootRequired: false })).toBe(false);
+    expect(shouldToastReboot(0, { updated: 1, remaining: 0 }, { supported: false, rebootRequired: true })).toBe(false);
   });
 });
