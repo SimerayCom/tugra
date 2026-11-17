@@ -25,6 +25,21 @@ describe("fleetAttention", () => {
     ]);
   });
 
+  it("does not report an http-only domain (no TLS by design) as a certificate error", () => {
+    const httpOnly = (domain: string, appId: string, state: DomainView["ssl"]["state"]): DomainView =>
+      ({ domain, appId, https: false, ssl: { state } } as DomainView);
+    const tls = (domain: string, appId: string, state: DomainView["ssl"]["state"]): DomainView =>
+      ({ domain, appId, https: true, ssl: { state } } as DomainView);
+    const out = fleetAttention([], [], [
+      httpOnly("hello.1-2-3-4.sslip.io", "a1", "error"), // older hub: probed 443 and failed
+      httpOnly("immich.1-2-3-4.sslip.io", "a2", "none"),
+      tls("shop.acme.dev", "a3", "none"),
+      tls("blog.acme.dev", "a4", "error"), // should have a cert and lacks one: still reported
+      tls("api.acme.dev", "a5", "expiring"),
+    ]);
+    expect(out.map((i) => i.name)).toEqual(["blog.acme.dev", "api.acme.dev"]);
+  });
+
   it("returns [] when everything is healthy", () => {
     expect(fleetAttention([srv("a", "ONLINE")], [mon("x", "UP")], [dom("ok.io", "a", "ok")])).toEqual([]);
     expect(fleetAttention([], [])).toEqual([]);

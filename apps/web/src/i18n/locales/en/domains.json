@@ -10,6 +10,7 @@
   "daysLeft": "{n}d left",
   "expiring": "expiring",
   "noCert": "no cert",
+  "httpOnly": "HTTP only",
   "redirect": "redirect",
   "headers": "headers"
 }

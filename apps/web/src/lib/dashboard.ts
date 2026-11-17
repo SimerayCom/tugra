@@ -21,7 +21,9 @@ export function fleetAttention(
     .filter((m) => m.status === "DOWN")
     .map((m) => ({ kind: "monitor" as const, id: m.id, name: m.name, status: m.status }));
   const certs = domains
-    .filter((d) => d.ssl.state !== "ok")
+    // Only a domain that is meant to serve TLS can have a certificate problem: an http-only domain (https=false,
+    // e.g. a sslip magic domain without HTTPS) or one the hub reports as "none" has no cert by design.
+    .filter((d) => d.https !== false && (d.ssl.state === "error" || d.ssl.state === "expiring"))
     // link to the owning app (id = appId)
     .map((d) => ({ kind: "domain" as const, id: d.appId, name: d.domain, status: d.ssl.state }));
   return [...offline, ...down, ...certs];

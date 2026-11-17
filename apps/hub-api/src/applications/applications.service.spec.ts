@@ -17,6 +17,7 @@ import { COMPOSE_RENDERED_MARKER, COMPOSE_SHA_MARKER } from "../deploy/compose-g
 
 // listDomains probes TLS over the network; stub it so the unit test stays offline.
 jest.mock("./ssl-probe", () => ({
+  ...jest.requireActual("./ssl-probe"),
   probeSsl: jest.fn().mockResolvedValue({ state: "ok", daysRemaining: 90, issuer: "Let's Encrypt" }),
 }));
 
@@ -4631,6 +4632,18 @@ describe("ApplicationsService.listDomains", () => {
     expect(res).toHaveLength(1);
     expect(res[0]).toMatchObject({ id: "app1", appId: "app1", appStatus: "RUNNING", teamId: "t1", name: "web", domain: "shop.acme.dev" });
     expect(res[0].ssl.state).toBe("ok");
+  });
+
+  it("reports an http-only domain as ssl none (no probe, no false certificate error)", async () => {
+    const { probeSsl } = jest.requireMock("./ssl-probe") as { probeSsl: jest.Mock };
+    probeSsl.mockClear();
+    const svc = make({}, {}, {});
+    jest.spyOn(svc, "list").mockResolvedValue([
+      { id: "app1", teamId: "t1", name: "hello", status: "RUNNING", domain: "hello.37-27-205-247.sslip.io", https: false, url: "http://hello.37-27-205-247.sslip.io", domainRedirect: null, securityHeaders: false },
+    ] as never);
+    const res = await svc.listDomains("u1");
+    expect(res[0].ssl.state).toBe("none");
+    expect(probeSsl).not.toHaveBeenCalled();
   });
 });
 

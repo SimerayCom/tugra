@@ -150,7 +150,7 @@ import {
   composeGitCloneDir,
 } from "../deploy/compose-git";
 import { PortAllocatorService } from "./port-allocator.service";
-import { probeSsl } from "./ssl-probe";
+import { domainSsl, probeSsl } from "./ssl-probe";
 import { AiService } from "./ai.service";
 import { TeamDefaultsService } from "../teams/team-defaults.service";
 import { normalizeTags } from "../common/tags";
@@ -392,7 +392,7 @@ export const DomainViewSchema = z.object({
   domainRedirect: z.string().nullable(),
   securityHeaders: z.boolean(),
   ssl: z.object({
-    state: z.enum(["ok", "expiring", "error"]),
+    state: z.enum(["ok", "expiring", "error", "none"]),
     daysRemaining: z.number().nullable(),
     validTo: z.string().nullable(),
     issuer: z.string().nullable(),
@@ -5494,7 +5494,7 @@ export class ApplicationsService {
         url: a.url,
         domainRedirect: a.domainRedirect,
         securityHeaders: a.securityHeaders,
-        ssl: await probeSsl(a.domain!),
+        ssl: await domainSsl(a.domain!, a.https, probeSsl),
       })),
     );
   }
