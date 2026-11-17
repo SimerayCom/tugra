@@ -97,6 +97,10 @@ describe("patch-script", () => {
     expect(() => buildUpgradeOneScript("--force")).toThrow(/invalid/);
     expect(() => buildUpgradeOneScript("a b")).toThrow(/invalid/);
     expect(() => buildUpgradeOneScript("")).toThrow(/invalid/);
+    // apt reads a trailing `-` as "remove this package" (a name that would turn an upgrade into a removal)
+    expect(() => buildUpgradeOneScript("nginx-")).toThrow(/invalid/);
+    expect(() => buildInstallPhasedScript("docker-ce-")).toThrow(/invalid/);
+    expect(() => buildUpgradeOneScript("g++")).not.toThrow();
   });
 
   describe("parseUpgradable", () => {
