@@ -7,6 +7,22 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **Compose services come back after a Docker restart or a reboot.** Every compose member that sets no restart
+  policy (App Store templates, pasted and git compose stacks, previews) now gets `restart: unless-stopped` through
+  Tugra's override file; an explicit `restart` (including `"no"`) and init/one-shot members are left alone. Running
+  stored-compose services are healed with `docker update --restart unless-stopped` within about 15 minutes, without a
+  redeploy or a restart.
+- **App logs open at once.** A compose app's Logs tab streams its main service immediately (the picker still
+  switches), and the app header and crash timeline follow a container that comes back within seconds; a stopped
+  container no longer shows a stale "Unhealthy".
+- **Server patching confirms and refreshes.** After "Update all" or a single package the panel re-checks on its
+  own, clears applied packages and reports how many were updated; when the update restarts Docker it waits for the
+  agent to reconnect instead of leaving the old list on screen.
+- **No false SSL errors for http-only domains.** Domains served without TLS (such as sslip.io app domains) are shown
+  as "HTTP only" and no longer listed under Needs attention; a domain that should have a certificate still is.
+- **The in-app updater updates itself.** After every update the updater sidecar is recreated on the new release image
+  (it used to stay on the version it was installed with), and an updater left behind catches up when it starts.
+
 ## [0.1.0-beta.18] - 2026-11-17
 
 - **Guided migration runs from Coolify (preview).** One resumable, observable, abortable run now chains what the
