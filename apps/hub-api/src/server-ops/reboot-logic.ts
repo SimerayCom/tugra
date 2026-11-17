@@ -211,7 +211,9 @@ export function evaluateVerification(input: VerificationInput): VerificationOutc
       if (now.state === "created" || now.state === "restarting") return { ...base, verdict: "pending" as const, detail };
       return { ...base, verdict: "missing" as const, detail };
     }
-    if (c.health === "none") return { ...base, verdict: "ok" as const, detail: "running" };
+    // A container that was ALREADY unhealthy before the reboot is judged on running only: a reboot must not be blamed
+    // for a problem that predates it (and would make every reboot of such a server "degraded").
+    if (c.health === "none" || c.health === "unhealthy") return { ...base, verdict: "ok" as const, detail: c.health === "unhealthy" ? "running (was unhealthy before the reboot)" : "running" };
     if (now.health === "healthy") return { ...base, verdict: "ok" as const, detail: "healthy" };
     if (now.health === "unhealthy") return { ...base, verdict: "unhealthy" as const, detail: "unhealthy" };
     return { ...base, verdict: "pending" as const, detail: now.health === "none" ? "running" : now.health }; // starting (start period)

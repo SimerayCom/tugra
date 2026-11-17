@@ -162,6 +162,15 @@ describe("evaluateVerification", () => {
     expect(never.result).toBe("degraded");
   });
 
+  it("a container that was already unhealthy before the reboot is judged on running only (the reboot is not blamed for it)", () => {
+    const snap = snapshot({ containers: [{ name: "web", image: "nginx", restartPolicy: "always", health: "unhealthy", swarm: false }], domains: [] });
+    const r = run({ snapshot: snap, state: stateRead([cs("web", "running", "unhealthy")]), domains: null });
+    expect(r).toMatchObject({ settled: true, result: "ok" });
+    expect(r.report.containers[0]).toMatchObject({ verdict: "ok", detail: "running (was unhealthy before the reboot)" });
+    // ...but if it did not come back at all, that IS the reboot's doing
+    expect(run({ snapshot: snap, state: stateRead([]), domains: null, final: true }).result).toBe("degraded");
+  });
+
   it("a container that had no healthcheck needs only to be running", () => {
     expect(run().report.containers.find((c) => c.name === "db")).toMatchObject({ verdict: "ok", hadHealthcheck: false });
   });
