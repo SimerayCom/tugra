@@ -1,6 +1,7 @@
 import { request as httpsRequest } from "node:https";
 import { request as httpRequest } from "node:http";
 import { assertAllowedUrl, guardedLookup } from "./ssrf-guard";
+import { AuthPausedError, type RequestLimits } from "./request-limits";
 
 const TIMEOUT_MS = 15_000; // per-socket idle timeout
 const DEADLINE_MS = 30_000; // hard overall cap: a trickle/stalled response cannot hang the request forever
@@ -15,7 +16,19 @@ export interface GuardedGetConfig {
   headers: () => Record<string, string>;
   /** Trailing hint appended to a non-2xx error message (token/allowed-IPs advice). */
   errorHint?: (status: number) => string;
+  /** Optional pacing + 429/lockout handling (Coolify 4.7+). Absent = every non-2xx is surfaced as-is (Dokploy). */
+  limits?: RequestLimits;
+  /** Test seam: replaces the socket. The real transport is SSRF-pinned; an injected one is only ever used by specs. */
+  transport?: RawTransport;
 }
+
+/** A raw response: any non-redirect status, the body (size-capped) and the `Retry-After` header. */
+export interface RawGetResponse {
+  status: number;
+  retryAfter?: string | null;
+  body: Buffer;
+}
+export type RawTransport = (url: URL, headers: Record<string, string>) => Promise<RawGetResponse>;
 
 /**
  * SSRF-safe authenticated GET client for one external-source instance. Every request validates the URL scheme
@@ -26,9 +39,11 @@ export interface GuardedGetConfig {
  */
 export class GuardedHttpGet {
   private readonly base: URL;
+  private readonly transport: RawTransport;
 
   constructor(baseUrl: string, private readonly cfg: GuardedGetConfig) {
     this.base = assertAllowedUrl(baseUrl); // throws on a bad scheme / embedded credentials
+    this.transport = cfg.transport ?? guardedRequest(cfg.label);
   }
 
   get<T>(path: string): Promise<T> {
@@ -50,13 +65,34 @@ export class GuardedHttpGet {
     });
   }
 
-  private fetchBody<T>(path: string, accept: string, parse: (body: string) => T): Promise<T> {
+  private async fetchBody<T>(path: string, accept: string, parse: (body: string) => T): Promise<T> {
     const label = this.cfg.label;
     const url = new URL(`${this.cfg.apiPrefix}${path}`, this.base);
     if (url.origin !== this.base.origin) throw new Error(`path escaped the ${label} base origin`); // defence-in-depth
-    const doRequest = url.protocol === "https:" ? httpsRequest : httpRequest;
+    const send = () => this.transport(url, { Accept: accept, ...this.cfg.headers() });
+    let res: RawGetResponse;
+    try {
+      res = this.cfg.limits ? await this.cfg.limits.run(send) : await send();
+    } catch (e) {
+      if (e instanceof AuthPausedError) {
+        const hint = this.cfg.errorHint?.(e.status) ?? "";
+        throw new Error(`${label} API error ${e.status}${hint} — requests paused for ${Math.ceil(e.retryAfterMs / 1000)} s after repeated authorization failures, so the token is not locked out`);
+      }
+      throw e;
+    }
+    if (res.status < 200 || res.status >= 300) {
+      const hint = this.cfg.errorHint?.(res.status) ?? "";
+      throw new Error(`${label} API error ${res.status}${hint}`);
+    }
+    return parse(res.body.toString("utf8"));
+  }
+}
 
-    return new Promise<T>((resolve, reject) => {
+/** The real transport: one SSRF-pinned GET that resolves with ANY non-redirect status (the caller interprets it). */
+function guardedRequest(label: string): RawTransport {
+  return (url, headers) => {
+    const doRequest = url.protocol === "https:" ? httpsRequest : httpRequest;
+    return new Promise<RawGetResponse>((resolve, reject) => {
       let settled = false;
       const done = (fn: () => void) => {
         if (settled) return;
@@ -68,7 +104,7 @@ export class GuardedHttpGet {
         url,
         {
           method: "GET",
-          headers: { Accept: accept, ...this.cfg.headers() },
+          headers,
           lookup: guardedLookup,
           timeout: TIMEOUT_MS,
         },
@@ -90,20 +126,8 @@ export class GuardedHttpGet {
             chunks.push(c);
           });
           res.on("aborted", () => done(() => reject(new Error(`${label} response was truncated`))));
-          res.on("end", () =>
-            done(() => {
-              if (status < 200 || status >= 300) {
-                const hint = this.cfg.errorHint?.(status) ?? "";
-                return reject(new Error(`${label} API error ${status}${hint}`));
-              }
-              const body = Buffer.concat(chunks).toString("utf8");
-              try {
-                resolve(parse(body));
-              } catch (e) {
-                reject(e instanceof Error ? e : new Error(`${label} returned an unreadable response`));
-              }
-            }),
-          );
+          const ra = res.headers["retry-after"];
+          res.on("end", () => done(() => resolve({ status, retryAfter: Array.isArray(ra) ? ra[0] : (ra ?? null), body: Buffer.concat(chunks) })));
         },
       );
       // Hard overall deadline — set AFTER req exists so a synchronous throw from doRequest can never leave an
@@ -116,5 +140,5 @@ export class GuardedHttpGet {
       req.on("error", (e) => done(() => reject(e)));
       req.end();
     });
-  }
+  };
 }
