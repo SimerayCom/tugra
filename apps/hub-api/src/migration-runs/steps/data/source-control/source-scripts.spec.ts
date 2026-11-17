@@ -217,7 +217,7 @@ describe("source inspect with a custom container name prefix", () => {
   });
 
   it("refuses a prefix that is not a plain name instead of putting it in a shell pattern", () => {
-    for (const bad of ["a b", "x;id", "-x", "a'b", "$(id)", ""]) expect(() => buildSourceInspectScript([{ itemRef: ref, containerPrefix: bad }])).toThrow();
+    for (const bad of ["a b", "x;id", "-x", "a'b", "$(id)", "", "tugra", "tugra-db", "coolify", "coolify-db"]) expect(() => buildSourceInspectScript([{ itemRef: ref, containerPrefix: bad }])).toThrow();
   });
 
   it("parses the containers found under the prefix and under the uuid, and drops look-alikes", () => {

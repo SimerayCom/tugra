@@ -13,7 +13,20 @@
  */
 export const CONTAINER_PREFIX_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 
-export const validContainerPrefix = (v: unknown): v is string => typeof v === "string" && CONTAINER_PREFIX_RE.test(v);
+/** Mirrors the migrator's `isForbiddenName` (agent/internal/migrate/discover.go): Tugra's own containers and Coolify's control plane. */
+const CONTROL_PLANE_EXACT = new Set(["coolify", "coolify-db", "coolify-redis", "coolify-realtime", "coolify-proxy", "coolify-sentinel", "coolify-helper"]);
+const isControlPlaneName = (name: string): boolean => {
+  const l = name.toLowerCase();
+  return l.startsWith("tugra_") || l.startsWith("tugra-") || CONTROL_PLANE_EXACT.has(l);
+};
+
+/**
+ * A prefix is also refused when the container it would name (`<prefix>-<timestamp>`) is a control-plane container, so the freeze,
+ * the inventory cross-check and the migrator's resolver agree: the prefix comes from the source API and must never steer a stop or
+ * a copy at Tugra's or Coolify's own containers.
+ */
+export const validContainerPrefix = (v: unknown): v is string =>
+  typeof v === "string" && CONTAINER_PREFIX_RE.test(v) && !isControlPlaneName(v) && !isControlPlaneName(`${v}-0`);
 
 /** `itemRef -> prefix` of the `app` items of a stored plan (`BulkOperation.meta.plan.items`). Tolerant: anything malformed is skipped. */
 export function containerPrefixesOf(planItems: unknown): Map<string, string> {

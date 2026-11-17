@@ -644,7 +644,7 @@ describe("static flags in settings (R4)", () => {
 });
 
 describe("sensitive fields hidden by the token (R5)", () => {
-  it("isSensitiveVisibleRow is by KEY presence: a gated key is absent (not null) on a plain token, present (even null) otherwise", () => {
+  it("isSensitiveVisible is by KEY presence: a gated key is absent (not null) on a plain token, present (even null) otherwise", () => {
     expect(isSensitiveVisible({ uuid: "a", build_pack: "nixpacks" })).toBe(false);
     expect(isSensitiveVisible({ uuid: "a", start_command: null })).toBe(true);
     expect(isSensitiveVisible({ uuid: "a", build_command: "npm run build" })).toBe(true);
@@ -670,6 +670,17 @@ describe("sensitive fields hidden by the token (R5)", () => {
     const row = { uuid: "a", install_command: null, build_command: null, start_command: null };
     expect(buildCoolifyFleet(input([row], [{ uuid: "d", custom_docker_run_options: null } as never])).warnings.filter((w) => /sensitive fields/.test(w))).toEqual([]);
     expect(buildCoolifyFleet(input([])).warnings).toEqual([]);
+  });
+
+  it("the shared helper's full 4.7.5 key lists decide: any one gated key proves the token read the row, a row with none of them is hidden", () => {
+    const warned = (apps: CoolifyFleetInput["apps"], dbs: CoolifyFleetInput["databases"] = []) => buildCoolifyFleet(input(apps, dbs)).warnings.some((w) => /sensitive fields/.test(w));
+    // a key beyond the old six markers (health-check command, labels, dockerfile, compose text) counts as visible on an application
+    for (const k of ["health_check_command", "custom_labels", "dockerfile", "docker_compose_raw", "custom_nginx_configuration"]) expect([k, warned([{ uuid: "a", [k]: null } as never])]).toEqual([k, false]);
+    // and a database engine's *_conf counts on a database
+    for (const k of ["postgres_conf", "mysql_conf", "redis_conf", "custom_docker_run_options"]) expect([k, warned([], [{ uuid: "d", database_type: "standalone-postgresql", [k]: null } as never])]).toEqual([k, false]);
+    // a row carrying only non-gated fields is hidden, whatever else it holds
+    expect(warned([{ uuid: "a", build_pack: "nixpacks", fqdn: "https://x" }])).toBe(true);
+    expect(warned([], [{ uuid: "d", database_type: "standalone-postgresql", image: "postgres:16" } as never])).toBe(true);
   });
 
   it("the warning reaches the plan", () => {
@@ -741,7 +752,7 @@ describe("custom container name prefix", () => {
     expect(appContainerPrefix({ uuid: U, settings: { custom_container_name_prefix: "shop" } })).toBe("shop");
     expect(appContainerPrefix({ uuid: U, custom_container_name_prefix: " shop-2 " })).toBe("shop-2");
     expect(appContainerPrefix({ uuid: U, settings: { custom_container_name_prefix: "shop" }, custom_container_name_prefix: "flat" })).toBe("shop"); // the nested value wins
-    for (const v of [null, undefined, "", "   ", "sh op", "x;id", "-x", U]) expect([v, appContainerPrefix({ uuid: U, settings: { custom_container_name_prefix: v as string | null } })]).toEqual([v, undefined]);
+    for (const v of [null, undefined, "", "   ", "sh op", "x;id", "-x", U, "tugra", "tugra-db", "coolify", "coolify-db"]) expect([v, appContainerPrefix({ uuid: U, settings: { custom_container_name_prefix: v as string | null } })]).toEqual([v, undefined]);
     expect(appContainerPrefix({ uuid: U })).toBeUndefined();
   });
 

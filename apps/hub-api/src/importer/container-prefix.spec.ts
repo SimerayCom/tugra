@@ -9,6 +9,12 @@ describe("container name prefix", () => {
       expect([bad, validContainerPrefix(bad)]).toEqual([bad, false]);
     }
   });
+  it("refuses a prefix that names a Tugra or Coolify control-plane container, like the migrator's resolver does", () => {
+    for (const bad of ["tugra", "Tugra", "tugra-db", "tugra_agent", "tugra-fsd-1", "coolify", "coolify-db", "COOLIFY-PROXY", "coolify-redis", "coolify-realtime", "coolify-sentinel", "coolify-helper"]) {
+      expect([bad, validContainerPrefix(bad)]).toEqual([bad, false]);
+    }
+    for (const ok of ["tugrashop", "my-coolify", "coolify-shop", "coolifyx"]) expect([ok, validContainerPrefix(ok)]).toEqual([ok, true]);
+  });
   it("reads the prefixes of the app items of a stored plan, skipping everything malformed", () => {
     const m = containerPrefixesOf([
       { itemRef: "app:s:a", kind: "app", proposed: { containerPrefix: "shop" } },
