@@ -17,6 +17,7 @@ const MAX_TARGETS_PER_COMMAND = 40; // projects per script, to keep one command 
 export class ComposeRestartHealService {
   private readonly logger = new Logger(ComposeRestartHealService.name);
   private readonly lastRun = new Map<string, number>();
+  private running = false;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -24,6 +25,8 @@ export class ComposeRestartHealService {
   ) {}
 
   async runTick(now = Date.now()): Promise<void> {
+    if (this.running) return; // a slow pass is still going: never overlap two loops over the same servers
+    this.running = true;
     try {
       const servers = await this.prisma.server.findMany({ where: { status: "ONLINE" }, select: { id: true } });
       for (const server of servers) {
@@ -39,6 +42,8 @@ export class ComposeRestartHealService {
       }
     } catch (e) {
       this.logger.warn(`compose restart-policy heal tick failed: ${String(e)}`);
+    } finally {
+      this.running = false;
     }
   }
 
@@ -48,15 +53,18 @@ export class ComposeRestartHealService {
       select: { id: true, composeFile: true, gitUrl: true, composePath: true },
     });
     const targets = healTargetsFor(apps);
+    let failed = false;
     for (let i = 0; i < targets.length; i += MAX_TARGETS_PER_COMMAND) {
       const chunk: HealTarget[] = targets.slice(i, i + MAX_TARGETS_PER_COMMAND);
       const r = await this.agentWs.sendCommand(serverId, buildComposeRestartHealScript(chunk), "bulk", HEAL_TIMEOUT_MS);
       if (r.exitCode !== 0) {
         this.logger.warn(`compose restart-policy heal exited ${r.exitCode} on server ${serverId}`);
+        failed = true;
         continue;
       }
       const n = parseHealed(r.output);
       if (n > 0) this.logger.log(`compose restart-policy heal: set unless-stopped on ${n} container(s) on server ${serverId}`);
     }
+    if (failed) this.lastRun.delete(serverId); // retry next tick, like a thrown failure
   }
 }

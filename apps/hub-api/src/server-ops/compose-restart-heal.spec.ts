@@ -156,4 +156,23 @@ describe("ComposeRestartHealService", () => {
     await svc.runTick(2_000); // within the interval, but the failed pass cleared the throttle
     expect(sendCommand).toHaveBeenCalledTimes(2);
   });
+
+  it("retries on the next tick after a non-zero exit, not only after a throw", async () => {
+    const { svc, sendCommand } = make({ exitCode: 1 });
+    await svc.runTick(1_000);
+    await svc.runTick(2_000); // inside the interval, but the failed pass cleared the throttle
+    expect(sendCommand).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not start a second pass while one is still running", async () => {
+    const { svc, sendCommand } = make();
+    let release!: () => void;
+    sendCommand.mockImplementationOnce(() => new Promise((res) => { release = () => res({ exitCode: 0, output: "" }); }));
+    const first = svc.runTick(1_000);
+    await new Promise((r) => setImmediate(r));
+    await svc.runTick(1_000 + HEAL_INTERVAL_MS); // would be due, but the first pass has not finished
+    expect(sendCommand).toHaveBeenCalledTimes(1);
+    release();
+    await first;
+  });
 });
