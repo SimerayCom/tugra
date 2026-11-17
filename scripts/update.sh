@@ -312,7 +312,7 @@ resolve_pins() {
 # failure the old updater simply keeps running (the next update or installer run retries), the update itself is done.
 UPDATER_REFRESH_SCHEDULED=0
 refresh_updater_self() {
-  local cid src image
+  local cid src image want
   if [ "$DRY" -eq 1 ]; then printf 'RUN: refresh tugra-updater via a one-shot helper container\n'; return 0; fi
   cid="$(docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" ps -q tugra-updater 2>/dev/null | head -n1 || true)"
   [ -n "$cid" ] || { log "warning: could not find the updater container; it will be refreshed on the next installer run"; return 0; }
@@ -323,12 +323,23 @@ refresh_updater_self() {
     log "warning: could not resolve the checkout's host path; the updater will be refreshed on the next installer run"
     return 0
   fi
+  # The helper's `compose up` must be quick: if the new image is not in the local cache it would have to pull
+  # first, and the old updater could resume the queue and start a job that the recreate then cuts off. So never
+  # schedule the recreate without the image present (a pre-pull that failed is retried by the next update/start).
+  want="$(updater_expected_image)"
+  if [ -n "$want" ] && ! docker image inspect "$want" >/dev/null 2>&1; then
+    log "warning: the updater image $want is not pulled yet; leaving the updater as it is (the next update or start retries)"
+    return 0
+  fi
   docker rm -f tugra-updater-refresh >/dev/null 2>&1 || true
   if docker run -d --rm --name tugra-updater-refresh \
       -v /var/run/docker.sock:/var/run/docker.sock -v "$src:$src" -w "$src" --entrypoint sh "$image" \
       -c 'sleep 5 && exec docker compose --profile updater --project-directory "$1/deploy" --env-file "$1/.env" -f "$1/deploy/docker-compose.yml" up -d --no-deps tugra-updater' \
       sh "$src" >/dev/null 2>&1; then
     UPDATER_REFRESH_SCHEDULED=1
+    # Record the attempt now, whichever path scheduled it: a script-reload exec right after an update re-runs the
+    # start-up catch-up while this helper is still pending, and it must see this refresh as already under way.
+    if [ -n "$want" ]; then redis SET "$UPDATER_REFRESH_KEY" "$want" >/dev/null 2>&1 || true; fi
     log "updater refresh scheduled (the sidecar restarts in a few seconds)"
   else
     log "warning: could not start the updater refresh helper; the updater will be refreshed on the next installer run"
@@ -582,16 +593,17 @@ fi
 # Catch-up at start (and after a script-reload exec): an updater whose image is older than the one compose now
 # names (the previous release ran an update.sh that predates the post-update refresh, or its helper failed) is
 # refreshed before it takes any job, so it converges without an installer run. Race-free: the loop is not
-# draining the queue while the helper is pending, so no update can be cut off mid-run. Attempted once per
-# expected image (a marker in Redis), so an image string that never compares equal cannot cause a restart loop.
+# draining the queue while the helper is pending, and the image is pulled first, so the recreate is a quick local
+# swap. Attempted once per expected image (a marker in Redis, written when a refresh is scheduled by any path), so an
+# image string that never compares equal cannot cause a restart loop and a refresh already pending is not redone.
 catch_up_updater() {
   local want last
   updater_image_stale || return 0
   want="$(updater_expected_image)"
   last="$(redis GET "$UPDATER_REFRESH_KEY" 2>/dev/null || true)"
   if [ "$last" = "$want" ]; then return 0; fi
-  redis SET "$UPDATER_REFRESH_KEY" "$want" >/dev/null 2>&1 || true
   log "the running updater image is not $want — refreshing it before taking jobs"
+  compose pull tugra-updater || log "warning: could not pull the updater image"
   refresh_updater_self
   # The helper recreates this container in a few seconds; keep out of the queue until then. If it could not
   # be started (or never fires) carry on with the old updater.

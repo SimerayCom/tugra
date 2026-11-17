@@ -100,7 +100,7 @@ case "$1" in
     n=$(grep -c 'up -d --no-deps hub-api web' "$SHIM_LOG" || true)
     if [ -n "$SHIM_UNHEALTHY_FIRST" ] && [ "$n" -lt 2 ]; then echo unhealthy; exit 0; fi
     echo healthy; exit 0 ;;
-  image) echo "\$SHIM_UPDATER_WANT_ID"; exit 0 ;;
+  image) [ -n "$SHIM_IMAGE_MISSING" ] && exit 1; echo "\$SHIM_UPDATER_WANT_ID"; exit 0 ;;
   run|rm) [ -n "$SHIM_RUN_FAIL" ] && [ "$1" = run ] && exit 1; exit 0 ;;
   compose)
     case "$*" in
@@ -113,6 +113,10 @@ case "$1" in
         for n in "$d"/*; do [ -f "$n" ] && echo "$(basename "$n") $(cksum < "$n" | cut -d' ' -f1)"; done
         rm -rf "$d"; exit 0 ;;
       *"--profile updater config"*)
+        if [ -n "$SHIM_UPDATER_WANT_FROM_ENV" ]; then
+          envf=""; prev=""; for a in "$@"; do if [ "$prev" = "--env-file" ]; then envf="$a"; fi; prev="$a"; done
+          SHIM_UPDATER_WANT="ghcr.io/simeraycom/tugra-updater:$(grep '^TUGRA_VERSION=' "$envf" | cut -d= -f2)"
+        fi
         [ -n "$SHIM_UPDATER_WANT" ] && printf 'services:\n  hub-api:\n    image: ghcr.io/x/hub:1\n  tugra-updater:\n    image: %s\n    restart: unless-stopped\n  web:\n    image: ghcr.io/x/web:1\n' "$SHIM_UPDATER_WANT"
         exit 0 ;;
       *" config"*)
@@ -123,6 +127,7 @@ case "$1" in
           else echo 'time="x" level=warning msg="The \\"NEEDS_NEW_VAR\\" variable is not set. Defaulting to a blank string."' >&2; fi
         fi
         exit 0 ;;
+      *" pull tugra-updater"*) [ -n "$SHIM_UPDATER_PULL_FAIL" ] && exit 1; exit 0 ;;
       *" pull hub-api web"*)
         [ -n "$SHIM_WIPE_BACKUPS" ] && rm -rf "$SHIM_WIPE_BACKUPS"/host-files-*
         [ -n "$SHIM_PULL_FAIL" ] && exit 1; exit 0 ;;
@@ -142,7 +147,10 @@ exit 0
     `#!/bin/bash
 echo "redis-cli $*" >> "$SHIM_LOG"
 case "$*" in
-  *"GET instance:update:updater-refreshed"*) printf '%s\\n' "$SHIM_REFRESHED"; exit 0 ;;
+  *"GET instance:update:updater-refreshed"*)
+    # the marker as the script itself last wrote it (so a restart after a refresh sees it), else the seeded value
+    v="$(grep '^redis-cli .* SET instance:update:updater-refreshed ' "$SHIM_LOG" | tail -n1 | awk '{print $NF}')"
+    printf '%s\\n' "\${v:-$SHIM_REFRESHED}"; exit 0 ;;
   *BLPOP*) if [ -e "$SHIM_STATE" ]; then exit 1; fi; : > "$SHIM_STATE"; printf 'instance:update:queue\\n%s\\n' "$SHIM_JOB"; exit 0 ;;
 esac
 exit 0
@@ -363,6 +371,46 @@ suite("update.sh applying a release's compose + scripts (end to end)", () => {
       expect(runs(log)[0]).toContain("up -d --no-deps tugra-updater");
       expect(log).toContain("SET instance:update:updater-refreshed ghcr.io/simeraycom/tugra-updater:0.2.0");
       expect(log.indexOf("docker run ")).toBeLessThan(log.indexOf("BLPOP"));
+    });
+
+    it("the new image is pulled BEFORE the helper is scheduled, so the recreate is a quick local swap", () => {
+      const rig = makeRig();
+      const { log } = run(rig, {}, stale);
+      expect(log).toMatch(/docker compose .* pull tugra-updater/);
+      expect(log.indexOf("pull tugra-updater")).toBeLessThan(log.indexOf("docker run "));
+      expect(log.indexOf("docker run ")).toBeLessThan(log.indexOf("BLPOP"));
+    });
+
+    it("an image that is not in the local cache (pull failed) is never recreated onto: the old updater carries on and the next start retries", () => {
+      const rig = makeRig();
+      const { log, out } = run(rig, {}, { ...stale, SHIM_UPDATER_PULL_FAIL: "1", SHIM_IMAGE_MISSING: "1" });
+      expect(runs(log)).toEqual([]);
+      expect(log).not.toContain("SET instance:update:updater-refreshed"); // no marker: a later start tries again
+      expect(out).toContain("could not pull the updater image");
+      expect(out).toContain("is not pulled yet");
+      expect(log).toContain("BLPOP"); // and it still serves the queue
+    });
+
+    it("a post-update refresh is skipped the same way when the updater image never got pulled", () => {
+      const rig = makeRig();
+      const digest = publish(rig, "0.2.0", unchangedFiles(rig));
+      const { log, finalLog } = (() => {
+        const r = run(rig, { targetVersion: "0.2.0", hostFilesDigest: digest }, { ...stale, SHIM_IMAGE_MISSING: "1", SHIM_REFRESHED: "ghcr.io/simeraycom/tugra-updater:0.2.0" });
+        return { log: r.log, finalLog: finalStatus(r.log) };
+      })();
+      expect(finalLog).toContain('"phase":"done"');
+      expect(runs(log)).toEqual([]);
+    });
+
+    it("an update that reloads the scripts schedules ONE refresh: the re-exec'd start-up catch-up sees it as already pending", () => {
+      const rig = makeRig();
+      const digest = publish(rig, "0.2.0", changedFiles());
+      // the updater is current when it starts (compose names the .env version) and only becomes stale once the update moves TUGRA_VERSION
+      const { log } = run(rig, { targetVersion: "0.2.0", hostFilesDigest: digest }, { SHIM_UPDATER_HAVE: "ghcr.io/simeraycom/tugra-updater:0.1.0", SHIM_UPDATER_WANT_FROM_ENV: "1" });
+      expect(finalStatus(log)).toContain('"phase":"done"');
+      expect(log).toContain("SET instance:update:updater-refreshed ghcr.io/simeraycom/tugra-updater:0.2.0"); // the post-update schedule records itself
+      expect(runs(log)).toHaveLength(1);
+      expect(log.split("\n").filter((l) => l.startsWith("docker rm -f tugra-updater-refresh"))).toHaveLength(1); // the pending helper is not killed and redone
     });
 
     it("is attempted once per expected image: a marker for it means no second restart", () => {
