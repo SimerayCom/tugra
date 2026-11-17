@@ -301,10 +301,10 @@
     "allowLiveShapeProbe": "Allow a read-only live probe of the source API",
     "allowLiveShapeProbeHint": "Lets the hub read the source API to learn its shapes. Off by default.",
     "sourceController": "Who freezes the source",
-    "sourceControllerHint": "Manual prints the steps and records your attestation. API or agent let the hub stop and restart the recorded source containers.",
+    "sourceControllerHint": "Manual prints the steps and records your attestation. API or agent let the hub stop and restart the recorded source containers. The API controller needs a Coolify token with the deploy ability (a write-only token is refused); an application restart is a redeploy on the source.",
     "controller": {
       "manual": "Manual (printed steps)",
-      "api": "Source API (write token)",
+      "api": "Source API (token with the deploy ability)",
       "agent": "Agent on the source host"
     },
     "emailInvalid": "Enter a valid email address.",

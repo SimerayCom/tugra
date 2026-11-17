@@ -13,7 +13,7 @@
   "baseUrl": "Coolify URL",
   "baseUrlPlaceholder": "https://coolify.example.com",
   "token": "API token",
-  "tokenHint": "Create the token on your admin/owner team with the read ability (add read:sensitive too — it's used at apply time to fetch env values, container labels and Dockerfile text). A 403 means Coolify's API \"Allowed IPs\" setting is on and doesn't include this hub's IP; add it there or clear the list.",
+  "tokenHint": "Create the token in Coolify under Keys & Tokens, API tokens, as a team admin or owner, for the whole team (not limited to selected projects or environments). Give it the read ability and also read:sensitive: without it Coolify hides build, start and install commands, health-check commands, custom labels, Dockerfile and compose text, and variable values, and the import would miss them (read:sensitive only works when the token's creator is an admin or owner). A guided run that stops and restarts the source through the API needs the deploy ability as well; a write-only token is not enough. A 403 can also mean the Coolify API is disabled, or its \"Allowed IPs\" setting is on and doesn't include this hub's IP; fix it there or clear the list. A token that has more access than its creator now has in the team is refused: create a new one. Coolify allows 200 requests a minute per user, so a large fleet is read at a measured pace and a rate limit makes the import wait.",
   "baseUrlDokploy": "Dokploy URL",
   "baseUrlPlaceholderDokploy": "https://dokploy.example.com",
   "tokenDokploy": "API key",

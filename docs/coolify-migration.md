@@ -42,6 +42,25 @@ Always start with `--dry-run`: it projects every step and writes nothing outside
   [fleet runs](runbooks/guided-migration.md#fleet-runs-several-source-hosts-one-run). The manual path on this page needs
   none of it: run the migrator on each source host yourself.
 
+## The Coolify API token
+
+Create the token in Coolify under **Keys & Tokens, API tokens**. What it needs depends on how far you take the migration:
+
+| Use | Ability | Notes |
+|---|---|---|
+| Connect and preview (discover) | `read` | Sees apps, databases, services, servers and non-secret settings. |
+| Import with full fidelity | `read` **and `read:sensitive`** | Coolify 4.7 hides build/install/start and pre/post-deploy commands, the health-check command and response text, custom docker run options, Dockerfile text, custom labels, compose text and database `*_conf` from a token without it, along with passwords and variable values. The import plan warns when a row arrives without them. |
+| Guided run with the `api` source controller | `deploy` (plus the two above) | Start and stop need the literal `deploy` ability. A token that only has `write` gets a 403; `root` covers everything. |
+
+Rules that trip people up:
+
+- `read:sensitive` only takes effect when the person who created the token is an **admin or owner** of the team. A member's token silently reads like a plain `read` token.
+- The token must cover the **whole team**. A token limited to selected projects or environments cannot read `/servers` and the other team-wide endpoints, so connecting fails with a 403.
+- A token whose creator now has less access in the team than the token grants is refused ("API token has more access than you have in this team"): create a new one.
+- A 403 for every request also means the API is switched off in Coolify's settings, or **Allowed IPs** is on and does not include this hub's address.
+- **Rate limits (Coolify 4.7+).** Coolify allows 200 requests a minute per user (every token of that user shares the budget) and blocks a token for 60 s, then 300 s, then 900 s after 30 failed (401/403) requests in a minute. Tugra paces its requests to about 150 a minute per Coolify URL, honours `Retry-After` on a 429 for a bounded time, and stops sending requests from a token that keeps failing authorization. A rate-limited import fails with a `rate-limited` error that is safe to retry a minute later. Older Coolify releases have no such limits and are unaffected.
+- **Start and stop.** The `api` controller stops the source with `POST /{applications|services|databases}/{uuid}/stop` (always with `docker_cleanup=false`, so Coolify does not prune the source host) and restarts it on an abort with the matching `start`. A database or service that is already stopped or running counts as done. For an **application**, Coolify's `start` is a **deploy**: an abort rebuilds and redeploys the app rather than just starting its old container. Older Coolify releases that only expose these as `GET` are still supported.
+
 ## What moves how
 
 | What | How |
