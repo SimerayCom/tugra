@@ -50,6 +50,7 @@ const s = (
   trafficAnalytics: false,
   provider: null,
   providerServerId: null,
+  providerManualLink: false,
   canWrite,
   canOps: canWrite,
 });

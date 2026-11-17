@@ -1,4 +1,5 @@
 import { HetznerApiClient, HetznerApiError } from "./hetzner.client";
+import { FAKE_CONSOLE_PASSWORD, FAKE_CONSOLE_URL, FAKE_ROOT_PASSWORD, FakeHetznerApi } from "../testing/fake-hetzner-api";
 
 const TOKEN = "SECRET_TOKEN_should_never_leak";
 
@@ -85,5 +86,108 @@ describe("HetznerApiClient", () => {
       mockFetch({ ok: false, status: 500, body: { error: { message: "boom" } } });
       await expect(client.destroyServer(TOKEN, "42")).rejects.toMatchObject({ status: 500 });
     });
+  });
+});
+
+describe("HetznerApiClient out-of-band (against the fake Hetzner API)", () => {
+  const client = new HetznerApiClient();
+  let api: FakeHetznerApi;
+  beforeEach(() => {
+    api = new FakeHetznerApi().add({ id: 42, name: "web-1", status: "running", ipv4: "203.0.113.10" }).install();
+    api.validToken = TOKEN;
+  });
+  afterEach(() => api.uninstall());
+
+  it.each([
+    ["power_on", "poweron"],
+    ["power_off", "poweroff"],
+    ["reboot", "reset"], // our `reboot` is the HARD reset; Hetzner's own `reboot` is the soft ACPI one
+    ["shutdown", "shutdown"],
+  ] as const)("power %s -> POST /servers/42/actions/%s with a bearer token and no body", async (action, endpoint) => {
+    const r = await client.power(TOKEN, "42", action);
+    expect(api.requests).toEqual([{ method: "POST", path: `/servers/42/actions/${endpoint}`, authorization: `Bearer ${TOKEN}`, body: undefined }]);
+    expect(r).toMatchObject({ status: "running", command: endpoint });
+    expect(r.id).toMatch(/^\d+$/);
+  });
+
+  it("enableRescue -> POST enable_rescue {type:linux64}; returns the one-time root password", async () => {
+    const r = await client.enableRescue(TOKEN, "42");
+    expect(api.requests[0]).toMatchObject({ method: "POST", path: "/servers/42/actions/enable_rescue", body: { type: "linux64" } });
+    expect(r.rootPassword).toBe(FAKE_ROOT_PASSWORD);
+    expect(r.action.command).toBe("enable_rescue");
+    expect(api.servers.get(42)!.rescue_enabled).toBe(true);
+  });
+
+  it("disableRescue -> POST disable_rescue", async () => {
+    api.servers.get(42)!.rescue_enabled = true;
+    await client.disableRescue(TOKEN, "42");
+    expect(api.requests[0]).toMatchObject({ method: "POST", path: "/servers/42/actions/disable_rescue" });
+    expect(api.servers.get(42)!.rescue_enabled).toBe(false);
+  });
+
+  it("requestConsole -> POST request_console; returns wss url + password and the documented 60 s lifetime", async () => {
+    const r = await client.requestConsole(TOKEN, "42");
+    expect(api.requests[0]).toMatchObject({ method: "POST", path: "/servers/42/actions/request_console" });
+    expect(r).toMatchObject({ wssUrl: FAKE_CONSOLE_URL, password: FAKE_CONSOLE_PASSWORD, validForSeconds: 60 });
+  });
+
+  it("getServerState maps status, lock, rescue flag and addresses", async () => {
+    api.servers.get(42)!.locked = true;
+    api.servers.get(42)!.rescue_enabled = true;
+    await expect(client.getServerState(TOKEN, "42")).resolves.toEqual({
+      providerServerId: "42",
+      name: "web-1",
+      status: "running",
+      locked: true,
+      rescueEnabled: true,
+      publicIpv4: "203.0.113.10",
+      publicIpv6: null,
+    });
+    expect(api.requests[0]).toMatchObject({ method: "GET", path: "/servers/42", authorization: `Bearer ${TOKEN}` });
+  });
+
+  it("listServers follows pagination (50 per page) and stops at the last page", async () => {
+    for (let i = 100; i < 160; i++) api.add({ id: i, name: `vm-${i}`, status: "off" });
+    const all = await client.listServers(TOKEN);
+    expect(all).toHaveLength(61);
+    expect(api.requests.map((r) => r.path)).toEqual(["/servers?per_page=50&page=1", "/servers?per_page=50&page=2"]);
+  });
+
+  it("refuses a server id that is not a plain positive integer, before any request is made", async () => {
+    for (const bad of ["", "0", "-1", "42/../1", "42?x=1", "abc", "1e3", "4 2"]) {
+      await expect(client.power(TOKEN, bad, "power_on")).rejects.toMatchObject({ status: 422 });
+      await expect(client.getServerState(TOKEN, bad)).rejects.toMatchObject({ status: 422 });
+    }
+    expect(api.requests).toHaveLength(0);
+  });
+
+  it("an unknown server is a 404, a locked one a 423, a bad token a 401 — with Hetzner's own error code", async () => {
+    await expect(client.power(TOKEN, "999", "power_on")).rejects.toMatchObject({ status: 404, hetznerError: { code: "not_found" } });
+    api.servers.get(42)!.locked = true;
+    await expect(client.power(TOKEN, "42", "power_on")).rejects.toMatchObject({ status: 423, hetznerError: { code: "locked" } });
+    await expect(client.power("wrong", "42", "power_on")).rejects.toMatchObject({ status: 401 });
+  });
+
+  it("an action Hetzner already reports as failed is an error, with its message and no secrets", async () => {
+    api.nextActionStatus = "error";
+    const err = (await client.power(TOKEN, "42", "reboot").catch((e) => e)) as HetznerApiError;
+    expect(err).toBeInstanceOf(HetznerApiError);
+    expect(err.status).toBe(502);
+    expect(err.message).toContain("Action failed");
+    expect(err.message).not.toContain(TOKEN);
+  });
+
+  it("a 2xx without the secret the caller needs is a 502 (never an empty password)", async () => {
+    const fn = jest.fn().mockResolvedValue({ ok: true, status: 201, json: async () => ({ action: { id: 1, status: "running", command: "enable_rescue" } }) });
+    (global as unknown as { fetch: typeof fetch }).fetch = fn as unknown as typeof fetch;
+    await expect(client.enableRescue(TOKEN, "42")).rejects.toMatchObject({ status: 502 });
+    await expect(client.requestConsole(TOKEN, "42")).rejects.toMatchObject({ status: 502 });
+  });
+
+  it("a network failure is status 0 and the message never carries the token", async () => {
+    api.failNext = { status: 0, code: "", message: "" };
+    const err = (await client.power(TOKEN, "42", "power_on").catch((e) => e)) as HetznerApiError;
+    expect(err.status).toBe(0);
+    expect(err.message).not.toContain(TOKEN);
   });
 });

@@ -9,6 +9,8 @@ import { CloudCredentialsService } from "./cloud-credentials.service";
 import { CloudCredentialsController } from "./cloud-credentials.controller";
 import { ProvisioningService } from "./provisioning.service";
 import { ProvisioningController } from "./provisioning.controller";
+import { OobService } from "./oob.service";
+import { OobController } from "./oob.controller";
 import { PROVISIONING_SERVICE } from "./cloud.tokens";
 
 // Imports ServersModule (one-directional). The reverse edge — ServersService destroying a VM on
@@ -16,7 +18,7 @@ import { PROVISIONING_SERVICE } from "./cloud.tokens";
 // TeamAccessService and AuditService come from @Global modules.
 @Module({
   imports: [CryptoModule, ServersModule],
-  controllers: [CloudCredentialsController, ProvisioningController],
+  controllers: [CloudCredentialsController, ProvisioningController, OobController],
   providers: [
     HetznerApiClient,
     DigitalOceanApiClient,
@@ -24,8 +26,9 @@ import { PROVISIONING_SERVICE } from "./cloud.tokens";
     CloudProviderFactory,
     CloudCredentialsService,
     ProvisioningService,
+    OobService,
     { provide: PROVISIONING_SERVICE, useExisting: ProvisioningService },
   ],
-  exports: [ProvisioningService, PROVISIONING_SERVICE, CloudCredentialsService],
+  exports: [ProvisioningService, PROVISIONING_SERVICE, CloudCredentialsService, OobService],
 })
 export class CloudModule {}

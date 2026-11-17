@@ -13,7 +13,7 @@ const LIFECYCLE_TOOLS = ["deploy_application", "cancel_deployment", "restart_app
 const MIGRATION_READ_TOOLS = ["migration_run_list", "migration_run_status", "migration_run_events", "migration_run_report"];
 const MIGRATION_DEPLOY_TOOLS = ["migration_run_create", "migration_run_start", "migration_run_set_inputs", "migration_run_approve", "migration_run_retry", "migration_run_pause", "migration_run_resume", "migration_run_abort"];
 const MIGRATION_ADMIN_TOOLS = ["migration_run_cleanup", "migration_run_reverse"];
-const DEPLOY_TOOLS = [...LIFECYCLE_TOOLS, "form_swarm", "join_swarm_node", "add_swarm_manager", "set_ingress_replicas", "fleet_app_action", "setup_app_domain", "import_apply", "import_mapping_put", "reboot_server", "cancel_server_reboot", ...MIGRATION_DEPLOY_TOOLS];
+const DEPLOY_TOOLS = [...LIFECYCLE_TOOLS, "form_swarm", "join_swarm_node", "add_swarm_manager", "set_ingress_replicas", "fleet_app_action", "setup_app_domain", "import_apply", "import_mapping_put", "reboot_server", "cancel_server_reboot", "server_power", "disable_server_rescue", ...MIGRATION_DEPLOY_TOOLS];
 const WRITE_TOOLS = ["set_env_var", "delete_env_var", "import_connect"];
 const ADMIN_TOOLS = ["dissolve_swarm", "remove_application", "remove_swarm_manager", "leave_swarm_node", "import_rollback", ...MIGRATION_ADMIN_TOOLS];
 
@@ -30,7 +30,7 @@ describe("MCP_TOOLS catalog", () => {
   it("has the expected tool count — keep docs (README/api.md) in sync when this changes", () => {
     // A drift guard: the MCP tool count is referenced in prose in README.md + docs/api.md. When you add or
     // remove a tool, bump this number AND those docs in the same commit.
-    expect(MCP_TOOLS).toHaveLength(73);
+    expect(MCP_TOOLS).toHaveLength(76);
     // Names are unique.
     expect(new Set(MCP_TOOLS.map((t) => t.name)).size).toBe(MCP_TOOLS.length);
   });
@@ -1167,6 +1167,52 @@ describe("guided migration run tools", () => {
       expect(migrationRuns.reverse).not.toHaveBeenCalled();
       await tool("migration_run_reverse").execute(deps, "u1", { runId: "r1", confirmName: "r1", acknowledgeDataLoss: true }, ctx);
       expect(migrationRuns.reverse).toHaveBeenCalledWith(expect.objectContaining({ channel: "mcp" }), "r1", { confirmName: "r1", acknowledgeDataLoss: true });
+    });
+  });
+
+  describe("server out-of-band (cloud power) tools", () => {
+    const mk = () => {
+      const oob = {
+        status: jest.fn().mockResolvedValue({ linked: true, state: { status: "running" } }),
+        power: jest.fn().mockResolvedValue({ ok: true, action: "power_on", providerAction: { id: "1", status: "running", command: "poweron" } }),
+        disableRescue: jest.fn().mockResolvedValue({ ok: true, action: "disable_rescue" }),
+      };
+      return { deps: { oob } as unknown as McpDeps, oob };
+    };
+
+    it("scopes: the status read is read; power and disabling rescue need deploy", () => {
+      expect(tool("get_server_oob").scope).toBe("read");
+      expect(tool("server_power").scope).toBe("deploy");
+      expect(tool("disable_server_rescue").scope).toBe("deploy");
+    });
+
+    it("the secret-returning actions (rescue password, console) are NOT exposed: their one-time secrets must not reach a model", () => {
+      const names = MCP_TOOLS.map((t) => t.name);
+      expect(names.filter((n) => /rescue|console/.test(n))).toEqual(["disable_server_rescue"]);
+    });
+
+    it.each(["power_off", "reboot", "shutdown"])("server_power %s is REFUSED without the typed server name (nothing reaches the service)", async (action) => {
+      const { deps, oob } = mk();
+      await expect(Promise.resolve().then(() => tool("server_power").execute(deps, "u1", { id: "s1", action }))).rejects.toThrow(/confirmName/);
+      await expect(Promise.resolve().then(() => tool("server_power").execute(deps, "u1", { id: "s1", action, confirmName: "" }))).rejects.toThrow(/confirmName/);
+      expect(oob.power).not.toHaveBeenCalled();
+    });
+
+    it("server_power validates the action and passes a valid request through (the service compares the name to the server's)", async () => {
+      const { deps, oob } = mk();
+      await expect(Promise.resolve().then(() => tool("server_power").execute(deps, "u1", { id: "s1", action: "format_disk", confirmName: "web-1" }))).rejects.toThrow(/invalid arguments/);
+      await tool("server_power").execute(deps, "u1", { id: "s1", action: "reboot", confirmName: "web-1" });
+      expect(oob.power).toHaveBeenCalledWith("u1", "s1", { action: "reboot", confirmName: "web-1" });
+      await tool("server_power").execute(deps, "u1", { id: "s1", action: "power_on" });
+      expect(oob.power).toHaveBeenLastCalledWith("u1", "s1", { action: "power_on", confirmName: undefined });
+    });
+
+    it("status and disable-rescue are thin pass-throughs", async () => {
+      const { deps, oob } = mk();
+      await tool("get_server_oob").execute(deps, "u1", { id: "s1" });
+      await tool("disable_server_rescue").execute(deps, "u1", { id: "s1" });
+      expect(oob.status).toHaveBeenCalledWith("u1", "s1");
+      expect(oob.disableRescue).toHaveBeenCalledWith("u1", "s1");
     });
   });
 

@@ -10,6 +10,7 @@ import { MetricsModule } from "../metrics/metrics.module";
 import { SecretProvidersModule } from "../secret-providers/secret-providers.module";
 import { DnsModule } from "../dns/dns.module";
 import { TunnelModule } from "../tunnel/tunnel.module";
+import { CloudModule } from "../cloud/cloud.module";
 import { ServerOpsModule } from "../server-ops/server-ops.module";
 import { MigrationRunsModule } from "../migration-runs/migration-runs.module";
 import { McpController } from "./mcp.controller";
@@ -22,7 +23,7 @@ import { McpService } from "./mcp.service";
  * MCP adds no new authorization path; it is a JSON-RPC surface over the existing capabilities.
  */
 @Module({
-  imports: [ApplicationsModule, ServersModule, ClustersModule, DatabasesModule, BackupsModule, MonitorsModule, ImporterModule, MetricsModule, SecretProvidersModule, DnsModule, TunnelModule, MigrationRunsModule, ServerOpsModule],
+  imports: [ApplicationsModule, ServersModule, ClustersModule, DatabasesModule, BackupsModule, MonitorsModule, ImporterModule, MetricsModule, SecretProvidersModule, DnsModule, TunnelModule, MigrationRunsModule, ServerOpsModule, CloudModule],
   controllers: [McpController],
   providers: [McpService],
 })

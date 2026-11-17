@@ -19,6 +19,7 @@ import { useT } from "../../../../i18n/provider";
 import { MetricChart, METRIC_GRID_STYLE, METRIC_CHART_HEIGHT } from "../../../../components/charts";
 import { ServerContainersCard } from "../../../../components/server-containers-card";
 import { ServerRebootCard } from "../../../../components/server-reboot-card";
+import { ServerOobCard } from "../../../../components/server-oob-card";
 import { LiveGauges } from "../../../../components/live-gauges";
 import { GpuCard } from "../../../../components/gpu-card";
 import { DiscoverAdoptCard } from "../../../../components/discover-adopt-card";
@@ -294,6 +295,7 @@ export default function ServerDetailPage() {
         <>
           <TagsCard tags={server.tags} canWrite={server.canWrite} onSave={(next) => tags.mutate(next)} />
           <ServerRebootCard id={id} serverName={server.name} canWrite={server.canWrite} />
+          <ServerOobCard id={id} serverName={server.name} />
           <ProxyCard id={id} canWrite={server.canWrite} />
           <TrafficAnalyticsCard id={id} enabled={server.trafficAnalytics} canWrite={server.canWrite} />
           <ProxyDynamicCard id={id} canWrite={server.canWrite} />
@@ -1003,8 +1005,10 @@ function DeleteServerCard({ id, server }: { id: string; server: ServerView }) {
   const [open, setOpen] = useState(false);
   const [destroyVm, setDestroyVm] = useState(true);
   const [confirmName, setConfirmName] = useState("");
+  // Only a VM Tugra provisioned can be destroyed with the server: a hand-linked one (out-of-band access) is never ours to delete.
+  const canDestroyVm = !!server.provider && !server.providerManualLink;
   const del = useMutation({
-    mutationFn: () => api.deleteServer(id, { destroyVm: !!server.provider && destroyVm }),
+    mutationFn: () => api.deleteServer(id, { destroyVm: canDestroyVm && destroyVm }),
     onSuccess: () => router.replace("/servers"),
   });
   const canDelete = !del.isPending && confirmName === server.name;
@@ -1015,11 +1019,11 @@ function DeleteServerCard({ id, server }: { id: string; server: ServerView }) {
         <Modal onClose={() => setOpen(false)} labelledBy="del-srv-title">
           <h3 id="del-srv-title" style={{ margin: "0 0 8px", fontSize: 15 }}>{t("servers.deleteServer")}</h3>
           <p style={{ fontSize: 13, color: "var(--c-tx2)", margin: "0 0 12px" }}>{t("servers.deleteConfirm", { name: server.name })}</p>
-          {server.provider && (
+          {canDestroyVm && (
             <label style={{ display: "flex", alignItems: "flex-start", gap: 8, fontSize: 13, color: "var(--c-tx2)", marginBottom: 14 }}>
               <input type="checkbox" checked={destroyVm} onChange={(e) => setDestroyVm(e.target.checked)} style={{ marginTop: 3 }} />
               <span>
-                {t("servers.destroyVmLabel", { provider: server.provider })}
+                {t("servers.destroyVmLabel", { provider: server.provider ?? "" })}
                 <span style={{ display: "block", fontSize: 11, color: "var(--c-tx3)", marginTop: 2 }}>{t("servers.destroyVmHint")}</span>
               </span>
             </label>

@@ -6,6 +6,7 @@ import { ApplicationsService } from "../applications/applications.service";
 import { AppDatabaseLinksService } from "../applications/app-database-links.service";
 import { ServersService } from "../servers/servers.service";
 import { RebootService } from "../server-ops/reboot.service";
+import { OobService } from "../cloud/oob.service";
 import { ClustersService } from "../clusters/clusters.service";
 import { SwarmService } from "../clusters/swarm.service";
 import { DatabasesService } from "../databases/databases.service";
@@ -56,6 +57,7 @@ export class McpService {
     dbLinks: AppDatabaseLinksService,
     servers: ServersService,
     serverReboot: RebootService,
+    oob: OobService,
     clusters: ClustersService,
     swarm: SwarmService,
     databases: DatabasesService,
@@ -71,7 +73,7 @@ export class McpService {
     @Inject(MIGRATION_RUNS_FACADE) migrationRuns: MigrationRunsFacade,
     private readonly audit: AuditService,
   ) {
-    this.deps = { apps, dbLinks, servers, serverReboot, clusters, swarm, databases, backups, monitors, importer, executor, license, metrics, secretProviders, dnsCredentials, tunnel, migrationRuns };
+    this.deps = { apps, dbLinks, servers, serverReboot, oob, clusters, swarm, databases, backups, monitors, importer, executor, license, metrics, secretProviders, dnsCredentials, tunnel, migrationRuns };
   }
 
   /** Handle one JSON-RPC message. Returns the response object, or null for notifications (no body). */

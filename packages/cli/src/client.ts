@@ -75,6 +75,46 @@ export interface RebootPreviewShape {
   agentOnline: boolean;
 }
 
+/** The out-of-band link + provider-side state of a server (GET /servers/:id/oob). */
+export interface OobStatusShape {
+  linked: boolean;
+  provider: string | null;
+  providerServerId: string | null;
+  manual: boolean;
+  supported: boolean;
+  credentialName: string | null;
+  credentialMissing: boolean;
+  canManage: boolean;
+  canOps: boolean;
+  state: { providerServerId: string; name: string; status: string; locked: boolean; rescueEnabled: boolean; publicIpv4: string | null; publicIpv6: string | null } | null;
+  stateError: string | null;
+}
+export type OobPowerAction = "power_on" | "power_off" | "reboot" | "shutdown";
+export interface OobActionShape {
+  ok: true;
+  action: string;
+  providerAction: { id: string; status: string; command: string };
+  [k: string]: unknown;
+}
+export interface OobRescueShape extends OobActionShape {
+  rootPassword: string;
+  expiresInMinutes: number;
+}
+export interface OobConsoleShape extends OobActionShape {
+  wssUrl: string;
+  password: string;
+  validForSeconds: number;
+}
+export interface OobCandidateShape {
+  providerServerId: string;
+  name: string;
+  status: string;
+  publicIpv4: string | null;
+  matchesIp: boolean;
+  taken: boolean;
+  [k: string]: unknown;
+}
+
 /** An error carrying the hub's HTTP status + message. status 0 = the hub was unreachable. */
 export class ApiError extends Error {
   constructor(
@@ -167,6 +207,34 @@ export class TugraClient {
   /** DELETE /servers/:id/reboot — cancel a SCHEDULED reboot. */
   cancelServerReboot(id: string): Promise<RebootViewShape> {
     return this.request("DELETE", `/servers/${encodeURIComponent(id)}/reboot`);
+  }
+  /** GET /servers/:id/oob — the cloud link and the provider-side power / rescue state. */
+  getServerOob(id: string): Promise<OobStatusShape> {
+    return this.request("GET", `/servers/${encodeURIComponent(id)}/oob`);
+  }
+  /** POST /servers/:id/oob/power — power_off / reboot (hard reset) / shutdown need `confirmName` = the server's name. */
+  oobPower(id: string, body: { action: OobPowerAction; confirmName?: string }): Promise<OobActionShape> {
+    return this.request("POST", `/servers/${encodeURIComponent(id)}/oob/power`, body);
+  }
+  /** POST /servers/:id/oob/rescue — enables rescue; the one-time root password is in the response only (needs read:secrets). */
+  oobEnableRescue(id: string): Promise<OobRescueShape> {
+    return this.request("POST", `/servers/${encodeURIComponent(id)}/oob/rescue`, {});
+  }
+  oobDisableRescue(id: string): Promise<OobActionShape> {
+    return this.request("DELETE", `/servers/${encodeURIComponent(id)}/oob/rescue`);
+  }
+  /** POST /servers/:id/oob/console — a provider console session (url + password, valid ~1 minute; needs read:secrets). */
+  oobConsole(id: string): Promise<OobConsoleShape> {
+    return this.request("POST", `/servers/${encodeURIComponent(id)}/oob/console`, {});
+  }
+  oobCandidates(id: string, cloudCredentialId: string): Promise<OobCandidateShape[]> {
+    return this.request("GET", `/servers/${encodeURIComponent(id)}/oob/candidates?cloudCredentialId=${encodeURIComponent(cloudCredentialId)}`);
+  }
+  oobLink(id: string, body: { cloudCredentialId: string; providerServerId: string; confirmProviderName?: string }): Promise<OobStatusShape> {
+    return this.request("PUT", `/servers/${encodeURIComponent(id)}/oob/link`, body);
+  }
+  oobUnlink(id: string): Promise<OobStatusShape> {
+    return this.request("DELETE", `/servers/${encodeURIComponent(id)}/oob/link`);
   }
   listApps(): Promise<Row[]> {
     return this.request("GET", "/apps");

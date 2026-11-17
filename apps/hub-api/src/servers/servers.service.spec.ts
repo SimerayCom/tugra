@@ -260,6 +260,17 @@ describe("ServersService.deleteForUser (destroy VM)", () => {
     expect(prisma.server!.delete as jest.Mock).toHaveBeenCalled();
   });
 
+  it("does NOT destroy a VM an operator linked by hand for out-of-band access (Tugra did not create it)", async () => {
+    const prisma = {
+      ...owner(),
+      server: { findUnique: jest.fn().mockResolvedValue({ ...provisioned, providerManualLink: true }), delete: jest.fn().mockResolvedValue(undefined) },
+    } as unknown as PrismaService;
+    const { svc, destroyVm } = svcForDelete(prisma);
+    await svc.deleteForUser("u1", "s1", { destroyVm: true });
+    expect(destroyVm).not.toHaveBeenCalled();
+    expect(prisma.server!.delete as jest.Mock).toHaveBeenCalledWith({ where: { id: "s1" } });
+  });
+
   it("does NOT destroy for a manually-enrolled server (no provider fields)", async () => {
     const prisma = {
       ...owner(),
