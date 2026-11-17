@@ -15055,7 +15055,7 @@ export interface operations {
                         securityHeaders: boolean;
                         ssl: {
                             /** @enum {string} */
-                            state: "ok" | "expiring" | "error";
+                            state: "ok" | "expiring" | "error" | "none";
                             daysRemaining: number | null;
                             validTo: string | null;
                             issuer: string | null;
