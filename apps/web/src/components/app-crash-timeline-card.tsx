@@ -8,6 +8,7 @@ import { useT } from "../i18n/provider";
 import { Badge, EmptyState, Spinner } from "./ui";
 import { relativeTime } from "../lib/fleet";
 import { containerBadges } from "../lib/container-badges";
+import { friendlyContainer } from "../lib/log-container";
 import { TERMINAL_PRE_STYLE } from "../lib/terminal-theme";
 
 // Frozen pre-crash log tail: the shared terminal look with this card's own tighter sizing and a bounded
@@ -21,16 +22,14 @@ const LOG_PRE_STYLE: CSSProperties = {
   maxHeight: 280,
 };
 
-/** Strip the `tugra_<id>` project prefix so a container reads as its compose service ("wordpress", "db")
- *  instead of the raw `tugra_<cuid>-wordpress-1`. Handles the compose replica form, the swarm task form
- *  (`tugra_<id>[-<svc>].<slot>.<taskid>`), and the bare single-container form. */
-function friendlyContainer(name: string): string {
-  const swarm = /^tugra_[a-z0-9]+(?:-(.+?))?\.\d+\.[a-z0-9]+$/i.exec(name);
-  if (swarm) return swarm[1] ?? "container";
-  const m = /^tugra_[a-z0-9]+-(.+)-\d+$/i.exec(name);
-  if (m) return m[1];
-  if (/^tugra_[a-z0-9]+$/i.test(name)) return "container";
-  return name;
+/** True while a container is mid-transition (created / restarting / healthcheck starting / exited moments ago),
+ *  i.e. its row is likely to change within seconds. A container that has been down for a while is not. */
+function isTransitioning(c: ContainerRuntimeState): boolean {
+  const status = c.status.toLowerCase();
+  if (status === "created" || status === "restarting") return true;
+  if (status === "running") return c.health === "starting";
+  const finished = c.finishedAt ? Date.parse(c.finishedAt) : NaN;
+  return (status === "exited" || status === "dead") && Number.isFinite(finished) && Date.now() - finished < 120_000;
 }
 
 /** "Crash timeline" card: why this app's containers died — exit code, OOM kills, restart deltas and the
@@ -41,7 +40,9 @@ export function AppCrashTimelineCard({ id }: { id: string }) {
   const { data, isLoading, isError } = useQuery({
     queryKey: ["appRuntimeState", id],
     queryFn: () => api.getAppRuntimeState(id),
-    refetchInterval: 10000,
+    // Follow a container that is coming back (starting / restarting / just exited) at the same pace as the app
+    // header, so the card shows it running and healthy within a poll or two; settled apps poll slowly.
+    refetchInterval: (q) => (q.state.data?.containers.some(isTransitioning) ? 5000 : 10000),
   });
   const containers = data?.containers ?? [];
   const events = data?.events ?? [];
@@ -64,6 +65,9 @@ export function AppCrashTimelineCard({ id }: { id: string }) {
     <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
       {containers.length > 0 && (
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <div style={{ fontSize: 12, fontWeight: 600, color: "var(--c-tx3)", textTransform: "uppercase", letterSpacing: "0.04em" }}>
+            {t("apps.crash.current")}
+          </div>
           {containers.map((c) => (
             <ContainerSummary key={c.containerName} c={c} />
           ))}

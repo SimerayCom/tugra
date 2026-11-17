@@ -7,7 +7,7 @@
 // currently running, otherwise we'd paint a false "Exit 0". A restart count > 0 is surfaced on its own
 // because a crash-looping container is often "running" again by the time we poll it.
 
-export type ContainerBadgeKey = "restarts" | "exit" | "oom" | "unhealthy";
+export type ContainerBadgeKey = "restarts" | "exit" | "oom" | "unhealthy" | "starting";
 
 export interface ContainerBadge {
   key: ContainerBadgeKey;
@@ -31,7 +31,12 @@ export function containerBadges(c: BadgeableContainer): ContainerBadge[] {
   if (restarts > 0) badges.push({ key: "restarts", tone: "warn", vars: { n: restarts } });
   if (c.oomKilled) badges.push({ key: "oom", tone: "danger" });
   if ((c.exitCode ?? 0) !== 0 && !running) badges.push({ key: "exit", tone: "danger", vars: { code: c.exitCode ?? 0 } });
-  if ((c.health ?? "").toLowerCase() === "unhealthy") badges.push({ key: "unhealthy", tone: "warn" });
+  // Docker keeps the LAST healthcheck verdict on a container that has since exited, so "Unhealthy" on a stopped
+  // container is history, not its current state (the exit badge already says it is down). Health only describes
+  // a container that is up.
+  const health = (c.health ?? "").toLowerCase();
+  if (running && health === "unhealthy") badges.push({ key: "unhealthy", tone: "warn" });
+  if (running && health === "starting") badges.push({ key: "starting", tone: "warn" });
 
   return badges;
 }

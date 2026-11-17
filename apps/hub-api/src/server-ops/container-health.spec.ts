@@ -1,4 +1,4 @@
-import { CONTAINER_HEALTH_SCRIPT, parseHealthOutput, diffContainerStates, explainExit, memUnderPressure, COOLDOWN_MS, type ContainerSnap, type PrevState } from "./container-health";
+import { CONTAINER_HEALTH_SCRIPT, parseHealthOutput, diffContainerStates, explainExit, memUnderPressure, COOLDOWN_MS, isSettling, SETTLE_WINDOW_MS, type ContainerSnap, type PrevState } from "./container-health";
 
 const snap = (over: Partial<ContainerSnap> = {}): ContainerSnap => ({
   name: "tugra_app1",
@@ -256,5 +256,27 @@ describe("diffContainerStates — timeline event", () => {
   });
   it("no event on a steady running container", () => {
     expect(diffContainerStates(prev({ restartCount: 3 }), snap({ restartCount: 3 }), [], { now: NOW }).event).toBeNull();
+  });
+});
+
+describe("isSettling", () => {
+  const now = Date.parse("2026-11-17T12:00:00Z");
+  const ago = (ms: number) => new Date(now - ms).toISOString();
+  it("is true while created / restarting / health-starting", () => {
+    expect(isSettling({ status: "created", health: null, finishedAt: null }, now)).toBe(true);
+    expect(isSettling({ status: "restarting", health: null, finishedAt: null }, now)).toBe(true);
+    expect(isSettling({ status: "running", health: "starting", finishedAt: null }, now)).toBe(true);
+  });
+  it("is false for a settled running container (healthy, unhealthy or no healthcheck)", () => {
+    for (const health of ["healthy", "unhealthy", null]) expect(isSettling({ status: "running", health, finishedAt: null }, now)).toBe(false);
+  });
+  it("is true for a container that died within the settle window, false once it has been down longer", () => {
+    expect(isSettling({ status: "exited", health: "unhealthy", finishedAt: ago(5_000) }, now)).toBe(true);
+    expect(isSettling({ status: "dead", health: null, finishedAt: ago(SETTLE_WINDOW_MS - 1) }, now)).toBe(true);
+    expect(isSettling({ status: "exited", health: null, finishedAt: ago(SETTLE_WINDOW_MS + 1) }, now)).toBe(false);
+  });
+  it("is false for an exited container without a usable finish time, and for paused", () => {
+    expect(isSettling({ status: "exited", health: null, finishedAt: null }, now)).toBe(false);
+    expect(isSettling({ status: "paused", health: null, finishedAt: null }, now)).toBe(false);
   });
 });
