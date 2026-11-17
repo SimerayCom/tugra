@@ -1,6 +1,7 @@
 import { connect } from "node:tls";
 
-export type SslState = "ok" | "expiring" | "error";
+/** "none" = the domain is not meant to serve TLS (http-only), so there is no certificate to judge. */
+export type SslState = "ok" | "expiring" | "error" | "none";
 
 export interface SslStatus {
   state: SslState;
@@ -50,4 +51,14 @@ export function probeSsl(host: string, timeoutMs = 4000): Promise<SslStatus> {
       }
     });
   });
+}
+
+/**
+ * The SSL status a dashboard should show for an app domain. A domain that is deliberately served over plain
+ * http (https=false: sslip magic domain without HTTPS, TLS off) has no certificate by design, so it is "none"
+ * (never probed, never an error); a domain that is meant to be https is probed and a missing cert is "error".
+ */
+export function domainSsl(host: string, https: boolean, probe: (h: string) => Promise<SslStatus> = probeSsl): Promise<SslStatus> {
+  if (!https) return Promise.resolve({ state: "none", daysRemaining: null, validTo: null, issuer: null });
+  return probe(host);
 }

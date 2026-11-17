@@ -15870,7 +15870,8 @@
                             "enum": [
                               "ok",
                               "expiring",
-                              "error"
+                              "error",
+                              "none"
                             ]
                           },
                           "daysRemaining": {

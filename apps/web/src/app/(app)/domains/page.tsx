@@ -14,7 +14,8 @@ import { SkeletonTable } from "../../../components/skeleton";
 import { statusLabel } from "../../../lib/status";
 import { ErrorState } from "../../../components/error-state";
 
-function sslColor(state: DomainView["ssl"]["state"]): string {
+function sslColor(state: DomainView["ssl"]["state"], https = true): string {
+  if (!https || state === "none") return "var(--c-tx3)";
   if (state === "ok") return "var(--c-g)";
   if (state === "expiring") return "var(--c-am)";
   return "var(--c-tx3)";
@@ -43,14 +44,16 @@ export default function DomainsPage() {
           {domains.map((d, i) => {
             const ssl = d.ssl;
             const sslText =
-              ssl.state === "error"
+              ssl.state === "none" || !d.https
+                ? t("domains.httpOnly")
+                : ssl.state === "error"
                 ? t("domains.noCert")
                 : ssl.daysRemaining != null
                   ? t("domains.daysLeft", { n: ssl.daysRemaining })
                   : "—";
             return (
               <ListRow key={d.id} index={i}>
-                <span style={{ width: 9, height: 9, borderRadius: "50%", background: sslColor(ssl.state) }} />
+                <span style={{ width: 9, height: 9, borderRadius: "50%", background: sslColor(ssl.state, d.https) }} />
                 <div style={{ flex: 1 }}>
                   <a href={d.url ?? `https://${d.domain}`} target="_blank" rel="noreferrer" style={{ fontWeight: 600, fontSize: 14, color: "var(--c-lapis)", textDecoration: "none" }}>
                     {d.domain}
@@ -67,7 +70,7 @@ export default function DomainsPage() {
                   </div>
                 </div>
                 <div style={{ textAlign: "right" }}>
-                  <div style={{ fontSize: 12, color: sslColor(ssl.state), fontWeight: 600 }}>{sslText}</div>
+                  <div style={{ fontSize: 12, color: sslColor(ssl.state, d.https), fontWeight: 600 }}>{sslText}</div>
                   {ssl.issuer && <div style={{ fontSize: 11, color: "var(--c-tx3)" }}>{ssl.issuer}</div>}
                 </div>
               </ListRow>

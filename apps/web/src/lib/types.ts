@@ -1490,7 +1490,7 @@ export interface DomainView {
   domainRedirect: "www" | "root" | null;
   securityHeaders: boolean;
   ssl: {
-    state: "ok" | "expiring" | "error";
+    state: "ok" | "expiring" | "error" | "none";
     daysRemaining: number | null;
     validTo: string | null;
     issuer: string | null;
