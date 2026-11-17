@@ -52,7 +52,7 @@ for the dump; nothing is changed. `PRE_UPDATE_BACKUP=0` in `.env` disables it (n
 `PRE_UPDATE_KEEP` and `TUGRA_BACKUP_DIR`. For the in-app updater `TUGRA_BACKUP_DIR` must be an absolute path
 **inside the checkout** (that is the only directory the sidecar has mounted); otherwise the update is refused
 with "pre-update backup failed". The installer (`install.sh`) accepts any path. After hub-api and web are healthy the sidecar also refreshes the bundled
-local agent and pre-pulls the updater image. The sidecar runs `scripts/update.sh` from the mounted checkout, so an
+local agent, pre-pulls the updater image and then recreates the updater itself on that image (see below). The sidecar runs `scripts/update.sh` from the mounted checkout, so an
 install only gains a new updater capability (the snapshot, the compose/script updates below) after that checkout is
 updated once with `git pull && ./scripts/install.sh` (below).
 
@@ -86,8 +86,13 @@ from the hub or Redis: it downloads and verifies everything itself.
    file and scripts are put back first and the previous version is recreated from them and verified. If that cannot be
    completed the status is `recovery_required` and names the backup directory.
 5. **Finish.** Replaced scripts take effect immediately (the sidecar restarts its own loop on the new code), and when
-   the compose file changed a one-shot helper container recreates the `tugra-updater` service itself — a container
-   cannot recreate itself — so a changed updater definition or image takes effect without an installer run.
+   the compose file changed, or the running updater is on an older image than the one the compose file now names
+   (every release moves the image tag, even one that changes no file), a one-shot helper container recreates the
+   `tugra-updater` service itself — a container cannot recreate itself — so a changed updater definition or image
+   takes effect without an installer run. This happens last, after the update is reported done; if the helper
+   cannot start the old updater keeps running and the next update retries. An updater that is still on an older
+   image when it starts (for example after a release whose scripts predate this) refreshes itself once, before it
+   takes any job.
 
 The common case — only the images changed — is a fast path: the sidecar fetches the small signed list, sees your
 checkout already matches, and downloads and changes nothing. Releases published before this feature, and manifests

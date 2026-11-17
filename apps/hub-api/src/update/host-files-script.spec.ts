@@ -94,11 +94,13 @@ case "$1" in
   inspect)
     case "$*" in
       *Mounts*) echo "/host/checkout"; exit 0 ;;
-      *Config.Image*) echo "ghcr.io/simeraycom/tugra-updater:0.2.0"; exit 0 ;;
+      *Config.Image*) echo "\${SHIM_UPDATER_HAVE:-ghcr.io/simeraycom/tugra-updater:0.2.0}"; exit 0 ;;
+      *"{{.Image}}"*) echo "\$SHIM_UPDATER_RUNNING_ID"; exit 0 ;;
     esac
     n=$(grep -c 'up -d --no-deps hub-api web' "$SHIM_LOG" || true)
     if [ -n "$SHIM_UNHEALTHY_FIRST" ] && [ "$n" -lt 2 ]; then echo unhealthy; exit 0; fi
     echo healthy; exit 0 ;;
+  image) echo "\$SHIM_UPDATER_WANT_ID"; exit 0 ;;
   run|rm) [ -n "$SHIM_RUN_FAIL" ] && [ "$1" = run ] && exit 1; exit 0 ;;
   compose)
     case "$*" in
@@ -110,6 +112,9 @@ case "$1" in
         awk -v d="$d" '/^services:/{s=1;next} /^[A-Za-z]/{s=0} s&&/^  [A-Za-z0-9_-]+:$/{name=$1; sub(":","",name)} s&&name{print >> (d "/" name)}' "$f"
         for n in "$d"/*; do [ -f "$n" ] && echo "$(basename "$n") $(cksum < "$n" | cut -d' ' -f1)"; done
         rm -rf "$d"; exit 0 ;;
+      *"--profile updater config"*)
+        [ -n "$SHIM_UPDATER_WANT" ] && printf 'services:\n  hub-api:\n    image: ghcr.io/x/hub:1\n  tugra-updater:\n    image: %s\n    restart: unless-stopped\n  web:\n    image: ghcr.io/x/web:1\n' "$SHIM_UPDATER_WANT"
+        exit 0 ;;
       *" config"*)
         f=""; prev=""; for a in "$@"; do if [ "$prev" = "-f" ]; then f="$a"; fi; prev="$a"; done
         if grep -q INVALID_COMPOSE "$f" 2>/dev/null; then echo "invalid compose" >&2; exit 1; fi
@@ -137,6 +142,7 @@ exit 0
     `#!/bin/bash
 echo "redis-cli $*" >> "$SHIM_LOG"
 case "$*" in
+  *"GET instance:update:updater-refreshed"*) printf '%s\\n' "$SHIM_REFRESHED"; exit 0 ;;
   *BLPOP*) if [ -e "$SHIM_STATE" ]; then exit 1; fi; : > "$SHIM_STATE"; printf 'instance:update:queue\\n%s\\n' "$SHIM_JOB"; exit 0 ;;
 esac
 exit 0
@@ -208,6 +214,7 @@ function run(rig: Rig, job: Record<string, string>, env: Record<string, string> 
       SHIM_STATE: join(rig.dir, "state"),
       SHIM_JOB: JSON.stringify(job),
       UPDATE_HEALTH_TIMEOUT: "1",
+      UPDATER_REFRESH_WAIT: "0",
       ...env,
     } as NodeJS.ProcessEnv,
   });
@@ -272,6 +279,104 @@ suite("update.sh applying a release's compose + scripts (end to end)", () => {
     expect(runLine).toContain("up -d --no-deps tugra-updater");
     expect(runLine).toContain("--project-directory");
     expect(log.indexOf('"phase":"done"')).toBeLessThan(log.indexOf("docker run "));
+  });
+
+  describe("updater image follows the release (image-only releases change no compose text but move the tag)", () => {
+    const helperRuns = (log: string) => log.split("\n").filter((l) => l.startsWith("docker run "));
+    const imageOnly = (rig: Rig) => publish(rig, "0.2.0", unchangedFiles(rig));
+
+    it("an image-only release whose compose now names a newer updater image recreates the updater, detached and last", () => {
+      const rig = makeRig();
+      const digest = imageOnly(rig);
+      const { log, out } = run(rig, { targetVersion: "0.2.0", hostFilesDigest: digest }, {
+        SHIM_UPDATER_HAVE: "ghcr.io/simeraycom/tugra-updater:0.1.0",
+        SHIM_UPDATER_WANT: "ghcr.io/simeraycom/tugra-updater:0.2.0",
+        SHIM_REFRESHED: "ghcr.io/simeraycom/tugra-updater:0.2.0", // the start-up catch-up already tried; this is the post-update path
+      });
+      expect(finalStatus(log)).toContain('"phase":"done"');
+      const runs = helperRuns(log);
+      expect(runs).toHaveLength(1);
+      expect(runs[0]).toContain("-v /host/checkout:/host/checkout");
+      expect(runs[0]).toContain("ghcr.io/simeraycom/tugra-updater:0.1.0"); // the helper runs on the image that is running now
+      expect(runs[0]).toContain("up -d --no-deps tugra-updater");
+      expect(runs[0]).not.toMatch(/hub-api|postgres|redis/);
+      expect(log.indexOf('"phase":"done"')).toBeLessThan(log.indexOf("docker run ")); // after the status is final
+      expect(out).toContain("updater refresh scheduled");
+    });
+
+    it("the same tag whose local image id moved (a re-pulled latest) is refreshed too", () => {
+      const rig = makeRig();
+      const digest = imageOnly(rig);
+      const { log } = run(rig, { targetVersion: "0.2.0", hostFilesDigest: digest }, {
+        SHIM_UPDATER_HAVE: "ghcr.io/simeraycom/tugra-updater:latest",
+        SHIM_UPDATER_WANT: "ghcr.io/simeraycom/tugra-updater:latest",
+        SHIM_UPDATER_RUNNING_ID: "sha256:old",
+        SHIM_UPDATER_WANT_ID: "sha256:new",
+        SHIM_REFRESHED: "ghcr.io/simeraycom/tugra-updater:latest",
+      });
+      expect(helperRuns(log)).toHaveLength(1);
+    });
+
+    it("an updater already on the release's image is left alone", () => {
+      const rig = makeRig();
+      const digest = imageOnly(rig);
+      const { log } = run(rig, { targetVersion: "0.2.0", hostFilesDigest: digest }, {
+        SHIM_UPDATER_HAVE: "ghcr.io/simeraycom/tugra-updater:0.2.0",
+        SHIM_UPDATER_WANT: "ghcr.io/simeraycom/tugra-updater:0.2.0",
+        SHIM_UPDATER_RUNNING_ID: "sha256:same",
+        SHIM_UPDATER_WANT_ID: "sha256:same",
+      });
+      expect(finalStatus(log)).toContain('"phase":"done"');
+      expect(helperRuns(log)).toEqual([]);
+    });
+
+    it("when the expected image cannot be determined nothing is restarted (and the update still completes)", () => {
+      const rig = makeRig();
+      const digest = imageOnly(rig);
+      const { log } = run(rig, { targetVersion: "0.2.0", hostFilesDigest: digest }, { SHIM_UPDATER_HAVE: "ghcr.io/simeraycom/tugra-updater:0.1.0" });
+      expect(finalStatus(log)).toContain('"phase":"done"');
+      expect(helperRuns(log)).toEqual([]);
+    });
+
+    it("a failing refresh helper never fails an otherwise good update", () => {
+      const rig = makeRig();
+      const digest = imageOnly(rig);
+      const { log, out } = run(rig, { targetVersion: "0.2.0", hostFilesDigest: digest }, {
+        SHIM_UPDATER_HAVE: "ghcr.io/simeraycom/tugra-updater:0.1.0",
+        SHIM_UPDATER_WANT: "ghcr.io/simeraycom/tugra-updater:0.2.0",
+        SHIM_RUN_FAIL: "1",
+        SHIM_REFRESHED: "ghcr.io/simeraycom/tugra-updater:0.2.0",
+      });
+      expect(finalStatus(log)).toContain('"phase":"done"');
+      expect(out).toContain("could not start the updater refresh helper");
+    });
+  });
+
+  describe("start-up catch-up (an updater left on an older image converges without an installer run)", () => {
+    const stale = { SHIM_UPDATER_HAVE: "ghcr.io/simeraycom/tugra-updater:0.1.0", SHIM_UPDATER_WANT: "ghcr.io/simeraycom/tugra-updater:0.2.0" };
+    const runs = (log: string) => log.split("\n").filter((l) => l.startsWith("docker run "));
+
+    it("a stale updater is refreshed BEFORE it takes any job, and the attempt is recorded", () => {
+      const rig = makeRig();
+      const { log } = run(rig, {}, stale); // a job without a target is ignored: only the start-up path is exercised
+      expect(runs(log)).toHaveLength(1);
+      expect(runs(log)[0]).toContain("up -d --no-deps tugra-updater");
+      expect(log).toContain("SET instance:update:updater-refreshed ghcr.io/simeraycom/tugra-updater:0.2.0");
+      expect(log.indexOf("docker run ")).toBeLessThan(log.indexOf("BLPOP"));
+    });
+
+    it("is attempted once per expected image: a marker for it means no second restart", () => {
+      const rig = makeRig();
+      const { log } = run(rig, {}, { ...stale, SHIM_REFRESHED: "ghcr.io/simeraycom/tugra-updater:0.2.0" });
+      expect(runs(log)).toEqual([]);
+    });
+
+    it("an up-to-date updater is not touched at start", () => {
+      const rig = makeRig();
+      const { log } = run(rig, {}, { SHIM_UPDATER_HAVE: "ghcr.io/simeraycom/tugra-updater:0.2.0", SHIM_UPDATER_WANT: "ghcr.io/simeraycom/tugra-updater:0.2.0", SHIM_UPDATER_RUNNING_ID: "a", SHIM_UPDATER_WANT_ID: "a" });
+      expect(runs(log)).toEqual([]);
+      expect(log).not.toContain("updater-refreshed");
+    });
   });
 
   it("FAST PATH: a checkout that already matches the release downloads no file, applies nothing, starts no helper", () => {

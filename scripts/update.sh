@@ -5,7 +5,9 @@
 # fires). BEFORE anything is swapped it takes a mandatory restore point (pg_dump + .env copy, see
 # lib/snapshot.sh), then pulls the target images and recreates hub-api + web (--no-deps) — never postgres,
 # redis or itself. Once those are healthy it also refreshes the local `agent` (non-fatal) and pre-pulls the
-# updater image for the next installer re-run (the updater cannot recreate itself).
+# updater image. The updater cannot recreate itself mid-run, so when its running image is not the one the
+# release's compose now resolves (the common case: TUGRA_VERSION moved) it starts a detached one-shot helper
+# AFTER the update is final that recreates only the `tugra-updater` service.
 # The hub cannot do this: recreating hub-api kills the process running the command. This container survives.
 #
 #   scripts/update.sh --watch                 # the sidecar loop (BLPOP the queue forever)
@@ -24,6 +26,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 COMPOSE_FILE="$REPO_DIR/deploy/docker-compose.yml"
+UPDATER_REFRESH_KEY="instance:update:updater-refreshed"
+UPDATER_REFRESH_WAIT="${UPDATER_REFRESH_WAIT:-30}"
 ENV_FILE="${ENV_FILE:-$REPO_DIR/.env}"
 REDIS_URL="${REDIS_URL:-redis://redis:6379}"
 
@@ -305,7 +309,8 @@ resolve_pins() {
 # checkout mounted at its HOST path — compose resolves the service's `..:/repo` bind relative to the compose file's
 # directory, so that path must be the real host path, which is read from this container's own /repo mount.
 # Detached + delayed so the status/lock are already final when this container goes away. Best-effort: on any
-# failure the old updater simply keeps running (the next installer run refreshes it), the update itself is done.
+# failure the old updater simply keeps running (the next update or installer run retries), the update itself is done.
+UPDATER_REFRESH_SCHEDULED=0
 refresh_updater_self() {
   local cid src image
   if [ "$DRY" -eq 1 ]; then printf 'RUN: refresh tugra-updater via a one-shot helper container\n'; return 0; fi
@@ -323,10 +328,38 @@ refresh_updater_self() {
       -v /var/run/docker.sock:/var/run/docker.sock -v "$src:$src" -w "$src" --entrypoint sh "$image" \
       -c 'sleep 5 && exec docker compose --profile updater --project-directory "$1/deploy" --env-file "$1/.env" -f "$1/deploy/docker-compose.yml" up -d --no-deps tugra-updater' \
       sh "$src" >/dev/null 2>&1; then
+    UPDATER_REFRESH_SCHEDULED=1
     log "updater refresh scheduled (the sidecar restarts in a few seconds)"
   else
     log "warning: could not start the updater refresh helper; the updater will be refreshed on the next installer run"
   fi
+}
+
+# The image reference compose now resolves for the updater service (TUGRA_VERSION already moved in .env). Empty
+# when it cannot be determined.
+updater_expected_image() {
+  docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" --profile updater config 2>/dev/null \
+    | awk '/^  tugra-updater:[[:space:]]*$/{s=1;next} s&&/^  [^ ]/{s=0} s&&/^    image:/{sub(/^    image:[[:space:]]*/,""); gsub(/"/,""); print; exit}' || true
+}
+
+# True (0) when the RUNNING updater container is not on the image the compose file now names: a different tag
+# (an image-only release moved TUGRA_VERSION, so the compose text did not change but the tag did) or the same
+# tag whose local image id moved (a re-pulled `latest`). Anything undeterminable counts as "not stale" so a
+# docker hiccup can never make every update restart the sidecar.
+updater_image_stale() {
+  local cid want have running_id want_id
+  [ "$DRY" -eq 1 ] && return 1
+  cid="$(docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" ps -q tugra-updater 2>/dev/null | head -n1 || true)"
+  [ -n "$cid" ] || return 1
+  want="$(updater_expected_image)"
+  [ -n "$want" ] || return 1
+  have="$(docker inspect -f '{{.Config.Image}}' "$cid" 2>/dev/null || true)"
+  [ -n "$have" ] || return 1
+  if [ "$have" != "$want" ]; then return 0; fi
+  running_id="$(docker inspect -f '{{.Image}}' "$cid" 2>/dev/null || true)"
+  want_id="$(docker image inspect -f '{{.Id}}' "$want" 2>/dev/null || true)"
+  if [ -n "$running_id" ] && [ -n "$want_id" ] && [ "$running_id" != "$want_id" ]; then return 0; fi
+  return 1
 }
 
 # Set when a successful update replaced scripts: the watch loop then re-execs the (new) update.sh.
@@ -493,7 +526,7 @@ _do_update() {
   # hub-api + web are verified healthy: now bring the bundled local agent along (the hub's protocol gate keeps
   # an old agent working meanwhile) and pre-pull the updater image. Both are best-effort — a failure here must
   # never fail an otherwise good update. `--no-deps` + an explicit service name: postgres/redis/updater are
-  # never recreated (the updater can't recreate itself; it moves on the next installer re-run).
+  # never recreated here (the updater can't recreate itself mid-run; refresh_updater_self does it detached, last).
   if [ -n "$(compose ps -q agent 2>/dev/null | head -n1)" ]; then
     if compose pull agent && compose up -d --no-deps agent; then
       log "local agent refreshed to $target"
@@ -508,9 +541,11 @@ _do_update() {
   release_lock
   log "update to $target complete"
   # Replaced scripts take effect for the NEXT job (this process keeps running the old file); a replaced compose
-  # file also redefines the updater service itself. Both happen after the status is final.
+  # file also redefines the updater service itself. The updater is also refreshed when it still runs an older
+  # image than the release's compose names (an image-only release changes no compose text but moves the tag).
+  # All of it happens after the status is final.
   if [ "$HF_SCRIPTS_CHANGED" -eq 1 ]; then RELOAD_SELF=1; fi
-  if [ "$HF_COMPOSE_CHANGED" -eq 1 ]; then refresh_updater_self; fi
+  if [ "$HF_COMPOSE_CHANGED" -eq 1 ] || updater_image_stale; then refresh_updater_self; fi
 }
 
 # Extract one flat string field ("key":"value") from a queue job without jq; empty when absent. `|| true`: a
@@ -543,6 +578,26 @@ if [ "$WATCH" -ne 1 ]; then
   printf 'usage: update.sh --watch  (or --dry-run --target <version>)\n' >&2
   exit 1
 fi
+
+# Catch-up at start (and after a script-reload exec): an updater whose image is older than the one compose now
+# names (the previous release ran an update.sh that predates the post-update refresh, or its helper failed) is
+# refreshed before it takes any job, so it converges without an installer run. Race-free: the loop is not
+# draining the queue while the helper is pending, so no update can be cut off mid-run. Attempted once per
+# expected image (a marker in Redis), so an image string that never compares equal cannot cause a restart loop.
+catch_up_updater() {
+  local want last
+  updater_image_stale || return 0
+  want="$(updater_expected_image)"
+  last="$(redis GET "$UPDATER_REFRESH_KEY" 2>/dev/null || true)"
+  if [ "$last" = "$want" ]; then return 0; fi
+  redis SET "$UPDATER_REFRESH_KEY" "$want" >/dev/null 2>&1 || true
+  log "the running updater image is not $want — refreshing it before taking jobs"
+  refresh_updater_self
+  # The helper recreates this container in a few seconds; keep out of the queue until then. If it could not
+  # be started (or never fires) carry on with the old updater.
+  if [ "$UPDATER_REFRESH_SCHEDULED" -eq 1 ]; then sleep "$UPDATER_REFRESH_WAIT"; fi
+}
+catch_up_updater
 
 log "watching $QUEUE_KEY on $REDIS_URL"
 while true; do

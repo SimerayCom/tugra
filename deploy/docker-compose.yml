@@ -174,7 +174,8 @@ services:
         condition: service_healthy
 
   # Self-update sidecar. The hub can't recreate its own container, so it queues a job in Redis that this
-  # sidecar drains, then pulls + recreates hub-api/web (--no-deps, never itself/postgres/redis). It has
+  # sidecar drains, then pulls + recreates hub-api/web (--no-deps, never postgres/redis; it is itself recreated
+  # last, by a detached one-shot helper, once an update is done — a container can't recreate itself). It has
   # docker.sock but runs only scripts/update.sh's fixed pull/up command set (see SECURITY.md).
   tugra-updater:
     image: "ghcr.io/simeraycom/tugra-updater:${TUGRA_VERSION:-latest}"
