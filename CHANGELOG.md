@@ -7,6 +7,22 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **Guided migration works against Coolify 4.7.5.** Checked against a live 4.7.5 instance:
+  - Application containers named `<uuid>-YYYYMMDDTHHMMSS` (4.7) are found by the agent's volume resolution and by the
+    freeze, inventory and cross-check steps; the old `<uuid>-<digits>` names still work.
+  - The Coolify API client paces itself under Coolify's per-user limit (all of a user's tokens share it), waits out a 429
+    `Retry-After`, and stops after repeated 401/403 so a bad token is not locked out.
+  - Database and service start/stop treat "already stopped/running" as done, stops no longer trigger Coolify's Docker
+    cleanup on the source, and the token needs the `deploy` ability (plus `read:sensitive`, created by a team admin or
+    owner); the labels, hints and docs say so.
+  - When a token cannot read build/start commands and other sensitive fields, the plan warns instead of carrying apps
+    without them; locked (shown-once) variables are reported as locked, not as a token problem.
+  - Static/SPA settings are read from the application detail, compose apps keep their per-service domains, the git
+    provider comes from `source_type`, removed service members are skipped, and Valkey databases are carried as Valkey or
+    refused with a clear reason.
+  - Printed decommission commands skip control-plane containers the host does not have and include coolify-sentinel.
+  - The migration lab has a Coolify 4.7.5 profile (rate limit, 400 on already stopped/running, ISO container names).
+
 ## [0.1.0-beta.21] - 2026-11-17
 
 - **Reboot a server from the panel, and see that everything came back.** The server's Maintenance tab has a Reboot card
