@@ -70,12 +70,16 @@ beforeEach(() => {
       '( /bin/sh "$script"; rm -f "$FAKE/active-$unit" ) >/dev/null 2>&1 &',
     ].join("\n"),
   );
+  // An `active-<unit>` file is a running unit; its content is its ActiveState (empty = active). list-units honours
+  // --state=a,b like the real one, so a guard that forgets "deactivating" is caught here.
   put(
     "systemctl",
     [
       'case "$1" in',
-      '  is-active) if [ -f "$FAKE/active-$2" ]; then echo active; exit 0; else echo inactive; exit 3; fi ;;',
-      '  list-units) for f in "$FAKE"/active-*; do [ -e "$f" ] && echo "$(basename "$f" | sed s/^active-//).service loaded active running"; done; exit 0 ;;',
+      '  is-active) if [ -f "$FAKE/active-$2" ]; then st=$(cat "$FAKE/active-$2"); echo "${st:-active}"; exit 0; else echo inactive; exit 3; fi ;;',
+      "  list-units) want=active; for a in \"$@\"; do case \"$a\" in --state=*) want=${a#--state=} ;; esac; done",
+      '    for f in "$FAKE"/active-*; do [ -e "$f" ] || continue; st=$(cat "$f"); st=${st:-active}',
+      '      case ",$want," in *",$st,"*) echo "$(basename "$f" | sed s/^active-//).service loaded $st running" ;; esac; done; exit 0 ;;',
       "esac",
     ].join("\n"),
   );
@@ -90,7 +94,7 @@ const ID = "a1b2c3d4e5f60718";
 const opts = (o: Partial<Parameters<typeof buildPatchRunScript>[1]> = {}) => ({
   id: ID,
   deadlineSec: 60,
-  offset: 0,
+  lines: 0,
   guard: { kind: "all" as const },
   pollSec: "0.1",
   stateDir: state,
@@ -143,6 +147,14 @@ describe("CHECK under sh with fake apt/dpkg (read-only)", () => {
     expect(parseUpgradable(r.stdout).applyRunning).toBe(true);
     expect(existsSync(join(fake, "calls")) ? readFileSync(join(fake, "calls"), "utf8") : "").not.toContain("update");
   });
+
+  it("a unit that is deactivating (its kill window after the deadline) still counts as running", () => {
+    fakeApt("'ii  vim'");
+    writeFileSync(join(fake, "active-tugra-patch-deadbeefdeadbeef"), "deactivating");
+    const r = runSh(buildCheckScript(sysd));
+    expect(parseUpgradable(r.stdout).applyRunning).toBe(true);
+    expect(existsSync(join(fake, "calls")) ? readFileSync(join(fake, "calls"), "utf8") : "").not.toContain("update");
+  });
 });
 
 describe("APPLY inner script under sh with fake apt/dpkg", () => {
@@ -188,7 +200,7 @@ describe("APPLY driver: host-side unit + polling", () => {
     expect(readFileSync(join(state, `${ID}.rc`), "utf8").trim()).toBe("3");
   });
 
-  it("survives its follower being killed: re-attaching resumes at the offset and starts NO second unit", async () => {
+  it("survives its follower being killed: re-attaching resumes after the lines it has and starts NO second unit", async () => {
     const inner = "echo one; sleep 2; echo two; exit 0";
     const first = spawn(SH, ["-c", buildPatchRunScript(inner, opts())], { env: envFor(), stdio: ["ignore", "pipe", "ignore"] });
     let out = "";
@@ -206,9 +218,9 @@ describe("APPLY driver: host-side unit + polling", () => {
     expect(existsSync(join(state, `${ID}.rc`))).toBe(false); // the unit is still mid-run
     const got = parsePatchRun(out);
     expect(got.log.startsWith("one\n")).toBe(true);
-    const offset = Buffer.byteLength("one\n");
+    const lines = 1;
 
-    const second = runSh(buildPatchRunScript(inner, opts({ offset })));
+    const second = runSh(buildPatchRunScript(inner, opts({ lines })));
     const st = parsePatchRun(second.stdout);
     expect(second.stdout).not.toContain("TUGRA_PATCH_STARTED"); // re-attached, did not start again
     expect(st.log).toBe("two\n"); // only what the hub does not have yet
@@ -218,7 +230,7 @@ describe("APPLY driver: host-side unit + polling", () => {
 
   it("re-attaching after the unit already finished just replays the tail and the exit code", () => {
     runSh(buildPatchRunScript("echo hello; exit 5", opts()));
-    const again = runSh(buildPatchRunScript("echo hello; exit 5", opts({ offset: 0 })));
+    const again = runSh(buildPatchRunScript("echo hello; exit 5", opts({ lines: 0 })));
     expect(parsePatchRun(again.stdout)).toMatchObject({ log: "hello\n", rc: 5 });
     expect(calls()).toHaveLength(1);
   });
@@ -230,6 +242,28 @@ describe("APPLY driver: host-side unit + polling", () => {
     expect(parsePatchRun(r.stdout).busy).toBe(true);
     expect(calls()).toHaveLength(0);
     expect(existsSync(join(state, `${ID}.run`))).toBe(false);
+  });
+
+  it("refuses to start while the other patch unit is still deactivating (it holds the dpkg lock until it is gone)", () => {
+    writeFileSync(join(fake, "active-tugra-patch-0000000000000000"), "deactivating");
+    const r = runSh(buildPatchRunScript("echo never", opts()));
+    expect(r.status).toBe(1);
+    expect(parsePatchRun(r.stdout).busy).toBe(true);
+    expect(calls()).toHaveLength(0);
+  });
+
+  it("resumes by line, so non-UTF-8 bytes and multibyte text cannot throw the resume point off", () => {
+    // 0xE2 0x80 is the front half of a multibyte character: the hub decodes it to U+FFFD (3 bytes), so a byte offset
+    // computed from the decoded text would not match the file. Lines do.
+    const inner = "printf 'caf\\303\\251 \\342\\200 bad\\nsecond\\nthird\\n'; printf 'no-newline'; exit 0";
+    runSh(buildPatchRunScript(inner, opts()));
+    const resumed = runSh(buildPatchRunScript(inner, opts({ lines: 2 })));
+    const st = parsePatchRun(resumed.stdout);
+    expect(st.log).toBe("third\nno-newline"); // from line 3 on, including the unterminated last line
+    expect(st.rc).toBe(0);
+    expect(calls()).toHaveLength(1);
+    const full = parsePatchRun(runSh(buildPatchRunScript(inner, opts({ lines: 0 }))).stdout);
+    expect(full.log.split("\n")).toHaveLength(4);
   });
 
   it("reports a failed unit start and leaves no half-started state behind", () => {

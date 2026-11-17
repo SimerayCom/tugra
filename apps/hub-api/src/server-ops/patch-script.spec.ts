@@ -322,7 +322,7 @@ describe("patch-script", () => {
   });
 
   describe("buildPatchRunScript", () => {
-    const base = { id: "0123456789abcdef", deadlineSec: 1800, offset: 0, guard: { kind: "all" as const } };
+    const base = { id: "0123456789abcdef", deadlineSec: 1800, lines: 0, guard: { kind: "all" as const } };
     it("starts the package manager as a transient host unit and polls its state files", () => {
       const s = buildPatchRunScript("apt-get upgrade -y", base);
       expect(s).toContain("systemd-run --unit \"$UNIT\" --collect");
@@ -348,7 +348,7 @@ describe("patch-script", () => {
       expect(() => buildPatchRunScript("x", { ...base, stateDir: "/tmp/a b" })).toThrow(/invalid patch run option/);
       expect(() => buildPatchRunScript("x", { ...base, pollSec: "1; reboot" })).toThrow(/invalid patch run option/);
       expect(() => buildPatchRunScript("x", { ...base, guard: { kind: "one", pkg: "a;b" } })).toThrow(/invalid package name/);
-      expect(() => buildPatchRunScript("x", { ...base, offset: -1 })).toThrow(/invalid patch run bounds/);
+      expect(() => buildPatchRunScript("x", { ...base, lines: -1 })).toThrow(/invalid patch run bounds/);
       expect(() => buildPatchRunScript("x", { ...base, deadlineSec: 0 })).toThrow(/invalid patch run bounds/);
     });
     it("never reboots", () => {

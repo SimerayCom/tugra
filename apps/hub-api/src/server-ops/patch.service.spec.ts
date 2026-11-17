@@ -196,7 +196,7 @@ describe("PatchService apply (host-side unit)", () => {
     return Buffer.from(outer![1], "base64").toString("utf8");
   }
   const runId = (script: string) => /ID='([a-f0-9]+)'/.exec(driver(script))![1];
-  const offsetOf = (script: string) => Number(/^POS=(\d+)$/m.exec(driver(script))![1]);
+  const linesOf = (script: string) => Number(/^POS=(\d+)$/m.exec(driver(script))![1]);
 
   beforeEach(() => {
     patchTiming.retryPauseMs = 1;
@@ -221,7 +221,7 @@ describe("PatchService apply (host-side unit)", () => {
     (audit.log as jest.Mock).mockReset();
   });
 
-  it("an apply that drops with the engine restart re-attaches to the SAME unit at the byte offset it already has", async () => {
+  it("an apply that drops with the engine restart re-attaches to the SAME unit after the log lines it already has", async () => {
     const sent: string[] = [];
     let call = 0;
     const online = [false, false, true]; // the agent is down for two polls, then back
@@ -242,8 +242,8 @@ describe("PatchService apply (host-side unit)", () => {
 
     expect(sent).toHaveLength(2);
     expect(runId(sent[1])).toBe(runId(sent[0])); // same unit — never a second apply
-    expect(offsetOf(sent[0])).toBe(0);
-    expect(offsetOf(sent[1])).toBe(Buffer.byteLength("Unpacking docker-ce\n")); // the partial line is re-read, not lost
+    expect(linesOf(sent[0])).toBe(0);
+    expect(linesOf(sent[1])).toBe(1); // the partial line is re-read, not lost
     expect(r.exitCode).toBe(0);
     expect(r.output).toBe("Unpacking docker-ce\nSetting up docker-ce\nDone\n"); // seamless, nothing duplicated
     // the live stream saw each byte once, in order
@@ -251,6 +251,49 @@ describe("PatchService apply (host-side unit)", () => {
     expect(pushed).toBe("Unpacking docker-ce\nSetting up docker-ce\nDone\n");
     expect(logs.finish).toHaveBeenCalledTimes(1);
     expect(logs.finish).toHaveBeenCalledWith("s1", expect.objectContaining({ status: "SUCCESS", exitCode: 0 }));
+  });
+
+  it("reads the exit code from the live chunks when the agent's final output is capped at 64 KiB", async () => {
+    // exec.go: Result.Output keeps the first 64 KiB then "\n…(truncated)" — the RC marker is past the cap.
+    const body = "Setting up pkg ...\n".repeat(5000); // ~95 KB
+    const full = `${HEAD}${BEGIN}${body}\nTUGRA_PATCH_RC=0\n`;
+    const capped = full.slice(0, 65536) + "\n…(truncated)";
+    let attaches = 0;
+    const agentWs = {
+      isOnline: jest.fn().mockReturnValue(true),
+      sendCommand: jest.fn().mockImplementation((_s: string, _sc: string, _c: string, _t: number, onChunk?: (c: string) => void) => {
+        if (++attaches > 3) return Promise.reject(new Error("re-attach loop")); // a broken parse would spin here
+        for (let i = 0; i < full.length; i += 4096) onChunk?.(full.slice(i, i + 4096));
+        return Promise.resolve({ exitCode: 0, output: capped });
+      }),
+    } as unknown as AgentWsServer;
+    const logs = makeLogs();
+    const r = await make(prisma, access, agentWs, logs).upgradeAll("u1", "s1");
+    expect(agentWs.sendCommand).toHaveBeenCalledTimes(1); // no pointless re-attach loop
+    expect(r.exitCode).toBe(0);
+    expect(r.output).toBe(body.slice(-65536)); // the tail the caller gets, intact
+    expect(r.output).not.toContain("truncated");
+    expect((logs.push as jest.Mock).mock.calls.map((c) => c[1]).join("")).toBe(body); // the live stream is whole
+    expect(logs.finish).toHaveBeenCalledWith("s1", expect.objectContaining({ status: "SUCCESS", exitCode: 0 }));
+  });
+
+  it("resumes by log lines: non-UTF-8 text in the log cannot shift the resume point", async () => {
+    const sent: string[] = [];
+    let call = 0;
+    const agentWs = {
+      isOnline: jest.fn().mockReturnValue(true),
+      sendCommand: jest.fn().mockImplementation((_s: string, script: string, _c: string, _t: number, onChunk?: (c: string) => void) => {
+        sent.push(script);
+        if (++call === 1) {
+          // Two split halves of a multibyte character reach the hub as U+FFFD each (3 bytes apiece, 1 byte on the host).
+          onChunk?.(`${HEAD}${BEGIN}caf\uFFFD\uFFFD done\nsecond\nthird-par`);
+          return Promise.reject(new AgentDisconnectedException());
+        }
+        return Promise.resolve({ exitCode: 0, output: `${HEAD}${BEGIN}third-part\n\nTUGRA_PATCH_RC=0\n` });
+      }),
+    } as unknown as AgentWsServer;
+    await make(prisma, access, agentWs).upgradeAll("u1", "s1");
+    expect(linesOf(sent[1])).toBe(2); // two complete lines, whatever their bytes
   });
 
   it("re-attaches when the helper ends before the unit does (no exit code yet)", async () => {

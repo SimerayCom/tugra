@@ -57,6 +57,19 @@ function completeLines(text: string): string {
   return i < 0 ? "" : text.slice(0, i + 1);
 }
 
+/** Newline count = the resume point the host-side follower understands (immune to how the text was decoded). */
+function countLines(text: string): number {
+  let n = 0;
+  for (let i = text.indexOf("\n"); i >= 0; i = text.indexOf("\n", i + 1)) n++;
+  return n;
+}
+
+/** The agent caps a command's final Result.Output (64 KiB, then a truncation note) but not its live chunks. Prefer
+ *  the accumulated chunks whenever they hold at least as much as the final output; fall back to it when none came. */
+function fullerOutput(streamed: string, final: string): string {
+  return streamed.length >= final.length ? streamed : final;
+}
+
 /** A host-exec patch that could not enter the host → a clear message, never a silent mis-parse. */
 function hostFailMessage(host: HostExecStatus): string {
   if (host.busy) return "a patch is already running on this server — wait for it to finish";
@@ -212,7 +225,7 @@ export class PatchService {
    * Run an apply on the server: the package manager runs as a transient systemd unit on the HOST (see
    * buildPatchRunScript), this method follows it. An engine upgrade that restarts Docker drops the agent mid-way;
    * the unit does not care, so on a drop (or an attach that ended before the unit did) we wait for the agent and
-   * re-send the SAME run id, which re-attaches at the byte offset already received — never a second unit. Output
+   * re-send the SAME run id, which re-attaches after the log lines already received — never a second unit. Output
    * goes live to DeployLogHub when `stream` is set. Resolves with the package manager's own exit code.
    */
   private async runApply(
@@ -224,7 +237,7 @@ export class PatchService {
   ): Promise<{ output: string; exitCode: number }> {
     const id = randomBytes(8).toString("hex");
     const deadlineAt = Date.now() + (unitSec + APPLY_MARGIN_SEC) * 1000;
-    let log = ""; // the package manager's output we hold (the hub's view of the host log; its byte length is the resume offset)
+    let log = ""; // the package manager's output we hold (the hub's view of the host log, complete lines only; its line count is the resume point)
     let pushed = 0; // chars of `log` already sent to the live stream
     let inline = false; // saw TUGRA_PATCH_MODE=inline: not resumable, a re-run would start the upgrade again
     const live = (text: string) => {
@@ -241,7 +254,7 @@ export class PatchService {
           throw new ServiceUnavailableException("lost contact with the server during the update — it keeps running on the server; run a check to see where it ended up");
         }
         const script = wrapHostExec(
-          buildPatchRunScript(inner, { id, deadlineSec: unitSec, offset: Buffer.byteLength(log), guard }),
+          buildPatchRunScript(inner, { id, deadlineSec: unitSec, lines: countLines(log), guard }),
           { deadlineSec: remainingSec, killSec: ATTACH_KILL_SEC },
         );
         let acc = "";
@@ -264,8 +277,11 @@ export class PatchService {
           }
           continue;
         }
-        const host = parseHostExec(r.output);
-        const st = parsePatchRun(r.output);
+        // The agent caps the FINAL output at 64 KiB (the live chunks are not capped): a long upgrade would lose the
+        // exit-code marker from r.output, so read the chunks we accumulated and keep r.output as the fallback.
+        const out = fullerOutput(acc, r.output);
+        const host = parseHostExec(out);
+        const st = parsePatchRun(out);
         if (st.mode === "inline") inline = true;
         if (!host.entered) {
           // A leftover helper from before the restart may still hold the name for a moment: wait it out.
@@ -278,7 +294,7 @@ export class PatchService {
         if (st.busy) throw new ServiceUnavailableException(hostFailMessage({ ...host, busy: true }));
         if (st.engineBlocked) throw new ConflictException(engineBlockedMessage(st.engineBlocked));
         if (st.startFailed) throw new ServiceUnavailableException("could not start the update on the server (systemd-run failed)");
-        log = base + st.log;
+        log = base + (st.rc !== null ? st.log : completeLines(st.log));
         live(log);
         if (st.rc !== null) {
           const exitCode = st.rc < 0 ? 1 : st.rc;

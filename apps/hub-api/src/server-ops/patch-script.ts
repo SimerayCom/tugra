@@ -55,7 +55,7 @@ const DPKG_BROKEN_FN =
 // A patch unit started by an earlier apply is still running (its apt holds the dpkg lock).
 const patchRunningFn = (systemdDir: string) =>
   `tugra_patch_running() { [ -d '${systemdDir}' ] && command -v systemctl >/dev/null 2>&1 && ` +
-  "systemctl list-units --plain --no-legend --no-pager --state=active,activating 'tugra-patch-*' 2>/dev/null | grep -q .; }";
+  "systemctl list-units --plain --no-legend --no-pager --state=active,activating,deactivating,reloading 'tugra-patch-*' 2>/dev/null | grep -q .; }";
 
 /**
  * Refresh the index, list upgradables, flag reboot-required — for whichever package
@@ -229,7 +229,7 @@ export function parseHostExec(output: string): HostExecStatus {
 // namespaces, its own cgroup — an engine restart cannot touch it), with its script, output and exit code in a
 // Tugra state dir, and the helper merely FOLLOWS that unit. When the helper (and the agent) die with the engine,
 // the hub re-sends the very same driver once the agent is back: it finds the unit's state files, does NOT start a
-// second unit, and resumes streaming at the byte offset the hub already has. Hosts without systemd fall back to
+// second unit, and resumes streaming after the log lines the hub already has. Hosts without systemd fall back to
 // running the script inline (as before) and then REFUSE container-engine packages — see below.
 
 const RUN_ID_RE = /^[a-f0-9]{8,32}$/;
@@ -243,8 +243,8 @@ export interface PatchRunOptions {
   id: string;
   /** Hard cap on the package manager's runtime (seconds). */
   deadlineSec: number;
-  /** Bytes of the unit's log the hub already has — the follower resumes there. 0 on the first attach. */
-  offset: number;
+  /** Complete lines of the unit's log the hub already has — the follower resumes after them. 0 on the first attach. */
+  lines: number;
   /** What is being upgraded: drives the container-engine refusal on hosts without systemd. */
   guard: PatchGuard;
   /** Seconds between polls of the unit (fractions allowed, for tests). Default 2. */
@@ -263,10 +263,14 @@ const PENDING_NAMES_FN =
   "elif command -v apk >/dev/null 2>&1; then apk version -l '<' 2>/dev/null | sed 's/-[0-9][^ ]* *<.*$//'; " +
   "fi; }";
 
-// Print the bytes of the unit's log past $POS and advance it. $POS counts bytes, matching the hub's offset.
+// Print the COMPLETE lines of the unit's log past $POS and advance it. $POS counts lines, matching the hub's resume
+// point: a byte offset would drift from the hub's decoded text on any non-UTF-8 byte or multibyte character split
+// across the agent's reads, whereas a newline survives every re-encoding. tugra_emit_rest prints what follows the last
+// newline (an unterminated final line) — only once the unit has ended and the log can no longer grow.
 const EMIT_LOG_FN =
-  'tugra_emit_log() { [ -f "$D/$ID.log" ] || return 0; SZ=$(wc -c < "$D/$ID.log" | tr -d " "); ' +
-  'if [ "$SZ" -gt "$POS" ]; then tail -c +$((POS + 1)) "$D/$ID.log" | head -c $((SZ - POS)); POS=$SZ; fi; }';
+  'tugra_emit_log() { [ -f "$D/$ID.log" ] || return 0; N=$(wc -l < "$D/$ID.log" | tr -d " "); ' +
+  'if [ "$N" -gt "$POS" ]; then tail -n +$((POS + 1)) "$D/$ID.log" | head -n $((N - POS)); POS=$N; fi; }; ' +
+  'tugra_emit_rest() { [ -f "$D/$ID.log" ] && tail -n +$((POS + 1)) "$D/$ID.log"; return 0; }';
 
 /**
  * The script the host runs (inside the helper's nsenter) for ONE apply attach. Marker protocol on stdout:
@@ -281,8 +285,8 @@ const EMIT_LOG_FN =
 export function buildPatchRunScript(inner: string, o: PatchRunOptions): string {
   if (!RUN_ID_RE.test(o.id)) throw new Error("invalid patch run id");
   const deadline = Math.trunc(o.deadlineSec);
-  const offset = Math.trunc(o.offset);
-  if (!(deadline > 0) || !(offset >= 0)) throw new Error("invalid patch run bounds");
+  const lines = Math.trunc(o.lines);
+  if (!(deadline > 0) || !(lines >= 0)) throw new Error("invalid patch run bounds");
   const stateDir = o.stateDir ?? PATCH_STATE_DIR;
   const systemdDir = o.systemdDir ?? SYSTEMD_DIR;
   const poll = o.pollSec ?? "2";
@@ -304,7 +308,7 @@ export function buildPatchRunScript(inner: string, o: PatchRunOptions): string {
     `D='${stateDir}'`,
     `ID='${o.id}'`,
     'UNIT="tugra-patch-$ID"',
-    `POS=${offset}`,
+    `POS=${lines}`,
     `ENGINE_RE='${ENGINE_ERE}'`,
     DPKG_BROKEN_FN,
     PENDING_NAMES_FN,
@@ -314,7 +318,7 @@ export function buildPatchRunScript(inner: string, o: PatchRunOptions): string {
     '  mkdir -p "$D" && chmod 700 "$D" || { echo TUGRA_PATCH_START_FAILED; exit 1; }',
     '  if [ ! -f "$D/$ID.run" ]; then',
     // One patch unit at a time on a host: two package managers would fight over the dpkg lock.
-    "    if systemctl list-units --plain --no-legend --no-pager --state=active,activating 'tugra-patch-*' 2>/dev/null | grep -q .; then echo TUGRA_PATCH_BUSY; exit 1; fi",
+    "    if systemctl list-units --plain --no-legend --no-pager --state=active,activating,deactivating,reloading 'tugra-patch-*' 2>/dev/null | grep -q .; then echo TUGRA_PATCH_BUSY; exit 1; fi",
     '    find "$D" -type f -mtime +7 -delete 2>/dev/null',
     `    printf %s '${b64(inner)}' | base64 -d > "$D/$ID.sh" && printf %s '${b64(runner)}' | base64 -d > "$D/$ID.run.tmp" && mv "$D/$ID.run.tmp" "$D/$ID.run" || { echo TUGRA_PATCH_START_FAILED; rm -f "$D/$ID.run" "$D/$ID.run.tmp"; exit 1; }`,
     '    if ! systemd-run --unit "$UNIT" --collect --quiet --description "Tugra OS package update" /bin/sh "$D/$ID.run" >"$D/$ID.start.err" 2>&1; then',
@@ -326,10 +330,10 @@ export function buildPatchRunScript(inner: string, o: PatchRunOptions): string {
     "  GONE=0",
     "  while :; do",
     "    tugra_emit_log",
-    '    if [ -f "$D/$ID.rc" ]; then tugra_emit_log; echo; echo "TUGRA_PATCH_RC=$(cat "$D/$ID.rc")"; exit 0; fi',
+    '    if [ -f "$D/$ID.rc" ]; then tugra_emit_log; tugra_emit_rest; echo; echo "TUGRA_PATCH_RC=$(cat "$D/$ID.rc")"; exit 0; fi',
     '    case "$(systemctl is-active "$UNIT" 2>/dev/null)" in active|activating|deactivating) GONE=0 ;; *) GONE=$((GONE + 1)) ;; esac',
     // The unit is gone and left no exit code (killed, host rebooted): report that rather than polling forever.
-    '    if [ "$GONE" -ge 3 ]; then tugra_emit_log; echo; echo "TUGRA_PATCH_RC=-1"; exit 0; fi',
+    '    if [ "$GONE" -ge 3 ]; then tugra_emit_log; tugra_emit_rest; echo; echo "TUGRA_PATCH_RC=-1"; exit 0; fi',
     `    sleep ${poll}`,
     "  done",
     "else",
