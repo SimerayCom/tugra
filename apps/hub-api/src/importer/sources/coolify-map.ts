@@ -1,4 +1,5 @@
 import { why } from "../reason";
+import { isSensitiveVisible } from "./coolify-sensitive";
 import { inlineDockerfileProblem } from "../../applications/dto";
 import type {
   ForeignApp,
@@ -17,7 +18,7 @@ import type {
  * plain read token, where Coolify strips passwords, env VALUES, internal_db_url and dockerfile. Since 4.7 the build
  * and run commands, deploy hooks, custom Docker options, labels and compose text are `read:sensitive`-gated too (and
  * that ability only counts for a token created by a team admin or owner); older versions (4.1.2 to 4.6) return them to
- * any read token. A gated field is absent from the row, never null: {@link isSensitiveVisibleRow} tells the two apart so
+ * any read token. A gated field is absent from the row, never null: {@link isSensitiveVisible} tells the two apart so
  * the plan can say what is not carried. We carry only non-secret identity: names, usernames, database names, env KEYS,
  * domains, ports, build config, and `secretRef` (the Coolify uuid) for a later sensitive-scoped fetch. Field names are
  * taken from the Coolify v4 models/controllers (4.1.2 to 4.7.5).
@@ -84,7 +85,7 @@ export interface CoolifyApp {
   publish_directory?: string | null;
   ports_exposes?: string | null; // "3000,8080"
   ports_mappings?: string | null; // "8080:80,9000:9000"
-  // Commands: read:sensitive-gated from 4.7 (absent from the row, see isSensitiveVisibleRow); any read token on 4.1.2 to 4.6.
+  // Commands: read:sensitive-gated from 4.7 (absent from the row, see isSensitiveVisible); any read token on 4.1.2 to 4.6.
   install_command?: string | null;
   build_command?: string | null;
   start_command?: string | null;
@@ -496,24 +497,6 @@ export function parseWatchPaths(raw: unknown): string[] {
   return out;
 }
 
-/** The row keys Coolify 4.7 hides from a token without `read:sensitive` (Application / database / Service `$hidden`). A key is ABSENT then, not null. */
-const SENSITIVE_MARKER_KEYS: Record<"application" | "database" | "service", readonly string[]> = {
-  application: ["install_command", "build_command", "start_command", "pre_deployment_command", "post_deployment_command", "custom_docker_run_options"],
-  database: ["custom_docker_run_options"],
-  service: ["docker_compose_raw"],
-};
-
-/**
- * Pure: whether a list/detail row was read with a token that may see sensitive fields. By KEY PRESENCE: 4.7 drops the gated keys
- * from the row when the token lacks `read:sensitive` (or its creator is not a team admin/owner), where 4.1.2 to 4.6 always
- * return them (null when unset), so a row carrying ANY marker key is a visible one and an old instance never trips the warning.
- * Not a row at all (null / array) counts as visible: there is nothing to warn about.
- */
-export function isSensitiveVisibleRow(row: unknown, kind: "application" | "database" | "service" = "application"): boolean {
-  if (!row || typeof row !== "object" || Array.isArray(row)) return true;
-  return SENSITIVE_MARKER_KEYS[kind].some((k) => k in (row as Record<string, unknown>));
-}
-
 /** Fixed-reason coverage rows for what is PRESENT on a Coolify app but has no Tugra carry path. Presence only. */
 function coolifyNotCarried(app: CoolifyApp, realGit: boolean, kind: ForeignApp["kind"]): NonNullable<ForeignApp["notCarried"]> {
   const out: NonNullable<ForeignApp["notCarried"]> = [];
@@ -787,8 +770,8 @@ export function buildCoolifyFleet(input: CoolifyFleetInput): ForeignFleet {
   if (servicesNeedingSecret > 0) {
     warnings.push(`${servicesNeedingSecret} service(s) need a read:sensitive token to fetch their compose file before import`);
   }
-  const hiddenApps = input.apps.filter((a) => !isSensitiveVisibleRow(a, "application")).length;
-  const hiddenDbs = input.databases.filter((d) => !isSensitiveVisibleRow(d, "database")).length;
+  const hiddenApps = input.apps.filter((a) => !isSensitiveVisible(a, "application")).length;
+  const hiddenDbs = input.databases.filter((d) => !isSensitiveVisible(d, "database")).length;
   if (hiddenApps > 0 || hiddenDbs > 0) {
     const what = [
       hiddenApps > 0 ? `${hiddenApps} application(s): install/build/start commands, deploy hooks, health-check commands, custom Docker options, container labels and inline Dockerfile` : "",

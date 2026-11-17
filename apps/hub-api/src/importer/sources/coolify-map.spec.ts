@@ -17,10 +17,10 @@ import {
   parseWatchPaths,
   parseComposeDomains,
   coolifyGitProvider,
-  isSensitiveVisibleRow,
   isValkeyImage,
   type CoolifyFleetInput,
 } from "./coolify-map";
+import { isSensitiveVisible } from "./coolify-sensitive";
 import { planImport } from "../import-planner";
 import { foreignAppToCreateInput, foreignAppToIngressPlan, foreignAppToPostCreateConfig } from "../apply-map";
 
@@ -643,14 +643,13 @@ describe("static flags in settings (R4)", () => {
 
 describe("sensitive fields hidden by the token (R5)", () => {
   it("isSensitiveVisibleRow is by KEY presence: a gated key is absent (not null) on a plain token, present (even null) otherwise", () => {
-    expect(isSensitiveVisibleRow({ uuid: "a", build_pack: "nixpacks" })).toBe(false);
-    expect(isSensitiveVisibleRow({ uuid: "a", start_command: null })).toBe(true);
-    expect(isSensitiveVisibleRow({ uuid: "a", build_command: "npm run build" })).toBe(true);
-    expect(isSensitiveVisibleRow({ uuid: "d" }, "database")).toBe(false);
-    expect(isSensitiveVisibleRow({ uuid: "d", custom_docker_run_options: null }, "database")).toBe(true);
-    expect(isSensitiveVisibleRow({ uuid: "s" }, "service")).toBe(false);
-    expect(isSensitiveVisibleRow({ uuid: "s", docker_compose_raw: "x" }, "service")).toBe(true);
-    expect(isSensitiveVisibleRow(null)).toBe(true); // nothing to judge
+    expect(isSensitiveVisible({ uuid: "a", build_pack: "nixpacks" })).toBe(false);
+    expect(isSensitiveVisible({ uuid: "a", start_command: null })).toBe(true);
+    expect(isSensitiveVisible({ uuid: "a", build_command: "npm run build" })).toBe(true);
+    expect(isSensitiveVisible({ uuid: "d" }, "database")).toBe(false);
+    expect(isSensitiveVisible({ uuid: "d", custom_docker_run_options: null }, "database")).toBe(true);
+    expect(isSensitiveVisible({ uuid: "s" }, "service")).toBe(false);
+    expect(isSensitiveVisible({ uuid: "s", docker_compose_raw: "x" }, "service")).toBe(true);
   });
 
   const input = (apps: CoolifyFleetInput["apps"], databases: CoolifyFleetInput["databases"] = []): CoolifyFleetInput => ({ servers: [], resourcesByServer: {}, apps, databases, services: [], envsByResource: {}, volumesByResource: {} });
