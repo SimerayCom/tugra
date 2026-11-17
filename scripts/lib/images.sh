@@ -159,6 +159,20 @@ prune_collect() {
       done
 }
 
+# prune_summary <current> <previous>: prints `<image count> <bytes>` of what prune_release_images would remove.
+prune_summary() {
+  local rows ids id n=0 bytes=0 size
+  rows="$(prune_collect | prune_select "$1" "$2")" || rows=""
+  ids="$(printf '%s\n' "$rows" | cut -d'|' -f1 | sort -u | sed '/^$/d')"
+  for id in $ids; do
+    n=$((n + 1))
+    size="$(docker image inspect -f '{{.Size}}' "$id" 2>/dev/null | tr -d '[:space:]')"
+    case "$size" in ''|*[!0-9]*) size=0 ;; esac
+    bytes=$((bytes + size))
+  done
+  printf '%s %s\n' "$n" "$bytes"
+}
+
 _img_human() {
   awk -v b="${1:-0}" 'BEGIN { if (b >= 1073741824) printf "%.1f GB", b / 1073741824; else printf "%.0f MB", b / 1048576 }'
 }
@@ -211,10 +225,10 @@ pull_agent_image() {
     [[ "$digest" =~ ^[0-9a-f]{64}$ ]] || { log "agent image: ignoring a malformed platform digest"; digest=""; }
   fi
   if [ -z "$digest" ]; then
-    docker pull "$repo:$version" >/dev/null 2>&1
+    docker pull "$repo:$version" >/dev/null
     return $?
   fi
-  docker pull "$repo@sha256:$digest" >/dev/null 2>&1 || return 1
+  docker pull "$repo@sha256:$digest" >/dev/null || return 1
   label="$(docker image inspect -f "{{index .Config.Labels \"$TUGRA_IMG_VERSION_LABEL\"}}" "$repo@sha256:$digest" 2>/dev/null | tr -d '[:space:]')" || return 1
   if [ "${label#v}" != "${version#v}" ]; then
     log "agent image: $repo@sha256:${digest:0:12}… reports version '${label:-none}', expected $version — not using it"

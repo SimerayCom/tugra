@@ -552,6 +552,26 @@ case "$1" in
   volume) echo "$SHIM_VOLUMES"; exit 0 ;;
   inspect) echo "$SHIM_INSPECT"; exit 0 ;;
   rm) exit 0 ;;
+  pull) if [ -n "$SHIM_AGENT_PULL_ERR" ]; then echo "$SHIM_AGENT_PULL_ERR" >&2; exit 1; fi; exit 0 ;;
+  image) # SHIM_IMAGES: rows ID|REPO|TAG|DIGEST|VERSION|SOURCE|TITLE|SIZE|INUSE (unset = an empty image store)
+      [ -n "$SHIM_IMAGES" ] || exit 0
+      case "$2" in
+        ls) awk -F'|' '{print $1"|"$2"|"$3"|"$4}' "$SHIM_IMAGES" ;;
+        inspect) shift 2; fmt=""; if [ "$1" = "-f" ]; then fmt="$2"; shift 2; fi
+          row="$(awk -F'|' -v r="$1" '$1==r || ($2!="<none>" && $3!="<none>" && $2":"$3==r) {print; exit}' "$SHIM_IMAGES")"
+          [ -n "$row" ] || exit 1
+          case "$fmt" in
+            *"{{.Size}}"*) echo "$row" | cut -d'|' -f8 ;;
+            *"image.source"*) echo "$row" | cut -d'|' -f5-7 ;;
+          esac ;;
+      esac
+      exit 0 ;;
+  rmi) [ -n "$SHIM_IMAGES" ] || exit 0
+      row="$(awk -F'|' -v r="$2" '$1==r || ($2!="<none>" && $3!="<none>" && $2":"$3==r) {print; exit}' "$SHIM_IMAGES")"
+      [ -n "$row" ] || exit 1
+      [ "$(echo "$row" | cut -d'|' -f9)" = "1" ] && exit 1
+      id="$(echo "$row" | cut -d'|' -f1)"
+      awk -F'|' -v i="$id" '$1!=i' "$SHIM_IMAGES" > "$SHIM_IMAGES.n"; mv "$SHIM_IMAGES.n" "$SHIM_IMAGES"; exit 0 ;;
   ps) # plain docker ps (the compose branch handles 'docker compose ps'): an unmanaged agent exists only without the label filter
       case "$*" in *tugra-agent-1*) case "$*" in *label=*) : ;; *) [ -n "$SHIM_UNMANAGED_AGENT" ] && echo stalecid ;; esac ;; esac
       exit 0 ;;
@@ -707,6 +727,81 @@ exit 0
         const r = install(p, HTTP, { env: { SHIM_PULL_ERR: "no matching manifest for linux/arm64/v8 in the manifest list entries" } });
         expect(r.code).toBe(0);
         expect(calls()).toContain("up -d --build");
+      });
+    });
+
+    describe("agent image + old release images", () => {
+      const AGENT_IMG = "ghcr.io/simeraycom/tugra-agent";
+      it("never `compose pull`s the bundled agent (its multi-platform index broke that pull on the containerd image store): a plain docker pull of the tag does it", () => {
+        const p = join(work, "agent-pull.env"); reset();
+        const r = install(p, HTTP, { env: { TUGRA_VERSION: "0.1.0-beta.19" } });
+        expect(r.code).toBe(0);
+        const log = calls();
+        const composePull = log.split("\n").find((l) => / pull /.test(l) && l.startsWith("docker compose")) as string;
+        expect(composePull).toBeDefined();
+        expect(composePull).toMatch(/pull postgres redis hub-api web tugra-updater$/);
+        expect(log).toContain(`docker pull ${AGENT_IMG}:0.1.0-beta.19`);
+        expect(log.indexOf(`docker pull ${AGENT_IMG}`)).toBeLessThan(log.indexOf("up -d"));
+        expect(log).not.toContain("build agent");
+        // an unpinned install follows :latest, exactly as the compose file does
+        const q = join(work, "agent-pull-latest.env"); reset();
+        install(q, HTTP);
+        expect(calls()).toContain(`docker pull ${AGENT_IMG}:latest`);
+      });
+
+      it("an agent image that cannot be pulled stops a pinned install before any container is recreated", () => {
+        const p = join(work, "agent-pull-fail.env"); reset();
+        const r = install(p, HTTP, { env: { TUGRA_VERSION: "0.1.0-beta.19", SHIM_AGENT_PULL_ERR: "failed to copy: httpReadSeeker: failed open: could not fetch content descriptor" } });
+        expect(r.code).toBe(1);
+        expect(calls()).not.toMatch(/up -d/);
+        expect(r.out).toContain("pinned");
+      });
+
+      const HUB = "ghcr.io/simeraycom/tugra-hub";
+      const SRC = "https://github.com/SimerayCom/tugra";
+      const images = [
+        `sha256:old11|${HUB}|0.1.0-beta.11|<none>|0.1.0-beta.11|${SRC}|Tugra Hub API|3000|0`,
+        `sha256:old17|${HUB}|0.1.0-beta.17|<none>|0.1.0-beta.17|${SRC}|Tugra Hub API|3000|1`, // in use: stays
+        `sha256:prev18|${HUB}|<none>|sha256:aa18|0.1.0-beta.18|${SRC}|Tugra Hub API|3000|0`,
+        `sha256:cur19|${HUB}|<none>|sha256:aa19|0.1.0-beta.19|${SRC}|Tugra Hub API|3000|0`,
+        "sha256:pg|postgres|16-alpine|<none>|||||0",
+      ];
+      /** An existing install on beta.18 that is upgraded to beta.19 by this run. */
+      const upgrade = (name: string, extra: string[]) => {
+        const p = join(work, name);
+        dry(p, HTTP);
+        writeFileSync(p, readFileSync(p, "utf8").replace(/^TUGRA_VERSION=.*\n?/m, "") + "TUGRA_VERSION=0.1.0-beta.18\n");
+        const table = join(work, `${name}.images`);
+        writeFileSync(table, images.join("\n") + "\n");
+        reset();
+        const r = install(p, [...HTTP, ...extra], { env: { TUGRA_VERSION: "0.1.0-beta.19", SHIM_IMAGES: table } });
+        return { r, table };
+      };
+
+      it("without --prune-images it only reports what could be freed (nothing is removed)", () => {
+        const { r, table } = upgrade("prune-hint.env", []);
+        expect(r.code).toBe(0);
+        expect(r.out).toMatch(/2 old Tugra release image\(s\), about 0 MB.*--prune-images/);
+        expect(calls()).not.toContain("docker rmi");
+        expect(readFileSync(table, "utf8")).toContain("sha256:old11");
+      });
+
+      it("--prune-images removes Tugra's own releases older than the previous one, keeps current + previous and everything foreign or in use, and logs it", () => {
+        const { r, table } = upgrade("prune-now.env", ["--prune-images"]);
+        expect(r.code).toBe(0);
+        const left = readFileSync(table, "utf8");
+        expect(left).not.toContain("sha256:old11");
+        for (const keep of ["sha256:old17", "sha256:prev18", "sha256:cur19", "sha256:pg"]) expect(left).toContain(keep);
+        expect(calls()).toMatch(/docker rmi ghcr\.io\/simeraycom\/tugra-hub:0\.1\.0-beta\.11/);
+        expect(calls()).not.toMatch(/docker rmi [^\n]*(postgres|prev18|cur19)/);
+        expect(r.out).toMatch(/image cleanup: removed 1 old Tugra release image\(s\)/);
+      });
+
+      it("an install that built from source never offers or runs the cleanup", () => {
+        const p = join(work, "prune-build.env"); reset();
+        const r = install(p, [...HTTP, "--build", "--prune-images"], { env: { SHIM_IMAGES: join(work, "prune-hint.env.images") } });
+        expect(r.code).toBe(0);
+        expect(calls()).not.toContain("docker rmi");
       });
     });
 
