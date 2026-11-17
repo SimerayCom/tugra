@@ -23,6 +23,8 @@ vi.mock("../../../../lib/api", () => ({
 }));
 
 import ServerDetailPage from "./page";
+import { patchTiming } from "../../../../lib/patching";
+
 
 const server = (o: Partial<ServerView> = {}): ServerView =>
   ({
@@ -65,7 +67,9 @@ function mount() {
 const confirmDialog = async () => fireEvent.click(await screen.findByRole("button", { name: "Confirm" }));
 const toastTexts = () => toasts.map((t) => t.message);
 
+const timing0 = { ...patchTiming };
 beforeEach(() => {
+  Object.assign(patchTiming, timing0);
   toasts = [];
   unsub = subscribeToast((t) => toasts.push(t));
   stubs.fns = { getServer: async () => server() };
@@ -167,26 +171,115 @@ describe("server detail feedback", () => {
     packages: [{ name: "openssl", current: "1", candidate: "2" }], ...o,
   });
 
-  it("patch apply toasts completion and a reboot-required notice from the re-check", async () => {
+  const pkgs = (...names: string[]) => names.map((name) => ({ name, current: "1", candidate: "2" }));
+  const err = (status: number, message: string) => Object.assign(new Error(message), { status });
+  const clickCheck = async () => fireEvent.click(await screen.findByRole("button", { name: "Check for updates" }));
+
+  it("update all re-checks by itself, clears the applied rows and toasts what changed", async () => {
     nav.tab = "updates";
     let calls = 0;
-    stubs.fns.checkUpdates = async () => (++calls === 1 ? pkgInfo() : pkgInfo({ rebootRequired: true }));
+    stubs.fns.checkUpdates = async () => (++calls === 1 ? pkgInfo({ count: 2, packages: pkgs("docker-ce", "openssl") }) : pkgInfo({ count: 0, packages: [], rebootRequired: true }));
     stubs.fns.upgradeAll = async () => ({ output: "done", exitCode: 0 });
     mount();
-    fireEvent.click(await screen.findByRole("button", { name: "Check for updates" }));
+    await clickCheck();
+    expect(await screen.findByText("docker-ce")).toBeInTheDocument();
     fireEvent.click(await screen.findByRole("button", { name: "Update all" }));
-    await waitFor(() => expect(toastTexts()).toContain("Updates applied"));
+    await waitFor(() => expect(toastTexts()).toContain("2 package(s) updated — the server is up to date."));
     await waitFor(() => expect(toastTexts()).toContain("Updates applied — a reboot is required to finish them."));
+    expect(calls).toBe(2); // no manual second click
+    expect(screen.queryByText("docker-ce")).toBeNull();
+    expect(screen.getByText("Your server is up to date.")).toBeInTheDocument();
+    expect(screen.getByText("A reboot is required to finish applying updates.")).toBeInTheDocument();
   });
 
-  it("a non-zero apply exit toasts a failure instead of success", async () => {
+  it("a single-package update reports the counts and keeps the remaining rows", async () => {
     nav.tab = "updates";
-    stubs.fns.checkUpdates = async () => pkgInfo();
+    let calls = 0;
+    stubs.fns.checkUpdates = async () => (++calls === 1 ? pkgInfo({ count: 2, packages: pkgs("curl", "openssl") }) : pkgInfo({ count: 1, packages: pkgs("openssl") }));
+    stubs.fns.upgradeOne = async () => ({ output: "ok", exitCode: 0 });
+    mount();
+    await clickCheck();
+    fireEvent.click((await screen.findAllByRole("button", { name: "Update" }))[0]);
+    await waitFor(() => expect(toastTexts()).toContain("curl updated — 1 package(s) still pending."));
+    expect(screen.queryByText("curl")).toBeNull();
+    expect(screen.getByText("openssl")).toBeInTheDocument();
+  });
+
+  it("warns when an update leaves everything pending", async () => {
+    nav.tab = "updates";
+    stubs.fns.checkUpdates = async () => pkgInfo({ count: 1, packages: pkgs("linux-image") });
+    stubs.fns.upgradeAll = async () => ({ output: "kept back", exitCode: 0 });
+    mount();
+    await clickCheck();
+    fireEvent.click(await screen.findByRole("button", { name: "Update all" }));
+    await waitFor(() => expect(toasts.some((x) => x.type === "error" && /No packages were updated — 1 still pending/.test(x.message))).toBe(true));
+  });
+
+  it("when the update restarts Docker the card waits for the agent and re-checks instead of showing stale rows", async () => {
+    nav.tab = "updates";
+    patchTiming.intervalMs = 5;
+    let phase: "before" | "down" | "up" = "before";
+    let downChecks = 0;
+    stubs.fns.checkUpdates = async () => {
+      if (phase === "before") return pkgInfo({ count: 2, packages: pkgs("docker-ce", "containerd.io") });
+      if (phase === "down" && ++downChecks < 3) throw err(503, "The agent is offline — try again once it reconnects.");
+      return pkgInfo({ count: 0, packages: [] });
+    };
+    stubs.fns.upgradeAll = async () => { phase = "down"; throw err(503, "agent disconnected"); };
+    mount();
+    await clickCheck();
+    expect(await screen.findByText("docker-ce")).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: "Update all" }));
+    expect(await screen.findByText(/reconnecting/)).toBeInTheDocument();
+    expect(screen.queryByText("docker-ce")).toBeNull(); // stale rows are not shown while waiting
+    await waitFor(() => expect(toastTexts()).toContain("2 package(s) updated. The agent restarted during the update and is back online — the server is up to date."));
+    expect(screen.getByText("Your server is up to date.")).toBeInTheDocument();
+    expect(downChecks).toBe(3);
+    expect(toasts.filter((x) => x.type === "error")).toHaveLength(0);
+  });
+
+  it("hides the stale list and says so when the re-check never gets an answer", async () => {
+    nav.tab = "updates";
+    patchTiming.intervalMs = 5;
+    patchTiming.deadlineMs = 40;
+    let after = false;
+    stubs.fns.checkUpdates = async () => {
+      if (!after) return pkgInfo({ rebootRequired: true });
+      throw err(503, "offline");
+    };
+    stubs.fns.upgradeAll = async () => { after = true; return { output: "done", exitCode: 0 }; };
+    mount();
+    await clickCheck();
+    fireEvent.click(await screen.findByRole("button", { name: "Update all" }));
+    await waitFor(() => expect(toasts.some((x) => x.type === "error" && /could not be re-checked/.test(x.message))).toBe(true));
+    expect(screen.queryByText("openssl")).toBeNull();
+    expect(screen.queryByText("A reboot is required to finish applying updates.")).toBeNull();
+    expect(screen.getByRole("alert")).toHaveTextContent("press “Check for updates”");
+    expect(toastTexts()).not.toContain("Updates applied");
+  });
+
+  it("a refused apply (4xx) toasts the error and leaves the list alone", async () => {
+    nav.tab = "updates";
+    let calls = 0;
+    stubs.fns.checkUpdates = async () => { calls++; return pkgInfo(); };
+    stubs.fns.upgradeAll = async () => { throw err(403, "no permission"); };
+    mount();
+    await clickCheck();
+    fireEvent.click(await screen.findByRole("button", { name: "Update all" }));
+    await waitFor(() => expect(toasts).toContainEqual({ message: "no permission", type: "error" }));
+    expect(calls).toBe(1);
+    expect(screen.getByText("openssl")).toBeInTheDocument();
+  });
+
+  it("a non-zero apply exit toasts a failure with counts instead of success", async () => {
+    nav.tab = "updates";
+    let calls = 0;
+    stubs.fns.checkUpdates = async () => (++calls === 1 ? pkgInfo({ count: 2, packages: pkgs("a", "b") }) : pkgInfo({ count: 1, packages: pkgs("b") }));
     stubs.fns.upgradeAll = async () => ({ output: "E: broken", exitCode: 100 });
     mount();
-    fireEvent.click(await screen.findByRole("button", { name: "Check for updates" }));
+    await clickCheck();
     fireEvent.click(await screen.findByRole("button", { name: "Update all" }));
-    await waitFor(() => expect(toasts.some((t) => t.type === "error" && /did not finish cleanly/.test(t.message))).toBe(true));
+    await waitFor(() => expect(toasts.some((x) => x.type === "error" && /did not finish cleanly — 1 package\(s\) updated, 1 still pending/.test(x.message))).toBe(true));
     expect(toastTexts()).not.toContain("Updates applied");
   });
 
