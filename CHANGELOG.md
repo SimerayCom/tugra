@@ -7,6 +7,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.0-beta.19] - 2026-11-17
+
 - **Compose services come back after a Docker restart or a reboot.** Every compose member that sets no restart
   policy (App Store templates, pasted and git compose stacks, previews) now gets `restart: unless-stopped` through
   Tugra's override file; an explicit `restart` (including `"no"`) and init/one-shot members are left alone. Running
