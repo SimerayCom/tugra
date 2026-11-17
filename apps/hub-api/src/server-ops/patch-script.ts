@@ -8,7 +8,8 @@
 
 // Allows the name forms every manager uses (incl. dnf's `name.x86_64` arch suffix with `_`, and
 // capitalised RPM names like NetworkManager). Rejects shell metacharacters, spaces and leading flags.
-const PKG_RE = /^[A-Za-z0-9][A-Za-z0-9._+-]*$/;
+// A trailing `-` is apt syntax for "REMOVE this package" (`apt-get install --only-upgrade foo-`), so it can never end a name.
+const PKG_RE = /^[A-Za-z0-9](?:[A-Za-z0-9._+-]*[A-Za-z0-9._+])?$/;
 
 export type PkgManager = "apt" | "dnf" | "yum" | "apk";
 
