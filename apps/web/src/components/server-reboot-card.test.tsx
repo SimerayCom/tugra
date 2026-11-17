@@ -377,6 +377,28 @@ describe("last verification report", () => {
     expect(within(rep).getByText("The server still asks for a reboot.")).toBeTruthy();
   });
 
+  it("a host that was already down before the reboot is labelled as such (not as a failure of the reboot), and an unreadable flag is said", async () => {
+    stubStatus({
+      last: done("degraded", report({
+        domains: [{ host: "old.example.com", verdict: "not_answering_before", status: 404 }],
+        rebootRequired: "unknown",
+        summary: { containersOk: 2, containersExpected: 2, domainsOk: 0, domainsExpected: 0 },
+      })),
+    });
+    wrap(card());
+    const rep = await screen.findByTestId("reboot-report");
+    expect(within(rep).getByText("Was not answering before")).toBeTruthy();
+    expect(rep.textContent).toContain("old.example.com · 404");
+    expect(within(rep).getByText("Whether the server still asks for a reboot could not be read.")).toBeTruthy();
+  });
+
+  it("failed: a missed scheduled reboot says it was not run", async () => {
+    stubStatus({ last: done("failed", { ...report(), containers: [], domains: [], reason: "missed", docker: "unknown" }) });
+    wrap(card());
+    const rep = await screen.findByTestId("reboot-report");
+    expect(within(rep).getByRole("alert").textContent).toContain("so it was not run");
+  });
+
   it("failed: shows why in words and no per-item rows", async () => {
     stubStatus({ last: done("failed", { ...report(), containers: [], domains: [], reason: "agent_never_returned", docker: "unknown", summary: { containersOk: 0, containersExpected: 2, domainsOk: 0, domainsExpected: 1 } }) });
     wrap(card());

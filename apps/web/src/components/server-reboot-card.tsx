@@ -30,7 +30,7 @@ import {
 type Tone = "ok" | "warn" | "danger" | "muted";
 const RESULT_TONE: Record<RebootResult, Tone> = { ok: "ok", degraded: "warn", failed: "danger", cancelled: "muted" };
 const CONTAINER_TONE: Record<RebootContainerVerdict, Tone> = { ok: "ok", missing: "danger", unhealthy: "danger", pending: "warn", skipped: "muted" };
-const DOMAIN_TONE: Record<RebootDomainVerdict, Tone> = { ok: "ok", not_answering: "danger", pending: "warn", unverified: "muted" };
+const DOMAIN_TONE: Record<RebootDomainVerdict, Tone> = { ok: "ok", not_answering: "danger", not_answering_before: "muted", pending: "warn", unverified: "muted" };
 
 export const REBOOT_QUERY_KEY = (id: string) => ["server-reboot", id] as const;
 
@@ -280,6 +280,7 @@ function ReportBody({ report, result }: { report: RebootReport; result: RebootRe
       )}
       {report.docker === "inactive" && <Warning>{t("reboot.report.dockerInactive")}</Warning>}
       {report.rebootRequired === "still_set" && <Warning>{t("reboot.report.rebootRequiredStill")}</Warning>}
+      {report.rebootRequired === "unknown" && result === "degraded" && <Warning>{t("reboot.report.rebootRequiredUnknown")}</Warning>}
       {report.domainsNote === "skipped_no_host_port" && <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 8 }}>{t("reboot.report.domainsSkipped")}</div>}
       {report.domainsNote === "probe_unavailable" && <Warning>{t("reboot.report.probeUnavailable")}</Warning>}
 

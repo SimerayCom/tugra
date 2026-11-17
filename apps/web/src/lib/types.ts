@@ -604,7 +604,7 @@ export interface DpkgInterrupted {
 export type RebootState = "SCHEDULED" | "STARTING" | "REBOOTING" | "WAITING_AGENT" | "VERIFYING" | "DONE";
 export type RebootResult = "ok" | "degraded" | "failed" | "cancelled";
 export type RebootContainerVerdict = "ok" | "missing" | "unhealthy" | "pending" | "skipped";
-export type RebootDomainVerdict = "ok" | "not_answering" | "pending" | "unverified";
+export type RebootDomainVerdict = "ok" | "not_answering" | "not_answering_before" | "pending" | "unverified";
 export interface RebootReport {
   version: 1;
   checkedAt: string;

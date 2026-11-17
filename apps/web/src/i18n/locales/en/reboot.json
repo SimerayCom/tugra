@@ -63,6 +63,7 @@
     "containers": "Containers",
     "domains": "Domains",
     "rebootRequiredStill": "The server still asks for a reboot.",
+    "rebootRequiredUnknown": "Whether the server still asks for a reboot could not be read.",
     "domainsSkipped": "Domains were not checked: this server's proxy has no host port to probe.",
     "probeUnavailable": "Domains could not be checked: the probe could not run on the server.",
     "dockerInactive": "Docker is not running.",
@@ -79,6 +80,7 @@
     "domain": {
       "ok": "Answering",
       "not_answering": "Not answering",
+      "not_answering_before": "Was not answering before",
       "pending": "Not checked yet",
       "unverified": "Not checked"
     }
@@ -94,6 +96,8 @@
     "host_did_not_reboot": "The server did not reboot.",
     "agent_never_returned": "The server's agent did not come back in time.",
     "docker_inactive": "Docker did not come back after the reboot.",
-    "state_unreadable": "The server could not be read after the reboot."
+    "state_unreadable": "The server could not be read after the reboot.",
+    "missed": "The scheduled time passed while the hub could not start the reboot, so it was not run.",
+    "unauthorized": "The person who scheduled the reboot can no longer run server operations on this team."
   }
 }

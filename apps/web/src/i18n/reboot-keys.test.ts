@@ -23,12 +23,12 @@ describe("reboot i18n coverage", () => {
   it("every key built dynamically has all its members (verdicts, reasons, steps, hints, results, schedule errors)", () => {
     const need: Record<string, string[]> = {
       "verdict.container": ["ok", "missing", "unhealthy", "pending", "skipped"],
-      "verdict.domain": ["ok", "not_answering", "pending", "unverified"],
+      "verdict.domain": ["ok", "not_answering", "not_answering_before", "pending", "unverified"],
       "report.result": ["ok", "degraded", "failed", "cancelled"],
       "live.step": ["scheduled", "rebooting", "waiting", "verifying"],
       "live.hint": ["scheduled", "rebooting", "waiting", "verifying"],
       scheduleError: ["invalid", "past", "tooFar"],
-      reason: ["snapshot_failed", "agent_offline", "busy_patch", "busy_deploy", "unsupported", "start_failed", "interrupted", "host_did_not_reboot", "agent_never_returned", "docker_inactive", "state_unreadable"],
+      reason: ["snapshot_failed", "agent_offline", "busy_patch", "busy_deploy", "unsupported", "start_failed", "interrupted", "host_did_not_reboot", "agent_never_returned", "docker_inactive", "state_unreadable", "missed", "unauthorized"],
     };
     for (const [prefix, members] of Object.entries(need)) for (const m of members) expect(keys, `${prefix}.${m}`).toContain(`${prefix}.${m}`);
   });
