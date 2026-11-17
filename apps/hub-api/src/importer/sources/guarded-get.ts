@@ -2,6 +2,7 @@ import { request as httpsRequest } from "node:https";
 import { request as httpRequest } from "node:http";
 import { assertAllowedUrl, guardedLookup } from "./ssrf-guard";
 import { AuthPausedError, retryAfterHeader, type RequestLimits } from "./request-limits";
+import { safeApiMessage } from "./api-message";
 
 const TIMEOUT_MS = 15_000; // per-socket idle timeout
 const DEADLINE_MS = 30_000; // hard overall cap: a trickle/stalled response cannot hang the request forever
@@ -14,12 +15,25 @@ export interface GuardedGetConfig {
   label: string;
   /** Per-request headers (auth + accept). A thunk so a rotated token is read fresh each call. */
   headers: () => Record<string, string>;
-  /** Trailing hint appended to a non-2xx error message (token/allowed-IPs advice). */
-  errorHint?: (status: number) => string;
+  /**
+   * Trailing hint appended to a non-2xx error message (token/allowed-IPs advice). `ctx.message` is the safe excerpt of the
+   * response's JSON `message` (only when {@link includeApiMessage} is on and the status is 4xx), `ctx.egressIp` this hub's
+   * public address (only for a 403, only when {@link egressIp} is wired and knows it).
+   */
+  errorHint?: (status: number, ctx?: ErrorHintContext) => string;
+  /** Keep the first ~100 safe characters of a 4xx response's JSON `message` in the error (Coolify: tells the 403 causes apart). */
+  includeApiMessage?: boolean;
+  /** This hub's egress IP as far as it is known (null = unknown); asked only when a 403 hint is built. Never throws into the request. */
+  egressIp?: () => Promise<string | null>;
   /** Optional pacing + 429/lockout handling (Coolify 4.7+). Absent = every non-2xx is surfaced as-is (Dokploy). */
   limits?: RequestLimits;
   /** Test seam: replaces the socket. The real transport is SSRF-pinned; an injected one is only ever used by specs. */
   transport?: RawTransport;
+}
+
+export interface ErrorHintContext {
+  message?: string | null;
+  egressIp?: string | null;
 }
 
 /** A raw response: any non-redirect status, the body (size-capped) and the `Retry-After` header. */
@@ -65,6 +79,25 @@ export class GuardedHttpGet {
     });
   }
 
+  /** The values that must never appear in an error: the configured credentials (each header value, minus the Accept header). */
+  private secrets(): string[] {
+    return Object.entries(this.cfg.headers())
+      .filter(([k]) => k.toLowerCase() !== "accept")
+      .map(([, v]) => v);
+  }
+
+  private async hintContext(status: number, message: string | null): Promise<ErrorHintContext> {
+    let egressIp: string | null = null;
+    if (status === 403 && this.cfg.egressIp) {
+      try {
+        egressIp = await this.cfg.egressIp();
+      } catch {
+        egressIp = null; // an unresolvable address must never hide the real error
+      }
+    }
+    return { message, egressIp };
+  }
+
   private async fetchBody<T>(path: string, accept: string, parse: (body: string) => T): Promise<T> {
     const label = this.cfg.label;
     const url = new URL(`${this.cfg.apiPrefix}${path}`, this.base);
@@ -75,14 +108,16 @@ export class GuardedHttpGet {
       res = this.cfg.limits ? await this.cfg.limits.run(send) : await send();
     } catch (e) {
       if (e instanceof AuthPausedError) {
-        const hint = this.cfg.errorHint?.(e.status) ?? "";
+        const hint = this.cfg.errorHint?.(e.status, await this.hintContext(e.status, null)) ?? "";
         throw new Error(`${label} API error ${e.status}${hint} — requests paused for ${Math.ceil(e.retryAfterMs / 1000)} s after repeated authorization failures, so the token is not locked out`);
       }
       throw e;
     }
     if (res.status < 200 || res.status >= 300) {
-      const hint = this.cfg.errorHint?.(res.status) ?? "";
-      throw new Error(`${label} API error ${res.status}${hint}`);
+      const is4xx = res.status >= 400 && res.status < 500;
+      const message = this.cfg.includeApiMessage && is4xx ? safeApiMessage(res.body, this.secrets()) : null;
+      const hint = this.cfg.errorHint?.(res.status, await this.hintContext(res.status, message)) ?? "";
+      throw new Error(`${label} API error ${res.status}${message ? `: "${message}"` : ""}${hint}`);
     }
     return parse(res.body.toString("utf8"));
   }
