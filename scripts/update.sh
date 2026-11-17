@@ -4,8 +4,10 @@
 # It drains a Redis job queue that the hub LPUSHes to when the owner clicks "Update now" (or auto-update
 # fires). BEFORE anything is swapped it takes a mandatory restore point (pg_dump + .env copy, see
 # lib/snapshot.sh), then pulls the target images and recreates hub-api + web (--no-deps) — never postgres,
-# redis or itself. Once those are healthy it also refreshes the local `agent` (non-fatal) and pre-pulls the
-# updater image. The updater cannot recreate itself mid-run, so when its running image is not the one the
+# redis or itself. Once those are healthy it also refreshes the local `agent` (non-fatal; pulled by its signed
+# per-arch image digest, never `compose pull`, see lib/images.sh) and pre-pulls the updater image, then removes
+# Tugra's own release images older than the previous release (lib/images.sh; TUGRA_PRUNE_IMAGES=0 turns that off).
+# The updater cannot recreate itself mid-run, so when its running image is not the one the
 # release's compose now resolves (the common case: TUGRA_VERSION moved) it starts a detached one-shot helper
 # AFTER the update is final that recreates only the `tugra-updater` service.
 # The hub cannot do this: recreating hub-api kills the process running the command. This container survives.
@@ -13,6 +15,10 @@
 #   scripts/update.sh --watch                 # the sidecar loop (BLPOP the queue forever)
 #   scripts/update.sh --dry-run --target X    # print what an update to X would run, touching nothing
 #   scripts/update.sh --dry-run --job '{"targetVersion":"X","hubDigest":"<64hex>","webDigest":"<64hex>"}'
+#   scripts/update.sh --apply-host-files <version> <hostFilesDigest>
+#                                             # one-shot: verify + apply the release's signed compose/scripts to the
+#                                             # checkout of a stack ALREADY running <version> (the hub's bootstrap for an
+#                                             # install whose updater predates host-files); no pull, no recreate
 #
 # Queue job (flat JSON strings; no jq in this image): {"targetVersion":"X"} (legacy, tag-only) or
 # {"targetVersion":"X","hubDigest":"<64hex>","webDigest":"<64hex>"}. With BOTH digests the images are pulled by
@@ -21,10 +27,14 @@
 # the signature-verified versions.json) makes the update also apply the release's compose file + installer scripts:
 # this sidecar re-verifies and applies them itself (scripts/lib/hostfiles.sh) — before the pull, with a backup and an
 # automatic rollback; the .env is never edited by that step. Without it the update is images-only, as before.
+# Optional "agentAmd64Digest" / "agentArm64Digest" (64-hex, the signed per-platform agent image manifests) let the
+# local agent be pulled by digest; without them it is pulled by tag with a plain `docker pull`.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
-REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+# TUGRA_REPO_DIR points the script at a checkout other than its own location: the one-shot host-files bootstrap runs
+# the updater image's baked copy of this script against the operator's checkout mounted at its HOST path.
+REPO_DIR="${TUGRA_REPO_DIR:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 COMPOSE_FILE="$REPO_DIR/deploy/docker-compose.yml"
 UPDATER_REFRESH_KEY="instance:update:updater-refreshed"
 UPDATER_REFRESH_WAIT="${UPDATER_REFRESH_WAIT:-30}"
@@ -40,9 +50,15 @@ DRY=0
 TARGET=""
 JOB=""
 WATCH=0
+APPLY_HF=0
+APPLY_HF_VERSION=""
+APPLY_HF_DIGEST=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --watch) WATCH=1; shift ;;
+    --apply-host-files)
+      [ $# -ge 3 ] || { printf 'update.sh: --apply-host-files needs <version> <hostFilesDigest>\n' >&2; exit 1; }
+      APPLY_HF=1; APPLY_HF_VERSION="$2"; APPLY_HF_DIGEST="$3"; shift 3 ;;
     --dry-run) DRY=1; shift ;;
     --target) TARGET="${2:-}"; shift 2 ;;
     --job) JOB="${2:-}"; shift 2 ;;
@@ -86,6 +102,8 @@ TUGRA_SNAPSHOT_DRY="$DRY"
 . "$SCRIPT_DIR/lib/snapshot.sh"
 # shellcheck source=lib/hostfiles.sh
 . "$SCRIPT_DIR/lib/hostfiles.sh"
+# shellcheck source=lib/images.sh
+. "$SCRIPT_DIR/lib/images.sh"
 
 # The sidecar only has the checkout (/repo) mounted. A TUGRA_BACKUP_DIR outside it would be written into the
 # container's ephemeral filesystem and vanish while the log claims success — so refuse it up front.
@@ -120,6 +138,8 @@ is_hex64() { [[ "${1:-}" =~ ^[0-9a-f]{64}$ ]]; }
 # Image repos used to look a pulled digest up locally (override for a mirror).
 HUB_IMAGE_REPO="${HUB_IMAGE_REPO:-ghcr.io/simeraycom/tugra-hub}"
 WEB_IMAGE_REPO="${WEB_IMAGE_REPO:-ghcr.io/simeraycom/tugra-web}"
+AGENT_IMAGE_REPO="${AGENT_IMAGE_REPO:-ghcr.io/simeraycom/tugra-agent}"
+UPDATER_IMAGE_REPO="${UPDATER_IMAGE_REPO:-ghcr.io/simeraycom/tugra-updater}"
 VERSION_LABEL="org.opencontainers.image.version"
 
 # Write the version (+ the hub/web digest pins when `touched` is 1) into .env. Digest values are bare hex, or
@@ -180,40 +200,6 @@ set_recovery_required() {
   # can't silently lapse back to idle, plus a durable marker the hub gates new updates on until it is cleared.
   redis SET "$STATUS_KEY" "{\"phase\":\"recovery_required\",\"targetVersion\":\"$target\",\"error\":\"update to $target failed and the previous version could not be restored and verified — manual recovery required (set TUGRA_VERSION=$prev${pins}${files} and recreate hub-api + web)$(snap_note)\"}"
   redis SET "instance:update:recovery_required" "{\"targetVersion\":\"$target\",\"previousVersion\":\"$prev\"}"
-}
-
-# Strictly-newer guard (defense-in-depth; the hub already gated never-downgrade). Semver-aware:
-# `sort -V` ranks 0.1.0 BELOW 0.1.0-beta.1 (the opposite of semver), which would strand beta instances.
-# Rules: strip a leading "v" and any +build; compare the numeric major.minor.patch core first; on an equal
-# core a release outranks any prerelease of it; two prereleases of the same core fall back to version sort
-# on the prerelease part (beta.2 < beta.10). Usage: is_newer <candidate> <baseline> -> 0 if candidate > baseline.
-is_newer() {
-  local a="${1#v}" b="${2#v}"
-  a="${a%%+*}"; b="${b%%+*}"
-  [ "$a" != "$b" ] || return 1
-  local acore="${a%%-*}" bcore="${b%%-*}" apre="" bpre=""
-  case "$a" in *-*) apre="${a#*-}" ;; esac
-  case "$b" in *-*) bpre="${b#*-}" ;; esac
-  local a1 a2 a3 b1 b2 b3
-  IFS=. read -r a1 a2 a3 <<EOF_A
-$acore
-EOF_A
-  IFS=. read -r b1 b2 b3 <<EOF_B
-$bcore
-EOF_B
-  # Missing/non-numeric components count as 0.
-  a1="${a1:-0}"; a2="${a2:-0}"; a3="${a3:-0}"; b1="${b1:-0}"; b2="${b2:-0}"; b3="${b3:-0}"
-  local x y
-  for pair in "$a1 $b1" "$a2 $b2" "$a3 $b3"; do
-    x="${pair% *}"; y="${pair#* }"
-    case "$x$y" in *[!0-9]*) x=0; y=0 ;; esac
-    if [ "$x" -gt "$y" ]; then return 0; fi
-    if [ "$x" -lt "$y" ]; then return 1; fi
-  done
-  # Equal core: release > prerelease; no prerelease on either side means identical (already excluded).
-  if [ -z "$apre" ] && [ -n "$bpre" ]; then return 0; fi
-  if [ -n "$apre" ] && [ -z "$bpre" ]; then return 1; fi
-  [ "$(printf '%s\n%s\n' "$bpre" "$apre" | sort -V | tail -1)" = "$apre" ]
 }
 
 # Poll the given services (default hub-api) until ALL are healthy, or give up. Returns 0 healthy, 1
@@ -373,6 +359,92 @@ updater_image_stale() {
   return 1
 }
 
+# The local agent's platform architecture as the release pipeline names it (amd64 | arm64), from the engine itself.
+# Dry-run hook: DRY_ARCH (default amd64).
+local_arch() {
+  local a
+  if [ "$DRY" -eq 1 ]; then printf '%s' "${DRY_ARCH:-amd64}"; return 0; fi
+  a="$(docker version --format '{{.Server.Arch}}' 2>/dev/null | tr -d '[:space:]' || true)"
+  case "$a" in x86_64) a=amd64 ;; aarch64) a=arm64 ;; esac
+  printf '%s' "$a"
+}
+
+# Bring the bundled agent onto <version>: pull its image (pull_agent_image, lib/images.sh: by signed per-arch digest
+# when the job carries one, else a plain `docker pull`), then recreate ONLY the agent service from the local image.
+# `compose pull agent` is deliberately not used — it fails on the containerd image store (see lib/images.sh), and its
+# "must be built from source: docker compose build agent" follow-up warning is just that failure surfacing.
+# Usage: refresh_local_agent <version> <amd64 digest> <arm64 digest>
+refresh_local_agent() {
+  local version="$1" amd="${2:-}" arm="${3:-}" arch digest=""
+  arch="$(local_arch)"
+  case "$arch" in amd64) digest="$amd" ;; arm64) digest="$arm" ;; esac
+  is_hex64 "$digest" || digest=""
+  if [ "$DRY" -eq 1 ]; then
+    if [ -n "$digest" ]; then
+      printf 'RUN: docker pull %s@sha256:%s\n' "$AGENT_IMAGE_REPO" "$digest"
+      printf 'RUN: docker tag <that image> %s:%s\n' "$AGENT_IMAGE_REPO" "$version"
+    else
+      printf 'RUN: docker pull %s:%s\n' "$AGENT_IMAGE_REPO" "$version"
+    fi
+    compose up -d --no-deps agent
+    return 0
+  fi
+  if ! pull_agent_image "$version" "$digest"; then
+    log "could not pull the agent image $AGENT_IMAGE_REPO:$version${digest:+ (platform digest ${digest:0:12}…)}"
+    return 1
+  fi
+  compose up -d --no-deps agent
+}
+
+# Remove Tugra's own release images older than the previous release. Opt-out: TUGRA_PRUNE_IMAGES=0 (env or .env).
+# Usage: prune_old_release_images <current (new) version> <previous version>
+prune_old_release_images() {
+  if [ "$(_snap_cfg TUGRA_PRUNE_IMAGES 1)" = "0" ]; then
+    log "image cleanup disabled (TUGRA_PRUNE_IMAGES=0)"
+    return 0
+  fi
+  if [ "$DRY" -eq 1 ]; then
+    printf 'RUN: remove Tugra release images older than %s (keeping %s and %s)\n' "$2" "$1" "$2"
+    return 0
+  fi
+  prune_release_images "$1" "$2" || log "warning: image cleanup did not finish"
+}
+
+# One-shot: verify + apply the release's signed compose/scripts to THIS checkout for a stack that already runs that
+# release. Used by the hub's bootstrap of an install whose update.sh predates host-files support (such a script
+# ignores the job's hostFilesDigest, so the checkout never received a newer compose file or script). Same trust model
+# and the same backup + validation as an in-app update (lib/hostfiles.sh); nothing is pulled or recreated.
+# Exit: 0 applied or already current, 1 refused/failed (HF_ERROR printed), 2 bad arguments.
+apply_host_files_only() {
+  local version="$1" digest="$2" cur
+  if ! hf_version_ok "$version" || ! is_hex64 "$digest"; then log "host files: need a release version and a 64-hex digest"; return 2; fi
+  cur="$(env_get TUGRA_VERSION)"
+  if [ "$cur" != "$version" ]; then
+    log "host files: this stack runs ${cur:-an unpinned version}, not $version — refusing (the bootstrap only syncs files to the running release)"
+    return 1
+  fi
+  HF_APPLIED=0; HF_BACKUP_DIR=""; HF_CHANGED=(); HF_SCRIPTS_CHANGED=0; HF_COMPOSE_CHANGED=0
+  if ! hf_prepare "$version" "$digest"; then
+    log "host files: $HF_ERROR — nothing was changed"
+    hf_cleanup
+    return 1
+  fi
+  if [ "${#HF_CHANGED[@]}" -eq 0 ]; then
+    log "host files: compose and scripts already match release $version"
+    hf_cleanup
+    return 0
+  fi
+  if backup_dir_ok; then HF_BACKUP_ROOT="$(_snap_cfg TUGRA_BACKUP_DIR "$REPO_DIR/backups")"; else HF_BACKUP_ROOT="$REPO_DIR/backups"; fi
+  if ! hf_apply "$version" "$version"; then
+    log "host files: $HF_ERROR"
+    hf_cleanup
+    return 1
+  fi
+  hf_cleanup
+  log "host files: ${#HF_CHANGED[@]} file(s) brought to release $version"
+  return 0
+}
+
 # Set when a successful update replaced scripts: the watch loop then re-execs the (new) update.sh.
 RELOAD_SELF=0
 
@@ -385,7 +457,7 @@ do_update() {
 }
 
 _do_update() {
-  local target="$1" hubDigest="${2:-}" webDigest="${3:-}" hostDigest="${4:-}"
+  local target="$1" hubDigest="${2:-}" webDigest="${3:-}" hostDigest="${4:-}" agentAmd64="${5:-}" agentArm64="${6:-}"
   local current; current="$(env_get TUGRA_VERSION)"; [ -n "$current" ] || current="latest"
   if [ "$current" != "latest" ] && ! is_newer "$target" "$current"; then
     log "refusing non-newer target $target (current $current)"
@@ -538,11 +610,11 @@ _do_update() {
   # an old agent working meanwhile) and pre-pull the updater image. Both are best-effort — a failure here must
   # never fail an otherwise good update. `--no-deps` + an explicit service name: postgres/redis/updater are
   # never recreated here (the updater can't recreate itself mid-run; refresh_updater_self does it detached, last).
-  if [ -n "$(compose ps -q agent 2>/dev/null | head -n1)" ]; then
-    if compose pull agent && compose up -d --no-deps agent; then
+  if [ "$DRY" -eq 1 ] || [ -n "$(compose ps -q agent 2>/dev/null | head -n1)" ]; then
+    if refresh_local_agent "$target" "$agentAmd64" "$agentArm64"; then
       log "local agent refreshed to $target"
     else
-      log "warning: could not refresh the local agent (update itself is fine; re-run scripts/install.sh to refresh it)"
+      log "warning: could not refresh the local agent (the update itself is fine; the hub retries it on its own, or re-run scripts/install.sh)"
     fi
   fi
   compose pull tugra-updater || log "warning: could not pre-pull the updater image"
@@ -551,6 +623,9 @@ _do_update() {
   redis DEL "instance:update:recovery_required" # a verified update clears any stale recovery marker
   release_lock
   log "update to $target complete"
+  # Disk housekeeping, after the status is final (a slow `rmi` never delays the UI): drop Tugra's own release images
+  # older than the previous release. Never fatal, never touches anything that is not a Tugra release image.
+  prune_old_release_images "$target" "$current"
   # Replaced scripts take effect for the NEXT job (this process keeps running the old file); a replaced compose
   # file also redefines the updater service itself. The updater is also refreshed when it still runs an older
   # image than the release's compose names (an image-only release changes no compose text but moves the tag).
@@ -565,7 +640,7 @@ job_field() { printf '%s' "$1" | grep -o "\"$2\":\"[^\"]*\"" | head -n1 | cut -d
 
 # One queue job: {"targetVersion":"X"} (legacy) or {"targetVersion":"X","hubDigest":"<64hex>","webDigest":"<64hex>"}.
 handle_job() {
-  local job="$1" target hub web host
+  local job="$1" target hub web host agentAmd64 agentArm64
   target="$(job_field "$job" targetVersion)"
   if [ -z "$target" ]; then
     log "ignoring malformed job: $job"
@@ -575,8 +650,15 @@ handle_job() {
   hub="$(job_field "$job" hubDigest)"
   web="$(job_field "$job" webDigest)"
   host="$(job_field "$job" hostFilesDigest)"
-  do_update "$target" "$hub" "$web" "$host"
+  agentAmd64="$(job_field "$job" agentAmd64Digest)"
+  agentArm64="$(job_field "$job" agentArm64Digest)"
+  do_update "$target" "$hub" "$web" "$host" "$agentAmd64" "$agentArm64"
 }
+
+if [ "$APPLY_HF" -eq 1 ]; then
+  apply_host_files_only "$APPLY_HF_VERSION" "$APPLY_HF_DIGEST"
+  exit $?
+fi
 
 if [ "$DRY" -eq 1 ]; then
   if [ -n "$JOB" ]; then handle_job "$JOB"; exit 0; fi

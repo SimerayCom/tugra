@@ -17,6 +17,7 @@ const SCRIPTS = join(__dirname, "..", "..", "..", "..", "scripts");
 const REAL_UPDATE = readFileSync(join(SCRIPTS, "update.sh"), "utf8");
 const REAL_SNAPSHOT = readFileSync(join(SCRIPTS, "lib", "snapshot.sh"), "utf8");
 const REAL_HOSTFILES = readFileSync(join(SCRIPTS, "lib", "hostfiles.sh"), "utf8");
+const REAL_IMAGES = readFileSync(join(SCRIPTS, "lib", "images.sh"), "utf8");
 const BASH = execFileSync("sh", ["-c", "command -v bash"]).toString().trim();
 
 const BASE_URL = "https://example.test/tugra";
@@ -76,6 +77,7 @@ function makeRig(extraEnv: string[] = []): Rig {
   writeFileSync(join(repo, "scripts", "update.sh"), REAL_UPDATE, { mode: 0o755 });
   writeFileSync(join(repo, "scripts", "lib", "snapshot.sh"), REAL_SNAPSHOT, { mode: 0o755 });
   writeFileSync(join(repo, "scripts", "lib", "hostfiles.sh"), REAL_HOSTFILES, { mode: 0o755 });
+  writeFileSync(join(repo, "scripts", "lib", "images.sh"), REAL_IMAGES, { mode: 0o755 });
   writeFileSync(join(repo, "scripts", "install.sh"), OLD_INSTALL, { mode: 0o755 });
   writeFileSync(join(repo, "deploy", "docker-compose.yml"), OLD_COMPOSE);
   const { priv, publicKeyB64 } = keypair();
@@ -202,11 +204,12 @@ function changedFiles(): Record<string, string> {
     "scripts/update.sh": REAL_UPDATE + "\n# release marker\n",
     "scripts/lib/snapshot.sh": REAL_SNAPSHOT,
     "scripts/lib/hostfiles.sh": REAL_HOSTFILES,
+    "scripts/lib/images.sh": REAL_IMAGES,
   };
 }
 function unchangedFiles(rig: Rig): Record<string, string> {
   const read = (p: string) => readFileSync(join(rig.repo, p), "utf8");
-  return Object.fromEntries(["deploy/docker-compose.yml", "scripts/install.sh", "scripts/update.sh", "scripts/lib/snapshot.sh", "scripts/lib/hostfiles.sh"].map((p) => [p, read(p)]));
+  return Object.fromEntries(["deploy/docker-compose.yml", "scripts/install.sh", "scripts/update.sh", "scripts/lib/snapshot.sh", "scripts/lib/hostfiles.sh", "scripts/lib/images.sh"].map((p) => [p, read(p)]));
 }
 
 function run(rig: Rig, job: Record<string, string>, env: Record<string, string> = {}, extraArgs: string[] = ["--watch"]) {
