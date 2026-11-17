@@ -442,7 +442,7 @@ apply_host_files_only() {
     log "host files: this stack runs ${cur:-an unpinned version}, not $version — refusing (the bootstrap only syncs files to the running release)"
     return 1
   fi
-  HF_APPLIED=0; HF_BACKUP_DIR=""; HF_CHANGED=(); HF_SCRIPTS_CHANGED=0; HF_COMPOSE_CHANGED=0
+  HF_APPLIED=0; HF_BACKUP_DIR=""; HF_CHANGED=(); HF_SCRIPTS_CHANGED=0; HF_COMPOSE_CHANGED=0; HF_VERIFIED=0; HF_LOCAL_EDITS=()
   if ! hf_prepare "$version" "$digest"; then
     log "host files: $HF_ERROR — nothing was changed"
     hf_cleanup
@@ -450,6 +450,7 @@ apply_host_files_only() {
   fi
   if [ "${#HF_CHANGED[@]}" -eq 0 ]; then
     log "host files: compose and scripts already match release $version"
+    hf_sync_checkout "$version"
     hf_cleanup
     return 0
   fi
@@ -459,8 +460,9 @@ apply_host_files_only() {
     hf_cleanup
     return 1
   fi
-  hf_cleanup
   log "host files: ${#HF_CHANGED[@]} file(s) brought to release $version"
+  hf_sync_checkout "$version"
+  hf_cleanup
   return 0
 }
 
@@ -468,7 +470,7 @@ apply_host_files_only() {
 RELOAD_SELF=0
 
 do_update() {
-  HF_APPLIED=0; HF_BACKUP_DIR=""; HF_CHANGED=(); HF_SCRIPTS_CHANGED=0; HF_COMPOSE_CHANGED=0
+  HF_APPLIED=0; HF_BACKUP_DIR=""; HF_CHANGED=(); HF_SCRIPTS_CHANGED=0; HF_COMPOSE_CHANGED=0; HF_VERIFIED=0; HF_LOCAL_EDITS=()
   _do_update "$@"
   local rc=$?
   hf_cleanup   # the private staging dir never outlives a job, whatever branch it ended on
@@ -642,6 +644,8 @@ _do_update() {
   redis DEL "instance:update:recovery_required" # a verified update clears any stale recovery marker
   release_lock
   log "update to $target complete"
+  # The release's compose/scripts were written into the checkout: bring its git state in line (never fatal).
+  hf_sync_checkout "$target"
   # Disk housekeeping, after the status is final (a slow `rmi` never delays the UI): drop Tugra's own release images
   # older than the previous release. Never fatal, never touches anything that is not a Tugra release image.
   prune_old_release_images "$target" "$current"

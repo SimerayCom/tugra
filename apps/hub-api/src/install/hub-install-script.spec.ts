@@ -1,7 +1,7 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { parse as parseYaml } from "yaml";
 
 // Repo-root artifacts (jest rootDir is src/, but __dirname resolves to the real source dir).
@@ -616,7 +616,7 @@ exit 0
     }
     symlinkSync(join(shims, "docker"), join(noCurl, "docker"));
 
-    interface RunOpts { env?: Record<string, string>; noCurl?: boolean }
+    interface RunOpts { env?: Record<string, string>; noCurl?: boolean; script?: string }
     const reset = (): void => {
       writeFileSync(LOG, "");
       rmSync(`${LOG}.pgup`, { force: true });
@@ -624,9 +624,10 @@ exit 0
     const calls = (): string => readFileSync(LOG, "utf8");
     /** First install writes the .env in dry-run (no Docker), the real run then exercises compose. */
     const install = (envPath: string, args: string[], opts: RunOpts = {}): { code: number; out: string } => {
-      const base = { PATH: `${opts.noCurl ? noCurl : shims}:${process.env.PATH}`, SHIM_LOG: LOG, TUGRA_HEALTH_TRIES: "1", TUGRA_HEALTH_INTERVAL: "0", TMPDIR: work };
+      // TUGRA_CHECKOUT_SYNC=0: the repo these runs execute from may be a developer's dirty tree; never let a spec fetch or move git.
+      const base = { PATH: `${opts.noCurl ? noCurl : shims}:${process.env.PATH}`, SHIM_LOG: LOG, TUGRA_HEALTH_TRIES: "1", TUGRA_HEALTH_INTERVAL: "0", TMPDIR: work, TUGRA_CHECKOUT_SYNC: "0" };
       const env = { ...base, ...(opts.noCurl ? { PATH: noCurl } : {}), ...(opts.env ?? {}) } as NodeJS.ProcessEnv;
-      const r = spawnSync(BASH, [INSTALL_SH, "--env-file", envPath, "--no-telemetry", ...args], { env, encoding: "utf8" });
+      const r = spawnSync(BASH, [opts.script ?? INSTALL_SH, "--env-file", envPath, "--no-telemetry", ...args], { env, encoding: "utf8" });
       return { code: r.status ?? -1, out: `${r.stdout}${r.stderr}` };
     };
     const dry = (envPath: string, args: string[], extra: Record<string, string> = {}): void => {
@@ -637,6 +638,129 @@ exit 0
     };
     const HTTP = ["--hub-url", "http://10.0.0.5:3000", "--web-url", "http://10.0.0.5:3001"];
     const readEnv = (p: string) => parseEnv(readFileSync(p, "utf8"));
+
+    describe("a git checkout the in-app updater wrote compose/scripts into", () => {
+      const gitIn = (cwd: string, ...args: string[]): string =>
+        execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@example.test", "-c", "commit.gpgsign=false", ...args], { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+      const porcelain = (repo: string) => execFileSync("git", ["status", "--porcelain", "--untracked-files=all"], { cwd: repo, encoding: "utf8" }).replace(/\n$/, "");
+      let n = 0;
+
+      /** A copy of the real scripts as a git checkout at v0.1.0 (remote has v0.2.0), then the "update" written over it. */
+      function dirtyCheckout(): { repo: string; origin: string; v1: string; v2: string; envPath: string } {
+        n += 1;
+        const root = join(work, `co${n}`);
+        const repo = join(root, "repo");
+        const origin = join(root, "origin.git");
+        mkdirSync(join(repo, "deploy"), { recursive: true });
+        cpSync(join(REPO_ROOT, "scripts"), join(repo, "scripts"), { recursive: true });
+        cpSync(COMPOSE, join(repo, "deploy", "docker-compose.yml"));
+        writeFileSync(join(repo, ".gitignore"), ".env\n.env.*\nbackups/\n.tugra-host-applied\n");
+        gitIn(repo, "init", "-q", "-b", "main");
+        gitIn(repo, "add", "-A");
+        gitIn(repo, "commit", "-q", "-m", "v1");
+        gitIn(repo, "tag", "v0.1.0");
+        const v1 = gitIn(repo, "rev-parse", "HEAD");
+        gitIn(root, "init", "-q", "--bare", origin);
+        gitIn(root, "clone", "-q", repo, "w");
+        const w = join(root, "w");
+        const installV2 = `${readFileSync(join(w, "scripts", "install.sh"), "utf8")}\n# release 0.2.0\n`;
+        writeFileSync(join(w, "scripts", "install.sh"), installV2, { mode: 0o755 });
+        writeFileSync(join(w, "scripts", "lib", "extra.sh"), "# new in 0.2.0\n", { mode: 0o755 });
+        gitIn(w, "add", "-A");
+        gitIn(w, "commit", "-q", "-m", "v2");
+        gitIn(w, "tag", "v0.2.0");
+        const v2 = gitIn(w, "rev-parse", "HEAD");
+        gitIn(w, "push", "-q", origin, "main", "--tags");
+        gitIn(repo, "remote", "add", "origin", origin);
+        gitIn(repo, "update-ref", "refs/remotes/origin/main", v1);
+        gitIn(repo, "branch", "-q", "--set-upstream-to=origin/main", "main");
+        // what the in-app updater did
+        writeFileSync(join(repo, "scripts", "install.sh"), installV2, { mode: 0o755 });
+        writeFileSync(join(repo, "scripts", "lib", "extra.sh"), "# new in 0.2.0\n", { mode: 0o755 });
+        expect(porcelain(repo)).toBe(" M scripts/install.sh\n?? scripts/lib/extra.sh");
+        return { repo, origin, v1, v2, envPath: join(root, "env") };
+      }
+      const sync = { TUGRA_CHECKOUT_SYNC: "1" };
+
+      it("git itself refuses the documented upgrade paths on such a checkout (the problem)", () => {
+        const c = dirtyCheckout();
+        expect(() => gitIn(c.repo, "fetch", "-q", "origin", "main")).not.toThrow();
+        expect(() => gitIn(c.repo, "pull", "-q", "--ff-only")).toThrow();
+      });
+
+      it("a re-run with TUGRA_VERSION=<v> proceeds (exit 0, stack brought up) and leaves the checkout clean at that release", () => {
+        const c = dirtyCheckout();
+        reset();
+        const r = install(c.envPath, HTTP, { script: join(c.repo, "scripts", "install.sh"), env: { ...sync, TUGRA_VERSION: "0.2.0" } });
+        expect(r.code).toBe(0);
+        expect(r.out).toContain("git checkout moved to release tag v0.2.0");
+        expect(porcelain(c.repo)).toBe("");
+        expect(gitIn(c.repo, "rev-parse", "HEAD")).toBe(c.v2);
+        expect(gitIn(c.repo, "symbolic-ref", "--short", "HEAD")).toBe("main");
+        expect(calls()).toContain("docker compose"); // it went on to install
+        expect(readEnv(c.envPath).TUGRA_VERSION).toBe("0.2.0");
+      });
+
+      it("the version may come from .env (what the updater wrote) instead of the environment", () => {
+        const c = dirtyCheckout();
+        mkdirSync(dirname(c.envPath), { recursive: true });
+        writeFileSync(c.envPath, "TUGRA_VERSION=0.2.0\n");
+        const r = install(c.envPath, HTTP, { script: join(c.repo, "scripts", "install.sh"), env: sync });
+        expect(r.code).toBe(0);
+        expect(porcelain(c.repo)).toBe("");
+        expect(gitIn(c.repo, "rev-parse", "HEAD")).toBe(c.v2);
+      });
+
+      it("--sync-checkout does only that: no Docker call, exit 0", () => {
+        const c = dirtyCheckout();
+        reset();
+        const r = install(c.envPath, ["--sync-checkout"], { script: join(c.repo, "scripts", "install.sh"), env: { ...sync, TUGRA_VERSION: "0.2.0" } });
+        expect(r.code).toBe(0);
+        expect(porcelain(c.repo)).toBe("");
+        expect(calls()).not.toContain("docker");
+      });
+
+      it("--sync-checkout without a version to match says so and changes nothing", () => {
+        const c = dirtyCheckout();
+        const r = install(c.envPath, ["--sync-checkout"], { script: join(c.repo, "scripts", "install.sh"), env: sync });
+        expect(r.code).toBe(1);
+        expect(r.out).toContain("TUGRA_VERSION=<version>");
+        expect(porcelain(c.repo)).toContain("M scripts/install.sh");
+      });
+
+      it("a real local edit is kept and the install still proceeds; git is left untouched with a warning", () => {
+        const c = dirtyCheckout();
+        const mine = `${readFileSync(join(c.repo, "scripts", "install.sh"), "utf8")}# my own edit\n`;
+        writeFileSync(join(c.repo, "scripts", "install.sh"), mine);
+        const r = install(c.envPath, HTTP, { script: join(c.repo, "scripts", "install.sh"), env: { ...sync, TUGRA_VERSION: "0.2.0" } });
+        expect(r.code).toBe(0);
+        expect(r.out).toContain("scripts/install.sh differs from release v0.2.0");
+        expect(readFileSync(join(c.repo, "scripts", "install.sh"), "utf8")).toBe(mine);
+        expect(gitIn(c.repo, "rev-parse", "HEAD")).toBe(c.v1);
+      });
+
+      it("offline (the release tag cannot be fetched): the install proceeds, git untouched, reason shown", () => {
+        const c = dirtyCheckout();
+        gitIn(c.repo, "remote", "set-url", "origin", join(c.repo, "..", "gone.git"));
+        const r = install(c.envPath, HTTP, { script: join(c.repo, "scripts", "install.sh"), env: { ...sync, TUGRA_VERSION: "0.2.0" } });
+        expect(r.code).toBe(0);
+        expect(r.out).toContain("could not be fetched");
+        expect(gitIn(c.repo, "rev-parse", "HEAD")).toBe(c.v1);
+      });
+
+      it("a clean checkout and TUGRA_CHECKOUT_SYNC=0 are never moved", () => {
+        const c = dirtyCheckout();
+        const r0 = install(c.envPath, HTTP, { script: join(c.repo, "scripts", "install.sh"), env: { TUGRA_CHECKOUT_SYNC: "0", TUGRA_VERSION: "0.2.0" } });
+        expect(r0.code).toBe(0);
+        expect(gitIn(c.repo, "rev-parse", "HEAD")).toBe(c.v1);
+        gitIn(c.repo, "checkout", "-q", "--", "scripts/install.sh");
+        rmSync(join(c.repo, "scripts", "lib", "extra.sh"));
+        expect(porcelain(c.repo)).toBe("");
+        const r1 = install(c.envPath, HTTP, { script: join(c.repo, "scripts", "install.sh"), env: { ...sync, TUGRA_VERSION: "0.2.0" } });
+        expect(r1.code).toBe(0);
+        expect(gitIn(c.repo, "rev-parse", "HEAD")).toBe(c.v1);
+      });
+    });
 
     describe("update-check hint", () => {
       it("says checks are ON by default and OFF after --no-update-checks", () => {

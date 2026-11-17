@@ -18,6 +18,7 @@ const REAL_UPDATE = readFileSync(join(SCRIPTS, "update.sh"), "utf8");
 const REAL_SNAPSHOT = readFileSync(join(SCRIPTS, "lib", "snapshot.sh"), "utf8");
 const REAL_HOSTFILES = readFileSync(join(SCRIPTS, "lib", "hostfiles.sh"), "utf8");
 const REAL_IMAGES = readFileSync(join(SCRIPTS, "lib", "images.sh"), "utf8");
+const REAL_CHECKOUT = readFileSync(join(SCRIPTS, "lib", "checkout.sh"), "utf8");
 const BASH = execFileSync("sh", ["-c", "command -v bash"]).toString().trim();
 
 const BASE_URL = "https://example.test/tugra";
@@ -78,6 +79,7 @@ function makeRig(extraEnv: string[] = []): Rig {
   writeFileSync(join(repo, "scripts", "lib", "snapshot.sh"), REAL_SNAPSHOT, { mode: 0o755 });
   writeFileSync(join(repo, "scripts", "lib", "hostfiles.sh"), REAL_HOSTFILES, { mode: 0o755 });
   writeFileSync(join(repo, "scripts", "lib", "images.sh"), REAL_IMAGES, { mode: 0o755 });
+  writeFileSync(join(repo, "scripts", "lib", "checkout.sh"), REAL_CHECKOUT, { mode: 0o755 });
   writeFileSync(join(repo, "scripts", "install.sh"), OLD_INSTALL, { mode: 0o755 });
   writeFileSync(join(repo, "deploy", "docker-compose.yml"), OLD_COMPOSE);
   const { priv, publicKeyB64 } = keypair();
@@ -205,11 +207,12 @@ function changedFiles(): Record<string, string> {
     "scripts/lib/snapshot.sh": REAL_SNAPSHOT,
     "scripts/lib/hostfiles.sh": REAL_HOSTFILES,
     "scripts/lib/images.sh": REAL_IMAGES,
+    "scripts/lib/checkout.sh": REAL_CHECKOUT,
   };
 }
 function unchangedFiles(rig: Rig): Record<string, string> {
   const read = (p: string) => readFileSync(join(rig.repo, p), "utf8");
-  return Object.fromEntries(["deploy/docker-compose.yml", "scripts/install.sh", "scripts/update.sh", "scripts/lib/snapshot.sh", "scripts/lib/hostfiles.sh", "scripts/lib/images.sh"].map((p) => [p, read(p)]));
+  return Object.fromEntries(["deploy/docker-compose.yml", "scripts/install.sh", "scripts/update.sh", "scripts/lib/snapshot.sh", "scripts/lib/hostfiles.sh", "scripts/lib/images.sh", "scripts/lib/checkout.sh"].map((p) => [p, read(p)]));
 }
 
 function run(rig: Rig, job: Record<string, string>, env: Record<string, string> = {}, extraArgs: string[] = ["--watch"]) {
@@ -887,5 +890,117 @@ suite("update.sh --apply-host-files (the hub's bootstrap for a checkout that pre
     onRelease(rig, "0.2.0");
     expect(applyRun(rig, "0.2.0", "nothex").r.status).toBe(2);
     expect(applyRun(rig, "bad version", "a".repeat(64)).r.status).toBe(2);
+  });
+});
+
+suite("update.sh keeps the install's git checkout consistent with the files it wrote", () => {
+  const gitIn = (cwd: string, ...args: string[]): string =>
+    execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@example.test", "-c", "commit.gpgsign=false", ...args], { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+  const porcelain = (rig: Rig) => execFileSync("git", ["status", "--porcelain", "--untracked-files=all"], { cwd: rig.repo, encoding: "utf8" }).replace(/\n$/, "");
+
+  /** Turns the rig's repo into a git checkout at v0.1.0 whose remote also has tag v0.2.0 = the release `files`. */
+  function gitify(rig: Rig, release: Record<string, string>): { v1: string; v2: string; origin: string } {
+    writeFileSync(join(rig.repo, ".gitignore"), ".env\n.env.*\nbackups/\n.update-staging.*/\n.tugra-host-applied\n");
+    gitIn(rig.repo, "init", "-q", "-b", "main");
+    gitIn(rig.repo, "add", "-A");
+    gitIn(rig.repo, "commit", "-q", "-m", "v1");
+    gitIn(rig.repo, "tag", "v0.1.0");
+    const v1 = gitIn(rig.repo, "rev-parse", "HEAD");
+    const origin = join(rig.dir, "origin.git");
+    const work = join(rig.dir, "work");
+    gitIn(rig.dir, "init", "-q", "--bare", origin);
+    gitIn(rig.dir, "clone", "-q", rig.repo, "work");
+    for (const [p, c] of Object.entries(release)) {
+      mkdirSync(dirname(join(work, p)), { recursive: true });
+      writeFileSync(join(work, p), c, { mode: p.endsWith(".sh") ? 0o755 : 0o644 });
+    }
+    gitIn(work, "add", "-A");
+    gitIn(work, "commit", "-q", "-m", "v2");
+    gitIn(work, "tag", "v0.2.0");
+    const v2 = gitIn(work, "rev-parse", "HEAD");
+    gitIn(work, "push", "-q", origin, "main", "--tags");
+    gitIn(rig.repo, "remote", "add", "origin", origin);
+    gitIn(rig.repo, "update-ref", "refs/remotes/origin/main", v1);
+    gitIn(rig.repo, "branch", "-q", "--set-upstream-to=origin/main", "main");
+    expect(porcelain(rig)).toBe("");
+    return { v1, v2, origin };
+  }
+
+  it("after the update the checkout is clean at the release tag (documented `git pull` / `git checkout <tag>` work again)", () => {
+    const rig = makeRig();
+    const files = changedFiles();
+    const g = gitify(rig, files);
+    const digest = publish(rig, "0.2.0", files);
+    const { log, out } = run(rig, { targetVersion: "0.2.0", hostFilesDigest: digest });
+
+    expect(finalStatus(log)).toContain('"phase":"done"');
+    expect(read(rig, "scripts/install.sh")).toBe(NEW_INSTALL);
+    expect(porcelain(rig)).toBe("");
+    expect(gitIn(rig.repo, "rev-parse", "HEAD")).toBe(g.v2);
+    expect(gitIn(rig.repo, "symbolic-ref", "--short", "HEAD")).toBe("main");
+    expect(out).toContain("git checkout: moved to release tag v0.2.0");
+    expect(() => gitIn(rig.repo, "checkout", "-q", "v0.1.0")).not.toThrow();
+    expect(() => gitIn(rig.repo, "checkout", "-q", "v0.2.0")).not.toThrow();
+  });
+
+  it("an image-only release on a checkout an earlier apply left dirty (fast path: nothing to replace) is cleaned too", () => {
+    const rig = makeRig();
+    const files = changedFiles();
+    const g = gitify(rig, files);
+    for (const [p, c] of Object.entries(files)) writeFileSync(join(rig.repo, p), c, { mode: p.endsWith(".sh") ? 0o755 : 0o644 }); // what the earlier apply left
+    expect(porcelain(rig)).not.toBe("");
+    const digest = publish(rig, "0.2.0", unchangedFiles(rig));
+    const { log, out } = run(rig, { targetVersion: "0.2.0", hostFilesDigest: digest });
+    expect(finalStatus(log)).toContain('"phase":"done"');
+    expect(fileCurls(log)).toEqual([]);
+    expect(porcelain(rig)).toBe("");
+    expect(gitIn(rig.repo, "rev-parse", "HEAD")).toBe(g.v2);
+    expect(out).toContain("git checkout: moved to release tag v0.2.0");
+  });
+
+  it("a real local edit is replaced as before (backed up) but reported, and git is left untouched", () => {
+    const rig = makeRig();
+    const files = changedFiles();
+    const g = gitify(rig, files);
+    writeFileSync(join(rig.repo, "scripts", "install.sh"), "#!/usr/bin/env bash\n# my own edit\n", { mode: 0o755 });
+    const digest = publish(rig, "0.2.0", files);
+    const { log, out } = run(rig, { targetVersion: "0.2.0", hostFilesDigest: digest });
+
+    expect(finalStatus(log)).toContain('"phase":"done"');
+    expect(read(rig, "scripts/install.sh")).toBe(NEW_INSTALL);
+    expect(out).toContain("WARNING scripts/install.sh had local edits");
+    expect(out).toContain("git checkout: left untouched because scripts/install.sh had local edits");
+    const bk = readdirSync(join(rig.repo, "backups")).find((d) => d.startsWith("host-files-0.1.0-to-0.2.0-")) as string;
+    expect(readFileSync(join(rig.repo, "backups", bk, "files", "scripts", "install.sh"), "utf8")).toContain("my own edit");
+    expect(readFileSync(join(rig.repo, "backups", bk, "LOCAL-EDITS"), "utf8")).toBe("scripts/install.sh\n");
+    expect(gitIn(rig.repo, "rev-parse", "HEAD")).toBe(g.v1);
+    expect(porcelain(rig)).toContain("M scripts/install.sh");
+  });
+
+  it("offline (tag not in the repo, remote unreachable): the update still completes, git is untouched and the reason is logged", () => {
+    const rig = makeRig();
+    const files = changedFiles();
+    const g = gitify(rig, files);
+    gitIn(rig.repo, "remote", "set-url", "origin", join(rig.dir, "gone.git"));
+    const digest = publish(rig, "0.2.0", files);
+    const { log, out } = run(rig, { targetVersion: "0.2.0", hostFilesDigest: digest });
+    expect(finalStatus(log)).toContain('"phase":"done"');
+    expect(read(rig, "scripts/install.sh")).toBe(NEW_INSTALL);
+    expect(gitIn(rig.repo, "rev-parse", "HEAD")).toBe(g.v1);
+    expect(out).toMatch(/git checkout: the release tag v0\.2\.0 is not in the checkout and could not be fetched/);
+  });
+
+  it("TUGRA_CHECKOUT_SYNC=0 turns it off; a non-git install never mentions git", () => {
+    const rig = makeRig();
+    const files = changedFiles();
+    const g = gitify(rig, files);
+    const digest = publish(rig, "0.2.0", files);
+    const { out } = run(rig, { targetVersion: "0.2.0", hostFilesDigest: digest }, { TUGRA_CHECKOUT_SYNC: "0" });
+    expect(out).not.toContain("git checkout:");
+    expect(gitIn(rig.repo, "rev-parse", "HEAD")).toBe(g.v1);
+
+    const plain = makeRig();
+    const d2 = publish(plain, "0.2.0", changedFiles());
+    expect(run(plain, { targetVersion: "0.2.0", hostFilesDigest: d2 }).out).not.toContain("git checkout:");
   });
 });

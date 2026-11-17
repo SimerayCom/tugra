@@ -36,6 +36,11 @@ HF_MAX_MANIFEST_BYTES=16384
 HF_HEADER="tugra-host-files v1"
 HF_STATE_FILE=".tugra-host-applied"   # `<sha256>  <path>` of the last in-app apply (bootstrap.sh uses it to reset git state)
 
+# Keeping the checkout's git state consistent with the files written here (see lib/checkout.sh).
+_HF_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+# shellcheck source=checkout.sh
+if [ -f "$_HF_LIB_DIR/checkout.sh" ]; then . "$_HF_LIB_DIR/checkout.sh"; fi
+
 # Results of the last hf_prepare / hf_apply (read by update.sh).
 HF_STAGE=""            # private staging dir (inside the checkout so renames stay same-filesystem); "" when none
 HF_CHANGED=()          # repo-relative paths whose content will change
@@ -44,6 +49,8 @@ HF_SCRIPTS_CHANGED=0   # 1 when any scripts/*.sh changed (update.sh then re-exec
 HF_COMPOSE_CHANGED=0   # 1 when deploy/docker-compose.yml changed
 HF_BACKUP_DIR=""       # where hf_apply saved the previous copies (rollback source)
 HF_APPLIED=0           # 1 once hf_apply replaced files (rollback is then needed on a later failure)
+HF_VERIFIED=0          # 1 once hf_prepare verified the signed manifest + every changed file (hf_sync_checkout needs it)
+HF_LOCAL_EDITS=()      # paths hf_apply replaced although their content was an operator's edit (backed up, reported)
 
 hf_sha256() { sha256sum "$1" 2>/dev/null | cut -d' ' -f1; }
 
@@ -146,7 +153,7 @@ hf_cleanup() {
 #   1  failed — HF_ERROR says why; nothing was changed
 hf_prepare() {
   local target="$1" digest="$2" rc i path sha local_sha url hexre='^[0-9a-f]{64}$'
-  HF_CHANGED=(); HF_ERROR=""; HF_SCRIPTS_CHANGED=0; HF_COMPOSE_CHANGED=0
+  HF_CHANGED=(); HF_ERROR=""; HF_SCRIPTS_CHANGED=0; HF_COMPOSE_CHANGED=0; HF_VERIFIED=0
   hf_cleanup
   hf_version_ok "$target" || { HF_ERROR="invalid target version"; return 1; }
   [[ "$digest" =~ $hexre ]] || { HF_ERROR="invalid host files digest"; return 1; }
@@ -188,9 +195,10 @@ hf_prepare() {
     HF_CHANGED+=("$path")
     case "$path" in deploy/docker-compose.yml) HF_COMPOSE_CHANGED=1 ;; *) HF_SCRIPTS_CHANGED=1 ;; esac
   done
+  HF_VERIFIED=1
   [ "${#HF_CHANGED[@]}" -gt 0 ] || return 0
 
-  hf_validate || return 1
+  hf_validate || { HF_VERIFIED=0; return 1; }
   return 0
 }
 
@@ -295,7 +303,7 @@ _hf_write_state() {
 # Any failure restores what was already replaced. Requires a successful hf_prepare with a non-empty HF_CHANGED.
 hf_apply() {
   local from to stamp dir keep path i n
-  HF_ERROR=""; HF_APPLIED=0; HF_BACKUP_DIR=""
+  HF_ERROR=""; HF_APPLIED=0; HF_BACKUP_DIR=""; HF_LOCAL_EDITS=()
   [ "${#HF_CHANGED[@]}" -gt 0 ] || return 0
   from="$(printf '%s' "$1" | tr -c 'A-Za-z0-9._-' '_')"
   to="$(printf '%s' "$2" | tr -c 'A-Za-z0-9._-' '_')"
@@ -311,6 +319,7 @@ hf_apply() {
   : > "$dir/PATHS"
   for path in "${HF_CHANGED[@]}"; do
     if [ -f "$REPO_DIR/$path" ]; then
+      if _hf_is_local_edit "$path"; then HF_LOCAL_EDITS+=("$path"); fi
       mkdir -p "$dir/files/$(dirname "$path")" && cp -p "$REPO_DIR/$path" "$dir/files/$path" \
         || { HF_ERROR="cannot back up $path"; return 1; }
       printf 'K %s\n' "$path" >> "$dir/PATHS"
@@ -339,6 +348,46 @@ hf_apply() {
     n=$((n + 1)); if [ "$n" -ge "$keep" ]; then rm -rf "$i"; fi
   done
   log "host files: replaced ${#HF_CHANGED[@]} file(s) from release $to (previous copies: $dir)"
+  if [ "${#HF_LOCAL_EDITS[@]}" -gt 0 ]; then
+    printf '%s\n' "${HF_LOCAL_EDITS[@]}" > "$dir/LOCAL-EDITS" 2>/dev/null || true
+    log "host files: WARNING ${HF_LOCAL_EDITS[*]} had local edits that are now replaced by the release copy; your version is saved in $dir/files"
+  fi
+  return 0
+}
+
+# 0 when <path> is a tracked-or-recorded file whose current content is an operator's edit: it differs from what git's
+# HEAD has AND from what the previous in-app apply recorded. Not a git checkout (or no git here) = nothing to tell.
+_hf_is_local_edit() {
+  local path="$1" cur head rec
+  declare -F co_is_checkout >/dev/null 2>&1 || return 1
+  co_is_checkout || return 1
+  [ -f "$REPO_DIR/$path" ] || return 1
+  cur="$(hf_sha256 "$REPO_DIR/$path")"
+  head="$(_co_blob_sha HEAD "$path")"
+  [ -n "$cur" ] && [ "$cur" != "$head" ] || return 1
+  rec="$(awk -v p="$path" '$2==p {print $1; exit}' "$REPO_DIR/$HF_STATE_FILE" 2>/dev/null || true)"
+  [ "$cur" != "$rec" ]
+}
+
+# hf_sync_checkout <version>: after a successful update, when the install dir is a git checkout and the (verified)
+# release files are byte-identical to the release tag, move the checkout to that tag so `git status` is clean and
+# `git pull` / `git checkout <tag>` keep working (lib/checkout.sh has the rules). Real local edits, an unavailable tag
+# (offline) or no git leave git untouched and are reported; it never fails the update. TUGRA_CHECKOUT_SYNC=0 turns it off.
+hf_sync_checkout() {
+  local version="$1" list fetch=1 i
+  [ "${DRY:-0}" -eq 0 ] || return 0
+  declare -F co_sync >/dev/null 2>&1 || return 0
+  [ "$HF_VERIFIED" -eq 1 ] || return 0
+  [ "$(_snap_cfg TUGRA_CHECKOUT_SYNC 1)" != "0" ] || return 0
+  if [ "${#HF_LOCAL_EDITS[@]}" -gt 0 ]; then
+    log "git checkout: left untouched because ${HF_LOCAL_EDITS[*]} had local edits (saved in ${HF_BACKUP_DIR:-the host files backup})"
+    return 0
+  fi
+  list="$(mktemp 2>/dev/null)" || list=""
+  if [ -n "$list" ]; then for i in "${!HF_PATHS[@]}"; do printf '%s  %s\n' "${HF_SHAS[$i]}" "${HF_PATHS[$i]}"; done > "$list"; fi
+  co_sync "$version" "$list" "$fetch" || true
+  [ -z "$list" ] || rm -f "$list"
+  co_report "$version"
   return 0
 }
 

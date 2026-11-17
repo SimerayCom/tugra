@@ -127,9 +127,26 @@ Notes:
 
 - Local edits to `deploy/docker-compose.yml` or the scripts are overwritten by a release that changes them (the previous
   copy is in the backup directory). Keep configuration in `.env`.
-- The sidecar records what it applied in `.tugra-host-applied`. On a `git` checkout the applied files show as modified;
-  re-running `bootstrap.sh` resets them automatically, and for a manual `git pull` run
-  `awk '{print $2}' .tugra-host-applied | xargs git checkout --` first.
+- **Git state of the checkout.** The files the updater writes are byte-identical to the release, but a `git` checkout
+  would show them as modified (and a new script as untracked), and `git pull` / `git checkout <tag>` then refuse with
+  "Your local changes ... would be overwritten". So after a successful update the sidecar moves the checkout to the
+  release tag `v<version>` (fetching just that tag when the checkout does not have it) when every modified compose/script
+  file has exactly that tag's content; `git status` is clean afterwards. A branch that can fast-forward keeps its name
+  (`git pull` keeps working), otherwise the checkout is detached at the tag. It never discards anything:
+  a compose/script file that you edited yourself (it differs from both your checkout's `HEAD` and the release) is still
+  replaced by the release copy as above, but is reported in the log, listed in `LOCAL-EDITS` inside the backup
+  directory, and git is then left alone; with no network (the tag cannot be fetched), no `git` in an older updater
+  image, or other local changes git refuses to carry over, git is left exactly as it was and the log says why. Switch it
+  off with `TUGRA_CHECKOUT_SYNC=0` in `.env`.
+- **If `git pull` refuses on such a checkout** (an older updater, or one of the cases above), run
+  `TUGRA_VERSION=<the version you run> ./scripts/install.sh --sync-checkout`: it performs the same move (checking again
+  that every modified compose/script file equals the release, and never discarding a real edit) and does nothing else.
+  A normal `TUGRA_VERSION=<version> ./scripts/install.sh` does the same step first and then carries on with the install,
+  so a re-run on a checkout dirtied only by the updater's files proceeds instead of stopping. After that,
+  `git pull` works on a branch checkout; on a detached one use `git checkout main && git pull` (or
+  `git fetch --tags && git checkout v<newer>`).
+- The sidecar records what it applied in `.tugra-host-applied`. Re-running `bootstrap.sh` also resets the applied
+  files that still match that record.
 - The updater image needs `curl` and `openssl` to verify files; it has them from the release that introduced this
   feature. An older updater image refuses a release that changes compose/scripts ("run `git pull && ./scripts/install.sh`
   once to refresh it") instead of applying anything unverified.
@@ -158,6 +175,10 @@ cd tugra
 git pull
 ./scripts/install.sh
 ```
+
+(If `git pull` refuses because the in-app updater modified `deploy/docker-compose.yml` or the scripts, see
+[Git state of the checkout](#releases-that-change-the-compose-file-or-the-scripts) above:
+`TUGRA_VERSION=<version> ./scripts/install.sh --sync-checkout` makes the checkout clean again.)
 
 This pulls (or rebuilds) the images referenced by your checkout and recreates the stack. A digest pin left by the
 self-updater is kept on a plain re-run, and cleared when you re-pin with `TUGRA_VERSION=…` or build from source with

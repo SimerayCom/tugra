@@ -49,6 +49,10 @@
 #                       old ones. Without the flag the installer only says how much could be freed. The in-app
 #                       updater does this by itself after each update (turn off: TUGRA_PRUNE_IMAGES=0 in .env).
 #   --dry-run           Generate the .env and exit — do not touch Docker.
+#   --sync-checkout     Only bring this git checkout in line with the compose file/scripts the in-app updater wrote
+#                       (it leaves them "modified" and makes `git pull` refuse), then exit. The target is the release in
+#                       TUGRA_VERSION (env or .env). A normal run with TUGRA_VERSION set does this step first by itself;
+#                       TUGRA_CHECKOUT_SYNC=0 turns it off. Real local edits are never discarded.
 #   --restore-from <f>  Restore a hub bundle made by `scripts/hub-migrate.sh pack` onto THIS host (moves an
 #                       existing hub here, no pg_dump). Overwrites this host's .env + hub volume. See
 #                       docs/disaster-recovery.md.
@@ -69,6 +73,7 @@ PRUNE_IMAGES="${TUGRA_PRUNE_IMAGES_NOW:-0}"
 DRY_RUN=0
 RESTORE_FROM=""
 RESTORE_SET=0
+SYNC_CHECKOUT_ONLY=0
 ASSUME_YES=0
 # Outbound policy: update checks and anonymous usage stats are ON by default (opt-out); public-IP detection is
 # opt-in. env-var forms let the one-line curl|sh installer choose too.
@@ -174,6 +179,7 @@ while [ $# -gt 0 ]; do
     --public-ip) MANUAL_PUBLIC_IP="${2:-}"; shift 2 ;;
     --dry-run|--no-start) DRY_RUN=1; shift ;;
     --restore-from) RESTORE_FROM="${2:-}"; RESTORE_SET=1; shift 2 ;;
+    --sync-checkout) SYNC_CHECKOUT_ONLY=1; shift ;;
     --yes|-y) ASSUME_YES=1; shift ;;
     -h|--help)  sed -n '2,/^set -euo/p' "$SCRIPT_PATH" | sed '$d' | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) err "unknown option: $1"; exit 1 ;;
@@ -260,6 +266,27 @@ case "$HUB_PORT$WEB_PORT" in *[!0-9]*) err "HUB_PORT/WEB_PORT must be numeric (g
 # Remember the trust mode this .env had BEFORE this run rewrites it (drives the http->https bind transition).
 PREV_TRUSTED="$(env_get HUB_TRUSTED_PROXY)"
 PREV_VERSION="$(env_get TUGRA_VERSION)"; PREV_VERSION="${PREV_VERSION:-latest}"
+
+# A checkout the in-app updater wrote compose/scripts into shows those files as modified (byte-identical to the release,
+# but git refuses `git pull` / `git checkout <tag>`). Before anything else: when every dirty compose/script file equals
+# the release tag's content (TUGRA_VERSION from the env or .env), move the checkout to that tag so git is clean again.
+# Never fatal and never discards a real edit (lib/checkout.sh): offline or an edited file just means "left as is".
+SYNC_VERSION="${TUGRA_VERSION:-$(env_get TUGRA_VERSION | tr -d "\"' \r")}"
+if [ "$SYNC_CHECKOUT_ONLY" = 1 ] && { [ -z "$SYNC_VERSION" ] || [ "$SYNC_VERSION" = latest ]; }; then
+  err "--sync-checkout needs the release to match: run  TUGRA_VERSION=<version> ./scripts/install.sh --sync-checkout"; exit 1
+fi
+if [ "$DRY_RUN" -eq 0 ] && [ "${TUGRA_CHECKOUT_SYNC:-1}" != 0 ] && [ -f "$SCRIPT_DIR/lib/checkout.sh" ] \
+   && [ -n "$SYNC_VERSION" ] && [ "$SYNC_VERSION" != latest ]; then
+  # shellcheck source=lib/checkout.sh
+  . "$SCRIPT_DIR/lib/checkout.sh"
+  if co_sync "$SYNC_VERSION" "" 1; then
+    [ "$CO_RESULT" != synced ] || log "git checkout moved to release tag v${SYNC_VERSION#v} (${CO_COMMIT:0:8}): the compose file and scripts are clean in git again"
+  else
+    warn "git checkout: $CO_NOTE"
+    [ "$SYNC_CHECKOUT_ONLY" = 0 ] || exit 1
+  fi
+fi
+[ "$SYNC_CHECKOUT_ONLY" = 0 ] || exit 0
 # Pre-run copy of an existing .env (kept in the private log dir, removed on exit) — the restore point's .env.
 ENV_BEFORE=""
 if [ -n "$LOGDIR" ] && [ -s "$ENV_FILE" ]; then ENV_BEFORE="$LOGDIR/env.before"; cp -p "$ENV_FILE" "$ENV_BEFORE" && chmod 600 "$ENV_BEFORE" || ENV_BEFORE=""; fi
