@@ -1,0 +1,99 @@
+{
+  "title": "Reboot server",
+  "desc": "Restart this server. A reboot is never automatic: you start it, and Tugra checks afterwards that everything that was running came back.",
+  "now": "Reboot now",
+  "schedule": "Schedule…",
+  "cancelScheduled": "Cancel scheduled reboot",
+  "cancelling": "Cancelling…",
+  "cancelled": "The scheduled reboot was cancelled.",
+  "viewOnly": "You can see the reboot status. Rebooting needs the server operator role.",
+  "fromPatching": "Reboot this server…",
+  "dialog": {
+    "titleNow": "Reboot {server} now?",
+    "titleSchedule": "Schedule a reboot of {server}",
+    "when": "Reboot at",
+    "scheduleLocal": "Local time: {local}",
+    "scheduleUtc": "Stored as {utc}",
+    "scheduleRange": "Between 1 minute and 7 days from now.",
+    "impactTitle": "What happens",
+    "impact": "{containers} containers and {domains} domains will be briefly unavailable.",
+    "impactLoading": "Checking what is running…",
+    "impactFailed": "Could not read what is running. The reboot can still go ahead.",
+    "impactAfter": "Tugra checks afterwards that every container with a restart policy runs again and every domain answers.",
+    "hub": "This server also runs the Tugra hub itself. The panel will go away for 1 to 3 minutes and come back on its own.",
+    "agentOffline": "The server's agent is offline right now, so a reboot cannot be started.",
+    "typeToConfirm": "Type the server name {name} to confirm",
+    "confirmNow": "Reboot now",
+    "confirmSchedule": "Schedule reboot",
+    "cancel": "Cancel"
+  },
+  "scheduleError": {
+    "invalid": "Pick a date and time.",
+    "past": "Pick a time at least a minute from now.",
+    "tooFar": "Pick a time within the next 7 days."
+  },
+  "live": {
+    "heading": "Reboot in progress",
+    "headingScheduled": "Reboot scheduled",
+    "scheduledFor": "Scheduled for {when}",
+    "step": {
+      "scheduled": "Scheduled",
+      "rebooting": "Rebooting",
+      "waiting": "Waiting for the agent",
+      "verifying": "Verifying"
+    },
+    "hint": {
+      "scheduled": "Nothing happens until then. You can cancel until it starts.",
+      "rebooting": "The server is going down. This takes a few minutes.",
+      "waiting": "The server is down or starting up. Waiting for the agent to reconnect.",
+      "verifying": "The agent is back. Checking that every container and domain came back."
+    },
+    "unreachable": "The panel can't reach the hub right now. That is expected while the server that hosts it reboots; this page keeps trying."
+  },
+  "report": {
+    "title": "Last reboot",
+    "when": "Verified {when}",
+    "result": {
+      "ok": "Everything came back",
+      "degraded": "Some things did not come back",
+      "failed": "Failed",
+      "cancelled": "Cancelled"
+    },
+    "summary": "{containersOk} of {containersTotal} containers running, {domainsOk} of {domainsTotal} domains answering",
+    "containers": "Containers",
+    "domains": "Domains",
+    "rebootRequiredStill": "The server still asks for a reboot.",
+    "domainsSkipped": "Domains were not checked: this server's proxy has no host port to probe.",
+    "probeUnavailable": "Domains could not be checked: the probe could not run on the server.",
+    "dockerInactive": "Docker is not running.",
+    "restartPolicy": "restart: {policy}"
+  },
+  "verdict": {
+    "container": {
+      "ok": "Running",
+      "missing": "Not back",
+      "unhealthy": "Unhealthy",
+      "pending": "Still starting",
+      "skipped": "Not expected back"
+    },
+    "domain": {
+      "ok": "Answering",
+      "not_answering": "Not answering",
+      "pending": "Not checked yet",
+      "unverified": "Not checked"
+    }
+  },
+  "reason": {
+    "snapshot_failed": "Tugra could not read what was running, so nothing was rebooted.",
+    "agent_offline": "The server's agent was offline.",
+    "busy_patch": "An OS update was running.",
+    "busy_deploy": "A deploy was running.",
+    "unsupported": "The server has no systemd.",
+    "start_failed": "The reboot could not be armed on the server.",
+    "interrupted": "The hub was interrupted before the reboot started.",
+    "host_did_not_reboot": "The server did not reboot.",
+    "agent_never_returned": "The server's agent did not come back in time.",
+    "docker_inactive": "Docker did not come back after the reboot.",
+    "state_unreadable": "The server could not be read after the reboot."
+  }
+}

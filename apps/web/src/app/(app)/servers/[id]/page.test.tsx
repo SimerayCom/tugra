@@ -112,6 +112,15 @@ describe("server detail feedback", () => {
     await waitFor(() => expect(toasts).toContainEqual({ message: "Saved", type: "success" }));
   });
 
+  it("the Maintenance tab has the Reboot card, typed to this server's name", async () => {
+    nav.tab = "maintenance";
+    stubs.fns.getServerReboot = async () => ({ active: null, last: null });
+    stubs.fns.getServerRebootPreview = async () => ({ containers: 4, domains: 2, hostsHub: false, agentOnline: true });
+    mount();
+    fireEvent.click(await screen.findByRole("button", { name: "Reboot now" }));
+    expect(await screen.findByLabelText(/Type the server name box/)).toBeInTheDocument();
+  });
+
   it("proxy dynamic config save toasts saved and applied", async () => {
     nav.tab = "maintenance";
     stubs.fns.listProxyDynamicConfigs = async () => ({ configs: [{ name: "rl", content: "a: 1" }] });
@@ -190,6 +199,19 @@ describe("server detail feedback", () => {
     expect(screen.queryByText("docker-ce")).toBeNull();
     expect(screen.getByText("Your server is up to date.")).toBeInTheDocument();
     expect(screen.getByText("A reboot is required to finish applying updates.")).toBeInTheDocument();
+  });
+
+  it("the reboot-required banner links to the Reboot card (the page never reboots anything itself)", async () => {
+    nav.tab = "updates";
+    stubs.fns.checkUpdates = async () => pkgInfo({ count: 0, packages: [], rebootRequired: true });
+    const reboot = vi.fn();
+    stubs.fns.requestServerReboot = reboot;
+    mount();
+    await clickCheck();
+    expect(await screen.findByText("A reboot is required to finish applying updates.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Reboot this server…" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Reboot this server…" }));
+    expect(reboot).not.toHaveBeenCalled();
   });
 
   it("a single-package update reports the counts and keeps the remaining rows", async () => {

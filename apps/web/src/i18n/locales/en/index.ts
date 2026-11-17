@@ -24,6 +24,7 @@ import objectMigration from "./objectMigration.json";
 import onboarding from "./onboarding.json";
 import patching from "./patching.json";
 import projects from "./projects.json";
+import reboot from "./reboot.json";
 import registries from "./registries.json";
 import cloudCredentials from "./cloudCredentials.json";
 import secretProviders from "./secretProviders.json";
@@ -41,6 +42,6 @@ import terminal from "./terminal.json";
 import traffic from "./traffic.json";
 
 // Split into namespace files (this JSON gets large); merged here.
-const en = { apps, audit, auth, backups, bulk, charts, cloudCredentials, secretProviders, clusters, common, cutover, dashboard, databases, destinations, domains, errors, feedback, fleet, home, import: importNs, logdrains, migrationRun, monitors, nav, notifications, objectMigration, onboarding, patching, projects, registries, resources, rollouts, servers, settings, sources, shared, tags, teams, templates, terminal, traffic };
+const en = { apps, audit, auth, backups, bulk, charts, cloudCredentials, secretProviders, clusters, common, cutover, dashboard, databases, destinations, domains, errors, feedback, fleet, home, import: importNs, logdrains, migrationRun, monitors, nav, notifications, objectMigration, onboarding, patching, projects, reboot, registries, resources, rollouts, servers, settings, sources, shared, tags, teams, templates, terminal, traffic };
 
 export default en;

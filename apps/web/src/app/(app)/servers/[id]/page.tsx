@@ -18,6 +18,7 @@ import type { MetricsRange, PatchInfo, ServerStatus, ServerView, AgentUpdateResp
 import { useT } from "../../../../i18n/provider";
 import { MetricChart, METRIC_GRID_STYLE, METRIC_CHART_HEIGHT } from "../../../../components/charts";
 import { ServerContainersCard } from "../../../../components/server-containers-card";
+import { ServerRebootCard } from "../../../../components/server-reboot-card";
 import { LiveGauges } from "../../../../components/live-gauges";
 import { GpuCard } from "../../../../components/gpu-card";
 import { DiscoverAdoptCard } from "../../../../components/discover-adopt-card";
@@ -276,7 +277,14 @@ export default function ServerDetailPage() {
       {tab === "updates" && server.canWrite && (
         <>
           <AgentUpdateCard id={id} version={server.agentVersion} />
-          <PatchCard id={id} />
+          <PatchCard
+            id={id}
+            onOpenReboot={() => {
+              setTab("maintenance");
+              // The card mounts with the tab: scroll to it once it is there.
+              setTimeout(() => document.getElementById("server-reboot")?.scrollIntoView?.({ behavior: "smooth", block: "start" }), 50);
+            }}
+          />
         </>
       )}
 
@@ -285,6 +293,7 @@ export default function ServerDetailPage() {
       {tab === "maintenance" && (
         <>
           <TagsCard tags={server.tags} canWrite={server.canWrite} onSave={(next) => tags.mutate(next)} />
+          <ServerRebootCard id={id} serverName={server.name} canWrite={server.canWrite} />
           <ProxyCard id={id} canWrite={server.canWrite} />
           <TrafficAnalyticsCard id={id} enabled={server.trafficAnalytics} canWrite={server.canWrite} />
           <ProxyDynamicCard id={id} canWrite={server.canWrite} />
@@ -576,7 +585,7 @@ function ServerAuditCard({ id }: { id: string }) {
 
 type PatchPhase = "idle" | "applying" | "waiting" | "running" | "rechecking";
 
-function PatchCard({ id }: { id: string }) {
+function PatchCard({ id, onOpenReboot }: { id: string; onOpenReboot: () => void }) {
   const t = useT();
   const confirm = useConfirm();
   const [output, setOutput] = useState("");
@@ -740,7 +749,10 @@ function PatchCard({ id }: { id: string }) {
       {list && list.supported && (
         <>
           {list.rebootRequired && (
-            <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--c-am)", marginBottom: 10 }}><TriangleAlert size={13} aria-hidden style={{ flexShrink: 0 }} /> {t("patching.rebootRequired")}</div>
+            <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, fontSize: 12, color: "var(--c-am)", marginBottom: 10 }}>
+              <TriangleAlert size={13} aria-hidden style={{ flexShrink: 0 }} /> {t("patching.rebootRequired")}
+              <Btn variant="ghost" onClick={onOpenReboot}>{t("reboot.fromPatching")}</Btn>
+            </div>
           )}
           {list.applyRunning && (
             <div role="status" style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--c-am)", marginBottom: 10 }}><Spinner /> {t("patching.runningBanner")}</div>

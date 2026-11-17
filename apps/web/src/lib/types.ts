@@ -600,6 +600,51 @@ export interface DpkgInterrupted {
   containerEngine: boolean;
 }
 
+// Reboot server: a requested reboot, scheduled or in progress, and the verification report once the server is back.
+export type RebootState = "SCHEDULED" | "STARTING" | "REBOOTING" | "WAITING_AGENT" | "VERIFYING" | "DONE";
+export type RebootResult = "ok" | "degraded" | "failed" | "cancelled";
+export type RebootContainerVerdict = "ok" | "missing" | "unhealthy" | "pending" | "skipped";
+export type RebootDomainVerdict = "ok" | "not_answering" | "pending" | "unverified";
+export interface RebootReport {
+  version: 1;
+  checkedAt: string;
+  rebooted: boolean;
+  docker: "active" | "inactive" | "unknown";
+  containers: { name: string; image: string; restartPolicy: string; hadHealthcheck: boolean; verdict: RebootContainerVerdict; detail?: string }[];
+  domains: { host: string; verdict: RebootDomainVerdict; status: number | null }[];
+  domainsNote?: "skipped_no_host_port" | "probe_unavailable";
+  rebootRequired: "cleared" | "still_set" | "unknown";
+  /** A closed failure code (rendered through reboot.reason.*), never raw output. */
+  reason?: string;
+  summary: { containersOk: number; containersExpected: number; domainsOk: number; domainsExpected: number };
+}
+export interface RebootView {
+  id: string;
+  serverId: string;
+  mode: "now" | "scheduled";
+  state: RebootState;
+  result: RebootResult | null;
+  requestedBy: string;
+  scheduledAt: string | null;
+  startedAt: string | null;
+  agentBackAt: string | null;
+  verifiedAt: string | null;
+  createdAt: string;
+  snapshot: { containers: number; domains: number; hostsHub: boolean } | null;
+  report: RebootReport | null;
+}
+export interface RebootStatus {
+  active: RebootView | null;
+  last: RebootView | null;
+}
+export interface RebootPreview {
+  containers: number;
+  domains: number;
+  hostsHub: boolean;
+  agentOnline: boolean;
+}
+export type RebootRequest = { mode: "now"; confirmName: string } | { mode: "scheduled"; at: string; confirmName: string };
+
 // Fleet-wide OS patching across many servers at once (non-writable servers are skipped, not errored).
 export interface FleetPatchCheckRow {
   serverId: string;

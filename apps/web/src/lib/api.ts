@@ -1,5 +1,9 @@
 import { HUB_UNREACHABLE_CODE, hubUnreachableMessage, isHubDownStatus, isNetworkFailure, reportHubDown } from "./hub-connection";
 import type {
+  RebootPreview,
+  RebootRequest,
+  RebootStatus,
+  RebootView,
   AppMove,
   AppMovePhase,
   MoveAcks,
@@ -1019,6 +1023,21 @@ export const api = {
   },
   deleteAppLogDrain(appId: string, drainId: string) {
     return apiFetch<{ ok: true }>(`/apps/${appId}/log-drains/${drainId}`, { method: "DELETE" });
+  },
+  /** Reboot server: the live reboot (if any) and the last finished one with its verification report. */
+  getServerReboot(id: string) {
+    return apiFetch<RebootStatus>(`/servers/${id}/reboot`);
+  },
+  /** What a reboot would take down (counts) — for the confirmation dialog. */
+  getServerRebootPreview(id: string) {
+    return apiFetch<RebootPreview>(`/servers/${id}/reboot/preview`);
+  },
+  requestServerReboot(id: string, body: RebootRequest) {
+    return apiFetch<RebootView>(`/servers/${id}/reboot`, { method: "POST", body: JSON.stringify(body) });
+  },
+  /** Cancel a SCHEDULED reboot (one that already started cannot be cancelled). */
+  cancelServerReboot(id: string) {
+    return apiFetch<RebootView>(`/servers/${id}/reboot`, { method: "DELETE" });
   },
   upgradeAll(id: string) {
     return apiFetch<{ output: string; exitCode: number }>(`/servers/${id}/updates/apply`, { method: "POST" });
