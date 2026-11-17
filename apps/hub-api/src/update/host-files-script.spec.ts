@@ -895,7 +895,7 @@ suite("update.sh --apply-host-files (the hub's bootstrap for a checkout that pre
 
 suite("update.sh keeps the install's git checkout consistent with the files it wrote", () => {
   const gitIn = (cwd: string, ...args: string[]): string =>
-    execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@example.test", "-c", "commit.gpgsign=false", ...args], { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+    execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@example.test", "-c", "commit.gpgsign=false", "-c", "init.defaultBranch=main", ...args], { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
   const porcelain = (rig: Rig) => execFileSync("git", ["status", "--porcelain", "--untracked-files=all"], { cwd: rig.repo, encoding: "utf8" }).replace(/\n$/, "");
 
   /** Turns the rig's repo into a git checkout at v0.1.0 whose remote also has tag v0.2.0 = the release `files`. */

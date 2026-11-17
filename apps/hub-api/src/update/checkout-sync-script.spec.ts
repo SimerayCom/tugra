@@ -32,7 +32,7 @@ const dirs: string[] = [];
 afterAll(() => dirs.forEach((d) => rmSync(d, { recursive: true, force: true })));
 
 const git = (cwd: string, ...args: string[]): string =>
-  execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@example.test", "-c", "commit.gpgsign=false", ...args], { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+  execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@example.test", "-c", "commit.gpgsign=false", "-c", "init.defaultBranch=main", ...args], { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
 
 function write(root: string, files: Record<string, string>): void {
   for (const [p, c] of Object.entries(files)) {

@@ -641,7 +641,7 @@ exit 0
 
     describe("a git checkout the in-app updater wrote compose/scripts into", () => {
       const gitIn = (cwd: string, ...args: string[]): string =>
-        execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@example.test", "-c", "commit.gpgsign=false", ...args], { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+        execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@example.test", "-c", "commit.gpgsign=false", "-c", "init.defaultBranch=main", ...args], { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
       const porcelain = (repo: string) => execFileSync("git", ["status", "--porcelain", "--untracked-files=all"], { cwd: repo, encoding: "utf8" }).replace(/\n$/, "");
       let n = 0;
 

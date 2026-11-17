@@ -23,7 +23,7 @@ describe("scripts/bootstrap.sh", () => {
     afterAll(() => rmSync(root, { recursive: true, force: true }));
 
     const git = (cwd: string, ...args: string[]): string =>
-      execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false", ...args], {
+      execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false", "-c", "init.defaultBranch=main", ...args], {
         cwd,
         encoding: "utf8",
         env: { PATH: process.env.PATH, HOME: root, GIT_CONFIG_NOSYSTEM: "1" } as NodeJS.ProcessEnv,
