@@ -221,15 +221,24 @@ func resolveContainerID(sourceRef, override string, rows []psRow, allowSuffix bo
 	return id, err
 }
 
-var suffixDigitsRe = regexp.MustCompile(`^[0-9]{6,}$`)
+// suffixDigitsRe is the legacy Coolify deploy suffix (4.1.x .. 4.6: epoch-like digits); suffixISORe is the 4.7.x one
+// (`YYYYMMDDTHHMMSS`). A preview container (`<uuid>-pr-N`) and anything else is neither.
+var (
+	suffixDigitsRe = regexp.MustCompile(`^[0-9]{6,}$`)
+	suffixISORe    = regexp.MustCompile(`^[0-9]{8}T[0-9]{6}$`)
+)
 
-// resolveBySuffixedName matches `<sourceRef>-<digits>` (Coolify names an application container after its uuid plus a
-// deploy timestamp). Several such containers (an old and a new deploy) are ambiguous: fail closed.
+func isDeploySuffix(s string) bool { return suffixDigitsRe.MatchString(s) || suffixISORe.MatchString(s) }
+
+// resolveBySuffixedName matches `<sourceRef>-<suffix>` in both Coolify forms (legacy digits and the 4.7.x ISO
+// timestamp); Coolify names an application container after its uuid (or its custom container-name prefix, which a
+// caller that knows it passes as sourceRef) plus a deploy timestamp. Several such containers (an old and a new
+// deploy) are ambiguous: fail closed.
 func resolveBySuffixedName(sourceRef string, rows []psRow) (string, error) {
 	var hits []string
 	for _, r := range rows {
 		for _, n := range r.names {
-			if rest, ok := strings.CutPrefix(n, sourceRef+"-"); ok && suffixDigitsRe.MatchString(rest) {
+			if rest, ok := strings.CutPrefix(n, sourceRef+"-"); ok && isDeploySuffix(rest) {
 				hits = append(hits, r.id)
 				break
 			}

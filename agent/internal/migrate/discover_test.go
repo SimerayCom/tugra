@@ -157,3 +157,47 @@ func TestClassifyEnginePrecedence(t *testing.T) {
 		t.Errorf("env fallback failed: %q", got)
 	}
 }
+
+func TestResolveBySuffixedNameBothCoolifyForms(t *testing.T) {
+	const uuid = "x8kc0sw4cw0c0ooc0o4gg0ck"
+	row := func(id, name string) psRow { return psRow{id: id, names: []string{name}} }
+	cases := []struct {
+		name    string
+		rows    []psRow
+		ref     string
+		want    string
+		wantErr error
+	}{
+		{"legacy digits", []psRow{row(pgID, uuid+"-170000000000")}, uuid, pgID, nil},
+		{"4.7.5 ISO timestamp", []psRow{row(pgID, uuid+"-20261110T153012")}, uuid, pgID, nil},
+		{"custom prefix, ISO", []psRow{row(pgID, "shop-20261110T153012")}, "shop", pgID, nil},
+		{"custom prefix, legacy", []psRow{row(pgID, "shop-170000000000")}, "shop", pgID, nil},
+		{"old and new deploy are ambiguous", []psRow{row(pgID, uuid+"-170000000000"), row(otherID, uuid+"-20261110T153012")}, uuid, "", ErrAmbiguous},
+		{"preview container is not the app", []psRow{row(pgID, uuid+"-pr-12")}, uuid, "", ErrNotFound},
+		{"short digits", []psRow{row(pgID, uuid+"-12345")}, uuid, "", ErrNotFound},
+		{"ISO with lowercase t", []psRow{row(pgID, uuid+"-20261110t153012")}, uuid, "", ErrNotFound},
+		{"ISO too short", []psRow{row(pgID, uuid+"-20261110T1530")}, uuid, "", ErrNotFound},
+		{"ISO with trailing junk", []psRow{row(pgID, uuid+"-20261110T153012x")}, uuid, "", ErrNotFound},
+		{"ISO with a second suffix", []psRow{row(pgID, uuid+"-20261110T153012-1")}, uuid, "", ErrNotFound},
+		{"another uuid sharing the prefix", []psRow{row(pgID, uuid+"x-20261110T153012")}, uuid, "", ErrNotFound},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := resolveContainerID(c.ref, "", c.rows, true)
+			if err != c.wantErr || got != c.want {
+				t.Fatalf("got (%q, %v), want (%q, %v)", got, err, c.want, c.wantErr)
+			}
+		})
+	}
+	t.Run("exact consistent name wins and needs no suffix", func(t *testing.T) {
+		got, err := resolveContainerID(uuid, "", []psRow{row(pgID, uuid), row(otherID, uuid+"-20261110T153012")}, true)
+		if err != nil || got != pgID {
+			t.Fatalf("got (%q, %v)", got, err)
+		}
+	})
+	t.Run("the DB arm never takes a suffixed name", func(t *testing.T) {
+		if _, err := resolveContainerID(uuid, "", []psRow{row(pgID, uuid+"-20261110T153012")}, false); err != ErrNotFound {
+			t.Fatalf("got %v", err)
+		}
+	})
+}
