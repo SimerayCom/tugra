@@ -31,5 +31,17 @@
   "applied": "Updates applied",
   "appliedOne": "{pkg} updated",
   "applyFailed": "The update did not finish cleanly — see the log below.",
-  "rebootRequiredToast": "Updates applied — a reboot is required to finish them."
+  "rebootRequiredToast": "Updates applied — a reboot is required to finish them.",
+  "appliedCounts": "{updated} package(s) updated — the server is up to date.",
+  "appliedNothingLeft": "The update finished — the server is up to date.",
+  "appliedOneCounts": "{pkg} updated — {remaining} package(s) still pending.",
+  "appliedPartial": "{updated} package(s) updated, {remaining} still pending.",
+  "appliedNone": "No packages were updated — {remaining} still pending. They may be held back or need new dependencies.",
+  "failedCounts": "The update did not finish cleanly — {updated} package(s) updated, {remaining} still pending. See the log below.",
+  "restartedDone": "{updated} package(s) updated. The agent restarted during the update and is back online — the server is up to date.",
+  "restartedPartial": "The agent restarted during the update and is back online — {updated} package(s) updated, {remaining} still pending.",
+  "waitingAgent": "The update restarted Docker, so the agent is reconnecting. Waiting for it, then checking for updates again…",
+  "rechecking": "Update finished — checking what is left…",
+  "recheckFailed": "Couldn't re-check the server after the update. The list below is hidden because it may be out of date — press “Check for updates”.",
+  "recheckFailedToast": "The update ran, but the server could not be re-checked. Check for updates to see what changed."
 }

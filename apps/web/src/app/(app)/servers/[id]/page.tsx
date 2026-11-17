@@ -14,7 +14,7 @@ import { CopyBtn } from "../../../../components/copy-row";
 import { useConfirm } from "../../../../components/confirm";
 import { pct, fmtBytesStr, formatUptime } from "../../../../lib/fleet";
 import { diskPctSeries, humanizeRatePair } from "../../../../lib/metrics";
-import type { MetricsRange, ServerStatus, ServerView, AgentUpdateResponse } from "../../../../lib/types";
+import type { MetricsRange, PatchInfo, ServerStatus, ServerView, AgentUpdateResponse } from "../../../../lib/types";
 import { useT } from "../../../../i18n/provider";
 import { MetricChart, METRIC_GRID_STYLE, METRIC_CHART_HEIGHT } from "../../../../components/charts";
 import { ServerContainersCard } from "../../../../components/server-containers-card";
@@ -37,7 +37,7 @@ import type { ProxyStatus } from "../../../../lib/types";
 import { PageHeader } from "../../../../components/page-header";
 import { Tabs } from "../../../../components/tabs-nav";
 import { RuntimeUpdateWarning } from "../../../../components/runtime-update-warning";
-import { containerRuntimeUpdates } from "../../../../lib/patching";
+import { containerRuntimeUpdates, isAgentDropError, isTransientPatchError, patchTiming, settledApplyLog, shouldToastReboot, summarizeApply } from "../../../../lib/patching";
 import { usePatchLogStream } from "../../../../hooks/useDeployLogStream";
 import { useMetricsStream } from "../../../../hooks/useMetricsStream";
 import { useServerReconnect } from "../../../../hooks/useServerReconnect";
@@ -574,47 +574,106 @@ function ServerAuditCard({ id }: { id: string }) {
   );
 }
 
+type PatchPhase = "idle" | "applying" | "waiting" | "rechecking";
+
 function PatchCard({ id }: { id: string }) {
   const t = useT();
   const [output, setOutput] = useState("");
   const [applying, setApplying] = useState(false);
   const log = usePatchLogStream(id, applying);
+  const streamedRef = useRef("");
+  streamedRef.current = log.lines;
   const logText = applying ? log.lines : output;
   const logRef = useStickToBottom<HTMLPreElement>(logText); // follow the live apt output as it streams
   const toast = useToast();
-  // True from a finished apply until its follow-up re-check lands, so the reboot notice fires only for that check.
-  const recheckAfterApply = useRef(false);
+  const [info, setInfo] = useState<PatchInfo | null>(null);
+  // After an update the list is untrusted (packages it installed are still listed, a restarted agent can't answer)
+  // until a fresh check lands: `stale` hides the rows and the reboot banner, `phase` says what we are waiting on.
+  const [stale, setStale] = useState(false);
+  const [phase, setPhase] = useState<PatchPhase>("idle");
+  const [applyTarget, setApplyTarget] = useState<string | null>(null); // package name, or null for "update all"
+  const alive = useRef(true);
+  useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   const check = useMutation({
     mutationFn: () => api.checkUpdates(id),
-    onSuccess: (r) => {
-      if (!recheckAfterApply.current) return;
-      recheckAfterApply.current = false;
-      if (r.supported && r.rebootRequired) toast(t("patching.rebootRequiredToast"), "info");
-    },
-    onError: () => { recheckAfterApply.current = false; },
+    onSuccess: (r) => { setInfo(r); setStale(false); },
   });
-  const info = check.data;
-  // Exit 0 = applied; anything else is a failed apply that returned (not threw), so don't toast success for it.
-  const applyDone = (r: { output: string; exitCode: number }, okMsg: string) => {
-    setOutput(r.output);
-    if (r.exitCode === 0) toast(okMsg, "success");
-    else toast(t("patching.applyFailed"), "error");
-    recheckAfterApply.current = true;
-    check.mutate();
+  const busy = phase !== "idle";
+
+  // Re-run the check after an update until it answers. A 4xx is a definitive error (stop); anything transient —
+  // the agent reconnecting after the update restarted Docker, a hub timeout, a network blip — is retried until the
+  // deadline. Resolves null when it never got a trustworthy answer or the card unmounted.
+  const recheck = async (waitFirst: boolean): Promise<PatchInfo | null> => {
+    const deadline = Date.now() + patchTiming.deadlineMs;
+    let first = !waitFirst;
+    for (;;) {
+      if (!first) await new Promise((r) => setTimeout(r, patchTiming.intervalMs));
+      first = false;
+      if (!alive.current) return null;
+      try {
+        return await api.checkUpdates(id);
+      } catch (e) {
+        if (!isTransientPatchError(e) || Date.now() >= deadline) return null;
+      }
+    }
   };
-  const upgradeAll = useMutation({
-    mutationFn: () => api.upgradeAll(id),
-    onSuccess: (r) => applyDone(r, t("patching.applied")),
-    onSettled: () => setApplying(false),
-  });
-  const upgradeOne = useMutation({
-    mutationFn: (pkg: string) => api.upgradeOne(id, pkg),
-    onSuccess: (r, pkg) => applyDone(r, t("patching.appliedOne", { pkg })),
-    onSettled: () => setApplying(false),
-  });
-  const busy = upgradeAll.isPending || upgradeOne.isPending;
-  const runAll = () => { setOutput(""); setApplying(true); upgradeAll.mutate(); };
-  const runOne = (pkg: string) => { setOutput(""); setApplying(true); upgradeOne.mutate(pkg); };
+
+  const apply = async (pkg: string | null) => {
+    const before = info?.packages ?? [];
+    setOutput("");
+    setApplyTarget(pkg);
+    setPhase("applying");
+    setApplying(true);
+    let exitCode = 0;
+    let dropped = false;
+    try {
+      const r = pkg ? await api.upgradeOne(id, pkg) : await api.upgradeAll(id);
+      if (!alive.current) return;
+      setOutput(settledApplyLog(r.output, streamedRef.current));
+      exitCode = r.exitCode;
+    } catch (e) {
+      if (!alive.current) return;
+      setOutput(settledApplyLog(null, streamedRef.current)); // keep the live apt output the owner was watching
+      setApplying(false);
+      if (!isAgentDropError(e)) {
+        // The hub refused or the host couldn't be patched: nothing ran, the list is still true.
+        setPhase("idle");
+        toast(e instanceof Error ? e.message : t("patching.applyFailed"), "error");
+        return;
+      }
+      dropped = true; // the update most likely restarted Docker, taking the agent with it
+    }
+    setApplying(false);
+    setStale(true);
+    setPhase(dropped ? "waiting" : "rechecking");
+    const after = await recheck(dropped);
+    if (!alive.current) return;
+    setPhase("idle");
+    if (!after) {
+      toast(t("patching.recheckFailedToast"), "error");
+      return; // stay stale: never show the old list as if it were current
+    }
+    setInfo(after);
+    setStale(false);
+    const sum = summarizeApply(before, after);
+    if (!sum) {
+      toast(dropped || exitCode !== 0 ? t("patching.recheckFailedToast") : t("patching.applied"), exitCode === 0 ? "info" : "error");
+    } else if (exitCode !== 0) {
+      toast(t("patching.failedCounts", sum), "error");
+    } else if (dropped) {
+      toast(t(sum.remaining === 0 ? "patching.restartedDone" : "patching.restartedPartial", sum), sum.remaining === 0 ? "success" : "info");
+    } else if (sum.remaining === 0) {
+      toast(sum.updated > 0 ? t("patching.appliedCounts", sum) : t("patching.appliedNothingLeft"), "success");
+    } else if (pkg && !after.packages.some((p) => p.name === pkg)) {
+      toast(t("patching.appliedOneCounts", { pkg, remaining: sum.remaining }), "success");
+    } else {
+      toast(t(sum.updated > 0 ? "patching.appliedPartial" : "patching.appliedNone", sum), sum.updated > 0 ? "info" : "error");
+    }
+    if (shouldToastReboot(exitCode, sum, after)) toast(t("patching.rebootRequiredToast"), "info");
+  };
+  const runAll = () => { void apply(null); };
+  const runOne = (pkg: string) => { void apply(pkg); };
+  const list = stale ? null : info;
 
   return (
     <SectionCard
@@ -623,10 +682,10 @@ function PatchCard({ id }: { id: string }) {
       style={{ marginTop: 20 }}
       right={
         <>
-          {info?.supported && info.manager && (
-            <span className="mono" style={{ fontSize: 11, color: "var(--c-tx3)", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: "1px 6px" }}>{info.manager}</span>
+          {list?.supported && list.manager && (
+            <span className="mono" style={{ fontSize: 11, color: "var(--c-tx3)", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: "1px 6px" }}>{list.manager}</span>
           )}
-          <Btn variant="ghost" onClick={() => check.mutate()} disabled={check.isPending}>
+          <Btn variant="ghost" onClick={() => check.mutate()} disabled={check.isPending || busy}>
             {check.isPending ? "…" : t("patching.check")}
           </Btn>
         </>
@@ -635,41 +694,51 @@ function PatchCard({ id }: { id: string }) {
 
       {check.isError && <div style={{ color: "var(--c-r)", fontSize: 12 }}>{(check.error as Error).message}</div>}
 
-      {info && !info.supported && (
+      {phase === "waiting" && (
+        <div role="status" style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "var(--c-am)", marginBottom: 10 }}><Spinner /> {t("patching.waitingAgent")}</div>
+      )}
+      {phase === "rechecking" && (
+        <div role="status" style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "var(--c-tx3)", marginBottom: 10 }}><Spinner /> {t("patching.rechecking")}</div>
+      )}
+      {stale && phase === "idle" && (
+        <div role="alert" style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "var(--c-r)", marginBottom: 10 }}><TriangleAlert size={13} aria-hidden style={{ flexShrink: 0 }} /> {t("patching.recheckFailed")}</div>
+      )}
+
+      {list && !list.supported && (
         <div style={{ fontSize: 13, color: "var(--c-tx3)" }}>{t("patching.unsupported")}</div>
       )}
 
-      {info && info.supported && (
+      {list && list.supported && (
         <>
-          {info.rebootRequired && (
+          {list.rebootRequired && (
             <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--c-am)", marginBottom: 10 }}><TriangleAlert size={13} aria-hidden style={{ flexShrink: 0 }} /> {t("patching.rebootRequired")}</div>
           )}
-          {info.checkFailed ? (
+          {list.checkFailed ? (
             <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "var(--c-r)" }}><TriangleAlert size={13} aria-hidden style={{ flexShrink: 0 }} /> {t("patching.checkFailed")}</div>
-          ) : info.count === 0 ? (
+          ) : list.count === 0 ? (
             <div style={{ fontSize: 13, color: "var(--c-g)" }}>{t("patching.upToDate")}</div>
           ) : (
             <>
               <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
-                <span style={{ fontSize: 13, fontWeight: 600 }}>{t("patching.count", { n: info.count })}</span>
+                <span style={{ fontSize: 13, fontWeight: 600 }}>{t("patching.count", { n: list.count })}</span>
                 <div style={{ flex: 1 }} />
-                <Btn onClick={runAll} loading={upgradeAll.isPending} disabled={busy}>
-                  {upgradeAll.isPending ? t("patching.running") : t("patching.updateAll")}
+                <Btn onClick={runAll} loading={phase === "applying" && applyTarget === null} disabled={busy}>
+                  {phase === "applying" && applyTarget === null ? t("patching.running") : t("patching.updateAll")}
                 </Btn>
               </div>
-              <RuntimeUpdateWarning packages={containerRuntimeUpdates(info.packages)} />
+              <RuntimeUpdateWarning packages={containerRuntimeUpdates(list.packages)} />
               <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 12 }}>
-                {info.packages.map((p) => (
+                {list.packages.map((p) => (
                   <div key={p.name} style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 12 }}>
                     <span style={{ fontWeight: 600, width: 180, overflow: "hidden", textOverflow: "ellipsis" }}>{p.name}</span>
                     <span className="mono" style={{ color: "var(--c-tx3)", flex: 1, overflow: "hidden", textOverflow: "ellipsis" }}>{p.current ? `${p.current} → ${p.candidate}` : `↑ ${p.candidate}`}</span>
                     <button
                       onClick={() => runOne(p.name)}
                       disabled={busy}
-                      aria-busy={(upgradeOne.isPending && upgradeOne.variables === p.name) || undefined}
+                      aria-busy={(phase === "applying" && applyTarget === p.name) || undefined}
                       style={{ background: "transparent", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", color: "var(--c-lapis)", fontSize: 11, cursor: "pointer", padding: "2px 8px", fontFamily: "inherit" }}
                     >
-                      {upgradeOne.isPending && upgradeOne.variables === p.name ? t("patching.running") : t("patching.update")}
+                      {phase === "applying" && applyTarget === p.name ? t("patching.running") : t("patching.update")}
                     </button>
                   </div>
                 ))}
