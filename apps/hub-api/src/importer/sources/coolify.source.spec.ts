@@ -75,6 +75,144 @@ describe("CoolifySource", () => {
     });
   });
 
+  describe("Coolify 4.7.5 shapes", () => {
+    const base = {
+      "/servers": [{ uuid: "srv-a", name: "box" }],
+      "/servers/srv-a/resources": [{ uuid: "app-1" }, { uuid: "svc-1" }],
+      "/databases": [],
+    };
+    // A plain-token 4.7.5 list row: the gated keys (commands, labels, compose) are ABSENT, and so are is_static / is_spa.
+    const row475 = { uuid: "app-1", name: "site", build_pack: "nixpacks", git_repository: "o/site", git_branch: "main", publish_directory: "/dist", ports_exposes: "80", fqdn: "https://site.example.test" };
+
+    it("reads is_static / is_spa from settings.* of the detail GET for a nixpacks app, one extra GET", async () => {
+      const client = new FakeClient({
+        ...base,
+        "/applications": [row475],
+        "/applications/app-1": { ...row475, settings: { is_static: true, is_spa: false } },
+        "/applications/app-1/envs": [],
+        "/applications/app-1/storages": [],
+        "/services": [],
+      });
+      const fleet = await new CoolifySource(client).discover();
+      expect(fleet.apps[0]).toMatchObject({ kind: "git", buildPack: "static", publishDirectory: "/dist", staticSpa: false });
+      expect(client.calls.filter((c) => c === "/applications/app-1")).toHaveLength(1);
+    });
+
+    it("also reads the settings of a railpack and a static app, and none for a dockerfile / image app", async () => {
+      const apps = [
+        { ...row475, uuid: "r", build_pack: "railpack" },
+        { ...row475, uuid: "s", build_pack: "static" },
+        { ...row475, uuid: "d", build_pack: "dockerfile" },
+        { uuid: "i", build_pack: "dockerimage", docker_registry_image_name: "nginx" },
+      ];
+      const routes: Record<string, unknown> = { ...base, "/applications": apps, "/services": [], "/applications/r": { settings: { is_static: true } }, "/applications/s": { settings: { is_spa: false } } };
+      for (const a of apps) {
+        routes[`/applications/${a.uuid}/envs`] = [];
+        routes[`/applications/${a.uuid}/storages`] = [];
+      }
+      const client = new FakeClient(routes);
+      const fleet = await new CoolifySource(client).discover();
+      expect(fleet.apps.map((a) => a.buildPack)).toEqual(["static", "static", "dockerfile", "image"]);
+      expect(fleet.apps[1].staticSpa).toBe(false);
+      expect(client.calls.filter((c) => /^\/applications\/[a-z]$/.test(c)).sort()).toEqual(["/applications/r", "/applications/s"]);
+    });
+
+    it("keeps reading the top-level flags of 4.1.2 to 4.6 and does not spend a detail GET when the row already has them", async () => {
+      const client = new FakeClient({
+        ...base,
+        "/applications": [{ ...row475, is_static: true, is_spa: true }],
+        "/applications/app-1/envs": [],
+        "/applications/app-1/storages": [],
+        "/services": [],
+      });
+      const fleet = await new CoolifySource(client).discover();
+      expect(fleet.apps[0].buildPack).toBe("static");
+      expect(client.calls).not.toContain("/applications/app-1");
+    });
+
+    it("a detail read that fails (or has no settings) keeps the list row and says so only on a failure", async () => {
+      const routes = { ...base, "/applications": [row475], "/applications/app-1/envs": [], "/applications/app-1/storages": [], "/services": [] };
+      const failed = await new CoolifySource(new FakeClient({ ...routes, "/applications/app-1": new Error("429 slow down") })).discover();
+      expect(failed.apps[0].buildPack).toBe("nixpacks");
+      expect(failed.warnings).toContain("could not read the static-site settings of site — a static site may be planned as a regular build");
+      const plain = await new CoolifySource(new FakeClient({ ...routes, "/applications/app-1": { ...row475 } })).discover();
+      expect(plain.apps[0].buildPack).toBe("nixpacks");
+      expect(plain.warnings.filter((w) => /static-site/.test(w))).toEqual([]);
+    });
+
+    it("warns, naming what is not carried and the fix, when the rows carry no sensitive keys; stays quiet when they do", async () => {
+      const routes = { ...base, "/applications": [{ ...row475, build_pack: "dockerfile" }], "/applications/app-1/envs": [], "/applications/app-1/storages": [], "/services": [] };
+      const hidden = await new CoolifySource(new FakeClient(routes)).discover();
+      const w = hidden.warnings.find((x) => /read:sensitive/.test(x) && /not be carried|NOT be carried/.test(x));
+      expect(w).toBeDefined();
+      expect(w).toMatch(/1 application\(s\)/);
+      expect(w).toMatch(/start commands/);
+      expect(w).toMatch(/team admin or owner/);
+      const visible = await new CoolifySource(new FakeClient({ ...routes, "/applications": [{ ...row475, build_pack: "dockerfile", install_command: null, build_command: null, start_command: null }] })).discover();
+      expect(visible.warnings.filter((x) => /sensitive fields/.test(x))).toEqual([]);
+    });
+
+    it("service list rows carry no members or compose: the detail GET supplies them, members the compose dropped are skipped, the server name comes from the detail", async () => {
+      const client = new FakeClient({
+        ...base,
+        "/applications": [],
+        "/services": [{ uuid: "svc-1", name: "stack", service_type: "plausible" }],
+        "/services/svc-1": {
+          uuid: "svc-1",
+          name: "stack",
+          docker_compose_raw: "services:\n  web:\n    image: x:1\n",
+          destination: { server: { uuid: "srv-a", name: "box-detail" } },
+          applications: [
+            { uuid: "sa-1", name: "web", fqdn: "https://svc.example.test:8000" },
+            { uuid: "sa-old", name: "gone", is_removed_from_compose: true },
+          ],
+          databases: [
+            { uuid: "sd-1", name: "pg", is_removed_from_compose: false },
+            { uuid: "sd-old", name: "old-db", is_removed_from_compose: true },
+          ],
+        },
+      });
+      const fleet = await new CoolifySource(client).discover();
+      const svc = fleet.services[0];
+      expect(svc.memberApps).toEqual(["sa-1"]);
+      expect(svc.memberDbs).toEqual(["sd-1"]);
+      expect(svc.members!.map((m) => m.name)).toEqual(["pg", "web"]);
+      expect(svc.composeFile).toContain("services:");
+      expect(svc.serverName).toBe("box-detail");
+      expect(client.calls).toContain("/services/svc-1");
+    });
+
+    it("the old inventory shape (members + compose already on the list row) still skips the detail GET", async () => {
+      const client = new FakeClient({
+        ...base,
+        "/applications": [],
+        "/services": [{ uuid: "svc-1", name: "stack", docker_compose_raw: "services: {}", applications: [{ uuid: "sa-1", name: "web" }], databases: [] }],
+      });
+      const fleet = await new CoolifySource(client).discover();
+      expect(fleet.services[0].memberApps).toEqual(["sa-1"]);
+      expect(client.calls).not.toContain("/services/svc-1");
+    });
+
+    it("locked variables (is_shown_once) are reported LOCKED, never as a token problem", async () => {
+      const client = new FakeClient({
+        ...base,
+        "/applications": [{ ...row475, build_pack: "dockerfile" }],
+        "/services": [],
+        "/applications/app-1/envs": [{ key: "ONLY_SECRET", is_shown_once: true }],
+        "/applications/app-1/storages": [],
+      });
+      const fleet = await new CoolifySource(client).discover();
+      expect(fleet.apps[0].envReport).toEqual({ total: 1, previewSkipped: 0, unresolved: [{ key: "ONLY_SECRET", reason: "LOCKED" }], invalidKeys: [], tokenReadOnly: false });
+    });
+
+    it("fetchSecrets tags a locked variable LOCKED and still carries the readable ones", async () => {
+      const client = new FakeClient({ "/applications/app-1/envs": [{ key: "A", value: "1", real_value: "1" }, { key: "B", is_shown_once: true }] });
+      const out = await new CoolifySource(client).fetchSecrets("app-1");
+      expect(out.values).toEqual({ A: "1" });
+      expect(out.unresolved).toEqual([{ key: "B", secret: true, reason: "LOCKED", ref: undefined }]);
+    });
+  });
+
   describe("fetchSecrets (read:sensitive env resolution)", () => {
     it("returns resolved values (real_value preferred) and reports unresolvable keys", async () => {
       const client = new FakeClient({

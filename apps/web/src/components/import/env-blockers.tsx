@@ -10,6 +10,7 @@ const REASON_KEY: Record<ImportEnvReason, string> = {
   NO_VALUE: "import.env.reason.noValue",
   SHARED_UNEXPANDED: "import.env.reason.sharedUnexpanded",
   MAGIC: "import.env.reason.magic",
+  LOCKED: "import.env.reason.locked",
 };
 const LIST_CAP = 40;
 

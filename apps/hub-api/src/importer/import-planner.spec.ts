@@ -345,3 +345,22 @@ describe("planImport dbDataModes (physical volume copy)", () => {
     expect(plan.items.find((i) => i.itemRef === "database:srv1:p2")!.risks).toContainEqual(expect.objectContaining({ level: "blocker", code: "db.volume.unknown" }));
   });
 });
+
+describe("planImport Valkey databases", () => {
+  const valkeyDb = (extra: Record<string, unknown>) => ({
+    ...fleet,
+    apps: [],
+    databases: [{ sourceRef: "v1", name: "cache", engine: "REDIS" as const, image: "valkey/valkey:9-alpine", serverRef: "srv1", ...extra }],
+    volumes: [],
+  });
+  it("does not ask to pin a version for a Valkey database (its tag is no Redis version)", () => {
+    const p = planImport(valkeyDb({ notCarried: [{ field: "engineFamily", reasonCode: "coolify_valkey", reason: "x", level: "info" }] }), opts);
+    const codes = p.items.find((i) => i.itemRef === "database:srv1:v1")!.risks.map((r) => r.code);
+    expect(codes).not.toContain("db.version.missing");
+    expect(codes).toContain("db.notCarried.engineFamily");
+  });
+  it("still asks for the version of a Redis database with an unknown version", () => {
+    const p = planImport(valkeyDb({ image: undefined }), opts);
+    expect(p.items.find((i) => i.itemRef === "database:srv1:v1")!.risks.map((r) => r.code)).toContain("db.version.missing");
+  });
+});

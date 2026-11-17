@@ -145,12 +145,18 @@ func TestClassifyEnginePrecedence(t *testing.T) {
 		"postgres:16":               "POSTGRES",
 		"mysql:8":                   "MYSQL",
 		"redis:7":                   "REDIS",
+		"valkey/valkey:9-alpine":    "REDIS",
+		"docker.io/valkey/valkey:8": "REDIS",
 		"registry.example.com:5000/lib/postgres:16": "POSTGRES",
 	}
 	for img, want := range cases {
 		if got := classifyEngine(img, nil); got != want {
 			t.Errorf("classify(%q)=%q want %q", img, got, want)
 		}
+	}
+	// a Valkey image is Redis-compatible by NAME: no REDIS_PASSWORD (or any env) is needed to classify it
+	if got := classifyEngine("valkey/valkey:9-alpine", map[string]string{"SOMETHING": "x"}); got != "REDIS" {
+		t.Errorf("valkey without env: %q", got)
 	}
 	// env-signature fallback for an unrecognised image
 	if got := classifyEngine("custom/db:1", map[string]string{"POSTGRES_PASSWORD": "x"}); got != "POSTGRES" {

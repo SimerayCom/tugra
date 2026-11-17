@@ -204,7 +204,12 @@ func formatSanity(engine string, head []byte) error {
 		if !hasPrefix(head, "PGDMP") {
 			return fmt.Errorf("%w: POSTGRES custom archive magic missing", errBadFormat)
 		}
-	case "REDIS", "KEYDB":
+	case "REDIS":
+		// Valkey 9 (the image Coolify 4.7 gives a new Redis database) writes a "VALKEY080" header; Redis and Valkey 8 write "REDIS00xx".
+		if !hasPrefix(head, "REDIS") && !hasPrefix(head, "VALKEY") {
+			return fmt.Errorf("%w: RDB magic missing", errBadFormat)
+		}
+	case "KEYDB":
 		if !hasPrefix(head, "REDIS") {
 			return fmt.Errorf("%w: RDB magic missing", errBadFormat)
 		}

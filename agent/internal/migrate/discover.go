@@ -394,6 +394,10 @@ func classifyEngine(image string, env map[string]string) string {
 		return "MYSQL"
 	case strings.Contains(base, "redis"):
 		return "REDIS"
+	case strings.Contains(base, "valkey"):
+		// Valkey (the image Coolify 4.7 gives a new Redis database) speaks the Redis protocol and ships redis-cli, so the Redis
+		// recipe dumps it; the hub keeps the source image on the target, so the RDB stays loadable. Named, not left to the env fallback.
+		return "REDIS"
 	}
 	// env-signature fallback (image unrecognised, e.g. a private registry tag)
 	switch {
