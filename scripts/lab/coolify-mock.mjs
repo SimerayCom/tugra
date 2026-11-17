@@ -10,6 +10,11 @@ import { buildFleet, route, summary } from "./coolify-fleet.mjs";
 const args = process.argv.slice(2);
 const val = (k, d) => { const i = args.indexOf(k); return i >= 0 ? args[i + 1] : d; };
 const rate = val("--rate-limit", undefined);
+// a typo must not quietly turn the 429 off (NaN reads as "off"): refuse anything but a non-negative integer
+if (args.includes("--rate-limit") && !(rate !== undefined && /^[0-9]+$/.test(rate))) {
+  console.error(`coolify-mock: --rate-limit needs a non-negative integer, got ${rate === undefined ? "nothing" : JSON.stringify(rate)}`);
+  process.exit(2);
+}
 const fleet = buildFleet({
   profile: val("--profile", "4.1.2"),
   ...(rate === undefined ? {} : { rateLimit: Number(rate) }),

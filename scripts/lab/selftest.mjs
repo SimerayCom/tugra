@@ -871,6 +871,25 @@ test("L13: every team token is connected and planned, and the counts are the tok
   assert.match(read("coolify-mock.mjs"), /refuses loopback/);
 });
 
+test("coolify-mock refuses a --rate-limit that is not a non-negative integer instead of turning the 429 off", () => {
+  for (const bad of [["--rate-limit", "abc"], ["--rate-limit", "-1"], ["--rate-limit", "1.5"], ["--rate-limit"]]) {
+    const r = spawnSync("node", [join(LAB, "coolify-mock.mjs"), "--listen", "0", "--bind", "127.0.0.1", "--profile", "4.7.5", ...bad], { encoding: "utf8", timeout: 5000 });
+    assert.equal(r.status, 2, `${bad.join(" ")}: ${r.stderr}`);
+    assert.match(r.stderr, /--rate-limit needs a non-negative integer/);
+  }
+  const ok = spawnSync("node", [join(LAB, "coolify-mock.mjs"), "--summary", "--profile", "4.7.5", "--rate-limit", "0"], { encoding: "utf8", timeout: 5000 });
+  assert.equal(ok.status, 0);
+});
+
+test("L13: stop_pid waits until the mock is gone, so the next profile can bind the same port", () => {
+  const src = read("l13-fleet-coolify.sh");
+  const fn = /^stop_pid\(\) \{.*\}$/m.exec(src);
+  assert.ok(fn, "stop_pid is defined");
+  const r = spawnSync("bash", ["-c", `${fn[0]}\nsleep 30 & p=$!\nstop_pid "$p"\nif kill -0 "$p" 2>/dev/null; then echo alive; else echo gone; fi`], { encoding: "utf8", timeout: 15000 });
+  assert.equal(r.stdout.trim(), "gone", r.stderr);
+  assert.match(src, /stop_mock\(\) \{[^\n]*stop_pid /);
+});
+
 test("L13: runs both Coolify profiles, and resolves an ISO-named source container against the 4.7.5 one", () => {
   const s = read("l13-fleet-coolify.sh");
   assert.match(s, /discover_profile 4\.1\.2/);

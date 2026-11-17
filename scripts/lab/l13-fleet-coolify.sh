@@ -22,7 +22,9 @@ PORT="${L13_PORT:-4010}"
 lab_guard_destructive
 lab_load
 MOCK_PID_FILE="$LAB_DIR/coolify-mock.pid"
-stop_mock() { [ ! -f "$MOCK_PID_FILE" ] || { kill "$(cat "$MOCK_PID_FILE")" 2>/dev/null || true; rm -f "$MOCK_PID_FILE"; }; }
+# stop_pid <pid>: kill it and wait until it is gone, so the next mock can bind the same port
+stop_pid() { local i; kill "$1" 2>/dev/null || return 0; for i in $(seq 1 50); do kill -0 "$1" 2>/dev/null || return 0; sleep 0.1; done; kill -9 "$1" 2>/dev/null || true; }
+stop_mock() { [ ! -f "$MOCK_PID_FILE" ] || { stop_pid "$(cat "$MOCK_PID_FILE")"; rm -f "$MOCK_PID_FILE"; }; }
 trap stop_mock EXIT
 : >"$LAB_DIR/l13.summary"
 
@@ -96,13 +98,13 @@ lab_check "4.7.5: POST start of a running database is 400 (already running)" tes
 BURST_PORT=$((PORT + 1))
 node "$LAB_SELF_DIR/coolify-mock.mjs" --listen "$BURST_PORT" --bind 127.0.0.1 --profile 4.7.5 --rate-limit 5 2>>"$LAB_DIR/coolify-mock.log" &
 BURST_PID=$!
-trap 'kill "$BURST_PID" 2>/dev/null || true; stop_mock' EXIT
+trap 'stop_pid "$BURST_PID"; stop_mock' EXIT
 lab_wait 20 "the burst mock on :$BURST_PORT" curl -sS -o /dev/null "http://127.0.0.1:${BURST_PORT}/api/v1/version"
 for _ in 1 2 3 4 5; do code GET /servers "$T" "$BURST_PORT" >/dev/null; done
 BURST_REPLY="$(curl -sS -i -H "Authorization: Bearer $T" "http://127.0.0.1:${BURST_PORT}/api/v1/servers" | tr -d '\r')"
 lab_check "4.7.5: the 6th request in a minute is 429" bash -c 'printf "%s\n" "$1" | head -n 1 | grep -q " 429"' _ "$BURST_REPLY"
 lab_check "4.7.5: the 429 carries a numeric Retry-After" bash -c 'printf "%s\n" "$1" | grep -qi -E "^retry-after: [0-9]+$"' _ "$BURST_REPLY"
-kill "$BURST_PID" 2>/dev/null || true
+stop_pid "$BURST_PID"
 trap stop_mock EXIT
 
 # source-container resolution: a running application container named the 4.7.5 way, resolved by the migrator from the uuid alone
