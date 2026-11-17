@@ -7,6 +7,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **Out-of-band cloud access (Hetzner first).** For servers linked to a Hetzner Cloud server, the panel, CLI and MCP can
+  power on, shut down, hard power off, hard reset, enable/disable rescue mode and open the provider console, even with
+  the agent offline. Destructive actions need a typed server-name confirmation and are audited first; the rescue root
+  password and console session are shown once and never stored. Existing servers can be linked by hand
+  (`providerManualLink`; a hand-linked VM is never destroyed when the server is deleted in Tugra).
+- **Coolify connect errors say what is wrong.** A Coolify 403 shows Coolify's own message and the single fix that matches
+  it (add the hub's address to Allowed IPs, enable the API, use a whole-team token, a token no wider than its creator, or
+  the missing ability). The import wizard shows the hub's public egress IP (`IMPORT_EGRESS_IP` overrides it).
+- **Coolify apps with a custom container name prefix** are found by the freeze, inventory, cross-check and volume copy.
+- **Security review of everything added since beta.17** (`docs/security/2026-11-review.md`): the updater refuses a queued
+  target version that is not a plain version string, and package names ending in "-" (an apt removal) are refused.
+- README roadmap updated through beta.21 in all eight languages.
+
 - **Guided migration works against Coolify 4.7.5.** Checked against a live 4.7.5 instance:
   - Application containers named `<uuid>-YYYYMMDDTHHMMSS` (4.7) are found by the agent's volume resolution and by the
     freeze, inventory and cross-check steps; the old `<uuid>-<digits>` names still work.
