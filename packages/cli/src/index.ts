@@ -4,6 +4,7 @@ import { CLI_VERSION } from "./version";
 import { printError } from "./output";
 import * as auth from "./commands/auth";
 import * as resources from "./commands/resources";
+import * as reboot from "./commands/reboot";
 import * as cutover from "./commands/cutover";
 import * as run from "./commands/run";
 import * as api from "./commands/api";
@@ -18,6 +19,7 @@ program
 
 auth.register(program);
 resources.register(program);
+reboot.register(program);
 api.register(program);
 objects.register(program);
 cutover.register(program);

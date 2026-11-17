@@ -39,6 +39,42 @@ export interface ImportVolumesView {
   }[];
 }
 
+/** The subset of a ServerReboot view the CLI reads (the full object flows through `--json`). */
+export interface RebootReportView {
+  rebooted: boolean;
+  docker: string;
+  containers: { name: string; image: string; restartPolicy: string; verdict: string; detail?: string }[];
+  domains: { host: string; verdict: string; status: number | null }[];
+  domainsNote?: string;
+  rebootRequired: string;
+  reason?: string;
+  summary: { containersOk: number; containersExpected: number; domainsOk: number; domainsExpected: number };
+  [k: string]: unknown;
+}
+export interface RebootViewShape {
+  id: string;
+  mode: "now" | "scheduled";
+  state: string;
+  result: string | null;
+  scheduledAt: string | null;
+  startedAt: string | null;
+  agentBackAt: string | null;
+  verifiedAt: string | null;
+  snapshot: { containers: number; domains: number; hostsHub: boolean } | null;
+  report: RebootReportView | null;
+  [k: string]: unknown;
+}
+export interface RebootStatusShape {
+  active: RebootViewShape | null;
+  last: RebootViewShape | null;
+}
+export interface RebootPreviewShape {
+  containers: number;
+  domains: number;
+  hostsHub: boolean;
+  agentOnline: boolean;
+}
+
 /** An error carrying the hub's HTTP status + message. status 0 = the hub was unreachable. */
 export class ApiError extends Error {
   constructor(
@@ -111,6 +147,26 @@ export class TugraClient {
 
   listServers(): Promise<Row[]> {
     return this.request("GET", "/servers");
+  }
+  /** GET /servers/:id — the CLI needs only the name (the typed confirmation of a reboot). */
+  getServer(id: string): Promise<{ id: string; name: string } & Row> {
+    return this.request("GET", `/servers/${encodeURIComponent(id)}`);
+  }
+  /** GET /servers/:id/reboot — the live reboot (if any) and the last finished one with its verification report. */
+  getServerReboot(id: string): Promise<RebootStatusShape> {
+    return this.request("GET", `/servers/${encodeURIComponent(id)}/reboot`);
+  }
+  /** GET /servers/:id/reboot/preview — what a reboot takes down (counts). */
+  getServerRebootPreview(id: string): Promise<RebootPreviewShape> {
+    return this.request("GET", `/servers/${encodeURIComponent(id)}/reboot/preview`);
+  }
+  /** POST /servers/:id/reboot — `confirmName` must equal the server's name (the hub refuses otherwise). */
+  requestServerReboot(id: string, body: { mode: "now"; confirmName: string } | { mode: "scheduled"; at: string; confirmName: string }): Promise<RebootViewShape> {
+    return this.request("POST", `/servers/${encodeURIComponent(id)}/reboot`, body);
+  }
+  /** DELETE /servers/:id/reboot — cancel a SCHEDULED reboot. */
+  cancelServerReboot(id: string): Promise<RebootViewShape> {
+    return this.request("DELETE", `/servers/${encodeURIComponent(id)}/reboot`);
   }
   listApps(): Promise<Row[]> {
     return this.request("GET", "/apps");

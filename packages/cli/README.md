@@ -45,6 +45,9 @@ tugra logout --profile prod   # forget the token locally (does NOT revoke it —
 | `tugra logout [--profile <name>]` | Forget the local token (does not revoke). |
 | `tugra ctx [use <name>]` | List or switch profiles. |
 | `tugra servers ls` | List enrolled servers. |
+| `tugra servers reboot <id> [--at <time>] [--yes]` | Reboot a server now, or at a time (`--at` takes an ISO time, a local time like `2026-12-01 03:00`, or `+30m` / `+2h` / `+1d`). Shows what goes down, asks you to type the server name (`--yes` confirms without asking; no terminal and no `--yes` refuses). Needs `deploy`. `server` works for `servers`. |
+| `tugra servers reboot-status <id>` | The server's reboot state and the last verification: which containers and domains came back and which did not. |
+| `tugra servers reboot-cancel <id>` | Cancel a scheduled reboot (needs `deploy`). |
 | `tugra apps ls` | List applications. |
 | `tugra apps deploy <id>` | Trigger a deploy (needs the `deploy` scope). |
 | `tugra apps restart <id>` | Restart an app (needs `deploy`). |
