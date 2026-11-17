@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import React from "react";
 import { I18nProvider } from "../../../../i18n/provider";
 import { api } from "../../../../lib/api";
+import { CONTAINER_LIST_FAST_MS, CONTAINER_LIST_SLOW_MS } from "../../../../lib/log-container";
 
 // Capture what the logs card is asked to stream instead of opening a real SSE stream.
 const liveProps: { container?: string; active?: boolean; emptyHint?: React.ReactNode }[] = [];
@@ -95,5 +96,32 @@ describe("LiveContainerLogsCard — compose logs show at once", () => {
     show(<LiveContainerLogsCard id="a1" isCompose clustered />);
     expect(spy).not.toHaveBeenCalled();
     expect(screen.getByTestId("state").textContent).toBe("streaming:-");
+  });
+});
+
+describe("LiveContainerLogsCard — the container list stays fresh", () => {
+  afterEach(() => vi.useRealTimers());
+
+  it("picks up the containers once a deploy/restart finishes, without a remount", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const spy = vi.spyOn(api, "listAppContainers")
+      .mockResolvedValueOnce({ containers: [] })
+      .mockResolvedValue({ containers: IMMICH });
+    show(<LiveContainerLogsCard id="a1" isCompose appName="Immich" />);
+    await waitFor(() => expect(screen.getByTestId("hint").textContent).toMatch(/No containers found/));
+    await vi.advanceTimersByTimeAsync(CONTAINER_LIST_FAST_MS + 100);
+    await waitFor(() => expect(screen.getByTestId("state").textContent).toBe("streaming:tugra_ck1abc-immich-1"));
+    expect(spy.mock.calls.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("stays on the followed container when a refreshed list is ordered differently", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.spyOn(api, "listAppContainers")
+      .mockResolvedValueOnce({ containers: [{ name: "tugra_ck1abc-api-1", state: "running" }, { name: "tugra_ck1abc-worker-1", state: "running" }] })
+      .mockResolvedValue({ containers: [{ name: "tugra_ck1abc-worker-1", state: "running" }, { name: "tugra_ck1abc-api-1", state: "running" }] });
+    show(<LiveContainerLogsCard id="a1" isCompose />);
+    await waitFor(() => expect(screen.getByTestId("state").textContent).toBe("streaming:tugra_ck1abc-api-1"));
+    await vi.advanceTimersByTimeAsync(CONTAINER_LIST_SLOW_MS + 100);
+    expect(screen.getByTestId("state").textContent).toBe("streaming:tugra_ck1abc-api-1");
   });
 });

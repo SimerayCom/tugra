@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { composeServiceOf, friendlyContainer, linkServices, pickDefaultLogContainer } from "./log-container";
+import { CONTAINER_LIST_FAST_MS, CONTAINER_LIST_SLOW_MS, composeServiceOf, containerListRefetchMs, friendlyContainer, linkServices, pickDefaultLogContainer } from "./log-container";
 
 const c = (svc: string, state = "running", n = 1) => ({ name: `tugra_ck1abc-${svc}-${n}`, state });
 
@@ -63,5 +63,19 @@ describe("pickDefaultLogContainer", () => {
   });
   it("handles containers with custom names (no service) by taking the first running one", () => {
     expect(pickDefaultLogContainer([{ name: "immich_machine_learning", state: "running" }, { name: "immich_server", state: "running" }], { appName: "Immich" })).toBe("immich_machine_learning");
+  });
+});
+
+describe("containerListRefetchMs / keep", () => {
+  it("polls fast until something runs, then slowly", () => {
+    expect(containerListRefetchMs(undefined)).toBe(CONTAINER_LIST_FAST_MS);
+    expect(containerListRefetchMs([])).toBe(CONTAINER_LIST_FAST_MS);
+    expect(containerListRefetchMs([c("web", "exited")])).toBe(CONTAINER_LIST_FAST_MS);
+    expect(containerListRefetchMs([c("web", "exited"), c("db")])).toBe(CONTAINER_LIST_SLOW_MS);
+  });
+  it("keeps the followed container while it still runs, else falls back to the default", () => {
+    const list = [c("db"), c("web"), c("cache")];
+    expect(pickDefaultLogContainer(list, { appName: "Shop", keep: c("cache").name })).toBe(c("cache").name);
+    expect(pickDefaultLogContainer([c("db"), c("web"), c("cache", "exited")], { keep: c("cache").name })).toBe(c("web").name);
   });
 });

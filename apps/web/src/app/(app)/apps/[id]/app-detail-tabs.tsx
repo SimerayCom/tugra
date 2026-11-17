@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { ArrowDown, ChevronRight, CloudUpload, Lock } from "lucide-react";
@@ -12,7 +12,7 @@ import { LiveLogsCard } from "../../../../components/live-logs-card";
 import { ActivitySpinner, Btn, Card, EmptyState, SectionCard, Spinner } from "../../../../components/ui";
 import { useT } from "../../../../i18n/provider";
 import { api } from "../../../../lib/api";
-import { friendlyContainer, pickDefaultLogContainer } from "../../../../lib/log-container";
+import { containerListRefetchMs, friendlyContainer, pickDefaultLogContainer } from "../../../../lib/log-container";
 import { deploymentColor, shortDigest } from "../../../../lib/apps";
 import { LevelLog } from "../../../../components/level-log";
 import { collapseCarriageReturns, summarizeDeployLog } from "../../../../lib/log-lines";
@@ -34,9 +34,19 @@ export function LiveContainerLogsCard({ id, isCompose, neverDeployed = false, cl
   // compose app has many containers: list them (the picker shares this query) and start on the main service
   // right away — "Pick a container" before any log appears reads as "this app has no logs".
   const perContainer = isCompose && !clustered && !neverDeployed;
-  const list = useQuery({ queryKey: ["appContainers", id], queryFn: () => api.listAppContainers(id), enabled: perContainer });
+  // Kept fresh: opened during a deploy/restart the list can be empty or all-exited, and must not stay that way.
+  const list = useQuery({
+    queryKey: ["appContainers", id],
+    queryFn: () => api.listAppContainers(id),
+    enabled: perContainer,
+    refetchInterval: (q) => containerListRefetchMs(q.state.data?.containers),
+  });
   const containers = list.data?.containers;
-  const auto = useMemo(() => (containers ? pickDefaultLogContainer(containers, { appName, services }) : undefined), [containers, appName, services]);
+  const followed = useRef<string | undefined>(undefined);
+  const auto = containers ? pickDefaultLogContainer(containers, { appName, services, keep: followed.current }) : undefined;
+  useEffect(() => {
+    followed.current = auto;
+  }, [auto]);
   // An explicit pick wins, but only while that container still exists (a redeploy can rename it).
   const container = picked && (!containers || containers.some((c) => c.name === picked)) ? picked : auto;
   const active = !neverDeployed && (!perContainer || !!container);

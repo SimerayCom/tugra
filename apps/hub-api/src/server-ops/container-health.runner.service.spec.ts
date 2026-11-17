@@ -67,7 +67,7 @@ describe("ContainerHealthRunnerService.runTick", () => {
   it("swallows a thrown sendCommand (bulk revoked / timeout) and does not crash", async () => {
     const { svc, fireForEvent } = make({ rows: [prevRow()] });
     (svc as unknown as { agentWs: AgentWsServer }).agentWs.sendCommand = jest.fn().mockRejectedValue(new Error("not granted")) as never;
-    await expect(svc.runTick()).resolves.toEqual({ settling: false });
+    await expect(svc.runTick()).resolves.toEqual({ settling: false, settlingKeys: [] });
     expect(fireForEvent).not.toHaveBeenCalled();
   });
 
@@ -105,7 +105,7 @@ describe("ContainerHealthRunnerService.runTick", () => {
   it("swallows a ContainerEvent write failure without aborting the tick (per-container isolation)", async () => {
     const { svc, create, deleteMany } = make({ rows: [prevRow({ restartCount: 2, restartCountAtNotify: 2 })], output: inspectOut(3) });
     create.mockRejectedValueOnce(new Error("23502 bad byte"));
-    await expect(svc.runTick()).resolves.toEqual({ settling: false });
+    await expect(svc.runTick()).resolves.toEqual({ settling: false, settlingKeys: [] });
     expect(deleteMany).toHaveBeenCalled(); // the tick ran to completion past the failed row
   });
 
@@ -250,23 +250,23 @@ describe("ContainerHealthRunnerService settling + overlap", () => {
 
   it("reports settling while a container's HEALTHCHECK is still starting", async () => {
     const { svc } = make({ rows: [prevRow()], output: inspectHealth("starting") });
-    expect(await svc.runTick()).toEqual({ settling: true });
+    expect(await svc.runTick()).toEqual({ settling: true, settlingKeys: ["s1/tugra_app1"] });
   });
 
   it("reports settling for a container that died moments ago (a restart in flight)", async () => {
     const { svc } = make({ rows: [prevRow()], output: exitedOut(recent) });
-    expect(await svc.runTick()).toEqual({ settling: true });
+    expect(await svc.runTick()).toEqual({ settling: true, settlingKeys: ["s1/tugra_app1"] });
   });
 
   it("is not settling once the container is healthy, nor for one that has been down a long while", async () => {
-    expect(await make({ rows: [prevRow()], output: inspectHealth("healthy") }).svc.runTick()).toEqual({ settling: false });
+    expect(await make({ rows: [prevRow()], output: inspectHealth("healthy") }).svc.runTick()).toEqual({ settling: false, settlingKeys: [] });
     const old = new Date(Date.now() - 3_600_000).toISOString();
-    expect(await make({ rows: [prevRow()], output: exitedOut(old) }).svc.runTick()).toEqual({ settling: false });
+    expect(await make({ rows: [prevRow()], output: exitedOut(old) }).svc.runTick()).toEqual({ settling: false, settlingKeys: [] });
   });
 
   it("does not report settling for an app the operator stopped", async () => {
     const { svc } = make({ rows: [prevRow()], output: exitedOut(recent), apps: [{ id: "app1", name: "Shop", status: "STOPPED" }] });
-    expect(await svc.runTick()).toEqual({ settling: false });
+    expect(await svc.runTick()).toEqual({ settling: false, settlingKeys: [] });
   });
 
   it("overlapping runTick calls share one poll (no race on the same state rows)", async () => {

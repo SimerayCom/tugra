@@ -8,8 +8,9 @@ import { ContainerHealthRunnerService } from "./container-health.runner.service"
 const QUEUE = "container-health";
 // While a container is mid-transition (starting / restarting / just died) re-check this often instead of waiting
 // for the next interval, so a container that comes back healthy reaches the app header and crash timeline within
-// seconds. Bounded: after MAX_FAST_CHECKS in a row (a container stuck "starting" for ages) it falls back to the
-// normal cadence, and an episode that ends (nothing settling) resets the count.
+// seconds. Bounded PER CONTAINER: a container that stays settling for MAX_FAST_CHECKS polls in a row (stuck
+// "starting", crash-looping "restarting") stops buying quick re-checks, but never starves another container's
+// transition, which starts with a fresh budget. A container that settles (or disappears) is forgotten.
 const FAST_INTERVAL_MS = 10_000;
 const MAX_FAST_CHECKS = 30;
 
@@ -21,7 +22,7 @@ export class ContainerHealthSchedulerService implements OnApplicationBootstrap, 
   private queue?: Queue;
   private worker?: Worker;
   private fastTimer?: NodeJS.Timeout;
-  private fastChecks = 0;
+  private readonly streaks = new Map<string, number>();
   private stopped = false;
 
   constructor(
@@ -45,14 +46,16 @@ export class ContainerHealthSchedulerService implements OnApplicationBootstrap, 
 
   /** Run one poll; if a container is still settling, schedule a quick re-check (never more than one pending). */
   async tickAndFollowUp(): Promise<void> {
-    const { settling } = await this.runner.runTick();
+    const { settlingKeys } = await this.runner.runTick();
     if (this.stopped) return;
-    if (!settling) {
-      this.fastChecks = 0;
-      return;
-    }
-    if (this.fastTimer || this.fastChecks >= MAX_FAST_CHECKS) return;
-    this.fastChecks++;
+    // Consecutive settling polls per container; anything not settling this run drops out (budget resets).
+    const next = new Map<string, number>();
+    for (const key of settlingKeys) next.set(key, (this.streaks.get(key) ?? 0) + 1);
+    this.streaks.clear();
+    for (const [k, v] of next) this.streaks.set(k, v);
+    // The interval tick counts as streak 1, so a container gets MAX_FAST_CHECKS quick re-checks after it.
+    const budgeted = [...next.values()].some((n) => n <= MAX_FAST_CHECKS);
+    if (!budgeted || this.fastTimer) return;
     this.fastTimer = setTimeout(() => {
       this.fastTimer = undefined;
       this.tickAndFollowUp().catch((e) => this.logger.warn(`fast container-health check failed: ${String(e)}`));
