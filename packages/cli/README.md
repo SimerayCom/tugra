@@ -48,6 +48,12 @@ tugra logout --profile prod   # forget the token locally (does NOT revoke it —
 | `tugra servers reboot <id> [--at <time>] [--yes]` | Reboot a server now, or at a time (`--at` takes an ISO time, a local time like `2026-12-01 03:00`, or `+30m` / `+2h` / `+1d`). Shows what goes down, asks you to type the server name (`--yes` confirms without asking; no terminal and no `--yes` refuses). Needs `deploy`. `server` works for `servers`. |
 | `tugra servers reboot-status <id>` | The server's reboot state and the last verification: which containers and domains came back and which did not. |
 | `tugra servers reboot-cancel <id>` | Cancel a scheduled reboot (needs `deploy`). |
+| `tugra servers oob-status <id>` | The server's cloud link and the provider-side power / rescue state. Works while the agent is offline. |
+| `tugra servers oob-power <id> <on\|off\|reboot\|shutdown> [--yes]` | Power a cloud-linked server at the provider: `on`; `off` (hard, like pulling the cord); `reboot` (hard reset); `shutdown` (graceful). `off`, `reboot` and `shutdown` ask you to type the server name (`--yes` confirms without asking; no terminal and no `--yes` refuses). Needs `deploy`. |
+| `tugra servers oob-rescue <id> <enable\|disable>` | Enable or disable the provider's rescue system. Enabling prints the one-time root password once (never stored); then reboot the server. Enabling needs `deploy` + `read:secrets`. |
+| `tugra servers oob-console <id>` | Request a provider console session: prints the websocket URL and VNC password once (valid about a minute). Needs `deploy` + `read:secrets`. |
+| `tugra servers oob-link <id> --credential <id> [--cloud-server <id>] [--confirm-name <name>]` | Link an existing server to its cloud server. With only `--credential` it lists that credential's cloud servers (and which one has this server's public IP). |
+| `tugra servers oob-unlink <id>` | Remove a hand-made cloud link (a link Tugra made when it provisioned the server stays). |
 | `tugra apps ls` | List applications. |
 | `tugra apps deploy <id>` | Trigger a deploy (needs the `deploy` scope). |
 | `tugra apps restart <id>` | Restart an app (needs `deploy`). |
