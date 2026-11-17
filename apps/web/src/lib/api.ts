@@ -1026,6 +1026,10 @@ export const api = {
   upgradeOne(id: string, pkg: string) {
     return apiFetch<{ output: string; exitCode: number }>(`/servers/${id}/updates/apply/${pkg}`, { method: "POST" });
   },
+  /** Install one phased (gradually rolled out) apt package now, ahead of Ubuntu's rollout reaching this server. */
+  upgradePhased(id: string, pkg: string) {
+    return apiFetch<{ output: string; exitCode: number }>(`/servers/${id}/updates/apply/${pkg}/phased`, { method: "POST" });
+  },
   setCleanupConfig(id: string, cfg: { enabled: boolean; intervalHours?: number; cron?: string | null; thresholdPct?: number | null; volumes?: boolean }) {
     return apiFetch<{ ok: true }>(`/servers/${id}/cleanup-config`, {
       method: "PUT",

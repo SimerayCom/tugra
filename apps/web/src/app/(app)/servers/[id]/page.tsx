@@ -37,7 +37,7 @@ import type { ProxyStatus } from "../../../../lib/types";
 import { PageHeader } from "../../../../components/page-header";
 import { Tabs } from "../../../../components/tabs-nav";
 import { RuntimeUpdateWarning } from "../../../../components/runtime-update-warning";
-import { containerRuntimeUpdates, interruptedNames, isAgentDropError, isTransientPatchError, patchTiming, settledApplyLog, shouldToastReboot, summarizeApply } from "../../../../lib/patching";
+import { containerRuntimeUpdates, interruptedNames, isAgentDropError, isTransientPatchError, patchTiming, phasedToastKey, settledApplyLog, shouldToastReboot, summarizeApply } from "../../../../lib/patching";
 import { usePatchLogStream } from "../../../../hooks/useDeployLogStream";
 import { useMetricsStream } from "../../../../hooks/useMetricsStream";
 import { useServerReconnect } from "../../../../hooks/useServerReconnect";
@@ -626,7 +626,8 @@ function PatchCard({ id }: { id: string }) {
     }
   };
 
-  const apply = async (pkg: string | null) => {
+  // `forced`: install a phased package now (the per-package path that bypasses Ubuntu's rollout); never set for "update all".
+  const apply = async (pkg: string | null, forced = false) => {
     // Finishing an interrupted dpkg that includes the container engine restarts Docker: say so first, never silently.
     const interrupted = info?.dpkgInterrupted;
     if (interrupted?.containerEngine) {
@@ -638,7 +639,7 @@ function PatchCard({ id }: { id: string }) {
       });
       if (!ok) return;
     }
-    const before = info?.packages ?? [];
+    const before = forced && pkg ? [{ name: pkg }] : (info?.packages ?? []);
     setOutput("");
     setApplyTarget(pkg);
     setPhase("applying");
@@ -646,7 +647,7 @@ function PatchCard({ id }: { id: string }) {
     let exitCode = 0;
     let dropped = false;
     try {
-      const r = pkg ? await api.upgradeOne(id, pkg) : await api.upgradeAll(id);
+      const r = pkg && forced ? await api.upgradePhased(id, pkg) : pkg ? await api.upgradeOne(id, pkg) : await api.upgradeAll(id);
       if (!alive.current) return;
       setOutput(settledApplyLog(r.output, streamedRef.current));
       exitCode = r.exitCode;
@@ -681,6 +682,11 @@ function PatchCard({ id }: { id: string }) {
       toast(t("patching.failedCounts", sum), "error");
     } else if (dropped) {
       toast(t(sum.remaining === 0 ? "patching.restartedDone" : "patching.restartedPartial", sum), sum.remaining === 0 ? "success" : "info");
+    } else if (phasedToastKey(sum)) {
+      // Ubuntu's phased rollout deferred these: not "held back", and they install by themselves later.
+      toast(t(phasedToastKey(sum)!, sum), "info");
+    } else if (forced && pkg && sum.remaining === 0) {
+      toast(t("patching.appliedOne", { pkg }), "success");
     } else if (sum.remaining === 0) {
       toast(sum.updated > 0 ? t("patching.appliedCounts", sum) : t("patching.appliedNothingLeft"), "success");
     } else if (pkg && !after.packages.some((p) => p.name === pkg)) {
@@ -692,6 +698,7 @@ function PatchCard({ id }: { id: string }) {
   };
   const runAll = () => { void apply(null); };
   const runOne = (pkg: string) => { void apply(pkg); };
+  const runPhased = (pkg: string) => { void apply(pkg, true); };
   const list = stale ? null : info;
 
   return (
@@ -785,6 +792,29 @@ function PatchCard({ id }: { id: string }) {
                 ))}
               </div>
             </>
+          )}
+          {!list.checkFailed && list.phased && list.phased.length > 0 && (
+            <div data-testid="phased-updates" style={{ marginBottom: 12, padding: "8px 10px", border: "1px dashed var(--c-bd)", borderRadius: "var(--r1)", color: "var(--c-tx3)" }}>
+              <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 2 }}>{t("patching.phasedTitle", { n: list.phased.length })}</div>
+              <div style={{ fontSize: 12, marginBottom: 8 }}>{t("patching.phasedDesc")}</div>
+              <RuntimeUpdateWarning packages={containerRuntimeUpdates(list.phased)} />
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                {list.phased.map((p) => (
+                  <div key={p.name} style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 12 }}>
+                    <span style={{ fontWeight: 600, width: 180, overflow: "hidden", textOverflow: "ellipsis" }}>{p.name}</span>
+                    <span className="mono" style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis" }}>{p.current ? `${p.current} → ${p.candidate}` : `↑ ${p.candidate}`}</span>
+                    <button
+                      onClick={() => runPhased(p.name)}
+                      disabled={busy || list.applyRunning}
+                      aria-busy={(phase === "applying" && applyTarget === p.name) || undefined}
+                      style={{ background: "transparent", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", color: "var(--c-lapis)", fontSize: 11, cursor: "pointer", padding: "2px 8px", fontFamily: "inherit" }}
+                    >
+                      {phase === "applying" && applyTarget === p.name ? t("patching.running") : t("patching.installNow")}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
           )}
         </>
       )}

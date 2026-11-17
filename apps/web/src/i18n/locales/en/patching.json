@@ -52,5 +52,10 @@
   "interruptedConfirmButton": "Update and restart Docker",
   "stillRunning": "An update is still running on this server. Waiting for it to finish, then checking again…",
   "runningBanner": "An update is running on this server right now — the list below may change. Check again when it finishes.",
-  "finishInterrupted": "Finish interrupted update"
+  "finishInterrupted": "Finish interrupted update",
+  "phasedTitle": "{n} update(s) rolling out gradually",
+  "phasedDesc": "Ubuntu is rolling this update out gradually; it installs automatically when this server's turn comes.",
+  "installNow": "Install now",
+  "appliedPhased": "Nothing was installed — {phased} package(s) deferred by Ubuntu's phased rollout. They install automatically when this server's turn comes, or use Install now.",
+  "appliedPhasedSome": "{updated} package(s) updated; {phased} deferred by Ubuntu's phased rollout — they install automatically when this server's turn comes."
 }

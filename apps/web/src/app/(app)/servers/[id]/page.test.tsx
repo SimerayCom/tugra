@@ -295,6 +295,94 @@ describe("server detail feedback", () => {
   });
 });
 
+describe("server patching: Ubuntu phased updates", () => {
+  const info = (o: Record<string, unknown> = {}) => ({
+    supported: true, manager: "apt", checkFailed: false, rebootRequired: false, count: 0, dpkgInterrupted: null, applyRunning: false,
+    packages: [], phased: [{ name: "snapd", current: "2.76.3", candidate: "2.78" }], ...o,
+  });
+  const clickCheck = async () => fireEvent.click(await screen.findByRole("button", { name: "Check for updates" }));
+
+  it("shows a phased package in its own muted section, not in the count, with the explanation", async () => {
+    nav.tab = "updates";
+    stubs.fns.checkUpdates = async () => info();
+    mount();
+    await clickCheck();
+    const section = await screen.findByTestId("phased-updates");
+    expect(within(section).getByText("snapd")).toBeInTheDocument();
+    expect(section).toHaveTextContent("Ubuntu is rolling this update out gradually; it installs automatically when this server's turn comes.");
+    expect(within(section).getByRole("button", { name: "Install now" })).toBeEnabled();
+    expect(screen.getByText("Your server is up to date.")).toBeInTheDocument();
+    expect(screen.queryByText(/can be upgraded/)).toBeNull();
+    expect(screen.queryByRole("button", { name: "Update all" })).toBeNull();
+  });
+
+  it("no phased section when nothing is phased (also for a hub that does not send the field)", async () => {
+    nav.tab = "updates";
+    stubs.fns.checkUpdates = async () => info({ phased: undefined });
+    mount();
+    await clickCheck();
+    expect(await screen.findByText("Your server is up to date.")).toBeInTheDocument();
+    expect(screen.queryByTestId("phased-updates")).toBeNull();
+  });
+
+  it("Install now forces just that package through upgradePhased; Update all and Update never do", async () => {
+    nav.tab = "updates";
+    let calls = 0;
+    const upgradePhased = vi.fn(async () => ({ output: "ok", exitCode: 0 }));
+    const upgradeOne = vi.fn(async () => ({ output: "", exitCode: 0 }));
+    const upgradeAll = vi.fn(async () => ({ output: "", exitCode: 0 }));
+    stubs.fns.checkUpdates = async () => (++calls === 1 ? info({ count: 1, packages: [{ name: "vim", current: "1", candidate: "2" }] }) : info({ count: 1, packages: [{ name: "vim", current: "1", candidate: "2" }], phased: [] }));
+    Object.assign(stubs.fns, { upgradePhased, upgradeOne, upgradeAll });
+    mount();
+    await clickCheck();
+    fireEvent.click(await within(await screen.findByTestId("phased-updates")).findByRole("button", { name: "Install now" }));
+    await waitFor(() => expect(toastTexts()).toContain("snapd updated — 1 package(s) still pending."));
+    expect(upgradePhased).toHaveBeenCalledWith("s1", "snapd");
+    expect(upgradeOne).not.toHaveBeenCalled();
+    expect(upgradeAll).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("phased-updates")).toBeNull();
+    expect(screen.getByText("vim")).toBeInTheDocument(); // the normal list is untouched
+  });
+
+  it("the normal update buttons never claim a phased package", async () => {
+    nav.tab = "updates";
+    const upgradePhased = vi.fn(async () => ({ output: "", exitCode: 0 }));
+    const upgradeAll = vi.fn(async () => ({ output: "", exitCode: 0 }));
+    stubs.fns.checkUpdates = async () => info({ count: 1, packages: [{ name: "vim", current: "1", candidate: "2" }] });
+    Object.assign(stubs.fns, { upgradePhased, upgradeAll });
+    mount();
+    await clickCheck();
+    fireEvent.click(await screen.findByRole("button", { name: "Update all" }));
+    await waitFor(() => expect(upgradeAll).toHaveBeenCalledTimes(1));
+    expect(upgradePhased).not.toHaveBeenCalled();
+  });
+
+  it("an update that apt still defers for phasing says so instead of 'held back'", async () => {
+    nav.tab = "updates";
+    let calls = 0;
+    const pkg = { name: "snapd", current: "2.76.3", candidate: "2.78" };
+    stubs.fns.checkUpdates = async () => (++calls === 1 ? info({ count: 1, packages: [pkg], phased: [] }) : info({ count: 0, packages: [], phased: [pkg] }));
+    stubs.fns.upgradeAll = async () => ({ output: "The following upgrades have been deferred due to phasing:\n  snapd", exitCode: 0 });
+    mount();
+    await clickCheck();
+    fireEvent.click(await screen.findByRole("button", { name: "Update all" }));
+    await waitFor(() => expect(toasts.some((x) => /deferred by Ubuntu's phased rollout/.test(x.message))).toBe(true));
+    expect(toasts.some((x) => /held back/.test(x.message))).toBe(false);
+    expect(await screen.findByTestId("phased-updates")).toBeInTheDocument();
+  });
+
+  it("the generic 'held back' hint stays for a package that is still pending and not phased", async () => {
+    nav.tab = "updates";
+    const pkg = { name: "linux-image", current: "1", candidate: "2" };
+    stubs.fns.checkUpdates = async () => info({ count: 1, packages: [pkg], phased: [] });
+    stubs.fns.upgradeAll = async () => ({ output: "kept back", exitCode: 0 });
+    mount();
+    await clickCheck();
+    fireEvent.click(await screen.findByRole("button", { name: "Update all" }));
+    await waitFor(() => expect(toasts.some((x) => x.type === "error" && /held back/.test(x.message))).toBe(true));
+  });
+});
+
 describe("server patching: interrupted dpkg and a still-running update", () => {
   const info = (o: Record<string, unknown> = {}) => ({
     supported: true, manager: "apt", checkFailed: false, rebootRequired: false, count: 1, dpkgInterrupted: null, applyRunning: false,

@@ -60,23 +60,34 @@ export function isAgentDropError(e: unknown): boolean {
 }
 
 export type ApplySummary = {
-  /** Packages that were upgradable before the run and are no longer listed. */
+  /** Packages that were upgradable before the run and are no longer listed (neither as pending nor as phased). */
   updated: number;
-  /** Packages still listed after the run. */
+  /** Packages still listed after the run (phased ones are not counted: they never were pending). */
   remaining: number;
+  /** Packages from before the run that Ubuntu's phased rollout deferred: still not installed, and not an error. */
+  phased: number;
 };
 
 /** What an update changed, from the pre-apply list and the fresh re-check. A package counts as updated when it
  *  is gone from the new list; one that is still listed (held back, new dependencies, interrupted) stays
- *  remaining. Null when the fresh check cannot be trusted (unsupported or the check itself failed). Pure. */
+ *  remaining, and one now listed as phased is deferred by Ubuntu's rollout, not "held back". Null when the fresh
+ *  check cannot be trusted (unsupported or the check itself failed). Pure. */
 export function summarizeApply(
   before: Pick<UpgradablePackage, "name">[],
-  after: { supported: boolean; checkFailed: boolean; packages: Pick<UpgradablePackage, "name">[]; count: number },
+  after: { supported: boolean; checkFailed: boolean; packages: Pick<UpgradablePackage, "name">[]; count: number; phased?: Pick<UpgradablePackage, "name">[] },
 ): ApplySummary | null {
   if (!after.supported || after.checkFailed) return null;
-  const still = new Set(after.packages.map((p) => p.name));
-  const updated = before.filter((p) => !still.has(p.name)).length;
-  return { updated, remaining: after.count };
+  const pending = new Set(after.packages.map((p) => p.name));
+  const phased = new Set((after.phased ?? []).map((p) => p.name));
+  const updated = before.filter((p) => !pending.has(p.name) && !phased.has(p.name)).length;
+  return { updated, remaining: after.count, phased: before.filter((p) => phased.has(p.name)).length };
+}
+
+/** Which toast key describes a finished, clean apply that left phased packages behind. Null when phasing is not
+ *  the story (nothing was deferred by it). Pure. */
+export function phasedToastKey(sum: ApplySummary): "patching.appliedPhased" | "patching.appliedPhasedSome" | null {
+  if (sum.phased === 0) return null;
+  return sum.updated > 0 ? "patching.appliedPhasedSome" : "patching.appliedPhased";
 }
 
 /** Text to keep in the log panel once the apply request has settled: the hub's final output when it answered,
@@ -91,7 +102,7 @@ export function settledApplyLog(response: string | null, streamed: string): stri
  *  failed or no-op run it would contradict the outcome toast (the banner already shows it). Pure. */
 export function shouldToastReboot(
   exitCode: number,
-  sum: ApplySummary | null,
+  sum: Pick<ApplySummary, "updated" | "remaining"> | null,
   after: { supported: boolean; rebootRequired?: boolean },
 ): boolean {
   return exitCode === 0 && !!sum && sum.updated > 0 && after.supported && !!after.rebootRequired;

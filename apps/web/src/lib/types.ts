@@ -576,8 +576,13 @@ export interface PatchInfo {
   manager: string | null; // apt | dnf | yum | apk — the package manager detected on the server
   checkFailed: boolean; // the update check ran but errored (repo unreachable / bad GPG) — not "up to date"
   rebootRequired: boolean;
+  /** Packages a normal update installs — excludes `phased`. */
   packages: UpgradablePackage[];
+  /** `packages.length`: phased packages are not counted. */
   count: number;
+  /** apt only: upgradable packages Ubuntu is still rolling out gradually; a normal update defers them until this
+   *  server's turn. Absent from a hub older than this field (treat as none). */
+  phased?: UpgradablePackage[];
   /** apt only: packages a cut-off earlier run left half-configured; null when dpkg is clean. A check only REPORTS it —
    *  an update (which runs on the host and may restart the container engine) is what finishes it. */
   dpkgInterrupted: DpkgInterrupted | null;

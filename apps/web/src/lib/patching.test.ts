@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { ApiError } from "./api";
 import { HUB_UNREACHABLE_CODE } from "./hub-connection";
-import { containerRuntimeUpdates, interruptedNames, isAgentDropError, isContainerRuntimePackage, isTransientPatchError, settledApplyLog, shouldToastReboot, summarizeApply } from "./patching";
+import { containerRuntimeUpdates, interruptedNames, isAgentDropError, isContainerRuntimePackage, isTransientPatchError, phasedToastKey, settledApplyLog, shouldToastReboot, summarizeApply } from "./patching";
 
 describe("containerRuntimeUpdates", () => {
   it("picks docker-ce, containerd.io and runc out of the pending list", () => {
@@ -23,15 +23,31 @@ const after = (names: string[], o: Record<string, unknown> = {}) => ({ supported
 
 describe("summarizeApply", () => {
   it("counts packages that left the list as updated and the rest as remaining", () => {
-    expect(summarizeApply([{ name: "a" }, { name: "b" }, { name: "c" }], after(["c"]))).toEqual({ updated: 2, remaining: 1 });
+    expect(summarizeApply([{ name: "a" }, { name: "b" }, { name: "c" }], after(["c"]))).toEqual({ updated: 2, remaining: 1, phased: 0 });
   });
   it("is all-remaining when nothing changed and ignores packages that newly appeared", () => {
-    expect(summarizeApply([{ name: "a" }], after(["a"]))).toEqual({ updated: 0, remaining: 1 });
-    expect(summarizeApply([{ name: "a" }], after(["z"]))).toEqual({ updated: 1, remaining: 1 });
+    expect(summarizeApply([{ name: "a" }], after(["a"]))).toEqual({ updated: 0, remaining: 1, phased: 0 });
+    expect(summarizeApply([{ name: "a" }], after(["z"]))).toEqual({ updated: 1, remaining: 1, phased: 0 });
+  });
+  it("a package that moved to the phased list is deferred, not updated and not pending", () => {
+    const r = summarizeApply([{ name: "snapd" }, { name: "vim" }], after([], { phased: [{ name: "snapd" }] }));
+    expect(r).toEqual({ updated: 1, remaining: 0, phased: 1 });
+  });
+  it("a package still phased after a forced install is not counted as updated", () => {
+    expect(summarizeApply([{ name: "snapd" }], after([], { phased: [{ name: "snapd" }] }))).toEqual({ updated: 0, remaining: 0, phased: 1 });
+    expect(summarizeApply([{ name: "snapd" }], after([], { phased: [] }))).toEqual({ updated: 1, remaining: 0, phased: 0 });
   });
   it("is null when the fresh check cannot be trusted", () => {
     expect(summarizeApply([{ name: "a" }], after([], { checkFailed: true }))).toBeNull();
     expect(summarizeApply([{ name: "a" }], after([], { supported: false }))).toBeNull();
+  });
+});
+
+describe("phasedToastKey", () => {
+  it("names phasing only when something was deferred by it", () => {
+    expect(phasedToastKey({ updated: 0, remaining: 0, phased: 0 })).toBeNull();
+    expect(phasedToastKey({ updated: 0, remaining: 0, phased: 1 })).toBe("patching.appliedPhased");
+    expect(phasedToastKey({ updated: 2, remaining: 0, phased: 1 })).toBe("patching.appliedPhasedSome");
   });
 });
 
