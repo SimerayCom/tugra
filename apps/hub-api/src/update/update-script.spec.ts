@@ -453,6 +453,17 @@ exec ${REAL_DF} "$@"
       expect(out).not.toContain("SET_ENV");
     });
 
+    it("refuses a targetVersion that is not a plain version string: nothing is written to .env, pulled or recreated", () => {
+      for (const bad of ["9.9.9 EVIL=1", "9.9.9$(id)", "9.9.9`id`", "9.9.9;reboot", "9.9.9\\nEVIL=1", "-9.9.9", "../9.9.9", "9.9.9/x", `1.${"0".repeat(70)}`]) {
+        const out = run(job(bad), "TUGRA_VERSION=0.1.0\n");
+        expect(out).toContain("malformed target version");
+        expect(out).not.toContain("SET_ENV");
+        expect(out).not.toContain("pull hub-api web");
+        expect(out).not.toContain("up -d --no-deps");
+        expect(out).not.toContain("SNAPSHOT:");
+      }
+    });
+
     it("a legacy target on a PINNED stack clears the old pin (an old digest must not override the new tag)", () => {
       const out = run(job("0.2.0"), `TUGRA_VERSION=0.1.0\nTUGRA_HUB_DIGEST=${PH}\nTUGRA_WEB_DIGEST=${PW}\n`);
       expect(out).toContain("SET_ENV: TUGRA_VERSION=0.2.0");

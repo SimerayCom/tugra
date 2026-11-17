@@ -470,6 +470,14 @@ apply_host_files_only() {
 RELOAD_SELF=0
 
 do_update() {
+  # The target names a docker tag and is written into .env: only a plain version string gets that far (a queue job is
+  # data, never trusted to be one). Nothing is changed, snapshotted or pulled for anything else.
+  if ! hf_version_ok "${1:-}"; then
+    log "refusing a malformed target version"
+    set_status failed "unknown" "\"malformed target version\""
+    release_lock
+    return 0
+  fi
   HF_APPLIED=0; HF_BACKUP_DIR=""; HF_CHANGED=(); HF_SCRIPTS_CHANGED=0; HF_COMPOSE_CHANGED=0; HF_VERIFIED=0; HF_LOCAL_EDITS=()
   _do_update "$@"
   local rc=$?
