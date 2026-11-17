@@ -1,4 +1,6 @@
 import {
+  CONTROL_PLANE_REMOVAL_COMMANDS,
+  CONTROL_PLANE_STOP_COMMANDS,
   DECOMMISSION_MAX_CONTAINERS,
   REMOVAL_COMMANDS,
   STOP_COMMANDS,
@@ -44,6 +46,54 @@ describe("decommission scripts (golden)", () => {
     }
     for (const c of STOP_COMMANDS) expect(c).toContain("docker");
     expect(REMOVAL_COMMANDS.join(" ")).not.toMatch(/volume|-v /);
+  });
+});
+
+describe("the printed control-plane commands tolerate containers the host does not have", () => {
+  // A fake docker on PATH that knows only the named containers (4.7.5: no coolify-realtime, but a coolify-sentinel); a missing
+  // one fails `container inspect` and, like the real docker, `stop`/`rm`. Run under the system sh (dash on the CI runners).
+  const run = (cmd: string, existing: string[]): { code: number; calls: string[] } => {
+    const dir = mkdtempSync(join(tmpdir(), "tugra-dcm-"));
+    try {
+      writeFileSync(join(dir, "calls.txt"), "");
+      writeFileSync(
+        join(dir, "docker"),
+        [
+          "#!/bin/sh",
+          'echo "$*" >> "$FAKE_DIR/calls.txt"',
+          `case "$1" in container) n="$3" ;; *) n="$2" ;; esac`,
+          `case " ${existing.join(" ")} " in *" $n "*) exit 0 ;; esac`,
+          'echo "Error: No such container: $n" >&2; exit 1',
+          "",
+        ].join("\n"),
+      );
+      chmodSync(join(dir, "docker"), 0o755);
+      let code = 0;
+      try {
+        execFileSync("sh", ["-c", cmd], { env: { PATH: `${dir}:/usr/bin:/bin`, FAKE_DIR: dir }, stdio: "pipe" });
+      } catch (e) {
+        code = (e as { status: number }).status;
+      }
+      const calls = execFileSync("cat", [join(dir, "calls.txt")], { encoding: "utf8" }).split("\n").filter((l) => l && !l.startsWith("container inspect"));
+      return { code, calls };
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  };
+  const V475 = ["coolify", "coolify-sentinel", "coolify-redis", "coolify-db", "coolify-proxy"]; // no coolify-realtime
+  const V46 = ["coolify", "coolify-realtime", "coolify-redis", "coolify-db", "coolify-proxy"]; // no coolify-sentinel
+
+  it("stops exactly what exists on 4.7.5 (sentinel included, no realtime) and exits 0", () => {
+    const r = run(CONTROL_PLANE_STOP_COMMANDS[0], V475);
+    expect(r).toEqual({ code: 0, calls: V475.map((n) => `stop ${n}`) });
+  });
+  it("still stops the 4.1 .. 4.6 set (realtime included) and exits 0", () => {
+    expect(run(CONTROL_PLANE_STOP_COMMANDS[0], V46)).toEqual({ code: 0, calls: V46.map((n) => `stop ${n}`) });
+  });
+  it("the removal command is tolerant the same way, and removes volumes of nothing", () => {
+    expect(run(CONTROL_PLANE_REMOVAL_COMMANDS[0], V475)).toEqual({ code: 0, calls: V475.map((n) => `rm ${n}`) });
+    expect(run(CONTROL_PLANE_REMOVAL_COMMANDS[0], ["coolify-proxy"])).toEqual({ code: 0, calls: ["rm coolify-proxy"] });
+    expect(run(CONTROL_PLANE_REMOVAL_COMMANDS[0], [])).toEqual({ code: 0, calls: [] });
   });
 });
 

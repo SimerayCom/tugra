@@ -99,8 +99,15 @@ export const MANAGED_REMOVAL_COMMANDS: readonly string[] = ["docker ps -aq --fil
  * its API and the telemetry the apps still send there, for every team at once: these commands are printed LAST, only after every
  * other run of the same source has finished, and never while one is still moving production.
  */
-export const CONTROL_PLANE_STOP_COMMANDS: readonly string[] = ["docker stop coolify coolify-realtime coolify-redis coolify-db coolify-proxy"];
-export const CONTROL_PLANE_REMOVAL_COMMANDS: readonly string[] = ["docker rm coolify coolify-realtime coolify-redis coolify-db coolify-proxy"];
+/**
+ * Which of these exist depends on the Coolify generation (`coolify-realtime` is gone on 4.7, `coolify-sentinel` is new), so each
+ * command skips a name the host does not have instead of failing on it, and ends 0 either way.
+ */
+export const CONTROL_PLANE_CONTAINERS: readonly string[] = ["coolify", "coolify-realtime", "coolify-sentinel", "coolify-redis", "coolify-db", "coolify-proxy"];
+const forEachExisting = (verb: "stop" | "rm"): string =>
+  `for c in ${CONTROL_PLANE_CONTAINERS.join(" ")}; do if docker container inspect "$c" >/dev/null 2>&1; then docker ${verb} "$c"; fi; done`;
+export const CONTROL_PLANE_STOP_COMMANDS: readonly string[] = [forEachExisting("stop")];
+export const CONTROL_PLANE_REMOVAL_COMMANDS: readonly string[] = [forEachExisting("rm")];
 export const STOP_COMMANDS: readonly string[] = [...MANAGED_STOP_COMMANDS, ...CONTROL_PLANE_STOP_COMMANDS];
 export const REMOVAL_COMMANDS: readonly string[] = [...MANAGED_REMOVAL_COMMANDS, ...CONTROL_PLANE_REMOVAL_COMMANDS];
 
