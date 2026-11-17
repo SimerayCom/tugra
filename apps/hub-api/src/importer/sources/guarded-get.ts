@@ -1,7 +1,7 @@
 import { request as httpsRequest } from "node:https";
 import { request as httpRequest } from "node:http";
 import { assertAllowedUrl, guardedLookup } from "./ssrf-guard";
-import { AuthPausedError, type RequestLimits } from "./request-limits";
+import { AuthPausedError, retryAfterHeader, type RequestLimits } from "./request-limits";
 
 const TIMEOUT_MS = 15_000; // per-socket idle timeout
 const DEADLINE_MS = 30_000; // hard overall cap: a trickle/stalled response cannot hang the request forever
@@ -126,8 +126,8 @@ function guardedRequest(label: string): RawTransport {
             chunks.push(c);
           });
           res.on("aborted", () => done(() => reject(new Error(`${label} response was truncated`))));
-          const ra = res.headers["retry-after"];
-          res.on("end", () => done(() => resolve({ status, retryAfter: Array.isArray(ra) ? ra[0] : (ra ?? null), body: Buffer.concat(chunks) })));
+          const ra = retryAfterHeader(res.headers);
+          res.on("end", () => done(() => resolve({ status, retryAfter: ra, body: Buffer.concat(chunks) })));
         },
       );
       // Hard overall deadline — set AFTER req exists so a synchronous throw from doRequest can never leave an

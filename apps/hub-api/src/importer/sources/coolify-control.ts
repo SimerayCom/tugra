@@ -1,7 +1,7 @@
 import { request as httpsRequest } from "node:https";
 import { request as httpRequest } from "node:http";
 import { assertAllowedUrl, guardedLookup } from "./ssrf-guard";
-import { AuthPausedError, RateLimitedError, coolifyLimits, type RequestLimits } from "./request-limits";
+import { AuthPausedError, RateLimitedError, coolifyLimits, retryAfterHeader, type RequestLimits } from "./request-limits";
 
 /**
  * The WRITE half of a Coolify instance (P7 lane B): stop / start / read the state of ONE application, service or
@@ -18,8 +18,8 @@ import { AuthPausedError, RateLimitedError, coolifyLimits, type RequestLimits } 
  *
  * Start/stop semantics (Coolify 4.7.5, verified against its source):
  *  - the verbs are `POST /{applications|services|databases}/{uuid}/{start|stop}`. Older v4 releases exposed them as `GET`;
- *    a POST answered 405 there, so {@link CoolifyControl} falls back to `GET` on a 405 ONLY. A POST 404 is a resource that
- *    does not exist and stays `not-found` (4.7.5 answers 405 to every GET start/stop, so falling back would hide it);
+ *    there a POST answers 405 or (catch-all route) 404, so {@link CoolifyControl} retries as `GET` on either. Only a GET 2xx
+ *    counts as success: 4.7.5 answers GET with 405 for every uuid, so POST 404 + GET 405/404 stays `not-found`;
  *  - `POST /applications/{uuid}/start` is `action_deploy`: it QUEUES A DEPLOYMENT (a rebuild), it is not a `docker start`.
  *    For an application the abort path therefore re-deploys the stopped app; databases and services are really started;
  *  - a database or service that is already in the requested state answers 400 "already stopped" / "already running":
@@ -114,8 +114,14 @@ export class CoolifyControl {
     // docker_cleanup=false on a stop: Coolify's default runs a docker prune on the source host after the stop.
     const p = this.path(kind, uuid, `/${verb}`) + (verb === "stop" ? "?docker_cleanup=false" : "");
     let res = await this.transport.request("POST", p);
-    // An older Coolify exposes start/stop as GET only (a POST is a 405 there). A 404 is NOT a verb problem: the resource is gone.
-    if (res.status === 405) res = await this.transport.request("GET", p);
+    if (res.status === 404 || res.status === 405) {
+      // An older Coolify (4.1.2 .. 4.6) exposes start/stop as GET only, and its catch-all route answers a wrong-verb POST with
+      // 404 "Not found." (some builds 405). So both retry as GET. On 4.7.5 a GET start/stop is ALWAYS a 405 (it points at the
+      // POST), which means: POST 404 + GET 405 (or 404) is a resource that does not exist, never a success.
+      const postStatus = res.status;
+      res = await this.transport.request("GET", p);
+      if (res.status === 404 || (res.status === 405 && postStatus === 404)) throw new ControlError("not-found");
+    }
     if (res.status === 400 && alreadyInState(verb, res.body)) return; // "Database is already stopped" / "Service is already running": the wanted state
     this.assertOk(res.status);
   }
@@ -147,7 +153,7 @@ const TIMEOUT_MS = 15_000;
 const DEADLINE_MS = 30_000;
 const MAX_BYTES = 1024 * 1024;
 
-class GuardedHttpTransport implements CoolifyControlTransport {
+export class GuardedHttpTransport implements CoolifyControlTransport {
   private readonly base: URL;
 
   constructor(
@@ -166,7 +172,9 @@ class GuardedHttpTransport implements CoolifyControlTransport {
       return { status: res.status, body: res.body };
     } catch (e) {
       if (e instanceof RateLimitedError) return { status: 429, body: null };
-      if (e instanceof AuthPausedError) return { status: e.status, body: null };
+      // The pause is a local, transient timer (not Coolify's answer): report it as the retryable rate-limited code, never as a
+      // forbidden/unauthorized verdict on a token that may be fine (a discover's optional 403s share this token's breaker).
+      if (e instanceof AuthPausedError) return { status: 429, body: null };
       throw e;
     }
   }
@@ -208,7 +216,7 @@ class GuardedHttpTransport implements CoolifyControlTransport {
             }
             chunks.push(c);
           });
-          const ra = res.headers["retry-after"];
+          const ra = retryAfterHeader(res.headers);
           res.on("aborted", () => done(() => reject(new ControlError("unreachable"))));
           res.on("end", () =>
             done(() => {
@@ -218,7 +226,7 @@ class GuardedHttpTransport implements CoolifyControlTransport {
               } catch {
                 /* a non-JSON body only matters to `state`, which then reports bad-response */
               }
-              resolve({ status, body, retryAfter: Array.isArray(ra) ? ra[0] : (ra ?? null) });
+              resolve({ status, body, retryAfter: ra });
             }),
           );
         },

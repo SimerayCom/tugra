@@ -68,7 +68,7 @@ describe("CoolifyControl", () => {
     ]);
   });
 
-  it("falls back to GET only on a 405 (an older Coolify exposes start/stop as GET)", async () => {
+  it("retries as GET on a 405 (an older Coolify exposes start/stop as GET only)", async () => {
     const getOnly = new FakeTransport((m) => (m === "POST" ? { status: 405, body: null } : { status: 200, body: { message: "ok" } }));
     await new CoolifyControl(getOnly).start("service", "s1");
     expect(getOnly.calls).toEqual([
@@ -77,11 +77,31 @@ describe("CoolifyControl", () => {
     ]);
   });
 
-  it("a POST 404 stays not-found and is NOT retried as GET (4.7.5 answers 405 to every GET start/stop, which would hide it)", async () => {
+  it("retries as GET on a POST 404 too: an older Coolify's catch-all route answers a wrong-verb POST with 404 Not found", async () => {
+    const catchAll = new FakeTransport((m) => (m === "POST" ? { status: 404, body: { message: "Not found." } } : { status: 200, body: { message: "ok" } }));
+    await new CoolifyControl(catchAll).stop("application", "abc");
+    await new CoolifyControl(catchAll).start("database", "d1");
+    expect(catchAll.calls.map((c) => c.method)).toEqual(["POST", "GET", "POST", "GET"]);
+  });
+
+  it("POST 404 + GET 405 (4.7.5 answers every GET start/stop with 405) or GET 404 is a resource that does not exist: not-found, never success", async () => {
     const t = new FakeTransport((m) => (m === "POST" ? { status: 404, body: { message: "Resource not found." } } : { status: 405, body: null }));
     await expect(new CoolifyControl(t).stop("application", "gone")).rejects.toMatchObject({ code: "not-found" });
     await expect(new CoolifyControl(t).start("database", "gone")).rejects.toMatchObject({ code: "not-found" });
-    expect(t.calls.map((c) => c.method)).toEqual(["POST", "POST"]);
+    const both404 = new FakeTransport(() => ({ status: 404, body: null }));
+    await expect(new CoolifyControl(both404).stop("service", "gone")).rejects.toMatchObject({ code: "not-found" });
+  });
+
+  it("POST 405 + GET 405 is a rejection (the verb is not supported at all), not a not-found", async () => {
+    const t = new FakeTransport(() => ({ status: 405, body: null }));
+    await expect(new CoolifyControl(t).stop("application", "abc")).rejects.toMatchObject({ code: "rejected" });
+  });
+
+  it("the GET fallback honours the idempotent 400 and the retryable 429", async () => {
+    const t = new FakeTransport((m) => (m === "POST" ? { status: 404, body: null } : { status: 400, body: { message: "Service is already running." } }));
+    await expect(new CoolifyControl(t).start("service", "s1")).resolves.toBeUndefined();
+    const limited = new FakeTransport((m) => (m === "POST" ? { status: 405, body: null } : { status: 429, body: null }));
+    await expect(new CoolifyControl(limited).start("service", "s1")).rejects.toMatchObject({ code: "rate-limited" });
   });
 
   it("is idempotent on 4.7.5: 400 already stopped / already running is the wanted state", async () => {

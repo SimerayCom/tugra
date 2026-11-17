@@ -33,6 +33,11 @@ describe("isSensitiveVisible", () => {
     expect(isSensitiveVisible({ uuid: "s", docker_compose_raw: "c2VydmljZXM6" }, "service")).toBe(true);
   });
 
+  it("4.7.5 hides BOTH service compose keys without read:sensitive (Service.php $hidden), so either one is proof of visibility", () => {
+    expect(isSensitiveVisible({ uuid: "s", docker_compose: "c2VydmljZXM6" }, "service")).toBe(true);
+    expect(isSensitiveVisible({ uuid: "s", name: "svc", status: "running:healthy", service_type: "plausible" }, "service")).toBe(false);
+  });
+
   it("a key of another kind does not make a row of this kind visible", () => {
     expect(isSensitiveVisible({ uuid: "s", build_command: "x" }, "service")).toBe(false);
   });

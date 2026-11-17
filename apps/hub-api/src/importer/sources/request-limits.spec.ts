@@ -7,9 +7,12 @@ import {
   PACED_REQUESTS_PER_MIN,
   PACE_BURST,
   RateLimitedError,
+  RequestLimits,
   TokenBucket,
   parseRetryAfterMs,
   type Clock,
+  humanWait,
+  retryAfterHeader,
   type LimitedResponse,
 } from "./request-limits";
 
@@ -34,6 +37,32 @@ describe("parseRetryAfterMs", () => {
     expect(parseRetryAfterMs(new Date(5_000).toUTCString(), 0)).toBe(5_000);
     expect(parseRetryAfterMs(new Date(0).toUTCString(), 10_000)).toBe(1_000);
     for (const bad of [undefined, null, "", "soon"]) expect(parseRetryAfterMs(bad, 0)).toBeNull();
+  });
+});
+
+describe("retryAfterHeader", () => {
+  it("reads a string, takes the first of an array, and is null when absent", () => {
+    expect(retryAfterHeader({ "retry-after": "60" })).toBe("60");
+    expect(retryAfterHeader({ "retry-after": ["300", "900"] })).toBe("300");
+    expect(retryAfterHeader({ "retry-after": [] })).toBeNull();
+    expect(retryAfterHeader({ "content-type": "application/json" })).toBeNull();
+    expect(retryAfterHeader({ "retry-after": undefined })).toBeNull();
+  });
+});
+
+describe("RateLimitedError", () => {
+  it("carries status 429 and never prints a bare second count that reads as 401/403/404", () => {
+    for (const sec of [401, 403, 404]) {
+      const e = new RateLimitedError("Coolify", sec);
+      expect(e.status).toBe(429);
+      expect(e.code).toBe("rate-limited");
+      expect(e.retryAfterSec).toBe(sec);
+      expect(/\b(401|403|404)\b/.test(e.message)).toBe(false);
+    }
+    expect(humanWait(10)).toBe("10 s");
+    expect(humanWait(60)).toBe("1 min");
+    expect(humanWait(900)).toBe("15 min");
+    expect(humanWait(301)).toBe("6 min");
   });
 });
 
@@ -70,7 +99,20 @@ describe("TokenBucket", () => {
     b.blockUntil(c.t + 7_000);
     expect(b.reserve()).toBe(7_000);
     c.t += 7_000;
-    expect(b.reserve()).toBe(0);
+    expect(b.reserve()).toBe(400); // the slot the first caller took at the end of the block was the only free one
+    c.t += 400;
+    expect(b.reserve()).toBe(400);
+  });
+
+  it("callers queued behind a 429 leave one pace apart after it ends, not as a burst of the stored tokens", () => {
+    const c = new FakeClock();
+    const b = new TokenBucket(PACED_REQUESTS_PER_MIN, PACE_BURST, c); // a full bucket of PACE_BURST tokens
+    b.blockUntil(c.t + 7_000);
+    expect(b.blockedFor()).toBe(7_000);
+    const slots = Array.from({ length: 6 }, () => b.reserve());
+    expect(slots).toEqual([7_000, 7_400, 7_800, 8_200, 8_600, 9_000]);
+    c.t += 7_000;
+    expect(b.blockedFor()).toBe(0);
   });
 });
 
@@ -204,5 +246,58 @@ describe("RequestLimits.run", () => {
     await Promise.all(Array.from({ length: PACE_BURST + 5 }, (_, i) => callers[i % 5].run(async () => ({ status: 200 }))));
     expect(clock.slept.length).toBe(5); // only the requests beyond the burst waited
     expect(clock.slept[0]).toBeGreaterThan(0);
+  });
+
+  it("a caller already sleeping for its slot does not send into a 429 that another caller got meanwhile", async () => {
+    let t = 1_700_000_000_000;
+    const start = t;
+    const slept: number[] = [];
+    let hook: (() => void) | null = null;
+    const clock: Clock = {
+      now: () => t,
+      sleep: async (ms) => {
+        slept.push(ms);
+        t += ms;
+        const h = hook;
+        hook = null;
+        h?.();
+      },
+    };
+    const bucket = new TokenBucket(PACED_REQUESTS_PER_MIN, PACE_BURST, clock);
+    const limits = new RequestLimits(bucket, new AuthBreaker(clock), clock);
+    for (let i = 0; i < PACE_BURST; i++) bucket.reserve(); // the burst is gone: the next caller must wait for its slot
+    // while this caller sleeps, another caller's 429 says "not before +5 s"
+    hook = () => bucket.blockUntil(t + 5_000);
+    const sentAt: number[] = [];
+    await limits.run(async () => (sentAt.push(t), { status: 200 }));
+    expect(slept).toHaveLength(2);
+    expect(sentAt).toHaveLength(1);
+    expect(sentAt[0]).toBeGreaterThanOrEqual(start + 400 + 5_000); // not before the block that arrived while it slept
+    expect(slept[0]).toBe(400);
+    expect(slept[1]).toBeGreaterThanOrEqual(5_000);
+  });
+
+  it("a caller already sleeping for its slot does not send once the token's breaker tripped meanwhile", async () => {
+    let t = 1_700_000_000_000;
+    let hook: (() => void) | null = null;
+    const clock: Clock = {
+      now: () => t,
+      sleep: async (ms) => {
+        t += ms;
+        const h = hook;
+        hook = null;
+        h?.();
+      },
+    };
+    const bucket = new TokenBucket(PACED_REQUESTS_PER_MIN, PACE_BURST, clock);
+    const breaker = new AuthBreaker(clock);
+    const limits = new RequestLimits(bucket, breaker, clock);
+    for (let i = 0; i < PACE_BURST; i++) bucket.reserve();
+    hook = () => {
+      for (let i = 0; i < AUTH_401_TRIP; i++) breaker.record(401);
+    };
+    let sent = 0;
+    await expect(limits.run(async () => (sent++, { status: 200 }))).rejects.toBeInstanceOf(AuthPausedError);
+    expect(sent).toBe(0);
   });
 });

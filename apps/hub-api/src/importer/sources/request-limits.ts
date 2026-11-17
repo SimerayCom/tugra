@@ -57,13 +57,20 @@ export interface LimitedResponse {
 /** A 429 that outlived the bounded retries, or a Retry-After too long to wait for. Stable: callers branch on `code`. */
 export class RateLimitedError extends Error {
   readonly code = "rate-limited" as const;
+  /** The HTTP status this stands for. Callers that sniff messages for 401/403/404 must read this field instead. */
+  readonly status = 429 as const;
   constructor(
     label: string,
     readonly retryAfterSec: number,
   ) {
-    super(`${label} API error 429 (rate-limited: ${label} allows 200 requests a minute per user — wait about ${retryAfterSec} s and retry)`);
+    super(`${label} API error 429 (rate-limited: ${label} allows 200 requests a minute per user — wait about ${humanWait(retryAfterSec)} and retry)`);
     this.name = "RateLimitedError";
   }
+}
+
+/** A wait as "N s" under a minute, else whole minutes: a bare number of seconds in a message could be mistaken for an HTTP status (401/403/404). */
+export function humanWait(sec: number): string {
+  return sec < 60 ? `${Math.max(1, Math.ceil(sec))} s` : `${Math.ceil(sec / 60)} min`;
 }
 
 /** The token kept failing authorization, so the client stopped sending requests for a while instead of risking Coolify's lockout. */
@@ -75,6 +82,12 @@ export class AuthPausedError extends Error {
     super(`authorization failed (${status}); requests paused for ${Math.ceil(retryAfterMs / 1000)} s`);
     this.name = "AuthPausedError";
   }
+}
+
+/** The `Retry-After` value of a node response header bag (a header may arrive as a string or an array); null when absent. */
+export function retryAfterHeader(headers: { [name: string]: string | string[] | undefined }): string | null {
+  const ra = headers["retry-after"];
+  return Array.isArray(ra) ? (ra[0] ?? null) : (ra ?? null);
 }
 
 /** Parse a `Retry-After` header (delta-seconds or HTTP-date) into milliseconds from `now`; null when absent or unparseable. */
@@ -101,19 +114,32 @@ export class TokenBucket {
     this.last = clock.now();
   }
 
-  /** Reserve one request slot and return how long the caller must wait before sending (0 = send now). Callers queue fairly: slots are handed out in call order. */
+  /**
+   * Reserve one request slot and return how long the caller must wait before sending (0 = send now). Callers queue fairly:
+   * slots are handed out in call order. While the bucket is blocked (a 429 said "not before ts") slots are handed out
+   * AFTER the block, one pace apart, so the queue leaves as a trickle and not as a burst that refreshes the 429.
+   */
   reserve(): number {
     const t = this.clock.now();
-    this.tokens = Math.min(this.burst, this.tokens + ((t - this.last) * this.ratePerMin) / 60_000);
-    this.last = t;
+    const te = Math.max(t, this.blockedUntil);
+    this.tokens = Math.min(this.burst, this.tokens + (Math.max(0, te - this.last) * this.ratePerMin) / 60_000);
+    this.last = te;
     this.tokens -= 1;
     const pace = this.tokens < 0 ? Math.ceil((-this.tokens * 60_000) / this.ratePerMin) : 0;
-    return Math.max(pace, this.blockedUntil - t, 0);
+    return te - t + pace;
+  }
+
+  /** Milliseconds still blocked by a 429 (0 = not blocked). */
+  blockedFor(): number {
+    return Math.max(0, this.blockedUntil - this.clock.now());
   }
 
   /** A 429 said "not before `ts`": every caller of this base URL holds back until then (the bucket is the user's shared budget). */
   blockUntil(ts: number): void {
     if (ts > this.blockedUntil) this.blockedUntil = ts;
+    // no stored burst after a 429: refilling starts when the block ends, one request leaves then, the rest follow at the pace
+    this.tokens = 1;
+    this.last = Math.max(this.last, this.blockedUntil);
   }
 }
 
@@ -135,7 +161,13 @@ export class AuthBreaker {
     return { kind: "ok" };
   }
 
-  /** Record the final status of a request that was actually sent (a 429 is recorded through {@link lock}, not here). */
+  /**
+   * Every 403 counts, also when other requests of the token succeed: Coolify's own limiter counts every 401/403 of the token
+   * in the minute (ThrottleFailedApiRequests) whatever else succeeds, so a discover that keeps hitting per-route 403s would be
+   * locked out by Coolify at 30 (for 60 s, then 300 s, then 900 s) just the same. Pausing at {@link AUTH_FAILURE_TRIP} keeps
+   * the lockout from ever starting; the pause is short, and the freeze control client reports it as retryable (`rate-limited`), not as a denial.
+   *
+   * Record the final status of a request that was actually sent (a 429 is recorded through {@link lock}, not here). */
   record(status: number): void {
     const t = this.clock.now();
     if (status >= 200 && status < 300) {
@@ -191,11 +223,7 @@ export class RequestLimits {
   async run<T extends LimitedResponse>(send: () => Promise<T>): Promise<T> {
     let waited = 0;
     for (let attempt = 0; ; attempt++) {
-      const st = this.breaker.state();
-      if (st.kind === "auth") throw new AuthPausedError(st.status, st.ms);
-      if (st.kind === "locked") throw new RateLimitedError(this.label, Math.ceil(st.ms / 1000));
-      const wait = this.bucket.reserve();
-      if (wait > 0) await this.clock.sleep(wait);
+      await this.slot();
       const res = await send();
       if (res.status !== 429) {
         this.breaker.record(res.status);
@@ -211,6 +239,23 @@ export class RequestLimits {
       }
       waited += waitMs;
       this.bucket.blockUntil(this.clock.now() + waitMs); // every concurrent caller of this base URL holds back too
+    }
+  }
+
+  /**
+   * Wait for a pacing slot. The breaker and the bucket's 429 block are consulted again after every sleep: a request that was
+   * already queued when another caller's 429 (or the token's auth failures) arrived must not be sent anyway.
+   */
+  private async slot(): Promise<void> {
+    for (;;) {
+      const st = this.breaker.state();
+      if (st.kind === "auth") throw new AuthPausedError(st.status, st.ms);
+      if (st.kind === "locked") throw new RateLimitedError(this.label, Math.ceil(st.ms / 1000));
+      const wait = this.bucket.reserve();
+      if (wait <= 0) return;
+      await this.clock.sleep(wait);
+      const after = this.breaker.state();
+      if (after.kind === "ok" && this.bucket.blockedFor() <= 0) return;
     }
   }
 }
