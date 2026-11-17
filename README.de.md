@@ -192,7 +192,7 @@ Live-Logs, Metriken und das Terminal werden per WebSocket gestreamt. Die vollst�
 - [x] Live-Metriken, Build-Logs & Web-Terminal (WebSocket-Streams; das Terminal ist per Capability abgesichert und standardmäßig deaktiviert)
 - [x] Datenbanken (9 Engines) mit Backups & Restore (lokal + S3/R2 offsite)
 - [x] Multi-Server-Cluster + Aufbau von Docker Swarm, Bulk-Operationen über die Flotte
-- [x] Nativer MCP-Server — 56 Tools (lesende sowie schreibende und Flotten-Tools mit PAT-Scope) + geführte Prompts
+- [x] Nativer MCP-Server — 73 Tools (lesende sowie schreibende und Flotten-Tools mit PAT-Scope) + geführte Prompts
 - [x] App Store — 280+ Ein-Klick-Vorlagen + Home-Mode-Launcher
 - [x] Dateimanager für App-Volumes — durchsuchen, herunterladen, hochladen, bearbeiten, umbenennen, Berechtigungen ändern und löschen (Schreibzugriff ist eine optionale Server-Capability; Web-UI, dazu MCP `list_files` zum Lesen)
 - [x] Preview-Deployments (pro Pull Request)

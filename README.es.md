@@ -192,7 +192,7 @@ Los logs en vivo, las métricas y la terminal se transmiten por WebSockets. Desg
 - [x] Métricas en vivo, logs de build y terminal web (flujos WebSocket; la terminal está protegida por capability y desactivada por defecto)
 - [x] Bases de datos (9 motores) con backups y restore (local + fuera del servidor en S3/R2)
 - [x] Clusters multiservidor + formación de Docker Swarm, operaciones masivas sobre toda la fleet
-- [x] Servidor MCP nativo — 56 herramientas (lectura + operaciones de mutación/fleet con scope de PAT) + prompts guiados
+- [x] Servidor MCP nativo — 73 herramientas (lectura + operaciones de mutación/fleet con scope de PAT) + prompts guiados
 - [x] App Store — más de 280 plantillas con un clic + lanzador en modo Home
 - [x] Gestor de archivos para volumes de apps — explorar, descargar, subir, editar, renombrar, cambiar permisos y eliminar (la escritura es una capability opcional del servidor; Web UI, y MCP `list_files` para lectura)
 - [x] Deploys de vista previa (por pull request)

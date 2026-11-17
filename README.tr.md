@@ -192,7 +192,7 @@ Canlı log'lar, metrikler ve terminal WebSocket'ler üzerinden akar. Tüm ayrın
 - [x] Canlı metrikler, build log'ları ve web terminal (WebSocket akışları; terminal capability ile korunur ve varsayılan olarak kapalıdır)
 - [x] Backup ve restore destekli veritabanları (9 motor; yerel + S3/R2 off-site)
 - [x] Multi-server cluster'lar + Docker Swarm kurulumu, fleet genelinde toplu işlemler
-- [x] Yerleşik MCP sunucusu — 56 tool (okuma + PAT scope'lu değişiklik yapan/fleet operasyonları) + yönlendirmeli prompt'lar
+- [x] Yerleşik MCP sunucusu — 73 tool (okuma + PAT scope'lu değişiklik yapan/fleet operasyonları) + yönlendirmeli prompt'lar
 - [x] App store — 280+ tek tıkla şablon + Home modu launcher'ı
 - [x] Uygulama volume'ları için dosya yöneticisi — gezme, indirme, yükleme, düzenleme, yeniden adlandırma, izin değiştirme ve silme (yazma, isteğe bağlı bir sunucu capability'sidir; Web UI, okuma için ayrıca MCP `list_files`)
 - [x] Preview deploy'lar (pull request başına)

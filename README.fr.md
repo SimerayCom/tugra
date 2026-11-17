@@ -192,7 +192,7 @@ Les logs en direct, les métriques et le terminal sont diffusés en streaming vi
 - [x] Métriques en direct, logs de build et terminal web (flux WebSocket ; le terminal est protégé par capability et désactivé par défaut)
 - [x] Bases de données (9 moteurs) avec sauvegardes et restauration (local + hors site S3/R2)
 - [x] Clusters multi-serveurs + création de Docker Swarm, opérations en masse sur toute la flotte
-- [x] Serveur MCP natif — 56 outils (lecture + écriture/opérations de flotte soumises aux scopes du PAT) + prompts guidés
+- [x] Serveur MCP natif — 73 outils (lecture + écriture/opérations de flotte soumises aux scopes du PAT) + prompts guidés
 - [x] App Store — plus de 280 modèles en un clic + lanceur en mode Home
 - [x] Gestionnaire de fichiers pour les volumes d'applications — parcourir, télécharger, téléverser, modifier, renommer, changer les permissions et supprimer (l'écriture est une capability serveur optionnelle ; interface web, plus MCP `list_files` en lecture)
 - [x] Déploiements de preview (une app par pull request)
