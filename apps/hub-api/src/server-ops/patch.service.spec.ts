@@ -48,6 +48,27 @@ describe("PatchService", () => {
     expect(r.packages[0].name).toBe("docker-ce");
   });
 
+  it("checkUpdates reports a phased package separately and keeps it out of the count", async () => {
+    const prisma = { server: { findUnique: jest.fn().mockResolvedValue(server) } } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const output = [
+      "TUGRA_HOST_ENTERED",
+      "TUGRA_MGR=apt",
+      "TUGRA_UPGRADABLE",
+      "Listing...",
+      "snapd/noble-updates 2.78 amd64 [upgradable from: 2.76.3]",
+      "TUGRA_PHASED_SIM",
+      "The following upgrades have been deferred due to phasing:",
+      "  snapd",
+      "",
+    ].join("\n");
+    const agentWs = { isOnline: jest.fn().mockReturnValue(true), sendCommand: jest.fn().mockResolvedValue({ exitCode: 0, output }) } as unknown as AgentWsServer;
+    const r = await make(prisma, access, agentWs).checkUpdates("u1", "s1");
+    expect(r.count).toBe(0);
+    expect(r.packages).toEqual([]);
+    expect(r.phased).toEqual([{ name: "snapd", current: "2.76.3", candidate: "2.78" }]);
+  });
+
   it("checkUpdates throws a typed AgentOfflineException (503) when the agent is offline — not a 500, and signs/audits nothing", async () => {
     const prisma = { server: { findUnique: jest.fn().mockResolvedValue(server) } } as unknown as PrismaService;
     const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
@@ -219,6 +240,32 @@ describe("PatchService apply (host-side unit)", () => {
     expect(order).toEqual(["audit", "send"]);
     expect(logs.finish).toHaveBeenCalledWith("s1", expect.objectContaining({ status: "FAILED", exitCode: 100 }));
     (audit.log as jest.Mock).mockReset();
+  });
+
+  it("upgradePhased audits first, then runs the forced single-package install as the host-side unit", async () => {
+    const order: string[] = [];
+    (audit.log as jest.Mock).mockImplementation(async () => void order.push("audit"));
+    let sent = "";
+    const agentWs = {
+      sendCommand: jest.fn().mockImplementation(async (_s: string, script: string) => {
+        order.push("send");
+        sent = script;
+        return { exitCode: 0, output: `${HEAD}${BEGIN}1 upgraded\n\nTUGRA_PATCH_RC=0\n` };
+      }),
+    } as unknown as AgentWsServer;
+    const r = await make(prisma, access, agentWs, makeLogs()).upgradePhased("u1", "s1", "snapd");
+    expect(r).toEqual({ output: "1 upgraded\n", exitCode: 0 });
+    expect(order).toEqual(["audit", "send"]);
+    expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "server.patch.apply", target: "s1", meta: { pkg: "snapd", phased: true } }));
+    const inner = Buffer.from(/printf %s '([A-Za-z0-9+/=]+)' \| base64 -d > "\$D\/\$ID\.sh"/.exec(driver(sent))![1], "base64").toString("utf8");
+    expect(inner).toContain("Always-Include-Phased-Updates=true install --only-upgrade -y snapd");
+    (audit.log as jest.Mock).mockReset();
+  });
+
+  it("upgradePhased rejects a bad package name before auditing or sending", async () => {
+    const agentWs = { sendCommand: jest.fn() } as unknown as AgentWsServer;
+    await expect(make(prisma, access, agentWs, makeLogs()).upgradePhased("u1", "s1", "evil; rm -rf /")).rejects.toThrow(/invalid/);
+    expect(agentWs.sendCommand).not.toHaveBeenCalled();
   });
 
   it("an apply that drops with the engine restart re-attaches to the SAME unit after the log lines it already has", async () => {

@@ -9,7 +9,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildCheckScript, buildPatchRunScript, buildUpgradeAllScript, buildUpgradeOneScript, parsePatchRun, parseUpgradable } from "./patch-script";
+import { buildCheckScript, buildInstallPhasedScript, buildPatchRunScript, buildUpgradeAllScript, buildUpgradeOneScript, parsePatchRun, parseUpgradable } from "./patch-script";
 
 // The shell under test (the host's /bin/sh is dash on Debian/Ubuntu); PATCH_TEST_SH=/bin/dash exercises that one.
 const SH = process.env.PATCH_TEST_SH ?? "/bin/sh";
@@ -126,8 +126,26 @@ describe("CHECK under sh with fake apt/dpkg (read-only)", () => {
     });
     const log = readFileSync(join(fake, "calls"), "utf8");
     expect(log).not.toMatch(/^dpkg /m); // dpkg itself (configure) is never invoked — dpkg-query only reads
-    expect(log).not.toMatch(/install|upgrade|--configure|-f install/);
+    expect(log).not.toMatch(/install|--configure|-f install/);
+    expect(log.match(/^apt-get .*upgrade.*$/gm)).toEqual(["apt-get -s upgrade"]); // only ever simulated
     expect(log).toContain("apt-get update -qq"); // the index refresh is the only write
+  });
+
+  it("reports a phased package separately, from a real (simulated) apt-get -s upgrade, without upgrading anything", () => {
+    put(
+      "apt-get",
+      [
+        'echo "apt-get $*" >> "$FAKE/calls"',
+        'case "$*" in *"-s upgrade"*) printf "%s\\n" "Reading package lists..." "Calculating upgrade..." "The following upgrades have been deferred due to phasing:" "  snapd" "0 upgraded, 0 newly installed, 0 to remove and 1 not upgraded." ;; esac',
+      ].join("\n"),
+    );
+    put("apt", 'echo "Listing..."; echo "snapd/noble-updates 2.78 amd64 [upgradable from: 2.76.3]"; echo "vim/noble 2 amd64 [upgradable from: 1]"');
+    put("dpkg-query", "true");
+    const info = parseUpgradable(runSh(buildCheckScript(sysd)).stdout);
+    expect(info.count).toBe(1);
+    expect(info.packages.map((p) => p.name)).toEqual(["vim"]);
+    expect(info.phased).toEqual([{ name: "snapd", current: "2.76.3", candidate: "2.78" }]);
+    expect(readFileSync(join(fake, "calls"), "utf8")).not.toMatch(/Always-Include-Phased/);
   });
 
   it("a non-engine interrupted package is reported without the engine flag; clean dpkg reports none", () => {
@@ -179,6 +197,27 @@ describe("APPLY inner script under sh with fake apt/dpkg", () => {
     const calls = readFileSync(join(fake, "calls"), "utf8").trim().split("\n");
     expect(calls).toHaveLength(1);
     expect(calls[0]).toContain("install --only-upgrade -y vim");
+  });
+});
+
+describe("forced phased install under sh with fake apt", () => {
+  it("passes the phasing override to apt for that one package only", () => {
+    put("apt-get", 'echo "apt-get $*" >> "$FAKE/calls"');
+    put("dpkg-query", "true");
+    put("dpkg", 'echo "dpkg $*" >> "$FAKE/calls"');
+    runSh(buildInstallPhasedScript("snapd"));
+    const calls = readFileSync(join(fake, "calls"), "utf8").trim().split("\n");
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toContain("-o APT::Get::Always-Include-Phased-Updates=true install --only-upgrade -y snapd");
+    runSh(buildUpgradeOneScript("snapd"));
+    const all = readFileSync(join(fake, "calls"), "utf8").trim().split("\n");
+    expect(all[1]).not.toContain("Always-Include-Phased-Updates");
+  });
+
+  it("refuses without apt (phasing is an apt/Ubuntu concept)", () => {
+    const r = runSh(buildInstallPhasedScript("snapd"));
+    expect(r.status).toBe(1);
+    expect(r.stdout).toContain("TUGRA_PHASED_UNSUPPORTED");
   });
 });
 

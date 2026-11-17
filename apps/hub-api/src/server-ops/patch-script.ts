@@ -57,6 +57,10 @@ const patchRunningFn = (systemdDir: string) =>
   `tugra_patch_running() { [ -d '${systemdDir}' ] && command -v systemctl >/dev/null 2>&1 && ` +
   "systemctl list-units --plain --no-legend --no-pager --state=active,activating,deactivating,reloading 'tugra-patch-*' 2>/dev/null | grep -q .; }";
 
+// Keeps just apt's "deferred due to phasing" block (the header and its indented package lines) from the simulation.
+const PHASED_AWK =
+  "/^The following upgrades have been deferred due to phasing:/ { p = 1; print; next } p && /^[ \\t]/ { print; next } { p = 0 }";
+
 /**
  * Refresh the index, list upgradables, flag reboot-required — for whichever package
  * manager the server has. Emits `TUGRA_MGR=<mgr>`, then `TUGRA_UPGRADABLE` + the raw list,
@@ -81,6 +85,10 @@ export function buildCheckScript(systemdDir = SYSTEMD_DIR): string {
     "  echo TUGRA_UPGRADABLE",
     "  apt list --upgradable 2>/dev/null",
     "  [ -f /var/run/reboot-required ] && echo TUGRA_REBOOT || true",
+    // READ-ONLY simulation (-s): apt lists packages Ubuntu is still phasing in under `apt list --upgradable`, yet a
+    // normal upgrade defers them. The simulation names those; only that block of its output is kept.
+    "  echo TUGRA_PHASED_SIM",
+    `  LC_ALL=C apt-get -s upgrade 2>/dev/null | awk '${PHASED_AWK}' || true`,
     "elif command -v dnf >/dev/null 2>&1; then",
     "  echo TUGRA_MGR=dnf",
     "  echo TUGRA_UPGRADABLE",
@@ -149,6 +157,21 @@ export function buildUpgradeOneScript(pkg: string): string {
     `elif command -v yum >/dev/null 2>&1; then yum -y update ${pkg};`,
     `elif command -v apk >/dev/null 2>&1; then apk upgrade ${pkg};`,
     "else echo TUGRA_UNSUPPORTED; exit 1; fi",
+  ].join("\n");
+}
+
+/**
+ * Install ONE phased (gradually rolled out) apt package right now, bypassing Ubuntu's phasing for that package only.
+ * `-o APT::Get::Always-Include-Phased-Updates=true` appears here and nowhere else: "update all" and the plain
+ * per-package update keep honouring the rollout. apt only — other managers have no phasing, so they refuse.
+ */
+export function buildInstallPhasedScript(pkg: string): string {
+  if (!PKG_RE.test(pkg)) throw new Error("invalid package name");
+  return [
+    "if command -v apt-get >/dev/null 2>&1; then",
+    APT_HEAL,
+    `  ${APT_UP} -o APT::Get::Always-Include-Phased-Updates=true install --only-upgrade -y ${pkg};`,
+    'else echo "TUGRA_PHASED_UNSUPPORTED: phased rollouts exist only on apt"; exit 1; fi',
   ].join("\n");
 }
 
@@ -421,8 +444,13 @@ export interface PatchInfo {
   manager: PkgManager | null;
   checkFailed: boolean; // the manager's check ran but errored (repo unreachable / bad GPG) — result is NOT "up to date"
   rebootRequired: boolean;
+  /** Upgradable packages a normal update installs. Excludes {@link phased}. */
   packages: UpgradablePackage[];
+  /** `packages.length` — phased packages are not counted. */
   count: number;
+  /** apt only: upgradable packages Ubuntu is still rolling out gradually; a normal update defers them until this
+   *  server's turn. Empty on every other manager. */
+  phased: UpgradablePackage[];
   /** apt only: packages a previous (cut-off) run left half-configured; null when dpkg is clean. */
   dpkgInterrupted: DpkgInterrupted | null;
   /** A patch unit started earlier is still running on the host — the list is mid-flight, not final. */
@@ -441,7 +469,7 @@ function readManager(output: string): PkgManager | null {
   return m ? (m[1] as PkgManager) : null;
 }
 
-const UNSUPPORTED: PatchInfo = { supported: false, manager: null, checkFailed: false, rebootRequired: false, packages: [], count: 0, dpkgInterrupted: null, applyRunning: false };
+const UNSUPPORTED: PatchInfo = { supported: false, manager: null, checkFailed: false, rebootRequired: false, packages: [], count: 0, phased: [], dpkgInterrupted: null, applyRunning: false };
 
 const BROKEN_STATES = new Set<string>(["half-configured", "unpacked", "half-installed", "triggers-pending"]);
 
@@ -452,6 +480,25 @@ function readInterrupted(output: string): DpkgInterrupted | null {
   }
   if (packages.length === 0) return null;
   return { packages, containerEngine: packages.some((p) => isContainerEnginePackage(p.name)) };
+}
+
+const PHASED_HEADER = "The following upgrades have been deferred due to phasing:";
+
+/** Names apt's simulated upgrade says it deferred because of Ubuntu's phased rollout. Accepts the full
+ *  `apt-get -s upgrade` text or just the block; the names are indented lines right after the header. Pure. */
+export function parsePhasedNames(sim: string): string[] {
+  const lines = sim.split("\n");
+  const at = lines.findIndex((l) => l.trim() === PHASED_HEADER);
+  if (at < 0) return [];
+  const names = new Set<string>();
+  for (const raw of lines.slice(at + 1)) {
+    if (!/^\s+\S/.test(raw)) break;
+    for (const tok of raw.trim().split(/\s+/)) {
+      const name = tok.replace(/:[a-z0-9-]+$/i, ""); // multiarch "libfoo:i386"
+      if (PKG_RE.test(name)) names.add(name);
+    }
+  }
+  return [...names];
 }
 
 /** Parse the agent's check-script output into structured update info (manager-aware). */
@@ -465,7 +512,11 @@ export function parseUpgradable(output: string): PatchInfo {
   const packages: UpgradablePackage[] = [];
   // Only the lines after the TUGRA_UPGRADABLE marker are the package list.
   const start = output.indexOf("TUGRA_UPGRADABLE");
-  const body = start >= 0 ? output.slice(start + "TUGRA_UPGRADABLE".length) : output;
+  const afterList = start >= 0 ? output.slice(start + "TUGRA_UPGRADABLE".length) : output;
+  // apt appends the phasing simulation after a marker; it is not part of the package list.
+  const simAt = afterList.indexOf("TUGRA_PHASED_SIM");
+  const body = simAt >= 0 ? afterList.slice(0, simAt) : afterList;
+  const phasedNames = manager === "apt" && simAt >= 0 ? new Set(parsePhasedNames(afterList.slice(simAt))) : new Set<string>();
 
   for (const raw of body.split("\n")) {
     const line = raw.trim();
@@ -492,13 +543,16 @@ export function parseUpgradable(output: string): PatchInfo {
       }
     }
   }
+  const phased = packages.filter((p) => phasedNames.has(p.name));
+  const ready = phased.length === 0 ? packages : packages.filter((p) => !phasedNames.has(p.name));
   return {
     supported: true,
     manager,
     checkFailed,
     rebootRequired,
-    packages,
-    count: packages.length,
+    packages: ready,
+    count: ready.length,
+    phased,
     dpkgInterrupted: manager === "apt" ? readInterrupted(output) : null,
     applyRunning: /^TUGRA_PATCH_RUNNING$/m.test(output),
   };

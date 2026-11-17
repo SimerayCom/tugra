@@ -3,6 +3,8 @@ import {
   isContainerEnginePackage,
   buildUpgradeAllScript,
   buildUpgradeOneScript,
+  buildInstallPhasedScript,
+  parsePhasedNames,
   wrapHostExec,
   buildPatchRunScript,
   parseHostExec,
@@ -66,7 +68,9 @@ describe("patch-script", () => {
     it("never configures, installs or upgrades anything", () => {
       const s = buildCheckScript();
       expect(s).not.toMatch(/dpkg\s+(--configure|-i|--install|--remove|-r|-P)/);
-      expect(s).not.toMatch(/apt(-get)?\s+(-\S+\s+)*(install|upgrade|dist-upgrade|full-upgrade|remove|purge|--fix-broken)/);
+      // apt may only SIMULATE (-s) an upgrade (to read which packages Ubuntu defers for phasing) — never perform one
+      expect(s).not.toMatch(/apt(-get)?\s+(-(?!s\b)\S+\s+)*(install|upgrade|dist-upgrade|full-upgrade|remove|purge|--fix-broken)/);
+      for (const m of s.matchAll(/apt-get\s+(\S*\s+)*?(upgrade|dist-upgrade|full-upgrade)/g)) expect(m[0]).toMatch(/\s-s\s/);
       expect(s).not.toMatch(/dnf\s+(-y\s+)?(upgrade|install)|yum\s+(-y\s+)?(update|install)|apk\s+(upgrade|add)/);
       expect(s).not.toContain("--configure");
       // it only LOOKS at dpkg's state
@@ -385,5 +389,98 @@ describe("patch-script", () => {
 
   it("a TUGRA_PATCH_BUSY marker counts as busy", () => {
     expect(parseHostExec("TUGRA_HOST_ENTERED\nTUGRA_PATCH_BUSY\n").busy).toBe(true);
+  });
+
+  describe("Ubuntu phased updates", () => {
+    // Real text from an Ubuntu 24.04 host (apt-get -s upgrade), snapd held back by the phased rollout.
+    const SIM = [
+      "Reading package lists...",
+      "Building dependency tree...",
+      "Reading state information...",
+      "Calculating upgrade...",
+      "The following upgrades have been deferred due to phasing:",
+      "  snapd",
+      "0 upgraded, 0 newly installed, 0 to remove and 1 not upgraded.",
+      "",
+    ].join("\n");
+    const SNAPD = "snapd/noble-updates 2.78+ubuntu24.04 amd64 [upgradable from: 2.76.3+ubuntu24.04]";
+
+    it("parsePhasedNames reads the deferred block of the real simulation output", () => {
+      expect(parsePhasedNames(SIM)).toEqual(["snapd"]);
+    });
+
+    it("parsePhasedNames handles several packages over several lines, multiarch suffixes and a block-only input", () => {
+      const block = [
+        "The following upgrades have been deferred due to phasing:",
+        "  snapd libc6:i386 ubuntu-advantage-tools",
+        "  gnome-shell",
+        "The following packages have been kept back:",
+        "  not-phased",
+      ].join("\n");
+      expect(parsePhasedNames(block)).toEqual(["snapd", "libc6", "ubuntu-advantage-tools", "gnome-shell"]);
+    });
+
+    it("parsePhasedNames is empty without the header (no phasing, or an apt that prints nothing)", () => {
+      expect(parsePhasedNames("")).toEqual([]);
+      expect(parsePhasedNames("Calculating upgrade...\n0 upgraded, 0 newly installed, 0 to remove and 0 not upgraded.\n")).toEqual([]);
+      expect(parsePhasedNames("The following packages have been kept back:\n  linux-image\n")).toEqual([]);
+    });
+
+    it("splits phased packages out of the list and excludes them from the count", () => {
+      const out = [
+        "TUGRA_MGR=apt",
+        "TUGRA_UPGRADABLE",
+        "Listing...",
+        SNAPD,
+        "vim/noble-updates 2:9.1.0016-1ubuntu7.16 amd64 [upgradable from: 2:9.1.0016-1ubuntu7.15]",
+        "TUGRA_REBOOT",
+        "TUGRA_PHASED_SIM",
+        "The following upgrades have been deferred due to phasing:",
+        "  snapd",
+        "",
+      ].join("\n");
+      const r = parseUpgradable(out);
+      expect(r.count).toBe(1);
+      expect(r.packages.map((p) => p.name)).toEqual(["vim"]);
+      expect(r.phased).toEqual([{ name: "snapd", candidate: "2.78+ubuntu24.04", current: "2.76.3+ubuntu24.04" }]);
+      expect(r.rebootRequired).toBe(true);
+    });
+
+    it("the proven case: one upgradable package that is phased means count 0 and one phased entry", () => {
+      const r = parseUpgradable(["TUGRA_MGR=apt", "TUGRA_UPGRADABLE", "Listing...", SNAPD, "TUGRA_PHASED_SIM", SIM].join("\n"));
+      expect(r.count).toBe(0);
+      expect(r.packages).toEqual([]);
+      expect(r.phased.map((p) => p.name)).toEqual(["snapd"]);
+    });
+
+    it("without a phasing block everything stays in the normal list; non-apt managers never report phased", () => {
+      const apt = parseUpgradable(["TUGRA_MGR=apt", "TUGRA_UPGRADABLE", SNAPD, "TUGRA_PHASED_SIM", ""].join("\n"));
+      expect(apt.count).toBe(1);
+      expect(apt.phased).toEqual([]);
+      // an old check output with no simulation marker at all
+      expect(parseUpgradable(["TUGRA_MGR=apt", "TUGRA_UPGRADABLE", SNAPD].join("\n")).phased).toEqual([]);
+      const dnf = parseUpgradable("TUGRA_MGR=dnf\nTUGRA_UPGRADABLE\ncurl.x86_64  7.76.1  baseos\nTUGRA_PHASED_SIM\n" + SIM);
+      expect(dnf.count).toBe(1);
+      expect(dnf.phased).toEqual([]);
+      expect(parseUpgradable("TUGRA_UNSUPPORTED").phased).toEqual([]);
+    });
+
+    it("a deferred name that apt does not list as upgradable is ignored (no phantom row)", () => {
+      const r = parseUpgradable(["TUGRA_MGR=apt", "TUGRA_UPGRADABLE", "TUGRA_PHASED_SIM", SIM].join("\n"));
+      expect(r.phased).toEqual([]);
+      expect(r.count).toBe(0);
+    });
+
+    it("the forced per-package install carries the phasing override; no other script does", () => {
+      const forced = buildInstallPhasedScript("snapd");
+      expect(forced).toContain("-o APT::Get::Always-Include-Phased-Updates=true install --only-upgrade -y snapd");
+      expect(forced).toContain("dpkg --configure -a"); // same heal as every apply
+      expect(forced).not.toContain("dnf");
+      for (const s of [buildUpgradeAllScript(), buildUpgradeOneScript("snapd"), buildCheckScript()]) {
+        expect(s).not.toContain("Always-Include-Phased-Updates");
+      }
+      expect(() => buildInstallPhasedScript("evil; rm -rf /")).toThrow(/invalid/);
+      expect(() => buildInstallPhasedScript("--force")).toThrow(/invalid/);
+    });
   });
 });

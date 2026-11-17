@@ -264,6 +264,14 @@ export class ServerOpsController {
     return this.patch.upgradeOne(user.userId, id, pkg);
   }
 
+  /** Install one phased (gradually rolled out) apt package right now. */
+  @Post("updates/apply/:pkg/phased")
+  @RequireScopes("deploy")
+  @HttpCode(200)
+  upgradePhased(@CurrentUser() user: AuthUser, @Param("id") id: string, @Param("pkg") pkg: string) {
+    return this.patch.upgradePhased(user.userId, id, pkg);
+  }
+
   /** Live patch-log stream (SSE). Completes when no patch run is active. */
   @Sse("updates/stream")
   streamLogs(@CurrentUser() user: AuthUser, @Param("id") id: string): Observable<MessageEvent> {

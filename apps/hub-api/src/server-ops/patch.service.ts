@@ -14,6 +14,7 @@ import {
   type PatchGuard,
   buildUpgradeAllScript,
   buildUpgradeOneScript,
+  buildInstallPhasedScript,
   wrapHostExec,
   parseHostExec,
   parseUpgradable,
@@ -153,6 +154,14 @@ export class PatchService {
     await this.requireWrite(userId, serverId);
     const script = buildUpgradeOneScript(pkg); // validates the name before anything is audited or sent
     await this.audit.log({ actor: userId, action: "server.patch.apply", target: serverId, meta: { pkg } });
+    return this.runApply(serverId, script, { kind: "one", pkg }, UPGRADE_ONE_UNIT_SEC, true);
+  }
+
+  /** Install ONE phased package now (apt), ahead of Ubuntu's gradual rollout reaching this server. Same host-side unit. */
+  async upgradePhased(userId: string, serverId: string, pkg: string): Promise<{ output: string; exitCode: number }> {
+    await this.requireWrite(userId, serverId);
+    const script = buildInstallPhasedScript(pkg); // validates the name before anything is audited or sent
+    await this.audit.log({ actor: userId, action: "server.patch.apply", target: serverId, meta: { pkg, phased: true } });
     return this.runApply(serverId, script, { kind: "one", pkg }, UPGRADE_ONE_UNIT_SEC, true);
   }
 
