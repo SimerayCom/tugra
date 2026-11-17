@@ -762,6 +762,39 @@
                     "lastCheckError": {
                       "type": "string",
                       "nullable": true
+                    },
+                    "updater": {
+                      "type": "object",
+                      "properties": {
+                        "version": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "behind": {
+                          "type": "boolean"
+                        },
+                        "state": {
+                          "type": "string",
+                          "enum": [
+                            "unknown",
+                            "current",
+                            "behind",
+                            "refreshing",
+                            "failed"
+                          ]
+                        },
+                        "checkedAt": {
+                          "type": "string",
+                          "nullable": true
+                        }
+                      },
+                      "required": [
+                        "version",
+                        "behind",
+                        "state",
+                        "checkedAt"
+                      ],
+                      "additionalProperties": false
                     }
                   },
                   "required": [
@@ -776,7 +809,8 @@
                     "checksEnabled",
                     "checkIntervalMin",
                     "lastCheckedAt",
-                    "lastCheckError"
+                    "lastCheckError",
+                    "updater"
                   ],
                   "additionalProperties": false
                 }
@@ -941,6 +975,39 @@
                     "lastCheckError": {
                       "type": "string",
                       "nullable": true
+                    },
+                    "updater": {
+                      "type": "object",
+                      "properties": {
+                        "version": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "behind": {
+                          "type": "boolean"
+                        },
+                        "state": {
+                          "type": "string",
+                          "enum": [
+                            "unknown",
+                            "current",
+                            "behind",
+                            "refreshing",
+                            "failed"
+                          ]
+                        },
+                        "checkedAt": {
+                          "type": "string",
+                          "nullable": true
+                        }
+                      },
+                      "required": [
+                        "version",
+                        "behind",
+                        "state",
+                        "checkedAt"
+                      ],
+                      "additionalProperties": false
                     }
                   },
                   "required": [
@@ -955,7 +1022,8 @@
                     "checksEnabled",
                     "checkIntervalMin",
                     "lastCheckedAt",
-                    "lastCheckError"
+                    "lastCheckError",
+                    "updater"
                   ],
                   "additionalProperties": false
                 }
@@ -1195,6 +1263,39 @@
                     "lastCheckError": {
                       "type": "string",
                       "nullable": true
+                    },
+                    "updater": {
+                      "type": "object",
+                      "properties": {
+                        "version": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "behind": {
+                          "type": "boolean"
+                        },
+                        "state": {
+                          "type": "string",
+                          "enum": [
+                            "unknown",
+                            "current",
+                            "behind",
+                            "refreshing",
+                            "failed"
+                          ]
+                        },
+                        "checkedAt": {
+                          "type": "string",
+                          "nullable": true
+                        }
+                      },
+                      "required": [
+                        "version",
+                        "behind",
+                        "state",
+                        "checkedAt"
+                      ],
+                      "additionalProperties": false
                     }
                   },
                   "required": [
@@ -1209,7 +1310,8 @@
                     "checksEnabled",
                     "checkIntervalMin",
                     "lastCheckedAt",
-                    "lastCheckError"
+                    "lastCheckError",
+                    "updater"
                   ],
                   "additionalProperties": false
                 }
