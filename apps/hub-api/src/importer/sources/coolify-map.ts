@@ -14,10 +14,13 @@ import type {
 
 /**
  * Pure mappers: Coolify v4 REST JSON → the neutral {@link ForeignFleet}. SECRET-FREE — discover runs on a
- * plain read token, where Coolify strips passwords, env VALUES, internal_db_url and
- * dockerfile (all `read:sensitive`-gated; a service's `docker_compose_raw` was readable with the inventory token). We therefore carry only non-secret identity: names, usernames,
- * database names, env KEYS, domains, ports, build config, and `secretRef` (the Coolify uuid) for a later
- * sensitive-scoped fetch. Field names below are taken verbatim from Coolify v4.4.6 models/controllers.
+ * plain read token, where Coolify strips passwords, env VALUES, internal_db_url and dockerfile. Since 4.7 the build
+ * and run commands, deploy hooks, custom Docker options, labels and compose text are `read:sensitive`-gated too (and
+ * that ability only counts for a token created by a team admin or owner); older versions (4.1.2 to 4.6) return them to
+ * any read token. A gated field is absent from the row, never null: {@link isSensitiveVisibleRow} tells the two apart so
+ * the plan can say what is not carried. We carry only non-secret identity: names, usernames, database names, env KEYS,
+ * domains, ports, build config, and `secretRef` (the Coolify uuid) for a later sensitive-scoped fetch. Field names are
+ * taken from the Coolify v4 models/controllers (4.1.2 to 4.7.5).
  */
 
 // ── Raw Coolify shapes (only the fields we read; sensitive ones are usually absent on a read token) ──
@@ -81,11 +84,12 @@ export interface CoolifyApp {
   publish_directory?: string | null;
   ports_exposes?: string | null; // "3000,8080"
   ports_mappings?: string | null; // "8080:80,9000:9000"
+  // Commands: read:sensitive-gated from 4.7 (absent from the row, see isSensitiveVisibleRow); any read token on 4.1.2 to 4.6.
   install_command?: string | null;
   build_command?: string | null;
   start_command?: string | null;
   fqdn?: string | null; // "https://a.com,http://b.com:3000"
-  docker_compose_raw?: string | null; // may need read:sensitive for an app (a service's raw compose was readable)
+  docker_compose_raw?: string | null; // read:sensitive-gated (an old inventory's service rows carried it for any read token)
   // ── Presence-only / apply-time reads. Names + encodings are HAND-BUILT from Coolify v4 sources, UNVERIFIED until
   // the live check (spec G3-C section 11); a wrong name only loses a coverage note, never produces wrong data.
   /** Extra docker network aliases: a comma/space separated string (or a list). Config only. */
@@ -103,12 +107,20 @@ export interface CoolifyApp {
   is_http_basic_auth_enabled?: boolean | null;
   /** Repo-relative glob patterns that gate a push deploy, one per line (a comma list is tolerated). Config, not a secret. */
   watch_paths?: string | null;
-  /** A static site: the build output (`publish_directory`) is served by a web server instead of a start command. */
+  /** A static site: the build output (`publish_directory`) is served by a web server instead of a start command. Top-level on
+   *  4.1.2 to 4.6; from 4.7 only `settings.is_static` (see {@link appStaticFlags}). */
   is_static?: boolean | null;
   /** Static sites only: serve `index.html` for unknown paths. */
   is_spa?: boolean | null;
   /** Which host variant the proxy redirects to the other: `www`, `non-www` or `both` (no redirect, both are served). */
   redirect?: string | null;
+  /** The git source's model: `GithubApp` | `GitlabApp` | `GiteaApp` (4.7); absent on older versions and for deploy-key / public repos. */
+  source_type?: string | null;
+  /** Compose apps keep their domains here (`fqdn` is empty): a JSON string `{"<service>":{"domain":"https://a,https://b"}}` (an object or a
+   *  list of `{name, domain}` is tolerated). Config, not a secret. */
+  docker_compose_domains?: string | Record<string, unknown> | Array<unknown> | null;
+  /** Nested `application_settings` of `GET /applications/{uuid}` (4.7: `is_static` / `is_spa` are NOT top-level columns). */
+  settings?: { is_static?: boolean | null; is_spa?: boolean | null } | null;
 }
 export interface CoolifyDatabase {
   uuid: string;
@@ -137,14 +149,17 @@ export interface CoolifyService {
   uuid: string;
   name?: string | null;
   service_type?: string | null; // one-click template key
-  /** The raw compose is readable with the inventory token (verified on the owner's inventory: all 19 rows carry it). The
-   *  rendered `docker_compose` is NEVER used (rendered `<uuid>_*` volume names, `coolify.*` labels). */
+  /** The raw compose: on a 4.1.2 inventory every list row carries it; from 4.7 it is `read:sensitive`-gated and absent otherwise.
+   *  The rendered `docker_compose` is NEVER used (rendered `<uuid>_*` volume names, `coolify.*` labels). */
   docker_compose_raw?: string | null;
-  // The /services list rows already eager-load the members (inventory shape). `image` on a member is the compose image,
-  // not the running one. UNVERIFIED against live Coolify (probe C0 not run): a wrong name only loses a note.
-  applications?: Array<{ uuid: string; name?: string | null; fqdn?: string | null; image?: string | null }>;
-  databases?: Array<{ uuid: string; name?: string | null; image?: string | null }>;
+  // Members: older list rows eager-load them; from 4.7 only `GET /services/{uuid}` does (the list rows carry no `applications` /
+  // `databases`). `image` on a member is the compose image, not the running one. A member the compose file no longer declares
+  // stays in the table with `is_removed_from_compose: true`: it is not part of the service and is skipped.
+  applications?: Array<{ uuid: string; name?: string | null; fqdn?: string | null; image?: string | null; is_removed_from_compose?: boolean | null }>;
+  databases?: Array<{ uuid: string; name?: string | null; image?: string | null; is_removed_from_compose?: boolean | null }>;
+  /** Only on rows that load the destination (the detail read, and only for a read:sensitive token); older list rows carried it. */
   server?: { uuid?: string | null; name?: string | null } | null;
+  destination?: { server?: { uuid?: string | null; name?: string | null } | null } | null;
 }
 export interface CoolifyEnv {
   key: string;
@@ -204,8 +219,15 @@ export function coolifyEngine(db: CoolifyDatabase): TugraDbEngine | "UNKNOWN" {
   if (/postgres/.test(image)) return "POSTGRES";
   if (/mysql/.test(image)) return "MYSQL";
   if (/mongo/.test(image)) return "MONGO";
-  if (/redis/.test(image)) return "REDIS";
+  if (/redis|valkey/.test(image)) return "REDIS"; // Valkey speaks the Redis protocol; Coolify 4.7 gives it `standalone-redis` too
   return "UNKNOWN";
+}
+
+/** Whether a database image is Valkey (the Redis fork Coolify 4.7 defaults new `standalone-redis` databases to): `valkey/valkey:9-alpine`, a mirror's `valkey`. */
+export function isValkeyImage(image: string | null | undefined): boolean {
+  if (!image) return false;
+  const base = (image.split("@")[0].split("/").pop() ?? "").split(":")[0].toLowerCase();
+  return base === "valkey" || base.startsWith("valkey-");
 }
 
 /** Coolify sets this fake repo (branch "main") on dockerimage + inline-dockerfile apps that have no real git. */
@@ -218,11 +240,23 @@ const PLACEHOLDER_REPO = "coollabsio/coolify";
  * like a URL/scp form (https/ssh/git@) pass through unchanged; an unrecognized form is left as-is (the
  * planner surfaces it as needs-manual rather than silently rewriting an unknown provider).
  */
-export function normalizeGitUrl(repo: string): string {
+export function normalizeGitUrl(repo: string, sourceType?: string | null): string {
   const r = repo.trim();
   if (/^(https?:\/\/|git@|ssh:\/\/)/i.test(r)) return r; // already a clone URL / scp-like form
+  // A bare owner/repo of a GitLab / Gitea App has no host the list row names (it lives on the source's own instance): never guessed as GitHub.
+  if (coolifyGitProvider(sourceType) === "gitlab" || coolifyGitProvider(sourceType) === "gitea") return r;
   if (/^[\w.-]+\/[\w.-]+$/.test(r)) return `https://github.com/${r.replace(/\.git$/i, "")}.git`; // owner/repo (GitHub App)
   return r;
+}
+
+/** The git provider a Coolify `source_type` names (`GithubApp` | `GitlabApp` | `GiteaApp`), or undefined when absent or unknown (older versions). */
+export function coolifyGitProvider(sourceType: string | null | undefined): "github" | "gitlab" | "gitea" | undefined {
+  if (typeof sourceType !== "string") return undefined;
+  const t = (sourceType.trim().split("\\").pop() ?? "").toLowerCase(); // the polymorphic column may hold `App\\Models\\GithubApp`
+  if (t === "githubapp") return "github";
+  if (t === "gitlabapp") return "gitlab";
+  if (t === "giteaapp") return "gitea";
+  return undefined;
 }
 
 /** A bare `owner/repo` (not a URL) is exactly how Coolify stores a GitHub-App source — the signal that the
@@ -241,6 +275,19 @@ export function hasRealGit(app: CoolifyApp): boolean {
   return true;
 }
 
+/** The build packs whose `is_static` / `is_spa` flags change the Tugra mapping: those flags live in `application_settings`. */
+export function coolifyNeedsSettings(app: Pick<CoolifyApp, "build_pack">): boolean {
+  return app.build_pack === "nixpacks" || app.build_pack === "railpack" || app.build_pack === "static";
+}
+
+/** `is_static` / `is_spa` of an app: from 4.7 only the nested `settings` of the detail read carries them, older versions put them on the row. */
+export function appStaticFlags(app: Pick<CoolifyApp, "is_static" | "is_spa" | "settings">): { isStatic?: boolean; isSpa?: boolean } {
+  const pick = (nested: unknown, top: unknown): boolean | undefined => (typeof nested === "boolean" ? nested : typeof top === "boolean" ? top : undefined);
+  const isStatic = pick(app.settings?.is_static, app.is_static);
+  const isSpa = pick(app.settings?.is_spa, app.is_spa);
+  return { ...(isStatic !== undefined ? { isStatic } : {}), ...(isSpa !== undefined ? { isSpa } : {}) };
+}
+
 /** Coolify build pack → Tugra source kind + build pack. A docker-image app (build_pack 'dockerimage', or a
  *  registry image with no real git repo) wins first — Coolify stores a placeholder repo for those. */
 export function mapCoolifyBuildPack(app: CoolifyApp): { kind: ForeignApp["kind"]; buildPack: ForeignApp["buildPack"] } {
@@ -249,7 +296,7 @@ export function mapCoolifyBuildPack(app: CoolifyApp): { kind: ForeignApp["kind"]
   }
   // A nixpacks/railpack app Coolify marks `is_static` builds a site and serves its publish directory with a web server: that is
   // Tugra's STATIC build (build command + output directory), not a started process.
-  if (app.is_static === true && (app.build_pack === "nixpacks" || app.build_pack === "railpack") && hasRealGit(app)) return { kind: "git", buildPack: "static" };
+  if (appStaticFlags(app).isStatic === true && (app.build_pack === "nixpacks" || app.build_pack === "railpack") && hasRealGit(app)) return { kind: "git", buildPack: "static" };
   switch (app.build_pack) {
     case "dockercompose":
       return { kind: "compose", buildPack: "dockercompose" };
@@ -292,6 +339,40 @@ export function parseFqdns(fqdn: string | null | undefined): ForeignDomain[] {
   }
   const out = [...byKey.values()];
   if (out.length) out[0].primary = true;
+  return out;
+}
+
+/**
+ * Pure: a compose app's `docker_compose_domains` (a JSON string `{"<service>":{"domain":"https://a,https://b"}}`; an already
+ * parsed object, or the API's list form `[{name, domain}]`, is tolerated) → per-service domains. Each domain carries its
+ * compose service as `serviceRef`; none is primary (a compose app has no single web service: the apply step binds each one to
+ * its service). Same http/https collapsing as {@link parseFqdns}, scoped per service. Unparsable input yields no domains.
+ */
+export function parseComposeDomains(raw: unknown): ForeignDomain[] {
+  let value: unknown = raw;
+  if (typeof raw === "string") {
+    if (!raw.trim()) return [];
+    try {
+      value = JSON.parse(raw);
+    } catch {
+      return [];
+    }
+  }
+  const entries: Array<[string, unknown]> = [];
+  if (Array.isArray(value)) {
+    for (const row of value) {
+      const name = (row as { name?: unknown } | null)?.name;
+      if (typeof name === "string") entries.push([name, row]);
+    }
+  } else if (value && typeof value === "object") {
+    for (const [name, row] of Object.entries(value as Record<string, unknown>)) entries.push([name, row]);
+  }
+  const out: ForeignDomain[] = [];
+  for (const [service, row] of entries) {
+    const domain = typeof row === "string" ? row : (row as { domain?: unknown } | null)?.domain;
+    if (typeof domain !== "string") continue;
+    for (const d of parseFqdns(domain)) out.push({ ...d, serviceRef: service, primary: false });
+  }
   return out;
 }
 
@@ -415,6 +496,24 @@ export function parseWatchPaths(raw: unknown): string[] {
   return out;
 }
 
+/** The row keys Coolify 4.7 hides from a token without `read:sensitive` (Application / database / Service `$hidden`). A key is ABSENT then, not null. */
+const SENSITIVE_MARKER_KEYS: Record<"application" | "database" | "service", readonly string[]> = {
+  application: ["install_command", "build_command", "start_command", "pre_deployment_command", "post_deployment_command", "custom_docker_run_options"],
+  database: ["custom_docker_run_options"],
+  service: ["docker_compose_raw"],
+};
+
+/**
+ * Pure: whether a list/detail row was read with a token that may see sensitive fields. By KEY PRESENCE: 4.7 drops the gated keys
+ * from the row when the token lacks `read:sensitive` (or its creator is not a team admin/owner), where 4.1.2 to 4.6 always
+ * return them (null when unset), so a row carrying ANY marker key is a visible one and an old instance never trips the warning.
+ * Not a row at all (null / array) counts as visible: there is nothing to warn about.
+ */
+export function isSensitiveVisibleRow(row: unknown, kind: "application" | "database" | "service" = "application"): boolean {
+  if (!row || typeof row !== "object" || Array.isArray(row)) return true;
+  return SENSITIVE_MARKER_KEYS[kind].some((k) => k in (row as Record<string, unknown>));
+}
+
 /** Fixed-reason coverage rows for what is PRESENT on a Coolify app but has no Tugra carry path. Presence only. */
 function coolifyNotCarried(app: CoolifyApp, realGit: boolean, kind: ForeignApp["kind"]): NonNullable<ForeignApp["notCarried"]> {
   const out: NonNullable<ForeignApp["notCarried"]> = [];
@@ -476,6 +575,17 @@ export function parseNetworkAliases(raw: unknown): string[] {
   return out;
 }
 
+/** A compose app keeps its domains per service in `docker_compose_domains` (`fqdn` is empty there); every other app in `fqdn`. */
+function mapAppDomains(app: CoolifyApp, kind: ForeignApp["kind"]): ForeignDomain[] {
+  const plain = parseFqdns(app.fqdn);
+  if (kind !== "compose") return plain;
+  const perService = parseComposeDomains(app.docker_compose_domains);
+  if (!perService.length) return plain;
+  // `fqdn` on a compose row (older instances) names no service: keep it only for hosts the service map does not already carry.
+  const seen = new Set(perService.map((d) => d.host));
+  return [...perService, ...plain.filter((d) => !seen.has(d.host)).map((d) => ({ ...d, primary: false }))];
+}
+
 export function mapApplication(
   app: CoolifyApp,
   ctx: { envs: CoolifyEnv[]; volumes: CoolifyVolume[]; serverRef?: string },
@@ -506,25 +616,26 @@ export function mapApplication(
     // credentials, which would break the secret-free contract. Only set git for a real repo.
     git: realGit
       ? {
-          url: normalizeGitUrl(app.git_repository!),
+          url: normalizeGitUrl(app.git_repository!, app.source_type),
           branch: app.git_branch ?? undefined,
           dockerfilePath: app.dockerfile_location ?? undefined,
           baseDirectory: app.base_directory ?? undefined,
-          provider: isGithubAppRepo(app.git_repository!) ? "github" : undefined,
+          // `source_type` names the git source's model (4.7); older rows do not carry it and fall back to the owner/repo shape.
+          provider: coolifyGitProvider(app.source_type) ?? (isGithubAppRepo(app.git_repository!) ? "github" : undefined),
         }
       : undefined,
     composeFile: app.docker_compose_raw ?? undefined, // present only with a read:sensitive token
-    // install/build/start are app build CONFIG (shown by Coolify to any read token, not secret-gated) and
-    // are required to reproduce the build — carried as-is.
+    // install/build/start are app build CONFIG required to reproduce the build — carried as-is. Coolify 4.7+ gates them behind
+    // read:sensitive (absent from the row otherwise: the fleet warning names it); 4.1.2 to 4.6 show them to any read token.
     installCommand: app.install_command ?? undefined,
     buildCommand: app.build_command ?? undefined,
     startCommand: app.start_command ?? undefined,
     publishDirectory: app.publish_directory ?? undefined,
     // A static site that does not fall back to index.html: Tugra's static builds always do (reported at apply).
-    ...(buildPack === "static" && app.is_spa === false ? { staticSpa: false } : {}),
+    ...(buildPack === "static" && appStaticFlags(app).isSpa === false ? { staticSpa: false } : {}),
     ...(watchPaths.length ? { watchPaths } : {}),
     ports: parsePorts(app.ports_exposes),
-    domains: parseFqdns(app.fqdn),
+    domains: mapAppDomains(app, kind),
     env: ctx.envs.map(mapEnv),
     volumes: ctx.volumes.map((v) => mapVolume(v, app.uuid)),
     internalHost: app.uuid, // Coolify's internal docker hostname is the resource uuid
@@ -545,11 +656,17 @@ export function mapDatabase(
   const database =
     db.postgres_db ?? db.mysql_database ?? db.mariadb_database ?? db.mongo_initdb_database ?? db.clickhouse_db ?? undefined;
   const tls = tlsExpectation(db);
+  // Coolify 4.7 runs a new `standalone-redis` database on valkey/valkey (its tag, `9-alpine`, is no Redis version: a stock
+  // `redis:9-alpine` does not exist). Tugra creates it as Redis, keeps the source image, and names no version.
+  const valkey = engine === "REDIS" && isValkeyImage(db.image);
+  const notCarried: NonNullable<ForeignDb["notCarried"]> = [];
+  if (valkey) notCarried.push({ field: "engineFamily", level: "info", ...why("coolify_valkey") });
+  if (engine === "REDIS" && nonEmpty(db.redis_conf)) notCarried.push({ field: "redisConf", level: "warn", ...why("coolify_redis_conf") });
   return {
     sourceRef: db.uuid,
     name: db.name ?? db.uuid,
     engine,
-    version: versionFromImage(db.image),
+    version: valkey ? undefined : versionFromImage(db.image),
     image: db.image ?? undefined,
     credentials: { username: username ?? undefined, database: database ?? undefined, secretRef: db.uuid },
     hostInternal: db.uuid,
@@ -558,7 +675,7 @@ export function mapDatabase(
     serverRef: ctx.serverRef,
     ...(tls ? { tls } : {}),
     // R48: Tugra's Redis has no custom redis.conf. Presence only; the plan says the config must be re-applied by hand.
-    ...(engine === "REDIS" && nonEmpty(db.redis_conf) ? { notCarried: [{ field: "redisConf", level: "warn" as const, ...why("coolify_redis_conf") }] } : {}),
+    ...(notCarried.length ? { notCarried } : {}),
   };
 }
 
@@ -598,19 +715,22 @@ export function foreignDbOfContainer(c: { host: string; container: string; engin
   };
 }
 
-export function mapService(svc: CoolifyService, ctx: { serverRef?: string }): ForeignService {
+export function mapService(svc: CoolifyService, ctx: { serverRef?: string; serverName?: string }): ForeignService {
+  const server = svc.server ?? svc.destination?.server ?? undefined;
   // Members: the compose service key is the Coolify member name. Apps carry their fqdn rows (parseFqdns dedupes the
   // http/https pair and keeps the port); databases of a service are compose containers and carry none. Sorted by name
   // so the plan hash does not depend on the source's row order.
+  const liveApps = (svc.applications ?? []).filter((a) => a?.is_removed_from_compose !== true);
+  const liveDbs = (svc.databases ?? []).filter((d) => d?.is_removed_from_compose !== true);
   const members: ForeignServiceMember[] = [
-    ...(svc.applications ?? []).map((a): ForeignServiceMember => ({
+    ...liveApps.map((a): ForeignServiceMember => ({
       name: a.name ?? a.uuid,
       kind: "app",
       ref: a.uuid,
       ...(a.image ? { image: a.image } : {}),
       domains: parseFqdns(a.fqdn).map((d) => ({ ...d, serviceRef: a.name ?? a.uuid, primary: false })),
     })),
-    ...(svc.databases ?? []).map((d): ForeignServiceMember => ({
+    ...liveDbs.map((d): ForeignServiceMember => ({
       name: d.name ?? d.uuid,
       kind: "db",
       ref: d.uuid,
@@ -623,12 +743,13 @@ export function mapService(svc: CoolifyService, ctx: { serverRef?: string }): Fo
     name: svc.name ?? svc.uuid,
     templateSlug: svc.service_type ?? undefined,
     composeFile: svc.docker_compose_raw ?? undefined,
-    memberApps: (svc.applications ?? []).map((a) => a.uuid),
-    memberDbs: (svc.databases ?? []).map((d) => d.uuid),
-    // The server listing may not name the service (the list row carries its own server): fall back to it.
-    serverRef: ctx.serverRef ?? svc.server?.uuid ?? undefined,
+    memberApps: liveApps.map((a) => a.uuid),
+    memberDbs: liveDbs.map((d) => d.uuid),
+    // The server's resource listing places the service; its own row names the server only on older versions or for a
+    // read:sensitive detail read (`destination.server`).
+    serverRef: ctx.serverRef ?? server?.uuid ?? undefined,
     members,
-    ...(svc.server?.name ? { serverName: svc.server.name } : {}),
+    ...(server?.name ?? ctx.serverName ? { serverName: server?.name ?? ctx.serverName } : {}),
   };
 }
 
@@ -649,7 +770,11 @@ export function buildCoolifyFleet(input: CoolifyFleetInput): ForeignFleet {
     return envReport ? { ...mapped, envReport } : mapped;
   });
   const databases = input.databases.map((d) => mapDatabase(d, { volumes: vols(d.uuid), serverRef: serverOf.get(d.uuid) }));
-  const services = input.services.map((s) => mapService(s, { serverRef: serverOf.get(s.uuid) }));
+  const serverNameOf = new Map(input.servers.filter((s) => s.name).map((s) => [s.uuid, s.name as string]));
+  const services = input.services.map((s) => {
+    const serverRef = serverOf.get(s.uuid);
+    return mapService(s, { serverRef, serverName: serverRef ? serverNameOf.get(serverRef) : undefined });
+  });
 
   const warnings: string[] = [...(input.warnings ?? [])];
   const composeNeedingSecret = apps.filter((a) => a.kind === "compose" && !a.composeFile).length;
@@ -659,6 +784,17 @@ export function buildCoolifyFleet(input: CoolifyFleetInput): ForeignFleet {
   const servicesNeedingSecret = services.filter((s) => !s.composeFile).length;
   if (servicesNeedingSecret > 0) {
     warnings.push(`${servicesNeedingSecret} service(s) need a read:sensitive token to fetch their compose file before import`);
+  }
+  const hiddenApps = input.apps.filter((a) => !isSensitiveVisibleRow(a, "application")).length;
+  const hiddenDbs = input.databases.filter((d) => !isSensitiveVisibleRow(d, "database")).length;
+  if (hiddenApps > 0 || hiddenDbs > 0) {
+    const what = [
+      hiddenApps > 0 ? `${hiddenApps} application(s): install/build/start commands, deploy hooks, health-check commands, custom Docker options, container labels and inline Dockerfile` : "",
+      hiddenDbs > 0 ? `${hiddenDbs} database(s): custom config files and Docker options` : "",
+    ].filter(Boolean);
+    warnings.push(
+      `the API token cannot read the sensitive fields of ${what.join("; ")} — they will NOT be carried and must be re-entered after the import. To carry them, create the Coolify token with the read:sensitive ability as a team admin or owner (Coolify ignores the ability for other members), then reconnect`,
+    );
   }
   const unknownDbs = databases.filter((d) => d.engine === "UNKNOWN").length;
   if (unknownDbs > 0) warnings.push(`${unknownDbs} database(s) have an engine with no Tugra equivalent (e.g. SQLite) and cannot be imported`);

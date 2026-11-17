@@ -4,7 +4,9 @@ import { why } from "../reason";
 import { mapLimit } from "./map-limit";
 import { buildEnvReport, classifyEnvRow } from "../env-report";
 import {
+  appStaticFlags,
   buildCoolifyFleet,
+  coolifyNeedsSettings,
   withServerDetail,
   decodeCoolifyDockerfile,
   decodeCoolifyLabels,
@@ -32,7 +34,9 @@ export interface CoolifyClient {
  * The `coolify` import source (read-only discover). Enumerates a Coolify v4 fleet over its REST API and maps
  * it to a SECRET-FREE {@link ForeignFleet}. discover() runs on a plain read token: passwords, env values,
  * internal_db_url and docker_compose_raw are all `read:sensitive`-gated and simply absent — the fleet carries
- * only non-secret identity + a `secretRef` (the Coolify uuid) per resource for a later sensitive-scoped fetch.
+ * only non-secret identity + a `secretRef` (the Coolify uuid) per resource for a later sensitive-scoped fetch. From
+ * Coolify 4.7 the build / start commands, deploy hooks, Docker options, labels and Dockerfile are gated the same way
+ * (and only for a token created by a team admin or owner): a row without them says so in the fleet's warnings.
  */
 export class CoolifySource implements ImportSource {
   readonly kind = "coolify" as const;
@@ -121,7 +125,7 @@ export class CoolifySource implements ImportSource {
       }
     });
     if (detailFailed > 0) warnings.push(`could not read the details of ${detailFailed} server(s) — their reachability and OS checks are skipped`);
-    const apps = (await this.client.get<CoolifyApp[]>("/applications")) ?? [];
+    const listedApps = (await this.client.get<CoolifyApp[]>("/applications")) ?? [];
     const databases = (await this.client.get<CoolifyDatabase[]>("/databases")) ?? [];
     const serviceList = await tryGet<CoolifyService[]>("/services", [], "services");
 
@@ -139,16 +143,17 @@ export class CoolifySource implements ImportSource {
       resourcesByServer[s.uuid] = resources.map((r) => r?.uuid).filter((u): u is string => !!u);
     });
 
-    // The /services list rows already carry the members (applications[], databases[]) and the raw compose (verified on
-    // the owner's inventory). The per-service detail GET stays as the FALLBACK for a row that lacks them. Preserve order.
+    // Coolify 4.1.2's /services list rows carried the members (applications[], databases[]) and the raw compose; from 4.7 they
+    // carry neither (the compose is read:sensitive-gated), so the per-service detail GET (it loads the members) is the normal
+    // path and the list row is kept only when it already has both. Preserve order.
     const services = await mapLimit(serviceList, DISCOVER_CONCURRENCY, (s) =>
       Array.isArray(s.applications) && typeof s.docker_compose_raw === "string"
         ? Promise.resolve(s)
         : tryGet<CoolifyService>(`/services/${s.uuid}`, s, `service ${s.name ?? s.uuid}`),
     );
 
-    await mapLimit(apps, DISCOVER_CONCURRENCY, async (a) => {
-      // The two per-app reads are independent → fetch them together. The env read is NOT routed through tryGet: a
+    const apps = await mapLimit(listedApps, DISCOVER_CONCURRENCY, async (a) => {
+      // The per-app reads are independent → fetch them together. The env read is NOT routed through tryGet: a
       // failure must leave `envReport` ABSENT (never an empty, "clean" report) and say so with a fixed warning.
       const readEnvs = async (): Promise<unknown | undefined> => {
         try {
@@ -159,10 +164,13 @@ export class CoolifySource implements ImportSource {
         }
       };
       const [envs, vols] = await Promise.all([readEnvs(), tryGet<unknown>(`/applications/${a.uuid}/storages`, [], `storage for ${a.name ?? a.uuid}`)]);
+      // After the two parallel reads, so a worker never has more than the two in flight (the Coolify API is rate limited).
+      const withSettings = await this.readStaticSettings(a, warnings);
       envsByResource[a.uuid] = extractEnvs(envs ?? []);
       // Key NAMES + reason codes only (values are inspected in memory by the classifier and dropped at once).
       if (envs !== undefined) envReportByResource[a.uuid] = buildEnvReport(envs);
       volumesByResource[a.uuid] = extractVolumes(vols);
+      return withSettings;
     });
 
     await mapLimit(databases, DISCOVER_CONCURRENCY, async (d) => {
@@ -170,6 +178,26 @@ export class CoolifySource implements ImportSource {
     });
 
     return buildCoolifyFleet({ servers, resourcesByServer, apps, databases, services, envsByResource, envReportByResource, volumesByResource, warnings });
+  }
+
+  /**
+   * `is_static` / `is_spa` of a nixpacks / railpack / static app. Since Coolify 4.7 they are `application_settings` columns and
+   * appear only as `settings.*` on the single-application read (the list rows do not load the settings), so those build packs
+   * take ONE detail GET here; older versions kept both on the list row (the row is returned unchanged when it still has them).
+   * A failed read keeps the list row and says so: a static site would otherwise be planned as a started process, silently.
+   */
+  private async readStaticSettings(a: CoolifyApp, warnings: string[]): Promise<CoolifyApp> {
+    if (!coolifyNeedsSettings(a)) return a;
+    const known = appStaticFlags(a);
+    if (known.isStatic !== undefined && known.isSpa !== undefined) return a;
+    try {
+      const detail = await this.client.get<CoolifyApp>(`/applications/${encodeURIComponent(a.uuid)}`);
+      if (!detail || typeof detail !== "object" || Array.isArray(detail) || !detail.settings || typeof detail.settings !== "object") return a;
+      return { ...a, settings: { is_static: detail.settings.is_static, is_spa: detail.settings.is_spa } };
+    } catch {
+      warnings.push(`could not read the static-site settings of ${a.name ?? a.uuid} — a static site may be planned as a regular build`);
+      return a;
+    }
   }
 
   /**

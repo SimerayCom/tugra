@@ -15,10 +15,14 @@ import {
   decodeCoolifyLabels,
   decodeCoolifyDockerfile,
   parseWatchPaths,
+  parseComposeDomains,
+  coolifyGitProvider,
+  isSensitiveVisibleRow,
+  isValkeyImage,
   type CoolifyFleetInput,
 } from "./coolify-map";
 import { planImport } from "../import-planner";
-import { foreignAppToCreateInput, foreignAppToPostCreateConfig } from "../apply-map";
+import { foreignAppToCreateInput, foreignAppToIngressPlan, foreignAppToPostCreateConfig } from "../apply-map";
 
 describe("normalizeGitUrl", () => {
   it("normalizes a bare owner/repo (Coolify GitHub-App form) to a clone URL", () => {
@@ -524,5 +528,201 @@ describe("static site, redirect mode and redis conf (R18 / R19 / R48)", () => {
     expect(JSON.stringify(plan)).not.toMatch(/SUPERSECRET|maxmemory/);
     expect("notCarried" in mapDatabase({ ...db, redis_conf: "" }, { volumes: [] })).toBe(false);
     expect("notCarried" in mapDatabase({ ...db, database_type: "standalone-postgresql", image: "postgres:17", redis_conf: "x" }, { volumes: [] })).toBe(false);
+  });
+});
+
+describe("compose app domains (R9, docker_compose_domains)", () => {
+  const ctx = { envs: [], volumes: [] };
+  // The 4.7.5 shape: fqdn is empty, the domains live per service in a JSON string.
+  const composeApp = {
+    uuid: "c1",
+    name: "stack",
+    build_pack: "dockercompose",
+    git_repository: "org/stack",
+    git_branch: "main",
+    fqdn: null,
+    docker_compose_domains: JSON.stringify({ web: { domain: "https://app.example.test:3000,http://app.example.test:3000,https://www.example.test:3000" }, api: { domain: "https://api.example.test:8080" } }),
+  };
+
+  it("parseComposeDomains reads the JSON string: per service, a comma list, http/https pair collapsed, port kept, none primary", () => {
+    expect(parseComposeDomains(composeApp.docker_compose_domains)).toEqual([
+      { host: "app.example.test", https: true, port: 3000, path: undefined, primary: false, serviceRef: "web" },
+      { host: "www.example.test", https: true, port: 3000, path: undefined, primary: false, serviceRef: "web" },
+      { host: "api.example.test", https: true, port: 8080, path: undefined, primary: false, serviceRef: "api" },
+    ]);
+  });
+
+  it("tolerates an object, the {name, domain} list form, a null / empty / invalid value and a service without a domain", () => {
+    expect(parseComposeDomains({ web: { domain: "https://a.example.test" } })).toHaveLength(1);
+    expect(parseComposeDomains([{ name: "web", domain: "https://a.example.test" }, { name: "x" }, { domain: "https://noname.example.test" }])).toEqual([expect.objectContaining({ host: "a.example.test", serviceRef: "web" })]);
+    for (const bad of [null, undefined, "", "  ", "{not json", "[]", "{}", 7, '{"web":{}}']) expect(parseComposeDomains(bad)).toEqual([]);
+  });
+
+  it("mapApplication maps a compose app's domains from docker_compose_domains (fqdn empty)", () => {
+    const a = mapApplication(composeApp, ctx);
+    expect(a.kind).toBe("compose");
+    expect(a.domains!.map((d) => `${d.serviceRef}:${d.host}:${d.port}`)).toEqual(["web:app.example.test:3000", "web:www.example.test:3000", "api:api.example.test:8080"]);
+    expect(a.domains!.some((d) => d.primary)).toBe(false);
+  });
+
+  it("a compose row of an older instance that still has an fqdn keeps those hosts too, without repeating a service host", () => {
+    const a = mapApplication({ ...composeApp, fqdn: "https://app.example.test:3000,https://legacy.example.test" }, ctx);
+    expect(a.domains!.map((d) => d.host)).toEqual(["app.example.test", "www.example.test", "api.example.test", "legacy.example.test"]);
+    expect(a.domains!.find((d) => d.host === "legacy.example.test")!.serviceRef).toBeUndefined();
+    expect(a.domains!.some((d) => d.primary)).toBe(false);
+  });
+
+  it("docker_compose_domains is ignored on a non-compose app (its fqdn is the source of truth) and a compose app without it maps its fqdn as before", () => {
+    expect(mapApplication({ uuid: "n", build_pack: "nixpacks", git_repository: "o/r", fqdn: "https://x.example.test", docker_compose_domains: composeApp.docker_compose_domains }, ctx).domains!.map((d) => d.host)).toEqual(["x.example.test"]);
+    expect(mapApplication({ ...composeApp, docker_compose_domains: null, fqdn: "https://old.example.test" }, ctx).domains).toEqual([expect.objectContaining({ host: "old.example.test", primary: true })]);
+  });
+
+  it("the per-service domains reach the apply step as service domains (the first one is the create-time domain, as for any compose source)", () => {
+    const a = mapApplication({ ...composeApp, docker_compose_raw: "services:\n  web:\n    image: x:1\n  api:\n    image: y:1\n" }, ctx);
+    const plan = foreignAppToIngressPlan(a);
+    expect(plan.serviceDomains).toEqual([{ service: "web", hostname: "www.example.test", port: 3000 }, { service: "api", hostname: "api.example.test", port: 8080 }]);
+    expect(foreignAppToCreateInput(a, {}, { serverId: "srv" })).toMatchObject({ source: "COMPOSE", domain: "app.example.test" });
+  });
+});
+
+describe("git provider from source_type (R10)", () => {
+  const ctx = { envs: [], volumes: [] };
+  const git = { uuid: "a", name: "x", build_pack: "nixpacks", git_branch: "main" };
+
+  it("coolifyGitProvider names the provider of GithubApp / GitlabApp / GiteaApp, also as a full model class, and nothing else", () => {
+    expect(coolifyGitProvider("GithubApp")).toBe("github");
+    expect(coolifyGitProvider("GitlabApp")).toBe("gitlab");
+    expect(coolifyGitProvider("GiteaApp")).toBe("gitea");
+    expect(coolifyGitProvider("App\\Models\\GithubApp")).toBe("github");
+    for (const other of [undefined, null, "", "Server", 5]) expect(coolifyGitProvider(other as string)).toBeUndefined();
+  });
+
+  it("a GitLab / Gitea App repo is that provider and its bare owner/repo is NOT rewritten to github.com", () => {
+    const gl = mapApplication({ ...git, git_repository: "grp/proj", source_type: "GitlabApp" }, ctx);
+    expect(gl.git).toMatchObject({ url: "grp/proj", provider: "gitlab" });
+    const gt = mapApplication({ ...git, git_repository: "me/proj", source_type: "GiteaApp" }, ctx);
+    expect(gt.git).toMatchObject({ url: "me/proj", provider: "gitea" });
+    expect(normalizeGitUrl("grp/proj", "GitlabApp")).toBe("grp/proj");
+  });
+
+  it("a GithubApp repo is github with the github.com clone URL", () => {
+    expect(mapApplication({ ...git, git_repository: "org/repo", source_type: "GithubApp" }, ctx).git).toMatchObject({ url: "https://github.com/org/repo.git", provider: "github" });
+  });
+
+  it("without source_type (4.1.2 to 4.6) the old owner/repo heuristic decides", () => {
+    expect(mapApplication({ ...git, git_repository: "org/repo" }, ctx).git).toMatchObject({ url: "https://github.com/org/repo.git", provider: "github" });
+    expect(mapApplication({ ...git, git_repository: "https://git.example.test/org/repo.git" }, ctx).git!.provider).toBeUndefined();
+    expect(mapApplication({ ...git, git_repository: "org/repo", source_type: null }, ctx).git!.provider).toBe("github");
+    expect(mapApplication({ ...git, git_repository: "org/repo", source_type: "SomethingNew" }, ctx).git!.provider).toBe("github");
+  });
+});
+
+describe("static flags in settings (R4)", () => {
+  const ctx = { envs: [], volumes: [] };
+  const git = { uuid: "a", name: "site", git_repository: "org/site", git_branch: "main" };
+
+  it("settings.is_static / is_spa (4.7 detail read) drive the mapping like the old top-level fields", () => {
+    expect(mapApplication({ ...git, build_pack: "nixpacks", settings: { is_static: true } }, ctx).buildPack).toBe("static");
+    expect(mapCoolifyBuildPack({ ...git, build_pack: "railpack", settings: { is_static: true } })).toEqual({ kind: "git", buildPack: "static" });
+    expect(mapApplication({ ...git, build_pack: "static", settings: { is_spa: false } }, ctx).staticSpa).toBe(false);
+    expect(mapApplication({ ...git, build_pack: "nixpacks", settings: { is_static: false } }, ctx).buildPack).toBe("nixpacks");
+  });
+
+  it("the nested value wins over a stale top-level one; either alone is enough", () => {
+    expect(mapCoolifyBuildPack({ ...git, build_pack: "nixpacks", is_static: true, settings: { is_static: false } }).buildPack).toBe("nixpacks");
+    expect(mapCoolifyBuildPack({ ...git, build_pack: "nixpacks", is_static: true, settings: {} }).buildPack).toBe("static");
+  });
+});
+
+describe("sensitive fields hidden by the token (R5)", () => {
+  it("isSensitiveVisibleRow is by KEY presence: a gated key is absent (not null) on a plain token, present (even null) otherwise", () => {
+    expect(isSensitiveVisibleRow({ uuid: "a", build_pack: "nixpacks" })).toBe(false);
+    expect(isSensitiveVisibleRow({ uuid: "a", start_command: null })).toBe(true);
+    expect(isSensitiveVisibleRow({ uuid: "a", build_command: "npm run build" })).toBe(true);
+    expect(isSensitiveVisibleRow({ uuid: "d" }, "database")).toBe(false);
+    expect(isSensitiveVisibleRow({ uuid: "d", custom_docker_run_options: null }, "database")).toBe(true);
+    expect(isSensitiveVisibleRow({ uuid: "s" }, "service")).toBe(false);
+    expect(isSensitiveVisibleRow({ uuid: "s", docker_compose_raw: "x" }, "service")).toBe(true);
+    expect(isSensitiveVisibleRow(null)).toBe(true); // nothing to judge
+  });
+
+  const input = (apps: CoolifyFleetInput["apps"], databases: CoolifyFleetInput["databases"] = []): CoolifyFleetInput => ({ servers: [], resourcesByServer: {}, apps, databases, services: [], envsByResource: {}, volumesByResource: {} });
+
+  it("the fleet gets ONE warning counting the apps and databases read without the gated fields, naming the fix", () => {
+    const fleet = buildCoolifyFleet(input([{ uuid: "a" }, { uuid: "b", start_command: null }, { uuid: "c" }], [{ uuid: "d", database_type: "standalone-redis" }]));
+    const warns = fleet.warnings.filter((w) => /sensitive fields/.test(w));
+    expect(warns).toHaveLength(1);
+    expect(warns[0]).toMatch(/2 application\(s\)/);
+    expect(warns[0]).toMatch(/1 database\(s\)/);
+    expect(warns[0]).toMatch(/NOT be carried/);
+    expect(warns[0]).toMatch(/read:sensitive ability as a team admin or owner/);
+  });
+
+  it("no warning for rows that carry the keys (4.1.2 to 4.6, or a read:sensitive 4.7 token) or for an empty fleet", () => {
+    const row = { uuid: "a", install_command: null, build_command: null, start_command: null };
+    expect(buildCoolifyFleet(input([row], [{ uuid: "d", custom_docker_run_options: null } as never])).warnings.filter((w) => /sensitive fields/.test(w))).toEqual([]);
+    expect(buildCoolifyFleet(input([])).warnings).toEqual([]);
+  });
+
+  it("the warning reaches the plan", () => {
+    const fleet = buildCoolifyFleet(input([{ uuid: "a", build_pack: "dockerfile" }]));
+    expect(planImport(fleet, { sourceKind: "coolify" }).warnings.some((w) => /sensitive fields/.test(w))).toBe(true);
+  });
+});
+
+describe("service members and server name (R8)", () => {
+  it("members the compose no longer declares are skipped everywhere", () => {
+    const s = mapService(
+      {
+        uuid: "s1",
+        applications: [{ uuid: "m1", name: "web" }, { uuid: "m2", name: "gone", is_removed_from_compose: true }],
+        databases: [{ uuid: "d1", name: "db", is_removed_from_compose: false }, { uuid: "d2", name: "olddb", is_removed_from_compose: true }],
+      },
+      {},
+    );
+    expect(s.members!.map((m) => m.name)).toEqual(["db", "web"]);
+    expect(s.memberApps).toEqual(["m1"]);
+    expect(s.memberDbs).toEqual(["d1"]);
+  });
+
+  it("the server name comes from the row (older), the detail's destination.server, or the server list; the row wins", () => {
+    expect(mapService({ uuid: "s", destination: { server: { uuid: "x", name: "dest" } } }, {})).toMatchObject({ serverRef: "x", serverName: "dest" });
+    expect(mapService({ uuid: "s", server: { uuid: "r", name: "row" }, destination: { server: { uuid: "x", name: "dest" } } }, {}).serverName).toBe("row");
+    expect(mapService({ uuid: "s" }, { serverRef: "srv-a", serverName: "listed" })).toMatchObject({ serverRef: "srv-a", serverName: "listed" });
+    expect("serverName" in mapService({ uuid: "s" }, {})).toBe(false);
+    const fleet = buildCoolifyFleet({ servers: [{ uuid: "srv-a", name: "box" }], resourcesByServer: { "srv-a": ["s"] }, apps: [], databases: [], services: [{ uuid: "s", docker_compose_raw: "x" }], envsByResource: {}, volumesByResource: {} });
+    expect(fleet.services[0]).toMatchObject({ serverRef: "srv-a", serverName: "box" });
+  });
+});
+
+describe("Valkey databases (R12, standalone-redis on valkey/valkey)", () => {
+  const valkey = { uuid: "v1", name: "cache", database_type: "standalone-redis", image: "valkey/valkey:9-alpine" };
+
+  it("isValkeyImage matches the Valkey repositories, with a registry prefix, and nothing else", () => {
+    for (const ok of ["valkey/valkey:9-alpine", "docker.io/valkey/valkey:8", "registry.example.test:5000/valkey:7", "valkey/valkey-bundle:9", "valkey"]) expect(isValkeyImage(ok)).toBe(true);
+    for (const no of ["redis:7.2", "bitnami/redis:7", "myorg/not-valkey-ui:1", "eqalpha/keydb", "", null, undefined]) expect(isValkeyImage(no)).toBe(false);
+  });
+
+  it("maps to REDIS (database_type, or the image when the type is missing), keeping the image but NOT the Valkey tag as a Redis version", () => {
+    const m = mapDatabase(valkey, { volumes: [] });
+    expect(m).toMatchObject({ engine: "REDIS", image: "valkey/valkey:9-alpine", sourceRef: "v1" });
+    expect(m.version).toBeUndefined();
+    expect(coolifyEngine({ uuid: "v", image: "valkey/valkey:9-alpine" })).toBe("REDIS");
+    expect(mapDatabase({ ...valkey, database_type: undefined }, { volumes: [] }).engine).toBe("REDIS");
+    expect(buildCoolifyFleet({ servers: [], resourcesByServer: {}, apps: [], databases: [valkey], services: [], envsByResource: {}, volumesByResource: {} }).warnings.filter((w) => /no Tugra equivalent/.test(w))).toEqual([]);
+  });
+
+  it("says so in the plan (info row, no blocker) and combines with a custom redis.conf", () => {
+    const m = mapDatabase({ ...valkey, redis_conf: "maxmemory 1gb" }, { volumes: [] });
+    expect(m.notCarried).toEqual([expect.objectContaining({ field: "engineFamily", level: "info", reasonCode: "coolify_valkey" }), expect.objectContaining({ field: "redisConf", level: "warn" })]);
+    const plan = planImport({ servers: [], apps: [], databases: [m], services: [], volumes: [], sharedEnv: [], warnings: [] }, { sourceKind: "coolify" });
+    expect(plan.items[0].risks.filter((r) => r.level === "blocker")).toEqual([]);
+    expect(plan.items[0].risks).toContainEqual(expect.objectContaining({ code: "db.notCarried.engineFamily", level: "info" }));
+  });
+
+  it("a Redis image keeps its version and gets no Valkey note", () => {
+    const m = mapDatabase({ uuid: "r", database_type: "standalone-redis", image: "redis:7.2" }, { volumes: [] });
+    expect(m).toMatchObject({ engine: "REDIS", version: "7.2" });
+    expect("notCarried" in m).toBe(false);
   });
 });
