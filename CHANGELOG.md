@@ -7,6 +7,27 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **Server patching survives a container-engine upgrade.** "Update all" and single-package updates now run the package
+  manager on the host as a transient systemd unit (`tugra-patch-<id>`), outside the container that starts them, so a
+  docker-ce/containerd upgrade restarting Docker no longer kills the update half-way and leaves the engine half-configured;
+  the panel re-attaches to the running unit when the agent reconnects and shows its full log. A check is read-only: an
+  interrupted dpkg is reported as its own finding (with whether the container engine is involved), never repaired
+  silently, and an update that would restart Docker asks first. Hosts without systemd refuse engine packages from inside
+  the container. Patch audit entries are written when the run starts.
+- **Traefik always routes through the proxy network.** The proxy runs with `--providers.docker.network=tugra-proxy` and every
+  routed container carries `traefik.docker.network=tugra-proxy`, so an app or compose service attached to several networks
+  no longer hangs after a Docker restart because Traefik picked an IP on a network it is not on. Existing proxies are
+  recreated once on their next reconcile.
+- **The updater cleans up and catches up.** After an update, Tugra's own release images older than the previous release are
+  removed (`TUGRA_PRUNE_IMAGES=0` keeps them; the installer offers `--prune-images`). The local agent is pulled by its
+  per-platform digest from the signed manifest, which also works on Docker's containerd image store. An updater that
+  predates self-refresh is recreated on the release image by the hub through the local agent, and the panel shows the
+  updater's version.
+- **Docker cleanup runs like Coolify's.** Besides the daily 03:00 run, a server whose disk passes its threshold (default 80%)
+  gets an extra run at most once an hour; new servers are scheduled within minutes, and servers that were never configured
+  are switched on while an operator's explicit "off" is kept. The server page shows what cleanup deletes and what it never
+  deletes.
+
 ## [0.1.0-beta.19] - 2026-11-17
 
 - **Compose services come back after a Docker restart or a reboot.** Every compose member that sets no restart
