@@ -230,6 +230,30 @@ export function UpdatesCard() {
         )}
       </div>
 
+      {data?.updater?.version && (
+        <div data-testid="updater-status" style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", margin: "-4px 0 14px" }}>
+          <span style={{ fontSize: 13 }}>
+            <span style={{ color: "var(--c-tx3)" }}>{t("settings.updaterVersion")}: </span>
+            <code>{data.updater.version}</code>
+          </span>
+          <Badge tone={data.updater.state === "failed" ? "danger" : data.updater.behind ? "warn" : "ok"}>
+            {t(data.updater.state === "refreshing" ? "settings.updaterRefreshing" : data.updater.behind ? "settings.updaterBehind" : "settings.updaterCurrent")}
+          </Badge>
+        </div>
+      )}
+      {data?.updater?.behind && data.updater.version && (
+        <p
+          role="status"
+          data-testid="updater-notice"
+          style={{ fontSize: 12, color: data.updater.state === "failed" ? "var(--c-r)" : "var(--c-tx2)", margin: "-6px 0 14px", overflowWrap: "anywhere" }}
+        >
+          {t(
+            data.updater.state === "failed" ? "settings.updaterFailedNote" : data.updater.state === "refreshing" ? "settings.updaterRefreshingNote" : "settings.updaterBehindNote",
+            { version: data.updater.version },
+          )}
+        </p>
+      )}
+
       {data && (
         <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "-6px 0 14px", overflowWrap: "anywhere" }}>
           {data.checksEnabled === false ? (
