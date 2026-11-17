@@ -94,6 +94,25 @@ from the hub or Redis: it downloads and verifies everything itself.
    image when it starts (for example after a release whose scripts predate this) refreshes itself once, before it
    takes any job.
 
+6. **Clean up.** Every release adds roughly 8 GB of images (hub, web, agent, updater) and nothing used to remove the old
+   ones. After a verified update the sidecar removes Tugra's **own** release images older than the previous release:
+   the running one and the one before it (your rollback) stay, an image used by any container is refused by Docker and
+   stays, and nothing that is not a Tugra release image (apps, databases, Traefik, your own tags, `latest`) is touched.
+   Digest-pinned pulls leave no tag locally, so the release is read from the image's version label. The log says what
+   was freed. Opt out with `TUGRA_PRUNE_IMAGES=0` in `.env`. The installer reports what could be freed and removes it
+   with `--prune-images`.
+
+The local agent is pulled by the signed per-platform image digest (not `docker compose pull`, which failed on engines
+that use the containerd image store because the release tag also lists BuildKit attestation entries).
+
+**An install whose updater predates all of this** (an old `tugra-updater` image and an old `scripts/update.sh` ignore the
+signed compose/scripts, never refresh the updater and cannot even report their version) converges without an installer
+run: shortly after the hub restarts on the new release it asks the local agent, once per release and never while an
+update is queued or running, to pull the release's updater image by its signed digest, apply the release's signed
+compose/scripts to the checkout (same signature checks, backup and validation as above) and recreate the updater and
+the bundled agent with a detached helper. **Settings → Updates** shows the update helper's version and says when it lags
+or when this did not finish (then run `./scripts/install.sh` once).
+
 The common case — only the images changed — is a fast path: the sidecar fetches the small signed list, sees your
 checkout already matches, and downloads and changes nothing. Releases published before this feature, and manifests
 without `hostFilesDigest`, update images only, exactly as before; if verification fails for any reason the update is
