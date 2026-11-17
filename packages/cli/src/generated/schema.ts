@@ -7603,6 +7603,13 @@ export interface operations {
                         checkIntervalMin: number;
                         lastCheckedAt: string | null;
                         lastCheckError: string | null;
+                        updater: {
+                            version: string | null;
+                            behind: boolean;
+                            /** @enum {string} */
+                            state: "unknown" | "current" | "behind" | "refreshing" | "failed";
+                            checkedAt: string | null;
+                        };
                     };
                 };
             };
@@ -7745,6 +7752,13 @@ export interface operations {
                         checkIntervalMin: number;
                         lastCheckedAt: string | null;
                         lastCheckError: string | null;
+                        updater: {
+                            version: string | null;
+                            behind: boolean;
+                            /** @enum {string} */
+                            state: "unknown" | "current" | "behind" | "refreshing" | "failed";
+                            checkedAt: string | null;
+                        };
                     };
                 };
             };
@@ -7829,6 +7843,13 @@ export interface operations {
                         checkIntervalMin: number;
                         lastCheckedAt: string | null;
                         lastCheckError: string | null;
+                        updater: {
+                            version: string | null;
+                            behind: boolean;
+                            /** @enum {string} */
+                            state: "unknown" | "current" | "behind" | "refreshing" | "failed";
+                            checkedAt: string | null;
+                        };
                     };
                 };
             };

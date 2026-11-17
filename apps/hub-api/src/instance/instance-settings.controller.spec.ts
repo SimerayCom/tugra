@@ -4,6 +4,7 @@ import type { AuditService } from "../audit/audit.service";
 import type { AuthUser } from "../auth/strategies/jwt.strategy";
 import type { UpdateService } from "../update/update.service";
 import type { UpdaterService } from "../update/updater.service";
+import type { StackConvergeService } from "../update/stack-converge.service";
 import type { CryptoService } from "../crypto/crypto.service";
 import type { LicenseService } from "../license/license.service";
 import type { TelemetryService } from "../telemetry/telemetry.service";
@@ -77,6 +78,10 @@ function make(current: CurrentSettings) {
     requestUpdate: jest.fn().mockResolvedValue({ status: "started", targetVersion: "0.2.0" }),
     getProgress: jest.fn().mockResolvedValue({ phase: "idle", targetVersion: null, error: null }),
   } as unknown as UpdaterService;
+  const converge = {
+    view: jest.fn().mockResolvedValue({ version: "0.1.0-beta.17", behind: true, state: "behind", checkedAt: "2026-11-17T08:00:00.000Z" }),
+    reconcileIfStale: jest.fn(),
+  } as unknown as StackConvergeService;
   const license = {
     status: jest.fn().mockReturnValue({ plan: "community", valid: false, expiresAt: null, source: null }),
     verifyToken: jest.fn().mockResolvedValue({ edition: "pro", expiresAt: Date.now() + 3600_000 }),
@@ -100,7 +105,7 @@ function make(current: CurrentSettings) {
     retire: jest.fn().mockResolvedValue({ keyId: "0123456789abcdef", state: "RETIRED" }),
     restore: jest.fn().mockResolvedValue({ keyId: "0123456789abcdef", state: "DECRYPT_ONLY" }),
   };
-  return { ctrl: new InstanceSettingsController(settings, audit, update, updater, crypto, license, telemetry, mail, rotation as never, keyring as never), settings, audit, update, updater, crypto, license, telemetry, mail, rotation, keyring };
+  return { ctrl: new InstanceSettingsController(settings, audit, update, updater, crypto, license, telemetry, mail, rotation as never, keyring as never, converge), converge, settings, audit, update, updater, crypto, license, telemetry, mail, rotation, keyring };
 }
 
 const ORIGINAL_EDITION = process.env.TUGRA_EDITION;
@@ -154,6 +159,16 @@ describe("InstanceSettingsController", () => {
     const out = await ctrl.getUpdate();
     expect(update.getStatus).toHaveBeenCalled();
     expect(out).toMatchObject({ current: "0.0.0-dev", updateAvailable: false, latest: null });
+  });
+
+  it("every update status carries the update helper's own version, and opening the panel lets the hub look at it (background, never awaited)", async () => {
+    const { ctrl, converge } = make({ apiEnabled: true, apiAllowedIps: [] });
+    (converge.reconcileIfStale as jest.Mock).mockImplementation(() => new Promise(() => undefined));
+    const got = await ctrl.getUpdate();
+    expect(got).toMatchObject({ updater: { version: "0.1.0-beta.17", behind: true, state: "behind" } });
+    expect(converge.reconcileIfStale).toHaveBeenCalledTimes(1);
+    expect(await ctrl.checkUpdate()).toMatchObject({ updater: { behind: true } });
+    expect(await ctrl.setUpdate(OWNER, { autoUpdate: false })).toMatchObject({ updater: { state: "behind" } });
   });
 
   it("getUpdate kicks refreshIfStale with the status' lastCheckedAt AFTER getStatus, without waiting for it", async () => {

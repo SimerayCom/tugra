@@ -174,6 +174,18 @@ describe("UpdaterService.requestUpdate", () => {
       expect("hostFilesDigest" in queued(r)).toBe(false);
     });
 
+    it("carries the signed per-platform AGENT digests so the sidecar can pull the local agent by digest (well-formed ones only)", async () => {
+      const AMD = "1".repeat(64);
+      const ARM = "2".repeat(64);
+      const r = redisStub();
+      const svc = new UpdaterService(r.svc, updateStub({ status: "ok", channel: "stable", entry: { version: "1.2.4", agentSha256: { amd64: AMD, arm64: ARM } } }));
+      await svc.requestUpdate({ actor: "u1", auto: false });
+      expect(queued(r)).toEqual({ targetVersion: "1.2.4", agentAmd64Digest: AMD, agentArm64Digest: ARM });
+      expect(buildUpdateJob("1.2.4", undefined, undefined, { amd64: AMD, arm64: "sha256:not-bare" })).toEqual({ targetVersion: "1.2.4", agentAmd64Digest: AMD });
+      expect(buildUpdateJob("1.2.4", undefined, undefined, { riscv: AMD })).toEqual({ targetVersion: "1.2.4" });
+      expect("agentAmd64Digest" in buildUpdateJob("1.2.4")).toBe(false); // an older manifest queues the legacy job exactly as before
+    });
+
     it("buildUpdateJob is pure and does not add digest keys for an absent pair", () => {
       expect(buildUpdateJob("1.0.0")).toEqual({ targetVersion: "1.0.0" });
       expect("hubDigest" in buildUpdateJob("1.0.0", { hub: H })).toBe(false);

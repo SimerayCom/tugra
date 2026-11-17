@@ -43,6 +43,11 @@
 #   --enable-update-checks  Re-enable update checks after --no-update-checks (they are on by default; also: TUGRA_ENABLE_UPDATE_CHECKS=1).
 #   --detect-public-ip  Best-effort auto-detect this host's public IP (off by default, for privacy).
 #   --public-ip <ip>    Pin the host's public IP (so deployed-app magic URLs are reachable from outside).
+#   --prune-images      After a healthy install/upgrade, remove Tugra's OWN release images older than the previous
+#                       release (the running one and the one before it, for rollback, are kept; nothing that is not
+#                       a Tugra release image is touched). Every release adds ~8 GB of images and nothing removed the
+#                       old ones. Without the flag the installer only says how much could be freed. The in-app
+#                       updater does this by itself after each update (turn off: TUGRA_PRUNE_IMAGES=0 in .env).
 #   --dry-run           Generate the .env and exit — do not touch Docker.
 #   --restore-from <f>  Restore a hub bundle made by `scripts/hub-migrate.sh pack` onto THIS host (moves an
 #                       existing hub here, no pg_dump). Overwrites this host's .env + hub volume. See
@@ -60,6 +65,7 @@ HUB_URL=""
 WEB_URL=""
 FORCE_BUILD=0
 FORCE_PULL=0
+PRUNE_IMAGES="${TUGRA_PRUNE_IMAGES_NOW:-0}"
 DRY_RUN=0
 RESTORE_FROM=""
 RESTORE_SET=0
@@ -146,6 +152,7 @@ while [ $# -gt 0 ]; do
     --env-file) ENV_FILE="${2:-}"; shift 2 ;;
     --build)    FORCE_BUILD=1; shift ;;
     --pull)     FORCE_PULL=1; shift ;;
+    --prune-images) PRUNE_IMAGES=1; shift ;;
     --no-update-checks)     NO_UPDATE_CHECKS=1; shift ;;
     --enable-update-checks) ENABLE_UPDATE_CHECKS=1; shift ;;
     --enable-telemetry)     ENABLE_TELEMETRY=1; shift ;;
@@ -724,6 +731,8 @@ abort_untouched() {
 # protect. A failure aborts with the stack untouched; PRE_UPDATE_BACKUP=0 (in .env or env) is the only opt-out.
 # shellcheck source=lib/snapshot.sh
 . "$SCRIPT_DIR/lib/snapshot.sh"
+# shellcheck source=lib/images.sh
+. "$SCRIPT_DIR/lib/images.sh"
 pg_running() { [ -n "$(compose ps -q postgres 2>/dev/null | head -n1)" ]; }
 pg_exists() {
   [ -n "$(compose ps -aq postgres 2>/dev/null | head -n1)" ] && return 0
@@ -795,12 +804,22 @@ compose_up() {
     exit 1
   fi
 }
+# Pull the published images. The bundled agent is NOT pulled with `compose pull`: on an engine that uses the
+# containerd image store that pull fetched the BuildKit attestation entries of the multi-platform tag and failed
+# ("could not fetch content descriptor … application/vnd.in-toto+json … not found", then compose's misleading
+# "must be built from source: docker compose build agent"). A plain `docker pull` of the tag does not (lib/images.sh).
+pull_published_images() {
+  compose pull postgres redis hub-api web || return 1
+  _av="$(env_get TUGRA_VERSION | tr -d "\"' ")"
+  pull_agent_image "${_av:-latest}" || return 1
+  pull_updater_image "${_av:-latest}" || return 1
+}
 if [ "$FORCE_BUILD" -eq 1 ]; then
   log "Building images from source…"; compose_up --build
 elif [ "$FORCE_PULL" -eq 1 ]; then
-  compose pull || abort_untouched "Could not pull the published images (--pull)."
+  pull_published_images || abort_untouched "Could not pull the published images (--pull)."
   compose_up --no-build
-elif compose pull >"$LOGDIR/pull.log" 2>&1; then
+elif pull_published_images >"$LOGDIR/pull.log" 2>&1; then
   log "Using published images."; compose_up --no-build
 elif [ -z "$(env_get TUGRA_VERSION)" ] && pull_image_missing && [ -f "$REPO_DIR/deploy/Dockerfile.hub" ]; then
   # No published image for this arch/tag (see $LOGDIR/pull.log). Build from this checkout. This is a full pnpm +
@@ -936,6 +955,23 @@ if [ "$(env_get PANEL_TLS)" = "1" ] && [ "$HEALTHY" != "0" ]; then
       note "Check: docker logs tugra-proxy  ·  DNS for $_pd -> this host  ·  :80/:443 reachable (setup log: $LOGDIR/panel-run.log)"
       note "Reach it meanwhile:  ssh -L 3001:127.0.0.1:3001 <this-host>  then open http://localhost:3001"
       note "Disable auto-TLS anytime:  re-run with --no-auto-tls  (nothing else is changed on failure)."
+    fi
+  fi
+fi
+
+# --- old release images: every release leaves ~8 GB (hub + web + agent + updater) that nothing removed ----------
+# Opt-in removal (--prune-images); otherwise just say how much could be freed. Only Tugra's own release images older
+# than the previous release are ever candidates (lib/images.sh); a failure here never fails the install.
+if [ "$HEALTHY" != "0" ] && [ "$FORCE_BUILD" -eq 0 ]; then
+  _cur="$(env_get TUGRA_VERSION | tr -d "\"' ")"; _cur="${_cur:-latest}"
+  if [ "$PRUNE_IMAGES" = "1" ]; then
+    prune_release_images "$_cur" "$PREV_VERSION" || warn "image cleanup did not finish (the install itself is fine)."
+  else
+    _ps="$(prune_summary "$_cur" "$PREV_VERSION" 2>/dev/null || true)"
+    _pn="${_ps%% *}"; _pb="${_ps#* }"
+    case "$_pn" in ''|*[!0-9]*) _pn=0 ;; esac
+    if [ "$_pn" -gt 0 ]; then
+      note "$_pn old Tugra release image(s), about $(_img_human "${_pb:-0}"), are no longer needed. Remove them with: re-run this installer with --prune-images (the in-app updater cleans up after each update by itself)."
     fi
   fi
 fi

@@ -296,6 +296,19 @@ export interface InstanceUpdateStatus {
   lastCheckedAt: string | null;
   /** Short reason the most recent check attempt failed, else null. */
   lastCheckError: string | null;
+  /** The update helper (tugra-updater sidecar) as the hub last saw it through the local agent. */
+  updater: InstanceUpdaterStatus;
+}
+
+/**
+ * The update helper's own release. `behind` = older than this hub (the hub then refreshes it itself after an update);
+ * `state`: unknown (not probed / no sidecar) · current · behind · refreshing (just scheduled) · failed (did not converge).
+ */
+export interface InstanceUpdaterStatus {
+  version: string | null;
+  behind: boolean;
+  state: "unknown" | "current" | "behind" | "refreshing" | "failed";
+  checkedAt: string | null;
 }
 
 /** Result of POST /instance/update (starting the updater). `started` = queued for the sidecar. */

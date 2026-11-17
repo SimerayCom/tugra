@@ -101,14 +101,15 @@ describe("scripts/update.sh", () => {
     it("refreshes the local agent only after the hub/web health wait, and pre-pulls the updater (never recreates it)", () => {
       const out = dry("0.2.0", "TUGRA_VERSION=0.1.0\n");
       const wait = out.indexOf("wait up to");
-      const pullAgent = out.indexOf("pull agent");
+      const pullAgent = out.indexOf("docker pull ghcr.io/simeraycom/tugra-agent:0.2.0"); // a plain pull — never `compose pull agent`
       const upAgent = out.indexOf("up -d --no-deps agent");
       const done = out.indexOf('"phase":"done"');
       expect(wait).toBeGreaterThan(-1);
       expect(pullAgent).toBeGreaterThan(wait);
       expect(upAgent).toBeGreaterThan(pullAgent);
       expect(done).toBeGreaterThan(upAgent);
-      expect(out).toContain("pull tugra-updater");
+      expect(out).toContain("RUN: docker pull ghcr.io/simeraycom/tugra-updater:0.2.0"); // a plain pull, like the agent: never `compose pull`
+      expect(out).not.toMatch(/compose[^\n]* pull[^\n]* (agent|tugra-updater)/); // compose pull of the agent hit the in-toto 404 on the containerd store
       expect(out).not.toMatch(/up -d[^\n]*(postgres|redis|tugra-updater)/);
       expect(out).not.toMatch(/up -d\s*$/m);
     });
@@ -144,6 +145,7 @@ describe("scripts/update.sh", () => {
     writeFileSync(join(repo, "scripts", "update.sh"), readFileSync(UPDATE_SH));
     writeFileSync(join(repo, "scripts", "lib", "snapshot.sh"), readFileSync(join(UPDATE_SH, "..", "lib", "snapshot.sh")));
     writeFileSync(join(repo, "scripts", "lib", "hostfiles.sh"), readFileSync(join(UPDATE_SH, "..", "lib", "hostfiles.sh")));
+    writeFileSync(join(repo, "scripts", "lib", "images.sh"), readFileSync(join(UPDATE_SH, "..", "lib", "images.sh")));
     const SH = join(repo, "scripts", "update.sh");
     // docker: logs; pg_dump fails when SHIM_DUMP_FAIL is set; ps -q yields an id; inspect says healthy.
     writeFileSync(
@@ -519,6 +521,7 @@ exec ${REAL_DF} "$@"
       writeFileSync(join(tmp, "scripts", "update.sh"), readFileSync(UPDATE_SH, "utf8"), { mode: 0o755 });
       writeFileSync(join(tmp, "scripts", "lib", "snapshot.sh"), readFileSync(join(UPDATE_SH, "..", "lib", "snapshot.sh")));
       writeFileSync(join(tmp, "scripts", "lib", "hostfiles.sh"), readFileSync(join(UPDATE_SH, "..", "lib", "hostfiles.sh")));
+      writeFileSync(join(tmp, "scripts", "lib", "images.sh"), readFileSync(join(UPDATE_SH, "..", "lib", "images.sh")));
       writeFileSync(join(tmp, "deploy", "docker-compose.yml"), "services:\n  hub-api:\n    image: ghcr.io/simeraycom/tugra-hub:${TUGRA_VERSION:-latest}\n");
       writeFileSync(join(tmp, ".env"), "TUGRA_VERSION=0.1.0\n");
       const out = execFileSync("bash", [join(tmp, "scripts", "update.sh"), "--dry-run", "--job", job("0.2.0", H, W)], {

@@ -34,6 +34,25 @@ export const UpdateStatusViewSchema = z.object({
 export type UpdateStatusView = z.infer<typeof UpdateStatusViewSchema>;
 
 /**
+ * The update helper (`tugra-updater` sidecar) as the hub last saw it, via the local agent. `behind` = it runs an older
+ * release than this hub: after an update the hub then refreshes it by itself (see StackConvergeService), and a helper
+ * that predates self-refresh could otherwise only be fixed by re-running scripts/install.sh. `state`: unknown (never
+ * probed / no sidecar), current, behind (will be refreshed), refreshing (the refresh was just scheduled) or failed
+ * (the last refresh attempt did not go through — the notice then points at the installer).
+ */
+export const UpdaterViewSchema = z.object({
+  version: z.string().nullable(),
+  behind: z.boolean(),
+  state: z.enum(["unknown", "current", "behind", "refreshing", "failed"]),
+  checkedAt: z.string().nullable(),
+});
+export type UpdaterView = z.infer<typeof UpdaterViewSchema>;
+
+/** GET/PATCH /instance/update + POST /instance/update/check: the status plus the update helper's own version. */
+export const OwnerUpdateStatusViewSchema = UpdateStatusViewSchema.extend({ updater: UpdaterViewSchema });
+export type OwnerUpdateStatusView = z.infer<typeof OwnerUpdateStatusViewSchema>;
+
+/**
  * The member-facing slice of the update status (GET /instance/version): what every signed-in user may see
  * so the shell can show the running version under the logo and an "update available" hint. No preferences
  * (channel policy, auto-update, notice, changelog link) — those stay owner-only.

@@ -38,7 +38,8 @@ import {
 import { MailService } from "../mail/mail.service";
 import { UpdateService } from "../update/update.service";
 import { UpdaterService, isTerminalPhase } from "../update/updater.service";
-import { UpdateApplyResultSchema, UpdateStatusViewSchema } from "../update/dto";
+import { StackConvergeService } from "../update/stack-converge.service";
+import { OwnerUpdateStatusViewSchema, UpdateApplyResultSchema } from "../update/dto";
 import { TelemetryService } from "../telemetry/telemetry.service";
 
 /**
@@ -62,7 +63,13 @@ export class InstanceSettingsController {
     private readonly mail: MailService,
     private readonly rotation: SecretsRotationService,
     private readonly keyring: KeyRingService,
+    private readonly converge: StackConvergeService,
   ) {}
+
+  /** The update status plus the update helper's own version (read from Redis, never from docker). */
+  private async updateView() {
+    return { ...(await this.update.getStatus()), updater: await this.converge.view() };
+  }
 
   /**
    * Master-key rotation status (owner-only, session-only): which key is current, which previous keys are still
@@ -124,12 +131,14 @@ export class InstanceSettingsController {
    * downgrade. Owner-only (inherits the class guards); nothing is applied here.
    */
   @Get("update")
-  @ApiZodResponse(UpdateStatusViewSchema)
+  @ApiZodResponse(OwnerUpdateStatusViewSchema)
   async getUpdate() {
-    const status = await this.update.getStatus();
+    const status = await this.updateView();
     // Opening the panel is the moment an owner cares: kick a background refresh when the last check is stale.
     // Fire-and-forget — the request never waits on the network, and this path never applies an update.
     this.update.refreshIfStale(status.lastCheckedAt);
+    // Same moment: let the hub look at the update helper (and bring it forward when it lags). Throttled, background.
+    this.converge.reconcileIfStale();
     return status;
   }
 
@@ -141,7 +150,7 @@ export class InstanceSettingsController {
    */
   @Patch("update")
   @ApiZodBody(UpdateInstanceUpdateSchema)
-  @ApiZodResponse(UpdateStatusViewSchema)
+  @ApiZodResponse(OwnerUpdateStatusViewSchema)
   async setUpdate(
     @CurrentUser() user: AuthUser,
     @Body(new ZodValidationPipe(UpdateInstanceUpdateSchema)) body: UpdateInstanceUpdateInput,
@@ -153,16 +162,16 @@ export class InstanceSettingsController {
     if (body.updateChannel !== undefined) patch.updateChannel = body.updateChannel ?? AUTO_UPDATE_CHANNEL;
     await this.settings.update(patch);
     await this.audit.log({ actor: user.userId, action: "instance_update.settings", target: "singleton" });
-    return this.update.getStatus();
+    return this.updateView();
   }
 
   /** Manually re-check the signed manifest now (the scheduler otherwise checks hourly). Never throws. */
   @Post("update/check")
   @HttpCode(200)
-  @ApiZodResponse(UpdateStatusViewSchema)
+  @ApiZodResponse(OwnerUpdateStatusViewSchema)
   async checkUpdate() {
     await this.update.checkRemote();
-    return this.update.getStatus();
+    return this.updateView();
   }
 
   /**

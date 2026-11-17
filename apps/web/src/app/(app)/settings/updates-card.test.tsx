@@ -26,6 +26,7 @@ const STATUS: InstanceUpdateStatus = {
   checkIntervalMin: 60,
   lastCheckedAt: new Date(Date.now() - 4 * 60_000).toISOString(),
   lastCheckError: null,
+  updater: { version: null, behind: false, state: "unknown", checkedAt: null },
 };
 
 function sseResponse(frames: string[]): Response {
@@ -76,6 +77,61 @@ describe("UpdatesCard", () => {
     expect(screen.getByText(/Update available/)).toBeTruthy();
     expect(screen.getByText("View changelog")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Update now" })).toBeTruthy(); // in-app updater available
+  });
+
+  describe("update helper (tugra-updater) version", () => {
+    const withUpdater = (updater: InstanceUpdateStatus["updater"]) => vi.mocked(api.getInstanceUpdate).mockResolvedValue({ ...STATUS, updater });
+
+    it("shows nothing when the hub has not seen the helper (or an older hub sends no field)", async () => {
+      h.user = { isInstanceOwner: true };
+      wrap();
+      await screen.findByText("Updates");
+      expect(screen.queryByTestId("updater-status")).toBeNull();
+      expect(screen.queryByTestId("updater-notice")).toBeNull();
+      cleanup();
+      qc.clear();
+      vi.mocked(api.getInstanceUpdate).mockResolvedValue({ ...STATUS, updater: undefined as never });
+      wrap();
+      await screen.findByText("Updates");
+      expect(screen.queryByTestId("updater-status")).toBeNull();
+    });
+
+    it("an up-to-date helper shows its version with an Up to date badge and no notice", async () => {
+      h.user = { isInstanceOwner: true };
+      withUpdater({ version: "0.1.0-beta.16", behind: false, state: "current", checkedAt: new Date().toISOString() });
+      wrap();
+      const row = await screen.findByTestId("updater-status");
+      expect(row.textContent).toContain("Update helper");
+      expect(row.textContent).toContain("0.1.0-beta.16");
+      expect(row.textContent).toContain("Up to date");
+      expect(screen.queryByTestId("updater-notice")).toBeNull();
+    });
+
+    it("a helper that lags the hub says so, and that the hub brings it forward by itself", async () => {
+      h.user = { isInstanceOwner: true };
+      withUpdater({ version: "0.1.0-beta.12", behind: true, state: "behind", checkedAt: new Date().toISOString() });
+      wrap();
+      const row = await screen.findByTestId("updater-status");
+      expect(row.textContent).toContain("0.1.0-beta.12");
+      expect(row.textContent).toContain("Behind");
+      const note = screen.getByTestId("updater-notice");
+      expect(note.textContent).toContain("runs 0.1.0-beta.12");
+      expect(note.textContent).toContain("brings it forward by itself");
+    });
+
+    it("while the refresh is scheduled it says Refreshing; when it did not converge it points at the installer", async () => {
+      h.user = { isInstanceOwner: true };
+      withUpdater({ version: "0.1.0-beta.12", behind: true, state: "refreshing", checkedAt: null });
+      wrap();
+      expect((await screen.findByTestId("updater-status")).textContent).toContain("Refreshing");
+      expect(screen.getByTestId("updater-notice").textContent).toContain("restarts in a few seconds");
+      cleanup();
+      qc.clear();
+      withUpdater({ version: "0.1.0-beta.12", behind: true, state: "failed", checkedAt: null });
+      wrap();
+      await screen.findByTestId("updater-status");
+      expect(screen.getByTestId("updater-notice").textContent).toContain("run scripts/install.sh on the server once");
+    });
   });
 
   it("auto channel: shows 'Automatic (Beta)' selected and Save sends updateChannel null", async () => {

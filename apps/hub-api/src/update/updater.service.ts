@@ -2,14 +2,17 @@ import { Injectable, Logger } from "@nestjs/common";
 import { appVersion, isAutoApplicable, isNewer, parseVersion } from "@tugra/shared";
 import { RedisService } from "../redis/redis.service";
 import { UpdateService } from "./update.service";
+import { SHA256_HEX } from "./update-manifest";
 import type { UpdateApplyResult, UpdateProgress } from "./dto";
 
 // The hub cannot recreate its own container, so it never runs docker. Instead it takes a cross-process
 // lock and LPUSHes a job onto a Redis queue that the `tugra-updater` sidecar (docker.sock) drains; the
 // sidecar reports progress back into the status key. All three keys live in Redis so they survive the
 // hub-api container being recreated mid-update.
-const LOCK_KEY = "instance:update:lock";
-const STATUS_KEY = "instance:update:status";
+export const UPDATE_LOCK_KEY = "instance:update:lock";
+export const UPDATE_STATUS_KEY = "instance:update:status";
+const LOCK_KEY = UPDATE_LOCK_KEY;
+const STATUS_KEY = UPDATE_STATUS_KEY;
 const QUEUE_KEY = "instance:update:queue";
 const LOCK_TTL_S = 900; // 15-min backstop; the sidecar releases the lock on any terminal status
 const STATUS_TTL_S = 3600; // must outlive the recreate so a reconnecting client can read the final state
@@ -37,6 +40,9 @@ export function mapStatus(raw: string | null): UpdateProgress {
   }
 }
 
+/** A job's agent digests: the signed per-platform image manifest digests, keyed like the manifest's `agentSha256`. */
+export type AgentDigests = Record<string, string>;
+
 /**
  * The job the sidecar drains. When the freshly verified manifest entry carries BOTH the hub and web INDEX
  * digests the job pins them (`{targetVersion, hubDigest, webDigest}`, flat strings — the sidecar parses with
@@ -45,19 +51,33 @@ export function mapStatus(raw: string | null): UpdateProgress {
  * `hostFilesDigest` (sha256 of the release's signed host-files manifest) is added independently when the entry
  * carries it: it tells the sidecar the release publishes compose/script files to apply. It carries NO file content —
  * the sidecar downloads and signature-verifies those itself, so a compromised hub or Redis cannot inject a file.
+ * `agentAmd64Digest` / `agentArm64Digest` (the manifest's per-platform agent image digests, only when well-formed) let
+ * the sidecar pull the bundled local agent by digest — a plain tag pull of the multi-platform index failed on engines
+ * with the containerd image store — and are optional: without them the sidecar pulls the tag with `docker pull`.
  * Pure — unit-tested directly.
  */
+export interface UpdateJob {
+  targetVersion: string;
+  hubDigest?: string;
+  webDigest?: string;
+  hostFilesDigest?: string;
+  agentAmd64Digest?: string;
+  agentArm64Digest?: string;
+}
 export function buildUpdateJob(
   targetVersion: string,
   digests?: { hub?: string; web?: string },
   hostFilesDigest?: string,
-): { targetVersion: string; hubDigest?: string; webDigest?: string; hostFilesDigest?: string } {
-  const job: { targetVersion: string; hubDigest?: string; webDigest?: string; hostFilesDigest?: string } = { targetVersion };
+  agentSha256?: AgentDigests,
+): UpdateJob {
+  const job: UpdateJob = { targetVersion };
   if (digests?.hub && digests.web) {
     job.hubDigest = digests.hub;
     job.webDigest = digests.web;
   }
   if (hostFilesDigest) job.hostFilesDigest = hostFilesDigest;
+  if (agentSha256?.amd64 && SHA256_HEX.test(agentSha256.amd64)) job.agentAmd64Digest = agentSha256.amd64;
+  if (agentSha256?.arm64 && SHA256_HEX.test(agentSha256.arm64)) job.agentArm64Digest = agentSha256.arm64;
   return job;
 }
 
@@ -106,7 +126,7 @@ export class UpdaterService {
       JSON.stringify({ phase: "queued", targetVersion: latest, error: null, actor, startedAt: new Date().toISOString() }),
       STATUS_TTL_S,
     );
-    await this.redis.client.lpush(QUEUE_KEY, JSON.stringify(buildUpdateJob(latest, verified.entry.imageDigests, verified.entry.hostFilesDigest)));
+    await this.redis.client.lpush(QUEUE_KEY, JSON.stringify(buildUpdateJob(latest, verified.entry.imageDigests, verified.entry.hostFilesDigest, verified.entry.agentSha256)));
     this.logger.log(`update requested by ${actor} (auto=${auto}): ${current} → ${latest}`);
     return { status: "started", targetVersion: latest };
   }
