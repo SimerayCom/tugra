@@ -101,7 +101,7 @@ export const MANAGED_REMOVAL_COMMANDS: readonly string[] = ["docker ps -aq --fil
  */
 /**
  * Which of these exist depends on the Coolify generation (`coolify-realtime` is gone on 4.7, `coolify-sentinel` is new), so each
- * command skips a name the host does not have instead of failing on it, and ends 0 either way.
+ * command skips a name the host does not have instead of failing on it (a real `docker stop`/`docker rm` failure still shows, the commands are printed for the operator and never run by Tugra).
  */
 export const CONTROL_PLANE_CONTAINERS: readonly string[] = ["coolify", "coolify-realtime", "coolify-sentinel", "coolify-redis", "coolify-db", "coolify-proxy"];
 const forEachExisting = (verb: "stop" | "rm"): string =>

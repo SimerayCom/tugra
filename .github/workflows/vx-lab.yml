@@ -23,7 +23,7 @@ on:
   workflow_dispatch:
     inputs:
       items:
-        description: "all, fleet, or a comma list of: tar (L4), core (L0 L1a L1b), restart (L2), postgres (L6), memory (L7), seats (L8), throttle (L3 mechanics), fleetpg (L9), fleetdb (L10), fleetminio (L11), fleethosts (L12), fleetcoolify (L13), ubuntu (L14), streamdump (L15), pgtls (L16); fleet = the six fleet-shaped ones, stream = streamdump and pgtls"
+        description: "all, fleet, or a comma list of: tar (L4), core (L0 L1a L1b), restart (L2), postgres (L6), memory (L7), seats (L8), throttle (L3 mechanics), fleetpg (L9), fleetdb (L10), fleetminio (L11), fleethosts (L12), fleetcoolify (L13, Coolify 4.1.2 and 4.7.5 profiles), ubuntu (L14), streamdump (L15), pgtls (L16); fleet = the six fleet-shaped ones, stream = streamdump and pgtls"
         required: false
         default: all
         type: string
@@ -563,7 +563,7 @@ jobs:
         run: scripts/lab/down.sh
 
   fleetcoolify:
-    name: L13 discovery against a Coolify 4.1.2 shaped fleet
+    name: L13 discovery against Coolify 4.1.2 and 4.7.5 shaped fleets
     needs: plan
     if: needs.plan.outputs.fleetcoolify == 'true'
     runs-on: ubuntu-latest
