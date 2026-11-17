@@ -20,7 +20,8 @@ import type { AppSpec } from "./deploy-script";
 const base: AppSpec = {
   id: "abc",
   source: "COMPOSE",
-  composeFile: "services:\n  web:\n    image: nginx",
+  // the member states its own restart policy: the default-restart override (compose-restart.ts) is covered in its own suite
+  composeFile: "services:\n  web:\n    image: nginx\n    restart: unless-stopped",
   env: {},
   hostPort: null,
   containerPort: null,
@@ -522,7 +523,7 @@ describe("composeTugraLabels (D5)", () => {
 
 
 describe("compose shared networks (hub-owned extra attachments)", () => {
-  const base = { id: "app1", name: "svc", composeFile: "services:\n  meilisearch:\n    image: a:1\n  web:\n    image: b:1\n", env: {} } as unknown as Parameters<typeof composeOverride>[0];
+  const base = { id: "app1", name: "svc", composeFile: "services:\n  meilisearch:\n    image: a:1\n    restart: unless-stopped\n  web:\n    image: b:1\n    restart: unless-stopped\n", env: {} } as unknown as Parameters<typeof composeOverride>[0];
   const nets = [{ network: "svc-search", service: "meilisearch", aliases: ["meilisearch", "search"] }];
 
   it("without rows the override and the up script are exactly as before", () => {

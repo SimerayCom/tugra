@@ -26,6 +26,7 @@ import {
 } from "./deploy-script";
 import { assertScriptFits, mlPrefix, mlPrelude, planEnv } from "./env-render";
 import { composeOverride, composeProject, composeGitDir, composeGitCloneDir, composeOpFile } from "./compose-script";
+import { composeRestartServices } from "./compose-restart";
 import { composeHookPostSteps, composeHookPreSteps, type ComposeHookPlan } from "./compose-hooks";
 
 // Re-export the shared path helpers (defined in compose-script.ts so the lifecycle builders there can reuse
@@ -118,12 +119,21 @@ export function buildComposeGitRenderScript(app: AppSpec): string {
  * `sha` (the digest the hub already validated), then brings the stack up (building from the clone). When
  * the app has per-service domains, the Tugra routing override is layered with a second `-f`.
  */
-export function buildComposeGitUpScript(app: AppSpec, sha: string, noCache = false, hooks: ComposeHookPlan | null = null): string {
+export function buildComposeGitUpScript(
+  app: AppSpec,
+  sha: string,
+  noCache = false,
+  hooks: ComposeHookPlan | null = null,
+  renderedCompose: string | null = null,
+): string {
   const { lines, envArg, prefix, fits } = cloneAndEnvSteps(app);
   const proj = composeProject(app);
   const file = composeFileArg(app);
   const rows = app.serviceDomains ?? [];
-  const writeOverride = rows.length > 0;
+  // The repo's YAML is on the agent, not the hub: the default restart policy is decided from the RENDERED stack the hub
+  // validated (the sha lock below guarantees it is what runs). Absent (a bare unit-test call) → nothing injected.
+  const restartServices = composeRestartServices(renderedCompose);
+  const writeOverride = rows.length > 0 || restartServices.length > 0;
   const overridePath = `${composeGitDir(app)}/override.yml`;
   lines.push(
     `TUGRA_RENDERED=$(${renderExpr(app, envArg, prefix)})`,
@@ -134,7 +144,7 @@ export function buildComposeGitUpScript(app: AppSpec, sha: string, noCache = fal
     ...certPreludeFor(app),
   );
   if (writeOverride) {
-    lines.push(`printf %s ${shq(b64(composeOverride(app)))} | base64 -d > ${overridePath}`);
+    lines.push(`printf %s ${shq(b64(composeOverride(app, restartServices)))} | base64 -d > ${overridePath}`);
   }
   lines.push(...registryLoginPrelude(app.registryAuth));
   const overrideArg = writeOverride ? `-f ${overridePath} ` : "";

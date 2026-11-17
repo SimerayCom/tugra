@@ -2351,7 +2351,7 @@ export class ApplicationsService {
         // COMPOSE pre/post-deploy hooks: validate the hook service against the RENDERED stack (hard gate; a missing
         // service throws -> FAILED with the message in the deploy log). The up script is sha-locked to this render.
         const hooks = composeHookPlan(spec, rendered.compose);
-        gitComposeUp = buildComposeGitUpScript(spec, rendered.sha, noCache, hooks);
+        gitComposeUp = buildComposeGitUpScript(spec, rendered.sha, noCache, hooks, rendered.compose);
       }
       const command = isGitCompose
         ? gitComposeUp!

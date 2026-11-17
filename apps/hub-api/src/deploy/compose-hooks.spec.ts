@@ -4,7 +4,8 @@ import { buildComposeGitUpScript } from "./compose-git";
 import { composeHookContainerName, composeHookPlan, composeHookPostSteps, composeHookPreSteps } from "./compose-hooks";
 import type { AppSpec } from "./deploy-script";
 
-const YAML = "services:\n  web:\n    image: nginx\n  api:\n    image: app:1\n  worker:\n    build: ./w\n    image: w:1\n";
+// every member states its own restart policy, so no default-restart override is layered into these byte-exact scripts
+const YAML = "services:\n  web:\n    image: nginx\n    restart: always\n  api:\n    image: app:1\n    restart: always\n  worker:\n    build: ./w\n    image: w:1\n    restart: always\n";
 const base: AppSpec = { id: "abc", source: "COMPOSE", composeFile: YAML, env: {}, hostPort: null, containerPort: null };
 const hooked: AppSpec = { ...base, composeHookService: "api", preDeployCommand: "npm run migrate", postDeployCommand: "npm run warm" };
 

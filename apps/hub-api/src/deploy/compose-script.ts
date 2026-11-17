@@ -23,6 +23,7 @@ import {
 } from "./deploy-script";
 import { assertScriptFits, mlPrefix, mlPrelude, planEnv } from "./env-render";
 import { composeHookPlan, composeHookPostSteps, composeHookPreSteps } from "./compose-hooks";
+import { composeRestartServices, DEFAULT_COMPOSE_RESTART } from "./compose-restart";
 
 /** A named volume declared in a compose app's docker-compose.yml. `dockerName` is the real docker
  *  volume: `<project>_<key>` for a normal declaration, the explicit `name:` when set, or the key
@@ -191,8 +192,13 @@ export function composeTugraLabels(
  * once a service declares a `networks:` key, compose drops its implicit `default`
  * membership, so we must re-list `default` or the service loses reach to its DB/
  * sibling services (e.g. WordPress → its mariadb).
+ *
+ * It also stamps `restart: unless-stopped` on every member that sets no restart policy of its own (see
+ * compose-restart.ts), so the stack comes back after a Docker restart / reboot. `restartServices` is that member list;
+ * omitted, it is read from the stored compose file (a git-compose app has none stored: its caller passes the list it
+ * computed from the validated rendered stack).
  */
-export function composeOverride(app: AppSpec): string {
+export function composeOverride(app: AppSpec, restartServices?: string[]): string {
   const magic = !!(app.domain && app.composeWebService);
   const mounts = app.configMounts ?? [];
   // Name each service ONCE in the override (duplicate YAML mapping keys are invalid). A service may need
@@ -230,10 +236,13 @@ export function composeOverride(app: AppSpec): string {
     add(binds, m.serviceName, `      - ${JSON.stringify(`${mountFilePath(app, i)}:${m.target}:ro`)}`);
   });
   for (const svc of extraNets.keys()) touch(svc);
+  const restart = new Set(restartServices ?? composeRestartServicesOf(app));
+  for (const svc of restart) touch(svc);
 
   const lines: string[] = ["services:"];
   for (const name of order) {
     lines.push(`  ${name}:`);
+    if (restart.has(name)) lines.push(`    restart: ${DEFAULT_COMPOSE_RESTART}`);
     const n = networks.get(name);
     const extra = extraNets.get(name);
     if (extra && extra.length) {
@@ -260,6 +269,12 @@ export function composeOverride(app: AppSpec): string {
   }
   lines.push("");
   return lines.join("\n");
+}
+
+/** The members of this app's STORED compose file that get the default restart policy. A git-compose app keeps its YAML
+ *  in the clone (not on the hub), so it yields none here: its up script is given the list from the rendered stack. */
+export function composeRestartServicesOf(app: AppSpec): string[] {
+  return isGitCompose(app) ? [] : composeRestartServices(app.composeFile);
 }
 
 /** Compose project name — namespaces all services of this app. */
@@ -323,10 +338,11 @@ export function buildComposeUpScript(app: AppSpec, noCache = false): string {
   const magic = !!(app.domain && app.composeWebService);
   const mounts = app.configMounts ?? [];
   const overridePath = composeOverridePath(app);
-  // The Tugra override carries the proxy labels (primary and/or per-service domains) AND/OR the config-mount
-  // binds — write it for any of them.
+  // The Tugra override carries the proxy labels (primary and/or per-service domains), the config-mount binds AND/OR the
+  // default restart policy of members that set none — write it for any of them.
   const extraNetworks = [...new Set((app.composeNetworks ?? []).map((r) => r.network))];
-  const writeOverride = magic || mounts.length > 0 || (app.serviceDomains?.length ?? 0) > 0 || extraNetworks.length > 0;
+  const restartServices = composeRestartServicesOf(app);
+  const writeOverride = magic || mounts.length > 0 || (app.serviceDomains?.length ?? 0) > 0 || extraNetworks.length > 0 || restartServices.length > 0;
 
   const lines = [
     "set -e",
@@ -352,7 +368,7 @@ export function buildComposeUpScript(app: AppSpec, noCache = false): string {
   // created can ever be pruned; idempotent and tolerant of an existing one.
   for (const n of extraNetworks) lines.push(`docker network create --label ${NETWORK_OWNER_LABEL} ${shq(n)} 2>/dev/null || true`);
   if (writeOverride) {
-    lines.push(`printf %s ${shq(b64(composeOverride(app)))} | base64 -d > ${overridePath}`);
+    lines.push(`printf %s ${shq(b64(composeOverride(app, restartServices)))} | base64 -d > ${overridePath}`);
   }
   if (hasEnv) {
     lines.push(

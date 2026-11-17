@@ -19,10 +19,11 @@ import { ContainerOpsService } from "./container-ops.service";
 import { ContainerLogStreamGuard } from "./container-log-stream.guard";
 import { ContainerHealthRunnerService } from "./container-health.runner.service";
 import { ContainerHealthSchedulerService } from "./container-health.scheduler.service";
+import { ComposeRestartHealService } from "./compose-restart-heal.service";
 
 @Module({
   imports: [AgentGatewayModule, MetricsModule, CryptoModule, NotificationsModule, ServersModule, ClustersModule, LogDrainsModule],
   controllers: [ServerOpsController, FleetController],
-  providers: [CleanupService, GpuInventoryService, CleanupRunnerService, CleanupSchedulerService, PatchService, LogDrainService, ProxyOpsService, ContainerOpsService, ContainerLogStreamGuard, ContainerHealthRunnerService, ContainerHealthSchedulerService],
+  providers: [CleanupService, GpuInventoryService, CleanupRunnerService, CleanupSchedulerService, PatchService, LogDrainService, ProxyOpsService, ContainerOpsService, ContainerLogStreamGuard, ContainerHealthRunnerService, ContainerHealthSchedulerService, ComposeRestartHealService],
 })
 export class ServerOpsModule {}
