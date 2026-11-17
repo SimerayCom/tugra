@@ -204,3 +204,33 @@ describe("source scripts executed against a fake source host", () => {
     expect(start.get(A)).toBe("gone");
   });
 });
+
+describe("source inspect with a custom container name prefix", () => {
+  const UUID = "x8kc0sw4cw0c0ooc0o4gg0ck";
+  const ref = `app:s:${UUID}`;
+  const line = (id: string, name: string, state = "running") => ["TUGRA_CTR", ref, id, name, "ghcr.io/x/web:1", "", state].join("\t");
+
+  it("the discovery script has a case pattern for <prefix>-<digits> beside the uuid ones, shell-quoted", () => {
+    const script = buildSourceInspectScript([{ itemRef: ref, containerPrefix: "shop" }]);
+    expect(script).toContain(`'${UUID}'|'${UUID}'-[0-9]*|'shop'-[0-9]*)`);
+    expect(buildSourceInspectScript([{ itemRef: ref }])).not.toContain("'shop'");
+  });
+
+  it("refuses a prefix that is not a plain name instead of putting it in a shell pattern", () => {
+    for (const bad of ["a b", "x;id", "-x", "a'b", "$(id)", ""]) expect(() => buildSourceInspectScript([{ itemRef: ref, containerPrefix: bad }])).toThrow();
+  });
+
+  it("parses the containers found under the prefix and under the uuid, and drops look-alikes", () => {
+    const out = [line(A, "shop-20261110T153012"), line(B, `${UUID}-20261110T153012`), line(C, "shop-pr-3"), line(D, "shopx-20261110T153012")].join("\n");
+    const found = parseSourceInspect(out, [{ itemRef: ref, containerPrefix: "shop" }]);
+    expect(found.map((f) => f.name).sort()).toEqual(["shop-20261110T153012", `${UUID}-20261110T153012`].sort());
+    // the same report for an item that was not told its prefix keeps only the uuid one: what the freeze did before
+    expect(parseSourceInspect(out, [{ itemRef: ref }]).map((f) => f.name)).toEqual([`${UUID}-20261110T153012`]);
+  });
+
+  it("another item's prefix is not applied to this item", () => {
+    const other = `app:s:y9kc0sw4cw0c0ooc0o4gg0ck`;
+    const out = [line(A, "shop-20261110T153012")].join("\n");
+    expect(parseSourceInspect(out, [{ itemRef: ref }, { itemRef: other, containerPrefix: "shop" }])).toEqual([]);
+  });
+});

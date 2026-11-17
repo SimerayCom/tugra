@@ -24,6 +24,20 @@ const input = (over: Partial<Parameters<HostCommandService["build"]>[0]> = {}) =
 /** The pasted command is `sh -s <<'EOF' ... EOF`; syntax-check it for real. */
 const syntaxOk = (command: string): boolean => spawnSync("sh", ["-n", "-c", command]).status === 0;
 
+describe("HostCommandService: FREEZE items of an app with a custom container name prefix", () => {
+  it("the freeze item of a prefixed app is `<itemRef>=<prefix>`; an unprefixed one stays the bare itemRef", async () => {
+    const snap = makeSnap({ apps: [{ itemRef: `app:srv-a:${UC}`, name: "web", containerPrefix: "shop" }, { itemRef: `app:srv-a:${UA}`, name: "plain" }], services: [], databases: [], volumes: [] });
+    const r = await new HostCommandService(new FakeDataPort(snap)).build(input({ step: "FREEZE" }));
+    expect(r.command).toContain(`'srv-a') printf '%s\\n' 'app:srv-a:${UA}' 'app:srv-a:${UC}=shop' ;;`);
+    expect(syntaxOk(r.command)).toBe(true);
+  });
+
+  it("refuses to build a script for a prefix that is not a plain name", async () => {
+    const snap = makeSnap({ apps: [{ itemRef: `app:srv-a:${UC}`, name: "web", containerPrefix: "x;id" }], services: [], databases: [], volumes: [] });
+    await expect(new HostCommandService(new FakeDataPort(snap)).build(input({ step: "FREEZE" }))).rejects.toBeInstanceOf(HostCommandError);
+  });
+});
+
 describe("HostCommandService", () => {
   it("DATA_SEED: one script for the hosts that have data items, each restricted to ITS items with --only, in the phase's flags", async () => {
     const r = await svc().build(input());

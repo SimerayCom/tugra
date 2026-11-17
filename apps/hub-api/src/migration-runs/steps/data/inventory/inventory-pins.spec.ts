@@ -25,6 +25,13 @@ describe("derivePins (R11)", () => {
     expect(pins).toEqual([{ kind: "image-pin", key: "getmeili/meilisearch:latest", scope: "host-1", value: D1, evidence: "host-loop-reported" }]);
   });
 
+  it("the candidate's containerPrefix lets its <prefix>-<timestamp> container pin; another app's prefix does not", () => {
+    const inventories = new Map([["host-1", inv([ctr(H("a"), "shop-20261110T153012", "getmeili/meilisearch:latest", [`getmeili/meilisearch@${D1}`])])]]);
+    expect(derivePins([{ ...cand(U1, "getmeili/meilisearch:latest"), containerPrefix: "shop" }], inventories)).toEqual([{ kind: "image-pin", key: "getmeili/meilisearch:latest", scope: "host-1", value: D1, evidence: "host-loop-reported" }]);
+    expect(derivePins([cand(U1, "getmeili/meilisearch:latest")], inventories)).toEqual([]);
+    expect(derivePins([{ ...cand(U1, "getmeili/meilisearch:latest"), containerPrefix: "other" }], inventories)).toEqual([]);
+  });
+
   it("a single-host run (label `_`) pins for every server; a tag that is not floating, a stopped container and a foreign container pin nothing", () => {
     const inventories = new Map([["_", inv([ctr(H("a"), U1, "nginx", [`nginx@${D1}`]), ctr(H("b"), U2, "nginx", [`nginx@${D2}`], "exited"), ctr(H("c"), "other", "nginx", [`nginx@${D2}`])])]]);
     expect(derivePins([cand(U1, "nginx", "_")], inventories)).toEqual([{ kind: "image-pin", key: "nginx", scope: "", value: D1, evidence: "host-loop-reported" }]);
@@ -77,10 +84,10 @@ describe("the whole path: the real inventory script against a fake docker, then 
     fake = null;
   });
 
-  function ingestRun(operatorPin?: string) {
+  function ingestRun(operatorPin?: string, prefix?: { name: string; planned: boolean }) {
     fake = new InventoryHostFake({
       containers: [
-        { id: H("a"), name: `${U1}-170000000000`, image: "getmeili/meilisearch:latest", repoDigests: [`getmeili/meilisearch@${D1}`] },
+        { id: H("a"), name: prefix ? `${prefix.name}-20261110T153012` : `${U1}-170000000000`, image: "getmeili/meilisearch:latest", repoDigests: [`getmeili/meilisearch@${D1}`] },
         { id: H("b"), name: `${U2}-170000000001`, image: "gotenberg/gotenberg:8", repoDigests: [`gotenberg/gotenberg@${D2}`] },
       ],
     });
@@ -98,7 +105,7 @@ describe("the whole path: the real inventory script against a fake docker, then 
           meta: {
             plan: {
               items: [
-                { itemRef: `app:host-1:${U1}`, kind: "app", proposed: { source: "IMAGE", image: "getmeili/meilisearch:latest" } },
+                { itemRef: `app:host-1:${U1}`, kind: "app", proposed: { source: "IMAGE", image: "getmeili/meilisearch:latest", ...(prefix?.planned ? { containerPrefix: prefix.name } : {}) } },
                 { itemRef: `app:host-1:${U2}`, kind: "app", proposed: { source: "IMAGE", image: "gotenberg/gotenberg:8" } },
               ],
             },
@@ -114,6 +121,15 @@ describe("the whole path: the real inventory script against a fake docker, then 
     const { svc, hints, text } = ingestRun();
     await svc.ingest(OP, text);
     expect(await hints.list("run1")).toEqual([{ kind: "image-pin", key: "getmeili/meilisearch:latest", scope: "host-1", value: D1, evidence: "host-loop-reported" }]);
+  });
+
+  it("an app with a custom container name prefix: its <prefix>-<timestamp> container is found through the plan's containerPrefix (and not without it)", async () => {
+    const withPrefix = ingestRun(undefined, { name: "shop", planned: true });
+    await withPrefix.svc.ingest(OP, withPrefix.text);
+    expect(await withPrefix.hints.list("run1")).toEqual([{ kind: "image-pin", key: "getmeili/meilisearch:latest", scope: "host-1", value: D1, evidence: "host-loop-reported" }]);
+    const without = ingestRun(undefined, { name: "shop", planned: false });
+    await without.svc.ingest(OP, without.text);
+    expect(await without.hints.list("run1")).toEqual([]);
   });
 
   it("an operator's own pin survives the report; re-running the inventory refreshes a host-reported one", async () => {

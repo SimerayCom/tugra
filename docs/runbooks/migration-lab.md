@@ -360,8 +360,11 @@ handling; `200` is the real default). A second mock with a budget of 5 proves th
 starts a RUNNING container named `<uuid>-YYYYMMDDTHHMMSS` after the first application of team 0 and runs the volume copy: the dry run
 must say `volume-skipped-running` (resolved by the uuid alone), `--stop-source` must stop exactly that container, and the volume must
 compare identical. An application with a `custom_container_name_prefix` is named `<prefix>-<timestamp>`; the item ref carries only
-the uuid, so the hub-built freeze and inventory scripts do not resolve such an application (the agent matches `<sourceRef>-<suffix>`, so it
-would, if handed the prefix as its sourceRef). The mock keeps the prefix `null` on every application.
+the uuid, so the discovery reads the prefix from the application detail (`settings.custom_container_name_prefix`) into the plan item
+(`proposed.containerPrefix`) and the freeze (agent and host-loop scripts), the host inventory cross-check, the image pins and the
+migrator's volume resolver (`containerPrefix` on the `/targets` row) all match `<prefix>-<timestamp>` as well as `<uuid>-<timestamp>`.
+This is covered at the unit level (real shell against a fake docker, the Go resolver); the mock still keeps the prefix `null` on every
+application, so no lab job exercises it yet.
 
 ### L14 Ubuntu 26.04 (`l14-ubuntu-source.sh`)
 The job runs on `ubuntu-latest` (24.04 at the time of writing): a runner label for 26.04 is not assumed to exist, and a job on a label

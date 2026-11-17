@@ -38,7 +38,14 @@ type Target struct {
 	SourceImage     string   `json:"sourceImage"`
 	AppItemRef      string   `json:"appItemRef"`
 	DatabaseItemRef string   `json:"databaseItemRef"`
+	// ContainerPrefix is the owning app's custom container name prefix (Coolify settings.custom_container_name_prefix): its
+	// container is `<prefix>-<deploy timestamp>` instead of `<uuid>-<deploy timestamp>`. Additive and optional; app volumes only.
+	ContainerPrefix string `json:"containerPrefix"`
 }
+
+// containerPrefixRe is the shape of a container name prefix the hub puts into a target: a plain docker-name-safe token, the same
+// charset as a source ref. Anything else is refused before it can reach a name comparison.
+var containerPrefixRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$`)
 
 // VolDest is where a streamed volume lands on the target (hub-derived; never a host path).
 type VolDest struct {
@@ -161,7 +168,7 @@ func Resolve(ctx context.Context, tg Target, override, dockerPath string, env []
 		return nil, err
 	}
 
-	id, err := resolveContainerID(sourceRef, override, rows, false)
+	id, err := resolveContainerID(sourceRef, "", override, rows, false)
 	if err != nil {
 		return nil, err
 	}
@@ -208,15 +215,16 @@ func Resolve(ctx context.Context, tg Target, override, dockerPath string, env []
 
 // resolveContainerID picks ONE container id: a --map override (exact name / 64-hex id / unique 12-hex prefix) or the
 // byte-exact name match of sourceRef. allowSuffix (the volume arm only) additionally accepts Coolify's application
-// container naming `<uuid>-<digits>` when no container is named exactly sourceRef. 0 hits => ErrNotFound; >1 =>
-// ErrAmbiguous. The DB arm calls it with allowSuffix=false, so its behaviour is exactly what it always was.
-func resolveContainerID(sourceRef, override string, rows []psRow, allowSuffix bool) (string, error) {
+// container naming `<uuid>-<deploy timestamp>`, or `<prefix>-<deploy timestamp>` for an app with a custom container name prefix,
+// when no container is named exactly sourceRef. 0 hits => ErrNotFound; >1 => ErrAmbiguous. The DB arm calls it with
+// allowSuffix=false, so its behaviour is exactly what it always was.
+func resolveContainerID(sourceRef, prefix, override string, rows []psRow, allowSuffix bool) (string, error) {
 	if override != "" {
 		return resolveOverride(override, rows)
 	}
 	id, err := resolveByName(sourceRef, rows)
 	if err == ErrNotFound && allowSuffix {
-		return resolveBySuffixedName(sourceRef, rows)
+		return resolveBySuffixedName(rows, sourceRef, prefix)
 	}
 	return id, err
 }
@@ -230,17 +238,23 @@ var (
 
 func isDeploySuffix(s string) bool { return suffixDigitsRe.MatchString(s) || suffixISORe.MatchString(s) }
 
-// resolveBySuffixedName matches `<sourceRef>-<suffix>` in both Coolify forms (legacy digits and the 4.7.x ISO
-// timestamp); Coolify names an application container after its uuid (or its custom container-name prefix, which a
-// caller that knows it passes as sourceRef) plus a deploy timestamp. Several such containers (an old and a new
-// deploy) are ambiguous: fail closed.
-func resolveBySuffixedName(sourceRef string, rows []psRow) (string, error) {
+// resolveBySuffixedName matches `<base>-<suffix>` in both Coolify forms (legacy digits and the 4.7.x ISO timestamp) for each
+// base: Coolify names an application container after its uuid, or its custom container name prefix, plus a deploy timestamp. An
+// empty base is skipped. Several such containers (an old and a new deploy, or one under the uuid and one under the prefix) are
+// ambiguous: fail closed.
+func resolveBySuffixedName(rows []psRow, bases ...string) (string, error) {
 	var hits []string
 	for _, r := range rows {
+	rowLoop:
 		for _, n := range r.names {
-			if rest, ok := strings.CutPrefix(n, sourceRef+"-"); ok && isDeploySuffix(rest) {
-				hits = append(hits, r.id)
-				break
+			for _, base := range bases {
+				if base == "" {
+					continue
+				}
+				if rest, ok := strings.CutPrefix(n, base+"-"); ok && isDeploySuffix(rest) {
+					hits = append(hits, r.id)
+					break rowLoop
+				}
 			}
 		}
 	}

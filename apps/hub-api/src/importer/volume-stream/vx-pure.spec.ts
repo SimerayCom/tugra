@@ -33,6 +33,13 @@ describe("buildVolumeTargets", () => {
     const maria = new Map([[DB_ID, { id: DB_ID, engine: "MARIADB", version: "11", image: "mariadb:11" }]]);
     expect(buildVolumeTargets({ tasks: [dbTask()], dbs: maria, dbVolumeRefs: new Set([DB_REF]) })).toEqual([]);
   });
+  it("an app volume carries its owner's custom container name prefix; nothing else does", () => {
+    const prefixes = new Map([[APP_REF, "shop"], [DB_REF, "ignored"]]);
+    const t = buildVolumeTargets({ tasks: [dbTask(), appTask()], dbs, dbVolumeRefs: new Set([DB_REF]), appContainerPrefixes: prefixes });
+    expect(t.find((x) => x.itemRef === APP_VOL_REF)).toMatchObject({ containerPrefix: "shop", appItemRef: APP_REF });
+    expect(t.find((x) => x.itemRef === DB_VOL_REF)).not.toHaveProperty("containerPrefix");
+    expect(buildVolumeTargets({ tasks: [appTask()], dbs, dbVolumeRefs: new Set() })[0]).not.toHaveProperty("containerPrefix");
+  });
   it("marks an explicit exclusion on the target", () => {
     const t = buildVolumeTargets({ tasks: [appTask()], dbs, dbVolumeRefs: new Set(), excluded: { [APP_VOL_REF]: { reason: "signoz", at: "x", by: "u" } } });
     expect(t[0].excluded).toEqual({ reason: "signoz", at: "x", by: "u" });

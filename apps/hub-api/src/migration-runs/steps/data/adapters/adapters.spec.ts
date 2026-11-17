@@ -96,6 +96,13 @@ describe("PrismaDataPort.snapshot", () => {
     expect(vols["volume:srv:pgvol:data"] ?? vols["volume:s:pgvol:data"]).toMatchObject({ destType: "db-data", gates: expect.any(Array) });
   });
 
+  it("an app whose plan item has a custom container name prefix carries it into the snapshot (the freeze stop list and the cross-check read it there)", async () => {
+    const o = op();
+    (o.meta.plan.items as unknown[]).push({ itemRef: "app:s:abc", kind: "app", proposed: { containerPrefix: "shop" } }, { itemRef: "app:s:ex", kind: "app", proposed: { containerPrefix: "no good" } }, { itemRef: "database:s:pg", kind: "database", proposed: { containerPrefix: "db" } });
+    const s = await port(prisma(o)).snapshot(makeRun());
+    expect(s.apps).toEqual([{ itemRef: "app:s:abc", name: "web", source: "GIT", containerPrefix: "shop" }, { itemRef: "app:s:ex", name: "cache-app", source: "IMAGE" }]);
+  });
+
   it("carries when a database's data task finished, so a restore from before the freeze can be told from the final one", async () => {
     const at = new Date("2026-11-20T09:45:00.000Z");
     const tasks = op().tasks.map((t) => (t.itemRef === "data:database:s:pg" ? { ...t, status: "DONE", output: null, finishedAt: at } : t));

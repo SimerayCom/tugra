@@ -12,7 +12,7 @@
  *    recorded containers and archives the record.
  *
  * Constant text: the run-specific values arrive in the variables `F_REF`, `F_RUNID`, `F_ACTION`, `F_ITEMS` (newline-joined
- * itemRefs), `F_GRACE` and `F_ALLOW_UNRESOLVED`, set by a PRELUDE ({@link freezePrelude}) of validated assignments. It carries no
+ * itemRefs, an app with a custom container name prefix as `<itemRef>=<prefix>`), `F_GRACE` and `F_ALLOW_UNRESOLVED`, set by a PRELUDE ({@link freezePrelude}) of validated assignments. It carries no
  * token: nothing here talks to the hub; the loop posts what this prints.
  */
 import { IDENT, shq } from "./source-scripts";
@@ -24,6 +24,16 @@ export type FreezeAction = (typeof FREEZE_ACTIONS)[number];
 const RUN_ID_RE = /^[A-Za-z0-9_-]{8,64}$/;
 const REF_RE = /^[A-Za-z0-9_-]{1,128}$/;
 const ITEM_RE = /^(app|service|database):[A-Za-z0-9_-]{1,128}:[A-Za-z0-9_-]{1,128}$/;
+/** A freeze item as the loop hands it to the host: the itemRef, plus `=<prefix>` for an app with a custom container name prefix. */
+const FREEZE_ITEM_RE = /^(app|service|database):[A-Za-z0-9_-]{1,128}:[A-Za-z0-9_-]{1,128}(=[A-Za-z0-9][A-Za-z0-9_-]{0,63})?$/;
+export const isFreezeItem = (x: string): boolean => FREEZE_ITEM_RE.test(x);
+
+/** The freeze item of a stop-list entry: `<itemRef>` or `<itemRef>=<prefix>` (an invalid prefix is refused, never embedded). */
+export function freezeItemOf(s: { itemRef: string; containerPrefix?: string }): string {
+  const token = s.containerPrefix ? `${s.itemRef}=${s.containerPrefix}` : s.itemRef;
+  if (!FREEZE_ITEM_RE.test(token)) throw new Error("invalid freeze item");
+  return token;
+}
 
 export interface FreezePreludeInput {
   ref: string;
@@ -38,7 +48,7 @@ export interface FreezePreludeInput {
 export function freezePrelude(i: FreezePreludeInput): string {
   if (!REF_RE.test(i.ref) || !RUN_ID_RE.test(i.runId) || !(FREEZE_ACTIONS as readonly string[]).includes(i.action)) throw new Error("invalid freeze input");
   if (!Number.isInteger(i.graceSec) || i.graceSec < 1 || i.graceSec > 3600) throw new Error("invalid grace");
-  if (i.items.length > 2000 || i.items.some((x) => !ITEM_RE.test(x))) throw new Error("invalid freeze item");
+  if (i.items.length > 2000 || i.items.some((x) => !FREEZE_ITEM_RE.test(x))) throw new Error("invalid freeze item");
   return [`F_REF='${i.ref}'`, `F_RUNID='${i.runId}'`, `F_ACTION='${i.action}'`, `F_GRACE='${i.graceSec}'`, `F_ALLOW_UNRESOLVED='${i.allowUnresolved ? 1 : 0}'`, `F_ITEMS='${i.items.join("\n")}'`, ""].join("\n");
 }
 
@@ -59,12 +69,23 @@ valid_rec() {
   case "$3" in ''|*[!A-Za-z0-9._/:@-]*|[!A-Za-z0-9]*) return 1 ;; esac
   return 0
 }
+# <digits, 6+> (4.1 .. 4.6) or YYYYMMDDTHHMMSS (4.7): the deploy timestamp Coolify appends; a preview (pr-N) is neither
+deploy_suffix() {
+  case "$1" in
+    [0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]T[0-9][0-9][0-9][0-9][0-9][0-9]) return 0 ;;
+    ''|*[!0-9]*) return 1 ;;
+  esac
+  [ "@{#1}" -ge 6 ]
+}
 discover() {
   docker ps -a --no-trunc --format '{{.ID}}|{{.Names}}|{{.Image}}|{{.Ports}}|{{.State}}' > "$D/ps.tmp" 2>/dev/null </dev/null || return 1
   : > "$D/rec.tmp"
   : > "$D/unres.tmp"
-  printf '%s\n' "$F_ITEMS" | while IFS= read -r item; do
-    [ -n "$item" ] || continue
+  printf '%s\n' "$F_ITEMS" | while IFS= read -r entry; do
+    [ -n "$entry" ] || continue
+    item=@{entry%%=*}
+    pfx=
+    case "$entry" in *=*) pfx=@{entry#*=} ;; esac
     kind=@{item%%:*}
     uuid=@{item##*:}
     found=0
@@ -72,15 +93,10 @@ discover() {
       m=0
       case "$name" in
         "$uuid") m=1 ;;
-        "$uuid"-*)
-          # <uuid>-<digits, 6+> (4.1 .. 4.6) or <uuid>-YYYYMMDDTHHMMSS (4.7); a preview <uuid>-pr-N is neither
-          sfx=@{name#"$uuid"-}
-          case "$sfx" in
-            [0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]T[0-9][0-9][0-9][0-9][0-9][0-9]) m=1 ;;
-            ''|*[!0-9]*) ;;
-            *) [ "@{#sfx}" -ge 6 ] && m=1 ;;
-          esac ;;
+        "$uuid"-*) sfx=@{name#"$uuid"-}; deploy_suffix "$sfx" && m=1 ;;
       esac
+      # an app with a custom container name prefix is named <prefix>-<timestamp> instead of <uuid>-<timestamp>
+      if [ "$m" = 0 ] && [ -n "$pfx" ]; then case "$name" in "$pfx"-*) sfx=@{name#"$pfx"-}; deploy_suffix "$sfx" && m=1 ;; esac; fi
       if [ "$kind" = service ] && [ "$m" = 0 ]; then case "$name" in ?*-"$uuid") m=1 ;; esac; fi
       [ "$m" = 1 ] || continue
       found=1

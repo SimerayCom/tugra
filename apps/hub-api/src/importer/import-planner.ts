@@ -11,6 +11,7 @@ import type {
   ImportRisk,
 } from "./foreign-fleet";
 import { mapBuildPack } from "./buildpack-map";
+import { validContainerPrefix } from "./container-prefix";
 import { foreignAppToVolumes } from "./apply-map";
 import { transformServiceCompose, type ServiceTransformResult } from "./import-service-map";
 import type { ForeignService } from "./foreign-fleet";
@@ -207,6 +208,8 @@ function planApp(app: ForeignApp, dbByRef: Map<string, ForeignDb>, volumesCarrie
       replicas: app.replicas ?? 1,
       templateSlug: app.templateSlug ?? null,
       ...(mappedVolumes ? { volumeMounts: mappedVolumes.volumes.length } : {}),
+      // the source container is `<prefix>-<timestamp>`, not `<uuid>-<timestamp>`: the freeze, the host inventory and the volume copy need it
+      ...(validContainerPrefix(app.containerPrefix) ? { containerPrefix: app.containerPrefix } : {}),
     },
     risks,
     dependsOn,

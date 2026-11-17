@@ -12,6 +12,7 @@
  *    charsets), so a hostile source cannot smuggle code into a script the hub runs as root.
  */
 import { coolifyRefOf, type CoolifyResourceKind } from "../../../../importer/sources/coolify-control";
+import { validContainerPrefix } from "../../../../importer/container-prefix";
 import type { RecordedContainer } from "../data-contract";
 
 /** POSIX single-quote a value. */
@@ -35,8 +36,9 @@ export const isDeploySuffix = (s: string): boolean => LEGACY_SUFFIX_RE.test(s) |
 /**
  * Does a container name belong to the Coolify resource `uuid` (exact, `<uuid>-<deploy suffix>` in either the legacy digits
  * or the 4.7.x ISO form, or a service component `<x>-<uuid>`)? `containerPrefixes` are the app's
- * `custom_container_name_prefix` values when the caller knows them (Coolify then names the container `<prefix>-<suffix>`);
- * the item ref carries only the uuid, so the shell scripts cannot take it and such an app is matched by uuid only.
+ * `custom_container_name_prefix` values when the caller knows them (Coolify then names the container `<prefix>-<suffix>`). The item
+ * ref carries only the uuid, so the prefix travels beside it (`proposed.containerPrefix` of the plan item) and every caller that
+ * matches containers by name passes it: the freeze (agent and host loop), the host inventory cross-check, the image pins.
  */
 export function containerNameMatches(name: string, uuid: string, kind: CoolifyResourceKind, containerPrefixes: readonly string[] = []): boolean {
   if (name === uuid) return true;
@@ -49,6 +51,15 @@ export function containerNameMatches(name: string, uuid: string, kind: CoolifyRe
 
 export interface InspectTarget {
   itemRef: string;
+  /** The app's custom container name prefix (`<prefix>-<deploy timestamp>`), when it has one. */
+  containerPrefix?: string;
+}
+
+/** The prefixes of a target, validated: a value that is not a plain name never reaches a shell pattern. */
+function prefixesOf(it: InspectTarget): string[] {
+  if (it.containerPrefix === undefined) return [];
+  if (!validContainerPrefix(it.containerPrefix)) throw new Error("invalid container prefix");
+  return [it.containerPrefix];
 }
 
 /** The read-only discovery: every container (any state) whose name belongs to one of the items. */
@@ -58,7 +69,7 @@ export function buildSourceInspectScript(items: readonly InspectTarget[]): strin
     const ref = coolifyRefOf(it.itemRef);
     if (!ref) throw new Error("not a coolify item ref");
     const u = shq(ref.uuid);
-    const pats = [u, `${u}-[0-9]*`, ...(ref.kind === "service" ? [`*-${u}`] : [])];
+    const pats = [u, `${u}-[0-9]*`, ...prefixesOf(it).map((p) => `${shq(p)}-[0-9]*`), ...(ref.kind === "service" ? [`*-${u}`] : [])];
     cases.push(`    ${pats.join("|")}) emit ${shq(it.itemRef)} ;;`);
   }
   return [
@@ -81,6 +92,7 @@ export interface DiscoveredContainer extends RecordedContainer {
 /** Parse + VALIDATE the discovery output: a line that fails any check is dropped (never trusted). */
 export function parseSourceInspect(output: string, items: readonly InspectTarget[]): DiscoveredContainer[] {
   const refs = new Map(items.map((i) => [i.itemRef, coolifyRefOf(i.itemRef)]));
+  const prefixes = new Map(items.map((i) => [i.itemRef, prefixesOf(i)]));
   const out: DiscoveredContainer[] = [];
   const seen = new Set<string>();
   for (const line of output.split("\n")) {
@@ -89,7 +101,7 @@ export function parseSourceInspect(output: string, items: readonly InspectTarget
     const [, itemRef, id, name, image, ports, state] = f;
     const ref = refs.get(itemRef);
     if (!ref || !isHex64(id) || !NAME_RE.test(name) || !IMAGE_RE.test(image) || !PORTS_RE.test(ports) || !/^[a-z]{3,12}$/.test(state)) continue;
-    if (!containerNameMatches(name, ref.uuid, ref.kind) || seen.has(id)) continue;
+    if (!containerNameMatches(name, ref.uuid, ref.kind, prefixes.get(itemRef) ?? []) || seen.has(id)) continue;
     seen.add(id);
     out.push({ id, name, image, ports, itemRef, state });
   }

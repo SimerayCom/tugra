@@ -14,6 +14,7 @@ import { ImportExecutorService } from "../import-executor.service";
 import { MigrationTokenService, type MigrationTokenContext } from "../migration-token.service";
 import type { GateResult } from "./vx-gates";
 import { dbGates, dumpDestGate, dumpDestLayout } from "./vx-dest-gate";
+import { containerPrefixesOf } from "../container-prefix";
 import { DUMP_VOLUME_NAME, VOLUME_INGEST_DUMP, VX_409, VX_PROTOCOL, VX_VOL_IDX, isStreamDumpEngine, vxDataRef, vxDumpEnabled, vxEnabled, vxMaxBytes, vxMaxDumpBytes, vxMaxParts, vxPartRawBytes, vxPrincipal, vxCommitWaitMs, vxStaleMs } from "./vx-constants";
 import { VxPartRegistry, type InflightPart, type PartOutcome } from "./vx-part-registry";
 import { VxApplyService } from "./vx-apply.service";
@@ -94,7 +95,7 @@ export class VxService {
       const rows = await this.prisma.database.findMany({ where: { id: { in: dbIds } }, select: { id: true, engine: true, version: true, image: true } });
       for (const r of rows) dbs.set(r.id, { id: r.id, engine: r.engine, version: r.version, image: r.image });
     }
-    return buildVolumeTargets({ tasks: opRow.tasks, dbs, dbVolumeRefs: dbVolumeModeRefs(meta.plan?.items), dbStreamRefs: vxDumpEnabled() ? dbStreamModeRefs(meta) : new Set<string>(), excluded: meta.vxExcluded });
+    return buildVolumeTargets({ tasks: opRow.tasks, dbs, dbVolumeRefs: dbVolumeModeRefs(meta.plan?.items), dbStreamRefs: vxDumpEnabled() ? dbStreamModeRefs(meta) : new Set<string>(), excluded: meta.vxExcluded, appContainerPrefixes: containerPrefixesOf(meta.plan?.items) });
   }
 
   /**
@@ -346,7 +347,10 @@ export class VxService {
         dest: { type: t.destType, name: t.name, mountPath: t.mountPath },
       };
       if (t.excluded) base.reason = t.excluded.reason;
-      if (t.destType === "app-volume") base.appItemRef = t.appItemRef;
+      if (t.destType === "app-volume") {
+        base.appItemRef = t.appItemRef;
+        if (t.containerPrefix) base.containerPrefix = t.containerPrefix; // the migrator finds `<prefix>-<timestamp>` as well as `<uuid>-<timestamp>`
+      }
       else Object.assign(base, { databaseItemRef: t.databaseItemRef, engine: t.engine, engineVersion: t.engineVersion, sourceImage: t.sourceImage });
       rows.push(base);
     }

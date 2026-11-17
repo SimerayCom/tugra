@@ -35,6 +35,8 @@ export interface VxVolumeTarget {
   mountPath: string;
   /** The owning application task's itemRef (`app:`), or the compose SERVICE's (`service:`) when {@link ownerKind} is `service`. */
   appItemRef?: string;
+  /** An `app` owner whose source container is named `<prefix>-<deploy timestamp>` (Coolify `custom_container_name_prefix`): the migrator's resolver needs it beside the uuid in the ref. */
+  containerPrefix?: string;
   /** `service`: the volume belongs to an imported compose service (a stopped compose app); it reuses the app-volume lane end to end. */
   ownerKind?: "service";
   databaseItemRef?: string;
@@ -153,6 +155,8 @@ export function buildVolumeTargets(opts: {
   /** Databases moved by the streamed dump lane: they get a `db-dump` target and NEVER a `db-data` one (the dump lane wins over a physical plan item). */
   dbStreamRefs?: ReadonlySet<string>;
   excluded?: Readonly<Record<string, VxExclusion>>;
+  /** `app itemRef -> custom container name prefix` of the plan (`containerPrefixesOf`); only an `app` task's volumes carry it. */
+  appContainerPrefixes?: ReadonlyMap<string, string>;
 }): VxVolumeTarget[] {
   const out: VxVolumeTarget[] = [];
   for (const t of opts.tasks) {
@@ -164,7 +168,8 @@ export function buildVolumeTargets(opts: {
       for (const m of res!.mounts!) {
         const ref = volumeItemRef(t.itemRef, m.name);
         if (!ref || typeof m.path !== "string") continue;
-        out.push({ itemRef: ref, destType: "app-volume", name: m.name, mountPath: m.path, appItemRef: t.itemRef });
+        const containerPrefix = opts.appContainerPrefixes?.get(t.itemRef);
+        out.push({ itemRef: ref, destType: "app-volume", name: m.name, mountPath: m.path, appItemRef: t.itemRef, ...(containerPrefix ? { containerPrefix } : {}) });
       }
     } else if (t.resourceType === "application" && t.kind === "service") {
       // a compose SERVICE (search engine, document converter, ...): each copy volume is an app-volume target owned by the service's app.

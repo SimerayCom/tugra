@@ -36,7 +36,7 @@ import { isMigrationToken } from "../../../../importer/migration-token";
 import { SERVER_MAP_MAX } from "../../../core/run-contract";
 import { assertSafeFlags, type MigratorPhase } from "../data-logic";
 import { LAUNCH_MARK, MIGRATE_RUN_ROOT, MIG_MARK, buildLaunchTemplate, buildLauncherStatusScript, type LaunchTag } from "../launcher/migrator-launcher";
-import { buildFreezeTemplate, freezePrelude } from "./host-freeze-script";
+import { buildFreezeTemplate, freezePrelude, isFreezeItem } from "./host-freeze-script";
 import { shq } from "./source-scripts";
 
 export const LOOP_SCRIPT_STEPS = ["DATA_SEED", "FREEZE", "DATA_FINAL", "INVENTORY"] as const;
@@ -47,7 +47,7 @@ export interface LoopHostInput {
   ref: string;
   /** The migrator flags for this host (the phase's flags plus one `--only <itemRef>` per item that lives here). */
   flags: readonly string[];
-  /** FREEZE: the itemRefs (`app:`/`service:`/`database:`) whose containers this host stops. */
+  /** FREEZE: the itemRefs (`app:`/`service:`/`database:`) whose containers this host stops; an app with a custom container name prefix as `<itemRef>=<prefix>` (`freezeItemOf`). */
   freezeItems: readonly string[];
 }
 
@@ -74,7 +74,6 @@ export interface HostLoopInput {
 
 const REF_RE = /^[A-Za-z0-9_-]{1,128}$/;
 const KEYDIR_RE = /^\/[A-Za-z0-9._@/-]{1,200}$/;
-const ITEM_RE = /^[a-z]+:[A-Za-z0-9_-]{1,128}:[A-Za-z0-9_-]{1,128}(:[A-Za-z0-9_-]{1,64})?$/;
 
 /** The attempt number of each phase's remote run directory: `inspect` and `warm-db` share the `seed` tag, so they must differ. */
 export function launchAttemptFor(phase: MigratorPhase): number {
@@ -340,7 +339,7 @@ export function buildHostLoopScript(i: HostLoopInput): string {
   for (const h of hosts) {
     if (!REF_RE.test(h.ref)) throw new Error("invalid host ref");
     assertSafeFlags(h.flags);
-    if (h.freezeItems.length > 2000 || h.freezeItems.some((x) => !ITEM_RE.test(x))) throw new Error("invalid freeze item");
+    if (h.freezeItems.length > 2000 || h.freezeItems.some((x) => !isFreezeItem(x))) throw new Error("invalid freeze item");
   }
   const dataStep = i.step === "DATA_SEED" || i.step === "DATA_FINAL";
   if (dataStep && !i.phase) throw new Error("a data step needs its phase");

@@ -30,11 +30,12 @@ import {
   type RecordedContainer,
   type SourceApiPort,
   type SourceHostPort,
+  type SourceItem,
 } from "./data-contract";
 import { TICK_GAP_CHECK, TICK_GAP_CODES, TICK_GAP_GATE_CHECK, tickGapCovered } from "./tick-gap";
 import { estimateEquals, estimateWindowDetail, sha256Hex, tickGapOf, windowExtrasOf, type TickGap, type WindowTerms } from "./data-logic";
 import { HOST_LOOP_CODES } from "./inventory/host-codes";
-import { planRefsOf, serverRefOfItem, sourceHostsOf } from "./inventory/host-hosts";
+import { containerPrefixesOfSnapshot, planRefsOf, serverRefOfItem, sourceHostsOf } from "./inventory/host-hosts";
 import { attestableFindings, crossCheckChecks } from "./inventory/cross-check";
 import { emptyHostView, loadHostView, type HostView } from "./inventory/host-view";
 import { HOST_REPORT_PORT, type HostReportPort } from "./inventory/inventory-contract";
@@ -55,6 +56,8 @@ export interface StopItem {
   kind: CoolifyResourceKind;
   uuid: string;
   name: string;
+  /** The app's custom container name prefix: its container is `<prefix>-<timestamp>`, not `<uuid>-<timestamp>`. */
+  containerPrefix?: string;
 }
 
 export interface FreezeObs extends Observation {
@@ -95,10 +98,10 @@ export { TICK_GAP_CHECK, TICK_GAP_CODES };
  */
 export function buildStopList(snap: Pick<DataSnapshot, "apps" | "services"> & { databases?: ReadonlyArray<Pick<DbDataItem, "itemRef" | "name" | "plane">> }): StopItem[] {
   const out: StopItem[] = [];
-  const candidates = [...snap.apps, ...snap.services, ...(snap.databases ?? []).filter((d) => d.plane === "volume")];
+  const candidates: ReadonlyArray<Pick<SourceItem, "itemRef" | "name" | "containerPrefix">> = [...snap.apps, ...snap.services, ...(snap.databases ?? []).filter((d) => d.plane === "volume")];
   for (const it of candidates) {
     const ref = coolifyRefOf(it.itemRef);
-    if (ref) out.push({ itemRef: it.itemRef, kind: ref.kind, uuid: ref.uuid, name: it.name ?? ref.uuid });
+    if (ref) out.push({ itemRef: it.itemRef, kind: ref.kind, uuid: ref.uuid, name: it.name ?? ref.uuid, ...(it.containerPrefix ? { containerPrefix: it.containerPrefix } : {}) });
   }
   return out.sort((a, b) => (a.itemRef < b.itemRef ? -1 : 1));
 }
@@ -298,6 +301,7 @@ export class FreezeHandler implements StepHandler<FreezeObs>, OnModuleInit {
       inventories: obs.hosts.inventories,
       reach: obs.hosts.reach,
       planRefs: planRefsOf(obs.snap),
+      containerPrefixes: containerPrefixesOfSnapshot(obs.snap),
       unlistedDbPolicy: resolveOwnerInput(run.inputs, "unlistedDbPolicy") ?? "block",
       orphanVolumePolicy: resolveOwnerInput(run.inputs, "orphanVolumePolicy") ?? "block",
       attestations: [...ctx.stepState("DATA_SEED").evidence.attestations, ...ctx.step.evidence.attestations],
@@ -518,7 +522,7 @@ export class FreezeHandler implements StepHandler<FreezeObs>, OnModuleInit {
       let record = obs.record;
       if (!record) {
         // 1. discover + record identity (only what is RUNNING now: a container that was already stopped is never started again)
-        const targets = obs.stop.map((s) => ({ itemRef: s.itemRef }));
+        const targets = obs.stop.map((s) => ({ itemRef: s.itemRef, ...(s.containerPrefix ? { containerPrefix: s.containerPrefix } : {}) }));
         const res = await this.host.run(run.targetServerId, buildSourceInspectScript(targets), "migrate", SCRIPT_TIMEOUT_MS);
         const found = parseSourceInspect(res.output, targets);
         const running: RecordedContainer[] = found.filter((c) => c.state === "running").map((c) => ({ id: c.id, name: c.name, image: c.image, ports: c.ports, itemRef: c.itemRef }));

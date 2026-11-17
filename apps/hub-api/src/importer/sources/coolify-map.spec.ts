@@ -18,6 +18,8 @@ import {
   parseComposeDomains,
   coolifyGitProvider,
   isValkeyImage,
+  appContainerPrefix,
+  containerPrefixKnown,
   type CoolifyFleetInput,
 } from "./coolify-map";
 import { isSensitiveVisible } from "./coolify-sensitive";
@@ -730,5 +732,32 @@ describe("Valkey databases (R12, standalone-redis on valkey/valkey)", () => {
     const m = mapDatabase({ uuid: "r", database_type: "standalone-redis", image: "redis:7.2" }, { volumes: [] });
     expect(m).toMatchObject({ engine: "REDIS", version: "7.2" });
     expect("notCarried" in m).toBe(false);
+  });
+});
+
+describe("custom container name prefix", () => {
+  const U = "x8kc0sw4cw0c0ooc0o4gg0ck";
+  it("appContainerPrefix reads settings.custom_container_name_prefix (4.7) or the flat column, trimmed, and drops the unusable", () => {
+    expect(appContainerPrefix({ uuid: U, settings: { custom_container_name_prefix: "shop" } })).toBe("shop");
+    expect(appContainerPrefix({ uuid: U, custom_container_name_prefix: " shop-2 " })).toBe("shop-2");
+    expect(appContainerPrefix({ uuid: U, settings: { custom_container_name_prefix: "shop" }, custom_container_name_prefix: "flat" })).toBe("shop"); // the nested value wins
+    for (const v of [null, undefined, "", "   ", "sh op", "x;id", "-x", U]) expect([v, appContainerPrefix({ uuid: U, settings: { custom_container_name_prefix: v as string | null } })]).toEqual([v, undefined]);
+    expect(appContainerPrefix({ uuid: U })).toBeUndefined();
+  });
+
+  it("containerPrefixKnown: the setting present (even null) or a pre-4.7 row means no detail read is needed", () => {
+    expect(containerPrefixKnown({})).toBe(false);
+    expect(containerPrefixKnown({ settings: { is_static: true } })).toBe(false);
+    expect(containerPrefixKnown({ settings: { custom_container_name_prefix: null } })).toBe(true);
+    expect(containerPrefixKnown({ custom_container_name_prefix: null })).toBe(true);
+    expect(containerPrefixKnown({ is_static: false })).toBe(true);
+    expect(containerPrefixKnown({ is_spa: true })).toBe(true);
+  });
+
+  it("mapApplication carries it on the ForeignApp and leaves it out when there is none", () => {
+    const base = { uuid: U, name: "web", build_pack: "dockerfile", git_repository: "o/r" };
+    expect(mapApplication({ ...base, settings: { custom_container_name_prefix: "shop" } }, { envs: [], volumes: [] }).containerPrefix).toBe("shop");
+    expect(mapApplication(base, { envs: [], volumes: [] })).not.toHaveProperty("containerPrefix");
+    expect(mapApplication(base, { envs: [], volumes: [] }).sourceRef).toBe(U);
   });
 });

@@ -138,6 +138,9 @@ export interface ForeignApp {
   autoDeploy?: boolean;
   /** Repo-relative glob patterns gating whether a push deploys (Tugra `setWatchPaths`). */
   watchPaths?: string[];
+  /** The source's custom container name prefix (Coolify `settings.custom_container_name_prefix`): its container is named
+   *  `<prefix>-<deploy timestamp>` instead of `<uuid>-<deploy timestamp>`. Only a shell-safe name ({@link validContainerPrefix}). */
+  containerPrefix?: string;
   /** Exec-form argv overrides for the container ENTRYPOINT / CMD (Tugra `setContainerCommand`). */
   containerEntrypoint?: string[];
   containerCommand?: string[];

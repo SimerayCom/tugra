@@ -26,5 +26,9 @@ export function dataItemsOfHost(host: string, items: Pick<DataSnapshot, "databas
   return [...items.databases.map((d) => d.itemRef), ...items.volumes.filter((v) => !v.excluded).map((v) => v.itemRef)].filter((r) => serverRefOfItem(r) === host).sort();
 }
 
+/** `app itemRef -> custom container name prefix` of the apps that have one (their container is `<prefix>-<timestamp>`, not `<uuid>-<timestamp>`). */
+export const containerPrefixesOfSnapshot = (items: Pick<DataSnapshot, "apps">): Map<string, string> =>
+  new Map(items.apps.filter((a) => !!a.containerPrefix).map((a) => [a.itemRef, a.containerPrefix as string] as const));
+
 /** Every itemRef of the plan (for the cross-check). */
 export const planRefsOf = (items: HostItems): string[] => [...items.databases.map((d) => d.itemRef), ...items.volumes.map((v) => v.itemRef), ...items.apps.map((a) => a.itemRef), ...items.services.map((s) => s.itemRef)];

@@ -179,6 +179,13 @@ describe("VxService targets + view", () => {
     const json = JSON.stringify(rows);
     expect(json).not.toMatch(/tugra_appv|tugra_dbv|password|token|\/etc\/tugra/i);
   });
+  it("targetRows: an app volume row carries the plan's custom container name prefix for the migrator's resolver (a bad value never travels)", async () => {
+    const withPrefix = harness({ op: { meta: { sourceKind: "coolify", serverId: SERVER_ID, plan: { items: [{ itemRef: "app:srv1:5f3a9c", kind: "app", proposed: { containerPrefix: "shop" } }] } } } });
+    const { rows } = await withPrefix.svc.targetRows(withPrefix.op as never);
+    expect(rows[0]).toMatchObject({ itemRef: APP_VOL_REF, appItemRef: "app:srv1:5f3a9c", containerPrefix: "shop" });
+    const bad = harness({ op: { meta: { sourceKind: "coolify", serverId: SERVER_ID, plan: { items: [{ itemRef: "app:srv1:5f3a9c", kind: "app", proposed: { containerPrefix: "x; id" } }] } } } });
+    expect(((await bad.svc.targetRows(bad.op as never)).rows[0] as Record<string, unknown>).containerPrefix).toBeUndefined();
+  });
   it("an excluded volume is advertised as `excluded` with its reason (never silently dropped)", async () => {
     const h = harness({ op: { meta: { sourceKind: "coolify", serverId: SERVER_ID, plan: { items: [] }, vxExcluded: { [APP_VOL_REF]: { reason: "owner chose", at: "x", by: "u" } } } } });
     const { rows } = await h.svc.targetRows(h.op as never);

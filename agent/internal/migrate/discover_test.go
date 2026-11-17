@@ -189,20 +189,55 @@ func TestResolveBySuffixedNameBothCoolifyForms(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got, err := resolveContainerID(c.ref, "", c.rows, true)
+			got, err := resolveContainerID(c.ref, "", "", c.rows, true)
 			if err != c.wantErr || got != c.want {
 				t.Fatalf("got (%q, %v), want (%q, %v)", got, err, c.want, c.wantErr)
 			}
 		})
 	}
 	t.Run("exact consistent name wins and needs no suffix", func(t *testing.T) {
-		got, err := resolveContainerID(uuid, "", []psRow{row(pgID, uuid), row(otherID, uuid+"-20261110T153012")}, true)
+		got, err := resolveContainerID(uuid, "", "", []psRow{row(pgID, uuid), row(otherID, uuid+"-20261110T153012")}, true)
 		if err != nil || got != pgID {
 			t.Fatalf("got (%q, %v)", got, err)
 		}
 	})
+	t.Run("an app with a custom container name prefix is found under <prefix>-<timestamp>, ISO and legacy", func(t *testing.T) {
+		for _, name := range []string{"shop-20261110T153012", "shop-170000000000"} {
+			got, err := resolveContainerID(uuid, "shop", "", []psRow{row(pgID, name), row(otherID, "unrelated-20261110T153012")}, true)
+			if err != nil || got != pgID {
+				t.Fatalf("%s: got (%q, %v)", name, got, err)
+			}
+		}
+	})
+	t.Run("the uuid form still resolves when a prefix is set (a container not yet recreated under the prefix)", func(t *testing.T) {
+		got, err := resolveContainerID(uuid, "shop", "", []psRow{row(pgID, uuid+"-20261110T153012")}, true)
+		if err != nil || got != pgID {
+			t.Fatalf("got (%q, %v)", got, err)
+		}
+	})
+	t.Run("a container under the uuid AND one under the prefix is ambiguous, never a guess", func(t *testing.T) {
+		if _, err := resolveContainerID(uuid, "shop", "", []psRow{row(pgID, uuid+"-20261110T153012"), row(otherID, "shop-20261111T153012")}, true); err != ErrAmbiguous {
+			t.Fatalf("got %v", err)
+		}
+	})
+	t.Run("a prefix never matches a preview, a short suffix or a longer name", func(t *testing.T) {
+		for _, name := range []string{"shop-pr-3", "shop-12345", "shopx-20261110T153012", "shop-20261110T153012-1", "myshop-20261110T153012"} {
+			if _, err := resolveContainerID(uuid, "shop", "", []psRow{row(pgID, name)}, true); err != ErrNotFound {
+				t.Fatalf("%s: got %v", name, err)
+			}
+		}
+	})
+	t.Run("the prefix is ignored on the DB arm and with an override", func(t *testing.T) {
+		if _, err := resolveContainerID(uuid, "shop", "", []psRow{row(pgID, "shop-20261110T153012")}, false); err != ErrNotFound {
+			t.Fatalf("got %v", err)
+		}
+		got, err := resolveContainerID(uuid, "shop", "custom-name", []psRow{row(pgID, "custom-name"), row(otherID, "shop-20261110T153012")}, true)
+		if err != nil || got != pgID {
+			t.Fatalf("override: got (%q, %v)", got, err)
+		}
+	})
 	t.Run("the DB arm never takes a suffixed name", func(t *testing.T) {
-		if _, err := resolveContainerID(uuid, "", []psRow{row(pgID, uuid+"-20261110T153012")}, false); err != ErrNotFound {
+		if _, err := resolveContainerID(uuid, "", "", []psRow{row(pgID, uuid+"-20261110T153012")}, false); err != ErrNotFound {
 			t.Fatalf("got %v", err)
 		}
 	})

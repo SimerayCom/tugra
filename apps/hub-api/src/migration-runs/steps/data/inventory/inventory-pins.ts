@@ -19,6 +19,8 @@ import type { HostInventory } from "./host-protocol";
 export interface PinCandidate {
   itemRef: string;
   image: string;
+  /** The app's custom container name prefix, when it has one (its container is `<prefix>-<timestamp>`). */
+  containerPrefix?: string;
 }
 
 /** The repository of an image as docker prints it in RepoDigests: the Docker Hub aliases are folded (`docker.io/library/nginx` is `nginx`). */
@@ -40,7 +42,7 @@ export function derivePins(candidates: readonly PinCandidate[], inventories: Rea
     const repo = normalizedRepo(cand.image);
     const digests = new Set<string>();
     for (const c of inv.containers) {
-      if (c.state !== "running" || !containerNameMatches(c.name, ref.uuid, "application")) continue;
+      if (c.state !== "running" || !containerNameMatches(c.name, ref.uuid, "application", cand.containerPrefix ? [cand.containerPrefix] : [])) continue;
       for (const d of c.repoDigests ?? []) {
         const at = d.indexOf("@");
         if (at > 0 && normalizedRepo(d.slice(0, at)) === repo && DIGEST_RE.test(d.slice(at + 1))) digests.add(d.slice(at + 1));

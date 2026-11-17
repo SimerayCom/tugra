@@ -84,7 +84,17 @@ func ResolveVolume(ctx context.Context, tg Target, override, dockerPath string, 
 	if err != nil {
 		return nil, err
 	}
-	id, err := resolveContainerID(sourceRef, override, rows, tg.Dest.Type == "app-volume")
+	prefix := ""
+	if tg.Dest.Type == "app-volume" && tg.ContainerPrefix != "" {
+		if !containerPrefixRe.MatchString(tg.ContainerPrefix) {
+			return nil, fmt.Errorf("container name prefix has an unsafe charset")
+		}
+		if isForbiddenName(tg.ContainerPrefix) {
+			return nil, ErrForbidden
+		}
+		prefix = tg.ContainerPrefix
+	}
+	id, err := resolveContainerID(sourceRef, prefix, override, rows, tg.Dest.Type == "app-volume")
 	if err == ErrNotFound && override == "" && isServiceVolume(tg) {
 		// A Coolify SERVICE is a compose project named by its uuid (the sourceRef); its members are named `<member>-<uuid>`,
 		// so no container carries the bare uuid. The member that holds this volume is the one that mounts the target's path.

@@ -23,7 +23,7 @@ import type { LauncherStatus } from "./launcher/migrator-launcher";
 import { vxPartRawBytes } from "../../../importer/volume-stream/vx-constants";
 import { attestableFindings, carryDecisions, crossCheckChecks } from "./inventory/cross-check";
 import { HOST_LOOP_CODES } from "./inventory/host-codes";
-import { dataItemsOfHost, planRefsOf, sourceHostsOf } from "./inventory/host-hosts";
+import { containerPrefixesOfSnapshot, dataItemsOfHost, planRefsOf, sourceHostsOf } from "./inventory/host-hosts";
 import { loopVerdict } from "./inventory/host-protocol";
 import { loadHostView, loopByHost, type HostView } from "./inventory/host-view";
 import { HOST_REPORT_PORT, type HostReportPort } from "./inventory/inventory-contract";
@@ -164,6 +164,7 @@ export class DataSeedHandler implements StepHandler<SeedObs>, OnModuleInit {
         inventories: view.inventories,
         reach: view.reach,
         planRefs: planRefsOf(snap),
+        containerPrefixes: containerPrefixesOfSnapshot(snap),
         unlistedDbPolicy: resolveOwnerInput(run.inputs, "unlistedDbPolicy") ?? "block",
         orphanVolumePolicy: resolveOwnerInput(run.inputs, "orphanVolumePolicy") ?? "block",
         attestations: ctx.step.evidence.attestations,
@@ -217,6 +218,7 @@ export class DataSeedHandler implements StepHandler<SeedObs>, OnModuleInit {
     const carry = carryDecisions({
       inventories: obs.hosts.inventories,
       planRefs: planRefsOf(snap),
+      containerPrefixes: containerPrefixesOfSnapshot(snap),
       unlistedDbPolicy: resolveOwnerInput(run.inputs, "unlistedDbPolicy") ?? "block",
       attestations: ctx.step.evidence.attestations,
     });

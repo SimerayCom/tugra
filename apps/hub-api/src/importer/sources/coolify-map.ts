@@ -1,5 +1,6 @@
 import { why } from "../reason";
 import { isSensitiveVisible } from "./coolify-sensitive";
+import { validContainerPrefix } from "../container-prefix";
 import { inlineDockerfileProblem } from "../../applications/dto";
 import type {
   ForeignApp,
@@ -120,8 +121,10 @@ export interface CoolifyApp {
   /** Compose apps keep their domains here (`fqdn` is empty): a JSON string `{"<service>":{"domain":"https://a,https://b"}}` (an object or a
    *  list of `{name, domain}` is tolerated). Config, not a secret. */
   docker_compose_domains?: string | Record<string, unknown> | Array<unknown> | null;
-  /** Nested `application_settings` of `GET /applications/{uuid}` (4.7: `is_static` / `is_spa` are NOT top-level columns). */
-  settings?: { is_static?: boolean | null; is_spa?: boolean | null } | null;
+  /** Nested `application_settings` of `GET /applications/{uuid}` (4.7: `is_static` / `is_spa` / `custom_container_name_prefix` are NOT top-level columns). */
+  settings?: { is_static?: boolean | null; is_spa?: boolean | null; custom_container_name_prefix?: string | null } | null;
+  /** Top-level only on a response that flattens the settings; read through {@link appContainerPrefix}. */
+  custom_container_name_prefix?: string | null;
 }
 export interface CoolifyDatabase {
   uuid: string;
@@ -287,6 +290,25 @@ export function appStaticFlags(app: Pick<CoolifyApp, "is_static" | "is_spa" | "s
   const isStatic = pick(app.settings?.is_static, app.is_static);
   const isSpa = pick(app.settings?.is_spa, app.is_spa);
   return { ...(isStatic !== undefined ? { isStatic } : {}), ...(isSpa !== undefined ? { isSpa } : {}) };
+}
+
+/**
+ * The custom container name prefix of an app: from 4.7 only the nested `settings` of the detail read carries it. Coolify names the
+ * container `<prefix>-<deploy timestamp>` then (`generateApplicationContainerName`). Absent when unset, equal to the uuid (no
+ * difference), or not a shell-safe name (dropped: the app is then matched by its uuid and the freeze says what it could not find).
+ */
+export function appContainerPrefix(app: Pick<CoolifyApp, "uuid" | "settings" | "custom_container_name_prefix">): string | undefined {
+  const raw = app.settings?.custom_container_name_prefix ?? app.custom_container_name_prefix;
+  const v = typeof raw === "string" ? raw.trim() : "";
+  return validContainerPrefix(v) && v !== app.uuid ? v : undefined;
+}
+
+/** Whether the row already says what its prefix is (nested or flat, even null): no detail read is needed for it. */
+export function containerPrefixKnown(app: Pick<CoolifyApp, "settings" | "custom_container_name_prefix" | "is_static" | "is_spa">): boolean {
+  if (app.settings && typeof app.settings === "object" && "custom_container_name_prefix" in app.settings) return true;
+  if ("custom_container_name_prefix" in app) return true;
+  // 4.1.2 .. 4.6 rows carry `is_static` / `is_spa` as top-level columns and predate the setting: nothing to read.
+  return typeof app.is_static === "boolean" || typeof app.is_spa === "boolean";
 }
 
 /** Coolify build pack → Tugra source kind + build pack. A docker-image app (build_pack 'dockerimage', or a
@@ -619,6 +641,7 @@ export function mapApplication(
     // A static site that does not fall back to index.html: Tugra's static builds always do (reported at apply).
     ...(buildPack === "static" && appStaticFlags(app).isSpa === false ? { staticSpa: false } : {}),
     ...(watchPaths.length ? { watchPaths } : {}),
+    ...(appContainerPrefix(app) ? { containerPrefix: appContainerPrefix(app) } : {}),
     ports: parsePorts(app.ports_exposes),
     domains: mapAppDomains(app, kind),
     env: ctx.envs.map(mapEnv),

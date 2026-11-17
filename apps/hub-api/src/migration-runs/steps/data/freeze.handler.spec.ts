@@ -484,6 +484,58 @@ describe("FREEZE with the agent controller (same host, against a fake source hos
   });
 });
 
+describe("FREEZE of an app with a custom container name prefix", () => {
+  const UUID = "x8kc0sw4cw0c0ooc0o4gg0ck";
+  const E = ctrId("e");
+  const prefixed = () => [
+    { id: A, name: "shop-20261110T153012", image: "ghcr.io/x/web:1", ports: "", running: true }, // <prefix>-<timestamp>, NOT <uuid>-<timestamp>
+    { id: B, name: "shopx-20261110T153012", image: "ghcr.io/x/other:1", ports: "", running: true }, // another app whose name merely starts the same
+    { id: C, name: "shop-pr-3", image: "ghcr.io/x/web:1", ports: "", running: true }, // a preview
+    { id: E, name: "unrelated", image: "postgres:16", ports: "", running: true },
+  ];
+  const buildPrefixed = (containerPrefix: string | undefined) => {
+    const registry = new StepHandlerRegistryService();
+    const host = new SourceHostFake({ containers: prefixed() });
+    const data = new FakeDataPort(makeSnap({ apps: [{ itemRef: `app:s:${UUID}`, name: "web", ...(containerPrefix ? { containerPrefix } : {}) }], services: [] }));
+    const handler = new FreezeHandler(registry, data, new FakeSourceApi(), host, new FakeCaps());
+    handler.onModuleInit();
+    return { handler, host };
+  };
+  const ctxOf = (run: RunSnapshot) => makeCtx({ key: "FREEZE", run, approval: APPROVAL, steps: { DATA_SEED: { status: "PASSED" }, DNS_PREPARE: { status: "SKIPPED" } } });
+
+  it("the stop list carries the prefix", () => {
+    expect(buildStopList({ apps: [{ itemRef: `app:s:${UUID}`, name: "web", containerPrefix: "shop" }, { itemRef: "app:s:abc", name: "w" }], services: [] }).map((s) => [s.itemRef, s.containerPrefix])).toEqual([
+      ["app:s:abc", undefined],
+      [`app:s:${UUID}`, "shop"],
+    ]);
+  });
+
+  it("the agent controller discovers, records and stops exactly the <prefix>-<timestamp> container", async () => {
+    const run = agentRun();
+    const { handler, host } = buildPrefixed("shop");
+    const h = ctxOf(run);
+    const obs = await handler.observe(h.ctx);
+    expect(await handler.act(h.ctx, obs)).toEqual({ outcome: "done" });
+    const rec = h.comp.freeze as FreezeRecord;
+    expect(rec.containers!.map((c) => [c.id, c.name])).toEqual([[A, "shop-20261110T153012"]]);
+    expect(host.container(A).running).toBe(false);
+    for (const id of [B, C, E]) expect(host.container(id).running).toBe(true); // look-alikes and unrelated containers untouched
+    expect(host.forbiddenCalls()).toEqual([]);
+    host.dispose();
+  });
+
+  it("without the prefix the same host leaves the app unresolved: fail closed, nothing stopped (what the freeze did before)", async () => {
+    const run = agentRun();
+    const { handler, host } = buildPrefixed(undefined);
+    const h = ctxOf(run);
+    const obs = await handler.observe(h.ctx);
+    const res = await handler.act(h.ctx, obs);
+    expect(res).toMatchObject({ outcome: "wait", wait: { code: DATA_CODES.freezeContainerUnresolved } });
+    expect(host.container(A).running).toBe(true);
+    host.dispose();
+  });
+});
+
 describe("FREEZE.dryRun", () => {
   it("projects the plan and the stop list without touching the source", async () => {
     const { handler, ctx, api, host } = build(apiRun());

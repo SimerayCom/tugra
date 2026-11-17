@@ -5,6 +5,7 @@ import { DATA_PORT, type DataPort, type DataSnapshot } from "../data-contract";
 import { migratorFlags, type MigratorPhase } from "../data-logic";
 import { phaseFor } from "../run-commands";
 import { buildStopList, UNRESOLVED_CHECK } from "../freeze.handler";
+import { freezeItemOf } from "../source-control/host-freeze-script";
 import { buildHostLoopScript, onlyFlags, wrapHostLoopCommand, type LoopHostInput, type LoopScriptStep } from "../source-control/host-loop-script";
 import { HostCommandError, type HostCommandInput, type RunHostCommandPort } from "./inventory-contract";
 import { dataItemsOfHost, serverRefOfItem, sourceHostsOf } from "./host-hosts";
@@ -51,7 +52,7 @@ export class HostCommandService implements RunHostCommandPort {
       } else if (step === "FREEZE") {
         const items = buildStopList(snap)
           .filter((s) => serverRefOfItem(s.itemRef) === ref)
-          .map((s) => s.itemRef);
+          .map((s) => freezeItemOf(s));
         if (items.length) hosts.push({ ref, flags: [], freezeItems: items });
       } else {
         const items = dataItemsOfHost(ref, snap);

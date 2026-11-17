@@ -110,6 +110,8 @@ export interface SourceItem {
   name: string | null;
   /** How the destination app is built (`GIT` = an image build inside the downtime window, R27/C5); absent for services and when unknown. */
   source?: "IMAGE" | "GIT" | "COMPOSE";
+  /** An app whose source container is named `<prefix>-<deploy timestamp>` (Coolify `custom_container_name_prefix`) instead of `<uuid>-...`; a validated plain name. */
+  containerPrefix?: string;
 }
 
 export interface DataSnapshot {

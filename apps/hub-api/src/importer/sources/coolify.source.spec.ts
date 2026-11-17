@@ -1,4 +1,5 @@
 import { CoolifySource, mapLimit, type CoolifyClient } from "./coolify.source";
+import { planImport } from "../import-planner";
 
 class FakeClient implements CoolifyClient {
   calls: string[] = [];
@@ -98,7 +99,7 @@ describe("CoolifySource", () => {
       expect(client.calls.filter((c) => c === "/applications/app-1")).toHaveLength(1);
     });
 
-    it("also reads the settings of a railpack and a static app, and none for a dockerfile / image app", async () => {
+    it("also reads the settings of a railpack and a static app; a dockerfile / image app takes the detail GET only for its container name prefix", async () => {
       const apps = [
         { ...row475, uuid: "r", build_pack: "railpack" },
         { ...row475, uuid: "s", build_pack: "static" },
@@ -114,7 +115,77 @@ describe("CoolifySource", () => {
       const fleet = await new CoolifySource(client).discover();
       expect(fleet.apps.map((a) => a.buildPack)).toEqual(["static", "static", "dockerfile", "image"]);
       expect(fleet.apps[1].staticSpa).toBe(false);
-      expect(client.calls.filter((c) => /^\/applications\/[a-z]$/.test(c)).sort()).toEqual(["/applications/r", "/applications/s"]);
+      // one GET each (never two): r and s for the static flags (+ prefix), d and i for the prefix alone
+      expect(client.calls.filter((c) => /^\/applications\/[a-z]$/.test(c)).sort()).toEqual(["/applications/d", "/applications/i", "/applications/r", "/applications/s"]);
+    });
+
+    describe("custom container name prefix (settings.custom_container_name_prefix)", () => {
+      const detail = (over: Record<string, unknown>) => ({ ...row475, settings: { is_static: false, is_spa: false, ...over } });
+      const routesFor = (apps: unknown[], extra: Record<string, unknown> = {}) => {
+        const r: Record<string, unknown> = { ...base, "/applications": apps, "/services": [], ...extra };
+        for (const a of apps as Array<{ uuid: string }>) {
+          r[`/applications/${a.uuid}/envs`] = [];
+          r[`/applications/${a.uuid}/storages`] = [];
+        }
+        return r;
+      };
+
+      it("is read from the detail GET for ANY build pack and lands on the discovered app", async () => {
+        const dockerfile = { ...row475, uuid: "df", build_pack: "dockerfile" };
+        const image = { uuid: "im", build_pack: "dockerimage", docker_registry_image_name: "nginx" };
+        const client = new FakeClient(
+          routesFor([row475, dockerfile, image], {
+            "/applications/app-1": detail({ custom_container_name_prefix: "site-prod" }),
+            "/applications/df": detail({ custom_container_name_prefix: "shop" }),
+            "/applications/im": detail({ custom_container_name_prefix: null }),
+          }),
+        );
+        const fleet = await new CoolifySource(client).discover();
+        expect(fleet.apps.map((a) => [a.sourceRef, a.containerPrefix])).toEqual([["app-1", "site-prod"], ["df", "shop"], ["im", undefined]]);
+        expect(client.calls.filter((c) => /^\/applications\/(app-1|df|im)$/.test(c)).sort()).toEqual(["/applications/app-1", "/applications/df", "/applications/im"]);
+      });
+
+      it("a row that already carries the setting (nested or flat, even null) and a 4.1.2 to 4.6 row spend no detail GET", async () => {
+        const nested = { ...row475, uuid: "n", build_pack: "dockerfile", settings: { custom_container_name_prefix: "shop" } };
+        const flat = { ...row475, uuid: "f", build_pack: "dockerfile", custom_container_name_prefix: null };
+        const legacy = { ...row475, uuid: "l", build_pack: "dockerfile", is_static: false };
+        const client = new FakeClient(routesFor([nested, flat, legacy]));
+        const fleet = await new CoolifySource(client).discover();
+        expect(fleet.apps.map((a) => [a.sourceRef, a.containerPrefix])).toEqual([["n", "shop"], ["f", undefined], ["l", undefined]]);
+        expect(client.calls.filter((c) => /^\/applications\/[a-z]$/.test(c))).toEqual([]);
+      });
+
+      it("a value that is not a plain name, or equals the uuid, is dropped (the app is then matched by its uuid)", async () => {
+        const apps = [{ ...row475, uuid: "a", build_pack: "dockerfile" }, { ...row475, uuid: "b", build_pack: "dockerfile" }, { ...row475, uuid: "c", build_pack: "dockerfile" }];
+        const client = new FakeClient(
+          routesFor(apps, {
+            "/applications/a": detail({ custom_container_name_prefix: "x; reboot" }),
+            "/applications/b": detail({ custom_container_name_prefix: "b" }),
+            "/applications/c": detail({ custom_container_name_prefix: "  shop  " }),
+          }),
+        );
+        const fleet = await new CoolifySource(client).discover();
+        expect(fleet.apps.map((a) => a.containerPrefix)).toEqual([undefined, undefined, "shop"]);
+      });
+
+      it("a detail read that fails says so, naming what may be missed", async () => {
+        const client = new FakeClient(routesFor([{ ...row475, build_pack: "dockerfile" }], { "/applications/app-1": new Error("429 slow down") }));
+        const fleet = await new CoolifySource(client).discover();
+        expect(fleet.warnings).toContain("could not read the container name settings of site — if it has a custom container name prefix, its container may not be found by name");
+        expect(fleet.apps[0].containerPrefix).toBeUndefined();
+      });
+
+      it("the plan item carries it as proposed.containerPrefix, inside the plan hash (a different prefix is a different plan)", async () => {
+        const mk = async (prefix: string | null) => {
+          const client = new FakeClient(routesFor([{ ...row475, build_pack: "dockerfile" }], { "/applications/app-1": detail({ custom_container_name_prefix: prefix }) }));
+          return planImport(await new CoolifySource(client).discover(), { sourceKind: "coolify" });
+        };
+        const withPrefix = await mk("shop");
+        const without = await mk(null);
+        expect(withPrefix.items.find((i) => i.kind === "app")!.proposed).toMatchObject({ containerPrefix: "shop" });
+        expect(without.items.find((i) => i.kind === "app")!.proposed).not.toHaveProperty("containerPrefix");
+        expect(withPrefix.planHash).not.toBe(without.planHash);
+      });
     });
 
     it("keeps reading the top-level flags of 4.1.2 to 4.6 and does not spend a detail GET when the row already has them", async () => {

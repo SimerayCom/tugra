@@ -12,12 +12,13 @@ import type { GateCheck } from "../../../core/dto";
 import { hostLoopTargets, resolveOwnerInput, type RunSnapshot } from "../../../core/run-contract";
 import { crossCheckChecks } from "../../data/inventory/cross-check";
 import { serverRefOfItem } from "../../data/inventory/host-hosts";
+import { containerPrefixesOf } from "../../../../importer/container-prefix";
 import type { HostView } from "../../data/inventory/host-view";
 
 /** The plan item kinds the cross-check accounts containers and volumes against. */
 const ACCOUNTED_KINDS = new Set(["app", "database", "service", "volume"]);
 
-export function preflightCrossCheck(run: RunSnapshot, plan: { items: ReadonlyArray<{ itemRef: string; kind: string }> }, view: HostView | undefined): GateCheck[] {
+export function preflightCrossCheck(run: RunSnapshot, plan: { items: ReadonlyArray<{ itemRef: string; kind: string; proposed?: Record<string, unknown> | null }> }, view: HostView | undefined): GateCheck[] {
   if (!view || view.inventories.size === 0) return [];
   // every plan item carries its source server in its ref (`app:<serverRef|_>:<uuid>`); the unknown `_` is not a host
   const refs = plan.items.filter((i) => ACCOUNTED_KINDS.has(i.kind)).map((i) => i.itemRef);
@@ -28,6 +29,7 @@ export function preflightCrossCheck(run: RunSnapshot, plan: { items: ReadonlyArr
     inventories: view.inventories,
     reach: view.reach,
     planRefs: refs,
+    containerPrefixes: containerPrefixesOf(plan.items),
     unlistedDbPolicy: resolveOwnerInput(run.inputs, "unlistedDbPolicy") ?? "block",
     orphanVolumePolicy: resolveOwnerInput(run.inputs, "orphanVolumePolicy") ?? "block",
     attestations: [],

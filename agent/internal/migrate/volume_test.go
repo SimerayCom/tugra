@@ -481,3 +481,62 @@ func TestResolveServiceVolumeRefusals(t *testing.T) {
 		}
 	})
 }
+
+func TestResolveVolumeCustomContainerNamePrefix(t *testing.T) {
+	c := stoppedApp()
+	c.name = "shop-20261110T153012" // Coolify: <custom_container_name_prefix>-<deploy timestamp>; the volume is still named after the uuid
+	d := &volDocker{ctrs: []*vctr{c}}
+	d.install(t)
+
+	if _, err := ResolveVolume(context.Background(), appVolTarget("5f3a9c"), "", "docker", nil); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("without the prefix the container is not found under the uuid: %v", err)
+	}
+	tg := appVolTarget("5f3a9c")
+	tg.ContainerPrefix = "shop"
+	vs, err := ResolveVolume(context.Background(), tg, "", "docker", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if vs.ContainerID != appCtrID || vs.Name != "shop-20261110T153012" || vs.VolumeName != "5f3a9c_data" {
+		t.Errorf("unexpected source %+v", vs)
+	}
+}
+
+func TestResolveVolumeContainerPrefixIsValidatedAndAppOnly(t *testing.T) {
+	c := stoppedApp()
+	c.name = "shop-20261110T153012"
+	d := &volDocker{ctrs: []*vctr{c}}
+	d.install(t)
+	for _, bad := range []string{"sh op", "shop;x", "-shop", "../shop", "sh$(x)", strings.Repeat("a", 65)} {
+		tg := appVolTarget("5f3a9c")
+		tg.ContainerPrefix = bad
+		if _, err := ResolveVolume(context.Background(), tg, "", "docker", nil); err == nil || errors.Is(err, ErrNotFound) {
+			t.Errorf("prefix %q must be refused as unsafe, got %v", bad, err)
+		}
+	}
+	tg := appVolTarget("5f3a9c")
+	tg.ContainerPrefix = "tugra-agent"
+	if _, err := ResolveVolume(context.Background(), tg, "", "docker", nil); !errors.Is(err, ErrForbidden) {
+		t.Errorf("a control-plane name is never a prefix: %v", err)
+	}
+	// a database target ignores the prefix: the DB arm matches the exact name only
+	db := dbVolTarget("5f3a9c")
+	db.ContainerPrefix = "shop"
+	if _, err := ResolveVolume(context.Background(), db, "", "docker", nil); !errors.Is(err, ErrNotFound) {
+		t.Errorf("database volumes never resolve by prefix: %v", err)
+	}
+}
+
+func TestTargetDecodesContainerPrefix(t *testing.T) {
+	var tg Target
+	if err := json.Unmarshal([]byte(`{"itemRef":"volume:srv1:5f3a9c:data","kind":"volume","containerPrefix":"shop","dest":{"type":"app-volume","name":"data","mountPath":"/d"}}`), &tg); err != nil {
+		t.Fatal(err)
+	}
+	if tg.ContainerPrefix != "shop" {
+		t.Errorf("containerPrefix not decoded: %+v", tg)
+	}
+	var old Target
+	if err := json.Unmarshal([]byte(`{"itemRef":"volume:srv1:5f3a9c:data","kind":"volume"}`), &old); err != nil || old.ContainerPrefix != "" {
+		t.Errorf("an old hub's row has no prefix: %+v %v", old, err)
+	}
+}

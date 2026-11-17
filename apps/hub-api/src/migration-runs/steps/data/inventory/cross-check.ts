@@ -90,6 +90,8 @@ export interface CrossCheckInput {
   reach: ReadonlyMap<string, ReachReport>;
   /** Every itemRef of the run's plan (apps, services, databases, volumes). */
   planRefs: readonly string[];
+  /** `app itemRef -> custom container name prefix`: such an app's container is `<prefix>-<timestamp>`, so it must still account for itself. */
+  containerPrefixes?: ReadonlyMap<string, string>;
   unlistedDbPolicy: UnlistedDbPolicy;
   orphanVolumePolicy: OrphanVolumePolicy;
   attestations: ReadonlyArray<{ checkId: string; subject?: string; note?: string }>;
@@ -114,12 +116,13 @@ export interface Finding {
 const serverRefOf = (itemRef: string): string => itemRef.split(":")[1] ?? "_";
 
 /** Does a plan item of kind app/service/database account for this container? */
-function accountedFor(c: Pick<InvContainer, "name">, host: string, planRefs: readonly string[]): boolean {
+function accountedFor(c: Pick<InvContainer, "name">, host: string, planRefs: readonly string[], prefixes?: ReadonlyMap<string, string>): boolean {
   for (const ref of planRefs) {
     const sr = serverRefOf(ref);
     if (sr !== host && sr !== "_" && host !== "_") continue;
     const parsed = coolifyRefOf(ref);
-    if (parsed && containerNameMatches(c.name, parsed.uuid, parsed.kind)) return true;
+    const prefix = prefixes?.get(ref);
+    if (parsed && containerNameMatches(c.name, parsed.uuid, parsed.kind, prefix ? [prefix] : [])) return true;
   }
   return false;
 }
@@ -141,12 +144,12 @@ function volumeAccountedFor(volume: string, host: string, planRefs: readonly str
 }
 
 /** The unlisted database containers and orphan volumes of one host inventory. Pure. */
-export function findingsOf(inv: HostInventory, planRefs: readonly string[]): Finding[] {
+export function findingsOf(inv: HostInventory, planRefs: readonly string[], prefixes?: ReadonlyMap<string, string>): Finding[] {
   const out: Finding[] = [];
   for (const c of inv.containers) {
     if (isInfraContainer(c.name)) continue;
     const engine = dbEngineOfImage(c.image);
-    if (!engine || accountedFor(c, inv.ref, planRefs)) continue;
+    if (!engine || accountedFor(c, inv.ref, planRefs, prefixes)) continue;
     out.push({ kind: "unlisted-db", host: inv.ref, key: `${inv.ref}/${c.name}`, name: c.name, image: c.image, engine, state: c.state });
   }
   for (const v of inv.volumes) {
@@ -280,12 +283,12 @@ const settledBy = (i: Settled, key: string): boolean => i.attestations.some((x) 
  * operator attestation settled and that {@link carryAssessment} accepts. Empty under any other policy. A container the plan
  * accounts for (including one an earlier carry already created) is not an unlisted finding, so a second call returns nothing for it.
  */
-export function carryDecisions(i: Pick<CrossCheckInput, "inventories" | "planRefs" | "unlistedDbPolicy" | "attestations">): CarrySpec[] {
+export function carryDecisions(i: Pick<CrossCheckInput, "inventories" | "planRefs" | "containerPrefixes" | "unlistedDbPolicy" | "attestations">): CarrySpec[] {
   if (i.unlistedDbPolicy !== "carry") return [];
   const out: CarrySpec[] = [];
   for (const [host, inv] of [...i.inventories].sort((a, b) => (a[0] < b[0] ? -1 : 1))) {
     if (!inv.complete) continue;
-    for (const f of findingsOf(inv, i.planRefs)) {
+    for (const f of findingsOf(inv, i.planRefs, i.containerPrefixes)) {
       if (f.kind !== "unlisted-db" || settledBy(i, f.key)) continue;
       const c = inv.containers.find((x) => x.name === f.name);
       const a = c ? carryAssessment(host, c) : null;
@@ -320,7 +323,7 @@ export function crossCheckChecks(i: CrossCheckInput): GateCheck[] {
     }
     if (inv.rejected > 0 && !i.findingsOnly) checks.push({ id: checkKey("inventory-rejected", host), status: "warn", code: INVENTORY_CODES.rejectedLines, subject: host, params: { host, count: inv.rejected }, evidence: HOST_EVIDENCE });
 
-    for (const f of findingsOf(inv, i.planRefs)) {
+    for (const f of findingsOf(inv, i.planRefs, i.containerPrefixes)) {
       if (f.kind === "unlisted-db") {
         const base = { subject: f.key, evidence: HOST_EVIDENCE, ownerInput: "unlistedDbPolicy" as const };
         const params = { host, container: f.name, image: f.image ?? "", engine: f.engine ?? "", state: f.state ?? "" };

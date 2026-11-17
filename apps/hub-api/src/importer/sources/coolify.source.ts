@@ -7,6 +7,7 @@ import {
   appStaticFlags,
   buildCoolifyFleet,
   coolifyNeedsSettings,
+  containerPrefixKnown,
   withServerDetail,
   decodeCoolifyDockerfile,
   decodeCoolifyLabels,
@@ -165,7 +166,7 @@ export class CoolifySource implements ImportSource {
       };
       const [envs, vols] = await Promise.all([readEnvs(), tryGet<unknown>(`/applications/${a.uuid}/storages`, [], `storage for ${a.name ?? a.uuid}`)]);
       // After the two parallel reads, so a worker never has more than the two in flight (the Coolify API is rate limited).
-      const withSettings = await this.readStaticSettings(a, warnings);
+      const withSettings = await this.readAppSettings(a, warnings);
       envsByResource[a.uuid] = extractEnvs(envs ?? []);
       // Key NAMES + reason codes only (values are inspected in memory by the classifier and dropped at once).
       if (envs !== undefined) envReportByResource[a.uuid] = buildEnvReport(envs);
@@ -181,21 +182,28 @@ export class CoolifySource implements ImportSource {
   }
 
   /**
-   * `is_static` / `is_spa` of a nixpacks / railpack / static app. Since Coolify 4.7 they are `application_settings` columns and
-   * appear only as `settings.*` on the single-application read (the list rows do not load the settings), so those build packs
-   * take ONE detail GET here; older versions kept both on the list row (the row is returned unchanged when it still has them).
-   * A failed read keeps the list row and says so: a static site would otherwise be planned as a started process, silently.
+   * The `application_settings` of an app, from ONE detail GET: `is_static` / `is_spa` of a nixpacks / railpack / static app and the
+   * custom container name prefix of ANY app. Since Coolify 4.7 they are `application_settings` columns and appear only as `settings.*`
+   * on the single-application read (the list rows do not load the settings), so an app takes the GET when it still needs one of them;
+   * older versions kept the static flags on the row and have no prefix (the row is returned unchanged when it has what it needs).
+   * A failed read keeps the list row and says so: a static site would otherwise be planned as a started process, and an app with a
+   * custom prefix would be looked for under its uuid on the source host, silently.
    */
-  private async readStaticSettings(a: CoolifyApp, warnings: string[]): Promise<CoolifyApp> {
-    if (!coolifyNeedsSettings(a)) return a;
+  private async readAppSettings(a: CoolifyApp, warnings: string[]): Promise<CoolifyApp> {
     const known = appStaticFlags(a);
-    if (known.isStatic !== undefined && known.isSpa !== undefined) return a;
+    const needsStatic = coolifyNeedsSettings(a) && (known.isStatic === undefined || known.isSpa === undefined);
+    const needsPrefix = !containerPrefixKnown(a);
+    if (!needsStatic && !needsPrefix) return a;
     try {
       const detail = await this.client.get<CoolifyApp>(`/applications/${encodeURIComponent(a.uuid)}`);
       if (!detail || typeof detail !== "object" || Array.isArray(detail) || !detail.settings || typeof detail.settings !== "object") return a;
-      return { ...a, settings: { is_static: detail.settings.is_static, is_spa: detail.settings.is_spa } };
+      return {
+        ...a,
+        settings: { is_static: detail.settings.is_static, is_spa: detail.settings.is_spa, custom_container_name_prefix: detail.settings.custom_container_name_prefix ?? null },
+      };
     } catch {
-      warnings.push(`could not read the static-site settings of ${a.name ?? a.uuid} — a static site may be planned as a regular build`);
+      if (needsStatic) warnings.push(`could not read the static-site settings of ${a.name ?? a.uuid} — a static site may be planned as a regular build`);
+      if (needsPrefix) warnings.push(`could not read the container name settings of ${a.name ?? a.uuid} — if it has a custom container name prefix, its container may not be found by name`);
       return a;
     }
   }

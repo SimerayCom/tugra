@@ -11,6 +11,7 @@ import { PROBE_MAX_BYTES } from "./inventory-script";
 import { mergeFreeze } from "./report-merge";
 import { serverRefOfItem } from "./host-hosts";
 import { RUN_HINTS, type RunHintStore } from "../../import/baseline/run-hints";
+import { validContainerPrefix } from "../../../../importer/container-prefix";
 import { derivePins, pinsToWrite, type PinCandidate } from "./inventory-pins";
 
 type RawReq = Readable & { headers: Record<string, string | string[] | undefined> };
@@ -141,9 +142,9 @@ export class HostReportService {
     if (!this.hints) return;
     try {
       const row = await this.prisma.bulkOperation.findUnique({ where: { id: opId }, select: { meta: true } });
-      const meta = typeof row?.meta === "object" && row.meta ? (row.meta as { plan?: { items?: Array<{ itemRef?: unknown; kind?: unknown; proposed?: { source?: unknown; image?: unknown } }> } }) : {};
+      const meta = typeof row?.meta === "object" && row.meta ? (row.meta as { plan?: { items?: Array<{ itemRef?: unknown; kind?: unknown; proposed?: { source?: unknown; image?: unknown; containerPrefix?: unknown } }> } }) : {};
       const candidates: PinCandidate[] = (meta.plan?.items ?? []).flatMap((i) =>
-        i.kind === "app" && typeof i.itemRef === "string" && i.proposed?.source === "IMAGE" && typeof i.proposed.image === "string" ? [{ itemRef: i.itemRef, image: i.proposed.image }] : [],
+        i.kind === "app" && typeof i.itemRef === "string" && i.proposed?.source === "IMAGE" && typeof i.proposed.image === "string" ? [{ itemRef: i.itemRef, image: i.proposed.image, ...(validContainerPrefix(i.proposed.containerPrefix) ? { containerPrefix: i.proposed.containerPrefix } : {}) }] : [],
       );
       if (!candidates.length) return;
       const write = pinsToWrite(derivePins(candidates, inventories), await this.hints.list(runId, promotedFromId));

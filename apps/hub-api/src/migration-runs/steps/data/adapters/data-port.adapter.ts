@@ -4,6 +4,7 @@ import { PrismaService } from "../../../../prisma/prisma.service";
 import { AuditService } from "../../../../audit/audit.service";
 import { CryptoService } from "../../../../crypto/crypto.service";
 import { ImportExecutorService } from "../../../../importer/import-executor.service";
+import { containerPrefixesOf } from "../../../../importer/container-prefix";
 import { foreignDbOfContainer } from "../../../../importer/sources/coolify-map";
 import { MIGRATOR_ENGINES, MIGRATOR_UNSUPPORTED } from "../../../../importer/migrator-recipe";
 import { VxService } from "../../../../importer/volume-stream/vx.service";
@@ -89,10 +90,11 @@ export class PrismaDataPort implements DataPort {
     const sourceOf = new Map(appRows.map((a) => [a.id, a.source as "IMAGE" | "GIT" | "COMPOSE"]));
 
     const volumeRefs = dbVolumeModeRefs(meta.plan?.items);
+    const prefixOf = containerPrefixesOf(meta.plan?.items);
     const dump = vxDumpEnabled();
     const streamRefs = dump ? dbStreamModeRefs(meta) : new Set<string>();
     const targets: VxVolumeTarget[] = vx
-      ? buildVolumeTargets({ tasks, dbs: new Map(dbRows.map((d) => [d.id, { id: d.id, engine: d.engine, version: d.version, image: d.image }])), dbVolumeRefs: volumeRefs, dbStreamRefs: streamRefs, excluded: meta.vxExcluded })
+      ? buildVolumeTargets({ tasks, dbs: new Map(dbRows.map((d) => [d.id, { id: d.id, engine: d.engine, version: d.version, image: d.image }])), dbVolumeRefs: volumeRefs, dbStreamRefs: streamRefs, excluded: meta.vxExcluded, appContainerPrefixes: prefixOf })
       : [];
     const transfers = targets.length ? await this.prisma.migrationVolumeTransfer.findMany({ where: { opId: op.id } }) : [];
     const tByRef = new Map(transfers.map((t) => [t.itemRef, t]));
@@ -169,7 +171,12 @@ export class PrismaDataPort implements DataPort {
     const named = (kind: "app" | "service"): SourceItem[] =>
       tasks
         .filter((t) => t.status === "DONE" && t.itemRef?.startsWith(`${kind}:`))
-        .map((t) => ({ itemRef: t.itemRef as string, name: t.resourceId ? (nameOf.get(t.resourceId) ?? null) : null, ...(kind === "app" && t.resourceId && sourceOf.has(t.resourceId) ? { source: sourceOf.get(t.resourceId)! } : {}) }))
+        .map((t) => ({
+          itemRef: t.itemRef as string,
+          name: t.resourceId ? (nameOf.get(t.resourceId) ?? null) : null,
+          ...(kind === "app" && t.resourceId && sourceOf.has(t.resourceId) ? { source: sourceOf.get(t.resourceId)! } : {}),
+          ...(kind === "app" && prefixOf.has(t.itemRef as string) ? { containerPrefix: prefixOf.get(t.itemRef as string)! } : {}),
+        }))
         .sort((a, b) => (a.itemRef < b.itemRef ? -1 : 1));
 
     const active = !!op.migrationTokenHash && !!op.migrationTokenExpiresAt && op.migrationTokenExpiresAt.getTime() > Date.now() && !op.cancelRequestedAt;

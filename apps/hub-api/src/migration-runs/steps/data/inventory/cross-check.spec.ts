@@ -334,3 +334,27 @@ describe("R2: carry of an unlisted database", () => {
     expect(out.map((o) => [o.host, o.engine, o.version])).toEqual([["host-1", "POSTGRES", "17"], ["host-2", "REDIS", "7"]]);
   });
 });
+
+describe("an app with a custom container name prefix accounts for its own <prefix>-<timestamp> container", () => {
+  const PREFIXED = inv({ containers: [...inv().containers, { id: id("f"), name: "shop-20261110T153012", image: "postgres:16-alpine", state: "running" }] }); // an image app that runs a database image
+  const refs = [...planRefs];
+  const prefixes = new Map([[`app:host-1:${UAPP}`, "shop"]]);
+
+  it("without the prefix the container looks like an unlisted database (the gap); with it nothing is unlisted", () => {
+    expect(findingsOf(PREFIXED, refs).map((f) => f.key)).toEqual(["host-1/shop-20261110T153012"]);
+    expect(findingsOf(PREFIXED, refs, prefixes)).toEqual([]);
+  });
+
+  it("only the app that has the prefix claims it; a look-alike name stays unlisted", () => {
+    const lookAlike = inv({ containers: [...inv().containers, { id: id("f"), name: "shopx-20261110T153012", image: "postgres:16-alpine", state: "running" }, { id: id("e"), name: "shop-pr-3", image: "postgres:16-alpine", state: "running" }] });
+    expect(findingsOf(lookAlike, refs, prefixes).map((f) => f.key).sort()).toEqual(["host-1/shop-pr-3", "host-1/shopx-20261110T153012"]);
+    expect(findingsOf(PREFIXED, refs, new Map([[`app:host-1:${GHOST}`, "shop"]])).map((f) => f.key)).toEqual(["host-1/shop-20261110T153012"]);
+  });
+
+  it("crossCheckChecks and carryDecisions take the same map: a prefixed container is neither a blocker nor carried as a new database", () => {
+    const withMap = base({ inventories: new Map([["host-1", PREFIXED]]), containerPrefixes: prefixes });
+    expect(codes(crossCheckChecks(withMap))).toEqual([`pass:${INVENTORY_CODES.reachOk}`]);
+    expect(codes(crossCheckChecks(base({ inventories: new Map([["host-1", PREFIXED]]) }))).some((c) => c.endsWith(INVENTORY_CODES.unlistedDb))).toBe(true);
+    expect(carryDecisions({ inventories: new Map([["host-1", PREFIXED]]), planRefs: refs, containerPrefixes: prefixes, unlistedDbPolicy: "carry", attestations: [] })).toEqual([]);
+  });
+});
