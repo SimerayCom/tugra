@@ -57,6 +57,34 @@ export function explainExit(code: number, oomKilled: boolean): string {
   }
 }
 
+/** A just-died container stays "settling" this long: a recreate/restart passes through `exited` for a moment,
+ *  and the next poll must come soon enough to see it back up instead of leaving the stale row for a full cycle. */
+export const SETTLE_WINDOW_MS = 2 * 60 * 1000;
+
+/**
+ * True while a container's persisted state is likely to change again within seconds: it is being created or
+ * restarted, its HEALTHCHECK is still `starting`, or it died moments ago (a restart/recreate in flight). The
+ * poller uses this to re-check quickly instead of waiting a full interval, so the app header and the crash
+ * timeline follow a container that comes back instead of showing the pre-restart state for a minute. A
+ * container that has been down (or fine) for a while is NOT settling, so a permanently-exited one costs nothing.
+ */
+export function isSettling(c: Pick<ContainerSnap, "status" | "health" | "finishedAt">, now: number): boolean {
+  switch (c.status) {
+    case "created":
+    case "restarting":
+      return true;
+    case "running":
+      return c.health === "starting";
+    case "exited":
+    case "dead": {
+      const t = c.finishedAt ? Date.parse(c.finishedAt) : NaN;
+      return Number.isFinite(t) && now - t >= 0 && now - t < SETTLE_WINDOW_MS;
+    }
+    default:
+      return false;
+  }
+}
+
 export interface ContainerSnap {
   name: string;
   id: string;

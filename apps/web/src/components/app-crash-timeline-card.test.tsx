@@ -111,4 +111,54 @@ describe("AppCrashTimelineCard", () => {
     expect(screen.getByText("container")).toBeTruthy();
     expect(screen.getByTitle("tugra_ck123-web.2.def456xyz")).toBeTruthy();
   });
+
+  it("does not paint a stale 'Unhealthy' on a container that has exited (health is only meaningful while up)", async () => {
+    vi.spyOn(api, "getAppRuntimeState").mockResolvedValue({
+      containers: [container({ status: "exited", exitCode: 143, health: "unhealthy", finishedAt: "2026-11-06T09:59:00.000Z" })],
+      events: [],
+    });
+    wrap(<AppCrashTimelineCard id="app1" />);
+    await waitFor(() => expect(screen.getByText("exited")).toBeTruthy());
+    expect(screen.getByText("Exit 143")).toBeTruthy();
+    expect(screen.queryByText("Unhealthy")).toBeNull();
+  });
+
+  it("shows a Starting badge while a running container's healthcheck is still starting", async () => {
+    vi.spyOn(api, "getAppRuntimeState").mockResolvedValue({ containers: [container({ health: "starting" })], events: [] });
+    wrap(<AppCrashTimelineCard id="app1" />);
+    await waitFor(() => expect(screen.getByText("Starting")).toBeTruthy());
+  });
+
+  describe("recovery", () => {
+    beforeEach(() => vi.useFakeTimers({ shouldAdvanceTime: true }));
+    afterEach(() => vi.useRealTimers());
+
+    it("follows a container that comes back: exited/Exit 143/Unhealthy becomes running with no exit badge on the next poll, and the past exit stays as a history row", async () => {
+      const finished = new Date(Date.now() - 10_000).toISOString();
+      const past = event({ id: "past", exitCode: 143, reason: "Terminated - SIGTERM (143)", restartDelta: 0 });
+      const spy = vi
+        .spyOn(api, "getAppRuntimeState")
+        .mockResolvedValueOnce({ containers: [container({ status: "exited", exitCode: 143, health: "unhealthy", finishedAt: finished })], events: [past] })
+        .mockResolvedValue({ containers: [container({ status: "running", exitCode: 143, health: "healthy", finishedAt: finished })], events: [past] });
+      wrap(<AppCrashTimelineCard id="app1" />);
+      await waitFor(() => expect(screen.getByText("exited")).toBeTruthy());
+      // The just-exited container is mid-transition, so the card re-reads after 5s (not the settled 10s).
+      await vi.advanceTimersByTimeAsync(5_100);
+      await waitFor(() => expect(screen.getByText("running")).toBeTruthy());
+      expect(spy.mock.calls.length).toBeGreaterThanOrEqual(2);
+      expect(screen.queryByText("exited")).toBeNull();
+      expect(screen.queryByText("Unhealthy")).toBeNull();
+      // Current state shows no exit badge; the crash episode is still listed as history.
+      expect(screen.queryAllByText("Exit 143")).toHaveLength(1); // the history row only
+      expect(screen.getByText("Terminated - SIGTERM (143)")).toBeTruthy();
+    });
+
+    it("keeps the slow cadence for a settled container (no 5s re-read)", async () => {
+      const spy = vi.spyOn(api, "getAppRuntimeState").mockResolvedValue({ containers: [container()], events: [] });
+      wrap(<AppCrashTimelineCard id="app1" />);
+      await waitFor(() => expect(spy).toHaveBeenCalledTimes(1));
+      await vi.advanceTimersByTimeAsync(6_000);
+      expect(spy).toHaveBeenCalledTimes(1);
+    });
+  });
 });

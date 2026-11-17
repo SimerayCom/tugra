@@ -7,6 +7,7 @@ import {
   CONTAINER_HEALTH_SCRIPT,
   parseHealthOutput,
   diffContainerStates,
+  isSettling,
   memUnderPressure,
   COOLDOWN_MS,
   type ContainerSnap,
@@ -40,19 +41,35 @@ export class ContainerHealthRunnerService {
     private readonly notifications: NotificationsService,
   ) {}
 
-  async runTick(): Promise<void> {
+  private inFlight: Promise<{ settling: boolean }> | null = null;
+
+  /** One poll over every online server. Resolves `settling: true` when any container is mid-transition (see
+   *  `isSettling`), so the scheduler can re-check soon. Overlapping calls (the interval job and a fast
+   *  follow-up) share one run instead of racing the same ContainerState rows. */
+  runTick(): Promise<{ settling: boolean }> {
+    if (!this.inFlight) {
+      this.inFlight = this.tick().finally(() => {
+        this.inFlight = null;
+      });
+    }
+    return this.inFlight;
+  }
+
+  private async tick(): Promise<{ settling: boolean }> {
     const servers = await this.prisma.server.findMany({ where: { status: "ONLINE" }, select: { id: true, name: true, teamId: true, hostname: true } });
+    let settling = false;
     for (const server of servers) {
       try {
         if (!this.agentWs.isOnline(server.id)) continue;
-        await this.checkServer(server);
+        if (await this.checkServer(server)) settling = true;
       } catch (e) {
         this.logger.warn(`container-health check failed for server ${server.id}: ${String(e)}`);
       }
     }
+    return { settling };
   }
 
-  private async checkServer(server: { id: string; name: string; teamId: string; hostname: string | null }): Promise<void> {
+  private async checkServer(server: { id: string; name: string; teamId: string; hostname: string | null }): Promise<boolean> {
     const prevRows = await this.prisma.containerState.findMany({ where: { serverId: server.id } });
     const seed = prevRows.length === 0;
     const nowSec = Math.floor(Date.now() / 1000);
@@ -61,7 +78,7 @@ export class ContainerHealthRunnerService {
     const r = await this.agentWs.sendCommand(server.id, CONTAINER_HEALTH_SCRIPT(cursor), "bulk", POLL_TIMEOUT_MS);
     if (r.exitCode !== 0) {
       this.logger.warn(`container-health list failed on server ${server.id} (exit ${r.exitCode})`);
-      return; // state untouched → no false transitions
+      return false; // state untouched → no false transitions
     }
     const parsed = parseHealthOutput(r.output);
     if (parsed.truncated) this.logger.warn(`container-health output truncated on server ${server.id} (too many containers)`);
@@ -234,6 +251,12 @@ export class ContainerHealthRunnerService {
     const liveNames = parsed.containers.map((c) => c.name);
     // No live container: drop every row of the server (a NUL placeholder in notIn is rejected by PostgreSQL as invalid UTF-8).
     await this.prisma.containerState.deleteMany({ where: liveNames.length ? { serverId: server.id, containerName: { notIn: liveNames } } : { serverId: server.id } });
+    // A container of a deliberately stopped app is expected to sit exited; only a live transition is "settling".
+    return parsed.containers.some((c) => {
+      if (!isSettling(c, now)) return false;
+      const label = resolveContainerLabel(c.name, appsById, dbsById);
+      return !(label.kind === "app" && !!label.resourceId && stoppedAppIds.has(label.resourceId));
+    });
   }
 
   /** Grab the last log lines of a just-crashed container over the "logs" capability (same gate as the

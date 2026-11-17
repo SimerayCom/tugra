@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { ArrowDown, ChevronRight, CloudUpload, Lock } from "lucide-react";
 import { AppCrashTimelineCard } from "../../../../components/app-crash-timeline-card";
@@ -10,6 +11,8 @@ import { type ChartEvent } from "../../../../components/charts";
 import { LiveLogsCard } from "../../../../components/live-logs-card";
 import { ActivitySpinner, Btn, Card, EmptyState, SectionCard, Spinner } from "../../../../components/ui";
 import { useT } from "../../../../i18n/provider";
+import { api } from "../../../../lib/api";
+import { friendlyContainer, pickDefaultLogContainer } from "../../../../lib/log-container";
 import { deploymentColor, shortDigest } from "../../../../lib/apps";
 import { LevelLog } from "../../../../components/level-log";
 import { collapseCarriageReturns, summarizeDeployLog } from "../../../../lib/log-lines";
@@ -21,25 +24,43 @@ import { ROLLOUT_KNOWN, rolloutColor } from "./app-detail-shared";
 import { useChartTimes } from "../../../../lib/appearance";
 import { formatDateTime } from "../../../../lib/format-time";
 
-export function LiveContainerLogsCard({ id, isCompose, neverDeployed = false }: { id: string; isCompose: boolean; neverDeployed?: boolean }) {
+export function LiveContainerLogsCard({ id, isCompose, neverDeployed = false, clustered = false, appName, services }: { id: string; isCompose: boolean; neverDeployed?: boolean; clustered?: boolean; appName?: string; services?: readonly string[] }) {
   const t = useT();
-  const [container, setContainer] = useState<string | undefined>(undefined);
+  // The container the user explicitly picked; until they pick one a compose app follows its main service.
+  const [picked, setPicked] = useState<string | undefined>(undefined);
   const [pickerOpen, setPickerOpen] = useState(false);
-  // A NEW app has no container yet → nothing to follow (a stream would only relay "No such container"
-  // on every reconnect). A compose app has many containers → the user must pick one before we can follow it.
-  const active = !neverDeployed && (!isCompose || !!container);
+  // A NEW app has no container yet → nothing to follow (a stream would only relay "No such container" on every
+  // reconnect). A swarm app streams the aggregated service logs, so it needs no container either. A classic
+  // compose app has many containers: list them (the picker shares this query) and start on the main service
+  // right away — "Pick a container" before any log appears reads as "this app has no logs".
+  const perContainer = isCompose && !clustered && !neverDeployed;
+  const list = useQuery({ queryKey: ["appContainers", id], queryFn: () => api.listAppContainers(id), enabled: perContainer });
+  const containers = list.data?.containers;
+  const auto = useMemo(() => (containers ? pickDefaultLogContainer(containers, { appName, services }) : undefined), [containers, appName, services]);
+  // An explicit pick wins, but only while that container still exists (a redeploy can rename it).
+  const container = picked && (!containers || containers.some((c) => c.name === picked)) ? picked : auto;
+  const active = !neverDeployed && (!perContainer || !!container);
+  const emptyHint = neverDeployed
+    ? t("apps.logsBeforeFirstDeploy")
+    : list.isLoading
+      ? t("apps.loadingContainers")
+      : containers && containers.length === 0
+        ? t("apps.noContainers")
+        : list.isError
+          ? t("apps.pickContainerToStream")
+          : t("apps.loadingContainers");
 
   return (
     <>
       <LiveLogsCard
         basePath={`/apps/${id}`}
-        container={container}
+        container={perContainer ? container : undefined}
         active={active}
-        emptyHint={neverDeployed ? t("apps.logsBeforeFirstDeploy") : t("apps.pickContainerToStream")}
+        emptyHint={emptyHint}
         headerExtra={
-          isCompose && !neverDeployed ? (
-            <Btn variant="ghost" onClick={() => setPickerOpen(true)}>
-              {container ?? t("apps.selectContainer")}
+          perContainer ? (
+            <Btn variant="ghost" onClick={() => setPickerOpen(true)} title={container}>
+              {container ? friendlyContainer(container) : t("apps.selectContainer")}
             </Btn>
           ) : undefined
         }
@@ -49,7 +70,7 @@ export function LiveContainerLogsCard({ id, isCompose, neverDeployed = false }: 
           id={id}
           onClose={() => setPickerOpen(false)}
           onPick={(name) => {
-            setContainer(name);
+            setPicked(name);
             setPickerOpen(false);
           }}
         />
@@ -140,13 +161,13 @@ export function FilesTab({ id, app }: { id: string; app: Pick<Application, "sour
   );
 }
 
-export function LogsTab({ id, canWrite, isCompose, clustered = false, neverDeployed, streamActive, liveLines, lastDeployLog }: { id: string; canWrite: boolean; isCompose: boolean; clustered?: boolean; neverDeployed: boolean; streamActive: boolean; liveLines: string; lastDeployLog: string | null | undefined }) {
+export function LogsTab({ id, canWrite, isCompose, clustered = false, neverDeployed, streamActive, liveLines, lastDeployLog, appName, services }: { id: string; canWrite: boolean; isCompose: boolean; clustered?: boolean; appName?: string; services?: readonly string[]; neverDeployed: boolean; streamActive: boolean; liveLines: string; lastDeployLog: string | null | undefined }) {
   const t = useT();
   return (
     <>
       {/* During a deploy the BUILD log belongs up top; runtime container logs sit below it. */}
       {streamActive && <LiveLogCard lines={liveLines} />}
-      {canWrite && <LiveContainerLogsCard id={id} isCompose={isCompose} neverDeployed={neverDeployed} />}
+      {canWrite && <LiveContainerLogsCard id={id} isCompose={isCompose} neverDeployed={neverDeployed} clustered={clustered} appName={appName} services={services} />}
       {canWrite && <LogDrainCard scope={{ kind: "app", id, isCompose, clustered }} />}
       {!streamActive &&
         (lastDeployLog ? (

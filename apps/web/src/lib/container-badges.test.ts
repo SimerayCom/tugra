@@ -44,4 +44,12 @@ describe("containerBadges", () => {
   it("treats missing fields as benign (no badges)", () => {
     expect(containerBadges({})).toEqual([]);
   });
+
+  it("drops a stale unhealthy verdict from a stopped container (docker keeps the last health result after exit)", () => {
+    expect(containerBadges({ status: "exited", exitCode: 143, health: "unhealthy" })).toEqual([{ key: "exit", tone: "danger", vars: { code: 143 } }]);
+  });
+
+  it("flags a running container whose healthcheck is still starting", () => {
+    expect(containerBadges({ status: "running", health: "starting" })).toEqual([{ key: "starting", tone: "warn" }]);
+  });
 });

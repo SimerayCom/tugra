@@ -6,6 +6,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, appIconUrl } from "../../../../lib/api";
 import { appStatusDisplay, appSourceSummary, deleteCleanupOptions, webhookUrl } from "../../../../lib/apps";
 import { statusLabel } from "../../../../lib/status";
+import { linkServices } from "../../../../lib/log-container";
 import { useDeployLogStream } from "../../../../hooks/useDeployLogStream";
 import { type ChartEvent } from "../../../../components/charts";
 import { ConfigMountsCard } from "../../../../components/config-mounts-card";
@@ -251,6 +252,7 @@ export default function AppDetailPage() {
     ) : node;
   const deployingNow = deploy.isPending || optimisticDeploy;
   const isRunning = appData.status === "RUNNING";
+  const logServices = linkServices(appData.links); // compose services that serve a link: the log tab starts on one of them
   const statusDisplay = appStatusDisplay(appData);
   const headerStatus = deployingNow && appData.status !== "RUNNING" ? { label: statusLabel(t, "DEPLOYING"), color: "var(--c-am)" } : { label: statusLabel(t, statusDisplay.key), color: statusDisplay.color };
   const primary: "deploy" | "restart" | "start" = appData.status === "RUNNING" ? "restart" : appData.status === "STOPPED" ? "start" : "deploy";
@@ -570,7 +572,7 @@ export default function AppDetailPage() {
       {tab === "analytics" && <AnalyticsTab app={appData} />}
 
       {tab === "logs" && (
-        <LogsTab id={id} canWrite={appData.canWrite} isCompose={appData.source === "COMPOSE"} clustered={!!appData.clusterId} neverDeployed={appData.status === "NEW"} streamActive={streamActive} liveLines={live.lines} lastDeployLog={lastDep?.logs} />
+        <LogsTab id={id} canWrite={appData.canWrite} isCompose={appData.source === "COMPOSE"} clustered={!!appData.clusterId} neverDeployed={appData.status === "NEW"} appName={appData.name} services={logServices} streamActive={streamActive} liveLines={live.lines} lastDeployLog={lastDep?.logs} />
       )}
 
       {tab === "files" && appData.canWrite && <FilesTab id={id} app={appData} />}
