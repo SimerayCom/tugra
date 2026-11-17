@@ -70,12 +70,12 @@ describe("buildRefreshScript (the exact commands)", () => {
     expect(plannedServices(basePlan)).toEqual(["tugra-updater", "agent"]);
     expect(plannedServices({ refreshUpdater: false, refreshAgent: true })).toEqual(["agent"]);
     const s = buildRefreshScript(basePlan);
-    expect(s).toMatch(/docker run -d --rm --name tugra-updater-refresh .*up -d --no-deps "\$@"' sh "\$SRC" tugra-updater agent /);
+    expect(s).toMatch(/docker run -d --rm --name tugra-updater-refresh .*up -d --no-deps "\$@" \|\| exit 1; bash \/opt\/tugra\/scripts\/update\.sh --prune-images "\$v" \|\| true' sh "\$SRC" "\$VERSION" tugra-updater agent /);
     expect(s).not.toMatch(/compose (pull|down|stop|rm|kill|restart)/);
     expect(s).not.toMatch(/postgres|redis|hub-api/);
     const onlyAgent = buildRefreshScript({ ...basePlan, refreshUpdater: false });
-    expect(onlyAgent).toMatch(/sh "\$SRC" agent >/);
-    expect(onlyAgent).not.toMatch(/sh "\$SRC" tugra-updater/);
+    expect(onlyAgent).toMatch(/sh "\$SRC" "\$VERSION" agent >/);
+    expect(onlyAgent).not.toMatch(/"\$VERSION" tugra-updater/);
   });
 
   it("applies the signed host files in the NEW updater image only for a lagging updater, before the recreate", () => {
@@ -111,8 +111,8 @@ describe("buildRefreshScript (the exact commands)", () => {
       `#!/bin/bash
 echo "docker $*" >> "$SHIM_LOG"
 case "$1" in
-  ps) [ -n "$SHIM_NO_UPDATER" ] || echo cid1; exit 0 ;;
-  inspect) echo "\${SHIM_SRC-/srv/tugra}"; exit 0 ;;
+  ps) case "$*" in *service=agent*) echo agentcid; exit 0 ;; esac; [ -n "$SHIM_NO_UPDATER" ] || echo cid1; exit 0 ;;
+  inspect) case "$*" in *working_dir*) echo "\${SHIM_AGENT_WD-/srv/tugra/deploy}"; exit 0 ;; esac; echo "\${SHIM_SRC-/srv/tugra}"; exit 0 ;;
   pull) [ -n "$SHIM_PULL_FAIL" ] && exit 1; exit 0 ;;
   image) case "$*" in *"{{.Id}}"*) echo "sha256:imgid"; exit 0 ;; *) echo "\${SHIM_LABEL:-0.1.0-beta.20}"; exit 0 ;; esac ;;
   run) case "$*" in *--apply-host-files*) [ -n "$SHIM_HF_FAIL" ] && exit 1 ;; esac; [ -n "$SHIM_HELPER_FAIL" ] && [[ "$*" == *"-d --rm"* ]] && exit 1; exit 0 ;;
@@ -138,7 +138,7 @@ exit 0
       expect(calls.some((c) => c.includes("--entrypoint bash ghcr.io/simeraycom/tugra-updater:0.1.0-beta.20 /opt/tugra/scripts/update.sh --apply-host-files 0.1.0-beta.20 " + H))).toBe(true);
       const helper = calls.find((c) => c.startsWith("docker run -d --rm --name tugra-updater-refresh")) as string;
       expect(helper).toContain("-v /srv/tugra:/srv/tugra");
-      expect(helper).toMatch(/sh \/srv\/tugra tugra-updater agent$/);
+      expect(helper).toMatch(/sh \/srv\/tugra 0\.1\.0-beta\.20 tugra-updater agent$/);
       // outside the helper's own command line the agent runs no compose, and stops/removes nothing but a stale helper
       expect(calls.filter((c) => !c.startsWith("docker run -d --rm --name tugra-updater-refresh")).some((c) => /docker compose|docker (stop|restart|kill)|docker rm -f (?!tugra-updater-refresh)/.test(c))).toBe(false);
       expect(calls.findIndex((c) => c.includes("--apply-host-files"))).toBeLessThan(calls.findIndex((c) => c.startsWith("docker run -d")));
@@ -167,8 +167,29 @@ exit 0
       const a = exec(basePlan, { SHIM_NO_UPDATER: "1" });
       expect(a.res).toMatchObject({ ok: false, error: "no-updater-container" });
       expect(a.calls.some((c) => c.startsWith("docker pull"))).toBe(false);
-      const b = exec(basePlan, { SHIM_SRC: "" });
+      const b = exec(basePlan, { SHIM_SRC: "", SHIM_AGENT_WD: "" });
       expect(b.res).toMatchObject({ ok: false, error: "no-checkout-path" });
+    });
+
+    it("an AGENT-only lag on an install without an updater container is refreshed: the checkout comes from the agent's compose working-dir, the helper image is the release updater image", () => {
+      const plan: RefreshPlan = { ...basePlan, refreshUpdater: false, hostFilesDigest: undefined };
+      const { calls, res } = exec(plan, { SHIM_NO_UPDATER: "1", SHIM_AGENT_WD: "/opt/stack/deploy" });
+      expect(res).toEqual({ ok: true, scheduled: ["agent"], hostFiles: null, error: null });
+      expect(calls).toContain(`docker pull ghcr.io/simeraycom/tugra-updater@sha256:${U}`);
+      expect(calls).toContain(`docker pull ghcr.io/simeraycom/tugra-agent@sha256:${A}`);
+      const helper = calls.find((c) => c.startsWith("docker run -d --rm --name tugra-updater-refresh")) as string;
+      expect(helper).toContain("-v /opt/stack:/opt/stack");
+      expect(helper).toMatch(/sh \/opt\/stack 0\.1\.0-beta\.20 agent$/);
+      // a working dir that is not <checkout>/deploy is refused rather than guessed
+      expect(exec(plan, { SHIM_NO_UPDATER: "1", SHIM_AGENT_WD: "/opt/stack/elsewhere" }).res).toMatchObject({ ok: false, error: "no-checkout-path" });
+    });
+
+    it("the helper prunes old release images after the recreate, only for the version it brought up", () => {
+      const helper = exec(basePlan).calls.find((c) => c.startsWith("docker run -d --rm --name tugra-updater-refresh")) as string;
+      expect(helper.indexOf("up -d --no-deps")).toBeGreaterThan(-1);
+      expect(helper.indexOf("update.sh --prune-images")).toBeGreaterThan(helper.indexOf("up -d --no-deps"));
+      expect(helper).toContain("-e ENV_FILE=/srv/tugra/.env");
+      expect(helper).toContain('sh /srv/tugra 0.1.0-beta.20 tugra-updater agent');
     });
 
     it("a helper that cannot be started is a failure (nothing was recreated)", () => {

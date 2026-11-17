@@ -25,14 +25,22 @@ const INFO_TTL_S = 14 * 24 * 3600;
 const MARKER_OK_TTL_S = 30 * 24 * 3600;
 /** A failed attempt is retried after this long (the marker doubles as the "once per release" guard while it lives). */
 const MARKER_FAILED_TTL_S = 6 * 3600;
-/** The update lock is held while the helper recreates the services, so no update can start in that window. */
+/** After the helper is scheduled the update lock stays for this long: the recreate window (helper delay + `up`). */
 const LOCK_HOLD_S = 120;
 const PROBE_TIMEOUT_MS = 30_000;
 const REFRESH_TIMEOUT_MS = 12 * 60_000;
+/**
+ * The lock is taken for the WHOLE operation: the refresh script pulls images and applies host files for up to
+ * REFRESH_TIMEOUT_MS before it even starts the detached helper, and a lock that lapsed in between would let an
+ * "Update now" queue a job that the helper's recreate then cuts off. Shortened to LOCK_HOLD_S once the helper runs.
+ */
+const LOCK_OPERATION_S = Math.ceil(REFRESH_TIMEOUT_MS / 1000) + 120;
 const PANEL_MIN_GAP_MS = 10 * 60_000;
 const FIRST_RUN_DELAY_MS = 2 * 60_000;
 const INTERVAL_MS = 60 * 60_000;
 const REFRESHING_WINDOW_MS = 10 * 60_000;
+/** Without a probe taken after the refreshing window, "refreshing" is kept for at most this long before it counts as failed. */
+const PROBE_GRACE_MS = 60 * 60_000;
 const IN_FLIGHT_PHASES = new Set(["queued", "pulling", "recreating"]);
 
 export type ConvergeOutcome =
@@ -132,8 +140,15 @@ export class StackConvergeService implements OnApplicationBootstrap, OnModuleDes
     let state: UpdaterView["state"] = info.version ? "current" : "unknown";
     if (behind) {
       const scheduled = info.scheduledAt ? Date.parse(info.scheduledAt) : NaN;
-      if (Number.isFinite(scheduled) && Date.now() - scheduled < REFRESHING_WINDOW_MS) state = "refreshing";
-      else if (info.error || info.scheduledAt) state = "failed"; // an attempt was made and the helper still lags
+      const checked = Date.parse(info.checkedAt);
+      const sinceScheduled = Date.now() - scheduled;
+      if (Number.isFinite(scheduled) && sinceScheduled < REFRESHING_WINDOW_MS) state = "refreshing";
+      else if (Number.isFinite(scheduled) && !(checked >= scheduled + REFRESHING_WINDOW_MS) && sinceScheduled < PROBE_GRACE_MS) {
+        // The stored version is still the one seen BEFORE the refresh: no probe has run since the helper had time to
+        // recreate the updater, so "still behind" proves nothing yet. Keep saying "refreshing" and look again.
+        state = "refreshing";
+        this.reconcileIfStale();
+      } else if (info.error || info.scheduledAt) state = "failed"; // an attempt was made and the helper still lags
       else state = "behind";
     }
     return { version: info.version, behind, state, checkedAt: info.checkedAt };
@@ -181,7 +196,7 @@ export class StackConvergeService implements OnApplicationBootstrap, OnModuleDes
     // Never mid-job: an update that is queued/pulling/recreating owns the stack; the lock (also held for the recreate
     // window below) makes the check-and-take atomic against a click on "Update now".
     if (IN_FLIGHT_PHASES.has(mapStatus(await this.redis.get(UPDATE_STATUS_KEY)).phase)) return "update-in-progress";
-    if (!(await this.redis.firstInWindow(UPDATE_LOCK_KEY, LOCK_HOLD_S))) return "update-in-progress";
+    if (!(await this.redis.firstInWindow(UPDATE_LOCK_KEY, LOCK_OPERATION_S))) return "update-in-progress";
 
     let scheduled = false;
     try {
@@ -215,6 +230,8 @@ export class StackConvergeService implements OnApplicationBootstrap, OnModuleDes
         return "failed";
       }
       scheduled = true;
+      // The helper is running now: the lock only has to cover its delay + recreate from here on.
+      await this.redis.expire(UPDATE_LOCK_KEY, LOCK_HOLD_S).catch(() => undefined);
       await this.redis.set(MARKER_KEY, own, MARKER_OK_TTL_S);
       await this.recordAttempt(null, true);
       this.logger.log(`refreshing ${plannedServices(plan).join(" + ")} to ${own} through the local agent${res.hostFiles ? ` (host files: ${res.hostFiles})` : ""}`);
@@ -230,7 +247,7 @@ export class StackConvergeService implements OnApplicationBootstrap, OnModuleDes
       await this.recordAttempt("the local agent did not complete the refresh", false).catch(() => undefined);
       return "failed";
     } finally {
-      // Hold the lock through the recreate window after a successful start; release it at once otherwise.
+      // Hold the lock through the recreate window after a successful start (shortened above); release it at once otherwise.
       if (!scheduled) await this.redis.del(UPDATE_LOCK_KEY).catch(() => undefined);
     }
   }

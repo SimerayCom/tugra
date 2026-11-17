@@ -34,6 +34,7 @@ interface Opts {
   refreshOut?: string;
   probeThrows?: boolean;
   redisInit?: Record<string, string>;
+  onRefresh?: () => void;
 }
 
 function rig(o: Opts = {}) {
@@ -46,10 +47,14 @@ function rig(o: Opts = {}) {
       ttl.set(k, t);
     }),
     del: jest.fn(async (...ks: string[]) => ks.forEach((k) => store.delete(k))),
-    firstInWindow: jest.fn(async (k: string) => {
+    firstInWindow: jest.fn(async (k: string, t: number) => {
       if (store.has(k)) return false;
       store.set(k, "1");
+      ttl.set(k, t);
       return true;
+    }),
+    expire: jest.fn(async (k: string, t: number) => {
+      ttl.set(k, t);
     }),
   } as unknown as RedisService;
   const local = o.local === undefined ? { id: "srv1", arch: "x86_64", agentVersion: "0.1.0-beta.18", capabilities: ["deploy", "logs"] } : o.local;
@@ -59,6 +64,7 @@ function rig(o: Opts = {}) {
     isOnline: jest.fn().mockReturnValue(o.online ?? true),
     sendCommand: jest.fn(async (_id: string, script: string) => {
       commands.push(script);
+      if (!script.includes("TUGRA_PROBE")) o.onRefresh?.();
       if (script.includes("TUGRA_PROBE")) {
         if (o.probeThrows) throw new Error("agent offline");
         return { exitCode: 0, output: o.updaterAbsent ? "TUGRA_PROBE updater=absent" : probeOut(o.updaterVersion === undefined ? "0.1.0-beta.17" : o.updaterVersion) };
@@ -143,6 +149,33 @@ describe("StackConvergeService.reconcile (bootstrap of an updater/agent that lag
     expect(r.store.has(UPDATE_LOCK_KEY)).toBe(true);
   });
 
+  it("the update lock covers the WHOLE refresh (pulls + host files can take minutes) and is only then shortened to the recreate window", async () => {
+    let held: { has: boolean; ttl: number | undefined } | undefined;
+    const r = rig({ onRefresh: () => undefined });
+    // while the (long) refresh script runs, the lock must still be there for at least as long as the script may take
+    (r.agentWs.sendCommand as jest.Mock).mockImplementationOnce(async () => ({ exitCode: 0, output: probeOut("0.1.0-beta.17") })).mockImplementationOnce(async () => {
+      held = { has: r.store.has(UPDATE_LOCK_KEY), ttl: r.ttl.get(UPDATE_LOCK_KEY) };
+      return { exitCode: 0, output: "TUGRA_STEP scheduled=tugra-updater,agent\n" };
+    });
+    expect(await r.svc.reconcile()).toBe("scheduled");
+    expect(held?.has).toBe(true);
+    expect(held?.ttl).toBeGreaterThanOrEqual(12 * 60 + 60); // REFRESH_TIMEOUT (12 min) + margin: a lock that lapsed mid-script lets "Update now" slip in
+    expect(r.redis.expire).toHaveBeenCalledWith(UPDATE_LOCK_KEY, expect.any(Number));
+    const after = r.ttl.get(UPDATE_LOCK_KEY) as number;
+    expect(after).toBeGreaterThanOrEqual(60);
+    expect(after).toBeLessThanOrEqual(300);
+    expect(r.store.has(UPDATE_LOCK_KEY)).toBe(true);
+  });
+
+  it("an agent that lags on an install WITHOUT an updater container is refreshed too (agent only, by its signed platform digest)", async () => {
+    const r = rig({ updaterAbsent: true });
+    expect(await r.svc.reconcile()).toBe("scheduled");
+    const s = r.refreshCommands()[0];
+    expect(s).toContain(`pull_release "$AGENT_REPO" '${A_AMD}'`);
+    expect(s).toMatch(/"\$VERSION" agent >/);
+    expect(s).not.toContain("--apply-host-files");
+  });
+
   it("a refresh that does not start: failure, lock released, short retry marker, the panel says failed", async () => {
     const r = rig({ refreshExit: 4, refreshOut: "TUGRA_STEP error=pull-updater\n" });
     expect(await r.svc.reconcile()).toBe("failed");
@@ -158,7 +191,7 @@ describe("StackConvergeService.reconcile (bootstrap of an updater/agent that lag
     expect(s).toContain(`pull_release "$UPD_REPO" ''`);
     expect(s).not.toContain("--apply-host-files");
     expect(s).not.toContain("pull_release \"$AGENT_REPO\"");
-    expect(s).toMatch(/sh "\$SRC" tugra-updater >/);
+    expect(s).toMatch(/"\$VERSION" tugra-updater >/);
   });
 
   it("an agent that lags with no digest for its platform (and a current updater) cannot be refreshed: no-digest, lock released", async () => {
@@ -223,6 +256,26 @@ describe("StackConvergeService.view (what the panel shows)", () => {
     await r.svc.reconcile();
     const stored = JSON.parse(r.store.get("instance:update:updater-info") as string);
     stored.scheduledAt = new Date(Date.now() - 30 * 60_000).toISOString();
+    r.store.set("instance:update:updater-info", JSON.stringify(stored));
+    expect(await r.svc.view()).toMatchObject({ behind: true, state: "failed" });
+  });
+
+  it("after the refreshing window it does not cry 'failed' until a probe taken AFTER the helper had time to restart still sees the old version", async () => {
+    const r = rig();
+    await r.svc.reconcile();
+    const stored = JSON.parse(r.store.get("instance:update:updater-info") as string);
+    // scheduled 15 min ago; the last probe is from BEFORE that (the one that found the lag)
+    stored.scheduledAt = new Date(Date.now() - 15 * 60_000).toISOString();
+    stored.checkedAt = new Date(Date.now() - 20 * 60_000).toISOString();
+    r.store.set("instance:update:updater-info", JSON.stringify(stored));
+    expect(await r.svc.view()).toMatchObject({ behind: true, state: "refreshing" });
+    // a probe from after the window that still sees the old helper is a real failure
+    stored.checkedAt = new Date(Date.now() - 2 * 60_000).toISOString();
+    r.store.set("instance:update:updater-info", JSON.stringify(stored));
+    expect(await r.svc.view()).toMatchObject({ behind: true, state: "failed" });
+    // and with no probe at all for over an hour the attempt counts as failed rather than "refreshing" forever
+    stored.scheduledAt = new Date(Date.now() - 3 * 3600_000).toISOString();
+    stored.checkedAt = new Date(Date.now() - 4 * 3600_000).toISOString();
     r.store.set("instance:update:updater-info", JSON.stringify(stored));
     expect(await r.svc.view()).toMatchObject({ behind: true, state: "failed" });
   });

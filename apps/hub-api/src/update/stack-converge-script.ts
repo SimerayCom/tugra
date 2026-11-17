@@ -21,7 +21,9 @@ import { SHA256_HEX } from "./update-manifest";
  *      validated, atomically replaced — the same code path as an in-app update;
  *   3. starts a detached one-shot helper (the new updater image has docker + compose) that, a few seconds later,
  *      recreates ONLY the lagging services with `up -d --no-deps` — a container cannot recreate itself, and the agent
- *      running this very script is one of the targets.
+ *      running this very script is one of the targets. Once they are up the helper runs
+ *      `update.sh --prune-images <version>`, which removes Tugra's own old release images (the running release and
+ *      the newest older one stay; the old update.sh of such an install never pruned anything).
  */
 
 /** The compose project the hub stack runs under (same default the hub backup uses). */
@@ -162,8 +164,17 @@ export function buildRefreshScript(plan: RefreshPlan): string {
     `UPD_REPO=${shq(updaterRepo)}`,
     `AGENT_REPO=${shq(agentRepo)}`,
     ...findUpdater(plan.project),
-    `[ -n "$CID" ] || { echo "TUGRA_STEP error=no-updater-container"; exit 3; }`,
-    `SRC="$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/repo"}}{{.Source}}{{end}}{{end}}' "$CID" 2>/dev/null | tr -d '\\r\\n')"`,
+    // A lagging updater needs its container (its /repo mount is the checkout). An AGENT-only refresh (an install
+    // without an updater container) takes the checkout from the agent's own compose working-dir label instead
+    // (<checkout>/deploy); the helper image is the release's updater image, pulled below either way.
+    ...(plan.refreshUpdater ? [`[ -n "$CID" ] || { echo "TUGRA_STEP error=no-updater-container"; exit 3; }`] : []),
+    `SRC=""`,
+    `if [ -n "$CID" ]; then SRC="$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/repo"}}{{.Source}}{{end}}{{end}}' "$CID" 2>/dev/null | tr -d '\\r\\n')"; fi`,
+    `case "$SRC" in /*) ;; *)`,
+    `  SRC=""`,
+    `  ACID="$(docker ps -aq --filter "label=com.docker.compose.project=$P" --filter "label=com.docker.compose.service=agent" | head -n1)"`,
+    `  if [ -n "$ACID" ]; then WD="$(docker inspect -f '{{index .Config.Labels "com.docker.compose.project.working_dir"}}' "$ACID" 2>/dev/null | tr -d '\\r\\n')"; case "$WD" in /*/deploy) SRC="\${WD%/deploy}" ;; esac; fi`,
+    `  ;; esac`,
     `case "$SRC" in /*) ;; *) echo "TUGRA_STEP error=no-checkout-path"; exit 3 ;; esac`,
     // pull_release <repo> <digest-or-empty>: by signed digest + label check + local tag, else a plain tag pull.
     `pull_release() {`,
@@ -193,7 +204,9 @@ export function buildRefreshScript(plan: RefreshPlan): string {
   lines.push(
     `docker rm -f tugra-updater-refresh >/dev/null 2>&1 || true`,
     // Detached + delayed: this very script runs inside the agent, which is one of the services being recreated.
-    `if docker run -d --rm --name tugra-updater-refresh -v /var/run/docker.sock:/var/run/docker.sock -v "$SRC:$SRC" -w "$SRC" --entrypoint sh "$UPD_REPO:$VERSION" -c 'sleep 5; d="$1"; shift; exec docker compose --profile updater --project-directory "$d/deploy" --env-file "$d/.env" -f "$d/deploy/docker-compose.yml" up -d --no-deps "$@"' sh "$SRC" ${services.join(" ")} >/dev/null 2>&1; then echo "TUGRA_STEP scheduled=${services.join(",")}"; else echo "TUGRA_STEP error=helper-start"; exit 4; fi`,
+    // After the recreate the same helper drops Tugra's old release images (update.sh --prune-images: keeps the running
+    // release and the newest older one, never a foreign image, honours TUGRA_PRUNE_IMAGES=0); it never fails the refresh.
+    `if docker run -d --rm --name tugra-updater-refresh -v /var/run/docker.sock:/var/run/docker.sock -v "$SRC:$SRC" -w "$SRC" -e TUGRA_REPO_DIR="$SRC" -e ENV_FILE="$SRC/.env" --entrypoint sh "$UPD_REPO:$VERSION" -c 'sleep 5; d="$1"; v="$2"; shift 2; docker compose --profile updater --project-directory "$d/deploy" --env-file "$d/.env" -f "$d/deploy/docker-compose.yml" up -d --no-deps "$@" || exit 1; bash /opt/tugra/scripts/update.sh --prune-images "$v" || true' sh "$SRC" "$VERSION" ${services.join(" ")} >/dev/null 2>&1; then echo "TUGRA_STEP scheduled=${services.join(",")}"; else echo "TUGRA_STEP error=helper-start"; exit 4; fi`,
   );
   return lines.join("\n");
 }
