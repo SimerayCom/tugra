@@ -294,3 +294,56 @@ describe("server detail feedback", () => {
     expect(busy).toHaveAttribute("aria-busy", "true");
   });
 });
+
+describe("docker cleanup card (default-on, what it does and does not delete)", () => {
+  const stateText = async () => (await screen.findByTestId("cleanup-state")).textContent ?? "";
+
+  it("default server: shows ON with the daily schedule and the disk trigger", async () => {
+    nav.tab = "maintenance";
+    stubs.fns.getServer = async () => server({ cleanupEnabled: true, cleanupCron: "0 3 * * *", cleanupThresholdPct: 80 });
+    mount();
+    const text = await stateText();
+    expect(text).toContain("Automatic cleanup is on");
+    expect(text).toContain("Runs on schedule “0 3 * * *”");
+    expect(text).toContain("whenever disk usage reaches 80% (at most once an hour)");
+    expect(text).toContain("Not run yet");
+  });
+
+  it("an interval-only schedule and a missing threshold are described honestly", async () => {
+    nav.tab = "maintenance";
+    stubs.fns.getServer = async () => server({ cleanupEnabled: true, cleanupIntervalHours: 6, cleanupThresholdPct: null });
+    mount();
+    const text = await stateText();
+    expect(text).toContain("Runs every 6 h");
+    expect(text).toContain("with no disk-usage trigger");
+  });
+
+  it("explicitly OFF is shown as off (no schedule claims) with the way back on", async () => {
+    nav.tab = "maintenance";
+    stubs.fns.getServer = async () => server({ cleanupEnabled: false, cleanupCron: "0 3 * * *", cleanupThresholdPct: 80 });
+    mount();
+    const text = await stateText();
+    expect(text).toContain("Automatic cleanup is off");
+    expect(text).toContain("Nothing is pruned on this server unless you press “Clean now”");
+    expect(text).not.toContain("Runs on schedule");
+  });
+
+  it("states the defaults and what it deletes and never deletes", async () => {
+    nav.tab = "maintenance";
+    stubs.fns.getServer = async () => server({ cleanupEnabled: true });
+    mount();
+    await stateText();
+    expect(screen.getByText(/dangling image layers and build cache older than 7 days/)).toBeInTheDocument();
+    expect(screen.getByText(/Never deleted: app images \(including rollback versions\), stopped containers, networks and volumes/)).toBeInTheDocument();
+    expect(screen.getByText("Defaults for every server: on, daily at 03:00, and also whenever disk usage reaches 80%.")).toBeInTheDocument();
+  });
+
+  it("the threshold field is labelled as an extra trigger, not a gate", async () => {
+    nav.tab = "maintenance";
+    stubs.fns.getServer = async () => server({ cleanupEnabled: true, cleanupThresholdPct: 80 });
+    mount();
+    await stateText();
+    expect(screen.getByLabelText("Also at disk %")).toHaveValue(80);
+    expect(screen.getByText(/also runs when this server's disk usage reaches this percentage/)).toBeInTheDocument();
+  });
+});
