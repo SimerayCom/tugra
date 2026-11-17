@@ -222,12 +222,45 @@ describe("evaluateVerification", () => {
     expect(end.report.docker).toBe("unknown");
   });
 
-  it("a probe that cannot run is reported (never a fake ok) and degrades", () => {
-    const r = run({ domains: probe({}, true) });
+  it("a probe that cannot run is reported (never a fake ok); judged only when the window is over", () => {
+    const open = run({ domains: probe({}, true) });
+    expect(open).toMatchObject({ settled: false, result: null }); // the helper may fail once right after boot
+    const r = run({ domains: probe({}, true), final: true });
     expect(r).toMatchObject({ settled: true, result: "degraded" });
     expect(r.report.domainsNote).toBe("probe_unavailable");
     expect(r.report.domains.every((d) => d.verdict === "unverified")).toBe(true);
     expect(r.report.summary.domainsExpected).toBe(0);
+  });
+
+  it("a probe that failed once and works on the next poll ends OK", () => {
+    expect(run({ domains: probe({}, true) }).settled).toBe(false);
+    expect(run({ domains: probe({ "a.example.com": 200, "b.example.com": 200 }) })).toMatchObject({ settled: true, result: "ok" });
+  });
+
+  it("a host that was not answering BEFORE the reboot is not blamed on it (and is not counted as expected)", () => {
+    const r = run({ snapshot: snapshot({ domainsDown: ["b.example.com"] }), domains: probe({ "a.example.com": 200, "b.example.com": 404 }) });
+    expect(r).toMatchObject({ settled: true, result: "ok" });
+    expect(r.report.domains.find((d) => d.host === "b.example.com")).toEqual({ host: "b.example.com", verdict: "not_answering_before", status: 404 });
+    expect(r.report.summary).toMatchObject({ domainsOk: 1, domainsExpected: 1 });
+  });
+
+  it("a host that answered before the reboot and not after IS degraded; one that was down before and answers now is ok", () => {
+    const bad = run({ snapshot: snapshot({ domainsDown: ["b.example.com"] }), domains: probe({ "a.example.com": 404, "b.example.com": 200 }), final: true });
+    expect(bad).toMatchObject({ settled: true, result: "degraded" });
+    expect(bad.report.domains.map((d) => d.verdict)).toEqual(["not_answering", "ok"]);
+  });
+
+  it("a reboot-required flag that was asked for but could not be read is not 'everything came back'", () => {
+    // not asked yet (the first pass): no effect
+    expect(run({ rebootRequired: null })).toMatchObject({ settled: true, result: "ok" });
+    // asked, unreadable: keep polling inside the window...
+    expect(run({ rebootRequired: null, flagChecked: true })).toMatchObject({ settled: false, result: null });
+    // ...and degraded at the end of it
+    const end = run({ rebootRequired: null, flagChecked: true, final: true });
+    expect(end).toMatchObject({ settled: true, result: "degraded" });
+    expect(end.report.rebootRequired).toBe("unknown");
+    // read fine: ok
+    expect(run({ rebootRequired: false, flagChecked: true })).toMatchObject({ settled: true, result: "ok" });
   });
 
   it("a proxy with no host port is noted, not probed, and does not degrade", () => {

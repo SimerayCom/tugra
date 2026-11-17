@@ -25,6 +25,7 @@ import {
   ACTIVE_REBOOT_STATES,
   buildDomainTargets,
   checkRebootSchedule,
+  domainStatusIsUp,
   evaluateVerification,
   failureReport,
   rebootTiming,
@@ -41,6 +42,7 @@ import type { RebootRequestInput, RebootView } from "./dto";
 const STATE_TIMEOUT_MS = 45_000;
 const PROBE_TIMEOUT_MS = 90_000;
 const HOST_TIMEOUT_MS = 60_000;
+const BASELINE_PROBE_TIMEOUT_MS = 40_000;
 const HOST_EXEC = { deadlineSec: 40, killSec: 5 };
 
 const SCHEDULE_MESSAGES = {
@@ -84,6 +86,8 @@ export class RebootService implements OnApplicationBootstrap {
   /** Rows being advanced right now in this process (a slow verification poll must not overlap the next tick). */
   private readonly inflight = new Set<string>();
   private lastTickAt = 0;
+  /** Why a scheduled reboot last could not start (this process only), so the end of its window names the cause. */
+  private readonly lastBlock = new Map<string, "busy_patch" | "busy_deploy" | "agent_offline">();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -143,8 +147,14 @@ export class RebootService implements OnApplicationBootstrap {
     if (now) await this.assertNoDeploy(serverId);
     // Read-only host look: is there systemd to hold a delayed reboot, and (for "now") is an OS update running.
     const host = await this.readHost(serverId);
-    if (host.systemd === false) throw new BadRequestException("this server has no systemd, so Tugra cannot arm a delayed reboot on it — reboot it from a shell on the server");
-    if (now && host.patchRunning) throw new ConflictException("an OS update is running on this server — wait for it to finish before rebooting");
+    if (host.busy) {
+      // An OS update's helper holds the host-exec name. Now: refuse. Scheduled: fine, it only has to be free when it fires
+      // (systemd is checked again then: the start script refuses a host without it).
+      if (now) throw new ConflictException(FAILURE_MESSAGES.busy_patch);
+    } else {
+      if (host.systemd === false) throw new BadRequestException(FAILURE_MESSAGES.unsupported);
+      if (now && host.patchRunning) throw new ConflictException(FAILURE_MESSAGES.busy_patch);
+    }
 
     let row: ServerReboot;
     try {
@@ -189,6 +199,7 @@ export class RebootService implements OnApplicationBootstrap {
     const claimed = await this.prisma.serverReboot.updateMany({ where: { id: active.id, state: "SCHEDULED" }, data: { state: "DONE", result: "cancelled", verifiedAt: new Date() } });
     if (claimed.count === 0) throw new ConflictException("the reboot has already started and cannot be cancelled");
     await this.queue.unschedule(active.id).catch(() => undefined);
+    this.lastBlock.delete(active.id);
     await this.audit.log({ actor: userId, action: "server.reboot.cancel", target: serverId, meta: { rebootId: active.id } }).catch(() => undefined);
     const row = await this.prisma.serverReboot.findUnique({ where: { id: active.id } });
     return toView(row ?? { ...active, state: "DONE", result: "cancelled" });
@@ -255,11 +266,33 @@ export class RebootService implements OnApplicationBootstrap {
 
   private async advanceScheduled(row: ServerReboot): Promise<void> {
     if (!row.scheduledAt || row.scheduledAt.getTime() > Date.now()) return;
-    const outcome = await this.start(row);
-    // A failure was already settled (and notified) by start(); a blocked one keeps waiting until its window ends.
-    if (outcome.kind === "blocked" && Date.now() > row.scheduledAt.getTime() + rebootTiming.busyRetryWindowMs) {
-      await this.settle(row.id, "failed", failureReport(outcome.reason, null), { notify: true });
+    const windowEnds = row.scheduledAt.getTime() + rebootTiming.busyRetryWindowMs;
+    // A reboot must never fire at a time nobody chose: a hub (or Redis) that was down at the due time, or a tick that
+    // arrives long after it, must not start it now.
+    if (Date.now() > windowEnds) {
+      // Kept waiting on a busy server until the window ended: say what blocked it. Never attempted (the hub or Redis was
+      // down): it was missed. Either way it is NOT run now.
+      const reason = this.lastBlock.get(row.id) ?? "missed";
+      this.lastBlock.delete(row.id);
+      await this.settle(row.id, "failed", failureReport(reason, null), { notify: true });
+      await this.queue.unschedule(row.id).catch(() => undefined);
+      return;
     }
+    // Authorised when it was scheduled; re-checked now (the requester may have left the team or lost the permission).
+    const server = await this.prisma.server.findUnique({ where: { id: row.serverId }, select: { id: true, name: true, teamId: true, isLocal: true, proxyBind: true } });
+    if (!server) return;
+    try {
+      await this.access.requirePermission(row.requestedBy, server.teamId, "servers:ops");
+    } catch (e) {
+      if (!(e instanceof ForbiddenException || e instanceof NotFoundException)) throw e;
+      await this.settle(row.id, "failed", failureReport("unauthorized", null), { notify: true, server });
+      await this.queue.unschedule(row.id).catch(() => undefined);
+      return;
+    }
+    // A failure is settled (and notified) by start(); a blocked one keeps waiting until its window ends.
+    const outcome = await this.start(row, server);
+    if (outcome.kind === "blocked") this.lastBlock.set(row.id, outcome.reason);
+    else this.lastBlock.delete(row.id);
   }
 
   /** A hub died between claiming the row and arming the unit. Whether the unit was armed is unknown, so let the same
@@ -292,7 +325,10 @@ export class RebootService implements OnApplicationBootstrap {
       const r = await this.agentWs.sendCommand(row.serverId, buildBootIdScript(), "patch", 15_000);
       bootId = parseRebootState(r.output).bootId;
     } catch {
-      return; // flapping agent: look again next tick
+      // Flapping agent, a revoked capability, a broken helper: look again next tick, but never forever (a row stuck here
+      // would also block every future reboot of the server).
+      if (age > rebootTiming.agentDeadlineMs) await this.settle(row.id, "failed", failureReport("state_unreadable", snap), { notify: true });
+      return;
     }
     if (bootId && snap?.bootId && bootId !== snap.bootId) {
       await this.prisma.serverReboot.updateMany({ where: { id: row.id, state: { in: ["REBOOTING", "WAITING_AGENT"] } }, data: { state: "VERIFYING", agentBackAt: new Date() } });
@@ -338,8 +374,9 @@ export class RebootService implements OnApplicationBootstrap {
     let outcome = evaluateVerification({ snapshot: snap, state, domains, rebootRequired: null, final });
     // Everything else is fine: now (and only now: it costs a helper container) ask the host whether it still wants a reboot.
     if (outcome.result === "ok") {
-      const flag = await this.readRebootFlag(row.serverId);
-      outcome = evaluateVerification({ snapshot: snap, state, domains, rebootRequired: flag, final });
+      let flag = await this.readRebootFlag(row.serverId);
+      if (flag === null) flag = await this.readRebootFlag(row.serverId); // one more look before calling it unreadable
+      outcome = evaluateVerification({ snapshot: snap, state, domains, rebootRequired: flag, final, flagChecked: true });
     }
     if (outcome.settled && outcome.result) {
       await this.settle(row.id, outcome.result, outcome.report, { notify: true });
@@ -372,6 +409,17 @@ export class RebootService implements OnApplicationBootstrap {
 
     if (!this.agentWs.isOnline(row.serverId)) return block("agent_offline");
     if (await this.deployRunning(row.serverId)) return block("busy_deploy");
+    // Read-only look BEFORE anything is audited or snapshotted: a reboot that is blocked by a running OS update is
+    // retried every tick and must leave no "started" entries behind (an immediate one did this look in request()).
+    if (scheduled) {
+      try {
+        const host = await this.readHost(row.serverId);
+        if (host.busy || host.patchRunning) return block("busy_patch");
+      } catch (e) {
+        if (e instanceof AgentOfflineException) return block("agent_offline");
+        // Anything else: the start script below has its own busy check and reports what it finds.
+      }
+    }
     // Audited before it runs (a scheduled one was audited when it was scheduled; its firing is its own entry).
     if (scheduled) await this.audit.log({ actor: row.requestedBy, action: "server.reboot.start", target: row.serverId, meta: { rebootId: row.id } });
 
@@ -420,15 +468,36 @@ export class RebootService implements OnApplicationBootstrap {
     const read = parseRebootState(r.output);
     if (!read.complete || read.docker !== true || !read.bootId) throw new Error("incomplete container state");
     const apps = await this.routedApps(row.serverId);
+    const domains = buildDomainTargets(apps);
+    const probe = server.proxyBind === "none" ? "skipped_no_host_port" : "loopback";
+    const domainsDown = probe === "loopback" ? await this.baselineDown(row.serverId, domains) : undefined;
     return {
       version: 1,
       takenAt: new Date().toISOString(),
       bootId: read.bootId,
       hostsHub: server.isLocal,
       containers: snapshotContainers(read),
-      domains: buildDomainTargets(apps),
-      probe: server.proxyBind === "none" ? "skipped_no_host_port" : "loopback",
+      domains,
+      probe,
+      ...(domainsDown ? { domainsDown } : {}),
     };
+  }
+
+  /** Best effort: which routed hosts do NOT answer right now (before the reboot)? Those are not blamed on the reboot.
+   *  undefined when the probe cannot run (then every domain is judged after the reboot). */
+  private async baselineDown(serverId: string, domains: ReturnType<typeof buildDomainTargets>): Promise<string[] | undefined> {
+    if (domains.length === 0) return undefined;
+    try {
+      const r = await this.agentWs.sendCommand(serverId, buildDomainProbeScript(domains), "patch", BASELINE_PROBE_TIMEOUT_MS);
+      const read = parseDomainProbe(r.output);
+      if (read.unavailable || read.codes.size === 0) return undefined;
+      return domains.filter((d) => {
+        const code = read.codes.get(d.host);
+        return code !== undefined && !domainStatusIsUp(code);
+      }).map((d) => d.host);
+    } catch {
+      return undefined;
+    }
   }
 
   // ───────────────────────────── finishing ─────────────────────────────
@@ -486,14 +555,15 @@ export class RebootService implements OnApplicationBootstrap {
     if (await this.deployRunning(serverId)) throw new ConflictException(FAILURE_MESSAGES.busy_deploy);
   }
 
-  private async readHost(serverId: string) {
+  /** `busy`: an OS update's helper holds the host-exec name, so the host could not be looked at. */
+  private async readHost(serverId: string): Promise<({ busy: true } & Partial<ReturnType<typeof parseRebootHost>>) | ({ busy: false } & ReturnType<typeof parseRebootHost>)> {
     const r = await this.agentWs.sendCommand(serverId, wrapHostExec(buildRebootPreflightScript(), HOST_EXEC), "patch", HOST_TIMEOUT_MS);
     const host = parseHostExec(r.output);
     if (!host.entered) {
-      if (host.busy) throw new ConflictException("an OS update is running on this server — wait for it to finish before rebooting");
+      if (host.busy) return { busy: true };
       throw new ServiceUnavailableException(`the server's host could not be reached: ${host.unavailableReason ?? "the agent could not run on the host"}`);
     }
-    return parseRebootHost(r.output);
+    return { busy: false, ...parseRebootHost(r.output) };
   }
 
   /** The host's "reboot required" flag after the reboot; null when it could not be read (never counted against the host). */
@@ -520,6 +590,8 @@ const FAILURE_MESSAGES: Record<RebootFailureReason, string> = {
   agent_never_returned: "the server's agent did not come back in time",
   docker_inactive: "Docker did not come back after the reboot",
   state_unreadable: "could not read the server after the reboot",
+  missed: "the scheduled time passed while the hub could not start the reboot, so it was not run",
+  unauthorized: "the person who scheduled the reboot is no longer allowed to run server operations on this team",
 };
 
 function notifyCtx(server: { id: string; name: string }, row: ServerReboot, report: RebootReport): Record<string, unknown> {

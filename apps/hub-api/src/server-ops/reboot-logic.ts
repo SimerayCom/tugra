@@ -68,6 +68,9 @@ export interface RebootSnapshot {
   domains: DomainTarget[];
   /** loopback: probe the proxy on 127.0.0.1; skipped_no_host_port: the proxy publishes no host port, so it cannot be probed. */
   probe: "loopback" | "skipped_no_host_port";
+  /** Hosts that did NOT answer (2xx/3xx/401) in a best-effort probe just before the reboot: a reboot is not blamed for
+   *  those. Absent when the baseline probe could not run (then every domain is judged). */
+  domainsDown?: string[];
 }
 
 /** The running containers of a state read, as the snapshot keeps them. Only RUNNING ones are expected back. */
@@ -117,7 +120,7 @@ export function buildDomainTargets(apps: AppRoutingRow[]): DomainTarget[] {
 // ── verification ───────────────────────────────────────────────────────────────────────────────────────────────────
 
 export type ContainerVerdict = "ok" | "missing" | "unhealthy" | "pending" | "skipped";
-export type DomainVerdict = "ok" | "not_answering" | "pending" | "unverified";
+export type DomainVerdict = "ok" | "not_answering" | "not_answering_before" | "pending" | "unverified";
 
 export interface ContainerReportRow {
   name: string;
@@ -166,6 +169,8 @@ export const REBOOT_FAILURE_REASONS = [
   "agent_never_returned",
   "docker_inactive",
   "state_unreadable",
+  "missed",
+  "unauthorized",
 ] as const;
 export type RebootFailureReason = (typeof REBOOT_FAILURE_REASONS)[number];
 
@@ -183,6 +188,8 @@ export interface VerificationInput {
   rebootRequired: boolean | null;
   /** The window is over: whatever is not ok now stays that way. */
   final: boolean;
+  /** The reboot-required flag has been asked for (so `rebootRequired: null` means "unreadable", not "not asked yet"). */
+  flagChecked?: boolean;
 }
 
 export interface VerificationOutcome {
@@ -219,6 +226,7 @@ export function evaluateVerification(input: VerificationInput): VerificationOutc
     return { ...base, verdict: "pending" as const, detail: now.health === "none" ? "running" : now.health }; // starting (start period)
   });
 
+  const downBefore = new Set(snapshot.domainsDown ?? []);
   let domainsNote: RebootReport["domainsNote"];
   let domainRows: DomainReportRow[];
   if (snapshot.probe === "skipped_no_host_port") {
@@ -231,7 +239,11 @@ export function evaluateVerification(input: VerificationInput): VerificationOutc
     domainRows = snapshot.domains.map((d) => {
       const code = domains?.codes.get(d.host);
       if (code === undefined) return { host: d.host, verdict: "pending" as const, status: null };
-      return { host: d.host, verdict: domainStatusIsUp(code) ? ("ok" as const) : ("not_answering" as const), status: code === 0 ? null : code };
+      const status = code === 0 ? null : code;
+      if (domainStatusIsUp(code)) return { host: d.host, verdict: "ok" as const, status };
+      // It was not answering before the reboot either: the reboot did not break it.
+      if (downBefore.has(d.host)) return { host: d.host, verdict: "not_answering_before" as const, status };
+      return { host: d.host, verdict: "not_answering" as const, status };
     });
   }
 
@@ -239,7 +251,7 @@ export function evaluateVerification(input: VerificationInput): VerificationOutc
 
   const containersOk = containers.filter((c) => c.verdict === "ok").length;
   const containersExpected = containers.filter((c) => c.verdict !== "skipped").length;
-  const probedDomains = domainRows.filter((d) => d.verdict !== "unverified");
+  const probedDomains = domainRows.filter((d) => d.verdict !== "unverified" && d.verdict !== "not_answering_before");
   const domainsOk = domainRows.filter((d) => d.verdict === "ok").length;
 
   const rebooted = !!state?.bootId && state.bootId !== snapshot.bootId;
@@ -256,13 +268,21 @@ export function evaluateVerification(input: VerificationInput): VerificationOutc
   };
 
   const dockerOk = dockerUp === true;
-  const anyPending = containers.some((c) => c.verdict === "pending") || domainRows.some((d) => d.verdict === "pending");
+  // A probe that could not run is judged at the end of the window only: the helper can fail once in the first seconds
+  // after boot (docker still settling) and work a poll later.
+  const probePending = domainsNote === "probe_unavailable" && !final;
+  const anyPending = containers.some((c) => c.verdict === "pending") || domainRows.some((d) => d.verdict === "pending") || probePending;
   // Things that can still recover while the window is open (a container restarts, the proxy picks its route up).
   const dynamicBad = containers.some((c) => c.verdict === "missing" || c.verdict === "unhealthy") || domainRows.some((d) => d.verdict === "not_answering");
   // Things that will not change by waiting: the host still asks for a reboot; the probe cannot run at all.
   const staticBad = flag === "still_set" || domainsNote === "probe_unavailable";
 
-  if (dockerOk && !anyPending && !dynamicBad) return { report, settled: true, result: staticBad ? "degraded" : "ok" };
+  // The flag was asked for but could not be read: poll again; at the end of the window it is not "everything is back".
+  const flagUnreadable = !!input.flagChecked && flag === "unknown";
+  if (dockerOk && !anyPending && !dynamicBad) {
+    if (flagUnreadable && !final) return { report, settled: false, result: null };
+    return { report, settled: true, result: staticBad || flagUnreadable ? "degraded" : "ok" };
+  }
   if (!final) return { report, settled: false, result: null };
   // The window is over. Pending items never became ok, so they count as bad now.
   if (!state) return { report: { ...report, reason: "state_unreadable" }, settled: true, result: "failed" };

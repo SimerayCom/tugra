@@ -191,7 +191,7 @@ export const RebootReportSchema = z.object({
       detail: z.string().optional(),
     }),
   ),
-  domains: z.array(z.object({ host: z.string(), verdict: z.enum(["ok", "not_answering", "pending", "unverified"]), status: z.number().nullable() })),
+  domains: z.array(z.object({ host: z.string(), verdict: z.enum(["ok", "not_answering", "not_answering_before", "pending", "unverified"]), status: z.number().nullable() })),
   domainsNote: z.enum(["skipped_no_host_port", "probe_unavailable"]).optional(),
   rebootRequired: z.enum(["cleared", "still_set", "unknown"]),
   reason: z.string().optional(),

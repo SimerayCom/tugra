@@ -87,6 +87,12 @@ interface World {
   startThrows: Error | null;
   stateThrows: boolean;
   probeUnavailable: boolean;
+  /** the boot-id read (the watcher's look at a returned agent) always fails */
+  bootThrows: boolean;
+  /** an OS update's helper holds the host-exec container name */
+  helperBusy: boolean;
+  /** the host's reboot-required flag cannot be read */
+  flagUnreadable: boolean;
 }
 
 const RUNNING = ["web running healthy unless-stopped 0 nginx:1", "db running none always 0 postgres:16", "scratch running none no 0 busybox"];
@@ -105,6 +111,9 @@ function makeWorld(over: Partial<World> = {}): World {
     startThrows: null,
     stateThrows: false,
     probeUnavailable: false,
+    bootThrows: false,
+    helperBusy: false,
+    flagUnreadable: false,
     ...over,
   };
 }
@@ -131,7 +140,10 @@ function setup(over: { world?: Partial<World>; deployRunning?: boolean; apps?: u
     const inner = hostInner(cmd);
     let kind: string;
     let output: string;
-    if (inner) {
+    if (inner && world.helperBusy) {
+      kind = "busy";
+      output = 'docker: Error response from daemon: Conflict. The container name "/tugra-patch" is already in use\n';
+    } else if (inner) {
       if (inner.includes("systemd-run --unit tugra-reboot")) {
         kind = "start";
         order.push("sendCommand:start");
@@ -139,7 +151,7 @@ function setup(over: { world?: Partial<World>; deployRunning?: boolean; apps?: u
         output = "TUGRA_HOST_ENTERED\n" + world.startOutput + "\n";
       } else {
         kind = "preflight";
-        output = ["TUGRA_HOST_ENTERED", `TUGRA_RB_SYSTEMD=${world.systemd ? 1 : 0}`, world.patchRunning ? "TUGRA_RB_PATCH_RUNNING" : "", `TUGRA_RB_REQUIRED=${world.rebootRequired ? 1 : 0}`, ""].join("\n");
+        output = ["TUGRA_HOST_ENTERED", `TUGRA_RB_SYSTEMD=${world.systemd ? 1 : 0}`, world.patchRunning ? "TUGRA_RB_PATCH_RUNNING" : "", world.flagUnreadable ? "" : `TUGRA_RB_REQUIRED=${world.rebootRequired ? 1 : 0}`, ""].join("\n");
       }
     } else if (cmd.includes("reboot-probe")) {
       kind = "probe";
@@ -150,6 +162,7 @@ function setup(over: { world?: Partial<World>; deployRunning?: boolean; apps?: u
       output = [`TUGRA_RB_BOOT=${world.bootId}`, `TUGRA_RB_DOCKER=${world.docker ? "active" : "inactive"}`, ...world.containers.map((c) => `TUGRA_RB_C ${c}`), "TUGRA_RB_END", ""].join("\n");
     } else {
       kind = "boot";
+      if (world.bootThrows) throw new AgentDisconnectedException();
       output = `TUGRA_RB_BOOT=${world.bootId}\n`;
     }
     sent.push({ cap, kind });
@@ -290,7 +303,7 @@ describe("RebootService.request: an immediate reboot", () => {
       ],
     });
     // the snapshot is taken BEFORE the unit is armed; everything goes through the `patch` capability
-    expect(t.sent.map((s) => s.kind)).toEqual(["preflight", "state", "start"]);
+    expect(t.sent.map((s) => s.kind)).toEqual(["preflight", "state", "probe", "start"]);
     expect(new Set(t.sent.map((s) => s.cap))).toEqual(new Set(["patch"]));
   });
 
@@ -448,7 +461,10 @@ describe("scheduled reboots", () => {
     const t = setup();
     await t.svc.request("u1", "s1", { ...sched, at: at() });
     t.state.deployRunning = true;
-    advance(2 * 3600_000 + rebootTiming.busyRetryWindowMs + 1000);
+    advance(2 * 3600_000 + 1000);
+    await t.svc.tick(); // due, blocked: keeps waiting
+    expect(t.table.rows[0].state).toBe("SCHEDULED");
+    advance(rebootTiming.busyRetryWindowMs);
     await t.svc.tick();
     expect(t.table.rows[0]).toMatchObject({ state: "DONE", result: "failed" });
     expect((t.table.rows[0].report as { reason: string }).reason).toBe("busy_deploy");
@@ -462,6 +478,84 @@ describe("scheduled reboots", () => {
     t.world.startOutput = "TUGRA_REBOOT_BUSY=patch";
     await t.svc.tick();
     expect(t.table.rows[0].state).toBe("SCHEDULED");
+  });
+
+  it("a hub that comes back long after the due time does NOT fire the reboot (missed), even on a free server", async () => {
+    const t = setup();
+    await t.svc.request("u1", "s1", { ...sched, at: at() });
+    advance(2 * 3600_000 + rebootTiming.busyRetryWindowMs + 60_000); // the hub (or Redis) was down meanwhile
+    t.sent.length = 0;
+    t.order.length = 0;
+    await t.svc.tick();
+    expect(t.table.rows[0]).toMatchObject({ state: "DONE", result: "failed" });
+    expect((t.table.rows[0].report as { reason: string }).reason).toBe("missed");
+    expect(t.sent).toEqual([]); // nothing was looked at or armed on the host
+    expect(t.order).not.toContain("audit:server.reboot.start");
+    expect(t.notifications.fireForEvent).toHaveBeenCalledWith("t1", "server_reboot_failed", expect.objectContaining({ reason: "missed" }));
+    expect(t.queue.unschedule).toHaveBeenCalledWith("r1");
+  });
+
+  it("a delayed job that fires a little late (inside the window) still runs it", async () => {
+    const t = setup();
+    await t.svc.request("u1", "s1", { ...sched, at: at() });
+    advance(2 * 3600_000 + 5 * 60_000);
+    await t.svc.advanceById("r1");
+    expect(t.table.rows[0].state).toBe("REBOOTING");
+  });
+
+  it("re-checks the requester at fire time: a user who lost servers:ops (or left the team) does not reboot the server", async () => {
+    const t = setup();
+    await t.svc.request("u1", "s1", { ...sched, at: at() });
+    advance(2 * 3600_000 + 1000);
+    t.access.requirePermission.mockRejectedValueOnce(new ForbiddenException("insufficient permission for this team"));
+    t.sent.length = 0;
+    await t.svc.tick();
+    expect(t.table.rows[0]).toMatchObject({ state: "DONE", result: "failed" });
+    expect((t.table.rows[0].report as { reason: string }).reason).toBe("unauthorized");
+    expect(t.access.requirePermission).toHaveBeenLastCalledWith("u1", "t1", "servers:ops");
+    expect(t.sent).toEqual([]);
+    expect(t.order).not.toContain("sendCommand:start");
+    expect(t.notifications.fireForEvent).toHaveBeenCalledWith("t1", "server_reboot_failed", expect.objectContaining({ reason: "unauthorized" }));
+  });
+
+  it("a scheduled reboot blocked by a running OS update leaves ONE audit entry once it finally starts, not one per retry", async () => {
+    const t = setup();
+    await t.svc.request("u1", "s1", { ...sched, at: at() });
+    advance(2 * 3600_000 + 1000);
+    t.world.patchRunning = true;
+    for (let i = 0; i < 6; i++) {
+      await t.svc.tick();
+      advance(10_000);
+    }
+    expect(t.table.rows[0].state).toBe("SCHEDULED");
+    expect(t.audit.log.mock.calls.filter((c) => c[0].action === "server.reboot.start")).toHaveLength(0);
+    expect(t.sent.filter((s) => s.kind === "state")).toHaveLength(0); // no snapshot per retry either
+    t.world.patchRunning = false;
+    await t.svc.tick();
+    expect(t.table.rows[0].state).toBe("REBOOTING");
+    expect(t.audit.log.mock.calls.filter((c) => c[0].action === "server.reboot.start")).toHaveLength(1);
+  });
+
+  it("a start script that reports busy (a race after the preflight) is not audited again on every retry either", async () => {
+    const t = setup();
+    await t.svc.request("u1", "s1", { ...sched, at: at() });
+    advance(2 * 3600_000 + 1000);
+    t.world.helperBusy = true;
+    for (let i = 0; i < 4; i++) {
+      await t.svc.tick();
+      advance(10_000);
+    }
+    expect(t.table.rows[0].state).toBe("SCHEDULED");
+    expect(t.audit.log.mock.calls.filter((c) => c[0].action === "server.reboot.start")).toHaveLength(0);
+  });
+
+  it("a scheduled reboot is accepted even while an OS update's helper holds the host-exec name", async () => {
+    const t = setup({ world: { helperBusy: true } });
+    const view = await t.svc.request("u1", "s1", { ...sched, at: at() });
+    expect(view).toMatchObject({ state: "SCHEDULED", mode: "scheduled" });
+    // an immediate one is still refused
+    t.table.rows.length = 0;
+    await expect(t.svc.request("u1", "s1", REQ_NOW)).rejects.toThrow(/OS update is running/);
   });
 
   it("while the agent is offline at the due time it keeps waiting", async () => {
@@ -601,8 +695,79 @@ describe("watching a reboot through to verification (fake agent results)", () =>
     const t = await armed();
     back(t, { probeUnavailable: true });
     await t.svc.tick();
+    expect(t.table.rows[0].state).toBe("VERIFYING"); // not judged on the first poll
+    advance(rebootTiming.verifyWindowMs + 1000);
+    await t.svc.tick();
     expect(t.table.rows[0]).toMatchObject({ state: "DONE", result: "degraded" });
     expect((t.table.rows[0].report as { domainsNote: string }).domainsNote).toBe("probe_unavailable");
+  });
+
+  it("a probe that fails once right after boot and works on the next poll ends OK", async () => {
+    const t = await armed();
+    back(t, { probeUnavailable: true });
+    await t.svc.tick();
+    expect(t.table.rows[0].state).toBe("VERIFYING");
+    advance(10_000);
+    t.world.probeUnavailable = false;
+    await t.svc.tick();
+    expect(t.table.rows[0]).toMatchObject({ state: "DONE", result: "ok" });
+  });
+
+  it("a domain that was not answering before the reboot is not blamed on it", async () => {
+    const t = setup({ world: { domainCodes: { "app.example.com": 404 } } });
+    await t.svc.request("u1", "s1", REQ_NOW);
+    expect((t.table.rows[0].snapshot as { domainsDown: string[] }).domainsDown).toEqual(["app.example.com"]);
+    back(t);
+    await t.svc.tick();
+    expect(t.table.rows[0]).toMatchObject({ state: "DONE", result: "ok" });
+    expect((t.table.rows[0].report as { domains: unknown[] }).domains).toEqual([{ host: "app.example.com", verdict: "not_answering_before", status: 404 }]);
+  });
+
+  it("a domain that answered before the reboot and 404s after it is DEGRADED", async () => {
+    const t = await armed();
+    expect((t.table.rows[0].snapshot as { domainsDown: string[] }).domainsDown).toEqual([]);
+    back(t, { domainCodes: { "app.example.com": 404 } });
+    await t.svc.tick();
+    advance(rebootTiming.verifyWindowMs + 1000);
+    await t.svc.tick();
+    expect(t.table.rows[0].result).toBe("degraded");
+  });
+
+  it("a reboot-required flag that cannot be read never ends 'everything came back'", async () => {
+    const t = await armed();
+    back(t, { flagUnreadable: true });
+    await t.svc.tick();
+    expect(t.table.rows[0].state).toBe("VERIFYING"); // looked at again next poll
+    expect(t.notifications.fireForEvent).not.toHaveBeenCalled();
+    advance(rebootTiming.verifyWindowMs + 1000);
+    await t.svc.tick();
+    expect(t.table.rows[0]).toMatchObject({ state: "DONE", result: "degraded" });
+    expect((t.table.rows[0].report as { rebootRequired: string }).rebootRequired).toBe("unknown");
+    expect(t.notifications.fireForEvent).toHaveBeenCalledWith("t1", "server_reboot_degraded", expect.anything());
+  });
+
+  it("a flag that cannot be read once but can the next poll ends OK", async () => {
+    const t = await armed();
+    back(t, { flagUnreadable: true });
+    await t.svc.tick();
+    advance(10_000);
+    t.world.flagUnreadable = false;
+    await t.svc.tick();
+    expect(t.table.rows[0]).toMatchObject({ state: "DONE", result: "ok" });
+  });
+
+  it("an online agent whose boot id can never be read ends FAILED within a bound, freeing the server for another reboot", async () => {
+    const t = await armed();
+    back(t, { bootThrows: true });
+    await t.svc.tick();
+    expect(t.table.rows[0].state).toBe("REBOOTING");
+    advance(rebootTiming.agentDeadlineMs + 1000);
+    await t.svc.tick();
+    expect(t.table.rows[0]).toMatchObject({ state: "DONE", result: "failed" });
+    expect((t.table.rows[0].report as { reason: string }).reason).toBe("state_unreadable");
+    expect(t.notifications.fireForEvent).toHaveBeenCalledWith("t1", "server_reboot_failed", expect.objectContaining({ reason: "state_unreadable" }));
+    t.world.bootThrows = false;
+    await expect(t.svc.request("u1", "s1", REQ_NOW)).resolves.toMatchObject({ state: "REBOOTING" }); // the index no longer blocks it
   });
 
   it("a server whose proxy has no host port is not probed and can still end OK", async () => {

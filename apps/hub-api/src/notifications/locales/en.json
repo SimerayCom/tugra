@@ -137,7 +137,9 @@
       "host_did_not_reboot": "the server did not reboot",
       "agent_never_returned": "the server's agent did not come back in time",
       "docker_inactive": "Docker did not come back",
-      "state_unreadable": "the server could not be read after the reboot"
+      "state_unreadable": "the server could not be read after the reboot",
+      "missed": "the scheduled time passed while the hub could not start it, so it was not run",
+      "unauthorized": "whoever scheduled it can no longer run server operations on this team"
     },
     "field": { "containers": "Containers back", "domains": "Domains answering", "reason": "Reason", "problems": "Not back ({count})", "rebootRequired": "Reboot required" },
     "stillRequired": "the server still asks for a reboot",
