@@ -1,6 +1,7 @@
 import { request as httpsRequest } from "node:https";
 import { request as httpRequest } from "node:http";
 import { assertAllowedUrl, guardedLookup } from "./ssrf-guard";
+import { AuthPausedError, RateLimitedError, coolifyLimits, type RequestLimits } from "./request-limits";
 
 /**
  * The WRITE half of a Coolify instance (P7 lane B): stop / start / read the state of ONE application, service or
@@ -15,13 +16,21 @@ import { assertAllowedUrl, guardedLookup } from "./ssrf-guard";
  *    (a failure is a fixed {@link ControlErrorCode}, which is what the run engine stores and the web localizes),
  *  - it never deletes anything: there is no remove method on purpose.
  *
- * The exact start/stop verb differs between Coolify releases (older v4 betas expose them as `GET`, newer ones as `POST`).
- * {@link CoolifyControl} therefore tries `POST` first and falls back to `GET` on a 404/405 only. Both are idempotent on
- * Coolify's side (stopping a stopped resource answers with a message, not an error). UNVERIFIED against a live Coolify:
- * the lab probe (design item 7) must confirm the verb and the `status` strings below before an owner relies on `api`.
+ * Start/stop semantics (Coolify 4.7.5, verified against its source):
+ *  - the verbs are `POST /{applications|services|databases}/{uuid}/{start|stop}`. Older v4 releases exposed them as `GET`;
+ *    a POST answered 405 there, so {@link CoolifyControl} falls back to `GET` on a 405 ONLY. A POST 404 is a resource that
+ *    does not exist and stays `not-found` (4.7.5 answers 405 to every GET start/stop, so falling back would hide it);
+ *  - `POST /applications/{uuid}/start` is `action_deploy`: it QUEUES A DEPLOYMENT (a rebuild), it is not a `docker start`.
+ *    For an application the abort path therefore re-deploys the stopped app; databases and services are really started;
+ *  - a database or service that is already in the requested state answers 400 "already stopped" / "already running":
+ *    that is the desired end state, so it is success here (the start/stop is idempotent for the caller);
+ *  - a stop defaults to `docker_cleanup=true`, which runs a docker prune on the SOURCE host after the stop. A migration
+ *    must not touch anything else on the source, so every stop sends `docker_cleanup=false`;
+ *  - the token needs the literal `deploy` ability (Sanctum matches abilities literally: `write` alone gets a 403).
+ *    Reading the state needs `read`.
  */
 
-export const CONTROL_ERROR_CODES = ["forbidden", "unauthorized", "not-found", "unreachable", "rejected", "bad-response"] as const;
+export const CONTROL_ERROR_CODES = ["forbidden", "unauthorized", "not-found", "unreachable", "rejected", "bad-response", "rate-limited"] as const;
 export type ControlErrorCode = (typeof CONTROL_ERROR_CODES)[number];
 
 /** A control failure with a FIXED code. `message` equals the code: nothing from the remote ever lands in it. */
@@ -91,23 +100,23 @@ export class CoolifyControl {
     return parseCoolifyStatus((body as { status?: unknown }).status);
   }
 
-  /** Stop one resource. Idempotent. Resolves once Coolify ACCEPTED the request; the caller confirms with {@link state}. */
+  /** Stop one resource (no docker cleanup on the source host). Idempotent. Resolves once Coolify ACCEPTED the request; the caller confirms with {@link state}. */
   async stop(kind: CoolifyResourceKind, uuid: string): Promise<void> {
-    await this.act(kind, uuid, "/stop");
+    await this.act(kind, uuid, "stop");
   }
 
-  /** Start one resource again (the abort path). Idempotent. */
+  /** Start one resource again (the abort path). Idempotent. For an application this queues a deploy (see the file header). */
   async start(kind: CoolifyResourceKind, uuid: string): Promise<void> {
-    await this.act(kind, uuid, "/start");
+    await this.act(kind, uuid, "start");
   }
 
-  private async act(kind: CoolifyResourceKind, uuid: string, suffix: "/stop" | "/start"): Promise<void> {
-    const p = this.path(kind, uuid, suffix);
+  private async act(kind: CoolifyResourceKind, uuid: string, verb: "stop" | "start"): Promise<void> {
+    // docker_cleanup=false on a stop: Coolify's default runs a docker prune on the source host after the stop.
+    const p = this.path(kind, uuid, `/${verb}`) + (verb === "stop" ? "?docker_cleanup=false" : "");
     let res = await this.transport.request("POST", p);
-    if (res.status === 404 || res.status === 405) {
-      // An older Coolify exposes start/stop as GET. A 404 for the RESOURCE would also land here; the GET then says so.
-      res = await this.transport.request("GET", p);
-    }
+    // An older Coolify exposes start/stop as GET only (a POST is a 405 there). A 404 is NOT a verb problem: the resource is gone.
+    if (res.status === 405) res = await this.transport.request("GET", p);
+    if (res.status === 400 && alreadyInState(verb, res.body)) return; // "Database is already stopped" / "Service is already running": the wanted state
     this.assertOk(res.status);
   }
 
@@ -116,9 +125,20 @@ export class CoolifyControl {
     if (status === 401) throw new ControlError("unauthorized");
     if (status === 403) throw new ControlError("forbidden");
     if (status === 404) throw new ControlError("not-found");
+    if (status === 429) throw new ControlError("rate-limited"); // retryable: the limit lifts on its own
     if (status >= 500 || status === 0) throw new ControlError("unreachable");
     throw new ControlError("rejected");
   }
+}
+
+const ALREADY_STOPPED_RE = /\balready\s+(stopped|exited)\b/i;
+const ALREADY_RUNNING_RE = /\balready\s+(running|started)\b/i;
+
+/** Whether a 400 body is Coolify saying the resource is ALREADY in the state this verb asks for. The message is only matched, never returned. */
+function alreadyInState(verb: "stop" | "start", body: unknown): boolean {
+  const msg = body && typeof body === "object" ? (body as { message?: unknown }).message : undefined;
+  if (typeof msg !== "string") return false;
+  return (verb === "stop" ? ALREADY_STOPPED_RE : ALREADY_RUNNING_RE).test(msg);
 }
 
 // ───────────────────────────── guarded transport ─────────────────────────────
@@ -133,15 +153,29 @@ class GuardedHttpTransport implements CoolifyControlTransport {
   constructor(
     baseUrl: string,
     private readonly token: string,
+    private readonly limits?: RequestLimits,
   ) {
     this.base = assertAllowedUrl(baseUrl);
+    this.limits ??= coolifyLimits.for(baseUrl, token);
   }
 
-  request(method: "GET" | "POST", path: string): Promise<ControlTransportResponse> {
+  /** Paced under Coolify's per-user limit; a 429 honours a bounded Retry-After; a token that keeps failing authorization is paused. */
+  async request(method: "GET" | "POST", path: string): Promise<ControlTransportResponse> {
+    try {
+      const res = await this.limits!.run(() => this.once(method, path));
+      return { status: res.status, body: res.body };
+    } catch (e) {
+      if (e instanceof RateLimitedError) return { status: 429, body: null };
+      if (e instanceof AuthPausedError) return { status: e.status, body: null };
+      throw e;
+    }
+  }
+
+  private once(method: "GET" | "POST", path: string): Promise<ControlTransportResponse & { retryAfter: string | null }> {
     const url = new URL(`/api/v1${path}`, this.base);
     if (url.origin !== this.base.origin) return Promise.reject(new ControlError("rejected")); // defence in depth
     const doRequest = url.protocol === "https:" ? httpsRequest : httpRequest;
-    return new Promise<ControlTransportResponse>((resolve, reject) => {
+    return new Promise((resolve, reject) => {
       let settled = false;
       const done = (fn: () => void) => {
         if (settled) return;
@@ -174,6 +208,7 @@ class GuardedHttpTransport implements CoolifyControlTransport {
             }
             chunks.push(c);
           });
+          const ra = res.headers["retry-after"];
           res.on("aborted", () => done(() => reject(new ControlError("unreachable"))));
           res.on("end", () =>
             done(() => {
@@ -183,7 +218,7 @@ class GuardedHttpTransport implements CoolifyControlTransport {
               } catch {
                 /* a non-JSON body only matters to `state`, which then reports bad-response */
               }
-              resolve({ status, body });
+              resolve({ status, body, retryAfter: Array.isArray(ra) ? ra[0] : (ra ?? null) });
             }),
           );
         },

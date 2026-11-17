@@ -287,6 +287,12 @@ describe("CoolifySourceApi", () => {
     const notFound: CoolifyControlTransport = { request: async () => Promise.reject(new ControlError("not-found")) };
     expect(await build(session(), notFound).api.state(makeRun(), "database", "d1")).toEqual({ ok: false, reason: "not-found" });
   });
+  it("a 429 is the fixed retryable `rate-limited`, and an already-stopped database counts as stopped", async () => {
+    const limited: CoolifyControlTransport = { request: async () => ({ status: 429, body: { message: "Too Many Attempts." } }) };
+    expect(await build(session(), limited).api.stop(makeRun(), "database", "d1")).toEqual({ ok: false, reason: "rate-limited" });
+    const already: CoolifyControlTransport = { request: async () => ({ status: 400, body: { message: "Database is already stopped." } }) };
+    expect(await build(session(), already).api.stop(makeRun(), "database", "d1")).toEqual({ ok: true });
+  });
   it("an SSRF-refused base URL is a fixed `unreachable`", async () => {
     const api = new CoolifySourceApi(readOnly({ importSession: { findUnique: async () => session({ baseUrl: "http://169.254.169.254" }) } }), { decrypt: () => "t" } as never);
     expect(await api.available(makeRun())).toEqual({ ok: false, reason: "unreachable" });

@@ -500,6 +500,7 @@ export class FreezeHandler implements StepHandler<FreezeObs>, OnModuleInit {
       await ctx.assertLease();
       const cur = await this.api.state(run, it.kind, it.uuid);
       if (cur.ok && cur.state === "stopped") continue;
+      // idempotent on Coolify 4.7 (an already-stopped database/service answers 400, which the client maps to success); sent without docker cleanup
       const res = await this.api.stop(run, it.kind, it.uuid);
       if (!res.ok) return { outcome: "fail", code: DATA_CODES.freezeApiFailed, params: { reason: res.reason, itemRef: it.itemRef }, retryable: res.reason !== "forbidden" && res.reason !== "unauthorized" };
     }
@@ -604,6 +605,7 @@ export class FreezeHandler implements StepHandler<FreezeObs>, OnModuleInit {
     if (rec.controller === "api") {
       const failed: string[] = [];
       for (const it of rec.api ?? []) {
+        // an application "start" is a Coolify deploy (it queues a rebuild); an already-running database/service answers 400, which the client maps to success
         const res = await this.api.start(run, it.kind, it.uuid);
         if (!res.ok) failed.push(it.itemRef);
       }

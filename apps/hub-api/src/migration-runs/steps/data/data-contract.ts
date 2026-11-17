@@ -223,7 +223,7 @@ export interface SourceHostPort {
 
 export type ApiResourceKind = "application" | "service" | "database";
 export type ApiState = "running" | "stopped" | "unknown";
-export type ApiFailure = "forbidden" | "unauthorized" | "not-found" | "unreachable" | "rejected" | "bad-response" | "session-expired" | "unsupported";
+export type ApiFailure = "forbidden" | "unauthorized" | "not-found" | "unreachable" | "rejected" | "bad-response" | "rate-limited" | "session-expired" | "unsupported";
 
 /** The Coolify write API, bound to the run's import session. */
 export interface SourceApiPort {
