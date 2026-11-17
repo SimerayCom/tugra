@@ -391,6 +391,9 @@ describe("server patching: interrupted dpkg and a still-running update", () => {
     expect(await screen.findByText(/update is running on this server right now/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Update all" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Update" })).toBeDisabled();
+  });
+});
+
 describe("docker cleanup card (default-on, what it does and does not delete)", () => {
   const stateText = async () => (await screen.findByTestId("cleanup-state")).textContent ?? "";
 
