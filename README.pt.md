@@ -105,7 +105,7 @@ Uma comparação lado a lado com as ferramentas de PaaS auto-hospedáveis que as
 | Equipes / RBAC | ✅ | ✅ | ✅ | ~⁷ | — | — |
 | SSO / OIDC | ✅ (Pro)⁸ | ✅ | ✅ | ~⁷ | — | — |
 | Log de auditoria | ✅ | ✅ | ✅ | ~⁷ | — | — |
-| MCP / controle por agentes | ✅ 70 tools⁵ | ✅ | ✅ | ~⁷ | — | ~² |
+| MCP / controle por agentes | ✅ 73 tools⁵ | ✅ | ✅ | ~⁷ | — | ~² |
 | **Confiança e licença** | | | | | | |
 | Telemetria | Anônima, opt-out (somente contagens) | n/a | n/a | n/a | n/a | n/a |
 | Migrar para cá (importar do Coolify) | ✅⁹ | — | — | — | — | — |

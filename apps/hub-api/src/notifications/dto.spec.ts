@@ -32,6 +32,14 @@ describe("notification channel schemas — event types", () => {
     expect(() => CreateChannelSchema.parse({ ...base, eventTypes: events })).not.toThrow();
   });
 
+  it("accepts the server reboot events", () => {
+    const events = ["server_reboot_verified", "server_reboot_degraded", "server_reboot_failed"];
+    for (const e of events) {
+      expect(EVENT_TYPES).toContain(e);
+      expect(() => CreateChannelSchema.parse({ ...base, eventTypes: [e] })).not.toThrow();
+    }
+  });
+
   it("defaults locale to en on create and accepts an explicit locale", () => {
     expect(CreateChannelSchema.parse(base).locale).toBe("en");
     expect(CreateChannelSchema.parse({ ...base, locale: "tr" }).locale).toBe("tr");

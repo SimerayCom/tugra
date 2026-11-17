@@ -323,7 +323,7 @@ describe("renderEvent — typed per-event templates", () => {
     for (const type of [
       "deploy_success", "deploy_failed", "deploy_rolled_back", "backup_failed", "backup_success",
       "backup_missing", "backup_recovered", "verify_missing", "verify_recovered",
-      "backup_restore_failed", "ssl_expiring", "token_expiring", "server_offline", "server_online", "swarm_degraded",
+      "backup_restore_failed", "ssl_expiring", "token_expiring", "server_offline", "server_online", "swarm_degraded", "server_reboot_verified", "server_reboot_degraded", "server_reboot_failed",
       "volume_backup_success", "volume_backup_failed", "scheduled_task_success", "scheduled_task_failed",
       "docker_cleanup_success", "docker_cleanup_failed", "monitor_up", "monitor_down", "image_update_available",
     ]) {
@@ -334,6 +334,42 @@ describe("renderEvent — typed per-event templates", () => {
       expect(typeof m.timestamp).toBe("string");
       expect(m.event).toBe(type);
     }
+  });
+
+  describe("server reboot events", () => {
+    const ctx = { serverId: "srv1", serverName: "prod-1", containersOk: 11, containersExpected: 12, domainsOk: 4, domainsExpected: 5, problems: "db, app.example.com", problemCount: 2 };
+
+    it("server_reboot_verified: success, not critical, counts in the summary, server link", () => {
+      const m = render("server_reboot_verified", { ...ctx, containersOk: 12, domainsOk: 5, problems: "", problemCount: 0 });
+      expect(m.level).toBe("success");
+      expect(m.critical).toBe(false);
+      expect(m.title).toBe("Reboot verified — prod-1");
+      expect(m.summary).toContain("12 of 12 containers running, 5 of 5 domains answering");
+      expect(fieldVal(m, "Containers back")).toBe("12/12");
+      expect(fieldVal(m, "Domains answering")).toBe("5/5");
+      expect(m.fields.some((f) => f.label.startsWith("Not back"))).toBe(false);
+      expect(linkUrl(m, "Open server")).toBe("https://web.test/servers/srv1");
+    });
+
+    it("server_reboot_degraded: warning, names what did not come back", () => {
+      const m = render("server_reboot_degraded", { ...ctx, rebootRequired: "yes" });
+      expect(m.level).toBe("warning");
+      expect(m.critical).toBe(false);
+      expect(m.title).toBe("Reboot finished with problems — prod-1");
+      expect(m.summary).toContain("11 of 12 containers running, 4 of 5 domains answering");
+      expect(fieldVal(m, "Not back (2)")).toBe("db, app.example.com");
+      expect(fieldVal(m, "Reboot required")).toBe("the server still asks for a reboot");
+    });
+
+    it("server_reboot_failed: failure + critical, the reason in words, no counts that were never verified", () => {
+      const m = render("server_reboot_failed", { serverId: "srv1", serverName: "prod-1", reason: "agent_never_returned" });
+      expect(m.level).toBe("failure");
+      expect(m.critical).toBe(true);
+      expect(m.summary).toContain("the server's agent did not come back in time");
+      expect(fieldVal(m, "Reason")).toBe("the server's agent did not come back in time");
+      expect(fieldVal(m, "Containers back")).toBeUndefined();
+      expect(JSON.stringify(m)).not.toContain("undefined");
+    });
   });
 
   it("clamps an over-long value to ≤1000 chars ending in an ellipsis", () => {
@@ -348,12 +384,12 @@ describe("renderEvent — typed per-event templates", () => {
     // critical events are volume_backup_failed and scheduled_task_failed (real failed operations).
     const critical = new Set([
       "deploy_failed", "backup_failed", "backup_restore_failed", "server_offline", "monitor_down",
-      "volume_backup_failed", "scheduled_task_failed", "swarm_degraded", "backup_missing", "verify_missing",
+      "volume_backup_failed", "scheduled_task_failed", "swarm_degraded", "backup_missing", "verify_missing", "server_reboot_failed",
     ]);
     const all = [
       "deploy_success", "deploy_failed", "deploy_rolled_back", "backup_failed", "backup_success",
       "backup_missing", "backup_recovered", "verify_missing", "verify_recovered",
-      "backup_restore_failed", "ssl_expiring", "token_expiring", "server_offline", "server_online", "swarm_degraded",
+      "backup_restore_failed", "ssl_expiring", "token_expiring", "server_offline", "server_online", "swarm_degraded", "server_reboot_verified", "server_reboot_degraded", "server_reboot_failed",
       "volume_backup_success", "volume_backup_failed", "scheduled_task_success", "scheduled_task_failed",
       "docker_cleanup_success", "docker_cleanup_failed", "monitor_up", "monitor_down", "image_update_available",
     ];

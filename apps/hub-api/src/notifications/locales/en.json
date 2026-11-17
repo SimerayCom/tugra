@@ -113,6 +113,36 @@
     "field": { "hostname": "Hostname", "lastSeen": "Last seen", "ip": "IP" },
     "link": { "openServer": "Open server" }
   },
+  "serverReboot": {
+    "verified": {
+      "title": "Reboot verified — {server}",
+      "summary": "{server} rebooted and everything came back: {containersOk} of {containersTotal} containers running, {domainsOk} of {domainsTotal} domains answering."
+    },
+    "degraded": {
+      "title": "Reboot finished with problems — {server}",
+      "summary": "{server} rebooted, but not everything came back: {containersOk} of {containersTotal} containers running, {domainsOk} of {domainsTotal} domains answering. Open the server to see which."
+    },
+    "failed": {
+      "title": "Reboot FAILED — {server}",
+      "summary": "The reboot of {server} did not complete: {reason}. Next step: open the server and check it."
+    },
+    "reason": {
+      "snapshot_failed": "Tugra could not read what was running, so nothing was rebooted",
+      "agent_offline": "the server's agent was offline",
+      "busy_patch": "an OS update was running",
+      "busy_deploy": "a deploy was running",
+      "unsupported": "the server has no systemd",
+      "start_failed": "the reboot could not be armed on the server",
+      "interrupted": "the hub was interrupted before the reboot started",
+      "host_did_not_reboot": "the server did not reboot",
+      "agent_never_returned": "the server's agent did not come back in time",
+      "docker_inactive": "Docker did not come back",
+      "state_unreadable": "the server could not be read after the reboot"
+    },
+    "field": { "containers": "Containers back", "domains": "Domains answering", "reason": "Reason", "problems": "Not back ({count})", "rebootRequired": "Reboot required" },
+    "stillRequired": "the server still asks for a reboot",
+    "link": { "openServer": "Open server" }
+  },
   "swarm": {
     "degraded": {
       "title": "Swarm degraded — {cluster}",

@@ -11,6 +11,7 @@ import { backupFailedTemplate, backupSucceededTemplate, restoreFailedTemplate } 
 import { backupMissingTemplate, backupRecoveredTemplate } from "./templates/backup-health";
 import { verifyMissingTemplate, verifyRecoveredTemplate } from "./templates/backup-verify";
 import { serverOfflineTemplate, serverOnlineTemplate } from "./templates/server";
+import { serverRebootTemplate } from "./templates/server-reboot";
 import { swarmDegradedTemplate } from "./templates/swarm";
 import { sslExpiringTemplate, tokenExpiringTemplate } from "./templates/expiry";
 import { monitorTemplate } from "./templates/monitor";
@@ -117,6 +118,9 @@ const REGISTRY: Record<string, EventTemplate> = {
   token_expiring: tokenExpiringTemplate,
   server_offline: serverOfflineTemplate,
   server_online: serverOnlineTemplate,
+  server_reboot_verified: serverRebootTemplate,
+  server_reboot_degraded: serverRebootTemplate,
+  server_reboot_failed: serverRebootTemplate,
   swarm_degraded: swarmDegradedTemplate,
   volume_backup_success: volumeBackupTemplate,
   volume_backup_failed: volumeBackupTemplate,

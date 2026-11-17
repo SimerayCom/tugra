@@ -13,6 +13,8 @@ import { GpuInventoryService } from "./gpu-inventory.service";
 import { CleanupRunnerService } from "./cleanup-runner.service";
 import { CleanupSchedulerService } from "./cleanup.scheduler.service";
 import { PatchService } from "./patch.service";
+import { RebootService } from "./reboot.service";
+import { RebootQueueService } from "./reboot-queue.service";
 import { LogDrainService } from "./log-drain.service";
 import { ProxyOpsService } from "./proxy-ops.service";
 import { ContainerOpsService } from "./container-ops.service";
@@ -25,6 +27,8 @@ import { ComposeRestartHealSchedulerService } from "./compose-restart-heal.sched
 @Module({
   imports: [AgentGatewayModule, MetricsModule, CryptoModule, NotificationsModule, ServersModule, ClustersModule, LogDrainsModule],
   controllers: [ServerOpsController, FleetController],
-  providers: [CleanupService, GpuInventoryService, CleanupRunnerService, CleanupSchedulerService, PatchService, LogDrainService, ProxyOpsService, ContainerOpsService, ContainerLogStreamGuard, ContainerHealthRunnerService, ContainerHealthSchedulerService, ComposeRestartHealService, ComposeRestartHealSchedulerService],
+  // RebootService is exported for the MCP tools (the same service the REST routes call).
+  exports: [RebootService],
+  providers: [CleanupService, GpuInventoryService, CleanupRunnerService, CleanupSchedulerService, PatchService, RebootService, RebootQueueService, LogDrainService, ProxyOpsService, ContainerOpsService, ContainerLogStreamGuard, ContainerHealthRunnerService, ContainerHealthSchedulerService, ComposeRestartHealService, ComposeRestartHealSchedulerService],
 })
 export class ServerOpsModule {}

@@ -105,7 +105,7 @@ Ein direkter Vergleich mit den selbst hostbaren PaaS-Tools, die tatsächlich eva
 | Teams / RBAC | ✅ | ✅ | ✅ | ~⁷ | — | — |
 | SSO / OIDC | ✅ (Pro)⁸ | ✅ | ✅ | ~⁷ | — | — |
 | Audit-Log | ✅ | ✅ | ✅ | ~⁷ | — | — |
-| MCP / Agentensteuerung | ✅ 70 tools⁵ | ✅ | ✅ | ~⁷ | — | ~² |
+| MCP / Agentensteuerung | ✅ 73 tools⁵ | ✅ | ✅ | ~⁷ | — | ~² |
 | **Vertrauen & Lizenz** | | | | | | |
 | Telemetrie | Anonym, Opt-out (nur Zähler) | n/a | n/a | n/a | n/a | n/a |
 | Migration zu Tugra (Import aus Coolify) | ✅⁹ | — | — | — | — | — |

@@ -377,6 +377,7 @@ model Server {
   trafficUniqueHours     TrafficUniqueHour[]
   logDrains              LogDrain[]
   proxyDynamicConfigs    ProxyDynamicConfig[]
+  reboots                ServerReboot[]
   tunnel                 ServerTunnel?
   createdAt              DateTime                @default(now())
 
@@ -2549,4 +2550,31 @@ model MigrationRunEvent {
   actorId String? // codes + params only: no English text, no secrets
 
   @@id([runId, seq])
+}
+
+// A requested server reboot and what came of it. Reboots are never automatic: a row exists only because a person (or
+// their token) asked for one. `state` is the live phase (SCHEDULED -> STARTING -> REBOOTING -> WAITING_AGENT ->
+// VERIFYING -> DONE); `result` is set only in DONE (ok | degraded | failed | cancelled). `snapshot` is what should come
+// back (containers + routed domains, taken BEFORE the reboot); `report` is the per-item verification afterwards. A partial
+// unique index `server_reboot_one_active_per_server ON ServerReboot(serverId) WHERE state <> 'DONE'` (see the
+// 20261127000000 migration; Prisma cannot model it) allows at most one live reboot per server.
+model ServerReboot {
+  id          String    @id @default(cuid())
+  server      Server    @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  serverId    String
+  requestedBy String // user id of whoever asked (audit actor)
+  mode        String // "now" | "scheduled"
+  state       String    @default("STARTING") // SCHEDULED | STARTING | REBOOTING | WAITING_AGENT | VERIFYING | DONE
+  scheduledAt DateTime? // when a scheduled reboot is due (UTC); null for "now"
+  startedAt   DateTime? // when the host-side reboot unit was created
+  agentBackAt DateTime? // when the agent reconnected on a new boot
+  verifiedAt  DateTime? // when verification settled (or the reboot ended in failure)
+  result      String? // ok | degraded | failed | cancelled — set only when state = DONE
+  snapshot    Json? // pre-reboot: { bootId, hostsHub, containers[], domains[], probe }
+  report      Json? // post-reboot verification (per container / domain), updated while VERIFYING
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([serverId, createdAt])
+  @@index([state])
 }

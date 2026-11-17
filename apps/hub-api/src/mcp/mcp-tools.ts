@@ -15,6 +15,8 @@ import type { ImporterService } from "../importer/importer.service";
 import type { ImportExecutorService } from "../importer/import-executor.service";
 import { REMOTE_SOURCE_KINDS, ServiceChoicesSchema, ImportAckSchema, ImportDbDataModesSchema, isRemoteSourceKind, ImportMappingResolveSchema, ImportMappingPutSchema } from "../importer/dto";
 import { ImportMappingDocSchema } from "../importer/import-mapping";
+import type { RebootService } from "../server-ops/reboot.service";
+import { RebootRequestSchema } from "../server-ops/dto";
 import type { LicenseService } from "../license/license.service";
 import type { MetricsService } from "../metrics/metrics.service";
 import { rangeToMs, type AppContainerMetrics } from "../metrics/container-metrics.service";
@@ -43,6 +45,7 @@ export interface McpDeps {
   apps: ApplicationsService;
   dbLinks: AppDatabaseLinksService;
   servers: ServersService;
+  serverReboot: RebootService;
   clusters: ClustersService;
   swarm: SwarmService;
   databases: DatabasesService;
@@ -296,6 +299,13 @@ export const MCP_TOOLS: McpTool[] = [
     },
   },
   {
+    name: "get_server_reboot_status",
+    description: "A server's reboot state: the live reboot (scheduled, rebooting, waiting for the agent or verifying) and the last finished one with its per-container / per-domain verification report. Read-only.",
+    scope: "read",
+    inputSchema: idSchema,
+    execute: (d, userId, a) => d.serverReboot.status(userId, reqStr(a, "id")),
+  },
+  {
     name: "get_server_metrics",
     description:
       "Compact resource summary for one server over a range (1h|6h|24h|7d|30d, default 1h): current, average and peak CPU %, memory % and disk % plus the sample window. Read-only; any team member may read it. Args: id (server), range (optional).",
@@ -466,6 +476,33 @@ export const MCP_TOOLS: McpTool[] = [
       action: "rollback",
       deployment: stripDeployment(await d.apps.rollback(userId, reqStr(a, "id"), reqStr(a, "deploymentId"))),
     }),
+  },
+  {
+    name: "reboot_server",
+    description:
+      "REBOOT a server (every container and routed domain on it is down for a minute or more; if it hosts the Tugra hub, the panel goes away too). Refused unless `confirmName` equals the server's EXACT name (read it with get_server first; never guess it) and refused (409) while an OS update or a deploy runs on the server. mode \"now\" (the host reboots about 15 seconds later) or \"scheduled\" with `at`, an ISO date-time between 1 minute and 7 days ahead. After the server is back the hub verifies, within 10 minutes, that every container with a restart policy runs again (healthy where it has a healthcheck), every routed domain answers through the local proxy and the reboot-required flag cleared; read the outcome with get_server_reboot_status. Needs the deploy scope.",
+    scope: "deploy",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string" },
+        confirmName: { type: "string", description: "the server's exact name (typed confirmation)" },
+        mode: { type: "string", enum: ["now", "scheduled"] },
+        at: { type: "string", description: "ISO date-time, required for mode=scheduled" },
+      },
+      required: ["id", "confirmName", "mode"],
+    },
+    execute: async (d, userId, a) => {
+      const body = parseWith(RebootRequestSchema, { mode: a.mode, at: a.at, confirmName: a.confirmName });
+      return { ok: true, action: "reboot_server", reboot: await d.serverReboot.request(userId, reqStr(a, "id"), body) };
+    },
+  },
+  {
+    name: "cancel_server_reboot",
+    description: "Cancel a SCHEDULED reboot that has not started yet. A reboot that already started cannot be cancelled.",
+    scope: "deploy",
+    inputSchema: idSchema,
+    execute: async (d, userId, a) => ({ ok: true, action: "cancel_server_reboot", reboot: await d.serverReboot.cancel(userId, reqStr(a, "id")) }),
   },
   {
     name: "scale_application",

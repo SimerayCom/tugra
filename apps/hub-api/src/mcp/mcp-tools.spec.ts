@@ -13,7 +13,7 @@ const LIFECYCLE_TOOLS = ["deploy_application", "cancel_deployment", "restart_app
 const MIGRATION_READ_TOOLS = ["migration_run_list", "migration_run_status", "migration_run_events", "migration_run_report"];
 const MIGRATION_DEPLOY_TOOLS = ["migration_run_create", "migration_run_start", "migration_run_set_inputs", "migration_run_approve", "migration_run_retry", "migration_run_pause", "migration_run_resume", "migration_run_abort"];
 const MIGRATION_ADMIN_TOOLS = ["migration_run_cleanup", "migration_run_reverse"];
-const DEPLOY_TOOLS = [...LIFECYCLE_TOOLS, "form_swarm", "join_swarm_node", "add_swarm_manager", "set_ingress_replicas", "fleet_app_action", "setup_app_domain", "import_apply", "import_mapping_put", ...MIGRATION_DEPLOY_TOOLS];
+const DEPLOY_TOOLS = [...LIFECYCLE_TOOLS, "form_swarm", "join_swarm_node", "add_swarm_manager", "set_ingress_replicas", "fleet_app_action", "setup_app_domain", "import_apply", "import_mapping_put", "reboot_server", "cancel_server_reboot", ...MIGRATION_DEPLOY_TOOLS];
 const WRITE_TOOLS = ["set_env_var", "delete_env_var", "import_connect"];
 const ADMIN_TOOLS = ["dissolve_swarm", "remove_application", "remove_swarm_manager", "leave_swarm_node", "import_rollback", ...MIGRATION_ADMIN_TOOLS];
 
@@ -30,7 +30,7 @@ describe("MCP_TOOLS catalog", () => {
   it("has the expected tool count — keep docs (README/api.md) in sync when this changes", () => {
     // A drift guard: the MCP tool count is referenced in prose in README.md + docs/api.md. When you add or
     // remove a tool, bump this number AND those docs in the same commit.
-    expect(MCP_TOOLS).toHaveLength(70);
+    expect(MCP_TOOLS).toHaveLength(73);
     // Names are unique.
     expect(new Set(MCP_TOOLS.map((t) => t.name)).size).toBe(MCP_TOOLS.length);
   });
@@ -1167,6 +1167,44 @@ describe("guided migration run tools", () => {
       expect(migrationRuns.reverse).not.toHaveBeenCalled();
       await tool("migration_run_reverse").execute(deps, "u1", { runId: "r1", confirmName: "r1", acknowledgeDataLoss: true }, ctx);
       expect(migrationRuns.reverse).toHaveBeenCalledWith(expect.objectContaining({ channel: "mcp" }), "r1", { confirmName: "r1", acknowledgeDataLoss: true });
+    });
+  });
+
+  describe("server reboot tools", () => {
+    const rebootView = { id: "rb1", state: "REBOOTING" };
+    const mk = () => {
+      const serverReboot = { status: jest.fn().mockResolvedValue({ active: null, last: null }), request: jest.fn().mockResolvedValue(rebootView), cancel: jest.fn().mockResolvedValue({ id: "rb1", state: "DONE", result: "cancelled" }) };
+      return { deps: { serverReboot } as unknown as McpDeps, serverReboot };
+    };
+
+    it("scopes: status is read; rebooting and cancelling need the deploy scope", () => {
+      expect(tool("get_server_reboot_status").scope).toBe("read");
+      expect(tool("reboot_server").scope).toBe("deploy");
+      expect(tool("cancel_server_reboot").scope).toBe("deploy");
+    });
+
+    it("reboot_server is REFUSED without the typed confirmation (nothing reaches the service)", async () => {
+      const { deps, serverReboot } = mk();
+      await expect(Promise.resolve().then(() => tool("reboot_server").execute(deps, "u1", { id: "s1", mode: "now" }))).rejects.toThrow(/confirmName/);
+      await expect(Promise.resolve().then(() => tool("reboot_server").execute(deps, "u1", { id: "s1", mode: "now", confirmName: "" }))).rejects.toThrow(/confirmName/);
+      await expect(Promise.resolve().then(() => tool("reboot_server").execute(deps, "u1", { id: "s1", confirmName: "prod-1" }))).rejects.toThrow(/mode/);
+      await expect(Promise.resolve().then(() => tool("reboot_server").execute(deps, "u1", { id: "s1", mode: "scheduled", confirmName: "prod-1" }))).rejects.toThrow(/at/);
+      expect(serverReboot.request).not.toHaveBeenCalled();
+    });
+
+    it("reboot_server passes the validated request (the service compares the name to the server's)", async () => {
+      const { deps, serverReboot } = mk();
+      const r = await tool("reboot_server").execute(deps, "u1", { id: "s1", mode: "scheduled", at: "2026-12-01T03:00:00Z", confirmName: "prod-1" });
+      expect(serverReboot.request).toHaveBeenCalledWith("u1", "s1", { mode: "scheduled", at: "2026-12-01T03:00:00Z", confirmName: "prod-1" });
+      expect(r).toEqual({ ok: true, action: "reboot_server", reboot: rebootView });
+    });
+
+    it("status and cancel are thin pass-throughs", async () => {
+      const { deps, serverReboot } = mk();
+      await tool("get_server_reboot_status").execute(deps, "u1", { id: "s1" });
+      expect(serverReboot.status).toHaveBeenCalledWith("u1", "s1");
+      await tool("cancel_server_reboot").execute(deps, "u1", { id: "s1" });
+      expect(serverReboot.cancel).toHaveBeenCalledWith("u1", "s1");
     });
   });
 });

@@ -105,7 +105,7 @@ Une comparaison côte à côte avec les outils PaaS auto-hébergeables que l'on 
 | Équipes / RBAC | ✅ | ✅ | ✅ | ~⁷ | — | — |
 | SSO / OIDC | ✅ (Pro)⁸ | ✅ | ✅ | ~⁷ | — | — |
 | Journal d'audit | ✅ | ✅ | ✅ | ~⁷ | — | — |
-| MCP / pilotage par agent | ✅ 70 tools⁵ | ✅ | ✅ | ~⁷ | — | ~² |
+| MCP / pilotage par agent | ✅ 73 tools⁵ | ✅ | ✅ | ~⁷ | — | ~² |
 | **Confiance et licence** | | | | | | |
 | Télémétrie | Anonyme, opt-out (compteurs uniquement) | n/a | n/a | n/a | n/a | n/a |
 | Migration vers Tugra (import depuis Coolify) | ✅⁹ | — | — | — | — | — |

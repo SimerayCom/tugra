@@ -105,7 +105,7 @@ Una comparación directa con las herramientas PaaS autoalojables que la gente ev
 | Equipos / RBAC | ✅ | ✅ | ✅ | ~⁷ | — | — |
 | SSO / OIDC | ✅ (Pro)⁸ | ✅ | ✅ | ~⁷ | — | — |
 | Log de auditoría | ✅ | ✅ | ✅ | ~⁷ | — | — |
-| MCP / control por agentes | ✅ 70 tools⁵ | ✅ | ✅ | ~⁷ | — | ~² |
+| MCP / control por agentes | ✅ 73 tools⁵ | ✅ | ✅ | ~⁷ | — | ~² |
 | **Confianza y licencia** | | | | | | |
 | Telemetría | Anónima, opt-out (solo conteos) | n/a | n/a | n/a | n/a | n/a |
 | Migrar a Tugra (importar desde Coolify) | ✅⁹ | — | — | — | — | — |

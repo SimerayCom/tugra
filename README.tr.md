@@ -105,7 +105,7 @@ Tuğra; uygulamaları ve veritabanlarını kendi sunucularınızda deploy etmek,
 | Ekipler / RBAC | ✅ | ✅ | ✅ | ~⁷ | — | — |
 | SSO / OIDC | ✅ (Pro)⁸ | ✅ | ✅ | ~⁷ | — | — |
 | Audit log | ✅ | ✅ | ✅ | ~⁷ | — | — |
-| MCP / ajan kontrolü | ✅ 70 tools⁵ | ✅ | ✅ | ~⁷ | — | ~² |
+| MCP / ajan kontrolü | ✅ 73 tools⁵ | ✅ | ✅ | ~⁷ | — | ~² |
 | **Güven ve lisans** | | | | | | |
 | Telemetri | Anonim, opt-out (yalnızca sayılar) | n/a | n/a | n/a | n/a | n/a |
 | Migrasyon (Coolify'dan import) | ✅⁹ | — | — | — | — | — |

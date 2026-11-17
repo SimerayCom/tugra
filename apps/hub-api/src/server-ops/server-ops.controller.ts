@@ -26,6 +26,7 @@ import { CleanupService } from "./cleanup.service";
 import { GpuInventoryService } from "./gpu-inventory.service";
 import { GpuReportSchema } from "./gpu-inventory";
 import { PatchService } from "./patch.service";
+import { RebootService } from "./reboot.service";
 import { LogDrainService } from "./log-drain.service";
 import { ProxyOpsService } from "./proxy-ops.service";
 import { ContainerOpsService } from "./container-ops.service";
@@ -37,6 +38,11 @@ import {
   ContainerActionSchema,
   CreateLogDrainInput,
   CreateLogDrainSchema,
+  RebootPreviewSchema,
+  RebootRequestInput,
+  RebootRequestSchema,
+  RebootStatusSchema,
+  RebootViewSchema,
   SetProxyDynamicConfigInput,
   SetProxyDynamicConfigSchema,
   SetTrafficAnalyticsInput,
@@ -55,6 +61,7 @@ export class ServerOpsController {
     private readonly cleanup: CleanupService,
     private readonly gpus: GpuInventoryService,
     private readonly patch: PatchService,
+    private readonly reboot: RebootService,
     private readonly logDrains: LogDrainService,
     private readonly proxy: ProxyOpsService,
     private readonly containerOps: ContainerOpsService,
@@ -279,6 +286,42 @@ export class ServerOpsController {
       mergeMap((sub) => (sub ? concat(from(sub.replay), sub.live) : EMPTY)),
       map((event) => ({ data: JSON.stringify(event) }) as MessageEvent),
     );
+  }
+
+  // ── Reboot server. Never automatic: needs the server's name typed as confirmation. Same gate as patching: team
+  // permission servers:ops, `deploy` PAT scope for the mutating calls. DELETE cancels a SCHEDULED reboot only.
+  @Get("reboot")
+  @ApiZodResponse(RebootStatusSchema)
+  rebootStatus(@CurrentUser() user: AuthUser, @Param("id") id: string) {
+    return this.reboot.status(user.userId, id);
+  }
+
+  /** What a reboot would take down (counts), for the confirmation dialog. */
+  @Get("reboot/preview")
+  @ApiZodResponse(RebootPreviewSchema)
+  rebootPreview(@CurrentUser() user: AuthUser, @Param("id") id: string) {
+    return this.reboot.preview(user.userId, id);
+  }
+
+  @Post("reboot")
+  @RequireScopes("deploy")
+  @HttpCode(200)
+  @ApiZodBody(RebootRequestSchema)
+  @ApiZodResponse(RebootViewSchema)
+  requestReboot(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(RebootRequestSchema)) body: RebootRequestInput,
+  ) {
+    return this.reboot.request(user.userId, id, body);
+  }
+
+  @Delete("reboot")
+  @RequireScopes("deploy")
+  @HttpCode(200)
+  @ApiZodResponse(RebootViewSchema)
+  cancelReboot(@CurrentUser() user: AuthUser, @Param("id") id: string) {
+    return this.reboot.cancel(user.userId, id);
   }
 
   @Post("cleanup")

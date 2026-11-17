@@ -159,3 +159,76 @@ export const TrafficAnalyticsStateSchema = z.object({
   apply: z.enum(["applied", "deferred", "failed", "not-in-pool", "cluster-shared"]),
   applyError: z.string().nullable(),
 });
+
+// ── Reboot server ────────────────────────────────────────────────────────────────────────────────────────────────────
+// A reboot is never automatic. `confirmName` must equal the server's name (typed confirmation, checked in the service);
+// `at` is an ISO instant (UTC or with an offset), 1 minute to 7 days ahead (checked in the service, against its clock).
+export const RebootRequestSchema = z
+  .object({
+    mode: z.enum(["now", "scheduled"]),
+    at: z.string().datetime({ offset: true }).optional(),
+    confirmName: z.string().min(1).max(200),
+  })
+  .strict()
+  .refine((b) => (b.mode === "scheduled") === (b.at !== undefined), { message: "`at` is required for a scheduled reboot and not allowed for an immediate one", path: ["at"] });
+export type RebootRequestInput = z.infer<typeof RebootRequestSchema>;
+
+const RebootStateEnum = z.enum(["SCHEDULED", "STARTING", "REBOOTING", "WAITING_AGENT", "VERIFYING", "DONE"]);
+const RebootResultEnum = z.enum(["ok", "degraded", "failed", "cancelled"]);
+
+export const RebootReportSchema = z.object({
+  version: z.literal(1),
+  checkedAt: z.string(),
+  rebooted: z.boolean(),
+  docker: z.enum(["active", "inactive", "unknown"]),
+  containers: z.array(
+    z.object({
+      name: z.string(),
+      image: z.string(),
+      restartPolicy: z.string(),
+      hadHealthcheck: z.boolean(),
+      verdict: z.enum(["ok", "missing", "unhealthy", "pending", "skipped"]),
+      detail: z.string().optional(),
+    }),
+  ),
+  domains: z.array(z.object({ host: z.string(), verdict: z.enum(["ok", "not_answering", "pending", "unverified"]), status: z.number().nullable() })),
+  domainsNote: z.enum(["skipped_no_host_port", "probe_unavailable"]).optional(),
+  rebootRequired: z.enum(["cleared", "still_set", "unknown"]),
+  reason: z.string().optional(),
+  summary: z.object({ containersOk: z.number(), containersExpected: z.number(), domainsOk: z.number(), domainsExpected: z.number() }),
+});
+
+export const RebootViewSchema = z.object({
+  id: z.string(),
+  serverId: z.string(),
+  mode: z.enum(["now", "scheduled"]),
+  state: RebootStateEnum,
+  result: RebootResultEnum.nullable(),
+  requestedBy: z.string(),
+  scheduledAt: z.string().nullable(),
+  startedAt: z.string().nullable(),
+  agentBackAt: z.string().nullable(),
+  verifiedAt: z.string().nullable(),
+  createdAt: z.string(),
+  /** What was expected back (counts only; the per-item results are in `report`). */
+  snapshot: z.object({ containers: z.number(), domains: z.number(), hostsHub: z.boolean() }).nullable(),
+  report: RebootReportSchema.nullable(),
+});
+export type RebootView = z.infer<typeof RebootViewSchema>;
+
+export const RebootStatusSchema = z.object({
+  /** The live reboot (scheduled or in progress), if any. */
+  active: RebootViewSchema.nullable(),
+  /** The most recent finished one, with its verification report. */
+  last: RebootViewSchema.nullable(),
+});
+
+export const RebootPreviewSchema = z.object({
+  /** Containers running now that a reboot briefly takes down. */
+  containers: z.number(),
+  /** Routed hostnames (RUNNING apps) that are briefly unavailable. */
+  domains: z.number(),
+  /** The Tugra hub itself runs on this server: the panel goes away for 1-3 minutes. */
+  hostsHub: z.boolean(),
+  agentOnline: z.boolean(),
+});
