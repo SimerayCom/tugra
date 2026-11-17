@@ -262,6 +262,14 @@ describe("FREEZE with the api controller", () => {
     expect(await handler.act(h2.ctx, await handler.observe(h2.ctx))).toMatchObject({ outcome: "fail", retryable: true });
   });
 
+  it("a stop Coolify rate-limits fails with the stable rate-limited reason and is retryable (the limit lifts on its own)", async () => {
+    const run = apiRun();
+    const { handler, ctx, api } = build(run);
+    api.failStop.set("def", "rate-limited");
+    const h = ctx({ run, approval: APPROVAL });
+    expect(await handler.act(h.ctx, await handler.observe(h.ctx))).toMatchObject({ outcome: "fail", code: DATA_CODES.freezeApiFailed, params: { reason: "rate-limited", itemRef: "app:s:def" }, retryable: true });
+  });
+
   it("a stop that is accepted but never takes effect fails after the confirmation window", async () => {
     const run = apiRun();
     const { handler, ctx, api } = build(run);

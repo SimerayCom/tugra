@@ -120,7 +120,7 @@ Two more choices, both with safe defaults:
   host run it and needs the opt-in `migrate` capability on that server (granted for the run, revoked at the end);
   `coolify-host-loop` prints one script for the **Coolify host** that loops over every source host (see below).
 - **Source controller** (`manual` default, `api`, `agent`): who freezes and restarts the source writers. `manual` prints
-  the steps and you attest; `api` needs a Coolify **write** token; `agent` stops the recorded container ids.
+  the steps and you attest; `api` needs a Coolify token with the **`deploy`** ability (see [the API token](../coolify-migration.md#the-coolify-api-token)); `agent` stops the recorded container ids.
 
 ## The flow
 
