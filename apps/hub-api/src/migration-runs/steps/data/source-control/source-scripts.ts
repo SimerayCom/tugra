@@ -24,10 +24,25 @@ const PORTS_RE = /^[\x20-\x7e]{0,500}$/;
 
 export const SRC_MARK = { ctr: "TUGRA_CTR", stop: "TUGRA_STOP", start: "TUGRA_START", state: "TUGRA_STATE" } as const;
 
-/** Does a container name belong to the Coolify resource `uuid` (exact, `<uuid>-<digits>` deploy suffix, or a service component `<x>-<uuid>`)? */
-export function containerNameMatches(name: string, uuid: string, kind: CoolifyResourceKind): boolean {
+/** Legacy (4.1 .. 4.6) deploy suffix: epoch-like digits. */
+const LEGACY_SUFFIX_RE = /^[0-9]{6,}$/;
+/** 4.7.x deploy suffix: `YYYYMMDDTHHMMSS` (bootstrap/helpers/docker.php generateApplicationContainerName). */
+const ISO_SUFFIX_RE = /^[0-9]{8}T[0-9]{6}$/;
+
+/** Is `s` the deploy timestamp Coolify appends to an application container name (either generation)? A preview (`pr-N`) is neither. */
+export const isDeploySuffix = (s: string): boolean => LEGACY_SUFFIX_RE.test(s) || ISO_SUFFIX_RE.test(s);
+
+/**
+ * Does a container name belong to the Coolify resource `uuid` (exact, `<uuid>-<deploy suffix>` in either the legacy digits
+ * or the 4.7.x ISO form, or a service component `<x>-<uuid>`)? `containerPrefixes` are the app's
+ * `custom_container_name_prefix` values when the caller knows them (Coolify then names the container `<prefix>-<suffix>`);
+ * the item ref carries only the uuid, so the shell scripts cannot take it and such an app is matched by uuid only.
+ */
+export function containerNameMatches(name: string, uuid: string, kind: CoolifyResourceKind, containerPrefixes: readonly string[] = []): boolean {
   if (name === uuid) return true;
-  if (name.startsWith(`${uuid}-`) && /^[0-9]{6,}$/.test(name.slice(uuid.length + 1))) return true;
+  for (const base of [uuid, ...containerPrefixes]) {
+    if (base && name.startsWith(`${base}-`) && isDeploySuffix(name.slice(base.length + 1))) return true;
+  }
   if (kind === "service" && name.endsWith(`-${uuid}`) && name.length > uuid.length + 1) return true;
   return false;
 }

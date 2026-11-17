@@ -72,7 +72,14 @@ discover() {
       m=0
       case "$name" in
         "$uuid") m=1 ;;
-        "$uuid"-*) sfx=@{name#"$uuid"-}; case "$sfx" in ''|*[!0-9]*) ;; *) [ "@{#sfx}" -ge 6 ] && m=1 ;; esac ;;
+        "$uuid"-*)
+          # <uuid>-<digits, 6+> (4.1 .. 4.6) or <uuid>-YYYYMMDDTHHMMSS (4.7); a preview <uuid>-pr-N is neither
+          sfx=@{name#"$uuid"-}
+          case "$sfx" in
+            [0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]T[0-9][0-9][0-9][0-9][0-9][0-9]) m=1 ;;
+            ''|*[!0-9]*) ;;
+            *) [ "@{#sfx}" -ge 6 ] && m=1 ;;
+          esac ;;
       esac
       if [ "$kind" = service ] && [ "$m" = 0 ]; then case "$name" in ?*-"$uuid") m=1 ;; esac; fi
       [ "$m" = 1 ] || continue
