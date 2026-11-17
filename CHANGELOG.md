@@ -7,6 +7,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.0-beta.22] - 2026-11-17
+
 - **Out-of-band cloud access (Hetzner first).** For servers linked to a Hetzner Cloud server, the panel, CLI and MCP can
   power on, shut down, hard power off, hard reset, enable/disable rescue mode and open the provider console, even with
   the agent offline. Destructive actions need a typed server-name confirmation and are audited first; the rescue root
