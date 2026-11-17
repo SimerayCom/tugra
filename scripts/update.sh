@@ -19,6 +19,10 @@
 #                                             # one-shot: verify + apply the release's signed compose/scripts to the
 #                                             # checkout of a stack ALREADY running <version> (the hub's bootstrap for an
 #                                             # install whose updater predates host-files); no pull, no recreate
+#   scripts/update.sh --prune-images <version>
+#                                             # one-shot: remove Tugra's own release images older than the rollback
+#                                             # anchor of a stack running <version> (the hub's bootstrap runs it after
+#                                             # the recreate; the anchor is the newest older release still on disk)
 #
 # Queue job (flat JSON strings; no jq in this image): {"targetVersion":"X"} (legacy, tag-only) or
 # {"targetVersion":"X","hubDigest":"<64hex>","webDigest":"<64hex>"}. With BOTH digests the images are pulled by
@@ -53,12 +57,17 @@ WATCH=0
 APPLY_HF=0
 APPLY_HF_VERSION=""
 APPLY_HF_DIGEST=""
+PRUNE_ONLY=0
+PRUNE_VERSION=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --watch) WATCH=1; shift ;;
     --apply-host-files)
       [ $# -ge 3 ] || { printf 'update.sh: --apply-host-files needs <version> <hostFilesDigest>\n' >&2; exit 1; }
       APPLY_HF=1; APPLY_HF_VERSION="$2"; APPLY_HF_DIGEST="$3"; shift 3 ;;
+    --prune-images)
+      [ $# -ge 2 ] || { printf 'update.sh: --prune-images needs <version>\n' >&2; exit 1; }
+      PRUNE_ONLY=1; PRUNE_VERSION="$2"; shift 2 ;;
     --dry-run) DRY=1; shift ;;
     --target) TARGET="${2:-}"; shift 2 ;;
     --job) JOB="${2:-}"; shift 2 ;;
@@ -396,6 +405,16 @@ refresh_local_agent() {
   compose up -d --no-deps agent
 }
 
+# Pre-pull the updater image the compose file names for <version> with a plain `docker pull` (never `compose pull`:
+# the updater's release tag is built with the same BuildKit attestations as the agent's, see lib/images.sh).
+# Usage: pull_updater_image_for <version>
+pull_updater_image_for() {
+  local ref=""
+  if [ "$DRY" -eq 1 ]; then printf 'RUN: docker pull %s:%s\n' "$UPDATER_IMAGE_REPO" "$1"; return 0; fi
+  ref="$(updater_expected_image)"
+  pull_updater_image "$1" "$ref"
+}
+
 # Remove Tugra's own release images older than the previous release. Opt-out: TUGRA_PRUNE_IMAGES=0 (env or .env).
 # Usage: prune_old_release_images <current (new) version> <previous version>
 prune_old_release_images() {
@@ -617,7 +636,7 @@ _do_update() {
       log "warning: could not refresh the local agent (the update itself is fine; the hub retries it on its own, or re-run scripts/install.sh)"
     fi
   fi
-  compose pull tugra-updater || log "warning: could not pre-pull the updater image"
+  pull_updater_image_for "$target" || log "warning: could not pre-pull the updater image"
 
   set_status done "$target"
   redis DEL "instance:update:recovery_required" # a verified update clears any stale recovery marker
@@ -655,6 +674,24 @@ handle_job() {
   do_update "$target" "$hub" "$web" "$host" "$agentAmd64" "$agentArm64"
 }
 
+# One-shot prune for a stack that already runs <version>. prune_select treats "previous == current" as "keep the newest
+# release below current that is on disk", so no previous version has to be known. A stack on another version is left alone.
+prune_images_only() {
+  local version="$1" cur
+  if ! hf_version_ok "$version"; then log "image cleanup: need a release version"; return 2; fi
+  cur="$(env_get TUGRA_VERSION)"
+  if [ "${cur#v}" != "${version#v}" ]; then
+    log "image cleanup: this stack runs ${cur:-an unpinned version}, not $version — nothing removed"
+    return 1
+  fi
+  prune_old_release_images "$version" "$version"
+}
+
+if [ "$PRUNE_ONLY" -eq 1 ]; then
+  prune_images_only "$PRUNE_VERSION"
+  exit $?
+fi
+
 if [ "$APPLY_HF" -eq 1 ]; then
   apply_host_files_only "$APPLY_HF_VERSION" "$APPLY_HF_DIGEST"
   exit $?
@@ -685,7 +722,7 @@ catch_up_updater() {
   last="$(redis GET "$UPDATER_REFRESH_KEY" 2>/dev/null || true)"
   if [ "$last" = "$want" ]; then return 0; fi
   log "the running updater image is not $want — refreshing it before taking jobs"
-  compose pull tugra-updater || log "warning: could not pull the updater image"
+  pull_updater_image_for "${want##*:}" || log "warning: could not pull the updater image"
   refresh_updater_self
   # The helper recreates this container in a few seconds; keep out of the queue until then. If it could not
   # be started (or never fires) carry on with the old updater.

@@ -108,8 +108,8 @@ describe("scripts/update.sh", () => {
       expect(pullAgent).toBeGreaterThan(wait);
       expect(upAgent).toBeGreaterThan(pullAgent);
       expect(done).toBeGreaterThan(upAgent);
-      expect(out).toContain("pull tugra-updater");
-      expect(out).not.toMatch(/compose[^\n]* pull[^\n]* agent/); // compose pull of the agent hit the in-toto 404 on the containerd store
+      expect(out).toContain("RUN: docker pull ghcr.io/simeraycom/tugra-updater:0.2.0"); // a plain pull, like the agent: never `compose pull`
+      expect(out).not.toMatch(/compose[^\n]* pull[^\n]* (agent|tugra-updater)/); // compose pull of the agent hit the in-toto 404 on the containerd store
       expect(out).not.toMatch(/up -d[^\n]*(postgres|redis|tugra-updater)/);
       expect(out).not.toMatch(/up -d\s*$/m);
     });

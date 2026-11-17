@@ -77,34 +77,60 @@ tugra_release_repos() {
 # True for a plain MAJOR.MINOR.PATCH[-pre][+build] version (optionally v-prefixed).
 _img_is_version() { [[ "${1:-}" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.+-]+)?$ ]]; }
 
+# _prune_is_tugra <repo> <src label> <title label>: 0 when the image is one of Tugra's own release images.
+_prune_is_tugra() {
+  local repo="$1" src="$2" title="$3" t
+  if printf '%s\n' "$(tugra_release_repos)" | grep -qxF -- "$repo"; then return 0; fi
+  if [ "$repo" = "<none>" ] && [ "$src" = "$TUGRA_IMG_SOURCE_LABEL" ]; then
+    for t in "${TUGRA_IMG_TITLES[@]}"; do [ "$title" = "$t" ] && return 0; done
+  fi
+  return 1
+}
+
 # prune_select <current> <previous>
 # stdin: one image reference per line, fields separated by `|`:
 #   ID|REPOSITORY|TAG|DIGEST|VERSION_LABEL|SOURCE_LABEL|TITLE_LABEL        (`<none>` for an empty repo/tag/digest)
 # stdout: `ID|REF|VERSION` for every reference to remove (REF is repo:tag, repo@digest, or the bare ID for an unnamed
 # image). An ID with at least one reference that must stay is never emitted: one image id can carry several tags.
+# When <previous> equals <current> (a re-run on the same release) the rollback anchor is the highest Tugra release
+# below <current> found in the input, never <current> itself.
 prune_select() {
-  local cur="${1#v}" prev="${2#v}" floor="" repos
-  repos="$(tugra_release_repos)"
+  local cur="${1#v}" prev="${2#v}" floor="" input
+  input="$(cat)"
+  # Re-run on the SAME version (installer repair, --pull, applying host files after an in-app update): the caller's
+  # "previous" is the current release itself and says nothing about the real rollback anchor. Take the highest
+  # Tugra release below <current> that is present on disk as the previous one, so it is kept.
+  if _img_is_version "$cur" && [ "$prev" = "$cur" ]; then
+    local a_id a_repo a_tag a_digest a_ver a_src a_title a_v best=""
+    while IFS='|' read -r a_id a_repo a_tag a_digest a_ver a_src a_title || [ -n "$a_id" ]; do
+      [ -n "$a_id" ] || continue
+      [ "$a_ver" = "<no value>" ] && a_ver=""; [ "$a_src" = "<no value>" ] && a_src=""; [ "$a_title" = "<no value>" ] && a_title=""
+      _prune_is_tugra "$a_repo" "$a_src" "$a_title" || continue
+      a_v="$a_ver"
+      if [ -z "$a_v" ] && _img_is_version "$a_tag"; then a_v="$a_tag"; fi
+      a_v="${a_v#v}"
+      _img_is_version "$a_v" || continue
+      is_newer "$cur" "$a_v" || continue          # only versions strictly below <current>
+      if [ -z "$best" ] || is_newer "$a_v" "$best"; then best="$a_v"; fi
+    done <<EOF_INPUT
+$input
+EOF_INPUT
+    [ -n "$best" ] && prev="$best"
+  fi
   # The floor is the OLDER of the two kept releases: strictly older versions are removable. No floor (previous is
   # not a plain version, e.g. `latest`) = nothing versioned is removable.
   if _img_is_version "$prev"; then
     floor="$prev"
     if _img_is_version "$cur" && is_newer "$prev" "$cur"; then floor="$cur"; fi
   fi
-  local rows="" keep_ids="|" id repo tag digest ver src title is_tugra version ref t known=0
+  local rows="" keep_ids="|" id repo tag digest ver src title is_tugra version ref
   while IFS='|' read -r id repo tag digest ver src title || [ -n "$id" ]; do
     [ -n "$id" ] || continue
     [ "$ver" = "<no value>" ] && ver=""
     [ "$src" = "<no value>" ] && src=""
     [ "$title" = "<no value>" ] && title=""
     is_tugra=0
-    if printf '%s\n' "$repos" | grep -qxF -- "$repo"; then
-      is_tugra=1
-    elif [ "$repo" = "<none>" ] && [ "$src" = "$TUGRA_IMG_SOURCE_LABEL" ]; then
-      known=0
-      for t in "${TUGRA_IMG_TITLES[@]}"; do [ "$title" = "$t" ] && known=1; done
-      [ "$known" -eq 1 ] && is_tugra=1
-    fi
+    _prune_is_tugra "$repo" "$src" "$title" && is_tugra=1
     [ "$is_tugra" -eq 1 ] || continue   # foreign image: never kept-or-removed, simply not ours
 
     version="$ver"
@@ -131,7 +157,9 @@ prune_select() {
     elif [ "$repo" != "<none>" ] && [ -n "$digest" ] && [ "$digest" != "<none>" ]; then ref="$repo@$digest"
     else ref="$id"; fi
     rows="${rows}${id}|${ref}|${version:-unknown}"$'\n'
-  done
+  done <<EOF_MAIN
+$input
+EOF_MAIN
   # Second pass: drop every row whose image id also carries a reference that stays.
   local line rid
   while IFS= read -r line; do
@@ -237,4 +265,15 @@ pull_agent_image() {
   id="$(docker image inspect -f '{{.Id}}' "$repo@sha256:$digest" 2>/dev/null | tr -d '[:space:]')"
   [ -n "$id" ] || return 1
   docker tag "$id" "$repo:$version"
+}
+
+# Pull the updater sidecar's image WITHOUT `docker compose pull` (the same containerd-store attestation failure the
+# agent hit applies to any release tag built with BuildKit provenance/SBOM): a plain `docker pull <ref>`.
+#   pull_updater_image <version> [<ref compose resolves for tugra-updater>]
+# With a ref it is pulled as given; otherwise <repo>:<version>. UPDATER_IMAGE_REPO overrides the repository.
+# Returns 0 only when the image is usable locally.
+pull_updater_image() {
+  local ref="${2:-}"
+  [ -n "$ref" ] || ref="${UPDATER_IMAGE_REPO:-ghcr.io/simeraycom/tugra-updater}:${1:-latest}"
+  docker pull "$ref" >/dev/null
 }

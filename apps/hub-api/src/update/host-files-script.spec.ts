@@ -103,6 +103,7 @@ case "$1" in
     if [ -n "$SHIM_UNHEALTHY_FIRST" ] && [ "$n" -lt 2 ]; then echo unhealthy; exit 0; fi
     echo healthy; exit 0 ;;
   image) [ -n "$SHIM_IMAGE_MISSING" ] && exit 1; echo "\$SHIM_UPDATER_WANT_ID"; exit 0 ;;
+  pull) [ -n "$SHIM_UPDATER_PULL_FAIL" ] && [[ "$2" == *tugra-updater* ]] && exit 1; exit 0 ;;
   run|rm) [ -n "$SHIM_RUN_FAIL" ] && [ "$1" = run ] && exit 1; exit 0 ;;
   compose)
     case "$*" in
@@ -129,7 +130,6 @@ case "$1" in
           else echo 'time="x" level=warning msg="The \\"NEEDS_NEW_VAR\\" variable is not set. Defaulting to a blank string."' >&2; fi
         fi
         exit 0 ;;
-      *" pull tugra-updater"*) [ -n "$SHIM_UPDATER_PULL_FAIL" ] && exit 1; exit 0 ;;
       *" pull hub-api web"*)
         [ -n "$SHIM_WIPE_BACKUPS" ] && rm -rf "$SHIM_WIPE_BACKUPS"/host-files-*
         [ -n "$SHIM_PULL_FAIL" ] && exit 1; exit 0 ;;
@@ -379,8 +379,9 @@ suite("update.sh applying a release's compose + scripts (end to end)", () => {
     it("the new image is pulled BEFORE the helper is scheduled, so the recreate is a quick local swap", () => {
       const rig = makeRig();
       const { log } = run(rig, {}, stale);
-      expect(log).toMatch(/docker compose .* pull tugra-updater/);
-      expect(log.indexOf("pull tugra-updater")).toBeLessThan(log.indexOf("docker run "));
+      expect(log).toContain("docker pull ghcr.io/simeraycom/tugra-updater:0.2.0"); // a plain pull, never `compose pull`
+      expect(log).not.toMatch(/docker compose .* pull tugra-updater/);
+      expect(log.indexOf("docker pull ghcr.io/simeraycom/tugra-updater:0.2.0")).toBeLessThan(log.indexOf("docker run "));
       expect(log.indexOf("docker run ")).toBeLessThan(log.indexOf("BLPOP"));
     });
 

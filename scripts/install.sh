@@ -809,9 +809,10 @@ compose_up() {
 # ("could not fetch content descriptor … application/vnd.in-toto+json … not found", then compose's misleading
 # "must be built from source: docker compose build agent"). A plain `docker pull` of the tag does not (lib/images.sh).
 pull_published_images() {
-  compose pull postgres redis hub-api web tugra-updater || return 1
+  compose pull postgres redis hub-api web || return 1
   _av="$(env_get TUGRA_VERSION | tr -d "\"' ")"
   pull_agent_image "${_av:-latest}" || return 1
+  pull_updater_image "${_av:-latest}" || return 1
 }
 if [ "$FORCE_BUILD" -eq 1 ]; then
   log "Building images from source…"; compose_up --build

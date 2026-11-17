@@ -739,14 +739,16 @@ exit 0
         const log = calls();
         const composePull = log.split("\n").find((l) => / pull /.test(l) && l.startsWith("docker compose")) as string;
         expect(composePull).toBeDefined();
-        expect(composePull).toMatch(/pull postgres redis hub-api web tugra-updater$/);
+        expect(composePull).toMatch(/pull postgres redis hub-api web$/); // neither the agent nor the updater goes through `compose pull`
         expect(log).toContain(`docker pull ${AGENT_IMG}:0.1.0-beta.19`);
+        expect(log).toContain("docker pull ghcr.io/simeraycom/tugra-updater:0.1.0-beta.19");
         expect(log.indexOf(`docker pull ${AGENT_IMG}`)).toBeLessThan(log.indexOf("up -d"));
         expect(log).not.toContain("build agent");
         // an unpinned install follows :latest, exactly as the compose file does
         const q = join(work, "agent-pull-latest.env"); reset();
         install(q, HTTP);
         expect(calls()).toContain(`docker pull ${AGENT_IMG}:latest`);
+        expect(calls()).toContain("docker pull ghcr.io/simeraycom/tugra-updater:latest");
       });
 
       it("an agent image that cannot be pulled stops a pinned install before any container is recreated", () => {

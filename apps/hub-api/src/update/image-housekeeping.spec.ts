@@ -65,6 +65,19 @@ describe("prune_select (which images go)", () => {
     expect(out.find((l) => l.startsWith("sha256:hub11"))).toBe(`sha256:hub11|${HUB}:0.1.0-beta.11|0.1.0-beta.11`);
   });
 
+  it("a re-run on the SAME release (installer repair/--pull) keeps the real rollback anchor: the newest older release on disk, not the current one", () => {
+    // current == previous == beta.19: the installer cannot know the real previous release, so beta.18 (on disk) stays
+    const out = select(rows, "0.1.0-beta.19", "0.1.0-beta.19");
+    expect(removedIds(out)).toEqual(["sha256:dangling12", "sha256:hub11", "sha256:hub17", "sha256:web2"]);
+    expect(removedIds(out)).not.toContain("sha256:hub18");
+    // without anything older than current on disk there is nothing to anchor on and nothing to remove
+    expect(removedIds(select([rows[3]], "0.1.0-beta.19", "0.1.0-beta.19"))).toEqual([]);
+    // the anchor only looks at Tugra's images: a foreign image with a newer-looking version never becomes it
+    const withForeign = [...rows.filter((r) => !r.startsWith("sha256:hub18")), row("sha256:fx", "traefik", "v0.1.0-beta.18", "<none>", "0.1.0-beta.18")];
+    // (the foreign beta.18 is ignored, so the anchor is Tugra's own beta.17, which stays)
+    expect(removedIds(select(withForeign, "0.1.0-beta.19", "0.1.0-beta.19"))).toEqual(["sha256:dangling12", "sha256:hub11", "sha256:web2"]);
+  });
+
   it("references: a tagged image is removed as repo:tag, a digest-only one as repo@digest, an unnamed one by id", () => {
     const out = select(
       [
@@ -287,6 +300,93 @@ describe("pull_agent_image (the local agent refresh reference)", () => {
     try {
       expect(call(shim, `0.2.0 ${D}`, { SHIM_PULL_FAIL: "tugra-agent" }).status).not.toBe(0);
       expect(call(shim, "0.2.0", { SHIM_PULL_FAIL: "tugra-agent" }).status).not.toBe(0);
+    } finally {
+      shim.cleanup();
+    }
+  });
+});
+
+describe("pull_updater_image (the updater is not pulled through compose either)", () => {
+  const UPD = "ghcr.io/simeraycom/tugra-updater";
+  const call = (shim: ReturnType<typeof makeShimDir>, args: string, env: Record<string, string> = {}) =>
+    spawnSync(BASH, ["-c", `log() { echo "$*"; }; . "${IMAGES_SH}"; pull_updater_image ${args}`], { encoding: "utf8", env: { ...shim.env, ...env } });
+  const calls = (shim: ReturnType<typeof makeShimDir>) => readFileSync(shim.log, "utf8").split("\n").filter(Boolean);
+
+  it("is a plain `docker pull <repo>:<version>` (or the exact ref compose resolves), never `docker compose pull`", () => {
+    const shim = makeShimDir([]);
+    try {
+      expect(call(shim, "0.2.0", { SHIM_PULL_VER: "0.2.0" }).status).toBe(0);
+      expect(calls(shim)).toEqual([`docker pull ${UPD}:0.2.0`]);
+      writeFileSync(shim.log, "");
+      expect(call(shim, `0.2.0 mirror.example/tugra-updater:0.2.0`, { SHIM_PULL_VER: "0.2.0" }).status).toBe(0);
+      expect(calls(shim)).toEqual(["docker pull mirror.example/tugra-updater:0.2.0"]);
+      writeFileSync(shim.log, "");
+      expect(call(shim, "0.2.0", { SHIM_PULL_VER: "0.2.0", UPDATER_IMAGE_REPO: "mirror.example/u" }).status).toBe(0);
+      expect(calls(shim)).toEqual(["docker pull mirror.example/u:0.2.0"]);
+    } finally {
+      shim.cleanup();
+    }
+  });
+
+  it("a failed pull is a failure", () => {
+    const shim = makeShimDir([]);
+    try {
+      expect(call(shim, "0.2.0", { SHIM_PULL_FAIL: "tugra-updater" }).status).not.toBe(0);
+    } finally {
+      shim.cleanup();
+    }
+  });
+
+  it("update.sh and install.sh never run `compose pull` for the updater (or the agent)", () => {
+    for (const f of ["update.sh", "install.sh"]) {
+      const code = readFileSync(join(SCRIPTS, f), "utf8").split("\n").filter((l) => !l.trim().startsWith("#")).join("\n");
+      expect(code).not.toMatch(/compose pull[^\n]*(tugra-updater|agent)/);
+    }
+    const out = execFileSync(BASH, [UPDATE_SH, "--dry-run", "--job", JSON.stringify({ targetVersion: "0.2.0" })], {
+      stdio: "pipe",
+      env: { PATH: process.env.PATH, ENV_FILE: join(tmpdir(), "no-such-env-file") } as NodeJS.ProcessEnv,
+    }).toString();
+    expect(out).toContain(`RUN: docker pull ${UPD}:0.2.0`);
+    expect(out).not.toMatch(/pull[^\n]*tugra-updater[^:]/);
+  });
+});
+
+describe("update.sh --prune-images <version> (the hub bootstrap's cleanup)", () => {
+  const dir = mkdtempSync(join(tmpdir(), "update-sh-prune-"));
+  afterAll(() => rmSync(dir, { recursive: true, force: true }));
+  const run = (shim: ReturnType<typeof makeShimDir>, envText: string, version: string, extra: Record<string, string> = {}) => {
+    const envFile = join(dir, ".env");
+    writeFileSync(envFile, envText);
+    return spawnSync(BASH, [UPDATE_SH, "--prune-images", version], { encoding: "utf8", env: { ...shim.env, ENV_FILE: envFile, ...extra } as NodeJS.ProcessEnv });
+  };
+
+  it("on a stack running <version> it keeps that release and the newest older one on disk, removes the rest and never a foreign image", () => {
+    const shim = makeShimDir([
+      img("sha256:hub10", HUB, "0.1.0-beta.10", "<none>", "0.1.0-beta.10", GB),
+      img("sha256:hub18", HUB, "<none>", "sha256:aa18", "0.1.0-beta.18", GB),
+      img("sha256:hub19", HUB, "<none>", "sha256:aa19", "0.1.0-beta.19", GB),
+      img("sha256:other", "nginx", "latest", "<none>", "", GB),
+    ]);
+    try {
+      const r = run(shim, "TUGRA_VERSION=0.1.0-beta.19\n", "0.1.0-beta.19");
+      expect(r.status).toBe(0);
+      const left = readFileSync(shim.table, "utf8");
+      expect(left).not.toContain("sha256:hub10");
+      for (const keep of ["hub18", "hub19", "nginx"]) expect(left).toContain(keep);
+      expect(r.stdout).toMatch(/image cleanup: removed 1 old Tugra release image\(s\), freed about 1\.0 GB/);
+    } finally {
+      shim.cleanup();
+    }
+  });
+
+  it("does nothing for a stack on another version, with TUGRA_PRUNE_IMAGES=0, or for a bad version", () => {
+    const shim = makeShimDir([img("sha256:hub10", HUB, "0.1.0-beta.10", "<none>", "0.1.0-beta.10", GB)]);
+    try {
+      expect(run(shim, "TUGRA_VERSION=0.1.0-beta.18\n", "0.1.0-beta.19").status).toBe(1);
+      expect(run(shim, "TUGRA_VERSION=0.1.0-beta.19\nTUGRA_PRUNE_IMAGES=0\n", "0.1.0-beta.19").stdout).toContain("image cleanup disabled");
+      expect(run(shim, "TUGRA_VERSION=0.1.0-beta.19\n", "1.0; reboot").status).toBe(2);
+      expect(readFileSync(shim.table, "utf8")).toContain("sha256:hub10");
+      expect(readFileSync(shim.log, "utf8")).not.toContain("docker rmi");
     } finally {
       shim.cleanup();
     }
