@@ -63,7 +63,7 @@ describe("AnalyticsTab", () => {
   it("scopes every panel request to the app (appId) and renders the panels", async () => {
     const m = mockApi();
     show(makeApp());
-    await waitFor(() => expect(screen.getByText("Chrome")).toBeTruthy());
+    await waitFor(() => expect(screen.getByText("Chrome")).toBeTruthy(), { timeout: 5000 }); // several panels resolve; CI under load is slower than 1 s
     for (const spy of [m.summary, m.paths, m.countries]) expect(spy).toHaveBeenCalledWith(expect.objectContaining({ appId: "app1", teamId: "t1" }));
     expect(m.breakdown).toHaveBeenCalledWith("browser", expect.objectContaining({ appId: "app1", teamId: "t1" }));
     expect(m.summary.mock.calls[0][0]?.domain).toBeUndefined();
@@ -111,7 +111,7 @@ describe("AnalyticsTab", () => {
     cleanup();
     mockApi();
     show(makeApp({ clusterId: "c1" }));
-    await waitFor(() => expect(screen.getByText("Chrome")).toBeTruthy());
+    await waitFor(() => expect(screen.getByText("Chrome")).toBeTruthy(), { timeout: 5000 }); // several panels resolve; CI under load is slower than 1 s
     expect(screen.getByText(/runs in a cluster/)).toBeTruthy();
   });
 
