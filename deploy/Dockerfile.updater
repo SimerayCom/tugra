@@ -15,6 +15,14 @@ LABEL org.opencontainers.image.source="https://github.com/SimerayCom/tugra" \
 
 RUN apk add --no-cache bash redis curl openssl
 
+# A copy of the updater scripts of THIS release, baked in so the hub can bootstrap an install whose checkout
+# predates in-app host-file updates: its old scripts/update.sh ignores a release's compose/script changes, so the
+# one-shot `bash /opt/tugra/scripts/update.sh --apply-host-files <version> <digest>` (run by the hub, through the local
+# agent, in this image with the checkout mounted) brings the checkout to the release with the same signature checks,
+# backup and validation as an in-app update. Never used by the running sidecar, which executes the checkout's copy.
+COPY scripts/update.sh /opt/tugra/scripts/update.sh
+COPY scripts/lib/ /opt/tugra/scripts/lib/
+
 WORKDIR /repo
 # The script + compose file + .env are bind-mounted from the repo at runtime; the compose `command`
 # invokes `scripts/update.sh --watch`. Clear the base image's docker entrypoint so command runs directly.

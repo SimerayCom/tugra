@@ -809,3 +809,82 @@ describe("hostfiles.sh syntax", () => {
     expect(() => execFileSync(BASH, ["-n", join(SCRIPTS, "update.sh")], { stdio: "pipe" })).not.toThrow();
   });
 });
+
+suite("update.sh --apply-host-files (the hub's bootstrap for a checkout that predates in-app host files)", () => {
+  // The bootstrap runs the updater IMAGE's baked copy of the scripts (/opt/tugra/scripts) against the operator's checkout
+  // (TUGRA_REPO_DIR), with the stack already on the release: no pull, no recreate, only the signed files change.
+  function applyRun(rig: Rig, version: string, digest: string, env: Record<string, string> = {}) {
+    const image = join(rig.dir, "image", "scripts");
+    mkdirSync(join(image, "lib"), { recursive: true });
+    writeFileSync(join(image, "update.sh"), REAL_UPDATE, { mode: 0o755 });
+    for (const [n, c] of [["snapshot.sh", REAL_SNAPSHOT], ["hostfiles.sh", REAL_HOSTFILES], ["images.sh", REAL_IMAGES]] as const) writeFileSync(join(image, "lib", n), c, { mode: 0o755 });
+    writeFileSync(rig.log, "");
+    const r = spawnSync(BASH, [join(image, "update.sh"), "--apply-host-files", version, digest], {
+      encoding: "utf8",
+      env: { PATH: `${join(rig.dir, "bin")}:${process.env.PATH}`, ENV_FILE: rig.envFile, TUGRA_REPO_DIR: rig.repo, SHIM_LOG: rig.log, SHIM_REL: rig.rel, ...env } as NodeJS.ProcessEnv,
+    });
+    return { r, log: readFileSync(rig.log, "utf8"), out: `${r.stdout}${r.stderr}`, image };
+  }
+  const onRelease = (rig: Rig, v: string) => writeFileSync(rig.envFile, rig.envText.replace("TUGRA_VERSION=0.1.0", `TUGRA_VERSION=${v}`));
+
+  it("brings the checkout (not the image copy) to the release: signed files replaced with a backup, .env untouched, nothing pulled or recreated", () => {
+    const rig = makeRig();
+    onRelease(rig, "0.2.0");
+    const envBefore = readFileSync(rig.envFile, "utf8");
+    const digest = publish(rig, "0.2.0", changedFiles());
+    const { r, log, out, image } = applyRun(rig, "0.2.0", digest);
+    expect(r.status).toBe(0);
+    expect(out).toContain("3 file(s) brought to release 0.2.0");
+    expect(read(rig, "deploy/docker-compose.yml")).toBe(NEW_COMPOSE);
+    expect(read(rig, "scripts/install.sh")).toBe(NEW_INSTALL);
+    expect(read(rig, "scripts/update.sh")).toContain("# release marker");
+    expect(readFileSync(join(image, "update.sh"), "utf8")).toBe(REAL_UPDATE); // the image's own copy is never rewritten
+    expect(readFileSync(rig.envFile, "utf8")).toBe(envBefore);
+    expect(readdirSync(join(rig.repo, "backups")).some((d) => d.startsWith("host-files-0.2.0-to-0.2.0-"))).toBe(true);
+    expect(log).not.toMatch(/docker pull|compose pull|up -d|docker (stop|restart|rm)/);
+    expect(log).not.toContain("redis-cli"); // no queue, no status, no lock: it is not an update job
+    expect(leftovers(rig)).toEqual([]);
+  });
+
+  it("already current: exits 0 and changes nothing", () => {
+    const rig = makeRig();
+    onRelease(rig, "0.2.0");
+    const digest = publish(rig, "0.2.0", unchangedFiles(rig));
+    const { r, out } = applyRun(rig, "0.2.0", digest);
+    expect(r.status).toBe(0);
+    expect(out).toContain("already match release 0.2.0");
+    expect(read(rig, "deploy/docker-compose.yml")).toBe(OLD_COMPOSE);
+  });
+
+  it("refuses when the stack does not run that release (it only syncs files to the RUNNING release)", () => {
+    const rig = makeRig(); // TUGRA_VERSION=0.1.0
+    const digest = publish(rig, "0.2.0", changedFiles());
+    const { r, out } = applyRun(rig, "0.2.0", digest);
+    expect(r.status).toBe(1);
+    expect(out).toContain("not 0.2.0");
+    expect(read(rig, "deploy/docker-compose.yml")).toBe(OLD_COMPOSE);
+  });
+
+  it("a manifest signed by another key, or a digest that does not match, is refused with the checkout untouched", () => {
+    const rig = makeRig();
+    onRelease(rig, "0.2.0");
+    const digest = publish(rig, "0.2.0", changedFiles(), { signWith: keypair().priv });
+    const bad = applyRun(rig, "0.2.0", digest);
+    expect(bad.r.status).toBe(1);
+    expect(bad.out).toContain("signature verification failed");
+    const rig2 = makeRig();
+    onRelease(rig2, "0.2.0");
+    publish(rig2, "0.2.0", changedFiles());
+    const wrong = applyRun(rig2, "0.2.0", "0".repeat(64));
+    expect(wrong.r.status).toBe(1);
+    expect(wrong.out).toContain("does not match the digest");
+    for (const g of [rig, rig2]) expect(read(g, "deploy/docker-compose.yml")).toBe(OLD_COMPOSE);
+  });
+
+  it("bad arguments exit non-zero before touching anything", () => {
+    const rig = makeRig();
+    onRelease(rig, "0.2.0");
+    expect(applyRun(rig, "0.2.0", "nothex").r.status).toBe(2);
+    expect(applyRun(rig, "bad version", "a".repeat(64)).r.status).toBe(2);
+  });
+});
