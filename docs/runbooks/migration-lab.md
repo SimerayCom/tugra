@@ -13,7 +13,7 @@ link, a Cloudflare body cap, real Coolify container naming, separate disks) is t
 
 L0-L8 were written against one stopped container with 256 MiB to 6 GiB of urandom. **L9-L14 and the fleet-shaped fixtures
 (`fleet.sh`)** model the estate the guided migration has to move: running sources with Coolify's uuid names, a multi-GB
-time-series PostgreSQL, a MariaDB over the logical cap, a 12-bucket MinIO on a bind mount, Coolify 4.1.2 discovery and an Ubuntu 26.04
+time-series PostgreSQL, a MariaDB over the logical cap, a 12-bucket MinIO on a bind mount, Coolify 4.1.2 and 4.7.5 discovery and an Ubuntu 26.04
 userland. They are described in "Fleet-shaped lab" below; their data is **generated on the runner, never kept in git**.
 **L15 and L16** are the data-plane legs for the databases the owner's `largeDbMode` `stream-logical` carries: the streamed dump lane
 (PostgreSQL and MariaDB, the hub killed mid-dump) and PostgreSQL with `sslmode=require`. They, like the physical copies of L6 and L9,
@@ -138,7 +138,7 @@ scripts/lab/compare.sh lab-src "$DEST_VOLUME"
 | `fleet.sh` | The fleet-shaped fixtures, sourced by L9-L16. Coolify-style names (`fleet_uuid`: 24 characters, `fleet_stamp`: the 13 digit deploy suffix), a running PostgreSQL with a multi-GB append-only time-series table (`fleet_pg_load_ticks`), a running MariaDB (`fleet_mariadb_load`), a MinIO with the 12 real bucket size classes on a host bind (`fleet_minio_plan`, `fleet_minio_fill`), redis with a password on its command line and a custom conf, orphan volumes, `fleet_snapshot_others` (the blast-radius check), `fleet_pull` (a pull with retries that names the image it could not get) and `fleet_cleanup`. Everything it creates carries the docker label `tugra.lab.fleet=1` and `down.sh` removes exactly that. |
 | `units.mjs` | Docker's decimal human sizes (`2.147GB`) as bytes, to compare `docker system df` with what is really on disk. |
 | `seed-mode.mjs` | The engine and data lane a seeded op uses: `--kind db` is a PostgreSQL physical copy by default, `--data-mode dump` is the logical arm (its ITEMREF is the database ref), `--data-mode stream` puts the database on the streamed dump lane through `BulkOperation.meta.vxStream` (what DATA_SEED writes; its ITEMREF is `volume:_:<ref>:dump`; PostgreSQL, MariaDB and MySQL), and every engine but PostgreSQL is logical only. `seed.mjs op --ssl` makes the destination PostgreSQL serve TLS. |
-| `coolify-fleet.mjs`, `coolify-mock.mjs` | A Coolify 4.1.2 API with invented names: 8 team tokens (read-only, scoped by token), an unfiltered `/teams`, 78 apps, 29 databases, 19 services, 24 servers, comma-list `fqdn`s with both schemes, service sub-apps on `:8080`. L13 serves it to the hub. |
+| `coolify-fleet.mjs`, `coolify-mock.mjs` | A Coolify 4.1.2 API (and, with `--profile 4.7.5`, a 4.7.5 one: see L13) with invented names: 8 team tokens (read-only, scoped by token), an unfiltered `/teams`, 78 apps, 29 databases, 19 services, 24 servers, comma-list `fqdn`s with both schemes, service sub-apps on `:8080`. L13 serves it to the hub. |
 | `ubuntu-pick.sh` | Pulls `ubuntu:26.04`, else falls back to `ubuntu:24.04` and says `fallback` (L14 turns that into a workflow warning). |
 | `selftest.mjs` | `node --test scripts/lab/selftest.mjs`: the harness's own decisions (workflow job selection, the destructive guard, ownership scoping, the L0 snapshot, manifest and tar listing, the tap, the timing of L2/L3/L6/L8) without docker. Runs in the `tar` job. |
 | `throttle-proxy.mjs` | Node `net` only. `--listen 4001 --target 127.0.0.1:3000 --rate 10` throttles the upload direction to 10 MB/s by backpressure, shared by all connections like one link. Verified on loopback: 5, 20 MB/s configured gave 5.0 and 20.0 MB/s measured. |
@@ -279,6 +279,7 @@ git. Every row says where the fact is exercised.
 | Sources are running containers, 24 character uuid names, `--stop-source` is the real path | `fleet_uuid`, `fleet_stamp`, running sources | L9, L11, L12, L14 |
 | Two deploys of one application, an exited container with a restart history, a crash-looping one, no health checks anywhere | Cases B, C, D | L12 |
 | Coolify 4.1.2: per-team read-only tokens, an unfiltered `/teams`, comma-list `fqdn` with both schemes, service sub-apps on `:8080` | The mock API | L13 (CI), Tier B step 1 (real) |
+| Coolify 4.7.5: list rows without members or sensitive fields, settings nested on the detail, POST start/stop with 400 "already ...", 429 with `Retry-After`, `<uuid>-YYYYMMDDTHHMMSS` container names | The mock API (`--profile 4.7.5`) | L13 (CI), Tier B step 1 (real) |
 | Cloudflare: proxied, DNS-only, tunnel CNAME, a generated host, a zone outside Cloudflare | A real zone and a token | Tier B step 5 only |
 | Three source hosts on Ubuntu 26.04 | The 26.04 userland | L14 (CI), Tier B (a real 26.04 VM) |
 
@@ -341,11 +342,26 @@ starts for that restore is named as the case's own container, nothing else on th
 pinned image serves the copied volume (500 documents); whether `latest` opens a copy of it is recorded in `l12.summary`
 (`L12_MEILI_LATEST_OPENS`), because version drift between instances is a finding, not a pass/fail. `L12_MEILI=0` skips F.
 
-### L13 discovery against Coolify 4.1.2 (`l13-fleet-coolify.sh`)
-The mock API on the docker host address (the hub's SSRF guard refuses loopback). For each of the 8 team tokens the hub connects and
-plans, and the plan counts exactly that team's applications and databases, with every item named after the team: a token's scope is the
-token, **never `/teams`**, which is unfiltered. An unknown token is refused. This does not prove what a real 4.1.2 does; it proves the
-hub reads the shape the owner's inventory shows. The real instance is Tier B step 1.
+### L13 discovery against Coolify 4.1.2 and 4.7.5 (`l13-fleet-coolify.sh`)
+The mock API on the docker host address (the hub's SSRF guard refuses loopback), run in two profiles (`coolify-mock.mjs --profile`).
+For each of the 8 team tokens the hub connects and plans, and the plan counts exactly that team's applications and databases, with every
+item named after the team: a token's scope is the token, **never `/teams`**, which is unfiltered. An unknown token is refused. This does
+not prove what a real Coolify does; it proves the hub reads the shape the owner's inventory and the Coolify source show. The real
+instance is Tier B step 1.
+
+The **4.7.5 profile** models what 4.7.5 changed, read from its source: list rows without members or sensitive fields (a service row has
+no `applications`, `databases`, `server` or `docker_compose_raw`; an application row has no `settings`, which nests `is_static`, `is_spa`
+and `custom_container_name_prefix` on the detail GET), `POST /{applications,databases,services}/{uuid}/{start,stop}` (a database or
+service already in the asked state is **400** "already running." / "already stopped."; `GET` on those paths is **405** with
+`Allow: POST`; an application start queues a deployment), one per-user request budget (200 a minute, shared by every token) that answers
+**429** with `Retry-After`, and application containers named `<uuid>-YYYYMMDDTHHMMSS` (the 4.1.2 form is `<uuid>-<12 digits>`).
+`L13_RATE_LIMIT` sets the discovery mock's budget (default `0`, off, so the plan does not depend on the importer's `Retry-After`
+handling; `200` is the real default). A second mock with a budget of 5 proves the 429 and its header. After discovery the scenario
+starts a RUNNING container named `<uuid>-YYYYMMDDTHHMMSS` after the first application of team 0 and runs the volume copy: the dry run
+must say `volume-skipped-running` (resolved by the uuid alone), `--stop-source` must stop exactly that container, and the volume must
+compare identical. An application with a `custom_container_name_prefix` is named `<prefix>-<timestamp>`; the item ref carries only
+the uuid, so the hub-built freeze and inventory scripts do not resolve such an application (the agent matches `<sourceRef>-<suffix>`, so it
+would, if handed the prefix as its sourceRef). The mock keeps the prefix `null` on every application.
 
 ### L14 Ubuntu 26.04 (`l14-ubuntu-source.sh`)
 The job runs on `ubuntu-latest` (24.04 at the time of writing): a runner label for 26.04 is not assumed to exist, and a job on a label

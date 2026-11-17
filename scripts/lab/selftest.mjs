@@ -13,7 +13,7 @@ import { fileURLToPath } from "node:url";
 import { select } from "./scope.mjs";
 import { parseDockerSize } from "./units.mjs";
 import { itemRefFor, resolveDbMode, withStreamMode } from "./seed-mode.mjs";
-import { buildFleet, route, summary, tokenOf, TEAMS, VERSION } from "./coolify-fleet.mjs";
+import { buildFleet, containerName, route, summary, tokenOf, TEAMS, VERSION, VERSION_475 } from "./coolify-fleet.mjs";
 
 const LAB = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(LAB, "../..");
@@ -565,6 +565,138 @@ test("coolify-fleet: the shape of the real estate, scoped by token, with an unfi
   assert.equal(binds.length, 2);
 });
 
+// ---- the Coolify 4.7.5 profile -------------------------------------------------------------------------------------------------
+test("coolify-fleet 4.7.5: list rows without members or sensitive fields, settings on the detail, ISO container names", () => {
+  const fleet = buildFleet({ profile: VERSION_475 });
+  assert.equal(fleet.version, "4.7.5");
+  const t = fleet.teams[0];
+  const get = (path) => route(fleet, "GET", path, t.token);
+  assert.equal(get("/api/v1/version").text, "4.7.5");
+  // the same resources as 4.1.2
+  const old = buildFleet();
+  assert.deepEqual(summary(fleet).map(({ firstApp, ...rest }) => rest), summary(old).map(({ firstApp, ...rest }) => rest));
+  // a service row: identity only; the detail carries the members and server but never the raw compose (read:sensitive)
+  const row = get("/api/v1/services").body[0];
+  for (const k of ["applications", "databases", "server", "docker_compose_raw"]) assert.equal(row[k], undefined, `list row has no ${k}`);
+  assert.equal(row.uuid, t.services[0].uuid);
+  const detail = get(`/api/v1/services/${row.uuid}`).body;
+  assert.ok(Array.isArray(detail.applications) && detail.applications.length > 0 && detail.server);
+  assert.equal(detail.docker_compose_raw, undefined);
+  // an application: no settings on the row (not even top-level is_static / is_spa), nested on the detail
+  const apps = get("/api/v1/applications").body;
+  assert.ok(apps.every((a) => a.settings === undefined && a.is_static === undefined && a.is_spa === undefined && a.bindMount === undefined));
+  const d = get(`/api/v1/applications/${t.apps[0].uuid}`).body;
+  assert.deepEqual(Object.keys(d.settings).sort(), ["custom_container_name_prefix", "is_consistent_container_name_enabled", "is_spa", "is_static"]);
+  assert.equal(d.settings.custom_container_name_prefix, null);
+  const nix = fleet.teams.flatMap((x) => x.apps).find((a) => a.build_pack === "nixpacks");
+  const nixTeam = fleet.teams.find((x) => x.apps.includes(nix));
+  assert.equal(route(fleet, "GET", `/api/v1/applications/${nix.uuid}`, nixTeam.token).body.settings.is_static, true, "the static nixpacks application is visible only on the detail");
+  assert.equal(apps.find((a) => a.build_pack === "dockerimage")?.source_type ?? null, null);
+  assert.ok(apps.filter((a) => a.build_pack === "dockerfile").every((a) => a.source_type === "App\\Models\\GithubApp"));
+  // container names: ISO for 4.7.5, <12 digits> for 4.1.2, from the summary the lab script reads
+  const u = t.apps[0].uuid;
+  assert.equal(containerName("4.7.5", u), `${u}-20261110T153012`);
+  assert.equal(containerName("4.1.2", u), `${u}-261110153012`);
+  assert.match(summary(fleet)[0].firstApp.container, /^[0-9a-f]{24}-[0-9]{8}T[0-9]{6}$/);
+  assert.match(summary(old)[0].firstApp.container, /^[0-9a-f]{24}-[0-9]{12}$/);
+});
+
+test("coolify-fleet 4.7.5: 4.1.2 stays GET-only and keeps its own shapes", () => {
+  const old = buildFleet();
+  const t = old.teams[0];
+  assert.equal(route(old, "POST", `/api/v1/databases/${t.databases[0].uuid}/stop`, t.token).status, 405);
+  assert.equal(route(old, "GET", "/api/v1/services", t.token).body[0].applications.length, 1, "4.1.2 service rows carry their members");
+  assert.ok(route(old, "GET", "/api/v1/services", t.token).body[0].docker_compose_raw);
+  assert.equal(route(old, "GET", `/api/v1/applications/${t.apps[0].uuid}`, t.token).body.settings, undefined);
+  assert.equal(old.rate, null);
+  for (let i = 0; i < 400; i++) assert.equal(route(old, "GET", "/api/v1/servers", t.token, 1000).status, 200, "no 429 on 4.1.2");
+});
+
+test("coolify-fleet 4.7.5: POST start/stop, 400 already stopped/running, 405 on GET, 403 without the deploy ability", () => {
+  const fleet = buildFleet({ profile: VERSION_475, rateLimit: 0 });
+  const t = fleet.teams[0];
+  const post = (path) => route(fleet, "POST", path, t.token);
+  const db = `/api/v1/databases/${t.databases[0].uuid}`;
+  assert.equal(route(fleet, "GET", `${db}/stop`, t.token).status, 405);
+  assert.deepEqual(route(fleet, "GET", `${db}/stop`, t.token).headers, { Allow: "POST" });
+  assert.equal(route(fleet, "GET", `${db}/stop`, t.token).body.message, "This endpoint has changed to a POST request.");
+  assert.equal(post(`${db}/start`).status, 400);
+  assert.equal(post(`${db}/start`).body.message, "Database is already running.");
+  assert.equal(post(`${db}/stop`).status, 200);
+  assert.equal(post(`${db}/stop`).status, 400);
+  assert.equal(post(`${db}/stop`).body.message, "Database is already stopped.");
+  assert.equal(post(`${db}/start`).status, 200);
+  const svc = `/api/v1/services/${t.services[0].uuid}`;
+  assert.equal(post(`${svc}/stop`).status, 200);
+  assert.equal(post(`${svc}/stop`).body.message, "Service is already stopped.");
+  assert.equal(post(`${svc}/start`).body.message, "Service starting request queued.");
+  // an application start queues a deployment and never says "already running"
+  const app = `/api/v1/applications/${t.apps[0].uuid}`;
+  assert.equal(post(`${app}/start`).body.message, "Deployment request queued.");
+  assert.equal(post(`${app}/stop`).body.message, "Application stopping request queued.");
+  assert.equal(post(`${app}/stop`).status, 200);
+  // a resource of another team, an unknown verb, an unknown token
+  assert.equal(post(`/api/v1/databases/${fleet.teams[1].databases[0].uuid}/stop`).status, 404);
+  assert.equal(post(`${db}/restart`).status, 404);
+  assert.equal(route(fleet, "POST", `${db}/stop`, "bogus").status, 401);
+  const noDeploy = buildFleet({ profile: VERSION_475, deployAbility: false });
+  assert.equal(route(noDeploy, "POST", `/api/v1/databases/${noDeploy.teams[0].databases[0].uuid}/stop`, noDeploy.teams[0].token).status, 403);
+});
+
+test("coolify-fleet 4.7.5: ONE per-user budget across every token, then 429 with Retry-After, and the window slides", () => {
+  const fleet = buildFleet({ profile: VERSION_475, rateLimit: 5 });
+  const [a, b] = [fleet.teams[0], fleet.teams[1]];
+  const t0 = 1_000_000;
+  for (let i = 0; i < 3; i++) assert.equal(route(fleet, "GET", "/api/v1/servers", a.token, t0 + i * 1000).status, 200);
+  for (let i = 0; i < 2; i++) assert.equal(route(fleet, "GET", "/api/v1/servers", b.token, t0 + 3000 + i).status, 200, "another team's token spends the same budget");
+  const limited = route(fleet, "GET", "/api/v1/servers", a.token, t0 + 10_000);
+  assert.equal(limited.status, 429);
+  assert.equal(limited.body.message, "Too Many Attempts.");
+  assert.equal(limited.headers["Retry-After"], "50", "60 s window, the oldest hit was at t0");
+  assert.equal(route(fleet, "GET", "/api/v1/servers", b.token, t0 + 10_500).status, 429, "still limited, and a refused request is not counted");
+  assert.equal(route(fleet, "GET", "/api/v1/servers", a.token, t0 + 60_001).status, 200, "the oldest hit left the window");
+  // an unknown token is a 401 and spends nothing
+  const f2 = buildFleet({ profile: VERSION_475, rateLimit: 1 });
+  for (let i = 0; i < 10; i++) assert.equal(route(f2, "GET", "/api/v1/servers", "bogus", 5).status, 401);
+  assert.equal(route(f2, "GET", "/api/v1/servers", f2.teams[0].token, 6).status, 200);
+  // rateLimit 0 turns it off
+  const off = buildFleet({ profile: VERSION_475, rateLimit: 0 });
+  for (let i = 0; i < 500; i++) assert.equal(route(off, "GET", "/api/v1/servers", off.teams[0].token, 7).status, 200);
+  assert.equal(buildFleet({ profile: VERSION_475 }).rate.perMinute, 200, "the real default");
+  assert.throws(() => buildFleet({ profile: "9.9.9" }), /unknown Coolify profile/);
+});
+
+test("coolify-mock --profile 4.7.5: serves POST and the 429 headers over HTTP", async () => {
+  const child = spawn("node", [join(LAB, "coolify-mock.mjs"), "--listen", "0", "--bind", "127.0.0.1", "--profile", "4.7.5", "--rate-limit", "3"], { stdio: ["ignore", "ignore", "pipe"] });
+  try {
+    const port = await new Promise((res, rej) => {
+      child.stderr.on("data", (d) => { const m = /on 127\.0\.0\.1:(\d+)/.exec(String(d)); if (m) res(Number(m[1])); });
+      child.on("exit", () => rej(new Error("mock exited")));
+      setTimeout(() => rej(new Error("mock did not start")), 5000);
+    });
+    const call = (method, path, token) => new Promise((res, rej) => {
+      http.request({ host: "127.0.0.1", port, path, method, headers: token ? { Authorization: `Bearer ${token}` } : {} }, (r) => {
+        let b = ""; r.on("data", (c) => (b += c)); r.on("end", () => res({ status: r.statusCode, headers: r.headers, body: b }));
+      }).on("error", rej).end();
+    });
+    const tok = tokenOf(0);
+    const uuid = buildFleet({ profile: VERSION_475 }).teams[0].databases[0].uuid;
+    assert.equal((await call("GET", "/api/v1/version", tok)).body, "4.7.5");
+    const stop = await call("POST", `/api/v1/databases/${uuid}/stop`, tok);
+    assert.equal(stop.status, 200);
+    assert.match(stop.body, /stopping request queued/);
+    const again = await call("POST", `/api/v1/databases/${uuid}/stop`, tok);
+    assert.equal(again.status, 400);
+    assert.match(again.body, /already stopped/);
+    const limited = await call("GET", "/api/v1/servers", tok);
+    assert.equal(limited.status, 429);
+    assert.match(limited.headers["retry-after"], /^[0-9]+$/);
+    assert.equal((await call("GET", `/api/v1/databases/${uuid}/start`, tokenOf(1))).status, 429, "the budget is shared by every token");
+  } finally {
+    child.kill();
+  }
+});
+
 test("coolify-mock: serves the fleet over HTTP and refuses an unknown token", async () => {
   const child = spawn("node", [join(LAB, "coolify-mock.mjs"), "--listen", "0", "--bind", "127.0.0.1"], { stdio: ["ignore", "ignore", "pipe"] });
   try {
@@ -737,6 +869,33 @@ test("L13: every team token is connected and planned, and the counts are the tok
   assert.match(s, /no other team's resource leaked in/);
   assert.match(s, /--bind 0\.0\.0\.0/, "the hub's SSRF guard refuses loopback, so the mock listens on the docker host address");
   assert.match(read("coolify-mock.mjs"), /refuses loopback/);
+});
+
+test("L13: runs both Coolify profiles, and resolves an ISO-named source container against the 4.7.5 one", () => {
+  const s = read("l13-fleet-coolify.sh");
+  assert.match(s, /discover_profile 4\.1\.2/);
+  assert.match(s, /discover_profile 4\.7\.5 --rate-limit "\$\{L13_RATE_LIMIT:-0\}"/);
+  for (const what of [/LIST row has no members, server or compose/, /GET start answers 405/, /already stopped/, /already running/, /6th request in a minute is 429/, /numeric Retry-After/]) assert.match(s, what);
+  // the source container is named after the application's uuid in the 4.7.5 form, running, and the migrator must stop it
+  assert.match(s, /named <uuid>-YYYYMMDDTHHMMSS/);
+  assert.match(s, /\[0-9\]\{8\}T\[0-9\]\{6\}/);
+  assert.match(s, /lab_expect_item iso-dry volume-skipped-running/);
+  assert.match(s, /lab_expect_item iso-plan planned would-stop-source/);
+  assert.match(s, /lab_run iso-copy --arms all --stop-source/);
+  assert.match(s, /lab_expect_item iso-copy volume-applied/);
+  assert.ok(s.indexOf("lab_run iso-copy") > s.indexOf("discover_profile 4.7.5"), "after the 4.7.5 discovery");
+  assert.match(s, /compare\.sh" "\$SRC_VOLUME" "\$DEST_VOLUME"/);
+  // nothing outside the lab fixtures is touched: the fleet label cleans up, and the blast-radius check closes the case
+  assert.match(s, /fleet_snapshot_others "\$ISO_NAME"/);
+});
+
+test("coolify-mock: --summary names the first application and the container this version gives it", () => {
+  const sum = JSON.parse(execFileSync("node", [join(LAB, "coolify-mock.mjs"), "--summary", "--profile", "4.7.5"], { encoding: "utf8" }));
+  assert.equal(sum.length, 8);
+  assert.match(sum[0].firstApp.container, new RegExp(`^${sum[0].firstApp.uuid}-[0-9]{8}T[0-9]{6}$`));
+  assert.equal(sum[4].firstApp, undefined, "an empty team has no application");
+  const legacy = JSON.parse(execFileSync("node", [join(LAB, "coolify-mock.mjs"), "--summary"], { encoding: "utf8" }));
+  assert.match(legacy[0].firstApp.container, new RegExp(`^${legacy[0].firstApp.uuid}-[0-9]{12}$`));
 });
 
 test("L8: more migrators than seats, 2 to 4 migrators, all started together", () => {
