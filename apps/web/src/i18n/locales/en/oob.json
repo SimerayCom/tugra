@@ -1,0 +1,109 @@
+{
+  "title": "Out-of-band access",
+  "desc": "Power, rescue and console straight from your cloud provider. These work even when this server's agent is offline or its operating system is down.",
+  "provider": "Cloud server at {provider}: {name}",
+  "credential": "Credential: {name}",
+  "linkedBy": {
+    "tugra": "Provisioned by Tugra",
+    "hand": "Linked by hand"
+  },
+  "power": {
+    "label": "Power",
+    "running": "Running",
+    "off": "Off",
+    "starting": "Starting",
+    "stopping": "Stopping",
+    "rebuilding": "Rebuilding",
+    "migrating": "Migrating",
+    "initializing": "Initializing",
+    "deleting": "Deleting",
+    "unknown": "Unknown"
+  },
+  "rescueOn": "Rescue armed",
+  "locked": "Locked by the provider",
+  "stateError": "Could not read the cloud server: {error}",
+  "unsupported": "Out-of-band actions are not available for this provider yet.",
+  "viewOnly": "You can see the status. Acting on the cloud server needs the server operator role.",
+  "actions": {
+    "powerOn": "Power on",
+    "shutdown": "Shut down",
+    "reboot": "Hard reboot",
+    "powerOff": "Power off",
+    "enableRescue": "Enable rescue",
+    "disableRescue": "Disable rescue",
+    "console": "Open console"
+  },
+  "hints": {
+    "shutdown": "Graceful: asks the operating system to stop.",
+    "reboot": "Hard reset: cuts power and starts again. Unsaved data can be lost.",
+    "powerOff": "Cuts power like pulling the cord. Unsaved data can be lost.",
+    "rescue": "Boots a minimal rescue system on the next boot, with a one-time root password.",
+    "console": "A one-minute VNC session to the screen and keyboard."
+  },
+  "confirm": {
+    "titleShutdown": "Shut down {server}?",
+    "titleReboot": "Hard reboot {server}?",
+    "titlePowerOff": "Power off {server}?",
+    "bodyShutdown": "The cloud provider asks the operating system to stop. Everything on this server goes down until you power it on again.",
+    "bodyReboot": "The cloud provider cuts power and starts the server again, like pressing the reset button. Everything on it goes down, and unsaved data can be lost. Use it when a normal reboot does not work.",
+    "bodyPowerOff": "The cloud provider cuts power immediately, like pulling the cord. Everything on this server goes down until you power it on again, and unsaved data can be lost. Use it when shutdown does not work.",
+    "typeToConfirm": "Type the server name ({name}) to confirm",
+    "cancel": "Cancel",
+    "confirmShutdown": "Shut down",
+    "confirmReboot": "Hard reboot",
+    "confirmPowerOff": "Power off",
+    "rescueTitle": "Enable rescue mode for {server}?",
+    "rescueBody": "The next time the server boots it starts a minimal rescue system instead of its own disk, with a one-time root password shown to you once. Rescue turns itself off after that boot, or after {minutes} minutes. It does not reboot the server by itself.",
+    "rescueConfirm": "Enable rescue",
+    "consoleTitle": "Open a console for {server}?",
+    "consoleBody": "The provider gives you a one-minute websocket address and a VNC password, shown once. Anyone with them sees the screen and types on the keyboard of this server.",
+    "consoleConfirm": "Request console"
+  },
+  "done": {
+    "powerOn": "Power on was sent to the cloud provider.",
+    "shutdown": "Shutdown was sent to the cloud provider.",
+    "reboot": "Hard reboot was sent to the cloud provider.",
+    "powerOff": "Power off was sent to the cloud provider.",
+    "disableRescue": "Rescue mode disabled. The server boots from its own disk next time."
+  },
+  "secret": {
+    "once": "Shown once. Tugra does not store it and cannot show it again.",
+    "rescueTitle": "Rescue root password",
+    "rescueBody": "Rescue is armed. Reboot the server to boot into it, then log in as root over SSH with this password. It turns itself off after that boot or after {minutes} minutes.",
+    "consoleTitle": "Console session",
+    "consoleBody": "Connect with a VNC-over-websocket client using this address and password. You can also open the cloud provider's own console for this server.",
+    "expiresIn": "Address valid for {seconds} s",
+    "expired": "The address has expired. Request a new console session.",
+    "rootPassword": "Root password",
+    "wssUrl": "Websocket address",
+    "vncPassword": "VNC password",
+    "providerConsole": "Open the provider console",
+    "close": "I have copied it"
+  },
+  "link": {
+    "title": "Link to a cloud server",
+    "desc": "This server is not linked to a cloud server. Link it to use power, rescue and console without the agent. Only the Hetzner Cloud is supported today.",
+    "button": "Link to Hetzner…",
+    "dialogTitle": "Link {server} to a cloud server",
+    "credential": "Cloud credential",
+    "noCredential": "No Hetzner credential in this team yet. Add one under Cloud providers first.",
+    "pick": "Cloud server",
+    "loading": "Reading the cloud servers…",
+    "none": "This credential sees no cloud servers.",
+    "matches": "Same public IP",
+    "taken": "Already linked",
+    "ip": "IPv4 {ip}",
+    "noIp": "no IPv4",
+    "mismatchTitle": "We cannot prove this is the same machine",
+    "mismatchBody": "Its public IP does not match this server's. A wrong link would power off the wrong machine. If you are sure, type the cloud server's name ({name}) to confirm.",
+    "confirm": "Link",
+    "cancel": "Cancel",
+    "credentialMissing": "This server was linked to a cloud credential that has since been deleted. Link it again.",
+    "unlink": "Unlink",
+    "unlinkConfirm": "Remove the link to the cloud server? Tugra keeps the server itself.",
+    "howto": "Servers Tugra provisions are linked automatically. For an existing server, pick the cloud server it runs on. Deleting the server in Tugra never deletes a hand-linked cloud server."
+  },
+  "errors": {
+    "generic": "The cloud provider could not do that."
+  }
+}

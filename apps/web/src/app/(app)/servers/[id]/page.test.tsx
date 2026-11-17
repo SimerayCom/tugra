@@ -34,7 +34,7 @@ const server = (o: Partial<ServerView> = {}): ServerView =>
     cpuCores: null, memTotalBytes: null, uptimeSeconds: null, cleanupEnabled: false, cleanupIntervalHours: null, cleanupCron: null,
     cleanupThresholdPct: null, cleanupVolumes: false, description: null, timezone: null, lastCleanupAt: null, lastSeenAt: null,
     createdAt: "", seal: null, tags: [], capabilities: [], isLocal: false, proxyBind: "public", trafficAnalytics: false, provider: null,
-    providerServerId: null, canWrite: true, canOps: true, ...o,
+    providerServerId: null, providerManualLink: false, canWrite: true, canOps: true, ...o,
   }) as unknown as ServerView;
 
 let qc: QueryClient;
@@ -503,6 +503,27 @@ describe("server patching: interrupted dpkg and a still-running update", () => {
     expect(await screen.findByText(/update is running on this server right now/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Update all" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Update" })).toBeDisabled();
+  });
+});
+
+describe("delete server: destroying the VM is offered only for a VM Tugra provisioned", () => {
+  const open = async () => {
+    nav.tab = "maintenance";
+    mount();
+    fireEvent.click(await screen.findByRole("button", { name: "Delete server" }));
+    await screen.findByRole("dialog");
+  };
+
+  it("a provisioned VM offers 'Also destroy the VM'", async () => {
+    stubs.fns.getServer = async () => server({ provider: "hetzner", providerServerId: "42" });
+    await open();
+    expect(screen.getByText(/Also destroy the VM at hetzner/)).toBeInTheDocument();
+  });
+
+  it("a hand-linked VM (out-of-band only) never offers it", async () => {
+    stubs.fns.getServer = async () => server({ provider: "hetzner", providerServerId: "42", providerManualLink: true });
+    await open();
+    expect(screen.queryByText(/Also destroy the VM/)).toBeNull();
   });
 });
 

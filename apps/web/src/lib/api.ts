@@ -79,6 +79,12 @@ import type {
   AppRuntimeState,
   DiscoveredContainer,
   CloudCredential,
+  OobActionResult,
+  OobCandidate,
+  OobConsoleResult,
+  OobPowerAction,
+  OobRescueResult,
+  OobStatus,
   DnsCredential,
   DnsAutoSetupResult,
   DnsManualRecords,
@@ -1126,6 +1132,33 @@ export const api = {
   },
   deleteServer(id: string, opts?: { destroyVm?: boolean }) {
     return apiFetch<{ ok: true }>(`/servers/${id}${opts?.destroyVm ? "?destroyVm=true" : ""}`, { method: "DELETE" });
+  },
+  // Out-of-band (cloud provider) power, rescue and console — work while the server's agent is offline.
+  getServerOob(id: string) {
+    return apiFetch<OobStatus>(`/servers/${id}/oob`);
+  },
+  oobPower(id: string, body: { action: OobPowerAction; confirmName?: string }) {
+    return apiFetch<OobActionResult>(`/servers/${id}/oob/power`, { method: "POST", body: JSON.stringify(body) });
+  },
+  /** The response carries the one-time rescue root password: never cache it. */
+  oobEnableRescue(id: string) {
+    return apiFetch<OobRescueResult>(`/servers/${id}/oob/rescue`, { method: "POST" });
+  },
+  oobDisableRescue(id: string) {
+    return apiFetch<OobActionResult>(`/servers/${id}/oob/rescue`, { method: "DELETE" });
+  },
+  /** The response carries the console websocket URL + VNC password (one minute): never cache it. */
+  oobConsole(id: string) {
+    return apiFetch<OobConsoleResult>(`/servers/${id}/oob/console`, { method: "POST" });
+  },
+  oobCandidates(id: string, cloudCredentialId: string) {
+    return apiFetch<OobCandidate[]>(`/servers/${id}/oob/candidates?cloudCredentialId=${encodeURIComponent(cloudCredentialId)}`);
+  },
+  oobLink(id: string, body: { cloudCredentialId: string; providerServerId: string; confirmProviderName?: string }) {
+    return apiFetch<OobStatus>(`/servers/${id}/oob/link`, { method: "PUT", body: JSON.stringify(body) });
+  },
+  oobUnlink(id: string) {
+    return apiFetch<OobStatus>(`/servers/${id}/oob/link`, { method: "DELETE" });
   },
   // Cloud provisioning + provider credentials
   listCloudCredentials() {

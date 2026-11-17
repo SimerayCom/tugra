@@ -446,8 +446,54 @@ export interface ServerView {
   trafficAnalytics: boolean; // Traffic Analytics opt-in: the proxy writes a local JSON access log (default off)
   provider: string | null; // cloud provider that created this VM (null = manually enrolled)
   providerServerId: string | null; // provider-side id (present once created; enables destroy-VM)
+  providerManualLink: boolean; // true = an operator linked an existing VM (out-of-band only; Tugra never destroys it)
   canWrite: boolean;
   canOps: boolean; // servers:ops — gates host operations such as GPU re-detection
+}
+
+// Out-of-band (cloud provider) access to a server: power, rescue and console without the agent.
+export type OobPowerAction = "power_on" | "power_off" | "reboot" | "shutdown";
+export interface OobProviderState {
+  providerServerId: string;
+  name: string;
+  status: string; // provider power word: running | off | starting | stopping | rebuilding | migrating | initializing | ...
+  locked: boolean;
+  rescueEnabled: boolean;
+  publicIpv4: string | null;
+  publicIpv6: string | null;
+}
+export interface OobStatus {
+  linked: boolean;
+  provider: string | null;
+  providerServerId: string | null;
+  manual: boolean; // linked by hand (Tugra did not create the VM and never destroys it)
+  supported: boolean;
+  credentialName: string | null;
+  credentialMissing: boolean;
+  canManage: boolean;
+  canOps: boolean;
+  state: OobProviderState | null;
+  stateError: string | null;
+}
+export interface OobActionResult {
+  ok: true;
+  action: string;
+  providerAction: { id: string; status: "running" | "success" | "error"; command: string };
+}
+/** Returned once by the hub; the page keeps it in component state only. */
+export interface OobRescueResult extends OobActionResult {
+  rootPassword: string;
+  expiresInMinutes: number;
+}
+/** Returned once by the hub; the page keeps it in component state only. */
+export interface OobConsoleResult extends OobActionResult {
+  wssUrl: string;
+  password: string;
+  validForSeconds: number;
+}
+export interface OobCandidate extends OobProviderState {
+  matchesIp: boolean;
+  taken: boolean;
 }
 
 // A team's cloud-provider API credential. The token itself is never returned.

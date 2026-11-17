@@ -45,6 +45,7 @@ const s = (id: string, canWrite: boolean): ServerView => ({
   trafficAnalytics: false,
   provider: null,
   providerServerId: null,
+  providerManualLink: false,
   canWrite,
   canOps: canWrite,
 });
