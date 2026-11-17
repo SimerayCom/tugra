@@ -7,6 +7,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **In-app updates keep the install's git checkout clean.** After applying a release's compose file and scripts, the updater
+  moves the checkout to the release tag when the files are byte-identical, so `git pull` and `git checkout <tag>` work
+  again. Real local edits are backed up, reported and never discarded; local commits are never orphaned. `install.sh`
+  re-runs on such a checkout proceed, and `install.sh --sync-checkout` repairs one the updater could not clean.
+
 ## [0.1.0-beta.20] - 2026-11-17
 
 - **Server patching survives a container-engine upgrade.** "Update all" and single-package updates now run the package
