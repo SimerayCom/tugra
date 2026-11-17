@@ -233,7 +233,9 @@ function envReportRisks(r: NonNullable<ForeignApp["envReport"]>): ImportRisk[] {
     out.push({
       level: "blocker",
       code: ENV_RISK_UNRESOLVED,
-      message: `${r.unresolved.length} variable(s) cannot be carried and will be missing in the new app: ${nameList(r.unresolved.map((u) => `${u.key} (${u.reason})`))}`,
+      message: `${r.unresolved.length} variable(s) cannot be carried and will be missing in the new app: ${nameList(r.unresolved.map((u) => `${u.key} (${u.reason})`))}${
+        r.unresolved.some((u) => u.reason === "LOCKED") ? "; LOCKED variables are locked in the source and its API never returns their value, so no token can read them: set them in Tugra after the import" : ""
+      }`,
     });
   }
   if (r.invalidKeys.length) {

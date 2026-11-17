@@ -1107,7 +1107,7 @@ export interface ImportCoverageApp {
   name: string;
   notCarried: ImportCoverageEntry[];
 }
-export type ImportEnvReason = "NO_VALUE" | "SHARED_UNEXPANDED" | "MAGIC";
+export type ImportEnvReason = "NO_VALUE" | "SHARED_UNEXPANDED" | "MAGIC" | "LOCKED";
 /** Strict-env summary (Coolify): variable NAMES + reason codes only, never values. */
 export interface ImportCoverageEnvApp {
   itemRef: string;

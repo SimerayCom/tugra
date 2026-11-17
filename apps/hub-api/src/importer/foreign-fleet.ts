@@ -41,7 +41,7 @@ export interface ForeignEnv {
   ref?: { type: "shared" | "vault" | "magic" | "encrypted"; provider?: string; path?: string };
   generated?: boolean; // source-generated (e.g. SERVICE_PASSWORD_*) — regenerate or carry, don't treat as user input
   /** Why a variable could not be carried (set by `fetchSecrets` on an `unresolved` entry; Coolify only). */
-  reason?: "NO_VALUE" | "SHARED_UNEXPANDED" | "MAGIC";
+  reason?: "NO_VALUE" | "SHARED_UNEXPANDED" | "MAGIC" | "LOCKED";
 }
 
 export interface ForeignVolume {
@@ -174,7 +174,7 @@ export interface ForeignApp {
   envReport?: {
     total: number; // non-preview rows
     previewSkipped: number; // is_preview twins (not imported)
-    unresolved: { key: string; reason: "NO_VALUE" | "SHARED_UNEXPANDED" | "MAGIC" }[]; // sorted by key, capped
+    unresolved: { key: string; reason: "NO_VALUE" | "SHARED_UNEXPANDED" | "MAGIC" | "LOCKED" }[]; // sorted by key, capped
     invalidKeys: string[]; // fail isValidUserEnvKey (or are denied); sorted, capped
     tokenReadOnly: boolean; // variables exist but no row carried a value: the API token lacks read:sensitive
   };

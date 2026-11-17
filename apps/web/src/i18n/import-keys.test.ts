@@ -20,7 +20,7 @@ describe("import wizard i18n coverage", () => {
 
   it("the spec'd env/git/remap keys all exist", () => {
     const keys = [
-      "env.blockers.title", "env.blockers.body", "env.reason.noValue", "env.reason.sharedUnexpanded", "env.reason.magic", "env.reason.invalidKey",
+      "env.blockers.title", "env.blockers.body", "env.reason.noValue", "env.reason.sharedUnexpanded", "env.reason.magic", "env.reason.locked", "env.reason.invalidKey",
       "env.tokenReadOnly.title", "env.tokenReadOnly.body", "env.previewSkipped", "env.ackItem", "env.ackAll", "env.ackWarning", "env.taskNote", "env.keysMore", "remap.serviceLinkReview", "remap.unresolvedHost",
       "git.title", "git.group.linked", "git.group.publicOk", "git.group.needsSource", "git.group.ambiguous", "git.group.sshDeployKey", "git.group.unsupportedHost", "git.group.unknown",
       "git.connectGithub", "git.recheck", "git.relink", "git.pickSource", "git.sshConverted", "git.deployKey.title", "git.deployKey.copy", "git.gitlabNote", "git.hosts",

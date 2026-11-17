@@ -75,3 +75,38 @@ describe("buildEnvReport", () => {
     expect(buildEnvReport([...sensitiveRows].reverse())).toEqual(buildEnvReport(sensitiveRows));
   });
 });
+
+describe("locked variables (Coolify 4.7 is_shown_once)", () => {
+  // The REAL 4.7.5 shape: a locked row has no value and no real_value even for a read:sensitive token.
+  const locked = { uuid: "l1", key: "LOCKED_SECRET", is_shown_once: true, is_preview: false, is_shared: false, is_coolify: false };
+
+  it("classifies a locked row with its own LOCKED reason (never NO_VALUE), also when it is shared or a magic variable", () => {
+    expect(classifyEnvRow(locked)).toEqual({ kind: "unresolved", key: "LOCKED_SECRET", reason: "LOCKED" });
+    expect(classifyEnvRow({ ...locked, is_shared: true })).toMatchObject({ reason: "LOCKED" });
+    expect(classifyEnvRow({ ...locked, is_coolify: true })).toMatchObject({ reason: "LOCKED" });
+  });
+
+  it("a locked row that DOES carry a value (an older instance) is carried like any other", () => {
+    expect(classifyEnvRow({ ...locked, value: "v", real_value: "v" })).toEqual({ kind: "value", key: "LOCKED_SECRET", value: "v" });
+  });
+
+  it("when EVERY variable is locked the token is not blamed: no tokenReadOnly, each key reported LOCKED", () => {
+    const r = buildEnvReport([locked, { ...locked, key: "OTHER_LOCKED" }]);
+    expect(r.tokenReadOnly).toBe(false);
+    expect(r.total).toBe(2);
+    expect(r.unresolved).toEqual([
+      { key: "LOCKED_SECRET", reason: "LOCKED" },
+      { key: "OTHER_LOCKED", reason: "LOCKED" },
+    ]);
+  });
+
+  it("a locked row beside readable ones changes nothing for the others; beside unreadable ones the token is still the problem", () => {
+    expect(buildEnvReport([locked, { key: "A", value: "x" }]).tokenReadOnly).toBe(false);
+    const r = buildEnvReport([locked, { key: "A" }]); // no value on a NON-locked row: the token lacks read:sensitive
+    expect(r.tokenReadOnly).toBe(true);
+    expect(r.unresolved).toEqual([
+      { key: "A", reason: "NO_VALUE" },
+      { key: "LOCKED_SECRET", reason: "LOCKED" },
+    ]);
+  });
+});
