@@ -55,6 +55,7 @@ describe("ImportWizard", () => {
     // The post-import cutover step reads these on mount once the timeline settles; default to "not set up yet".
     vi.spyOn(api, "getCutover").mockRejectedValue(new ApiError(404, "not found"));
     vi.spyOn(api, "listDnsCredentials").mockResolvedValue([]);
+    vi.spyOn(api, "importEgressIp").mockResolvedValue({ ip: null, source: "unknown" });
     vi.spyOn(api, "listTeams").mockResolvedValue([{ id: "t1", name: "Team One" }] as never);
     vi.spyOn(api, "listServers").mockResolvedValue([{ id: "srv1", name: "Server A", teamId: "t1", status: "ONLINE", clusterId: null, tags: [] }] as never);
     // The post-import MigrateDataCard reads this on mount once the timeline settles — default to "no live token".
@@ -85,6 +86,60 @@ describe("ImportWizard", () => {
     expect(applySpy).toHaveBeenCalledWith({ sourceKind: "coolify", sessionId: "s1", targetServerId: "srv1", planHash: "a".repeat(32) });
     expect(screen.getByText("web-app")).toBeTruthy();
     expect(screen.getByText(/Importing/)).toBeTruthy(); // timeline header
+  });
+
+  it("shows the hub's egress IP for Coolify's Allowed IPs, with a copy button and the proxy note", async () => {
+    vi.spyOn(api, "importEgressIp").mockResolvedValue({ ip: "203.0.113.7", source: "server" });
+    wrap(<ImportWizard />);
+    const box = await screen.findByTestId("egress-ip");
+    expect(within(box).getByText("203.0.113.7")).toBeTruthy();
+    expect(within(box).getByRole("button", { name: "Copy address" })).toBeTruthy();
+    expect(box.textContent).toMatch(/Allowed IPs/);
+    expect(box.textContent).toMatch(/reverse proxy or Cloudflare/);
+    expect(box.textContent).toMatch(/Taken from the public address of the server this hub runs on/);
+  });
+
+  it("says plainly when the hub cannot tell its address, and when the operator set it", async () => {
+    wrap(<ImportWizard />);
+    const unknown = await screen.findByTestId("egress-ip");
+    expect(unknown.textContent).toMatch(/cannot tell which public address/);
+    expect(unknown.textContent).toMatch(/IMPORT_EGRESS_IP/);
+    expect(within(unknown).queryByRole("button", { name: "Copy address" })).toBeNull();
+    cleanup();
+    vi.spyOn(api, "importEgressIp").mockResolvedValue({ ip: "198.51.100.4", source: "env" });
+    qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    wrap(<ImportWizard />);
+    const env = await screen.findByTestId("egress-ip");
+    expect(within(env).getByText("198.51.100.4")).toBeTruthy();
+    expect(env.textContent).toMatch(/Set by the operator/);
+  });
+
+  it("a failed lookup does not block connecting and is not shown as an address", async () => {
+    vi.spyOn(api, "importEgressIp").mockRejectedValue(new ApiError(500, "boom"));
+    wrap(<ImportWizard />);
+    const box = await screen.findByTestId("egress-ip");
+    expect(box.textContent).toMatch(/could not be asked for its address/);
+    expect(screen.getByRole("button", { name: "Connect & preview" })).toBeTruthy();
+  });
+
+  it("the egress note is Coolify only: a Dokploy source has no allow-list", async () => {
+    wrap(<ImportWizard />);
+    await screen.findByTestId("egress-ip");
+    fireEvent.click(screen.getByRole("radio", { name: "Dokploy" }));
+    await waitFor(() => expect(screen.queryByTestId("egress-ip")).toBeNull());
+  });
+
+  it("shows the hub's 403 message with the single cause and the egress address in the connect error", async () => {
+    const msg = 'Coolify API error 403: "You are not allowed to access the API." (Coolify\'s Allowed IPs list does not include this hub\'s address 203.0.113.7: add it in Coolify under Settings > Advanced > Allowed IPs)';
+    vi.spyOn(api, "importConnect").mockRejectedValue(new ApiError(400, `could not reach Coolify: ${msg}`));
+    wrap(<ImportWizard />);
+    await screen.findByRole("option", { name: "Team One" });
+    fireEvent.change(screen.getByLabelText("Coolify URL"), { target: { value: "https://coolify.example.com" } });
+    fireEvent.change(screen.getByLabelText("API token"), { target: { value: "tok" } });
+    fireEvent.click(screen.getByRole("button", { name: "Connect & preview" }));
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("You are not allowed to access the API.");
+    expect(alert.textContent).toContain("203.0.113.7");
   });
 
   it("offers the guided run next to the manual apply, which stays", async () => {

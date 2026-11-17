@@ -126,6 +126,7 @@ import type {
   ImportStoredMapping,
   ImportRemoteKind,
   ImportSession,
+  ImportEgressIp,
   ImportOperation,
   MigrateCommand,
   MintedMigrationToken,
@@ -2163,6 +2164,10 @@ export const api = {
   // Store an encrypted, short-lived connection to a source PaaS (the token is never returned/logged).
   importConnect(input: { sourceKind: ImportRemoteKind; teamId: string; baseUrl: string; token: string; scopeLabel?: string }) {
     return apiFetch<ImportSession>("/import/connect", { method: "POST", body: JSON.stringify(input) });
+  },
+  // The hub's public egress IP for the wizard ("add this to the source's Allowed IPs"); `ip: null` = unknown, never guessed.
+  importEgressIp() {
+    return apiFetch<ImportEgressIp>("/import/egress-ip");
   },
   // Dry-run preview (secret-free) — local server to adopt, or a connected remote session.
   importPlan(input: { sourceKind: "local-docker"; serverId: string } | { sourceKind: ImportRemoteKind; sessionId: string; dbDataModes?: Record<string, "volume"> }) {

@@ -13,7 +13,17 @@
   "baseUrl": "Coolify URL",
   "baseUrlPlaceholder": "https://coolify.example.com",
   "token": "API token",
-  "tokenHint": "Create the token in Coolify under Keys & Tokens, API tokens, as a team admin or owner, for the whole team (not limited to selected projects or environments). Give it the read ability and also read:sensitive: without it Coolify hides build, start and install commands, health-check commands, custom labels, Dockerfile and compose text, and variable values, and the import would miss them (read:sensitive only works when the token's creator is an admin or owner). A guided run that stops and restarts the source through the API needs the deploy ability as well; a write-only token is not enough. A 403 can also mean the Coolify API is disabled, or its \"Allowed IPs\" setting is on and doesn't include this hub's IP; fix it there or clear the list. A token that has more access than its creator now has in the team is refused: create a new one. Coolify allows 200 requests a minute per user, so a large fleet is read at a measured pace and a rate limit makes the import wait.",
+  "tokenHint": "Create the token in Coolify under Keys & Tokens, API tokens, as a team admin or owner, for the whole team (not limited to selected projects or environments). Give it the read ability and also read:sensitive: without it Coolify hides build, start and install commands, health-check commands, custom labels, Dockerfile and compose text, and variable values, and the import would miss them (read:sensitive only works when the token's creator is an admin or owner). A guided run that stops and restarts the source through the API needs the deploy ability as well; a write-only token is not enough. A 403 can also mean the Coolify API is disabled, or its \"Allowed IPs\" setting is on and doesn't include this hub's address (shown below); the error names the single cause Coolify reports. A token that has more access than its creator now has in the team is refused: create a new one. Coolify allows 200 requests a minute per user, so a large fleet is read at a measured pace and a rate limit makes the import wait.",
+  "egressIp": {
+    "title": "This hub's address for Coolify's Allowed IPs",
+    "known": "If Coolify has Allowed IPs switched on (Settings, Advanced), add this address to the list, or clear the list. The hub connects to Coolify from it.",
+    "knownEnv": "Set by the operator (IMPORT_EGRESS_IP).",
+    "knownServer": "Taken from the public address of the server this hub runs on.",
+    "unknown": "This hub cannot tell which public address Coolify sees it connect from: its own server has no public address on record and IMPORT_EGRESS_IP is not set. If Coolify has Allowed IPs switched on, add the address your Coolify sees this hub connect from, or ask the operator to set IMPORT_EGRESS_IP.",
+    "proxy": "If Coolify sits behind a reverse proxy or Cloudflare, Coolify has to see the real client IP; otherwise it compares its proxy's address and that is the one to list.",
+    "copy": "Copy address",
+    "unavailable": "The hub could not be asked for its address."
+  },
   "baseUrlDokploy": "Dokploy URL",
   "baseUrlPlaceholderDokploy": "https://dokploy.example.com",
   "tokenDokploy": "API key",

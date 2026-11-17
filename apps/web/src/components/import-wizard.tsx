@@ -42,6 +42,33 @@ const SOURCE_KINDS: readonly ImportRemoteKind[] = ["coolify", "dokploy"];
 /** An operation's source kind (a string from the hub) narrowed to a wizard source; anything unknown reads as Coolify. */
 const asRemoteKind = (k: string | null | undefined): ImportRemoteKind => (k === "dokploy" ? "dokploy" : "coolify");
 
+/** Where to put this hub into Coolify's Allowed IPs: the address the hub connects from, or an honest "unknown". Coolify only (Dokploy has no such list). */
+function EgressIpNote() {
+  const t = useT();
+  const { data, isError, isPending } = useQuery({ queryKey: ["import-egress-ip"], queryFn: () => api.importEgressIp(), staleTime: 5 * 60_000, retry: false });
+  if (isPending) return null;
+  return (
+    <div data-testid="egress-ip" style={{ background: "var(--c-el)", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: "10px 12px", margin: "-4px 0 16px", fontSize: 12 }}>
+      <div style={{ fontWeight: 600, marginBottom: 6 }}>{t("import.egressIp.title")}</div>
+      {isError ? (
+        <p style={{ margin: 0, color: "var(--c-tx3)" }}>{t("import.egressIp.unavailable")}</p>
+      ) : data?.ip ? (
+        <>
+          <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, marginBottom: 6 }}>
+            <code className="mono" style={{ fontSize: 13, userSelect: "all", wordBreak: "break-all" }}>{data.ip}</code>
+            <CopyBtn text={data.ip} label={t("import.egressIp.copy")} />
+          </div>
+          <p style={{ margin: "0 0 4px", color: "var(--c-tx2)" }}>{t("import.egressIp.known")}</p>
+          <p style={{ margin: "0 0 4px", color: "var(--c-tx3)" }}>{data.source === "env" ? t("import.egressIp.knownEnv") : t("import.egressIp.knownServer")}</p>
+        </>
+      ) : (
+        <p style={{ margin: "0 0 4px", color: "var(--c-tx2)" }}>{t("import.egressIp.unknown")}</p>
+      )}
+      {!isError && <p style={{ margin: 0, color: "var(--c-tx3)" }}>{t("import.egressIp.proxy")}</p>}
+    </div>
+  );
+}
+
 /** The import wizard: pick a source (Coolify / Dokploy) → connect → preview (secret-free plan) → apply onto a
  *  target Tugra server → watch the live timeline. Local-docker container adoption keeps its own UI on a server's page. */
 export function ImportWizard() {
@@ -187,12 +214,13 @@ export function ImportWizard() {
       <label style={label} htmlFor="imp-token">{t(src.tok)}</label>
       <input id="imp-token" style={field} type="password" value={token} onChange={(e) => setToken(e.target.value)} autoComplete="off" />
       <p style={{ fontSize: 11, color: "var(--c-tx3)", margin: "-6px 0 16px" }}>{t(src.tokHint)}</p>
+      {kind === "coolify" && <EgressIpNote />}
 
       <label style={label} htmlFor="imp-scope">{t("import.review.scopeLabel")}</label>
       <input id="imp-scope" style={field} value={scopeLabel} onChange={(e) => setScopeLabel(e.target.value.toLowerCase())} placeholder="team-3" maxLength={64} autoComplete="off" spellCheck={false} />
       <p style={{ fontSize: 11, color: "var(--c-tx3)", margin: "-6px 0 16px" }}>{t("import.review.scopeLabelHelp")}</p>
 
-      {connect.isError && <div style={{ color: "var(--c-r)", fontSize: 12, marginBottom: 10 }}>{(connect.error as Error).message}</div>}
+      {connect.isError && <div role="alert" style={{ color: "var(--c-r)", fontSize: 12, marginBottom: 10, overflowWrap: "anywhere" }}>{(connect.error as Error).message}</div>}
 
       <Btn onClick={() => connect.mutate()} disabled={busy || !effectiveTeam || !baseUrl.trim() || !token.trim()}>
         {connect.isPending ? t("import.connecting") : planM.isPending ? t("import.planning") : t("import.connect")}

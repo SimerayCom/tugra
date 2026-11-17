@@ -1224,6 +1224,12 @@ export interface ImportStoredMapping {
   lastAppliedAt: string | null;
 }
 /** The short-lived encrypted connection returned by import_connect. */
+/** `GET /import/egress-ip`: the address the source sees this hub connect from. `ip: null` = the hub cannot tell (never guessed). */
+export interface ImportEgressIp {
+  ip: string | null;
+  source: "env" | "server" | "unknown";
+}
+
 export interface ImportSession {
   sessionId: string;
   expiresAt: string;
