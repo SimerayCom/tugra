@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable } from "@nestjs/common";
-import type { CloudProvider } from "./cloud-provider.interface";
+import type { CloudOobProvider, CloudProvider } from "./cloud-provider.interface";
 import { HetznerApiClient } from "./hetzner.client";
 import { DigitalOceanApiClient } from "./digitalocean.client";
 import { VultrApiClient } from "./vultr.client";
@@ -19,5 +19,11 @@ export class CloudProviderFactory {
     if (provider === "digitalocean") return this.digitalocean;
     if (provider === "vultr") return this.vultr;
     throw new BadRequestException(`provider not yet supported: ${provider}`);
+  }
+
+  /** The provider's out-of-band client (power / rescue / console), or null when it has none yet. Hetzner only
+   *  for now; DigitalOcean and Vultr stay provisioning-only until their console/rescue APIs are verified. */
+  getOob(provider: string): CloudOobProvider | null {
+    return provider === "hetzner" ? this.hetzner : null;
   }
 }

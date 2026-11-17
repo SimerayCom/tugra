@@ -25,3 +25,60 @@ export interface CloudProvider {
   /** Idempotent — an already-gone (404) VM resolves normally (best-effort teardown). */
   destroyServer(token: string, providerServerId: string): Promise<void>;
 }
+
+/** Out-of-band power actions that work whether or not the Tugra agent is alive. `reboot` is a HARD reset
+ *  (cut power and start again) and `power_off` cuts power: both can lose unflushed data, so the service
+ *  requires a typed confirmation for them. `shutdown` is the graceful (ACPI) stop. */
+export const OOB_POWER_ACTIONS = ["power_on", "power_off", "reboot", "shutdown"] as const;
+export type OobPowerAction = (typeof OOB_POWER_ACTIONS)[number];
+
+/** The provider-side view of one VM (never carries a credential). */
+export interface ProviderServerState {
+  providerServerId: string;
+  name: string;
+  /** Provider status word, e.g. running | off | starting | stopping | rebuilding | migrating | initializing. */
+  status: string;
+  locked: boolean;
+  rescueEnabled: boolean;
+  publicIpv4: string | null;
+  publicIpv6: string | null;
+}
+
+/** The provider-side action a call started. `status` is "running" while the provider works on it. */
+export interface ProviderActionResult {
+  id: string;
+  status: "running" | "success" | "error";
+  command: string;
+}
+
+export interface EnableRescueResult {
+  action: ProviderActionResult;
+  /** One-time root password of the rescue system. Shown once; never stored or logged by Tugra. */
+  rootPassword: string;
+}
+
+export interface ConsoleSession {
+  action: ProviderActionResult;
+  /** Short-lived websocket URL of the provider's VNC proxy (carries a token). Shown once. */
+  wssUrl: string;
+  /** VNC password for that URL. Shown once; never stored or logged by Tugra. */
+  password: string;
+  /** How long the URL stays valid for a first connect. */
+  validForSeconds: number;
+}
+
+/**
+ * Providers that can act on a VM without its agent: power, rescue, console. Same contract as CloudProvider
+ * (the token is an explicit argument, never kept, never in a thrown message). Hetzner is the first.
+ */
+export interface CloudOobProvider {
+  readonly name: string;
+  /** Read one VM. A 404 throws (the VM is gone or belongs to another project). */
+  getServerState(token: string, providerServerId: string): Promise<ProviderServerState>;
+  /** The VMs of the token's project (first pages only: bounded). */
+  listServers(token: string): Promise<ProviderServerState[]>;
+  power(token: string, providerServerId: string, action: OobPowerAction): Promise<ProviderActionResult>;
+  enableRescue(token: string, providerServerId: string): Promise<EnableRescueResult>;
+  disableRescue(token: string, providerServerId: string): Promise<ProviderActionResult>;
+  requestConsole(token: string, providerServerId: string): Promise<ConsoleSession>;
+}

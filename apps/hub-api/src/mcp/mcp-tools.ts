@@ -17,6 +17,8 @@ import { REMOTE_SOURCE_KINDS, ServiceChoicesSchema, ImportAckSchema, ImportDbDat
 import { ImportMappingDocSchema } from "../importer/import-mapping";
 import type { RebootService } from "../server-ops/reboot.service";
 import { RebootRequestSchema } from "../server-ops/dto";
+import type { OobService } from "../cloud/oob.service";
+import { OobPowerSchema, OOB_DESTRUCTIVE_POWER_ACTIONS } from "../cloud/oob.dto";
 import type { LicenseService } from "../license/license.service";
 import type { MetricsService } from "../metrics/metrics.service";
 import { rangeToMs, type AppContainerMetrics } from "../metrics/container-metrics.service";
@@ -46,6 +48,7 @@ export interface McpDeps {
   dbLinks: AppDatabaseLinksService;
   servers: ServersService;
   serverReboot: RebootService;
+  oob: OobService;
   clusters: ClustersService;
   swarm: SwarmService;
   databases: DatabasesService;
@@ -503,6 +506,43 @@ export const MCP_TOOLS: McpTool[] = [
     scope: "deploy",
     inputSchema: idSchema,
     execute: async (d, userId, a) => ({ ok: true, action: "cancel_server_reboot", reboot: await d.serverReboot.cancel(userId, reqStr(a, "id")) }),
+  },
+  {
+    name: "get_server_oob",
+    description:
+      "A server's out-of-band (cloud provider) link and live provider state: whether it is linked to a cloud server (Hetzner), its power status (running, off, ...), whether rescue mode is armed and whether the provider has it locked. Works while the server's agent is offline. Read-only. The rescue root password and the provider console are NOT available through MCP (their one-time secrets must not enter a model's context): use the panel or `tugra servers oob-rescue` / `oob-console`.",
+    scope: "read",
+    inputSchema: idSchema,
+    execute: (d, userId, a) => d.oob.status(userId, reqStr(a, "id")),
+  },
+  {
+    name: "server_power",
+    description:
+      "Power a cloud-linked server at the PROVIDER, even when its agent is offline: power_on; power_off (cuts power, like pulling the cord: data loss possible); reboot (HARD reset: power cut and started again); shutdown (graceful ACPI stop). Everything on the server goes down for power_off, reboot and shutdown, so those three are refused unless `confirmName` equals the server's EXACT name (read it with get_server first; never guess it). Needs the deploy scope and the servers:ops permission. Check the result with get_server_oob.",
+    scope: "deploy",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string" },
+        action: { type: "string", enum: ["power_on", "power_off", "reboot", "shutdown"] },
+        confirmName: { type: "string", description: "the server's exact name; required for power_off, reboot and shutdown" },
+      },
+      required: ["id", "action"],
+    },
+    execute: async (d, userId, a) => {
+      const body = parseWith(OobPowerSchema, { action: a.action, confirmName: optStr(a, "confirmName") });
+      if ((OOB_DESTRUCTIVE_POWER_ACTIONS as readonly string[]).includes(body.action) && !body.confirmName) {
+        throw new Error(`${body.action} refused — pass "confirmName" exactly equal to the server's name to confirm; this takes everything on the server down`);
+      }
+      return d.oob.power(userId, reqStr(a, "id"), body);
+    },
+  },
+  {
+    name: "disable_server_rescue",
+    description: "Disable the provider's rescue mode on a cloud-linked server (it then boots from its own disk on the next boot). Does not reboot it. Needs the deploy scope and the servers:ops permission.",
+    scope: "deploy",
+    inputSchema: idSchema,
+    execute: (d, userId, a) => d.oob.disableRescue(userId, reqStr(a, "id")),
   },
   {
     name: "scale_application",

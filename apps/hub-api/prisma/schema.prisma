@@ -362,6 +362,10 @@ model Server {
   providerServerId       String?
   cloudCredential        CloudCredential?        @relation(fields: [cloudCredentialId], references: [id], onDelete: SetNull)
   cloudCredentialId      String?
+  // True when an operator linked an EXISTING VM to a provider credential by hand (out-of-band power/rescue/
+  // console). Tugra did not create that VM, so deleting the server record must never destroy it. False for a
+  // VM Tugra provisioned itself (the link is written at provision time and enables destroy-VM on delete).
+  providerManualLink     Boolean                 @default(false)
   metrics                Metric[]
   containerMetrics       ContainerMetric[]
   containerStates        ContainerState[]

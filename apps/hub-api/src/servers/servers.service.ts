@@ -104,6 +104,7 @@ export const ServerViewSchema = z.object({
   trafficAnalytics: z.boolean(), // Traffic Analytics: the proxy writes a JSON access log (default on for new servers; per-server toggle)
   provider: z.string().nullable(), // cloud provider that created this VM (null = manually enrolled)
   providerServerId: z.string().nullable(), // provider-side id (present once created; enables destroy-VM)
+  providerManualLink: z.boolean(), // true = an operator linked an existing VM (out-of-band only; never destroyed by Tugra)
   canWrite: z.boolean(),
   canOps: z.boolean(), // servers:ops — may run host operations (e.g. re-run GPU detection); gates those UI actions
 });
@@ -368,9 +369,10 @@ export class ServersService {
       .get<TunnelService>(TUNNEL_SERVICE, { strict: false })
       .releaseResources(id)
       .catch(() => undefined);
-    // Destroy the cloud VM too when asked — only for provider-created servers, and best-effort so a
-    // provider failure never blocks removing the row (lazy token avoids a static module cycle).
-    if (opts?.destroyVm && server.provider && server.providerServerId && server.cloudCredentialId) {
+    // Destroy the cloud VM too when asked — only for provider-created servers (never one an operator linked by
+    // hand for out-of-band access: Tugra did not create it), and best-effort so a provider failure never blocks
+    // removing the row (lazy token avoids a static module cycle).
+    if (opts?.destroyVm && !server.providerManualLink && server.provider && server.providerServerId && server.cloudCredentialId) {
       await this.moduleRef
         .get<ProvisioningService>(PROVISIONING_SERVICE, { strict: false })
         .destroyVm(server.provider, server.cloudCredentialId, server.providerServerId)
@@ -777,6 +779,7 @@ export class ServersService {
       trafficAnalytics?: boolean;
       provider?: string | null;
       providerServerId?: string | null;
+      providerManualLink?: boolean;
     },
     canWrite: boolean,
     canOps: boolean,
@@ -827,6 +830,7 @@ export class ServersService {
       trafficAnalytics: s.trafficAnalytics ?? false,
       provider: s.provider ?? null,
       providerServerId: s.providerServerId ?? null,
+      providerManualLink: s.providerManualLink ?? false,
       canWrite,
       canOps,
     };
