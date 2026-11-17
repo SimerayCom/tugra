@@ -1,0 +1,9 @@
+tugra-host-files v1
+version 0.1.0-beta.18
+dec0332ba787e3f486f3d82fca5103c4c5aff2f4f3472100d5c188564ff6e854  deploy/docker-compose.yml
+317c3e8ab89f53da565c685b6f69c0ccba8942b06d00ebf04f4810dbe2652187  scripts/bootstrap.sh
+e63f1aaa82a46ff1d4daa8c9bb0a6123b46a9880f4ad14d9cb41d15a0eb12546  scripts/hub-migrate.sh
+43a081f2b97e9fc509bb0d77d987a864e957a6b297556080d0397394b217db95  scripts/install.sh
+37f8e762d480c338ba2dab1a833a21c84e57c3fc6a1a0ef5e581ce96b6b4c720  scripts/lib/hostfiles.sh
+59613ce9ff68dbb39fcff4943bfc9ca1fe538150a7026418c0801b934a0c9c28  scripts/lib/snapshot.sh
+26f81d54f9404aeb5038104c72318acb1df7ba7c38df001764db2a13ec622406  scripts/update.sh
