@@ -1,3 +1,4 @@
+import { isIP } from "node:net";
 import { z } from "zod";
 import { isValidIpOrCidr } from "../common/ip-allowlist";
 import { DEFAULT_PART_MIB, MAX_PART_MIB, MIN_PART_MIB, clampPartMib } from "../app-moves/part-size";
@@ -104,6 +105,13 @@ export const envSchema = z
   // outside — without it the hub would fall back to the agent's in-container docker-bridge address. Optional;
   // a blank/private/garbage value is ignored (re-validated with isPublicIp before it is used).
   LOCAL_SERVER_PUBLIC_IP: z.string().optional(),
+  // Import wizard: the address a source (Coolify) sees this hub connect from, shown so the owner can put it into the source's
+  // Allowed IPs list. Optional operator override for a hub behind NAT / another egress gateway / a LAN-only source; unset =
+  // the public address of the hub's own server record, or "unknown". The hub never probes a public IP-echo service for it.
+  IMPORT_EGRESS_IP: z
+    .string()
+    .optional()
+    .refine((v) => !v || isIP(v.trim()) !== 0, "IMPORT_EGRESS_IP must be a single IPv4 or IPv6 address"),
   // The uiMode new accounts get by default. A turnkey single-box install sets "home" so the owner lands on
   // the launcher; unset → "home"/"fleet" falls back to the schema default ("fleet").
   DEFAULT_UI_MODE: z.enum(["fleet", "home"]).optional(),

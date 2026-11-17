@@ -7,9 +7,17 @@ const user = { userId: "u1" } as never;
 function make() {
   const executor = { apply: jest.fn().mockResolvedValue({ opId: "op-1" }) };
   const gitLinks = { list: jest.fn().mockResolvedValue({ rows: [], groups: [] }), relink: jest.fn().mockResolvedValue({ results: [], linked: 0 }) };
-  const ctl = new ImporterController({} as never, executor as never, gitLinks as never, {} as never);
+  const ctl = new ImporterController({} as never, executor as never, gitLinks as never, {} as never, { resolve: jest.fn() } as never);
   return { ctl, executor, gitLinks };
 }
+
+describe("ImporterController — egress IP", () => {
+  it("GET /import/egress-ip returns the resolver's answer", async () => {
+    const egress = { resolve: jest.fn().mockResolvedValue({ ip: "203.0.113.7", source: "server" }) };
+    const ctl = new ImporterController({} as never, {} as never, {} as never, {} as never, egress as never);
+    await expect(ctl.egressIp()).resolves.toEqual({ ip: "203.0.113.7", source: "server" });
+  });
+});
 
 describe("ImporterController — acks and git-link endpoints", () => {
   it("apply passes the validated body (acks included) to the executor unchanged", async () => {

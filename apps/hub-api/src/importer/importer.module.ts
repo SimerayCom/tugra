@@ -29,6 +29,7 @@ import { VxPartRegistry } from "./volume-stream/vx-part-registry";
 import { CoolifyClientFactory } from "./sources/coolify-client.factory";
 import { DokployClientFactory } from "./sources/dokploy-client.factory";
 import { ImportSourceFactory } from "./sources/import-source.factory";
+import { EgressIpService } from "./egress-ip.service";
 
 // Reuses MigratorService (MigratorModule) for local-docker adopt/unadopt, ApplicationsService
 // (ApplicationsModule) to create/remove apps and DatabasesService (DatabasesModule) to provision
@@ -38,7 +39,7 @@ import { ImportSourceFactory } from "./sources/import-source.factory";
 @Module({
   imports: [MigratorModule, CryptoModule, ApplicationsModule, DatabasesModule, BackupsModule, VolumeBackupsModule, GitSourcesModule, ProjectsModule, AgentGatewayModule, AppMovesModule],
   controllers: [ImporterController, MigrationIngestController, MigrationArtifactController, MigrationVolumeController],
-  providers: [ImporterService, ImportExecutorService, GitLinkResolverService, ImportGitLinksService, MigrationTokenService, MigrationTokenGuard, MigrationIngestService, CoolifyClientFactory, DokployClientFactory, ImportSourceFactory, CutoverCertService, ImportMappingService, VxService, VxApplyService, VxRecoveryService, VxPartRegistry],
+  providers: [ImporterService, ImportExecutorService, GitLinkResolverService, ImportGitLinksService, MigrationTokenService, MigrationTokenGuard, MigrationIngestService, EgressIpService, CoolifyClientFactory, DokployClientFactory, ImportSourceFactory, CutoverCertService, ImportMappingService, VxService, VxApplyService, VxRecoveryService, VxPartRegistry],
   exports: [ImporterService, ImportExecutorService, CutoverCertService, ImportMappingService], // the MCP server wraps these as import_* tools
 })
 export class ImporterModule {}

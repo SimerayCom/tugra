@@ -34,6 +34,7 @@ import {
   type ImportMappingPutInput,
 } from "./dto";
 import { ImportGitLinksService } from "./import-git-links.service";
+import { EgressIpService } from "./egress-ip.service";
 
 @ApiTags("import")
 @ApiSecurity("pat")
@@ -45,7 +46,18 @@ export class ImporterController {
     private readonly executor: ImportExecutorService,
     private readonly gitLinks: ImportGitLinksService,
     private readonly vx: VxService,
+    private readonly egress: EgressIpService,
   ) {}
+
+  /**
+   * The hub's public egress IP for the import wizard ("add this address to Coolify's Allowed IPs"). Operator override
+   * `IMPORT_EGRESS_IP`, else the hub's own server record, else `{ ip: null, source: "unknown" }`. No outbound probe.
+   * Read-only and cached; the address is not a secret (the source sees it on every request).
+   */
+  @Get("egress-ip")
+  egressIp() {
+    return this.egress.resolve();
+  }
 
   /** Connect an external source PaaS (Coolify): verify reachability + store an encrypted, expiring session. */
   @Post("connect")

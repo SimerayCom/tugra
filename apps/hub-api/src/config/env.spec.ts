@@ -370,3 +370,17 @@ describe("validateEnv — default-on signed update checks", () => {
     expect(out.UPDATE_MANIFEST_URL).toBe(OFFICIAL_UPDATE_MANIFEST_URL);
   });
 });
+
+describe("validateEnv — IMPORT_EGRESS_IP", () => {
+  const dev = { ...base, NODE_ENV: "development" as const };
+  it("accepts one IPv4 or IPv6 address and an empty value", () => {
+    expect(() => validateEnv({ ...dev, IMPORT_EGRESS_IP: "203.0.113.7" })).not.toThrow();
+    expect(() => validateEnv({ ...dev, IMPORT_EGRESS_IP: "2001:db8::1" })).not.toThrow();
+    expect(() => validateEnv({ ...dev, IMPORT_EGRESS_IP: "" })).not.toThrow();
+  });
+  it("rejects a CIDR, a list or a name", () => {
+    for (const v of ["203.0.113.0/24", "203.0.113.7,203.0.113.8", "hub.example.com"]) {
+      expect(() => validateEnv({ ...dev, IMPORT_EGRESS_IP: v })).toThrow(/IMPORT_EGRESS_IP/);
+    }
+  });
+});
