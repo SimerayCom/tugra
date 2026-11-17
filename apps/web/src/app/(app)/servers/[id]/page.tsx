@@ -37,7 +37,7 @@ import type { ProxyStatus } from "../../../../lib/types";
 import { PageHeader } from "../../../../components/page-header";
 import { Tabs } from "../../../../components/tabs-nav";
 import { RuntimeUpdateWarning } from "../../../../components/runtime-update-warning";
-import { containerRuntimeUpdates, isAgentDropError, isTransientPatchError, patchTiming, settledApplyLog, shouldToastReboot, summarizeApply } from "../../../../lib/patching";
+import { containerRuntimeUpdates, interruptedNames, isAgentDropError, isTransientPatchError, patchTiming, settledApplyLog, shouldToastReboot, summarizeApply } from "../../../../lib/patching";
 import { usePatchLogStream } from "../../../../hooks/useDeployLogStream";
 import { useMetricsStream } from "../../../../hooks/useMetricsStream";
 import { useServerReconnect } from "../../../../hooks/useServerReconnect";
@@ -574,10 +574,11 @@ function ServerAuditCard({ id }: { id: string }) {
   );
 }
 
-type PatchPhase = "idle" | "applying" | "waiting" | "rechecking";
+type PatchPhase = "idle" | "applying" | "waiting" | "running" | "rechecking";
 
 function PatchCard({ id }: { id: string }) {
   const t = useT();
+  const confirm = useConfirm();
   const [output, setOutput] = useState("");
   const [applying, setApplying] = useState(false);
   const log = usePatchLogStream(id, applying);
@@ -602,23 +603,41 @@ function PatchCard({ id }: { id: string }) {
 
   // Re-run the check after an update until it answers. A 4xx is a definitive error (stop); anything transient —
   // the agent reconnecting after the update restarted Docker, a hub timeout, a network blip — is retried until the
-  // deadline. Resolves null when it never got a trustworthy answer or the card unmounted.
+  // deadline. The update itself runs on the host and outlives all of that (even a hub restart), so an answer that
+  // says it is STILL RUNNING is not an answer either: keep waiting (longer deadline) until it has finished.
+  // Resolves null when it never got a trustworthy answer or the card unmounted.
   const recheck = async (waitFirst: boolean): Promise<PatchInfo | null> => {
-    const deadline = Date.now() + patchTiming.deadlineMs;
+    const started = Date.now();
+    let lastAnswer = started; // the transient-error deadline counts from the last time the server answered
     let first = !waitFirst;
     for (;;) {
       if (!first) await new Promise((r) => setTimeout(r, patchTiming.intervalMs));
       first = false;
       if (!alive.current) return null;
       try {
-        return await api.checkUpdates(id);
+        const r = await api.checkUpdates(id);
+        lastAnswer = Date.now();
+        if (!r.applyRunning) return r;
+        if (Date.now() - started >= patchTiming.runningDeadlineMs) return null;
+        if (alive.current) setPhase("running");
       } catch (e) {
-        if (!isTransientPatchError(e) || Date.now() >= deadline) return null;
+        if (!isTransientPatchError(e) || Date.now() - lastAnswer >= patchTiming.deadlineMs) return null;
       }
     }
   };
 
   const apply = async (pkg: string | null) => {
+    // Finishing an interrupted dpkg that includes the container engine restarts Docker: say so first, never silently.
+    const interrupted = info?.dpkgInterrupted;
+    if (interrupted?.containerEngine) {
+      const ok = await confirm({
+        title: t("patching.interruptedConfirmTitle"),
+        body: t("patching.interruptedConfirm", { packages: interruptedNames(info!).join(", ") }),
+        confirmLabel: t("patching.interruptedConfirmButton"),
+        danger: true,
+      });
+      if (!ok) return;
+    }
     const before = info?.packages ?? [];
     setOutput("");
     setApplyTarget(pkg);
@@ -697,6 +716,9 @@ function PatchCard({ id }: { id: string }) {
       {phase === "waiting" && (
         <div role="status" style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "var(--c-am)", marginBottom: 10 }}><Spinner /> {t("patching.waitingAgent")}</div>
       )}
+      {phase === "running" && (
+        <div role="status" style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "var(--c-am)", marginBottom: 10 }}><Spinner /> {t("patching.stillRunning")}</div>
+      )}
       {phase === "rechecking" && (
         <div role="status" style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "var(--c-tx3)", marginBottom: 10 }}><Spinner /> {t("patching.rechecking")}</div>
       )}
@@ -713,16 +735,35 @@ function PatchCard({ id }: { id: string }) {
           {list.rebootRequired && (
             <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--c-am)", marginBottom: 10 }}><TriangleAlert size={13} aria-hidden style={{ flexShrink: 0 }} /> {t("patching.rebootRequired")}</div>
           )}
+          {list.applyRunning && (
+            <div role="status" style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--c-am)", marginBottom: 10 }}><Spinner /> {t("patching.runningBanner")}</div>
+          )}
+          {list.dpkgInterrupted && (
+            <div role="alert" data-testid="dpkg-interrupted" style={{ display: "flex", alignItems: "flex-start", gap: 8, fontSize: 12, color: "var(--c-am)", border: "1px solid var(--c-am)", borderRadius: "var(--r1)", padding: "8px 10px", marginBottom: 10 }}>
+              <TriangleAlert size={14} aria-hidden style={{ flexShrink: 0, marginTop: 1 }} />
+              <span>
+                {t("patching.interrupted", { packages: list.dpkgInterrupted.packages.map((p) => `${p.name} (${p.state})`).join(", ") })}{" "}
+                {list.dpkgInterrupted.containerEngine ? t("patching.interruptedEngine") : t("patching.interruptedRemedy")}
+              </span>
+            </div>
+          )}
           {list.checkFailed ? (
             <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "var(--c-r)" }}><TriangleAlert size={13} aria-hidden style={{ flexShrink: 0 }} /> {t("patching.checkFailed")}</div>
           ) : list.count === 0 ? (
-            <div style={{ fontSize: 13, color: "var(--c-g)" }}>{t("patching.upToDate")}</div>
+            list.dpkgInterrupted ? (
+              // Nothing to upgrade, but dpkg is unfinished: "up to date" would be a lie. The update path finishes it.
+              <Btn onClick={runAll} loading={phase === "applying" && applyTarget === null} disabled={busy || list.applyRunning}>
+                {phase === "applying" && applyTarget === null ? t("patching.running") : t("patching.finishInterrupted")}
+              </Btn>
+            ) : (
+              <div style={{ fontSize: 13, color: "var(--c-g)" }}>{t("patching.upToDate")}</div>
+            )
           ) : (
             <>
               <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
                 <span style={{ fontSize: 13, fontWeight: 600 }}>{t("patching.count", { n: list.count })}</span>
                 <div style={{ flex: 1 }} />
-                <Btn onClick={runAll} loading={phase === "applying" && applyTarget === null} disabled={busy}>
+                <Btn onClick={runAll} loading={phase === "applying" && applyTarget === null} disabled={busy || list.applyRunning}>
                   {phase === "applying" && applyTarget === null ? t("patching.running") : t("patching.updateAll")}
                 </Btn>
               </div>
@@ -734,7 +775,7 @@ function PatchCard({ id }: { id: string }) {
                     <span className="mono" style={{ color: "var(--c-tx3)", flex: 1, overflow: "hidden", textOverflow: "ellipsis" }}>{p.current ? `${p.current} → ${p.candidate}` : `↑ ${p.candidate}`}</span>
                     <button
                       onClick={() => runOne(p.name)}
-                      disabled={busy}
+                      disabled={busy || list.applyRunning}
                       aria-busy={(phase === "applying" && applyTarget === p.name) || undefined}
                       style={{ background: "transparent", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", color: "var(--c-lapis)", fontSize: 11, cursor: "pointer", padding: "2px 8px", fontFamily: "inherit" }}
                     >

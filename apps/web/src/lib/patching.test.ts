@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { ApiError } from "./api";
 import { HUB_UNREACHABLE_CODE } from "./hub-connection";
-import { containerRuntimeUpdates, isAgentDropError, isContainerRuntimePackage, isTransientPatchError, settledApplyLog, shouldToastReboot, summarizeApply } from "./patching";
+import { containerRuntimeUpdates, interruptedNames, isAgentDropError, isContainerRuntimePackage, isTransientPatchError, settledApplyLog, shouldToastReboot, summarizeApply } from "./patching";
 
 describe("containerRuntimeUpdates", () => {
   it("picks docker-ce, containerd.io and runc out of the pending list", () => {
@@ -95,5 +95,12 @@ describe("shouldToastReboot", () => {
     expect(shouldToastReboot(0, null, sys)).toBe(false);
     expect(shouldToastReboot(0, { updated: 1, remaining: 0 }, { supported: true, rebootRequired: false })).toBe(false);
     expect(shouldToastReboot(0, { updated: 1, remaining: 0 }, { supported: false, rebootRequired: true })).toBe(false);
+  });
+});
+
+describe("interruptedNames", () => {
+  it("lists the half-configured packages, empty when dpkg is clean", () => {
+    expect(interruptedNames({ dpkgInterrupted: { packages: [{ name: "docker-ce", state: "half-configured" }, { name: "vim", state: "unpacked" }], containerEngine: true } })).toEqual(["docker-ce", "vim"]);
+    expect(interruptedNames({ dpkgInterrupted: null })).toEqual([]);
   });
 });

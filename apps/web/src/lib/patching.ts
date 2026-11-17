@@ -1,4 +1,4 @@
-import type { UpgradablePackage } from "./types";
+import type { PatchInfo, UpgradablePackage } from "./types";
 
 /** Packages whose upgrade restarts the container engine (dockerd / containerd / the OCI runtime) — and with it
  *  every container on the host. Exact names: `docker-ce-cli` and friends do not restart anything. */
@@ -19,7 +19,15 @@ export const patchTiming = {
   intervalMs: 5000,
   /** Give up waiting for the agent after this long. */
   deadlineMs: 180_000,
+  /** How long to keep waiting while the host reports the update is still running (it outlives the Docker restart and
+   *  the hub's own request; a big upgrade can take a while). */
+  runningDeadlineMs: 35 * 60_000,
 };
+
+/** Names of the packages dpkg left unfinished, for display. Empty when dpkg is clean. Pure. */
+export function interruptedNames(info: Pick<PatchInfo, "dpkgInterrupted">): string[] {
+  return info.dpkgInterrupted?.packages.map((p) => p.name) ?? [];
+}
 
 /** Is this a transient failure — the agent is gone/restarting, the hub timed out, or the network blipped — as
  *  opposed to a definitive 4xx answer (no permission, bad package)? Duck-typed on `status` so it works for the

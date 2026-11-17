@@ -167,7 +167,7 @@ describe("server detail feedback", () => {
   });
 
   const pkgInfo = (o: Record<string, unknown> = {}) => ({
-    supported: true, manager: "apt", checkFailed: false, rebootRequired: false, count: 1,
+    supported: true, manager: "apt", checkFailed: false, rebootRequired: false, count: 1, dpkgInterrupted: null, applyRunning: false,
     packages: [{ name: "openssl", current: "1", candidate: "2" }], ...o,
   });
 
@@ -292,5 +292,104 @@ describe("server detail feedback", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Update" }));
     const busy = await screen.findByRole("button", { name: "Updating…" });
     expect(busy).toHaveAttribute("aria-busy", "true");
+  });
+});
+
+describe("server patching: interrupted dpkg and a still-running update", () => {
+  const info = (o: Record<string, unknown> = {}) => ({
+    supported: true, manager: "apt", checkFailed: false, rebootRequired: false, count: 1, dpkgInterrupted: null, applyRunning: false,
+    packages: [{ name: "openssl", current: "1", candidate: "2" }], ...o,
+  });
+  const brokenEngine = { packages: [{ name: "docker-ce", state: "half-configured" }, { name: "containerd.io", state: "unpacked" }], containerEngine: true };
+  const clickCheck = async () => fireEvent.click(await screen.findByRole("button", { name: "Check for updates" }));
+
+  it("a check shows the half-configured engine as its own warning with the remedy — and only checks", async () => {
+    nav.tab = "updates";
+    const upgradeAll = vi.fn(async () => ({ output: "", exitCode: 0 }));
+    stubs.fns.checkUpdates = async () => info({ dpkgInterrupted: brokenEngine });
+    stubs.fns.upgradeAll = upgradeAll;
+    mount();
+    await clickCheck();
+    const banner = await screen.findByTestId("dpkg-interrupted");
+    expect(banner).toHaveTextContent("docker-ce (half-configured), containerd.io (unpacked)");
+    expect(banner).toHaveTextContent("Checking never repairs this");
+    expect(banner).toHaveTextContent("container engine");
+    expect(banner).toHaveTextContent("restarts Docker");
+    expect(banner).toHaveTextContent("“Update all”");
+    expect(upgradeAll).not.toHaveBeenCalled();
+  });
+
+  it("a non-engine interrupted package shows the remedy without the Docker-restart warning, and updating needs no extra confirmation", async () => {
+    nav.tab = "updates";
+    const upgradeAll = vi.fn(async () => ({ output: "", exitCode: 0 }));
+    let calls = 0;
+    stubs.fns.checkUpdates = async () => (++calls === 1 ? info({ dpkgInterrupted: { packages: [{ name: "man-db", state: "triggers-pending" }], containerEngine: false } }) : info({ count: 0, packages: [] }));
+    stubs.fns.upgradeAll = upgradeAll;
+    mount();
+    await clickCheck();
+    const banner = await screen.findByTestId("dpkg-interrupted");
+    expect(banner).toHaveTextContent("man-db (triggers-pending)");
+    expect(banner).not.toHaveTextContent("restarts Docker");
+    fireEvent.click(await screen.findByRole("button", { name: "Update all" }));
+    await waitFor(() => expect(upgradeAll).toHaveBeenCalledTimes(1));
+  });
+
+  it("updating with a half-configured engine asks first: cancel runs nothing, confirm runs the update", async () => {
+    nav.tab = "updates";
+    const upgradeAll = vi.fn(async () => ({ output: "", exitCode: 0 }));
+    let calls = 0;
+    stubs.fns.checkUpdates = async () => (++calls === 1 ? info({ dpkgInterrupted: brokenEngine }) : info({ count: 0, packages: [] }));
+    stubs.fns.upgradeAll = upgradeAll;
+    mount();
+    await clickCheck();
+    fireEvent.click(await screen.findByRole("button", { name: "Update all" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveTextContent("docker-ce, containerd.io");
+    expect(dialog).toHaveTextContent("restarts Docker");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(upgradeAll).not.toHaveBeenCalled();
+    fireEvent.click(await screen.findByRole("button", { name: "Update all" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Update and restart Docker" }));
+    await waitFor(() => expect(upgradeAll).toHaveBeenCalledTimes(1));
+  });
+
+  it("nothing to upgrade but dpkg interrupted is NOT 'up to date': it offers to finish the update", async () => {
+    nav.tab = "updates";
+    stubs.fns.checkUpdates = async () => info({ count: 0, packages: [], dpkgInterrupted: { packages: [{ name: "vim", state: "half-configured" }], containerEngine: false } });
+    mount();
+    await clickCheck();
+    expect(await screen.findByRole("button", { name: "Finish interrupted update" })).toBeEnabled();
+    expect(screen.queryByText("Your server is up to date.")).toBeNull();
+  });
+
+  it("after an update the card keeps waiting while the host still reports the update running, then shows the result", async () => {
+    nav.tab = "updates";
+    patchTiming.intervalMs = 5;
+    let phase: "before" | "running" | "done" = "before";
+    let runningChecks = 0;
+    stubs.fns.checkUpdates = async () => {
+      if (phase === "before") return info();
+      if (phase === "running" && ++runningChecks < 3) return info({ applyRunning: true });
+      return info({ count: 0, packages: [] });
+    };
+    stubs.fns.upgradeAll = async () => { phase = "running"; throw Object.assign(new Error("Bad Gateway"), { status: 502 }); }; // the hub went down with Docker
+    mount();
+    await clickCheck();
+    fireEvent.click(await screen.findByRole("button", { name: "Update all" }));
+    expect(await screen.findByText(/still running on this server/)).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText("Your server is up to date.")).toBeInTheDocument());
+    expect(runningChecks).toBe(3);
+    expect(toasts.filter((x) => x.type === "error")).toHaveLength(0);
+  });
+
+  it("a check that finds an update running says so and disables the update buttons", async () => {
+    nav.tab = "updates";
+    stubs.fns.checkUpdates = async () => info({ applyRunning: true });
+    mount();
+    await clickCheck();
+    expect(await screen.findByText(/update is running on this server right now/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Update all" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Update" })).toBeDisabled();
   });
 });

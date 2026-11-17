@@ -565,6 +565,21 @@ export interface PatchInfo {
   rebootRequired: boolean;
   packages: UpgradablePackage[];
   count: number;
+  /** apt only: packages a cut-off earlier run left half-configured; null when dpkg is clean. A check only REPORTS it —
+   *  an update (which runs on the host and may restart the container engine) is what finishes it. */
+  dpkgInterrupted: DpkgInterrupted | null;
+  /** An update started earlier is still running on the host — this list is mid-flight, not final. */
+  applyRunning: boolean;
+}
+
+export interface InterruptedPackage {
+  name: string;
+  state: "half-configured" | "unpacked" | "half-installed" | "triggers-pending";
+}
+export interface DpkgInterrupted {
+  packages: InterruptedPackage[];
+  /** Includes the container engine: finishing it restarts Docker, and with it every container. */
+  containerEngine: boolean;
 }
 
 // Fleet-wide OS patching across many servers at once (non-writable servers are skipped, not errored).

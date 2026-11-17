@@ -37,7 +37,8 @@ export function PatchBulkModal({
     if (!r.online) return t("bulk.offline");
     if (r.error || r.updates?.checkFailed) return t("bulk.checkError");
     const base = r.updates?.count ? t("bulk.updatesAvailable", { n: r.updates.count }) : t("bulk.upToDate");
-    return r.updates?.rebootRequired ? `${base} · ${t("bulk.rebootRequired")}` : base;
+    const flags = [r.updates?.dpkgInterrupted ? t("bulk.dpkgInterrupted") : null, r.updates?.rebootRequired ? t("bulk.rebootRequired") : null].filter(Boolean);
+    return flags.length > 0 ? [base, ...flags].join(" · ") : base;
   };
 
   const rowStyle: React.CSSProperties = { display: "flex", justifyContent: "space-between", gap: 10, fontSize: 12, padding: "5px 0", borderTop: "1px solid var(--c-bd)" };
@@ -64,7 +65,7 @@ export function PatchBulkModal({
               {check.data.results.map((r) => (
                 <div key={r.serverId} style={rowStyle}>
                   <span style={{ fontWeight: 600 }}>{nameOf(r.serverId)}</span>
-                  <span style={{ color: !r.online || r.error || r.updates?.checkFailed ? "var(--c-am)" : r.updates?.count ? "var(--c-a)" : "var(--c-tx3)" }}>{checkLabel(r)}</span>
+                  <span style={{ color: !r.online || r.error || r.updates?.checkFailed || r.updates?.dpkgInterrupted ? "var(--c-am)" : r.updates?.count ? "var(--c-a)" : "var(--c-tx3)" }}>{checkLabel(r)}</span>
                 </div>
               ))}
               {check.data.skipped.length > 0 && (

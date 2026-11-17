@@ -43,5 +43,14 @@
   "waitingAgent": "The update restarted Docker, so the agent is reconnecting. Waiting for it, then checking for updates again…",
   "rechecking": "Update finished — checking what is left…",
   "recheckFailed": "Couldn't re-check the server after the update. The list below is hidden because it may be out of date — press “Check for updates”.",
-  "recheckFailedToast": "The update ran, but the server could not be re-checked. Check for updates to see what changed."
+  "recheckFailedToast": "The update ran, but the server could not be re-checked. Check for updates to see what changed.",
+  "interrupted": "A previous update was interrupted: {packages} did not finish configuring. Checking never repairs this — it only reports it.",
+  "interruptedEngine": "That includes the container engine. Finishing it restarts Docker, so every app and database on this server restarts and is briefly unavailable. “Update all” (or updating any one package) completes it first, on the host, so the Docker restart cannot interrupt it.",
+  "interruptedRemedy": "“Update all” (or updating any one package) completes the configuration first, on the host.",
+  "interruptedConfirmTitle": "Finish the interrupted update?",
+  "interruptedConfirm": "dpkg is half-configured for {packages}. Continuing completes it first, and that restarts Docker — every app and database on this server restarts and is briefly unavailable. Continue?",
+  "interruptedConfirmButton": "Update and restart Docker",
+  "stillRunning": "An update is still running on this server. Waiting for it to finish, then checking again…",
+  "runningBanner": "An update is running on this server right now — the list below may change. Check again when it finishes.",
+  "finishInterrupted": "Finish interrupted update"
 }

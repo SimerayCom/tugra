@@ -53,5 +53,6 @@
   "exit": "exit {code}",
   "running": "Running…",
   "noOutput": "(no output)",
-  "rebootHint": "Reboots are never automatic. Run Check updates on a server to see whether one is pending."
+  "rebootHint": "Reboots are never automatic. Run Check updates on a server to see whether one is pending.",
+  "dpkgInterrupted": "dpkg interrupted"
 }
