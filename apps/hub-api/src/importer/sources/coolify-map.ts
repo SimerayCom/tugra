@@ -620,8 +620,10 @@ export function mapApplication(
           branch: app.git_branch ?? undefined,
           dockerfilePath: app.dockerfile_location ?? undefined,
           baseDirectory: app.base_directory ?? undefined,
-          // `source_type` names the git source's model (4.7); older rows do not carry it and fall back to the owner/repo shape.
-          provider: coolifyGitProvider(app.source_type) ?? (isGithubAppRepo(app.git_repository!) ? "github" : undefined),
+          // `source_type` names the git source's model (4.7); older rows do not carry it and fall back to GitHub. It decides only for a
+          // bare owner/repo (the form the GitHub/GitLab/Gitea App sources store): public and deploy-key repos also point at the built-in
+          // GithubApp source but keep a clone URL, which is no App install of any provider.
+          provider: isGithubAppRepo(app.git_repository!) ? coolifyGitProvider(app.source_type) ?? "github" : undefined,
         }
       : undefined,
     composeFile: app.docker_compose_raw ?? undefined, // present only with a read:sensitive token

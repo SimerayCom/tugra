@@ -106,3 +106,37 @@ func TestDumpRejectsEmptyEnv(t *testing.T) {
 		t.Fatal("a nil child env must be refused (it would inherit os.Environ)")
 	}
 }
+
+func redisPlan(engine string) Plan {
+	return Plan{Argv: []string{"docker", "exec", "ctr", "redis-cli"}, Env: []string{"PATH=/usr/bin:/bin"}, Engine: engine}
+}
+
+func TestFormatSanityRedisFamily(t *testing.T) {
+	// Valkey 9 writes a VALKEY080 RDB header (verified against valkey/valkey:9-alpine); Redis and Valkey 8 write REDIS00xx.
+	for _, tc := range []struct {
+		engine, head string
+		ok           bool
+	}{
+		{"REDIS", "REDIS0011", true},
+		{"REDIS", "VALKEY080", true},
+		{"KEYDB", "REDIS0009", true},
+		{"KEYDB", "VALKEY080", false}, // only a Redis-protocol engine on a Valkey image writes it
+		{"REDIS", "garbage!!", false},
+		{"REDIS", "VALKE", false},
+	} {
+		err := formatSanity(tc.engine, []byte(tc.head))
+		if tc.ok && err != nil {
+			t.Errorf("%s %q: unexpected %v", tc.engine, tc.head, err)
+		}
+		if !tc.ok && !errors.Is(err, errBadFormat) {
+			t.Errorf("%s %q: expected errBadFormat, got %v", tc.engine, tc.head, err)
+		}
+	}
+}
+
+func TestDumpValkeyRDB(t *testing.T) {
+	stub := writeStub(t, `printf 'VALKEY080-payload'`)
+	if _, err := dumpOne(context.Background(), stub, redisPlan("REDIS"), t.TempDir(), 1<<20, 10*time.Second); err != nil {
+		t.Fatalf("a Valkey 9 RDB must pass the format guard: %v", err)
+	}
+}

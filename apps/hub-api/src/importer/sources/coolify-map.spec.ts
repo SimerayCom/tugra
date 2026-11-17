@@ -609,6 +609,13 @@ describe("git provider from source_type (R10)", () => {
     expect(mapApplication({ ...git, git_repository: "org/repo", source_type: "GithubApp" }, ctx).git).toMatchObject({ url: "https://github.com/org/repo.git", provider: "github" });
   });
 
+  it("a clone URL is never labelled by source_type (Coolify points public and deploy-key repos at the built-in GithubApp source)", () => {
+    for (const repo of ["git@gitlab.com:o/r.git", "ssh://git@host.example.test/o/r.git", "https://gitlab.example.test/o/r.git"]) {
+      expect(mapApplication({ ...git, git_repository: repo, source_type: "GithubApp" }, ctx).git).toMatchObject({ url: repo, provider: undefined });
+      expect(mapApplication({ ...git, git_repository: repo, source_type: "GitlabApp" }, ctx).git!.provider).toBeUndefined();
+    }
+  });
+
   it("without source_type (4.1.2 to 4.6) the old owner/repo heuristic decides", () => {
     expect(mapApplication({ ...git, git_repository: "org/repo" }, ctx).git).toMatchObject({ url: "https://github.com/org/repo.git", provider: "github" });
     expect(mapApplication({ ...git, git_repository: "https://git.example.test/org/repo.git" }, ctx).git!.provider).toBeUndefined();
