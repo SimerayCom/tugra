@@ -7,6 +7,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.0-beta.21] - 2026-11-17
+
 - **Reboot a server from the panel, and see that everything came back.** The server's Maintenance tab has a Reboot card
   (now, or scheduled up to 7 days ahead) with an impact preview (containers and domains briefly unavailable, a warning when
   the server hosts the Tugra hub) and a typed server-name confirmation; the Server patching "reboot required" banner links
