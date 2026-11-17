@@ -7,6 +7,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.0-beta.18] - 2026-11-17
+
 - **Guided migration runs from Coolify (preview).** One resumable, observable, abortable run now chains what the
   manual runbooks did step by step: preflight, config import, environment remap, dark deploy, data seed, freeze, final
   data copy, TLS pre-issue, verification, DNS prepare, cutover, an observe window and finalize, plus an optional
