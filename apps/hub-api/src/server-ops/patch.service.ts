@@ -1,13 +1,17 @@
-import { Injectable, NotFoundException, ServiceUnavailableException } from "@nestjs/common";
+import { randomBytes } from "node:crypto";
+import { ConflictException, Injectable, NotFoundException, ServiceUnavailableException } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { TeamAccessService } from "../common/team-access.service";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
-import { AgentOfflineException } from "../agent-gateway/agent-offline.exception";
+import { AgentCommandTimeoutException, AgentDisconnectedException, AgentOfflineException } from "../agent-gateway/agent-offline.exception";
 import { DeployLogHub } from "../agent-gateway/deploy-log.hub";
 import { planTargets } from "../bulk/bulk.service";
 import {
   buildCheckScript,
+  buildPatchRunScript,
+  parsePatchRun,
+  type PatchGuard,
   buildUpgradeAllScript,
   buildUpgradeOneScript,
   wrapHostExec,
@@ -18,24 +22,53 @@ import {
 } from "./patch-script";
 
 const CHECK_TIMEOUT_MS = 120_000;
-// The APPLY hub timeouts sit JUST ABOVE their in-container backstops (deadline+kill), so the hub waits for the
-// real outcome of a long-but-healthy upgrade instead of giving up first. A hub timeout well below the host
-// backstop (the old 10-min hub vs 30-min host) abandons a large multi-package upgrade mid-run — the user sees
-// a failure while the agent keeps patching, and a connection drop at that point can leave dpkg interrupted.
-const UPGRADE_ALL_TIMEOUT_MS = 1_860_000; // > UPGRADE_ALL_HOST deadline+kill (1800+30)
-const UPGRADE_ONE_TIMEOUT_MS = 960_000; // > UPGRADE_ONE_HOST deadline+kill (900+30)
-// In-container `timeout` backstops for the host-exec helper. CHECK is BELOW the hub timeout so a slow check
-// is killed cleanly in-container (clean marker, not a hub-side timeout). The APPLY backstops free a truly hung
-// helper (the tugra-patch name mutex); the hub timeouts above are set to outlast them so the agent, not the
-// hub, decides when a long upgrade is done.
+// In-container `timeout` backstop for the CHECK helper: BELOW the hub timeout so a slow check is killed cleanly
+// in-container (clean marker, not a hub-side timeout).
 const CHECK_HOST = { deadlineSec: 100, killSec: 5 };
-const UPGRADE_ALL_HOST = { deadlineSec: 1800, killSec: 30 };
-const UPGRADE_ONE_HOST = { deadlineSec: 900, killSec: 30 };
+// APPLY: the package manager runs as a host-side systemd unit capped at `unitSec`; the helper (and the hub call)
+// only FOLLOW it. The whole apply may take unitSec + a margin for the unit's kill grace and the final read; within
+// that the hub re-attaches as often as the engine restart makes it necessary.
+const UPGRADE_ALL_UNIT_SEC = 1800;
+const UPGRADE_ONE_UNIT_SEC = 900;
+const APPLY_MARGIN_SEC = 150;
+const ATTACH_KILL_SEC = 10;
+const ATTACH_HUB_SLACK_MS = 30_000;
+
+/** Pauses of the apply loop. A mutable object so tests can shrink it. */
+export const patchTiming = {
+  /** Pause before re-attaching after the helper ended or the agent was unreachable. */
+  retryPauseMs: 5_000,
+  /** Poll interval while waiting for the agent to reconnect (e.g. after the update restarted Docker). */
+  onlinePollMs: 3_000,
+};
+
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+/** The agent went away mid-attach (typically the update restarted Docker, taking the agent with it). The host-side
+ *  unit is unaffected, so the hub re-attaches instead of reporting a failure. */
+function isAgentDrop(e: unknown): boolean {
+  return e instanceof AgentDisconnectedException || e instanceof AgentOfflineException || e instanceof AgentCommandTimeoutException;
+}
+
+/** Complete lines only: the part of a streamed log that can no longer change (a trailing partial line, or a
+ *  half-arrived marker, is held back until its newline lands or the attach ends). */
+function completeLines(text: string): string {
+  const i = text.lastIndexOf("\n");
+  return i < 0 ? "" : text.slice(0, i + 1);
+}
 
 /** A host-exec patch that could not enter the host → a clear message, never a silent mis-parse. */
 function hostFailMessage(host: HostExecStatus): string {
   if (host.busy) return "a patch is already running on this server — wait for it to finish";
   return `host patching unavailable: ${host.unavailableReason ?? "the agent could not run the patch on the host"}`;
+}
+/** Inline (no-systemd) hosts must not upgrade the container engine from inside a container the engine runs. */
+function engineBlockedMessage(names: string[]): string {
+  return (
+    `this server has no systemd, so the update would run inside the agent's helper container and ${names.join(", ")} ` +
+    "(the container engine) cannot be upgraded from there — the engine restart would kill the update mid-way and leave dpkg half-configured. " +
+    "Upgrade the engine packages from a shell on the server."
+  );
 }
 // Fan-out caps for fleet ops: checks are cheap (parallel more), applies are heavy (fewer at once).
 const FLEET_CHECK_CONCURRENCY = 8;
@@ -97,16 +130,17 @@ export class PatchService {
 
   async upgradeAll(userId: string, serverId: string): Promise<{ output: string; exitCode: number }> {
     await this.requireWrite(userId, serverId);
-    const r = await this.runStreamed(serverId, wrapHostExec(buildUpgradeAllScript(), UPGRADE_ALL_HOST), UPGRADE_ALL_TIMEOUT_MS);
+    // Audited BEFORE it runs: an engine upgrade can take the hub itself down with Docker (the hub is a container on
+    // the managed host in a single-server install), and an entry written only on completion would never exist.
     await this.audit.log({ actor: userId, action: "server.patch.apply", target: serverId });
-    return r;
+    return this.runApply(serverId, buildUpgradeAllScript(), { kind: "all" }, UPGRADE_ALL_UNIT_SEC, true);
   }
 
   async upgradeOne(userId: string, serverId: string, pkg: string): Promise<{ output: string; exitCode: number }> {
     await this.requireWrite(userId, serverId);
-    const r = await this.runStreamed(serverId, wrapHostExec(buildUpgradeOneScript(pkg), UPGRADE_ONE_HOST), UPGRADE_ONE_TIMEOUT_MS);
+    const script = buildUpgradeOneScript(pkg); // validates the name before anything is audited or sent
     await this.audit.log({ actor: userId, action: "server.patch.apply", target: serverId, meta: { pkg } });
-    return r;
+    return this.runApply(serverId, script, { kind: "one", pkg }, UPGRADE_ONE_UNIT_SEC, true);
   }
 
   /** Live build-log stream for the server's active patch run (replay + live). */
@@ -147,20 +181,19 @@ export class PatchService {
    */
   async upgradeAllBulk(userId: string, serverIds: string[]): Promise<{ results: FleetPatchApply[]; skipped: string[] }> {
     const { targets, skipped } = await this.planFleet(userId, serverIds);
+    if (targets.length > 0) {
+      // Before the run, like the single-server apply: an engine upgrade can take the hub down with Docker.
+      await this.audit.log({ actor: userId, action: "server.patch.apply.bulk", target: targets.join(","), meta: { count: targets.length } });
+    }
     const results = await mapPool(targets, FLEET_APPLY_CONCURRENCY, async (serverId): Promise<FleetPatchApply> => {
       if (!this.agentWs.isOnline(serverId)) return { serverId, online: false };
       try {
-        const r = await this.agentWs.sendCommand(serverId, wrapHostExec(buildUpgradeAllScript(), UPGRADE_ALL_HOST), "patch", UPGRADE_ALL_TIMEOUT_MS);
-        const host = parseHostExec(r.output);
-        if (!host.entered) return { serverId, online: true, error: hostFailMessage(host) }; // host not reached — not a real apply
+        const r = await this.runApply(serverId, buildUpgradeAllScript(), { kind: "all" }, UPGRADE_ALL_UNIT_SEC, false);
         return { serverId, online: true, exitCode: r.exitCode };
       } catch (e) {
         return { serverId, online: true, error: e instanceof Error ? e.message : String(e) };
       }
     });
-    if (targets.length > 0) {
-      await this.audit.log({ actor: userId, action: "server.patch.apply.bulk", target: targets.join(","), meta: { count: targets.length } });
-    }
     return { results, skipped };
   }
 
@@ -175,25 +208,92 @@ export class PatchService {
     };
   }
 
-  /** Run a patch command on the agent, streaming its output via DeployLogHub. */
-  private async runStreamed(serverId: string, script: string, timeoutMs: number): Promise<{ output: string; exitCode: number }> {
-    this.deployLogs.begin(serverId);
+  /**
+   * Run an apply on the server: the package manager runs as a transient systemd unit on the HOST (see
+   * buildPatchRunScript), this method follows it. An engine upgrade that restarts Docker drops the agent mid-way;
+   * the unit does not care, so on a drop (or an attach that ended before the unit did) we wait for the agent and
+   * re-send the SAME run id, which re-attaches at the byte offset already received — never a second unit. Output
+   * goes live to DeployLogHub when `stream` is set. Resolves with the package manager's own exit code.
+   */
+  private async runApply(
+    serverId: string,
+    inner: string,
+    guard: PatchGuard,
+    unitSec: number,
+    stream: boolean,
+  ): Promise<{ output: string; exitCode: number }> {
+    const id = randomBytes(8).toString("hex");
+    const deadlineAt = Date.now() + (unitSec + APPLY_MARGIN_SEC) * 1000;
+    let log = ""; // the package manager's output we hold (the hub's view of the host log; its byte length is the resume offset)
+    let pushed = 0; // chars of `log` already sent to the live stream
+    let inline = false; // saw TUGRA_PATCH_MODE=inline: not resumable, a re-run would start the upgrade again
+    const live = (text: string) => {
+      if (stream && text.length > pushed) {
+        this.deployLogs.push(serverId, text.slice(pushed));
+        pushed = text.length;
+      }
+    };
+    if (stream) this.deployLogs.begin(serverId);
     try {
-      const r = await this.agentWs.sendCommand(serverId, script, "patch", timeoutMs, (c) =>
-        this.deployLogs.push(serverId, c),
-      );
-      // A host-exec that never entered the host is NOT a successful patch, even on exit 0 (e.g. a missing
-      // `base64` would make the inner `$(…)` empty and `sh -c ""` exit 0). Treat it as FAILED and surface it.
-      const host = parseHostExec(r.output);
-      this.deployLogs.finish(serverId, {
-        status: r.exitCode === 0 && host.entered ? "SUCCESS" : "FAILED",
-        exitCode: r.exitCode,
-        deploymentId: serverId,
-      });
-      if (!host.entered) throw new ServiceUnavailableException(hostFailMessage(host));
-      return { output: r.output.slice(0, 65536), exitCode: r.exitCode };
+      for (let attempt = 0; ; attempt++) {
+        const remainingSec = Math.ceil((deadlineAt - Date.now()) / 1000);
+        if (remainingSec < 30) {
+          throw new ServiceUnavailableException("lost contact with the server during the update — it keeps running on the server; run a check to see where it ended up");
+        }
+        const script = wrapHostExec(
+          buildPatchRunScript(inner, { id, deadlineSec: unitSec, offset: Buffer.byteLength(log), guard }),
+          { deadlineSec: remainingSec, killSec: ATTACH_KILL_SEC },
+        );
+        let acc = "";
+        const base = log;
+        let r: { exitCode: number; output: string };
+        try {
+          r = await this.agentWs.sendCommand(serverId, script, "patch", remainingSec * 1000 + ATTACH_HUB_SLACK_MS, (c) => {
+            acc += c;
+            const st = parsePatchRun(acc);
+            if (st.mode === "inline") inline = true;
+            if (st.begun) live(base + completeLines(st.log));
+          });
+        } catch (e) {
+          if (!isAgentDrop(e) || inline) throw e;
+          // Keep what arrived (complete lines), then wait for the agent and re-attach.
+          log = base + completeLines(parsePatchRun(acc).log);
+          while (!this.agentWs.isOnline(serverId)) {
+            if (Date.now() >= deadlineAt) throw e;
+            await sleep(patchTiming.onlinePollMs);
+          }
+          continue;
+        }
+        const host = parseHostExec(r.output);
+        const st = parsePatchRun(r.output);
+        if (st.mode === "inline") inline = true;
+        if (!host.entered) {
+          // A leftover helper from before the restart may still hold the name for a moment: wait it out.
+          if (host.busy && attempt > 0 && !inline) {
+            await sleep(patchTiming.retryPauseMs);
+            continue;
+          }
+          throw new ServiceUnavailableException(hostFailMessage(host));
+        }
+        if (st.busy) throw new ServiceUnavailableException(hostFailMessage({ ...host, busy: true }));
+        if (st.engineBlocked) throw new ConflictException(engineBlockedMessage(st.engineBlocked));
+        if (st.startFailed) throw new ServiceUnavailableException("could not start the update on the server (systemd-run failed)");
+        log = base + st.log;
+        live(log);
+        if (st.rc !== null) {
+          const exitCode = st.rc < 0 ? 1 : st.rc;
+          if (stream) this.deployLogs.finish(serverId, { status: exitCode === 0 ? "SUCCESS" : "FAILED", exitCode, deploymentId: serverId });
+          const note = st.rc < 0 ? "\nthe update unit ended without reporting an exit code\n" : "";
+          return { output: (log + note).slice(-65536), exitCode };
+        }
+        // The attach ended before the update did (the helper was removed, its own backstop fired): the unit is
+        // still ours — attach again unless this was an inline run, which dies with its helper.
+        if (inline) throw new ServiceUnavailableException("the update was interrupted before it finished");
+        await sleep(patchTiming.retryPauseMs);
+      }
     } catch (e) {
-      this.deployLogs.finish(serverId, { status: "FAILED", exitCode: -1, deploymentId: serverId });
+      // Any failure (refusal, lost agent, unexpected throw) ends the live stream as FAILED.
+      if (stream) this.deployLogs.finish(serverId, { status: "FAILED", exitCode: -1, deploymentId: serverId });
       throw e;
     }
   }

@@ -1,6 +1,6 @@
-import { ForbiddenException } from "@nestjs/common";
-import { AgentOfflineException } from "../agent-gateway/agent-offline.exception";
-import { PatchService } from "./patch.service";
+import { ConflictException, ForbiddenException, ServiceUnavailableException } from "@nestjs/common";
+import { AgentDisconnectedException, AgentOfflineException } from "../agent-gateway/agent-offline.exception";
+import { PatchService, patchTiming } from "./patch.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { TeamAccessService } from "../common/team-access.service";
 import { AuditService } from "../audit/audit.service";
@@ -96,13 +96,14 @@ describe("PatchService", () => {
     const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     const agentWs = {
       sendCommand: jest.fn().mockImplementation((_s, _c, _cap, _t, onChunk?: (c: string) => void) => {
-        onChunk?.("Reading package lists...\n");
-        return Promise.resolve({ exitCode: 0, output: "TUGRA_HOST_ENTERED\nupgraded 3 packages" });
+        onChunk?.("TUGRA_HOST_ENTERED\nTUGRA_PATCH_MODE=unit\nTUGRA_PATCH_BEGIN\nReading package lists...\n");
+        return Promise.resolve({ exitCode: 0, output: "TUGRA_HOST_ENTERED\nTUGRA_PATCH_MODE=unit\nTUGRA_PATCH_STARTED\nTUGRA_PATCH_BEGIN\nReading package lists...\nupgraded 3 packages\n\nTUGRA_PATCH_RC=0\n" });
       }),
     } as unknown as AgentWsServer;
     const logs = makeLogs();
     const r = await make(prisma, access, agentWs, logs).upgradeAll("u1", "s1");
-    expect(r.output).toContain("upgraded");
+    expect(r.output).toBe("Reading package lists...\nupgraded 3 packages\n");
+    expect(r.exitCode).toBe(0);
     // The sent script is the HOST-EXEC wrapper (the real apt command is base64 inside it) — assert we run on
     // the host, not in the agent container.
     expect(agentWs.sendCommand).toHaveBeenCalledWith("s1", expect.stringContaining("--pid=host"), "patch", expect.any(Number), expect.any(Function));
@@ -169,7 +170,7 @@ describe("PatchService", () => {
     const access = { permissionsByTeam: jest.fn().mockResolvedValue(new Map([["t1", new Set(["servers:ops"])]])) } as unknown as TeamAccessService;
     const agentWs = {
       isOnline: jest.fn().mockReturnValue(true),
-      sendCommand: jest.fn().mockResolvedValue({ exitCode: 0, output: "TUGRA_HOST_ENTERED\ndone" }),
+      sendCommand: jest.fn().mockResolvedValue({ exitCode: 0, output: "TUGRA_HOST_ENTERED\nTUGRA_PATCH_MODE=unit\nTUGRA_PATCH_BEGIN\ndone\n\nTUGRA_PATCH_RC=0\n" }),
     } as unknown as AgentWsServer;
 
     const { results, skipped } = await make(prisma, access, agentWs).upgradeAllBulk("u1", ["s1", "s2"]);
@@ -177,6 +178,173 @@ describe("PatchService", () => {
     expect(skipped).toEqual(["s2"]);
     expect(results).toHaveLength(1);
     expect(results[0]).toMatchObject({ serverId: "s1", online: true, exitCode: 0 });
-    expect(agentWs.sendCommand).toHaveBeenCalledWith("s1", expect.stringContaining("--pid=host"), "patch", expect.any(Number));
+    expect(agentWs.sendCommand).toHaveBeenCalledWith("s1", expect.stringContaining("--pid=host"), "patch", expect.any(Number), expect.any(Function));
+  });
+});
+
+// ── apply: host-side unit, re-attach across an engine restart ───────────────────────────────────────────────────
+describe("PatchService apply (host-side unit)", () => {
+  const prisma = { server: { findUnique: jest.fn().mockResolvedValue(server) } } as unknown as PrismaService;
+  const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+  const HEAD = "TUGRA_HOST_ENTERED\nTUGRA_PATCH_MODE=unit\n";
+  const BEGIN = "TUGRA_PATCH_BEGIN\n";
+
+  /** The driver the host would run, recovered from the outer docker-run wrapper (two base64 layers). */
+  function driver(script: string): string {
+    const outer = /TUGRA_PATCH_B64='([A-Za-z0-9+/=]+)'/.exec(script);
+    expect(outer).not.toBeNull();
+    return Buffer.from(outer![1], "base64").toString("utf8");
+  }
+  const runId = (script: string) => /ID='([a-f0-9]+)'/.exec(driver(script))![1];
+  const offsetOf = (script: string) => Number(/^POS=(\d+)$/m.exec(driver(script))![1]);
+
+  beforeEach(() => {
+    patchTiming.retryPauseMs = 1;
+    patchTiming.onlinePollMs = 1;
+  });
+  afterEach(() => jest.restoreAllMocks());
+
+  it("returns the package manager's own exit code and output; audits BEFORE running", async () => {
+    const order: string[] = [];
+    (audit.log as jest.Mock).mockImplementation(async () => void order.push("audit"));
+    const agentWs = {
+      sendCommand: jest.fn().mockImplementation(async () => {
+        order.push("send");
+        return { exitCode: 0, output: `${HEAD}${BEGIN}E: held broken packages\n\nTUGRA_PATCH_RC=100\n` };
+      }),
+    } as unknown as AgentWsServer;
+    const logs = makeLogs();
+    const r = await make(prisma, access, agentWs, logs).upgradeOne("u1", "s1", "vim");
+    expect(r).toEqual({ output: "E: held broken packages\n", exitCode: 100 });
+    expect(order).toEqual(["audit", "send"]);
+    expect(logs.finish).toHaveBeenCalledWith("s1", expect.objectContaining({ status: "FAILED", exitCode: 100 }));
+    (audit.log as jest.Mock).mockReset();
+  });
+
+  it("an apply that drops with the engine restart re-attaches to the SAME unit at the byte offset it already has", async () => {
+    const sent: string[] = [];
+    let call = 0;
+    const online = [false, false, true]; // the agent is down for two polls, then back
+    const agentWs = {
+      isOnline: jest.fn().mockImplementation(() => online.shift() ?? true),
+      sendCommand: jest.fn().mockImplementation((_s: string, script: string, _c: string, _t: number, onChunk?: (c: string) => void) => {
+        sent.push(script);
+        if (++call === 1) {
+          // docker-ce's postinst restarts dockerd: the helper and the agent die mid-stream, half a line in
+          onChunk?.(`${HEAD}TUGRA_PATCH_STARTED\n${BEGIN}Unpacking docker-ce\nSetting up docker-`);
+          return Promise.reject(new AgentDisconnectedException());
+        }
+        return Promise.resolve({ exitCode: 0, output: `${HEAD}${BEGIN}Setting up docker-ce\nDone\n\nTUGRA_PATCH_RC=0\n` });
+      }),
+    } as unknown as AgentWsServer;
+    const logs = makeLogs();
+    const r = await make(prisma, access, agentWs, logs).upgradeAll("u1", "s1");
+
+    expect(sent).toHaveLength(2);
+    expect(runId(sent[1])).toBe(runId(sent[0])); // same unit — never a second apply
+    expect(offsetOf(sent[0])).toBe(0);
+    expect(offsetOf(sent[1])).toBe(Buffer.byteLength("Unpacking docker-ce\n")); // the partial line is re-read, not lost
+    expect(r.exitCode).toBe(0);
+    expect(r.output).toBe("Unpacking docker-ce\nSetting up docker-ce\nDone\n"); // seamless, nothing duplicated
+    // the live stream saw each byte once, in order
+    const pushed = (logs.push as jest.Mock).mock.calls.map((c) => c[1]).join("");
+    expect(pushed).toBe("Unpacking docker-ce\nSetting up docker-ce\nDone\n");
+    expect(logs.finish).toHaveBeenCalledTimes(1);
+    expect(logs.finish).toHaveBeenCalledWith("s1", expect.objectContaining({ status: "SUCCESS", exitCode: 0 }));
+  });
+
+  it("re-attaches when the helper ends before the unit does (no exit code yet)", async () => {
+    let call = 0;
+    const agentWs = {
+      isOnline: jest.fn().mockReturnValue(true),
+      sendCommand: jest.fn().mockImplementation(() =>
+        Promise.resolve(++call === 1 ? { exitCode: 137, output: `${HEAD}${BEGIN}partial\n` } : { exitCode: 0, output: `${HEAD}${BEGIN}\nTUGRA_PATCH_RC=0\n` }),
+      ),
+    } as unknown as AgentWsServer;
+    const r = await make(prisma, access, agentWs).upgradeAll("u1", "s1");
+    expect(call).toBe(2);
+    expect(r).toEqual({ output: "partial\n", exitCode: 0 });
+  });
+
+  it("waits out a leftover helper holding the name after a restart, then continues", async () => {
+    let call = 0;
+    const agentWs = {
+      isOnline: jest.fn().mockReturnValue(true),
+      sendCommand: jest.fn().mockImplementation(() => {
+        call++;
+        if (call === 1) return Promise.reject(new AgentDisconnectedException());
+        if (call === 2) return Promise.resolve({ exitCode: 125, output: 'Conflict. The container name "/tugra-patch" is already in use' });
+        return Promise.resolve({ exitCode: 0, output: `${HEAD}${BEGIN}ok\n\nTUGRA_PATCH_RC=0\n` });
+      }),
+    } as unknown as AgentWsServer;
+    expect((await make(prisma, access, agentWs).upgradeAll("u1", "s1")).exitCode).toBe(0);
+    expect(call).toBe(3);
+  });
+
+  it("gives up with a clear message (the unit keeps running) when the agent never comes back", async () => {
+    const t0 = Date.now();
+    let n = 0;
+    jest.spyOn(Date, "now").mockImplementation(() => (++n <= 2 ? t0 : t0 + 10_000_000));
+    const agentWs = {
+      isOnline: jest.fn().mockReturnValue(false),
+      sendCommand: jest.fn().mockRejectedValue(new AgentDisconnectedException()),
+    } as unknown as AgentWsServer;
+    const logs = makeLogs();
+    await expect(make(prisma, access, agentWs, logs).upgradeAll("u1", "s1")).rejects.toThrow(/disconnected/);
+    expect(logs.finish).toHaveBeenCalledWith("s1", expect.objectContaining({ status: "FAILED" }));
+  });
+
+  it("does NOT re-attach an inline (no-systemd) run that drops — a re-run would start the upgrade again", async () => {
+    const agentWs = {
+      isOnline: jest.fn().mockReturnValue(true),
+      sendCommand: jest.fn().mockImplementation((_s: string, _sc: string, _c: string, _t: number, onChunk?: (c: string) => void) => {
+        onChunk?.("TUGRA_HOST_ENTERED\nTUGRA_PATCH_MODE=inline\nTUGRA_PATCH_BEGIN\nworking\n");
+        return Promise.reject(new AgentDisconnectedException());
+      }),
+    } as unknown as AgentWsServer;
+    await expect(make(prisma, access, agentWs).upgradeAll("u1", "s1")).rejects.toThrow(/disconnected/);
+    expect(agentWs.sendCommand).toHaveBeenCalledTimes(1);
+  });
+
+  it("a container-engine refusal on a host without systemd is a 409 with the packages named", async () => {
+    const agentWs = {
+      sendCommand: jest.fn().mockResolvedValue({ exitCode: 1, output: "TUGRA_HOST_ENTERED\nTUGRA_PATCH_MODE=inline\nTUGRA_PATCH_ENGINE_BLOCKED=docker-ce,containerd.io\n" }),
+    } as unknown as AgentWsServer;
+    const err = await make(prisma, access, agentWs).upgradeAll("u1", "s1").catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ConflictException);
+    expect((err as Error).message).toMatch(/docker-ce, containerd\.io/);
+    expect((err as Error).message).toMatch(/no systemd/);
+  });
+
+  it("another patch unit already running is the 'already running' 503, never a second apply", async () => {
+    const agentWs = {
+      sendCommand: jest.fn().mockResolvedValue({ exitCode: 1, output: `${HEAD}TUGRA_PATCH_BUSY\n` }),
+    } as unknown as AgentWsServer;
+    const err = await make(prisma, access, agentWs).upgradeAll("u1", "s1").catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ServiceUnavailableException);
+    expect((err as Error).message).toMatch(/already running/);
+  });
+
+  it("a unit that vanished without an exit code is a failure, not a success", async () => {
+    const agentWs = {
+      sendCommand: jest.fn().mockResolvedValue({ exitCode: 0, output: `${HEAD}${BEGIN}x\n\nTUGRA_PATCH_RC=-1\n` }),
+    } as unknown as AgentWsServer;
+    const r = await make(prisma, access, agentWs).upgradeAll("u1", "s1");
+    expect(r.exitCode).toBe(1);
+    expect(r.output).toMatch(/without reporting an exit code/);
+  });
+
+  it("the fleet apply follows the unit too (no live stream) and reports the exit code", async () => {
+    const p = { server: { findMany: jest.fn().mockResolvedValue([{ id: "s1", teamId: "t1" }]) } } as unknown as PrismaService;
+    const a = { permissionsByTeam: jest.fn().mockResolvedValue(new Map([["t1", new Set(["servers:ops"])]])) } as unknown as TeamAccessService;
+    let call = 0;
+    const agentWs = {
+      isOnline: jest.fn().mockReturnValue(true),
+      sendCommand: jest.fn().mockImplementation(() => (++call === 1 ? Promise.reject(new AgentDisconnectedException()) : Promise.resolve({ exitCode: 0, output: `${HEAD}${BEGIN}\nTUGRA_PATCH_RC=7\n` }))),
+    } as unknown as AgentWsServer;
+    const logs = makeLogs();
+    const { results } = await make(p, a, agentWs, logs).upgradeAllBulk("u1", ["s1"]);
+    expect(results[0]).toMatchObject({ serverId: "s1", online: true, exitCode: 7 });
+    expect(logs.begin).not.toHaveBeenCalled();
   });
 });
