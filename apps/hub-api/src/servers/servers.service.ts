@@ -9,6 +9,7 @@ import {
 import { ModuleRef } from "@nestjs/core";
 import { z } from "zod";
 import { Prisma, Role, ServerStatus } from "@prisma/client";
+import { DEFAULT_CLEANUP_DATA } from "../server-ops/cleanup-defaults";
 import { AGENT_CAPABILITIES } from "@tugra/shared";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService, type AuditFilters } from "../audit/audit.service";
@@ -162,13 +163,11 @@ export class ServersService {
         enrollTokenExpiresAt: new Date(Date.now() + ENROLL_TTL_MS),
         status: ServerStatus.PENDING,
         capabilities: DEFAULT_CAPABILITIES, // least privilege: no terminal by default
-        // Disk hygiene on by default (Coolify parity): a daily scoped prune that only runs above 80% disk.
-        // The prune is rollback-safe and never touches named volumes (cleanupVolumes stays false), so it's
-        // safe out of the box; the operator can retune or disable it. Scheduled at the next hub bootstrap
-        // (or on the next setConfig). Kept in sync with provisionLocalServer and the cleanup-default backfill.
-        cleanupEnabled: true,
-        cleanupCron: "0 3 * * *",
-        cleanupThresholdPct: 80,
+        // Disk hygiene on by default (Coolify parity): daily scoped prune + a run whenever disk reaches 80%.
+        // Rollback-safe (never named volumes unless opted in); the operator can retune or turn it off. The
+        // scheduler registers it within 5 minutes (CleanupSchedulerService sweep). Same defaults on every
+        // create path: provisionLocalServer, the bulk create, and the "never configured" backfill migration.
+        ...DEFAULT_CLEANUP_DATA,
         // Set only for cloud-provisioned servers, so a later delete can destroy the VM.
         ...(provisioning ? { provider: provisioning.provider, cloudCredentialId: provisioning.cloudCredentialId } : {}),
       },
