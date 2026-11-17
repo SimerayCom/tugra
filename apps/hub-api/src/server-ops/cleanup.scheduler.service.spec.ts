@@ -17,15 +17,25 @@ function make(opts: {
   const findMany = jest.fn().mockImplementation(async (args: { where: Record<string, unknown> }) =>
     opts.servers.filter((s) => (args.where.cleanupEnabled === true ? s.cleanupEnabled === true : true) && (args.where.cleanupThresholdPct ? s.cleanupThresholdPct != null : true)),
   );
+  const findUnique = jest.fn().mockImplementation(async (args: { where: { id: string } }) => {
+    const row = opts.servers.find((x) => x.id === args.where.id);
+    return row ? { id: row.id, cleanupEnabled: row.cleanupEnabled } : null;
+  });
   const prisma = {
-    server: { findMany },
+    server: { findMany, findUnique },
     metric: { findFirst: jest.fn().mockResolvedValue(opts.metric === undefined ? hot : opts.metric) },
   } as unknown as PrismaService;
-  const runCleanup = jest.fn().mockResolvedValue({ ok: true, reclaimed: "", output: "" });
+  const runCleanup = jest.fn().mockResolvedValue({ ok: true, reclaimed: "1.2GB", output: "Total reclaimed space: 1.2GB" });
   const runner = { runCleanup } as unknown as CleanupRunnerService;
   // Atomic SET NX EX: first claim per key wins, later ones get null — like Redis.
   const claimed = new Set<string>();
-  const set = opts.redisSet ?? jest.fn().mockImplementation(async (k: string) => (claimed.has(k) ? null : (claimed.add(k), "OK")));
+  const ttl = new Map<string, number>();
+  const set = opts.redisSet ?? jest.fn().mockImplementation(async (k: string, _v: string, _ex: string, sec: number, nx?: string) => {
+    if (nx === "NX" && claimed.has(k)) return null;
+    claimed.add(k);
+    ttl.set(k, sec);
+    return "OK";
+  });
   const redis = { client: { set } } as unknown as RedisService;
   const svc = new CleanupSchedulerService({ get: () => "redis://x" } as unknown as ConfigService, prisma, runner, redis);
   const added: Array<{ name: string; opts: unknown }> = [];
@@ -36,7 +46,7 @@ function make(opts: {
     getRepeatableJobs: jest.fn().mockResolvedValue(repeatables),
     removeRepeatableByKey: jest.fn().mockImplementation(async (k: string) => void removed.push(k)),
   };
-  return { svc, runCleanup, added, removed, set, findMany };
+  return { svc, runCleanup, added, removed, set, findMany, ttl };
 }
 
 const srv = (id: string, over: Record<string, unknown> = {}) => ({
@@ -133,5 +143,73 @@ describe("CleanupSchedulerService.sweep (disk-threshold trigger)", () => {
     const { svc, added } = make({ servers: [srv("new", { cleanupThresholdPct: null })] });
     await svc.sweep(NOW);
     expect(added.map((a) => a.name)).toEqual(["cleanup:new"]);
+  });
+});
+
+describe("threshold run that frees nothing backs off", () => {
+  const empty = { ok: true, reclaimed: "0B", output: "Total reclaimed space: 0B" };
+
+  it("holds the Redis slot for 6h after a run that reclaimed nothing, and a run that reclaimed something keeps 1h", async () => {
+    const a = make({ servers: [srv("a")] });
+    a.runCleanup.mockResolvedValue(empty);
+    await a.svc.sweep(NOW);
+    expect(a.ttl.get("cleanup:threshold:a")).toBe(6 * 3600);
+    const b = make({ servers: [srv("a")] });
+    await b.svc.sweep(NOW);
+    expect(b.ttl.get("cleanup:threshold:a")).toBe(3600);
+  });
+
+  it("does not back off for a skipped (deploy running) or failed run", async () => {
+    const skipped = make({ servers: [srv("a")] });
+    skipped.runCleanup.mockResolvedValue({ ok: true, reclaimed: "", output: "skipped: 1 deploy(s) running on this server" });
+    await skipped.svc.sweep(NOW);
+    expect(skipped.ttl.get("cleanup:threshold:a")).toBe(3600);
+    const failed = make({ servers: [srv("a")] });
+    failed.runCleanup.mockResolvedValue({ ok: false, reclaimed: "", output: "boom" });
+    await failed.svc.sweep(NOW);
+    expect(failed.ttl.get("cleanup:threshold:a")).toBe(3600);
+  });
+
+  it("in-process fallback also backs off 6h (not 1h) after an empty run", async () => {
+    const { svc, runCleanup } = make({ servers: [srv("a")], metric: { ...hot, ts: new Date(NOW.getTime() + 10 * 3_600_000) }, redisSet: jest.fn().mockRejectedValue(new Error("redis down")) });
+    runCleanup.mockResolvedValue(empty);
+    await svc.sweep(NOW);
+    await svc.sweep(new Date(NOW.getTime() + 61 * 60_000));
+    expect(runCleanup).toHaveBeenCalledTimes(1);
+    await svc.sweep(new Date(NOW.getTime() + 6 * 3600_000 + 60_000));
+    expect(runCleanup).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("worker handler (processJob) and sweep registration", () => {
+  it("a sweep job reaches sweep(); a per-server job reaches runCleanup as the scheduler actor", async () => {
+    const { svc, runCleanup } = make({ servers: [srv("a")] });
+    const sweep = jest.spyOn(svc, "sweep");
+    await svc.processJob({ name: "cleanup-threshold-sweep", data: {} });
+    expect(sweep).toHaveBeenCalledTimes(1);
+    expect(runCleanup).toHaveBeenCalledTimes(1); // the sweep itself found a hot server
+    runCleanup.mockClear();
+    await svc.processJob({ name: "cleanup:a", data: { serverId: "a" } });
+    expect(runCleanup).toHaveBeenCalledWith("a", "scheduler", { skipIfDeploying: true });
+  });
+
+  it("a job for a server that was turned off is unscheduled and does not prune", async () => {
+    const { svc, runCleanup, removed } = make({ servers: [srv("a", { cleanupEnabled: false })], repeatables: ["cleanup:a"] });
+    await svc.processJob({ name: "cleanup:a", data: { serverId: "a" } });
+    expect(runCleanup).not.toHaveBeenCalled();
+    expect(removed).toEqual(["k:cleanup:a"]);
+  });
+
+  it("a job for a deleted server is unscheduled and does not prune", async () => {
+    const { svc, runCleanup, removed } = make({ servers: [], repeatables: ["cleanup:gone"] });
+    await svc.processJob({ name: "cleanup:gone", data: { serverId: "gone" } });
+    expect(runCleanup).not.toHaveBeenCalled();
+    expect(removed).toEqual(["k:cleanup:gone"]);
+  });
+
+  it("registerSweep adds the sweep repeatable every 5 minutes", async () => {
+    const { svc, added } = make({ servers: [] });
+    await svc.registerSweep();
+    expect(added).toEqual([{ name: "cleanup-threshold-sweep", opts: { repeat: { every: 300000 } } }]);
   });
 });

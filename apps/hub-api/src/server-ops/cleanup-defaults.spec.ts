@@ -2,6 +2,7 @@ import { ServerStatus } from "@prisma/client";
 import {
   DEFAULT_CLEANUP_DATA,
   planCleanupSchedule,
+  reclaimedNothing,
   shouldTriggerThresholdCleanup,
   THRESHOLD_SAMPLE_MAX_AGE_MS,
   type ThresholdInput,
@@ -56,5 +57,15 @@ describe("planCleanupSchedule", () => {
   });
   it("enabled with neither gets the default daily cron", () => {
     expect(planCleanupSchedule({ cleanupCron: null, cleanupIntervalHours: null, timezone: null })).toEqual({ kind: "cron", cron: "0 3 * * *" });
+  });
+});
+
+describe("reclaimedNothing", () => {
+  it("is true only for a completed run that freed nothing", () => {
+    expect(reclaimedNothing({ ok: true, reclaimed: "0B", output: "x" })).toBe(true);
+    expect(reclaimedNothing({ ok: true, reclaimed: "", output: "x" })).toBe(true);
+    expect(reclaimedNothing({ ok: true, reclaimed: "1.2GB", output: "x" })).toBe(false);
+    expect(reclaimedNothing({ ok: true, reclaimed: "", output: "skipped: 1 deploy(s) running" })).toBe(false);
+    expect(reclaimedNothing({ ok: false, reclaimed: "", output: "boom" })).toBe(false);
   });
 });

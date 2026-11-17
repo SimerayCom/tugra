@@ -18,6 +18,8 @@ export const DEFAULT_CLEANUP_DATA = {
 
 /** A threshold-triggered run happens at most once per hour per server. */
 export const THRESHOLD_COOLDOWN_SEC = 3600;
+/** After a threshold run that freed nothing (disk full of non-Docker data), wait this long before the next one. */
+export const THRESHOLD_BACKOFF_SEC = 6 * 3600;
 /** A disk sample older than this is not evidence of the CURRENT usage (agent offline / metrics stalled). */
 export const THRESHOLD_SAMPLE_MAX_AGE_MS = 10 * 60 * 1000;
 
@@ -57,4 +59,10 @@ export function planCleanupSchedule(s: {
   if (s.cleanupCron) return { kind: "cron", cron: s.cleanupCron, ...(s.timezone ? { tz: s.timezone } : {}) };
   if (s.cleanupIntervalHours) return { kind: "interval", intervalSec: s.cleanupIntervalHours * 3600 };
   return { kind: "cron", cron: DEFAULT_CLEANUP_CRON, ...(s.timezone ? { tz: s.timezone } : {}) };
+}
+
+/** True when a completed (not skipped, not failed) cleanup run freed nothing: no reclaimed figure or 0B. */
+export function reclaimedNothing(r: { ok: boolean; reclaimed: string; output: string }): boolean {
+  if (!r.ok || r.output.startsWith("skipped:")) return false;
+  return r.reclaimed === "" || /^0(\.0+)?\s*B$/i.test(r.reclaimed);
 }

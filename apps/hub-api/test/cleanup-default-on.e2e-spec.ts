@@ -19,6 +19,10 @@ describe("cleanup default-on backfill (migration data statements)", () => {
   const tag = `cxm-${Date.now()}`;
   let teamId = "";
   const ids: Record<string, string> = {};
+  // The replayed UPDATEs have no row filter (they are the migration's), so they also hit servers that other
+  // suites left behind in the shared e2e DB. Snapshot those and restore them in afterAll.
+  const cols = { cleanupEnabled: true, cleanupCron: true, cleanupIntervalHours: true, cleanupThresholdPct: true, cleanupExplicit: true } as const;
+  let others: Array<{ id: string } & Record<keyof typeof cols, unknown>> = [];
 
   const mk = async (key: string, data: Record<string, unknown>) => {
     const s = await prisma.server.create({ data: { name: `${tag}-${key}`, teamId, enrollToken: `${tag}-${key}`, ...data } });
@@ -27,6 +31,7 @@ describe("cleanup default-on backfill (migration data statements)", () => {
   const get = (key: string) => prisma.server.findUniqueOrThrow({ where: { id: ids[key] } });
 
   beforeAll(async () => {
+    others = (await prisma.server.findMany({ select: { id: true, ...cols } })) as typeof others;
     teamId = (await prisma.team.create({ data: { name: tag } })).id;
     await mk("never", {}); // legacy row: off, nothing set, never ran
     await mk("withCron", { cleanupCron: "0 5 * * *" }); // off but has a schedule -> deliberate
@@ -43,6 +48,10 @@ describe("cleanup default-on backfill (migration data statements)", () => {
   });
 
   afterAll(async () => {
+    for (const o of others) {
+      const { id, ...data } = o;
+      await prisma.server.update({ where: { id }, data: data as never }).catch(() => undefined);
+    }
     await prisma.auditLog.deleteMany({ where: { target: { contains: tag } } }).catch(() => undefined);
     await prisma.auditLog.deleteMany({ where: { OR: [{ target: ids.auditedOff }, { target: { contains: ids.auditedBulk ?? "x" } }] } }).catch(() => undefined);
     await prisma.team.delete({ where: { id: teamId } }).catch(() => undefined);

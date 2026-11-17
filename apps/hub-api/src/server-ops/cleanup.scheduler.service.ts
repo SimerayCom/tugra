@@ -12,7 +12,7 @@ import { reapIfGone } from "../common/orphan-reap";
 import { PrismaService } from "../prisma/prisma.service";
 import { RedisService } from "../redis/redis.service";
 import { CleanupRunnerService } from "./cleanup-runner.service";
-import { planCleanupSchedule, shouldTriggerThresholdCleanup, THRESHOLD_COOLDOWN_SEC } from "./cleanup-defaults";
+import { planCleanupSchedule, reclaimedNothing, shouldTriggerThresholdCleanup, THRESHOLD_BACKOFF_SEC, THRESHOLD_COOLDOWN_SEC } from "./cleanup-defaults";
 
 const QUEUE = "cleanup";
 /** Repeatable job (every 5 min): registers any missing per-server schedule, then checks disk thresholds. */
@@ -28,7 +28,7 @@ export class CleanupSchedulerService
   private queue?: Queue;
   private worker?: Worker;
   /** In-process fallback for the once-an-hour throttle when Redis is unreachable (fail closed, not open). */
-  private readonly localThrottle = new Map<string, number>();
+  private readonly localThrottle = new Map<string, number>(); // serverId -> blocked-until (ms)
 
   constructor(
     private readonly config: ConfigService,
@@ -45,26 +45,37 @@ export class CleanupSchedulerService
     if (process.env.NODE_ENV === "test") return;
     const connection = this.connection();
     this.queue = new Queue(QUEUE, { connection, defaultJobOptions: DEFAULT_JOB_OPTIONS });
-    this.worker = new Worker(
-      QUEUE,
-      async (job) => {
-        if (job.name === SWEEP_JOB) {
-          await this.sweep();
-          return;
-        }
-        const serverId = job.data.serverId as string;
-        // Orphan self-heal: the server was deleted → stop this repeatable instead of failing every tick.
-        if (!(await reapIfGone(serverId, () => this.prisma.server.findUnique({ where: { id: serverId }, select: { id: true } }).then(Boolean), (i) => this.unschedule(i)))) return;
-        // The scheduled run always runs (daily hygiene, like Coolify); the disk threshold is a SEPARATE extra
-        // trigger (sweep). It still skips while a deploy is building on this server; a manual "Clean now" doesn't.
-        await this.runner.runCleanup(serverId, "scheduler", { skipIfDeploying: true });
-      },
-      { connection },
-    );
+    this.worker = new Worker(QUEUE, (job) => this.processJob(job), { connection });
     const registered = await this.registerAll(true);
     this.logger.log(`scheduled ${registered.ok}/${registered.total} docker cleanup(s)`);
     // Missing-schedule reconcile + disk-threshold trigger, every 5 minutes (also covers servers created after boot).
+    await this.registerSweep();
+  }
+
+  /** Register the 5-minute sweep repeatable (reconcile + disk trigger). Never throws: a failure only logs. */
+  async registerSweep(): Promise<void> {
+    if (!this.queue) return;
     await this.queue.add(SWEEP_JOB, {}, { repeat: { every: SWEEP_EVERY_MS } }).catch((e) => this.logger.warn(`cleanup sweep not scheduled: ${e instanceof Error ? e.message : e}`));
+  }
+
+  /** Worker handler: a sweep job runs the reconcile + threshold check; a per-server job runs the daily cleanup. */
+  async processJob(job: { name: string; data: { serverId?: string } }): Promise<void> {
+    if (job.name === SWEEP_JOB) {
+      await this.sweep();
+      return;
+    }
+    const serverId = job.data.serverId as string;
+    // Self-heal: a deleted server, or one an operator turned off (the reconcile can re-add a repeatable in the
+    // moment between a disable and its unschedule), stops this repeatable instead of pruning or failing every tick.
+    const live = await reapIfGone(
+      serverId,
+      () => this.prisma.server.findUnique({ where: { id: serverId }, select: { id: true, cleanupEnabled: true } }).then((r) => !!r && r.cleanupEnabled),
+      (i) => this.unschedule(i),
+    );
+    if (!live) return;
+    // The scheduled run always runs (daily hygiene, like Coolify); the disk threshold is a SEPARATE extra
+    // trigger (sweep). It still skips while a deploy is building on this server; a manual "Clean now" doesn't.
+    await this.runner.runCleanup(serverId, "scheduler", { skipIfDeploying: true });
   }
 
   /** Register the repeatable job for every enabled server. `force` re-registers (boot); otherwise only servers
@@ -103,11 +114,18 @@ export class CleanupSchedulerService
       const r = await this.redis.client.set(`cleanup:threshold:${serverId}`, String(now), "EX", THRESHOLD_COOLDOWN_SEC, "NX");
       return r === "OK";
     } catch {
-      const last = this.localThrottle.get(serverId);
-      if (last != null && now - last < THRESHOLD_COOLDOWN_SEC * 1000) return false;
-      this.localThrottle.set(serverId, now);
+      const until = this.localThrottle.get(serverId);
+      if (until != null && now < until) return false;
+      this.localThrottle.set(serverId, now + THRESHOLD_COOLDOWN_SEC * 1000);
       return true;
     }
+  }
+
+  /** A threshold run that freed nothing (disk full of non-Docker data) would repeat hourly forever: hold the
+   *  slot for THRESHOLD_BACKOFF_SEC instead, so it does not churn audit rows and notifications. */
+  private async extendThresholdSlot(serverId: string, now: number): Promise<void> {
+    this.localThrottle.set(serverId, now + THRESHOLD_BACKOFF_SEC * 1000);
+    await this.redis.client.set(`cleanup:threshold:${serverId}`, String(now), "EX", THRESHOLD_BACKOFF_SEC).catch(() => undefined);
   }
 
   /** One 5-minute tick: add any missing schedules, then run a cleanup on every enabled ONLINE server whose
@@ -127,7 +145,12 @@ export class CleanupSchedulerService
       if (!(await this.claimThresholdSlot(s.id, now.getTime()))) continue;
       triggered.push(s.id);
       // Same safety as a scheduled run: skip while a deploy is building here. Failures are recorded by the runner.
-      await this.runner.runCleanup(s.id, "threshold", { skipIfDeploying: true }).catch((e) => this.logger.warn(`threshold cleanup failed for ${s.id}: ${e instanceof Error ? e.message : e}`));
+      try {
+        const r = await this.runner.runCleanup(s.id, "threshold", { skipIfDeploying: true });
+        if (reclaimedNothing(r)) await this.extendThresholdSlot(s.id, now.getTime());
+      } catch (e) {
+        this.logger.warn(`threshold cleanup failed for ${s.id}: ${e instanceof Error ? e.message : e}`);
+      }
     }
     return { triggered };
   }
