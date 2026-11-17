@@ -864,10 +864,18 @@ function CleanupCard({ id, server }: { id: string; server: ServerView }) {
   const diskUsage = useQuery({ queryKey: ["server-disk-usage", id], queryFn: () => api.diskUsage(id), staleTime: 30_000, retry: false });
   const save = useMutation({
     // A cron expression (when given) overrides the plain interval server-side; blank clears it. thresholdPct
-    // (when set) gates the scheduled run on disk usage; blank clears it.
+    // (when set) is an extra trigger: a cleanup also runs when disk usage reaches it; blank clears it.
     mutationFn: () => api.setCleanupConfig(id, { enabled, intervalHours: Number(interval) || 24, cron: cron.trim() || null, thresholdPct: threshold.trim() ? Math.min(100, Math.max(1, Number(threshold) || 0)) : null, volumes }),
     onSuccess: invalidate,
   });
+
+  // Saved state (not the form draft): what the hub will actually do for this server.
+  const schedulePart = server.cleanupCron
+    ? t("servers.cleanupRunsCron", { cron: server.cleanupCron })
+    : server.cleanupIntervalHours
+      ? t("servers.cleanupRunsEvery", { hours: server.cleanupIntervalHours })
+      : t("servers.cleanupRunsDaily");
+  const diskPart = server.cleanupThresholdPct != null ? t("servers.cleanupRunsAtDisk", { pct: server.cleanupThresholdPct }) : t("servers.cleanupRunsNoDisk");
 
   return (
     <Card style={{ padding: 16, marginTop: 20 }}>
@@ -888,10 +896,21 @@ function CleanupCard({ id, server }: { id: string; server: ServerView }) {
               : `${t("servers.cleanFailed")}${clean.data?.output ? ` — ${clean.data.output.slice(-200)}` : ""}`}
         </div>
       )}
-      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>
-        {t("servers.cleanupDesc")}
-        {server.lastCleanupAt ? ` · ${t("servers.lastCleanup")}: ${new Date(server.lastCleanupAt).toLocaleString()}` : ""}
-      </p>
+      <div role="status" data-testid="cleanup-state" style={{ margin: "0 0 12px", fontSize: 12, color: "var(--c-tx2)" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 600, color: server.cleanupEnabled ? "var(--c-g, var(--c-tx))" : "var(--c-tx)" }}>
+          <span aria-hidden style={{ width: 8, height: 8, borderRadius: "50%", background: server.cleanupEnabled ? "var(--c-g, currentColor)" : "var(--c-tx3)" }} />
+          {server.cleanupEnabled ? t("servers.cleanupStateOn") : t("servers.cleanupStateOff")}
+        </div>
+        <div style={{ marginTop: 2 }}>
+          {server.cleanupEnabled
+            ? `${schedulePart} ${diskPart}.`
+            : t("servers.cleanupStateOffHint")}
+          {` · ${t("servers.lastCleanup")}: ${server.lastCleanupAt ? new Date(server.lastCleanupAt).toLocaleString() : t("servers.cleanupNeverRan")}`}
+        </div>
+      </div>
+      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 4px" }}>{t("servers.cleanupDesc")}</p>
+      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 4px" }}>{t("servers.cleanupKeeps")}</p>
+      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("servers.cleanupDefaults")}</p>
       {diskUsage.data && (
         <div style={{ display: "flex", flexWrap: "wrap", gap: 16, margin: "0 0 12px", fontSize: 12, color: "var(--c-tx2)" }}>
           {(["diskImages", "diskContainers", "diskVolumes", "diskBuildCache"] as const).map((label, i) => {

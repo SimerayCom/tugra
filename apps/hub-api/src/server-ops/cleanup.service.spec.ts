@@ -66,6 +66,16 @@ describe("CleanupService", () => {
     expect(out).toEqual({ ok: true, reclaimed: "1GB", output: "reclaimed 1GB" });
   });
 
+  it("records an explicit operator choice (cleanupExplicit) on every saved config, including turning it off", async () => {
+    const update = jest.fn().mockResolvedValue({ ...server, cleanupEnabled: false });
+    const prisma = { server: { findUnique: jest.fn().mockResolvedValue(server), update } } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const scheduler = { schedule: jest.fn(), scheduleCron: jest.fn(), unschedule: jest.fn() } as unknown as CleanupSchedulerService;
+    await make(prisma, access, {}, scheduler).setConfig("u1", "s1", { enabled: false });
+    expect(update.mock.calls[0][0].data).toMatchObject({ cleanupEnabled: false, cleanupExplicit: true });
+    expect(scheduler.unschedule).toHaveBeenCalledWith("s1");
+  });
+
   it("schedules when enabled, unschedules otherwise", async () => {
     const update = jest.fn().mockResolvedValue({ ...server, cleanupEnabled: true, cleanupIntervalHours: 12 });
     const prisma = {

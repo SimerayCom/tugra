@@ -31,7 +31,7 @@ export class CleanupRunnerService {
    * never `docker system prune` / container / network / tagged-image prune, so stopped managed containers,
    * their networks and the hub-managed rollback images all survive); records lastCleanupAt. Returns the
    * agent output.
-   * `respectThreshold` (scheduled runs only): when the server has a cleanupThresholdPct, skip the prune
+   * `respectThreshold` (opt-in gate; the scheduler no longer sets it — the threshold is a separate disk trigger): when the server has a cleanupThresholdPct, skip the prune
    * unless the latest reported disk usage is at/above it. A manual "Clean now" passes false → always runs.
    * Unknown disk usage (no metric yet) never skips — better to prune than let a filling disk slip through.
    * `skipIfDeploying` (scheduled runs only): skip while a deploy is building/running on this server, so a

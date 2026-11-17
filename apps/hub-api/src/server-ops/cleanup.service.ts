@@ -13,10 +13,8 @@ import { CleanupSchedulerService } from "./cleanup.scheduler.service";
 import { buildDiskUsageScript, parseDiskUsage, type DiskUsage } from "./cleanup-script";
 import { planTargets } from "../bulk/bulk.service";
 import type { CleanupConfigInput } from "./dto";
+import { DEFAULT_CLEANUP_CRON } from "./cleanup-defaults";
 
-/** Daily at 03:00 — the schedule given to a server that is enabled with no cron or interval of its own, so
- *  "enabled" always means "actually runs" instead of silently never firing. */
-const DEFAULT_CLEANUP_CRON = "0 3 * * *";
 
 @Injectable()
 export class CleanupService {
@@ -102,6 +100,8 @@ export class CleanupService {
       where: { id: serverId },
       data: {
         cleanupEnabled: cfg.enabled,
+        // An operator made this choice (UI, API or fleet bulk): never let a default-on backfill override it.
+        cleanupExplicit: true,
         ...(cfg.intervalHours !== undefined ? { cleanupIntervalHours: cfg.intervalHours } : {}),
         ...(cfg.cron !== undefined ? { cleanupCron: cfg.cron } : {}),
         ...(cfg.thresholdPct !== undefined ? { cleanupThresholdPct: cfg.thresholdPct } : {}),

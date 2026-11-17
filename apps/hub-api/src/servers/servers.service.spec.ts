@@ -167,6 +167,18 @@ describe("ServersService.createServer (team role enforced)", () => {
     expect(create.mock.calls[0][0].data).toMatchObject({ provider: "hetzner", cloudCredentialId: "cc1" });
   });
 
+  it("a cloud/SSH-provisioned server also gets cleanup on by default", async () => {
+    const create = jest.fn().mockResolvedValue(row("s1", "teamA"));
+    const prisma = {
+      membership: { findUnique: jest.fn().mockResolvedValue({ role: Role.OWNER }) },
+      server: { create },
+    } as unknown as PrismaService;
+    await svcWith(prisma).createServer("u1", "web", "teamA", undefined, { provider: "hetzner", cloudCredentialId: "cc1" });
+    expect(create.mock.calls[0][0].data).toMatchObject({ cleanupEnabled: true, cleanupCron: "0 3 * * *", cleanupThresholdPct: 80 });
+    // A default is not an operator choice: the explicit flag stays at its schema default (false).
+    expect(create.mock.calls[0][0].data).not.toHaveProperty("cleanupExplicit");
+  });
+
   it("turns disk cleanup on by default (daily cron, 80% threshold)", async () => {
     const create = jest.fn().mockResolvedValue(row("s1", "teamA"));
     const prisma = {
@@ -187,6 +199,8 @@ describe("ServersService.createServersBulk (fleet fan-out)", () => {
     expect(res.servers).toHaveLength(3);
     expect(create).toHaveBeenCalledTimes(3);
     expect(res.servers.every((s) => /^tugra_en_/.test(s.enrollToken) && s.installCommand.includes(s.enrollToken))).toBe(true);
+    // The bulk path shares insertServer, so every server is created with cleanup on by default.
+    for (const c of create.mock.calls) expect(c[0].data).toMatchObject({ cleanupEnabled: true, cleanupCron: "0 3 * * *", cleanupThresholdPct: 80 });
     // servers:manage is checked ONCE up front, not per name.
     expect(membershipFind).toHaveBeenCalledTimes(1);
   });
