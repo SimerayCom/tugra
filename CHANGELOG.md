@@ -7,6 +7,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.0-beta.20] - 2026-11-17
+
 - **Server patching survives a container-engine upgrade.** "Update all" and single-package updates now run the package
   manager on the host as a transient systemd unit (`tugra-patch-<id>`), outside the container that starts them, so a
   docker-ce/containerd upgrade restarting Docker no longer kills the update half-way and leaves the engine half-configured;
