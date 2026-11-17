@@ -13,6 +13,7 @@ import {
   registryLoginPrelude,
   registryLogoutSteps,
   traefikLabels,
+  proxyNetworkPinLabel,
   serviceDomainLabels,
   certPreludeFor,
   PROXY_NETWORK,
@@ -142,7 +143,7 @@ export function composeOverridePath(app: { id: string }): string {
 export interface ComposeTugraLabel {
   key: string;
   value: string;
-  purpose: "traefik_routing" | "config_mount_fp";
+  purpose: "traefik_routing" | "proxy_network_pin" | "config_mount_fp";
   line: string;
 }
 
@@ -175,6 +176,9 @@ export function composeTugraLabels(
   for (const row of rows) {
     for (const l of serviceDomainLabels(app, row, { composeDollarEscape: opts.dollarEscape })) put(row.service, "traefik_routing", l);
   }
+  // Every routed service is on its project `default` network AND tugra-proxy → pin Traefik to the proxy network
+  // (once per service, even when it is both the web service and a per-service-domain target).
+  for (const svc of [...out.keys()]) put(svc, "proxy_network_pin", proxyNetworkPinLabel());
   (app.configMounts ?? []).forEach((m, i) => {
     // Fingerprint label so a content edit changes this service's compose config → `up -d` recreates it.
     put(m.serviceName, "config_mount_fp", `tugra.config-mount.${i}=${mountFp(m.content)}`);

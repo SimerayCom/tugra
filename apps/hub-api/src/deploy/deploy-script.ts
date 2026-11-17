@@ -54,7 +54,7 @@ export const PROXY_CONFIGHASH_LABEL = "tugra.proxy.confighash";
 // the hash via PROXY_IMAGE). It forces every existing proxy to reconcile to the new definition on its next
 // deploy — before the reconcile gate every domained deploy recreated unconditionally, so such a change
 // propagated "for free"; now making the hash change is what carries it.
-export const PROXY_SETUP_VERSION = "1";
+export const PROXY_SETUP_VERSION = "2";
 
 export type Source = "IMAGE" | "GIT" | "COMPOSE";
 export type BuildKind = "NIXPACKS" | "DOCKERFILE" | "STATIC" | "RAILPACK" | "HEROKU";
@@ -1513,16 +1513,21 @@ function sourceCommitRunToken(app: AppSpec): string {
   return "${TUGRA_C:+-e SOURCE_COMMIT=$TUGRA_C}";
 }
 
+/** `traefik.docker.network=tugra-proxy`: tells Traefik's docker provider which of a container's networks to take
+ *  the backend IP from. Every Tugra-routed container carries it (also covers a proxy started before
+ *  `--providers.docker.network` was added to the proxy flags). */
+export function proxyNetworkPinLabel(): string {
+  return `traefik.docker.network=${PROXY_NETWORK}`;
+}
+
 /** The Tugra-owned label lines a classic `docker run` carries for ingress: the Traefik set (domain apps only)
- *  plus the proxy-network pin. A dbNetwork app is on BOTH tugra-proxy and tugra-net; pin Traefik to the proxy
- *  network or it may pick the (proxy-unreachable) tugra-net IP and 502. Only added when the app opts in, so
- *  default apps keep byte-identical labels. Extra user networks put the app on >1 network too → same pin.
- *  Single source for the deploy script AND the read-only applied-labels view. */
+ *  plus the proxy-network pin. Every routed container gets the pin (a dbNetwork / extra-network / compose
+ *  default-network app is on >1 network and Traefik may otherwise pick an IP on a network it is not on and hang).
+ *  Previews and rolling-deploy twins share this builder. Single source for the deploy script AND the read-only
+ *  applied-labels view. */
 export function classicTugraLabelLines(app: TraefikLabelInput): string[] {
   if (!app.domain) return [];
-  const labels = [...traefikLabels(app)];
-  if (app.dbNetwork || appNetworkPlan(app).connect.length > 0) labels.push(`traefik.docker.network=${PROXY_NETWORK}`);
-  return labels;
+  return [...traefikLabels(app), proxyNetworkPinLabel()];
 }
 
 /** The stable-alias label (`tugra.alias=<alias>`), stamped so the alias is discoverable from `docker inspect`.
@@ -2376,6 +2381,7 @@ export function proxyConfigPreimage(opts: ProxySetupOpts = {}): string {
     `img=${PROXY_IMAGE}`,
     `email=${r.email}`,
     `bind=${r.bind}`,
+    `net=${PROXY_NETWORK}`,
     dnsPart,
     panelPart,
     `access=${r.accessLog ? "1" : "0"}`,
@@ -2429,6 +2435,10 @@ export function buildProxySetupScript(opts: ProxySetupOpts = {}): string {
     "--global.sendanonymoususage=false",
     "--providers.docker=true",
     "--providers.docker.exposedbydefault=false",
+    // Deterministic backend selection: a container on >1 network (compose default + tugra-proxy, db/app nets)
+    // otherwise lets Traefik pick ANY of its IPs, and the one it picks may be on a network Traefik is not on
+    // (every request then hangs). The proxy network is the only one Traefik is guaranteed to share.
+    `--providers.docker.network=${PROXY_NETWORK}`,
     // File provider for the panel router. ALWAYS on (even without a panel) so ANY recreate path keeps an
     // already-written panel.yml; apps keep routing via docker labels.
     "--providers.file.directory=/dynamic",

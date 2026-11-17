@@ -495,11 +495,28 @@ describe("composeTugraLabels (D5)", () => {
   it("groups traefik routing and config-mount fingerprints per service", () => {
     const m = composeTugraLabels(app, { dollarEscape: true });
     expect([...m.keys()]).toEqual(["web", "api"]);
-    expect(m.get("web")!.every((l) => l.purpose === "traefik_routing")).toBe(true);
+    expect(m.get("web")!.every((l) => l.purpose === "traefik_routing" || l.purpose === "proxy_network_pin")).toBe(true);
     expect(m.get("web")!.some((l) => l.key === "traefik.enable" && l.value === "true")).toBe(true);
     const api = m.get("api")!;
     expect(api.filter((l) => l.purpose === "config_mount_fp").map((l) => l.key)).toEqual(["tugra.config-mount.0"]);
     expect(api.some((l) => l.purpose === "traefik_routing")).toBe(true);
+  });
+
+  it("pins Traefik to tugra-proxy once on every routed service (web + per-service-domain), never on an unrouted one", () => {
+    const m = composeTugraLabels(app, { dollarEscape: true });
+    for (const svc of ["web", "api"]) {
+      expect(m.get(svc)!.filter((l) => l.line === "traefik.docker.network=tugra-proxy")).toHaveLength(1);
+      expect(m.get(svc)!.find((l) => l.key === "traefik.docker.network")!.purpose).toBe("proxy_network_pin");
+    }
+    // a service that is both the web service and a per-service-domain target is still pinned once
+    const both = composeTugraLabels({ ...app, serviceDomains: [{ service: "web", hostname: "z.example.com", port: 81 }] }, { dollarEscape: true });
+    expect(both.get("web")!.filter((l) => l.key === "traefik.docker.network")).toHaveLength(1);
+    // a mount-only service (no routing) gets no pin
+    const mountOnly = composeTugraLabels({ ...app, configMounts: [{ serviceName: "worker", target: "/c", content: "x" }] }, { dollarEscape: true });
+    expect(mountOnly.get("worker")!.some((l) => l.key === "traefik.docker.network")).toBe(false);
+    const yaml = parseYaml(composeOverride(app)) as { services: Record<string, { labels: string[] }> };
+    expect(yaml.services.web.labels).toContain("traefik.docker.network=tugra-proxy");
+    expect(yaml.services.api.labels).toContain("traefik.docker.network=tugra-proxy");
   });
 
   it("renders the override from exactly these lines (escaped), one labels block per service", () => {

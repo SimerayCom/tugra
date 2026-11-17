@@ -608,6 +608,13 @@ describe("deploy-script", () => {
       expect(s).toContain("traefik.http.services.tugra_abc.loadbalancer.healthcheck.interval=3s");
     });
 
+    it("the rollout twin AND the re-created live container both carry the proxy-network pin", () => {
+      const s = buildRollingDeployScript(domained, "v2", { probe: { kind: "httpExternal", port: 80, path: "/" }, ...gate });
+      const runs = s.split("\n").filter((l) => l.includes("docker run -d --name"));
+      expect(runs.length).toBeGreaterThanOrEqual(2);
+      for (const l of runs) expect(l).toContain("--label 'traefik.docker.network=tugra-proxy'");
+    });
+
     it("gate-accepted >=400 probe: live container is re-created WITHOUT the LB check label (no 503 after rename)", () => {
       const s = buildRollingDeployScript(domained, "v2", { probe: { kind: "httpExternal", port: 80, path: "/" }, ...gate });
       expect(s).toContain('if [ "$code" -ge 400 ]; then');
@@ -1814,6 +1821,32 @@ describe("deploy-script", () => {
     expect(s).toContain(PROXY_IMAGE);
   });
 
+  // --- Deterministic backend network ---------------------------------------------------------------
+  it("pins Traefik's docker provider to the proxy network (a multi-network container must not pick another IP)", () => {
+    for (const opts of [{}, { acmeEmail: "me@x.com", bind: "none" as const }, { acmeEmail: "me@x.com", panel: { domain: "app.example.com" } }]) {
+      const s = buildProxySetupScript(opts);
+      expect(s).toContain("--providers.docker.network=tugra-proxy");
+      // the flag is a Traefik arg (after the image), not a docker-run option
+      expect(s.indexOf("--providers.docker.network=tugra-proxy")).toBeGreaterThan(s.indexOf(PROXY_IMAGE));
+    }
+  });
+
+  it("drift: a proxy created before the network flag (old hash) no longer matches, so the reconcile gate recreates it", () => {
+    const opts = { acmeEmail: "me@x.com" };
+    const legacyPreimage = `v=1|img=${PROXY_IMAGE}|email=me@x.com|bind=public|dns=none|panel=none|access=0`;
+    const legacyHash = createHash("sha256").update(legacyPreimage).digest("hex").slice(0, 12);
+    expect(proxyConfigHash(opts)).not.toBe(legacyHash);
+    expect(proxyConfigPreimage(opts)).toContain("net=tugra-proxy");
+    const s = buildProxySetupScript(opts);
+    // gate compares the running container's stamped hash to the DESIRED one and only exits early on a match
+    expect(s).toContain(`DESIRED='${proxyConfigHash(opts)}'`);
+    expect(s).not.toContain(legacyHash);
+    expect(s).toContain('if [ "$CUR" = "$DESIRED" ] && [ "$STATE" = "running" ]; then');
+    expect(s).toContain("docker rm -f tugra-proxy");
+    // a forced recreate carries the flag too
+    expect(buildProxySetupScript({ ...opts, force: true })).toContain("--providers.docker.network=tugra-proxy");
+  });
+
   // --- Panel-TLS (DİLİM 1) ------------------------------------------------------------------------
   it("always mounts the file provider (even without a panel), alongside the docker provider", () => {
     const s = buildProxySetupScript({ acmeEmail: "me@x.com" });
@@ -2450,7 +2483,7 @@ describe("container ops + networking", () => {
 
   describe("byte-identity matrix (golden values captured from the pre-change builders)", () => {
     it("domain app run line is unchanged", () => {
-      expect(runLine(buildRunScript(dom, "v1"))).toBe("docker run -d --name tugra_abc --restart unless-stopped --log-driver json-file --log-opt max-size=10m --log-opt max-file=3 --env-file /etc/tugra/env/abc.env --network tugra-proxy --label 'traefik.enable=true' --label 'traefik.http.routers.tugra_abc.rule=Host(`x.com`)' --label 'traefik.http.routers.tugra_abc.entrypoints=websecure' --label 'traefik.http.routers.tugra_abc.tls.certresolver=le' --label 'traefik.http.services.tugra_abc.loadbalancer.server.port=80' --label 'traefik.http.routers.tugra_abc-web.rule=Host(`x.com`)' --label 'traefik.http.routers.tugra_abc-web.entrypoints=web' --label 'traefik.http.routers.tugra_abc-web.middlewares=tugra_abc-redirect' --label 'traefik.http.middlewares.tugra_abc-redirect.redirectscheme.scheme=https' 'tugra_abc:v1'");
+      expect(runLine(buildRunScript(dom, "v1"))).toBe("docker run -d --name tugra_abc --restart unless-stopped --log-driver json-file --log-opt max-size=10m --log-opt max-file=3 --env-file /etc/tugra/env/abc.env --network tugra-proxy --label 'traefik.enable=true' --label 'traefik.http.routers.tugra_abc.rule=Host(`x.com`)' --label 'traefik.http.routers.tugra_abc.entrypoints=websecure' --label 'traefik.http.routers.tugra_abc.tls.certresolver=le' --label 'traefik.http.services.tugra_abc.loadbalancer.server.port=80' --label 'traefik.http.routers.tugra_abc-web.rule=Host(`x.com`)' --label 'traefik.http.routers.tugra_abc-web.entrypoints=web' --label 'traefik.http.routers.tugra_abc-web.middlewares=tugra_abc-redirect' --label 'traefik.http.middlewares.tugra_abc-redirect.redirectscheme.scheme=https' --label 'traefik.docker.network=tugra-proxy' 'tugra_abc:v1'");
     });
     it("domain + dbNetwork run line is unchanged (same single trailing cleanup + connect)", () => {
       expect(runLine(buildRunScript({ ...dom, dbNetwork: true }, "v1"))).toBe("docker run -d --name tugra_abc --restart unless-stopped --log-driver json-file --log-opt max-size=10m --log-opt max-file=3 --env-file /etc/tugra/env/abc.env --network tugra-proxy --label 'traefik.enable=true' --label 'traefik.http.routers.tugra_abc.rule=Host(`x.com`)' --label 'traefik.http.routers.tugra_abc.entrypoints=websecure' --label 'traefik.http.routers.tugra_abc.tls.certresolver=le' --label 'traefik.http.services.tugra_abc.loadbalancer.server.port=80' --label 'traefik.http.routers.tugra_abc-web.rule=Host(`x.com`)' --label 'traefik.http.routers.tugra_abc-web.entrypoints=web' --label 'traefik.http.routers.tugra_abc-web.middlewares=tugra_abc-redirect' --label 'traefik.http.middlewares.tugra_abc-redirect.redirectscheme.scheme=https' --label 'traefik.docker.network=tugra-proxy' 'tugra_abc:v1' && docker network connect tugra-net tugra_abc || { docker rm -f tugra_abc 2>/dev/null; false; }");
@@ -2463,12 +2496,12 @@ describe("container ops + networking", () => {
     });
     it("whole swap scripts are unchanged when every new field is unset/null/0", () => {
       const unset: Partial<AppSpec> = { stopGracePeriodSec: null, drainSec: 0, restartMaxRetries: null, containerAlias: null, networks: [] };
-      expect(sha(buildRunScript({ ...dom, ...unset }, "v1"))).toBe("7fb942d4aefb5a69ff453b3ac7013446ac2ea6a7a2c0eb41c3e6730a0dca1a74");
+      expect(sha(buildRunScript({ ...dom, ...unset }, "v1"))).toBe("28f196c571155e8c8b916c5d0673529666fa359c8cbaab0071e776f94b7ccfe1");
       expect(sha(buildRunScript({ ...dom, dbNetwork: true, ...unset }, "v1"))).toBe("c509ecc91b9514aea4799261efcc584f65b9899b4947c1085e1cf70a8ea2bd98");
-      expect(sha(buildRollingDeployScript({ ...dom, ...unset }, "v2", rollingOpts))).toBe("e06315e0a60affaf7ec73d20397cde5837cf8937fdef4aa1aee32a9e65b0052d");
+      expect(sha(buildRollingDeployScript({ ...dom, ...unset }, "v2", rollingOpts))).toBe("47f047fd5cf634a6553425e356230bf642dae40d9d2574bdf9e05290c0ea3b6f");
       expect(
         sha(buildRollingDeployScript({ ...dom, ...unset }, "v2", { ...rollingOpts, soak: { windowSec: 30, intervalSec: 5 } })),
-      ).toBe("11959680e14e95aec9e60587388a28fde1897d550ebc0f68e3d5458c15c4987e");
+      ).toBe("1dba91f7fe8844a4ff74fa108eb05f56da24a8ee624336761a0bd4bfd10825fc");
       expect(
         sha(buildRecreateDeployScript({ ...withEnv, dbNetwork: true, hostPort: 8080, ...unset }, "v2", { probe: { kind: "stableWait" }, prevVersion: "v1", ...gate })),
       ).toBe("b0368331d6cd6a95a1f6d642dfedfdf44a8ed8ad9decd41c9cee694b611ee2b1");
@@ -2622,9 +2655,10 @@ describe("container ops + networking", () => {
       expect(s.indexOf("docker network create --label tugra.managed=true 'a'")).toBeLessThan(run);
       expect(s.indexOf("docker network create --label tugra.managed=true 'b'")).toBeLessThan(run);
     });
-    it("pins Traefik to tugra-proxy only when the routed app has extra networks", () => {
+    it("pins Traefik to tugra-proxy on every routed app, with or without extra networks, never on an unrouted one", () => {
       expect(c(buildRunScript({ ...dom, networks: ["a"] }, "v1"))).toContain("traefik.docker.network=tugra-proxy");
-      expect(c(buildRunScript(dom, "v1"))).not.toContain("traefik.docker.network");
+      expect(c(buildRunScript(dom, "v1"))).toContain("traefik.docker.network=tugra-proxy");
+      expect(c(buildRunScript({ ...base, env: { A: "1" } }, "v1"))).not.toContain("traefik.docker.network");
     });
     it("a network equal to the primary is dropped; tugra-apps is the primary for a bare app", () => {
       const l = c(buildRunScript({ ...base, networks: ["tugra-apps", "a"] }, "v1"));
@@ -3014,8 +3048,8 @@ describe("custom container labels (D5)", () => {
     it("is empty without a domain", () => {
       expect(classicTugraLabelLines(base)).toEqual([]);
     });
-    it("matches traefikLabels for a plain domain app (no pin)", () => {
-      expect(classicTugraLabelLines(dom)).toEqual(traefikLabels(dom));
+    it("is traefikLabels plus the proxy-network pin for a plain domain app", () => {
+      expect(classicTugraLabelLines(dom)).toEqual([...traefikLabels(dom), "traefik.docker.network=tugra-proxy"]);
     });
     it("appends the proxy-network pin with dbNetwork or extra networks", () => {
       expect(classicTugraLabelLines({ ...dom, dbNetwork: true }).slice(-1)).toEqual(["traefik.docker.network=tugra-proxy"]);
