@@ -373,15 +373,11 @@ The outage is evidenced, not assumed: the run has no exit code at the moment of 
 (`L15_PART_AT_KILL`), and the run must commit parts after the hub came back. A run that ends early with a non-zero exit dies with the
 migrator's failure and the log tail; only a clean exit 0 before the kill is reported as a dataset too small for the link. For PostgreSQL the
 destination's container is then recreated through the hub's own provision route and the rows are counted again.
-**The 18 leg is expected red today** with a `PRODUCT FINDING` line: the hub refuses a streamed dump into a PostgreSQL 18 destination, because
-Tugra mounts the database volume at the pre-18 data path (`database-script.ts`), so the restored cluster would sit outside the named volume.
-The gate is `importer/volume-stream/vx-dest-gate.ts` `dumpDestLayout`, called from `vx.service.ts` `begin` and `vx-apply.service.ts`
-`runDumpApply`. **The defect underneath is wider than the gate**: `databases/database-script.ts` builds every PostgreSQL run with
-`-v <volume>:/var/lib/postgresql/data` and no `PGDATA`, while the 18 image keeps its cluster under `/var/lib/postgresql/18/docker`, outside
-that mount, in an anonymous volume that a recreate orphans. **Every PostgreSQL 18 database Tugra provisions is affected**, fresh or restored,
-and nothing but a recreate shows it, which is why L16 leg A and the streamed legs recreate the container (`lab_dest_survives_recreate`) and
-name it as a `PRODUCT FINDING` when the rows are gone. When provisioning keeps the cluster and the gate is lifted, L15 and L9's streamed leg
-turn green with no change, and so does L16's leg B (it is decided on the hub's refusal, not on the version).
+**The 18 leg is green** since lab run 5 (`d9ee94b0`): it used to be red with a `PRODUCT FINDING` line, because Tugra mounted every
+PostgreSQL volume at the pre-18 data path while the 18 image keeps its cluster under `/var/lib/postgresql/18/docker`, outside the named
+volume, and `dumpDestLayout` refused the destination. New PostgreSQL 18 databases now mount the volume at `/var/lib/postgresql`
+(`Database.pgParentMount`), the gate refuses only an 18 database created before the fix, and the leg restores, recreates and
+counts the rows again.
 
 ### L16 PostgreSQL TLS (`l16-pg-tls.sh`, `L16_IMAGE`)
 `L16_IMAGE` is 16, 17, 18 or pgvector 17. **A**: a fresh destination with `Database.ssl` (what the importer sets from a `sslmode=require`
@@ -394,8 +390,8 @@ answers a nearest-neighbour query over TLS. The hub then recreates the container
 there (`L16_PERSISTENCE=ok`, or `lost-on-recreate` as a `PRODUCT FINDING`, see L15; the leg keeps gathering evidence and fails at its end).
 **B**: the same kind of destination receives a database through the streamed lane (L15's source and checks) and is read back over
 `sslmode=require`: the strict fingerprint is equal, and the data survives a recreate. B is always attempted; when the hub answers with the
-PostgreSQL 18 destination refusal (L15) the skip is written to `l16.summary` (`L16_RESTORE=skipped-pg18-destination-refused`) and the
-refusal is named, not hidden.
+PostgreSQL 18 destination refusal (an 18 database created before the parent-mount fix) the skip is written to `l16.summary`
+(`L16_RESTORE=skipped-pg18-destination-refused`) and the refusal is named, not hidden. A new 18 destination is not refused.
 
 ### Data integrity (`integrity.sh`)
 A row count proves rows arrived, not that the database means the same on the target. L6, L9, L10, L15 and L16 compare a **fingerprint**
@@ -410,8 +406,8 @@ and ACL of `lab_own` are not: **that is a product finding, the dump lanes do not
 
 ### What the fleet-shaped lab pins for the guided migration
 1. **The biggest database has an automatic physical lane only on PostgreSQL 16 and 17** (L9). On 18 the layout gate refuses the copy and
-   the artifact route is over the cap; the lane for it is `stream-logical` (L9, L15), which today refuses a PostgreSQL 18 destination
-   (see L15). Which version it runs is an owner fact, asked before the wave that contains it.
+   the artifact route is over the cap; the lane for it is `stream-logical` (L9, L15), which restores into a new PostgreSQL 18 destination
+   (L15, green since run 5). Which version it runs is an owner fact, asked before the wave that contains it.
 2. **A MariaDB over 256 MiB of dump has no automatic lane under the default policy** (L10), and the 1.8 GB one is over it; `stream-logical`
    carries it (L10, L15).
 3. **Volume size is not dump size** (L10): decide on the dump.
