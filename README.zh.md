@@ -203,7 +203,7 @@ Pro 和 Cloud 版本（SSO、审计日志导出、白标、托管控制平面）
 - [x] 服务器补丁管理（操作系统软件包更新），在主机上以临时 systemd 单元运行，因此 Docker/containerd 升级不会把更新中途打断；Ubuntu 的分阶段（phased）更新单独列出 · 与 Coolify 一致的 Docker 清理（每天一次，另外在服务器磁盘超过阈值时也会运行；服务器页面会显示它删除什么、绝不删除什么）
 - [x] 在面板中重启服务器（立即，或最多提前 7 天预约），带影响预览，重启后自动检查 Docker、此前运行的每个容器、每个已路由的域名以及需要重启的标志是否都已恢复；仅限手动，也可通过 CLI 和 MCP 使用
 - [x] 自更新（签名发布）+ 引导式上手
-- [x] 迁移工具——接管本地 Docker 容器 + 从 Coolify（Web 向导）和 Dokploy（Web 向导 / API / MCP / CLI）导入（连接 · 规划 · 应用 · 回滚）+ 一条命令的跨主机数据库数据迁移（Postgres · MySQL · MariaDB · Redis · KeyDB · Dragonfly）+ 流式、可断点续传的应用卷复制 + 有引导、可恢复的迁移运行（`tugra import run` 与 `migration_run_*` MCP 工具：先 dry-run，输入式确认，可中止/回退），以及面向大型数据库的流式转储通道（Postgres · MySQL · MariaDB）——已对照 Coolify 4.1.2 与 4.7.5 检查（API 速率限制、带时间戳的容器名、`read:sensitive` 令牌、自定义容器名前缀）；其数据平面在使用生成数据的 CI 迁移实验室中运行，尚未在真实集群上跑过
+- [x] 迁移工具——接管本地 Docker 容器 + 从 Coolify（Web 向导）和 Dokploy（Web 向导 / API / MCP / CLI）导入（连接 · 规划 · 应用 · 回滚）+ 一条命令的跨主机数据库数据迁移（Postgres · MySQL · MariaDB · Redis · KeyDB · Dragonfly）+ 流式、可断点续传的应用卷复制 + 有引导、可恢复的迁移运行（`tugra import run` 与 `migration_run_*` MCP 工具：先 dry-run，输入式确认，可中止/回退），以及面向大型数据库的流式转储通道（Postgres · MySQL · MariaDB）——已对照 Coolify 4.1.2 与 4.7.5 检查（API 速率限制、带时间戳的容器名、`read:sensitive` 令牌）；其数据平面在使用生成数据的 CI 迁移实验室中运行，尚未在真实集群上跑过
 - [x] 恢复验证演练（定时执行，带存活看门狗）· PostgreSQL 时间点恢复（WAL 传输 · 基础备份 · 恢复到任意一秒）
 - [x] 带健康检查关卡的滚动部署 + 可选启用的切换后 soak 观察与自动回退 · 机群滚动发布（金丝雀 → 分批 → 健康检查关卡 → 暂停/恢复/回滚）
 - [x] 部署可在 hub 重启后继续完成（agent 命令日志 + 结果接管）· 单次部署详情页（时间线 · 实时日志 · 配置对比）
