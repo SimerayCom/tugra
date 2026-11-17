@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { parse as yamlParse } from "yaml";
 import {
   buildPanelRouterYaml,
@@ -9,6 +11,30 @@ import {
   PANEL_HUB_ALIAS,
   PANEL_WEB_ALIAS,
 } from "./panel-router";
+
+describe("panel upstreams resolve on exactly one network", () => {
+  // hub-api / web sit on `default` AND `tugra-panel`; Traefik is on tugra-proxy + tugra-panel (never `default`).
+  // The file provider must therefore address them by an alias that exists ONLY on tugra-panel, never by service /
+  // container name (which resolves on both networks and could hand Traefik an unreachable IP).
+  const compose = yamlParse(readFileSync(join(__dirname, "../../../../deploy/docker-compose.yml"), "utf8"));
+  const urls = Object.values(
+    (yamlParse(buildPanelRouterYaml({ domain: "app.example.com", resolver: "le" })).http.services as Record<string, { loadBalancer: { servers: { url: string }[] } }>),
+  ).flatMap((svc) => svc.loadBalancer.servers.map((x) => new URL(x.url).hostname));
+
+  it("every panel upstream host is an alias declared only on the tugra-panel network", () => {
+    expect(urls.sort()).toEqual([PANEL_HUB_ALIAS, PANEL_WEB_ALIAS].sort());
+    for (const [svc, alias] of [["hub-api", PANEL_HUB_ALIAS], ["web", PANEL_WEB_ALIAS]] as const) {
+      const nets = compose.services[svc].networks;
+      expect(nets["tugra-panel"].aliases).toEqual([alias]);
+      expect(nets.default?.aliases ?? []).not.toContain(alias);
+      expect(nets["tugra-proxy"]).toBeUndefined();
+    }
+  });
+
+  it("the upstream hosts are not the compose service names (those resolve on the default network too)", () => {
+    for (const host of urls) expect(Object.keys(compose.services)).not.toContain(host);
+  });
+});
 
 describe("panel-router", () => {
   describe("buildPanelRouterYaml (TLS)", () => {
