@@ -7,6 +7,10 @@ import { DigitalOceanApiClient } from "./providers/digitalocean.client";
 import { VultrApiClient } from "./providers/vultr.client";
 import { FAKE_CONSOLE_PASSWORD, FAKE_CONSOLE_URL, FAKE_ROOT_PASSWORD, FakeHetznerApi } from "./testing/fake-hetzner-api";
 import { REQUIRE_SCOPES } from "../api-tokens/require-scopes.decorator";
+import { IdempotencyInterceptor } from "../common/idempotency.interceptor";
+import { lastValueFrom, of } from "rxjs";
+import type { CallHandler, ExecutionContext } from "@nestjs/common";
+import type { RedisService } from "../redis/redis.service";
 import type { PrismaService } from "../prisma/prisma.service";
 import type { AuditService } from "../audit/audit.service";
 import type { CryptoService } from "../crypto/crypto.service";
@@ -222,6 +226,40 @@ describe("OobService", () => {
       expect(e.getResponse()).toMatchObject({ code: mapped, statusCode: http });
       expect([401, 403]).not.toContain(e.getStatus());
     });
+    it("a request timeout is a 504 oob_provider_timeout; for an action it says the outcome is unknown", () => {
+      const e = oobHttpError("hetzner", new HetznerApiError("hetzner api timed out", 0, undefined, true), true);
+      expect(e.getStatus()).toBe(504);
+      expect(e.getResponse()).toMatchObject({ code: "oob_provider_timeout", statusCode: 504 });
+      expect(JSON.stringify(e.getResponse())).toMatch(/may or may not|unknown/i);
+      const read = oobHttpError("hetzner", new HetznerApiError("hetzner api timed out", 0, undefined, true));
+      expect(read.getStatus()).toBe(504);
+      expect(JSON.stringify(read.getResponse())).not.toMatch(/may or may not|unknown/i);
+      // a plain connection failure stays a 502
+      expect(oobHttpError("hetzner", new HetznerApiError("hetzner api unreachable", 0), true).getStatus()).toBe(502);
+    });
+    it("the real client reports an aborted request as a timeout and a refused connection as unreachable", async () => {
+      jest.useFakeTimers();
+      const api = new FakeHetznerApi().add({ id: 42, name: "web-1", status: "running" }).install();
+      try {
+        api.hang = true;
+        const pending = new HetznerApiClient().power("hz-token", "42", "reboot");
+        const assertion = expect(pending).rejects.toMatchObject({ status: 0, timedOut: true });
+        await jest.advanceTimersByTimeAsync(21_000);
+        await assertion;
+        api.hang = false;
+        api.failNext = { status: 0, code: "x", message: "x" };
+        await expect(new HetznerApiClient().power("hz-token", "42", "reboot")).rejects.toMatchObject({ status: 0, timedOut: false });
+      } finally {
+        api.uninstall();
+        jest.useRealTimers();
+      }
+    });
+    it("a timed-out power action is audited as failed with 504 and tells the caller to check the state", async () => {
+      ctx = make();
+      ctx.api.failNext = { status: -1, code: "timeout", message: "timeout" };
+      await expect(ctx.svc.power("u1", "s1", { action: "reboot", confirmName: "web-1" })).rejects.toMatchObject({ response: { code: "oob_provider_timeout", statusCode: 504 } });
+      expect(ctx.audit.log).toHaveBeenLastCalledWith(expect.objectContaining({ action: "server.oob.power.reboot.failed", meta: expect.objectContaining({ httpStatus: 504 }) }));
+    });
     it("a non-provider error becomes a 502, keeping a readable message", () => {
       const e = oobHttpError("hetzner", new Error("weird"));
       expect(e.getStatus()).toBe(502);
@@ -264,6 +302,19 @@ describe("OobService", () => {
       ctx.api.uninstall();
       ctx = make({ perms: [] });
       await expect(ctx.svc.status("u1", "s1")).resolves.toMatchObject({ canOps: false, canManage: false, linked: true });
+    });
+    it("a member without servers:ops never makes the hub call the provider with the team's token", async () => {
+      ctx = make({ perms: [] });
+      const s = await ctx.svc.status("u1", "s1");
+      expect(ctx.api.requests).toHaveLength(0);
+      expect(ctx.crypto.decrypt).not.toHaveBeenCalled();
+      expect(s).toMatchObject({ linked: true, state: null, stateError: null, canOps: false });
+    });
+    it("a member with servers:ops still gets the live state", async () => {
+      ctx = make({ perms: ["servers:ops"] });
+      const s = await ctx.svc.status("u1", "s1");
+      expect(ctx.api.requests).toHaveLength(1);
+      expect(s.state).toMatchObject({ status: "running" });
     });
   });
 
@@ -331,6 +382,22 @@ describe("OobService", () => {
       expect(ctx.audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "server.oob.unlink" }));
     });
 
+    it("a server Tugra is still provisioning (provider set, no provider id yet) cannot be hand-linked", async () => {
+      ctx = make({ server: { providerServerId: null } });
+      await expect(ctx.svc.link("u1", "s1", { cloudCredentialId: "cc1", providerServerId: "42" })).rejects.toBeInstanceOf(ConflictException);
+      expect(ctx.prisma.server.update).not.toHaveBeenCalled();
+      expect(ctx.api.requests).toHaveLength(0);
+    });
+
+    it("a Tugra-provisioned server whose credential was deleted can only have the SAME VM re-pointed to a new credential, and stays Tugra-owned", async () => {
+      ctx = make({ server: { cloudCredentialId: null } });
+      await expect(ctx.svc.link("u1", "s1", { cloudCredentialId: "cc1", providerServerId: "77", confirmProviderName: "db-1" })).rejects.toBeInstanceOf(ConflictException);
+      expect(ctx.prisma.server.update).not.toHaveBeenCalled();
+      await ctx.svc.link("u1", "s1", { cloudCredentialId: "cc1", providerServerId: "42" });
+      expect(ctx.prisma.server.update).toHaveBeenCalledTimes(1);
+      expect(ctx.prisma.server.update).toHaveBeenCalledWith({ where: { id: "s1" }, data: { provider: "hetzner", providerServerId: "42", cloudCredentialId: "cc1", providerManualLink: false } });
+    });
+
     it("unlink on a server that is not linked is a 400", async () => {
       ctx = make({ server: unlinked });
       await expect(ctx.svc.unlink("u1", "s1")).rejects.toBeInstanceOf(BadRequestException);
@@ -357,6 +424,25 @@ describe("OobController route gates", () => {
     const headers = (fn: unknown) => Reflect.getMetadata("__headers__", fn as object) as Array<{ name: string; value: string }> | undefined;
     expect(headers(p.enableRescue)).toEqual(expect.arrayContaining([{ name: "Cache-Control", value: "no-store" }]));
     expect(headers(p.console)).toEqual(expect.arrayContaining([{ name: "Cache-Control", value: "no-store" }]));
+  });
+
+  it("the two secret-returning POSTs opt out of Idempotency-Key replay (the 24h Redis copy would persist the secret)", async () => {
+    const redisCalls: string[] = [];
+    const client = new Proxy({}, { get: (_t, prop) => (...a: unknown[]) => { redisCalls.push(String(prop)); return Promise.resolve("OK"); } });
+    const redis = { client, get: async () => { redisCalls.push("get"); return null; }, set: async () => { redisCalls.push("set"); }, del: async () => { redisCalls.push("del"); } } as unknown as RedisService;
+    const interceptor = new IdempotencyInterceptor(redis, { encrypt: (x: string) => x, decrypt: (x: string) => x } as never);
+    for (const handler of [p.enableRescue, p.console]) {
+      const ctx = {
+        getType: () => "http",
+        getHandler: () => handler,
+        getClass: () => OobController,
+        switchToHttp: () => ({ getRequest: () => ({ method: "POST", headers: { "idempotency-key": "k-1" }, user: { userId: "u1" }, originalUrl: "/api/v1/servers/s1/oob/rescue", body: {} }), getResponse: () => ({ statusCode: 200 }) }),
+      } as unknown as ExecutionContext;
+      const next: CallHandler = { handle: jest.fn(() => of({ rootPassword: FAKE_ROOT_PASSWORD })) };
+      await lastValueFrom(await interceptor.intercept(ctx, next));
+      expect(next.handle).toHaveBeenCalledTimes(1);
+    }
+    expect(redisCalls).toEqual([]); // nothing written to, or read from, Redis
   });
 
   it("delegates with the caller and the server id", async () => {

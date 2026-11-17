@@ -1,6 +1,7 @@
 import { Body, Controller, Delete, Get, Header, HttpCode, Param, Post, Put, Query, UseGuards } from "@nestjs/common";
 import { ApiSecurity, ApiTags } from "@nestjs/swagger";
 import { ApiZodBody, ApiZodResponse } from "../openapi/openapi";
+import { SkipIdempotency } from "../common/skip-idempotency.decorator";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { ApiAuthGuard } from "../api-tokens/api-auth.guard";
@@ -23,7 +24,7 @@ import {
 /**
  * Out-of-band access to a cloud-linked server (power, rescue, provider console), usable while its agent is offline.
  * Team permission `servers:ops` (linking: `servers:manage`) + PAT scope `deploy`; the two routes that return a
- * secret (rescue password, console session) also need `read:secrets` and are never cacheable.
+ * secret (rescue password, console session) also need `read:secrets` and are never cacheable and never stored for `Idempotency-Key` replay.
  */
 @ApiTags("servers")
 @ApiSecurity("pat")
@@ -54,6 +55,7 @@ export class OobController {
   @RequireScopes("deploy", "read:secrets")
   @HttpCode(200)
   @Header("Cache-Control", "no-store")
+  @SkipIdempotency()
   @ApiZodResponse(OobRescueResultSchema)
   enableRescue(@CurrentUser() user: AuthUser, @Param("id") id: string) {
     return this.oob.enableRescue(user.userId, id);
@@ -72,6 +74,7 @@ export class OobController {
   @RequireScopes("deploy", "read:secrets")
   @HttpCode(200)
   @Header("Cache-Control", "no-store")
+  @SkipIdempotency()
   @ApiZodResponse(OobConsoleResultSchema)
   console(@CurrentUser() user: AuthUser, @Param("id") id: string) {
     return this.oob.console(user.userId, id);

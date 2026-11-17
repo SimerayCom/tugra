@@ -49,7 +49,7 @@ export class OobService {
 
   // ───────────────────────────── read ─────────────────────────────
 
-  /** The link and (best effort) the provider-side state, for any member of the server's team. */
+  /** The link for any member of the server's team; plus (best effort) the provider-side state for members with servers:ops. */
   async status(userId: string, serverId: string): Promise<OobStatusView> {
     const server = await this.requireServer(serverId);
     const perms = await this.access.membershipPermissions(userId, server.teamId);
@@ -76,7 +76,9 @@ export class OobService {
     const cred = await this.prisma.cloudCredential.findUnique({ where: { id: server.cloudCredentialId } });
     if (!cred) return { ...base, credentialMissing: true };
     const linked: OobStatusView = { ...base, linked: true, credentialName: cred.name };
-    if (!client) return linked;
+    // The provider is called with the team's token, so only callers who may act (servers:ops) trigger it; the rest
+    // get the link metadata without live state (a viewer or a poll loop must not burn the shared API rate limit).
+    if (!client || !canOps) return linked;
     try {
       linked.state = await client.getServerState(this.crypto.decrypt(cred.apiTokenEnc), server.providerServerId);
     } catch (e) {
@@ -155,8 +157,16 @@ export class OobService {
   async link(userId: string, serverId: string, body: OobLinkInput): Promise<OobStatusView> {
     const server = await this.requireServer(serverId);
     await this.access.requirePermission(userId, server.teamId, "servers:manage");
-    if (server.provider && server.providerServerId && server.cloudCredentialId && !server.providerManualLink) {
-      throw new ConflictException("this server was provisioned by Tugra and is already linked to its cloud server");
+    // Tugra-owned rows (provider set, not a hand link) are never re-pointed: it would flip providerManualLink on a VM
+    // Tugra created and leak it on delete. The one allowed change is a credential that was deleted: the SAME VM may be
+    // re-attached to a new credential, and the row stays Tugra-owned (providerManualLink false).
+    const tugraOwned = !!server.provider && !server.providerManualLink;
+    if (tugraOwned) {
+      if (!server.providerServerId) throw new ConflictException("this server is still being provisioned by Tugra; try again once it is created");
+      if (server.cloudCredentialId) throw new ConflictException("this server was provisioned by Tugra and is already linked to its cloud server");
+      if (body.providerServerId !== server.providerServerId) {
+        throw new ConflictException("this server was provisioned by Tugra; only its own cloud server can be linked again after its credential was deleted");
+      }
     }
     const { client, token, credentialName } = await this.credentialClient(server, body.cloudCredentialId);
     let state;
@@ -180,7 +190,7 @@ export class OobService {
     if (dup) throw new ConflictException("that cloud server is already linked to another server");
     await this.prisma.server.update({
       where: { id: serverId },
-      data: { provider: client.name, providerServerId: body.providerServerId, cloudCredentialId: body.cloudCredentialId, providerManualLink: true },
+      data: { provider: client.name, providerServerId: body.providerServerId, cloudCredentialId: body.cloudCredentialId, providerManualLink: !tugraOwned },
     });
     await this.audit.log({
       actor: userId,
@@ -248,7 +258,7 @@ export class OobService {
     try {
       return await call();
     } catch (e) {
-      const mapped = oobHttpError(r.server.provider ?? "provider", e);
+      const mapped = oobHttpError(r.server.provider ?? "provider", e, true);
       await this.audit
         .log({ actor: userId, action: `server.oob.${what}.failed`, target: r.server.id, meta: { ...meta, httpStatus: mapped.getStatus() } })
         .catch(() => undefined);
@@ -261,12 +271,25 @@ export class OobService {
  * Provider failure -> an HTTP error a person can act on. Messages come from the provider's RESPONSE body (never the
  * request, so never the token). 401/403 are NOT passed through as such: they would read as "you are not logged in to
  * Tugra" (and a browser session would be dropped), when it is the stored cloud credential that was refused.
+ * `mutating`: the call was an action; a timeout then means the provider may have executed it, and the message says so.
  */
-export function oobHttpError(provider: string, e: unknown): HttpException {
+export function oobHttpError(provider: string, e: unknown, mutating = false): HttpException {
   const status = typeof (e as { status?: unknown })?.status === "number" ? (e as { status: number }).status : -1;
   const code = (e as { hetznerError?: { code?: string } })?.hetznerError?.code;
   const msg = e instanceof Error && e.message ? e.message : `${provider} api error`;
   const body = (statusCode: number, code: string, message: string) => ({ statusCode, message, code });
+  if (status === 0 && (e as { timedOut?: unknown })?.timedOut === true) {
+    return new HttpException(
+      body(
+        504,
+        "oob_provider_timeout",
+        mutating
+          ? `${provider} did not answer in time; the action may or may not have been carried out: check the server's state before trying again`
+          : `${provider} did not answer in time; try again`,
+      ),
+      504,
+    );
+  }
   if (status === 0) return new HttpException(body(502, "oob_provider_unreachable", `${provider} api unreachable`), 502);
   if (status === 401 || (status === 403 && code !== "maintenance")) {
     return new HttpException(body(424, "oob_credential_rejected", `${provider} rejected the stored API token (it needs Read & Write access); update it under Cloud providers`), 424);

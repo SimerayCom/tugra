@@ -31,7 +31,9 @@ console tool, because their one-time secrets must not enter a model's context.
 
 - Team permission **`servers:ops`** for every action; **`servers:manage`** to link or unlink.
 - API token scope **`deploy`** for every acting route; **`deploy` + `read:secrets`** for the two routes that return a
-  secret (enable rescue, console). Any member of the team can read the status.
+  secret (enable rescue, console). Any member of the team can read the link; only members with `servers:ops` also get the
+  live provider state (power, rescue), so a viewer cannot spend the project's API rate limit.
+- The two secret routes ignore an `Idempotency-Key` header: their response is never stored for replay.
 - Every action is **audited before** the provider is called (`server.oob.power.<action>`, `server.oob.rescue.enable`,
   `server.oob.console`, ...) and a failed call adds a `.failed` entry. Link changes are audited as `server.oob.link` and
   `server.oob.unlink`.
@@ -54,7 +56,8 @@ A link is three things on the server: provider, the provider's server id and the
   Tugra leaves the cloud VM alone. Remove a hand link with **Unlink** (`oob-unlink`). A link made at provision time cannot
   be removed.
 - If the credential is later deleted, the server keeps its provider id but loses the credential: the card says so and
-  offers the link again.
+  offers the link again. For a server Tugra provisioned only its own cloud server can be re-attached (to a new
+  credential) and it stays Tugra-owned. A server still being provisioned cannot be linked by hand.
 
 ## The cloud API token
 
@@ -73,6 +76,7 @@ decrypted for one call and dropped; it never appears in a log, an error message 
 | `another action is already running ...` (409, `oob_locked`) | The provider has the server locked by a running action. Wait a moment. |
 | `the server no longer exists at ...` (409, `oob_provider_server_missing`) | The link is stale (VM deleted, or another project). Link it again. |
 | `... is rate limiting requests` (429) | Hetzner allows 3600 requests per hour per project. |
+| `... did not answer in time` (504, `oob_provider_timeout`) | The request timed out. For an action the provider may still have carried it out: check the server's state before trying again. |
 | `not linked` (409, `oob_not_linked`) | Link the server first. |
 | `confirmation name does not match` (400) | The typed name is not the server's exact name. |
 

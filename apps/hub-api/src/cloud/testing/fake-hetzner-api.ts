@@ -31,8 +31,10 @@ export class FakeHetznerApi {
   readonly servers = new Map<number, FakeHetznerServer>();
   /** The one token the fake accepts. */
   validToken = "hz-token";
-  /** Make the NEXT request fail with this HTTP status + error code (then clear). status 0 = network failure. */
+  /** Make the NEXT request fail with this HTTP status + error code (then clear). status 0 = network failure, -1 = the request was aborted (timeout). */
   failNext: { status: number; code: string; message: string } | null = null;
+  /** The next requests never answer until the caller aborts (the client's own timeout), like a stalled connection. */
+  hang = false;
   /** The next action response reports this action status (e.g. "error"). */
   nextActionStatus: "running" | "success" | "error" = "running";
   private nextActionId = 1000;
@@ -61,9 +63,17 @@ export class FakeHetznerApi {
     const body = typeof init?.body === "string" ? JSON.parse(init.body) : undefined;
     this.requests.push({ method, path, authorization: headers.authorization ?? null, body });
 
+    if (this.hang) {
+      return new Promise<Response>((_resolve, reject) => {
+        const abort = () => reject(Object.assign(new Error("This operation was aborted"), { name: "AbortError" }));
+        if (init?.signal?.aborted) abort();
+        else init?.signal?.addEventListener("abort", abort);
+      });
+    }
     if (this.failNext) {
       const f = this.failNext;
       this.failNext = null;
+      if (f.status === -1) throw Object.assign(new Error("This operation was aborted"), { name: "AbortError" }); // an aborted request (timeout)
       if (f.status === 0) throw new Error("ECONNRESET");
       return reply(f.status, { error: { code: f.code, message: f.message, details: null } });
     }

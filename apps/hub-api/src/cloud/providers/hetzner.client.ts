@@ -14,12 +14,13 @@ import type {
 const HETZNER_API_BASE = "https://api.hetzner.cloud/v1";
 const HETZNER_TIMEOUT_MS = 20_000;
 
-/** A Hetzner Cloud API failure. `status` 0 = network/timeout (request never completed). */
+/** A Hetzner Cloud API failure. `status` 0 = the request never completed: `timedOut` = our timeout aborted it (Hetzner may still have acted), else a connection failure. */
 export class HetznerApiError extends Error {
   constructor(
     message: string,
     readonly status: number,
     readonly hetznerError?: unknown,
+    readonly timedOut: boolean = false,
   ) {
     super(message);
     this.name = "HetznerApiError";
@@ -184,8 +185,9 @@ export class HetznerApiClient implements CloudProvider, CloudOobProvider {
           headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
           body: body === undefined ? undefined : JSON.stringify(body),
         });
-      } catch {
+      } catch (e) {
         // Network/timeout: never surface the token that lived in the request headers.
+        if (ctrl.signal.aborted || (e as { name?: string })?.name === "AbortError") throw new HetznerApiError("hetzner api timed out", 0, undefined, true);
         throw new HetznerApiError("hetzner api unreachable", 0);
       }
       if (res.status === 204) return undefined as T;

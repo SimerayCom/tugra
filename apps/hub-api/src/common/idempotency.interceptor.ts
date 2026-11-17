@@ -4,6 +4,7 @@ import { defer, Observable, of } from "rxjs";
 import { finalize, tap } from "rxjs/operators";
 import { RedisService } from "../redis/redis.service";
 import { CryptoService } from "../crypto/crypto.service";
+import { SKIP_IDEMPOTENCY } from "./skip-idempotency.decorator";
 
 const CLAIM_TTL_SEC = 120; // a PENDING claim self-heals in 2 min if the request crashes / the store never lands
 const HEARTBEAT_MS = Math.floor((CLAIM_TTL_SEC * 1000) / 3); // refresh the lease (~40s) well before it expires
@@ -48,6 +49,8 @@ export class IdempotencyInterceptor implements NestInterceptor {
     if (ctx.getType() !== "http") return next.handle();
     const req = ctx.switchToHttp().getRequest();
     if (req.method !== "POST") return next.handle(); // only POST (create/deploy-style) is deduped
+    // A route that returns a one-time secret opts out: its response must never be stored (or replayed) here.
+    if (Reflect.getMetadata(SKIP_IDEMPOTENCY, ctx.getHandler()) === true) return next.handle();
     const rawKey = req.headers?.["idempotency-key"];
     const headerKey = Array.isArray(rawKey) ? rawKey[0] : rawKey;
     const userId: string | undefined = req.user?.userId;

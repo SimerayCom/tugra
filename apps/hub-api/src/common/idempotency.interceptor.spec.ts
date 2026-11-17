@@ -3,6 +3,7 @@ import { lastValueFrom, of, throwError, Subject } from "rxjs";
 import { IdempotencyInterceptor } from "./idempotency.interceptor";
 import { RedisService } from "../redis/redis.service";
 import { CryptoService } from "../crypto/crypto.service";
+import { SkipIdempotency } from "./skip-idempotency.decorator";
 
 const PENDING = "\u0000pending";
 // Mock crypto: a prefix so tests can see the payload is encrypted before it reaches Redis.
@@ -217,5 +218,26 @@ describe("IdempotencyInterceptor", () => {
     } finally {
       jest.useRealTimers();
     }
+  });
+
+  it("a handler marked @SkipIdempotency runs untouched: no claim, no read, no stored result, even with an Idempotency-Key", async () => {
+    const setClient = jest.fn().mockResolvedValue("OK");
+    const get = jest.fn();
+    const { interceptor, evalMock } = make({ client: { set: setClient }, get });
+    class C {
+      @SkipIdempotency()
+      secret() {
+        return 1;
+      }
+    }
+    const { ctx } = ctxFor({ key: "k1", statusCode: 200 });
+    (ctx as unknown as { getHandler: () => unknown }).getHandler = () => C.prototype.secret;
+    const handler = { handle: jest.fn(() => of({ rootPassword: "s3cret" })) } as unknown as CallHandler;
+    const out = await lastValueFrom(await interceptor.intercept(ctx, handler));
+    expect(out).toEqual({ rootPassword: "s3cret" });
+    expect(handler.handle).toHaveBeenCalledTimes(1);
+    expect(setClient).not.toHaveBeenCalled();
+    expect(get).not.toHaveBeenCalled();
+    expect(evalMock).not.toHaveBeenCalled();
   });
 });
