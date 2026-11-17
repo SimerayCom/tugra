@@ -7,6 +7,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **Reboot a server from the panel, and see that everything came back.** The server's Maintenance tab has a Reboot card
+  (now, or scheduled up to 7 days ahead) with an impact preview (containers and domains briefly unavailable, a warning when
+  the server hosts the Tugra hub) and a typed server-name confirmation; the Server patching "reboot required" banner links
+  to it. After the reboot Tugra verifies on its own that Docker is up, every container that was running came back (healthy
+  if it has a healthcheck), every routed domain answers through the proxy and the reboot-required flag cleared, then shows
+  a per-item report and notifies (server_reboot_verified / degraded / failed). Things already down before the reboot are
+  reported as such, not blamed on it. A scheduled reboot that missed its time while the hub was down is never run late.
+  Reboots stay manual: nothing reboots automatically. Also in the CLI (`tugra servers reboot`, `reboot-status`,
+  `reboot-cancel`) and MCP (`reboot_server`, typed confirmation required).
+
 - **Server patching explains Ubuntu's phased updates.** Packages Ubuntu is rolling out gradually are no longer counted as
   pending: they appear in their own section ("installs automatically when this server's turn comes") with an Install now
   button for one package, Update all never claims them, and the result says "deferred by Ubuntu's phased rollout" instead
