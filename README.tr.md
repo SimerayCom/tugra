@@ -184,7 +184,7 @@ Canlı log'lar, metrikler ve terminal WebSocket'ler üzerinden akar. Tüm ayrın
 
 ## Yol haritası
 
-**Tamamlananlar**
+**Tamamlananlar** (v0.1.0-beta.21'e kadar)
 
 - [x] Hub ↔ Agent protokolü + sunucu kaydı (dışa bağlanan WSS · ed25519 · imzalı komutlar + capability scope)
 - [x] Git / Docker Compose / image'dan deploy (Nixpacks · Railpack · Heroku buildpack'leri · Dockerfile · statik site)
@@ -200,9 +200,10 @@ Canlı log'lar, metrikler ve terminal WebSocket'ler üzerinden akar. Tüm ayrın
 - [x] Zamanlanmış görevler (cron) · rollback'ler · kaynak limitleri ve health check'ler
 - [x] Projeler / ortamlar · ekipler, roller ve davetler · etiketler · paylaşılan değişkenler
 - [x] Public API (OpenAPI) + CLI (`tugra`)
-- [x] Sunucu yamalama (işletim sistemi paket güncellemeleri)
+- [x] Sunucu yamalama (işletim sistemi paket güncellemeleri); host üzerinde geçici bir systemd unit olarak çalışır, böylece Docker/containerd yükseltmesi işi yarıda kesemez; Ubuntu'nun kademeli (phased) güncellemeleri ayrı listelenir · Coolify'ınki gibi çalışan Docker temizliği (günlük çalışma, ayrıca sunucunun diski eşiği aştığında; neyi sildiği ve asla silmediği sunucu sayfasında görünür)
+- [x] Panelden sunucu yeniden başlatma (hemen ya da 7 güne kadar zamanlanmış), etki önizlemesiyle; ardından Docker'ın, çalışan her container'ın, yönlendirilen her domain'in ve reboot-required bayrağının geri geldiğinin otomatik doğrulanması; yalnızca elle tetiklenir, CLI ve MCP'den de kullanılabilir
 - [x] Self-update (imzalı sürümler) + yönlendirmeli onboarding
-- [x] Migrator — yerel Docker container'larını devralma + Coolify (web sihirbazı) ve Dokploy (web sihirbazı / API / MCP / CLI) üzerinden import (bağlan · planla · uygula · rollback) + tek komutla host'lar arası veritabanı verisi migrasyonu (Postgres · MySQL · MariaDB · Redis · KeyDB · Dragonfly) + akışlı, kaldığı yerden devam edebilen uygulama volume kopyası
+- [x] Migrator — yerel Docker container'larını devralma + Coolify (web sihirbazı) ve Dokploy (web sihirbazı / API / MCP / CLI) üzerinden import (bağlan · planla · uygula · rollback) + tek komutla host'lar arası veritabanı verisi migrasyonu (Postgres · MySQL · MariaDB · Redis · KeyDB · Dragonfly) + akışlı, kaldığı yerden devam edebilen uygulama volume kopyası + yönlendirmeli, kaldığı yerden devam eden bir migrasyon çalıştırması (`tugra import run` ve `migration_run_*` MCP tool'ları: önce dry-run, yazılı onaylar, iptal/geri alma) ve büyük veritabanları için akışlı dump hattı (Postgres · MySQL · MariaDB) — Coolify 4.1.2 ve 4.7.5'e karşı doğrulandı (API hız limitleri, zaman damgalı container adları, `read:sensitive` token'lar, özel container adı önekleri); veri düzlemi bir CI migrasyon laboratuvarında üretilmiş veriyle çalışıyor, henüz gerçek bir fleet üzerinde değil
 - [x] Restore-verify tatbikatları (zamanlanmış, liveness watchdog ile) · PostgreSQL point-in-time recovery (WAL shipping · base backup'lar · istediğiniz saniyeye restore)
 - [x] Health gate'li rolling deploy'lar + opt-in cutover sonrası soak ve otomatik geri alma · fleet rollout'ları (canary → dalgalar → health gate → durdur/devam et/rollback)
 - [x] Deploy'lar hub yeniden başlatmasından sağ çıkar (agent command journal + sonuç devralma) · deploy başına ayrıntı sayfası (zaman çizelgesi · canlı log · config diff)
@@ -211,6 +212,7 @@ Canlı log'lar, metrikler ve terminal WebSocket'ler üzerinden akar. Tüm ayrın
 
 **Sırada**
 
+- [ ] Yönlendirmeli migrasyonu gerçek bir Coolify fleet'i üzerinde çalıştırmak ve bulduklarını yayımlamak (laboratuvar ve runbook hazır; canlı çalıştırma açık kalan eşik)
 - [ ] Üçüncü taraf client'lar için MCP OAuth (dinamik client kaydı, PKCE)
 - [ ] ClickHouse + MongoDB verisi için tek tıkla migrasyon
 - [ ] Daha fazla migrasyon kaynağı (CapRover)

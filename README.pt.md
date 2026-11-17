@@ -184,7 +184,7 @@ Logs em tempo real, métricas e o terminal são transmitidos por WebSockets. Det
 
 ## Roteiro
 
-**Entregue**
+**Entregue** (até a v0.1.0-beta.21)
 
 - [x] Protocolo Hub ↔ Agente + registro (enrollment) de servidores (WSS de saída · ed25519 · comandos assinados + escopo de capacidades)
 - [x] Deploy a partir de Git / Docker Compose / imagem (Nixpacks · Railpack · buildpacks do Heroku · Dockerfile · site estático)
@@ -200,9 +200,10 @@ Logs em tempo real, métricas e o terminal são transmitidos por WebSockets. Det
 - [x] Tarefas agendadas (cron) · rollbacks · limites de recursos e health checks
 - [x] Projetos / ambientes · equipes, papéis e convites · tags · variáveis compartilhadas
 - [x] API pública (OpenAPI) + CLI (`tugra`)
-- [x] Patching de servidores (atualizações de pacotes do SO)
+- [x] Patching de servidores (atualizações de pacotes do SO), executado no host como unidade transitória do systemd para que uma atualização do Docker/containerd não o interrompa no meio; as atualizações graduais (phased) do Ubuntu aparecem separadas · Limpeza do Docker como a do Coolify (diária e, além disso, sempre que o disco de um servidor passa do limite; a página do servidor mostra o que ela apaga e o que nunca apaga)
+- [x] Reinício de um servidor pelo painel (agora ou agendado com até 7 dias de antecedência) com prévia do impacto e, depois, uma verificação automática de que o Docker, cada contêiner que estava rodando, cada domínio roteado e o sinalizador de reinício pendente voltaram; somente manual, também na CLI e no MCP
 - [x] Self-update (versões assinadas) + onboarding guiado
-- [x] Migrator — adoção de contêineres Docker locais + importação do Coolify (assistente web) e do Dokploy (assistente web / API / MCP / CLI) (conectar · planejar · aplicar · rollback) + migração de dados de banco entre hosts com um único comando (Postgres · MySQL · MariaDB · Redis · KeyDB · Dragonfly) + cópia de volumes de apps em streaming e retomável
+- [x] Migrator — adoção de contêineres Docker locais + importação do Coolify (assistente web) e do Dokploy (assistente web / API / MCP / CLI) (conectar · planejar · aplicar · rollback) + migração de dados de banco entre hosts com um único comando (Postgres · MySQL · MariaDB · Redis · KeyDB · Dragonfly) + cópia de volumes de apps em streaming e retomável + uma execução de migração guiada e retomável (`tugra import run` e as ferramentas MCP `migration_run_*`: dry-run primeiro, aprovações digitadas, aborto/reversão) com uma via de dump em streaming para bancos grandes (Postgres · MySQL · MariaDB) — verificada com o Coolify 4.1.2 e o 4.7.5 (limites de taxa da API, nomes de contêiner com carimbo de data e hora, tokens `read:sensitive`, prefixos de nome de contêiner personalizados); o plano de dados roda em um laboratório de migração em CI com dados gerados, ainda não em uma frota real
 - [x] Simulações de restore-verify (agendadas, com um watchdog de liveness) · recuperação para um ponto no tempo do PostgreSQL (envio de WAL · base backups · restore para qualquer segundo)
 - [x] Deploys progressivos com health gate + soak pós-cutover opt-in e reversão automática · rollouts de frota (canary → ondas → health gate → parar/retomar/rollback)
 - [x] Deploys sobrevivem a uma reinicialização do hub (journal de comandos do agent + adoção do resultado) · página de detalhes por deploy (linha do tempo · log ao vivo · diff de configuração)
@@ -211,6 +212,7 @@ Logs em tempo real, métricas e o terminal são transmitidos por WebSockets. Det
 
 **A seguir**
 
+- [ ] Rodar a migração guiada em uma frota real do Coolify e publicar o que essa execução encontrar (o laboratório e o runbook estão prontos; a execução ao vivo é a porta que continua aberta)
 - [ ] OAuth do MCP para clientes de terceiros (registro dinâmico de clientes, PKCE)
 - [ ] Migração com um clique para dados de ClickHouse + MongoDB
 - [ ] Mais fontes de migração (CapRover)

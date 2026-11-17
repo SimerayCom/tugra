@@ -184,7 +184,7 @@ Les logs en direct, les métriques et le terminal sont diffusés en streaming vi
 
 ## Feuille de route
 
-**Livré**
+**Livré** (jusqu'à v0.1.0-beta.21)
 
 - [x] Protocole Hub ↔ Agent + enrôlement des serveurs (WSS sortant · ed25519 · commandes signées + périmètre de capacités)
 - [x] Déploiement depuis Git / Docker Compose / image (Nixpacks · Railpack · buildpacks Heroku · Dockerfile · site statique)
@@ -200,9 +200,10 @@ Les logs en direct, les métriques et le terminal sont diffusés en streaming vi
 - [x] Tâches planifiées (cron) · rollbacks · limites de ressources et health checks
 - [x] Projets / environnements · équipes, rôles et invitations · tags · variables partagées
 - [x] API publique (OpenAPI) + CLI (`tugra`)
-- [x] Patching des serveurs (mises à jour des paquets de l'OS)
+- [x] Patching des serveurs (mises à jour des paquets de l'OS), exécuté sur l'hôte comme unité systemd transitoire pour qu'une mise à jour de Docker/containerd ne l'interrompe pas en cours de route ; les mises à jour progressives (phased) d'Ubuntu sont listées à part · Nettoyage Docker à la manière de Coolify (quotidien, et en plus dès que le disque d'un serveur dépasse son seuil ; la page du serveur montre ce qu'il supprime et ce qu'il ne supprime jamais)
+- [x] Redémarrage d'un serveur depuis le panneau (immédiat ou planifié jusqu'à 7 jours à l'avance) avec aperçu de l'impact, puis vérification automatique que Docker, chaque conteneur qui tournait, chaque domaine routé et l'indicateur de redémarrage requis sont revenus ; manuel uniquement, aussi dans la CLI et en MCP
 - [x] Self-update (versions signées) + prise en main guidée
-- [x] Migrateur — adoption de conteneurs Docker locaux + import depuis Coolify (assistant web) et Dokploy (assistant web / API / MCP / CLI) (connect · plan · apply · rollback) + migration des données de bases entre hôtes en une commande (Postgres · MySQL · MariaDB · Redis · KeyDB · Dragonfly) + copie des volumes d'applications en streaming et reprenable
+- [x] Migrateur — adoption de conteneurs Docker locaux + import depuis Coolify (assistant web) et Dokploy (assistant web / API / MCP / CLI) (connect · plan · apply · rollback) + migration des données de bases entre hôtes en une commande (Postgres · MySQL · MariaDB · Redis · KeyDB · Dragonfly) + copie des volumes d'applications en streaming et reprenable + une exécution de migration guidée et reprenable (`tugra import run` et les outils MCP `migration_run_*` : dry-run d'abord, approbations saisies, abandon/retour arrière) avec une voie de dump en streaming pour les grosses bases (Postgres · MySQL · MariaDB) — vérifiée face à Coolify 4.1.2 et 4.7.5 (limites de débit de l'API, noms de conteneur horodatés, jetons `read:sensitive`, préfixes de nom de conteneur personnalisés) ; son plan de données tourne dans un laboratoire de migration en CI sur des données générées, pas encore sur une vraie flotte
 - [x] Exercices de restore-verify (planifiés, avec un watchdog de liveness) · restauration à un instant donné de PostgreSQL (envoi des WAL · sauvegardes de base · restauration à la seconde près)
 - [x] Déploiements progressifs avec health gate + soak après bascule en opt-in et annulation automatique · rollouts de flotte (canary → vagues → health gate → arrêt/reprise/rollback)
 - [x] Les déploiements survivent à un redémarrage du hub (journal de commandes de l'agent + reprise du résultat) · page de détail par déploiement (chronologie · log en direct · diff de configuration)
@@ -211,6 +212,7 @@ Les logs en direct, les métriques et le terminal sont diffusés en streaming vi
 
 **Prochaines étapes**
 
+- [ ] Faire tourner la migration guidée sur une vraie flotte Coolify et publier ce que cette exécution révèle (le laboratoire et le runbook sont en place ; l'exécution en conditions réelles est la porte encore ouverte)
 - [ ] OAuth MCP pour les clients tiers (enregistrement dynamique des clients, PKCE)
 - [ ] Migration en un clic des données ClickHouse et MongoDB
 - [ ] Davantage de sources de migration (CapRover)
