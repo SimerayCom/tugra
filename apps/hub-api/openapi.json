@@ -56566,6 +56566,7 @@
                                     "enum": [
                                       "ok",
                                       "not_answering",
+                                      "not_answering_before",
                                       "pending",
                                       "unverified"
                                     ]
@@ -56815,6 +56816,7 @@
                                     "enum": [
                                       "ok",
                                       "not_answering",
+                                      "not_answering_before",
                                       "pending",
                                       "unverified"
                                     ]
@@ -57184,6 +57186,7 @@
                                 "enum": [
                                   "ok",
                                   "not_answering",
+                                  "not_answering_before",
                                   "pending",
                                   "unverified"
                                 ]
@@ -57522,6 +57525,7 @@
                                 "enum": [
                                   "ok",
                                   "not_answering",
+                                  "not_answering_before",
                                   "pending",
                                   "unverified"
                                 ]

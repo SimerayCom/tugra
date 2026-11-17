@@ -37687,7 +37687,7 @@ export interface operations {
                                 domains: {
                                     host: string;
                                     /** @enum {string} */
-                                    verdict: "ok" | "not_answering" | "pending" | "unverified";
+                                    verdict: "ok" | "not_answering" | "not_answering_before" | "pending" | "unverified";
                                     status: number | null;
                                 }[];
                                 /** @enum {string} */
@@ -37742,7 +37742,7 @@ export interface operations {
                                 domains: {
                                     host: string;
                                     /** @enum {string} */
-                                    verdict: "ok" | "not_answering" | "pending" | "unverified";
+                                    verdict: "ok" | "not_answering" | "not_answering_before" | "pending" | "unverified";
                                     status: number | null;
                                 }[];
                                 /** @enum {string} */
@@ -37873,7 +37873,7 @@ export interface operations {
                             domains: {
                                 host: string;
                                 /** @enum {string} */
-                                verdict: "ok" | "not_answering" | "pending" | "unverified";
+                                verdict: "ok" | "not_answering" | "not_answering_before" | "pending" | "unverified";
                                 status: number | null;
                             }[];
                             /** @enum {string} */
@@ -38002,7 +38002,7 @@ export interface operations {
                             domains: {
                                 host: string;
                                 /** @enum {string} */
-                                verdict: "ok" | "not_answering" | "pending" | "unverified";
+                                verdict: "ok" | "not_answering" | "not_answering_before" | "pending" | "unverified";
                                 status: number | null;
                             }[];
                             /** @enum {string} */
