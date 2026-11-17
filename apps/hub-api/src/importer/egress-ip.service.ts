@@ -30,11 +30,12 @@ const UNKNOWN_TTL_MS = 60_000; // a hub that has no address yet picks one up soo
 @Injectable()
 export class EgressIpService {
   private cache: { at: number; ttl: number; value: EgressIpInfo } | null = null;
+  /** The clock; a field (not a constructor parameter, which Nest would try to inject) so a spec can move time. */
+  now: () => number = Date.now;
 
   constructor(
     private readonly config: ConfigService,
     private readonly prisma: PrismaService,
-    private readonly now: () => number = Date.now,
   ) {}
 
   async resolve(): Promise<EgressIpInfo> {

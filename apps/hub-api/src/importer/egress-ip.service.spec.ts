@@ -5,7 +5,8 @@ function make(env: Record<string, string | undefined>, server: unknown, now = { 
     if (server instanceof Error) throw server;
     return server;
   });
-  const svc = new EgressIpService({ get: (k: string) => env[k] } as never, { server: { findFirst } } as never, () => now.t);
+  const svc = new EgressIpService({ get: (k: string) => env[k] } as never, { server: { findFirst } } as never);
+  svc.now = () => now.t;
   return { svc, findFirst, now };
 }
 
