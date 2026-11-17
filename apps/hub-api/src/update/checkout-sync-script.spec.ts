@@ -45,6 +45,7 @@ interface Rig {
   dir: string;
   origin: string;
   repo: string;
+  work: string;
   v2: string;
 }
 
@@ -78,7 +79,7 @@ function makeRig(opts: { shallow?: boolean; fetchTagIntoClone?: boolean } = {}):
   git(repo, "tag", "v0.1.0", v1);
   git(repo, "remote", "set-url", "origin", opts.shallow ? `file://${origin}` : origin);
   if (opts.fetchTagIntoClone) git(repo, "fetch", "-q", "--no-tags", "origin", "+refs/tags/v0.2.0:refs/tags/v0.2.0");
-  return { dir, origin, repo, v2 };
+  return { dir, origin, repo, work, v2 };
 }
 
 /** What the in-app updater leaves behind: the release's managed files written over the checkout. */
@@ -257,5 +258,109 @@ describe("scripts/lib/checkout.sh", () => {
     expect(r.result).toBe("skipped");
     expect(r.note).toContain("in progress");
     expect(existsSync(join(rig.repo, ".git", "MERGE_HEAD"))).toBe(true);
+  });
+  describe("review fixes", () => {
+    /** `id -u` says 0 and chown only logs: lets a normal user observe the sidecar's (root) ownership repair. */
+    function rootStubs(rig: Rig): { env: NodeJS.ProcessEnv; log: string } {
+      const bin = join(rig.dir, "stubs");
+      const log = join(rig.dir, "chown.log");
+      mkdirSync(bin);
+      const realId = execFileSync("sh", ["-c", "command -v id"]).toString().trim();
+      writeFileSync(join(bin, "id"), `#!/bin/sh\nif [ "$1" = "-u" ]; then echo 0; else exec ${realId} "$@"; fi\n`, { mode: 0o755 });
+      writeFileSync(join(bin, "chown"), `#!/bin/sh\necho "$@" >> "${log}"\n`, { mode: 0o755 });
+      return { env: { PATH: `${bin}:${process.env.PATH}` }, log };
+    }
+    const chowned = (log: string) => (existsSync(log) ? readFileSync(log, "utf8") : "");
+
+    it("hands git's files back to the checkout's owner even when the run ends in a skip (local edit after the fetch)", () => {
+      const rig = makeRig(); // tag not in the clone yet: the fetch (as root) writes into .git
+      applyRelease(rig.repo);
+      writeFileSync(join(rig.repo, "scripts", "install.sh"), "#!/usr/bin/env bash\n# my own edit\n");
+      const stubs = rootStubs(rig);
+      const r = co(rig.repo, "0.2.0", { env: stubs.env });
+      expect(r.result).toBe("skipped");
+      expect(chowned(stubs.log)).toMatch(/-R .*\.git/);
+    });
+
+    it("hands ownership back when the signed list does not match too", () => {
+      const rig = makeRig();
+      applyRelease(rig.repo);
+      const list = join(rig.dir, "list");
+      writeFileSync(list, `${"0".repeat(64)}  scripts/install.sh\n`);
+      const stubs = rootStubs(rig);
+      const r = co(rig.repo, "0.2.0", { list, env: stubs.env });
+      expect(r.note).toContain("signed release content");
+      expect(chowned(stubs.log)).toMatch(/-R .*\.git/);
+    });
+
+    it("does not touch ownership when git was never asked to write (clean checkout)", () => {
+      const rig = makeRig({ fetchTagIntoClone: true });
+      const stubs = rootStubs(rig);
+      expect(co(rig.repo, "0.2.0", { env: stubs.env }).result).toBe("clean");
+      expect(chowned(stubs.log)).toBe("");
+    });
+
+    it("the tag fetch writes no FETCH_HEAD", () => {
+      const rig = makeRig();
+      applyRelease(rig.repo);
+      expect(co(rig.repo, "0.2.0").result).toBe("synced");
+      expect(existsSync(join(rig.repo, ".git", "FETCH_HEAD"))).toBe(false);
+    });
+
+    it("a detached HEAD with a local commit no ref reaches keeps that commit on a rescue branch and its file", () => {
+      const rig = makeRig({ fetchTagIntoClone: true });
+      git(rig.repo, "checkout", "-q", "--detach", "v0.1.0");
+      writeFileSync(join(rig.repo, "apps", "mine.txt"), "mine\n");
+      git(rig.repo, "add", "apps/mine.txt");
+      git(rig.repo, "commit", "-q", "-m", "local");
+      const mine = git(rig.repo, "rev-parse", "HEAD");
+      applyRelease(rig.repo);
+      const r = co(rig.repo, "0.2.0");
+      expect(r.result).toBe("synced");
+      expect(git(rig.repo, "rev-parse", "HEAD")).toBe(rig.v2);
+      expect(git(rig.repo, "branch", "--contains", mine, "--format=%(refname:short)")).toMatch(/^tugra-local-/);
+      expect(status(rig.repo)).toBe("");
+    });
+
+    it("a detached HEAD on a tagged commit (a tag install) moves without creating any branch", () => {
+      const rig = makeRig({ fetchTagIntoClone: true });
+      git(rig.repo, "checkout", "-q", "--detach", "v0.1.0");
+      applyRelease(rig.repo);
+      expect(co(rig.repo, "0.2.0").result).toBe("synced");
+      expect(git(rig.repo, "branch", "--list", "tugra-local-*")).toBe("");
+    });
+
+    it("the branch name is kept only when git pull still fast-forwards: a tag off origin's line detaches", () => {
+      const rig = makeRig();
+      // a release tag cut from an unrelated line of history (a release branch), with the v2 managed files
+      git(rig.work, "checkout", "-q", "--orphan", "rel");
+      git(rig.work, "rm", "-rfq", ".");
+      write(rig.work, V2);
+      writeFileSync(join(rig.work, ".gitignore"), ".env\nbackups/\n.tugra-host-applied\n");
+      git(rig.work, "add", "-A");
+      git(rig.work, "commit", "-q", "-m", "rel");
+      git(rig.work, "tag", "v0.3.0");
+      git(rig.work, "push", "-q", rig.origin, "refs/tags/v0.3.0");
+      const old = git(rig.repo, "rev-parse", "HEAD");
+      expect(git(rig.repo, "rev-parse", "origin/main")).toBe(old);
+      applyRelease(rig.repo);
+      const r = co(rig.repo, "0.3.0");
+      expect(r.result).toBe("synced");
+      expect(() => git(rig.repo, "symbolic-ref", "-q", "HEAD")).toThrow(); // detached
+      expect(git(rig.repo, "rev-parse", "main")).toBe(old);
+    });
+
+    it("an operator's core.sshCommand (deploy key) is not overridden by a default GIT_SSH_COMMAND", () => {
+      const rig = makeRig();
+      applyRelease(rig.repo);
+      const called = join(rig.dir, "ssh-called");
+      const fake = join(rig.dir, "fake-ssh.sh");
+      writeFileSync(fake, `#!/bin/sh\necho "$@" > "${called}"\nexit 1\n`, { mode: 0o755 });
+      git(rig.repo, "config", "core.sshCommand", fake);
+      git(rig.repo, "remote", "set-url", "origin", "ssh://git@127.0.0.1:1/none.git");
+      const r = co(rig.repo, "0.2.0");
+      expect(r.result).toBe("skipped");
+      expect(existsSync(called)).toBe(true);
+    });
   });
 });

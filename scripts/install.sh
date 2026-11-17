@@ -275,7 +275,8 @@ SYNC_VERSION="${TUGRA_VERSION:-$(env_get TUGRA_VERSION | tr -d "\"' \r")}"
 if [ "$SYNC_CHECKOUT_ONLY" = 1 ] && { [ -z "$SYNC_VERSION" ] || [ "$SYNC_VERSION" = latest ]; }; then
   err "--sync-checkout needs the release to match: run  TUGRA_VERSION=<version> ./scripts/install.sh --sync-checkout"; exit 1
 fi
-if [ "$DRY_RUN" -eq 0 ] && [ "${TUGRA_CHECKOUT_SYNC:-1}" != 0 ] && [ -f "$SCRIPT_DIR/lib/checkout.sh" ] \
+SYNC_ON="${TUGRA_CHECKOUT_SYNC:-$(env_get TUGRA_CHECKOUT_SYNC | tr -d "\"' \r")}"
+if [ "$DRY_RUN" -eq 0 ] && [ "${SYNC_ON:-1}" != 0 ] && [ -f "$SCRIPT_DIR/lib/checkout.sh" ] \
    && [ -n "$SYNC_VERSION" ] && [ "$SYNC_VERSION" != latest ]; then
   # shellcheck source=lib/checkout.sh
   . "$SCRIPT_DIR/lib/checkout.sh"

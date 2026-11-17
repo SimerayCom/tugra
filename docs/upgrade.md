@@ -132,7 +132,8 @@ Notes:
   "Your local changes ... would be overwritten". So after a successful update the sidecar moves the checkout to the
   release tag `v<version>` (fetching just that tag when the checkout does not have it) when every modified compose/script
   file has exactly that tag's content; `git status` is clean afterwards. A branch that can fast-forward keeps its name
-  (`git pull` keeps working), otherwise the checkout is detached at the tag. It never discards anything:
+  (`git pull` keeps working), otherwise the checkout is detached at the tag; local commits that no branch contains are
+  first kept on a `tugra-local-<sha>` branch. It never discards anything:
   a compose/script file that you edited yourself (it differs from both your checkout's `HEAD` and the release) is still
   replaced by the release copy as above, but is reported in the log, listed in `LOCAL-EDITS` inside the backup
   directory, and git is then left alone; with no network (the tag cannot be fetched), no `git` in an older updater

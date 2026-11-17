@@ -748,6 +748,16 @@ exit 0
         expect(gitIn(c.repo, "rev-parse", "HEAD")).toBe(c.v1);
       });
 
+      it("TUGRA_CHECKOUT_SYNC=0 in .env (not the process environment) switches the step off too", () => {
+        const c = dirtyCheckout();
+        mkdirSync(dirname(c.envPath), { recursive: true });
+        writeFileSync(c.envPath, "TUGRA_CHECKOUT_SYNC=0\n");
+        const r = install(c.envPath, HTTP, { script: join(c.repo, "scripts", "install.sh"), env: { TUGRA_CHECKOUT_SYNC: "", TUGRA_VERSION: "0.2.0" } });
+        expect(r.code).toBe(0);
+        expect(gitIn(c.repo, "rev-parse", "HEAD")).toBe(c.v1);
+        expect(porcelain(c.repo)).toContain("M scripts/install.sh");
+      });
+
       it("a clean checkout and TUGRA_CHECKOUT_SYNC=0 are never moved", () => {
         const c = dirtyCheckout();
         const r0 = install(c.envPath, HTTP, { script: join(c.repo, "scripts", "install.sh"), env: { TUGRA_CHECKOUT_SYNC: "0", TUGRA_VERSION: "0.2.0" } });
