@@ -15,6 +15,7 @@ control plane for your servers. New here? Start with the [project overview](../R
 
 - [CLI](cli.md) — the `tugra` command-line client (full reference in the [package README](../packages/cli/README.md)).
 - [API](api.md) — the REST API, interactive docs, authentication and scopes.
+- [Out-of-band cloud access](runbooks/out-of-band-cloud.md) — power, rescue and console for cloud-linked servers, straight from the provider, with the agent offline.
 - [Log drains](log-drains.md) — ship container logs to HTTP, Loki, Datadog, syslog, GELF or fluentd, per server or per app; filters, egress policy, delivery status and guarantees.
 - [Traffic Analytics geo](traffic-analytics.md) — built-in country geolocation (DB-IP Lite), optional city database, and how to refresh it.
 - [Migrating from Coolify](coolify-migration.md) — one-command database-data migration (Postgres/MySQL/MariaDB/Redis/KeyDB/Dragonfly) plus the manual runbook for apps, volumes and the other engines.

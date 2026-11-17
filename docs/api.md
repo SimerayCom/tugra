@@ -51,7 +51,7 @@ Every PAT carries a set of scopes; a request needs the scope its route requires.
 |---|---|
 | `read` | Read-only access (implied by any other scope). |
 | `write` | Create and modify resources. |
-| `deploy` | Deploy, restart, run backups, apply updates, reboot or schedule a reboot of a server. |
+| `deploy` | Deploy, restart, run backups, apply updates, reboot or schedule a reboot of a server, power a cloud-linked server at its provider. |
 | `read:secrets` | Read decrypted secret values (env vars, connection strings). |
 | `admin` | Everything, including delete. |
 
