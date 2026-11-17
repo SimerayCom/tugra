@@ -4772,6 +4772,38 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/servers/{id}/reboot": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["ServerOpsController_rebootStatus"];
+        put?: never;
+        post: operations["ServerOpsController_requestReboot"];
+        delete: operations["ServerOpsController_cancelReboot"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/servers/{id}/reboot/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["ServerOpsController_rebootPreview"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/servers/{id}/cleanup": {
         parameters: {
             query?: never;
@@ -11122,7 +11154,7 @@ export interface operations {
                     config: {
                         [key: string]: unknown;
                     };
-                    eventTypes?: ("deploy_success" | "deploy_failed" | "deploy_rolled_back" | "server_offline" | "server_online" | "swarm_degraded" | "ssl_expiring" | "token_expiring" | "backup_failed" | "backup_success" | "backup_missing" | "backup_recovered" | "backup_restore_failed" | "verify_missing" | "verify_recovered" | "volume_backup_success" | "volume_backup_failed" | "scheduled_task_success" | "scheduled_task_failed" | "docker_cleanup_success" | "docker_cleanup_failed" | "container_crashed" | "container_oom" | "container_unhealthy" | "container_mem_pressure" | "rollout_halted" | "rollout_completed" | "rollout_rolled_back" | "rollout_rollback_failed" | "image_update_available" | "app_move_completed" | "app_move_rolled_back" | "app_move_failed")[];
+                    eventTypes?: ("deploy_success" | "deploy_failed" | "deploy_rolled_back" | "server_offline" | "server_online" | "server_reboot_verified" | "server_reboot_degraded" | "server_reboot_failed" | "swarm_degraded" | "ssl_expiring" | "token_expiring" | "backup_failed" | "backup_success" | "backup_missing" | "backup_recovered" | "backup_restore_failed" | "verify_missing" | "verify_recovered" | "volume_backup_success" | "volume_backup_failed" | "scheduled_task_success" | "scheduled_task_failed" | "docker_cleanup_success" | "docker_cleanup_failed" | "container_crashed" | "container_oom" | "container_unhealthy" | "container_mem_pressure" | "rollout_halted" | "rollout_completed" | "rollout_rolled_back" | "rollout_rollback_failed" | "image_update_available" | "app_move_completed" | "app_move_rolled_back" | "app_move_failed")[];
                     /** @default en */
                     locale?: string;
                 };
@@ -11249,7 +11281,7 @@ export interface operations {
                 "application/json": {
                     name?: string;
                     enabled?: boolean;
-                    eventTypes?: ("deploy_success" | "deploy_failed" | "deploy_rolled_back" | "server_offline" | "server_online" | "swarm_degraded" | "ssl_expiring" | "token_expiring" | "backup_failed" | "backup_success" | "backup_missing" | "backup_recovered" | "backup_restore_failed" | "verify_missing" | "verify_recovered" | "volume_backup_success" | "volume_backup_failed" | "scheduled_task_success" | "scheduled_task_failed" | "docker_cleanup_success" | "docker_cleanup_failed" | "container_crashed" | "container_oom" | "container_unhealthy" | "container_mem_pressure" | "rollout_halted" | "rollout_completed" | "rollout_rolled_back" | "rollout_rollback_failed" | "image_update_available" | "app_move_completed" | "app_move_rolled_back" | "app_move_failed")[];
+                    eventTypes?: ("deploy_success" | "deploy_failed" | "deploy_rolled_back" | "server_offline" | "server_online" | "server_reboot_verified" | "server_reboot_degraded" | "server_reboot_failed" | "swarm_degraded" | "ssl_expiring" | "token_expiring" | "backup_failed" | "backup_success" | "backup_missing" | "backup_recovered" | "backup_restore_failed" | "verify_missing" | "verify_recovered" | "volume_backup_success" | "volume_backup_failed" | "scheduled_task_success" | "scheduled_task_failed" | "docker_cleanup_success" | "docker_cleanup_failed" | "container_crashed" | "container_oom" | "container_unhealthy" | "container_mem_pressure" | "rollout_halted" | "rollout_completed" | "rollout_rolled_back" | "rollout_rollback_failed" | "image_update_available" | "app_move_completed" | "app_move_rolled_back" | "app_move_failed")[];
                     config?: {
                         [key: string]: unknown;
                     };
@@ -37551,6 +37583,513 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Authenticated but not permitted (scope or team permission). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate limit exceeded; see Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    ServerOpsController_rebootStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        active: {
+                            id: string;
+                            serverId: string;
+                            /** @enum {string} */
+                            mode: "now" | "scheduled";
+                            /** @enum {string} */
+                            state: "SCHEDULED" | "STARTING" | "REBOOTING" | "WAITING_AGENT" | "VERIFYING" | "DONE";
+                            /** @enum {string|null} */
+                            result: "ok" | "degraded" | "failed" | "cancelled" | null;
+                            requestedBy: string;
+                            scheduledAt: string | null;
+                            startedAt: string | null;
+                            agentBackAt: string | null;
+                            verifiedAt: string | null;
+                            createdAt: string;
+                            snapshot: {
+                                containers: number;
+                                domains: number;
+                                hostsHub: boolean;
+                            } | null;
+                            report: {
+                                /** @enum {number} */
+                                version: 1;
+                                checkedAt: string;
+                                rebooted: boolean;
+                                /** @enum {string} */
+                                docker: "active" | "inactive" | "unknown";
+                                containers: {
+                                    name: string;
+                                    image: string;
+                                    restartPolicy: string;
+                                    hadHealthcheck: boolean;
+                                    /** @enum {string} */
+                                    verdict: "ok" | "missing" | "unhealthy" | "pending" | "skipped";
+                                    detail?: string;
+                                }[];
+                                domains: {
+                                    host: string;
+                                    /** @enum {string} */
+                                    verdict: "ok" | "not_answering" | "pending" | "unverified";
+                                    status: number | null;
+                                }[];
+                                /** @enum {string} */
+                                domainsNote?: "skipped_no_host_port" | "probe_unavailable";
+                                /** @enum {string} */
+                                rebootRequired: "cleared" | "still_set" | "unknown";
+                                reason?: string;
+                                summary: {
+                                    containersOk: number;
+                                    containersExpected: number;
+                                    domainsOk: number;
+                                    domainsExpected: number;
+                                };
+                            } | null;
+                        } | null;
+                        last: {
+                            id: string;
+                            serverId: string;
+                            /** @enum {string} */
+                            mode: "now" | "scheduled";
+                            /** @enum {string} */
+                            state: "SCHEDULED" | "STARTING" | "REBOOTING" | "WAITING_AGENT" | "VERIFYING" | "DONE";
+                            /** @enum {string|null} */
+                            result: "ok" | "degraded" | "failed" | "cancelled" | null;
+                            requestedBy: string;
+                            scheduledAt: string | null;
+                            startedAt: string | null;
+                            agentBackAt: string | null;
+                            verifiedAt: string | null;
+                            createdAt: string;
+                            snapshot: {
+                                containers: number;
+                                domains: number;
+                                hostsHub: boolean;
+                            } | null;
+                            report: {
+                                /** @enum {number} */
+                                version: 1;
+                                checkedAt: string;
+                                rebooted: boolean;
+                                /** @enum {string} */
+                                docker: "active" | "inactive" | "unknown";
+                                containers: {
+                                    name: string;
+                                    image: string;
+                                    restartPolicy: string;
+                                    hadHealthcheck: boolean;
+                                    /** @enum {string} */
+                                    verdict: "ok" | "missing" | "unhealthy" | "pending" | "skipped";
+                                    detail?: string;
+                                }[];
+                                domains: {
+                                    host: string;
+                                    /** @enum {string} */
+                                    verdict: "ok" | "not_answering" | "pending" | "unverified";
+                                    status: number | null;
+                                }[];
+                                /** @enum {string} */
+                                domainsNote?: "skipped_no_host_port" | "probe_unavailable";
+                                /** @enum {string} */
+                                rebootRequired: "cleared" | "still_set" | "unknown";
+                                reason?: string;
+                                summary: {
+                                    containersOk: number;
+                                    containersExpected: number;
+                                    domainsOk: number;
+                                    domainsExpected: number;
+                                };
+                            } | null;
+                        } | null;
+                    };
+                };
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Authenticated but not permitted (scope or team permission). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate limit exceeded; see Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    ServerOpsController_requestReboot: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @enum {string} */
+                    mode: "now" | "scheduled";
+                    /** Format: date-time */
+                    at?: string;
+                    confirmName: string;
+                };
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        id: string;
+                        serverId: string;
+                        /** @enum {string} */
+                        mode: "now" | "scheduled";
+                        /** @enum {string} */
+                        state: "SCHEDULED" | "STARTING" | "REBOOTING" | "WAITING_AGENT" | "VERIFYING" | "DONE";
+                        /** @enum {string|null} */
+                        result: "ok" | "degraded" | "failed" | "cancelled" | null;
+                        requestedBy: string;
+                        scheduledAt: string | null;
+                        startedAt: string | null;
+                        agentBackAt: string | null;
+                        verifiedAt: string | null;
+                        createdAt: string;
+                        snapshot: {
+                            containers: number;
+                            domains: number;
+                            hostsHub: boolean;
+                        } | null;
+                        report: {
+                            /** @enum {number} */
+                            version: 1;
+                            checkedAt: string;
+                            rebooted: boolean;
+                            /** @enum {string} */
+                            docker: "active" | "inactive" | "unknown";
+                            containers: {
+                                name: string;
+                                image: string;
+                                restartPolicy: string;
+                                hadHealthcheck: boolean;
+                                /** @enum {string} */
+                                verdict: "ok" | "missing" | "unhealthy" | "pending" | "skipped";
+                                detail?: string;
+                            }[];
+                            domains: {
+                                host: string;
+                                /** @enum {string} */
+                                verdict: "ok" | "not_answering" | "pending" | "unverified";
+                                status: number | null;
+                            }[];
+                            /** @enum {string} */
+                            domainsNote?: "skipped_no_host_port" | "probe_unavailable";
+                            /** @enum {string} */
+                            rebootRequired: "cleared" | "still_set" | "unknown";
+                            reason?: string;
+                            summary: {
+                                containersOk: number;
+                                containersExpected: number;
+                                domainsOk: number;
+                                domainsExpected: number;
+                            };
+                        } | null;
+                    };
+                };
+            };
+            /** @description Invalid or malformed request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Authenticated but not permitted (scope or team permission). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate limit exceeded; see Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    ServerOpsController_cancelReboot: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        id: string;
+                        serverId: string;
+                        /** @enum {string} */
+                        mode: "now" | "scheduled";
+                        /** @enum {string} */
+                        state: "SCHEDULED" | "STARTING" | "REBOOTING" | "WAITING_AGENT" | "VERIFYING" | "DONE";
+                        /** @enum {string|null} */
+                        result: "ok" | "degraded" | "failed" | "cancelled" | null;
+                        requestedBy: string;
+                        scheduledAt: string | null;
+                        startedAt: string | null;
+                        agentBackAt: string | null;
+                        verifiedAt: string | null;
+                        createdAt: string;
+                        snapshot: {
+                            containers: number;
+                            domains: number;
+                            hostsHub: boolean;
+                        } | null;
+                        report: {
+                            /** @enum {number} */
+                            version: 1;
+                            checkedAt: string;
+                            rebooted: boolean;
+                            /** @enum {string} */
+                            docker: "active" | "inactive" | "unknown";
+                            containers: {
+                                name: string;
+                                image: string;
+                                restartPolicy: string;
+                                hadHealthcheck: boolean;
+                                /** @enum {string} */
+                                verdict: "ok" | "missing" | "unhealthy" | "pending" | "skipped";
+                                detail?: string;
+                            }[];
+                            domains: {
+                                host: string;
+                                /** @enum {string} */
+                                verdict: "ok" | "not_answering" | "pending" | "unverified";
+                                status: number | null;
+                            }[];
+                            /** @enum {string} */
+                            domainsNote?: "skipped_no_host_port" | "probe_unavailable";
+                            /** @enum {string} */
+                            rebootRequired: "cleared" | "still_set" | "unknown";
+                            reason?: string;
+                            summary: {
+                                containersOk: number;
+                                containersExpected: number;
+                                domainsOk: number;
+                                domainsExpected: number;
+                            };
+                        } | null;
+                    };
+                };
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Authenticated but not permitted (scope or team permission). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate limit exceeded; see Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    ServerOpsController_rebootPreview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        containers: number;
+                        domains: number;
+                        hostsHub: boolean;
+                        agentOnline: boolean;
+                    };
+                };
             };
             /** @description Missing or invalid authentication. */
             401: {

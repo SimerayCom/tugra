@@ -6005,6 +6005,9 @@
                         "deploy_rolled_back",
                         "server_offline",
                         "server_online",
+                        "server_reboot_verified",
+                        "server_reboot_degraded",
+                        "server_reboot_failed",
                         "swarm_degraded",
                         "ssl_expiring",
                         "token_expiring",
@@ -6214,6 +6217,9 @@
                         "deploy_rolled_back",
                         "server_offline",
                         "server_online",
+                        "server_reboot_verified",
+                        "server_reboot_degraded",
+                        "server_reboot_failed",
                         "swarm_degraded",
                         "ssl_expiring",
                         "token_expiring",
@@ -56320,6 +56326,1401 @@
         "responses": {
           "200": {
             "description": ""
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "servers"
+        ]
+      }
+    },
+    "/api/v1/servers/{id}/reboot": {
+      "get": {
+        "operationId": "ServerOpsController_rebootStatus",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "active": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "serverId": {
+                          "type": "string"
+                        },
+                        "mode": {
+                          "type": "string",
+                          "enum": [
+                            "now",
+                            "scheduled"
+                          ]
+                        },
+                        "state": {
+                          "type": "string",
+                          "enum": [
+                            "SCHEDULED",
+                            "STARTING",
+                            "REBOOTING",
+                            "WAITING_AGENT",
+                            "VERIFYING",
+                            "DONE"
+                          ]
+                        },
+                        "result": {
+                          "type": "string",
+                          "enum": [
+                            "ok",
+                            "degraded",
+                            "failed",
+                            "cancelled"
+                          ],
+                          "nullable": true
+                        },
+                        "requestedBy": {
+                          "type": "string"
+                        },
+                        "scheduledAt": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "startedAt": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "agentBackAt": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "verifiedAt": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "createdAt": {
+                          "type": "string"
+                        },
+                        "snapshot": {
+                          "type": "object",
+                          "properties": {
+                            "containers": {
+                              "type": "number"
+                            },
+                            "domains": {
+                              "type": "number"
+                            },
+                            "hostsHub": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "containers",
+                            "domains",
+                            "hostsHub"
+                          ],
+                          "additionalProperties": false,
+                          "nullable": true
+                        },
+                        "report": {
+                          "type": "object",
+                          "properties": {
+                            "version": {
+                              "type": "number",
+                              "enum": [
+                                1
+                              ]
+                            },
+                            "checkedAt": {
+                              "type": "string"
+                            },
+                            "rebooted": {
+                              "type": "boolean"
+                            },
+                            "docker": {
+                              "type": "string",
+                              "enum": [
+                                "active",
+                                "inactive",
+                                "unknown"
+                              ]
+                            },
+                            "containers": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "name": {
+                                    "type": "string"
+                                  },
+                                  "image": {
+                                    "type": "string"
+                                  },
+                                  "restartPolicy": {
+                                    "type": "string"
+                                  },
+                                  "hadHealthcheck": {
+                                    "type": "boolean"
+                                  },
+                                  "verdict": {
+                                    "type": "string",
+                                    "enum": [
+                                      "ok",
+                                      "missing",
+                                      "unhealthy",
+                                      "pending",
+                                      "skipped"
+                                    ]
+                                  },
+                                  "detail": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "name",
+                                  "image",
+                                  "restartPolicy",
+                                  "hadHealthcheck",
+                                  "verdict"
+                                ],
+                                "additionalProperties": false
+                              }
+                            },
+                            "domains": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "host": {
+                                    "type": "string"
+                                  },
+                                  "verdict": {
+                                    "type": "string",
+                                    "enum": [
+                                      "ok",
+                                      "not_answering",
+                                      "pending",
+                                      "unverified"
+                                    ]
+                                  },
+                                  "status": {
+                                    "type": "number",
+                                    "nullable": true
+                                  }
+                                },
+                                "required": [
+                                  "host",
+                                  "verdict",
+                                  "status"
+                                ],
+                                "additionalProperties": false
+                              }
+                            },
+                            "domainsNote": {
+                              "type": "string",
+                              "enum": [
+                                "skipped_no_host_port",
+                                "probe_unavailable"
+                              ]
+                            },
+                            "rebootRequired": {
+                              "type": "string",
+                              "enum": [
+                                "cleared",
+                                "still_set",
+                                "unknown"
+                              ]
+                            },
+                            "reason": {
+                              "type": "string"
+                            },
+                            "summary": {
+                              "type": "object",
+                              "properties": {
+                                "containersOk": {
+                                  "type": "number"
+                                },
+                                "containersExpected": {
+                                  "type": "number"
+                                },
+                                "domainsOk": {
+                                  "type": "number"
+                                },
+                                "domainsExpected": {
+                                  "type": "number"
+                                }
+                              },
+                              "required": [
+                                "containersOk",
+                                "containersExpected",
+                                "domainsOk",
+                                "domainsExpected"
+                              ],
+                              "additionalProperties": false
+                            }
+                          },
+                          "required": [
+                            "version",
+                            "checkedAt",
+                            "rebooted",
+                            "docker",
+                            "containers",
+                            "domains",
+                            "rebootRequired",
+                            "summary"
+                          ],
+                          "additionalProperties": false,
+                          "nullable": true
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "serverId",
+                        "mode",
+                        "state",
+                        "result",
+                        "requestedBy",
+                        "scheduledAt",
+                        "startedAt",
+                        "agentBackAt",
+                        "verifiedAt",
+                        "createdAt",
+                        "snapshot",
+                        "report"
+                      ],
+                      "additionalProperties": false,
+                      "nullable": true
+                    },
+                    "last": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "serverId": {
+                          "type": "string"
+                        },
+                        "mode": {
+                          "type": "string",
+                          "enum": [
+                            "now",
+                            "scheduled"
+                          ]
+                        },
+                        "state": {
+                          "type": "string",
+                          "enum": [
+                            "SCHEDULED",
+                            "STARTING",
+                            "REBOOTING",
+                            "WAITING_AGENT",
+                            "VERIFYING",
+                            "DONE"
+                          ]
+                        },
+                        "result": {
+                          "type": "string",
+                          "enum": [
+                            "ok",
+                            "degraded",
+                            "failed",
+                            "cancelled"
+                          ],
+                          "nullable": true
+                        },
+                        "requestedBy": {
+                          "type": "string"
+                        },
+                        "scheduledAt": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "startedAt": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "agentBackAt": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "verifiedAt": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "createdAt": {
+                          "type": "string"
+                        },
+                        "snapshot": {
+                          "type": "object",
+                          "properties": {
+                            "containers": {
+                              "type": "number"
+                            },
+                            "domains": {
+                              "type": "number"
+                            },
+                            "hostsHub": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "containers",
+                            "domains",
+                            "hostsHub"
+                          ],
+                          "additionalProperties": false,
+                          "nullable": true
+                        },
+                        "report": {
+                          "type": "object",
+                          "properties": {
+                            "version": {
+                              "type": "number",
+                              "enum": [
+                                1
+                              ]
+                            },
+                            "checkedAt": {
+                              "type": "string"
+                            },
+                            "rebooted": {
+                              "type": "boolean"
+                            },
+                            "docker": {
+                              "type": "string",
+                              "enum": [
+                                "active",
+                                "inactive",
+                                "unknown"
+                              ]
+                            },
+                            "containers": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "name": {
+                                    "type": "string"
+                                  },
+                                  "image": {
+                                    "type": "string"
+                                  },
+                                  "restartPolicy": {
+                                    "type": "string"
+                                  },
+                                  "hadHealthcheck": {
+                                    "type": "boolean"
+                                  },
+                                  "verdict": {
+                                    "type": "string",
+                                    "enum": [
+                                      "ok",
+                                      "missing",
+                                      "unhealthy",
+                                      "pending",
+                                      "skipped"
+                                    ]
+                                  },
+                                  "detail": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "name",
+                                  "image",
+                                  "restartPolicy",
+                                  "hadHealthcheck",
+                                  "verdict"
+                                ],
+                                "additionalProperties": false
+                              }
+                            },
+                            "domains": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "host": {
+                                    "type": "string"
+                                  },
+                                  "verdict": {
+                                    "type": "string",
+                                    "enum": [
+                                      "ok",
+                                      "not_answering",
+                                      "pending",
+                                      "unverified"
+                                    ]
+                                  },
+                                  "status": {
+                                    "type": "number",
+                                    "nullable": true
+                                  }
+                                },
+                                "required": [
+                                  "host",
+                                  "verdict",
+                                  "status"
+                                ],
+                                "additionalProperties": false
+                              }
+                            },
+                            "domainsNote": {
+                              "type": "string",
+                              "enum": [
+                                "skipped_no_host_port",
+                                "probe_unavailable"
+                              ]
+                            },
+                            "rebootRequired": {
+                              "type": "string",
+                              "enum": [
+                                "cleared",
+                                "still_set",
+                                "unknown"
+                              ]
+                            },
+                            "reason": {
+                              "type": "string"
+                            },
+                            "summary": {
+                              "type": "object",
+                              "properties": {
+                                "containersOk": {
+                                  "type": "number"
+                                },
+                                "containersExpected": {
+                                  "type": "number"
+                                },
+                                "domainsOk": {
+                                  "type": "number"
+                                },
+                                "domainsExpected": {
+                                  "type": "number"
+                                }
+                              },
+                              "required": [
+                                "containersOk",
+                                "containersExpected",
+                                "domainsOk",
+                                "domainsExpected"
+                              ],
+                              "additionalProperties": false
+                            }
+                          },
+                          "required": [
+                            "version",
+                            "checkedAt",
+                            "rebooted",
+                            "docker",
+                            "containers",
+                            "domains",
+                            "rebootRequired",
+                            "summary"
+                          ],
+                          "additionalProperties": false,
+                          "nullable": true
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "serverId",
+                        "mode",
+                        "state",
+                        "result",
+                        "requestedBy",
+                        "scheduledAt",
+                        "startedAt",
+                        "agentBackAt",
+                        "verifiedAt",
+                        "createdAt",
+                        "snapshot",
+                        "report"
+                      ],
+                      "additionalProperties": false,
+                      "nullable": true
+                    }
+                  },
+                  "required": [
+                    "active",
+                    "last"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "servers"
+        ]
+      },
+      "post": {
+        "operationId": "ServerOpsController_requestReboot",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "mode": {
+                    "type": "string",
+                    "enum": [
+                      "now",
+                      "scheduled"
+                    ]
+                  },
+                  "at": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "confirmName": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  }
+                },
+                "required": [
+                  "mode",
+                  "confirmName"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "serverId": {
+                      "type": "string"
+                    },
+                    "mode": {
+                      "type": "string",
+                      "enum": [
+                        "now",
+                        "scheduled"
+                      ]
+                    },
+                    "state": {
+                      "type": "string",
+                      "enum": [
+                        "SCHEDULED",
+                        "STARTING",
+                        "REBOOTING",
+                        "WAITING_AGENT",
+                        "VERIFYING",
+                        "DONE"
+                      ]
+                    },
+                    "result": {
+                      "type": "string",
+                      "enum": [
+                        "ok",
+                        "degraded",
+                        "failed",
+                        "cancelled"
+                      ],
+                      "nullable": true
+                    },
+                    "requestedBy": {
+                      "type": "string"
+                    },
+                    "scheduledAt": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "startedAt": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "agentBackAt": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "verifiedAt": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "createdAt": {
+                      "type": "string"
+                    },
+                    "snapshot": {
+                      "type": "object",
+                      "properties": {
+                        "containers": {
+                          "type": "number"
+                        },
+                        "domains": {
+                          "type": "number"
+                        },
+                        "hostsHub": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "containers",
+                        "domains",
+                        "hostsHub"
+                      ],
+                      "additionalProperties": false,
+                      "nullable": true
+                    },
+                    "report": {
+                      "type": "object",
+                      "properties": {
+                        "version": {
+                          "type": "number",
+                          "enum": [
+                            1
+                          ]
+                        },
+                        "checkedAt": {
+                          "type": "string"
+                        },
+                        "rebooted": {
+                          "type": "boolean"
+                        },
+                        "docker": {
+                          "type": "string",
+                          "enum": [
+                            "active",
+                            "inactive",
+                            "unknown"
+                          ]
+                        },
+                        "containers": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "name": {
+                                "type": "string"
+                              },
+                              "image": {
+                                "type": "string"
+                              },
+                              "restartPolicy": {
+                                "type": "string"
+                              },
+                              "hadHealthcheck": {
+                                "type": "boolean"
+                              },
+                              "verdict": {
+                                "type": "string",
+                                "enum": [
+                                  "ok",
+                                  "missing",
+                                  "unhealthy",
+                                  "pending",
+                                  "skipped"
+                                ]
+                              },
+                              "detail": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "name",
+                              "image",
+                              "restartPolicy",
+                              "hadHealthcheck",
+                              "verdict"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "domains": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "host": {
+                                "type": "string"
+                              },
+                              "verdict": {
+                                "type": "string",
+                                "enum": [
+                                  "ok",
+                                  "not_answering",
+                                  "pending",
+                                  "unverified"
+                                ]
+                              },
+                              "status": {
+                                "type": "number",
+                                "nullable": true
+                              }
+                            },
+                            "required": [
+                              "host",
+                              "verdict",
+                              "status"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "domainsNote": {
+                          "type": "string",
+                          "enum": [
+                            "skipped_no_host_port",
+                            "probe_unavailable"
+                          ]
+                        },
+                        "rebootRequired": {
+                          "type": "string",
+                          "enum": [
+                            "cleared",
+                            "still_set",
+                            "unknown"
+                          ]
+                        },
+                        "reason": {
+                          "type": "string"
+                        },
+                        "summary": {
+                          "type": "object",
+                          "properties": {
+                            "containersOk": {
+                              "type": "number"
+                            },
+                            "containersExpected": {
+                              "type": "number"
+                            },
+                            "domainsOk": {
+                              "type": "number"
+                            },
+                            "domainsExpected": {
+                              "type": "number"
+                            }
+                          },
+                          "required": [
+                            "containersOk",
+                            "containersExpected",
+                            "domainsOk",
+                            "domainsExpected"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "version",
+                        "checkedAt",
+                        "rebooted",
+                        "docker",
+                        "containers",
+                        "domains",
+                        "rebootRequired",
+                        "summary"
+                      ],
+                      "additionalProperties": false,
+                      "nullable": true
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "serverId",
+                    "mode",
+                    "state",
+                    "result",
+                    "requestedBy",
+                    "scheduledAt",
+                    "startedAt",
+                    "agentBackAt",
+                    "verifiedAt",
+                    "createdAt",
+                    "snapshot",
+                    "report"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid or malformed request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "servers"
+        ]
+      },
+      "delete": {
+        "operationId": "ServerOpsController_cancelReboot",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "serverId": {
+                      "type": "string"
+                    },
+                    "mode": {
+                      "type": "string",
+                      "enum": [
+                        "now",
+                        "scheduled"
+                      ]
+                    },
+                    "state": {
+                      "type": "string",
+                      "enum": [
+                        "SCHEDULED",
+                        "STARTING",
+                        "REBOOTING",
+                        "WAITING_AGENT",
+                        "VERIFYING",
+                        "DONE"
+                      ]
+                    },
+                    "result": {
+                      "type": "string",
+                      "enum": [
+                        "ok",
+                        "degraded",
+                        "failed",
+                        "cancelled"
+                      ],
+                      "nullable": true
+                    },
+                    "requestedBy": {
+                      "type": "string"
+                    },
+                    "scheduledAt": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "startedAt": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "agentBackAt": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "verifiedAt": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "createdAt": {
+                      "type": "string"
+                    },
+                    "snapshot": {
+                      "type": "object",
+                      "properties": {
+                        "containers": {
+                          "type": "number"
+                        },
+                        "domains": {
+                          "type": "number"
+                        },
+                        "hostsHub": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "containers",
+                        "domains",
+                        "hostsHub"
+                      ],
+                      "additionalProperties": false,
+                      "nullable": true
+                    },
+                    "report": {
+                      "type": "object",
+                      "properties": {
+                        "version": {
+                          "type": "number",
+                          "enum": [
+                            1
+                          ]
+                        },
+                        "checkedAt": {
+                          "type": "string"
+                        },
+                        "rebooted": {
+                          "type": "boolean"
+                        },
+                        "docker": {
+                          "type": "string",
+                          "enum": [
+                            "active",
+                            "inactive",
+                            "unknown"
+                          ]
+                        },
+                        "containers": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "name": {
+                                "type": "string"
+                              },
+                              "image": {
+                                "type": "string"
+                              },
+                              "restartPolicy": {
+                                "type": "string"
+                              },
+                              "hadHealthcheck": {
+                                "type": "boolean"
+                              },
+                              "verdict": {
+                                "type": "string",
+                                "enum": [
+                                  "ok",
+                                  "missing",
+                                  "unhealthy",
+                                  "pending",
+                                  "skipped"
+                                ]
+                              },
+                              "detail": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "name",
+                              "image",
+                              "restartPolicy",
+                              "hadHealthcheck",
+                              "verdict"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "domains": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "host": {
+                                "type": "string"
+                              },
+                              "verdict": {
+                                "type": "string",
+                                "enum": [
+                                  "ok",
+                                  "not_answering",
+                                  "pending",
+                                  "unverified"
+                                ]
+                              },
+                              "status": {
+                                "type": "number",
+                                "nullable": true
+                              }
+                            },
+                            "required": [
+                              "host",
+                              "verdict",
+                              "status"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "domainsNote": {
+                          "type": "string",
+                          "enum": [
+                            "skipped_no_host_port",
+                            "probe_unavailable"
+                          ]
+                        },
+                        "rebootRequired": {
+                          "type": "string",
+                          "enum": [
+                            "cleared",
+                            "still_set",
+                            "unknown"
+                          ]
+                        },
+                        "reason": {
+                          "type": "string"
+                        },
+                        "summary": {
+                          "type": "object",
+                          "properties": {
+                            "containersOk": {
+                              "type": "number"
+                            },
+                            "containersExpected": {
+                              "type": "number"
+                            },
+                            "domainsOk": {
+                              "type": "number"
+                            },
+                            "domainsExpected": {
+                              "type": "number"
+                            }
+                          },
+                          "required": [
+                            "containersOk",
+                            "containersExpected",
+                            "domainsOk",
+                            "domainsExpected"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "version",
+                        "checkedAt",
+                        "rebooted",
+                        "docker",
+                        "containers",
+                        "domains",
+                        "rebootRequired",
+                        "summary"
+                      ],
+                      "additionalProperties": false,
+                      "nullable": true
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "serverId",
+                    "mode",
+                    "state",
+                    "result",
+                    "requestedBy",
+                    "scheduledAt",
+                    "startedAt",
+                    "agentBackAt",
+                    "verifiedAt",
+                    "createdAt",
+                    "snapshot",
+                    "report"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "servers"
+        ]
+      }
+    },
+    "/api/v1/servers/{id}/reboot/preview": {
+      "get": {
+        "operationId": "ServerOpsController_rebootPreview",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "containers": {
+                      "type": "number"
+                    },
+                    "domains": {
+                      "type": "number"
+                    },
+                    "hostsHub": {
+                      "type": "boolean"
+                    },
+                    "agentOnline": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "containers",
+                    "domains",
+                    "hostsHub",
+                    "agentOnline"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
           },
           "401": {
             "description": "Missing or invalid authentication.",
