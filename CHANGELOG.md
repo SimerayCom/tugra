@@ -7,6 +7,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **Discover & adopt never offers Tugra's own containers.** The install stack (hub, web, agent, updater and its bundled
+  postgres/redis), the proxy, Tugra-run tunnels, helper containers and anything Tugra already manages are hidden from
+  the scan, and adopting one directly (API, MCP or CLI) is refused before anything is renamed.
+
 ## [0.1.0-beta.23] - 2026-11-18
 
 - **An in-app update can no longer leave the server half-updated.** Before anything is written or pulled, the updater
