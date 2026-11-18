@@ -297,7 +297,16 @@ fi
 [ "$SYNC_CHECKOUT_ONLY" = 0 ] || exit 0
 # Pre-run copy of an existing .env (kept in the private log dir, removed on exit) — the restore point's .env.
 ENV_BEFORE=""
-if [ -n "$LOGDIR" ] && [ -s "$ENV_FILE" ]; then ENV_BEFORE="$LOGDIR/env.before"; cp -p "$ENV_FILE" "$ENV_BEFORE" && chmod 600 "$ENV_BEFORE" || ENV_BEFORE=""; fi
+# That copy is what a later abort restores from, so a copy that did not land (a full disk is exactly when this runs) must stop the
+# run HERE, before anything is rewritten: continuing would let the abort path keep a half-configured .env and call it a fresh install.
+if [ -n "$LOGDIR" ] && [ -s "$ENV_FILE" ]; then
+  ENV_BEFORE="$LOGDIR/env.before"
+  if ! { cp -p "$ENV_FILE" "$ENV_BEFORE" && chmod 600 "$ENV_BEFORE" && [ "$(wc -c < "$ENV_FILE" | tr -d '[:space:]')" = "$(wc -c < "$ENV_BEFORE" | tr -d '[:space:]')" ]; }; then
+    rm -f "$ENV_BEFORE"; ENV_BEFORE=""
+    err "could not save a copy of $ENV_FILE in $LOGDIR (disk full?) — nothing was changed. Free some disk space (or point TMPDIR at a roomier directory) and re-run."
+    exit 1
+  fi
+fi
 
 # A real ACME contact email: format check + reject the placeholder domains Let's Encrypt won't accept
 # (mirrors panel-router.validateAcmeEmail so the installer fails fast before touching anything).
@@ -746,13 +755,31 @@ fi
 compose() { docker compose --profile updater --env-file "$ENV_FILE" -f "$COMPOSE_FILE" "$@"; }
 step "Fetching images & starting the stack (first run can take a few minutes)…"
 
+# The pre-run .env goes back the same way every other .env write happens: a SAME-DIR temp, size-verified against the saved
+# copy, fsync'ed, then renamed over the live file. An in-place copy that ran out of space would leave a truncated .env (every
+# secret lost) and still claim success. On failure the live .env is untouched and the saved copy is KEPT (its path is printed).
+_restore_env_before() {
+  local tmp
+  tmp="$(mktemp "${ENV_FILE}.XXXXXX")" || return 1
+  if ! { cp -p "$ENV_BEFORE" "$tmp" \
+         && [ "$(wc -c < "$tmp" | tr -d '[:space:]')" = "$(wc -c < "$ENV_BEFORE" | tr -d '[:space:]')" ] \
+         && _fsync_file "$tmp" && mv "$tmp" "$ENV_FILE"; }; then
+    rm -f "$tmp"; return 1
+  fi
+}
 # Abort AFTER the .env was rewritten and BEFORE any container was touched: put the pre-run .env back so the file
 # on disk matches the (unchanged) running stack, and say so truthfully. A fresh install has no pre-run file, so
 # its freshly generated .env is kept. Usage: abort_untouched <reason lines…> ; exits 1.
 abort_untouched() {
   for _m in "$@"; do err "$_m"; done
-  if [ -n "${ENV_BEFORE:-}" ] && [ -f "$ENV_BEFORE" ] && cp -p "$ENV_BEFORE" "$ENV_FILE"; then
-    err "No application containers were touched, and $ENV_FILE was restored to its pre-run state."
+  if [ -n "${ENV_BEFORE:-}" ] && [ -f "$ENV_BEFORE" ]; then
+    if _restore_env_before; then
+      err "No application containers were touched, and $ENV_FILE was restored to its pre-run state."
+    else
+      err "No application containers were touched, but $ENV_FILE could NOT be restored (disk full?): it keeps the configuration this run wrote."
+      err "The pre-run copy is saved at $ENV_BEFORE — after freeing disk space run: cp -p $ENV_BEFORE $ENV_FILE"
+      ENV_BEFORE=""   # keep that copy: the exit trap removes only a copy that is no longer needed
+    fi
   else
     err "No application containers were touched. ($ENV_FILE keeps the configuration written by this run — it is a fresh install.)"
   fi
@@ -791,10 +818,26 @@ if [ -n "$RUNNING_VERSION" ] && [ "$PREV_VERSION" != latest ] && is_newer "$PREV
   note "$ENV_FILE names $PREV_VERSION but the running stack is on $RUNNING_VERSION — a half-finished update; this run finishes it."
   PREV_VERSION="$RUNNING_VERSION"
 fi
+# 0 when every image the compose file resolves (the .env's TUGRA_VERSION and digest pins applied) is already on this machine.
+all_images_local() {
+  local imgs ref
+  imgs="$(compose config --images 2>/dev/null | sed '/^[[:space:]]*$/d')" || return 1
+  [ -n "$imgs" ] || return 1
+  while IFS= read -r ref; do
+    docker image inspect "$ref" >/dev/null 2>&1 || return 1
+  done <<EOF_IMGS
+$imgs
+EOF_IMGS
+  return 0
+}
 # DISK PREFLIGHT, before the restore point and before anything is pulled: room for the images in the Docker data root and
 # for the bookkeeping here. When short, the safe image cleanup runs once and it is measured again; still short = stop with
 # the numbers, the stack and the pre-run .env untouched. (TUGRA_DISK_CHECK=0 skips it; building from source has no pull.)
-if [ "$FORCE_BUILD" -eq 0 ]; then
+# A routine re-run (another domain, a flag) with every image already on this machine pulls nothing and needs no room, so
+# the check only runs when at least one image compose uses is missing locally (an unreadable list = run it, to be safe).
+# (An unpinned `latest` is a moving tag: the pull may fetch new layers, so it is always measured.)
+DISK_TARGET="$(env_get TUGRA_VERSION | tr -d "\"' \r")"
+if [ "$FORCE_BUILD" -eq 0 ] && { [ -z "$DISK_TARGET" ] || [ "$DISK_TARGET" = latest ] || ! all_images_local; }; then
   if ! disk_preflight "$PREV_VERSION" "$REPO_DIR" ""; then
     abort_untouched "$(disk_short_text)." "Nothing was pulled."
   fi

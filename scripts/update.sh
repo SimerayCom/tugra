@@ -167,7 +167,9 @@ snap_note() {
 hf_undo() { hf_rollback || log "host files: ROLLBACK FAILED — copy the files saved in $HF_BACKUP_DIR back into $REPO_DIR by hand"; }
 hf_note() { if [ "$HF_APPLIED" -eq 1 ] && [ -n "$HF_BACKUP_DIR" ]; then printf '; compose/scripts could NOT be restored: copy the files saved in %s back by hand' "$HF_BACKUP_DIR"; fi; }
 # A value safe to embed in the JSON status string (no quotes, backslashes or control characters).
-json_str() { printf '%s' "$1" | tr -d '"\\' | tr '\n\t\r' '   '; }
+# Every control character (ESC from a colourised `compose pull`, backspace, DEL ...) goes: one of them makes the status invalid
+# JSON, which the hub reads as "idle" and the panel then never shows the failure. \n \t \r become spaces first.
+json_str() { printf '%s' "$1" | tr '\n\t\r' '   ' | tr -d '"\\' | tr -d '\000-\037\177'; }
 
 # A bare lowercase 64-hex sha256 (the only digest form the manifest, the queue job and .env carry).
 is_hex64() { [[ "${1:-}" =~ ^[0-9a-f]{64}$ ]]; }
@@ -248,6 +250,7 @@ PINS_TOUCH_FORCE=0
 HALF_STATE=0
 HALF_RUNNING=""
 HALF_ENV=""
+HALF_KNOWN=0   # 1 when the running release could be read (so "no half state" is a real answer, not a blind spot)
 HALF_KEY="instance:update:half_state"
 
 # Compare what .env names with what actually runs. An update used to write .env BEFORE it pulled; when the pull (or the
@@ -256,10 +259,11 @@ HALF_KEY="instance:update:half_state"
 # Dry-run hook: DRY_RUNNING=<version> plays the running release (default: unknown = no half state).
 detect_half_state() {
   local envv="${1:-}" running=""
-  HALF_STATE=0; HALF_RUNNING=""; HALF_ENV=""
-  [ -n "$envv" ] && [ "$envv" != "latest" ] || return 0
+  HALF_STATE=0; HALF_RUNNING=""; HALF_ENV=""; HALF_KNOWN=0
+  [ -n "$envv" ] && [ "$envv" != "latest" ] || { HALF_KNOWN=1; return 0; }
   if [ "$DRY" -eq 1 ]; then running="${DRY_RUNNING:-}"; else running="$(running_stack_version)" || running=""; fi
   _img_is_version "$running" || return 0
+  HALF_KNOWN=1
   if is_newer "$envv" "$running"; then HALF_STATE=1; HALF_RUNNING="${running#v}"; HALF_ENV="$envv"; fi
   return 0
 }
@@ -403,7 +407,7 @@ pull_target_images() {
         PULL_ERROR="the disk filled up while pulling the images; free some space (remove unused Docker images or volumes) and retry"
       else
         PULL_CODE="pull_failed"
-        cause="$(printf '%s\n' "$out" | sed '/^[[:space:]]*$/d' | tail -n1 | cut -c1-200)"
+        cause="$(printf '%s\n' "$out" | sed "s/$(printf '\033')\[[0-9;]*[A-Za-z]//g" | sed '/^[[:space:]]*$/d' | tail -n1 | cut -c1-200)"
         PULL_ERROR="image pull failed${cause:+: $(json_str "$cause")}"
       fi
       return 1
@@ -662,8 +666,18 @@ _do_update() {
   # Previous digest pins (empty = the stack is tag-only). A malformed value is treated as unpinned so a hand-edited
   # .env can never be written back as garbage by a rollback. In a half state the pins in .env belong to a release that
   # never ran, so the previous pins are none.
+  # In a half state the pins to go back to are the ones the RUNNING containers were created from (a digest pull leaves no
+  # local tag, so a rollback by tag alone would need the registry): read from them, empty for a container on a plain tag.
   local prevHub prevWeb
-  if [ "$HALF_STATE" -eq 1 ]; then prevHub=""; prevWeb=""; else prevHub="$envHub"; prevWeb="$envWeb"; fi
+  if [ "$HALF_STATE" -eq 1 ]; then
+    prevHub=""; prevWeb=""
+    if [ "$DRY" -eq 0 ]; then
+      prevHub="$(running_pin hub-api)"; is_hex64 "$prevHub" || prevHub=""
+      prevWeb="$(running_pin web)"; is_hex64 "$prevWeb" || prevWeb=""
+    fi
+  else
+    prevHub="$envHub"; prevWeb="$envWeb"
+  fi
   log "updating $current -> $target"
   set_status pulling "$target"   # the hub knows no separate "snapshotting" phase; the snapshot runs under "pulling"
 
@@ -672,10 +686,13 @@ _do_update() {
   # short = refuse here with the numbers, nothing touched (lib/images.sh disk_preflight).
   if [ "$DRY" -eq 1 ]; then
     printf 'RUN: disk preflight (free space of the Docker data root and %s; safe image cleanup first when short)\n' "$REPO_DIR"
-  elif ! disk_preflight "$current" "$REPO_DIR" "$(updater_image_ref)"; then
-    log "$(disk_short_text) — nothing was changed"
-    fail_update "$target" "$(disk_short_text)" disk_space ",\"needBytes\":$DISK_NEED,\"haveBytes\":$DISK_HAVE,\"path\":\"$(json_str "$DISK_PATH")\""
-    return 0
+  else
+    DISK_TARGET="$target"; DISK_BACKUP_BYTES="$(snap_dump_estimate)"
+    if ! disk_preflight "$current" "$REPO_DIR" "$(updater_image_ref)"; then
+      log "$(disk_short_text) — nothing was changed"
+      fail_update "$target" "$(disk_short_text)" disk_space ",\"needBytes\":$DISK_NEED,\"haveBytes\":$DISK_HAVE,\"path\":\"$(json_str "$DISK_PATH")\""
+      return 0
+    fi
   fi
 
   # Release host files (compose + installer scripts), PREFLIGHT: download, verify (ed25519 + hashes) and validate them
@@ -718,6 +735,7 @@ _do_update() {
     if backup_dir_ok; then HF_BACKUP_ROOT="$(_snap_cfg TUGRA_BACKUP_DIR "$REPO_DIR/backups")"; else HF_BACKUP_ROOT="$REPO_DIR/backups"; fi
     if ! hf_apply "$current" "$target"; then
       log "host files: $HF_ERROR — aborting"
+      snapshot_discard   # nothing changed: the dump would only sit on a possibly tight disk
       fail_update "$target" "update refused: $HF_ERROR$(snap_note)"
       return 0
     fi
@@ -738,7 +756,7 @@ _do_update() {
     log "$PULL_ERROR — .env was not changed"
     local repaired=""
     if [ "$HALF_STATE" -eq 1 ]; then
-      if restore_env "$current" "" "" "$envHub" "$envWeb"; then
+      if restore_env "$current" "$prevHub" "$prevWeb" "$envHub" "$envWeb"; then
         repaired="; $ENV_FILE was set back to the running version $current"
         clear_half_state
       else
@@ -747,6 +765,7 @@ _do_update() {
       fi
     fi
     hf_undo
+    snapshot_discard   # nothing but the host files changed (and those are back): drop this run's dump, a retry takes a new one
     local code=""
     case "$PULL_CODE" in disk_full) code="disk_space" ;; esac
     fail_update "$target" "$PULL_ERROR$repaired$(hf_note)" "$code"
@@ -918,12 +937,20 @@ catch_up_updater
 # Start-up check for a half-finished update (.env names a release newer than the one the containers run): left by a crash,
 # a full disk, or an updater older than this fix. Reported to the hub, which shows "Finish update" in Settings > Updates;
 # the next "Update now" repairs it by itself either way (see _do_update). No half state clears an earlier report.
+# At host boot or right after a stack `up` this can run before hub-api and web are up: then the running release is UNKNOWN,
+# which is no evidence of a consistent install, so an earlier report is kept (only a positive "consistent" reading clears it)
+# and the check is repeated from the queue loop below. The log line is printed once per distinct half state.
+HALF_LOGGED=""
 report_half_state() {
   detect_half_state "$(env_get TUGRA_VERSION)"
   if [ "$HALF_STATE" -eq 1 ]; then
-    log "half-finished update: $ENV_FILE names $HALF_ENV but the running stack is on $HALF_RUNNING — Settings > Updates offers 'Finish update'"
+    if [ "$HALF_LOGGED" != "$HALF_ENV>$HALF_RUNNING" ]; then
+      log "half-finished update: $ENV_FILE names $HALF_ENV but the running stack is on $HALF_RUNNING — Settings > Updates offers 'Finish update'"
+      HALF_LOGGED="$HALF_ENV>$HALF_RUNNING"
+    fi
     mark_half_state "$HALF_ENV" "$HALF_RUNNING"
-  else
+  elif [ "$HALF_KNOWN" -eq 1 ]; then
+    HALF_LOGGED=""
     clear_half_state
   fi
 }
@@ -931,9 +958,10 @@ report_half_state
 
 log "watching $QUEUE_KEY on $REDIS_URL"
 while true; do
-  # BLPOP returns two lines: the key name, then the popped value.
-  job="$(redis-cli -u "$REDIS_URL" BLPOP "$QUEUE_KEY" 0 | sed -n '2p')"
-  [ -n "$job" ] || continue
+  # BLPOP returns two lines: the key name, then the popped value. It times out every HALF_RECHECK seconds (empty answer) so the
+  # half-state report is refreshed while the queue is idle: the stack may only have come up after this updater started.
+  job="$(redis-cli -u "$REDIS_URL" BLPOP "$QUEUE_KEY" "${HALF_RECHECK:-60}" | sed -n '2p')"
+  if [ -z "$job" ]; then report_half_state; continue; fi
   handle_job "$job" || log "update run errored (continuing to watch)"
   if [ "$RELOAD_SELF" -eq 1 ]; then
     # The release replaced update.sh/lib/*.sh: restart the loop on the new code (its syntax was checked before it

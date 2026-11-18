@@ -583,7 +583,8 @@ case "$1" in
     sub="$1"; shift
     case "$sub" in
       version) exit 0 ;;
-      pull) if [ -n "$SHIM_PULL_ERR" ]; then echo "$SHIM_PULL_ERR" >&2; exit 1; fi; exit 0 ;;
+      pull) if [ -n "$SHIM_PULL_ERR" ]; then : > "$SHIM_LOG.pullfail"; echo "$SHIM_PULL_ERR" >&2; exit 1; fi; exit 0 ;;
+      config) case "$*" in *--images*) [ -n "$SHIM_COMPOSE_IMAGES" ] && printf '%s\\n' $SHIM_COMPOSE_IMAGES ;; esac; exit 0 ;;
       up) case "$*" in *postgres*) : > "$SHIM_LOG.pgup" ;; esac; exit 0 ;;
       ps) last="\${@: -1}"
           case "$last" in
@@ -619,6 +620,7 @@ exec ${REAL_DF} "$@"
       join(shims, "mktemp"),
       `#!/bin/sh
 if [ -n "$SHIM_MKTEMP_FAIL" ]; then case "$1" in "$SHIM_MKTEMP_FAIL".*) echo "mktemp: failed to create file via template: No space left on device" >&2; exit 1 ;; esac; fi
+if [ -n "$SHIM_MKTEMP_FAIL_AFTER_PULL" ] && [ -e "$SHIM_LOG.pullfail" ]; then case "$1" in "$SHIM_MKTEMP_FAIL_AFTER_PULL".*) echo "mktemp: failed to create file via template: No space left on device" >&2; exit 1 ;; esac; fi
 if [ -n "$SHIM_MKTEMP_FULL" ]; then case "$1" in "$SHIM_MKTEMP_FULL".*)
   name="\${1%XXXXXX}full$$"
   if [ -e /dev/full ]; then ln -s /dev/full "$name"; else ln -s "$(dirname "$1")" "$name"; fi
@@ -626,8 +628,18 @@ if [ -n "$SHIM_MKTEMP_FULL" ]; then case "$1" in "$SHIM_MKTEMP_FULL".*)
 exec ${REAL_MKTEMP} "$@"
 `,
     );
+    // cp: SHIM_CP_FAIL makes the installer's copy of the pre-run .env (a path ending in env.before) fail, as on a full disk.
+    const REAL_CP = execFileSync("sh", ["-c", "command -v cp"]).toString().trim();
+    writeFileSync(
+      join(shims, "cp"),
+      `#!/bin/sh
+if [ -n "$SHIM_CP_FAIL" ]; then for a in "$@"; do case "$a" in */env.before) echo "cp: error writing '$a': No space left on device" >&2; exit 1 ;; esac; done; fi
+exec ${REAL_CP} "$@"
+`,
+    );
     chmodSync(join(shims, "docker"), 0o755);
     chmodSync(join(shims, "curl"), 0o755);
+    chmodSync(join(shims, "cp"), 0o755);
     chmodSync(join(shims, "df"), 0o755);
     chmodSync(join(shims, "mktemp"), 0o755);
 
@@ -648,6 +660,7 @@ exec ${REAL_MKTEMP} "$@"
     const reset = (): void => {
       writeFileSync(LOG, "");
       rmSync(`${LOG}.pgup`, { force: true });
+      rmSync(`${LOG}.pullfail`, { force: true });
     };
     const calls = (): string => readFileSync(LOG, "utf8");
     /** First install writes the .env in dry-run (no Docker), the real run then exercises compose. */
@@ -1007,6 +1020,50 @@ exec ${REAL_MKTEMP} "$@"
         expect(readFileSync(p).equals(before)).toBe(true);
         expect(readdirSync(dirname(p)).filter((f) => f.startsWith("envfull-write.env.") && existsSync(join(dirname(p), f)))).toEqual([]);
         expect(calls()).not.toContain("up -d");
+      });
+
+      it("the abort's restore of the pre-run .env is atomic too: when it cannot write, the live .env is NOT truncated, the failure is said out loud, and the saved copy is kept", () => {
+        const p = join(work, "restore-fail.env"); dry(p, HTTP, { TUGRA_VERSION: "0.1.0" });
+        const before = readFileSync(p); reset();
+        const r = install(p, ["--domain", "tugra.example.com"], { env: { SHIM_PULL_ERR: "manifest unknown", SHIM_MKTEMP_FAIL_AFTER_PULL: p } });
+        expect(r.code).toBe(1);
+        expect(r.out).toContain("could NOT be restored");
+        expect(r.out).not.toContain("restored to its pre-run state");
+        expect(readEnv(p).JWT_ACCESS_SECRET).toBeTruthy(); // a complete file (this run's), never a truncated one
+        const saved = /saved at (\S+env\.before)/.exec(r.out)?.[1];
+        expect(saved).toBeTruthy();
+        expect(readFileSync(saved as string).equals(before)).toBe(true); // the pre-run copy survives for a manual restore
+      });
+
+      it("a pre-run .env copy that cannot be made (full disk) stops the run before anything is rewritten, instead of pretending a fresh install", () => {
+        const p = join(work, "copy-fail.env"); dry(p, HTTP, { TUGRA_VERSION: "0.1.0" });
+        const before = readFileSync(p); reset();
+        const r = install(p, ["--domain", "tugra.example.com"], { env: { SHIM_CP_FAIL: "1" } });
+        expect(r.code).toBe(1);
+        expect(r.out).toContain("could not save a copy of");
+        expect(r.out).not.toContain("fresh install");
+        expect(readFileSync(p).equals(before)).toBe(true);
+        expect(calls()).not.toMatch(/ pull|up -d/);
+      });
+
+      it("a re-run that pulls nothing (every image of the pinned release is already local) is not refused for lack of room", () => {
+        const p = join(work, "disk-skip.env"); dry(p, HTTP, { TUGRA_VERSION: "0.1.0" }); reset(); setAvail(GB);
+        const r = install(p, HTTP, { env: { SHIM_DOCKER_ROOT: ROOT, SHIM_COMPOSE_IMAGES: "ghcr.io/simeraycom/tugra-hub:0.1.0 ghcr.io/simeraycom/tugra-web:0.1.0" } });
+        expect(r.code).toBe(0);
+        expect(r.out).not.toContain("not enough free disk space");
+        expect(r.out).not.toContain("disk check");
+      });
+
+      it("... but one missing image (or an unpinned `latest`) brings the check back, and the refusal names the TUGRA_DISK_CHECK=0 escape", () => {
+        const p = join(work, "disk-missing.env"); dry(p, HTTP, { TUGRA_VERSION: "0.1.0" }); reset(); setAvail(GB);
+        const images = withImages("disk-missing.images", [imgRow("sha256:h10", HUBR, "0.1.0", 2 * GB, "Tugra Hub API")]);
+        const r = install(p, HTTP, { env: { SHIM_DOCKER_ROOT: ROOT, SHIM_IMAGES: images, SHIM_COMPOSE_IMAGES: "ghcr.io/simeraycom/tugra-hub:0.1.0 ghcr.io/simeraycom/tugra-web:0.1.0" } });
+        expect(r.code).toBe(1);
+        expect(r.out).toContain("not enough free disk space");
+        expect(r.out).toContain("TUGRA_DISK_CHECK=0");
+        const q = join(work, "disk-latest.env"); reset(); setAvail(GB);
+        const l = install(q, HTTP, { env: { SHIM_DOCKER_ROOT: ROOT, SHIM_COMPOSE_IMAGES: "ghcr.io/simeraycom/tugra-hub:latest" } });
+        expect(l.out).toContain("not enough free disk space"); // a moving tag is always re-pulled
       });
 
       it("appending a new key goes through the same atomic write: other lines, their order and the file mode survive", () => {

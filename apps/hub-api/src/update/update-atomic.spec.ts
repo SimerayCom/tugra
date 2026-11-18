@@ -44,7 +44,11 @@ resolve() {
   awk -F'|' -v r="$1" '$1==r || ($2!="<none>" && $3!="<none>" && $2":"$3==r) || ($2!="<none>" && $4!="<none>" && $2"@"$4==r) {print $1; exit}' "$T"
 }
 case "$1" in
-  info) echo "$SHIM_ROOT"; exit 0 ;;
+  info) case "$*" in
+          *DriverStatus*) if [ -n "$SHIM_CONTAINERD" ]; then echo "[[driver-type io.containerd.snapshotter.v1]]"; else echo "[[Backing Filesystem extfs]]"; fi ;;
+          *) echo "$SHIM_ROOT" ;;
+        esac
+        exit 0 ;;
   image)
     case "$2" in
       ls) case "$*" in *" -q"*) awk -F'|' '{print $1}' "$T" ;; *) awk -F'|' '{print $1"|"$2"|"$3"|"$4}' "$T" ;; esac; exit 0 ;;
@@ -63,7 +67,11 @@ case "$1" in
     shift; fmt=""; if [ "$1" = "-f" ]; then fmt="$2"; shift 2; fi
     case "$fmt" in
       *Labels*) case "$1" in cid-hub-api) cat "$D/run_hub" ;; cid-web) cat "$D/run_web" ;; esac ;;
-      *Config.Image*) case "$1" in cid-hub-api) echo "ghcr.io/simeraycom/tugra-hub:$(cat "$D/run_hub")" ;; cid-web) echo "ghcr.io/simeraycom/tugra-web:$(cat "$D/run_web")" ;; esac ;;
+      *Config.Image*) # a container created from a digest pin carries repo:tag@sha256:<hex> (files run_hub_pin / run_web_pin)
+        case "$1" in
+          cid-hub-api) echo "ghcr.io/simeraycom/tugra-hub:$(cat "$D/run_hub")$([ -s "$D/run_hub_pin" ] && echo "@sha256:$(cat "$D/run_hub_pin")")" ;;
+          cid-web) echo "ghcr.io/simeraycom/tugra-web:$(cat "$D/run_web")$([ -s "$D/run_web_pin" ] && echo "@sha256:$(cat "$D/run_web_pin")")" ;;
+        esac ;;
       *"{{.Image}}"*) echo "sha256:updater-image" ;;
       *) echo healthy ;;
     esac
@@ -106,7 +114,7 @@ case "$1" in
         last=""; for a in "$@"; do last="$a"; done
         case "$last" in hub-api) echo cid-hub-api ;; web) echo cid-web ;; tugra-updater) echo cid-updater ;; esac
         exit 0 ;;
-      exec) case "$*" in *pg_dump*) printf 'PGDMP-fake-dump' ;; esac; exit 0 ;;
+      exec) case "$*" in *pg_dump*) printf 'PGDMP-fake-dump' ;; *psql*) [ -n "$SHIM_DB_SIZE" ] && echo "$SHIM_DB_SIZE" ;; esac; exit 0 ;;
     esac
     exit 0 ;;
 esac
@@ -116,7 +124,10 @@ exit 0
 const REDIS_SHIM = `#!/bin/sh
 printf '%s\\n' "redis-cli $*" >> "$SHIM_LOG"
 case "$*" in
-  *BLPOP*) if [ -e "$SHIM_DIR/popped" ] || [ -z "$SHIM_JOB" ]; then exit 1; fi; : > "$SHIM_DIR/popped"; printf 'instance:update:queue\\n%s\\n' "$SHIM_JOB"; exit 0 ;;
+  # SHIM_BLPOP_EMPTY=N: the first N BLPOPs time out (empty answer, exit 0); SHIM_BLPOP_FLIP=<v> then plays the stack coming up on <v>.
+  *BLPOP*) n="$(cat "$SHIM_DIR/blpop_n" 2>/dev/null || echo 0)"
+    if [ "$n" -lt "\${SHIM_BLPOP_EMPTY:-0}" ]; then echo $((n + 1)) > "$SHIM_DIR/blpop_n"; [ -z "$SHIM_BLPOP_FLIP" ] || { echo "$SHIM_BLPOP_FLIP" > "$SHIM_DIR/run_hub"; echo "$SHIM_BLPOP_FLIP" > "$SHIM_DIR/run_web"; }; exit 0; fi
+    if [ -e "$SHIM_DIR/popped" ] || [ -z "$SHIM_JOB" ]; then exit 1; fi; : > "$SHIM_DIR/popped"; printf 'instance:update:queue\\n%s\\n' "$SHIM_JOB"; exit 0 ;;
 esac
 exit 0
 `;
@@ -125,6 +136,7 @@ exit 0
 const DF_SHIM = `#!/bin/sh
 last=""; for a in "$@"; do last="$a"; done
 if [ "$last" = "$SHIM_ROOT" ]; then printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\\nfs 0 0 %s 0%% /\\n' "$(cat "$SHIM_DIR/avail_kb")"; exit 0; fi
+if [ -n "$TUGRA_CONTAINERD_ROOT" ] && [ "$last" = "$TUGRA_CONTAINERD_ROOT" ]; then printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\\nfs 0 0 %s 0%% /\\n' "$SHIM_CONTAINERD_AVAIL_KB"; exit 0; fi
 if [ -n "$SHIM_INSTALL_AVAIL_KB" ]; then printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\\nfs 0 0 %s 0%% /\\n' "$SHIM_INSTALL_AVAIL_KB"; exit 0; fi
 exec ${REAL_DF} "$@"
 `;
@@ -157,6 +169,8 @@ interface RigOpts {
   availBytes?: number;
   runHub?: string;
   runWeb?: string;
+  runHubPin?: string; // the running hub container was created from this digest pin (bare hex)
+  runWebPin?: string;
   root?: string; // the Docker data root path as `docker info` reports it (default: a real directory)
 }
 interface RunOpts {
@@ -190,6 +204,8 @@ function makeRig(o: RigOpts) {
   writeFileSync(join(state, "avail_kb"), String(kb(o.availBytes ?? 100 * GiB)));
   writeFileSync(join(state, "run_hub"), o.runHub ?? "0.1.0");
   writeFileSync(join(state, "run_web"), o.runWeb ?? o.runHub ?? "0.1.0");
+  writeFileSync(join(state, "run_hub_pin"), o.runHubPin ?? "");
+  writeFileSync(join(state, "run_web_pin"), o.runWebPin ?? "");
   writeFileSync(join(state, "pulls"), "");
   for (const [name, text] of [
     ["docker", DOCKER_SHIM],
@@ -205,6 +221,7 @@ function makeRig(o: RigOpts) {
 
   const run = (r: RunOpts = {}) => {
     rmSync(join(state, "popped"), { force: true });
+    rmSync(join(state, "blpop_n"), { force: true });
     writeFileSync(log, "");
     const job = r.job === null ? "" : JSON.stringify(r.job ?? { targetVersion: "0.2.0" });
     const res = spawnSync(BASH, [join(repo, "scripts", "update.sh"), "--watch"], {
@@ -262,14 +279,14 @@ describe("update.sh: disk preflight (before anything is written or pulled)", () 
     const rig = makeRig({
       env: "TUGRA_VERSION=0.1.0\nPRE_UPDATE_BACKUP=0\n",
       images: [...release("0.0.8"), ...release("0.0.9"), ...release("0.1.0")],
-      availBytes: 15 * GiB, // needs 20; the 0.0.8 release (9 GiB) is older than the rollback anchor 0.0.9
+      availBytes: 15 * GiB, // needs 20; 0.0.8 and 0.0.9 are both below the running release (the update itself deletes them afterwards)
     });
     const { calls, out } = rig.run();
     const beforePull = calls.slice(0, calls.search(/docker compose .* pull /)); // the preflight cleanup; the post-update cleanup comes later
     const rmi = beforePull.split("\n").filter((l) => l.startsWith("docker rmi "));
     expect(rmi.join("\n")).toContain("sha256:hub0.0.8");
     expect(rmi.join("\n")).toContain("sha256:web0.0.8");
-    expect(rmi.join("\n")).not.toMatch(/0\.0\.9|0\.1\.0/); // the previous release (rollback anchor) and the running one stay
+    expect(rmi.join("\n")).not.toMatch(/0\.1\.0/); // the running release (the rollback anchor) stays
     expect(out).toContain("removing old Tugra release images first");
     expect(out).toContain("enough space after the cleanup");
     expect(rig.status(calls).phase).toBe("done");
@@ -319,6 +336,83 @@ describe("update.sh: disk preflight (before anything is written or pulled)", () 
     const { out, calls } = rig.run();
     expect(out).toContain("could not measure the free space of the Docker data root");
     expect(rig.status(calls).phase).toBe("done");
+  });
+});
+
+describe("update.sh: disk preflight, review follow-ups", () => {
+  it("the preflight cleanup keeps only what the post-update cleanup keeps (target + running): the release BELOW the running one is freed too", () => {
+    const rig = makeRig({
+      env: "TUGRA_VERSION=0.1.0\nPRE_UPDATE_BACKUP=0\n",
+      images: [...release("0.0.8"), ...release("0.0.9"), ...release("0.1.0")],
+      availBytes: 5 * GiB, // needs 20; freeing 0.0.8 alone gives 14, freeing 0.0.8 and 0.0.9 gives 23
+    });
+    const { calls } = rig.run();
+    expect(rig.status(calls).phase).toBe("done");
+    const beforePull = calls.slice(0, calls.search(/docker compose .* pull /));
+    const rmi = beforePull.split("\n").filter((l) => l.startsWith("docker rmi ")).join("\n");
+    expect(rmi).toContain("sha256:hub0.0.9");
+    expect(rmi).not.toContain("0.1.0");
+  });
+
+  it("the refusal names the TUGRA_DISK_CHECK=0 escape hatch", () => {
+    const rig = makeRig({ env: "TUGRA_VERSION=0.1.0\nPRE_UPDATE_BACKUP=0\n", availBytes: 5 * GiB });
+    const { calls } = rig.run();
+    expect(String(rig.status(calls).error)).toContain("TUGRA_DISK_CHECK=0");
+  });
+
+  it("the containerd image store keeps its content under /var/lib/containerd: that filesystem is measured too, and named when it is the short one", () => {
+    const rig = makeRig({ env: "TUGRA_VERSION=0.1.0\nPRE_UPDATE_BACKUP=0\n" });
+    const croot = join(rig.dir, "containerd");
+    mkdirSync(croot);
+    const { calls } = rig.run({ extra: { SHIM_CONTAINERD: "1", TUGRA_CONTAINERD_ROOT: croot, SHIM_CONTAINERD_AVAIL_KB: String(kb(GiB)) } });
+    const st = rig.status(calls);
+    expect(st.code).toBe("disk_space");
+    expect(st.path).toBe(croot);
+    expect(st.haveBytes).toBe(GiB);
+    noWrite(calls);
+    const plain = makeRig({ env: "TUGRA_VERSION=0.1.0\nPRE_UPDATE_BACKUP=0\n" }); // an engine without that store: the path is never looked at
+    const p = plain.run({ extra: { TUGRA_CONTAINERD_ROOT: croot, SHIM_CONTAINERD_AVAIL_KB: String(kb(GiB)) } });
+    expect(plain.status(p.calls).phase).toBe("done");
+  });
+
+  it("the restore point's dump is part of the budget: a big database makes a tight disk short BEFORE the dump eats the pull's room", () => {
+    const tight = makeRig({ env: "TUGRA_VERSION=0.1.0\n", availBytes: 25 * GiB }); // 20 GiB for the images fits...
+    const { calls } = tight.run({ extra: { SHIM_DB_SIZE: String(6 * GiB) } }); // ...but not with a ~6.6 GiB dump on the same filesystem
+    const st = tight.status(calls);
+    expect(st.code).toBe("disk_space");
+    expect(st.path).toBe(join(tight.dir, "dockerroot"));
+    expect(Number(st.needBytes)).toBeGreaterThan(26 * GiB);
+    expect(calls).not.toContain("pg_dump");
+    noWrite(calls);
+    const small = makeRig({ env: "TUGRA_VERSION=0.1.0\n", availBytes: 25 * GiB });
+    expect(small.status(small.run({ extra: { SHIM_DB_SIZE: String(50 * 1024 * 1024) } }).calls).phase).toBe("done");
+  });
+
+  it("a run that fails before .env is written deletes the restore point it took (retries must not pile dumps onto a full disk); a good run keeps it", () => {
+    const dumps = (repo: string): string[] => {
+      const d = join(repo, "backups");
+      return existsSync(d) ? readdirSync(d).filter((f) => f.endsWith(".dump")) : [];
+    };
+    const bad = makeRig({ env: "TUGRA_VERSION=0.1.0\n" });
+    const r = bad.run({ extra: { SHIM_PULL_FAIL: "failed to register layer: no space left on device" } });
+    expect(bad.status(r.calls).phase).toBe("failed");
+    expect(String(bad.status(r.calls).error)).not.toContain("pre-update backup:");
+    expect(dumps(bad.repo)).toEqual([]);
+    const good = makeRig({ env: "TUGRA_VERSION=0.1.0\n" });
+    expect(good.status(good.run().calls).phase).toBe("done");
+    expect(dumps(good.repo)).toHaveLength(1);
+  });
+});
+
+describe("update.sh: the status is always valid JSON", () => {
+  it("control characters in a failing pull's output (ESC colours, backspace, BEL) cannot corrupt the status the hub parses", () => {
+    const rig = makeRig({ env: "TUGRA_VERSION=0.1.0\nPRE_UPDATE_BACKUP=0\n" });
+    const { calls } = rig.run({ extra: { SHIM_PULL_FAIL: "\u001b[31mError\u001b[0m response: \u0008denied\u0007 \u007f\"quoted\"\\" } });
+    const st = rig.status(calls); // JSON.parse inside: it threw before json_str dropped every control character
+    expect(st.phase).toBe("failed");
+    expect(String(st.error)).toMatch(/^image pull failed: Error response: denied/);
+    // eslint-disable-next-line no-control-regex
+    expect(String(st.error)).not.toMatch(/[\u0000-\u001f\u007f]/);
   });
 });
 
@@ -454,6 +548,18 @@ describe("update.sh: a half-finished update (.env ahead of what runs)", () => {
     expect(calls).not.toMatch(/up -d/);
   });
 
+  it("the target cannot be pulled and the RUNNING containers were created from digest pins: .env goes back to exactly those pins (a rollback by tag alone would need the registry)", () => {
+    const hubPin = "e".repeat(64);
+    const webPin = "f".repeat(64);
+    const rig = makeRig({ env: `${HALF_ENV}TUGRA_HUB_DIGEST=${"c".repeat(64)}\nTUGRA_WEB_DIGEST=${"d".repeat(64)}\n`, runHub: "0.1.0", runHubPin: hubPin, runWebPin: webPin });
+    const { calls } = rig.run({ extra: { SHIM_PULL_FAIL: "manifest unknown" } });
+    expect(String(rig.status(calls).error)).toContain("was set back to the running version 0.1.0");
+    expect(rig.readEnv()).toMatch(/^TUGRA_VERSION=0\.1\.0$/m);
+    expect(rig.readEnv()).toContain(`TUGRA_HUB_DIGEST=${hubPin}`);
+    expect(rig.readEnv()).toContain(`TUGRA_WEB_DIGEST=${webPin}`);
+    expect(rig.readEnv()).not.toContain("c".repeat(64));
+  });
+
   it("a disk preflight failure in a half state touches nothing (the 'Finish update' retry repairs it later)", () => {
     const rig = makeRig({ env: HALF_ENV, runHub: "0.1.0", availBytes: 2 * GiB });
     const before = rig.readEnv();
@@ -487,6 +593,17 @@ describe("update.sh: a half-finished update (.env ahead of what runs)", () => {
     expect(rig.status(calls).phase).toBe("failed");
     expect(calls).not.toMatch(/docker compose .* pull /);
     expect(rig.readEnv()).toContain("TUGRA_VERSION=0.3.0");
+  });
+
+  it("while the stack is not up yet (running release unreadable) an earlier half-state report is KEPT, and it is re-checked while idle: the report appears once the stack is readable", () => {
+    const rig = makeRig({ env: HALF_ENV, runHub: "not-a-version" });
+    const r = rig.run({ job: null, extra: { SHIM_BLPOP_EMPTY: "1", SHIM_BLPOP_FLIP: "0.1.0" } });
+    expect(r.calls).not.toContain("DEL instance:update:half_state"); // unknown is not "consistent"
+    const firstBlpop = r.calls.indexOf("BLPOP");
+    expect(firstBlpop).toBeGreaterThan(-1);
+    expect(r.calls.indexOf("SET instance:update:half_state")).toBeGreaterThan(firstBlpop); // reported by the re-check, not at start-up
+    expect(r.calls).toMatch(/SET instance:update:half_state \{"envVersion":"0\.2\.0","runningVersion":"0\.1\.0"\}/);
+    expect(r.calls).toMatch(/BLPOP instance:update:queue 60/); // bounded, so the idle loop can re-check
   });
 
   it("at start-up it reports a half state to the hub (so the panel can offer 'Finish update'), and clears the report when there is none", () => {

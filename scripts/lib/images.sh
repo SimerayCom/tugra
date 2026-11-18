@@ -294,6 +294,14 @@ pull_updater_image() {
 # Still short -> disk_preflight returns 1 with DISK_NEED / DISK_HAVE / DISK_PATH set (bytes, bytes, path) and nothing
 # has been touched. A measurement that cannot be taken NEVER blocks (it can only add a refusal on a positive shortfall).
 # TUGRA_DISK_CHECK=0 (env or .env) skips the whole check. Needs log() and _snap_cfg (lib/snapshot.sh).
+# Optional inputs the caller sets before disk_preflight (all reset by the caller, never by the library):
+#   DISK_TARGET        the release being installed: the preflight cleanup then keeps exactly what the post-update cleanup keeps
+#                      (the target and the running release), not the extra release below the running one it would otherwise spare;
+#   DISK_BACKUP_BYTES  the restore point's estimated dump size (snap_dump_estimate): added to the install dir's need, and to the
+#                      Docker data root's too when both live on one filesystem (or that cannot be told), since the dump is written
+#                      first and eats the room the pull needs.
+# When the engine uses the containerd image store (Docker 29+ default on new installs) the image content lives under
+# /var/lib/containerd, not DockerRootDir: that path is measured as well.
 TUGRA_DISK_MARGIN_BYTES=2147483648
 TUGRA_DISK_FRESH_BYTES=10737418240
 TUGRA_DISK_INSTALL_BYTES=268435456
@@ -301,6 +309,8 @@ DISK_NEED=0
 DISK_HAVE=0
 DISK_PATH=""
 DISK_PRUNED=0
+DISK_TARGET=""
+DISK_BACKUP_BYTES=0
 
 # Free bytes of the filesystem holding <path>, from `df -Pk` (POSIX layout: header + one line, field 4 = KiB available).
 _df_free_bytes() {
@@ -313,6 +323,24 @@ _df_free_bytes() {
 # The Docker data root (a HOST path), empty when the engine does not say.
 docker_root_dir() {
   docker info --format '{{.DockerRootDir}}' 2>/dev/null | tr -d '\r' | head -n1 || true
+}
+
+# The directory containerd keeps image content in when the engine uses the containerd image store; empty otherwise.
+# TUGRA_CONTAINERD_ROOT overrides the default /var/lib/containerd.
+docker_containerd_root() {
+  case "$(docker info --format '{{.DriverStatus}}' 2>/dev/null)" in
+    *io.containerd.snapshotter*) printf '%s' "${TUGRA_CONTAINERD_ROOT:-/var/lib/containerd}" ;;
+  esac
+}
+
+# 0 when <a> and <b> are on the same filesystem OR that cannot be told (the conservative answer for a budget), 1 when they
+# are known to be on different ones.
+_same_fs() {
+  local da db
+  da="$(stat -c %d "$1" 2>/dev/null || stat -f %d "$1" 2>/dev/null)" || return 0
+  db="$(stat -c %d "$2" 2>/dev/null || stat -f %d "$2" 2>/dev/null)" || return 0
+  case "$da$db" in ''|*[!0-9]*) return 0 ;; esac
+  [ "$da" = "$db" ]
 }
 
 # Free bytes under the Docker data root <root>. From the host it is readable directly; from the updater container it
@@ -362,23 +390,33 @@ disk_need_bytes() {
 
 # One measurement round: sets DISK_NEED / DISK_HAVE / DISK_PATH for the FIRST place that is short and returns 1, else 0.
 _disk_check_once() {
-  local cur="$1" dir="$2" probe="$3" need have root
+  local cur="$1" dir="$2" probe="$3" need have root croot r bneed="${DISK_BACKUP_BYTES:-0}" rneed
+  case "$bneed" in ''|*[!0-9]*) bneed=0 ;; esac
   need="$(disk_need_bytes "$cur")"
   root="$(docker_root_dir)"
-  if have="$(docker_root_free_bytes "$root" "$probe")"; then
-    if [ "$have" -lt "$need" ]; then DISK_NEED="$need"; DISK_HAVE="$have"; DISK_PATH="$root"; return 1; fi
-  else
-    log "disk check: could not measure the free space of the Docker data root — not blocking"
-  fi
+  croot="$(docker_containerd_root)"
+  [ "$croot" != "$root" ] || croot=""
+  for r in "$root" "$croot"; do
+    [ -n "$r" ] || continue
+    rneed="$need"
+    if [ "$bneed" -gt 0 ] && _same_fs "$r" "$dir"; then rneed=$((need + bneed)); fi
+    if have="$(docker_root_free_bytes "$r" "$probe")"; then
+      if [ "$have" -lt "$rneed" ]; then DISK_NEED="$rneed"; DISK_HAVE="$have"; DISK_PATH="$r"; return 1; fi
+    else
+      if [ "$r" = "$root" ]; then log "disk check: could not measure the free space of the Docker data root — not blocking"
+      else log "disk check: could not measure the free space of the containerd store ($r) — not blocking"; fi
+    fi
+  done
   if have="$(_df_free_bytes "$dir")"; then
-    if [ "$have" -lt "$TUGRA_DISK_INSTALL_BYTES" ]; then DISK_NEED="$TUGRA_DISK_INSTALL_BYTES"; DISK_HAVE="$have"; DISK_PATH="$dir"; return 1; fi
+    rneed=$((TUGRA_DISK_INSTALL_BYTES + bneed))
+    if [ "$have" -lt "$rneed" ]; then DISK_NEED="$rneed"; DISK_HAVE="$have"; DISK_PATH="$dir"; return 1; fi
   fi
   return 0
 }
 
 # disk_preflight <current version> <install dir> [<local image to probe with>] -> 0 enough (or unmeasurable), 1 short.
 disk_preflight() {
-  local cur="${1:-}" dir="$2" probe="${3:-}"
+  local cur="${1:-}" dir="$2" probe="${3:-}" keep_new="${1:-}"
   DISK_NEED=0; DISK_HAVE=0; DISK_PATH=""; DISK_PRUNED=0
   if [ "$(_snap_cfg TUGRA_DISK_CHECK 1)" = "0" ]; then
     log "disk check disabled (TUGRA_DISK_CHECK=0)"
@@ -390,16 +428,22 @@ disk_preflight() {
     log "disk check: image cleanup is disabled (TUGRA_PRUNE_IMAGES=0), nothing to free automatically"
     return 1
   fi
-  log "disk check: removing old Tugra release images first (the running and the previous release stay)"
+  # Keep what the post-update cleanup keeps (the target and the running release): the running release IS the rollback anchor,
+  # and the release below it is gone after the update anyway. Without a (newer) target: a re-run on the same release, which
+  # spares the newest release below the running one.
+  if [ -n "${DISK_TARGET:-}" ] && [ "$DISK_TARGET" != latest ] && _img_is_version "$DISK_TARGET" && is_newer "$DISK_TARGET" "$cur"; then
+    keep_new="$DISK_TARGET"
+  fi
+  log "disk check: removing old Tugra release images first (the running release stays)"
   DISK_PRUNED=1
-  prune_release_images "$cur" "$cur" || true
+  prune_release_images "$keep_new" "$cur" || true
   _disk_check_once "$cur" "$dir" "$probe" && { log "disk check: enough space after the cleanup"; return 0; }
   return 1
 }
 
 # "needs about X free on <path>, has Y" with the remedy; the one wording the updater status and the installer both use.
 disk_short_text() {
-  printf 'not enough free disk space: needs about %s free on %s, has %s. Free some space (remove unused Docker images or volumes, old backups, or enlarge the disk), then retry' \
+  printf 'not enough free disk space: needs about %s free on %s, has %s. Free some space (remove unused Docker images or volumes, old backups, or enlarge the disk), then retry (or set TUGRA_DISK_CHECK=0 in .env to skip this check)' \
     "$(_img_human "$DISK_NEED")" "$DISK_PATH" "$(_img_human "$DISK_HAVE")"
 }
 
@@ -438,4 +482,17 @@ running_stack_version() {
     fi
   done
   printf '%s' "$older"
+}
+
+# The digest pin <service>'s running container was created from (`repo:tag@sha256:<hex>` or `repo@sha256:<hex>` in its
+# Config.Image), as bare 64-hex; empty when it runs a plain tag or cannot be read. A pull by digest leaves no local tag, so
+# these are what an exact rollback of a pinned stack has to name. Needs ENV_FILE and COMPOSE_FILE; docker only (never writes).
+running_pin() {
+  local cid ref hex
+  cid="$(docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" ps -q "$1" 2>/dev/null | head -n1 || true)"
+  [ -n "$cid" ] || return 0
+  ref="$(docker inspect -f '{{.Config.Image}}' "$cid" 2>/dev/null | tr -d '[:space:]' || true)"
+  case "$ref" in *@sha256:*) hex="${ref##*@sha256:}" ;; *) return 0 ;; esac
+  if [[ "$hex" =~ ^[0-9a-f]{64}$ ]]; then printf '%s' "$hex"; fi
+  return 0
 }

@@ -68,6 +68,24 @@ _snap_space_ok() {
   return 0
 }
 
+# Bytes the restore point's dump is expected to need (the same upper bound _snap_space_ok uses), 0 when it is disabled or the
+# database size cannot be read (postgres not running yet): the update's disk preflight adds it to its budget.
+snap_dump_estimate() {
+  local size
+  if snapshot_disabled; then printf '0'; return 0; fi
+  size="$(compose exec -T postgres psql -U tugra -d tugra -Atc "select pg_database_size('tugra')" 2>/dev/null | tr -d '[:space:]' || true)"
+  case "$size" in ''|*[!0-9]*) printf '0' ;; *) printf '%s' "$(( size + size / 10 + 67108864 ))" ;; esac
+}
+
+# Drop the restore point taken by THIS run (SNAPSHOT_PATH + its .env copy). Only for a run that failed before it changed
+# anything (the database was never touched): the dump would otherwise stay on an already-tight disk, one more per retry.
+snapshot_discard() {
+  [ -n "${SNAPSHOT_PATH:-}" ] || return 0
+  if [ "${TUGRA_SNAPSHOT_DRY:-0}" = "1" ]; then SNAPSHOT_PATH=""; return 0; fi
+  rm -f "$SNAPSHOT_PATH" "${SNAPSHOT_PATH%.dump}.env"
+  SNAPSHOT_PATH=""
+}
+
 _snap_run() {
   local from to dir stamp base out owner
   from="$(printf '%s' "$1" | tr -c 'A-Za-z0-9._-' '_')"

@@ -64,10 +64,14 @@ The order is built so that no failure can leave `.env` naming a release that is 
    (`docker info`'s `DockerRootDir`; from inside the sidecar through a throwaway container that mounts that path read-only)
    and of the install directory. The data root needs about twice the size of the release you run now plus 2 GiB (10 GiB
    when no Tugra image is on disk to measure), the install directory 256 MiB. When either is short, the safe cleanup
-   from step 6 below runs once (only Tugra's own releases older than the running and the previous one) and the space is
-   measured again. Still short: the update stops with status `failed` and the numbers, for example "needs about 20.0 GB
+   from step 6 below runs once (only Tugra's own releases older than the running one) and the space is
+   measured again. The restore point's dump is part of the budget (the database size is added to the install directory's
+   need, and to the Docker data root's when both are one filesystem), and on an engine that uses the containerd image
+   store `/var/lib/containerd` is measured too. Still short: the update stops with status `failed` and the numbers, for example "needs about 20.0 GB
    free on /var/lib/docker, has 5.0 GB. Free some space ... then retry", and nothing was touched. `TUGRA_DISK_CHECK=0` in
-   `.env` skips the check; a measurement that cannot be taken never blocks. The installer runs the same preflight before it pulls.
+   `.env` skips the check; a measurement that cannot be taken never blocks. The installer runs the same preflight before it
+   pulls, and skips it when every image is already on the machine (a re-run that pulls nothing needs no room). A run that
+   fails before it wrote anything also deletes the restore point it took, so retries do not pile up dumps on a full disk.
 2. **Pull first, write `.env` last.** The images are pulled by the exact references the recreate will use (digest-pinned
    when the release publishes digests, else the tag), through a temporary copy of `.env`; then their version labels are
    checked. Only after both succeed is `.env` written, and every `.env` write is atomic: the new file is built next to
@@ -78,6 +82,17 @@ The order is built so that no failure can leave `.env` naming a release that is 
    recreates, or, when the target cannot be pulled, puts `.env` back to the running release. The updater also checks this
    when it starts; Settings > Updates then explains it and offers **Finish update**. The status text always carries the
    cause (the disk numbers, the failing pull, the version-label mismatch), never just "Update failed".
+
+**Stuck by an older updater.** A server whose `.env` was left naming a newer release by an updater from before this change
+still runs that old `update.sh`, which answers "target ... is not newer than the running version" and cannot repair it (the
+repair code arrives with a release). Free the disk, then finish the update from the shell once; the installer of this
+change handles the state (it pulls what `.env` names, or puts `.env` back to the running release when that cannot be pulled):
+
+```sh
+cd /path/to/tugra && git pull && ./scripts/install.sh
+```
+
+After that the checkout carries the new `update.sh` and **Update now** works as described above.
 
 ### Releases that change the compose file or the scripts
 
