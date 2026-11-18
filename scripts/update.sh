@@ -101,6 +101,7 @@ env_get() { grep "^$1=" "$ENV_FILE" 2>/dev/null | head -n1 | cut -d= -f2- || tru
 # `sync` ignores the argument and flushes the whole machine (slow, and no signal), so there it is skipped.
 _fsync_file() {
   case "$(uname -s 2>/dev/null)" in Darwin|*BSD) return 0 ;; esac
+  command -v sync >/dev/null 2>&1 || return 0 # a minimal userland without sync: the verified temp + rename still holds
   sync "$1" >/dev/null 2>&1
 }
 env_put() {

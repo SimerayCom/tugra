@@ -646,7 +646,7 @@ exec ${REAL_CP} "$@"
     // A PATH WITHOUT curl: symlink the host tools the installer needs next to the docker shim.
     const noCurl = join(shims, "nocurl");
     mkdirSync(noCurl);
-    for (const t of ["awk", "sed", "grep", "head", "tail", "cut", "tr", "cat", "date", "mktemp", "chmod", "chown", "rm", "mv", "cp", "mkdir", "dirname", "basename", "uname", "od", "base64", "openssl", "sort", "sleep", "stat", "ls", "git", "hostname", "id", "wc", "df", "env", "sh", "bash", "uniq", "tee", "ip", "dig", "getent"]) {
+    for (const t of ["awk", "sed", "grep", "head", "tail", "cut", "tr", "cat", "date", "mktemp", "chmod", "chown", "rm", "mv", "cp", "mkdir", "dirname", "basename", "uname", "od", "base64", "openssl", "sort", "sleep", "stat", "ls", "git", "hostname", "id", "wc", "df", "env", "sh", "bash", "uniq", "tee", "ip", "dig", "getent", "sync"]) {
       try {
         const real = execFileSync("sh", ["-c", `command -v ${t}`]).toString().trim();
         if (real.startsWith("/")) symlinkSync(real, join(noCurl, t));

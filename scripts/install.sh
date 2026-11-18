@@ -224,6 +224,7 @@ env_get() { { grep "^$1=" "$ENV_FILE" 2>/dev/null || true; } | head -n1 | cut -d
 # `sync` flushes the whole machine and gives no signal, so it is skipped there).
 _fsync_file() {
   case "$(uname -s 2>/dev/null)" in Darwin|*BSD) return 0 ;; esac
+  command -v sync >/dev/null 2>&1 || return 0 # a minimal userland without sync: the verified temp + rename still holds
   sync "$1" >/dev/null 2>&1
 }
 # Atomically rewrite .env without the lines matching `$1` (plus, optionally, one appended `$1=$2`): build the new file in
