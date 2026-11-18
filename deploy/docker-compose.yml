@@ -18,7 +18,7 @@ services:
     # command in docs/RELEASING.md. Resolved 2026-11-12 via the Docker Hub registry v2 API (index digest,
     # header == sha256(body) verified): Accept application/vnd.oci.image.index.v1+json on
     # registry-1.docker.io/v2/library/postgres/manifests/16-alpine.
-    image: postgres:16-alpine@sha256:aa6cb33cf4c19c765cefcf48d96176258800870a9a1e930ad126200f9d825139
+    image: postgres:16-alpine@sha256:81e77a4833487b8132fe4b00bedd39dc3f74b8641e387f19312a48f7de218c2e
     restart: unless-stopped
     environment:
       POSTGRES_USER: tugra
