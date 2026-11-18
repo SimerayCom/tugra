@@ -7,6 +7,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **An in-app update can no longer leave the server half-updated.** Before anything is written or pulled, the updater
+  checks free space on Docker's data root (and prunes old Tugra images first if short); if it still does not fit it stops
+  with the numbers ("needs about X GB free on <path>, has Y GB") and touches nothing. The target images are pulled and
+  verified BEFORE `.env` changes, and every `.env` write is atomic, so a full disk can no longer leave `.env` naming a
+  version that never installed. A half-finished update (`.env` ahead of the running stack) is detected: "Update now"
+  finishes it, or sets `.env` back to the running version if the target cannot be pulled, and Settings > Updates explains
+  it with a "Finish update" button. A failed update always shows its cause. `install.sh` runs the same disk check and
+  re-runs cleanly on a half-updated install. An install already stuck by an older updater is repaired once with
+  `TUGRA_VERSION=<version> ./scripts/install.sh` (see docs/upgrade.md).
+
 ## [0.1.0-beta.22] - 2026-11-17
 
 - **Out-of-band cloud access (Hetzner first).** For servers linked to a Hetzner Cloud server, the panel, CLI and MCP can
