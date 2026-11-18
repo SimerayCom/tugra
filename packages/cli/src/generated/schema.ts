@@ -7770,6 +7770,10 @@ export interface operations {
                             state: "unknown" | "current" | "behind" | "refreshing" | "failed";
                             checkedAt: string | null;
                         };
+                        halfUpdate: {
+                            envVersion: string;
+                            runningVersion: string;
+                        } | null;
                     };
                 };
             };
@@ -7919,6 +7923,10 @@ export interface operations {
                             state: "unknown" | "current" | "behind" | "refreshing" | "failed";
                             checkedAt: string | null;
                         };
+                        halfUpdate: {
+                            envVersion: string;
+                            runningVersion: string;
+                        } | null;
                     };
                 };
             };
@@ -8010,6 +8018,10 @@ export interface operations {
                             state: "unknown" | "current" | "behind" | "refreshing" | "failed";
                             checkedAt: string | null;
                         };
+                        halfUpdate: {
+                            envVersion: string;
+                            runningVersion: string;
+                        } | null;
                     };
                 };
             };

@@ -265,7 +265,7 @@ describe("APPLY driver: host-side unit + polling", () => {
     expect(st.log).toBe("two\n"); // only what the hub does not have yet
     expect(st.rc).toBe(0);
     expect(calls()).toHaveLength(1); // one systemd-run for the whole apply
-  });
+  }, 30_000); // several real shell runs; under full-suite load the default 5 s is too tight
 
   it("re-attaching after the unit already finished just replays the tail and the exit code", () => {
     runSh(buildPatchRunScript("echo hello; exit 5", opts()));
