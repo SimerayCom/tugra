@@ -3,7 +3,7 @@ import { appVersion, isAutoApplicable, isNewer, parseVersion } from "@tugra/shar
 import { RedisService } from "../redis/redis.service";
 import { UpdateService } from "./update.service";
 import { SHA256_HEX } from "./update-manifest";
-import type { UpdateApplyResult, UpdateProgress } from "./dto";
+import type { HalfUpdateView, UpdateApplyResult, UpdateProgress } from "./dto";
 
 // The hub cannot recreate its own container, so it never runs docker. Instead it takes a cross-process
 // lock and LPUSHes a job onto a Redis queue that the `tugra-updater` sidecar (docker.sock) drains; the
@@ -14,6 +14,8 @@ export const UPDATE_STATUS_KEY = "instance:update:status";
 const LOCK_KEY = UPDATE_LOCK_KEY;
 const STATUS_KEY = UPDATE_STATUS_KEY;
 const QUEUE_KEY = "instance:update:queue";
+/** Written by the sidecar (no TTL) when .env names a release newer than the one the containers run; see HalfUpdateView. */
+export const UPDATE_HALF_STATE_KEY = "instance:update:half_state";
 const LOCK_TTL_S = 900; // 15-min backstop; the sidecar releases the lock on any terminal status
 const STATUS_TTL_S = 3600; // must outlive the recreate so a reconnecting client can read the final state
 
@@ -24,19 +26,40 @@ export function isTerminalPhase(phase: UpdateProgress["phase"]): boolean {
   return TERMINAL_PHASES.includes(phase);
 }
 
+const EMPTY_PROGRESS_FIELDS = { code: null, needBytes: null, haveBytes: null, path: null } as const;
+
 /** Parse the Redis status blob into a UpdateProgress; "idle" when absent or unparseable. Pure. */
 export function mapStatus(raw: string | null): UpdateProgress {
-  if (!raw) return { phase: "idle", targetVersion: null, error: null };
+  if (!raw) return { phase: "idle", targetVersion: null, error: null, ...EMPTY_PROGRESS_FIELDS };
   try {
-    const p = JSON.parse(raw) as Partial<UpdateProgress>;
+    const p = JSON.parse(raw) as Partial<Record<keyof UpdateProgress, unknown>>;
     const phases: UpdateProgress["phase"][] = ["idle", "queued", "pulling", "recreating", "done", "failed", "recovery_required"];
+    const str = (v: unknown): string | null => (typeof v === "string" ? v : null);
+    const num = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : null);
     return {
-      phase: typeof p.phase === "string" && phases.includes(p.phase) ? p.phase : "idle",
-      targetVersion: typeof p.targetVersion === "string" ? p.targetVersion : null,
-      error: typeof p.error === "string" ? p.error : null,
+      phase: typeof p.phase === "string" && (phases as string[]).includes(p.phase) ? (p.phase as UpdateProgress["phase"]) : "idle",
+      targetVersion: str(p.targetVersion),
+      error: str(p.error),
+      code: str(p.code),
+      needBytes: num(p.needBytes),
+      haveBytes: num(p.haveBytes),
+      path: str(p.path),
     };
   } catch {
-    return { phase: "idle", targetVersion: null, error: null };
+    return { phase: "idle", targetVersion: null, error: null, ...EMPTY_PROGRESS_FIELDS };
+  }
+}
+
+/** Parse the sidecar's half-state marker; null when absent/garbled or when the running hub already is on `envVersion`. Pure. */
+export function mapHalfState(raw: string | null, running: string): HalfUpdateView | null {
+  if (!raw) return null;
+  try {
+    const p = JSON.parse(raw) as { envVersion?: unknown; runningVersion?: unknown };
+    if (typeof p.envVersion !== "string" || typeof p.runningVersion !== "string") return null;
+    if (!parseVersion(p.envVersion) || !isNewer(p.envVersion, running)) return null; // stale: the hub caught up (or it is not a version)
+    return { envVersion: p.envVersion, runningVersion: running };
+  } catch {
+    return null;
   }
 }
 
@@ -129,6 +152,11 @@ export class UpdaterService {
     await this.redis.client.lpush(QUEUE_KEY, JSON.stringify(buildUpdateJob(latest, verified.entry.imageDigests, verified.entry.hostFilesDigest, verified.entry.agentSha256)));
     this.logger.log(`update requested by ${actor} (auto=${auto}): ${current} → ${latest}`);
     return { status: "started", targetVersion: latest };
+  }
+
+  /** The half-finished update the sidecar reported (null = none). The running version is this hub's own, not the stored one. */
+  async getHalfUpdate(): Promise<HalfUpdateView | null> {
+    return mapHalfState(await this.redis.get(UPDATE_HALF_STATE_KEY), appVersion());
   }
 
   /** Current progress (read-only) for the SSE + any reconnecting client. */

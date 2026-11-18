@@ -795,6 +795,23 @@
                         "checkedAt"
                       ],
                       "additionalProperties": false
+                    },
+                    "halfUpdate": {
+                      "type": "object",
+                      "properties": {
+                        "envVersion": {
+                          "type": "string"
+                        },
+                        "runningVersion": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "envVersion",
+                        "runningVersion"
+                      ],
+                      "additionalProperties": false,
+                      "nullable": true
                     }
                   },
                   "required": [
@@ -810,7 +827,8 @@
                     "checkIntervalMin",
                     "lastCheckedAt",
                     "lastCheckError",
-                    "updater"
+                    "updater",
+                    "halfUpdate"
                   ],
                   "additionalProperties": false
                 }
@@ -1008,6 +1026,23 @@
                         "checkedAt"
                       ],
                       "additionalProperties": false
+                    },
+                    "halfUpdate": {
+                      "type": "object",
+                      "properties": {
+                        "envVersion": {
+                          "type": "string"
+                        },
+                        "runningVersion": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "envVersion",
+                        "runningVersion"
+                      ],
+                      "additionalProperties": false,
+                      "nullable": true
                     }
                   },
                   "required": [
@@ -1023,7 +1058,8 @@
                     "checkIntervalMin",
                     "lastCheckedAt",
                     "lastCheckError",
-                    "updater"
+                    "updater",
+                    "halfUpdate"
                   ],
                   "additionalProperties": false
                 }
@@ -1296,6 +1332,23 @@
                         "checkedAt"
                       ],
                       "additionalProperties": false
+                    },
+                    "halfUpdate": {
+                      "type": "object",
+                      "properties": {
+                        "envVersion": {
+                          "type": "string"
+                        },
+                        "runningVersion": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "envVersion",
+                        "runningVersion"
+                      ],
+                      "additionalProperties": false,
+                      "nullable": true
                     }
                   },
                   "required": [
@@ -1311,7 +1364,8 @@
                     "checkIntervalMin",
                     "lastCheckedAt",
                     "lastCheckError",
-                    "updater"
+                    "updater",
+                    "halfUpdate"
                   ],
                   "additionalProperties": false
                 }

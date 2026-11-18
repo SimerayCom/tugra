@@ -48,8 +48,17 @@ export const UpdaterViewSchema = z.object({
 });
 export type UpdaterView = z.infer<typeof UpdaterViewSchema>;
 
+/**
+ * A half-finished update the update helper found: the install's .env names `envVersion` but the running hub/web are still
+ * on `runningVersion` (an older updater wrote .env before pulling, then the pull failed - typically a full disk). The panel
+ * then offers "Finish update"; the next update resumes it (or puts .env back to the running release when the target cannot
+ * be pulled). Null when none, or when the running hub is already on that version.
+ */
+export const HalfUpdateViewSchema = z.object({ envVersion: z.string(), runningVersion: z.string() });
+export type HalfUpdateView = z.infer<typeof HalfUpdateViewSchema>;
+
 /** GET/PATCH /instance/update + POST /instance/update/check: the status plus the update helper's own version. */
-export const OwnerUpdateStatusViewSchema = UpdateStatusViewSchema.extend({ updater: UpdaterViewSchema });
+export const OwnerUpdateStatusViewSchema = UpdateStatusViewSchema.extend({ updater: UpdaterViewSchema, halfUpdate: HalfUpdateViewSchema.nullable() });
 export type OwnerUpdateStatusView = z.infer<typeof OwnerUpdateStatusViewSchema>;
 
 /**
@@ -71,10 +80,18 @@ export const UpdateApplyResultSchema = z.object({
 });
 export type UpdateApplyResult = z.infer<typeof UpdateApplyResultSchema>;
 
-/** Live update progress (GET /instance/update/stream, from the Redis status the sidecar writes). */
+/**
+ * Live update progress (GET /instance/update/stream, from the Redis status the sidecar writes). `error` is the human cause of
+ * a failure (never empty on `failed`); `code` is its machine kind, `disk_space` today (the disk preflight refused, or the disk
+ * filled up while pulling), with the measured `needBytes` / `haveBytes` and the `path` they were measured on when known.
+ */
 export const UpdateProgressSchema = z.object({
   phase: z.enum(["idle", "queued", "pulling", "recreating", "done", "failed", "recovery_required"]),
   targetVersion: z.string().nullable(),
   error: z.string().nullable(),
+  code: z.string().nullable(),
+  needBytes: z.number().nullable(),
+  haveBytes: z.number().nullable(),
+  path: z.string().nullable(),
 });
 export type UpdateProgress = z.infer<typeof UpdateProgressSchema>;

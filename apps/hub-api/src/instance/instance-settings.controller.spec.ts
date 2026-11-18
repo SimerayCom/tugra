@@ -76,7 +76,8 @@ function make(current: CurrentSettings) {
   } as unknown as UpdateService;
   const updater = {
     requestUpdate: jest.fn().mockResolvedValue({ status: "started", targetVersion: "0.2.0" }),
-    getProgress: jest.fn().mockResolvedValue({ phase: "idle", targetVersion: null, error: null }),
+    getProgress: jest.fn().mockResolvedValue({ phase: "idle", targetVersion: null, error: null, code: null, needBytes: null, haveBytes: null, path: null }),
+    getHalfUpdate: jest.fn().mockResolvedValue(null),
   } as unknown as UpdaterService;
   const converge = {
     view: jest.fn().mockResolvedValue({ version: "0.1.0-beta.17", behind: true, state: "behind", checkedAt: "2026-11-17T08:00:00.000Z" }),
@@ -216,6 +217,14 @@ describe("InstanceSettingsController", () => {
     expect(update.checkRemote).toHaveBeenCalled();
     expect(update.getStatus).toHaveBeenCalled();
     expect(out).toMatchObject({ current: "0.0.0-dev" });
+  });
+
+  it("every update status carries the half-finished update the helper reported (null when none), for the panel's Finish update", async () => {
+    const { ctrl, updater } = make({ apiEnabled: true, apiAllowedIps: [] });
+    expect(await ctrl.getUpdate()).toMatchObject({ halfUpdate: null });
+    (updater.getHalfUpdate as jest.Mock).mockResolvedValue({ envVersion: "0.2.0", runningVersion: "0.1.0" });
+    expect(await ctrl.getUpdate()).toMatchObject({ halfUpdate: { envVersion: "0.2.0", runningVersion: "0.1.0" } });
+    expect(await ctrl.checkUpdate()).toMatchObject({ halfUpdate: { envVersion: "0.2.0" } });
   });
 
   it("applyUpdate delegates to the updater, audits on start, and returns the result", async () => {

@@ -1,4 +1,4 @@
-import { UpdaterService, buildUpdateJob, mapStatus, isTerminalPhase } from "./updater.service";
+import { UpdaterService, buildUpdateJob, mapStatus, mapHalfState, isTerminalPhase, UPDATE_HALF_STATE_KEY } from "./updater.service";
 import type { RedisService } from "../redis/redis.service";
 import type { LatestEntryResult, UpdateService } from "./update.service";
 
@@ -14,6 +14,8 @@ function redisStub(lockAcquired = true) {
 function updateStub(verified: LatestEntryResult) {
   return { verifyLatestEntry: jest.fn().mockResolvedValue(verified) } as unknown as UpdateService;
 }
+
+const NO_DETAIL = { code: null, needBytes: null, haveBytes: null, path: null };
 
 const savedVersion = process.env.TUGRA_VERSION;
 beforeEach(() => {
@@ -206,19 +208,71 @@ describe("getProgress + pure helpers", () => {
     const r = redisStub();
     r.get.mockResolvedValue(JSON.stringify({ phase: "pulling", targetVersion: "1.2.4" }));
     const svc = new UpdaterService(r.svc, updateStub({ status: "unconfigured" }));
-    expect(await svc.getProgress()).toEqual({ phase: "pulling", targetVersion: "1.2.4", error: null });
+    expect(await svc.getProgress()).toEqual({ phase: "pulling", targetVersion: "1.2.4", error: null, ...NO_DETAIL });
+  });
+
+  it("getProgress carries the failure's cause and the disk numbers the sidecar measured", async () => {
+    const r = redisStub();
+    r.get.mockResolvedValue(
+      JSON.stringify({
+        phase: "failed",
+        targetVersion: "1.2.4",
+        error: "not enough free disk space: needs about 20.0 GB free on /var/lib/docker, has 5.0 GB. Free some space, then retry",
+        code: "disk_space",
+        needBytes: 21474836480,
+        haveBytes: 5368709120,
+        path: "/var/lib/docker",
+      }),
+    );
+    const svc = new UpdaterService(r.svc, updateStub({ status: "unconfigured" }));
+    expect(await svc.getProgress()).toEqual({
+      phase: "failed",
+      targetVersion: "1.2.4",
+      error: "not enough free disk space: needs about 20.0 GB free on /var/lib/docker, has 5.0 GB. Free some space, then retry",
+      code: "disk_space",
+      needBytes: 21474836480,
+      haveBytes: 5368709120,
+      path: "/var/lib/docker",
+    });
+  });
+
+  it("mapStatus drops detail fields of the wrong type (a hand-written status can not smuggle objects into the stream)", () => {
+    expect(mapStatus(JSON.stringify({ phase: "failed", code: { a: 1 }, needBytes: "12", haveBytes: -5, path: 7 }))).toEqual({
+      phase: "failed",
+      targetVersion: null,
+      error: null,
+      ...NO_DETAIL,
+    });
+  });
+
+  it("getHalfUpdate reads the sidecar's marker and reports THIS hub's version as the running one", async () => {
+    const r = redisStub();
+    r.get.mockImplementation(async (k: string) => (k === UPDATE_HALF_STATE_KEY ? JSON.stringify({ envVersion: "1.2.4", runningVersion: "1.2.0" }) : null));
+    const svc = new UpdaterService(r.svc, updateStub({ status: "unconfigured" }));
+    expect(await svc.getHalfUpdate()).toEqual({ envVersion: "1.2.4", runningVersion: "1.2.3" }); // appVersion() = 1.2.3 in this spec
+  });
+
+  it("mapHalfState ignores an absent, garbled or STALE marker (the hub already runs the version .env names)", () => {
+    expect(mapHalfState(null, "1.2.3")).toBeNull();
+    expect(mapHalfState("{nope", "1.2.3")).toBeNull();
+    expect(mapHalfState(JSON.stringify({ envVersion: 4 }), "1.2.3")).toBeNull();
+    expect(mapHalfState(JSON.stringify({ envVersion: "not-a-version", runningVersion: "1.2.3" }), "1.2.3")).toBeNull();
+    expect(mapHalfState(JSON.stringify({ envVersion: "1.2.3", runningVersion: "1.2.0" }), "1.2.3")).toBeNull(); // caught up
+    expect(mapHalfState(JSON.stringify({ envVersion: "1.2.2", runningVersion: "1.2.0" }), "1.2.3")).toBeNull(); // older than what runs
+    expect(mapHalfState(JSON.stringify({ envVersion: "1.3.0", runningVersion: "1.2.0" }), "1.2.3")).toEqual({ envVersion: "1.3.0", runningVersion: "1.2.3" });
   });
 
   it("mapStatus falls back to idle for absent/garbage/unknown-phase input", () => {
-    expect(mapStatus(null)).toEqual({ phase: "idle", targetVersion: null, error: null });
-    expect(mapStatus("{not json")).toEqual({ phase: "idle", targetVersion: null, error: null });
+    expect(mapStatus(null)).toEqual({ phase: "idle", targetVersion: null, error: null, ...NO_DETAIL });
+    expect(mapStatus("{not json")).toEqual({ phase: "idle", targetVersion: null, error: null, ...NO_DETAIL });
     expect(mapStatus(JSON.stringify({ phase: "bogus" }))).toMatchObject({ phase: "idle" });
-    expect(mapStatus(JSON.stringify({ phase: "failed", error: "boom" }))).toEqual({ phase: "failed", targetVersion: null, error: "boom" });
+    expect(mapStatus(JSON.stringify({ phase: "failed", error: "boom" }))).toEqual({ phase: "failed", targetVersion: null, error: "boom", ...NO_DETAIL });
     // recovery_required is a recognised phase (must NOT fall back to idle — that would hide an unrecovered stack)
     expect(mapStatus(JSON.stringify({ phase: "recovery_required", targetVersion: "0.2.0", error: "recover manually" }))).toEqual({
       phase: "recovery_required",
       targetVersion: "0.2.0",
       error: "recover manually",
+      ...NO_DETAIL,
     });
   });
 

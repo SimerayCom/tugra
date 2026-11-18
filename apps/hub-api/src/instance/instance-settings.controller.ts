@@ -68,7 +68,7 @@ export class InstanceSettingsController {
 
   /** The update status plus the update helper's own version (read from Redis, never from docker). */
   private async updateView() {
-    return { ...(await this.update.getStatus()), updater: await this.converge.view() };
+    return { ...(await this.update.getStatus()), updater: await this.converge.view(), halfUpdate: await this.updater.getHalfUpdate() };
   }
 
   /**
@@ -200,7 +200,7 @@ export class InstanceSettingsController {
   streamUpdate(): Observable<MessageEvent> {
     return interval(1000).pipe(
       mergeMap(() => from(this.updater.getProgress())),
-      distinctUntilChanged((a, b) => a.phase === b.phase && a.targetVersion === b.targetVersion && a.error === b.error),
+      distinctUntilChanged((a, b) => a.phase === b.phase && a.targetVersion === b.targetVersion && a.error === b.error && a.code === b.code),
       takeWhile((p) => !isTerminalPhase(p.phase), true), // inclusive: emit the terminal event, then complete
       map((p) => ({ data: JSON.stringify(p) }) as MessageEvent),
     );
