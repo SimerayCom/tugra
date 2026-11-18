@@ -5,7 +5,7 @@ import { TeamAccessService } from "../common/team-access.service";
 import { AuditService } from "../audit/audit.service";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
 import { ApplicationsService } from "../applications/applications.service";
-import { STACK, CUSTOM_STACK, OTHER_TUGRA, FOREIGN } from "./testing/demo-containers";
+import { STACK, CUSTOM_STACK, OTHER_TUGRA, FOREIGN, AGENT_SELF, inspectLine } from "./testing/demo-containers";
 
 describe("volumeDockerOptions (adopt carries named volumes so redeploy keeps data)", () => {
   it("carries named volumes as -v, dedupes by target, and skips bind/tmpfs", () => {
@@ -92,7 +92,7 @@ describe("MigratorService", () => {
     it("never lists Tugra's own stack, proxy, tunnel, helpers or managed containers; foreign ones still show", async () => {
       const own = [...Object.values(STACK), ...Object.values(CUSTOM_STACK), ...Object.values(OTHER_TUGRA)];
       const foreign = Object.values(FOREIGN);
-      const out = ["TUGRA_SELF=abcdef012345", ...own, ...foreign].join("\n");
+      const out = [`TUGRA_SELF=${AGENT_SELF}`, ...own, ...foreign].join("\n");
       const agentWs = { sendCommand: jest.fn().mockResolvedValue({ output: out, exitCode: 0 }) } as unknown as AgentWsServer;
       const { svc } = make({ agentWs });
       const { containers } = await svc.discover("u1", "s1");
@@ -193,9 +193,9 @@ describe("MigratorService", () => {
     });
 
     it("rejects a Tugra-owned container on the fresh re-inspect (no create)", async () => {
-      const agentWs = { sendCommand: jest.fn().mockResolvedValue({ output: inspectJson({ Name: "/tugra_clx1" }), exitCode: 0 }) } as unknown as AgentWsServer;
+      const agentWs = { sendCommand: jest.fn().mockResolvedValue({ output: inspectJson({ Name: "/tugra_cmwgxy1zm0j4nnm1a0cfjrm4j" }), exitCode: 0 }) } as unknown as AgentWsServer;
       const { svc, apps } = make({ agentWs });
-      await expect(svc.adopt("u1", "s1", { container: "tugra_clx1", name: "x" })).rejects.toThrow(/already managed/);
+      await expect(svc.adopt("u1", "s1", { container: "tugra_cmwgxy1zm0j4nnm1a0cfjrm4j", name: "x" })).rejects.toThrow(/already managed/);
       expect(apps.create as jest.Mock).not.toHaveBeenCalled();
     });
 
@@ -231,6 +231,22 @@ describe("MigratorService", () => {
         } as unknown as AgentWsServer;
         const { svc, apps } = make({ agentWs });
         await expect(svc.adopt("u1", "s1", { container: "panel-postgres-1", name: "x" })).rejects.toThrow(/install stack/);
+        expect(apps.create).not.toHaveBeenCalled();
+      });
+
+      it("a reserved-name container is refused with a distinct message", async () => {
+        const line = inspectLine({ name: "tugra_blog", image: "wordpress:6" });
+        const { svc, apps } = make({ agentWs: agentSeq(line) });
+        await expect(svc.adopt("u1", "s1", { container: "tugra_blog", name: "x" })).rejects.toThrow(/reserved for Tugra/);
+        expect(apps.create).not.toHaveBeenCalled();
+      });
+
+      it("a compose member the host-wide scan cannot classify (scan rejects) still gets the 400, not a 5xx", async () => {
+        const agentWs = {
+          sendCommand: jest.fn().mockResolvedValueOnce({ output: FOREIGN.composeApp, exitCode: 0 }).mockRejectedValueOnce(new Error("agent timeout")),
+        } as unknown as AgentWsServer;
+        const { svc, apps } = make({ agentWs });
+        await expect(svc.adopt("u1", "s1", { container: "shop-db-1", name: "x" })).rejects.toThrow(BadRequestException);
         expect(apps.create).not.toHaveBeenCalled();
       });
 

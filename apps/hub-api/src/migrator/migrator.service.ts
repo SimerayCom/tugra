@@ -38,8 +38,10 @@ export function tugraOwnedMessage(reason: TugraOwnedReason): string {
     tunnel: "a Tugra-managed tunnel",
     helper: "a Tugra helper container",
     managed: "already managed by Tugra",
+    reserved: "using a name reserved for Tugra (tugra-/tugra_)",
   };
-  return `this container is ${what[reason]} and can't be adopted`;
+  const hint = reason === "reserved" ? "; rename the container first if it is your own" : "";
+  return `this container is ${what[reason]} and can't be adopted${hint}`;
 }
 
 export type AdoptableContainer = DiscoveredContainer & { adoptable: boolean };
@@ -100,8 +102,14 @@ export class MigratorService {
     if (found.composeProject) {
       // A compose-project member may still belong to Tugra's own stack (the bundled postgres/redis carry no Tugra
       // marker of their own): classify it against the whole host so it gets the precise refusal.
-      const all = await this.agentWs.sendCommand(serverId, buildDiscoverScript(), "deploy", DISCOVER_TIMEOUT_MS);
-      const again = parseDiscovered(all.output).find((c) => c.id === found.id || c.name === found.name);
+      // Best effort: the target is refused either way, so a failing scan must not turn the 400 into a 5xx.
+      let again: ReturnType<typeof parseDiscovered>[number] | undefined;
+      try {
+        const all = await this.agentWs.sendCommand(serverId, buildDiscoverScript(), "deploy", DISCOVER_TIMEOUT_MS);
+        again = parseDiscovered(all.output).find((c) => c.id === found.id || c.name === found.name);
+      } catch {
+        again = undefined;
+      }
       if (again?.tugraReason) throw new BadRequestException(tugraOwnedMessage(again.tugraReason));
       throw new BadRequestException("compose-managed containers can't be adopted yet");
     }

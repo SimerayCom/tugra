@@ -3,7 +3,15 @@
  * beta.22): the compose stack, the Traefik proxy, Tugra-run apps/databases/compose services, helper containers and
  * ordinary foreign containers. Only the fields the migrator reads are kept; label sets are verbatim.
  */
+import { createHash } from "crypto";
+
 const IMG = "ghcr.io/simeraycom/tugra";
+
+/** Distinct, realistic 64-hex container id per name (optionally with a fixed prefix, e.g. the agent's own short id). */
+export function containerId(name: string, prefix = ""): string {
+  return (prefix + createHash("sha256").update(name).digest("hex")).slice(0, 64);
+}
+
 const OCI = (title: string) => ({
   "org.opencontainers.image.source": "https://github.com/SimerayCom/tugra",
   "org.opencontainers.image.title": title,
@@ -25,7 +33,7 @@ function compose(service: string, workingDir: string, extra: Record<string, stri
 
 export function inspectLine(over: { id?: string; name: string; image: string; labels?: Record<string, string>; state?: string }): string {
   return JSON.stringify({
-    Id: over.id ?? `${"a".repeat(12)}${over.name.replace(/[^a-z0-9]/g, "").padEnd(52, "0")}`.slice(0, 64),
+    Id: over.id ?? containerId(over.name),
     Name: `/${over.name}`,
     State: { Status: over.state ?? "running" },
     Config: { Image: over.image, Env: ["TOKEN=secret"], Labels: over.labels ?? {} },
@@ -34,11 +42,14 @@ export function inspectLine(over: { id?: string; name: string; image: string; la
   });
 }
 
+/** The hostname (= short container id) the discover script reports from inside the stack's agent. */
+export const AGENT_SELF = "abcdef012345";
+
 /** Tugra's own install stack (compose project "tugra"), as on the demo. */
 export const STACK = {
-  hubApi: inspectLine({ id: "1111111111112222", name: "tugra-hub-api-1", image: `${IMG}-hub:0.1.0-beta.22@sha256:fe7a75238fc3c9282d652fa7f76718a2b4627e615c146177d742f303374e5347`, labels: { ...compose("hub-api", "/repo/deploy"), ...OCI("Tugra Hub API") } }),
+  hubApi: inspectLine({ name: "tugra-hub-api-1", image: `${IMG}-hub:0.1.0-beta.22@sha256:fe7a75238fc3c9282d652fa7f76718a2b4627e615c146177d742f303374e5347`, labels: { ...compose("hub-api", "/repo/deploy"), ...OCI("Tugra Hub API") } }),
   web: inspectLine({ name: "tugra-web-1", image: `${IMG}-web:0.1.0-beta.22@sha256:d5d2fc4a1924945a0a3f79cf6c1ca67d776b58068399888416d0c78a036f4b52`, labels: { ...compose("web", "/repo/deploy", { "com.docker.compose.depends_on": "hub-api:service_started:false" }), ...OCI("Tugra Web") } }),
-  agent: inspectLine({ id: "abcdef0123456789aaaa", name: "tugra-agent-1", image: `${IMG}-agent:0.1.0-beta.22`, labels: { ...compose("agent", "/repo/deploy"), ...OCI("Tugra Agent") } }),
+  agent: inspectLine({ id: containerId("tugra-agent-1", AGENT_SELF), name: "tugra-agent-1", image: `${IMG}-agent:0.1.0-beta.22`, labels: { ...compose("agent", "/repo/deploy"), ...OCI("Tugra Agent") } }),
   updater: inspectLine({ name: "tugra-tugra-updater-1", image: `${IMG}-updater:0.1.0-beta.22`, labels: { ...compose("tugra-updater", "/root/tugra/deploy"), ...OCI("Tugra Updater") } }),
   // postgres/redis carry NO Tugra name/image/label of their own — only the compose project of the stack.
   postgres: inspectLine({ name: "tugra-postgres-1", image: "postgres:16-alpine@sha256:aa6cb33cf4c19c765cefcf48d96176258800870a9a1e930ad126200f9d825139", labels: compose("postgres", "/root/tugra/deploy", { "com.docker.compose.version": "5.7.1" }) }),
