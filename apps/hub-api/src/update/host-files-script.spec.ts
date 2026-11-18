@@ -104,7 +104,7 @@ case "$1" in
     n=$(grep -c 'up -d --no-deps hub-api web' "$SHIM_LOG" || true)
     if [ -n "$SHIM_UNHEALTHY_FIRST" ] && [ "$n" -lt 2 ]; then echo unhealthy; exit 0; fi
     echo healthy; exit 0 ;;
-  image) [ -n "$SHIM_IMAGE_MISSING" ] && exit 1; echo "\$SHIM_UPDATER_WANT_ID"; exit 0 ;;
+  image) [ -n "$SHIM_IMAGE_MISSING" ] && exit 1; case "$*" in *Labels*) echo "\${SHIM_IMG_LABEL:-0.2.0}"; exit 0 ;; esac; echo "\$SHIM_UPDATER_WANT_ID"; exit 0 ;;
   pull) [ -n "$SHIM_UPDATER_PULL_FAIL" ] && [[ "$2" == *tugra-updater* ]] && exit 1; exit 0 ;;
   run|rm) [ -n "$SHIM_RUN_FAIL" ] && [ "$1" = run ] && exit 1; exit 0 ;;
   compose)

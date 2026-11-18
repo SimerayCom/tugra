@@ -2,9 +2,12 @@
 #
 # Tugra self-update sidecar. Runs inside the `tugra-updater` container (docker.sock + the repo mounted).
 # It drains a Redis job queue that the hub LPUSHes to when the owner clicks "Update now" (or auto-update
-# fires). BEFORE anything is swapped it takes a mandatory restore point (pg_dump + .env copy, see
-# lib/snapshot.sh), then pulls the target images and recreates hub-api + web (--no-deps) — never postgres,
-# redis or itself. Once those are healthy it also refreshes the local `agent` (non-fatal; pulled by its signed
+# fires). Nothing is written or pulled before a DISK PREFLIGHT passes (free space of the Docker data root and the install
+# dir; a safe image cleanup runs first when short; lib/images.sh disk_preflight). Then it takes a mandatory restore point
+# (pg_dump + .env copy, see lib/snapshot.sh), PULLS the target images and verifies their version labels, and only then
+# writes .env (atomically) and recreates hub-api + web (--no-deps) — never postgres, redis or itself. A failure before the
+# .env write has nothing to roll back; a half-finished update an older updater left (.env ahead of what runs) is resumed, or
+# .env is put back to the running release when the target cannot be pulled (detect_half_state). Once those are healthy it also refreshes the local `agent` (non-fatal; pulled by its signed
 # per-arch image digest, never `compose pull`, see lib/images.sh) and pre-pulls the updater image, then removes
 # Tugra's own release images older than the previous release (lib/images.sh; TUGRA_PRUNE_IMAGES=0 turns that off).
 # The updater cannot recreate itself mid-run, so when its running image is not the one the
@@ -84,24 +87,49 @@ redis() { run redis-cli -u "$REDIS_URL" "$@"; }
 # `|| true`: a missing key makes grep exit 1, which under `set -o pipefail` would abort the caller's
 # assignment before the "latest" fallback can run. A fresh install has no TUGRA_VERSION line yet.
 env_get() { grep "^$1=" "$ENV_FILE" 2>/dev/null | head -n1 | cut -d= -f2- || true; }
-set_env() {
-  if [ "$DRY" -eq 1 ]; then printf 'SET_ENV: %s=%s\n' "$1" "$2"; return 0; fi
-  # Atomic: build the new file in a SAME-DIR temp (so `mv` is a same-filesystem atomic rename) and swap it
-  # in. A crash between write and rename can never leave a truncated .env — the old file stays until the mv.
-  # Every step is CHECKED and a failure returns 1: do_update/recover_previous key off it. (`set -e` is
-  # disabled inside `do_update ... || log`, so an unchecked write failure here would be silently swallowed
-  # and the update wrongly reported as "done".)
-  local tmp; tmp="$(mktemp "${ENV_FILE}.XXXXXX")" || return 1
-  if [ -f "$ENV_FILE" ]; then
-    { grep -v "^$1=" "$ENV_FILE" 2>/dev/null || true; } > "$tmp" || { rm -f "$tmp"; return 1; }
-    # Preserve the original owner + mode so a self-update never locks the installing user out of .env.
-    chmod "$(stat -c '%a' "$ENV_FILE" 2>/dev/null || echo 600)" "$tmp" 2>/dev/null || true
-    chown "$(stat -c '%u:%g' "$ENV_FILE" 2>/dev/null || echo 0:0)" "$tmp" 2>/dev/null || true
-  fi
-  printf '%s=%s\n' "$1" "$2" >> "$tmp" || { rm -f "$tmp"; return 1; }
-  mv "$tmp" "$ENV_FILE" || { rm -f "$tmp"; return 1; }
+# Atomically set KEY=VALUE in <file> (default: the .env). Every step is CHECKED and a failure returns 1 with the original
+# file untouched: do_update / recover_previous key off it. (`set -e` is disabled inside `do_update ... || log`, so an
+# unchecked write failure would be silently swallowed and the update wrongly reported as "done".)
+#   1. the new content is built in a SAME-DIR temp, so the final `mv` is a same-filesystem atomic rename: a crash or a
+#      full disk between write and rename can never leave a truncated .env, the old file stays until the mv;
+#   2. it is VERIFIED before it replaces anything (line count = the kept lines of the original + the new one; last line
+#      is the new assignment): a write that ran out of space part-way (grep's own exit code is not trusted) is caught here;
+#   3. it is fsync'ed (`sync FILE`, see _fsync_file) so a deferred ENOSPC surfaces now;
+#   4. only then mode/owner are copied over from the original (so a self-update never locks the installing user out of
+#      .env) and the temp is renamed in.
+# fsync one file. coreutils and busybox `sync FILE` flush just that file and FAIL when the write-back failed; macOS/BSD
+# `sync` ignores the argument and flushes the whole machine (slow, and no signal), so there it is skipped.
+_fsync_file() {
+  case "$(uname -s 2>/dev/null)" in Darwin|*BSD) return 0 ;; esac
+  sync "$1" >/dev/null 2>&1
 }
-set_status() { redis SET "$STATUS_KEY" "{\"phase\":\"$1\",\"targetVersion\":\"$2\",\"error\":${3:-null}}" EX "$STATUS_TTL"; }
+env_put() {
+  local file="$1" key="$2" val="$3" tmp kept have
+  if [ "$DRY" -eq 1 ]; then printf 'SET_ENV: %s=%s\n' "$key" "$val"; return 0; fi
+  tmp="$(mktemp "${file}.XXXXXX")" || { log "cannot create a temporary file next to $file (disk full?) — $file was not changed"; return 1; }
+  kept=0
+  if [ -f "$file" ]; then
+    kept="$(grep -vc "^${key}=" "$file" 2>/dev/null || true)"
+    case "$kept" in ''|*[!0-9]*) kept=0 ;; esac
+    { grep -v "^${key}=" "$file" 2>/dev/null || true; } > "$tmp" || { rm -f "$tmp"; log "cannot write $tmp (disk full?) — $file was not changed"; return 1; }
+  fi
+  printf '%s=%s\n' "$key" "$val" >> "$tmp" || { rm -f "$tmp"; log "cannot write $tmp (disk full?) — $file was not changed"; return 1; }
+  have="$(wc -l < "$tmp" 2>/dev/null | tr -d '[:space:]')"
+  if [ "$have" != "$((kept + 1))" ] || [ "$(tail -n1 "$tmp" 2>/dev/null)" != "${key}=${val}" ]; then
+    rm -f "$tmp"; log "the new $file did not verify after writing it (disk full?) — $file was not changed"; return 1
+  fi
+  _fsync_file "$tmp" || { rm -f "$tmp"; log "could not flush the new $file to disk (disk full?) — $file was not changed"; return 1; }
+  if [ -f "$file" ]; then
+    chmod "$(stat -c '%a' "$file" 2>/dev/null || stat -f '%Lp' "$file" 2>/dev/null || echo 600)" "$tmp" 2>/dev/null || chmod 600 "$tmp" 2>/dev/null || true
+    chown "$(stat -c '%u:%g' "$file" 2>/dev/null || echo 0:0)" "$tmp" 2>/dev/null || true
+  else
+    chmod 600 "$tmp" 2>/dev/null || true
+  fi
+  mv "$tmp" "$file" || { rm -f "$tmp"; log "could not replace $file — it was not changed"; return 1; }
+}
+set_env() { env_put "$ENV_FILE" "$1" "$2"; }
+# set_status <phase> <target> [<error as a JSON string literal>] [<extra JSON members, each starting with a comma>]
+set_status() { redis SET "$STATUS_KEY" "{\"phase\":\"$1\",\"targetVersion\":\"$2\",\"error\":${3:-null}${4:-}}" EX "$STATUS_TTL"; }
 release_lock() { redis DEL "$LOCK_KEY"; }
 
 # Dry-run switch for the snapshot library: a dedicated variable owned by THIS script (plain assignment, from our
@@ -151,23 +179,24 @@ AGENT_IMAGE_REPO="${AGENT_IMAGE_REPO:-ghcr.io/simeraycom/tugra-agent}"
 UPDATER_IMAGE_REPO="${UPDATER_IMAGE_REPO:-ghcr.io/simeraycom/tugra-updater}"
 VERSION_LABEL="org.opencontainers.image.version"
 
-# Write the version (+ the hub/web digest pins when `touched` is 1) into .env. Digest values are bare hex, or
+# Write the version (+ the hub/web digest pins when `touched` is 1) into <file>. Digest values are bare hex, or
 # EMPTY to unpin (compose then falls back to the plain tag). Returns 1 on the first failed write.
-write_pins() {
-  local version="$1" hub="$2" web="$3" touched="$4"
-  set_env TUGRA_VERSION "$version" || return 1
+write_pins_to() {
+  local file="$1" version="$2" hub="$3" web="$4" touched="$5"
+  env_put "$file" TUGRA_VERSION "$version" || return 1
   if [ "$touched" = 1 ]; then
-    set_env TUGRA_HUB_DIGEST "$hub" || return 1
-    set_env TUGRA_WEB_DIGEST "$web" || return 1
+    env_put "$file" TUGRA_HUB_DIGEST "$hub" || return 1
+    env_put "$file" TUGRA_WEB_DIGEST "$web" || return 1
   fi
 }
+write_pins() { write_pins_to "$ENV_FILE" "$@"; }
 
 # Put .env back to the previous version AND previous digest pins (no recreate). Digest keys are only touched
 # when either side had a pin — `touched` — so a tag-only -> tag-only update never writes them (legacy bytes).
 # Usage: restore_env <prev> <prevHub> <prevWeb> <newHub> <newWeb>
 restore_env() {
   local prev="$1" prevHub="$2" prevWeb="$3" newHub="${4:-}" newWeb="${5:-}" touched=0
-  if [ -n "$prevHub$prevWeb$newHub$newWeb" ]; then touched=1; fi
+  if [ -n "$prevHub$prevWeb$newHub$newWeb" ] || [ "$PINS_TOUCH_FORCE" = 1 ]; then touched=1; fi
   write_pins "$prev" "$prevHub" "$prevWeb" "$touched"
 }
 
@@ -201,7 +230,7 @@ set_recovery_required() {
   local target="$1" prev="$2" prevHub="${3:-}" prevWeb="${4:-}" newHub="${5:-}" newWeb="${6:-}" pins=""
   # Digest pins must be restored too: to the previous digests when the stack was pinned, or CLEARED (empty) when it
   # was tag-only but the failed update wrote new pins (a restore_env that died half-way may have left them).
-  if [ -n "$prevHub$prevWeb$newHub$newWeb" ]; then pins=" and TUGRA_HUB_DIGEST=${prevHub} TUGRA_WEB_DIGEST=${prevWeb}"; fi
+  if [ -n "$prevHub$prevWeb$newHub$newWeb" ] || [ "$PINS_TOUCH_FORCE" = 1 ]; then pins=" and TUGRA_HUB_DIGEST=${prevHub} TUGRA_WEB_DIGEST=${prevWeb}"; fi
   local files=""
   if [ "$HF_APPLIED" -eq 1 ] && [ -n "$HF_BACKUP_DIR" ]; then files=" AND restore the compose/scripts saved in $HF_BACKUP_DIR (copy each file back to the same path in $REPO_DIR)"; fi
   log "RECOVERY REQUIRED — restore manually: set TUGRA_VERSION=$prev${pins} in $ENV_FILE${files} then run: docker compose --env-file $ENV_FILE -f $COMPOSE_FILE up -d --no-deps hub-api web"
@@ -209,6 +238,50 @@ set_recovery_required() {
   # can't silently lapse back to idle, plus a durable marker the hub gates new updates on until it is cleared.
   redis SET "$STATUS_KEY" "{\"phase\":\"recovery_required\",\"targetVersion\":\"$target\",\"error\":\"update to $target failed and the previous version could not be restored and verified — manual recovery required (set TUGRA_VERSION=$prev${pins}${files} and recreate hub-api + web)$(snap_note)\"}"
   redis SET "instance:update:recovery_required" "{\"targetVersion\":\"$target\",\"previousVersion\":\"$prev\"}"
+}
+
+# 1 when .env already carried digest pins that belong to a release that never ran (a half-finished update, see
+# detect_half_state): every rollback/write then touches the pin keys too, so a stale pin can not override the tag.
+PINS_TOUCH_FORCE=0
+# Half-finished update state (detect_half_state): HALF_STATE=1 when .env names a release NEWER than the one the running
+# hub-api/web containers are on; HALF_RUNNING = the running release, HALF_ENV = what .env says.
+HALF_STATE=0
+HALF_RUNNING=""
+HALF_ENV=""
+HALF_KEY="instance:update:half_state"
+
+# Compare what .env names with what actually runs. An update used to write .env BEFORE it pulled; when the pull (or the
+# rollback write) then failed — a full disk, a crash, a killed updater — .env named a release that was never installed
+# and the next "Update now" refused with "target not newer than current". detect_half_state <env version>.
+# Dry-run hook: DRY_RUNNING=<version> plays the running release (default: unknown = no half state).
+detect_half_state() {
+  local envv="${1:-}" running=""
+  HALF_STATE=0; HALF_RUNNING=""; HALF_ENV=""
+  [ -n "$envv" ] && [ "$envv" != "latest" ] || return 0
+  if [ "$DRY" -eq 1 ]; then running="${DRY_RUNNING:-}"; else running="$(running_stack_version)" || running=""; fi
+  _img_is_version "$running" || return 0
+  if is_newer "$envv" "$running"; then HALF_STATE=1; HALF_RUNNING="${running#v}"; HALF_ENV="$envv"; fi
+  return 0
+}
+# Tell the hub (and so the panel's "Finish update") about a detected half state, or that there is none. No TTL on
+# purpose: it describes the checkout, not a job. The hub ignores it once it runs the release .env names.
+mark_half_state() { redis SET "$HALF_KEY" "{\"envVersion\":\"$(json_str "$1")\",\"runningVersion\":\"$(json_str "$2")\"}" >/dev/null 2>&1 || true; }
+clear_half_state() { redis DEL "$HALF_KEY" >/dev/null 2>&1 || true; }
+
+# The env file a pull runs against: a copy of .env that carries the pins this update WILL write, so compose resolves
+# exactly the image references the recreate will use (digest-pinned when the job carries digests, else the tag) while
+# .env itself keeps naming what runs. Removed right after the pull. Usage: stage_env <version> <hub> <web> <touched>
+STAGED_ENV=""
+stage_env() {
+  local version="$1" hub="$2" web="$3" touched="$4"
+  STAGED_ENV="${ENV_FILE}.stage.$$"
+  rm -f "$STAGED_ENV"
+  if [ -f "$ENV_FILE" ]; then
+    (umask 077; cp "$ENV_FILE" "$STAGED_ENV") || { rm -f "$STAGED_ENV"; return 1; }
+  else
+    (umask 077; : > "$STAGED_ENV") || return 1
+  fi
+  write_pins_to "$STAGED_ENV" "$version" "$hub" "$web" "$touched" || { rm -f "$STAGED_ENV"; return 1; }
 }
 
 # Poll the given services (default hub-api) until ALL are healthy, or give up. Returns 0 healthy, 1
@@ -298,6 +371,65 @@ resolve_pins() {
   PIN_HUB="$hub"; PIN_WEB="$web"
 }
 
+# PULL FIRST, WRITE .env LAST. Pull the exact target images, then verify they are THIS release, all before .env is
+# touched; so a failure here (no disk, no network, a wrong digest) leaves nothing to roll back.
+#   pull: `compose pull hub-api web` against a staged copy of .env (stage_env) = the exact refs the recreate will use.
+#   verify (digest-pinned): the pulled `repo@sha256:…` must carry an OCI version label equal to the target — FAIL-CLOSED
+#     (a valid digest of a different release, an unlabelled image, an uninspectable ref all refuse). Tag-only: the pulled
+#     `repo:tag` must not report a DIFFERENT version (a missing label there is tolerated: releases that predate it, a
+#     mirror that renames).
+# On failure PULL_ERROR (human text, JSON-safe), PULL_CODE (pull_failed | disk_full | label | stage_failed) are set and
+# 1 is returned. Usage: pull_target_images <target> <hubDigest> <webDigest> <touched>
+PULL_ERROR=""
+PULL_CODE=""
+pull_target_images() {
+  local target="$1" hub="$2" web="$3" touched="$4" out rc=0 cause svc ref why
+  PULL_ERROR=""; PULL_CODE=""
+  if [ "$DRY" -eq 1 ]; then
+    printf 'RUN: stage a copy of .env with TUGRA_VERSION=%s for the pull (.env itself is not written yet)\n' "$target"
+    printf 'RUN: docker compose --env-file <staged .env> -f %s pull hub-api web\n' "$COMPOSE_FILE"
+  else
+    if ! stage_env "$target" "$hub" "$web" "$touched"; then
+      PULL_CODE="stage_failed"
+      PULL_ERROR="could not prepare the pull (no space left next to $ENV_FILE?); nothing was changed"
+      return 1
+    fi
+    out="$(docker compose --env-file "$STAGED_ENV" -f "$COMPOSE_FILE" pull hub-api web 2>&1)" || rc=$?
+    rm -f "$STAGED_ENV"; STAGED_ENV=""
+    [ -z "$out" ] || printf '%s\n' "$out"
+    if [ "$rc" -ne 0 ]; then
+      if printf '%s' "$out" | grep -qi 'no space left on device'; then
+        PULL_CODE="disk_full"
+        PULL_ERROR="the disk filled up while pulling the images; free some space (remove unused Docker images or volumes) and retry"
+      else
+        PULL_CODE="pull_failed"
+        cause="$(printf '%s\n' "$out" | sed '/^[[:space:]]*$/d' | tail -n1 | cut -c1-200)"
+        PULL_ERROR="image pull failed${cause:+: $(json_str "$cause")}"
+      fi
+      return 1
+    fi
+  fi
+  for svc in hub web; do
+    if [ "$svc" = hub ]; then ref="$HUB_IMAGE_REPO"; else ref="$WEB_IMAGE_REPO"; fi
+    if [ -n "$hub" ]; then
+      if [ "$svc" = hub ]; then ref="$ref@sha256:$hub"; else ref="$ref@sha256:$web"; fi
+    else
+      ref="$ref:$target"
+    fi
+    if check_version_label "$ref" "$target"; then continue; fi
+    # Tag-only: only a DIFFERENT version is fatal.
+    if [ -z "$hub" ] && [ "$LABEL_FAIL" != "mismatch" ]; then continue; fi
+    case "$LABEL_FAIL" in
+      missing) why="image version label missing: $svc image carries no $VERSION_LABEL label (expected $target)" ;;
+      inspect_failed) why="image version check failed: could not inspect the pulled $svc image $ref" ;;
+      *) why="image version label mismatch: $svc reports $LABEL_SEEN, expected $target" ;;
+    esac
+    PULL_CODE="label"; PULL_ERROR="$why"
+    return 1
+  done
+  return 0
+}
+
 # Start the updater's OWN replacement when the release changed the compose file (its service definition and image
 # may have changed, and a container cannot recreate itself: `compose up` would kill the very process running it).
 # A one-shot helper container does it from outside: same image (docker CLI + compose), the docker socket, and the
@@ -346,6 +478,14 @@ refresh_updater_self() {
 updater_expected_image() {
   docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" --profile updater config 2>/dev/null \
     | awk '/^  tugra-updater:[[:space:]]*$/{s=1;next} s&&/^  [^ ]/{s=0} s&&/^    image:/{sub(/^    image:[[:space:]]*/,""); gsub(/"/,""); print; exit}' || true
+}
+
+# A local image the free-space probe can run `df` in: the image the running updater container was created from.
+updater_image_ref() {
+  local cid
+  cid="$(docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" ps -q tugra-updater 2>/dev/null | head -n1 || true)"
+  [ -n "$cid" ] || return 0
+  docker inspect -f '{{.Image}}' "$cid" 2>/dev/null || true
 }
 
 # True (0) when the RUNNING updater container is not on the image the compose file now names: a different tag
@@ -479,29 +619,64 @@ do_update() {
     return 0
   fi
   HF_APPLIED=0; HF_BACKUP_DIR=""; HF_CHANGED=(); HF_SCRIPTS_CHANGED=0; HF_COMPOSE_CHANGED=0; HF_VERIFIED=0; HF_LOCAL_EDITS=()
+  PINS_TOUCH_FORCE=0; HALF_STATE=0; HALF_RUNNING=""; HALF_ENV=""
   _do_update "$@"
   local rc=$?
   hf_cleanup   # the private staging dir never outlives a job, whatever branch it ended on
   return "$rc"
 }
 
+# A failed update: status failed + a cause (never a bare "failed"), lock released.
+# fail_update <target> <message (plain text)> [<code> [<extra JSON members>]]
+fail_update() {
+  local target="$1" msg="$2" code="${3:-}" extra="${4:-}"
+  if [ -n "$code" ]; then extra=",\"code\":\"$code\"${extra}"; fi
+  set_status failed "$target" "\"$(json_str "$msg")\"" "$extra"
+  release_lock
+}
+
 _do_update() {
   local target="$1" hubDigest="${2:-}" webDigest="${3:-}" hostDigest="${4:-}" agentAmd64="${5:-}" agentArm64="${6:-}"
-  local current; current="$(env_get TUGRA_VERSION)"; [ -n "$current" ] || current="latest"
+  local current envCurrent; envCurrent="$(env_get TUGRA_VERSION)"; current="${envCurrent:-latest}"
+
+  # What .env says is only what the NEXT `up` would use. If the containers run an OLDER release, an earlier update
+  # stopped half-way (it wrote .env, then the pull or the rollback failed: full disk, crash, an updater older than this
+  # check). That is not "nothing to do": the running release is the real baseline (rollback target, the never-downgrade
+  # guard, which images to prune) and this run finishes the job.
+  local envHub envWeb
+  envHub="$(env_get TUGRA_HUB_DIGEST)"; is_hex64 "$envHub" || envHub=""
+  envWeb="$(env_get TUGRA_WEB_DIGEST)"; is_hex64 "$envWeb" || envWeb=""
+  detect_half_state "$envCurrent"
+  if [ "$HALF_STATE" -eq 1 ]; then
+    log "half-finished update found: $ENV_FILE names $HALF_ENV but the running stack is on $HALF_RUNNING — finishing it (target $target)"
+    mark_half_state "$HALF_ENV" "$HALF_RUNNING"
+    current="$HALF_RUNNING"
+    if [ -n "$envHub$envWeb" ]; then PINS_TOUCH_FORCE=1; fi
+  fi
   if [ "$current" != "latest" ] && ! is_newer "$target" "$current"; then
     log "refusing non-newer target $target (current $current)"
-    set_status failed "$target" "\"target not newer than current\""
-    release_lock
+    fail_update "$target" "target $target is not newer than the running version $current"
     return 0
   fi
 
   # Previous digest pins (empty = the stack is tag-only). A malformed value is treated as unpinned so a hand-edited
-  # .env can never be written back as garbage by a rollback.
+  # .env can never be written back as garbage by a rollback. In a half state the pins in .env belong to a release that
+  # never ran, so the previous pins are none.
   local prevHub prevWeb
-  prevHub="$(env_get TUGRA_HUB_DIGEST)"; is_hex64 "$prevHub" || prevHub=""
-  prevWeb="$(env_get TUGRA_WEB_DIGEST)"; is_hex64 "$prevWeb" || prevWeb=""
+  if [ "$HALF_STATE" -eq 1 ]; then prevHub=""; prevWeb=""; else prevHub="$envHub"; prevWeb="$envWeb"; fi
   log "updating $current -> $target"
   set_status pulling "$target"   # the hub knows no separate "snapshotting" phase; the snapshot runs under "pulling"
+
+  # DISK PREFLIGHT, before anything is written or pulled: room for the target images in the Docker data root and for
+  # the bookkeeping in the install dir. When short, the safe image cleanup runs once and it is measured again; still
+  # short = refuse here with the numbers, nothing touched (lib/images.sh disk_preflight).
+  if [ "$DRY" -eq 1 ]; then
+    printf 'RUN: disk preflight (free space of the Docker data root and %s; safe image cleanup first when short)\n' "$REPO_DIR"
+  elif ! disk_preflight "$current" "$REPO_DIR" "$(updater_image_ref)"; then
+    log "$(disk_short_text) — nothing was changed"
+    fail_update "$target" "$(disk_short_text)" disk_space ",\"needBytes\":$DISK_NEED,\"haveBytes\":$DISK_HAVE,\"path\":\"$(json_str "$DISK_PATH")\""
+    return 0
+  fi
 
   # Release host files (compose + installer scripts), PREFLIGHT: download, verify (ed25519 + hashes) and validate them
   # in a private staging dir. Nothing in the checkout changes here, so a failure aborts with nothing changed. When the
@@ -510,8 +685,7 @@ _do_update() {
   if [ -n "$hostDigest" ]; then
     if ! hf_prepare "$target" "$hostDigest"; then
       log "host files: $HF_ERROR — aborting, nothing was changed"
-      set_status failed "$target" "\"update refused: $(json_str "$HF_ERROR"); nothing was changed\""
-      release_lock
+      fail_update "$target" "update refused: $HF_ERROR; nothing was changed"
       return 0
     fi
     if [ "${#HF_CHANGED[@]}" -eq 0 ]; then
@@ -531,13 +705,11 @@ _do_update() {
     log "WARNING: PRE_UPDATE_BACKUP=0 — updating WITHOUT a pre-update restore point"
   elif ! backup_dir_ok; then
     log "TUGRA_BACKUP_DIR must be an absolute path inside the checkout ($REPO_DIR) for the in-app updater — aborting, nothing was changed"
-    set_status failed "$target" "\"pre-update backup failed: TUGRA_BACKUP_DIR must be inside the checkout for the in-app updater\""
-    release_lock
+    fail_update "$target" "pre-update backup failed: TUGRA_BACKUP_DIR must be inside the checkout for the in-app updater"
     return 0
   elif ! tugra_snapshot "$current" "$target"; then
     log "pre-update backup failed — aborting, nothing was changed"
-    set_status failed "$target" "\"pre-update backup failed; nothing was changed\""
-    release_lock
+    fail_update "$target" "pre-update backup failed; nothing was changed"
     return 0
   fi
   # Apply the release's compose/scripts (backup first, atomic renames, restored by recover_all / the branches below on
@@ -546,62 +718,62 @@ _do_update() {
     if backup_dir_ok; then HF_BACKUP_ROOT="$(_snap_cfg TUGRA_BACKUP_DIR "$REPO_DIR/backups")"; else HF_BACKUP_ROOT="$REPO_DIR/backups"; fi
     if ! hf_apply "$current" "$target"; then
       log "host files: $HF_ERROR — aborting"
-      set_status failed "$target" "\"update refused: $(json_str "$HF_ERROR")$(snap_note)\""
-      release_lock
+      fail_update "$target" "update refused: $HF_ERROR$(snap_note)"
       return 0
     fi
   fi
   resolve_pins "$hubDigest" "$webDigest"
   hubDigest="$PIN_HUB"; webDigest="$PIN_WEB"
   local touched=0
-  if [ -n "$prevHub$prevWeb$hubDigest$webDigest" ]; then touched=1; fi
+  if [ -n "$prevHub$prevWeb$hubDigest$webDigest" ] || [ "$PINS_TOUCH_FORCE" -eq 1 ]; then touched=1; fi
   if [ -n "$hubDigest" ]; then
     log "digest-pinned: hub ${hubDigest:0:12}… web ${webDigest:0:12}…"
   fi
+
+  # PULL FIRST: the exact target images (digest-pinned when the job carries digests, else the tag), then their version
+  # labels — all while .env still names what runs. A failure here has nothing to roll back; only the release's
+  # compose/scripts (applied above) are put back. A half-finished update (.env ahead of what runs) whose target cannot
+  # be pulled is repaired instead: .env goes back to the running release, so it never names images that are not there.
+  if ! pull_target_images "$target" "$hubDigest" "$webDigest" "$touched"; then
+    log "$PULL_ERROR — .env was not changed"
+    local repaired=""
+    if [ "$HALF_STATE" -eq 1 ]; then
+      if restore_env "$current" "" "" "$envHub" "$envWeb"; then
+        repaired="; $ENV_FILE was set back to the running version $current"
+        clear_half_state
+      else
+        log "could not roll back $ENV_FILE to $current"
+        repaired="; $ENV_FILE still names $HALF_ENV (set TUGRA_VERSION=$current by hand)"
+      fi
+    fi
+    hf_undo
+    local code=""
+    case "$PULL_CODE" in disk_full) code="disk_space" ;; esac
+    fail_update "$target" "$PULL_ERROR$repaired$(hf_note)" "$code"
+    return 0
+  fi
+
+  # WRITE .env LAST (atomic + verified, see env_put): everything that can fail without touching a container has passed.
   # Tag-only -> tag-only keeps today's exact behaviour (only TUGRA_VERSION is written). Otherwise the digests are
   # written too: pinned target = the new digests; legacy target on a pinned stack = cleared (an old pin would
   # otherwise override the new tag and pull the OLD image).
+  local envBefore; envBefore="$(cat "$ENV_FILE" 2>/dev/null || true)"
   if ! write_pins "$target" "$hubDigest" "$webDigest" "$touched"; then
     log "could not write $ENV_FILE — aborting"
-    restore_env "$current" "$prevHub" "$prevWeb" "$hubDigest" "$webDigest" || true
-    hf_undo
-    set_status failed "$target" "\"could not update .env$(hf_note)$(snap_note)\""
-    release_lock
-    return 0
-  fi
-
-  # Pull + recreate ONLY the app containers (--no-deps: never touch postgres/redis or this updater).
-  if ! compose pull hub-api web; then
-    log "pull failed — rolling back .env"
-    restore_env "$current" "$prevHub" "$prevWeb" "$hubDigest" "$webDigest" || log "could not roll back $ENV_FILE"
-    hf_undo
-    set_status failed "$target" "\"image pull failed$(hf_note)\""
-    release_lock
-    return 0
-  fi
-
-  # Digest-pinned: the registry already enforced the content hash; additionally require that the pulled image
-  # really is THIS release (its OCI version label == target). That blocks a job whose digest is a valid image of
-  # a different (older) release. Nothing is recreated yet, so a mismatch is just a rolled-back .env.
-  if [ -n "$hubDigest" ]; then
-    local svc ref
-    for svc in hub web; do
-      if [ "$svc" = hub ]; then ref="$HUB_IMAGE_REPO@sha256:$hubDigest"; else ref="$WEB_IMAGE_REPO@sha256:$webDigest"; fi
-      if ! check_version_label "$ref" "$target"; then
-        local why
-        case "$LABEL_FAIL" in
-          missing) why="image version label missing: $svc image carries no $VERSION_LABEL label (expected $target)" ;;
-          inspect_failed) why="image version check failed: could not inspect the pulled $svc image $ref" ;;
-          *) why="image version label mismatch: $svc reports $LABEL_SEEN, expected $target" ;;
-        esac
-        log "$why — rolling back .env"
-        restore_env "$current" "$prevHub" "$prevWeb" "$hubDigest" "$webDigest" || log "could not roll back $ENV_FILE"
-        hf_undo
-        set_status failed "$target" "\"$why$(hf_note)\""
-        release_lock
-        return 0
+    local envNote="; $ENV_FILE was not changed and the previous version keeps running"
+    if [ "$(cat "$ENV_FILE" 2>/dev/null || true)" != "$envBefore" ]; then
+      # A key was written before the failing one (every single write is atomic, a sequence of them is not): put it back.
+      envNote="; the previous version keeps running"
+      if ! restore_env "$current" "$prevHub" "$prevWeb" "$hubDigest" "$webDigest"; then
+        log "could not roll back $ENV_FILE"
+        # The next update (or "Finish update") sees .env ahead of what runs and repairs it; say so rather than hide it.
+        mark_half_state "$target" "$current"
+        envNote="; the previous version keeps running, but $ENV_FILE may still name $target (set TUGRA_VERSION=$current by hand, or free disk space and click Update now again)"
       fi
-    done
+    fi
+    hf_undo
+    fail_update "$target" "could not update .env (disk full or not writable?)$envNote$(hf_note)$(snap_note)"
+    return 0
   fi
 
   set_status recreating "$target"
@@ -650,6 +822,7 @@ _do_update() {
 
   set_status done "$target"
   redis DEL "instance:update:recovery_required" # a verified update clears any stale recovery marker
+  clear_half_state
   release_lock
   log "update to $target complete"
   # The release's compose/scripts were written into the checkout: bring its git state in line (never fatal).
@@ -741,6 +914,20 @@ catch_up_updater() {
   if [ "$UPDATER_REFRESH_SCHEDULED" -eq 1 ]; then sleep "$UPDATER_REFRESH_WAIT"; fi
 }
 catch_up_updater
+
+# Start-up check for a half-finished update (.env names a release newer than the one the containers run): left by a crash,
+# a full disk, or an updater older than this fix. Reported to the hub, which shows "Finish update" in Settings > Updates;
+# the next "Update now" repairs it by itself either way (see _do_update). No half state clears an earlier report.
+report_half_state() {
+  detect_half_state "$(env_get TUGRA_VERSION)"
+  if [ "$HALF_STATE" -eq 1 ]; then
+    log "half-finished update: $ENV_FILE names $HALF_ENV but the running stack is on $HALF_RUNNING — Settings > Updates offers 'Finish update'"
+    mark_half_state "$HALF_ENV" "$HALF_RUNNING"
+  else
+    clear_half_state
+  fi
+}
+report_half_state
 
 log "watching $QUEUE_KEY on $REDIS_URL"
 while true; do

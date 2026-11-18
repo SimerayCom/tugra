@@ -176,11 +176,13 @@ exit 0
 `,
     );
     // df: the free-space pre-check reads `df -Pk <dir>` (header + one line, field 4 = KiB available). SHIM_DF_AVAIL_KB
-    // fakes that line, SHIM_DF_RAW replaces the whole output (garbage case); otherwise the real df runs.
+    // fakes that line, SHIM_DF_RAW replaces the whole output (garbage case); otherwise the real df runs. Only the BACKUP
+    // dir is faked (the updater's own disk preflight measures the install dir and must see the real filesystem).
     const REAL_DF = execFileSync("sh", ["-c", "command -v df"]).toString().trim();
     writeFileSync(
       join(bin, "df"),
       `#!/bin/bash
+case "\${@: -1}" in *backups*) ;; *) exec ${REAL_DF} "$@" ;; esac
 if [ -n "$SHIM_DF_RAW" ]; then printf '%s\n' "$SHIM_DF_RAW"; exit 0; fi
 if [ -n "$SHIM_DF_AVAIL_KB" ]; then printf 'Filesystem 1024-blocks Used Available Capacity Mounted\nfs 0 0 %s 0%% /\n' "$SHIM_DF_AVAIL_KB"; exit 0; fi
 exec ${REAL_DF} "$@"
@@ -337,7 +339,7 @@ exec ${REAL_DF} "$@"
       // recover restores the prev tag, recreates, AND verifies health (the old code skipped the re-check)
       // (the version + digest-pin writes live in restore_env → write_pins, which sets TUGRA_VERSION first)
       expect(source).toMatch(/recover_previous\(\)\s*\{[\s\S]*?restore_env "\$@" && compose up -d --no-deps hub-api web && wait_healthy/);
-      expect(source).toMatch(/write_pins\(\)\s*\{[\s\S]*?set_env TUGRA_VERSION "\$version"/);
+      expect(source).toMatch(/write_pins_to\(\)\s*\{[\s\S]*?env_put "\$file" TUGRA_VERSION "\$version"/);
       // used in BOTH the recreate-fail and the health-fail branches, via recover_all (which first puts the release's
       // compose/scripts back, then runs recover_previous)
       expect((source.match(/if recover_all "\$current" /g) ?? []).length).toBe(2);
@@ -348,9 +350,12 @@ exec ${REAL_DF} "$@"
       expect(source).toContain('redis SET "instance:update:recovery_required"'); // durable gate marker
     });
 
-    it("writes .env atomically (same-dir temp + mv, never a truncate-in-place)", () => {
-      expect(source).toContain('mktemp "${ENV_FILE}.XXXXXX"');
-      expect(source).toContain('mv "$tmp" "$ENV_FILE"');
+    it("writes .env atomically (same-dir temp, verified, fsync'ed, then mv — never a truncate-in-place)", () => {
+      expect(source).toContain('mktemp "${file}.XXXXXX"');
+      expect(source).toContain('_fsync_file "$tmp"');
+      expect(source).toContain('sync "$1"'); // the helper: coreutils/busybox fsync of just that file
+      expect(source).toContain('mv "$tmp" "$file"');
+      expect(source).toContain('set_env() { env_put "$ENV_FILE" "$1" "$2"; }');
       expect(source).not.toContain('cat "$tmp" > "$ENV_FILE"'); // the old non-atomic truncate-write is gone
     });
 
@@ -406,7 +411,7 @@ exec ${REAL_DF} "$@"
       return i;
     };
 
-    it("parses hubDigest/webDigest from the job: SET_ENV version < digests < pull < label check < up < done", () => {
+    it("parses hubDigest/webDigest from the job: pull < label check < SET_ENV version < digests < up < done (.env is written LAST)", () => {
       const out = run(job("0.2.0", H, W), "TUGRA_VERSION=0.1.0\n");
       const v = idx(out, "SET_ENV: TUGRA_VERSION=0.2.0");
       const h = idx(out, `SET_ENV: TUGRA_HUB_DIGEST=${H}`);
@@ -416,18 +421,30 @@ exec ${REAL_DF} "$@"
       const labelWeb = idx(out, `docker image inspect ghcr.io/simeraycom/tugra-web@sha256:${W}`);
       const up = idx(out, "up -d --no-deps hub-api web");
       const done = idx(out, '"phase":"done"');
-      expect([v, h, w, pull, labelHub, labelWeb, up, done]).toEqual([...[v, h, w, pull, labelHub, labelWeb, up, done]].sort((a, b) => a - b));
+      const order = [pull, labelHub, labelWeb, v, h, w, up, done];
+      expect(order).toEqual([...order].sort((a, b) => a - b));
       expect(out).toContain("digest-pinned");
       expect(readFileSync(envFile, "utf8")).toBe("TUGRA_VERSION=0.1.0\n"); // dry-run never mutates the file
     });
 
-    it("LEGACY job (no digest fields) behaves exactly as before: only TUGRA_VERSION is written, no label check", () => {
+    it("LEGACY job (no digest fields): only TUGRA_VERSION is written, after the pull; the tag's label is checked first", () => {
       const out = run(job("0.2.0"), "TUGRA_VERSION=0.1.0\n");
       expect(out).toContain("SET_ENV: TUGRA_VERSION=0.2.0");
       expect(out).not.toContain("TUGRA_HUB_DIGEST");
       expect(out).not.toContain("TUGRA_WEB_DIGEST");
-      expect(out).not.toContain("docker image inspect");
+      expect(out.indexOf("docker image inspect ghcr.io/simeraycom/tugra-hub:0.2.0")).toBeGreaterThan(out.indexOf("pull hub-api web"));
+      expect(out.indexOf("SET_ENV: TUGRA_VERSION=0.2.0")).toBeGreaterThan(out.indexOf("docker image inspect ghcr.io/simeraycom/tugra-web:0.2.0"));
       expect(out).toContain('"phase":"done"');
+    });
+
+    it("LEGACY (tag-only) job: a tag whose label names ANOTHER release is refused before .env is written; a missing label is tolerated", () => {
+      const bad = run(job("0.2.0"), "TUGRA_VERSION=0.1.0\n", { DRY_LABEL: "0.1.5" });
+      expect(bad).toContain("image version label mismatch: hub reports 0.1.5, expected 0.2.0");
+      expect(bad).not.toContain("SET_ENV");
+      expect(bad).not.toContain("up -d --no-deps hub-api web");
+      const none = run(job("0.2.0"), "TUGRA_VERSION=0.1.0\n", { DRY_LABEL: "missing" });
+      expect(none).toContain("SET_ENV: TUGRA_VERSION=0.2.0");
+      expect(none).toContain('"phase":"done"');
     });
 
     it("ignores a non-hex / 63-char / partial digest pair (legacy tag path) and says so", () => {
@@ -502,12 +519,11 @@ exec ${REAL_DF} "$@"
       expect(out).toContain(`TUGRA_HUB_DIGEST=${PH}`);
     });
 
-    it("OCI version label MISMATCH rolls back like a pull failure — .env restored, nothing recreated", () => {
+    it("OCI version label MISMATCH is refused BEFORE .env is written — nothing to roll back, nothing recreated", () => {
       const out = run(job("0.2.0", H, W), "TUGRA_VERSION=0.1.0\n", { DRY_LABEL: "0.1.5" });
       expect(out).toContain("image version label mismatch: hub reports 0.1.5, expected 0.2.0");
       expect(out).toContain('"phase":"failed"');
-      expect(out).toContain("SET_ENV: TUGRA_VERSION=0.1.0"); // restored
-      expect(out).toContain("SET_ENV: TUGRA_HUB_DIGEST=\n"); // new pin cleared
+      expect(out).not.toContain("SET_ENV"); // .env never touched
       expect(out).not.toContain("up -d --no-deps hub-api web"); // never recreated
       expect(out).not.toContain('"phase":"done"');
     });
@@ -515,9 +531,9 @@ exec ${REAL_DF} "$@"
     it("a MISSING label or a failed inspect FAILS CLOSED for a digest-pinned update (an unlabelled image is an older release someone pointed us at); a leading v on the label matches", () => {
       const missing = run(job("0.2.0", H, W), "TUGRA_VERSION=0.1.0\n", { DRY_LABEL: "missing" });
       expect(missing).toContain("image version label missing: hub image carries no org.opencontainers.image.version label");
-      expect(missing).toContain("rolling back .env");
+      expect(missing).toContain(".env was not changed");
       expect(missing).not.toContain("up -d --no-deps hub-api web");
-      expect(missing).toContain(`SET_ENV: TUGRA_VERSION=0.1.0`); // .env restored
+      expect(missing).not.toContain("SET_ENV"); // refused before any write: nothing to restore
       const failed = run(job("0.2.0", H, W), "TUGRA_VERSION=0.1.0\n", { DRY_LABEL: "inspect-fail" });
       expect(failed).toContain("image version check failed: could not inspect the pulled hub image");
       expect(failed).not.toContain("up -d --no-deps hub-api web");
@@ -543,7 +559,7 @@ exec ${REAL_DF} "$@"
       expect(out).toContain("no digest pin support");
       expect(out).toContain("SET_ENV: TUGRA_VERSION=0.2.0");
       expect(out).not.toContain("SET_ENV: TUGRA_HUB_DIGEST");
-      expect(out).not.toContain("docker image inspect");
+      expect(out).not.toContain("@sha256:"); // the tag, not a digest, is what gets inspected
     });
 
     it("keeps the downgrade guard in front of digests (non-newer target -> no write, no pull)", () => {

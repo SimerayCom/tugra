@@ -547,7 +547,7 @@ describe("scripts/install.sh", () => {
       `#!/bin/bash
 echo "docker $*" >> "$SHIM_LOG"
 case "$1" in
-  info) exit 0 ;;
+  info) [ -n "$SHIM_DOCKER_ROOT" ] && echo "$SHIM_DOCKER_ROOT"; exit 0 ;;
   version) echo 27.0.0; exit 0 ;;
   volume) echo "$SHIM_VOLUMES"; exit 0 ;;
   inspect) echo "$SHIM_INSPECT"; exit 0 ;;
@@ -571,6 +571,8 @@ case "$1" in
       [ -n "$row" ] || exit 1
       [ "$(echo "$row" | cut -d'|' -f9)" = "1" ] && exit 1
       id="$(echo "$row" | cut -d'|' -f1)"
+      # a removed image frees its size on the faked Docker data root (see the df shim)
+      [ -f "$SHIM_LOG.avail" ] && echo $(( $(cat "$SHIM_LOG.avail") + $(echo "$row" | cut -d'|' -f8) / 1024 )) > "$SHIM_LOG.avail"
       awk -F'|' -v i="$id" '$1!=i' "$SHIM_IMAGES" > "$SHIM_IMAGES.n"; mv "$SHIM_IMAGES.n" "$SHIM_IMAGES"; exit 0 ;;
   ps) # plain docker ps (the compose branch handles 'docker compose ps'): an unmanaged agent exists only without the label filter
       case "$*" in *tugra-agent-1*) case "$*" in *label=*) : ;; *) [ -n "$SHIM_UNMANAGED_AGENT" ] && echo stalecid ;; esac ;; esac
@@ -600,8 +602,34 @@ exit 0
 `,
     );
     writeFileSync(join(shims, "curl"), `#!/bin/bash\necho "curl $*" >> "$SHIM_LOG"\nexit "\${SHIM_CURL_RC:-0}"\n`);
+    // df: the faked Docker data root ($SHIM_DOCKER_ROOT) reads $SHIM_LOG.avail (KiB; a removed image raises it), every other
+    // path the real filesystem. mktemp: SHIM_MKTEMP_FAIL (a path prefix) makes the temp file for that .env unavailable (the
+    // create fails); SHIM_MKTEMP_FULL makes it a file every write to which fails (/dev/full where it exists, else a directory).
+    const REAL_DF = execFileSync("sh", ["-c", "command -v df"]).toString().trim();
+    const REAL_MKTEMP = execFileSync("sh", ["-c", "command -v mktemp"]).toString().trim();
+    writeFileSync(
+      join(shims, "df"),
+      `#!/bin/sh
+last=""; for a in "$@"; do last="$a"; done
+if [ -n "$SHIM_DOCKER_ROOT" ] && [ "$last" = "$SHIM_DOCKER_ROOT" ]; then printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\nfs 0 0 %s 0%% /\n' "$(cat "$SHIM_LOG.avail")"; exit 0; fi
+exec ${REAL_DF} "$@"
+`,
+    );
+    writeFileSync(
+      join(shims, "mktemp"),
+      `#!/bin/sh
+if [ -n "$SHIM_MKTEMP_FAIL" ]; then case "$1" in "$SHIM_MKTEMP_FAIL".*) echo "mktemp: failed to create file via template: No space left on device" >&2; exit 1 ;; esac; fi
+if [ -n "$SHIM_MKTEMP_FULL" ]; then case "$1" in "$SHIM_MKTEMP_FULL".*)
+  name="\${1%XXXXXX}full$$"
+  if [ -e /dev/full ]; then ln -s /dev/full "$name"; else ln -s "$(dirname "$1")" "$name"; fi
+  echo "$name"; exit 0 ;; esac; fi
+exec ${REAL_MKTEMP} "$@"
+`,
+    );
     chmodSync(join(shims, "docker"), 0o755);
     chmodSync(join(shims, "curl"), 0o755);
+    chmodSync(join(shims, "df"), 0o755);
+    chmodSync(join(shims, "mktemp"), 0o755);
 
     // A PATH WITHOUT curl: symlink the host tools the installer needs next to the docker shim.
     const noCurl = join(shims, "nocurl");
@@ -861,6 +889,133 @@ exit 0
         const r = install(p, HTTP, { env: { SHIM_PULL_ERR: "no matching manifest for linux/arm64/v8 in the manifest list entries" } });
         expect(r.code).toBe(0);
         expect(calls()).toContain("up -d --build");
+      });
+    });
+
+    describe("disk preflight, half-updated installs and a checked .env write", () => {
+      const ROOT = join(work, "docker-root");
+      mkdirSync(ROOT, { recursive: true });
+      const GB = 1024 ** 3;
+      const setAvail = (bytes: number): void => writeFileSync(`${LOG}.avail`, String(Math.floor(bytes / 1024)));
+      afterEach(() => rmSync(`${LOG}.avail`, { force: true }));
+      const SRC = "https://github.com/SimerayCom/tugra";
+      const imgRow = (id: string, repo: string, ver: string, size: number, title: string): string => [id, repo, ver, "<none>", ver, SRC, title, String(size), "0"].join("|");
+      const withImages = (name: string, rows: string[]): string => {
+        const f = join(work, name);
+        writeFileSync(f, rows.join("\n") + "\n");
+        return f;
+      };
+      const HUBR = "ghcr.io/simeraycom/tugra-hub";
+
+      it("a fresh install with too little room stops BEFORE pulling: the numbers + remedy, nothing pulled, no containers", () => {
+        const p = join(work, "disk-fresh.env"); reset(); setAvail(2 * GB);
+        const r = install(p, HTTP, { env: { SHIM_DOCKER_ROOT: ROOT } });
+        expect(r.code).toBe(1);
+        expect(r.out).toMatch(/not enough free disk space: needs about 10\.0 GB free on .*docker-root, has 2\.0 GB/);
+        expect(r.out).toContain("Nothing was pulled");
+        expect(calls()).not.toMatch(/ pull/);
+        expect(calls()).not.toContain("up -d");
+      });
+
+      it("a re-run with too little room leaves the pre-run .env BYTE-IDENTICAL", () => {
+        const p = join(work, "disk-rerun.env"); dry(p, HTTP);
+        const before = readFileSync(p); reset(); setAvail(GB);
+        const r = install(p, ["--domain", "tugra.example.com"], { env: { SHIM_DOCKER_ROOT: ROOT } });
+        expect(r.code).toBe(1);
+        expect(r.out).toContain("restored to its pre-run state");
+        expect(readFileSync(p).equals(before)).toBe(true);
+        expect(calls()).not.toMatch(/ pull/);
+      });
+
+      it("short, but old Tugra releases can go: the safe cleanup runs first (running + previous stay), then it pulls", () => {
+        const p = join(work, "disk-prune.env"); dry(p, HTTP, { TUGRA_VERSION: "0.1.0" }); reset();
+        const images = withImages("disk-prune.images", [
+          imgRow("sha256:h07", HUBR, "0.0.7", 6 * GB, "Tugra Hub API"),
+          imgRow("sha256:h08", HUBR, "0.0.8", GB, "Tugra Hub API"),
+          imgRow("sha256:h10", HUBR, "0.1.0", 2 * GB, "Tugra Hub API"),
+        ]);
+        setAvail(4 * GB); // the running 0.1.0 is 2 GB: needs 2 x 2 + 2 = 6 GB; removing 0.0.7 frees 6 GB
+        const r = install(p, HTTP, { env: { SHIM_DOCKER_ROOT: ROOT, SHIM_IMAGES: images } });
+        expect(r.code).toBe(0);
+        expect(r.out).toContain("removing old Tugra release images first");
+        expect(r.out).toContain("enough space after the cleanup");
+        const rmi = calls().split("\n").filter((l) => l.startsWith("docker rmi "));
+        expect(rmi.join("\n")).toContain("0.0.7");
+        expect(rmi.join("\n")).not.toMatch(/0\.0\.8|0\.1\.0/);
+        expect(calls().indexOf("docker rmi ")).toBeLessThan(calls().search(/compose .* pull /));
+      });
+
+      it("--build has no pull to protect, and TUGRA_DISK_CHECK=0 skips the check", () => {
+        const a = join(work, "disk-build.env"); reset(); setAvail(GB);
+        expect(install(a, HTTP, { env: { SHIM_DOCKER_ROOT: ROOT } }).code).toBe(1);
+        reset(); setAvail(GB);
+        const b = install(join(work, "disk-build2.env"), [...HTTP, "--build"], { env: { SHIM_DOCKER_ROOT: ROOT } });
+        expect(b.out).not.toContain("not enough free disk space");
+        reset(); setAvail(GB);
+        const c = install(join(work, "disk-off.env"), HTTP, { env: { SHIM_DOCKER_ROOT: ROOT, TUGRA_DISK_CHECK: "0" } });
+        expect(c.code).toBe(0);
+        expect(c.out).toContain("disk check disabled");
+      });
+
+      it("a re-run on a HALF-updated install (.env names 0.2.0, the containers run 0.1.0) proceeds and finishes the update", () => {
+        const p = join(work, "half-ok.env"); dry(p, HTTP, { TUGRA_VERSION: "0.2.0" }); reset();
+        const r = install(p, HTTP, { env: { SHIM_INSPECT: "0.1.0" } });
+        expect(r.code).toBe(0);
+        expect(r.out).toContain("names 0.2.0 but the running stack is on 0.1.0");
+        expect(calls()).toMatch(/compose .* pull /); // pulls what .env names though its images are absent
+        expect(calls()).toContain("up -d --no-build");
+        expect(readEnv(p).TUGRA_VERSION).toBe("0.2.0");
+      });
+
+      it("... and when 0.2.0 cannot be pulled the .env is put back to the RUNNING release instead of keeping a version that is not installed", () => {
+        const p = join(work, "half-fail.env"); dry(p, HTTP, { TUGRA_VERSION: "0.2.0" });
+        writeFileSync(p, `${readFileSync(p, "utf8")}TUGRA_HUB_DIGEST=${"c".repeat(64)}\nTUGRA_WEB_DIGEST=${"d".repeat(64)}\n`);
+        reset();
+        const r = install(p, HTTP, { env: { SHIM_INSPECT: "0.1.0", SHIM_PULL_ERR: "manifest unknown" } });
+        expect(r.code).toBe(1);
+        expect(r.out).toContain("a release that was never installed here");
+        expect(readEnv(p).TUGRA_VERSION).toBe("0.1.0");
+        expect(readEnv(p).TUGRA_HUB_DIGEST).toBe("");
+        expect(readEnv(p).TUGRA_WEB_DIGEST).toBe("");
+        expect(calls()).not.toContain("up -d");
+      });
+
+      it("a consistent install (.env = running version) is not reported as half-updated", () => {
+        const p = join(work, "half-none.env"); dry(p, HTTP, { TUGRA_VERSION: "0.1.0" }); reset();
+        const r = install(p, HTTP, { env: { SHIM_INSPECT: "0.1.0" } });
+        expect(r.code).toBe(0);
+        expect(r.out).not.toContain("half-finished update");
+      });
+
+      it("a .env write that cannot even create its temp file stops the run with a clear error, the original .env untouched, nothing started", () => {
+        const p = join(work, "envfull-create.env"); dry(p, HTTP);
+        const before = readFileSync(p); reset();
+        const r = install(p, HTTP, { env: { SHIM_MKTEMP_FAIL: p } });
+        expect(r.code).not.toBe(0);
+        expect(r.out).toContain("cannot create a temporary file next to");
+        expect(r.out).toContain("was not changed");
+        expect(readFileSync(p).equals(before)).toBe(true);
+        expect(calls()).not.toContain("up -d");
+      });
+
+      it("a .env write that runs out of space part-way (every write to the temp fails) never replaces the good file", () => {
+        const p = join(work, "envfull-write.env"); dry(p, HTTP);
+        const before = readFileSync(p); reset();
+        const r = install(p, HTTP, { env: { SHIM_MKTEMP_FULL: p } });
+        expect(r.code).not.toBe(0);
+        expect(r.out).toMatch(/cannot write .*\(disk full\?\)|did not verify/);
+        expect(readFileSync(p).equals(before)).toBe(true);
+        expect(readdirSync(dirname(p)).filter((f) => f.startsWith("envfull-write.env.") && existsSync(join(dirname(p), f)))).toEqual([]);
+        expect(calls()).not.toContain("up -d");
+      });
+
+      it("appending a new key goes through the same atomic write: other lines, their order and the file mode survive", () => {
+        const p = join(work, "env-append.env");
+        writeFileSync(p, "A=1\nB=two", { mode: 0o640 }); // no trailing newline, and a mode the installer must keep
+        execFileSync(BASH, [INSTALL_SH, "--dry-run", "--env-file", p, "--no-telemetry", ...HTTP], { stdio: "pipe", env: { PATH: process.env.PATH } as NodeJS.ProcessEnv });
+        const text = readFileSync(p, "utf8");
+        expect(text.startsWith("A=1\nB=two\n")).toBe(true);
+        expect(readEnv(p).JWT_ACCESS_SECRET).toBeTruthy();
       });
     });
 

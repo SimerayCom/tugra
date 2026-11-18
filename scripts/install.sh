@@ -220,40 +220,47 @@ rand_hex() { openssl rand -hex "$1" 2>/dev/null || { od -An -tx1 -N"$1" /dev/ura
 env_has() { [ -f "$ENV_FILE" ] && grep -q "^$1=" "$ENV_FILE"; }
 # Never fails (a missing file / missing key prints nothing) so `$(env_get X)` is safe under `set -euo pipefail`.
 env_get() { { grep "^$1=" "$ENV_FILE" 2>/dev/null || true; } | head -n1 | cut -d= -f2-; }
-# A hand-edited .env may lack a trailing newline; appending to it would glue the new KEY=VALUE onto the last
-# line (corrupting e.g. MAIL_HOST and dropping the next secret). Add the missing newline first.
-_env_nl_guard() {
-  if [ -s "$ENV_FILE" ] && [ -n "$(tail -c1 "$ENV_FILE" 2>/dev/null)" ]; then printf '\n' >> "$ENV_FILE"; fi
-  return 0
+# fsync one file (coreutils/busybox `sync FILE` flush just that file and FAIL when the write-back failed; macOS/BSD
+# `sync` flushes the whole machine and gives no signal, so it is skipped there).
+_fsync_file() {
+  case "$(uname -s 2>/dev/null)" in Darwin|*BSD) return 0 ;; esac
+  sync "$1" >/dev/null 2>&1
+}
+# Atomically rewrite .env without the lines matching `$1` (plus, optionally, one appended `$1=$2`): build the new file in
+# a SAME-DIR temp, VERIFY it (a write that ran out of disk part-way must never replace a good file: the line count is the
+# kept lines + the new one, and the last line is the new assignment), fsync it, copy mode/owner over, then rename it over
+# the old one. A crash or a full disk can never leave a truncated .env (= every secret lost); any failure leaves the old
+# file untouched and returns 1. Appending a key goes through here too (an append-in-place could leave a partial line).
+_env_rewrite() {
+  local key="$1" val="$2" add="$3" tmp kept=0 want have
+  tmp="$(mktemp "${ENV_FILE}.XXXXXX")" || { err "cannot create a temporary file next to $ENV_FILE (disk full?) — $ENV_FILE was not changed"; return 1; }
+  if [ -f "$ENV_FILE" ]; then
+    kept="$(grep -vc "^${key}=" "$ENV_FILE" 2>/dev/null || true)"
+    case "$kept" in ''|*[!0-9]*) kept=0 ;; esac
+    { grep -v "^${key}=" "$ENV_FILE" 2>/dev/null || true; } > "$tmp" || { rm -f "$tmp"; err "cannot write $tmp (disk full?) — $ENV_FILE was not changed"; return 1; }
+  fi
+  want="$kept"
+  if [ "$add" = "1" ]; then
+    printf '%s=%s\n' "$key" "$val" >> "$tmp" || { rm -f "$tmp"; err "cannot write $tmp (disk full?) — $ENV_FILE was not changed"; return 1; }
+    want=$((kept + 1))
+  fi
+  have="$(wc -l < "$tmp" 2>/dev/null | tr -d '[:space:]')"
+  if [ "$have" != "$want" ] || { [ "$add" = "1" ] && [ "$(tail -n1 "$tmp" 2>/dev/null)" != "${key}=${val}" ]; }; then
+    rm -f "$tmp"; err "the new $ENV_FILE did not verify after writing it (disk full?) — $ENV_FILE was not changed"; return 1
+  fi
+  _fsync_file "$tmp" || { rm -f "$tmp"; err "could not flush the new $ENV_FILE to disk (disk full?) — $ENV_FILE was not changed"; return 1; }
+  chmod "$(stat -c '%a' "$ENV_FILE" 2>/dev/null || echo 600)" "$tmp" 2>/dev/null || chmod 600 "$tmp" 2>/dev/null || true
+  chown "$(stat -c '%u:%g' "$ENV_FILE" 2>/dev/null || echo 0:0)" "$tmp" 2>/dev/null || true
+  mv "$tmp" "$ENV_FILE" || { rm -f "$tmp"; err "could not replace $ENV_FILE — it was not changed"; return 1; }
 }
 # Generate-once: keep an existing value on re-run (regenerating would invalidate sessions / orphan
 # encrypted data / change the signing identity / break the already-initialised Postgres volume).
 ensure_env() {
   if env_has "$1"; then return 0; fi
-  _env_nl_guard
-  printf '%s=%s\n' "$1" "$2" >> "$ENV_FILE"
-}
-# Atomically rewrite .env without the lines matching `$1` (plus, optionally, one appended `$1=$2`): build the
-# new file in a SAME-DIR temp and rename it over the old one, preserving mode/owner, so a crash mid-write can
-# never leave a truncated .env (= every secret lost).
-_env_rewrite() {
-  local key="$1" val="$2" add="$3" tmp
-  tmp="$(mktemp "${ENV_FILE}.XXXXXX")" || return 1
-  { grep -v "^${key}=" "$ENV_FILE" 2>/dev/null || true; } > "$tmp" || { rm -f "$tmp"; return 1; }
-  if [ "$add" = "1" ]; then printf '%s=%s\n' "$key" "$val" >> "$tmp" || { rm -f "$tmp"; return 1; }; fi
-  chmod "$(stat -c '%a' "$ENV_FILE" 2>/dev/null || echo 600)" "$tmp" 2>/dev/null || chmod 600 "$tmp" 2>/dev/null || true
-  chown "$(stat -c '%u:%g' "$ENV_FILE" 2>/dev/null || echo 0:0)" "$tmp" 2>/dev/null || true
-  mv "$tmp" "$ENV_FILE" || { rm -f "$tmp"; return 1; }
+  _env_rewrite "$1" "$2" 1
 }
 # Upsert: refresh derived/URL values every run (so a re-run with a new --domain updates them).
-set_env() {
-  if env_has "$1"; then
-    _env_rewrite "$1" "$2" 1
-  else
-    _env_nl_guard
-    printf '%s=%s\n' "$1" "$2" >> "$ENV_FILE"
-  fi
-}
+set_env() { _env_rewrite "$1" "$2" 1; }
 unset_env() { if env_has "$1"; then _env_rewrite "$1" "" 0; fi; }
 
 # Resolve the ports: env var > stored .env value > default. A flag-less re-run (the upgrade path) must keep a
@@ -749,6 +756,19 @@ abort_untouched() {
   else
     err "No application containers were touched. ($ENV_FILE keeps the configuration written by this run — it is a fresh install.)"
   fi
+  # A pre-run .env that already names a release NEWER than the one that runs is the leftover of a half-finished update
+  # (an older updater wrote it before the pull, then the pull or the rollback failed). Restoring it verbatim would keep
+  # a version whose images are not on this machine: put it back to what actually runs.
+  if [ -n "${RUNNING_VERSION:-}" ] && [ -f "$ENV_FILE" ]; then
+    _hv="$(env_get TUGRA_VERSION | tr -d "\"' \r")"
+    if [ -n "$_hv" ] && is_newer "$_hv" "$RUNNING_VERSION"; then
+      if set_env TUGRA_VERSION "$RUNNING_VERSION" && drop_digest_pins; then
+        err "$ENV_FILE named $_hv, a release that was never installed here; TUGRA_VERSION is set back to the running $RUNNING_VERSION."
+      else
+        err "$ENV_FILE names $_hv, a release that was never installed here: set TUGRA_VERSION=$RUNNING_VERSION by hand."
+      fi
+    fi
+  fi
   exit 1
 }
 
@@ -761,6 +781,24 @@ abort_untouched() {
 . "$SCRIPT_DIR/lib/snapshot.sh"
 # shellcheck source=lib/images.sh
 . "$SCRIPT_DIR/lib/images.sh"
+# Which release the hub-api + web containers REALLY run. A re-run on a half-updated install (an older updater wrote the
+# new TUGRA_VERSION to .env, then its pull failed — typically a full disk) finds .env ahead of the containers: the running
+# release is then the real "previous" one (restore point name, rollback anchor, what the disk estimate measures). The
+# re-run itself needs nothing special: it pulls whatever .env names (or the TUGRA_VERSION given), whether or not those
+# images are on this machine yet.
+RUNNING_VERSION="$(running_stack_version 2>/dev/null || true)"
+if [ -n "$RUNNING_VERSION" ] && [ "$PREV_VERSION" != latest ] && is_newer "$PREV_VERSION" "$RUNNING_VERSION"; then
+  note "$ENV_FILE names $PREV_VERSION but the running stack is on $RUNNING_VERSION — a half-finished update; this run finishes it."
+  PREV_VERSION="$RUNNING_VERSION"
+fi
+# DISK PREFLIGHT, before the restore point and before anything is pulled: room for the images in the Docker data root and
+# for the bookkeeping here. When short, the safe image cleanup runs once and it is measured again; still short = stop with
+# the numbers, the stack and the pre-run .env untouched. (TUGRA_DISK_CHECK=0 skips it; building from source has no pull.)
+if [ "$FORCE_BUILD" -eq 0 ]; then
+  if ! disk_preflight "$PREV_VERSION" "$REPO_DIR" ""; then
+    abort_untouched "$(disk_short_text)." "Nothing was pulled."
+  fi
+fi
 pg_running() { [ -n "$(compose ps -q postgres 2>/dev/null | head -n1)" ]; }
 pg_exists() {
   [ -n "$(compose ps -aq postgres 2>/dev/null | head -n1)" ] && return 0
@@ -791,7 +829,8 @@ if pg_exists; then
     fi
     log "Taking a pre-update backup (database dump + .env copy)…"
     TUGRA_SNAPSHOT_ENV_SRC="${ENV_BEFORE:-$ENV_FILE}"
-    if tugra_snapshot "$PREV_VERSION" "${TUGRA_VERSION:-${PREV_VERSION}}"; then
+    _snap_to="$(env_get TUGRA_VERSION | tr -d "\"' \r")"
+    if tugra_snapshot "$PREV_VERSION" "${TUGRA_VERSION:-${_snap_to:-$PREV_VERSION}}"; then
       ok "Restore point: $SNAPSHOT_PATH"
     else
       abort_untouched "Pre-update backup failed — no images pulled, no containers recreated." \

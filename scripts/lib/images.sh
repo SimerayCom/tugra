@@ -6,6 +6,8 @@
 #   prune_select <current> <previous>        PURE: reads image rows on stdin, prints what to remove
 #   prune_release_images <current> <prev>    removes Tugra's own old release images, logs what was freed
 #   pull_agent_image <version> [digest]      pulls the bundled agent image without `docker compose pull`
+#   disk_preflight <version> <dir> [image]   free-space check (Docker data root + install dir) BEFORE anything is pulled
+#   running_stack_version                    the release the running hub-api / web containers are really on
 #
 # WHY PRUNE: every release adds a hub (~3.7 GB), web (~4.2 GB), agent and updater image and nothing ever removed the
 # old ones, so a box that followed the beta train ran out of disk. After a verified update only the running release and
@@ -276,4 +278,164 @@ pull_updater_image() {
   local ref="${2:-}"
   [ -n "$ref" ] || ref="${UPDATER_IMAGE_REPO:-ghcr.io/simeraycom/tugra-updater}:${1:-latest}"
   docker pull "$ref" >/dev/null
+}
+
+# --- disk preflight -------------------------------------------------------------------------------------------------
+# A pull that runs out of disk half-way used to leave the stack in a state no button repaired (the beta.2x incident:
+# images never pruned, disk full, update.sh already wrote the new TUGRA_VERSION). So BEFORE anything is pulled or
+# written both places an update needs room are measured:
+#   - the Docker data root (`docker info` DockerRootDir): the new hub + web + agent + updater images land there. The
+#     estimate is 2x the on-disk size of the release now installed + 2 GiB margin (new layers, the unpack scratch space,
+#     the previous release kept as the rollback anchor); with no Tugra image on disk to measure (a fresh install) a fixed
+#     10 GiB. A manifest that publishes image sizes could replace this estimate; none does yet.
+#   - the install dir: 256 MiB for the .env rewrite, the staged env, host files and the restore point's bookkeeping.
+# When either is short the SAFE prune runs once (prune_release_images: only Tugra's own releases older than the running
+# and the previous one, plus unnamed Tugra leftovers; TUGRA_PRUNE_IMAGES=0 turns it off) and the space is measured again.
+# Still short -> disk_preflight returns 1 with DISK_NEED / DISK_HAVE / DISK_PATH set (bytes, bytes, path) and nothing
+# has been touched. A measurement that cannot be taken NEVER blocks (it can only add a refusal on a positive shortfall).
+# TUGRA_DISK_CHECK=0 (env or .env) skips the whole check. Needs log() and _snap_cfg (lib/snapshot.sh).
+TUGRA_DISK_MARGIN_BYTES=2147483648
+TUGRA_DISK_FRESH_BYTES=10737418240
+TUGRA_DISK_INSTALL_BYTES=268435456
+DISK_NEED=0
+DISK_HAVE=0
+DISK_PATH=""
+DISK_PRUNED=0
+
+# Free bytes of the filesystem holding <path>, from `df -Pk` (POSIX layout: header + one line, field 4 = KiB available).
+_df_free_bytes() {
+  local kb
+  kb="$(df -Pk "$1" 2>/dev/null | awk 'NR==2{print $4}')" || return 1
+  case "$kb" in ''|*[!0-9]*) return 1 ;; esac
+  printf '%s' "$((kb * 1024))"
+}
+
+# The Docker data root (a HOST path), empty when the engine does not say.
+docker_root_dir() {
+  docker info --format '{{.DockerRootDir}}' 2>/dev/null | tr -d '\r' | head -n1 || true
+}
+
+# Free bytes under the Docker data root <root>. From the host it is readable directly; from the updater container it
+# usually is not, so then a throwaway container (the given local image, else any local image) bind-mounts it read-only
+# and runs df there. Prints nothing and returns 1 when it cannot be measured.
+docker_root_free_bytes() {
+  local root="$1" img kb b
+  [ -n "$root" ] || return 1
+  if [ -d "$root" ] && b="$(_df_free_bytes "$root")"; then printf '%s' "$b"; return 0; fi
+  img="${2:-}"
+  [ -n "$img" ] || img="$(docker image ls -q 2>/dev/null | head -n1)"
+  [ -n "$img" ] || return 1
+  kb="$(docker run --rm --network none --entrypoint df -v "$root:/tugra-df-probe:ro" "$img" -Pk /tugra-df-probe 2>/dev/null | awk 'NR==2{print $4}')" || kb=""
+  case "$kb" in ''|*[!0-9]*) return 1 ;; esac
+  printf '%s' "$((kb * 1024))"
+}
+
+# Total on-disk bytes of Tugra's own release images of <version> (hub, web, agent, updater: found by repository and by
+# version label, so digest-pulled images that carry no tag count). Prints 0 when none is on disk.
+tugra_release_bytes() {
+  local want="${1#v}" id repo tag digest ver src title v size total=0 seen="|"
+  while IFS='|' read -r id repo tag digest ver src title; do
+    [ -n "$id" ] || continue
+    [ "$ver" = "<no value>" ] && ver=""
+    _prune_is_tugra "$repo" "$src" "$title" || continue
+    v="$ver"
+    if [ -z "$v" ] && _img_is_version "$tag"; then v="$tag"; fi
+    [ "${v#v}" = "$want" ] || continue
+    case "$seen" in *"|$id|"*) continue ;; esac
+    seen="${seen}${id}|"
+    size="$(docker image inspect -f '{{.Size}}' "$id" 2>/dev/null | tr -d '[:space:]')"
+    case "$size" in ''|*[!0-9]*) size=0 ;; esac
+    total=$((total + size))
+  done <<EOF_ROWS
+$(prune_collect)
+EOF_ROWS
+  printf '%s' "$total"
+}
+
+# Bytes the Docker data root needs free for an update away from <current>.
+disk_need_bytes() {
+  local sz
+  sz="$(tugra_release_bytes "${1:-}")"
+  case "$sz" in ''|*[!0-9]*) sz=0 ;; esac
+  if [ "$sz" -gt 0 ]; then printf '%s' "$((2 * sz + TUGRA_DISK_MARGIN_BYTES))"; else printf '%s' "$TUGRA_DISK_FRESH_BYTES"; fi
+}
+
+# One measurement round: sets DISK_NEED / DISK_HAVE / DISK_PATH for the FIRST place that is short and returns 1, else 0.
+_disk_check_once() {
+  local cur="$1" dir="$2" probe="$3" need have root
+  need="$(disk_need_bytes "$cur")"
+  root="$(docker_root_dir)"
+  if have="$(docker_root_free_bytes "$root" "$probe")"; then
+    if [ "$have" -lt "$need" ]; then DISK_NEED="$need"; DISK_HAVE="$have"; DISK_PATH="$root"; return 1; fi
+  else
+    log "disk check: could not measure the free space of the Docker data root — not blocking"
+  fi
+  if have="$(_df_free_bytes "$dir")"; then
+    if [ "$have" -lt "$TUGRA_DISK_INSTALL_BYTES" ]; then DISK_NEED="$TUGRA_DISK_INSTALL_BYTES"; DISK_HAVE="$have"; DISK_PATH="$dir"; return 1; fi
+  fi
+  return 0
+}
+
+# disk_preflight <current version> <install dir> [<local image to probe with>] -> 0 enough (or unmeasurable), 1 short.
+disk_preflight() {
+  local cur="${1:-}" dir="$2" probe="${3:-}"
+  DISK_NEED=0; DISK_HAVE=0; DISK_PATH=""; DISK_PRUNED=0
+  if [ "$(_snap_cfg TUGRA_DISK_CHECK 1)" = "0" ]; then
+    log "disk check disabled (TUGRA_DISK_CHECK=0)"
+    return 0
+  fi
+  _disk_check_once "$cur" "$dir" "$probe" && return 0
+  log "disk check: $DISK_PATH has $(_img_human "$DISK_HAVE") free, an update needs about $(_img_human "$DISK_NEED")"
+  if [ "$(_snap_cfg TUGRA_PRUNE_IMAGES 1)" = "0" ]; then
+    log "disk check: image cleanup is disabled (TUGRA_PRUNE_IMAGES=0), nothing to free automatically"
+    return 1
+  fi
+  log "disk check: removing old Tugra release images first (the running and the previous release stay)"
+  DISK_PRUNED=1
+  prune_release_images "$cur" "$cur" || true
+  _disk_check_once "$cur" "$dir" "$probe" && { log "disk check: enough space after the cleanup"; return 0; }
+  return 1
+}
+
+# "needs about X free on <path>, has Y" with the remedy; the one wording the updater status and the installer both use.
+disk_short_text() {
+  printf 'not enough free disk space: needs about %s free on %s, has %s. Free some space (remove unused Docker images or volumes, old backups, or enlarge the disk), then retry' \
+    "$(_img_human "$DISK_NEED")" "$DISK_PATH" "$(_img_human "$DISK_HAVE")"
+}
+
+# --- which release is REALLY running ----------------------------------------------------------------------------------
+# .env says which version compose will use for the NEXT `up`; the containers say what runs now. They differ after an
+# update that stopped between the .env write and the recreate (full disk, a crash, an updater older than this fix).
+
+# Release version of one container: its image's version label (a container carries its image's labels), else the tag of
+# the image it was created from. Prints nothing when it cannot be told (never a non-version string).
+_container_version() {
+  local v ref
+  v="$(docker inspect -f "{{index .Config.Labels \"$TUGRA_IMG_VERSION_LABEL\"}}" "$1" 2>/dev/null | tr -d '[:space:]')" || v=""
+  [ "$v" = "<no value>" ] && v=""
+  if ! _img_is_version "$v"; then
+    ref="$(docker inspect -f '{{.Config.Image}}' "$1" 2>/dev/null | tr -d '[:space:]')" || ref=""
+    ref="${ref%%@*}"
+    v=""
+    case "$ref" in *:*) v="${ref##*:}" ;; esac
+  fi
+  if _img_is_version "$v"; then printf '%s' "${v#v}"; fi
+}
+
+# The release the running hub-api and web containers are on. When they differ (a half-recreated stack) the OLDER one,
+# since that is what still needs updating. Empty when either is not running or cannot be read. Needs ENV_FILE and
+# COMPOSE_FILE; docker only (never writes).
+running_stack_version() {
+  local svc cid v out="" older=""
+  for svc in hub-api web; do
+    cid="$(docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" ps -q "$svc" 2>/dev/null | head -n1 || true)"
+    [ -n "$cid" ] || return 1
+    v="$(_container_version "$cid")"
+    [ -n "$v" ] || return 1
+    if [ -z "$out" ]; then out="$v"; older="$v"
+    elif [ "$v" != "$out" ]; then
+      if is_newer "$out" "$v"; then older="$v"; else older="$out"; fi
+    fi
+  done
+  printf '%s' "$older"
 }
