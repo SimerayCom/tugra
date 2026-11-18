@@ -35,7 +35,9 @@ export function DiscoverAdoptCard({ id }: { id: string }) {
           {scan.isPending ? t("servers.scanning") : t("servers.scan")}
         </Btn>
       </div>
-      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("servers.discoverDesc")}</p>
+      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>
+        {t("servers.discoverDesc")} {t("servers.discoverOwnNote")}
+      </p>
 
       {scan.isError && <div style={{ color: "var(--c-r)", fontSize: 12, marginBottom: 8 }}>{(scan.error as Error).message}</div>}
 

@@ -8,7 +8,11 @@ import {
   CONTAINER_REF_RE,
   CONTAINER_GONE_MARKER,
   NO_DOCKER_MARKER,
+  isTugraImage,
+  parseSelfHostname,
+  toPublicContainer,
 } from "./discover-script";
+import { STACK, CUSTOM_STACK, OTHER_TUGRA, FOREIGN, inspectLine } from "./testing/demo-containers";
 
 /** Minimal but realistic `docker inspect --format '{{json .}}'` object. */
 function inspectJson(over: Record<string, unknown> = {}): string {
@@ -171,6 +175,73 @@ describe("discover-script", () => {
       const out = [inspectJson({ Name: "/a" }), "{not json", "", inspectJson({ Name: "/b" })].join("\n");
       const parsed = parseDiscovered(out);
       expect(parsed.map((c) => c.name)).toEqual(["a", "b"]);
+    });
+  });
+
+  describe("Tugra-owned classification (real demo labels)", () => {
+    const reasonOf = (line: string) => parseDiscovered(line)[0].tugraReason;
+
+    it("flags every container of Tugra's own install stack", () => {
+      for (const [k, line] of Object.entries(STACK)) {
+        const [c] = parseDiscovered(line);
+        expect([k, c.isTugra]).toEqual([k, true]);
+        expect([k, c.tugraReason]).toEqual([k, "stack"]);
+      }
+    });
+
+    it("catches the bundled postgres/redis through the compose project even with no Tugra marker of their own", () => {
+      const out = [CUSTOM_STACK.hub, CUSTOM_STACK.pg].join("\n");
+      const parsed = parseDiscovered(out);
+      expect(parsed.map((c) => [c.name, c.tugraReason])).toEqual([["panel-hub-api-1", "stack"], ["panel-postgres-1", "stack"]]);
+      // the postgres alone (no first-party sibling in the scan) is NOT guessed to be Tugra's
+      expect(reasonOf(CUSTOM_STACK.pg)).toBeNull();
+    });
+
+    it("finds the project Tugra itself runs in via the agent container's own id (TUGRA_SELF hostname)", () => {
+      const agent = inspectLine({ id: "abcdef0123456789aaaa", name: "svc-1", image: "busybox", labels: { "com.docker.compose.project": "weird" } });
+      const sibling = inspectLine({ name: "weird-db-1", image: "postgres:16", labels: { "com.docker.compose.project": "weird" } });
+      const other = inspectLine({ name: "shop-db-1", image: "postgres:16", labels: { "com.docker.compose.project": "shop" } });
+      const out = ["TUGRA_SELF=abcdef012345", agent, sibling, other].join("\n");
+      expect(parseDiscovered(out).map((c) => [c.name, c.isTugra])).toEqual([["svc-1", true], ["weird-db-1", true], ["shop-db-1", false]]);
+      expect(parseSelfHostname(out)).toBe("abcdef012345");
+      // a host name (script run outside a container) never matches an id
+      expect(parseDiscovered(["TUGRA_SELF=my-host", agent].join("\n"))[0].isTugra).toBe(false);
+      expect(parseSelfHostname("nothing")).toBeNull();
+    });
+
+    it("flags the proxy, the tunnel, every helper family and Tugra-managed apps/dbs/compose services", () => {
+      const want: Record<string, string> = {
+        proxy: "proxy", swarmProxy: "proxy", tunnel: "tunnel",
+        vx: "helper", patch: "helper", reboot: "helper", migrator: "helper", objmig: "helper", backup: "helper", labelled: "helper",
+        app: "managed", db: "managed", composeSvc: "managed",
+      };
+      for (const [k, line] of Object.entries(OTHER_TUGRA)) {
+        const [c] = parseDiscovered(line);
+        expect([k, c.isTugra]).toEqual([k, true]);
+        expect([k, c.tugraReason]).toEqual([k, want[k]]);
+      }
+    });
+
+    it("keeps ordinary foreign containers (including compose ones and look-alikes) unflagged", () => {
+      for (const [k, line] of Object.entries(FOREIGN)) {
+        const [c] = parseDiscovered(line);
+        expect([k, c.isTugra]).toEqual([k, false]);
+        expect([k, c.tugraReason]).toEqual([k, null]);
+      }
+    });
+
+    it("identifies Tugra images (registry mirror, digest, local build) but not look-alikes", () => {
+      for (const ok of ["ghcr.io/simeraycom/tugra-hub:1@sha256:abc", "mirror.example/simeraycom/tugra-web:2", "tugra-hub-api", "tugra_clx1:clx2"]) expect(isTugraImage(ok)).toBe(true);
+      for (const no of ["nginx:1.25", "myorg/tugra:1", "ghcr.io/acme/web:1", "registry:5000/tugraphy/x"]) expect(isTugraImage(no)).toBe(false);
+    });
+
+    it("toPublicContainer drops the classifier-internal fields", () => {
+      const pub = toPublicContainer(parseDiscovered(FOREIGN.web)[0]) as unknown as Record<string, unknown>;
+      expect(Object.keys(pub).sort()).toEqual(["composeProject", "env", "id", "image", "isTugra", "mounts", "name", "ports", "restartPolicy", "state"]);
+    });
+
+    it("the discover script asks the host for its own hostname", () => {
+      expect(buildDiscoverScript()).toContain("TUGRA_SELF=$(hostname");
     });
   });
 });

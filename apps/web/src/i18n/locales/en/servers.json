@@ -229,6 +229,7 @@
   "cancel": "Cancel",
   "discoverTitle": "Discover & adopt apps",
   "discoverDesc": "Scan this server for containers not yet managed by Tugra and adopt them as apps.",
+  "discoverOwnNote": "Tugra's own containers are never listed.",
   "scan": "Scan",
   "scanning": "Scanning…",
   "noForeignContainers": "No unmanaged containers found on this server.",

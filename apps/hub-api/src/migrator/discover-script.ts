@@ -14,6 +14,8 @@ export function assertValidContainerRef(ref: string): void {
   if (!CONTAINER_REF_RE.test(ref)) throw new Error("invalid container reference");
 }
 
+import { DEFAULT_COMPOSE_PROJECT } from "../update/stack-converge-script";
+
 export interface DiscoveredPort {
   host: number | null; // published host port, or null when only exposed (unpublished)
   container: number;
@@ -28,6 +30,9 @@ export interface DiscoveredMount {
   source: string; // named volume → its name; bind → host path
   target: string; // in-container path
 }
+/** Why a container is Tugra's own (never listed, never adoptable). */
+export type TugraOwnedReason = "stack" | "proxy" | "tunnel" | "helper" | "managed";
+
 export interface DiscoveredContainer {
   id: string;
   name: string;
@@ -41,14 +46,81 @@ export interface DiscoveredContainer {
   composeProject: string | null;
 }
 
-// Tugra APPS use an underscore (tugra_<appId>); INFRA containers use a hyphen. Both are Tugra-owned
-// and must be excluded from adoption. (Matches deploy-script containerName / tunnel / agent installer.)
-const INFRA_NAMES = new Set(["tugra-proxy", "tugra-cfd", "tugra-agent"]);
+/** Parser-internal view: the public fields plus the identity signals the Tugra-ownership classifier reads. */
+export interface ParsedContainer extends DiscoveredContainer {
+  composeService: string | null;
+  composeWorkingDir: string | null;
+  labelKeys: string[];
+  tugraReason: TugraOwnedReason | null;
+}
+
+/** Strip the internal classifier fields before a container goes over the wire. */
+export function toPublicContainer(c: ParsedContainer): DiscoveredContainer {
+  const { composeService: _s, composeWorkingDir: _w, labelKeys: _l, tugraReason: _r, ...pub } = c;
+  void _s; void _w; void _l; void _r;
+  return pub;
+}
+
+// Tugra APPS/DBs/services use an underscore (tugra_<id>, tugra_db_<id>, tugra_<id>-<svc>-1); INFRA + helper
+// containers use a hyphen (tugra-proxy, tugra-agent, tugra-cfd, tugra-patch, tugra-vx-*, tugra-reboot, ...).
+// The whole `tugra_` / `tugra-` name space belongs to Tugra and is never adoptable. (Matches deploy-script
+// containerName / tunnel / agent installer / the compose default `<project>-<service>-<n>` for project "tugra".)
+const TUGRA_NAME_RE = /^tugra[_-]/;
+const PROXY_NAMES = new Set(["tugra-proxy", "tugra-swarm-proxy"]);
+const TUNNEL_NAME_RE = /^tugra-cfd/;
+const HELPER_NAME_RE = /^tugra[_-](vx|pat|patch|reboot|mig|migrate|migrator|objmig|restore|backup|wal|verify|fsd|part|updater-refresh)([_-]|$)/;
+// The services of Tugra's own install stack (deploy/docker-compose.yml).
+const STACK_SERVICES = new Set(["hub-api", "web", "agent", "tugra-updater", "postgres", "redis"]);
+function imageRepo(image: string): string {
+  const noDigest = image.split("@")[0] ?? "";
+  const lastSlash = noDigest.lastIndexOf("/");
+  const colon = noDigest.indexOf(":", lastSlash + 1);
+  return (colon === -1 ? noDigest : noDigest.slice(0, colon)).toLowerCase();
+}
+
+/** `ghcr.io/simeraycom/tugra-*` (or a mirror of it) and locally built `tugra-*` / `tugra_*` images. */
+export function isTugraImage(image: string): boolean {
+  const repo = imageRepo(image);
+  const base = repo.slice(repo.lastIndexOf("/") + 1);
+  return repo.includes("simeraycom/tugra") || /^tugra[_-]/.test(base);
+}
+
+/**
+ * Per-container Tugra-ownership check from the container's own identity (name, labels, image, compose
+ * service + working dir). Members of Tugra's compose project that carry no Tugra signal of their own (the
+ * bundled postgres/redis) are caught by the project pass in {@link parseDiscovered}.
+ */
+export function classifyTugraOwned(c: {
+  name: string;
+  image: string;
+  composeProject: string | null;
+  composeService: string | null;
+  composeWorkingDir: string | null;
+  labelKeys: string[];
+}): TugraOwnedReason | null {
+  if (PROXY_NAMES.has(c.name) || c.labelKeys.some((k) => k.startsWith("tugra.proxy."))) return "proxy";
+  if (TUNNEL_NAME_RE.test(c.name)) return "tunnel";
+  if (HELPER_NAME_RE.test(c.name) || c.labelKeys.includes("tugra.role")) return "helper";
+  if (c.name === "tugra-agent") return "stack"; // standalone-installed agent container
+  if (c.name.startsWith("tugra_")) return "managed";
+  if (isTugraImage(c.image)) return "stack";
+  // Tugra's install dir (a `tugra` path segment) + one of the stack's compose services.
+  const svc = c.composeService;
+  if (svc !== null && STACK_SERVICES.has(svc) && c.composeWorkingDir !== null && /(^|\/)tugra(\/|$)/.test(c.composeWorkingDir)) return "stack";
+  if (svc === "hub-api" || svc === "tugra-updater") return "stack"; // service names unique to Tugra's compose file
+  if (c.labelKeys.some((k) => k.startsWith("tugra."))) return "managed";
+  if (c.composeProject !== null && c.composeProject.startsWith("tugra_")) return "managed"; // Tugra-deployed compose app
+  if (TUGRA_NAME_RE.test(c.name)) return "helper";
+  return null;
+}
+
 // Docker/base-image-injected keys that are never meaningful app config to carry into an adopted app.
 const NOISE_ENV_KEYS = new Set(["PATH", "HOSTNAME"]);
 
 /** Emitted when the host has no docker at all — the one hard-failure marker (mirrors patch-script). */
 export const NO_DOCKER_MARKER = "TUGRA_NO_DOCKER";
+/** Prefix of the line carrying the script host's hostname (inside the agent container: its short container id). */
+export const SELF_MARKER = "TUGRA_SELF=";
 
 /**
  * List every container on the host and inspect them in one round-trip. Resilient to a docker-less
@@ -60,6 +132,8 @@ export function buildDiscoverScript(): string {
     "if ! command -v docker >/dev/null 2>&1; then",
     `  echo ${NO_DOCKER_MARKER}`,
     "else",
+    // The agent's own container id (its hostname) — lets the parser find the compose project Tugra itself runs in.
+    `  echo ${SELF_MARKER}$(hostname 2>/dev/null)`,
     "  ids=$(docker ps -aq 2>/dev/null)",
     '  if [ -n "$ids" ]; then',
     "    docker inspect --format '{{json .}}' $ids 2>/dev/null",
@@ -94,6 +168,15 @@ export function buildUnadoptScript(from: string, to: string): string {
   assertValidContainerRef(from);
   assertValidContainerRef(to);
   return `if docker container inspect ${from} >/dev/null 2>&1; then docker rename ${from} ${to}; else echo ${CONTAINER_GONE_MARKER}; fi`;
+}
+
+/** The hostname line the discover script prints (the agent container's own id), or null. */
+export function parseSelfHostname(output: string): string | null {
+  for (const line of output.split("\n")) {
+    const t = line.trim();
+    if (t.startsWith(SELF_MARKER)) return t.slice(SELF_MARKER.length).trim() || null;
+  }
+  return null;
 }
 
 function stripSlash(name: string): string {
@@ -166,8 +249,8 @@ function parseMounts(raw: Record<string, unknown>): DiscoveredMount[] {
  * containers. Line-tolerant: blank / marker / malformed-JSON lines are skipped, never thrown on;
  * 0 containers → []. Tugra-owned containers are returned too (flagged isTugra) — the caller filters.
  */
-export function parseDiscovered(output: string): DiscoveredContainer[] {
-  const out: DiscoveredContainer[] = [];
+export function parseDiscovered(output: string): ParsedContainer[] {
+  const out: ParsedContainer[] = [];
   for (const line of output.split("\n")) {
     const t = line.trim();
     if (!t || t.startsWith("TUGRA_")) continue;
@@ -184,7 +267,13 @@ export function parseDiscovered(output: string): DiscoveredContainer[] {
     const config = (raw.Config ?? {}) as { Image?: string; Labels?: Record<string, string> };
     const state = (raw.State ?? {}) as { Status?: string };
     const hostConfig = (raw.HostConfig ?? {}) as { RestartPolicy?: { Name?: string } };
-    const composeProject = config.Labels?.["com.docker.compose.project"] ?? null;
+    const labels = config.Labels && typeof config.Labels === "object" ? config.Labels : {};
+    const composeProject = labels["com.docker.compose.project"] ?? null;
+    const composeService = labels["com.docker.compose.service"] ?? null;
+    const composeWorkingDir = labels["com.docker.compose.project.working_dir"] ?? null;
+    const labelKeys = Object.keys(labels);
+    const image = typeof config.Image === "string" ? config.Image : "";
+    const tugraReason = classifyTugraOwned({ name, image, composeProject, composeService, composeWorkingDir, labelKeys });
     out.push({
       id: typeof raw.Id === "string" ? raw.Id : "",
       name,
@@ -194,9 +283,28 @@ export function parseDiscovered(output: string): DiscoveredContainer[] {
       env: parseEnv(raw),
       mounts: parseMounts(raw),
       restartPolicy: hostConfig.RestartPolicy?.Name ?? "",
-      isTugra: name.startsWith("tugra_") || INFRA_NAMES.has(name),
+      isTugra: tugraReason !== null,
       composeProject,
+      composeService,
+      composeWorkingDir,
+      labelKeys,
+      tugraReason,
     });
+  }
+  // Project pass: every member of a compose project that Tugra itself runs in (identified by a first-party
+  // member, the agent's own container, or the default project name) is the install stack — this is what
+  // catches the bundled postgres/redis, which carry no Tugra-specific name, image or label.
+  const self = parseSelfHostname(output);
+  const ownProjects = new Set<string>([DEFAULT_COMPOSE_PROJECT]);
+  for (const c of out) {
+    if (!c.composeProject) continue;
+    if (c.tugraReason === "stack" || (self && /^[0-9a-f]{12,64}$/.test(self) && c.id.startsWith(self))) ownProjects.add(c.composeProject);
+  }
+  for (const c of out) {
+    if (c.tugraReason === null && c.composeProject && ownProjects.has(c.composeProject)) {
+      c.tugraReason = "stack";
+      c.isTugra = true;
+    }
   }
   return out;
 }

@@ -53,6 +53,11 @@ describe("DiscoverAdoptCard", () => {
     expect(screen.getAllByText("Adopt").length).toBe(1);
   });
 
+  it("tells the user Tugra's own containers are never listed", () => {
+    wrap(<DiscoverAdoptCard id="s1" />);
+    expect(screen.getByText(/Tugra's own containers are never listed/)).toBeTruthy();
+  });
+
   it("shows an empty state when nothing unmanaged is found", async () => {
     vi.spyOn(api, "discoverContainers").mockResolvedValue({ containers: [] });
     wrap(<DiscoverAdoptCard id="s1" />);

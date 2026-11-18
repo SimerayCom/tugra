@@ -15,7 +15,9 @@ import {
   buildRenameScript,
   buildUnadoptScript,
   parseDiscovered,
+  toPublicContainer,
   NO_DOCKER_MARKER,
+  type TugraOwnedReason,
   type DiscoveredContainer,
   type DiscoveredEnv,
   type DiscoveredMount,
@@ -27,6 +29,18 @@ import { autoFlagMultiline } from "../importer/env-auto-flags";
 const DISCOVER_TIMEOUT_MS = 30_000;
 const INSPECT_TIMEOUT_MS = 15_000;
 const RENAME_TIMEOUT_MS = 15_000;
+
+/** Refusal text for adopting one of Tugra's own containers (a 400 — the caller asked for something never valid). */
+export function tugraOwnedMessage(reason: TugraOwnedReason): string {
+  const what: Record<TugraOwnedReason, string> = {
+    stack: "part of Tugra's own install stack",
+    proxy: "Tugra's reverse proxy",
+    tunnel: "a Tugra-managed tunnel",
+    helper: "a Tugra helper container",
+    managed: "already managed by Tugra",
+  };
+  return `this container is ${what[reason]} and can't be adopted`;
+}
 
 export type AdoptableContainer = DiscoveredContainer & { adoptable: boolean };
 
@@ -54,7 +68,8 @@ export class MigratorService {
       throw new ServiceUnavailableException("Docker is not available on this server");
     }
     const containers = parseDiscovered(r.output)
-      .filter((c) => !c.isTugra) // never offer Tugra's own app/infra containers
+      .filter((c) => !c.isTugra) // never offer Tugra's own stack / proxy / tunnel / helpers / managed containers
+      .map(toPublicContainer)
       .map((c) => ({
         ...c,
         // The client only needs env KEYS (to choose what to import); adopt() re-reads the values
@@ -79,8 +94,17 @@ export class MigratorService {
     );
     const found = parseDiscovered(inspect.output)[0];
     if (!found) throw new NotFoundException("container not found");
-    if (found.isTugra) throw new BadRequestException("this container is already managed by Tugra");
-    if (found.composeProject) throw new BadRequestException("compose-managed containers can't be adopted yet");
+    // Tugra's own containers can never be adopted — renaming one would break the panel/proxy/agent. Enforced here
+    // (not just hidden in discover) so a direct API / MCP / CLI call is refused too.
+    if (found.tugraReason) throw new BadRequestException(tugraOwnedMessage(found.tugraReason));
+    if (found.composeProject) {
+      // A compose-project member may still belong to Tugra's own stack (the bundled postgres/redis carry no Tugra
+      // marker of their own): classify it against the whole host so it gets the precise refusal.
+      const all = await this.agentWs.sendCommand(serverId, buildDiscoverScript(), "deploy", DISCOVER_TIMEOUT_MS);
+      const again = parseDiscovered(all.output).find((c) => c.id === found.id || c.name === found.name);
+      if (again?.tugraReason) throw new BadRequestException(tugraOwnedMessage(again.tugraReason));
+      throw new BadRequestException("compose-managed containers can't be adopted yet");
+    }
     if (!found.image) throw new BadRequestException("could not determine the container's image");
 
     // An explicit port choice must actually exist on the freshly-inspected container — otherwise we'd

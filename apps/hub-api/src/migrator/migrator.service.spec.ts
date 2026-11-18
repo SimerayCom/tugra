@@ -5,6 +5,7 @@ import { TeamAccessService } from "../common/team-access.service";
 import { AuditService } from "../audit/audit.service";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
 import { ApplicationsService } from "../applications/applications.service";
+import { STACK, CUSTOM_STACK, OTHER_TUGRA, FOREIGN } from "./testing/demo-containers";
 
 describe("volumeDockerOptions (adopt carries named volumes so redeploy keeps data)", () => {
   it("carries named volumes as -v, dedupes by target, and skips bind/tmpfs", () => {
@@ -86,6 +87,21 @@ describe("MigratorService", () => {
       expect(containers.map((c) => c.name)).toEqual(["legacy-web", "stack-db-1"]);
       expect(containers.find((c) => c.name === "legacy-web")!.adoptable).toBe(true);
       expect(containers.find((c) => c.name === "stack-db-1")!.adoptable).toBe(false);
+    });
+
+    it("never lists Tugra's own stack, proxy, tunnel, helpers or managed containers; foreign ones still show", async () => {
+      const own = [...Object.values(STACK), ...Object.values(CUSTOM_STACK), ...Object.values(OTHER_TUGRA)];
+      const foreign = Object.values(FOREIGN);
+      const out = ["TUGRA_SELF=abcdef012345", ...own, ...foreign].join("\n");
+      const agentWs = { sendCommand: jest.fn().mockResolvedValue({ output: out, exitCode: 0 }) } as unknown as AgentWsServer;
+      const { svc } = make({ agentWs });
+      const { containers } = await svc.discover("u1", "s1");
+      expect(containers.map((c) => c.name)).toEqual(["legacy-web", "my-tugra-blog", "shop-db-1", "shop-web-1", "my-tunnel", "immich_machine_learning"]);
+      expect(containers.find((c) => c.name === "legacy-web")!.adoptable).toBe(true);
+      expect(containers.find((c) => c.name === "shop-db-1")!.adoptable).toBe(false);
+      // classifier-internal fields never reach the client
+      expect(Object.keys(containers[0])).not.toContain("tugraReason");
+      expect(Object.keys(containers[0])).not.toContain("labelKeys");
     });
 
     it("throws a clear error (not an empty list) when Docker is unavailable", async () => {
@@ -181,6 +197,49 @@ describe("MigratorService", () => {
       const { svc, apps } = make({ agentWs });
       await expect(svc.adopt("u1", "s1", { container: "tugra_clx1", name: "x" })).rejects.toThrow(/already managed/);
       expect(apps.create as jest.Mock).not.toHaveBeenCalled();
+    });
+
+    describe("refuses Tugra's own containers server-side (direct API / MCP / CLI call)", () => {
+      const ownCases: Array<[string, string, RegExp]> = [
+        ...Object.entries(STACK).map(([k, line]) => [`stack ${k}`, line, /install stack/] as [string, string, RegExp]),
+        ["proxy", OTHER_TUGRA.proxy, /reverse proxy/],
+        ["tunnel", OTHER_TUGRA.tunnel, /tunnel/],
+        ["vx helper", OTHER_TUGRA.vx, /helper/],
+        ["patch helper", OTHER_TUGRA.patch, /helper/],
+        ["reboot helper", OTHER_TUGRA.reboot, /helper/],
+        ["migrator helper", OTHER_TUGRA.migrator, /helper/],
+        ["objmig helper", OTHER_TUGRA.objmig, /helper/],
+        ["managed app", OTHER_TUGRA.app, /already managed/],
+        ["managed db", OTHER_TUGRA.db, /already managed/],
+        ["managed compose service", OTHER_TUGRA.composeSvc, /already managed/],
+        ["label-only", OTHER_TUGRA.labelled, /helper/],
+      ];
+      it.each(ownCases)("%s -> 400, no app record, no rename", async (_n, line, re) => {
+        const agentWs = { sendCommand: jest.fn().mockResolvedValue({ output: line, exitCode: 0 }) } as unknown as AgentWsServer;
+        const { svc, apps } = make({ agentWs });
+        const name = JSON.parse(line).Name.slice(1) as string;
+        await expect(svc.adopt("u1", "s1", { container: name, name: "x" })).rejects.toThrow(BadRequestException);
+        await expect(svc.adopt("u1", "s1", { container: name, name: "x" })).rejects.toThrow(re);
+        expect(apps.create).not.toHaveBeenCalled();
+        expect((agentWs.sendCommand as jest.Mock).mock.calls.every((c) => !String(c[1]).includes("docker rename"))).toBe(true);
+      });
+
+      it("bundled postgres of a custom-named stack: refused as Tugra's own after a host-wide classification", async () => {
+        const full = ["TUGRA_SELF=whatever", CUSTOM_STACK.hub, CUSTOM_STACK.pg].join("\n");
+        const agentWs = {
+          sendCommand: jest.fn().mockResolvedValueOnce({ output: CUSTOM_STACK.pg, exitCode: 0 }).mockResolvedValueOnce({ output: full, exitCode: 0 }),
+        } as unknown as AgentWsServer;
+        const { svc, apps } = make({ agentWs });
+        await expect(svc.adopt("u1", "s1", { container: "panel-postgres-1", name: "x" })).rejects.toThrow(/install stack/);
+        expect(apps.create).not.toHaveBeenCalled();
+      });
+
+      it("a regular foreign container is still adopted", async () => {
+        const agentWs = agentSeq(FOREIGN.web);
+        const { svc, apps } = make({ agentWs });
+        await svc.adopt("u1", "s1", { container: "legacy-web", name: "web" });
+        expect(apps.create).toHaveBeenCalledTimes(1);
+      });
     });
 
     it("rejects a compose-managed container", async () => {
