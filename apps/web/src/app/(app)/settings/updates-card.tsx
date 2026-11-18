@@ -10,6 +10,7 @@ import { Field, Select, useSaveFeedback } from "../../../components/form";
 import { useToast } from "../../../components/toast";
 import { relativeTime } from "../../../lib/fleet";
 import {
+  failureMessage,
   formatElapsed,
   updateSteps,
   useUpdateStream,
@@ -72,6 +73,20 @@ function StepMark({ state, label }: { state: UpdateStepState; label: string }) {
 }
 
 /**
+ * Why the run failed: the disk shortfall with its numbers and remedy, or the cause the update helper reported; the generic text
+ * only when it reported none. A recovery_required stack keeps its own (manual recovery) message.
+ */
+function FailureText({ upd }: { upd: ReturnType<typeof useUpdateStream> }) {
+  const t = useT();
+  const m = upd.phase === "recovery_required" ? { key: upd.messageKey } : failureMessage(upd.failure, upd.messageKey);
+  return (
+    <span data-testid="update-failure" data-code={upd.failure?.code ?? ""} style={{ fontSize: 12, color: "var(--c-r)", overflowWrap: "anywhere" }}>
+      {t(m.key, "params" in m ? m.params : undefined)}
+    </span>
+  );
+}
+
+/**
  * The visible "Update now" run: a 4-step stepper (Queued → Pulling → Recreating → Reconnecting), an
  * indeterminate bar while working, elapsed time and the target version. Steps wrap/stack on narrow widths.
  */
@@ -127,9 +142,7 @@ function UpdateProgress({ upd }: { upd: ReturnType<typeof useUpdateStream> }) {
           <span style={{ fontSize: 12, color: "var(--c-tx3)", flexBasis: "100%" }}>{t("settings.updateReloadHint")}</span>
         </div>
       )}
-      {failed && upd.messageKey && (
-        <span style={{ fontSize: 12, color: "var(--c-r)" }}>{t(upd.messageKey)}</span>
-      )}
+      {failed && upd.messageKey && <FailureText upd={upd} />}
     </div>
   );
 }
@@ -272,10 +285,23 @@ export function UpdatesCard() {
       {/* Run in progress / finished: the stepper. The button below is hidden for the whole run (no double-fire). */}
       {(working || upd.phase === "done" || upd.phase === "failed" || upd.phase === "recovery_required") && <UpdateProgress upd={upd} />}
 
+      {/* An earlier update stopped half-way: say so and offer to finish it (not while a run is in progress or done). */}
+      {data?.halfUpdate && !working && upd.phase !== "done" && upd.phase !== "recovery_required" && (
+        <p role="status" data-testid="update-half-note" style={{ fontSize: 12, color: "var(--c-tx2)", margin: "0 0 14px", overflowWrap: "anywhere" }}>
+          <strong>{t("settings.updateHalfTitle")}.</strong>{" "}
+          {t(data.updateAvailable ? "settings.updateHalfNote" : "settings.updateHalfNoRelease", {
+            envVersion: data.halfUpdate.envVersion,
+            runningVersion: data.halfUpdate.runningVersion,
+          })}
+        </p>
+      )}
+
       {!working && upd.phase !== "done" && (
         <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", margin: "0 0 14px" }}>
           {/* Don't invite another update when the stack needs manual recovery. */}
-          {data?.updateAvailable && upd.phase !== "recovery_required" && <Btn onClick={() => upd.start()}>{t("settings.updateNow")}</Btn>}
+          {data?.updateAvailable && upd.phase !== "recovery_required" && (
+            <Btn onClick={() => upd.start()}>{data.halfUpdate ? t("settings.updateFinish") : t("settings.updateNow")}</Btn>
+          )}
           {/* Non-started outcomes (already up to date, notify-only, in progress…); failures render inside the stepper. */}
           {upd.messageKey && upd.phase !== "failed" && upd.phase !== "recovery_required" && (
             <span style={{ fontSize: 12, color: "var(--c-tx3)" }}>{t(upd.messageKey)}</span>

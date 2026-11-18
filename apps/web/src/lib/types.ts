@@ -298,6 +298,17 @@ export interface InstanceUpdateStatus {
   lastCheckError: string | null;
   /** The update helper (tugra-updater sidecar) as the hub last saw it through the local agent. */
   updater: InstanceUpdaterStatus;
+  /** A half-finished update the helper found (.env names a newer release than the one running); null when none. */
+  halfUpdate: InstanceHalfUpdate | null;
+}
+
+/**
+ * An earlier update stopped half-way (typically a full disk): the install's .env already names `envVersion` but the running
+ * hub/web are still on `runningVersion`. "Finish update" resumes it; the helper puts .env back when the target cannot be pulled.
+ */
+export interface InstanceHalfUpdate {
+  envVersion: string;
+  runningVersion: string;
 }
 
 /**

@@ -27,6 +27,7 @@ const STATUS: InstanceUpdateStatus = {
   lastCheckedAt: new Date(Date.now() - 4 * 60_000).toISOString(),
   lastCheckError: null,
   updater: { version: null, behind: false, state: "unknown", checkedAt: null },
+  halfUpdate: null,
 };
 
 function sseResponse(frames: string[]): Response {
@@ -403,5 +404,86 @@ describe("UpdatesCard", () => {
     } finally {
       global.fetch = savedFetch;
     }
+  });
+  describe("why an update failed, and a half-finished update", () => {
+    const failWith = async (frames: string[]) => {
+      h.user = { isInstanceOwner: true };
+      vi.spyOn(api, "applyInstanceUpdate").mockResolvedValue({ status: "started", targetVersion: "0.2.0" });
+      const savedFetch = global.fetch;
+      global.fetch = vi.fn(async () => sseResponse(frames)) as unknown as typeof fetch;
+      try {
+        wrap();
+        fireEvent.click(await screen.findByRole("button", { name: "Update now" }));
+        return await screen.findByTestId("update-failure");
+      } finally {
+        global.fetch = savedFetch;
+      }
+    };
+
+    it("a disk-preflight refusal shows the numbers, the path and the remedy (not just 'failed')", async () => {
+      const el = await failWith([
+        '{"phase":"pulling","targetVersion":"0.2.0"}',
+        JSON.stringify({
+          phase: "failed",
+          targetVersion: "0.2.0",
+          error: "not enough free disk space: needs about 20.0 GB free on /var/lib/docker, has 5.0 GB",
+          code: "disk_space",
+          needBytes: 21474836480,
+          haveBytes: 5368709120,
+          path: "/var/lib/docker",
+        }),
+      ]);
+      expect(el.getAttribute("data-code")).toBe("disk_space");
+      expect(el.textContent).toContain("about 20.0 GB free on /var/lib/docker");
+      expect(el.textContent).toContain("only 5.0 GB is available");
+      expect(el.textContent).toMatch(/Free some space .*click Update now again\. Nothing was changed\./);
+      expect(el.textContent).not.toMatch(/^The update failed\. Check the server logs/);
+      expect(screen.getByRole("button", { name: "Update now" })).toBeTruthy(); // retry once space is freed
+    });
+
+    it("a disk that filled up while pulling (no numbers) says so", async () => {
+      const el = await failWith(['{"phase":"failed","error":"the disk filled up while pulling the images","code":"disk_space"}']);
+      expect(el.textContent).toContain("The disk filled up while pulling the images");
+    });
+
+    it("any other cause the helper reports is quoted instead of a bare 'update failed'", async () => {
+      const el = await failWith(['{"phase":"failed","error":"image pull failed: manifest unknown"}']);
+      expect(el.textContent).toBe("The update failed: image pull failed: manifest unknown");
+    });
+
+    it("a failure with no reported cause at all keeps the generic text", async () => {
+      const el = await failWith(['{"phase":"failed"}']);
+      expect(el.textContent).toMatch(/The update failed\. Check the server logs/);
+    });
+
+    it("a detected half state is explained and offers 'Finish update' (instead of 'Update now'); it starts the same update", async () => {
+      h.user = { isInstanceOwner: true };
+      vi.mocked(api.getInstanceUpdate).mockResolvedValue({ ...STATUS, halfUpdate: { envVersion: "0.2.0", runningVersion: "0.1.0-beta.16" } });
+      const apply = vi.spyOn(api, "applyInstanceUpdate").mockResolvedValue({ status: "up-to-date", targetVersion: "0.2.0" });
+      wrap();
+      const note = await screen.findByTestId("update-half-note");
+      expect(note.textContent).toContain("An earlier update did not finish");
+      expect(note.textContent).toContain("names 0.2.0");
+      expect(note.textContent).toContain("still running 0.1.0-beta.16");
+      expect(screen.queryByRole("button", { name: "Update now" })).toBeNull();
+      fireEvent.click(screen.getByRole("button", { name: "Finish update" }));
+      await waitFor(() => expect(apply).toHaveBeenCalledTimes(1));
+    });
+
+    it("a half state with no newer release to finish it explains the manual fix and offers no button", async () => {
+      h.user = { isInstanceOwner: true };
+      vi.mocked(api.getInstanceUpdate).mockResolvedValue({ ...STATUS, updateAvailable: false, halfUpdate: { envVersion: "0.2.0", runningVersion: "0.1.0-beta.16" } });
+      wrap();
+      const note = await screen.findByTestId("update-half-note");
+      expect(note.textContent).toContain("Set TUGRA_VERSION=0.1.0-beta.16");
+      expect(screen.queryByRole("button", { name: "Finish update" })).toBeNull();
+    });
+
+    it("no half state, no note", async () => {
+      h.user = { isInstanceOwner: true };
+      wrap();
+      await screen.findByRole("button", { name: "Update now" });
+      expect(screen.queryByTestId("update-half-note")).toBeNull();
+    });
   });
 });

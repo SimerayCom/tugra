@@ -62,6 +62,49 @@ const APPLY_MESSAGE: Record<string, string> = {
   error: "settings.updateFailed",
 };
 
+/**
+ * Why an update ended in `failed` / `recovery_required`, as the update helper reported it in its last status frame:
+ * `error` is the human cause, `code` its machine kind (`disk_space`: the preflight refused, or the disk filled up while
+ * pulling), with the measured `needBytes` / `haveBytes` and the `path` when the helper knew them.
+ */
+export interface UpdateFailure {
+  error: string | null;
+  code: string | null;
+  needBytes: number | null;
+  haveBytes: number | null;
+  path: string | null;
+}
+
+/** One SSE status frame -> the failure detail it carries (wrong-typed fields dropped). Pure. */
+export function parseFailure(p: Record<string, unknown>): UpdateFailure {
+  const str = (v: unknown): string | null => (typeof v === "string" && v ? v : null);
+  const num = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : null);
+  return { error: str(p.error), code: str(p.code), needBytes: num(p.needBytes), haveBytes: num(p.haveBytes), path: str(p.path) };
+}
+
+/** Bytes as the "19.6 GB" / "512 MB" the update helper prints (binary units), so the panel and the server log agree. Pure. */
+export function formatBytes(bytes: number): string {
+  const gib = 1024 ** 3;
+  if (bytes >= gib) return `${(bytes / gib).toFixed(1)} GB`;
+  return `${Math.round(bytes / 1024 ** 2)} MB`;
+}
+
+/**
+ * The i18n key + params that explain a failed update. Never the bare "update failed": a disk shortfall names the numbers and the
+ * path, any other cause the helper reported is quoted, and only a failure with no reported cause at all falls back to the
+ * generic text. Pure.
+ */
+export function failureMessage(f: UpdateFailure | null, fallbackKey: string): { key: string; params?: Record<string, string> } {
+  if (f?.code === "disk_space") {
+    if (f.needBytes != null && f.haveBytes != null && f.path) {
+      return { key: "settings.updateDiskShort", params: { need: formatBytes(f.needBytes), have: formatBytes(f.haveBytes), path: f.path } };
+    }
+    return { key: "settings.updateDiskFull" };
+  }
+  if (f?.error) return { key: "settings.updateFailedReason", params: { reason: f.error } };
+  return { key: fallbackKey };
+}
+
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 // The SSE is best-effort progress. A healthy update tears it down within seconds when hub-api is recreated;
@@ -83,6 +126,7 @@ export function useUpdateStream() {
   const [failedStep, setFailedStep] = useState<UpdateStepId | null>(null);
   const [startedAt, setStartedAt] = useState<number | null>(null);
   const [endedAt, setEndedAt] = useState<number | null>(null);
+  const [failure, setFailure] = useState<UpdateFailure | null>(null);
   const abort = useRef<AbortController | null>(null);
   // The last working step reached, so a failure can mark WHICH step failed.
   const lastStep = useRef<UpdateStepId>("queued");
@@ -108,7 +152,7 @@ export function useUpdateStream() {
         await sleep(3000);
       }
       finish("failed", true);
-      setMessageKey("settings.updateFailed");
+      setMessageKey("settings.updateTimedOut");
     },
     [qc, finish],
   );
@@ -116,6 +160,7 @@ export function useUpdateStream() {
   const start = useCallback(async () => {
     setMessageKey("");
     setFailedStep(null);
+    setFailure(null);
     setEndedAt(null);
     setStartedAt(Date.now());
     lastStep.current = "queued";
@@ -140,6 +185,7 @@ export function useUpdateStream() {
     // Best-effort live progress. The stream is torn down when hub-api is recreated — that's expected.
     let sawDone = false;
     let terminal: UpdatePhase | null = null; // failed OR recovery_required — a terminal non-success
+    let detail: UpdateFailure | null = null; // the cause carried by that terminal frame
     const ctrl = new AbortController();
     abort.current = ctrl;
     const streamDone = (async () => {
@@ -152,8 +198,11 @@ export function useUpdateStream() {
         if (resp.body) {
           await consumeSseStream(resp.body, (raw) => {
             try {
-              const p = JSON.parse(raw) as { phase?: UpdatePhase };
-              if (p.phase === "failed" || p.phase === "recovery_required") terminal = p.phase;
+              const p = JSON.parse(raw) as { phase?: UpdatePhase } & Record<string, unknown>;
+              if (p.phase === "failed" || p.phase === "recovery_required") {
+                terminal = p.phase;
+                detail = parseFailure(p);
+              }
               if (p.phase === "done") sawDone = true;
               const step = p.phase ? stepOfPhase(p.phase) : null;
               if (step) lastStep.current = step;
@@ -179,6 +228,8 @@ export function useUpdateStream() {
       // Don't reconcile a terminal failure as if it might still succeed. recovery_required keeps its own
       // message (the stack may be partly updated — manual recovery needed).
       finish(terminal, true);
+      setFailure(detail);
+      qc.invalidateQueries({ queryKey: ["instanceUpdate"] }); // a half state may just have been repaired (or newly found)
       setMessageKey(terminal === "recovery_required" ? "settings.updateRecoveryRequired" : "settings.updateFailed");
       return;
     }
@@ -188,7 +239,7 @@ export function useUpdateStream() {
       setPhase("reconnecting");
     }
     await reconcile(res.targetVersion);
-  }, [reconcile, finish]);
+  }, [reconcile, finish, qc]);
 
-  return { phase, target, messageKey, failedStep, startedAt, endedAt, start };
+  return { phase, target, messageKey, failedStep, failure, startedAt, endedAt, start };
 }

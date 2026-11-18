@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { formatElapsed, stepOfPhase, updateSteps, type UpdatePhase } from "./useUpdateStream";
+import { failureMessage, formatBytes, formatElapsed, parseFailure, stepOfPhase, updateSteps, type UpdatePhase } from "./useUpdateStream";
 
 const states = (phase: UpdatePhase, failed?: Parameters<typeof updateSteps>[1]) => updateSteps(phase, failed).map((s) => s.state);
 
@@ -43,5 +43,36 @@ describe("formatElapsed", () => {
     expect(formatElapsed(65_000)).toBe("01:05");
     expect(formatElapsed(61 * 60_000)).toBe("61:00");
     expect(formatElapsed(-5)).toBe("00:00");
+  });
+});
+
+describe("failure reporting (never a bare 'update failed')", () => {
+  it("parseFailure keeps the cause and the disk numbers, drops wrong-typed fields", () => {
+    expect(parseFailure({ phase: "failed", error: "boom", code: "disk_space", needBytes: 10, haveBytes: 2, path: "/x" })).toEqual({
+      error: "boom",
+      code: "disk_space",
+      needBytes: 10,
+      haveBytes: 2,
+      path: "/x",
+    });
+    expect(parseFailure({ error: 5, code: {}, needBytes: "1", haveBytes: -1, path: "" })).toEqual({ error: null, code: null, needBytes: null, haveBytes: null, path: null });
+  });
+
+  it("formatBytes matches the update helper's wording (binary GB, MB under 1 GB)", () => {
+    expect(formatBytes(21474836480)).toBe("20.0 GB");
+    expect(formatBytes(5368709120)).toBe("5.0 GB");
+    expect(formatBytes(268435456)).toBe("256 MB");
+  });
+
+  it("failureMessage: disk numbers > reported cause > the generic key", () => {
+    const base = { error: null, code: null, needBytes: null, haveBytes: null, path: null };
+    expect(failureMessage({ ...base, code: "disk_space", needBytes: 21474836480, haveBytes: 5368709120, path: "/var/lib/docker" }, "g")).toEqual({
+      key: "settings.updateDiskShort",
+      params: { need: "20.0 GB", have: "5.0 GB", path: "/var/lib/docker" },
+    });
+    expect(failureMessage({ ...base, code: "disk_space" }, "g")).toEqual({ key: "settings.updateDiskFull" });
+    expect(failureMessage({ ...base, error: "image pull failed: x" }, "g")).toEqual({ key: "settings.updateFailedReason", params: { reason: "image pull failed: x" } });
+    expect(failureMessage(base, "settings.updateFailed")).toEqual({ key: "settings.updateFailed" });
+    expect(failureMessage(null, "settings.updateFailed")).toEqual({ key: "settings.updateFailed" });
   });
 });
