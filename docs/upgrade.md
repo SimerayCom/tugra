@@ -56,6 +56,29 @@ local agent, pre-pulls the updater image and then recreates the updater itself o
 install only gains a new updater capability (the snapshot, the compose/script updates below) after that checkout is
 updated once with `git pull && ./scripts/install.sh` (below).
 
+### An update can not leave a half state
+
+The order is built so that no failure can leave `.env` naming a release that is not installed:
+
+1. **Disk preflight, before anything is written or pulled.** The updater measures the free space of the Docker data root
+   (`docker info`'s `DockerRootDir`; from inside the sidecar through a throwaway container that mounts that path read-only)
+   and of the install directory. The data root needs about twice the size of the release you run now plus 2 GiB (10 GiB
+   when no Tugra image is on disk to measure), the install directory 256 MiB. When either is short, the safe cleanup
+   from step 6 below runs once (only Tugra's own releases older than the running and the previous one) and the space is
+   measured again. Still short: the update stops with status `failed` and the numbers, for example "needs about 20.0 GB
+   free on /var/lib/docker, has 5.0 GB. Free some space ... then retry", and nothing was touched. `TUGRA_DISK_CHECK=0` in
+   `.env` skips the check; a measurement that cannot be taken never blocks. The installer runs the same preflight before it pulls.
+2. **Pull first, write `.env` last.** The images are pulled by the exact references the recreate will use (digest-pinned
+   when the release publishes digests, else the tag), through a temporary copy of `.env`; then their version labels are
+   checked. Only after both succeed is `.env` written, and every `.env` write is atomic: the new file is built next to
+   it, verified, flushed to disk and renamed in, so a full disk can only fail the write and leave the old file intact.
+   A failure before that point has nothing to roll back.
+3. **A half-finished update is repaired, not refused.** If `.env` already names a release newer than the one the containers
+   run (a crash, a full disk, or an updater from before this change), **Update now** resumes it: it pulls what is missing and
+   recreates, or, when the target cannot be pulled, puts `.env` back to the running release. The updater also checks this
+   when it starts; Settings > Updates then explains it and offers **Finish update**. The status text always carries the
+   cause (the disk numbers, the failing pull, the version-label mismatch), never just "Update failed".
+
 ### Releases that change the compose file or the scripts
 
 A release can change files that live in your checkout rather than in an image: `deploy/docker-compose.yml` and the
