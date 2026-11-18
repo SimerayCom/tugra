@@ -7,6 +7,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.0-beta.23] - 2026-11-18
+
 - **An in-app update can no longer leave the server half-updated.** Before anything is written or pulled, the updater
   checks free space on Docker's data root (and prunes old Tugra images first if short); if it still does not fit it stops
   with the numbers ("needs about X GB free on <path>, has Y GB") and touches nothing. The target images are pulled and
