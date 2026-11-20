@@ -26,7 +26,7 @@ function build(run: RunSnapshot = makeRun()) {
   handler.onModuleInit();
   const ctx = (o: Partial<Parameters<typeof makeCtx>[0]> = {}): CtxHarness => makeCtx({ key: "VERIFY", run, ...o });
   const reportSource = (rows: Array<[string, number]> = [["public.t", 5]]) =>
-    checks.upsert({ runId: run.id, stepKey: "VERIFY", checkId: SOURCE_STATS_CHECK, subject: "database:s:pg", status: "unknown", evidenceKind: "migrator-reported", evidence: measured("database:s:pg", rows) as never });
+    checks.upsert({ runId: run.id, stepKey: "VERIFY", checkId: SOURCE_STATS_CHECK, subject: "database:s:pg", status: "unknown", evidenceKind: "migrator-reported", evidence: measured("database:s:pg", rows) as never, at: NOW });
   return { registry, data, objects, runtime, stats, flip, drift, checks, handler, ctx, reportSource, run };
 }
 
