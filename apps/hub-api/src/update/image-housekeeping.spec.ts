@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -122,6 +122,23 @@ describe("prune_select (which images go)", () => {
       env: { ...process.env, HUB_IMAGE_REPO: "registry.example/tugra-hub" } as NodeJS.ProcessEnv,
     });
     expect(r.stdout.trim()).toBe("sha256:m1|registry.example/tugra-hub:0.1.0-beta.1|0.1.0-beta.1");
+  });
+
+  it("recognises a release repository by an exact line match, in any position, under pipefail (never as a prefix, substring or glob)", () => {
+    const t = (repo: string) => spawnSync(BASH, ["-c", `set -euo pipefail; log() { :; }; . "${IMAGES_SH}"; _prune_is_tugra "$1" "" ""`, "x", repo]).status;
+    for (const repo of [HUB, WEB, AGENT, "ghcr.io/simeraycom/tugra-updater"]) expect(t(repo)).toBe(0);
+    for (const repo of ["ghcr.io/simeraycom/tugra-hu", "ghcr.io/simeraycom/tugra-hub2", "simeraycom/tugra-hub", "ghcr.io/simeraycom/tugra-*", "", "<none>"]) expect(t(repo)).toBe(1);
+  });
+
+  it("no script pipes printf into `grep -q` (under pipefail grep exits at the first match, printf dies of SIGPIPE and the match reads as a miss)", () => {
+    const files = [join(SCRIPTS, "update.sh"), join(SCRIPTS, "install.sh"), ...readdirSync(join(SCRIPTS, "lib")).filter((f) => f.endsWith(".sh")).map((f) => join(SCRIPTS, "lib", f))];
+    const offenders = files.flatMap((f) =>
+      readFileSync(f, "utf8")
+        .split("\n")
+        .filter((l) => !l.trim().startsWith("#") && /\b(printf|echo)\b[^|\n]*\|\s*grep\s+-[A-Za-z]*q/.test(l))
+        .map((l) => `${f}: ${l.trim()}`),
+    );
+    expect(offenders).toEqual([]);
   });
 
   it("is_newer orders prereleases the semver way (beta.10 > beta.9, release > its betas)", () => {

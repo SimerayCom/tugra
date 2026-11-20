@@ -403,7 +403,8 @@ pull_target_images() {
     rm -f "$STAGED_ENV"; STAGED_ENV=""
     [ -z "$out" ] || printf '%s\n' "$out"
     if [ "$rc" -ne 0 ]; then
-      if printf '%s' "$out" | grep -qi 'no space left on device'; then
+      # here-string, not a pipe: under pipefail `printf | grep -q` fails on SIGPIPE when grep exits at the first match (see _line_in)
+      if grep -qi 'no space left on device' <<<"$out"; then
         PULL_CODE="disk_full"
         PULL_ERROR="the disk filled up while pulling the images; free some space (remove unused Docker images or volumes) and retry"
       else

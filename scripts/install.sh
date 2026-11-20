@@ -386,7 +386,8 @@ panel_dns_preflight() {
     note "$_dom resolves to $_disp. Make sure that is THIS server's public IP — HTTP-01 validates over :80 at that address. (Behind Cloudflare's proxy, re-run with --acme-dns-cloudflare <token> for a real cert with the IP hidden.)"
     return 0
   fi
-  if printf '%s\n' "$_resolved" | grep -qxF "$_knownip"; then
+  # here-string, not a pipe: under pipefail the pipe form fails on SIGPIPE when grep exits at the first match
+  if grep -qxF "$_knownip" <<<"$_resolved"; then
     ok "$_dom resolves to this host ($_knownip) — HTTP-01 can validate; the panel cert issues on the first reachable request."
   else
     warn "$_dom resolves to $_disp, but this host's address is $_knownip."
@@ -846,7 +847,7 @@ fi
 pg_running() { [ -n "$(compose ps -q postgres 2>/dev/null | head -n1)" ]; }
 pg_exists() {
   [ -n "$(compose ps -aq postgres 2>/dev/null | head -n1)" ] && return 0
-  docker volume ls -q 2>/dev/null | grep -Eq '(^|_)tugra_pg$'
+  grep -Eq '(^|_)tugra_pg$' < <(docker volume ls -q 2>/dev/null)  # not a pipe: grep -q exiting early would SIGPIPE docker under pipefail
 }
 # Start ONLY postgres (--no-deps) and wait, bounded, until its docker healthcheck passes.
 start_postgres() {

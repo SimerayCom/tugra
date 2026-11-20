@@ -76,13 +76,25 @@ tugra_release_repos() {
     "${UPDATER_IMAGE_REPO:-ghcr.io/simeraycom/tugra-updater}"
 }
 
+# _line_in <needle> <lines>: 0 when <needle> is exactly one of the newline-separated <lines>. No pipe on purpose: this runs
+# under `set -o pipefail`, and `printf '%s\n' "$lines" | grep -qxF "$needle"` is a race there. bash's printf writes a
+# multi-line argument one line at a time, grep -q exits at the first match, and when it does so before printf's next write
+# lands, printf dies of SIGPIPE and pipefail turns a MATCH into a failure (seen: the hub repo, the first line, judged "not
+# Tugra's" on a loaded host, so a prune removed nothing and the disk preflight measured no release on disk).
+_line_in() {
+  local nl=$'\n'
+  [ -n "$1" ] || return 1
+  case "$nl$2$nl" in *"$nl$1$nl"*) return 0 ;; esac
+  return 1
+}
+
 # True for a plain MAJOR.MINOR.PATCH[-pre][+build] version (optionally v-prefixed).
 _img_is_version() { [[ "${1:-}" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.+-]+)?$ ]]; }
 
 # _prune_is_tugra <repo> <src label> <title label>: 0 when the image is one of Tugra's own release images.
 _prune_is_tugra() {
   local repo="$1" src="$2" title="$3" t
-  if printf '%s\n' "$(tugra_release_repos)" | grep -qxF -- "$repo"; then return 0; fi
+  if _line_in "$repo" "$(tugra_release_repos)"; then return 0; fi
   if [ "$repo" = "<none>" ] && [ "$src" = "$TUGRA_IMG_SOURCE_LABEL" ]; then
     for t in "${TUGRA_IMG_TITLES[@]}"; do [ "$title" = "$t" ] && return 0; done
   fi
@@ -182,7 +194,7 @@ prune_collect() {
   docker image ls --no-trunc --digests --format '{{.ID}}|{{.Repository}}|{{.Tag}}|{{.Digest}}' 2>/dev/null \
     | while IFS='|' read -r id repo tag digest; do
         [ -n "$id" ] || continue
-        if ! printf '%s\n' "$repos" | grep -qxF -- "$repo" && [ "$repo" != "<none>" ]; then continue; fi
+        if ! _line_in "$repo" "$repos" && [ "$repo" != "<none>" ]; then continue; fi
         meta="$(docker image inspect -f "{{index .Config.Labels \"$TUGRA_IMG_VERSION_LABEL\"}}|{{index .Config.Labels \"org.opencontainers.image.source\"}}|{{index .Config.Labels \"org.opencontainers.image.title\"}}" "$id" 2>/dev/null | tr -d '\n' | tr -d '\r')" || meta="||"
         [ -n "$meta" ] || meta="||"
         printf '%s|%s|%s|%s|%s\n' "$id" "$repo" "$tag" "$digest" "$meta"
