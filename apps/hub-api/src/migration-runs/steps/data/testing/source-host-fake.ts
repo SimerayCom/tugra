@@ -11,8 +11,8 @@
  *  - anything else is recorded and succeeds (`pull`, `run`, ...).
  * `forbiddenCalls()` returns every call a source host must never see from the engine (`rm`, `kill`, `prune`, `rmi`, ...).
  */
-import { spawn } from "node:child_process";
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import { chmodSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { SourceHostPort } from "../data-contract";
@@ -194,9 +194,35 @@ export class SourceHostFake implements SourceHostPort {
     return existsSync(p) ? readFileSync(p, "utf8") : null;
   }
 
+  /**
+   * Remove the fake host. The launcher script backgrounds the detached runner (`setsid sh run.sh &`), which keeps writing
+   * into its run directory (`out`, `err`, `rc`) after the launch call returned, so the directory is only removed once every
+   * runner that was started has recorded its exit code (`rc` is its last write) or is gone. Waiting is bounded; a runner
+   * that is still alive after that is a real defect of the spec and fails loudly instead of leaking a half-deleted tree.
+   */
   dispose(): void {
-    // The launch script backgrounds the fake migrator, which may still be writing its status file here.
-    rmSync(this.dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+    const deadline = Date.now() + 15_000;
+    const runsDir = join(this.dir, "runs");
+    const running = (): string[] => {
+      if (!existsSync(runsDir)) return [];
+      return readdirSync(runsDir).filter((name) => {
+        const d = join(runsDir, name);
+        if (!existsSync(join(d, "pid")) || existsSync(join(d, "rc"))) return false;
+        // alive = the recorded pid is STILL that runner (its command line names this run's run.sh); a recycled pid or a spec that
+        // wrote a foreign pid into the file is not ours to wait for
+        const pid = readFileSync(join(d, "pid"), "utf8").trim();
+        if (!/^[0-9]+$/.test(pid)) return false;
+        const ps = spawnSync("ps", ["-o", "command=", "-p", pid], { encoding: "utf8" });
+        return ps.status === 0 && ps.stdout.includes(join(d, "run.sh"));
+      });
+    };
+    let alive = running();
+    while (alive.length > 0 && Date.now() < deadline) {
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
+      alive = running();
+    }
+    if (alive.length > 0) throw new Error(`fake source host still has detached runners writing: ${alive.join(", ")}`);
+    rmSync(this.dir, { recursive: true, force: true });
   }
 }
 
