@@ -7,6 +7,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **Image cleanup and the disk check no longer misfire on a busy server.** A shell race could make the updater
+  miss its own release images: cleanup then removed nothing and the disk check under-estimated the space an update
+  needs. The same race could also mislabel a disk-full pull as a generic pull failure.
 - **Discover & adopt never offers Tugra's own containers.** The install stack (hub, web, agent, updater and its bundled
   postgres/redis), the proxy, Tugra-run tunnels, helper containers and anything Tugra already manages are hidden from
   the scan, and adopting one directly (API, MCP or CLI) is refused before anything is renamed.
