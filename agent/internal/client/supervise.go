@@ -70,7 +70,13 @@ func superviseWith(ctx context.Context, base config.Config, kp *keys.KeyPair, st
 				return probeEndpoint(c, primary)
 			}
 			ready := false
-			err := run(ctx, cfg, kp, store, func() { ready = true; backoff = time.Second })
+			err := run(ctx, cfg, kp, store, func() {
+				ready = true
+				backoff = time.Second
+				// The one log line of a successful (re)connect: `install.sh --doctor` reads it to tell a healthy agent from one
+				// whose last logged event is an old failure.
+				log.Printf("hub session on %s established", ep.URL)
+			})
 			if ctx.Err() != nil {
 				return
 			}

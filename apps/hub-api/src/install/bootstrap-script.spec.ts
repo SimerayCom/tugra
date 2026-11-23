@@ -1,6 +1,6 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -78,6 +78,53 @@ describe("scripts/bootstrap.sh", () => {
       expect(r.code).toBe(0);
       expect(r.out).toContain("Latest release: v0.1.0-beta.10");
       expect(r.out).toContain("INSTALLED:main args:--domain x.example.com ver:0.1.0-beta.10");
+    });
+
+    describe("--doctor is read-only", () => {
+      it("on a host with no checkout it runs the installer's doctor from a throwaway copy: nothing is left behind, no ./tugra", () => {
+        const r = boot({ TUGRA_DOCTOR_DOCKER_LOOKUP: "0" }, ["--doctor"]);
+        expect(r.code).toBe(0);
+        expect(r.out).toContain("args:--doctor");
+        expect(r.out).toContain("throwaway copy of v0.1.0-beta.10");
+        expect(existsSync(join(r.cwd, "tugra"))).toBe(false);
+      });
+
+      it("on a host that already has a checkout it runs THAT checkout as it is: no fetch, no checkout of the newest release, no TUGRA_VERSION", () => {
+        const cwd = join(root, "doctor-existing");
+        mkdirSync(cwd);
+        git(cwd, "clone", "-q", `file://${upstream}`, "tugra");
+        git(join(cwd, "tugra"), "checkout", "-q", "--detach", firstSha);
+        const head = git(join(cwd, "tugra"), "rev-parse", "HEAD");
+        const r = boot({ TUGRA_DOCTOR_DOCKER_LOOKUP: "0" }, ["--doctor"], { cwd });
+        expect(r.code).toBe(0);
+        expect(r.out).toContain("INSTALLED:first args:--doctor ver:none");
+        expect(r.out).toContain("nothing is fetched or changed");
+        expect(git(join(cwd, "tugra"), "rev-parse", "HEAD")).toBe(head); // not moved to the newest release
+      });
+
+      it("does not die on local edits in the checkout (the install path does): the doctor only reads", () => {
+        const cwd = join(root, "doctor-dirty");
+        mkdirSync(cwd);
+        git(cwd, "clone", "-q", `file://${upstream}`, "tugra");
+        writeFileSync(join(cwd, "tugra", "scripts", "install.sh"), '#!/bin/sh\necho "EDITED args:$*"\n');
+        const r = boot({ TUGRA_DOCTOR_DOCKER_LOOKUP: "0" }, ["--doctor"], { cwd });
+        expect(r.code).toBe(0);
+        expect(r.out).toContain("EDITED args:--doctor");
+      });
+
+      it("never installs git: without git and without a checkout it stops with a clear message", () => {
+        const bin = join(root, "nogit-bin");
+        mkdirSync(bin);
+        for (const t of ["sh", "head", "awk", "sort", "tail", "cut", "mktemp", "rm", "cat"]) {
+          const real = execFileSync("sh", ["-c", `command -v ${t}`]).toString().trim();
+          if (real.startsWith("/")) symlinkSync(real, join(bin, t));
+        }
+        const cwd = join(root, "doctor-nogit");
+        mkdirSync(cwd);
+        const r = spawnSync(join(bin, "sh"), [BOOTSTRAP, "--doctor"], { cwd, encoding: "utf8", env: { PATH: bin, HOME: root, TUGRA_DIR: "tugra", TUGRA_DOCTOR_DOCKER_LOOKUP: "0" } as NodeJS.ProcessEnv });
+        expect(r.status).toBe(1);
+        expect(`${r.stdout}${r.stderr}`).toContain("git is not installed (the doctor changes nothing, so it will not install it)");
+      });
     });
 
     it("a STABLE release wins over newer-looking pre-releases", () => {

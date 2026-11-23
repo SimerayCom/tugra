@@ -1,6 +1,7 @@
 package client
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
@@ -8,6 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -438,6 +440,31 @@ func TestRotationOrderAndPrimaryFirstAfterEveryDrop(t *testing.T) {
 	want := []string{"wss://primary.example.com/agent", "wss://fallback.example.com/agent", "wss://primary.example.com/agent", "wss://fallback.example.com/agent"}
 	if strings.Join(attempts, " ") != strings.Join(want, " ") {
 		t.Fatalf("attempts = %v\nwant     %v", attempts, want)
+	}
+}
+
+// A successful (re)connect logs one line: `install.sh --doctor` tells a healthy agent from one whose last logged event is an
+// old failure by it (before this line a good connection logged nothing at all).
+func TestSuperviseLogsEstablishedSession(t *testing.T) {
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	defer log.SetOutput(os.Stderr)
+	mgr, _ := endpoints.Open("", endpoints.Endpoint{URL: "wss://hub.example.com/agent"}, false)
+	ctx, cancel := context.WithCancel(context.Background())
+	n := 0
+	run := func(_ context.Context, _ config.Config, _ *keys.KeyPair, _ *config.Store, onReady func()) error {
+		if n++; n == 1 {
+			return errors.New("dial: connection refused")
+		}
+		onReady()
+		cancel()
+		return ctx.Err()
+	}
+	superviseWith(ctx, config.Config{}, keys.New(), &config.Store{}, mgr, run, func(context.Context, time.Duration) {})
+	out := buf.String()
+	fail, ok := strings.Index(out, "hub endpoint wss://hub.example.com/agent: dial"), strings.Index(out, "hub session on wss://hub.example.com/agent established")
+	if fail < 0 || ok < 0 || ok < fail {
+		t.Fatalf("want the failure line, then the established line, in the log:\n%s", out)
 	}
 }
 

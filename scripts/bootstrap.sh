@@ -10,6 +10,9 @@
 # Pass installer flags through after `--`, e.g. a TLS domain:
 #   curl -fsSL .../bootstrap.sh | sh -s -- --domain tugra.example.com
 #
+# Check a host without changing anything (never installs git, never touches an existing checkout):
+#   curl -fsSL .../bootstrap.sh | sh -s -- --doctor
+#
 # By default it installs the newest PUBLISHED release (the highest vX.Y.Z tag; a stable release wins over
 # pre-releases, and while there is no stable release yet the newest beta is used) with its prebuilt images.
 # Pin what you run: TUGRA_REF may be a branch, a tag or a full commit SHA (TUGRA_REF=main installs the
@@ -27,6 +30,60 @@ DIR="${TUGRA_DIR:-tugra}"
 say() { printf '\033[38;5;179m==>\033[0m %s\n' "$*"; }
 die() { printf '\033[31merror:\033[0m %s\n' "$*" >&2; exit 1; }
 
+# --- which ref: the newest published release unless TUGRA_REF says otherwise ---
+# latest_release: the highest release tag on the remote. Only vMAJOR.MINOR.PATCH[-alpha|beta|rc.N] tags count;
+# a stable release sorts above every pre-release of the same version (rank 9 vs 1-3). Pure git + awk, no API.
+latest_release() {
+  git ls-remote --tags --refs "$REPO_URL" 'v*' 2>/dev/null | awk '{ sub("^refs/tags/", "", $2); print $2 }' | awk '
+    /^v[0-9]+[.][0-9]+[.][0-9]+(-(alpha|beta|rc)[.][0-9]+)?$/ {
+      n = split(substr($0, 2), part, "-"); split(part[1], v, ".")
+      rank = 9; num = 0
+      if (n > 1) { split(part[2], p, "."); rank = (p[1] == "alpha") ? 1 : (p[1] == "beta") ? 2 : 3; num = p[2] }
+      printf "%06d%06d%06d%d%06d %s\n", v[1], v[2], v[3], rank, num, $0
+    }' | sort | tail -n 1 | cut -d' ' -f2
+}
+
+# --- --doctor is READ-ONLY: it must not install git, move an existing checkout to another release or clone into ./tugra ---
+# The doctor of an installed host runs from the checkout that host already has (./$DIR, or the one the running stack was
+# started from), exactly as it is. Only on a host with no checkout at all does it use a throwaway clone of the release,
+# deleted afterwards (that host has nothing installed, so there is nothing else to look at).
+_doctor=0
+for _a in "$@"; do if [ "$_a" = "--doctor" ]; then _doctor=1; fi; done
+if [ "$_doctor" = 1 ]; then
+  _found=""
+  if [ -f "$DIR/scripts/install.sh" ]; then _found="$DIR"
+  elif [ -f "$HOME/tugra/scripts/install.sh" ]; then _found="$HOME/tugra"
+  elif [ "${TUGRA_DOCTOR_DOCKER_LOOKUP:-1}" != 0 ] && command -v docker >/dev/null 2>&1; then
+    # compose records the directory of the compose file (<checkout>/deploy) on every container it started
+    _cid="$(docker ps -aq --filter label=com.docker.compose.project=tugra 2>/dev/null | head -n 1 || true)"
+    if [ -n "$_cid" ]; then
+      _wd="$(docker inspect -f '{{ index .Config.Labels "com.docker.compose.project.working_dir" }}' "$_cid" 2>/dev/null || true)"
+      if [ -n "$_wd" ] && [ -f "$_wd/../scripts/install.sh" ]; then _found="$(cd "$_wd/.." && pwd)"; fi
+    fi
+  fi
+  if [ -n "$_found" ]; then
+    say "Running the doctor from the existing checkout $_found (nothing is fetched or changed) …"
+    cd "$_found"
+    exec ./scripts/install.sh "$@"
+  fi
+  command -v git >/dev/null 2>&1 || die "no Tugra checkout was found here and git is not installed (the doctor changes nothing, so it will not install it). Run it from the checkout (./scripts/install.sh --doctor), or install git and re-run."
+  if [ -z "$REPO_REF" ]; then
+    REPO_REF="$(latest_release)" || REPO_REF=""
+    [ -n "$REPO_REF" ] || die "could not find a published Tugra release at $REPO_URL — check your network, or set TUGRA_REF"
+  fi
+  _tmp="$(mktemp -d "${TMPDIR:-/tmp}/tugra-doctor.XXXXXX")" || die "could not create a temporary directory"
+  trap 'rm -rf "$_tmp"' EXIT INT TERM
+  say "No Tugra checkout here: running the doctor from a throwaway copy of $REPO_REF (removed afterwards) …"
+  git -C "$_tmp" init -q && git -C "$_tmp" remote add origin "$REPO_URL" \
+    && git -C "$_tmp" fetch --depth 1 origin "$REPO_REF" >/dev/null 2>&1 \
+    && git -C "$_tmp" checkout -q FETCH_HEAD >/dev/null 2>&1 \
+    || die "could not fetch $REPO_REF from $REPO_URL — check the ref and your network"
+  cd "$_tmp"
+  _rc=0
+  ./scripts/install.sh "$@" || _rc=$?
+  exit "$_rc"
+fi
+
 # --- prerequisite: git (needed to fetch the repo; install.sh handles Docker) ---
 if ! command -v git >/dev/null 2>&1; then
   say "Installing git…"
@@ -41,18 +98,6 @@ if ! command -v git >/dev/null 2>&1; then
   command -v git >/dev/null 2>&1 || die "git install failed — install it manually, then re-run."
 fi
 
-# --- which ref: the newest published release unless TUGRA_REF says otherwise ---
-# latest_release: the highest release tag on the remote. Only vMAJOR.MINOR.PATCH[-alpha|beta|rc.N] tags count;
-# a stable release sorts above every pre-release of the same version (rank 9 vs 1-3). Pure git + awk, no API.
-latest_release() {
-  git ls-remote --tags --refs "$REPO_URL" 'v*' 2>/dev/null | awk '{ sub("^refs/tags/", "", $2); print $2 }' | awk '
-    /^v[0-9]+[.][0-9]+[.][0-9]+(-(alpha|beta|rc)[.][0-9]+)?$/ {
-      n = split(substr($0, 2), part, "-"); split(part[1], v, ".")
-      rank = 9; num = 0
-      if (n > 1) { split(part[2], p, "."); rank = (p[1] == "alpha") ? 1 : (p[1] == "beta") ? 2 : 3; num = p[2] }
-      printf "%06d%06d%06d%d%06d %s\n", v[1], v[2], v[3], rank, num, $0
-    }' | sort | tail -n 1 | cut -d' ' -f2
-}
 if [ -z "$REPO_REF" ]; then
   say "Looking up the latest Tugra release…"
   REPO_REF="$(latest_release)" || REPO_REF=""

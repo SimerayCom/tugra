@@ -58,6 +58,11 @@
 #                       (it leaves them "modified" and makes `git pull` refuse), then exit. The target is the release in
 #                       TUGRA_VERSION (env or .env). A normal run with TUGRA_VERSION set does this step first by itself;
 #                       TUGRA_CHECKOUT_SYNC=0 turns it off. Real local edits are never discarded.
+#   --doctor            Check this host and the Tugra stack, read-only (it never changes anything): who holds ports
+#                       80/443, the host firewall (ufw / firewalld / nftables / iptables), the hosting provider's cloud
+#                       firewall, IPv6 / AAAA, DNS, the Tugra containers, the proxy routes, the panel's certificate and
+#                       the local agent, each problem with its fix. Exit 0 = no problems, 1 = problems. Works on a fresh
+#                       host and on an installed one:  curl -fsSL .../bootstrap.sh | sh -s -- --doctor
 #   --restore-from <f>  Restore a hub bundle made by `scripts/hub-migrate.sh pack` onto THIS host (moves an
 #                       existing hub here, no pg_dump). Overwrites this host's .env + hub volume. See
 #                       docs/disaster-recovery.md.
@@ -80,6 +85,7 @@ RESTORE_FROM=""
 RESTORE_SET=0
 SYNC_CHECKOUT_ONLY=0
 ASSUME_YES=0
+DOCTOR=0   # --doctor: read-only network + stack health check (lib/netcheck.sh), then exit
 # Outbound policy: update checks and anonymous usage stats are ON by default (opt-out); public-IP detection is
 # opt-in. env-var forms let the one-line curl|sh installer choose too.
 ENABLE_UPDATE_CHECKS="${TUGRA_ENABLE_UPDATE_CHECKS:-0}" # re-enable after an earlier opt-out (checks are on by default)
@@ -187,6 +193,7 @@ while [ $# -gt 0 ]; do
     --dry-run|--no-start) DRY_RUN=1; shift ;;
     --restore-from) RESTORE_FROM="${2:-}"; RESTORE_SET=1; shift 2 ;;
     --sync-checkout) SYNC_CHECKOUT_ONLY=1; shift ;;
+    --doctor) DOCTOR=1; shift ;;
     --yes|-y) ASSUME_YES=1; shift ;;
     -h|--help)  sed -n '2,/^set -euo/p' "$SCRIPT_PATH" | sed '$d' | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) err "unknown option: $1"; exit 1 ;;
@@ -201,7 +208,7 @@ if [ "$ACME_DNS_TOKEN_ARGV" = "1" ]; then
 fi
 # Private (0700) scratch dir for logs + the generated panel-setup script (no fixed, predictable /tmp names).
 # Skipped for --dry-run, which must stay free of side effects.
-if [ "$DRY_RUN" -eq 0 ] && [ "$RESTORE_SET" -eq 0 ]; then
+if [ "$DRY_RUN" -eq 0 ] && [ "$RESTORE_SET" -eq 0 ] && [ "$DOCTOR" -eq 0 ]; then
   LOGDIR="$(umask 077; mktemp -d "${TMPDIR:-/tmp}/tugra-install.XXXXXX")" || { err "could not create a private log directory"; exit 1; }
 fi
 _setup=""; ENV_BEFORE=""
@@ -291,7 +298,7 @@ if [ "$SYNC_CHECKOUT_ONLY" = 1 ] && { [ -z "$SYNC_VERSION" ] || [ "$SYNC_VERSION
   err "--sync-checkout needs the release to match: run  TUGRA_VERSION=<version> ./scripts/install.sh --sync-checkout"; exit 1
 fi
 SYNC_ON="${TUGRA_CHECKOUT_SYNC:-$(env_get TUGRA_CHECKOUT_SYNC | tr -d "\"' \r")}"
-if [ "$DRY_RUN" -eq 0 ] && [ "${SYNC_ON:-1}" != 0 ] && [ -f "$SCRIPT_DIR/lib/checkout.sh" ] \
+if [ "$DRY_RUN" -eq 0 ] && [ "$DOCTOR" -eq 0 ] && [ "${SYNC_ON:-1}" != 0 ] && [ -f "$SCRIPT_DIR/lib/checkout.sh" ] \
    && [ -n "$SYNC_VERSION" ] && [ "$SYNC_VERSION" != latest ]; then
   # shellcheck source=lib/checkout.sh
   . "$SCRIPT_DIR/lib/checkout.sh"
@@ -372,15 +379,17 @@ is_private_ipv4() {
 # wrapped in `$( … || true )` so a failed resolver/pipeline can't trip `set -euo pipefail`; the function
 # always exits 0 and prints "" when nothing resolves or no resolver tool exists.
 _resolve_a() {
-  _h="$1"; _out=""
+  _h="$1"; _out=""; _to=""
+  # A broken resolver must not stall the installer / --doctor for the libc retry time (minutes): bound each lookup.
+  command -v timeout >/dev/null 2>&1 && _to="timeout 8"
   if command -v getent >/dev/null 2>&1; then
-    _out="$(getent ahostsv4 "$_h" 2>/dev/null | awk '{print $1}' | sort -u || true)"
+    _out="$($_to getent ahostsv4 "$_h" 2>/dev/null | awk '{print $1}' | sort -u || true)"
   elif command -v dig >/dev/null 2>&1; then
-    _out="$(dig +short +time=3 +tries=1 A "$_h" 2>/dev/null | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | sort -u || true)"
+    _out="$($_to dig +short +time=3 +tries=1 A "$_h" 2>/dev/null | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | sort -u || true)"
   elif command -v host >/dev/null 2>&1; then
-    _out="$(host -W 3 "$_h" 2>/dev/null | awk '/has address/{print $NF}' | sort -u || true)"
+    _out="$($_to host -W 3 "$_h" 2>/dev/null | awk '/has address/{print $NF}' | sort -u || true)"
   elif command -v nslookup >/dev/null 2>&1; then
-    _out="$(nslookup "$_h" 2>/dev/null | awk '/^Address: ?/{print $NF}' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | sort -u || true)"
+    _out="$($_to nslookup "$_h" 2>/dev/null | awk '/^Address: ?/{print $NF}' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | sort -u || true)"
   fi
   printf '%s' "$_out"
 }
@@ -456,6 +465,18 @@ panel_dns_preflight() {
   fi
 }
 
+# The private-address warning shared by the install and --doctor.
+warn_private_ip() {
+  warn "This server's address ($1) is a private one — it will only open from inside that network, not from the internet."
+  note "On a cloud server (behind NAT) re-run with --public-ip <the server's public IP> so the panel URL and agents use it."
+}
+
+# Network health checks (ports, firewall, cloud provider, IPv6) + --doctor: lib/netcheck.sh, read-only.
+if [ -f "$SCRIPT_DIR/lib/netcheck.sh" ]; then
+  # shellcheck source=lib/netcheck.sh
+  . "$SCRIPT_DIR/lib/netcheck.sh"
+fi
+
 # --- preflight (skipped for --dry-run so tests stay quiet + need no Docker) --------------------------
 preflight() {
   step "Checking requirements & installing prerequisites…"
@@ -504,19 +525,21 @@ preflight() {
   if [ -n "${freeg:-}" ]; then
     if [ "$freeg" -lt 5 ]; then note "Free disk: ~${freeg}GB — 10GB+ recommended (images + volumes)"; else ok "Free disk: ~${freeg}GB"; fi
   fi
-  if command -v ss >/dev/null 2>&1; then
-    for p in "${HUB_PORT:-3000}" "${WEB_PORT:-3001}"; do
-      ss -ltn 2>/dev/null | awk '{print $4}' | grep -qE "[:.]${p}$" && note "Port ${p} looks busy — the stack may fail to bind it (set HUB_PORT/WEB_PORT or free it)"
-    done
-    # :80/:443 are the reverse-proxy's ports (needed for --auto-tls and any app with a domain). A warning
-    # only — the proxy is created lazily, so a quick start without a domain is unaffected.
-    for p in 80 443; do
-      ss -ltn 2>/dev/null | awk '{print $4}' | grep -qE "[:.]${p}$" && note "Port ${p} is in use — Tugra's reverse proxy (--auto-tls or a domained app) needs it; free it or set a server's proxyBind to loopback/none. (Docker-published ports bypass ufw — use a cloud firewall.)"
+  if declare -F nc_preflight >/dev/null 2>&1; then
+    # Who holds :80/:443 and the raw ports (with advice), the host + cloud firewall, the hosting provider, IPv6/AAAA. Advice only.
+    nc_preflight
+  elif command -v ss >/dev/null 2>&1; then
+    for p in "${HUB_PORT:-3000}" "${WEB_PORT:-3001}" 80 443; do
+      ss -ltn 2>/dev/null | awk '{print $4}' | grep -qE "[:.]${p}$" && note "Port ${p} looks busy — Tugra's proxy / the stack may fail to bind it (free it or set HUB_PORT/WEB_PORT). (Docker-published ports bypass ufw — use a cloud firewall.)"
     done
   fi
   [ "$fail" -eq 0 ] || { err "Preflight failed — fix the ✗ item(s) above and re-run."; exit 1; }
   printf '\n'
 }
+if [ "$DOCTOR" -eq 1 ]; then
+  declare -F nc_doctor >/dev/null 2>&1 || { err "scripts/lib/netcheck.sh not found next to this installer — update the checkout and re-run"; exit 1; }
+  if nc_doctor; then exit 0; else exit 1; fi
+fi
 if [ "$DRY_RUN" -eq 0 ]; then
   banner
   preflight
@@ -599,8 +622,7 @@ elif [ -z "$HUB_URL" ] || [ -z "$WEB_URL" ]; then
     # printing it as the address to open. Only when the operator did not pin a public IP themselves.
     if [ -z "$MANUAL_PUBLIC_IP" ] && is_private_ipv4 "$HOST_IP"; then
       IP_PRIVATE_NOTICE=1
-      warn "This server's address ($HOST_IP) is a private one — it will only open from inside that network, not from the internet."
-      note "On a cloud server (behind NAT) re-run with --public-ip <the server's public IP> so the panel URL and agents use it."
+      warn_private_ip "$HOST_IP"
     fi
     # Through the proxy on port 80: no port in the URL (agents dial http://<ip>/agent, the browser opens http://<ip>/).
     HUB_URL="${HUB_URL:-http://$HOST_IP}"

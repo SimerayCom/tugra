@@ -7,6 +7,24 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **The installer tells you what is in the way, and `install.sh --doctor` checks a host read-only.** The install used to
+  print one line like "Port 80 looks busy". It now names who holds `80`/`443` (and the raw hub/web ports): the process from
+  `ss -ltnp`, or the container behind `docker-proxy`, with specific advice for nginx, Apache, Caddy, CloudPanel, Plesk,
+  cPanel, Coolify's proxy, another Tugra and anything else, naming the exact command and what it would take down; nothing
+  is stopped or changed. It also reads the host firewall (ufw, firewalld, nftables, iptables) and prints the one-line command
+  when `80`/`443` are blocked, explains that Docker-published ports bypass ufw, recognises the hosting provider locally
+  (DMI, cloud-init, hostname; no network call) for Hetzner, AWS, Google Cloud, Azure, DigitalOcean, Vultr, Linode/Akamai,
+  Oracle, Scaleway, OVHcloud, Contabo and generic KVM and says where its cloud firewall is, and flags a missing IPv6 or an
+  AAAA record that points elsewhere. `./scripts/install.sh --doctor` (also `curl … | sh -s -- --doctor`) runs all of it on a
+  fresh or installed host and adds the Tugra state: containers, the proxy and its routes on loopback, the certificate for the
+  panel domain and the local agent, each problem with its fix; exit 0 when fine, 1 otherwise. It never changes anything,
+  and neither does `curl … | sh -s -- --doctor`: the bootstrap then installs no git and fetches or moves no checkout (it runs
+  the one the host has, or a throwaway copy). A blocked `80`/`443` is a red cross only for a host program that serves it
+  (Docker-published ports skip INPUT rules), an agent that `Update agent` recreated outside compose is found, a firewall
+  that cannot be read without root is reported as unknown, and a bring-your-own-proxy or raw-port install gets its own
+  advice. The agent now logs `hub session on <url> established` on every successful connect, which is what the doctor
+  reads. See [Troubleshooting](docs/install.md#troubleshooting).
+
 - **Agents follow the hub when its address changes, and talk to it encrypted even on a bare IP.** The agent used to hold one
   URL fixed at install: an IP-mode hub meant plaintext `ws://<ip>/agent`, and setting, changing or removing the panel domain
   dropped the old route so every remote agent was stranded until re-installed by hand. Now each agent keeps an ordered,

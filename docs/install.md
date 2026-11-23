@@ -230,6 +230,7 @@ the `Secure` flag on HTTPS installs.
 | `--no-telemetry` / `--enable-telemetry` | Opt out of / explicitly accept the anonymous usage stats (also `TUGRA_TELEMETRY=0\|1`). |
 | `--no-update-checks` / `--enable-update-checks` | Opt out of (or re-enable) the signed self-update checks, which are on by default (also `TUGRA_UPDATE_CHECKS=0`). |
 | `--public-ip <ip>` / `--detect-public-ip` | Pin this host's public IP (or opt in to a best-effort probe) so deployed-app URLs resolve from outside. |
+| `--doctor` | Check this host and the Tugra stack without changing anything (ports 80/443, firewall, cloud provider, IPv6/DNS, containers, proxy routes, certificate, agent) and print the fix for each problem. Exit `0` = fine, `1` = problems. See [Troubleshooting](#troubleshooting). |
 | `--restore-from <bundle>` | Restore a hub bundle made by `scripts/hub-migrate.sh pack` onto this host (see [Disaster recovery](disaster-recovery.md)). |
 | `--yes`, `-y` | Assume yes for confirmation prompts. |
 | `--dry-run` | Generate `.env` and exit — touch no Docker. |
@@ -265,6 +266,82 @@ across re-runs — regenerating them would invalidate sessions, encrypted data a
 **arm64 control plane:** the published hub/web/updater images are amd64-only. On an arm64 host
 (e.g. a Pi control plane) run `./scripts/install.sh --build` to build natively; the agent image is
 multi-arch, so managed servers of any architecture are supported.
+
+## Troubleshooting
+
+### Run the doctor first
+
+```bash
+./scripts/install.sh --doctor                                   # from the checkout
+curl -fsSL https://raw.githubusercontent.com/SimerayCom/tugra/main/scripts/bootstrap.sh | sh -s -- --doctor   # on a fresh or installed host
+```
+
+The doctor is **read-only**: it never stops, starts, edits or installs anything, never writes `.env`, and the hosting
+provider is recognised from local files (the only probes are requests to `127.0.0.1` and, for `--domain`, a DNS lookup).
+The one-liner is read-only too: `bootstrap.sh --doctor` never installs git and never fetches or moves a checkout. It runs
+the checkout this host already has (`./tugra`, `~/tugra`, or the directory the running stack was started from) exactly as
+it is, local edits included. Only on a host with no checkout at all does it use a throwaway copy of the newest release,
+deleted when it finishes. Run it as root (`sudo`) for the full picture: without root, process names behind a port are
+hidden and a firewall that cannot be read is reported as unknown rather than as absent. It
+works on a host where Tugra is not installed yet (then it shows what the installer will find) and on an installed one,
+where it also reports the containers, the proxy routes, the certificate for `PANEL_DOMAIN` and the local agent. Every
+red cross comes with its fix; the exit code is `0` when nothing is wrong and `1` otherwise, so it also fits a monitor.
+The install runs the same port, firewall, provider and IPv6 checks as advice before it starts anything.
+
+What it checks:
+
+| Check | What you get |
+|---|---|
+| Who holds `80`/`443` (and `HUB_PORT`/`WEB_PORT`) | The process (from `ss -ltnp`) or, for `docker-proxy`, the container. Specific advice for nginx, Apache (`apache2`/`httpd`), Caddy, CloudPanel, Plesk, cPanel, Coolify's `coolify-proxy`, another Tugra, HAProxy/Traefik and anything else, with the exact command to free the port **and what it takes down**. Nothing is stopped for you. |
+| Host firewall | `ufw`, `firewalld`, `nftables`, `iptables`: whether inbound `80`/`443` (a raw-port install: its hub/web ports) are allowed, and the one-line command if not. A missing rule is a red cross only when a host program (your own nginx in front of Tugra) serves that port: Tugra's own proxy and raw ports are published by Docker, which these rules do not filter, so for them it is a note. |
+| Cloud provider | Hetzner, AWS, Google Cloud, Azure, DigitalOcean, Vultr, Linode/Akamai, Oracle, Scaleway, OVHcloud, Contabo or a generic KVM server, from `/sys/class/dmi/id`, cloud-init and the hostname; with where its cloud firewall lives (Hetzner Cloud Console → Firewalls, AWS Security Group inbound rules, …). |
+| IPv6 / DNS | Whether the host has a global IPv6 (Tailscale / Docker unique-local `fc00::/7` addresses do not count) and whether the domain's AAAA record points at it (a stale one is a red cross on an installed hub); a private/NAT address; the A record and Cloudflare advice the installer already gives for `--domain`. |
+| Tugra state | Containers up (including an agent that "Update agent" recreated outside compose as `tugra-agent-1`), `tugra-proxy`, the hub and the proxy routes on loopback, a valid certificate for `PANEL_DOMAIN`, and whether the local agent is connected (read from its log: a successful connect logs `hub session on <url> established`). |
+
+### Port 80 or 443 is already used
+
+The installer reports the holder and falls back to the raw ports (`http://<ip>:3001`) when `:80` is taken. To use
+the proxy instead, either free the port or let the existing server front Tugra:
+
+If your own nginx / Apache / CloudPanel already **fronts** Tugra ([Option B](#option-b--bring-your-own-reverse-proxy)), that
+holder is expected: the doctor reports it as the proxy in front of Tugra and asks only that `80`/`443` stay reachable.
+
+- **nginx / Apache / Caddy** — `sudo systemctl disable --now nginx` (or `apache2` / `httpd` / `caddy`) frees the port
+  and takes every site that server hosts offline until you start it again. To keep it, route to Tugra from it (see
+  [Option B](#option-b--bring-your-own-reverse-proxy)) and install with `--domain <host> --no-auto-tls`.
+- **CloudPanel** — do not stop its nginx: that takes every CloudPanel site and the admin on `:8443` down. Keep it
+  on 80/443 and add a vhost for the panel domain that follows the Option B routing table.
+- **Plesk / cPanel** — they regenerate their web server config, so keep them and use the raw ports, a proxy rule
+  in the panel, or a separate server for Tugra.
+- **Coolify** — `docker stop coolify-proxy` frees the ports but takes every app Coolify serves offline. Two
+  hubs that both want `:80`/`:443` belong on separate servers.
+- **Another Tugra** — manage that one (`./scripts/install.sh --doctor` in its directory); two hubs cannot share one
+  host's `:80`/`:443`.
+
+### The panel is not reachable from outside
+
+1. **Host firewall** — only matters for a program that runs on the host (your own nginx in front of Tugra); Tugra's
+   own proxy and raw ports are published by Docker and skip `ufw`/`iptables` INPUT rules (see 3). `sudo ufw allow 80/tcp && sudo ufw allow 443/tcp` (ufw),
+   `sudo firewall-cmd --permanent --add-port=80/tcp --add-port=443/tcp && sudo firewall-cmd --reload` (firewalld).
+   For iptables use `-I INPUT` (insert first) and for nftables `nft insert rule` (not `add`): a rule appended after a
+   blanket `REJECT`/`drop` never matches, which is what Oracle Cloud images ship.
+2. **Cloud firewall** — the provider's security group / firewall must allow TCP 80 and 443 (the doctor names where it
+   is for your provider). A server without one attached is not filtered on Hetzner; AWS, Azure, Google Cloud and
+   Oracle block everything not allowed.
+3. **Docker bypasses ufw** — a published port is reachable even when `ufw` denies it, because Docker inserts its own
+   NAT rules. Do not rely on `ufw` to hide the raw hub/web ports: use the cloud firewall, and keep them on loopback
+   (`HUB_BIND=127.0.0.1`, `WEB_BIND=127.0.0.1` in `.env`; a domain install does this for you).
+4. **Private address** — a cloud server behind NAT reports a private interface address; pass `--public-ip <ip>`.
+5. **IPv6** — a stale AAAA record that points elsewhere (or at a host with no IPv6) breaks HTTPS and the certificate
+   for IPv6 clients, because browsers and Let's Encrypt try IPv6 first. Delete the AAAA record or point it at this
+   host, and allow TCP 80/443 for IPv6 in the cloud firewall.
+
+### The certificate does not issue
+
+The doctor reports "No valid certificate" when the proxy serves its self-signed default. Let's Encrypt must reach the
+host over `:80`: the A record has to point at this server, `:80`/`:443` must be open (firewall and cloud firewall
+above) and, behind Cloudflare, SSL/TLS mode must be `Full` with `Always Use HTTPS` off while the first certificate
+issues. `docker logs tugra-proxy 2>&1 | grep -i acme` says why; re-run `./scripts/install.sh` afterwards.
 
 ## Next steps
 
