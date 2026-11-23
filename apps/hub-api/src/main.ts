@@ -13,10 +13,14 @@ import {
   trustProxyFn,
 } from "./common/observed-ip";
 import { applyTransferTimeouts } from "./common/http-timeouts";
+import { securityHeadersMiddleware } from "./common/security-headers";
 
 async function bootstrap() {
   // rawBody is needed to verify HMAC webhook signatures over the exact payload bytes.
   const app = await NestFactory.create(AppModule, { rawBody: true });
+  // nosniff / no framing / no referrer on every hub response (also reachable on the raw hub port).
+  app.use(securityHeadersMiddleware);
+  (app.getHttpAdapter().getInstance() as { disable(k: string): void }).disable("x-powered-by");
   // Behind the Next proxy / a reverse proxy the TCP peer is the proxy, so per-IP throttling would bucket every
   // browser user together. Only when the operator declares a proxy (HUB_TRUSTED_PROXY=true) trust exactly ONE
   // hop (req.ip = rightmost X-Forwarded-For entry, same rule as the PAT guard / agent gateway); never blanket-trust.

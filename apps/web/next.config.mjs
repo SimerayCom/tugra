@@ -9,6 +9,23 @@ const nextConfig = {
   // verify; a physical base backup; the restore-verify drill). Next's rewrite proxy would otherwise cut them at
   // its 30s default and the UI would report a failure for an operation that then completes server-side.
   experimental: { proxyTimeout: 600_000 },
+  poweredByHeader: false,
+  // Clickjacking / MIME-sniffing / referrer hardening for every panel page and proxied API response. The panel
+  // is never meant to be framed, so frame-ancestors 'none' (+ the legacy X-Frame-Options for old browsers).
+  async headers() {
+    return [
+      {
+        source: "/:path*",
+        headers: [
+          { key: "Content-Security-Policy", value: "frame-ancestors 'none'" },
+          { key: "X-Frame-Options", value: "DENY" },
+          { key: "X-Content-Type-Options", value: "nosniff" },
+          { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+          { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=(), payment=()" },
+        ],
+      },
+    ];
+  },
   // Same-origin proxy: the SPA calls "/api/v1/*" (relative), rewritten to the hub's versioned API so the
   // httpOnly session cookies stay same-origin (SameSite=Lax, no CORS). HUB_INTERNAL_URL is a server-side
   // env (the hub's address reachable from the Next server). OAuth start is exempt from the /api/v1 prefix
