@@ -11,6 +11,7 @@ import {
   RevClock,
   domainEndpoint,
   graceActive,
+  hostOfEndpoint,
   ipEndpoint,
   newGrace,
   normalizeEndpoints,
@@ -243,6 +244,11 @@ export class AgentEndpointsService implements OnApplicationBootstrap, OnModuleDe
         hubEndpointAt: new Date(),
       },
     });
+    // An agent refused a list as older than the one it holds, and that rev is above anything this hub process knows
+    // (the clock jumped forward once, or the hub was restored on a host whose clock is behind): raise the counter past
+    // it and send the list again, so a later domain change can still reach the agent. Bounded: after the raise the
+    // next rev is above the agent's, and a second refusal reports a rev no higher than the counter.
+    if (msg.accepted === false && typeof msg.rev === "number" && this.clock.observe(msg.rev)) await this.pushTo(serverId);
     await this.sweep();
   }
 
@@ -257,7 +263,17 @@ export class AgentEndpointsService implements OnApplicationBootstrap, OnModuleDe
       primary = ipEndpoint(target.ip, m.fingerprint);
     }
     const current = (await this.currentList()) ?? [];
-    return { primary, fallbacks: current.filter((e) => e.url !== primary.url) };
+    const fallbacks = current.filter((e) => e.url !== primary.url);
+    // IP mode: the IP route is ALWAYS kept as a fallback, whether or not its TLS has been confirmed "served"
+    // (currentList only lists it once ipTlsServedFp matches, which stays null with a loopback-bound proxy, a failed
+    // ensureProxy, or a local agent that has not reconnected since the upgrade). Without it the grace would carry no
+    // IP route and the switch would strand every agent that did not take the list — they all dial the IP.
+    const ip = this.ipModeAddress();
+    if (ip && !fallbacks.some((e) => e.url !== primary.url && hostOfEndpoint(e) === ip) && hostOfEndpoint(primary) !== ip) {
+      const m = await this.ensureIpTls(ip);
+      fallbacks.push(ipEndpoint(ip, m.fingerprint));
+    }
+    return { primary, fallbacks };
   }
 
   /**
@@ -268,7 +284,15 @@ export class AgentEndpointsService implements OnApplicationBootstrap, OnModuleDe
   async beginMove(plan: { primary: HubEndpoint; fallbacks: HubEndpoint[] }): Promise<{ total: number; moved: number }> {
     const remote = await this.remoteServers();
     if (remote.length === 0) return { total: 0, moved: 0 };
-    const grace: AgentEndpointGrace = { ...newGrace(plan.primary, plan.fallbacks, Date.now()), pendingSwitch: true };
+    // An earlier change whose grace is still open (a straggler has not moved) must survive this one failing early.
+    const earlier = parseGrace((await this.settings.get()).agentEndpointGrace);
+    const now = Date.now();
+    let previous: AgentEndpointGrace | undefined;
+    if (earlier && graceActive(earlier, now) && !earlier.pendingSwitch) {
+      const { previous: _p, ...rest } = earlier;
+      previous = rest;
+    } else if (earlier?.previous && graceActive(earlier.previous, now)) previous = earlier.previous; // a stale pending job: keep what it was protecting
+    const grace: AgentEndpointGrace = { ...newGrace(plan.primary, plan.fallbacks, now), pendingSwitch: true, ...(previous ? { previous } : {}) };
     await this.settings.update({ agentEndpointGrace: grace as unknown as object });
     await this.proxy.ensureProxy((await this.localId()) as string).catch((e) => this.logger.warn(`grace routes: ${(e as Error).message}`));
     await this.pushAll();
@@ -302,9 +326,13 @@ export class AgentEndpointsService implements OnApplicationBootstrap, OnModuleDe
   /** The change failed before the switch: forget the grace and point every agent back at the address that still works. */
   async cancelMove(): Promise<void> {
     const g = parseGrace((await this.settings.get()).agentEndpointGrace);
-    if (!g) return;
-    await this.settings.update({ agentEndpointGrace: Prisma.DbNull });
-    await this.pushAll(); // the steady list (the CURRENT address) — agents that went to the new one come back
+    // Only the grace THIS change opened (still waiting for the switch): a failure that came before moveAgents, or an
+    // earlier change's post-switch grace, is not ours to delete.
+    if (!g || !g.pendingSwitch) return;
+    const back = g.previous && graceActive(g.previous, Date.now()) ? g.previous : null;
+    await this.settings.update({ agentEndpointGrace: back ? (back as unknown as object) : Prisma.DbNull });
+    await this.pushAll(); // the steady list (the CURRENT address, plus any earlier grace) — agents that went to the new one come back
+    // (the caller re-renders the proxy afterwards)
   }
 
   /** Owner: "stop waiting for the rest" — drop the old routes now. */
@@ -316,10 +344,30 @@ export class AgentEndpointsService implements OnApplicationBootstrap, OnModuleDe
 
   private async endGrace(why: string): Promise<void> {
     this.logger.log(`agent address grace ended: ${why}`);
+    await this.recordStragglers(why);
     await this.settings.update({ agentEndpointGrace: Prisma.DbNull });
     await this.pushAll(); // the list without the old addresses
     const id = await this.localId();
     if (id) await this.proxy.ensureProxy(id).catch((e) => this.logger.warn(`grace routes drop: ${(e as Error).message}`));
+  }
+
+  /**
+   * The grace is a bounded promise (7 days), not a guarantee: an agent that never reported the new address (too old to
+   * understand the list, or offline the whole window) loses its old route when the grace ends and needs a re-install.
+   * The "did not move" list is only shown while the grace lasts, so write it down — log + audit — before it goes away.
+   */
+  private async recordStragglers(why: string): Promise<void> {
+    try {
+      const g = parseGrace((await this.settings.get()).agentEndpointGrace);
+      if (!g) return;
+      const left = (await this.progressFor(g.primary.url)).pending;
+      if (left.length === 0) return;
+      const names = left.map((p) => `${p.name} (${p.reason})`);
+      this.logger.warn(`agent address grace ended (${why}) with ${left.length} agent(s) still on the old address — they must be re-installed against ${g.primary.url}: ${names.join(", ")}`);
+      await this.prisma.auditLog?.create({ data: { actor: "system", action: "instance.panel_domain.agents_left_behind", target: g.primary.url, meta: { why, servers: left.slice(0, 50).map((p) => ({ id: p.id, name: p.name, reason: p.reason })) } } });
+    } catch (e) {
+      this.logger.warn(`straggler record: ${(e as Error).message}`);
+    }
   }
 
   /** Ends a grace that is done (everyone moved), expired, or abandoned. Safe to call often. */

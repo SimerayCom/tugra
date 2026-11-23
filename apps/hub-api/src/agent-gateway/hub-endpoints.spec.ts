@@ -50,6 +50,17 @@ describe("RevClock", () => {
     expect(d).toBeGreaterThan(b);
     expect(c.next(5000)).toBe(5000);
   });
+
+  it("observe raises the counter past a rev an agent already holds (clock jumped forward once), ignoring junk and lower revs", () => {
+    const c = new RevClock();
+    c.next(1000);
+    expect(c.observe(10_000_000)).toBe(true);
+    expect(c.next(2000)).toBe(10_000_001);
+    expect(c.observe(5)).toBe(false);
+    expect(c.observe(Number.NaN)).toBe(false);
+    expect(c.observe(Number.MAX_SAFE_INTEGER)).toBe(false); // out of range: a hostile report cannot wedge the counter
+    expect(c.next(2000)).toBe(10_000_002);
+  });
 });
 
 describe("signing (hub_endpoints / hubProof)", () => {

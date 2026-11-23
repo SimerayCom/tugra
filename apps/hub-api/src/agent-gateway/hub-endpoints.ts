@@ -56,14 +56,28 @@ export function serializeEndpoints(list: HubEndpoint[]): string {
 }
 
 /** Strictly increasing revision (anti-replay on the agent): wall-clock milliseconds, never repeating within a process,
- *  and still above any earlier hub process because the clock only moves forward. */
+ *  and raised past anything an agent says it already holds (`observe`) — so a clock that jumped forward once, or a hub
+ *  restored on a host whose clock is behind, cannot leave agents refusing every later list as "older". */
 export class RevClock {
   private last = 0;
   next(now: number = Date.now()): number {
     this.last = Math.max(this.last + 1, now);
     return this.last;
   }
+  /** The highest revision handed out or learned so far. */
+  peek(): number {
+    return this.last;
+  }
+  /** An agent reported holding `rev`; true when that is above everything this process knew (the next rev is then above it). */
+  observe(rev: number): boolean {
+    if (!Number.isSafeInteger(rev) || rev <= this.last || rev > MAX_OBSERVED_REV) return false;
+    this.last = rev;
+    return true;
+  }
 }
+
+/** An agent-reported revision above this is ignored (a compromised agent must not push the counter out of range). */
+const MAX_OBSERVED_REV = 2 ** 52;
 
 // ---- grace ------------------------------------------------------------------------------------------------------
 
@@ -83,6 +97,9 @@ export interface AgentEndpointGrace {
   /** The panel itself has not been switched to the new address yet (the panel-domain job is still running): agents may
    *  already be on the new endpoint, but the grace must not end — the hub's own address is still the old one. */
   pendingSwitch?: boolean;
+  /** The still-running grace of an EARLIER change this one replaced (only on a pendingSwitch grace): if this change
+   *  fails before the switch, it is restored instead of dropped — its stragglers must not lose their routes. */
+  previous?: AgentEndpointGrace;
 }
 
 export function newGrace(primary: HubEndpoint, fallbacks: HubEndpoint[], now: number, maxMs: number = GRACE_MAX_MS): AgentEndpointGrace {
@@ -91,7 +108,7 @@ export function newGrace(primary: HubEndpoint, fallbacks: HubEndpoint[], now: nu
 }
 
 /** Defensive read of the JSON column: anything malformed is "no grace" (never throws). */
-export function parseGrace(raw: unknown): AgentEndpointGrace | null {
+export function parseGrace(raw: unknown, nested = false): AgentEndpointGrace | null {
   if (!raw || typeof raw !== "object") return null;
   const g = raw as Partial<AgentEndpointGrace>;
   if (g.v !== 1 || typeof g.startedAt !== "number" || typeof g.expiresAt !== "number") return null;
@@ -106,6 +123,7 @@ export function parseGrace(raw: unknown): AgentEndpointGrace | null {
       fallbacks,
       ...(typeof g.confirmedAt === "number" ? { confirmedAt: g.confirmedAt } : {}),
       ...(g.pendingSwitch === true ? { pendingSwitch: true } : {}),
+      ...(!nested && g.previous ? ((p) => (p ? { previous: p } : {}))(parseGrace(g.previous, true)) : {}),
     };
   } catch {
     return null;

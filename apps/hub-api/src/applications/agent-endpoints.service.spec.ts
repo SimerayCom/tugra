@@ -1,7 +1,7 @@
 import { Prisma } from "@prisma/client";
 import { X509Certificate } from "node:crypto";
 import { AgentEndpointsService } from "./agent-endpoints.service";
-import { parseGrace } from "../agent-gateway/hub-endpoints";
+import { graceRoutes, parseGrace } from "../agent-gateway/hub-endpoints";
 import type { PrismaService } from "../prisma/prisma.service";
 import type { ConfigService } from "@nestjs/config";
 import type { CryptoService } from "../crypto/crypto.service";
@@ -44,6 +44,7 @@ function make(o: Opts = {}) {
         return s;
       }),
     },
+    auditLog: { create: jest.fn(async () => ({})) },
     instanceSettings: {
       updateMany: jest.fn(async ({ where, data }: { where: { ipTlsCertPem: null }; data: Record<string, unknown> }) => {
         if (row.ipTlsCertPem !== where.ipTlsCertPem) return { count: 0 };
@@ -225,6 +226,20 @@ describe("pushing and bookkeeping", () => {
     expect(m.servers[0]!.hubEndpointError).toBe("invalid signature");
   });
 
+  it("an agent refusing a list as older than the rev it holds (hub clock jumped / restored behind) raises the counter and gets the list again, once", async () => {
+    const m = make({ env: domainEnv, servers: [srv("a")] });
+    const held = Date.now() + 90 * 24 * 3600_000; // an earlier list pushed while the hub clock ran ahead
+    await m.svc.onState("a", { type: "hub_endpoint_state", rev: held, active: "wss://x/agent", primary: "wss://x/agent", accepted: false, error: "hub endpoint list is older than the one already accepted" });
+    expect(m.sent).toHaveLength(1);
+    expect(m.sent[0]!.msg.rev as number).toBeGreaterThan(held);
+    // the same report again (no new information) must not loop
+    await m.svc.onState("a", { type: "hub_endpoint_state", rev: held, active: "wss://x/agent", primary: "wss://x/agent", accepted: false, error: "malformed list" });
+    expect(m.sent).toHaveLength(1);
+    // and a successful report never triggers a push
+    await m.svc.onState("a", { type: "hub_endpoint_state", rev: held * 2, active: "wss://x/agent", primary: "wss://x/agent", accepted: true });
+    expect(m.sent).toHaveLength(1);
+  });
+
   it("bounds and sanitises a hostile report (oversized strings, junk rev)", async () => {
     const m = make({ env: domainEnv, servers: [srv("a")] });
     await m.svc.onState("a", { type: "hub_endpoint_state", rev: Number.NaN, active: "x".repeat(5000), primary: 7 as unknown as string, accepted: false });
@@ -250,6 +265,16 @@ describe("moving the agents (grace)", () => {
     // from a port-mode hub there is no current address to keep: the agents keep their own install-time URL
     const port = make({ env: { PANEL_IP_ROUTE: "0", WEB_PUBLIC_URL: "http://203.0.113.7:3001" } });
     expect((await port.svc.planMove({ kind: "domain", domain: "new.example.com" })).fallbacks).toEqual([]);
+  });
+
+  it("IP mode: the IP route stays a fallback even though its TLS was never confirmed served (it is what the agents dial)", async () => {
+    const m = make({ servers: [srv("a")] }); // PANEL_IP_ROUTE=1, http://203.0.113.7, ipTlsServedFp null
+    expect(await m.svc.currentList()).toBeNull();
+    const plan = await m.svc.planMove({ kind: "domain", domain: "new.example.com" });
+    expect(plan.primary.url).toBe(NEW);
+    expect(plan.fallbacks).toEqual([{ url: "wss://203.0.113.7/agent", pin: (await m.svc.ensureIpTls()).fingerprint }]);
+    await m.svc.beginMove(plan);
+    expect(graceRoutes(parseGrace(m.row.agentEndpointGrace), Date.now()).ip).toBe(true);
   });
 
   it("with no remote agent there is nothing to keep routable: no grace is created", async () => {
@@ -351,6 +376,42 @@ describe("moving the agents (grace)", () => {
     expect(m.row.agentEndpointGrace).toBeNull();
     expect(listOf(m).map((e: { url: string }) => e.url)).toEqual([OLD]);
     await m.svc.cancelMove(); // idempotent
+  });
+
+  it("an expired grace writes down the agents it leaves behind (the list is gone once the grace is)", async () => {
+    const m = make({ env: oldEnv, servers: [srv("a", NEW), srv("b", OLD)], supported: ["a"] });
+    m.row.agentEndpointGrace = { v: 1, startedAt: Date.now() - 8 * 24 * 3600_000, expiresAt: Date.now() - 1000, primary: { url: NEW }, fallbacks: [{ url: OLD }] };
+    await m.svc.sweep();
+    expect(m.row.agentEndpointGrace).toBeNull();
+    const create = (m.prisma as unknown as { auditLog: { create: jest.Mock } }).auditLog.create;
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(create.mock.calls[0][0].data).toMatchObject({ actor: "system", action: "instance.panel_domain.agents_left_behind", target: NEW });
+    expect(create.mock.calls[0][0].data.meta.servers).toEqual([{ id: "b", name: "srv-b", reason: "old_agent" }]);
+  });
+
+  it("cancel leaves a grace it did not open alone (a failure before moveAgents must not strand an earlier change's stragglers)", async () => {
+    const m = make({ env: oldEnv, servers: [srv("a", OLD)] });
+    const earlier = { v: 1, startedAt: Date.now(), expiresAt: Date.now() + 1e6, primary: { url: NEW }, fallbacks: [{ url: OLD }] };
+    m.row.agentEndpointGrace = earlier;
+    m.sent.length = 0;
+    await m.svc.cancelMove();
+    expect(m.row.agentEndpointGrace).toEqual(earlier);
+    expect(m.sent).toHaveLength(0);
+  });
+
+  it("cancel restores the earlier, still-open grace that this change replaced", async () => {
+    const m = make({ env: oldEnv, servers: [srv("a", OLD)] });
+    const earlier = { v: 1, startedAt: Date.now(), expiresAt: Date.now() + 1e6, primary: { url: NEW }, fallbacks: [{ url: OLD }] };
+    m.row.agentEndpointGrace = earlier;
+    await m.svc.beginMove({ primary: { url: "wss://third.example.com/agent" }, fallbacks: [{ url: NEW }, { url: OLD }] });
+    const during = parseGrace(m.row.agentEndpointGrace)!;
+    expect(during.pendingSwitch).toBe(true);
+    expect(during.previous?.primary.url).toBe(NEW);
+    m.sent.length = 0;
+    await m.svc.cancelMove();
+    expect(parseGrace(m.row.agentEndpointGrace)).toMatchObject({ primary: { url: NEW }, fallbacks: [{ url: OLD }] });
+    expect(parseGrace(m.row.agentEndpointGrace)!.pendingSwitch).toBeUndefined();
+    expect(listOf(m).map((e: { url: string }) => e.url)).toEqual([NEW, OLD]); // agents get the earlier list back
   });
 
   it("status: moved / total and each straggler with why; null when nothing is being waited on", async () => {

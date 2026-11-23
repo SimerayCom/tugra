@@ -81,9 +81,14 @@ it when it answers. Agents that do not advertise the feature keep using the sing
 prove it holds it: the agent sends a fresh `hubNonce` in `auth`/`enroll` and the hub answers with `hubProof`, an ed25519
 signature over `hubid\n<challenge>\n<hubNonce>` (the challenge is the hub's own per-connection nonce). A hub-pushed
 endpoint always needs the proof; once any proof has been seen an agent refuses a hub that stops sending it (no downgrade),
-and a different key than the pinned one is refused (`TUGRA_HUB_REPIN=1` accepts a changed `HUB_SIGNING_KEY` once). A
-hub-pushed endpoint can never make an agent resend its enroll token (`reenroll` is honoured only on the install-time
-address).
+and a different key than the pinned one is refused (`TUGRA_HUB_REPIN=1` accepts a changed `HUB_SIGNING_KEY` once, on the
+install-time address only — unset it afterwards, because while it is set that address may re-pin). `enrolled` is accepted
+only as the answer to an `enroll` the agent actually sent (never to an `auth`), and a hub-pushed endpoint can neither
+re-pin, nor receive the enroll token, nor make an agent resend it (`reenroll` is honoured only on the install-time
+address). The proof ties the hub key to *this handshake*, not to the address or the TLS channel: an endpoint that holds a
+valid certificate for a stale name in an agent's list could relay a live hub's proof. That is why the hub removes old
+addresses when the grace ends and why a name you no longer control must not stay as the install address of an agent — a
+relay can read what the agent receives (env values, secrets) but cannot sign commands.
 
 **Transport.** A domain uses its publicly trusted certificate. A hub on a bare IP (`http://<ip>/` install) serves
 `wss://<ip>/agent` on :443 with **one persisted self-signed certificate** (ECDSA P-256, ~10 years, IP SAN, key encrypted at
@@ -102,7 +107,13 @@ endpoint, the owner presses *Stop waiting*, or 7 days pass (`InstanceSettings.ag
 `ProxyConfigService` into `agentHosts` / `agentIp`). Settings → Panel domain shows "N of M agents moved to the new
 address" and the ones that did not (offline, still waiting, or too old to follow). A change that fails before the switch
 points the agents back at the address that still works. Agents too old to understand `hub_endpoints` keep working on
-their single URL because the old route is kept for them.
+their single URL because the old route is kept for them — for as long as the grace lasts: it is bounded (7 days), so an
+agent that never reported the new address (too old, or offline the whole window) loses its old route then and must be
+re-installed against the new one. The hub writes those agents to its log and to the audit log
+(`instance.panel_domain.agents_left_behind`) when the grace ends, since the in-panel list goes away with it. A change that
+fails before the switch restores any earlier, still-open grace instead of dropping it. The route changes are written to the
+proxy's dynamic files in place: a grace starting or ending never recreates the proxy. The list revision is the hub's clock
+raised past whatever an agent reports holding, so a clock that jumped once does not leave agents refusing later lists.
 
 **Durable deploy commands and hub-restart recovery.** A deploy is one long shell command the hub sends and
 awaits. Agents that advertise the `cmd_journal_v1` feature keep an on-disk *command journal*: the hub marks the

@@ -13,7 +13,8 @@ vulnerability**, see the [security policy](../SECURITY.md) — please don't open
   bare-IP install the hub serves `wss://` with a persisted self-signed certificate whose fingerprint is in the install
   command; the agent pins that leaf. Plain `ws://` requires an explicit `--hub-insecure` (commands stay signed, but
   environment values and secrets would travel readable) and the UI warns about it. See
-  [architecture](architecture.md#hub--agent-protocol).
+  [architecture](architecture.md#hub--agent-protocol). The identity proof is bound to the handshake, not to the address:
+  keep only names you control as an agent's install address, and unset `TUGRA_HUB_REPIN` once the new key is accepted.
 - **Fail-closed secrets.** `HUB_SIGNING_KEY` is required in production (the hub won't boot without it
   outside dev/test). Stored secrets (env vars, credentials, DB connection strings) are encrypted at rest
   with `SECRETS_ENCRYPTION_KEY`; the key can be rotated without downtime (see
