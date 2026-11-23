@@ -1917,17 +1917,30 @@ describe("deploy-script", () => {
     expect(proxyConfigHash({ panel: { domain: null, ipRoute: true } })).not.toBe(proxyConfigHash({}));
   });
 
-  it("the hash folds the agent grace routes and the IP certificate (its fingerprint, never the key) only when used", () => {
+  it("the hash does NOT fold the agent grace routes or the IP certificate (a grace starting/ending must never recreate the proxy)", () => {
     const base = proxyConfigHash({ panel: { domain: "app.example.com" } });
-    expect(proxyConfigHash({ panel: { domain: "app.example.com", agentHosts: [] } })).toBe(base);
-    expect(proxyConfigHash({ panel: { domain: "app.example.com", agentHosts: ["old.example.com"] } })).not.toBe(base);
-    expect(proxyConfigHash({ panel: { domain: "app.example.com", agentIp: true } })).not.toBe(base);
+    expect(proxyConfigHash({ panel: { domain: "app.example.com", agentHosts: ["old.example.com"] } })).toBe(base);
+    expect(proxyConfigHash({ panel: { domain: "app.example.com", agentIp: true } })).toBe(base);
     const a = proxyConfigHash({ panel: { domain: null, ipRoute: true, ipTls: { certPem: "CERT-A", keyPem: "KEY-A" } } });
     const b = proxyConfigHash({ panel: { domain: null, ipRoute: true, ipTls: { certPem: "CERT-B", keyPem: "KEY-A" } } });
-    expect(a).not.toBe(proxyConfigHash({ panel: { domain: null, ipRoute: true } })); // turning TLS on recreates the proxy once
-    expect(a).not.toBe(b); // a new certificate does too
-    expect(proxyConfigHash({ panel: { domain: null, ipRoute: true, ipTls: { certPem: "CERT-A", keyPem: "OTHER" } } })).toBe(a); // the key is not an input
+    expect(a).toBe(proxyConfigHash({ panel: { domain: null, ipRoute: true } }));
+    expect(a).toBe(b);
     expect(proxyConfigPreimage({ panel: { domain: null, ipRoute: true, ipTls: { certPem: "CERT-A", keyPem: "KEY-A" } } })).not.toContain("KEY-A");
+  });
+
+  it("an up-to-date proxy gets the grace routes / certificate written IN PLACE (only when changed), inside the gate and before it exits", () => {
+    const s = buildProxySetupScript({ panel: { domain: "app.example.com", agentHosts: ["old.example.com"], ipTls: { certPem: "CERT", keyPem: "SECRETKEY" } } });
+    const gateStart = s.indexOf('if [ "$CUR" = "$DESIRED" ]');
+    const gateEnd = s.indexOf("exit 0; fi");
+    const gate = s.slice(gateStart, gateEnd);
+    expect(gate).toContain("cmp -s /etc/tugra/proxy-dynamic/.panel.yml.tmp /etc/tugra/proxy-dynamic/panel.yml");
+    expect(gate).toContain("cmp -s /etc/tugra/proxy-dynamic/iptls/.cert.pem.tmp /etc/tugra/proxy-dynamic/iptls/cert.pem");
+    expect(gate).toContain("umask 077");
+    expect(gate).not.toContain("docker rm");
+    expect(gate).not.toContain("docker run");
+    expect(s).not.toContain("SECRETKEY");
+    // the gate refreshes the files but the recreate path below is still the full write
+    expect(s.indexOf("docker rm -f tugra-proxy")).toBeGreaterThan(gateEnd);
   });
 
   it("the IP certificate is written (0600 key, atomic) BEFORE the router file that references it; the key never appears in clear text", () => {
@@ -2057,7 +2070,8 @@ describe("deploy-script", () => {
       });
       const skip = s.indexOf("exit 0; fi");
       expect(skip).toBeGreaterThanOrEqual(0);
-      // every host-touching step sits after the skip — a skipped reconcile touches NOTHING
+      // every host-touching step sits after the skip — a skipped reconcile touches nothing but the hot-reloaded panel
+      // files (refreshed in place, only when changed; asserted separately), so the LAST occurrence is the recreate one
       for (const step of [
         "touch /etc/tugra/letsencrypt/acme.json",
         "printf %s '", // dns env-file / panel YAML blob writes
@@ -2065,8 +2079,10 @@ describe("deploy-script", () => {
         "/etc/tugra/proxy-dynamic/.panel.yml.tmp",
         "mkdir -p /etc/tugra/proxy-logs",
       ]) {
-        expect(s.indexOf(step)).toBeGreaterThan(skip);
+        expect(s.lastIndexOf(step)).toBeGreaterThan(skip);
       }
+      expect(s.indexOf("touch /etc/tugra/letsencrypt/acme.json")).toBeGreaterThan(skip);
+      expect(s.indexOf("/etc/tugra/proxy/dns.env")).toBeGreaterThan(skip);
     });
 
     it("force:true omits the gate entirely — no skip, always docker rm -f + run", () => {

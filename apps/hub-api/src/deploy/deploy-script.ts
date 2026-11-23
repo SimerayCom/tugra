@@ -2383,12 +2383,12 @@ export function proxyConfigPreimage(opts: ProxySetupOpts = {}): string {
     ? `panel=${opts.panel.domain ?? "-"}:${r.panelResolver}:${r.panelHttpOnly ? "http" : "tls"}` +
       // Only added when used, so a pre-existing single-domain proxy keeps its hash (no needless recreate on upgrade).
       (opts.panel.also?.length ? `:also=${opts.panel.also.join(",")}` : "") +
-      (opts.panel.ipRoute ? ":ip" : "") +
-      (opts.panel.agentHosts?.length ? `:agent=${opts.panel.agentHosts.join(",")}` : "") +
-      (opts.panel.agentIp ? ":aip" : "") +
-      // The certificate's own hash (never the key): a new certificate recreates the proxy exactly once.
-      (opts.panel.ipTls && !r.panelHttpOnly ? `:iptls=${createHash("sha256").update(opts.panel.ipTls.certPem).digest("hex").slice(0, 12)}` : "")
+      (opts.panel.ipRoute ? ":ip" : "")
     : "panel=none";
+  // NOT folded into the hash: the agent grace routes (agentHosts / agentIp) and the IP certificate. They live in the
+  // dynamic router file + cert files, which Traefik hot-reloads: a grace starting or ending (unattended, on a straggler's
+  // report or at expiry) must never recreate the proxy and drop every routed app. The reconcile gate rewrites those
+  // files in place instead (see hotPanelWriteSteps).
   return [
     `v=${PROXY_SETUP_VERSION}`,
     `img=${PROXY_IMAGE}`,
@@ -2476,6 +2476,17 @@ export function buildProxySetupScript(opts: ProxySetupOpts = {}): string {
 
   // Panel router file: object => atomic write (tmp+mv INSIDE the mounted dir so fsnotify fires); null =>
   // remove; undefined => leave untouched.
+  const panelYaml = (p: PanelProxyConfig) =>
+    buildPanelRouterYaml({
+      domain: p.domain,
+      resolver: panelResolver,
+      httpOnly: panelHttpOnly,
+      also: p.also,
+      ipRoute: p.ipRoute,
+      agentHosts: p.agentHosts,
+      agentIp: p.agentIp,
+      ipTls: p.ipTls,
+    });
   const panelWriteSteps =
     opts.panel === undefined
       ? []
@@ -2484,20 +2495,7 @@ export function buildProxySetupScript(opts: ProxySetupOpts = {}): string {
         : [
             // The certificate files first: the router file references them and Traefik reads both on its first load.
             ...(opts.panel.ipTls && !panelHttpOnly ? ipTlsWriteSteps(opts.panel.ipTls) : []),
-            `printf %s ${shq(
-              b64(
-                buildPanelRouterYaml({
-                  domain: opts.panel.domain,
-                  resolver: panelResolver,
-                  httpOnly: panelHttpOnly,
-                  also: opts.panel.also,
-                  ipRoute: opts.panel.ipRoute,
-                  agentHosts: opts.panel.agentHosts,
-                  agentIp: opts.panel.agentIp,
-                  ipTls: opts.panel.ipTls,
-                }),
-              ),
-            )} | base64 -d > ${PROXY_DYNAMIC_DIR}/.${PANEL_FILE}.tmp`,
+            `printf %s ${shq(b64(panelYaml(opts.panel)))} | base64 -d > ${PROXY_DYNAMIC_DIR}/.${PANEL_FILE}.tmp`,
             `mv ${PROXY_DYNAMIC_DIR}/.${PANEL_FILE}.tmp ${PROXY_DYNAMIC_DIR}/${PANEL_FILE}`,
           ];
   // When a panel is configured Traefik must join the dedicated tugra-panel network (attachment is lost on
@@ -2521,7 +2519,15 @@ export function buildProxySetupScript(opts: ProxySetupOpts = {}): string {
         `DESIRED=${shq(hash)}`,
         `CUR=$(docker inspect -f '{{index .Config.Labels "${PROXY_CONFIGHASH_LABEL}"}}' ${PROXY_NAME} 2>/dev/null || echo "")`,
         `STATE=$(docker inspect -f '{{.State.Status}}' ${PROXY_NAME} 2>/dev/null || echo absent)`,
-        `if [ "$CUR" = "$DESIRED" ] && [ "$STATE" = "running" ]; then echo "${PROXY_NAME} up to date ($DESIRED)"; exit 0; fi`,
+        // Up to date: only the hot-reloaded panel files (grace routes, IP certificate) may still need to change — written in
+        // place, and only when their content differs, so the proxy is never recreated for them.
+        ...(opts.panel
+          ? [
+              `if [ "$CUR" = "$DESIRED" ] && [ "$STATE" = "running" ]; then`,
+              ...hotPanelWriteSteps(opts.panel, panelHttpOnly, panelYaml(opts.panel)).map((l) => `  ${l}`),
+              `  echo "${PROXY_NAME} up to date ($DESIRED)"; exit 0; fi`,
+            ]
+          : [`if [ "$CUR" = "$DESIRED" ] && [ "$STATE" = "running" ]; then echo "${PROXY_NAME} up to date ($DESIRED)"; exit 0; fi`]),
       ];
 
   // Everything that TOUCHES the host — the destructive container replace, the acme / dns-env-file / panel /
@@ -2558,6 +2564,24 @@ export function buildProxySetupScript(opts: ProxySetupOpts = {}): string {
     ...gate,
     ...recreate,
   ].join("\n");
+}
+
+/** Write `body` to `dest` atomically and ONLY when it differs from what is there (an unchanged file must not make Traefik reload). */
+function writeIfChanged(dest: string, body: string, umask: string): string {
+  const tmp = `${dest.replace(/[^/]+$/, ".$&")}.tmp`;
+  return `( umask ${umask}; printf %s ${shq(b64(body))} | base64 -d > ${tmp} && { cmp -s ${tmp} ${dest} && rm -f ${tmp} || mv ${tmp} ${dest}; } )`;
+}
+
+/** The in-place (no recreate) refresh of the panel's dynamic files, run when the proxy is already up to date. */
+function hotPanelWriteSteps(panel: PanelProxyConfig, httpOnly: boolean, yaml: string): string[] {
+  const d = IP_TLS_HOST_DIR;
+  return [
+    `mkdir -p ${PROXY_DYNAMIC_DIR}`,
+    ...(panel.ipTls && !httpOnly
+      ? [`mkdir -p ${d}`, writeIfChanged(`${d}/key.pem`, panel.ipTls.keyPem, "077"), writeIfChanged(`${d}/cert.pem`, panel.ipTls.certPem, "022")]
+      : []),
+    writeIfChanged(`${PROXY_DYNAMIC_DIR}/${PANEL_FILE}`, yaml, "022"),
+  ];
 }
 
 /** Write the IP-mode certificate + key next to the router file: 0600 key (umask), atomic (tmp + mv) so Traefik never reads half a PEM. */
