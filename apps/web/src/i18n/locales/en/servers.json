@@ -334,5 +334,9 @@
   "tunnelConnecting": "Tunnel created — connecting to Cloudflare…",
   "tunnelConnectingBtn": "Connecting…",
   "tunnelDisconnected": "Tunnel disconnected",
-  "tunnelDisconnecting": "Disconnecting…"
+  "tunnelDisconnecting": "Disconnecting…",
+  "systemBadge": "system",
+  "showSystemContainers": "Show Tugra system containers",
+  "hideSystemContainers": "Hide Tugra system containers",
+  "systemSummary": "Tugra system: {count} containers · CPU {cpu}% · RAM {ram} (hidden)"
 }

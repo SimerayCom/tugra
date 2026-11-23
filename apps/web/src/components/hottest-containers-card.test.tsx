@@ -10,6 +10,7 @@ import type { HottestContainerRow } from "../lib/types";
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  try { localStorage.clear(); } catch { /* ignore */ }
 });
 
 let qc: QueryClient;
@@ -38,7 +39,7 @@ describe("HottestContainersCard", () => {
     ]);
     wrap(<HottestContainersCard teamId="t1" />);
     expect(await screen.findByText("WordPress")).toBeTruthy();
-    expect(spy).toHaveBeenCalledWith(10, "t1");
+    expect(spy).toHaveBeenCalledWith(30, "t1"); // over-fetch so hidden system rows still leave a top-10
     expect(screen.getByRole("table", { name: "Hottest containers" })).toBeTruthy();
     expect(screen.getByRole("link", { name: "WordPress" }).getAttribute("href")).toBe("/apps/app1");
     expect(screen.getByRole("link", { name: "main-pg" }).getAttribute("href")).toBe("/databases/d1");
@@ -51,6 +52,24 @@ describe("HottestContainersCard", () => {
     expect(within(rows[0]).getByText("80%")).toBeTruthy();
     expect(within(rows[0]).getByText("512 MB / 1.0 GB")).toBeTruthy();
     expect(within(rows[2]).getByText("3")).toBeTruthy();
+  });
+
+  it("hides Tugra system containers by default behind a remembered toggle, with a summary line", async () => {
+    vi.spyOn(api, "getFleetHottestContainers").mockResolvedValue([
+      row({ containerName: "tugra-hub-api-1", label: "hub-api", kind: "system", resourceId: undefined, cpu: 9, memUsed: 300 * 1024 * 1024 }),
+      row({}),
+      row({ containerName: "tugra-redis-1", label: "redis", kind: "system", resourceId: undefined, cpu: 1, memUsed: 20 * 1024 * 1024 }),
+    ]);
+    wrap(<HottestContainersCard />);
+    expect(await screen.findByText("WordPress")).toBeTruthy();
+    expect(screen.queryByText("hub-api")).toBeNull();
+    expect(screen.getAllByRole("row").slice(1)).toHaveLength(1);
+    expect(screen.getByText("Tugra system: 2 containers · CPU 10% · RAM 320 MB (hidden)")).toBeTruthy();
+    screen.getByRole("button", { name: "Show Tugra system containers" }).click();
+    expect(await screen.findByText("hub-api")).toBeTruthy();
+    expect(screen.getAllByRole("row").slice(1)).toHaveLength(3);
+    expect(localStorage.getItem("tugra.showSystemContainers")).toBe("1");
+    expect(screen.getByRole("button", { name: "Hide Tugra system containers" })).toBeTruthy();
   });
 
   it("shows an empty state when nothing is live", async () => {

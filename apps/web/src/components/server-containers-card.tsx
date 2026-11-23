@@ -15,6 +15,7 @@ import { Server, Cpu, MemoryStick, HardDrive, ArrowDownUp, Play, RotateCw, Squar
 import { Modal } from "./modal";
 import { LiveLogsCard } from "./live-logs-card";
 import { useToast } from "./toast";
+import { useShowSystemContainers, splitSystem } from "../lib/system-containers";
 
 /** Live inventory of every container on a server (Tugra + others) with its latest CPU/RAM/Net/Disk.
  *  Read-level stats; writers can also open any container's live logs from here. Polls (no SSE for stats). */
@@ -23,6 +24,7 @@ export function ServerContainersCard({ id, canWrite = false }: { id: string; can
   const qc = useQueryClient();
   const toast = useToast();
   const [logsFor, setLogsFor] = useState<string | null>(null);
+  const [showSystem, setShowSystem] = useShowSystemContainers();
   const [removeFor, setRemoveFor] = useState<string | null>(null);
   const [confirmText, setConfirmText] = useState("");
   const { data, isLoading } = useQuery({
@@ -62,19 +64,29 @@ export function ServerContainersCard({ id, canWrite = false }: { id: string; can
   const rows = data?.containers ?? [];
   // Only the containers that are NOT currently running (so they aren't already in the stats table above).
   const runningNames = new Set(rows.map((r) => r.name));
-  const stopped = (allData?.containers ?? []).filter((c) => c.state !== "running" && !runningNames.has(c.name));
+  const stoppedAll = (allData?.containers ?? []).filter((c) => c.state !== "running" && !runningNames.has(c.name));
+  const { visible, system } = splitSystem(rows, showSystem);
+  const stopped = showSystem ? stoppedAll : stoppedAll.filter((c) => c.kind !== "system");
+  const systemCount = system.count + stoppedAll.filter((c) => c.kind === "system").length;
 
   if (isLoading && rows.length === 0) {
     return <Card style={{ padding: 16, display: "flex", justifyContent: "center" }}><Spinner /></Card>;
   }
   // Gate the empty state on data ABSENCE only — a failed BACKGROUND poll keeps the last-good rows in
   // `data`, so keying on isError here would flash "no containers" over a populated table on any blip.
-  if (rows.length === 0 && stopped.length === 0) {
+  if (rows.length === 0 && stoppedAll.length === 0) {
     return <Card style={{ padding: 16 }}><EmptyState>{t("servers.noContainers")}</EmptyState></Card>;
   }
 
   return (
     <>
+      {systemCount > 0 && (
+        <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
+          <Btn variant="ghost" icon={Server} aria-pressed={showSystem} onClick={() => setShowSystem(!showSystem)}>
+            {showSystem ? t("servers.hideSystemContainers") : t("servers.showSystemContainers")}
+          </Btn>
+        </div>
+      )}
       <Card style={{ padding: 0, overflowX: "auto" }}>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
           <thead>
@@ -88,7 +100,7 @@ export function ServerContainersCard({ id, canWrite = false }: { id: string; can
             </tr>
           </thead>
           <tbody>
-            {rows.map((r) => (
+            {visible.map((r) => (
               <ContainerRow
                 key={r.name}
                 row={r}
@@ -109,6 +121,16 @@ export function ServerContainersCard({ id, canWrite = false }: { id: string; can
                 onRemove={() => { setRemoveFor(c.name); setConfirmText(""); }}
               />
             ))}
+            {!showSystem && systemCount > 0 && (
+              <tr style={{ borderBottom: "1px solid var(--c-bd)", color: "var(--c-tx3)" }}>
+                <Td colSpan={canWrite ? 6 : 5}>
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                    <KindIcon kind="system" />
+                    {t("servers.systemSummary", { count: systemCount, cpu: system.cpu.toFixed(0), ram: fmtBytes(system.memUsed) })}
+                  </span>
+                </Td>
+              </tr>
+            )}
           </tbody>
         </table>
       </Card>
@@ -181,7 +203,7 @@ function ContainerRow({ row, canWrite, busy, onLogs, onAction, onRemove }: {
           ) : (
             row.label
           )}
-          {row.kind === "system" && <Badge tone="muted">system</Badge>}
+          {row.kind === "system" && <Badge tone="muted">{t("servers.systemBadge")}</Badge>}
           {/* These rows are running (they reported docker stats), so pass status=running: the exit badge
               is suppressed here and belongs to the stopped list; restarts/unhealthy/OOM still surface. */}
           {containerBadges({ ...row, status: "running" }).map((b) => (
@@ -235,7 +257,7 @@ function StoppedRow({ row, canWrite, busy, onStart, onRemove }: {
           ) : (
             row.label
           )}
-          {row.kind === "system" && <Badge tone="muted">system</Badge>}
+          {row.kind === "system" && <Badge tone="muted">{t("servers.systemBadge")}</Badge>}
         </div>
         <div className="mono" style={{ fontSize: 11, color: "var(--c-tx3)", wordBreak: "break-all", marginTop: 2 }}>{row.name}</div>
       </Td>

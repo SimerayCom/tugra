@@ -12,26 +12,43 @@ import { useT } from "../i18n/provider";
 import { Btn, Card } from "./ui";
 import { MeterBar } from "./meter-bar";
 import { SkeletonTable } from "./skeleton";
+import { useShowSystemContainers, splitSystem } from "../lib/system-containers";
 
 const HOTTEST_LIMIT = 10;
+// Over-fetch so hiding Tugra's own containers still leaves a full top-10 of the user's.
+const HOTTEST_FETCH = 30;
 const KIND_ICON: Record<HottestContainerRow["kind"], LucideIcon> = { app: Boxes, db: Database, system: Server, other: Box };
 
 /** Fleet-wide "hottest containers": the live containers across every server the caller can see, ranked by
  *  CPU (one hub call; the hub scopes it to the caller's servers). Polls like the other fleet widgets. */
 export function HottestContainersCard({ teamId }: { teamId?: string | null }) {
   const t = useT();
+  const [showSystem, setShowSystem] = useShowSystemContainers();
   const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ["fleetHottestContainers", teamId ?? null],
-    queryFn: () => api.getFleetHottestContainers(HOTTEST_LIMIT, teamId ?? undefined),
+    queryFn: () => api.getFleetHottestContainers(HOTTEST_FETCH, teamId ?? undefined),
     select: (d) => (Array.isArray(d) ? d : []),
     refetchInterval: 10_000,
   });
-  const rows = data ?? [];
+  const { visible, system } = splitSystem(data ?? [], showSystem);
+  const rows = visible.slice(0, HOTTEST_LIMIT);
   const title = t("dashboard.hottest");
   return (
     <section aria-labelledby="hottest-title" style={{ marginBottom: 28 }}>
       <div id="hottest-title" style={{ fontSize: 13, fontWeight: 600, color: "var(--c-tx)" }}>{title}</div>
-      <div style={{ fontSize: 11, lineHeight: 1.4, color: "var(--c-tx3)", margin: "2px 0 10px" }}>{t("dashboard.hottestHint")}</div>
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, flexWrap: "wrap", margin: "2px 0 10px" }}>
+        <div style={{ fontSize: 11, lineHeight: 1.4, color: "var(--c-tx3)" }}>
+          {t("dashboard.hottestHint")}
+          {!showSystem && system.count > 0 && (
+            <span style={{ display: "block" }}>{t("servers.systemSummary", { count: system.count, cpu: system.cpu.toFixed(0), ram: fmtBytes(system.memUsed) })}</span>
+          )}
+        </div>
+        {system.count > 0 && (
+          <Btn variant="ghost" icon={Server} aria-pressed={showSystem} onClick={() => setShowSystem(!showSystem)}>
+            {showSystem ? t("servers.hideSystemContainers") : t("servers.showSystemContainers")}
+          </Btn>
+        )}
+      </div>
       {isLoading ? (
         <SkeletonTable rows={3} />
       ) : isError && data === undefined ? (
