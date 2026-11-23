@@ -22,6 +22,7 @@ const ONLINE = { id: "s-local", status: "ONLINE", publicIp: "203.0.113.9" };
 function make(o: Opts = {}) {
   const store = new Map<string, string>();
   const queue: string[] = [];
+  const seenAtQueue: string[] = [];
   const redis = {
     get: jest.fn(async (k: string) => store.get(k) ?? null),
     set: jest.fn(async (k: string, v: string) => void store.set(k, v)),
@@ -31,7 +32,18 @@ function make(o: Opts = {}) {
       store.set(k, "1");
       return true;
     }),
-    client: { lpush: jest.fn(async (_k: string, v: string) => void queue.push(v)) },
+    client: {
+      // the status the hub has recorded at the moment a job lands in the queue (the updater checks it before applying)
+      lpush: jest.fn(async (_k: string, v: string) => {
+        seenAtQueue.push(store.get(PANEL_DOMAIN_STATUS_KEY) ?? "");
+        queue.push(v);
+      }),
+      lrem: jest.fn(async (_k: string, _n: number, v: string) => {
+        let removed = 0;
+        for (let i = queue.length - 1; i >= 0; i--) if (queue[i] === v) (queue.splice(i, 1), removed++);
+        return removed;
+      }),
+    },
   } as unknown as RedisService;
   const server = "local" in o ? o.local : ONLINE;
   const prisma = {
@@ -63,7 +75,7 @@ function make(o: Opts = {}) {
   svc.timing = { certTimeout: 30, certPoll: 1, ackTimeout: 40, applyTimeout: 80, watchPoll: 1_000_000, settleTries: 1 };
   const job = () => JSON.parse(store.get(PANEL_DOMAIN_STATUS_KEY) ?? "null");
   const runner = () => (svc as unknown as { runner: Promise<void> | null }).runner;
-  return { svc, store, queue, redis, sendCommand, audit, settings, proxy, job, runner };
+  return { svc, store, queue, seenAtQueue, redis, sendCommand, audit, settings, proxy, job, runner };
 }
 
 describe("PanelDomainService.set", () => {
@@ -74,6 +86,26 @@ describe("PanelDomainService.set", () => {
     await expect(svc.set("u1", { domain: "panel.example.com", acmeEmail: "admin@example.com" })).rejects.toBeInstanceOf(BadRequestException);
     expect(proxy.ensureProxy).not.toHaveBeenCalled();
     expect(store.size).toBe(0);
+  });
+
+  it("rejects an email the update helper would refuse (so it is never saved or half-applied)", async () => {
+    const { svc, settings, store, proxy } = make();
+    for (const bad of ["o'brien@real-domain.io", "a$b@real-domain.io", "a&b@real-domain.io"]) {
+      await expect(svc.set("u1", { domain: "panel.example.com", acmeEmail: bad })).rejects.toBeInstanceOf(BadRequestException);
+    }
+    expect(settings.update).not.toHaveBeenCalled();
+    expect(proxy.ensureProxy).not.toHaveBeenCalled();
+    expect(store.size).toBe(0);
+  });
+
+  it("a failure before any job exists releases the lock (a retry is not told 'already running' for 15 minutes)", async () => {
+    const m = make();
+    (m.settings.update as jest.Mock).mockRejectedValueOnce(new Error("db down"));
+    await expect(m.svc.set("u1", { domain: "panel.example.com", acmeEmail: "ops@real-domain.io" })).rejects.toThrow("db down");
+    expect(m.store.has("instance:panel-domain:lock")).toBe(false);
+    await m.svc.set("u1", { domain: "panel.example.com", acmeEmail: "ops@real-domain.io" }); // the retry goes through
+    await m.runner();
+    expect(m.queue).toHaveLength(1);
   });
 
   it("happy path: proxy first, certificate verified, THEN the updater job; the pending router is stored; audited; email optional", async () => {
@@ -206,6 +238,31 @@ describe("PanelDomainService.reconcile (driven by the panel's poll)", () => {
     expect(m.store.has(PANEL_PENDING_KEY)).toBe(false);
   });
 
+  it("a job the hub rolled back is pulled out of the updater's queue, so a late sidecar can never apply it", async () => {
+    const m = await switching();
+    expect(m.queue).toHaveLength(1);
+    await new Promise((r) => setTimeout(r, 60));
+    await m.svc.reconcile();
+    expect(m.job()).toMatchObject({ phase: "failed", code: "updater_stale" });
+    expect(m.queue).toHaveLength(0);
+  });
+
+  it("the hub records 'switching' BEFORE the job can be popped (the updater only applies a job the hub still lists as switching)", async () => {
+    const m = await switching();
+    expect(JSON.parse(m.seenAtQueue[0])).toMatchObject({ phase: "switching", jobId: JSON.parse(m.queue[0]).jobId });
+  });
+
+  it("the updater's special outcomes keep their own code and the prefix is stripped from the message", async () => {
+    const a = await switching();
+    a.store.set(PANEL_DOMAIN_UPDATER_KEY, JSON.stringify({ jobId: a.job().jobId, phase: "failed", error: "unreachable: https://panel.example.com did not answer; the previous URL was restored" }));
+    await a.svc.reconcile();
+    expect(a.job()).toMatchObject({ phase: "failed", code: "unreachable", error: "https://panel.example.com did not answer; the previous URL was restored" });
+    const b = await switching();
+    b.store.set(PANEL_DOMAIN_UPDATER_KEY, JSON.stringify({ jobId: b.job().jobId, phase: "failed", error: "restore_unverified: the hub did not become healthy and the previous configuration could not be verified" }));
+    await b.svc.reconcile();
+    expect(b.job()).toMatchObject({ phase: "failed", code: "restore_unverified" });
+  });
+
   it("an 'applying' updater that never finishes times out", async () => {
     const m = await switching();
     m.store.set(PANEL_DOMAIN_UPDATER_KEY, JSON.stringify({ jobId: m.job().jobId, phase: "applying", error: null }));
@@ -257,6 +314,16 @@ describe("PanelDomainService.status", () => {
     const d = await make({ env: { WEB_PUBLIC_URL: "https://panel.example.com", PANEL_IP_ROUTE: undefined } }).svc.status();
     expect(d).toMatchObject({ mode: "domain", domain: "panel.example.com", localServerOnline: true });
     expect((await make({ env: { WEB_PUBLIC_URL: "http://203.0.113.9:3001", PANEL_IP_ROUTE: undefined } }).svc.status()).mode).toBe("port");
+  });
+  it("the view names where the panel is moving to: https://<domain> for a set, http://<ip> for a remove (never the address being left)", async () => {
+    const set = make();
+    await set.svc.set("u1", { domain: "panel.example.com" });
+    await set.runner();
+    expect((await set.svc.status()).job.targetUrl).toBe("https://panel.example.com");
+    const rm = make({ env: { WEB_PUBLIC_URL: "https://panel.example.com", PANEL_IP_ROUTE: "0", PANEL_TLS: "1" } });
+    await rm.svc.remove("u1", {});
+    await rm.runner();
+    expect((await rm.svc.status()).job.targetUrl).toBe("http://203.0.113.9");
   });
   it("is idle with no job", async () => {
     expect((await make().svc.status()).job).toMatchObject({ phase: "idle", action: null });

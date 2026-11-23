@@ -87,7 +87,7 @@ export function PanelDomainCard() {
         : t("settings.panelDomain_modePort", { url: data.url ?? "" });
 
   const box = { fontSize: 12, color: "var(--c-tx2)", background: "var(--c-el)", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: "9px 11px", marginTop: 12, lineHeight: 1.5 } as const;
-  const target = job?.action === "remove" ? data?.url ?? "" : job?.domain ? `https://${job.domain}` : "";
+  const target = job?.targetUrl ?? "";
   const steps: Array<{ phase: string; label: string }> =
     job?.action === "remove"
       ? [

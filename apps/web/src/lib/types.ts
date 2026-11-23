@@ -394,13 +394,14 @@ export interface PanelTlsStatus {
 
 /** Owner-set panel domain (GET/POST /instance/panel-domain): where the panel is served and the change in flight. */
 export type PanelDomainPhase = "idle" | "proxy" | "certificate" | "switching" | "done" | "failed";
-export type PanelDomainFailCode = "cert_timeout" | "proxy_failed" | "updater_stale" | "updater_failed" | "interrupted";
+export type PanelDomainFailCode = "cert_timeout" | "proxy_failed" | "updater_stale" | "updater_failed" | "unreachable" | "restore_unverified" | "interrupted";
 export interface PanelDomainJob {
   phase: PanelDomainPhase;
   action: "set" | "remove" | null;
   domain: string | null; // the host being switched to (null while removing)
+  targetUrl: string | null; // where the panel is moving to: https://<domain>, or http://<ip> while removing
   error: string | null;
-  code: PanelDomainFailCode | null; // why it failed; the previous URL kept working
+  code: PanelDomainFailCode | null; // why it failed; the previous URL kept working (restore_unverified: not confirmed)
   detail: string | null; // sanitized tail of the proxy's certificate log
   startedAt: string | null;
 }

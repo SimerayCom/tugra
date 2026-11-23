@@ -620,7 +620,65 @@ exec ${REAL_DF} "$@"
       expect(out).toContain("instance:panel-domain:updater");
       expect(out).not.toContain("instance:update:lock"); // not an update: never touches the update lock or the status key
       expect(out).not.toContain("instance:update:status");
-      expect(out).not.toContain("HUB_BIND"); // the raw ports are left as they are (remote agents may still dial them)
+      // the hub now trusts X-Forwarded-For: a still-public raw bind (here: no key = the compose default 0.0.0.0) goes to loopback
+      expect(out).toContain("SET_ENV: HUB_BIND=127.0.0.1");
+      expect(out).toContain("SET_ENV: WEB_BIND=127.0.0.1");
+      expect(out).toContain("probe https://panel.example.com/health"); // the real path is checked before the change is reported applied
+    });
+
+    it("a deliberate private-interface bind is left alone; an explicit 0.0.0.0 is moved to loopback", () => {
+      const withEnv = (envText: string): string => {
+        const envFile = join(dir, ".env.bind");
+        writeFileSync(envFile, envText);
+        return execFileSync("bash", [UPDATE_SH, "--dry-run", "--job", pdJob({ domain: "panel.example.com" })], {
+          stdio: "pipe",
+          env: { PATH: process.env.PATH, ENV_FILE: envFile } as NodeJS.ProcessEnv,
+        }).toString();
+      };
+      const kept = withEnv("TUGRA_VERSION=0.1.0\nHUB_BIND=10.0.0.5\nWEB_BIND=10.0.0.5\n");
+      expect(kept).not.toContain("SET_ENV: HUB_BIND");
+      expect(kept).not.toContain("SET_ENV: WEB_BIND");
+      const open = withEnv("TUGRA_VERSION=0.1.0\nHUB_BIND=0.0.0.0\nWEB_BIND=10.0.0.5\n");
+      expect(open).toContain("SET_ENV: HUB_BIND=127.0.0.1");
+      expect(open).not.toContain("SET_ENV: WEB_BIND");
+    });
+
+    it("an address that does not answer through the real path is rolled back: .env restored, hub recreated, reported as unreachable", () => {
+      const out = run(pdJob({ domain: "panel.example.com" }), { DRY_PROBE: "fail" });
+      expect(out).toContain("UNREACHABLE");
+      expect(out).toContain("restoring the previous configuration");
+      expect(out.match(/up -d --no-deps hub-api web/g)?.length).toBe(2);
+      expect(out).toContain('"error":"unreachable: https://panel.example.com did not answer');
+      expect(out).toContain("the previous URL was restored");
+      expect(out).not.toContain('"phase":"applied"');
+    });
+
+    it("the remove job (back to http://<ip>/) is not probed through the public name", () => {
+      expect(run(pdJob({ publicIp: "198.51.100.4" }))).not.toContain("probe https://");
+    });
+
+    it("a restore that cannot be verified is reported as restore_unverified", () => {
+      expect(run(pdJob({ domain: "panel.example.com" }), { DRY_HEALTH: "fail" })).toContain('"error":"restore_unverified: ');
+    });
+
+    describe("a job the hub already gave up on is never applied (queue age + the hub's own record)", () => {
+      const LIB = join(__dirname, "..", "..", "..", "..", "scripts", "lib", "paneldomain.sh");
+      const wants = (hubRecord: string, jobId = ID): number => {
+        const script = `DRY=0; redis() { printf '%s' "$FAKE_RECORD"; }; json_str() { printf '%s' "$1"; }; . "${LIB}"; pd_hub_wants "${jobId}"`;
+        return spawnSync("bash", ["-c", script], { env: { PATH: process.env.PATH, FAKE_RECORD: hubRecord } as NodeJS.ProcessEnv }).status ?? -1;
+      };
+      it("only a hub record that names this job in phase switching lets it through", () => {
+        expect(wants(`{"jobId":"${ID}","phase":"switching","action":"set"}`)).toBe(0);
+        expect(wants(`{"jobId":"${ID}","phase":"failed","action":"set"}`)).toBe(1); // the hub rolled back
+        expect(wants(`{"jobId":"other","phase":"switching"}`)).toBe(1); // a newer change replaced it
+        expect(wants("")).toBe(1); // no record at all
+      });
+      it("the sidecar's max job age is shorter than the hub's 90 s acknowledge window, and the hub check runs before anything is written", () => {
+        const lib = readFileSync(LIB, "utf8");
+        expect(lib).toMatch(/PANEL_DOMAIN_MAX_AGE="\$\{PANEL_DOMAIN_MAX_AGE:-60\}"/);
+        expect(lib.indexOf("pd_hub_wants \"$id\" ||")).toBeGreaterThan(0);
+        expect(lib.indexOf("pd_hub_wants \"$id\" ||")).toBeLessThan(lib.indexOf("set_env HUB_PUBLIC_URL"));
+      });
     });
 
     it("set without an email writes no ACME_EMAIL (it is optional)", () => {

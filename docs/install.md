@@ -88,7 +88,7 @@ If another service already listens on `:80`/`:443`, the installer keeps bring-yo
 **Behind Cloudflare (orange cloud):** this works **without a token**. Cloudflare forwards `:80` to your server, so
 HTTP-01 validates through the proxy. If the first certificate does not issue, set Cloudflare **SSL/TLS mode to
 Full** (not *Flexible*) and turn **Always Use HTTPS** off while it does (or set the record to *DNS only* for a
-minute); Tugra retries by itself. Prefer not to depend on `:80` reaching the server at all? A Cloudflare API token
+minute), then set the domain again (Settings → Panel domain) or re-run the installer to make Tugra ask Let's Encrypt again. Prefer not to depend on `:80` reaching the server at all? A Cloudflare API token
 switches the panel to **DNS-01** — a real certificate while the record stays proxied and your origin IP hidden — as
 an *option*:
 
@@ -112,14 +112,21 @@ the server and open **Settings → Instance → Panel domain** (owner only): ent
    working),
 2. waits for the Let's Encrypt certificate (HTTP-01, same Cloudflare notes as above),
 3. only then switches the instance's public URLs (`HUB_PUBLIC_URL`, `WEB_PUBLIC_URL`, `COOKIE_SECURE`,
-   `HUB_TRUSTED_PROXY`, `PANEL_TLS`, `PANEL_DOMAIN` in `.env`) and recreates hub + web. The change runs on the
+   `HUB_TRUSTED_PROXY`, `PANEL_TLS`, `PANEL_DOMAIN` in `.env`; a raw hub/web port still published on every interface
+   (`0.0.0.0`) moves to `127.0.0.1`, as `install.sh --domain` does) and recreates hub + web, then
+4. checks that `https://<domain>/health` answers **from the server itself through the real DNS and proxy path**
+   (a certificate on disk is not proof: Cloudflare *Flexible* or *Always Use HTTPS* can still loop) and reverts if it
+   does not. On a host that cannot reach its own public address, set `PANEL_DOMAIN_PROBE=0` in `.env` to skip this
+   check. The change runs on the
    update helper (the `tugra-updater` sidecar, the same checkout-and-docker path the in-app update uses; the hub
    never touches its own container). It needs a helper from this release — an older one is updated first
    (**Settings → Updates**) and the panel says so.
 
 **Rollback:** if the certificate is not issued in time (DNS not pointing here, `:80` unreachable, Cloudflare SSL
-mode *Flexible* …) or the hub does not come up on the new address, the pending routes are dropped and the previous
-`.env` is restored; the old address never stopped working and the panel shows the reason. **Remove domain** goes
+mode *Flexible* …), the hub does not come up on the new address, or the new address does not answer when the server
+tries it, the pending routes are dropped and the previous `.env` is restored and re-checked; the panel shows the
+reason (if the previous setup cannot be confirmed healthy it says so instead of claiming the old address works). A
+queued change the hub has given up on is removed from the update helper's queue and is never applied late. **Remove domain** goes
 back to `http://<server-ip>/` the same way. After a switch you sign in again at the new address (cookies are per
 origin), and agents installed on other servers with the old address need the new one (re-run their install command).
 

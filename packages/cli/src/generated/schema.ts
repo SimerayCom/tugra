@@ -24031,9 +24031,10 @@ export interface operations {
                             /** @enum {string|null} */
                             action: "set" | "remove" | null;
                             domain: string | null;
+                            targetUrl: string | null;
                             error: string | null;
                             /** @enum {string|null} */
-                            code: "cert_timeout" | "proxy_failed" | "updater_stale" | "updater_failed" | "interrupted" | null;
+                            code: "cert_timeout" | "proxy_failed" | "updater_stale" | "updater_failed" | "unreachable" | "restore_unverified" | "interrupted" | null;
                             detail: string | null;
                             startedAt: string | null;
                         };
@@ -24113,9 +24114,10 @@ export interface operations {
                             /** @enum {string|null} */
                             action: "set" | "remove" | null;
                             domain: string | null;
+                            targetUrl: string | null;
                             error: string | null;
                             /** @enum {string|null} */
-                            code: "cert_timeout" | "proxy_failed" | "updater_stale" | "updater_failed" | "interrupted" | null;
+                            code: "cert_timeout" | "proxy_failed" | "updater_stale" | "updater_failed" | "unreachable" | "restore_unverified" | "interrupted" | null;
                             detail: string | null;
                             startedAt: string | null;
                         };
@@ -24203,9 +24205,10 @@ export interface operations {
                             /** @enum {string|null} */
                             action: "set" | "remove" | null;
                             domain: string | null;
+                            targetUrl: string | null;
                             error: string | null;
                             /** @enum {string|null} */
-                            code: "cert_timeout" | "proxy_failed" | "updater_stale" | "updater_failed" | "interrupted" | null;
+                            code: "cert_timeout" | "proxy_failed" | "updater_stale" | "updater_failed" | "unreachable" | "restore_unverified" | "interrupted" | null;
                             detail: string | null;
                             startedAt: string | null;
                         };

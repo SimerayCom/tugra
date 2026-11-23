@@ -23,6 +23,9 @@ const STATUS_TTL_S = 6 * 3600;
 const ACTIVE = new Set(["proxy", "certificate", "switching"]);
 
 const IPV4_RE = /^(\d{1,3}\.){3}\d{1,3}$/;
+/** The email shape the update helper (scripts/lib/paneldomain.sh pd_valid_email) accepts: checked HERE so an address the
+ *  helper would refuse is rejected up front, before anything is saved or configured. */
+const HELPER_EMAIL_RE = /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/;
 
 interface StoredJob {
   jobId: string;
@@ -38,9 +41,11 @@ interface StoredJob {
   error: string | null;
   code: PanelDomainJob["code"];
   detail: string | null;
+  /** The exact queue payload handed to the updater, kept so a job the hub gives up on can be pulled back out of the queue. */
+  queued?: string | null;
 }
 
-const IDLE_JOB: PanelDomainJob = { phase: "idle", action: null, domain: null, error: null, code: null, detail: null, startedAt: null };
+const IDLE_JOB: PanelDomainJob = { phase: "idle", action: null, domain: null, targetUrl: null, error: null, code: null, detail: null, startedAt: null };
 
 function hostOf(u?: string | null): string | null {
   if (!u) return null;
@@ -120,6 +125,7 @@ export class PanelDomainService implements OnApplicationBootstrap {
     try {
       domain = validatePanelDomain(input.domain);
       email = optionalAcmeEmail(input.acmeEmail);
+      if (email && (email.length > 320 || !HELPER_EMAIL_RE.test(email))) throw new Error("the email contains characters that are not accepted here — use letters, digits and . _ % + - only");
     } catch (e) {
       throw new BadRequestException((e as Error).message);
     }
@@ -134,14 +140,20 @@ export class PanelDomainService implements OnApplicationBootstrap {
     await this.refuseDuringUpdate();
     if (!(await this.redis.firstInWindow(LOCK_KEY, LOCK_TTL_S))) throw new ConflictException("another panel domain change is already running");
 
-    const envEmail = (this.config.get<string>("ACME_EMAIL") ?? "").trim();
-    // The owner's email is only a contact for expiry notices. An env-set one (ACME_EMAIL) stays authoritative.
-    if (email && !envEmail) await this.settings.update({ acmeEmail: email });
-    const effective = envEmail || email || (await this.settings.get()).acmeEmail || null;
+    let job: StoredJob;
+    try {
+      const envEmail = (this.config.get<string>("ACME_EMAIL") ?? "").trim();
+      // The owner's email is only a contact for expiry notices. An env-set one (ACME_EMAIL) stays authoritative.
+      if (email && !envEmail) await this.settings.update({ acmeEmail: email });
+      const effective = envEmail || email || (await this.settings.get()).acmeEmail || null;
 
-    const job = this.newJob(userId, "set", domain, effective, null);
-    await this.writeJob(job);
-    await this.audit.log({ actor: userId, action: "instance.panel_domain.set", target: domain });
+      job = this.newJob(userId, "set", domain, effective, null);
+      await this.writeJob(job);
+    } catch (e) {
+      await this.redis.del(LOCK_KEY).catch(() => undefined); // nothing is running: do not leave every retry answering "already running" for 15 minutes
+      throw e;
+    }
+    await this.audit.log({ actor: userId, action: "instance.panel_domain.set", target: domain }).catch((e) => this.logger.warn(`audit: ${(e as Error).message}`));
     this.runner = this.runSet(job, local.id).catch((e) => this.logger.error(`panel-domain run: ${(e as Error).message}`));
     return this.status();
   }
@@ -166,8 +178,13 @@ export class PanelDomainService implements OnApplicationBootstrap {
 
     const job = this.newJob(userId, "remove", null, null, ip);
     job.previousDomain = current;
-    await this.writeJob(job);
-    await this.audit.log({ actor: userId, action: "instance.panel_domain.remove", target: current });
+    try {
+      await this.writeJob(job);
+    } catch (e) {
+      await this.redis.del(LOCK_KEY).catch(() => undefined);
+      throw e;
+    }
+    await this.audit.log({ actor: userId, action: "instance.panel_domain.remove", target: current }).catch((e) => this.logger.warn(`audit: ${(e as Error).message}`));
     this.runner = this.runRemove(job, local.id).catch((e) => this.logger.error(`panel-domain run: ${(e as Error).message}`));
     return this.status();
   }
@@ -243,9 +260,12 @@ export class PanelDomainService implements OnApplicationBootstrap {
       requestedAt: String(Math.floor(Date.now() / 1000)),
     };
     await this.redis.del(PANEL_DOMAIN_UPDATER_KEY);
-    await this.redis.client.lpush(UPDATE_QUEUE_KEY, JSON.stringify(payload));
+    // "switching" is recorded BEFORE the job is queued: the updater only applies a job the hub's own record still names in
+    // that phase, so it must already say so when the job can first be popped.
+    job.queued = JSON.stringify(payload);
     job.switchingAt = Date.now();
     await this.advance(job, "switching");
+    await this.redis.client.lpush(UPDATE_QUEUE_KEY, job.queued);
     this.watch();
   }
 
@@ -265,7 +285,12 @@ export class PanelDomainService implements OnApplicationBootstrap {
     const u = await this.readUpdater(job.jobId);
     const age = Date.now() - (job.switchingAt ?? Date.parse(job.startedAt));
     if (u?.phase === "applied") return this.finalize(job);
-    if (u?.phase === "failed") return this.fail(job, "updater_failed", u.error || "the updater could not apply the change");
+    if (u?.phase === "failed") {
+      // The helper marks two special outcomes with a prefix on its error text; everything else is a plain failure.
+      const m = /^(unreachable|restore_unverified):\s*(.*)$/s.exec(u.error ?? "");
+      if (m) return this.fail(job, m[1] as "unreachable" | "restore_unverified", m[2] || "the updater could not apply the change");
+      return this.fail(job, "updater_failed", u.error || "the updater could not apply the change");
+    }
     if (!u && age > this.timing.ackTimeout) {
       return this.fail(job, "updater_stale", "the update helper did not pick the change up — update it first (Settings → Updates), then retry");
     }
@@ -310,6 +335,9 @@ export class PanelDomainService implements OnApplicationBootstrap {
     job.error = error;
     job.detail = detail;
     await this.writeJob(job);
+    // The hub has given up: a job still waiting in the updater's queue must never be applied late (the updater also
+    // refuses one the hub no longer lists as "switching"). Best effort; the updater-side checks are the backstop.
+    if (job.queued) await this.redis.client.lrem(UPDATE_QUEUE_KEY, 0, job.queued).catch((e: Error) => this.logger.warn(`panel-domain dequeue: ${e.message}`));
     await this.redis.del(PANEL_PENDING_KEY);
     await this.redis.del(LOCK_KEY);
     await this.redis.del(PANEL_DOMAIN_UPDATER_KEY);
@@ -377,7 +405,9 @@ export class PanelDomainService implements OnApplicationBootstrap {
   }
 
   private view(j: StoredJob): PanelDomainJob {
-    return { phase: j.phase, action: j.action, domain: j.domain, error: j.error, code: j.code, detail: j.detail, startedAt: j.startedAt };
+    // Where the panel is moving to: https://<domain> for a set, http://<ip> for a remove (never the address being left).
+    const targetUrl = j.action === "set" && j.domain ? `https://${j.domain}` : j.action === "remove" && j.publicIp ? `http://${j.publicIp}` : null;
+    return { phase: j.phase, action: j.action, domain: j.domain, targetUrl, error: j.error, code: j.code, detail: j.detail, startedAt: j.startedAt };
   }
 
   private async writeJob(j: StoredJob): Promise<void> {

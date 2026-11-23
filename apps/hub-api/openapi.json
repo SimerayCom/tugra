@@ -33514,6 +33514,10 @@
                           "type": "string",
                           "nullable": true
                         },
+                        "targetUrl": {
+                          "type": "string",
+                          "nullable": true
+                        },
                         "error": {
                           "type": "string",
                           "nullable": true
@@ -33525,6 +33529,8 @@
                             "proxy_failed",
                             "updater_stale",
                             "updater_failed",
+                            "unreachable",
+                            "restore_unverified",
                             "interrupted"
                           ],
                           "nullable": true
@@ -33542,6 +33548,7 @@
                         "phase",
                         "action",
                         "domain",
+                        "targetUrl",
                         "error",
                         "code",
                         "detail",
@@ -33702,6 +33709,10 @@
                           "type": "string",
                           "nullable": true
                         },
+                        "targetUrl": {
+                          "type": "string",
+                          "nullable": true
+                        },
                         "error": {
                           "type": "string",
                           "nullable": true
@@ -33713,6 +33724,8 @@
                             "proxy_failed",
                             "updater_stale",
                             "updater_failed",
+                            "unreachable",
+                            "restore_unverified",
                             "interrupted"
                           ],
                           "nullable": true
@@ -33730,6 +33743,7 @@
                         "phase",
                         "action",
                         "domain",
+                        "targetUrl",
                         "error",
                         "code",
                         "detail",
@@ -33894,6 +33908,10 @@
                           "type": "string",
                           "nullable": true
                         },
+                        "targetUrl": {
+                          "type": "string",
+                          "nullable": true
+                        },
                         "error": {
                           "type": "string",
                           "nullable": true
@@ -33905,6 +33923,8 @@
                             "proxy_failed",
                             "updater_stale",
                             "updater_failed",
+                            "unreachable",
+                            "restore_unverified",
                             "interrupted"
                           ],
                           "nullable": true
@@ -33922,6 +33942,7 @@
                         "phase",
                         "action",
                         "domain",
+                        "targetUrl",
                         "error",
                         "code",
                         "detail",

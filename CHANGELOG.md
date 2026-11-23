@@ -15,11 +15,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   panel's HTTPS itself by default (Let's Encrypt HTTP-01, no email required; `--no-auto-tls` or an occupied :80/:443
   keeps bring-your-own-proxy). Behind a Cloudflare orange-cloud proxy the installer no longer says a token is needed:
   HTTP-01 is tried first and, only if it fails, it explains SSL mode Full / Always Use HTTPS off; `--acme-dns-cloudflare`
-  stays as an option.
+  stays as an option. A re-run never moves an existing install: an IP-mode install whose proxy probe misses is left as it is
+  (the raw-port fallback is only for the run that first enables IP mode), an install already served over https by its own
+  proxy keeps it unless `--auto-tls` is given, and a cloud server whose interface address is private is told to pass `--public-ip`.
 - **Set, change or remove the panel domain from Settings.** Settings → Instance → Panel domain (owner only) does what
   `install.sh --domain` did: it adds the domain's routes next to the current address, waits for the Let's Encrypt
-  certificate, then switches the public URLs and recreates hub and web through the update helper. A certificate or
-  startup failure rolls everything back with the old address still working and the reason shown. New owner-only
+  certificate, then switches the public URLs and recreates hub and web through the update helper, and only reports done
+  once the new address answers from the server through the public DNS/proxy path. A certificate, startup or reachability
+  failure rolls everything back with the previous address restored and the reason shown; a change the hub gave up on is
+  never applied late, and a raw hub/web port still published on every interface moves to loopback with the domain. New owner-only
   `GET /instance/panel-domain`, `POST /instance/panel-domain` and `POST /instance/panel-domain/remove` (OpenAPI and CLI
   schema regenerated); the change is audit-logged.
 - **The one-line install now installs the newest published release.** `curl … bootstrap.sh | sh` used to check out

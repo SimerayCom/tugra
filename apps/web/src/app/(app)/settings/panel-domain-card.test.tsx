@@ -15,7 +15,7 @@ vi.mock("../../../lib/auth", () => ({ useAuth: () => ({ user: h.user }) }));
 
 import { PanelDomainCard } from "./panel-domain-card";
 
-const IDLE = { phase: "idle", action: null, domain: null, error: null, code: null, detail: null, startedAt: null } as const;
+const IDLE = { phase: "idle", action: null, domain: null, targetUrl: null, error: null, code: null, detail: null, startedAt: null } as const;
 const IP_MODE: PanelDomainStatus = { mode: "ip", domain: null, url: "http://203.0.113.9", ipRoute: true, localServerOnline: true, acmeEmail: null, job: { ...IDLE } };
 const DOMAIN_MODE: PanelDomainStatus = { ...IP_MODE, mode: "domain", domain: "panel.example.com", url: "https://panel.example.com", ipRoute: false };
 
@@ -90,7 +90,7 @@ describe("PanelDomainCard", () => {
 
   it("a running change shows the steps and, while switching, links to the NEW address; the form is hidden", async () => {
     owner();
-    vi.spyOn(api, "getPanelDomain").mockResolvedValue({ ...IP_MODE, job: { ...IDLE, phase: "switching", action: "set", domain: "panel.example.com", startedAt: "2026-11-23T10:00:00Z" } });
+    vi.spyOn(api, "getPanelDomain").mockResolvedValue({ ...IP_MODE, job: { ...IDLE, phase: "switching", action: "set", domain: "panel.example.com", targetUrl: "https://panel.example.com", startedAt: "2026-11-23T10:00:00Z" } });
     wrap();
     expect(await screen.findByText(/Waiting for the Let's Encrypt certificate/)).toBeTruthy();
     expect(screen.getByText(/Switching the panel address and restarting the hub/)).toBeTruthy();
@@ -106,7 +106,8 @@ describe("PanelDomainCard", () => {
       job: { ...IDLE, phase: "failed", action: "set", domain: "panel.example.com", code: "cert_timeout", error: "x", detail: "Unable to obtain ACME certificate" },
     });
     wrap();
-    expect(await screen.findByText(/rolled back\. Your previous address still works/)).toBeTruthy();
+    expect(await screen.findByText(/The change did not go through/)).toBeTruthy();
+    expect(screen.getByText(/Your previous address still works and nothing else was touched/)).toBeTruthy();
     expect(screen.getByText(/SSL\/TLS mode is Full/)).toBeTruthy();
     expect(screen.getByText(/Always Use HTTPS/)).toBeTruthy();
     expect(screen.getByText(/Unable to obtain ACME certificate/)).toBeTruthy();
@@ -117,7 +118,29 @@ describe("PanelDomainCard", () => {
     owner();
     vi.spyOn(api, "getPanelDomain").mockResolvedValue({ ...IP_MODE, job: { ...IDLE, phase: "failed", action: "set", domain: "panel.example.com", code: "updater_stale", error: "x" } });
     wrap();
-    expect(await screen.findByText(/Update it first \(Settings → Updates\)/)).toBeTruthy();
+    expect(await screen.findByText(/Update the helper first \(Settings → Updates\)/)).toBeTruthy();
+  });
+
+  it("an unreachable new address says it was reverted; an unverified restore does NOT claim the old address works", async () => {
+    owner();
+    const spy = vi.spyOn(api, "getPanelDomain");
+    spy.mockResolvedValue({ ...IP_MODE, job: { ...IDLE, phase: "failed", action: "set", domain: "panel.example.com", code: "unreachable", error: "did not answer" } });
+    const { unmount } = wrap();
+    expect(await screen.findByText(/your previous address works again/)).toBeTruthy();
+    expect(screen.getByText(/SSL\/TLS mode to Full \(not Flexible\)/)).toBeTruthy();
+    unmount();
+    spy.mockResolvedValue({ ...IP_MODE, job: { ...IDLE, phase: "failed", action: "set", domain: "panel.example.com", code: "restore_unverified", error: "x" } });
+    wrap();
+    expect(await screen.findByText(/previous setup could not be confirmed healthy/)).toBeTruthy();
+    expect(screen.queryByText(/previous address still works/)).toBeNull();
+  });
+
+  it("while a REMOVE is switching, the link points at the new http://<ip> address, not the domain being removed", async () => {
+    owner();
+    vi.spyOn(api, "getPanelDomain").mockResolvedValue({ ...DOMAIN_MODE, job: { ...IDLE, phase: "switching", action: "remove", targetUrl: "http://203.0.113.9", startedAt: "2026-11-23T10:00:00Z" } });
+    wrap();
+    const link = await screen.findByRole("link", { name: "Open http://203.0.113.9" });
+    expect(link.getAttribute("href")).toBe("http://203.0.113.9");
   });
 
   it("domain mode: shows the domain, a Change button and Remove (after a confirm) that calls the API", async () => {

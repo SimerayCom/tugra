@@ -18,14 +18,15 @@ export const RemovePanelDomainSchema = z.object({
 export type RemovePanelDomainInput = z.infer<typeof RemovePanelDomainSchema>;
 
 export const PANEL_DOMAIN_PHASES = ["idle", "proxy", "certificate", "switching", "done", "failed"] as const;
-export const PANEL_DOMAIN_CODES = ["cert_timeout", "proxy_failed", "updater_stale", "updater_failed", "interrupted"] as const;
+export const PANEL_DOMAIN_CODES = ["cert_timeout", "proxy_failed", "updater_stale", "updater_failed", "unreachable", "restore_unverified", "interrupted"] as const;
 
 export const PanelDomainJobSchema = z.object({
   phase: z.enum(PANEL_DOMAIN_PHASES),
   action: z.enum(["set", "remove"]).nullable(),
   domain: z.string().nullable(), // the host being switched to (null while removing)
+  targetUrl: z.string().nullable(), // where the panel is moving to: https://<domain>, or http://<ip> while removing
   error: z.string().nullable(),
-  code: z.enum(PANEL_DOMAIN_CODES).nullable(), // why it failed; the old URL kept working
+  code: z.enum(PANEL_DOMAIN_CODES).nullable(), // why it failed; the old URL kept working (except restore_unverified: the previous setup could not be confirmed)
   detail: z.string().nullable(), // a short, sanitized tail of the proxy's certificate log
   startedAt: z.string().nullable(),
 });
