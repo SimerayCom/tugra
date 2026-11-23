@@ -1175,13 +1175,16 @@ describe("ApplicationsService", () => {
       const svc = make(prisma, {} as TeamAccessService, {} as AgentWsServer);
       const before = Date.now();
       const n = await svc.sweepStaleQueued(6 * 3600 * 1000);
+      const after = Date.now();
       expect(n).toBe(3);
       const arg = updateMany.mock.calls[0][0];
       // filters QUEUED ONLY — never SUCCESS/FAILED/RUNNING
       expect(arg.where.status).toBe("QUEUED");
       // older than cutoff = now - maxAgeMs (so a merely-rebooting server inside the window is untouched)
       expect(arg.where.createdAt.lt).toBeInstanceOf(Date);
-      expect((arg.where.createdAt.lt as Date).getTime()).toBeLessThanOrEqual(before - 6 * 3600 * 1000 + 5);
+      // bounded by the clock around the call (a slow CI runner can take more than a few ms between the reads)
+      expect((arg.where.createdAt.lt as Date).getTime()).toBeGreaterThanOrEqual(before - 6 * 3600 * 1000);
+      expect((arg.where.createdAt.lt as Date).getTime()).toBeLessThanOrEqual(after - 6 * 3600 * 1000);
       // leaves a QUEUED row legitimately waiting BEHIND a RUNNING deploy untouched
       expect(arg.where.application).toEqual({ deployments: { none: { status: "RUNNING" } } });
       expect(arg.data).toEqual({ status: "CANCELLED", exitCode: -1, logs: expect.stringMatching(/reconnect/i) });
