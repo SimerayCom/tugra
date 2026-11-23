@@ -7,6 +7,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.0-beta.25] - 2026-11-23
+
 - **Servers behind a Cloudflare-proxied hub get their real IP, hostname and OS.** With the panel on Cloudflare's orange
   cloud, every agent connection reached the hub from a Cloudflare edge address, so a new server was recorded with
   Cloudflare's IP (wrong magic URLs, DNS hints and allowlists), and every server showed its agent container's id and
