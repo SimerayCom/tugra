@@ -627,6 +627,9 @@ nc_env() { env_get "$1" | tr -d "\"' \r"; }
 # Epoch seconds of a `docker logs --timestamps` line ("2026-11-23T12:00:00.123456789Z ..."), "" when it cannot be read.
 nc_line_epoch() {
   local t="${1%% *}" b
+  # Only docker's RFC3339 prefix (2026-11-23T10:25:03.123Z) is a timestamp. Anything else (the agent's own
+  # "2026/11/23 10:25:03" log prefix, a bare date) must not be guessed at: GNU date reads "2026/11/23" as midnight.
+  case "$t" in [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]*) ;; *) return 0 ;; esac
   b="${t%%.*}"; b="${b%Z}"
   date -u -d "${b}Z" +%s 2>/dev/null || TZ=UTC date -j -f '%Y-%m-%dT%H:%M:%S' "$b" +%s 2>/dev/null || true
 }
