@@ -7,6 +7,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.0-beta.24] - 2026-11-23
+
 - **The installer tells you what is in the way, and `install.sh --doctor` checks a host read-only.** The install used to
   print one line like "Port 80 looks busy". It now names who holds `80`/`443` (and the raw hub/web ports): the process from
   `ss -ltnp`, or the container behind `docker-proxy`, with specific advice for nginx, Apache, Caddy, CloudPanel, Plesk,
