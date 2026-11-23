@@ -10,6 +10,7 @@
  * interpolate as JS. Only the image line concatenates the (validated) image ref.
  */
 
+import { HOST_FACTS_SH } from "./host-facts-sh";
 import { assertPinnable, archPinLines } from "./image-pin";
 
 /**
@@ -123,6 +124,11 @@ export function renderAgentInstallScript(opts: { image: string; digests?: { amd6
     `  printf '  Set --image or the AGENT_IMAGE env on the hub, or check your release channel is published.\\n' >&2`,
     "  exit 1",
     "fi",
+    "",
+    "# Capture the HOST's identity here, on the host, before the agent starts in its container (it would only see the",
+    "# container): hostname, OS and interface IPs go to /etc/tugra/host-facts.json, which the agent reports on connect.",
+    HOST_FACTS_SH.trimEnd(),
+    "tugra_write_host_facts",
     "",
     "# Idempotent: replace any existing agent container. The named volume keeps the agent identity",
     "# (~/.tugra: key + serverId/seal), so a re-run reconnects as the SAME server rather than re-enrolling.",

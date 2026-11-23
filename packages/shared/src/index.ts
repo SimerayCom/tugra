@@ -625,6 +625,7 @@ export interface HostInfo {
   memTotalBytes: number; // total RAM in bytes
   bootTime: number; // unix seconds the host booted (uptime derived from this)
   reportedIps?: string[]; // non-virtual, non-loopback interface IPs (reconciled with the observed IP)
+  hostname?: string; // the HOST's hostname (from the Docker daemon); absent on older agents
 }
 
 /** Agent -> Hub: host hardware/OS inventory. */

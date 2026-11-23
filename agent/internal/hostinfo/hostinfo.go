@@ -2,7 +2,9 @@
 package hostinfo
 
 import (
+	"context"
 	"net"
+	"os"
 	"strings"
 
 	"github.com/SimerayCom/tugra/agent/internal/protocol"
@@ -30,6 +32,29 @@ func Collect() (protocol.HostInfo, error) {
 		info.MemTotalBytes = vm.Total
 	}
 	info.ReportedIps = reportedIps()
+	// The agent runs in a bridge-networked container: overlay the HOST's identity and interfaces (see host.go).
+	// 1) the facts the installer captured on the host; 2) fresher runtime readings (Docker daemon, host-network helper).
+	if hf, ok := ReadHostFacts(HostFactsPath); ok {
+		if hf.Hostname != "" {
+			info.Hostname = hf.Hostname
+		}
+		if hf.OS != "" {
+			info.OS, info.OSVersion = hf.OS, hf.OSVersion
+		}
+		if len(hf.IPs) > 0 {
+			info.ReportedIps = hf.IPs
+		}
+	}
+	ctx := context.Background()
+	if h, ok := DockerHostOS(ctx); ok {
+		info.Hostname = h.Hostname
+		if h.OS != "" {
+			info.OS, info.OSVersion = h.OS, h.OSVersion
+		}
+	}
+	if ips := HostReportedIPs(ctx, os.Getenv("TUGRA_AGENT_IMAGE")); len(ips) > 0 {
+		info.ReportedIps = ips
+	}
 	return info, nil
 }
 

@@ -7,6 +7,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **Servers behind a Cloudflare-proxied hub get their real IP, hostname and OS.** With the panel on Cloudflare's orange
+  cloud, every agent connection reached the hub from a Cloudflare edge address, so a new server was recorded with
+  Cloudflare's IP (wrong magic URLs, DNS hints and allowlists), and every server showed its agent container's id and
+  Debian instead of the host. Now: the installer turns the verified CF-Connecting-IP mode on by itself when the panel's
+  DNS resolves to Cloudflare (`--no-cloudflare-proxy` still turns it off); the hub never records a Cloudflare edge
+  address as a server IP and repairs one already stored; the agent reads the host's hostname and OS from the Docker
+  daemon and its interface addresses through a short-lived, read-only, capability-stripped helper on the host network
+  (the agent's own image, nothing pulled); and a real public IPv4 always wins over a Tailscale/CGNAT `100.64/10` one.
+- **Host facts are captured at install time, on the host.** The agent installer (and the hub installer for the local
+  agent) records the host's hostname, OS and interface IPs (every global address, IPv4 and IPv6, Docker interfaces
+  skipped) in `/etc/tugra/host-facts.json` before the agent container starts, so the hub knows the real server from the
+  first connect; the agent refreshes the same facts at runtime and the hub keeps the full list of addresses.
+
 ## [0.1.0-beta.24] - 2026-11-23
 
 - **The installer tells you what is in the way, and `install.sh --doctor` checks a host read-only.** The install used to

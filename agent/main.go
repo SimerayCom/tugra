@@ -21,6 +21,7 @@ import (
 	"github.com/SimerayCom/tugra/agent/internal/ctrfs"
 	"github.com/SimerayCom/tugra/agent/internal/endpoints"
 	"github.com/SimerayCom/tugra/agent/internal/fsd"
+	"github.com/SimerayCom/tugra/agent/internal/hostinfo"
 	"github.com/SimerayCom/tugra/agent/internal/journal"
 	"github.com/SimerayCom/tugra/agent/internal/keys"
 	"github.com/SimerayCom/tugra/agent/internal/migrate"
@@ -34,6 +35,12 @@ func main() {
 	// The `fsd` subcommand re-invokes this same binary INSIDE the sandboxed helper container
 	// (see internal/fsd/launch.go). It must run before flag.Parse touches os.Args, takes no hub
 	// connection, and exits with the helper's status code.
+	// `hostips` prints the interface IPs as JSON and exits. The agent runs it in a short-lived helper container on
+	// the HOST network (internal/hostinfo/host.go) because its own container only sees a docker-bridge address.
+	if len(os.Args) > 1 && os.Args[1] == "hostips" {
+		os.Exit(hostinfo.PrintHostIPs())
+	}
+
 	if len(os.Args) > 1 && os.Args[1] == "fsd" {
 		os.Exit(fsd.RunCLI(os.Args[2:]))
 	}

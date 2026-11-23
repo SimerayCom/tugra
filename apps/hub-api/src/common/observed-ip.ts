@@ -1,6 +1,7 @@
 import { isIP } from "node:net";
 import {
   CLOUDFLARE_IP_RANGES,
+  isCloudflareEdgeIp,
   isCgnatV4,
   isIpv6,
   isLoopbackIp,
@@ -94,6 +95,13 @@ export function isSsrfSafeIp(ip: string, allowPrivate: boolean): boolean {
   return true;
 }
 
+/** A Cloudflare edge address (vendored ranges + HUB_TRUSTED_PROXY_CLOUDFLARE_EXTRA_CIDRS). When the hub sits behind
+ *  Cloudflare's orange cloud without the verified CF-Connecting-IP mode, every agent connection "comes from" one of
+ *  these, so it must never be recorded as a server's public IP. */
+export function isCloudflareEdge(ip: string | null | undefined): boolean {
+  return !!ip && isCloudflareEdgeIp(normalizeIp(ip), parseCloudflareExtraCidrs());
+}
+
 /** Best reachable candidate from agent-reported interface IPs:
  *  public IPv4 > real-LAN private IPv4 (10.x / 192.168.x) > any other IPv4 (incl. docker-bridge 172.x) > any
  *  non-loopback. The LAN-over-docker-bridge preference matters for a home/single-box server: the agent reports
@@ -104,6 +112,10 @@ export function bestReportedIp(reportedIps: string[]): string | null {
   // not misclassified as an "IPv6" and dropped into publicIpv6 unstripped.
   const usable = reportedIps.map(normalizeIp).filter((ip) => ip && isIP(ip) !== 0 && !isLoopbackIp(ip));
   return (
+    // A globally-routable IPv4 first: a CGNAT / Tailscale 100.64/10 address is "not RFC1918" but never reachable from
+    // the internet, so it must not win over the host's real public interface.
+    usable.find((ip) => !isIpv6(ip) && isPublicIp(ip)) ??
+    usable.find((ip) => !isIpv6(ip) && !isPrivateV4(ip) && !isCgnatV4(ip)) ??
     usable.find((ip) => !isIpv6(ip) && !isPrivateV4(ip)) ??
     usable.find((ip) => !isIpv6(ip) && isPrivateV4(ip) && !isDockerBridgeV4(ip)) ??
     usable.find((ip) => !isIpv6(ip)) ??
@@ -131,14 +143,18 @@ export function reconcileReportedIp(
   // source IP — never reachable — so it is ALSO repairable; for a remote server a 172.x may be a reachable
   // same-VPC/LAN address, so it stays authoritative there.
   const bridgeRepairable = isLocal && !!current.publicIp && isDockerBridgeV4(current.publicIp);
+  // A Cloudflare edge address recorded before the verified CF-Connecting-IP mode was on is never the server's own:
+  // it is repairable from the reported interfaces.
+  const cfRepairable = !!current.publicIp && isCloudflareEdge(current.publicIp);
   if (
     current.ipSource === "observed" &&
     current.publicIp &&
     !isLoopbackIp(current.publicIp) &&
-    !bridgeRepairable
+    !bridgeRepairable &&
+    !cfRepairable
   )
     return null;
-  const pick = bestReportedIp(reportedIps);
+  const pick = bestReportedIp(reportedIps.filter((ip) => !isCloudflareEdge(ip)));
   if (!pick || pick === current.publicIp) return null;
   // Never (re)store the hub's own docker-bridge address as a reachable IP for the local server — a
   // containerized agent whose only interface is the bridge would otherwise land back on 172.x via

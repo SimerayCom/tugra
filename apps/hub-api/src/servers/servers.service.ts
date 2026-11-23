@@ -37,7 +37,7 @@ import {
 } from "./agent-auth";
 import { normalizeTags } from "../common/tags";
 import { hubBaseUrl, agentWsUrl } from "../common/hub-url";
-import { isDockerBridgeV4, isIpv6, isLoopbackIp, isPublicIp, reconcileReportedIp } from "../common/observed-ip";
+import { isCloudflareEdge, isDockerBridgeV4, isIpv6, isLoopbackIp, isPublicIp, reconcileReportedIp } from "../common/observed-ip";
 import { filterByQuery } from "../common/query-filter";
 import { dnsCredsIssue, trimDnsCreds } from "../common/dns-creds";
 import { dnsProviderEnvCreds } from "../deploy/panel-router";
@@ -120,7 +120,12 @@ export interface HostInfoInput {
   memTotalBytes: number;
   bootTime: number; // unix seconds
   reportedIps?: string[];
+  /** The HOST's hostname (agent >= beta.25 reads it from the Docker daemon; the agent's own is its container id). */
+  hostname?: string;
 }
+
+/** RFC 1123 hostname (labels of letters/digits/hyphens, dot-separated, <= 253 chars). */
+const HOSTNAME_RE = /^(?=.{1,253}$)[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$/;
 
 /** A plain `ws://` hub on a host that leaves the machine / docker network (not localhost, not a single-label compose name)
  *  must be opted into explicitly — the agent refuses it otherwise. */
@@ -609,6 +614,10 @@ export class ServersService {
   ): Prisma.ServerUpdateInput {
     if (!observed || currentIpSource === "manual") return {};
     if (isLoopbackIp(observed)) return {}; // a loopback egress is not a reachable address
+    // Behind Cloudflare's proxy (without the verified CF-Connecting-IP mode) the "observed" address is Cloudflare's
+    // edge, never the server: recording it would point every magic URL and DNS hint at Cloudflare. The agent's
+    // reported host interfaces fill the IP instead (reconcileReportedIp).
+    if (isCloudflareEdge(observed)) return {};
     // For the hub's OWN single-box agent (isLocal), a docker-bridge source IP (172.16-31.x) is the agent's
     // in-container address — never reachable from other devices — so recording it dead-links every app URL;
     // skip it so a real interface IP or provisionLocalServer's manual pin wins. A REMOTE server's 172.x may be
@@ -769,6 +778,7 @@ export class ServersService {
           memTotalBytes: info.memTotalBytes ? BigInt(Math.round(info.memTotalBytes)) : null,
           bootTime: info.bootTime ? new Date(info.bootTime * 1000) : null,
           reportedIps,
+          ...(info.hostname && HOSTNAME_RE.test(info.hostname) ? { hostname: info.hostname } : {}),
           ...(reconcile ?? {}),
         },
       })

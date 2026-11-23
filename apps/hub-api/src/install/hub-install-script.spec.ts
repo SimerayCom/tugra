@@ -1576,6 +1576,24 @@ exec ${REAL_CP} "$@"
           expect(readEnv(p).ACME_DNS_TOKEN).toBeUndefined();
           expect(readEnv(p).PANEL_TLS).toBe("1");
         });
+        it("a proxied panel turns the verified Cloudflare client-IP mode on by itself (no --cloudflare-proxy needed)", () => {
+          const p = join(work, "cf-auto.env"); reset();
+          const r = install(p, ["--domain", "panel.example.com"], { env: { SHIM_GETENT: "104.21.5.5" } });
+          expect(r.code).toBe(0);
+          expect(readEnv(p).HUB_TRUSTED_PROXY).toBe("true");
+          expect(readEnv(p).HUB_TRUSTED_PROXY_CLOUDFLARE).toBe("true");
+          expect(r.out).toMatch(/Cloudflare proxy detected: real client and server IPs/);
+          // an existing install re-run without flags (stored PANEL_TLS, no preflight) still detects it
+          const p2 = join(work, "cf-auto-rerun.env"); reset();
+          install(p2, ["--domain", "panel.example.com"], { env: { SHIM_GETENT: "203.0.113.50" } });
+          expect(readEnv(p2).HUB_TRUSTED_PROXY_CLOUDFLARE).toBeUndefined();
+          install(p2, [], { env: { SHIM_GETENT: "104.21.5.5" } });
+          expect(readEnv(p2).HUB_TRUSTED_PROXY_CLOUDFLARE).toBe("true");
+          // an explicit --no-cloudflare-proxy always wins
+          const p3 = join(work, "cf-auto-off.env"); reset();
+          install(p3, ["--domain", "panel.example.com", "--no-cloudflare-proxy"], { env: { SHIM_GETENT: "104.21.5.5" } });
+          expect(readEnv(p3).HUB_TRUSTED_PROXY_CLOUDFLARE).toBe("false");
+        });
         it("uses Cloudflare's published 131.0.72.0/22 range (not 131.0.0.0/22)", () => {
           reset();
           const inside = install(join(work, "cf-131-in.env"), ["--domain", "panel.example.com"], { env: { SHIM_GETENT: "131.0.72.9" } });

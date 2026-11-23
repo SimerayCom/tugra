@@ -380,6 +380,14 @@ describe("ServersService.enroll (token validation)", () => {
     expect(data.ipSource).toBeUndefined();
   });
 
+  it("does not store a Cloudflare edge address as the server IP (hub behind the orange cloud)", async () => {
+    const { prisma, update } = pendingServer();
+    await enrollWith(prisma, "172.64.200.190");
+    const data = update.mock.calls[0][0].data;
+    expect(data.publicIp).toBeUndefined();
+    expect(data.ipSource).toBeUndefined();
+  });
+
   it("does not store a loopback observed IP (not a reachable address)", async () => {
     const { prisma, update } = pendingServer();
     await enrollWith(prisma, "127.0.0.1");
@@ -508,6 +516,28 @@ describe("ServersService.saveHostInfo + uptime view", () => {
     const data = update.mock.calls[0][0].data;
     expect(data.reportedIps).toEqual(["192.168.1.5", "127.0.0.1"]);
     expect(data.publicIp).toBe("192.168.1.5");
+    expect(data.ipSource).toBe("reported");
+  });
+
+  it("stores the HOST hostname reported via the Docker daemon, ignoring an invalid one", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = { server: { findUnique: jest.fn().mockResolvedValue(null), update } } as unknown as PrismaService;
+    await svcWith(prisma).saveHostInfo("s1", hostInfo({ hostname: "olgu-omer-ortak-new" }));
+    expect(update.mock.calls[0][0].data.hostname).toBe("olgu-omer-ortak-new");
+    await svcWith(prisma).saveHostInfo("s1", hostInfo({ hostname: "bad host;rm -rf" }));
+    expect(update.mock.calls[1][0].data.hostname).toBeUndefined();
+    await svcWith(prisma).saveHostInfo("s1", hostInfo());
+    expect(update.mock.calls[2][0].data.hostname).toBeUndefined();
+  });
+
+  it("replaces a Cloudflare edge IP recorded earlier with the reported host IP", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = {
+      server: { findUnique: jest.fn().mockResolvedValue({ publicIp: "172.64.200.190", ipSource: "observed", isLocal: false }), update },
+    } as unknown as PrismaService;
+    await svcWith(prisma).saveHostInfo("s1", hostInfo({ reportedIps: ["2.29.218.211", "100.85.166.104"] }));
+    const data = update.mock.calls[0][0].data;
+    expect(data.publicIp).toBe("2.29.218.211");
     expect(data.ipSource).toBe("reported");
   });
 

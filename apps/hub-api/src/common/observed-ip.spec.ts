@@ -5,6 +5,7 @@ import {
   isPublicIp,
   bestReportedIp,
   reconcileReportedIp,
+  isCloudflareEdge,
   isSsrfSafeIp,
   isAlwaysBlockedIp,
   isPrivateNetworkIp,
@@ -209,6 +210,36 @@ describe("bestReportedIp", () => {
   });
   it("a public IPv4 still beats everything, incl. a real LAN IP", () => {
     expect(bestReportedIp(["192.168.1.50", "172.17.0.1", "203.0.113.7"])).toBe("203.0.113.7");
+  });
+});
+
+describe("Cloudflare edge addresses are never a server IP", () => {
+  it("isCloudflareEdge recognises the vendored edge ranges and nothing else", () => {
+    expect(isCloudflareEdge("172.64.200.190")).toBe(true);
+    expect(isCloudflareEdge("104.21.5.9")).toBe(true);
+    expect(isCloudflareEdge("2.29.218.211")).toBe(false);
+    expect(isCloudflareEdge(null)).toBe(false);
+  });
+  it("repairs a Cloudflare edge address recorded as observed from the reported host interfaces", () => {
+    expect(
+      reconcileReportedIp({ publicIp: "172.64.200.190", ipSource: "observed" }, ["2.29.218.211", "100.85.166.104"]),
+    ).toEqual({ publicIp: "2.29.218.211", ipSource: "reported" });
+  });
+  it("never adopts a reported Cloudflare edge address", () => {
+    expect(reconcileReportedIp({ publicIp: null, ipSource: "observed" }, ["104.21.5.9"])).toBeNull();
+  });
+  it("a manual pin still wins over everything", () => {
+    expect(reconcileReportedIp({ publicIp: "172.64.200.190", ipSource: "manual" }, ["2.29.218.211"])).toBeNull();
+  });
+});
+
+describe("bestReportedIp — host interfaces with Tailscale", () => {
+  it("a real public IPv4 beats a CGNAT/Tailscale 100.64/10 address in any order", () => {
+    expect(bestReportedIp(["100.85.166.104", "2.29.218.211"])).toBe("2.29.218.211");
+    expect(bestReportedIp(["2.29.218.211", "100.85.166.104"])).toBe("2.29.218.211");
+  });
+  it("prefers a LAN address over CGNAT only when there is no public one", () => {
+    expect(bestReportedIp(["100.85.166.104", "10.0.0.5"])).toBe("100.85.166.104");
   });
 });
 

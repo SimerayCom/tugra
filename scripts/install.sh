@@ -413,6 +413,25 @@ _local_ip() {
 # the record may stay proxied and we verify the token — a call to the user's own Cloudflare account, which
 # DNS-01 provisioning makes anyway — rather than the address. A Cloudflare-proxied record needs NO token for HTTP-01
 # (the common case), so it is only ever mentioned as an option. Args: <domain> <dns01?> [known-ipv4].
+# Is the panel's hostname proxied by Cloudflare (its A/AAAA records resolve to Cloudflare edge addresses)? Reuses the
+# preflight's answer when it ran; otherwise resolves the stored panel host (a re-run with a stored PANEL_TLS skips the
+# preflight). Local DNS lookup only, no outbound probe. Returns 0 when proxied.
+panel_behind_cloudflare() {
+  [ "${PANEL_BEHIND_CF:-0}" = "1" ] && return 0
+  [ "$DRY_RUN" -eq 0 ] || return 1
+  local _h _r _a
+  _h="${DOMAIN:-}"
+  [ -n "$_h" ] || _h="$(env_get PANEL_DOMAIN)"
+  [ -n "$_h" ] || { _h="$(env_get HUB_PUBLIC_URL)"; _h="${_h#*://}"; _h="${_h%%/*}"; _h="${_h%%:*}"; }
+  [ -n "$_h" ] || return 1
+  _r="$(_resolve_a "$_h" 2>/dev/null || true)"
+  [ -n "$_r" ] || return 1
+  while IFS= read -r _a; do
+    if [ -n "$_a" ] && is_cloudflare_ip "$_a"; then PANEL_BEHIND_CF=1; return 0; fi
+  done <<<"$_r"
+  return 1
+}
+
 panel_dns_preflight() {
   _dom="$1"; _dns01="$2"; _knownip="${3:-}"
   _dom="$(printf '%s' "$_dom" | sed -e 's#^[a-zA-Z][a-zA-Z0-9+.-]*://##' -e 's#[/:].*$##')"
@@ -445,6 +464,7 @@ panel_dns_preflight() {
   _cf=0
   while IFS= read -r _ra; do [ -n "$_ra" ] && is_cloudflare_ip "$_ra" && _cf=1; done <<<"$_resolved"
   if [ "$_cf" = "1" ]; then
+    PANEL_BEHIND_CF=1
     ok "$_dom is behind Cloudflare's proxy (orange cloud). Tugra asks Let's Encrypt over HTTP-01 first, so no Cloudflare token is needed."
     note "If the certificate does not issue: set Cloudflare SSL/TLS mode to 'Full' (not 'Flexible') while the first cert issues and turn 'Always Use HTTPS' off (or set the record to DNS only for a minute)."
     note "Only if you would rather not depend on :80 reaching this server: re-run with --acme-dns-cloudflare-file <path> (optional DNS-01)."
@@ -475,6 +495,10 @@ warn_private_ip() {
 if [ -f "$SCRIPT_DIR/lib/netcheck.sh" ]; then
   # shellcheck source=lib/netcheck.sh
   . "$SCRIPT_DIR/lib/netcheck.sh"
+fi
+if [ -f "$SCRIPT_DIR/lib/hostfacts.sh" ]; then
+  # shellcheck source=lib/hostfacts.sh
+  . "$SCRIPT_DIR/lib/hostfacts.sh"
 fi
 
 # --- preflight (skipped for --dry-run so tests stay quiet + need no Docker) --------------------------
@@ -842,6 +866,12 @@ if [ "$HUB_HTTPS" != "1" ]; then
   if env_has HUB_TRUSTED_PROXY_CLOUDFLARE; then set_env HUB_TRUSTED_PROXY_CLOUDFLARE "false"; fi
 elif [ "$CF_PROXY" = "1" ]; then set_env HUB_TRUSTED_PROXY_CLOUDFLARE "true"
 elif [ "$CF_PROXY" = "0" ]; then set_env HUB_TRUSTED_PROXY_CLOUDFLARE "false"
+elif [ "$(env_get HUB_TRUSTED_PROXY_CLOUDFLARE)" != "true" ] && panel_behind_cloudflare; then
+  # The panel's DNS resolves to Cloudflare's edge (orange cloud): every connection reaches the hub from a Cloudflare
+  # address, so without this every agent's server IP and every login IP would be Cloudflare's. Turn the verified
+  # CF-Connecting-IP mode on automatically (it only trusts hops inside the published Cloudflare ranges).
+  set_env HUB_TRUSTED_PROXY_CLOUDFLARE "true"
+  ok "Cloudflare proxy detected: real client and server IPs are taken from Cloudflare's verified header (turn off with --no-cloudflare-proxy)."
 fi
 # IP mode: the hub renders the host-less http://<ip>/ router from this flag. Switched OFF whenever this run moves the panel
 # to a domain or to explicit URLs; never written for an install that does not use it.
@@ -880,6 +910,8 @@ fi
 # for both "Update now" and auto-update; it's a fixed-command docker.sock sidecar — see SECURITY.md).
 compose() { docker compose --profile updater --env-file "$ENV_FILE" -f "$COMPOSE_FILE" "$@"; }
 step "Fetching images & starting the stack (first run can take a few minutes)…"
+# The local agent runs in a container: record the HOST's hostname, OS and IPs where it can read them (/etc/tugra).
+if command -v tugra_write_host_facts >/dev/null 2>&1; then tugra_write_host_facts; fi
 
 # The pre-run .env goes back the same way every other .env write happens: a SAME-DIR temp, size-verified against the saved
 # copy, fsync'ed, then renamed over the live file. An in-place copy that ran out of space would leave a truncated .env (every

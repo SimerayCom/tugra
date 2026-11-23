@@ -245,7 +245,8 @@ type HostInfo struct {
 	CPUCores      int      `json:"cpuCores"`
 	MemTotalBytes uint64   `json:"memTotalBytes"`
 	BootTime      int64    `json:"bootTime"`
-	ReportedIps   []string `json:"reportedIps"` // non-virtual, non-loopback interface IPs (reconcile)
+	ReportedIps   []string `json:"reportedIps"`        // non-virtual, non-loopback interface IPs (reconcile)
+	Hostname      string   `json:"hostname,omitempty"` // the HOST's hostname (from the Docker daemon)
 }
 
 type HostInfoMsg struct {
