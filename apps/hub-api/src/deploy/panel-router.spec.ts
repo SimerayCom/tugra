@@ -5,6 +5,7 @@ import {
   buildPanelRouterYaml,
   validatePanelDomain,
   validateAcmeEmail,
+  optionalAcmeEmail,
   dnsProviderEnvCreds,
   PANEL_HUB_PATHS,
   PANEL_HUB_EXACT_PATHS,
@@ -149,6 +150,56 @@ describe("panel-router", () => {
         expect(() => validateAcmeEmail(bad)).toThrow();
       },
     );
+  });
+
+  describe("IP route + several hosts (a plain install, and a domain change in flight)", () => {
+    it("ipRoute with no domain: host-less http routers, hub paths above the web catch-all, both BELOW every app router", () => {
+      const routers = yamlParse(buildPanelRouterYaml({ domain: null, ipRoute: true })).http.routers;
+      expect(Object.keys(routers).sort()).toEqual(["tugra-panel-ip-hub", "tugra-panel-ip-web"]);
+      const hub = routers["tugra-panel-ip-hub"];
+      const web = routers["tugra-panel-ip-web"];
+      for (const p of PANEL_HUB_PATHS) expect(hub.rule).toContain(`PathPrefix(\`${p}\`)`);
+      for (const p of PANEL_HUB_EXACT_PATHS) expect(hub.rule).toContain(`Path(\`${p}\`)`);
+      expect(hub.rule).not.toContain("Host(");
+      expect(web.rule).toBe("PathPrefix(`/`)");
+      expect(hub.entryPoints).toEqual(["web"]);
+      expect(web.entryPoints).toEqual(["web"]);
+      expect(hub.tls).toBeUndefined();
+      // Traefik's default priority is the rule length: an app's Host(`a.io`) is 12+ and must always win over these.
+      expect(hub.priority).toBe(2);
+      expect(web.priority).toBe(1);
+      expect(hub.priority).toBeGreaterThan(web.priority);
+      expect(yamlParse(buildPanelRouterYaml({ domain: null, ipRoute: true })).http.middlewares).toBeUndefined();
+    });
+
+    it("a new host next to the current one: separate routers (and so separate certificates) per host; the first keeps its names", () => {
+      const routers = yamlParse(buildPanelRouterYaml({ domain: "new.example.com", also: ["old.example.com", "new.example.com"], ipRoute: true })).http.routers;
+      expect(routers["tugra-panel-web"].rule).toBe("Host(`new.example.com`)");
+      expect(routers["tugra-panel-web-2"].rule).toBe("Host(`old.example.com`)");
+      expect(routers["tugra-panel-hub-2"].rule).toContain("Host(`old.example.com`)");
+      expect(routers["tugra-panel-redirect-2"].rule).toBe("Host(`old.example.com`)");
+      expect(routers["tugra-panel-web-3"]).toBeUndefined(); // a duplicate host is collapsed
+      expect(routers["tugra-panel-ip-web"]).toBeDefined();
+      for (const k of ["tugra-panel-hub", "tugra-panel-hub-2"]) expect(routers[k].tls.certResolver).toBe("le");
+    });
+
+    it("needs a domain or the IP route, and validates every host", () => {
+      expect(() => buildPanelRouterYaml({ domain: null })).toThrow();
+      expect(() => buildPanelRouterYaml({ domain: "a.example.com", also: ["bad host"] })).toThrow();
+    });
+
+    it("a single domain without the IP route renders exactly what it always did", () => {
+      const routers = yamlParse(buildPanelRouterYaml({ domain: "app.example.com" })).http.routers;
+      expect(Object.keys(routers)).toEqual(["tugra-panel-hub", "tugra-panel-web", "tugra-panel-redirect"]);
+    });
+  });
+
+  it("optionalAcmeEmail: blank is fine, a given one must be real", () => {
+    expect(optionalAcmeEmail(undefined)).toBeUndefined();
+    expect(optionalAcmeEmail("  ")).toBeUndefined();
+    expect(optionalAcmeEmail("ops@real-domain.io")).toBe("ops@real-domain.io");
+    expect(() => optionalAcmeEmail("admin@example.com")).toThrow();
+    expect(() => optionalAcmeEmail("nope")).toThrow();
   });
 
   it("PANEL_HUB_PATHS matches the single-origin routing table in docs/install.md", () => {

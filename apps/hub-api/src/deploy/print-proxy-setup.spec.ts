@@ -43,12 +43,28 @@ describe("print-proxy-setup CLI", () => {
     expect(s).not.toContain("le-dns");
   });
 
-  it("throws (=> CLI exit 2, empty stdout) on missing domain, invalid domain, or placeholder/missing email", () => {
+  it("throws (=> CLI exit 2, empty stdout) on a missing domain (without the IP route), an invalid domain, or a placeholder email", () => {
     expect(() => renderProxySetupFromEnv({ ACME_EMAIL: "ops@tugra.io" } as NodeJS.ProcessEnv)).toThrow();
     expect(() => renderProxySetupFromEnv({ PANEL_DOMAIN: "*.x.com", ACME_EMAIL: "ops@tugra.io" } as NodeJS.ProcessEnv)).toThrow();
-    expect(() => renderProxySetupFromEnv({ PANEL_DOMAIN: "app.example.com" } as NodeJS.ProcessEnv)).toThrow();
     expect(() =>
       renderProxySetupFromEnv({ PANEL_DOMAIN: "app.example.com", ACME_EMAIL: "admin@example.com" } as NodeJS.ProcessEnv),
     ).toThrow();
+  });
+
+  it("the ACME email is OPTIONAL: no email => a resolver without a contact (never a placeholder one)", () => {
+    const s = renderProxySetupFromEnv({ PANEL_DOMAIN: "app.example.com" } as NodeJS.ProcessEnv);
+    expect(s).toContain("--certificatesresolvers.le.acme.httpchallenge=true");
+    expect(s).not.toContain("acme.email");
+    expect(s).not.toContain("admin@example.com");
+  });
+
+  it("PANEL_IP_ROUTE=1 renders the host-less http router (a plain install, no domain, no email)", () => {
+    const s = renderProxySetupFromEnv({ PANEL_IP_ROUTE: "1" } as NodeJS.ProcessEnv);
+    const m = s.match(/printf %s '([A-Za-z0-9+/=]+)' \| base64 -d > \/etc\/tugra\/proxy-dynamic\/\.panel\.yml\.tmp/);
+    const yaml = Buffer.from(m![1], "base64").toString();
+    expect(yaml).toContain("tugra-panel-ip-web");
+    expect(yaml).not.toContain("Host(");
+    expect(yaml).not.toContain("certResolver");
+    expect(s).toContain("docker network connect tugra-panel tugra-proxy"); // the router still reaches hub/web on the panel network
   });
 });

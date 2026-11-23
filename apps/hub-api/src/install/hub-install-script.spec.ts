@@ -8,6 +8,7 @@ import { parse as parseYaml } from "yaml";
 const REPO_ROOT = join(__dirname, "..", "..", "..", "..");
 const INSTALL_SH = join(REPO_ROOT, "scripts", "install.sh");
 const COMPOSE = join(REPO_ROOT, "deploy", "docker-compose.yml");
+const HTTP_URLS = ["--hub-url", "http://10.0.0.5:3000", "--web-url", "http://10.0.0.5:3001"];
 
 function parseEnv(text: string): Record<string, string> {
   const out: Record<string, string> = {};
@@ -192,12 +193,139 @@ describe("scripts/install.sh", () => {
       expect(parseEnv(readFileSync(built, "utf8")).TUGRA_HUB_DIGEST).toBe(""); // a built image can't carry a digest tag
     });
 
-    it("the http quick-start binds the published ports to 0.0.0.0 (agents dial host:3000)", () => {
+    it("the --raw-ports quick-start binds the published ports to 0.0.0.0 (agents dial host:3000)", () => {
       const envPath = join(dir, "bind-quick.env");
-      run([], envPath);
+      run(["--raw-ports"], envPath);
       const env = parseEnv(readFileSync(envPath, "utf8"));
       expect(env.HUB_BIND).toBe("0.0.0.0");
       expect(env.WEB_BIND).toBe("0.0.0.0");
+    });
+
+    describe("IP mode: a plain install serves the panel on http://<ip>/ (port 80) through Tugra's own proxy", () => {
+      const runIp = (args: string[], envPath: string, extra: Record<string, string> = {}) =>
+        execFileSync("bash", [INSTALL_SH, "--dry-run", "--env-file", envPath, ...args], { stdio: "pipe", env: { ...cleanEnv, ...extra } });
+      const rawEnv = (name: string): string => {
+        // an install made before IP mode existed: raw ports, no PANEL_IP_ROUTE
+        const p = join(dir, name);
+        run(["--raw-ports"], p);
+        return p;
+      };
+
+      it("a fresh install with NO flags: no port in the URLs, trusted proxy, http cookies, loopback raw ports, IP route on", () => {
+        const p = join(dir, "ip-fresh.env");
+        run([], p);
+        const env = parseEnv(readFileSync(p, "utf8"));
+        expect(env.HUB_PUBLIC_URL).toMatch(/^http:\/\/[^:/]+$/);
+        expect(env.WEB_PUBLIC_URL).toBe(env.HUB_PUBLIC_URL);
+        expect(env.PANEL_IP_ROUTE).toBe("1");
+        expect(env.HUB_TRUSTED_PROXY).toBe("true"); // exactly one hop: Tugra's own proxy
+        expect(env.COOKIE_SECURE).toBe("false"); // plain http: Secure cookies would kill the login
+        expect(env.HUB_BIND).toBe("127.0.0.1"); // only the proxy needs the raw ports, so 80/443 are all that must be open
+        expect(env.WEB_BIND).toBe("127.0.0.1");
+        expect(env.PANEL_TLS).toBeUndefined();
+      });
+      it("--public-ip names the address the URL uses (a cloud box behind NAT)", () => {
+        const p = join(dir, "ip-pub.env");
+        run(["--public-ip", "203.0.113.9"], p);
+        expect(parseEnv(readFileSync(p, "utf8")).WEB_PUBLIC_URL).toBe("http://203.0.113.9");
+      });
+      it("--raw-ports (and TUGRA_RAW_PORTS=1) keep the classic http://<ip>:3001 quick start with no proxy", () => {
+        for (const [name, args, extra] of [["ip-raw-a.env", ["--raw-ports"], {}], ["ip-raw-b.env", [], { TUGRA_RAW_PORTS: "1" }]] as const) {
+          const p = join(dir, name);
+          runIp([...args], p, extra);
+          const env = parseEnv(readFileSync(p, "utf8"));
+          expect(env.HUB_PUBLIC_URL).toMatch(/:3000$/);
+          expect(env.WEB_PUBLIC_URL).toMatch(/:3001$/);
+          expect(env.PANEL_IP_ROUTE).toBeUndefined();
+          expect(env.HUB_TRUSTED_PROXY).toBe("false");
+        }
+      });
+      it("explicit --hub-url/--web-url are honored as before (no IP mode)", () => {
+        const p = join(dir, "ip-explicit.env");
+        run(HTTP_URLS, p);
+        const env = parseEnv(readFileSync(p, "utf8"));
+        expect(env.HUB_PUBLIC_URL).toBe("http://10.0.0.5:3000");
+        expect(env.PANEL_IP_ROUTE).toBeUndefined();
+      });
+      it("an EXISTING install (raw ports, no PANEL_IP_ROUTE) is never moved by a flag-less upgrade re-run", () => {
+        const p = rawEnv("ip-existing.env");
+        const before = parseEnv(readFileSync(p, "utf8"));
+        run([], p);
+        const after = parseEnv(readFileSync(p, "utf8"));
+        expect(after.HUB_PUBLIC_URL).toBe(before.HUB_PUBLIC_URL);
+        expect(after.WEB_PUBLIC_URL).toBe(before.WEB_PUBLIC_URL);
+        expect(after.PANEL_IP_ROUTE).toBeUndefined();
+        expect(after.HUB_TRUSTED_PROXY).toBe("false");
+        expect(after.HUB_BIND).toBe("0.0.0.0");
+      });
+      it("an IP-mode install keeps its mode and URLs on a flag-less re-run", () => {
+        const p = join(dir, "ip-rerun.env");
+        run(["--public-ip", "203.0.113.9"], p);
+        const first = parseEnv(readFileSync(p, "utf8"));
+        run([], p);
+        const second = parseEnv(readFileSync(p, "utf8"));
+        expect(second.WEB_PUBLIC_URL).toBe(first.WEB_PUBLIC_URL);
+        expect(second.PANEL_IP_ROUTE).toBe("1");
+        expect(second.HUB_TRUSTED_PROXY).toBe("true");
+        expect(second.POSTGRES_PASSWORD).toBe(first.POSTGRES_PASSWORD);
+      });
+      it("moving an IP-mode install to --domain turns the IP route off and bundled TLS on", () => {
+        const p = join(dir, "ip-to-domain.env");
+        run([], p);
+        run(["--domain", "panel.example.com"], p);
+        const env = parseEnv(readFileSync(p, "utf8"));
+        expect(env.HUB_PUBLIC_URL).toBe("https://panel.example.com");
+        expect(env.PANEL_IP_ROUTE).toBe("0");
+        expect(env.PANEL_TLS).toBe("1");
+        expect(env.PANEL_DOMAIN).toBe("panel.example.com");
+        expect(env.COOKIE_SECURE).toBe("true");
+      });
+      it("going back to explicit http URLs turns IP mode off and clears the proxy trust (spoof-safe)", () => {
+        const p = join(dir, "ip-downgrade.env");
+        run([], p);
+        run(HTTP_URLS, p);
+        const env = parseEnv(readFileSync(p, "utf8"));
+        expect(env.PANEL_IP_ROUTE).toBe("0");
+        expect(env.HUB_TRUSTED_PROXY).toBe("false");
+      });
+      it("--cloudflare-proxy is refused on the http IP-mode origin (Cloudflare only proxies a hostname)", () => {
+        const p = join(dir, "ip-cf.env");
+        const r = spawnSync("bash", [INSTALL_SH, "--dry-run", "--env-file", p, "--cloudflare-proxy"], { encoding: "utf8", env: cleanEnv });
+        expect(r.status).not.toBe(0);
+        expect(`${r.stdout}${r.stderr}`).toMatch(/--cloudflare-proxy needs the panel served over https/);
+      });
+    });
+
+    describe("--domain provisions the panel HTTPS by itself: no token, no email", () => {
+      it("headless --domain alone turns bundled TLS on and writes NO ACME email", () => {
+        const p = join(dir, "dom-default.env");
+        run(["--domain", "panel.example.com"], p);
+        const env = parseEnv(readFileSync(p, "utf8"));
+        expect(env.PANEL_TLS).toBe("1");
+        expect(env.PANEL_DOMAIN).toBe("panel.example.com");
+        expect(env.ACME_EMAIL).toBeUndefined();
+        expect(env.ACME_DNS_TOKEN).toBeUndefined(); // no Cloudflare token anywhere
+      });
+      it("--no-auto-tls keeps bring-your-own-proxy", () => {
+        const p = join(dir, "dom-byo.env");
+        run(["--domain", "panel.example.com", "--no-auto-tls"], p);
+        expect(parseEnv(readFileSync(p, "utf8")).PANEL_TLS).toBe("0");
+      });
+      it("an optional --acme-email is stored, and a placeholder one is refused before anything is written", () => {
+        const ok = join(dir, "dom-mail.env");
+        run(["--domain", "panel.example.com", "--acme-email", "ops@real-domain.io"], ok);
+        expect(parseEnv(readFileSync(ok, "utf8")).ACME_EMAIL).toBe("ops@real-domain.io");
+        const bad = join(dir, "dom-mail-bad.env");
+        const r = spawnSync("bash", [INSTALL_SH, "--dry-run", "--env-file", bad, "--domain", "panel.example.com", "--acme-email", "admin@example.com"], { encoding: "utf8", env: cleanEnv });
+        expect(r.status).not.toBe(0);
+        expect(existsSync(bad)).toBe(false);
+      });
+      it("a re-run with a new --domain keeps an install's stored PANEL_TLS decision (BYO stays BYO)", () => {
+        const p = join(dir, "dom-keep.env");
+        run(["--domain", "a.example.com", "--no-auto-tls"], p);
+        run(["--domain", "b.example.com"], p);
+        expect(parseEnv(readFileSync(p, "utf8")).PANEL_TLS).toBe("0");
+      });
     });
 
     it("a fresh --domain install binds the published ports to loopback (proxy-only reachability)", () => {
@@ -479,7 +607,7 @@ describe("scripts/install.sh", () => {
 
     it("--help prints EVERY flag (it used to cut off after --env-file)", () => {
       const help = execFileSync("bash", [INSTALL_SH, "--help"], { stdio: "pipe", env: cleanEnv }).toString();
-      for (const f of ["--restore-from", "--public-ip", "--detect-public-ip", "--no-telemetry", "--no-update-checks", "--enable-update-checks", "--home", "--dry-run", "--keep-raw-ports", "--acme-dns-cloudflare-file"]) {
+      for (const f of ["--raw-ports", "--restore-from", "--public-ip", "--detect-public-ip", "--no-telemetry", "--no-update-checks", "--enable-update-checks", "--home", "--dry-run", "--keep-raw-ports", "--acme-dns-cloudflare-file"]) {
         expect(help).toContain(f);
       }
       expect(help).not.toContain("set -euo pipefail");
@@ -602,7 +730,16 @@ esac
 exit 0
 `,
     );
-    writeFileSync(join(shims, "curl"), `#!/bin/bash\necho "curl $*" >> "$SHIM_LOG"\nexit "\${SHIM_CURL_RC:-0}"\n`);
+    // curl: SHIM_CURL_FAIL_MATCH fails only the calls whose arguments contain that text (e.g. the proxy probe, not the hub health check).
+    writeFileSync(
+      join(shims, "curl"),
+      `#!/bin/bash\necho "curl $*" >> "$SHIM_LOG"\nif [ -n "$SHIM_CURL_FAIL_MATCH" ]; then case "$*" in *"$SHIM_CURL_FAIL_MATCH"*) exit 1 ;; esac; fi\nexit "\${SHIM_CURL_RC:-0}"\n`,
+    );
+    // ss: the faked listening sockets ($SHIM_SS, rows like "LISTEN 0 511 0.0.0.0:80 0.0.0.0:*"); getent: the faked DNS answer ($SHIM_GETENT, IPs).
+    writeFileSync(join(shims, "ss"), `#!/bin/sh\n[ -n "$SHIM_SS" ] && printf '%s\\n' "$SHIM_SS"\nexit 0\n`);
+    writeFileSync(join(shims, "getent"), `#!/bin/sh\nfor ip in $SHIM_GETENT; do echo "$ip STREAM $2"; done\nexit 0\n`);
+    chmodSync(join(shims, "ss"), 0o755);
+    chmodSync(join(shims, "getent"), 0o755);
     // df: the faked Docker data root ($SHIM_DOCKER_ROOT) reads $SHIM_LOG.avail (KiB; a removed image raises it), every other
     // path the real filesystem. mktemp: SHIM_MKTEMP_FAIL (a path prefix) makes the temp file for that .env unavailable (the
     // create fails); SHIM_MKTEMP_FULL makes it a file every write to which fails (/dev/full where it exists, else a directory).
@@ -1327,6 +1464,85 @@ exec ${REAL_CP} "$@"
         const b = legacyTls("tls-explicit"); reset();
         install(b, [], { env: { HUB_BIND: "0.0.0.0" } });
         expect(readEnv(b).HUB_BIND).toBe("0.0.0.0");
+      });
+
+      describe("IP mode (the plain install): the panel on http://<ip>/ through Tugra's own proxy", () => {
+        const fast = { TUGRA_PANEL_TRIES: "2", TUGRA_PANEL_INTERVAL: "0" };
+
+        it("starts the proxy with the IP route, probes port 80 and prints the http://<ip>/ URL (only 80/443 needed)", () => {
+          const p = join(work, "ip-run.env"); reset();
+          const r = install(p, ["--public-ip", "203.0.113.9"], { env: fast });
+          expect(r.code).toBe(0);
+          expect(calls()).toMatch(/compose .*run .*-e PANEL_IP_ROUTE=1 /); // the hub image renders the host-less router
+          expect(calls()).toContain("curl -fsS --max-time 4 http://127.0.0.1/health");
+          expect(r.out).toContain("Open http://203.0.113.9 in your browser");
+          expect(r.out).toMatch(/only ports 80 and 443 need to be open/);
+          expect(readEnv(p).HUB_BIND).toBe("127.0.0.1");
+        });
+
+        it("falls back to the raw ports (URLs, trust and binds) when the proxy does not answer, instead of leaving a dead URL", () => {
+          const p = join(work, "ip-fallback.env"); reset();
+          const r = install(p, ["--public-ip", "203.0.113.9"], { env: { ...fast, SHIM_CURL_FAIL_MATCH: "http://127.0.0.1/health" } });
+          expect(r.code).toBe(0);
+          const env = readEnv(p);
+          expect(env.WEB_PUBLIC_URL).toBe("http://203.0.113.9:3001");
+          expect(env.HUB_PUBLIC_URL).toBe("http://203.0.113.9:3000");
+          expect(env.PANEL_IP_ROUTE).toBe("0");
+          expect(env.HUB_TRUSTED_PROXY).toBe("false");
+          expect(env.HUB_BIND).toBe("0.0.0.0");
+          expect(r.out).toMatch(/falling back to the raw ports/);
+          expect(r.out).toContain("Web UI:  http://203.0.113.9:3001");
+          expect(calls()).toContain("up -d --no-deps hub-api web");
+        });
+
+        it("port 80 held by another service: the raw-port quick start is used and the operator is told why", () => {
+          const p = join(work, "ip-busy.env"); reset();
+          const r = install(p, ["--public-ip", "203.0.113.9"], { env: { SHIM_SS: "LISTEN 0 511 0.0.0.0:80 0.0.0.0:*" } });
+          expect(r.code).toBe(0);
+          expect(r.out).toMatch(/Port 80 is already in use/);
+          const env = readEnv(p);
+          expect(env.WEB_PUBLIC_URL).toBe("http://203.0.113.9:3001");
+          expect(env.PANEL_IP_ROUTE).toBeUndefined();
+          expect(calls()).not.toContain("PANEL_IP_ROUTE=1");
+        });
+
+        it("--raw-ports never starts the proxy", () => {
+          const p = join(work, "ip-rawports.env"); reset();
+          const r = install(p, ["--raw-ports"]);
+          expect(r.code).toBe(0);
+          expect(calls()).not.toContain("print-proxy-setup");
+          expect(r.out).not.toContain("Open http://");
+        });
+      });
+
+      describe("--domain behind Cloudflare: HTTP-01 first, no token required", () => {
+        it("a Cloudflare edge address is recognised and the advice names SSL mode Full / Always Use HTTPS, not a token", () => {
+          const p = join(work, "cf-http01.env"); reset();
+          const r = install(p, ["--domain", "panel.example.com"], { env: { SHIM_GETENT: "104.21.5.5 172.67.9.9" } });
+          expect(r.code).toBe(0);
+          expect(r.out).toMatch(/behind Cloudflare's proxy/);
+          expect(r.out).toMatch(/Tugra asks Let's Encrypt over HTTP-01 first, so no Cloudflare token is needed/);
+          expect(r.out).toContain("'Full'");
+          expect(r.out).toContain("'Always Use HTTPS'");
+          expect(r.out).not.toMatch(/re-run with --acme-dns-cloudflare <token>/);
+          expect(readEnv(p).ACME_DNS_TOKEN).toBeUndefined();
+          expect(readEnv(p).PANEL_TLS).toBe("1");
+        });
+        it("the token stays an OPTION (named only as --acme-dns-cloudflare-file), and the other record states are unchanged", () => {
+          const p = join(work, "cf-opt.env"); reset();
+          const cf = install(p, ["--domain", "panel.example.com"], { env: { SHIM_GETENT: "104.21.5.5" } });
+          expect(cf.out).toMatch(/optional DNS-01/);
+          const other = install(join(work, "cf-other.env"), ["--domain", "panel.example.com"], { env: { SHIM_GETENT: "203.0.113.50" } });
+          expect(other.out).not.toMatch(/behind Cloudflare's proxy/);
+          expect(other.out).not.toMatch(/--acme-dns-cloudflare <token>/);
+        });
+        it("a domain while :80 is held by another web server keeps bring-your-own-proxy (the bundled proxy could not bind)", () => {
+          const p = join(work, "dom-busy.env"); reset();
+          const r = install(p, ["--domain", "panel.example.com"], { env: { SHIM_SS: "LISTEN 0 511 0.0.0.0:80 0.0.0.0:*" } });
+          expect(r.code).toBe(0);
+          expect(r.out).toMatch(/Port 80 is already in use/);
+          expect(readEnv(p).PANEL_TLS).toBe("0");
+        });
       });
 
       it("when the panel router does NOT come up, nothing is rebound (the failure message promises host-port access)", () => {

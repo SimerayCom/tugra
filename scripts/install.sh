@@ -4,23 +4,28 @@
 # stack (deploy/docker-compose.yml). Idempotent: re-running preserves existing secrets and only
 # refreshes URLs, so it doubles as the upgrade path (`git pull && ./scripts/install.sh`).
 #
-#   ./scripts/install.sh                       # quick start (http, this host's IP)
-#   ./scripts/install.sh --domain tugra.example.com   # behind your TLS reverse proxy (https)
+#   ./scripts/install.sh                       # quick start: the panel on http://<this host's IP>/ (port 80, Tugra's own proxy)
+#   ./scripts/install.sh --domain tugra.example.com   # the panel on https://tugra.example.com (Let's Encrypt, automatic)
 #   TUGRA_VERSION=0.1.0-beta.1 ./scripts/install.sh    # pin a specific release (e.g. a beta); persisted to .env
 #
 # Flags:
-#   --domain <host>     Serve over https://<host>. By default you bring your own TLS reverse proxy
-#                       (path-routes / -> web and /agent,/terminal,/install,/webhooks,/auth/* -> hub).
-#                       Add --auto-tls to have Tugra provision the panel's HTTPS itself. Sets
-#                       COOKIE_SECURE=true + HUB_TRUSTED_PROXY=true.
-#   --auto-tls          With --domain: auto-provision the panel's HTTPS (bundled Traefik + Let's Encrypt).
-#                       Requires --acme-email. Opt-in; plain --domain stays bring-your-own-proxy.
+#   --domain <host>     Serve over https://<host>. Tugra provisions the panel's HTTPS itself (bundled Traefik +
+#                       Let's Encrypt HTTP-01: no token, no email needed; it also works behind Cloudflare's orange
+#                       cloud). Point <host>'s DNS at this server first. Sets COOKIE_SECURE=true + HUB_TRUSTED_PROXY=true.
+#                       When :80/:443 are already taken by another web server it falls back to bring-your-own
+#                       proxy (path-routes / -> web and /agent,/terminal,/install,/webhooks,/auth/* -> hub).
+#                       Without --domain the panel is served on http://<this host's IP>/ (port 80) the same way;
+#                       set the domain later in Settings -> Instance -> Panel domain.
+#   --auto-tls          With --domain: provision the panel's HTTPS (the default; kept for scripts).
 #   --no-auto-tls       With --domain: keep bring-your-own-proxy (no bundled TLS).
-#   --acme-email <addr> Contact email for Let's Encrypt (required by --auto-tls; providing it implies it).
-#   --acme-dns-cloudflare <token>  DNS-01 with a Cloudflare API token: a REAL panel cert while the record
-#                       stays Cloudflare-proxied (IP hidden). Implies --auto-tls. (HTTP-01 can't validate
-#                       through the proxy.) The token on the command line is visible in `ps` and shell
-#                       history — prefer --acme-dns-cloudflare-file or TUGRA_ACME_DNS_TOKEN.
+#   --acme-email <addr> OPTIONAL contact email for Let's Encrypt expiry notices (never required).
+#   --raw-ports         Without --domain: the classic quick start. No proxy; the panel is published on the raw
+#                       HUB_PORT/WEB_PORT (http://<ip>:3001) instead of port 80 (also: TUGRA_RAW_PORTS=1). Chosen
+#                       automatically when port 80 is already taken. An existing install keeps its own setup.
+#   --acme-dns-cloudflare <token>  OPTIONAL DNS-01 with a Cloudflare API token: a cert that never depends on :80
+#                       reaching this server, with the record Cloudflare-proxied (IP hidden). Implies --domain's
+#                       TLS. Not needed for a normal HTTP-01 setup. The token on the command line is visible in
+#                       `ps` and shell history — prefer --acme-dns-cloudflare-file or TUGRA_ACME_DNS_TOKEN.
 #   --acme-dns-cloudflare-file <path>  Same as above, reading the token from a file (first line).
 #   --cloudflare-proxy  The panel's DNS record is Cloudflare-proxied (orange cloud): trust CF-Connecting-IP as the
 #                       client IP, but ONLY when the hop the proxy observed is a published Cloudflare edge range
@@ -84,6 +89,7 @@ DETECT_PUBLIC_IP="${TUGRA_DETECT_PUBLIC_IP:-0}"
 MANUAL_PUBLIC_IP="${TUGRA_PUBLIC_IP:-}"
 ENABLE_TELEMETRY="${TUGRA_ENABLE_TELEMETRY:-0}" # explicit opt-in (skips the confirm prompt)
 NO_TELEMETRY="${TUGRA_NO_TELEMETRY:-0}"         # explicit opt-out of the default-on anonymous usage stats
+RAW_PORTS="${TUGRA_RAW_PORTS:-0}"               # --raw-ports: classic quick start on 3000/3001, no proxy
 HOME_MODE="${TUGRA_HOME_MODE:-0}"               # --home: start the owner in the simple Home launcher (CasaOS-style)
 # Panel-TLS (DİLİM 1): opt-in auto-HTTPS for the control panel. AUTO_TLS "" = undecided, "1"/"0" explicit.
 AUTO_TLS="${TUGRA_AUTO_TLS:-}"
@@ -176,6 +182,7 @@ while [ $# -gt 0 ]; do
     --cloudflare-proxy)     CF_PROXY=1; shift ;;
     --no-cloudflare-proxy)  CF_PROXY=0; shift ;;
     --keep-raw-ports)       KEEP_RAW_PORTS=1; shift ;;
+    --raw-ports)            RAW_PORTS=1; shift ;;
     --public-ip) MANUAL_PUBLIC_IP="${2:-}"; shift 2 ;;
     --dry-run|--no-start) DRY_RUN=1; shift ;;
     --restore-from) RESTORE_FROM="${2:-}"; RESTORE_SET=1; shift 2 ;;
@@ -319,6 +326,34 @@ valid_acme_email() {
   return 0
 }
 
+# 0 when something OTHER than Tugra's own proxy is listening on host port $1 (so the bundled proxy could not bind it).
+# Tugra's own tugra-proxy holding the port (started by an earlier install or deploy) is not a conflict. Without `ss`
+# nothing can be said: "free". (A here-string, not a pipe: under pipefail `grep -q` exiting early would SIGPIPE `ss`.)
+foreign_port_busy() {
+  command -v ss >/dev/null 2>&1 || return 1
+  _ssout="$(ss -ltn 2>/dev/null || true)"
+  grep -qE "[:.]${1}[[:space:]]*$" < <(printf '%s\n' "$_ssout" | awk '{print $4}') || return 1
+  if command -v docker >/dev/null 2>&1 && [ -n "$(docker ps -q --filter 'name=^/tugra-proxy$' 2>/dev/null || true)" ]; then return 1; fi
+  return 0
+}
+
+# True (0) when IPv4 $1 lies inside one of Cloudflare's published edge ranges (https://www.cloudflare.com/ips-v4).
+# A static list, so this needs no outbound call; it only steers advice (never a decision), and a stale range at worst
+# prints the generic "resolves elsewhere" hint instead of the Cloudflare one.
+_ip_to_int() { local IFS=.; set -- $1; echo $(( ($1 << 24) + ($2 << 16) + ($3 << 8) + $4 )); }
+is_cloudflare_ip() {
+  local ip="$1" c net bits n m
+  [[ "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 1
+  n="$(_ip_to_int "$ip")"
+  for c in 173.245.48.0/20 103.21.244.0/22 103.22.200.0/22 103.31.4.0/22 141.101.64.0/18 108.162.192.0/18 190.93.240.0/20 \
+           188.114.96.0/20 197.234.240.0/22 198.41.128.0/17 162.158.0.0/15 104.16.0.0/13 104.24.0.0/14 172.64.0.0/13 131.0.0.0/22; do
+    net="${c%/*}"; bits="${c#*/}"
+    m=$(( (0xFFFFFFFF << (32 - bits)) & 0xFFFFFFFF ))
+    if [ $(( n & m )) -eq $(( $(_ip_to_int "$net") & m )) ]; then return 0; fi
+  done
+  return 1
+}
+
 # Resolve a host's IPv4 A records to a newline-separated list, PORTABLY and best-effort. Every lookup is
 # wrapped in `$( … || true )` so a failed resolver/pipeline can't trip `set -euo pipefail`; the function
 # always exits 0 and prints "" when nothing resolves or no resolver tool exists.
@@ -346,14 +381,15 @@ _local_ip() {
   case "$_i" in localhost|"") printf '' ;; *) printf '%s' "$_i" ;; esac
 }
 
-# Advisory DNS/token sanity for --auto-tls, run BEFORE anything is provisioned so a misconfigured domain
+# Advisory DNS/token sanity for the panel's HTTPS, run BEFORE anything is provisioned so a misconfigured domain
 # is caught here (with an exact fix) instead of as a silent cert failure — the #1 "SSL just didn't work"
 # foot-gun. It ONLY prints guidance: never errors, never changes the decision, never blocks headless, so a
 # false read can't stop a correct setup or burn a Let's Encrypt attempt. Crucially it makes NO outbound IP
 # probe (trust-wedge): HTTP-01 compares the domain's A record against this host's LOCAL interface IP (or a
 # --public-ip you gave), never an external echo. DNS-01 (Cloudflare token) validates over DNS instead, so
 # the record may stay proxied and we verify the token — a call to the user's own Cloudflare account, which
-# DNS-01 provisioning makes anyway — rather than the address. Args: <domain> <dns01?> [known-ipv4].
+# DNS-01 provisioning makes anyway — rather than the address. A Cloudflare-proxied record needs NO token for HTTP-01
+# (the common case), so it is only ever mentioned as an option. Args: <domain> <dns01?> [known-ipv4].
 panel_dns_preflight() {
   _dom="$1"; _dns01="$2"; _knownip="${3:-}"
   _dom="$(printf '%s' "$_dom" | sed -e 's#^[a-zA-Z][a-zA-Z0-9+.-]*://##' -e 's#[/:].*$##')"
@@ -380,10 +416,20 @@ panel_dns_preflight() {
     note "$_dom has no A record yet. HTTP-01 needs it pointing at this server's public IP; add the DNS record and the panel cert issues automatically."
     return 0
   fi
-  [ -n "$_knownip" ] || _knownip="$(_local_ip)"
   _disp="$(printf '%s' "$_resolved" | tr '\n' ' ' | sed 's/ *$//')"
+  # Behind Cloudflare's orange cloud the A record is a Cloudflare edge address, never this host — and that is fine:
+  # HTTP-01 works through the proxy as long as Cloudflare forwards :80 to this server (it does by default). No token.
+  _cf=0
+  while IFS= read -r _ra; do [ -n "$_ra" ] && is_cloudflare_ip "$_ra" && _cf=1; done <<<"$_resolved"
+  if [ "$_cf" = "1" ]; then
+    ok "$_dom is behind Cloudflare's proxy (orange cloud). Tugra asks Let's Encrypt over HTTP-01 first, so no Cloudflare token is needed."
+    note "If the certificate does not issue: set Cloudflare SSL/TLS mode to 'Full' (not 'Flexible') while the first cert issues and turn 'Always Use HTTPS' off (or set the record to DNS only for a minute)."
+    note "Only if you would rather not depend on :80 reaching this server: re-run with --acme-dns-cloudflare-file <path> (optional DNS-01)."
+    return 0
+  fi
+  [ -n "$_knownip" ] || _knownip="$(_local_ip)"
   if [ -z "$_knownip" ]; then
-    note "$_dom resolves to $_disp. Make sure that is THIS server's public IP — HTTP-01 validates over :80 at that address. (Behind Cloudflare's proxy, re-run with --acme-dns-cloudflare <token> for a real cert with the IP hidden.)"
+    note "$_dom resolves to $_disp. Make sure that is THIS server's public IP — HTTP-01 validates over :80 at that address."
     return 0
   fi
   # here-string, not a pipe: under pipefail the pipe form fails on SIGPIPE when grep exits at the first match
@@ -391,8 +437,8 @@ panel_dns_preflight() {
     ok "$_dom resolves to this host ($_knownip) — HTTP-01 can validate; the panel cert issues on the first reachable request."
   else
     warn "$_dom resolves to $_disp, but this host's address is $_knownip."
-    note "HTTP-01 validates over :80 at the domain's address, so the panel cert WON'T issue until $_dom points here."
-    note "Behind Cloudflare's orange-cloud proxy (or NAT) this is expected — re-run with --acme-dns-cloudflare <token> for a real cert with the IP hidden. On a bare VPS, set $_dom's A record to this host."
+    note "HTTP-01 validates over :80 at the domain's address, so the panel cert WON'T issue until $_dom points at this server's public IP."
+    note "On a server behind NAT (the address above is private) that is expected: pass --public-ip <ip>. On a bare VPS, set $_dom's A record to this host."
   fi
 }
 
@@ -492,6 +538,24 @@ fi
 # start. Explicit flags still override; a deliberate downgrade passes --hub-url/--web-url (http://…).
 # Each half is preserved independently: passing only --hub-url (or only --web-url) keeps the stored other
 # half rather than recomputing it from the host IP (which would leave an https hub with an http web origin).
+# IP mode (the default for a fresh install without --domain): Tugra's own proxy serves the panel on http://<ip>/ (port 80),
+# with the same single-origin routing as a domain install, so only 80/443 have to be reachable. Decided ONCE, before the
+# URLs are resolved: a fresh install gets it (unless --raw-ports, explicit --hub-url/--web-url, or port 80 is taken by
+# something else); an existing install keeps exactly what it has (a stored PANEL_IP_ROUTE=1 stays on, every other
+# existing install keeps its raw ports) — a flag-less upgrade never moves anyone's panel.
+IP_MODE=0
+if [ -z "$DOMAIN" ] && [ -z "$HUB_URL" ] && [ -z "$WEB_URL" ]; then
+  if env_has HUB_PUBLIC_URL; then
+    [ "$(env_get PANEL_IP_ROUTE | tr -d "\"' \r")" = "1" ] && IP_MODE=1
+  elif [ "$RAW_PORTS" != "1" ]; then
+    IP_MODE=1
+    if [ "$DRY_RUN" -eq 0 ] && foreign_port_busy 80; then
+      IP_MODE=0
+      note "Port 80 is already in use by another service, so the panel is published on the raw ports (:$HUB_PORT/:$WEB_PORT) instead of http://<ip>/."
+      note "Free port 80 and re-run with --hub-url/--web-url removed, or add --domain <host> once your own proxy fronts Tugra."
+    fi
+  fi
+fi
 if [ -z "$DOMAIN" ]; then
   if [ -z "$HUB_URL" ] && env_has HUB_PUBLIC_URL; then HUB_URL="$(env_get HUB_PUBLIC_URL)"; fi
   if [ -z "$WEB_URL" ] && env_has WEB_PUBLIC_URL; then WEB_URL="$(env_get WEB_PUBLIC_URL)"; fi
@@ -505,7 +569,9 @@ elif [ -z "$HUB_URL" ] || [ -z "$WEB_URL" ]; then
   # Detect the IP PORTABLY — `hostname -I` is GNU/net-tools-only and ERRORS on macOS/BSD and on
   # busybox/Alpine; guard every step (`{ … || true; }`) so `set -euo pipefail` can't kill the script
   # silently when it's unavailable. Fall back to the default-route source IP, then to localhost.
-  HOST_IP="$( { hostname -I 2>/dev/null || true; } | awk '{print $1; exit}' )"
+  # An explicit --public-ip is the address the operator wants in the URL (a cloud box's interface IP is private behind NAT).
+  HOST_IP="${MANUAL_PUBLIC_IP:-}"
+  [ -n "$HOST_IP" ] || HOST_IP="$( { hostname -I 2>/dev/null || true; } | awk '{print $1; exit}' )"
   if [ -z "$HOST_IP" ]; then
     HOST_IP="$( { ip route get 1.1.1.1 2>/dev/null || true; } | awk '{for (i=1;i<=NF;i++) if ($i=="src") {print $(i+1); exit}}' )"
   fi
@@ -513,21 +579,30 @@ elif [ -z "$HUB_URL" ] || [ -z "$WEB_URL" ]; then
     HOST_IP="localhost"
     warn "Could not auto-detect this host's IP; using 'localhost'. If agents run on other machines, re-run with --hub-url http://<host-ip>:$HUB_PORT --web-url http://<host-ip>:$WEB_PORT"
   fi
-  HUB_URL="${HUB_URL:-http://$HOST_IP:$HUB_PORT}"
-  WEB_URL="${WEB_URL:-http://$HOST_IP:$WEB_PORT}"
+  if [ "$IP_MODE" = "1" ]; then
+    # Through the proxy on port 80: no port in the URL (agents dial http://<ip>/agent, the browser opens http://<ip>/).
+    HUB_URL="${HUB_URL:-http://$HOST_IP}"
+    WEB_URL="${WEB_URL:-http://$HOST_IP}"
+  else
+    HUB_URL="${HUB_URL:-http://$HOST_IP:$HUB_PORT}"
+    WEB_URL="${WEB_URL:-http://$HOST_IP:$WEB_PORT}"
+  fi
 fi
 # Cookie + proxy mode follow the RESOLVED hub origin's scheme: https => a TLS reverse proxy fronts the
 # hub, so set Secure cookies and trust exactly ONE proxy hop for X-Forwarded-For; plain http => no proxy,
 # trust only the un-spoofable raw TCP peer IP. Deriving from the scheme (not just the --domain flag) is
 # what lets a flag-less upgrade preserve the mode while an explicit http downgrade clears a stale proxy.
+# IP mode is plain http but sits behind Tugra's own proxy, so it trusts that one hop too (Secure cookies stay off: http).
+HUB_HTTPS=0
 case "$HUB_URL" in
-  https://*) COOKIE_SECURE="true";  HUB_TRUSTED_PROXY="true" ;;
+  https://*) COOKIE_SECURE="true";  HUB_TRUSTED_PROXY="true"; HUB_HTTPS=1 ;;
   *)         COOKIE_SECURE="false"; HUB_TRUSTED_PROXY="false" ;;
 esac
+[ "$IP_MODE" = "1" ] && HUB_TRUSTED_PROXY="true"
 # Cloudflare client-IP mode reads a forwarding chain it only believes behind a trusted proxy (https): refuse to
 # silently ignore the flag, and never leave a stale true behind a plain-http origin (the hub would refuse to boot).
 case "$CF_PROXY" in ""|0|1) ;; *) err "TUGRA_CLOUDFLARE_PROXY must be 1 or 0 (got: $CF_PROXY)"; exit 1 ;; esac
-if [ "$CF_PROXY" = "1" ] && [ "$HUB_TRUSTED_PROXY" != "true" ]; then
+if [ "$CF_PROXY" = "1" ] && [ "$HUB_HTTPS" != "1" ]; then
   err "--cloudflare-proxy needs the panel served over https (--domain <host> or an https --hub-url): Cloudflare only proxies a real hostname. Nothing was changed."
   exit 1
 fi
@@ -541,51 +616,43 @@ fi
 # --keep-raw-ports), and bundled TLS moves it once the panel router is live. Override anytime with
 # HUB_BIND/WEB_BIND (e.g. a private-interface IP for a proxy on another host).
 if [ "$HUB_TRUSTED_PROXY" = "true" ] && ! env_has HUB_PUBLIC_URL; then
-  PORT_BIND_DEFAULT="127.0.0.1"
+  PORT_BIND_DEFAULT="127.0.0.1"   # a fresh --domain or IP-mode install: only the proxy needs the raw ports
 else
   PORT_BIND_DEFAULT="0.0.0.0"
 fi
 
-# --- Panel-TLS (DİLİM 1): decide + validate BEFORE writing .env or starting anything ---------------
-# Opt-in. Only with a --domain https origin. Explicit --auto-tls/--no-auto-tls/--acme-email win; otherwise
-# a fresh install asks once on a TTY (default NO), headless stays off. Plain --domain = bring-your-own proxy
-# (unchanged). A flag-less re-run leaves DOMAIN empty, so a stored PANEL_TLS is preserved untouched here.
+# --- Panel-TLS: decide + validate BEFORE writing .env or starting anything -------------------------
+# Only with a --domain https origin. Tugra provisions the panel's HTTPS itself by default (bundled Traefik + Let's
+# Encrypt HTTP-01 — no token, no email needed), the way `--domain` is expected to behave in one command. Explicit
+# --no-auto-tls keeps bring-your-own-proxy, and so does a domain given while :80/:443 are held by another web server
+# (the bundled proxy could not bind them). A stored PANEL_TLS (an existing install's choice) is never overridden by a
+# flag-less run, and a re-run with --domain on an install that already decided keeps that decision.
 PANEL_TLS_DECISION=""; PANEL_ACME_EMAIL=""
 if [ -n "$DOMAIN" ] && [ "$HUB_TRUSTED_PROXY" = "true" ]; then
   _want=""
   if [ "$AUTO_TLS" = "1" ] || [ -n "$ACME_EMAIL_ARG" ] || [ -n "$ACME_DNS_TOKEN_ARG" ]; then _want=1
   elif [ "$AUTO_TLS" = "0" ]; then _want=0
   elif ! env_has PANEL_TLS; then
-    if [ "$DRY_RUN" -eq 0 ] && [ -r /dev/tty ]; then
-      printf '\n  Provision HTTPS for the panel automatically with Let'"'"'s Encrypt?\n'
-      printf '  Contacts Let'"'"'s Encrypt for %s with your email; no other outbound. [y/N] ' "$DOMAIN"
-      IFS= read -r _tls_ans </dev/tty || _tls_ans=""
-      case "$_tls_ans" in [Yy] | [Yy][Ee][Ss]) _want=1 ;; *) _want=0 ;; esac
-      printf '\n'
-    else
-      _want=0   # headless default: bring-your-own proxy (no surprise outbound to Let's Encrypt)
-    fi
+    _want=1
+    for _p in 80 443; do
+      if [ "$DRY_RUN" -eq 0 ] && foreign_port_busy "$_p"; then
+        _want=0
+        note "Port ${_p} is already in use by another service, so Tugra's own HTTPS proxy can't bind it: keeping bring-your-own-proxy for $DOMAIN."
+        note "Front Tugra with that proxy (docs/install.md has the routing table), or free :80/:443 and re-run with --auto-tls."
+      fi
+    done
   fi
   if [ "$_want" = "1" ]; then
+    # The contact email is OPTIONAL (Let's Encrypt only uses it for expiry notices); one that is given must be real.
     PANEL_ACME_EMAIL="$ACME_EMAIL_ARG"
     # env_has guards the fresh-install case: .env does not exist yet here, and `grep` on a missing file
     # exits 2, which under `set -e` + `&&` would silently abort. env_has returns false (no grep) if absent.
     if [ -z "$PANEL_ACME_EMAIL" ] && env_has ACME_EMAIL; then PANEL_ACME_EMAIL="$(env_get ACME_EMAIL)"; fi
-    if [ -z "$PANEL_ACME_EMAIL" ] && [ "$DRY_RUN" -eq 0 ] && [ -r /dev/tty ]; then
-      printf '  Let'"'"'s Encrypt needs a contact email (expiry notices). Enter it: '
-      IFS= read -r PANEL_ACME_EMAIL </dev/tty || PANEL_ACME_EMAIL=""
-    fi
-    if ! valid_acme_email "$PANEL_ACME_EMAIL"; then
-      err "--auto-tls needs a real --acme-email <you@domain> (not example/test/localhost). Nothing was changed."
+    if [ -n "$PANEL_ACME_EMAIL" ] && ! valid_acme_email "$PANEL_ACME_EMAIL"; then
+      err "--acme-email must be a real address (not example/test/localhost). Nothing was changed."
       exit 1
     fi
     PANEL_TLS_DECISION=1
-    if command -v ss >/dev/null 2>&1; then
-      for _p in 80 443; do
-        ss -ltn 2>/dev/null | awk '{print $4}' | grep -qE "[:.]${_p}$" &&
-          note "Port ${_p} looks busy — if another web server owns it, the panel TLS proxy can't bind (free it or use --no-auto-tls)."
-      done
-    fi
     # Catch a misconfigured domain HERE (before any ACME attempt), not as a silent cert failure later.
     # Advisory only — never blocks the install. DNS-01 token in play => check the token, not the A record.
     if [ "$DRY_RUN" -eq 0 ]; then
@@ -598,7 +665,7 @@ if [ -n "$DOMAIN" ] && [ "$HUB_TRUSTED_PROXY" = "true" ]; then
     PANEL_TLS_DECISION=0
   fi
 elif [ "$AUTO_TLS" = "1" ] || [ -n "$ACME_EMAIL_ARG" ] || [ -n "$ACME_DNS_TOKEN_ARG" ]; then
-  err "--auto-tls / --acme-email / --acme-dns-cloudflare require --domain <host> (the panel's HTTPS hostname)."
+  err "--auto-tls / --acme-email / --acme-dns-cloudflare require --domain <host> (the panel's HTTPS hostname). To set the domain later, use Settings -> Instance -> Panel domain."
   exit 1
 fi
 
@@ -719,18 +786,24 @@ set_env COOKIE_SECURE  "$COOKIE_SECURE"
 # CLEAR a stale HUB_TRUSTED_PROXY=true, else the hub would keep trusting spoofable X-Forwarded-For.
 set_env HUB_TRUSTED_PROXY "$HUB_TRUSTED_PROXY"
 # Cloudflare client-IP mode: explicit flag wins; a flag-less re-run keeps the stored value while the proxy trust is
-# still on; leaving trusted-proxy mode CLEARS it (the hub refuses to boot with CLOUDFLARE=true and no trusted proxy).
-if [ "$HUB_TRUSTED_PROXY" != "true" ]; then
+# still on; leaving https (or trusted-proxy mode) CLEARS it (Cloudflare only proxies a real https hostname).
+if [ "$HUB_HTTPS" != "1" ]; then
   if env_has HUB_TRUSTED_PROXY_CLOUDFLARE; then set_env HUB_TRUSTED_PROXY_CLOUDFLARE "false"; fi
 elif [ "$CF_PROXY" = "1" ]; then set_env HUB_TRUSTED_PROXY_CLOUDFLARE "true"
 elif [ "$CF_PROXY" = "0" ]; then set_env HUB_TRUSTED_PROXY_CLOUDFLARE "false"
 fi
+# IP mode: the hub renders the host-less http://<ip>/ router from this flag. Switched OFF whenever this run moves the panel
+# to a domain or to explicit URLs; never written for an install that does not use it.
+if [ "$IP_MODE" = "1" ]; then set_env PANEL_IP_ROUTE 1
+elif env_has PANEL_IP_ROUTE; then set_env PANEL_IP_ROUTE 0; fi
 # Panel-TLS: persist only when a decision was made THIS run (a flag-less re-run leaves these untouched).
 if [ -n "$PANEL_TLS_DECISION" ]; then
   set_env PANEL_TLS "$PANEL_TLS_DECISION"
   if [ "$PANEL_TLS_DECISION" = "1" ]; then
     set_env PANEL_DOMAIN "$DOMAIN"
-    set_env ACME_EMAIL "$PANEL_ACME_EMAIL"
+    [ -z "$PANEL_ACME_EMAIL" ] || set_env ACME_EMAIL "$PANEL_ACME_EMAIL"
+    # A domain is live: the host-less http://<ip>/ route is not (IP mode off; the hub reads PANEL_IP_ROUTE=1 only).
+    if env_has PANEL_IP_ROUTE; then set_env PANEL_IP_ROUTE 0; fi
     # DNS-01 (optional): a real cert while the record stays proxied (IP hidden). Token is a secret → 0600 .env.
     if [ -n "$ACME_DNS_TOKEN_ARG" ]; then
       set_env ACME_DNS_PROVIDER "${ACME_DNS_PROVIDER_ARG:-cloudflare}"
@@ -1011,36 +1084,52 @@ else
   log "Tugra is up."
 fi
 
-# --- Panel-TLS: provision the control-panel HTTPS proxy (opt-in; reads the persisted .env) ----------
-# Runs for a fresh enable AND a flag-less upgrade re-run (reads PANEL_TLS from .env). On ANY failure it
-# changes NOTHING else (no flag flip, no rebind) — the panel stays reachable on the host port.
-PANEL_UP=0
-if [ "$(env_get PANEL_TLS)" = "1" ] && [ "$HEALTHY" != "0" ]; then
-  _pd="$(env_get PANEL_DOMAIN)"; _pe="$(env_get ACME_EMAIL)"
+# --- Panel proxy: Tugra's own Traefik in front of the panel (reads the persisted .env) -----------------------------
+# Two flavours, both through the hub image's print-proxy-setup (single source of the Traefik flags):
+#   - bundled HTTPS (PANEL_TLS=1): https://<domain>, Let's Encrypt HTTP-01 (or the optional DNS-01 token).
+#   - IP mode (PANEL_IP_ROUTE=1, a plain install): the panel on http://<ip>/ (port 80), no domain, no cert.
+# Runs for a fresh enable AND a flag-less upgrade re-run. On a failure in the HTTPS flavour NOTHING else changes (no flag
+# flip, no rebind) — the panel stays reachable on the host port. In IP mode the URLs already point at port 80, so a proxy
+# that does not come up falls back to the raw ports (below) instead of leaving a panel nobody can open.
+PANEL_UP=0; PANEL_PROXY_KIND=""
+if [ "$HEALTHY" != "0" ]; then
+  if [ "$(env_get PANEL_TLS)" = "1" ] && [ -n "$(env_get PANEL_DOMAIN)" ]; then PANEL_PROXY_KIND="tls"
+  elif [ "$(env_get PANEL_IP_ROUTE | tr -d "\"' \r")" = "1" ]; then PANEL_PROXY_KIND="ip"; fi
+fi
+if [ -n "$PANEL_PROXY_KIND" ]; then
+  _pd=""; _pe="$(env_get ACME_EMAIL)"
+  [ "$PANEL_PROXY_KIND" = "tls" ] && _pd="$(env_get PANEL_DOMAIN)"
+  _pip=""; [ "$PANEL_PROXY_KIND" = "ip" ] && _pip=1
   # DNS-01 creds (optional) — passed to the generator so it emits the le-dns resolver for a real cert while proxied.
   _pdp="$(env_has ACME_DNS_PROVIDER && env_get ACME_DNS_PROVIDER || true)"; _pdt="$(env_has ACME_DNS_TOKEN && env_get ACME_DNS_TOKEN || true)"
-  if [ -n "$_pd" ] && [ -n "$_pe" ]; then
-    step "Provisioning HTTPS for the panel ($_pd)…"
+  if [ -n "$_pd" ] || [ -n "$_pip" ]; then
+    if [ -n "$_pip" ]; then step "Starting Tugra's proxy so the panel answers on port 80…"; else step "Provisioning HTTPS for the panel ($_pd)…"; fi
     # The generated script embeds the DNS-01 token: keep it in the private 0700 dir at 0600 and delete it on
     # exit (the EXIT trap above), never a leftover default-permission file in /tmp.
     _setup="$(umask 077; mktemp "$LOGDIR/panel-setup.XXXXXX")"
     # Single source of truth: the hub image prints the Traefik setup script (panel router); we run it as root.
     # The DNS token travels in the environment (`-e ACME_DNS_TOKEN` with no value forwards it), never in argv.
-    if ACME_DNS_TOKEN="$_pdt" compose run --rm --no-deps -T -e PANEL_DOMAIN="$_pd" -e ACME_EMAIL="$_pe" -e ACME_DNS_PROVIDER="$_pdp" -e ACME_DNS_TOKEN \
+    if ACME_DNS_TOKEN="$_pdt" compose run --rm --no-deps -T -e PANEL_DOMAIN="$_pd" -e PANEL_IP_ROUTE="$_pip" -e ACME_EMAIL="$_pe" -e ACME_DNS_PROVIDER="$_pdp" -e ACME_DNS_TOKEN \
         --entrypoint node hub-api dist/deploy/print-proxy-setup.js >"$_setup" 2>"$LOGDIR/panel-setup.log" && [ -s "$_setup" ]; then
       if sh "$_setup" >"$LOGDIR/panel-run.log" 2>&1; then
         # The router is up immediately (self-signed until Let's Encrypt issues over :80). Resolve the panel
         # host to loopback so we test the local Traefik regardless of external DNS; -k since the cert may be
         # the interim self-signed one until DNS + :80 let ACME complete.
         i=0
-        while [ "$i" -lt 45 ]; do
-          curl -fsSk --resolve "$_pd:443:127.0.0.1" "https://$_pd/health" >/dev/null 2>&1 && { PANEL_UP=1; break; }
-          i=$((i + 1)); sleep 2
+        while [ "$i" -lt "${TUGRA_PANEL_TRIES:-45}" ]; do
+          if [ -n "$_pip" ]; then
+            curl -fsS --max-time 4 "http://127.0.0.1/health" >/dev/null 2>&1 && { PANEL_UP=1; break; }  # host-less route -> the hub's /health
+          else
+            curl -fsSk --resolve "$_pd:443:127.0.0.1" "https://$_pd/health" >/dev/null 2>&1 && { PANEL_UP=1; break; }
+          fi
+          i=$((i + 1)); sleep "${TUGRA_PANEL_INTERVAL:-2}"
         done
       fi
     fi
     rm -f "$_setup"; _setup=""
-    if [ "$PANEL_UP" = "1" ]; then
+    if [ "$PANEL_UP" = "1" ] && [ -n "$_pip" ]; then
+      ok "Panel proxy is live: the panel answers on port 80 (only :80/:443 need to be open to the outside)."
+    elif [ "$PANEL_UP" = "1" ]; then
       ok "Panel HTTPS router is live (cert issues once $_pd resolves here and :80/:443 are reachable)."
       # Traefik reaches the hub/web over the tugra-panel docker network, so the raw host ports do not need to be
       # internet-exposed. Move a still-0.0.0.0 bind to loopback (opt out: --keep-raw-ports / an explicit
@@ -1062,9 +1151,21 @@ if [ "$(env_get PANEL_TLS)" = "1" ] && [ "$HEALTHY" != "0" ]; then
           HEALTHY="$_hprev"   # the hub was verified before the rebind attempt; do not flip a good install to failed
         fi
       fi
+    elif [ -n "$_pip" ]; then
+      # The URLs already name port 80, so a proxy that did not come up must not leave a panel nobody can open: put the
+      # classic raw-port setup back (the same keys --raw-ports writes) and recreate hub/web on it.
+      warn "Tugra's proxy did not come up on port 80 (setup log: $LOGDIR/panel-run.log) — falling back to the raw ports so the panel stays reachable."
+      _fbh="$(printf '%s' "$WEB_URL" | sed -e 's#^[a-zA-Z][a-zA-Z0-9+.-]*://##' -e 's#[/:].*$##')"
+      set_env HUB_PUBLIC_URL "http://$_fbh:$HUB_PORT"; set_env WEB_PUBLIC_URL "http://$_fbh:$WEB_PORT"
+      set_env COOKIE_SECURE false; set_env HUB_TRUSTED_PROXY false; set_env PANEL_IP_ROUTE 0
+      set_env HUB_BIND 0.0.0.0; set_env WEB_BIND 0.0.0.0
+      HUB_URL="http://$_fbh:$HUB_PORT"; WEB_URL="http://$_fbh:$WEB_PORT"; HUB_TRUSTED_PROXY="false"; IP_MODE=0; PANEL_PROXY_KIND=""
+      if compose up -d --no-deps hub-api web >"$LOGDIR/fallback.log" 2>&1; then wait_hub_healthy; else HEALTHY=0; fi
+      note "Check why :80 failed:  docker logs tugra-proxy  ·  is another service on :80? Then re-run with --raw-ports to keep this setup."
     else
       warn "Panel HTTPS didn't come up yet — the install is fine; the panel is still reachable on the host port."
       note "Check: docker logs tugra-proxy  ·  DNS for $_pd -> this host  ·  :80/:443 reachable (setup log: $LOGDIR/panel-run.log)"
+      note "Behind Cloudflare's proxy: set SSL/TLS mode 'Full' and turn 'Always Use HTTPS' off while the first cert issues; no token needed (optional: --acme-dns-cloudflare-file <path>)."
       note "Reach it meanwhile:  ssh -L 3001:127.0.0.1:3001 <this-host>  then open http://localhost:3001"
       note "Disable auto-TLS anytime:  re-run with --no-auto-tls  (nothing else is changed on failure)."
     fi
@@ -1090,7 +1191,11 @@ fi
 
 printf '  Web UI:  %s\n' "$WEB_URL"
 printf '  Hub API: %s\n' "$HUB_URL"
-if [ "$(env_get PANEL_TLS)" = "1" ]; then
+if [ "$IP_MODE" = "1" ] && [ "$PANEL_UP" = "1" ]; then
+  printf '  \033[1mOpen %s in your browser\033[0m — Tugra serves the panel on port 80 itself, so only ports 80 and 443 need to be open.\n' "$WEB_URL"
+  printf '  Have a domain? Point its DNS at this server, then set it in Settings -> Instance -> Panel domain (free HTTPS, no token),\n'
+  printf '  or re-run this installer with --domain <host>. (A cloud server behind NAT needs --public-ip <ip> for a reachable URL.)\n'
+elif [ "$(env_get PANEL_TLS)" = "1" ]; then
   [ "$PANEL_UP" = "1" ] && printf "  HTTPS is provisioned automatically (Let's Encrypt). Point %s's DNS at this host; the cert issues on the first reachable request.\n" "$(env_get PANEL_DOMAIN)"
   _hb="$(env_get HUB_BIND)"; _wb="$(env_get WEB_BIND)"
   if [ "$PANEL_UP" = "1" ] && [ "${_hb:-0.0.0.0}" = "0.0.0.0" ]; then
@@ -1104,7 +1209,7 @@ elif [ "$HUB_TRUSTED_PROXY" = "true" ]; then
   printf '  reach ONLY the proxy. Same-host proxy: the 127.0.0.1 default is correct. Proxy on another host:\n'
   printf '  set HUB_BIND/WEB_BIND to this box private IP and firewall 3000/3001 (Docker-published ports bypass ufw).\n'
 else
-  printf "  For TLS + a public domain: re-run with --domain <host> --auto-tls --acme-email <you@domain> (automatic HTTPS), or front the stack with your own reverse proxy.\n"
+  printf "  For TLS + a public domain: re-run with --domain <host> (automatic HTTPS), or front the stack with your own reverse proxy.\n"
 fi
 printf '  Back up the hub: keep %s offsite and schedule a pg_dump of the hub database (see docs/disaster-recovery.md).\n' "$ENV_FILE"
 printf '  Open the Web UI and create the owner account (enter the setup code if one is shown below). This machine connects itself as your first server; add more from Settings -> Servers.\n'

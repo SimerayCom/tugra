@@ -61,8 +61,11 @@ export const envSchema = z
   // bootstrap. The domain format is validated strictly at provisioning time (panel-router.validatePanelDomain).
   PANEL_TLS: z.enum(["0", "1"]).optional(),
   PANEL_DOMAIN: z.string().optional(),
+  // "1" = the panel is also served host-less on http://<server-ip>/ by Tugra's own proxy (a plain install with no
+  // domain; install.sh writes it, the in-app panel-domain change clears it). Cleared once a domain is live.
+  PANEL_IP_ROUTE: z.enum(["0", "1"]).optional(),
   // Optional DNS-01 for the panel (install.sh --acme-dns-cloudflare): a real Let's Encrypt cert at the
-  // origin WHILE the record stays Cloudflare-proxied (IP hidden) — HTTP-01 can't validate through a proxy.
+  // origin WHILE the record stays Cloudflare-proxied (IP hidden). Optional: HTTP-01 usually works through the proxy too.
   // When both are set, the panel uses the le-dns resolver with the token (passed to Traefik via a 0600
   // env-file, never argv). ACME_DNS_TOKEN is a secret, kept only in the 0600 .env.
   ACME_DNS_PROVIDER: z.string().optional(),

@@ -1,9 +1,11 @@
-import { Injectable, OnApplicationBootstrap } from "@nestjs/common";
+import { Injectable, OnApplicationBootstrap, Optional } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { PrismaService } from "../prisma/prisma.service";
 import { CryptoService } from "../crypto/crypto.service";
 import { InstanceSettingsService } from "../instance/instance-settings.service";
-import { validatePanelDomain, validateAcmeEmail, dnsProviderEnvCreds, type PanelResolver } from "../deploy/panel-router";
+import { RedisService } from "../redis/redis.service";
+import { validatePanelDomain, optionalAcmeEmail, dnsProviderEnvCreds, type PanelResolver } from "../deploy/panel-router";
+import { PANEL_PENDING_KEY, parsePanelPending } from "./panel-pending";
 
 export interface ResolvedProxyConfig {
   acmeEmail?: string;
@@ -12,7 +14,9 @@ export interface ResolvedProxyConfig {
   dnsCreds?: Record<string, string> | null;
   // Panel-TLS (DİLİM 1): a {domain, resolver} for the LOCAL server when panel TLS is on and valid; otherwise
   // undefined (leave the panel file untouched). Removal of the router is a separate, explicit op.
-  panel?: { domain: string; resolver: PanelResolver };
+  // `domain` is null only for the host-less http://<ip>/ panel of a plain install; `also` = hosts served at the same
+  // time (the OLD host while a domain change is verified); `ipRoute` = the host-less http route (PANEL_IP_ROUTE=1).
+  panel?: { domain: string | null; resolver: PanelResolver; also?: string[]; ipRoute?: boolean };
   // Traffic Analytics: true when the server opted in — the proxy then writes a JSON access log to the host.
   accessLog?: boolean; // always set by resolveFor; optional only so hand-built fixtures stay valid
 }
@@ -30,6 +34,7 @@ export class ProxyConfigService implements OnApplicationBootstrap {
     private readonly prisma: PrismaService,
     private readonly crypto: CryptoService,
     private readonly settings: InstanceSettingsService,
+    @Optional() private readonly redis?: RedisService,
   ) {}
 
   /** install.sh --auto-tls writes PANEL_TLS=1 + PANEL_DOMAIN; mirror that explicit operator intent into the
@@ -89,26 +94,51 @@ export class ProxyConfigService implements OnApplicationBootstrap {
     return { acmeEmail, bind, dnsProvider, dnsCreds, accessLog: s?.trafficAnalytics === true, ...(panel ? { panel } : {}) };
   }
 
-  /** The panel config — ONLY for the local server, when a panel domain is set AND the ACME email is valid.
-   *  resolver is derived: "le-dns" when the local server has usable DNS-01 creds (for a Cloudflare-proxied
-   *  record), else "le". Returns undefined (never throws) so a recreate can't blow up mid-deploy. */
+  /** The panel config — ONLY for the local server, when a panel domain is set or the host-less IP route is on
+   *  (PANEL_IP_ROUTE=1, a plain install). The ACME email is OPTIONAL (blank = a resolver without a contact) but one
+   *  that IS set must be real, else the panel is omitted (status surfaces why). While a domain change is in flight
+   *  (PANEL_PENDING_KEY) the NEW host is rendered next to what works today, so the current URL keeps working until
+   *  the change is verified. resolver is derived: "le-dns" when the local server has usable DNS-01 creds (for a
+   *  Cloudflare-proxied record), else "le". Returns undefined (never throws) so a recreate can't blow up mid-deploy. */
   private async resolvePanel(
     isLocal: boolean,
     acmeEmail: string | undefined,
     dnsUsable: boolean,
-  ): Promise<{ domain: string; resolver: PanelResolver } | undefined> {
+  ): Promise<ResolvedProxyConfig["panel"]> {
     if (!isLocal) return undefined;
     const raw = await this.settings.panelDomainFor(
       this.config.get<string>("PANEL_DOMAIN"),
       this.config.get<string>("PANEL_TLS"),
     );
-    if (!raw) return undefined;
+    const envIpRoute = this.config.get<string>("PANEL_IP_ROUTE")?.trim() === "1";
+    const pending = await this.readPending();
     try {
-      const domain = validatePanelDomain(raw);
-      validateAcmeEmail(acmeEmail ?? ""); // a placeholder/missing email omits the panel (status surfaces why)
-      return { domain, resolver: dnsUsable ? "le-dns" : "le" };
+      optionalAcmeEmail(acmeEmail ?? "");
+      const current = raw ? validatePanelDomain(raw) : null;
+      let domain: string | null = current;
+      const also: string[] = [];
+      let ipRoute = envIpRoute;
+      if (pending) {
+        if (pending.domain === null) {
+          ipRoute = true; // removing the domain: the IP route goes live BEFORE the URLs are switched
+        } else {
+          domain = validatePanelDomain(pending.domain);
+          if (current && current !== domain) also.push(current);
+        }
+      }
+      if (!domain && !ipRoute) return undefined;
+      return { domain, resolver: dnsUsable ? "le-dns" : "le", ...(also.length ? { also } : {}), ...(ipRoute ? { ipRoute: true } : {}) };
     } catch {
       return undefined;
+    }
+  }
+
+  private async readPending() {
+    if (!this.redis) return null;
+    try {
+      return parsePanelPending(await this.redis.get(PANEL_PENDING_KEY));
+    } catch {
+      return null; // Redis hiccup: resolve from the stored config rather than fail a deploy
     }
   }
 }

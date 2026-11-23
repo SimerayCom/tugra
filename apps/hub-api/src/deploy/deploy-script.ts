@@ -16,7 +16,7 @@ import { customLabelArgs } from "./custom-labels";
 import { registryRepoOf, type PushAlias } from "./push-ref";
 import {
   buildPanelRouterYaml,
-  validateAcmeEmail,
+  optionalAcmeEmail,
   PANEL_NETWORK,
   PROXY_DYNAMIC_DIR,
   PANEL_FILE,
@@ -2331,7 +2331,9 @@ export interface ProxySetupOpts {
   // Default (undefined/false) emits none of it — the script is byte-identical to before.
   accessLog?: boolean;
   // Panel-TLS (DİLİM 1): object => (re)write the panel router file; null => remove it; undefined => leave it.
-  panel?: { domain: string; resolver?: PanelResolver } | null;
+  //   domain null + ipRoute => the host-less http://<ip>/ panel of a plain install; `also` = extra hosts served at the
+  //   same time (the old host while a domain change is verified).
+  panel?: { domain: string | null; resolver?: PanelResolver; also?: string[]; ipRoute?: boolean } | null;
   // Explicit operator "recreate" (Start / Restart / traffic-analytics toggle / panel-apply): omit the reconcile
   // gate and ALWAYS rm+run, regardless of the on-host hash. The ordinary domained-deploy path leaves this false,
   // so an unchanged proxy is a zero-drop no-op. `force` is NOT a hashed input — it never changes the label.
@@ -2342,9 +2344,10 @@ export interface ProxySetupOpts {
  *  (to render) and {@link proxyConfigHash} (to hash), so the running container's confighash label can never
  *  disagree with what was actually launched. */
 function resolveProxyRender(opts: ProxySetupOpts) {
-  // The panel path demands a real ACME email (no admin@example.com fallback — Let's Encrypt rejects it); the
-  // classic app path keeps the fallback so existing http deploys never break.
-  const email = opts.panel ? validateAcmeEmail(opts.acmeEmail) : opts.acmeEmail || "admin@example.com";
+  // The panel path takes a REAL email or none at all (no admin@example.com fallback — Let's Encrypt rejects it; a
+  // blank email just leaves the resolver without a contact); the classic app path keeps the fallback so existing
+  // http deploys never break.
+  const email: string | undefined = opts.panel ? optionalAcmeEmail(opts.acmeEmail) : opts.acmeEmail || "admin@example.com";
   const dns =
     opts.dnsProvider && opts.dnsCreds && Object.keys(opts.dnsCreds).length > 0
       ? { provider: opts.dnsProvider, creds: opts.dnsCreds }
@@ -2374,12 +2377,15 @@ export function proxyConfigPreimage(opts: ProxySetupOpts = {}): string {
     ? `dns=${r.dns.provider}:${createHash("sha256").update(dnsCredsB64(r.dns.creds)).digest("hex")}`
     : "dns=none";
   const panelPart = opts.panel
-    ? `panel=${opts.panel.domain}:${r.panelResolver}:${r.panelHttpOnly ? "http" : "tls"}`
+    ? `panel=${opts.panel.domain ?? "-"}:${r.panelResolver}:${r.panelHttpOnly ? "http" : "tls"}` +
+      // Only added when used, so a pre-existing single-domain proxy keeps its hash (no needless recreate on upgrade).
+      (opts.panel.also?.length ? `:also=${opts.panel.also.join(",")}` : "") +
+      (opts.panel.ipRoute ? ":ip" : "")
     : "panel=none";
   return [
     `v=${PROXY_SETUP_VERSION}`,
     `img=${PROXY_IMAGE}`,
-    `email=${r.email}`,
+    `email=${r.email ?? ""}`,
     `bind=${r.bind}`,
     `net=${PROXY_NETWORK}`,
     dnsPart,
@@ -2446,14 +2452,14 @@ export function buildProxySetupScript(opts: ProxySetupOpts = {}): string {
     "--entrypoints.web.address=:80",
     "--entrypoints.websecure.address=:443",
     ...(accessLog ? proxyAccessLogFlags() : []),
-    `--certificatesresolvers.le.acme.email=${shq(email)}`,
+    ...(email ? [`--certificatesresolvers.le.acme.email=${shq(email)}`] : []),
     "--certificatesresolvers.le.acme.storage=/letsencrypt/acme.json",
     "--certificatesresolvers.le.acme.httpchallenge=true",
     "--certificatesresolvers.le.acme.httpchallenge.entrypoint=web",
     // Wildcard cert via DNS-01 — separate ACME storage from the HTTP-01 resolver.
     ...(dns
       ? [
-          `--certificatesresolvers.le-dns.acme.email=${shq(email)}`,
+          ...(email ? [`--certificatesresolvers.le-dns.acme.email=${shq(email)}`] : []),
           "--certificatesresolvers.le-dns.acme.storage=/letsencrypt/acme-dns.json",
           "--certificatesresolvers.le-dns.acme.dnschallenge=true",
           `--certificatesresolvers.le-dns.acme.dnschallenge.provider=${shq(dns.provider)}`,
@@ -2470,7 +2476,15 @@ export function buildProxySetupScript(opts: ProxySetupOpts = {}): string {
         ? [`rm -f ${PROXY_DYNAMIC_DIR}/${PANEL_FILE}`]
         : [
             `printf %s ${shq(
-              b64(buildPanelRouterYaml({ domain: opts.panel.domain, resolver: panelResolver, httpOnly: panelHttpOnly })),
+              b64(
+                buildPanelRouterYaml({
+                  domain: opts.panel.domain,
+                  resolver: panelResolver,
+                  httpOnly: panelHttpOnly,
+                  also: opts.panel.also,
+                  ipRoute: opts.panel.ipRoute,
+                }),
+              ),
             )} | base64 -d > ${PROXY_DYNAMIC_DIR}/.${PANEL_FILE}.tmp`,
             `mv ${PROXY_DYNAMIC_DIR}/.${PANEL_FILE}.tmp ${PROXY_DYNAMIC_DIR}/${PANEL_FILE}`,
           ];
@@ -2539,7 +2553,7 @@ export function buildProxySetupScript(opts: ProxySetupOpts = {}): string {
  * proxy (no app downtime). The file provider picks the change up via --providers.file.watch.
  */
 export function buildPanelRouterWriteScript(
-  panel: { domain: string; resolver?: PanelResolver; httpOnly?: boolean } | null,
+  panel: { domain: string | null; resolver?: PanelResolver; httpOnly?: boolean; also?: string[]; ipRoute?: boolean } | null,
 ): string {
   if (panel === null) {
     return ["set -e", `rm -f ${PROXY_DYNAMIC_DIR}/${PANEL_FILE}`].join("\n");

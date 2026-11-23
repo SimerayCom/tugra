@@ -5,17 +5,19 @@
  * EMPTY stdout, so a `| sh` of an empty stream runs nothing.
  *
  * Compiled to dist/deploy/print-proxy-setup.js; invoked as:
- *   node dist/deploy/print-proxy-setup.js   (env: PANEL_DOMAIN, ACME_EMAIL, PANEL_CERT_RESOLVER?, PROXY_BIND?)
+ *   node dist/deploy/print-proxy-setup.js   (env: PANEL_DOMAIN?, PANEL_IP_ROUTE?, ACME_EMAIL?, PROXY_BIND?; a domain, the
+ *   IP route or both). PANEL_IP_ROUTE=1 serves the panel host-less on http://<ip>/ (a plain install).
  */
 import { buildProxySetupScript } from "./deploy-script";
-import { validatePanelDomain, validateAcmeEmail, dnsProviderEnvCreds, type PanelResolver } from "./panel-router";
+import { validatePanelDomain, optionalAcmeEmail, dnsProviderEnvCreds, type PanelResolver } from "./panel-router";
 
 /** Pure: render the script from an env-like record, or throw on invalid input. Testable without a subprocess. */
 export function renderProxySetupFromEnv(env: NodeJS.ProcessEnv): string {
-  const domain = (env.PANEL_DOMAIN ?? "").trim();
-  if (!domain) throw new Error("PANEL_DOMAIN is required");
-  validatePanelDomain(domain); // fail fast with a clear message before building
-  validateAcmeEmail(env.ACME_EMAIL ?? ""); // panel path requires a real email (also enforced in the builder)
+  const rawDomain = (env.PANEL_DOMAIN ?? "").trim();
+  const ipRoute = (env.PANEL_IP_ROUTE ?? "").trim() === "1";
+  if (!rawDomain && !ipRoute) throw new Error("PANEL_DOMAIN (or PANEL_IP_ROUTE=1) is required");
+  const domain = rawDomain ? validatePanelDomain(rawDomain) : null; // fail fast with a clear message before building
+  const acmeEmail = optionalAcmeEmail(env.ACME_EMAIL ?? ""); // optional, but a given one must be real (also enforced in the builder)
 
   // DNS-01 (optional): when a provider + token are set, use the le-dns resolver (real cert while proxied,
   // IP hidden). The resolver is derived from whether we actually have creds — never le-dns without them,
@@ -26,11 +28,11 @@ export function renderProxySetupFromEnv(env: NodeJS.ProcessEnv): string {
   const resolver: PanelResolver = dnsCreds ? "le-dns" : "le";
 
   return buildProxySetupScript({
-    acmeEmail: env.ACME_EMAIL ?? null,
+    acmeEmail: acmeEmail ?? null,
     bind: env.PROXY_BIND ?? null,
     dnsProvider: dnsCreds ? dnsProvider : undefined,
     dnsCreds,
-    panel: { domain, resolver },
+    panel: { domain, resolver, ...(ipRoute ? { ipRoute: true } : {}) },
     // install.sh pipes this to `sh` as an explicit operator setup/apply — always (re)create the proxy, the same
     // force semantics as ProxyService (panel-TLS apply) and ProxyOpsService (Start/Restart). Omitting it would
     // let the reconcile gate skip an "up to date" proxy, silently changing the installer's always-apply behaviour.

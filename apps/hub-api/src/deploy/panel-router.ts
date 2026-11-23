@@ -88,41 +88,96 @@ export function validateAcmeEmail(input: unknown): string {
   return e;
 }
 
-function hubRule(domain: string): string {
-  const prefixes = PANEL_HUB_PATHS.map((p) => `PathPrefix(\`${p}\`)`);
-  const exact = PANEL_HUB_EXACT_PATHS.map((p) => `Path(\`${p}\`)`);
-  return `Host(\`${domain}\`) && (${[...prefixes, ...exact].join(" || ")})`;
+/**
+ * The ACME contact email is OPTIONAL for the panel: Let's Encrypt only uses it for expiry notices, and asking a
+ * first-time installer for one (or inventing one it would reject) is exactly the friction this avoids. Blank =>
+ * undefined (the resolver is configured without an email); a value that IS given must still be a real one.
+ */
+export function optionalAcmeEmail(input: unknown): string | undefined {
+  if (input === undefined || input === null) return undefined;
+  if (typeof input === "string" && !input.trim()) return undefined;
+  return validateAcmeEmail(input);
 }
 
+const PANEL_HUB_MATCHERS = [
+  ...PANEL_HUB_PATHS.map((p) => `PathPrefix(\`${p}\`)`),
+  ...PANEL_HUB_EXACT_PATHS.map((p) => `Path(\`${p}\`)`),
+].join(" || ");
+
+function hubRule(domain: string): string {
+  return `Host(\`${domain}\`) && (${PANEL_HUB_MATCHERS})`;
+}
+
+// Host-less "IP mode" routers (a plain install, no domain yet): the panel answers on http://<server-ip>/ with the SAME
+// single-origin split as a domain install. Priorities are deliberately BELOW every other router: Traefik's default
+// priority is the rule's length, so a deployed app's Host(...) router always beats these two and can never be
+// shadowed by the panel catch-all (the hub paths sit one above the web catch-all, as in the domain routers).
+const R_IP_HUB = "tugra-panel-ip-hub";
+const R_IP_WEB = "tugra-panel-ip-web";
+const IP_HUB_PRIORITY = 2;
+const IP_WEB_PRIORITY = 1;
+
 /**
- * Render the Traefik file-provider YAML for the panel on `domain`.
+ * Render the Traefik file-provider YAML for the panel.
  * - Normal (TLS at Traefik): hub-paths router (priority 200) + web catch-all (100), both on `websecure`
  *   with `tls.certResolver`, plus an http→https redirect router (300).
  * - httpOnly (proxyBind "none" / Cloudflare tunnel terminates TLS): both routers on `web`, no tls, no redirect.
- * The domain is re-validated here, so nothing unvalidated reaches the rule even if called directly.
+ * - `also`: more panel hostnames served at the same time (the OLD host while a domain change is being verified, so
+ *   the current URL keeps working); each gets its own routers (and so its own certificate).
+ * - `ipRoute`: add the host-less http routers above (plain install, or while a domain change is in flight).
+ * `domain` may be null for an IP-only panel. Every host is re-validated here, so nothing unvalidated reaches a rule
+ * even if called directly.
  */
-export function buildPanelRouterYaml(opts: { domain: string; resolver?: PanelResolver; httpOnly?: boolean }): string {
-  const domain = validatePanelDomain(opts.domain);
+export function buildPanelRouterYaml(opts: {
+  domain: string | null;
+  resolver?: PanelResolver;
+  httpOnly?: boolean;
+  also?: string[];
+  ipRoute?: boolean;
+}): string {
+  const domains: string[] = [];
+  for (const d of [opts.domain, ...(opts.also ?? [])]) {
+    if (d === null || d === undefined) continue;
+    const v = validatePanelDomain(d);
+    if (!domains.includes(v)) domains.push(v);
+  }
+  const ipRoute = opts.ipRoute === true;
+  if (domains.length === 0 && !ipRoute) throw new Error("panel router needs a domain or the IP route");
   const httpOnly = opts.httpOnly === true;
   const resolver: PanelResolver = opts.resolver === "le-dns" ? "le-dns" : "le";
   const entryPoints = httpOnly ? ["web"] : ["websecure"];
 
-  const routers: Record<string, unknown> = {
-    [R_HUB]: {
+  const routers: Record<string, unknown> = {};
+  domains.forEach((domain, i) => {
+    const sfx = i === 0 ? "" : `-${i + 1}`;
+    routers[`${R_HUB}${sfx}`] = {
       rule: hubRule(domain),
       entryPoints,
       priority: 200,
       service: SVC_HUB,
       ...(httpOnly ? {} : { tls: { certResolver: resolver } }),
-    },
-    [R_WEB]: {
+    };
+    routers[`${R_WEB}${sfx}`] = {
       rule: `Host(\`${domain}\`)`,
       entryPoints,
       priority: 100,
       service: SVC_WEB,
       ...(httpOnly ? {} : { tls: { certResolver: resolver } }),
-    },
-  };
+    };
+    if (!httpOnly) {
+      routers[`${R_REDIRECT}${sfx}`] = {
+        rule: `Host(\`${domain}\`)`,
+        entryPoints: ["web"],
+        priority: 300,
+        middlewares: [MW_HTTPS],
+        service: "noop@internal",
+      };
+    }
+  });
+  if (ipRoute) {
+    routers[R_IP_HUB] = { rule: `(${PANEL_HUB_MATCHERS})`, entryPoints: ["web"], priority: IP_HUB_PRIORITY, service: SVC_HUB };
+    routers[R_IP_WEB] = { rule: "PathPrefix(`/`)", entryPoints: ["web"], priority: IP_WEB_PRIORITY, service: SVC_WEB };
+  }
 
   const http: Record<string, unknown> = {
     routers,
@@ -131,15 +186,7 @@ export function buildPanelRouterYaml(opts: { domain: string; resolver?: PanelRes
       [SVC_WEB]: { loadBalancer: { passHostHeader: true, servers: [{ url: `http://${PANEL_WEB_ALIAS}:3001` }] } },
     },
   };
-
-  if (!httpOnly) {
-    routers[R_REDIRECT] = {
-      rule: `Host(\`${domain}\`)`,
-      entryPoints: ["web"],
-      priority: 300,
-      middlewares: [MW_HTTPS],
-      service: "noop@internal",
-    };
+  if (domains.length > 0 && !httpOnly) {
     http.middlewares = { [MW_HTTPS]: { redirectScheme: { scheme: "https", permanent: true } } };
   }
 

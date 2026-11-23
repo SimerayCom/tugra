@@ -7,7 +7,7 @@ import { AuditService } from "../audit/audit.service";
 import { InstanceSettingsService } from "../instance/instance-settings.service";
 import { ProxyConfigService } from "../proxy-config/proxy-config.service";
 import { ProxyService } from "./proxy.service";
-import { validateAcmeEmail, PROXY_DYNAMIC_DIR, PANEL_FILE } from "../deploy/panel-router";
+import { optionalAcmeEmail, PROXY_DYNAMIC_DIR, PANEL_FILE } from "../deploy/panel-router";
 
 export const PanelTlsStatusSchema = z.object({
   enabled: z.boolean(), // a panel domain is configured (install.sh --auto-tls / env / DB)
@@ -15,7 +15,7 @@ export const PanelTlsStatusSchema = z.object({
   resolver: z.string().nullable(), // "le" | "le-dns" | null (null = not resolvable, e.g. invalid email)
   originHost: z.string().nullable(), // host of WEB_PUBLIC_URL — the panel domain must equal this
   originMatches: z.boolean(),
-  acmeEmailOk: z.boolean(),
+  acmeEmailOk: z.boolean(), // true when no ACME email is set (it is optional) or the one set is a real address
   localServerId: z.string().nullable(),
   localServerOnline: z.boolean(),
   proxyRunning: z.boolean(),
@@ -58,7 +58,7 @@ export class PanelTlsService {
     const acmeEmail = await this.settings.acmeEmailFor(this.config.get<string>("ACME_EMAIL"));
     let acmeEmailOk = false;
     try {
-      validateAcmeEmail(acmeEmail ?? "");
+      optionalAcmeEmail(acmeEmail ?? "");
       acmeEmailOk = true;
     } catch {
       acmeEmailOk = false;
@@ -111,7 +111,7 @@ export class PanelTlsService {
     const cfg = await this.proxyConfig.resolveFor(local.id);
     if (!cfg.panel) {
       throw new BadRequestException(
-        "panel TLS is not configured — set a panel domain (install.sh --auto-tls, or PANEL_DOMAIN) and a real ACME email first",
+        "panel TLS is not configured — set a panel domain (Settings → Instance → Panel domain, or install.sh --domain) first",
       );
     }
     // ensureProxy recreates the proxy with the file provider + panel router (+ the tugra-panel attach); it

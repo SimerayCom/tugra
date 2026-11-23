@@ -3,6 +3,7 @@ import { InstanceSettingsService } from "../instance/instance-settings.service";
 import type { ConfigService } from "@nestjs/config";
 import type { PrismaService } from "../prisma/prisma.service";
 import type { CryptoService } from "../crypto/crypto.service";
+import type { RedisService } from "../redis/redis.service";
 
 type Opts = {
   env?: Record<string, string | undefined>;
@@ -11,6 +12,7 @@ type Opts = {
   panelDomain?: string | null; // what settings.panelDomainFor returns
   dbPanelDomain?: string | null; // what settings.get().panelDomain returns (bootstrap)
   decrypt?: (s: string) => string;
+  pending?: string | null; // the raw Redis value of the in-flight panel-domain change
 };
 
 function make(o: Opts = {}) {
@@ -28,7 +30,8 @@ function make(o: Opts = {}) {
     get: jest.fn().mockResolvedValue({ panelDomain: o.dbPanelDomain ?? null }),
     update,
   } as unknown as InstanceSettingsService;
-  return { svc: new ProxyConfigService(config, prisma, crypto, settings), update };
+  const redis = { get: jest.fn().mockResolvedValue(o.pending ?? null) } as unknown as RedisService;
+  return { svc: new ProxyConfigService(config, prisma, crypto, settings, redis), update };
 }
 
 const localHttp = { isLocal: true, certMode: "http", dnsProvider: null, dnsCredsEnc: null, proxyBind: "public" };
@@ -168,5 +171,40 @@ describe("InstanceSettingsService.panelDomainFor — env-over-DB precedence", ()
   });
   it("null DB + no env => null (bring-your-own proxy)", async () => {
     expect(await svc(null).panelDomainFor(undefined, undefined)).toBeNull();
+  });
+});
+
+describe("ProxyConfigService.resolveFor — IP route, optional email, domain change in flight", () => {
+  it("a plain install (PANEL_IP_ROUTE=1, no domain, no email) gets the host-less IP route", async () => {
+    const { svc } = make({ serverRow: localHttp, env: { PANEL_IP_ROUTE: "1" }, acmeEmail: undefined });
+    expect((await svc.resolveFor("s1")).panel).toEqual({ domain: null, resolver: "le", ipRoute: true });
+  });
+
+  it("the ACME email is optional: a domain with NO email still resolves (the resolver just has no contact)", async () => {
+    const { svc } = make({ serverRow: localHttp, panelDomain: "app.example.com", acmeEmail: undefined });
+    expect((await svc.resolveFor("s1")).panel).toEqual({ domain: "app.example.com", resolver: "le" });
+  });
+
+  it("a domain change in flight renders the NEW host next to the current one, and keeps the IP route", async () => {
+    const { svc } = make({
+      serverRow: localHttp,
+      env: { PANEL_IP_ROUTE: "1" },
+      pending: JSON.stringify({ domain: "new.example.com" }),
+    });
+    expect((await svc.resolveFor("s1")).panel).toEqual({ domain: "new.example.com", resolver: "le", ipRoute: true });
+    const { svc: s2 } = make({ serverRow: localHttp, panelDomain: "old.example.com", pending: JSON.stringify({ domain: "new.example.com" }) });
+    expect((await s2.resolveFor("s1")).panel).toEqual({ domain: "new.example.com", resolver: "le", also: ["old.example.com"] });
+  });
+
+  it("removing the domain in flight adds the IP route next to the current host", async () => {
+    const { svc } = make({ serverRow: localHttp, panelDomain: "old.example.com", pending: JSON.stringify({ domain: null }) });
+    expect((await svc.resolveFor("s1")).panel).toEqual({ domain: "old.example.com", resolver: "le", ipRoute: true });
+  });
+
+  it("an unreadable pending value is ignored; a non-local server never gets a panel", async () => {
+    const { svc } = make({ serverRow: localHttp, panelDomain: "old.example.com", pending: "{not json" });
+    expect((await svc.resolveFor("s1")).panel).toEqual({ domain: "old.example.com", resolver: "le" });
+    const { svc: other } = make({ serverRow: { ...localHttp, isLocal: false }, env: { PANEL_IP_ROUTE: "1" } });
+    expect((await other.resolveFor("s1")).panel).toBeUndefined();
   });
 });

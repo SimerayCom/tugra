@@ -1899,12 +1899,22 @@ describe("deploy-script", () => {
     expect(s).not.toContain("network connect tugra-panel");
   });
 
-  it("panel path REQUIRES a real email (throws); the non-panel path keeps the admin@example.com fallback", () => {
-    expect(() => buildProxySetupScript({ panel: { domain: "app.example.com" } })).toThrow();
+  it("panel path takes a REAL email or none (a placeholder throws; no email = no contact flag); the non-panel path keeps the admin@example.com fallback", () => {
     expect(() => buildProxySetupScript({ acmeEmail: "admin@example.com", panel: { domain: "app.example.com" } })).toThrow();
+    const noMail = buildProxySetupScript({ panel: { domain: "app.example.com" } });
+    expect(noMail).not.toContain("acme.email");
+    expect(noMail).not.toContain("admin@example.com");
     // classic app proxy with no email still works (fallback), unchanged behavior
     const s = buildProxySetupScript({});
     expect(s).toContain("acme.email='admin@example.com'");
+  });
+
+  it("the hash of a pre-existing single-domain panel is unchanged; also/ipRoute fold into it only when used", () => {
+    const base = proxyConfigHash({ acmeEmail: "me@x.com", panel: { domain: "app.example.com" } });
+    expect(proxyConfigHash({ acmeEmail: "me@x.com", panel: { domain: "app.example.com", also: [] } })).toBe(base);
+    expect(proxyConfigHash({ acmeEmail: "me@x.com", panel: { domain: "app.example.com", also: ["old.example.com"] } })).not.toBe(base);
+    expect(proxyConfigHash({ acmeEmail: "me@x.com", panel: { domain: "app.example.com", ipRoute: true } })).not.toBe(base);
+    expect(proxyConfigHash({ panel: { domain: null, ipRoute: true } })).not.toBe(proxyConfigHash({}));
   });
 
   it("panel + bind:'none' => httpOnly router (no tls block), still keeps the no-host-ports behavior", () => {
