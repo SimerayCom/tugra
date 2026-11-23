@@ -1,5 +1,7 @@
 import { why } from "../reason";
 import { isSensitiveVisible } from "./coolify-sensitive";
+import { coolifyHealth, coolifyRestartCount } from "./coolify-health";
+import { isDegradedHealth } from "../import-source";
 import { validContainerPrefix } from "../container-prefix";
 import { inlineDockerfileProblem } from "../../applications/dto";
 import type {
@@ -125,6 +127,9 @@ export interface CoolifyApp {
   settings?: { is_static?: boolean | null; is_spa?: boolean | null; custom_container_name_prefix?: string | null } | null;
   /** Top-level only on a response that flattens the settings; read through {@link appContainerPrefix}. */
   custom_container_name_prefix?: string | null;
+  /** The list row's runtime state (`running:healthy`, `exited:unhealthy`, ...) and the container restart counter (see coolify-health). */
+  status?: string | null;
+  restart_count?: number | string | null;
 }
 export interface CoolifyDatabase {
   uuid: string;
@@ -183,6 +188,22 @@ export interface CoolifyVolume {
   host_path?: string | null; // non-null = bind mount; null = named volume
 }
 
+/** One row of `GET /databases/{uuid}/backups` (a scheduled database backup). Only these fields are read: never an S3 key or secret. */
+export interface CoolifyBackup {
+  enabled?: boolean | null;
+  save_s3?: boolean | null;
+  frequency?: string | null;
+  s3_storage_id?: number | string | null;
+  s3_storage_uuid?: string | null;
+  s3?: { name?: string | null } | null;
+}
+/** One row of `GET /s3-storages`, reduced to what names a backup's target. The row's key and secret are never read. */
+export interface CoolifyS3Storage {
+  id?: number | string | null;
+  uuid?: string | null;
+  name?: string | null;
+}
+
 export interface CoolifyFleetInput {
   servers: CoolifyServer[];
   /** serverUuid → the resource uuids running on it (from GET /servers/{uuid}/resources). */
@@ -194,6 +215,10 @@ export interface CoolifyFleetInput {
   /** appUuid → the key-name/reason-code env report computed by the adapter (absent when the env read failed). */
   envReportByResource?: Record<string, NonNullable<ForeignApp["envReport"]>>;
   volumesByResource: Record<string, CoolifyVolume[]>;
+  /** databaseUuid → its scheduled backups (absent = not read). */
+  backupsByResource?: Record<string, CoolifyBackup[]>;
+  /** The team's S3 storages (names only), to name a backup's target. */
+  s3Storages?: CoolifyS3Storage[];
   /** Non-fatal fetch warnings accumulated by the adapter (a partial 403/404 during enumeration). */
   warnings?: string[];
 }
@@ -654,9 +679,27 @@ export function mapApplication(
   };
 }
 
+/**
+ * Pure: the enabled scheduled backups of one database folded into a secret-free summary (count, distinct frequencies, whether any
+ * uploads to S3, and the names of the S3 targets that can be resolved). Undefined when no schedule is enabled.
+ */
+export function mapBackupSchedule(rows: CoolifyBackup[] | undefined, s3: CoolifyS3Storage[] | undefined): ForeignDb["backupSchedule"] | undefined {
+  const active = (rows ?? []).filter((b) => b && b.enabled !== false);
+  if (!active.length) return undefined;
+  const frequencies = [...new Set(active.map((b) => (typeof b.frequency === "string" ? b.frequency.trim() : "")).filter(Boolean))].sort();
+  const toS3 = active.filter((b) => b.save_s3 === true);
+  const targets = new Set<string>();
+  for (const b of toS3) {
+    const hit = (s3 ?? []).find((x) => (b.s3_storage_uuid && x.uuid === b.s3_storage_uuid) || (b.s3_storage_id != null && x.id != null && String(x.id) === String(b.s3_storage_id)));
+    const name = hit?.name ?? b.s3?.name;
+    if (typeof name === "string" && name.trim()) targets.add(name.trim().slice(0, 80));
+  }
+  return { schedules: active.length, ...(frequencies.length ? { interval: frequencies.join(", ") } : {}), ...(toS3.length ? { s3: true } : {}), ...(targets.size ? { targets: [...targets].sort() } : {}) };
+}
+
 export function mapDatabase(
   db: CoolifyDatabase,
-  ctx: { volumes: CoolifyVolume[]; serverRef?: string },
+  ctx: { volumes: CoolifyVolume[]; serverRef?: string; backups?: CoolifyBackup[]; s3?: CoolifyS3Storage[] },
 ): ForeignDb {
   const engine = coolifyEngine(db);
   const username =
@@ -670,6 +713,16 @@ export function mapDatabase(
   const notCarried: NonNullable<ForeignDb["notCarried"]> = [];
   if (valkey) notCarried.push({ field: "engineFamily", level: "info", ...why("coolify_valkey") });
   if (engine === "REDIS" && nonEmpty(db.redis_conf)) notCarried.push({ field: "redisConf", level: "warn", ...why("coolify_redis_conf") });
+  // A scheduled backup (and its S3 target) is not carried: Tugra needs the destination credentials, which the importer never reads.
+  const backupSchedule = mapBackupSchedule(ctx.backups, ctx.s3);
+  if (backupSchedule) {
+    const frequency = backupSchedule.interval ?? "schedule not reported";
+    notCarried.push({
+      field: "backupSchedule",
+      level: "warn",
+      ...(backupSchedule.s3 ? why("coolify_backup_schedule_s3", { frequency, target: backupSchedule.targets?.join(", ") || "(name not readable)" }) : why("coolify_backup_schedule", { frequency })),
+    });
+  }
   return {
     sourceRef: db.uuid,
     name: db.name ?? db.uuid,
@@ -681,6 +734,7 @@ export function mapDatabase(
     externalPort: db.is_public ? db.public_port ?? undefined : undefined,
     volumes: ctx.volumes.map((v) => mapVolume(v, db.uuid)),
     serverRef: ctx.serverRef,
+    ...(backupSchedule ? { backupSchedule } : {}),
     ...(tls ? { tls } : {}),
     // R48: Tugra's Redis has no custom redis.conf. Presence only; the plan says the config must be re-applied by hand.
     ...(notCarried.length ? { notCarried } : {}),
@@ -761,6 +815,22 @@ export function mapService(svc: CoolifyService, ctx: { serverRef?: string; serve
   };
 }
 
+const MAX_HEALTH_WARNINGS = 10;
+
+/** The one-line plan warning for an app that is not healthy at the source. */
+export function sourceHealthWarning(name: string, h: NonNullable<ForeignApp["sourceHealth"]>): string {
+  const bits = [h.status ?? h.health, ...(h.restartCount ? [`${h.restartCount} restarts`] : [])];
+  return `app ${name} is not healthy at the source (${bits.join(", ")}): it migrates as it is, so check it before migrating`;
+}
+
+/** Pure: the source health of an app from its list row, or undefined when the row reports neither a status nor a restart counter. */
+export function appSourceHealth(a: Pick<CoolifyApp, "status" | "restart_count">): ForeignApp["sourceHealth"] | undefined {
+  const status = typeof a.status === "string" && /^[a-z]{3,20}(:[a-z]{3,20})?$/i.test(a.status.trim()) ? a.status.trim().toLowerCase() : undefined;
+  const restartCount = coolifyRestartCount(a.restart_count);
+  if (status === undefined && restartCount === null) return undefined;
+  return { health: coolifyHealth(status), ...(status ? { status } : {}), restartCount };
+}
+
 /** Assemble a full {@link ForeignFleet} from the Coolify resources discover already fetched. */
 export function buildCoolifyFleet(input: CoolifyFleetInput): ForeignFleet {
   const serverOf = new Map<string, string>();
@@ -775,9 +845,10 @@ export function buildCoolifyFleet(input: CoolifyFleetInput): ForeignFleet {
   const apps = input.apps.map((a) => {
     const mapped = mapApplication(a, { envs: envs(a.uuid), volumes: vols(a.uuid), serverRef: serverOf.get(a.uuid) });
     const envReport = input.envReportByResource?.[a.uuid];
-    return envReport ? { ...mapped, envReport } : mapped;
+    const sourceHealth = appSourceHealth(a);
+    return { ...mapped, ...(envReport ? { envReport } : {}), ...(sourceHealth ? { sourceHealth } : {}) };
   });
-  const databases = input.databases.map((d) => mapDatabase(d, { volumes: vols(d.uuid), serverRef: serverOf.get(d.uuid) }));
+  const databases = input.databases.map((d) => mapDatabase(d, { volumes: vols(d.uuid), serverRef: serverOf.get(d.uuid), backups: input.backupsByResource?.[d.uuid], s3: input.s3Storages }));
   const serverNameOf = new Map(input.servers.filter((s) => s.name).map((s) => [s.uuid, s.name as string]));
   const services = input.services.map((s) => {
     const serverRef = serverOf.get(s.uuid);
@@ -802,6 +873,17 @@ export function buildCoolifyFleet(input: CoolifyFleetInput): ForeignFleet {
     ].filter(Boolean);
     warnings.push(
       `the API token cannot read the sensitive fields of ${what.join("; ")} — they will NOT be carried and must be re-entered after the import. To carry them, create the Coolify token with the read:sensitive ability as a team admin or owner (Coolify ignores the ability for other members), then reconnect`,
+    );
+  }
+  // Apps already failing at the source (exited, unhealthy, crash-looping): migrated as they are, so the plan names them.
+  const degraded = apps.filter((a) => a.sourceHealth && isDegradedHealth(a.sourceHealth.health, a.sourceHealth.restartCount));
+  for (const a of degraded.slice(0, MAX_HEALTH_WARNINGS)) warnings.push(sourceHealthWarning(a.name, a.sourceHealth!));
+  if (degraded.length > MAX_HEALTH_WARNINGS) warnings.push(`${degraded.length - MAX_HEALTH_WARNINGS} more app(s) are not healthy at the source (see the preflight)`);
+  const s3Dbs = databases.filter((d) => d.backupSchedule?.s3);
+  if (s3Dbs.length > 0) {
+    const targets = [...new Set(s3Dbs.flatMap((d) => d.backupSchedule?.targets ?? []))].sort();
+    warnings.push(
+      `${s3Dbs.length} database(s) have a scheduled backup that uploads to S3${targets.length ? ` (${targets.join(", ")})` : ""}: Tugra does not carry the schedules or the S3 destinations (their credentials are never read) — add the destination in Tugra's Backups and recreate each schedule after the import`,
     );
   }
   const unknownDbs = databases.filter((d) => d.engine === "UNKNOWN").length;

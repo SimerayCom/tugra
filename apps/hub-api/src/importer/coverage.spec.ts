@@ -87,6 +87,23 @@ describe("buildCoverage", () => {
   });
 });
 
+describe("buildCoverage: database backup schedules (B1)", () => {
+  it("lists a database's not-carried backup schedule under its plan item ref, and no other database note", () => {
+    const db: ForeignFleet["databases"][number] = {
+      sourceRef: "d1",
+      name: "maria",
+      engine: "MARIADB",
+      serverRef: "s1",
+      notCarried: [
+        { field: "redisConf", level: "warn", reason: "x" },
+        { field: "backupSchedule", level: "warn", reason: "the source runs a scheduled backup ... S3 target db-bucket" },
+      ],
+    };
+    const c = buildCoverage({ ...fleet([]), databases: [db, { sourceRef: "d2", name: "clean", engine: "POSTGRES" }] }, o)!;
+    expect(c.apps).toEqual([{ itemRef: "database:s1:d1", name: "maria", notCarried: [{ field: "backupSchedule", level: "warn", reason: expect.stringContaining("db-bucket") }] }]);
+  });
+});
+
 describe("buildCoverage: services (R39/R53/R33)", () => {
   const compose = (volumes: string, mounts: string, image = "example.test/search:1") =>
     `services:\n  search:\n    image: ${image}\n    volumes:\n${mounts}\nvolumes:\n${volumes}`;

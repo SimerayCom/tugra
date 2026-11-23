@@ -40,7 +40,8 @@ export function buildServiceChecklist(
 ): ChecklistItem[] {
   const out: ChecklistItem[] = [];
   const name = choice?.name ?? svc.name;
-  const copy = res.volumes.filter((v) => v.policy === "copy");
+  // a volume the service does not carry (an object store's, moved through Object migration) is no data step
+  const copy = res.volumes.filter((v) => v.policy === "copy" && v.dataPlane !== "not-carried");
 
   // Nothing is deployed by the import. Always the first item.
   out.push({ kind: "deploy-after-data", severity: "warn", params: { name } });

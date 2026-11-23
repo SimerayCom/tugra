@@ -1,11 +1,13 @@
 import { MIGRATOR_ENGINES } from "./migrator-recipe";
-import { UNSUPPORTED_DB_IMPORT, analyzeService } from "./import-planner";
+import { UNSUPPORTED_DB_IMPORT, analyzeService, ns } from "./import-planner";
 import { foreignAppToVolumes } from "./apply-map";
+import { isMinioService } from "./import-service-map";
 import { gitUrlHost } from "../deploy/deploy-script";
 import { DEFAULT_MAX_ARTIFACT_BYTES } from "./migration-staging";
 import { maxVolumeBytes } from "./migration-volume";
 import { vxEnabled, vxPartRawBytes } from "./volume-stream/vx-constants";
-import type { DbDataPlane, ForeignApp, ForeignFleet, ImportCutoverHint, ImportOptions, ImportPreflight, PreflightHost, VolumeDataPlane } from "./foreign-fleet";
+import type { DbDataPlane, ForeignApp, ForeignDb, ForeignFleet, ImportCutoverHint, ImportOptions, ImportPreflight, PreflightHost, VolumeDataPlane } from "./foreign-fleet";
+import { isDegradedHealth } from "./import-source";
 import { counterpartOf, isGeneratedHost } from "../cutover/cutover.logic";
 
 const VX_DB_VOLUME_REASON =
@@ -17,15 +19,19 @@ function volumeCopyNote(engine: string): string {
   return "Volume copy is not offered for this engine: its data is copied logically.";
 }
 
+/** The scheduled-backup sentence of a database row: never carried, so the operator recreates it (names the S3 target when known). */
+function backupNote(b: ForeignDb["backupSchedule"]): string {
+  if (!b) return "";
+  const where = b.s3 ? ` and uploads to the S3 target ${b.targets?.length ? b.targets.join(", ") : "(name not readable)"}` : "";
+  return ` The source has a scheduled backup${b.interval ? ` (${b.interval})` : ""}${where}: it is not carried - recreate it in Tugra's Backups after the import${b.s3 ? " (add the S3 destination there first)" : ""}.`;
+}
+
 const DEFAULT_CAP_MIB = Math.round(DEFAULT_MAX_ARTIFACT_BYTES / (1024 * 1024));
 
 // Mirrors apply-map's canonMountPath so a type lookup matches the mapper's declared path exactly.
 const canonMount = (raw?: string): string => (raw ?? "").trim().replace(/\/{2,}/g, "/").replace(/(.)\/+$/, "$1");
 
-/** A MinIO object-store service: by its one-click template slug, or by a MinIO image in its compose file. */
-export function isMinioService(s: { templateSlug?: string; composeFile?: string }): boolean {
-  return s.templateSlug === "minio" || /minio\/minio/.test(s.composeFile ?? "");
-}
+export { isMinioService };
 export const MINIO_SERVICE_NOTE =
   "object data is not copied by this import - use Object migration (keys, sizes, metadata, timestamps; not versions, IAM users, replication or notifications)";
 
@@ -186,7 +192,7 @@ export function buildPreflight(fleet: ForeignFleet, options: ImportOptions, inve
     }
     // Volume copy is a Postgres-only choice; say WHY for the others instead of staying silent.
     const volumeNote = vx && c.dataPlane === "one-click" ? ` ${volumeCopyNote(d.engine)}` : "";
-    return { name: d.name, engine: d.engine, dataPlane: c.dataPlane, reason: c.reason + volumeNote };
+    return { name: d.name, engine: d.engine, dataPlane: c.dataPlane, reason: c.reason + volumeNote + backupNote(d.backupSchedule), ...(d.backupSchedule ? { backup: d.backupSchedule } : {}) };
   });
 
   const services = fleet.services.map((s) => {
@@ -200,7 +206,7 @@ export function buildPreflight(fleet: ForeignFleet, options: ImportOptions, inve
       ...(isMinioService(s) ? { objectStore: true as const } : {}),
       verdict: a.verdict,
       ...(r?.hold ? { hold: true } : {}),
-      ...(r?.volumes.length ? { volumes: r.volumes.map((v) => ({ key: v.key, dataPlane: v.dataPlane })) } : {}),
+      ...(r?.volumes.length ? { volumes: r.volumes.map((v) => ({ key: v.key, dataPlane: v.dataPlane, ...(v.origin === "host-bind" ? { origin: "host-bind" as const } : {}) })) } : {}),
     };
   });
 
@@ -230,6 +236,14 @@ export function buildPreflight(fleet: ForeignFleet, options: ImportOptions, inve
     ...(s.os ? { os: s.os } : {}),
   }));
 
+  // apps that were already failing at the source (a dead or crash-looping app is otherwise invisible in the plan)
+  const sourceHealth = carried
+    ? []
+    : fleet.apps
+        .filter((a) => a.sourceHealth && isDegradedHealth(a.sourceHealth.health, a.sourceHealth.restartCount))
+        .map((a) => ({ itemRef: ns("app", a.serverRef, a.sourceRef), name: a.name, health: a.sourceHealth!.health as "unhealthy" | "unknown" | "exited", ...(a.sourceHealth!.status ? { status: a.sourceHealth!.status } : {}), restartCount: a.sourceHealth!.restartCount }))
+        .sort((x, y) => (x.itemRef < y.itemRef ? -1 : x.itemRef > y.itemRef ? 1 : 0));
+
   return {
     databases,
     services,
@@ -250,5 +264,6 @@ export function buildPreflight(fleet: ForeignFleet, options: ImportOptions, inve
     ...(carried ? {} : { cutover: buildCutoverHint(fleet) }),
     // the source servers by name with their classification facts; a local-docker source has only its own anonymous server
     ...(hosts.length > 0 && !carried ? { hosts } : {}),
+    ...(sourceHealth.length ? { sourceHealth } : {}),
   };
 }

@@ -168,6 +168,15 @@ describe("PREFLIGHT checks (pure)", () => {
     expect(byId(cs, "preflight.cf-ssl-mode")).toMatchObject({ status: "fail", ackable: true, params: { zones: ["example.com:flexible"] } });
   });
 
+  it("a service's host-path bind (a MinIO data directory) counts toward the same bind-mount acknowledgement", () => {
+    const base = defaultPlan();
+    const plan = defaultPlan({ preflight: { ...base.preflight!, volumes: [{ app: "web", mountPath: "/data", type: "bind", dataPlane: "stream", reason: "" }], services: [{ name: "minio", members: 1, note: "", objectStore: true, volumes: [{ key: "minio-data", dataPlane: "not-carried", origin: "host-bind" }, { key: "other", dataPlane: "hub-staged" }] }] } });
+    expect(byId(preflightChecks(run(), obs({ plan })), "preflight.bind-mounts")).toMatchObject({ status: "warn", code: "preflight.bind-mounts-refused", params: { count: 2 }, ownerInput: "allowBind" });
+    const onlyService = defaultPlan({ preflight: { ...base.preflight!, services: [{ name: "minio", members: 1, note: "", volumes: [{ key: "minio-data", dataPlane: "not-carried", origin: "host-bind" }] }] } });
+    expect(byId(preflightChecks(run(), obs({ plan: onlyService })), "preflight.bind-mounts")).toMatchObject({ status: "warn", params: { count: 1 }, ownerInput: "allowBind" });
+    expect(byId(preflightChecks(run(), obs({ plan: defaultPlan({ preflight: { ...base.preflight!, services: [{ name: "minio", members: 1, note: "", volumes: [{ key: "named", dataPlane: "hub-staged" }] }] } }) })), "preflight.bind-mounts")).toBeUndefined();
+  });
+
   it("bind mounts are counted: refused by default (warn + ownerInput), pass once allowBind is answered", () => {
     const plan = defaultPlan({ preflight: { ...defaultPlan().preflight!, volumes: [{ app: "web", mountPath: "/data", type: "bind", dataPlane: "stream", reason: "" }] } });
     expect(byId(preflightChecks(run(), obs({ plan })), "preflight.bind-mounts")).toMatchObject({ status: "warn", code: "preflight.bind-mounts-refused", params: { count: 1 }, ownerInput: "allowBind" });
@@ -651,6 +660,14 @@ describe("PREFLIGHT source host classification (R5)", () => {
     // the empty host is only informed about: its flaky count is no concern of this run
     expect(byId(cs, "preflight.host-empty")).toMatchObject({ status: "pass", params: { count: 1, items: ["host-empty"] } });
     expect(cs.filter((c) => c.code === "preflight.host-flaky")).toHaveLength(1);
+  });
+
+  it("warns (never blocks) about a moved host that reports no operating system, and names only the moved ones", () => {
+    const cs = preflightChecks(baseRun(), baseObs({ plan: plan([{ ref: "ha", name: "host-1", os: "Ubuntu 24.04.4 LTS" }, { ref: "hb", name: "host-2" }, { ref: "hc" }, { ref: "hd", name: "idle-no-os" }], two) }));
+    expect(byId(cs, "preflight.host-os-unknown")).toMatchObject({ status: "warn", code: "preflight.host-os-unknown", params: { count: 2, items: ["host-2", "hc"] } });
+    expect(byId(cs, "preflight.host-os-unknown")).not.toHaveProperty("ackable");
+    const all = preflightChecks(baseRun(), baseObs({ plan: plan([{ ref: "ha", name: "host-1", os: "Ubuntu 24.04.4 LTS" }], two.slice(0, 1)) }));
+    expect(byId(all, "preflight.host-os-unknown")).toBeUndefined();
   });
 
   it("marks the control-plane host: a warning when the run moves things off it, plain information when it carries nothing", () => {

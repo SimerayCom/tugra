@@ -54,6 +54,63 @@ describe("CoolifySource", () => {
       expect(fleet.services[0]).toMatchObject({ sourceRef: "svc-1", templateSlug: "plausible", memberApps: ["sa-1"], memberDbs: ["sd-1"] });
     });
 
+    it("reads each database's scheduled backups and the S3 storages read-only, keeps names only and never an S3 secret", async () => {
+      const c = new FakeClient({
+        "/servers": [{ uuid: "srv-a", name: "box" }],
+        "/servers/srv-a/resources": [{ uuid: "db-1" }, { uuid: "db-2" }, { uuid: "db-3" }],
+        "/applications": [],
+        "/databases": [
+          { uuid: "db-1", name: "orders", database_type: "standalone-postgresql", image: "postgres:16" },
+          { uuid: "db-2", name: "cache", database_type: "standalone-redis", image: "redis:7" },
+          { uuid: "db-3", name: "plain", database_type: "standalone-mysql", image: "mysql:8" },
+        ],
+        "/services": [],
+        "/databases/db-1/storages": [],
+        "/databases/db-2/storages": [],
+        "/databases/db-3/storages": [],
+        "/databases/db-1/backups": [{ uuid: "b1", enabled: true, save_s3: true, frequency: "daily", s3_storage_id: 3, s3_storage_uuid: "s3-x", secret: "SHOULD-NOT-LEAK" }],
+        "/databases/db-3/backups": [],
+        "/s3-storages": [{ id: 3, uuid: "s3-x", name: "prod-bucket", region: "eu", key: "AKIAHIDDEN", secret: "S3-SECRET-VALUE" }],
+      });
+      const fleet = await new CoolifySource(c).discover();
+      expect(c.calls).not.toContain("/databases/db-2/backups"); // Redis has no scheduled backup in Coolify
+      expect(fleet.databases.find((d) => d.sourceRef === "db-1")!.backupSchedule).toEqual({ schedules: 1, interval: "daily", s3: true, targets: ["prod-bucket"] });
+      expect(fleet.databases.find((d) => d.sourceRef === "db-3")!.backupSchedule).toBeUndefined();
+      expect(JSON.stringify(fleet)).not.toMatch(/AKIAHIDDEN|S3-SECRET-VALUE|SHOULD-NOT-LEAK/);
+      expect(fleet.warnings.join("\n")).not.toMatch(/could not read the scheduled backups/);
+    });
+
+    it("says so once when a backup list cannot be read (not for a 404: that Coolify has no such endpoint)", async () => {
+      const routes = {
+        "/servers": [{ uuid: "srv-a" }],
+        "/servers/srv-a/resources": [],
+        "/applications": [],
+        "/databases": [{ uuid: "db-1", name: "a", database_type: "standalone-postgresql" }, { uuid: "db-2", name: "b", database_type: "standalone-postgresql" }],
+        "/services": [],
+        "/databases/db-1/storages": [],
+        "/databases/db-2/storages": [],
+      };
+      const missing = await new CoolifySource(new FakeClient(routes)).discover(); // both backups routes 404
+      expect(missing.warnings.join("\n")).not.toMatch(/scheduled backups/);
+      const denied = await new CoolifySource(new FakeClient({ ...routes, "/databases/db-1/backups": new Error("500 boom"), "/databases/db-2/backups": [] })).discover();
+      expect(denied.warnings.filter((w) => /scheduled backups/.test(w))).toEqual(["could not read the scheduled backups of 1 database(s) — a backup schedule they have is not shown in the plan"]);
+    });
+
+    it("keeps the health of each app (status + restart count) from the list row", async () => {
+      const c = new FakeClient({
+        "/servers": [{ uuid: "srv-a" }],
+        "/servers/srv-a/resources": [{ uuid: "app-1" }],
+        "/applications": [{ uuid: "app-1", name: "dead-api", build_pack: "dockerimage", docker_registry_image_name: "nginx", status: "exited:unhealthy", restart_count: 126368 }],
+        "/databases": [],
+        "/services": [],
+        "/applications/app-1/envs": [],
+        "/applications/app-1/storages": [],
+      });
+      const fleet = await new CoolifySource(c).discover();
+      expect(fleet.apps[0].sourceHealth).toEqual({ health: "exited", status: "exited:unhealthy", restartCount: 126368 });
+      expect(fleet.warnings).toContain("app dead-api is not healthy at the source (exited:unhealthy, 126368 restarts): it migrates as it is, so check it before migrating");
+    });
+
     it("never carries a secret value in the discovered fleet", async () => {
       const fleet = await new CoolifySource(client).discover();
       expect(JSON.stringify(fleet)).not.toMatch(/password/i);

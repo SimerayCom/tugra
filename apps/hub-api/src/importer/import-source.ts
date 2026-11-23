@@ -64,6 +64,13 @@ export interface SourceAppExtras {
 /** How a source resource was doing when the run looked (P7 health baseline): the enum is the one `SourceBaseline` stores. */
 export type SourceHealth = "healthy" | "unhealthy" | "unknown" | "exited";
 
+/** A container restarted this often and not currently healthy is crash-looping, whatever its status string says. */
+export const CRASH_LOOP_RESTARTS = 10;
+
+/** Was the resource already failing at the source: unhealthy or exited, or restarting without being healthy? */
+export const isDegradedHealth = (health: SourceHealth, restartCount: number | null): boolean =>
+  health === "unhealthy" || health === "exited" || (health !== "healthy" && restartCount !== null && restartCount >= CRASH_LOOP_RESTARTS);
+
 /** One resource's health at the source, read-only and secret-free (refs, an enum and a counter). */
 export interface SourceHealthRow {
   kind: "app" | "database" | "service";

@@ -4,12 +4,11 @@
  * source (90k restarts, exited for weeks) is not a regression when it fails on Tugra too, and an app with no health check
  * (most of the apps of a real fleet) has a defined `unknown`, never a silent pass.
  */
-import type { SourceHealthRow } from "../../../../importer/import-source";
+import { CRASH_LOOP_RESTARTS, isDegradedHealth, type SourceHealthRow } from "../../../../importer/import-source";
 import { ns } from "../../../../importer/import-planner";
 import { SourceBaselineSchema, type SourceBaseline } from "../../../core/dto";
 
-/** A container restarted this often and not currently healthy is crash-looping, whatever its status string says. */
-export const CRASH_LOOP_RESTARTS = 10;
+export { CRASH_LOOP_RESTARTS };
 /** The most entries a baseline keeps (the schema cap). */
 const MAX_ENTRIES = 5000;
 
@@ -33,7 +32,7 @@ export function buildSourceBaseline(rows: readonly SourceHealthRow[], now: Date)
 export const sameBaseline = (a: SourceBaseline | null, b: SourceBaseline): boolean => !!a && JSON.stringify(a.entries) === JSON.stringify(b.entries);
 
 /** Was the resource already failing at the source: unhealthy or exited, or restarting without being healthy? */
-export const isDegradedAtSource = (e: BaselineEntry): boolean => e.health === "unhealthy" || e.health === "exited" || (e.health !== "healthy" && e.restartCount !== null && e.restartCount >= CRASH_LOOP_RESTARTS);
+export const isDegradedAtSource = (e: BaselineEntry): boolean => isDegradedHealth(e.health, e.restartCount);
 
 /** The itemRefs that were already degraded at the source. */
 export function degradedItemRefs(baseline: SourceBaseline | null | undefined): Set<string> {

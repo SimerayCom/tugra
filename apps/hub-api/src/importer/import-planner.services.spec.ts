@@ -72,7 +72,7 @@ describe("planImport — services", () => {
   it("MinIO: container_name and host bind warnings, volume rewritten in the proposal", () => {
     const c = codes("delta-storage-minio");
     expect(c).toEqual(expect.arrayContaining(["service.container-name", "service.volume.hostbind"]));
-    expect(item("delta-storage-minio").proposed.volumes).toEqual([{ key: "minio-data", origin: "host-bind", policy: "copy", dataPlane: "hub-staged" }]);
+    expect(item("delta-storage-minio").proposed.volumes).toEqual([{ key: "minio-data", origin: "host-bind", policy: "copy", dataPlane: "not-carried" }]);
   });
 
   it("cloudflared is held, not a blocker", () => {
@@ -153,7 +153,14 @@ describe("buildPreflight — services", () => {
 
   it("carries hold and volume classes", () => {
     expect(row("cloudflared-hub").hold).toBe(true);
-    expect(row("alpha-storage-minio").volumes).toEqual([{ key: "minio-data", dataPlane: "hub-staged" }]);
+    expect(row("alpha-storage-minio").volumes).toEqual([{ key: "minio-data", dataPlane: "not-carried" }]);
+  });
+
+  it("a MinIO volume never reads as copied by the import, and a host-path bind is marked so the bind-mount gate counts it", () => {
+    // the row agrees with the note: the data is not copied (Object migration moves it)
+    expect(row("delta-storage-minio").note).toMatch(/Object migration/);
+    expect(row("delta-storage-minio").volumes).toEqual([{ key: "minio-data", dataPlane: "not-carried", origin: "host-bind" }]);
+    expect(pf.services.flatMap((s) => (s.name.includes("minio") ? s.volumes ?? [] : [])).some((v) => v.dataPlane === "hub-staged")).toBe(false);
   });
 });
 

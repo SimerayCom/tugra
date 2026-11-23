@@ -10,6 +10,8 @@ import {
   tlsExpectation,
   parseNetworkAliases,
   buildCoolifyFleet,
+  mapBackupSchedule,
+  appSourceHealth,
   normalizeGitUrl,
   isGithubAppRepo,
   decodeCoolifyLabels,
@@ -530,6 +532,60 @@ describe("static site, redirect mode and redis conf (R18 / R19 / R48)", () => {
     expect(JSON.stringify(plan)).not.toMatch(/SUPERSECRET|maxmemory/);
     expect("notCarried" in mapDatabase({ ...db, redis_conf: "" }, { volumes: [] })).toBe(false);
     expect("notCarried" in mapDatabase({ ...db, database_type: "standalone-postgresql", image: "postgres:17", redis_conf: "x" }, { volumes: [] })).toBe(false);
+  });
+});
+
+describe("scheduled database backups (B1): reported as not carried, never a secret", () => {
+  const pg = { uuid: "d1", name: "orders", database_type: "standalone-postgresql", image: "postgres:16" };
+  const s3 = [{ id: 7, uuid: "s3-a", name: "db-bucket" }, { id: 8, uuid: "s3-b", name: "other" }];
+
+  it("folds the enabled schedules into a summary and names the S3 target by id or uuid", () => {
+    expect(mapBackupSchedule([{ enabled: true, save_s3: true, frequency: "daily", s3_storage_id: 7 }, { enabled: true, save_s3: false, frequency: "0 3 * * 0" }], s3)).toEqual({ schedules: 2, interval: "0 3 * * 0, daily", s3: true, targets: ["db-bucket"] });
+    expect(mapBackupSchedule([{ save_s3: true, frequency: "daily", s3_storage_uuid: "s3-b" }], s3)).toMatchObject({ s3: true, targets: ["other"] });
+    // an unresolvable target is still an S3 backup, just unnamed
+    expect(mapBackupSchedule([{ enabled: true, save_s3: true, frequency: "daily", s3_storage_id: 99 }], [])).toEqual({ schedules: 1, interval: "daily", s3: true });
+  });
+
+  it("a disabled or absent schedule says nothing", () => {
+    expect(mapBackupSchedule([{ enabled: false, frequency: "daily" }], s3)).toBeUndefined();
+    expect(mapBackupSchedule([], s3)).toBeUndefined();
+    expect(mapBackupSchedule(undefined, s3)).toBeUndefined();
+  });
+
+  it("the database carries backupSchedule and a warn note whose reason names the S3 target (local-only uses the plain reason)", () => {
+    const withS3 = mapDatabase(pg, { volumes: [], backups: [{ enabled: true, save_s3: true, frequency: "daily", s3_storage_id: 7 }], s3 });
+    expect(withS3.backupSchedule).toEqual({ schedules: 1, interval: "daily", s3: true, targets: ["db-bucket"] });
+    expect(withS3.notCarried).toEqual([expect.objectContaining({ field: "backupSchedule", level: "warn", reasonCode: "coolify_backup_schedule_s3", reasonParams: { frequency: "daily", target: "db-bucket" } })]);
+    expect(withS3.notCarried![0].reason).toMatch(/S3 target db-bucket/);
+    const local = mapDatabase(pg, { volumes: [], backups: [{ enabled: true, save_s3: false, frequency: "daily" }] });
+    expect(local.notCarried).toEqual([expect.objectContaining({ field: "backupSchedule", reasonCode: "coolify_backup_schedule" })]);
+    expect("backupSchedule" in mapDatabase(pg, { volumes: [] })).toBe(false);
+  });
+
+  it("reaches the plan as a warn risk and the fleet warns once about the S3 targets", () => {
+    const fleet = buildCoolifyFleet({ servers: [], resourcesByServer: {}, apps: [], databases: [pg], services: [], envsByResource: {}, volumesByResource: {}, backupsByResource: { d1: [{ enabled: true, save_s3: true, frequency: "daily", s3_storage_id: 7 }] }, s3Storages: s3 });
+    expect(fleet.warnings.filter((w) => /uploads to S3/.test(w))).toEqual([expect.stringMatching(/1 database\(s\) have a scheduled backup that uploads to S3 \(db-bucket\)/)]);
+    const plan = planImport(fleet, { sourceKind: "coolify" });
+    expect(plan.items[0].risks).toContainEqual(expect.objectContaining({ level: "warn", code: "db.notCarried.backupSchedule" }));
+  });
+});
+
+describe("source health of an app (B4)", () => {
+  it("reads the list row's status and restart counter; nothing when the row says neither", () => {
+    expect(appSourceHealth({ status: "exited:unhealthy", restart_count: 126368 })).toEqual({ health: "exited", status: "exited:unhealthy", restartCount: 126368 });
+    expect(appSourceHealth({ status: "running:healthy", restart_count: 0 })).toEqual({ health: "healthy", status: "running:healthy", restartCount: 0 });
+    expect(appSourceHealth({ status: "weird status; rm -rf" })).toBeUndefined(); // a garbled state word is not carried
+    expect(appSourceHealth({})).toBeUndefined();
+  });
+
+  it("the fleet warns for an app that is dead or crash-looping, not for a healthy one", () => {
+    const app = (uuid: string, name: string, status: string, restart_count: number) => ({ uuid, name, build_pack: "nixpacks", git_repository: "o/r", status, restart_count });
+    const fleet = buildCoolifyFleet({ servers: [], resourcesByServer: {}, apps: [app("a1", "shortframes-api", "exited:unhealthy", 126368), app("a2", "fine", "running:healthy", 0), app("a3", "flappy", "running:unknown", 40)], databases: [], services: [], envsByResource: {}, volumesByResource: {} });
+    expect(fleet.warnings.filter((w) => /not healthy at the source/.test(w))).toEqual([
+      "app shortframes-api is not healthy at the source (exited:unhealthy, 126368 restarts): it migrates as it is, so check it before migrating",
+      "app flappy is not healthy at the source (running:unknown, 40 restarts): it migrates as it is, so check it before migrating",
+    ]);
+    expect(fleet.apps.find((a) => a.name === "fine")!.sourceHealth).toMatchObject({ health: "healthy" });
   });
 });
 

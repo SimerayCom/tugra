@@ -172,6 +172,9 @@ export interface ForeignApp {
   /** Fields PRESENT on the source that no Tugra setter carries. Field NAMES + FIXED reasons only, never values.
    *  Feeds the plan-time coverage report. NOT copied into `proposed`; no new `risks`; planHash unchanged. */
   notCarried?: Array<Unmapped & { level: "warn" | "info" }>;
+  /** How the app was doing at the source when discovered (Coolify: the list row's `status` and `restart_count`). Advisory, never hashed:
+   *  it changes every minute. `status` is the source's own state word (`exited:unhealthy`), `restartCount` null when not reported. */
+  sourceHealth?: { health: "healthy" | "unhealthy" | "unknown" | "exited"; status?: string; restartCount: number | null };
   /** Key NAMES + reason codes of the variables an import could not carry (Coolify only; absent = the source does not
    *  report it, e.g. Dokploy/local, so the planner stays lenient and byte-identical). NEVER values. */
   envReport?: {
@@ -194,7 +197,9 @@ export interface ForeignDb {
   hostInternal?: string; // source-side internal hostname (what dependent apps' DATABASE_URL points at)
   externalPort?: number;
   volumes?: ForeignVolume[];
-  backupSchedule?: { s3?: boolean; interval?: string };
+  /** The source's ENABLED scheduled backups of this database, summarised (Coolify only): how many, their frequencies, whether any uploads
+   *  to S3 and the names of the S3 targets. Never a credential. Reported as not carried; absent = none (or not read). */
+  backupSchedule?: { schedules?: number; s3?: boolean; interval?: string; targets?: string[] };
   /** Hard limits in Tugra units (Tugra Database has memoryMb/cpus only — no reservation column). */
   limits?: Pick<ForeignLimits, "memoryMb" | "cpus">;
   serviceRef?: string;
@@ -377,10 +382,10 @@ export interface ImportCoverage {
 }
 
 export interface ImportPreflight {
-  databases: Array<{ name: string; engine: string; dataPlane: DbDataPlane; reason: string }>;
+  databases: Array<{ name: string; engine: string; dataPlane: DbDataPlane; reason: string; /** The source's scheduled backups of this database (Coolify): not carried, recreate them in Tugra after the import. */ backup?: NonNullable<ForeignDb["backupSchedule"]> }>;
   /** Services (compose / one-click stacks) are discovered but NOT imported yet — surfaced here so they are
    *  never a silent drop on the review screen. */
-  services: Array<{ name: string; members: number; note: string; /** A MinIO object store: its data moves through Object migration. */ objectStore?: true; verdict?: "importable" | "partial" | "skipped"; hold?: boolean; volumes?: Array<{ key: string; dataPlane: string }> }>;
+  services: Array<{ name: string; members: number; note: string; /** A MinIO object store: its data moves through Object migration. */ objectStore?: true; verdict?: "importable" | "partial" | "skipped"; hold?: boolean; volumes?: Array<{ key: string; dataPlane: string; /** Present for a host-path bind (it needs the bind-mount acknowledgement like an app's). */ origin?: "host-bind" }> }>;
   /** Number of apps that declare a volume whose DATA must be copied (config-only was the old behavior). */
   appsWithVolumeData: number;
   volumeDataNote?: string;
@@ -399,6 +404,8 @@ export interface ImportPreflight {
   cutover?: ImportCutoverHint;
   /** The source servers with the facts a run classifies them by (control-plane box, reachability, OS). Additive; NOT part of planHash. */
   hosts?: PreflightHost[];
+  /** Apps already failing at the source (exited, unhealthy, crash-looping) when the plan was read: they migrate as they are. Additive; NOT part of planHash. */
+  sourceHealth?: Array<{ itemRef: string; name: string; health: "unhealthy" | "unknown" | "exited"; status?: string; restartCount: number | null }>;
 }
 
 /** One source server of the plan, without its address: the name the panel shows instead of the uuid, and the PREFLIGHT classification facts. */

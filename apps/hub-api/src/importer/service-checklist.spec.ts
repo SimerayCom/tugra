@@ -18,6 +18,11 @@ describe("buildServiceChecklist", () => {
     expect(c[3].params).toEqual({ network: "svc-alpha-meilisearch", alias: "meilisearch" });
   });
 
+  it("an object store (MinIO) has no volume data step or quiesce: its buckets move through Object migration", () => {
+    expect(kinds(build("alpha-storage-minio"))).not.toContain("data-step");
+    expect(kinds(build("alpha-storage-minio"))).not.toContain("quiesce");
+  });
+
   it("reach is manual when no private network was attached", () => {
     expect(build("alpha-meilisearch").find((i) => i.kind === "reach")!.params).toEqual({ manual: 1 });
   });

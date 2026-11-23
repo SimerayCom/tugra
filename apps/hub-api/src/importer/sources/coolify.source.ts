@@ -6,12 +6,15 @@ import { buildEnvReport, classifyEnvRow } from "../env-report";
 import {
   appStaticFlags,
   buildCoolifyFleet,
+  coolifyEngine,
   coolifyNeedsSettings,
   containerPrefixKnown,
   withServerDetail,
   decodeCoolifyDockerfile,
   decodeCoolifyLabels,
   type CoolifyApp,
+  type CoolifyBackup,
+  type CoolifyS3Storage,
   type CoolifyDatabase,
   type CoolifyEnv,
   type CoolifyServer,
@@ -174,11 +177,33 @@ export class CoolifySource implements ImportSource {
       return withSettings;
     });
 
+    // Scheduled database backups (read-only GET per database; Redis-family engines have none in Coolify) and the S3 storages that name their
+    // targets. A failed backup read is counted in ONE warning (an unread schedule would otherwise look like "no backup"); the S3 list is
+    // optional (a limited token gets a 403): without it a target is simply not named. Only names are kept, never an S3 key or secret.
+    const backupsByResource: Record<string, CoolifyBackup[]> = {};
+    let backupsFailed = 0;
     await mapLimit(databases, DISCOVER_CONCURRENCY, async (d) => {
       volumesByResource[d.uuid] = extractVolumes(await tryGet<unknown>(`/databases/${d.uuid}/storages`, [], `storage for ${d.name ?? d.uuid}`));
+      if (BACKUP_LESS_ENGINES.has(coolifyEngine(d))) return;
+      try {
+        const rows = await this.client.get<unknown>(`/databases/${encodeURIComponent(d.uuid)}/backups`);
+        if (Array.isArray(rows) && rows.length) backupsByResource[d.uuid] = rows.map(pickBackup);
+      } catch (e) {
+        if (!isNotFound(e)) backupsFailed += 1; // a Coolify without the endpoint has no scheduled backups to show
+      }
     });
+    if (backupsFailed > 0) warnings.push(`could not read the scheduled backups of ${backupsFailed} database(s) — a backup schedule they have is not shown in the plan`);
+    let s3Storages: CoolifyS3Storage[] = [];
+    if (Object.keys(backupsByResource).length > 0) {
+      try {
+        const rows = await this.client.get<unknown>("/s3-storages");
+        s3Storages = Array.isArray(rows) ? rows.map(pickS3Storage) : [];
+      } catch {
+        s3Storages = [];
+      }
+    }
 
-    return buildCoolifyFleet({ servers, resourcesByServer, apps, databases, services, envsByResource, envReportByResource, volumesByResource, warnings });
+    return buildCoolifyFleet({ servers, resourcesByServer, apps, databases, services, envsByResource, envReportByResource, volumesByResource, backupsByResource, s3Storages, warnings });
   }
 
   /**
@@ -335,6 +360,11 @@ function isDeniedOrMissing(e: unknown): boolean {
   return typeof e === "object" && e !== null && /\b(401|403|404)\b/.test(String((e as { message?: unknown }).message ?? ""));
 }
 
+function isNotFound(e: unknown): boolean {
+  const status = (e as { status?: unknown; statusCode?: unknown })?.status ?? (e as { statusCode?: unknown })?.statusCode;
+  return status === 404 || (typeof e === "object" && e !== null && /\b404\b/.test(String((e as { message?: unknown }).message ?? "")));
+}
+
 /** Pure: Coolify's `/storages` file rows (`file_storages`: fs_path/content/is_directory) → relative config files. Only
  *  rows with real text content are kept; the compose transform later accepts only paths its raw compose declares. */
 function extractServiceFiles(raw: unknown): ServiceBundle["files"] {
@@ -355,6 +385,33 @@ function extractServiceFiles(raw: unknown): ServiceBundle["files"] {
 
 /** The value when it is a non-empty string, else undefined (so `??` falls through an empty `dockerfile` to `dockerfile_raw`). */
 const nonEmptyStr = (v: unknown): string | undefined => (typeof v === "string" && v.trim() !== "" ? v : undefined);
+
+/** Engines Coolify has no scheduled database backup for (so no read is made). */
+const BACKUP_LESS_ENGINES = new Set(["REDIS", "KEYDB", "DRAGONFLY"]);
+
+/** Pure: copy ONLY the non-secret fields of a backup row (an S3 key or secret must never ride along). */
+function pickBackup(raw: unknown): CoolifyBackup {
+  const r = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+  const s3 = r.s3 && typeof r.s3 === "object" ? (r.s3 as Record<string, unknown>) : undefined;
+  return {
+    enabled: typeof r.enabled === "boolean" ? r.enabled : undefined,
+    save_s3: typeof r.save_s3 === "boolean" ? r.save_s3 : undefined,
+    frequency: typeof r.frequency === "string" ? r.frequency : undefined,
+    s3_storage_id: typeof r.s3_storage_id === "number" || typeof r.s3_storage_id === "string" ? r.s3_storage_id : undefined,
+    s3_storage_uuid: typeof r.s3_storage_uuid === "string" ? r.s3_storage_uuid : undefined,
+    ...(typeof s3?.name === "string" ? { s3: { name: s3.name } } : {}),
+  };
+}
+
+/** Pure: copy ONLY the identity of an S3 storage row (never its key or secret). */
+function pickS3Storage(raw: unknown): CoolifyS3Storage {
+  const r = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+  return {
+    id: typeof r.id === "number" || typeof r.id === "string" ? r.id : undefined,
+    uuid: typeof r.uuid === "string" ? r.uuid : undefined,
+    name: typeof r.name === "string" ? r.name : undefined,
+  };
+}
 
 /** Max concurrent enrichment GETs during discover — fast enough for a large fleet without hammering Coolify. */
 const DISCOVER_CONCURRENCY = 8;

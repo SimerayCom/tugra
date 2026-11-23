@@ -144,6 +144,29 @@ describe("buildPreflight — MinIO services point at Object migration (everythin
   });
 });
 
+describe("buildPreflight — source backups and source health", () => {
+  const o: ImportOptions = { sourceKind: "coolify" };
+  const dbWithBackup = { sourceRef: "d1", name: "maria", engine: "MARIADB" as const, backupSchedule: { schedules: 1, interval: "daily", s3: true, targets: ["db-bucket"] } };
+
+  it("a database with a scheduled backup says it is not carried, names the S3 target and carries the summary", () => {
+    const p = buildPreflight(fleet({ databases: [dbWithBackup, { sourceRef: "d2", name: "plain", engine: "POSTGRES" as const }] }), o);
+    expect(p.databases[0].reason).toMatch(/scheduled backup \(daily\) and uploads to the S3 target db-bucket: it is not carried - recreate it in Tugra's Backups/);
+    expect(p.databases[0].backup).toEqual(dbWithBackup.backupSchedule);
+    expect(p.databases[1]).not.toHaveProperty("backup");
+    expect(p.databases[1].reason).not.toMatch(/scheduled backup/);
+  });
+
+  it("lists apps already failing at the source and leaves healthy ones out", () => {
+    const a = (sourceRef: string, name: string, sourceHealth: ForeignApp["sourceHealth"]): ForeignApp => ({ sourceRef, name, kind: "git", buildPack: "nixpacks", serverRef: "s1", sourceHealth });
+    const p = buildPreflight(fleet({ apps: [a("a1", "dead", { health: "exited", status: "exited:unhealthy", restartCount: 126368 }), a("a2", "ok", { health: "healthy", status: "running:healthy", restartCount: 0 }), a("a3", "loop", { health: "unknown", restartCount: 25 }), a("a4", "unchecked", { health: "unknown", restartCount: 0 })] }), o);
+    expect(p.sourceHealth).toEqual([
+      { itemRef: "app:s1:a1", name: "dead", health: "exited", status: "exited:unhealthy", restartCount: 126368 },
+      { itemRef: "app:s1:a3", name: "loop", health: "unknown", restartCount: 25 },
+    ]);
+    expect(buildPreflight(fleet({ apps: [a("a2", "ok", { health: "healthy", restartCount: 0 })] }), o)).not.toHaveProperty("sourceHealth");
+  });
+});
+
 describe("buildCutoverHint: service hosts (R13)", () => {
   const { fixtureByName } = jest.requireActual("./testing/service-fixtures") as typeof import("./testing/service-fixtures");
   const withServices = (names: string[], apps: Parameters<typeof fleet>[0] = {}) => fleet({ ...apps, services: names.map((n) => fixtureByName(n).svc) });

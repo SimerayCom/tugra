@@ -219,6 +219,7 @@ export function hostChecks(plan: ImportPlanResponse, items: ImportPlanResponse["
   }
   if (cls.flaky.length) out.push({ id: "preflight.host-flaky", status: "warn", code: "preflight.host-flaky", params: { count: cls.flaky.length, items: names(cls.flaky.map((h) => `${h.name} (${h.count})`)) }, evidence: "source-api-reported" });
   if (cls.newOs.length) out.push({ id: "preflight.host-os-new", status: "warn", code: "preflight.host-os-new", params: { count: cls.newOs.length, items: names(cls.newOs.map((h) => `${h.name}: ${h.os}`)), tested: testedOsLabel() }, evidence: "source-api-reported" });
+  if (cls.osUnknown.length) out.push({ id: "preflight.host-os-unknown", status: "warn", code: "preflight.host-os-unknown", params: { count: cls.osUnknown.length, items: names(cls.osUnknown) }, evidence: "source-api-reported" });
   if (cls.empty.length) out.push({ id: "preflight.host-empty", status: "pass", code: "preflight.host-empty", params: { count: cls.empty.length, items: names(cls.empty) }, evidence: "source-api-reported" });
   return out;
 }
@@ -337,14 +338,15 @@ export function preflightChecks(run: RunSnapshot, obs: PreflightObs): GateCheck[
   if (objectStores.length) c.push({ id: "preflight.object-store", status: "warn", code: "preflight.object-store", params: { count: objectStores.length }, ...ev });
   const manualVolumes = pf?.volumes?.filter((v) => v.dataPlane === "manual" || v.dataPlane === "manual-large") ?? [];
   if (manualVolumes.length) c.push({ id: "preflight.volumes-manual", status: "warn", code: "preflight.volumes-manual", params: { count: manualVolumes.length }, ...ev });
-  const binds = pf?.volumes?.filter((v) => v.type === "bind") ?? [];
-  if (binds.length) {
+  // host-path binds of apps AND of services (a MinIO data directory): each needs the same acknowledgement
+  const bindCount = (pf?.volumes?.filter((v) => v.type === "bind").length ?? 0) + (pf?.services.reduce((n, sv) => n + (sv.volumes?.filter((v) => v.origin === "host-bind").length ?? 0), 0) ?? 0);
+  if (bindCount > 0) {
     const allow = resolveOwnerInput(run.inputs, "allowBind");
     c.push({
       id: "preflight.bind-mounts",
       status: allow === true ? "pass" : "warn",
       code: allow === true ? "preflight.bind-mounts-allowed" : "preflight.bind-mounts-refused",
-      params: { count: binds.length },
+      params: { count: bindCount },
       ...(allow === true ? {} : { ownerInput: "allowBind" as const }),
       ...ev,
     });

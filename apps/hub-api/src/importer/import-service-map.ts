@@ -30,6 +30,11 @@ const SECRET_KEY_RE = /PASSWORD|SECRET|TOKEN|KEY/i;
 const IMAGE_REPO_RE = /^[A-Za-z0-9][A-Za-z0-9._/:-]{0,200}$/;
 const PIN_REF_RE = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,200}(:[A-Za-z0-9_][A-Za-z0-9._-]{0,127})?(@sha256:[a-f0-9]{64})?$/;
 
+/** A MinIO object-store service: by its one-click template slug, or by a MinIO image in its compose file. */
+export function isMinioService(s: { templateSlug?: string; composeFile?: string }): boolean {
+  return s.templateSlug === "minio" || /minio\/minio/.test(s.composeFile ?? "");
+}
+
 export type ServiceVerdict = "importable" | "partial" | "skipped";
 export type ServiceDataPlane = "hub-staged" | "manual-large" | "not-carried" | "config-file" | "stateless";
 
@@ -772,7 +777,8 @@ function processVolumes(
     } else declared[key] = {};
     const policy = choice?.volumes?.[key]?.policy ?? (defaults?.[key] ?? "copy");
     v.policy = policy;
-    v.dataPlane = policy === "copy" ? "hub-staged" : policy === "empty" ? "stateless" : "not-carried";
+    // An object store's volume is never streamed with the service (its buckets move through Object migration), whatever the policy says.
+    v.dataPlane = policy === "copy" ? (isMinioService(svc) ? "not-carried" : "hub-staged") : policy === "empty" ? "stateless" : "not-carried";
     v.mounts.sort((a, b) => (a.service + a.path < b.service + b.path ? -1 : 1));
     volumes.push(v);
     if (policy === "skip") note(`volume:${key}`, "the data of this volume is not carried; Compose creates it empty on the first deploy", "warn");

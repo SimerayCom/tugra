@@ -44,6 +44,12 @@ export function buildCoverage(fleet: ForeignFleet, options: ImportOptions): Impo
     entries.sort((x, y) => (x.level === y.level ? (x.field < y.field ? -1 : x.field > y.field ? 1 : 0) : x.level === "warn" ? -1 : 1));
     apps.push({ itemRef: a.itemRef, name: svc.name, notCarried: entries });
   }
+  // Databases: a scheduled backup (and its S3 target) is never carried; the reason names the target. Only that entry is listed here
+  // (other database notes already show as plan risks).
+  for (const db of fleet.databases ?? []) {
+    const entries: Entry[] = (db.notCarried ?? []).filter((n) => n.field === "backupSchedule");
+    if (entries.length) apps.push({ itemRef: ns("database", db.serverRef, db.sourceRef), name: db.name, notCarried: entries });
+  }
   const env = envCoverage(fleet);
   const git = options.sourceKind === "coolify" ? gitCoverage(fleet) : undefined; // other sources keep their output byte-identical
   if (!apps.length && !env && !git) return undefined;

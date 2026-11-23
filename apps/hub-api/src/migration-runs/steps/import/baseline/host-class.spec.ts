@@ -65,5 +65,6 @@ describe("classifyHosts", () => {
     expect(cls.controlPlane).toEqual([{ name: "c", items: 0 }]);
     expect(cls.empty).toEqual(["c"]);
     expect(cls.osReported).toBe(2);
+    expect(cls.osUnknown).toEqual(["host-b"]); // moved and silent about its OS; the idle control-plane host is not asked about it
   });
 });

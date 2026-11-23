@@ -95,6 +95,8 @@ export const REASON_EN: Record<ImportReasonCode, string> = {
   coolify_redirect: "the source redirects to the {mode} host name; Tugra serves both names without a redirect — add a redirect rule in Tugra if the canonical name matters",
   coolify_redis_conf: "the source Redis uses a custom redis.conf, which Tugra does not carry; re-apply its settings by hand after the import",
   coolify_valkey: "the source runs Valkey, which Tugra has no engine for: it is created as Redis (same protocol) with the source image kept so its dump loads; if that image cannot be carried, a stock Redis is created and a Valkey 9 dump will not load into it",
+  coolify_backup_schedule: "the source runs a scheduled backup of this database ({frequency}, kept on its server); Tugra does not carry the schedule - recreate it in the database's Backups after the import",
+  coolify_backup_schedule_s3: "the source runs a scheduled backup of this database ({frequency}) that uploads to the S3 target {target}; Tugra does not carry the schedule or the S3 credentials - add the destination in Tugra's Backups and recreate the schedule after the import",
   coolify_inline_dockerfile: "an inline-Dockerfile app has no git repository; Tugra builds Dockerfile apps from a repo, so this app cannot be imported yet (repo-less Dockerfile apps are a planned feature)",
   dokploy_registry: "the registry credential is not carried; add the registry in Tugra before deploying a private image",
   dokploy_build_secrets: "build secret values are not read; re-add them as Tugra build secrets",

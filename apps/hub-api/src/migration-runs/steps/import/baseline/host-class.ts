@@ -96,6 +96,8 @@ export interface HostClass {
   flaky: Array<{ name: string; count: number }>;
   /** Hosts on a release newer than the newest tested one that carry something of this run. */
   newOs: Array<{ name: string; os: string }>;
+  /** Hosts the run moves something off that report no operating system (it is checked when the agent enrols on the target side). */
+  osUnknown: string[];
   /** Hosts with nothing of this run on them: skipped, not an error. */
   empty: string[];
   /** How many of the hosts reported an OS at all (zero means the source says nothing about it). */
@@ -107,7 +109,7 @@ export interface HostClass {
  * lists but the run puts nothing on is `empty`; flaky and new-OS flags only matter for hosts the run actually moves.
  */
 export function classifyHosts(hosts: readonly PreflightHost[], itemsByHost: ReadonlyMap<string, number>): HostClass {
-  const out: HostClass = { controlPlane: [], flaky: [], newOs: [], empty: [], osReported: 0 };
+  const out: HostClass = { controlPlane: [], flaky: [], newOs: [], osUnknown: [], empty: [], osReported: 0 };
   for (const h of hosts) {
     const name = h.name || h.ref;
     const items = itemsByHost.get(h.ref) ?? 0;
@@ -120,6 +122,7 @@ export function classifyHosts(hosts: readonly PreflightHost[], itemsByHost: Read
     }
     if (h.unreachableCount !== undefined && h.unreachableCount >= FLAKY_UNREACHABLE_COUNT) out.flaky.push({ name, count: h.unreachableCount });
     if (release && isNewerThanTested(release)) out.newOs.push({ name, os: osLabel(release) });
+    if (!h.os) out.osUnknown.push(name);
   }
   return out;
 }

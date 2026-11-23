@@ -1193,8 +1193,8 @@ export interface ImportApplyExtras {
   dbDataModes?: Record<string, "volume">;
 }
 export interface ImportPreflight {
-  databases: Array<{ name: string; engine: string; dataPlane: DbDataPlane; reason: string }>;
-  services: Array<{ name: string; members: number; note: string; objectStore?: true; verdict?: ImportServiceVerdict; hold?: boolean; volumes?: Array<{ key: string; dataPlane: string }> }>;
+  databases: Array<{ name: string; engine: string; dataPlane: DbDataPlane; reason: string; backup?: { schedules?: number; s3?: boolean; interval?: string; targets?: string[] } }>;
+  services: Array<{ name: string; members: number; note: string; objectStore?: true; verdict?: ImportServiceVerdict; hold?: boolean; volumes?: Array<{ key: string; dataPlane: string; origin?: "host-bind" }> }>;
   appsWithVolumeData: number;
   volumeDataNote?: string;
   volumes?: Array<{ app: string; mountPath: string; type?: "named" | "bind"; dataPlane: "hub-staged" | "manual-large" | "manual" | "unknown-size" | "stream"; reason: string; fidelity?: string }>;
@@ -1206,6 +1206,8 @@ export interface ImportPreflight {
   git?: { hosts: Array<{ host: string; apps: number }> };
   /** The source servers by name (Coolify, Dokploy), so a host is shown by its name and not by its uuid. */
   hosts?: Array<{ ref: string; name?: string; controlPlane?: true; unreachableCount?: number; os?: string }>;
+  /** Apps already failing at the source (exited, unhealthy, crash-looping): they migrate as they are. */
+  sourceHealth?: Array<{ itemRef: string; name: string; health: "unhealthy" | "unknown" | "exited"; status?: string; restartCount: number | null }>;
 }
 export interface ImportPlan {
   sourceKind: string;

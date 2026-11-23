@@ -1130,6 +1130,7 @@
     "preflight_host-control-plane-moves": "{host} is the server the source's control plane runs on, and this run moves {items} items off it. Decommission it last, after every other run of this source has finished.",
     "preflight_host-flaky": "{count} source servers were unreachable several checks in a row: {items}. Their data steps may fail or stall; run them when the host is stable.",
     "preflight_host-os-new": "{count} source servers run an operating system newer than the newest one tested ({tested}): {items}. The migrator and agent are untested there; try one host first.",
+    "preflight_host-os-unknown": "{count} source servers did not report an operating system: {items}. It is checked when the agent enrols on the target side, so an unsupported release shows up late; try one host first.",
     "preflight_host-empty": "{count} source servers carry nothing of this run and are skipped: {items}.",
     "preflight_disk-unknown": "The target server has no recent disk reading from its agent, so its free space could not be checked now.",
     "preflight_disk-low": "{server} has {freeGib} GiB free of {totalGib} GiB. A run needs at least {minGib} GiB free, and the streamed copy needs about twice the data size. Free some space, or accept the risk if everything moving is small.",
