@@ -727,7 +727,7 @@ export class ApplicationsService {
       dto.environmentId ?? (await this.teamDefaults.resolveDefaultEnvironmentId(server.teamId));
     if (dto.gitSourceId) {
       const gs = await this.prisma.gitSource.findUnique({ where: { id: dto.gitSourceId } });
-      if (!gs || !sourceUsableBy(gs, server.teamId)) throw new BadRequestException("git source not found in this team");
+      if (!gs || !(await this.canLinkGitSource(userId, gs, server.teamId))) throw new BadRequestException("git source not found in this team");
       this.assertSourceHost(gs, dto.gitUrl);
     }
 
@@ -4097,6 +4097,21 @@ export class ApplicationsService {
    * and mints a fresh deploy key; and a GitHub App (github.com-only) can never pair with a non-github host.
    * Returns the credential side effects as `warnings` so the UI can tell the operator what was reset.
    */
+  /**
+   * May `userId` link this Git source to an app in `teamId`? A team's own source: yes (the caller already holds
+   * apps:config there). A source shared with every team: only the instance owner, or someone who manages the
+   * source's OWN team's integrations — other teams see it read-only and cannot attach it to new apps. Apps already
+   * linked keep deploying through it either way (the clone credential is resolved by source id at deploy time).
+   */
+  private async canLinkGitSource(userId: string, gs: { teamId: string; sharedAllTeams?: boolean | null }, teamId: string): Promise<boolean> {
+    if (gs.teamId === teamId) return true;
+    if (!sourceUsableBy(gs, teamId)) return false;
+    const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { isInstanceOwner: true } });
+    if (user?.isInstanceOwner) return true;
+    const perms = (await this.access.permissionsByTeam(userId)).get(gs.teamId);
+    return perms?.has("integrations") ?? false;
+  }
+
   async setSource(userId: string, id: string, input: SetSourceInput): Promise<{ warnings: string[] }> {
     const app = await this.requireMutate(userId, id);
     if (app.isPreview) throw new BadRequestException("a preview app's source is controlled by its parent");
@@ -4145,7 +4160,7 @@ export class ApplicationsService {
         if (input.gitSourceId === null) nextSourceId = null;
         else {
           const gs = await this.prisma.gitSource.findUnique({ where: { id: input.gitSourceId } });
-          if (!gs || !sourceUsableBy(gs, app.teamId)) throw new BadRequestException("git source not found in this team");
+          if (!gs || !(await this.canLinkGitSource(userId, gs, app.teamId))) throw new BadRequestException("git source not found in this team");
           nextSourceId = input.gitSourceId;
         }
       }

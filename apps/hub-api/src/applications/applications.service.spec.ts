@@ -9082,3 +9082,30 @@ describe("ApplicationsService.prebuild (guided-migration early build)", () => {
     expect(requirePermission).toHaveBeenCalledWith("u1", "t1", "apps:deploy");
   });
 });
+
+describe("ApplicationsService.canLinkGitSource (shared Git sources)", () => {
+  const svcWith = (isInstanceOwner: boolean, perms: Map<string, Set<string>>) =>
+    make(
+      { user: { findUnique: jest.fn().mockResolvedValue({ isInstanceOwner }) } } as unknown as PrismaService,
+      { permissionsByTeam: jest.fn().mockResolvedValue(perms) } as unknown as TeamAccessService,
+      {} as AgentWsServer,
+    ) as unknown as { canLinkGitSource(u: string, gs: { teamId: string; sharedAllTeams?: boolean }, t: string): Promise<boolean> };
+
+  it("a team's own source is always linkable", async () => {
+    expect(await svcWith(false, new Map()).canLinkGitSource("u", { teamId: "t1" }, "t1")).toBe(true);
+  });
+  it("an unshared source of another team never is", async () => {
+    expect(await svcWith(true, new Map()).canLinkGitSource("u", { teamId: "t1", sharedAllTeams: false }, "t2")).toBe(false);
+  });
+  it("a shared source: the instance owner may link it in any team", async () => {
+    expect(await svcWith(true, new Map()).canLinkGitSource("u", { teamId: "t1", sharedAllTeams: true }, "t2")).toBe(true);
+  });
+  it("a shared source: a manager of the source's own team may link it", async () => {
+    const perms = new Map([["t1", new Set(["integrations"])]]);
+    expect(await svcWith(false, perms).canLinkGitSource("u", { teamId: "t1", sharedAllTeams: true }, "t2")).toBe(true);
+  });
+  it("a shared source: an ordinary member of another team only sees it (cannot link)", async () => {
+    const perms = new Map([["t2", new Set(["apps:config", "integrations"])]]);
+    expect(await svcWith(false, perms).canLinkGitSource("u", { teamId: "t1", sharedAllTeams: true }, "t2")).toBe(false);
+  });
+});

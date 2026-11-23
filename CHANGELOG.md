@@ -12,6 +12,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   repo linking, app create/link, and the repo/branch pickers all accept a shared source; other teams see it read-only
   with an "All teams" badge. Only the instance owner can share or stop sharing (`PATCH /git-sources/:id/sharing`, `admin`
   scope for a token), and each change is audited.
+  Linking a shared source to an app in another team is reserved for the instance owner or a manager of the source's own
+  team; ordinary members of other teams see it read-only and cannot attach it to new apps (apps already linked keep
+  deploying through it).
 
 ## [0.1.0-beta.25] - 2026-11-23
 
