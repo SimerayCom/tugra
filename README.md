@@ -115,10 +115,16 @@ A side-by-side with the self-hostable PaaS tools people actually evaluate (compe
 
 ## Quick start
 
-On a fresh Linux host, **one command** installs the prerequisites (git, Docker), clones the repo and brings the stack up:
+On a fresh Linux host, **one command** installs the prerequisites (git, Docker), clones the repo and brings the stack up. No domain, no Cloudflare token, no extra setup — the panel comes up on `http://<server-ip>/` (port 80, served by Tugra's own proxy, so only ports 80/443 need to be open):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/SimerayCom/tugra/main/scripts/bootstrap.sh | sh
+```
+
+Then open the printed URL, create the owner account, and — when you have a domain — set it under **Settings → Instance → Panel domain** (free HTTPS from Let's Encrypt, no token needed, works behind Cloudflare's orange cloud). Prefer to have the domain from the first minute? Point its DNS at the server and add it to the same command:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/SimerayCom/tugra/main/scripts/bootstrap.sh | sh -s -- --domain panel.example.com
 ```
 
 <p align="center"><img src="docs/assets/install.png" alt="Tugra one-command install on a fresh Ubuntu host: prerequisites installed, configuration written, the stack coming up healthy, and the owner setup code" width="840" /></p>
@@ -132,14 +138,14 @@ less scripts/install.sh   # review it first
 ./scripts/install.sh
 ```
 
-The installer generates strong secrets into a local `.env` (re-running preserves them), then brings up the hub, web UI, PostgreSQL and Redis with `docker compose`. When it finishes, open the printed **Web UI** URL (`http://<host-ip>:3001`; the hub/API base is `http://<host-ip>:3000`) and create the first account — it becomes the instance **owner**. On a fresh install the installer also prints a one-time **setup code** to enter when creating that account (recover it with `grep SETUP_CODE .env`). Then follow the onboarding wizard to connect your first server.
+The installer generates strong secrets into a local `.env` (re-running preserves them), then brings up the hub, web UI, PostgreSQL and Redis with `docker compose`. When it finishes, open the printed **Web UI** URL (`http://<host-ip>/`, or `https://<your-domain>` with `--domain`) and create the first account — it becomes the instance **owner**. On a fresh install the installer also prints a one-time **setup code** to enter when creating that account (recover it with `grep SETUP_CODE .env`). Then follow the onboarding wizard to connect your first server.
 
 Re-running `./scripts/install.sh` (e.g. after `git pull`) is safe — it keeps your secrets and only updates configuration, so it doubles as the upgrade path.
 
-**Production (TLS + a domain).** The stack ships plain HTTP on this host's ports for a quick start; put it behind your own reverse proxy that terminates TLS and re-run with your domain:
+**Production (TLS + a domain).** `--domain` makes Tugra's own proxy serve the panel over HTTPS with an automatic Let's Encrypt certificate (HTTP-01; no email or Cloudflare token required). Point the domain's DNS at the server first. Or skip the flag and set the domain later in **Settings → Instance → Panel domain** — the old address keeps working until the certificate is issued, and the change rolls back if it can't be. To front Tugra with your **own** reverse proxy instead, use `--no-auto-tls` (also chosen automatically when another service already holds :80/:443) and route as below:
 
 ```bash
-./scripts/install.sh --domain tugra.example.com
+./scripts/install.sh --domain tugra.example.com --no-auto-tls
 ```
 
 Route most traffic to the **web** (`:3001`) — it proxies the REST API and OAuth start to the hub for you — and send only the paths the web can't handle to the **hub** (`:3000`):
@@ -151,7 +157,8 @@ Route most traffic to the **web** (`:3001`) — it proxies the REST API and OAut
 
 Notes:
 
-- **TLS:** bring your own reverse proxy (Caddy, Traefik, nginx, …) or add `--auto-tls --acme-email you@domain` to let Tugra provision the panel's HTTPS (bundled Traefik + Let's Encrypt). `--domain` sets `COOKIE_SECURE=true` + `HUB_TRUSTED_PROXY=true`.
+- **TLS:** automatic by default with `--domain` (bundled Traefik + Let's Encrypt; `--acme-email you@domain` is an optional contact for expiry notices), or bring your own reverse proxy (Caddy, Traefik, nginx, …) with `--no-auto-tls`. Behind Cloudflare's orange cloud it works without a token; if the first certificate doesn't issue, set SSL/TLS mode **Full** and turn **Always Use HTTPS** off until it does (a DNS-01 token via `--acme-dns-cloudflare-file` is an optional alternative). `--domain` sets `COOKIE_SECURE=true` + `HUB_TRUSTED_PROXY=true`.
+- **Classic two-port quick start.** `--raw-ports` keeps the old layout (no proxy; web `:3001`, hub `:3000`); it is also what an install made before this changed keeps, and what a host with port 80 already taken gets.
 - **Lock down the raw ports.** With `HUB_TRUSTED_PROXY=true` the hub honors `X-Forwarded-For` (only from private/loopback/docker peers, or `HUB_TRUSTED_PROXY_CIDRS`), and the raw `:3000`/`:3001` ports should reach **only** the proxy. A fresh `--domain` install binds them to `127.0.0.1` (same-host proxy), and an existing install turning https is moved there too (`--keep-raw-ports` opts out). If the proxy runs on another host, set `HUB_BIND`/`WEB_BIND` to this box's private-interface IP and firewall the ports — Docker-published ports bypass `ufw`.
 - **"Sign in with GitHub"** works only in this single-origin proxy deployment (the hub and web share a public origin so the session cookie is visible to the SPA); it isn't available in the plain two-port quick start.
 

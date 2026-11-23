@@ -11,9 +11,9 @@ On a fresh Ubuntu/Debian host with Docker (the installer installs Docker if it i
 curl -fsSL https://raw.githubusercontent.com/SimerayCom/tugra/main/scripts/bootstrap.sh | bash
 ```
 
-Then open `http://<server-ip>:3001`, create the owner account and finish onboarding. For a real domain with
-HTTPS, re-run the installer with `./scripts/install.sh --domain tugra.example.com --auto-tls --acme-email you@example.com`
-(see [install.md](install.md)). The installer is safe to re-run; it takes a database + `.env` restore point before
+Then open the printed URL (`http://<server-ip>/`), create the owner account and finish onboarding. For a real domain
+with HTTPS, point its DNS at the server and set it in **Settings → Instance → Panel domain** (no token needed), or
+re-run the installer with `./scripts/install.sh --domain tugra.example.com` (see [install.md](install.md)). The installer is safe to re-run; it takes a database + `.env` restore point before
 changing anything on an existing install.
 
 The server you installed on is already enrolled as an agent ("This machine"). Add more servers from

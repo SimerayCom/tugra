@@ -12,30 +12,44 @@ install reference; the [project README](../README.md) has the short version.
 
 ## Quick start
 
-One line on the host:
+One line on the host. No domain, no Cloudflare token and no extra setup are needed:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/SimerayCom/tugra/main/scripts/bootstrap.sh | sh
 ```
 
+The panel comes up on **`http://<server-ip>/`** (port 80), served by Tugra's own proxy with the same
+single-origin routing a domain install uses, so only ports **80 and 443** have to be open in your firewall.
+Create the owner account, then — when you have a domain — set it under **Settings → Instance → Panel
+domain** (see [Set the domain later](#set-the-domain-later-settings--instance--panel-domain)).
+
+With a domain from the start (point its DNS at the server first), pass it to the same command:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/SimerayCom/tugra/main/scripts/bootstrap.sh | sh -s -- --domain panel.example.com
+```
+
 (or clone first, then run the installer directly — same result:)
 
 ```bash
-git clone https://github.com/SimerayCom/tugra.git && cd tugra && ./scripts/install.sh
+git clone https://github.com/SimerayCom/tugra.git && cd tugra && ./scripts/install.sh [--domain panel.example.com]
 ```
 
 It prompts once to share anonymous usage stats (`[Y/n]`, default yes; opt out with `--no-telemetry`).
-Run `./scripts/install.sh --help` for all flags (`--domain`, `--home`, `--no-telemetry`, `--public-ip`, …).
+Run `./scripts/install.sh --help` for all flags (`--domain`, `--raw-ports`, `--home`, `--no-telemetry`, `--public-ip`, …).
 
 The installer:
 
 1. Generates strong secrets **once** into a local `.env` at `chmod 600` (re-running preserves them).
 2. Brings up the hub, web UI, PostgreSQL and Redis with `docker compose` (the hub applies database
    migrations on boot).
-3. Waits for the hub to become healthy and prints the **Web UI** and **Hub API** URLs.
+3. Starts Tugra's own proxy (Traefik): without `--domain` it answers on `http://<server-ip>/`, with `--domain`
+   it serves `https://<domain>` with a Let's Encrypt certificate. If port 80 is already used by another
+   service, the installer says so and falls back to the classic raw ports (below).
+4. Waits for the hub to become healthy and prints the **Web UI** and **Hub API** URLs.
 
-In the two-port quick start the web UI is at `http://<host-ip>:3001` and the hub/API base is
-`http://<host-ip>:3000`. Open the web UI and create the first account — it becomes the instance
+A cloud server behind NAT reports a private interface address; pass `--public-ip <ip>` so the printed URL is the
+reachable one. Open the web UI and create the first account — it becomes the instance
 **owner**. On a fresh install the installer prints a one-time **setup code**; enter it when creating the
 owner account (to recover it later: `grep SETUP_CODE .env`). Then follow the onboarding wizard to connect
 your first server.
@@ -45,46 +59,73 @@ is fast. If a pull can't be satisfied — an **arm64** host (the images are amd6
 environment — the installer builds from your checkout instead (same command; it takes several minutes and
 wants ~2 GB RAM). Force either path with `--pull` or `--build`.
 
+**Classic raw ports.** `--raw-ports` (or `TUGRA_RAW_PORTS=1`) skips the proxy and publishes the panel on the raw
+ports instead — web UI `http://<host-ip>:3001`, hub/API `http://<host-ip>:3000`, as before. It is chosen
+automatically when port 80 is taken, and an install made before this change keeps exactly the setup it has:
+re-running the installer (the upgrade path) never moves an existing panel, and the existing `.env` values
+(`HUB_PUBLIC_URL`, `WEB_PUBLIC_URL`, `HUB_PORT`, `WEB_PORT`, `HUB_BIND`, `WEB_BIND`) always win.
+
 ## Production: TLS + a domain
 
-The quick start serves plain HTTP on the host's ports. For a public domain over HTTPS you have two
-options — automatic, or bring your own proxy.
+Tugra provisions the panel's HTTPS itself. You can give it the domain at install time (`--domain`) or later from
+the panel; or you can bring your own proxy.
 
-### Option A — automatic HTTPS (opt-in)
-
-```bash
-./scripts/install.sh --domain tugra.example.com --auto-tls --acme-email you@example.com
-```
-
-Tugra provisions the control panel's HTTPS for you: a bundled Traefik reverse proxy gets a Let's Encrypt
-certificate and path-routes the single origin (table below). This is **opt-in** (the trust-wedge: the only
-outbound call is to Let's Encrypt for *your* domain — no phone-home), so plain `--domain` stays
-bring-your-own-proxy. `--acme-email` is required (expiry notices; a placeholder like `example.com` is
-rejected). Point the domain's DNS at this host first; the certificate issues on the first reachable request.
-Before it provisions, the installer sanity-checks the setup — that the domain's A record resolves to this
-server (HTTP-01), or that the Cloudflare token is valid (DNS-01) — and prints the precise fix if something's
-off, so a misconfigured domain surfaces up front instead of as a silent certificate failure. The check is
-advisory: it never blocks the install, and the panel stays reachable on its host port regardless.
-
-**Behind Cloudflare (orange cloud):** HTTP-01 can't validate through the proxy, so pass a Cloudflare API
-token and Tugra uses **DNS-01** instead — a real certificate while the record stays proxied and your origin
-IP stays hidden:
+### Option A — automatic HTTPS (the default with `--domain`)
 
 ```bash
-./scripts/install.sh --domain panel.example.com --auto-tls --acme-email you@example.com \
-  --acme-dns-cloudflare <cf-dns-api-token>
+./scripts/install.sh --domain tugra.example.com
 ```
 
-(The token is stored only in the `0600` `.env` and handed to Traefik via a `0600` env-file. The installer
-itself never puts it in a process argument, but a token typed after `--acme-dns-cloudflare` is visible in your
-shell history and in `ps` for that command — prefer `--acme-dns-cloudflare-file <path>` (first line of the file)
-or `TUGRA_ACME_DNS_TOKEN`; the installer warns when the token comes from the command line.) Alternatives without a token: keep the record **DNS-only (grey)** so HTTP-01 issues directly,
-or set Cloudflare SSL/TLS to **Full** (Cloudflare serves its own edge cert; the origin serves Traefik's).
-Flip the panel on/off or re-apply anytime from **Settings → Panel HTTPS** (`GET`/`POST /instance/panel-tls`).
+A bundled Traefik reverse proxy gets a Let's Encrypt certificate (**HTTP-01**) and path-routes the single origin
+(table below). **No email and no Cloudflare token are required** — `--acme-email you@example.com` is only an
+optional contact for expiry notices (a placeholder like `example.com` is rejected). The only outbound call is to
+Let's Encrypt for *your* domain — no phone-home. Point the domain's DNS at this host first; the certificate issues
+as soon as `:80` is reachable. Before it provisions, the installer sanity-checks the setup — that the domain's A
+record resolves to this server, or that it is a Cloudflare address — and prints the precise fix if something is off.
+The check is advisory: it never blocks the install, and the panel stays reachable on its host port regardless.
+If another service already listens on `:80`/`:443`, the installer keeps bring-your-own-proxy (Option B) and says so.
+
+**Behind Cloudflare (orange cloud):** this works **without a token**. Cloudflare forwards `:80` to your server, so
+HTTP-01 validates through the proxy. If the first certificate does not issue, set Cloudflare **SSL/TLS mode to
+Full** (not *Flexible*) and turn **Always Use HTTPS** off while it does (or set the record to *DNS only* for a
+minute); Tugra retries by itself. Prefer not to depend on `:80` reaching the server at all? A Cloudflare API token
+switches the panel to **DNS-01** — a real certificate while the record stays proxied and your origin IP hidden — as
+an *option*:
+
+```bash
+./scripts/install.sh --domain panel.example.com --acme-dns-cloudflare-file /path/to/token
+```
+
+(The token is stored only in the `0600` `.env` and handed to Traefik via a `0600` env-file. The installer itself
+never puts it in a process argument, but a token typed after `--acme-dns-cloudflare` is visible in your shell
+history and in `ps` for that command — prefer `--acme-dns-cloudflare-file <path>` (first line of the file) or
+`TUGRA_ACME_DNS_TOKEN`; the installer warns when the token comes from the command line.)
+Check or re-apply the panel's proxy anytime from **Settings → Panel HTTPS** (`GET`/`POST /instance/panel-tls`).
+
+### Set the domain later (Settings → Instance → Panel domain)
+
+A plain install already works on `http://<server-ip>/`. When you have a domain, point its DNS (A/AAAA record) at
+the server and open **Settings → Instance → Panel domain** (owner only): enter it (the email is optional) and
+**Set domain**. No token, no SSH, no installer re-run. Tugra, in this order:
+
+1. adds the domain's routes to its proxy **next to** the current address (so the address you are using keeps
+   working),
+2. waits for the Let's Encrypt certificate (HTTP-01, same Cloudflare notes as above),
+3. only then switches the instance's public URLs (`HUB_PUBLIC_URL`, `WEB_PUBLIC_URL`, `COOKIE_SECURE`,
+   `HUB_TRUSTED_PROXY`, `PANEL_TLS`, `PANEL_DOMAIN` in `.env`) and recreates hub + web. The change runs on the
+   update helper (the `tugra-updater` sidecar, the same checkout-and-docker path the in-app update uses; the hub
+   never touches its own container). It needs a helper from this release — an older one is updated first
+   (**Settings → Updates**) and the panel says so.
+
+**Rollback:** if the certificate is not issued in time (DNS not pointing here, `:80` unreachable, Cloudflare SSL
+mode *Flexible* …) or the hub does not come up on the new address, the pending routes are dropped and the previous
+`.env` is restored; the old address never stopped working and the panel shows the reason. **Remove domain** goes
+back to `http://<server-ip>/` the same way. After a switch you sign in again at the new address (cookies are per
+origin), and agents installed on other servers with the old address need the new one (re-run their install command).
 
 ### Option B — bring your own reverse proxy
 
-Run `--domain` without `--auto-tls` and front the stack with your own TLS proxy (Caddy, Traefik, nginx, …).
+Run `--domain <host> --no-auto-tls` and front the stack with your own TLS proxy (Caddy, Traefik, nginx, …).
 
 Either way, `--domain` sets `COOKIE_SECURE=true` and `HUB_TRUSTED_PROXY=true`. Route most traffic to the
 **web** service (`:3001`); send only the paths the web can't handle to the **hub** (`:3000`):

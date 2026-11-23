@@ -7,6 +7,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **A plain install is reachable on port 80, and HTTPS needs no Cloudflare token.** Without `--domain` the panel now comes
+  up on `http://<server-ip>/` through Tugra's own proxy (the same single-origin routing as a domain install), so a host
+  that only opens 80/443 works out of the box and the URL is printed at the end of the install. An existing install keeps
+  its own setup (stored `.env` values win; a flag-less upgrade never moves the panel), `--raw-ports` keeps the classic
+  `:3000`/`:3001` layout, and a host whose port 80 is taken falls back to it with a note. `--domain` now provisions the
+  panel's HTTPS itself by default (Let's Encrypt HTTP-01, no email required; `--no-auto-tls` or an occupied :80/:443
+  keeps bring-your-own-proxy). Behind a Cloudflare orange-cloud proxy the installer no longer says a token is needed:
+  HTTP-01 is tried first and, only if it fails, it explains SSL mode Full / Always Use HTTPS off; `--acme-dns-cloudflare`
+  stays as an option.
+- **Set, change or remove the panel domain from Settings.** Settings → Instance → Panel domain (owner only) does what
+  `install.sh --domain` did: it adds the domain's routes next to the current address, waits for the Let's Encrypt
+  certificate, then switches the public URLs and recreates hub and web through the update helper. A certificate or
+  startup failure rolls everything back with the old address still working and the reason shown. New owner-only
+  `GET /instance/panel-domain`, `POST /instance/panel-domain` and `POST /instance/panel-domain/remove` (OpenAPI and CLI
+  schema regenerated); the change is audit-logged.
 - **The one-line install now installs the newest published release.** `curl … bootstrap.sh | sh` used to check out
   the development branch and, with no stable release published yet, fall back to building that unreleased code on
   the server. It now picks the highest release tag (stable over pre-release, numeric beta order) and its prebuilt
