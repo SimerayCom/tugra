@@ -325,6 +325,15 @@ model Server {
   cleanupVolumes         Boolean                 @default(false)
   lastCleanupAt          DateTime?
   lastSeenAt             DateTime?
+  // Hub endpoint list (agents advertising hub_endpoints_v1): what the agent last reported. `hubEndpointActive` is the URL
+  // its session is on right now, `hubEndpointPrimary` the primary of the list it holds, `hubEndpointRev` that list's
+  // revision, `hubEndpointError` why it refused the last pushed list (null = accepted). "Moved" = active == the hub's
+  // current primary for the instance. Null = an older agent that never reports (it stays on its single install URL).
+  hubEndpointActive      String?
+  hubEndpointPrimary     String?
+  hubEndpointRev         BigInt?
+  hubEndpointError       String?
+  hubEndpointAt          DateTime?
   team                   Team                    @relation(fields: [teamId], references: [id], onDelete: Cascade)
   teamId                 String
   // Optional membership in a Cluster (a named group of this team's servers). SetNull: deleting the
@@ -1963,6 +1972,16 @@ model InstanceSettings {
   // or env PANEL_DOMAIN), the hub provisions a Traefik file-provider router for the panel. env PANEL_TLS=1 +
   // PANEL_DOMAIN win over this (synced to DB at bootstrap). Null = bring-your-own-proxy (unchanged).
   panelDomain         String?
+  // IP-mode transport (http://<ip>/ install): the self-signed leaf certificate the proxy serves on :443 for the host-less
+  // routes, generated once and persisted so its fingerprint (the agent pin) never changes. PEM + encrypted PEM key.
+  ipTlsCertPem        String?
+  ipTlsKeyEnc         String?
+  // Fingerprint (sha256:<hex>) of the certificate the LOCAL proxy was last successfully configured to serve; the agent
+  // install command only switches to wss://<ip> once this equals the persisted certificate (a path that is really up).
+  ipTlsServedFp       String?
+  // Agent address grace after the panel address moved: the old hosts / the IP route stay routable for `/agent` until every
+  // agent reports the new endpoint, the owner confirms, or `expiresAt`. Shape: AgentEndpointGrace (agent-endpoints/grace.ts).
+  agentEndpointGrace  Json?
   autoUpdate          Boolean   @default(false)
   // Release channel to track. "auto" (the default) = automatic: a prerelease build (0.1.0-beta.N) tracks "beta",
   // a release build tracks "stable" (see @tugra/shared autoUpdateChannel); "stable" / "beta" are explicit owner

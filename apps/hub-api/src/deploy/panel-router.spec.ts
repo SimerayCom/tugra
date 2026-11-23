@@ -194,6 +194,87 @@ describe("panel-router", () => {
     });
   });
 
+  describe("IP mode over TLS (agents on wss://<ip>/agent) and the agent grace routes", () => {
+    const CERT = { certPem: "CERT", keyPem: "KEY" };
+
+    it("ipTls: the host-less routes ALSO answer on websecure with the default certificate (no certResolver, no Host)", () => {
+      const doc = yamlParse(buildPanelRouterYaml({ domain: null, ipRoute: true, ipTls: CERT }));
+      const r = doc.http.routers;
+      expect(Object.keys(r).sort()).toEqual(["tugra-panel-ip-hub", "tugra-panel-ip-hub-tls", "tugra-panel-ip-web", "tugra-panel-ip-web-tls"]);
+      for (const k of ["tugra-panel-ip-hub-tls", "tugra-panel-ip-web-tls"]) {
+        expect(r[k].entryPoints).toEqual(["websecure"]);
+        expect(r[k].tls).toEqual({}); // the store's default certificate: stable, unlike Traefik's regenerating built-in one
+        expect(r[k].rule).not.toContain("Host(");
+      }
+      expect(r["tugra-panel-ip-hub-tls"].priority).toBe(2); // still BELOW every app router
+      expect(r["tugra-panel-ip-web-tls"].priority).toBe(1);
+      expect(doc.tls.stores.default.defaultCertificate).toEqual({ certFile: "/dynamic/iptls/cert.pem", keyFile: "/dynamic/iptls/key.pem" });
+    });
+
+    it("without ipTls nothing about TLS is rendered (the plain IP install is unchanged)", () => {
+      const doc = yamlParse(buildPanelRouterYaml({ domain: null, ipRoute: true }));
+      expect(doc.tls).toBeUndefined();
+      expect(Object.keys(doc.http.routers)).toEqual(["tugra-panel-ip-hub", "tugra-panel-ip-web"]);
+    });
+
+    it("httpOnly (a tunnel terminates TLS, no :443 published): ipTls is ignored", () => {
+      const doc = yamlParse(buildPanelRouterYaml({ domain: null, ipRoute: true, ipTls: CERT, httpOnly: true }));
+      expect(doc.tls).toBeUndefined();
+      expect(Object.keys(doc.http.routers)).toEqual(["tugra-panel-ip-hub", "tugra-panel-ip-web"]);
+    });
+
+    it("an OLD host keeps ONLY the agent path (+ the file-transfer relay) after the panel moved: hub service, no web catch-all, no redirect", () => {
+      const doc = yamlParse(buildPanelRouterYaml({ domain: "new.example.com", agentHosts: ["old.example.com"] }));
+      const r = doc.http.routers;
+      const old = r["tugra-panel-agent-host-1"];
+      expect(old.rule).toBe("Host(`old.example.com`) && (PathPrefix(`/agent`) || PathPrefix(`/api/v1/agent-fs/t/`))");
+      expect(old.service).toBe("tugra-panel-hub");
+      expect(old.entryPoints).toEqual(["websecure"]);
+      expect(old.tls.certResolver).toBe("le"); // its certificate is still in the ACME store: wss keeps verifying
+      expect(old.priority).toBe(200);
+      // the panel itself is NOT served on the old host any more
+      expect(JSON.stringify(r)).not.toContain("Host(`old.example.com`)\"");
+      expect(Object.keys(r).filter((k) => r[k].rule === "Host(`old.example.com`)")).toEqual([]);
+    });
+
+    it("the IP keeps the agent path after the panel moved to a domain: http + (with a certificate) https, hub only", () => {
+      const doc = yamlParse(buildPanelRouterYaml({ domain: "new.example.com", agentIp: true, ipTls: CERT }));
+      const r = doc.http.routers;
+      expect(r["tugra-panel-agent-ip"].rule).toBe("PathPrefix(`/agent`) || PathPrefix(`/api/v1/agent-fs/t/`)");
+      expect(r["tugra-panel-agent-ip"].entryPoints).toEqual(["web"]);
+      expect(r["tugra-panel-agent-ip-tls"].entryPoints).toEqual(["websecure"]);
+      expect(r["tugra-panel-agent-ip-tls"].tls).toEqual({});
+      expect(r["tugra-panel-ip-web"]).toBeUndefined(); // the panel is not served on the IP any more
+      expect(r["tugra-panel-ip-web-tls"]).toBeUndefined();
+      expect(doc.tls.stores.default.defaultCertificate.certFile).toBe("/dynamic/iptls/cert.pem");
+      // both are BELOW every app router
+      expect(r["tugra-panel-agent-ip"].priority).toBeLessThanOrEqual(2);
+    });
+
+    it("grace-only (no panel host left, e.g. the IP route is off and the old host remains) still renders; a host already served is not duplicated", () => {
+      const y = yamlParse(buildPanelRouterYaml({ domain: null, agentHosts: ["old.example.com"] }));
+      expect(Object.keys(y.http.routers)).toEqual(["tugra-panel-agent-host-1"]);
+      const dup = yamlParse(buildPanelRouterYaml({ domain: "a.example.com", also: ["b.example.com"], agentHosts: ["a.example.com", "b.example.com", "c.example.com"] }));
+      expect(Object.keys(dup.http.routers).filter((k) => k.startsWith("tugra-panel-agent-host"))).toEqual(["tugra-panel-agent-host-1"]);
+      expect(dup.http.routers["tugra-panel-agent-host-1"].rule).toContain("c.example.com");
+    });
+
+    it("agentIp is moot while the full IP route is on (it already contains the agent path)", () => {
+      const r = yamlParse(buildPanelRouterYaml({ domain: null, ipRoute: true, agentIp: true })).http.routers;
+      expect(r["tugra-panel-agent-ip"]).toBeUndefined();
+    });
+
+    it("every old host is validated before it reaches a rule", () => {
+      expect(() => buildPanelRouterYaml({ domain: "a.example.com", agentHosts: ["bad host`)"] })).toThrow();
+    });
+
+    it("an agent route never shadows an app: its priority is the panel's own (hub 200 for a host, 2 for the IP)", () => {
+      const r = yamlParse(buildPanelRouterYaml({ domain: "a.example.com", agentHosts: ["old.example.com"], agentIp: true })).http.routers;
+      expect(r["tugra-panel-agent-host-1"].priority).toBe(200); // Host(...) && ... : only that host's /agent
+      expect(r["tugra-panel-agent-ip"].priority).toBe(2);
+    });
+  });
+
   it("optionalAcmeEmail: blank is fine, a given one must be real", () => {
     expect(optionalAcmeEmail(undefined)).toBeUndefined();
     expect(optionalAcmeEmail("  ")).toBeUndefined();

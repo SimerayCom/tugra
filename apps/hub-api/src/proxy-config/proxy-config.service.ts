@@ -4,7 +4,8 @@ import { PrismaService } from "../prisma/prisma.service";
 import { CryptoService } from "../crypto/crypto.service";
 import { InstanceSettingsService } from "../instance/instance-settings.service";
 import { RedisService } from "../redis/redis.service";
-import { validatePanelDomain, optionalAcmeEmail, dnsProviderEnvCreds, type PanelResolver } from "../deploy/panel-router";
+import { validatePanelDomain, optionalAcmeEmail, dnsProviderEnvCreds, type PanelProxyConfig, type PanelResolver } from "../deploy/panel-router";
+import { graceRoutes, parseGrace } from "../agent-gateway/hub-endpoints";
 import { PANEL_PENDING_KEY, parsePanelPending } from "./panel-pending";
 
 export interface ResolvedProxyConfig {
@@ -16,7 +17,9 @@ export interface ResolvedProxyConfig {
   // undefined (leave the panel file untouched). Removal of the router is a separate, explicit op.
   // `domain` is null only for the host-less http://<ip>/ panel of a plain install; `also` = hosts served at the same
   // time (the OLD host while a domain change is verified); `ipRoute` = the host-less http route (PANEL_IP_ROUTE=1).
-  panel?: { domain: string | null; resolver: PanelResolver; also?: string[]; ipRoute?: boolean };
+  // `agentHosts` / `agentIp` = grace routing of the AGENT path on an address that is no longer the panel's (agents still
+  // moving to the new one); `ipTls` = the persisted self-signed certificate served on :443 for the host-less routes.
+  panel?: PanelProxyConfig & { resolver: PanelResolver };
   // Traffic Analytics: true when the server opted in — the proxy then writes a JSON access log to the host.
   accessLog?: boolean; // always set by resolveFor; optional only so hand-built fixtures stay valid
 }
@@ -126,8 +129,33 @@ export class ProxyConfigService implements OnApplicationBootstrap {
           if (current && current !== domain) also.push(current);
         }
       }
-      if (!domain && !ipRoute) return undefined;
-      return { domain, resolver: dnsUsable ? "le-dns" : "le", ...(also.length ? { also } : {}), ...(ipRoute ? { ipRoute: true } : {}) };
+      // Agent grace: the old host(s) / the IP keep answering /agent until every agent has moved (agent-gateway/hub-endpoints.ts).
+      const settings = await this.settings.get();
+      const grace = graceRoutes(parseGrace(settings.agentEndpointGrace), Date.now());
+      const agentHosts = grace.hosts.filter((h) => h !== domain && !also.includes(h));
+      const agentIp = grace.ip && !ipRoute;
+      if (!domain && !ipRoute && agentHosts.length === 0 && !agentIp) return undefined;
+      const ipTls = ipRoute || agentIp ? this.ipTlsMaterial(settings) : undefined;
+      return {
+        domain,
+        resolver: dnsUsable ? "le-dns" : "le",
+        ...(also.length ? { also } : {}),
+        ...(ipRoute ? { ipRoute: true } : {}),
+        ...(agentHosts.length ? { agentHosts } : {}),
+        ...(agentIp ? { agentIp: true } : {}),
+        ...(ipTls ? { ipTls } : {}),
+      };
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** The persisted IP-mode certificate (key decrypted), or undefined while none exists yet / the key is unreadable —
+   *  the host-less routes then simply stay http-only until the hub has generated it (never fails a recreate). */
+  private ipTlsMaterial(s: { ipTlsCertPem: string | null; ipTlsKeyEnc: string | null }) {
+    if (!s.ipTlsCertPem || !s.ipTlsKeyEnc) return undefined;
+    try {
+      return { certPem: s.ipTlsCertPem, keyPem: this.crypto.decrypt(s.ipTlsKeyEnc) };
     } catch {
       return undefined;
     }

@@ -1,5 +1,5 @@
-import { execFileSync } from "node:child_process";
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import { mkdtempSync, writeFileSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { renderAgentInstallScript } from "./agent-install-script";
@@ -151,6 +151,68 @@ describe("renderAgentInstallScript", () => {
       const { code, stderr } = run(["--bogus"]);
       expect(code).not.toBe(0);
       expect(stderr).toContain("unknown option --bogus");
+    });
+  });
+
+  describe("transport policy (wss / pinned IP / explicit plaintext), run against a stub docker", () => {
+    const dir = mkdtempSync(join(tmpdir(), "agent-install-tp-"));
+    const file = join(dir, "agent.sh");
+    const log = join(dir, "docker.log");
+    writeFileSync(file, script);
+    writeFileSync(join(dir, "docker"), `#!/bin/sh\necho "$@" >> "${log}"\nexit 0\n`, { mode: 0o755 });
+    const env = { PATH: `${dir}:${process.env.PATH}` } as NodeJS.ProcessEnv;
+    afterAll(() => rmSync(dir, { recursive: true, force: true }));
+    const PIN = "sha256:" + "ab".repeat(32);
+
+    const run = (args: string[]) => {
+      rmSync(log, { force: true });
+      const r = spawnSync("sh", [file, ...args, "--token", "tok"], { env, encoding: "utf8" });
+      return { code: r.status ?? 1, stderr: r.stderr };
+    };
+    const dockerRun = () => {
+      try {
+        return readFileSync(log, "utf8").split("\n").find((l: string) => l.startsWith("run ")) ?? "";
+      } catch {
+        return "";
+      }
+    };
+
+    it("a pinned wss://<ip> hub starts the agent with TUGRA_HUB_PIN", () => {
+      const r = run(["--hub", "wss://203.0.113.7/agent", "--hub-pin", PIN]);
+      expect(r.code).toBe(0);
+      const line = dockerRun();
+      expect(line).toContain("-e TUGRA_HUB=wss://203.0.113.7/agent");
+      expect(line).toContain(`-e TUGRA_HUB_PIN=${PIN}`);
+      expect(line).not.toContain("TUGRA_HUB_INSECURE");
+    });
+
+    it("a bare-IP wss hub without a pin is refused (no CA can vouch for it)", () => {
+      const r = run(["--hub", "wss://203.0.113.7/agent"]);
+      expect(r.code).not.toBe(0);
+      expect(r.stderr).toContain("needs --hub-pin");
+      expect(dockerRun()).toBe("");
+    });
+
+    it("a domain wss hub needs neither a pin nor an opt-in", () => {
+      expect(run(["--hub", "wss://hub.example.com/agent"]).code).toBe(0);
+      expect(dockerRun()).not.toContain("TUGRA_HUB_PIN");
+    });
+
+    it("plain ws:// to a public host is refused unless --hub-insecure is given, and then warns", () => {
+      const refused = run(["--hub", "ws://203.0.113.7:3000/agent"]);
+      expect(refused.code).not.toBe(0);
+      expect(refused.stderr).toContain("plain ws://");
+      expect(dockerRun()).toBe("");
+      const ok = run(["--hub", "ws://203.0.113.7:3000/agent", "--hub-insecure"]);
+      expect(ok.code).toBe(0);
+      expect(ok.stderr).toContain("WARNING: plain ws://");
+      expect(dockerRun()).toContain("-e TUGRA_HUB_INSECURE=1");
+    });
+
+    it("plain ws:// to localhost or a compose-internal name needs no opt-in", () => {
+      expect(run(["--hub", "ws://localhost:3000/agent"]).code).toBe(0);
+      expect(run(["--hub", "ws://hub-api:3000/agent"]).code).toBe(0);
+      expect(run(["--hub", "ws://127.0.0.1:3000/agent"]).code).toBe(0);
     });
   });
 });

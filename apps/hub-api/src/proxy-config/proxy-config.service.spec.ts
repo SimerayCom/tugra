@@ -11,6 +11,7 @@ type Opts = {
   acmeEmail?: string;
   panelDomain?: string | null; // what settings.panelDomainFor returns
   dbPanelDomain?: string | null; // what settings.get().panelDomain returns (bootstrap)
+  settingsRow?: Record<string, unknown>; // extra InstanceSettings columns (agentEndpointGrace, ipTls*)
   decrypt?: (s: string) => string;
   pending?: string | null; // the raw Redis value of the in-flight panel-domain change
 };
@@ -27,7 +28,7 @@ function make(o: Opts = {}) {
   const settings = {
     acmeEmailFor: jest.fn().mockResolvedValue("acmeEmail" in o ? o.acmeEmail : "ops@tugra.io"),
     panelDomainFor: jest.fn().mockResolvedValue(o.panelDomain ?? null),
-    get: jest.fn().mockResolvedValue({ panelDomain: o.dbPanelDomain ?? null }),
+    get: jest.fn().mockResolvedValue({ panelDomain: o.dbPanelDomain ?? null, ...(o.settingsRow ?? {}) }),
     update,
   } as unknown as InstanceSettingsService;
   const redis = { get: jest.fn().mockResolvedValue(o.pending ?? null) } as unknown as RedisService;
@@ -206,5 +207,84 @@ describe("ProxyConfigService.resolveFor — IP route, optional email, domain cha
     expect((await svc.resolveFor("s1")).panel).toEqual({ domain: "old.example.com", resolver: "le" });
     const { svc: other } = make({ serverRow: { ...localHttp, isLocal: false }, env: { PANEL_IP_ROUTE: "1" } });
     expect((await other.resolveFor("s1")).panel).toBeUndefined();
+  });
+});
+
+describe("ProxyConfigService.resolveFor — agent grace + IP certificate", () => {
+  const IP_ENV = { PANEL_IP_ROUTE: "1" };
+  const now = Date.now();
+  const grace = (over: Record<string, unknown> = {}) => ({
+    v: 1,
+    startedAt: now - 1000,
+    expiresAt: now + 3600_000,
+    primary: { url: "wss://new.example.com/agent" },
+    fallbacks: [{ url: "wss://old.example.com/agent" }, { url: "wss://203.0.113.7/agent", pin: "sha256:" + "ab".repeat(32) }],
+    ...over,
+  });
+  const cert = { ipTlsCertPem: "CERT-PEM", ipTlsKeyEnc: "KEY-PEM" };
+
+  it("IP mode with a persisted certificate: the host-less routes carry it (key decrypted); without one they stay http-only", async () => {
+    const { svc } = make({ serverRow: localHttp, env: IP_ENV, acmeEmail: undefined, settingsRow: cert });
+    expect((await svc.resolveFor("s1")).panel).toEqual({ domain: null, resolver: "le", ipRoute: true, ipTls: { certPem: "CERT-PEM", keyPem: "KEY-PEM" } });
+    const bare = make({ serverRow: localHttp, env: IP_ENV, acmeEmail: undefined });
+    expect((await bare.svc.resolveFor("s1")).panel).toEqual({ domain: null, resolver: "le", ipRoute: true });
+  });
+
+  it("an unreadable key never fails a recreate: the certificate is simply left out", async () => {
+    const { svc } = make({ serverRow: localHttp, env: IP_ENV, acmeEmail: undefined, settingsRow: cert, decrypt: () => { throw new Error("bad key"); } });
+    expect((await svc.resolveFor("s1")).panel).toEqual({ domain: null, resolver: "le", ipRoute: true });
+  });
+
+  it("after the panel moved to a domain, the old host AND the IP keep the AGENT path while the grace is active", async () => {
+    const { svc } = make({ serverRow: localHttp, panelDomain: "new.example.com", settingsRow: { ...cert, agentEndpointGrace: grace() } });
+    expect((await svc.resolveFor("s1")).panel).toEqual({
+      domain: "new.example.com",
+      resolver: "le",
+      agentHosts: ["old.example.com"],
+      agentIp: true,
+      ipTls: { certPem: "CERT-PEM", keyPem: "KEY-PEM" },
+    });
+  });
+
+  it("an expired or released grace renders nothing extra (the old routes are dropped)", async () => {
+    for (const g of [grace({ expiresAt: now - 1 }), grace({ confirmedAt: now - 5 })]) {
+      const { svc } = make({ serverRow: localHttp, panelDomain: "new.example.com", settingsRow: { ...cert, agentEndpointGrace: g } });
+      expect((await svc.resolveFor("s1")).panel).toEqual({ domain: "new.example.com", resolver: "le" });
+    }
+  });
+
+  it("a malformed grace column is ignored, never thrown", async () => {
+    const { svc } = make({ serverRow: localHttp, panelDomain: "new.example.com", settingsRow: { agentEndpointGrace: { v: 9 } } });
+    expect((await svc.resolveFor("s1")).panel).toEqual({ domain: "new.example.com", resolver: "le" });
+  });
+
+  it("going back to the IP: the old DOMAIN keeps the agent path; the IP route is the panel's own (no duplicate agent-ip route)", async () => {
+    const g = grace({ primary: { url: "wss://203.0.113.7/agent", pin: "sha256:" + "ab".repeat(32) }, fallbacks: [{ url: "wss://old.example.com/agent" }] });
+    const { svc } = make({ serverRow: localHttp, env: IP_ENV, acmeEmail: undefined, settingsRow: { ...cert, agentEndpointGrace: g } });
+    expect((await svc.resolveFor("s1")).panel).toEqual({
+      domain: null,
+      resolver: "le",
+      ipRoute: true,
+      agentHosts: ["old.example.com"],
+      ipTls: { certPem: "CERT-PEM", keyPem: "KEY-PEM" },
+    });
+  });
+
+  it("a domain change in flight: the grace host that is already served as `also` is not rendered twice", async () => {
+    const { svc } = make({
+      serverRow: localHttp,
+      panelDomain: "old.example.com",
+      pending: JSON.stringify({ domain: "new.example.com" }),
+      settingsRow: { agentEndpointGrace: grace({ pendingSwitch: true }) },
+    });
+    const panel = (await svc.resolveFor("s1")).panel!;
+    expect(panel.domain).toBe("new.example.com");
+    expect(panel.also).toEqual(["old.example.com"]);
+    expect(panel.agentHosts).toBeUndefined();
+  });
+
+  it("only the LOCAL server gets any of it", async () => {
+    const { svc } = make({ serverRow: { ...localHttp, isLocal: false }, env: IP_ENV, settingsRow: { ...cert, agentEndpointGrace: grace() } });
+    expect((await svc.resolveFor("s1")).panel).toBeUndefined();
   });
 });

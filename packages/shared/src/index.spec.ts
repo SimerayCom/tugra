@@ -8,6 +8,8 @@ import {
   AGENT_FEATURE_DRAIN_GELF,
   AGENT_FEATURE_DRAIN_FLUENTD,
   canonicalLogDrains,
+  canonicalHubEndpoints,
+  canonicalHubProof,
   AGENT_FEATURE_FS2,
   AGENT_CAPABILITIES,
   FS_ERROR_CODES,
@@ -181,6 +183,13 @@ describe("shared protocol", () => {
     expect(canonicalCommand("r1", "echo hi", 5000, "deploy")).toBe("cmd\nr1\necho hi\n5000\ndeploy");
   });
 
+  it("canonicalHubEndpoints / canonicalHubProof goldens are byte-identical to the Go agent's", () => {
+    expect(canonicalHubEndpoints("srv1", 1731672000000, '[{"url":"wss://h/agent"}]')).toBe(
+      'hep\nsrv1\n1731672000000\n[{"url":"wss://h/agent"}]',
+    );
+    expect(canonicalHubEndpoints("srv2", 1, "[]")).not.toBe(canonicalHubEndpoints("srv1", 1, "[]"));
+    expect(canonicalHubProof("chal", "mine")).toBe("hubid\nchal\nmine");
+  });
   it("canonicalLogDrains golden is byte-identical to the Go agent's CanonicalLogDrains", () => {
     expect(canonicalLogDrains("srv1", 1731672000000, '[{"id":"d1"}]', "logs")).toBe(
       'ldrn\nsrv1\n1731672000000\n[{"id":"d1"}]\nlogs',

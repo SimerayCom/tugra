@@ -145,6 +145,28 @@ export const AGENT_FEATURE_FS2 = "fs2_v1";
  * naming a host. The app-move preflight refuses a server whose agent lacks it (`agent_too_old`).
  */
 export const AGENT_FEATURE_HUB_ORIGIN_ENV = "hub_origin_env_v1";
+/**
+ * `hub_endpoints_v1`: the agent keeps an ordered, persisted list of hub endpoints (primary + fallbacks), accepts the
+ * signed `hub_endpoints` frame, proves-checks the hub's identity (`hubNonce` -> `hubProof`) on every connection and
+ * reports `hub_endpoint_state`. An agent without it keeps working on the single URL it was installed with.
+ */
+export const AGENT_FEATURE_HUB_ENDPOINTS = "hub_endpoints_v1";
+/** Signed payload of a `hub_endpoints` frame. Byte-identical to the Go agent's CanonicalHubEndpoints. The serverId
+ *  stops a frame captured for server A being replayed to server B (the hub key is fleet-wide). */
+export function canonicalHubEndpoints(serverId: string, rev: number, endpointsJson: string): string {
+  return `hep\n${serverId}\n${rev}\n${endpointsJson}`;
+}
+/** What the hub signs in `hubProof`: the challenge nonce it issued plus the nonce the agent chose, so the proof is
+ *  fresh per connection. Byte-identical to the Go agent's CanonicalHubProof. */
+export function canonicalHubProof(challenge: string, hubNonce: string): string {
+  return `hubid\n${challenge}\n${hubNonce}`;
+}
+/** One hub address the agent may dial. `pin` is `sha256:<64 hex>` of the leaf certificate for a hub on a bare IP with
+ *  a self-signed certificate; absent = a publicly trusted certificate (or plain ws://, only with an explicit opt-in). */
+export interface HubEndpoint {
+  url: string;
+  pin?: string;
+}
 export function canonicalTermStart(
   sessionId: string,
   target: string,
@@ -442,6 +464,9 @@ export interface EnrolledMsg {
   seal: string;
   /** Hub's ed25519 public key (base64 SPKI) — agent pins it to verify command signatures. */
   hubKey?: string;
+  /** base64(ed25519 signature over canonicalHubProof(challenge nonce, the agent's hubNonce)) — proves the endpoint
+   *  holds the hub key. Only sent to an agent that supplied a hubNonce. */
+  hubProof?: string;
   /** The capabilities the hub grants this server — the agent enforces them fail-closed (empty = deny). */
   capabilities?: AgentCapability[];
 }
@@ -451,6 +476,7 @@ export interface AuthOkMsg {
   type: "auth_ok";
   serverId: string;
   hubKey?: string;
+  hubProof?: string;
   /** Granted capabilities (re-pushed on every reconnect). */
   capabilities?: AgentCapability[];
 }
@@ -482,6 +508,8 @@ export interface EnrollMsg {
   fingerprint: string;
   /** Optional feature flags (see AGENT_FEATURE_*). Absent on older agents. */
   features?: string[];
+  /** Agent-chosen nonce the hub signs back as `hubProof`. */
+  hubNonce?: string;
 }
 
 /** Reconnect of an already-enrolled agent: signs the challenge nonce. */
@@ -495,6 +523,8 @@ export interface AuthMsg {
   agentVersion?: string;
   /** Optional feature flags (see AGENT_FEATURE_*). Absent on older agents. */
   features?: string[];
+  /** Agent-chosen nonce the hub signs back as `hubProof`. */
+  hubNonce?: string;
 }
 
 /** Periodic host metrics. */
@@ -767,6 +797,28 @@ export interface LogDrainsV2Msg {
   sig?: string;
 }
 
+/** Hub -> Agent (agents advertising `hub_endpoints_v1`): the ordered hub endpoint list (primary first), as a
+ *  pre-serialised JSON string (`endpointsJson`, an array of HubEndpoint) so the signature covers the exact bytes.
+ *  `rev` is monotonic (the agent refuses a lower one). Sent on every connect and whenever the list changes. */
+export interface HubEndpointsMsg {
+  type: "hub_endpoints";
+  rev: number;
+  endpointsJson: string;
+  /** base64(ed25519 signature over canonicalHubEndpoints(<the agent's server id>, rev, endpointsJson)). */
+  sig: string;
+}
+
+/** Agent -> Hub: which list revision the agent holds and which endpoint this session is on. Sent after every
+ *  handshake and as the reply to `hub_endpoints` (accepted, or why not). */
+export interface HubEndpointStateMsg {
+  type: "hub_endpoint_state";
+  rev: number;
+  active: string;
+  primary: string;
+  accepted: boolean;
+  error?: string;
+}
+
 /** Legacy Hub -> Agent drain push (unsigned, ungated): ONLY plain server-wide http/loki/datadog drains, sent to
  *  agents without `log_drains_v2`. Byte-identical to the pre-D7 frame. */
 export interface LogDrainCfg {
@@ -864,7 +916,8 @@ export type AgentMessage =
   | FsResultMsg
   | Fs2ResultMsg
   | CommandStateMsg
-  | DrainStatusMsg;
+  | DrainStatusMsg
+  | HubEndpointStateMsg;
 export type HubMessage =
   | ChallengeMsg
   | EnrolledMsg
@@ -883,4 +936,5 @@ export type HubMessage =
   | CapabilitiesMsg
   | FsReqMsg
   | Fs2ReqMsg
-  | CommandStatusMsg;
+  | CommandStatusMsg
+  | HubEndpointsMsg;

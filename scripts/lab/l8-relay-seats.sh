@@ -59,7 +59,7 @@ move_setup() {
   docker volume rm -f lab-agent-b-state >/dev/null 2>&1 || true
   docker run -d --name lab-agent-b --restart unless-stopped \
     -v /var/run/docker.sock:/var/run/docker.sock -v lab-agent-b-state:/root/.tugra -v /etc/tugra:/etc/tugra \
-    -e "TUGRA_HUB=ws://${LAB_HOST}:${LAB_HUB_PORT}/agent" -e "TUGRA_TOKEN=${B_ENROLL_TOKEN}" -e "TUGRA_AGENT_IMAGE=${LAB_IMAGE}" \
+    -e "TUGRA_HUB=ws://${LAB_HOST}:${LAB_HUB_PORT}/agent" -e TUGRA_HUB_INSECURE=1 -e "TUGRA_TOKEN=${B_ENROLL_TOKEN}" -e "TUGRA_AGENT_IMAGE=${LAB_IMAGE}" \
     "$LAB_IMAGE" >/dev/null
   lab_wait 90 "server B ONLINE" bash -c "[ \"\$(node $LAB_SELF_DIR/seed.mjs server-status $B_SERVER_ID)\" = ONLINE ]"
   local name="lab-move-$(date +%s)"

@@ -33555,6 +33555,69 @@
                         "startedAt"
                       ],
                       "additionalProperties": false
+                    },
+                    "agents": {
+                      "type": "object",
+                      "properties": {
+                        "primaryUrl": {
+                          "type": "string"
+                        },
+                        "total": {
+                          "type": "integer"
+                        },
+                        "moved": {
+                          "type": "integer"
+                        },
+                        "pending": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "name": {
+                                "type": "string"
+                              },
+                              "reason": {
+                                "type": "string",
+                                "enum": [
+                                  "moved",
+                                  "waiting",
+                                  "offline",
+                                  "old_agent"
+                                ]
+                              },
+                              "error": {
+                                "type": "string",
+                                "nullable": true
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "name",
+                              "reason"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "expiresAt": {
+                          "type": "string"
+                        },
+                        "switching": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "primaryUrl",
+                        "total",
+                        "moved",
+                        "pending",
+                        "expiresAt",
+                        "switching"
+                      ],
+                      "additionalProperties": false,
+                      "nullable": true
                     }
                   },
                   "required": [
@@ -33564,7 +33627,8 @@
                     "ipRoute",
                     "localServerOnline",
                     "acmeEmail",
-                    "job"
+                    "job",
+                    "agents"
                   ],
                   "additionalProperties": false
                 }
@@ -33750,6 +33814,69 @@
                         "startedAt"
                       ],
                       "additionalProperties": false
+                    },
+                    "agents": {
+                      "type": "object",
+                      "properties": {
+                        "primaryUrl": {
+                          "type": "string"
+                        },
+                        "total": {
+                          "type": "integer"
+                        },
+                        "moved": {
+                          "type": "integer"
+                        },
+                        "pending": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "name": {
+                                "type": "string"
+                              },
+                              "reason": {
+                                "type": "string",
+                                "enum": [
+                                  "moved",
+                                  "waiting",
+                                  "offline",
+                                  "old_agent"
+                                ]
+                              },
+                              "error": {
+                                "type": "string",
+                                "nullable": true
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "name",
+                              "reason"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "expiresAt": {
+                          "type": "string"
+                        },
+                        "switching": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "primaryUrl",
+                        "total",
+                        "moved",
+                        "pending",
+                        "expiresAt",
+                        "switching"
+                      ],
+                      "additionalProperties": false,
+                      "nullable": true
                     }
                   },
                   "required": [
@@ -33759,7 +33886,8 @@
                     "ipRoute",
                     "localServerOnline",
                     "acmeEmail",
-                    "job"
+                    "job",
+                    "agents"
                   ],
                   "additionalProperties": false
                 }
@@ -33772,6 +33900,242 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "tags": [
+          "instance"
+        ]
+      }
+    },
+    "/api/v1/instance/panel-domain/agents/release": {
+      "post": {
+        "operationId": "PanelDomainController_releaseAgents",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "mode": {
+                      "type": "string",
+                      "enum": [
+                        "ip",
+                        "domain",
+                        "port"
+                      ]
+                    },
+                    "domain": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "url": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "ipRoute": {
+                      "type": "boolean"
+                    },
+                    "localServerOnline": {
+                      "type": "boolean"
+                    },
+                    "acmeEmail": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "job": {
+                      "type": "object",
+                      "properties": {
+                        "phase": {
+                          "type": "string",
+                          "enum": [
+                            "idle",
+                            "proxy",
+                            "certificate",
+                            "switching",
+                            "done",
+                            "failed"
+                          ]
+                        },
+                        "action": {
+                          "type": "string",
+                          "enum": [
+                            "set",
+                            "remove"
+                          ],
+                          "nullable": true
+                        },
+                        "domain": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "targetUrl": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "error": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "code": {
+                          "type": "string",
+                          "enum": [
+                            "cert_timeout",
+                            "proxy_failed",
+                            "updater_stale",
+                            "updater_failed",
+                            "unreachable",
+                            "restore_unverified",
+                            "interrupted"
+                          ],
+                          "nullable": true
+                        },
+                        "detail": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "startedAt": {
+                          "type": "string",
+                          "nullable": true
+                        }
+                      },
+                      "required": [
+                        "phase",
+                        "action",
+                        "domain",
+                        "targetUrl",
+                        "error",
+                        "code",
+                        "detail",
+                        "startedAt"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "agents": {
+                      "type": "object",
+                      "properties": {
+                        "primaryUrl": {
+                          "type": "string"
+                        },
+                        "total": {
+                          "type": "integer"
+                        },
+                        "moved": {
+                          "type": "integer"
+                        },
+                        "pending": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "name": {
+                                "type": "string"
+                              },
+                              "reason": {
+                                "type": "string",
+                                "enum": [
+                                  "moved",
+                                  "waiting",
+                                  "offline",
+                                  "old_agent"
+                                ]
+                              },
+                              "error": {
+                                "type": "string",
+                                "nullable": true
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "name",
+                              "reason"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "expiresAt": {
+                          "type": "string"
+                        },
+                        "switching": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "primaryUrl",
+                        "total",
+                        "moved",
+                        "pending",
+                        "expiresAt",
+                        "switching"
+                      ],
+                      "additionalProperties": false,
+                      "nullable": true
+                    }
+                  },
+                  "required": [
+                    "mode",
+                    "domain",
+                    "url",
+                    "ipRoute",
+                    "localServerOnline",
+                    "acmeEmail",
+                    "job",
+                    "agents"
+                  ],
+                  "additionalProperties": false
                 }
               }
             }
@@ -33949,6 +34313,69 @@
                         "startedAt"
                       ],
                       "additionalProperties": false
+                    },
+                    "agents": {
+                      "type": "object",
+                      "properties": {
+                        "primaryUrl": {
+                          "type": "string"
+                        },
+                        "total": {
+                          "type": "integer"
+                        },
+                        "moved": {
+                          "type": "integer"
+                        },
+                        "pending": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "name": {
+                                "type": "string"
+                              },
+                              "reason": {
+                                "type": "string",
+                                "enum": [
+                                  "moved",
+                                  "waiting",
+                                  "offline",
+                                  "old_agent"
+                                ]
+                              },
+                              "error": {
+                                "type": "string",
+                                "nullable": true
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "name",
+                              "reason"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "expiresAt": {
+                          "type": "string"
+                        },
+                        "switching": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "primaryUrl",
+                        "total",
+                        "moved",
+                        "pending",
+                        "expiresAt",
+                        "switching"
+                      ],
+                      "additionalProperties": false,
+                      "nullable": true
                     }
                   },
                   "required": [
@@ -33958,7 +34385,8 @@
                     "ipRoute",
                     "localServerOnline",
                     "acmeEmail",
-                    "job"
+                    "job",
+                    "agents"
                   ],
                   "additionalProperties": false
                 }

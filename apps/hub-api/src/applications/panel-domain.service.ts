@@ -11,6 +11,7 @@ import { optionalAcmeEmail, validatePanelDomain } from "../deploy/panel-router";
 import { PROXY_NAME } from "../deploy/deploy-script";
 import { UPDATE_LOCK_KEY, UPDATE_QUEUE_KEY } from "../update/updater.service";
 import { ProxyService } from "./proxy.service";
+import { AgentEndpointsService, type MoveTarget } from "./agent-endpoints.service";
 import type { PanelDomainJob, PanelDomainStatus, RemovePanelDomainInput, SetPanelDomainInput } from "./panel-domain.dto";
 
 export const PANEL_DOMAIN_STATUS_KEY = "instance:panel-domain:status";
@@ -72,6 +73,12 @@ const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
  *                   recreate puts the .env back. The hub never touches its own container or the host.
  *   4. done         the NEW hub process (recreated with the new env) settles the stored domain + the router file.
  *
+ * REMOTE AGENTS never get stranded by any of this. Right before the switch (after the certificate / IP route is verified)
+ * the new address list — new address first, every current address behind it — is signed and pushed to all connected
+ * agents (AgentEndpointsService.beginMove), and the proxy keeps the OLD host / the IP route answering `/agent` for as
+ * long as an agent still needs it (until all report the new address, the owner confirms, or 7 days): the panel moves,
+ * the agent path stays. A change that fails before the switch re-points the agents at the address that still works.
+ *
  * Progress lives in Redis (survives the hub being recreated) and is advanced lazily by status() (the panel polls it)
  * plus a short background watcher.
  */
@@ -91,6 +98,7 @@ export class PanelDomainService implements OnApplicationBootstrap {
     private readonly audit: AuditService,
     private readonly settings: InstanceSettingsService,
     private readonly proxy: ProxyService,
+    private readonly endpoints: AgentEndpointsService,
   ) {}
 
   // ---------------------------------------------------------------- reads
@@ -112,7 +120,15 @@ export class PanelDomainService implements OnApplicationBootstrap {
       localServerOnline: local?.status === "ONLINE",
       acmeEmail: (await this.settings.acmeEmailFor(this.config.get<string>("ACME_EMAIL"))) ?? s.acmeEmail ?? null,
       job: job ? this.view(job) : IDLE_JOB,
+      agents: await this.endpoints.status().catch(() => null),
     };
+  }
+
+  /** Owner: stop waiting for the agents that have not moved yet; the old address stops being routed for them. */
+  async releaseAgents(userId: string): Promise<PanelDomainStatus> {
+    await this.endpoints.release();
+    await this.audit.log({ actor: userId, action: "instance.panel_domain.agents_released", target: "agents" }).catch((e) => this.logger.warn(`audit: ${(e as Error).message}`));
+    return this.status();
   }
 
   // ---------------------------------------------------------------- actions
@@ -199,6 +215,7 @@ export class PanelDomainService implements OnApplicationBootstrap {
       await this.advance(job, "certificate");
       const cert = await this.waitForCertificate(localId, job.domain as string);
       if (!cert.ok) return await this.fail(job, "cert_timeout", "the certificate was not issued in time", cert.detail);
+      await this.moveAgents(job, { kind: "domain", domain: job.domain as string });
       await this.enqueue(job);
     } catch (e) {
       await this.fail(job, "proxy_failed", (e as Error).message || "could not configure the proxy");
@@ -209,11 +226,20 @@ export class PanelDomainService implements OnApplicationBootstrap {
     try {
       await this.redis.set(PANEL_PENDING_KEY, JSON.stringify({ domain: null }), PANEL_PENDING_TTL_S);
       await this.advance(job, "proxy");
+      await this.endpoints.ensureIpTls(job.publicIp); // the IP address answers on :443 with ONE persisted certificate (the agents' pin)
       await this.proxy.ensureProxy(localId); // IP route live next to the current host BEFORE the URLs are switched
+      await this.moveAgents(job, { kind: "ip", ip: job.publicIp as string });
       await this.enqueue(job);
     } catch (e) {
       await this.fail(job, "proxy_failed", (e as Error).message || "could not configure the proxy");
     }
+  }
+
+  /** Point every connected remote agent at the new address (old one kept behind it) BEFORE the panel switches. */
+  private async moveAgents(job: StoredJob, target: MoveTarget): Promise<void> {
+    const plan = await this.endpoints.planMove(target);
+    const r = await this.endpoints.beginMove(plan);
+    this.logger.log(`panel-domain ${job.jobId}: ${r.moved}/${r.total} remote agents already on ${plan.primary.url} before the switch`);
   }
 
   /** Poll Traefik's ACME store on the local server until `domain` has a certificate (or the deadline passes). */
@@ -303,6 +329,7 @@ export class PanelDomainService implements OnApplicationBootstrap {
     try {
       await this.settings.update({ panelDomain: job.action === "set" ? job.domain : null });
       await this.redis.del(PANEL_PENDING_KEY);
+      await this.endpoints.markSwitched().catch((e) => this.logger.warn(`agent endpoints: ${(e as Error).message}`)); // from here the agent grace may end once everyone moved
       void this.settleProxy(); // the local agent may still be reconnecting after the hub was recreated: retry in the background
       job.phase = "done";
       await this.writeJob(job);
@@ -341,6 +368,8 @@ export class PanelDomainService implements OnApplicationBootstrap {
     await this.redis.del(PANEL_PENDING_KEY);
     await this.redis.del(LOCK_KEY);
     await this.redis.del(PANEL_DOMAIN_UPDATER_KEY);
+    // Agents may already be on the new address: point them back at the one that still works BEFORE its router is dropped.
+    await this.endpoints.cancelMove().catch((e) => this.logger.warn(`panel-domain agents rollback: ${(e as Error).message}`));
     // Re-render the proxy WITHOUT the pending host (best effort: a failed settle leaves a harmless extra router that
     // the next reconcile removes; the old URL works either way).
     const local = await this.localServer();

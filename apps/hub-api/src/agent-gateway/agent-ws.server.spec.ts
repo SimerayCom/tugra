@@ -1,5 +1,5 @@
 import { ForbiddenException, HttpException, ServiceUnavailableException } from "@nestjs/common";
-import { canonicalLogDrains, canonicalFs2, fs2RequiredCapabilities } from "@tugra/shared";
+import { canonicalLogDrains, canonicalFs2, fs2RequiredCapabilities, canonicalHubEndpoints, canonicalHubProof } from "@tugra/shared";
 import { FsRemoteException } from "../files/fs-errors";
 import { AgentWsServer } from "./agent-ws.server";
 import { AgentCommandTimeoutException, AgentDisconnectedException, AgentOfflineException } from "./agent-offline.exception";
@@ -410,6 +410,91 @@ describe("AgentWsServer capability delivery (agent fail-closed)", () => {
     (setCapabilityPusher.mock.calls[0][0] as (id: string, caps: string[]) => void)("s1", ["deploy"]);
     expect(JSON.parse(socket.send.mock.calls.at(-1)![0])).toEqual({ type: "capabilities", capabilities: ["deploy"] });
     void server.onModuleDestroy(); // close the WS server created by bootstrap (no lingering handle)
+  });
+});
+
+describe("AgentWsServer hub endpoint list + identity proof (hub_endpoints_v1)", () => {
+  const signing = { sign: jest.fn((m: string) => `SIG(${m})`), publicKeySpkiBase64: "HUBKEY" } as any;
+  function ws(servers: Record<string, unknown> = {}) {
+    const svc = {
+      markOffline: jest.fn(), healOnline: jest.fn(), markOnline: jest.fn(),
+      enroll: jest.fn().mockResolvedValue({ serverId: "s1", seal: "SEAL" }),
+      authenticate: jest.fn().mockResolvedValue("ok"),
+      grantedCapabilities: jest.fn().mockResolvedValue(["deploy"]),
+      ...servers,
+    } as any;
+    const server = new AgentWsServer({} as any, svc, {} as any, {} as any, signing, {} as any);
+    const socket = { readyState: 1, send: jest.fn(), on: jest.fn(), close: jest.fn() } as any;
+    (server as any).state.set(socket, { nonce: "chal-1", authed: false, features: new Set() });
+    const sent = () => socket.send.mock.calls.map((c: [string]) => JSON.parse(c[0]));
+    return { server, socket, sent, deliver: (m: object) => (server as any).onMessage(socket, JSON.stringify(m)) };
+  }
+  const NONCE = "agent-nonce-0123456789abcdef";
+  const authMsg = (extra: object = {}) => ({ type: "auth", protocol: 2, serverId: "s1", signature: "x", agentVersion: "1.0.0", ...extra });
+  const enrollMsg = (extra: object = {}) => ({ type: "enroll", protocol: 2, token: "t", publicKey: "pk", agentVersion: "1.0.0", hostname: "h", ...extra });
+
+  it("auth_ok carries a hubProof over (the challenge, the agent's nonce) — fresh per connection", async () => {
+    const { deliver, sent } = ws();
+    await deliver(authMsg({ hubNonce: NONCE }));
+    const ok = sent().find((m: any) => m.type === "auth_ok");
+    expect(ok.hubKey).toBe("HUBKEY");
+    expect(ok.hubProof).toBe(`SIG(${canonicalHubProof("chal-1", NONCE)})`);
+  });
+
+  it("enrolled carries it too, so the very first connection can already be proven", async () => {
+    const { deliver, sent } = ws();
+    await deliver(enrollMsg({ hubNonce: NONCE }));
+    expect(sent().find((m: any) => m.type === "enrolled").hubProof).toBe(`SIG(${canonicalHubProof("chal-1", NONCE)})`);
+  });
+
+  it("an older agent (no / malformed hubNonce) gets the reply exactly as before — no proof field at all", async () => {
+    for (const extra of [{}, { hubNonce: "short" }, { hubNonce: "x".repeat(200) }, { hubNonce: 5 }]) {
+      const { deliver, sent } = ws();
+      await deliver(authMsg(extra));
+      expect(sent().find((m: any) => m.type === "auth_ok")).not.toHaveProperty("hubProof");
+    }
+  });
+
+  it("calls the endpoint hook after EVERY successful auth/enroll with the authenticated server id", async () => {
+    const onConnect = jest.fn();
+    const a = ws();
+    a.server.setHubEndpointsHooks({ onConnect, onState: jest.fn() });
+    await a.deliver(authMsg());
+    expect(onConnect).toHaveBeenCalledWith("s1");
+    const b = ws();
+    b.server.setHubEndpointsHooks({ onConnect, onState: jest.fn() });
+    await b.deliver(enrollMsg());
+    expect(onConnect).toHaveBeenCalledTimes(2);
+    const bad = ws({ authenticate: jest.fn().mockResolvedValue("bad") });
+    bad.server.setHubEndpointsHooks({ onConnect, onState: jest.fn() });
+    await bad.deliver(authMsg());
+    expect(onConnect).toHaveBeenCalledTimes(2); // an unauthenticated peer triggers nothing
+  });
+
+  it("hub_endpoint_state is delivered with the AUTHENTICATED server id (never one from the body), and ignored before auth", async () => {
+    const onState = jest.fn();
+    const h = harness();
+    h.server.setHubEndpointsHooks({ onConnect: jest.fn(), onState });
+    await h.deliver({ type: "hub_endpoint_state", serverId: "someone-else", rev: 1, active: "wss://a/agent", primary: "wss://a/agent", accepted: true });
+    expect(onState).toHaveBeenCalledWith("s1", expect.objectContaining({ active: "wss://a/agent" }));
+    const raw = ws();
+    raw.server.setHubEndpointsHooks({ onConnect: jest.fn(), onState });
+    onState.mockClear();
+    await raw.deliver({ type: "hub_endpoint_state", rev: 1, active: "x", primary: "y", accepted: true });
+    expect(onState).not.toHaveBeenCalled();
+  });
+
+  it("signs hub_endpoints with canonicalHubEndpoints (server id inside the signature); works without a hook registered", () => {
+    const h = harness();
+    const server = new AgentWsServer({} as any, {} as any, {} as any, {} as any, signing, {} as any);
+    const socket = { readyState: 1, send: jest.fn() } as any;
+    (server as any).sockets.set("s1", socket);
+    const json = '[{"url":"wss://new.example.com/agent"}]';
+    expect(server.sendToAgent("s1", { type: "hub_endpoints", serverId: "s1", rev: 42, endpointsJson: json })).toBe(true);
+    const m = JSON.parse(socket.send.mock.calls.at(-1)![0]);
+    expect(m.sig).toBe(`SIG(${canonicalHubEndpoints("s1", 42, json)})`);
+    expect(m.sig).not.toBe(`SIG(${canonicalHubEndpoints("s2", 42, json)})`); // bound to the server
+    expect(h.server.connectedServerIds()).toEqual(["s1"]);
   });
 });
 

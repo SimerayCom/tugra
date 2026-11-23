@@ -9,6 +9,7 @@ import type { AgentWsServer } from "../agent-gateway/agent-ws.server";
 import type { AuditService } from "../audit/audit.service";
 import type { InstanceSettingsService } from "../instance/instance-settings.service";
 import type { ProxyService } from "./proxy.service";
+import type { AgentEndpointsService } from "./agent-endpoints.service";
 
 type Opts = {
   env?: Record<string, string | undefined>;
@@ -71,11 +72,28 @@ function make(o: Opts = {}) {
     acmeEmailFor: jest.fn().mockImplementation(async (e?: string) => (e && e.trim() ? e.trim() : (o.dbAcmeEmail ?? undefined))),
   } as unknown as InstanceSettingsService;
   const proxy = { ensureProxy: jest.fn().mockResolvedValue(undefined) } as unknown as ProxyService;
-  const svc = new PanelDomainService(prisma, config, redis, agentWs, audit, settings, proxy);
+  // The agent-endpoints collaborator is recorded in ONE call log so the tests can assert the order against the proxy + the queue.
+  const calls: string[] = [];
+  (proxy.ensureProxy as jest.Mock).mockImplementation(async () => void calls.push("ensureProxy"));
+  const endpoints = {
+    ensureIpTls: jest.fn(async () => void calls.push("ensureIpTls")),
+    planMove: jest.fn(async (t: unknown) => ({ primary: { url: "wss://primary/agent" }, fallbacks: [{ url: "wss://old/agent" }], target: t })),
+    beginMove: jest.fn(async () => (calls.push("beginMove"), { total: 2, moved: 2 })),
+    markSwitched: jest.fn(async () => void calls.push("markSwitched")),
+    cancelMove: jest.fn(async () => void calls.push("cancelMove")),
+    release: jest.fn(async () => void calls.push("release")),
+    status: jest.fn().mockResolvedValue(null),
+  } as unknown as AgentEndpointsService;
+  const svc = new PanelDomainService(prisma, config, redis, agentWs, audit, settings, proxy, endpoints);
   svc.timing = { certTimeout: 30, certPoll: 1, ackTimeout: 40, applyTimeout: 80, watchPoll: 1_000_000, settleTries: 1 };
   const job = () => JSON.parse(store.get(PANEL_DOMAIN_STATUS_KEY) ?? "null");
   const runner = () => (svc as unknown as { runner: Promise<void> | null }).runner;
-  return { svc, store, queue, seenAtQueue, redis, sendCommand, audit, settings, proxy, job, runner };
+  (redis.client.lpush as jest.Mock).mockImplementation(async (_k: string, v: string) => {
+    calls.push("enqueue");
+    seenAtQueue.push(store.get(PANEL_DOMAIN_STATUS_KEY) ?? "");
+    queue.push(v);
+  });
+  return { svc, store, queue, seenAtQueue, redis, sendCommand, audit, settings, proxy, endpoints, calls, job, runner };
 }
 
 describe("PanelDomainService.set", () => {
@@ -327,5 +345,87 @@ describe("PanelDomainService.status", () => {
   });
   it("is idle with no job", async () => {
     expect((await make().svc.status()).job).toMatchObject({ phase: "idle", action: null });
+  });
+});
+
+describe("PanelDomainService + remote agents (the panel moves, the agents are never stranded)", () => {
+  const DOMAIN_ENV = { WEB_PUBLIC_URL: "https://panel.example.com", PANEL_IP_ROUTE: "0", PANEL_TLS: "1" };
+
+  it("setting a domain: the NEW list is pushed to the agents after the certificate is verified and BEFORE the switch is queued", async () => {
+    const m = make();
+    await m.svc.set("u1", { domain: "panel.example.com" });
+    await m.runner();
+    expect(m.endpoints.planMove).toHaveBeenCalledWith({ kind: "domain", domain: "panel.example.com" });
+    expect(m.endpoints.beginMove).toHaveBeenCalledWith(expect.objectContaining({ primary: { url: "wss://primary/agent" } }));
+    // proxy (new host routers + the grace routes) -> certificate verified -> agents moved -> only then the updater job
+    expect(m.calls.indexOf("beginMove")).toBeGreaterThan(m.calls.indexOf("ensureProxy"));
+    expect(m.calls.indexOf("enqueue")).toBeGreaterThan(m.calls.indexOf("beginMove"));
+  });
+
+  it("a certificate that never appears never touches the agents (nothing was started that needs undoing, but the grace is cleared)", async () => {
+    const m = make({ certAfterPolls: Infinity });
+    await m.svc.set("u1", { domain: "panel.example.com" });
+    await m.runner();
+    expect(m.endpoints.beginMove).not.toHaveBeenCalled();
+    expect(m.endpoints.cancelMove).toHaveBeenCalled();
+    expect(m.queue).toHaveLength(0);
+  });
+
+  it("removing the domain: the IP certificate is created first, then the agents get the pinned IP address", async () => {
+    const m = make({ env: DOMAIN_ENV });
+    await m.svc.remove("u1", {});
+    await m.runner();
+    expect(m.endpoints.ensureIpTls).toHaveBeenCalledWith("203.0.113.9");
+    expect(m.endpoints.planMove).toHaveBeenCalledWith({ kind: "ip", ip: "203.0.113.9" });
+    expect(m.calls.indexOf("ensureIpTls")).toBeLessThan(m.calls.indexOf("ensureProxy"));
+    expect(m.calls.indexOf("beginMove")).toBeLessThan(m.calls.indexOf("enqueue"));
+  });
+
+  it("an agent-move failure stops the change BEFORE the switch (nothing queued) and re-points the agents back", async () => {
+    const m = make();
+    (m.endpoints.beginMove as jest.Mock).mockRejectedValueOnce(new Error("db down"));
+    await m.svc.set("u1", { domain: "panel.example.com" });
+    await m.runner();
+    expect(m.queue).toHaveLength(0);
+    expect(m.job().phase).toBe("failed");
+    expect(m.endpoints.cancelMove).toHaveBeenCalled();
+    // the agents are pointed back BEFORE the pending router is dropped
+    expect(m.calls.lastIndexOf("cancelMove")).toBeLessThan(m.calls.lastIndexOf("ensureProxy"));
+  });
+
+  it("a rollback after the switch was queued also re-points the agents", async () => {
+    const m = make();
+    await m.svc.set("u1", { domain: "panel.example.com" });
+    await m.runner();
+    m.store.set(PANEL_DOMAIN_UPDATER_KEY, JSON.stringify({ jobId: m.job().jobId, phase: "failed", error: "boom" }));
+    await m.svc.reconcile();
+    expect(m.job().phase).toBe("failed");
+    expect(m.endpoints.cancelMove).toHaveBeenCalledTimes(1);
+  });
+
+  it("finalizing tells the agent endpoints the panel has switched (the grace may then end once everyone moved)", async () => {
+    const m = make();
+    await m.svc.set("u1", { domain: "panel.example.com" });
+    await m.runner();
+    m.store.set(PANEL_DOMAIN_UPDATER_KEY, JSON.stringify({ jobId: m.job().jobId, phase: "applied", error: null }));
+    await m.svc.reconcile();
+    expect(m.endpoints.markSwitched).toHaveBeenCalledTimes(1);
+    expect(m.endpoints.cancelMove).not.toHaveBeenCalled();
+  });
+
+  it("status carries how many agents moved and which did not; the owner can stop waiting for the rest", async () => {
+    const m = make();
+    const agents = { primaryUrl: "wss://panel.example.com/agent", total: 3, moved: 2, pending: [{ id: "s2", name: "db-2", reason: "offline" }], expiresAt: "2026-12-01T00:00:00.000Z", switching: false };
+    (m.endpoints.status as jest.Mock).mockResolvedValue(agents);
+    expect((await m.svc.status()).agents).toEqual(agents);
+    await m.svc.releaseAgents("u1");
+    expect(m.endpoints.release).toHaveBeenCalled();
+    expect(m.audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "instance.panel_domain.agents_released" }));
+  });
+
+  it("a failing agent-status read never breaks the panel status", async () => {
+    const m = make();
+    (m.endpoints.status as jest.Mock).mockRejectedValue(new Error("db"));
+    expect((await m.svc.status()).agents).toBeNull();
   });
 });

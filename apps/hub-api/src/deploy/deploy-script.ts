@@ -20,7 +20,9 @@ import {
   PANEL_NETWORK,
   PROXY_DYNAMIC_DIR,
   PANEL_FILE,
+  IP_TLS_HOST_DIR,
   type PanelResolver,
+  type PanelProxyConfig,
 } from "./panel-router";
 
 export const PROXY_NETWORK = "tugra-proxy";
@@ -2333,7 +2335,8 @@ export interface ProxySetupOpts {
   // Panel-TLS (DİLİM 1): object => (re)write the panel router file; null => remove it; undefined => leave it.
   //   domain null + ipRoute => the host-less http://<ip>/ panel of a plain install; `also` = extra hosts served at the
   //   same time (the old host while a domain change is verified).
-  panel?: { domain: string | null; resolver?: PanelResolver; also?: string[]; ipRoute?: boolean } | null;
+  //   agentHosts / agentIp = grace routing of the agent path on an old address; ipTls = the :443 self-signed certificate.
+  panel?: PanelProxyConfig | null;
   // Explicit operator "recreate" (Start / Restart / traffic-analytics toggle / panel-apply): omit the reconcile
   // gate and ALWAYS rm+run, regardless of the on-host hash. The ordinary domained-deploy path leaves this false,
   // so an unchanged proxy is a zero-drop no-op. `force` is NOT a hashed input — it never changes the label.
@@ -2380,7 +2383,11 @@ export function proxyConfigPreimage(opts: ProxySetupOpts = {}): string {
     ? `panel=${opts.panel.domain ?? "-"}:${r.panelResolver}:${r.panelHttpOnly ? "http" : "tls"}` +
       // Only added when used, so a pre-existing single-domain proxy keeps its hash (no needless recreate on upgrade).
       (opts.panel.also?.length ? `:also=${opts.panel.also.join(",")}` : "") +
-      (opts.panel.ipRoute ? ":ip" : "")
+      (opts.panel.ipRoute ? ":ip" : "") +
+      (opts.panel.agentHosts?.length ? `:agent=${opts.panel.agentHosts.join(",")}` : "") +
+      (opts.panel.agentIp ? ":aip" : "") +
+      // The certificate's own hash (never the key): a new certificate recreates the proxy exactly once.
+      (opts.panel.ipTls && !r.panelHttpOnly ? `:iptls=${createHash("sha256").update(opts.panel.ipTls.certPem).digest("hex").slice(0, 12)}` : "")
     : "panel=none";
   return [
     `v=${PROXY_SETUP_VERSION}`,
@@ -2475,6 +2482,8 @@ export function buildProxySetupScript(opts: ProxySetupOpts = {}): string {
       : opts.panel === null
         ? [`rm -f ${PROXY_DYNAMIC_DIR}/${PANEL_FILE}`]
         : [
+            // The certificate files first: the router file references them and Traefik reads both on its first load.
+            ...(opts.panel.ipTls && !panelHttpOnly ? ipTlsWriteSteps(opts.panel.ipTls) : []),
             `printf %s ${shq(
               b64(
                 buildPanelRouterYaml({
@@ -2483,6 +2492,9 @@ export function buildProxySetupScript(opts: ProxySetupOpts = {}): string {
                   httpOnly: panelHttpOnly,
                   also: opts.panel.also,
                   ipRoute: opts.panel.ipRoute,
+                  agentHosts: opts.panel.agentHosts,
+                  agentIp: opts.panel.agentIp,
+                  ipTls: opts.panel.ipTls,
                 }),
               ),
             )} | base64 -d > ${PROXY_DYNAMIC_DIR}/.${PANEL_FILE}.tmp`,
@@ -2548,19 +2560,28 @@ export function buildProxySetupScript(opts: ProxySetupOpts = {}): string {
   ].join("\n");
 }
 
+/** Write the IP-mode certificate + key next to the router file: 0600 key (umask), atomic (tmp + mv) so Traefik never reads half a PEM. */
+function ipTlsWriteSteps(m: { certPem: string; keyPem: string }): string[] {
+  const d = IP_TLS_HOST_DIR;
+  return [
+    `mkdir -p ${d}`,
+    `( umask 077; printf %s ${shq(b64(m.keyPem))} | base64 -d > ${d}/.key.pem.tmp && mv ${d}/.key.pem.tmp ${d}/key.pem )`,
+    `( umask 022; printf %s ${shq(b64(m.certPem))} | base64 -d > ${d}/.cert.pem.tmp && mv ${d}/.cert.pem.tmp ${d}/cert.pem )`,
+  ];
+}
+
 /**
  * Just (re)write or remove the panel router file — for a hot-reload re-apply that must NOT recreate the
  * proxy (no app downtime). The file provider picks the change up via --providers.file.watch.
  */
-export function buildPanelRouterWriteScript(
-  panel: { domain: string | null; resolver?: PanelResolver; httpOnly?: boolean; also?: string[]; ipRoute?: boolean } | null,
-): string {
+export function buildPanelRouterWriteScript(panel: (PanelProxyConfig & { httpOnly?: boolean }) | null): string {
   if (panel === null) {
     return ["set -e", `rm -f ${PROXY_DYNAMIC_DIR}/${PANEL_FILE}`].join("\n");
   }
   return [
     "set -e",
     `mkdir -p ${PROXY_DYNAMIC_DIR}`,
+    ...(panel.ipTls && !panel.httpOnly ? ipTlsWriteSteps(panel.ipTls) : []),
     `printf %s ${shq(b64(buildPanelRouterYaml(panel)))} | base64 -d > ${PROXY_DYNAMIC_DIR}/.${PANEL_FILE}.tmp`,
     `mv ${PROXY_DYNAMIC_DIR}/.${PANEL_FILE}.tmp ${PROXY_DYNAMIC_DIR}/${PANEL_FILE}`,
   ].join("\n");

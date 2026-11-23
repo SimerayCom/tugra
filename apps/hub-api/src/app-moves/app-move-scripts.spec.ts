@@ -476,7 +476,10 @@ describe("part stat / send / recv / drop", () => {
     }
   });
 
-  const CRED = ["K=$(mktemp)", `printf 'url = "%s%s"\\n' "$O" "$(printf %s '${Buffer.from(RELAY).toString("base64")}' | base64 -d)" > "$K"`];
+  const CRED = ["K=$(mktemp)", `printf 'url = "%s%s"\\n' "$O" "$(printf %s '${Buffer.from(RELAY).toString("base64")}' | base64 -d)" > "$K"`,
+    // a hub on a bare IP serves a self-signed certificate: the agent exports the one it pinned and curl trusts exactly that
+    `[ -z "\${TUGRA_HUB_CACERT:-}" ] || printf 'cacert = "%s"\\n' "$TUGRA_HUB_CACERT" >> "$K"`,
+  ];
 
   it("the signed relay path is never a curl argument: it goes through a private config file (-K), and not even verbatim into the script", () => {
     for (const s of [buildMoveSendScript({ moveId: MOVE_ID, idx: 0, part: 7, path: RELAY }), buildMoveRecvScript({ moveId: MOVE_ID, idx: 0, part: 7, path: RELAY, size: 1000, sha256: SHA })]) {

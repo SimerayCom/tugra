@@ -2,7 +2,8 @@ import { ConflictException } from "@nestjs/common";
 import { Role, ServerStatus } from "@prisma/client";
 // Signature verification is exercised elsewhere; here we drive the auth branch deterministically.
 jest.mock("./agent-auth", () => ({ ...jest.requireActual("./agent-auth"), verifyEd25519: jest.fn(() => true) }));
-import { DEFAULT_CAPABILITIES, ServersService } from "./servers.service";
+import { DEFAULT_CAPABILITIES, ServersService, plainWsNeedsOptIn } from "./servers.service";
+import { AGENT_ENDPOINTS_SERVICE } from "../applications/applications.tokens";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { NetworkSettingsSchema } from "./dto/servers.schemas";
@@ -947,5 +948,74 @@ describe("ServersService.deleteForUser — app moves", () => {
     const { svc, prisma } = svcFor(null);
     await svc.deleteForUser("u1", "s1");
     expect(prisma.server!.delete as jest.Mock).toHaveBeenCalled();
+  });
+});
+
+
+describe("ServersService install command transport (IP mode / domain / plain)", () => {
+  const prisma = () =>
+    ({
+      membership: { findUnique: jest.fn().mockResolvedValue({ role: Role.OWNER }) },
+      server: { create: jest.fn().mockResolvedValue(row("s1", "teamA")) },
+    }) as unknown as PrismaService;
+  const svc = (installTransport: unknown) =>
+    new ServersService(
+      prisma(),
+      audit,
+      notifications,
+      {
+        get: jest.fn((token: string) => (token === AGENT_ENDPOINTS_SERVICE ? { installTransport } : { createForServer })),
+      } as unknown as import("@nestjs/core").ModuleRef,
+      crypto,
+      new TeamAccessService(prisma()),
+    );
+  const withHub = async (url: string | undefined, fn: () => Promise<void>) => {
+    const prev = process.env.HUB_PUBLIC_URL;
+    if (url === undefined) delete process.env.HUB_PUBLIC_URL;
+    else process.env.HUB_PUBLIC_URL = url;
+    try {
+      await fn();
+    } finally {
+      if (prev === undefined) delete process.env.HUB_PUBLIC_URL;
+      else process.env.HUB_PUBLIC_URL = prev;
+    }
+  };
+  const PIN = "sha256:" + "cd".repeat(32);
+
+  it("IP mode: the installer is fetched over the pinned certificate and the agent gets wss://<ip>/agent + the fingerprint", async () => {
+    await withHub("http://203.0.113.7", async () => {
+      const t = { ip: "203.0.113.7", hubUrl: "wss://203.0.113.7/agent", pin: PIN, spkiPin: "SPKI/base64+pin=", origin: "https://203.0.113.7" };
+      const res = await svc(jest.fn().mockResolvedValue(t)).createServer("u1", "web", "teamA");
+      expect(res.installCommand).toBe(
+        `curl -fsSLk --pinnedpubkey 'sha256//SPKI/base64+pin=' https://203.0.113.7/install/agent.sh | sh -s -- --hub wss://203.0.113.7/agent --hub-pin ${PIN} --token ${res.enrollToken}`,
+      );
+      expect(res.installCommand).not.toContain("ws://203");
+      expect(res.installCommand).not.toContain("--hub-insecure");
+    });
+  });
+
+  it("IP mode not (yet) served: falls back to plain ws:// and says so with an explicit --hub-insecure", async () => {
+    await withHub("http://203.0.113.7", async () => {
+      const res = await svc(jest.fn().mockResolvedValue(null)).createServer("u1", "web", "teamA");
+      expect(res.installCommand).toContain("--hub ws://203.0.113.7/agent --hub-insecure --token ");
+    });
+  });
+
+  it("a lookup failure never blocks adding a server", async () => {
+    await withHub("https://hub.example.com", async () => {
+      const res = await svc(jest.fn().mockRejectedValue(new Error("db"))).createServer("u1", "web", "teamA");
+      expect(res.installCommand).toContain("--hub wss://hub.example.com/agent --token ");
+    });
+  });
+
+  it("a domain hub never carries the insecure flag; a loopback / compose-internal plain hub does not need it", () => {
+    expect(plainWsNeedsOptIn("wss://hub.example.com/agent")).toBe(false);
+    expect(plainWsNeedsOptIn("ws://localhost:3000/agent")).toBe(false);
+    expect(plainWsNeedsOptIn("ws://127.0.0.1:3000/agent")).toBe(false);
+    expect(plainWsNeedsOptIn("ws://hub-api:3000/agent")).toBe(false);
+    expect(plainWsNeedsOptIn("ws://203.0.113.7:3000/agent")).toBe(true);
+    expect(plainWsNeedsOptIn("ws://hub.example.com/agent")).toBe(true);
+    expect(plainWsNeedsOptIn("ws://[2001:db8::1]:3000/agent")).toBe(true);
+    expect(plainWsNeedsOptIn("garbage")).toBe(false);
   });
 });

@@ -442,7 +442,13 @@ const DEFAULT_CURL_MAX_SEC = 14 * 60;
 function relayCredentialLines(path: string): { setup: string[]; arg: string } {
   const b64 = Buffer.from(assertRelayPath(path), "utf8").toString("base64");
   return {
-    setup: ["K=$(mktemp)", `printf 'url = "%s%s"\\n' "$O" "$(printf %s ${shq(b64)} | base64 -d)" > "$K"`],
+    setup: [
+      "K=$(mktemp)",
+      `printf 'url = "%s%s"\\n' "$O" "$(printf %s ${shq(b64)} | base64 -d)" > "$K"`,
+      // A hub on a bare IP serves a self-signed certificate; the agent exports the path of the one it pinned
+      // (TUGRA_HUB_CACERT, backup commands only) and curl then trusts exactly that certificate and nothing else.
+      `[ -z "\${TUGRA_HUB_CACERT:-}" ] || printf 'cacert = "%s"\\n' "$TUGRA_HUB_CACERT" >> "$K"`,
+    ],
     arg: '-K "$K"',
   };
 }

@@ -2708,6 +2708,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/instance/panel-domain/agents/release": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["PanelDomainController_releaseAgents"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/instance/panel-domain/remove": {
         parameters: {
             query?: never;
@@ -24038,6 +24054,20 @@ export interface operations {
                             detail: string | null;
                             startedAt: string | null;
                         };
+                        agents: {
+                            primaryUrl: string;
+                            total: number;
+                            moved: number;
+                            pending: {
+                                id: string;
+                                name: string;
+                                /** @enum {string} */
+                                reason: "moved" | "waiting" | "offline" | "old_agent";
+                                error?: string | null;
+                            }[];
+                            expiresAt: string;
+                            switching: boolean;
+                        } | null;
                     };
                 };
             };
@@ -24121,6 +24151,20 @@ export interface operations {
                             detail: string | null;
                             startedAt: string | null;
                         };
+                        agents: {
+                            primaryUrl: string;
+                            total: number;
+                            moved: number;
+                            pending: {
+                                id: string;
+                                name: string;
+                                /** @enum {string} */
+                                reason: "moved" | "waiting" | "offline" | "old_agent";
+                                error?: string | null;
+                            }[];
+                            expiresAt: string;
+                            switching: boolean;
+                        } | null;
                     };
                 };
             };
@@ -24131,6 +24175,96 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Authenticated but not permitted (scope or team permission). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate limit exceeded; see Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    PanelDomainController_releaseAgents: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @enum {string} */
+                        mode: "ip" | "domain" | "port";
+                        domain: string | null;
+                        url: string | null;
+                        ipRoute: boolean;
+                        localServerOnline: boolean;
+                        acmeEmail: string | null;
+                        job: {
+                            /** @enum {string} */
+                            phase: "idle" | "proxy" | "certificate" | "switching" | "done" | "failed";
+                            /** @enum {string|null} */
+                            action: "set" | "remove" | null;
+                            domain: string | null;
+                            targetUrl: string | null;
+                            error: string | null;
+                            /** @enum {string|null} */
+                            code: "cert_timeout" | "proxy_failed" | "updater_stale" | "updater_failed" | "unreachable" | "restore_unverified" | "interrupted" | null;
+                            detail: string | null;
+                            startedAt: string | null;
+                        };
+                        agents: {
+                            primaryUrl: string;
+                            total: number;
+                            moved: number;
+                            pending: {
+                                id: string;
+                                name: string;
+                                /** @enum {string} */
+                                reason: "moved" | "waiting" | "offline" | "old_agent";
+                                error?: string | null;
+                            }[];
+                            expiresAt: string;
+                            switching: boolean;
+                        } | null;
+                    };
                 };
             };
             /** @description Missing or invalid authentication. */
@@ -24212,6 +24346,20 @@ export interface operations {
                             detail: string | null;
                             startedAt: string | null;
                         };
+                        agents: {
+                            primaryUrl: string;
+                            total: number;
+                            moved: number;
+                            pending: {
+                                id: string;
+                                name: string;
+                                /** @enum {string} */
+                                reason: "moved" | "waiting" | "offline" | "old_agent";
+                                error?: string | null;
+                            }[];
+                            expiresAt: string;
+                            switching: boolean;
+                        } | null;
                     };
                 };
             };

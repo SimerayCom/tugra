@@ -99,7 +99,7 @@ mkdir -p /etc/tugra 2>/dev/null || sudo mkdir -p /etc/tugra
 docker run -d --name lab-agent --restart unless-stopped \
   --add-host host.docker.internal:host-gateway \
   -v /var/run/docker.sock:/var/run/docker.sock -v lab-agent-state:/root/.tugra -v /etc/tugra:/etc/tugra \
-  -e "TUGRA_HUB=ws://${HOST}:${LAB_HUB_PORT}/agent" -e "TUGRA_TOKEN=${ENROLL_TOKEN}" -e "TUGRA_AGENT_IMAGE=${LAB_IMAGE}" \
+  -e "TUGRA_HUB=ws://${HOST}:${LAB_HUB_PORT}/agent" -e TUGRA_HUB_INSECURE=1 -e "TUGRA_TOKEN=${ENROLL_TOKEN}" -e "TUGRA_AGENT_IMAGE=${LAB_IMAGE}" \
   "$LAB_IMAGE" >/dev/null
 lab_wait 90 "the target server to go ONLINE" bash -c '[ "$(node "'"$LAB_SELF_DIR"'/seed.mjs" server-status)" = ONLINE ]'
 lab_log "lab is up: hub $HUB_URL, server $SERVER_ID ONLINE. Next: scripts/lab/l0-dry-run.sh (or any l*.sh)"

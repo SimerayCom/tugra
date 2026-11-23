@@ -32,6 +32,26 @@ export const PanelDomainJobSchema = z.object({
 });
 export type PanelDomainJob = z.infer<typeof PanelDomainJobSchema>;
 
+export const AGENT_MOVE_REASONS = ["moved", "waiting", "offline", "old_agent"] as const;
+
+/** How far the remote agents are in moving to the panel's new address (null once none is being waited on). */
+export const AgentMoveStatusSchema = z.object({
+  primaryUrl: z.string(), // the address agents are moving to (wss://…/agent)
+  total: z.number().int(), // remote agents that count (every enrolled server except the one the hub runs on)
+  moved: z.number().int(), // of them, reporting the new address
+  pending: z.array(
+    z.object({
+      id: z.string(),
+      name: z.string(),
+      reason: z.enum(AGENT_MOVE_REASONS), // waiting = online, not switched yet · offline · old_agent = online but cannot follow (update it)
+      error: z.string().nullable().optional(), // why the agent refused the pushed list, if it did
+    }),
+  ),
+  expiresAt: z.string(), // the old address stops being routed for agents at the latest then (7 days)
+  switching: z.boolean(), // the panel change itself is still running
+});
+export type AgentMoveStatus = z.infer<typeof AgentMoveStatusSchema>;
+
 export const PanelDomainStatusSchema = z.object({
   mode: z.enum(["ip", "domain", "port"]), // ip = http://<ip>/ via the proxy · domain = https://<domain> · port = legacy :3001
   domain: z.string().nullable(), // the host the panel is served on right now (null in ip/port mode)
@@ -40,5 +60,6 @@ export const PanelDomainStatusSchema = z.object({
   localServerOnline: z.boolean(),
   acmeEmail: z.string().nullable(),
   job: PanelDomainJobSchema,
+  agents: AgentMoveStatusSchema.nullable(), // remote agents still moving to the new address (the old one stays routable for them)
 });
 export type PanelDomainStatus = z.infer<typeof PanelDomainStatusSchema>;

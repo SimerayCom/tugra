@@ -32,7 +32,8 @@ import { AppPrivilegedController } from "./app-privileged.controller";
 import { AiService } from "./ai.service";
 import { PortAllocatorService } from "./port-allocator.service";
 import { ContainerLogStreamGuard } from "./log-stream.guard";
-import { APPLICATIONS_SERVICE, PROXY_SERVICE } from "./applications.tokens";
+import { AgentEndpointsService } from "./agent-endpoints.service";
+import { AGENT_ENDPOINTS_SERVICE, APPLICATIONS_SERVICE, PROXY_SERVICE } from "./applications.tokens";
 
 @Module({
   imports: [AgentGatewayModule, MetricsModule, CryptoModule, MonitorsModule, NotificationsModule, GitSourcesModule, TeamDefaultsModule, CatalogModule, ClustersModule, DnsModule, DatabasesModule, SecretProvidersModule, LogDrainsModule],
@@ -50,6 +51,7 @@ import { APPLICATIONS_SERVICE, PROXY_SERVICE } from "./applications.tokens";
     ProxyService,
     PanelTlsService,
     PanelDomainService,
+    AgentEndpointsService,
     AiService,
     PortAllocatorService,
     ContainerLogStreamGuard,
@@ -57,8 +59,9 @@ import { APPLICATIONS_SERVICE, PROXY_SERVICE } from "./applications.tokens";
     // without a static module import (which would form a dependency cycle).
     { provide: APPLICATIONS_SERVICE, useExisting: ApplicationsService },
     { provide: PROXY_SERVICE, useExisting: ProxyService },
+    { provide: AGENT_ENDPOINTS_SERVICE, useExisting: AgentEndpointsService },
   ],
-  exports: [ApplicationsService, ProxyService, AppDatabaseLinksService, AppSecretRefsService, APPLICATIONS_SERVICE, PortAllocatorService, DeployLeaseService],
+  exports: [ApplicationsService, ProxyService, AgentEndpointsService, AGENT_ENDPOINTS_SERVICE, AppDatabaseLinksService, AppSecretRefsService, APPLICATIONS_SERVICE, PortAllocatorService, DeployLeaseService],
 })
 export class ApplicationsModule implements OnModuleInit {
   constructor(

@@ -22,7 +22,8 @@ import { APP_MOVE_TERMINAL } from "../common/app-move-guard";
 // A value import WOULD create a require cycle: applications.service imports
 // AgentWsServer, which imports ServersService.
 import type { ApplicationsService } from "../applications/applications.service";
-import { APPLICATIONS_SERVICE, PROXY_SERVICE } from "../applications/applications.tokens";
+import { AGENT_ENDPOINTS_SERVICE, APPLICATIONS_SERVICE, PROXY_SERVICE } from "../applications/applications.tokens";
+import type { AgentEndpointsService } from "../applications/agent-endpoints.service";
 import type { TunnelService } from "../tunnel/tunnel.service";
 import { TUNNEL_SERVICE } from "../tunnel/tunnel.tokens";
 import type { ProvisioningService } from "../cloud/provisioning.service";
@@ -121,6 +122,22 @@ export interface HostInfoInput {
   reportedIps?: string[];
 }
 
+/** A plain `ws://` hub on a host that leaves the machine / docker network (not localhost, not a single-label compose name)
+ *  must be opted into explicitly — the agent refuses it otherwise. */
+export function plainWsNeedsOptIn(hubUrl: string): boolean {
+  try {
+    const u = new URL(hubUrl);
+    if (u.protocol !== "ws:") return false;
+    const h = u.hostname.toLowerCase().replace(/^\[|\]$/g, "");
+    if (h === "localhost") return false;
+    if (h.includes(":")) return h !== "::1"; // IPv6 literal: loopback only
+    if (/^\d+\.\d+\.\d+\.\d+$/.test(h)) return !h.startsWith("127."); // IPv4 literal: loopback only
+    return h.includes("."); // a single-label name is a compose service on the docker network
+  } catch {
+    return false;
+  }
+}
+
 @Injectable()
 export class ServersService {
   constructor(
@@ -189,7 +206,7 @@ export class ServersService {
     return {
       server: this.toView(created, true, true),
       enrollToken,
-      installCommand: this.buildInstallCommand(enrollToken, publicUrl),
+      installCommand: await this.buildInstallCommand(enrollToken, publicUrl),
     };
   }
 
@@ -224,11 +241,37 @@ export class ServersService {
   }
 
   /** The one-line agent install command. A `curl | sh` bootstrap that fetches the agent installer from
-   *  this hub and runs it with the ws URL + enroll token embedded (the installer pulls the version-matched
+   *  this hub and runs it with the hub address + enroll token embedded (the installer pulls the version-matched
    *  agent image and runs it as a Docker container). The hub enforces every capability grant afresh before
-   *  signing a command, so the agent needs no local allowlist snapshot (the hub is the sole gate). */
-  private buildInstallCommand(token: string, publicUrl?: string): string {
-    return `curl -fsSL ${hubBaseUrl(publicUrl)}/install/agent.sh | sh -s -- --hub ${agentWsUrl(publicUrl)} --token ${token}`;
+   *  signing a command, so the agent needs no local allowlist snapshot (the hub is the sole gate).
+   *
+   *  The address is chosen so nothing is readable on the wire where it can be avoided:
+   *   - IP mode (http://<ip>/ install, the proxy serves :443 with the hub's persisted self-signed certificate): the
+   *     installer itself is fetched over that certificate (curl pins its public key) and the agent gets
+   *     `wss://<ip>/agent` + `--hub-pin sha256:<fingerprint>` — it will talk to nothing but that certificate;
+   *   - a domain (https): `wss://<domain>/agent`, publicly trusted certificate, nothing to pin;
+   *   - anything else (a plain http hub, e.g. the raw :3000 port) yields `ws://…`, which the agent only accepts with an
+   *     explicit `--hub-insecure` — so the command says so out loud, and the UI warns when it sees it. */
+  private async buildInstallCommand(token: string, publicUrl?: string): Promise<string> {
+    let t: Awaited<ReturnType<AgentEndpointsService["installTransport"]>> = null;
+    try {
+      t = (await this.agentEndpoints()?.installTransport(publicUrl)) ?? null;
+    } catch {
+      t = null; // never block adding a server on the transport lookup: the plain derivation below still works
+    }
+    if (t) {
+      return `curl -fsSLk --pinnedpubkey 'sha256//${t.spkiPin}' ${t.origin}/install/agent.sh | sh -s -- --hub ${t.hubUrl} --hub-pin ${t.pin} --token ${token}`;
+    }
+    const hub = agentWsUrl(publicUrl);
+    return `curl -fsSL ${hubBaseUrl(publicUrl)}/install/agent.sh | sh -s -- --hub ${hub}${plainWsNeedsOptIn(hub) ? " --hub-insecure" : ""} --token ${token}`;
+  }
+
+  private agentEndpoints(): AgentEndpointsService | undefined {
+    try {
+      return this.moduleRef.get<AgentEndpointsService>(AGENT_ENDPOINTS_SERVICE, { strict: false });
+    } catch {
+      return undefined; // not wired (unit tests / a trimmed module graph): the plain derivation below still works
+    }
   }
 
   /**
@@ -252,7 +295,7 @@ export class ServersService {
       server.enrollTokenExpiresAt.getTime() > Date.now();
     return {
       status: server.status,
-      installCommand: valid ? this.buildInstallCommand(server.enrollToken!, publicUrl) : null,
+      installCommand: valid ? await this.buildInstallCommand(server.enrollToken!, publicUrl) : null,
       expiresAt: server.enrollTokenExpiresAt,
     };
   }
@@ -276,7 +319,7 @@ export class ServersService {
       data: { enrollToken, enrollTokenExpiresAt: expiresAt },
     });
     await this.audit.log({ actor: userId, action: "server.enroll.reissue", target: id });
-    return { installCommand: this.buildInstallCommand(enrollToken, publicUrl), expiresAt };
+    return { installCommand: await this.buildInstallCommand(enrollToken, publicUrl), expiresAt };
   }
 
   /** The teams the user belongs to (for team pickers, command-center scoping). */

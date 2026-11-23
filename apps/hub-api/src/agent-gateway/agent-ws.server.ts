@@ -18,10 +18,11 @@ import type {
   Fs2ResultMsg,
   Fs2Scope,
   FsEntry,
+  HubEndpointStateMsg,
   TermExitMsg,
   TermOutputMsg,
 } from "@tugra/shared";
-import { PROTOCOL_VERSION, checkAgentCompat, canonicalCommand, canonicalCommandCancel, canonicalCommandStatus, canonicalTermStart, canonicalLogStart, canonicalAgentUpdate, canonicalFs, canonicalLogDrains, canonicalFs2, fs2RequiredCapabilities, AGENT_FEATURE_FS2 } from "@tugra/shared";
+import { PROTOCOL_VERSION, checkAgentCompat, canonicalCommand, canonicalCommandCancel, canonicalCommandStatus, canonicalTermStart, canonicalLogStart, canonicalAgentUpdate, canonicalFs, canonicalLogDrains, canonicalFs2, fs2RequiredCapabilities, AGENT_FEATURE_FS2, canonicalHubEndpoints, canonicalHubProof } from "@tugra/shared";
 import { FsRemoteException } from "../files/fs-errors";
 import { HubSigningService } from "./hub-signing.service";
 import { AgentCommandTimeoutException, AgentDisconnectedException, AgentOfflineException } from "./agent-offline.exception";
@@ -167,6 +168,10 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
   // online again (a hub restart no longer drops queued deploys). Mirrors logDrainProvider's on-online
   // piggyback; invoked AFTER this.sockets.set(...), so isOnline(serverId) is already true in the callback.
   private deployReDriveProvider?: (serverId: string) => void;
+  // Hub endpoint list (hub_endpoints_v1): invoked on every (re)connect so the current signed list can be pushed, and with an
+  // agent's hub_endpoint_state report. serverId always comes from the authenticated socket, never the message body.
+  private hubEndpointsOnConnect?: (serverId: string) => void;
+  private hubEndpointStateSink?: (serverId: string, msg: HubEndpointStateMsg) => void;
 
   constructor(
     private readonly httpAdapterHost: HttpAdapterHost,
@@ -325,10 +330,12 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
             serverId,
             seal,
             hubKey: this.hubSign.publicKeySpkiBase64,
+            ...this.hubProofFor(st, msg.hubNonce),
             capabilities: await this.servers.grantedCapabilities(serverId),
           });
           this.logDrainProvider?.(serverId);
           this.deployReDriveProvider?.(serverId);
+          this.hubEndpointsOnConnect?.(serverId);
           return;
         }
         case "auth": {
@@ -364,10 +371,12 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
             type: "auth_ok",
             serverId: msg.serverId,
             hubKey: this.hubSign.publicKeySpkiBase64,
+            ...this.hubProofFor(st, msg.hubNonce),
             capabilities: await this.servers.grantedCapabilities(msg.serverId),
           });
           this.logDrainProvider?.(msg.serverId);
           this.deployReDriveProvider?.(msg.serverId);
+          this.hubEndpointsOnConnect?.(msg.serverId);
           return;
         }
         case "metrics": {
@@ -389,6 +398,11 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
         case "drain_status": {
           if (!st.authed || !st.serverId) return; // ignored (not authed)
           this.drainStatusSink?.(st.serverId, (msg as { drains?: unknown }).drains);
+          return;
+        }
+        case "hub_endpoint_state": {
+          if (!st.authed || !st.serverId) return;
+          this.hubEndpointStateSink?.(st.serverId, msg);
           return;
         }
         case "heartbeat": {
@@ -862,6 +876,10 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
       msg.sig = this.hubSign.sign(
         canonicalLogDrains(msg.serverId as string, msg.rev as number, msg.drainsJson as string, msg.capability as string),
       );
+    } else if (msg.type === "hub_endpoints") {
+      // The signed endpoint list: serverId is inside the signature (a frame captured for server A never verifies on B) and
+      // the agent checks it against its OWN stored id.
+      msg.sig = this.hubSign.sign(canonicalHubEndpoints(msg.serverId as string, msg.rev as number, msg.endpointsJson as string));
     } else if (msg.type === "fs2_req") {
       msg.sig = this.hubSign.sign(canonicalFs2(msg as unknown as Fs2Fields));
     } else if (msg.type === "fs_req") {
@@ -978,6 +996,24 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
    *  construction (isOnline(serverId) === true). */
   setDeployReDriveProvider(fn: (serverId: string) => void): void {
     this.deployReDriveProvider = fn;
+  }
+
+  /** Register the hub-endpoint hooks (HubEndpointsService): on-connect push + the agent's state reports. */
+  setHubEndpointsHooks(hooks: { onConnect: (serverId: string) => void; onState: (serverId: string, msg: HubEndpointStateMsg) => void }): void {
+    this.hubEndpointsOnConnect = hooks.onConnect;
+    this.hubEndpointStateSink = hooks.onState;
+  }
+
+  /** Ids of every server whose agent socket is currently open. */
+  connectedServerIds(): string[] {
+    return [...this.sockets.entries()].filter(([, s]) => s.readyState === WebSocket.OPEN).map(([id]) => id);
+  }
+
+  /** The proof that THIS endpoint holds the hub key: a signature over (the challenge it issued, the nonce the agent chose),
+   *  only for an agent that sent a well-formed nonce (older agents get the reply exactly as before). */
+  private hubProofFor(st: ConnState, hubNonce: unknown): { hubProof?: string } {
+    if (typeof hubNonce !== "string" || hubNonce.length < 16 || hubNonce.length > 128) return {};
+    return { hubProof: this.hubSign.sign(canonicalHubProof(st.nonce, hubNonce)) };
   }
 
   /** Fire-and-forget a message to a connected agent. Returns false if offline. */

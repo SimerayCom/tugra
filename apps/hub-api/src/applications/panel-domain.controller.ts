@@ -44,6 +44,14 @@ export class PanelDomainController {
     return this.panelDomain.set(user.userId, body);
   }
 
+  /** Stop waiting for the agents that have not moved to the new address yet: the old address stops being routed for them now. */
+  @Post("agents/release")
+  @HttpCode(200)
+  @ApiZodResponse(PanelDomainStatusSchema)
+  releaseAgents(@CurrentUser() user: AuthUser) {
+    return this.panelDomain.releaseAgents(user.userId);
+  }
+
   /** Drop the domain and go back to http://<server-ip>/. 202: the change runs in the background. */
   @Post("remove")
   @HttpCode(202)

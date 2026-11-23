@@ -25,6 +25,14 @@ export const PANEL_WEB_ALIAS = "tugra-panel-web";
 /** Host dir mounted read-only into Traefik as /dynamic; holds the file-provider configs. */
 export const PROXY_DYNAMIC_DIR = "/etc/tugra/proxy-dynamic";
 export const PANEL_FILE = "panel.yml";
+/** Where the IP-mode self-signed certificate lives: a sub-directory of the dynamic dir on the host (written by the proxy
+ *  setup script, 0600 key) and the same files as Traefik sees them (`/dynamic` is the read-only mount). */
+export const IP_TLS_HOST_DIR = `${PROXY_DYNAMIC_DIR}/iptls`;
+export const IP_TLS_CERT_FILE = "/dynamic/iptls/cert.pem";
+export const IP_TLS_KEY_FILE = "/dynamic/iptls/key.pem";
+/** The agent path and the signed file-transfer relay the agents use: the only things kept routable on an address that is
+ *  no longer the panel's (see `agentHosts` / `agentIp`). */
+export const AGENT_PATHS = ["/agent", "/api/v1/agent-fs/t/"] as const;
 
 // Traefik object names (router name == service name is allowed — separate namespaces).
 const R_HUB = "tugra-panel-hub";
@@ -35,6 +43,29 @@ const SVC_HUB = "tugra-panel-hub";
 const SVC_WEB = "tugra-panel-web";
 
 export type PanelResolver = "le" | "le-dns";
+
+/** The IP-mode self-signed certificate + key (PEM) the proxy serves as its default certificate on :443. */
+export interface IpTlsMaterial {
+  certPem: string;
+  keyPem: string;
+}
+
+/** Everything the proxy needs to know about the panel (and the agent path), resolved by ProxyConfigService. */
+export interface PanelProxyConfig {
+  /** The host the panel is served on; null for a host-less http://<ip>/ panel. */
+  domain: string | null;
+  resolver?: PanelResolver;
+  /** More hosts serving the WHOLE panel at the same time (the old host while a domain change is verified). */
+  also?: string[];
+  /** The host-less http route (plain install, or while a domain change is in flight). */
+  ipRoute?: boolean;
+  /** Old hosts that keep only the agent path (/agent + the transfer relay) while agents move to the new address. */
+  agentHosts?: string[];
+  /** The IP route keeps the agent path although the panel moved to a domain. */
+  agentIp?: boolean;
+  /** Serve the host-less routes on :443 with this self-signed certificate (IP mode). */
+  ipTls?: IpTlsMaterial;
+}
 
 // Traefik's lego DNS-01 providers read their token from a provider-specific env var. Map the ones we offer
 // at install time so a user who pastes a Cloudflare token gets a REAL cert WHILE the record stays proxied
@@ -104,6 +135,8 @@ const PANEL_HUB_MATCHERS = [
   ...PANEL_HUB_EXACT_PATHS.map((p) => `Path(\`${p}\`)`),
 ].join(" || ");
 
+const AGENT_PATH_MATCHERS = AGENT_PATHS.map((p) => `PathPrefix(\`${p}\`)`).join(" || ");
+
 function hubRule(domain: string): string {
   return `Host(\`${domain}\`) && (${PANEL_HUB_MATCHERS})`;
 }
@@ -114,6 +147,11 @@ function hubRule(domain: string): string {
 // shadowed by the panel catch-all (the hub paths sit one above the web catch-all, as in the domain routers).
 const R_IP_HUB = "tugra-panel-ip-hub";
 const R_IP_WEB = "tugra-panel-ip-web";
+const R_IP_HUB_TLS = "tugra-panel-ip-hub-tls";
+const R_IP_WEB_TLS = "tugra-panel-ip-web-tls";
+const R_AGENT_IP = "tugra-panel-agent-ip";
+const R_AGENT_IP_TLS = "tugra-panel-agent-ip-tls";
+const R_AGENT_HOST = "tugra-panel-agent-host";
 const IP_HUB_PRIORITY = 2;
 const IP_WEB_PRIORITY = 1;
 
@@ -125,16 +163,15 @@ const IP_WEB_PRIORITY = 1;
  * - `also`: more panel hostnames served at the same time (the OLD host while a domain change is being verified, so
  *   the current URL keeps working); each gets its own routers (and so its own certificate).
  * - `ipRoute`: add the host-less http routers above (plain install, or while a domain change is in flight).
+ * - `ipTls`: in IP mode ALSO answer the host-less routes on `websecure` with the hub's persisted self-signed certificate
+ *   (Traefik's default certificate, files written next to this one), so agents reach the hub over wss on a bare IP.
+ * - `agentHosts` / `agentIp`: the AGENT path only (`/agent` + the file-transfer relay) stays routable on these old hosts /
+ *   on the IP while agents move to the panel's new address — the panel itself is not served there any more. Grace routing:
+ *   it keeps every remote agent that is still dialling the old address connected until all have moved.
  * `domain` may be null for an IP-only panel. Every host is re-validated here, so nothing unvalidated reaches a rule
  * even if called directly.
  */
-export function buildPanelRouterYaml(opts: {
-  domain: string | null;
-  resolver?: PanelResolver;
-  httpOnly?: boolean;
-  also?: string[];
-  ipRoute?: boolean;
-}): string {
+export function buildPanelRouterYaml(opts: Omit<PanelProxyConfig, "ipTls"> & { httpOnly?: boolean; ipTls?: boolean | IpTlsMaterial }): string {
   const domains: string[] = [];
   for (const d of [opts.domain, ...(opts.also ?? [])]) {
     if (d === null || d === undefined) continue;
@@ -142,8 +179,15 @@ export function buildPanelRouterYaml(opts: {
     if (!domains.includes(v)) domains.push(v);
   }
   const ipRoute = opts.ipRoute === true;
-  if (domains.length === 0 && !ipRoute) throw new Error("panel router needs a domain or the IP route");
+  const agentHosts: string[] = [];
+  for (const h of opts.agentHosts ?? []) {
+    const v = validatePanelDomain(h);
+    if (!agentHosts.includes(v) && !domains.includes(v)) agentHosts.push(v); // a host the panel is served on already has the agent path
+  }
+  const agentIp = opts.agentIp === true && !ipRoute; // the full IP route already includes the agent path
+  if (domains.length === 0 && !ipRoute && agentHosts.length === 0 && !agentIp) throw new Error("panel router needs a domain or the IP route");
   const httpOnly = opts.httpOnly === true;
+  const ipTls = !!opts.ipTls && !httpOnly;
   const resolver: PanelResolver = opts.resolver === "le-dns" ? "le-dns" : "le";
   const entryPoints = httpOnly ? ["web"] : ["websecure"];
 
@@ -177,7 +221,25 @@ export function buildPanelRouterYaml(opts: {
   if (ipRoute) {
     routers[R_IP_HUB] = { rule: `(${PANEL_HUB_MATCHERS})`, entryPoints: ["web"], priority: IP_HUB_PRIORITY, service: SVC_HUB };
     routers[R_IP_WEB] = { rule: "PathPrefix(`/`)", entryPoints: ["web"], priority: IP_WEB_PRIORITY, service: SVC_WEB };
+    if (ipTls) {
+      // Same routes on :443. No Host(): a bare IP has no SNI, so Traefik answers with its DEFAULT certificate (below).
+      routers[R_IP_HUB_TLS] = { rule: `(${PANEL_HUB_MATCHERS})`, entryPoints: ["websecure"], priority: IP_HUB_PRIORITY, service: SVC_HUB, tls: {} };
+      routers[R_IP_WEB_TLS] = { rule: "PathPrefix(`/`)", entryPoints: ["websecure"], priority: IP_WEB_PRIORITY, service: SVC_WEB, tls: {} };
+    }
   }
+  if (agentIp) {
+    routers[R_AGENT_IP] = { rule: AGENT_PATH_MATCHERS, entryPoints: ["web"], priority: IP_HUB_PRIORITY, service: SVC_HUB };
+    if (ipTls) routers[R_AGENT_IP_TLS] = { rule: AGENT_PATH_MATCHERS, entryPoints: ["websecure"], priority: IP_HUB_PRIORITY, service: SVC_HUB, tls: {} };
+  }
+  agentHosts.forEach((host, i) => {
+    routers[`${R_AGENT_HOST}-${i + 1}`] = {
+      rule: `Host(\`${host}\`) && (${AGENT_PATH_MATCHERS})`,
+      entryPoints,
+      priority: 200,
+      service: SVC_HUB,
+      ...(httpOnly ? {} : { tls: { certResolver: resolver } }),
+    };
+  });
 
   const http: Record<string, unknown> = {
     routers,
@@ -190,5 +252,11 @@ export function buildPanelRouterYaml(opts: {
     http.middlewares = { [MW_HTTPS]: { redirectScheme: { scheme: "https", permanent: true } } };
   }
 
-  return yamlStringify({ http });
+  const doc: Record<string, unknown> = { http };
+  if (ipTls && (ipRoute || agentIp)) {
+    // The persisted self-signed certificate is the default for every TLS router without its own (the host-less ones):
+    // stable across restarts, unlike Traefik's regenerating built-in default, so its fingerprint can be pinned.
+    doc.tls = { stores: { default: { defaultCertificate: { certFile: IP_TLS_CERT_FILE, keyFile: IP_TLS_KEY_FILE } } } };
+  }
+  return yamlStringify(doc);
 }

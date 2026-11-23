@@ -1917,6 +1917,46 @@ describe("deploy-script", () => {
     expect(proxyConfigHash({ panel: { domain: null, ipRoute: true } })).not.toBe(proxyConfigHash({}));
   });
 
+  it("the hash folds the agent grace routes and the IP certificate (its fingerprint, never the key) only when used", () => {
+    const base = proxyConfigHash({ panel: { domain: "app.example.com" } });
+    expect(proxyConfigHash({ panel: { domain: "app.example.com", agentHosts: [] } })).toBe(base);
+    expect(proxyConfigHash({ panel: { domain: "app.example.com", agentHosts: ["old.example.com"] } })).not.toBe(base);
+    expect(proxyConfigHash({ panel: { domain: "app.example.com", agentIp: true } })).not.toBe(base);
+    const a = proxyConfigHash({ panel: { domain: null, ipRoute: true, ipTls: { certPem: "CERT-A", keyPem: "KEY-A" } } });
+    const b = proxyConfigHash({ panel: { domain: null, ipRoute: true, ipTls: { certPem: "CERT-B", keyPem: "KEY-A" } } });
+    expect(a).not.toBe(proxyConfigHash({ panel: { domain: null, ipRoute: true } })); // turning TLS on recreates the proxy once
+    expect(a).not.toBe(b); // a new certificate does too
+    expect(proxyConfigHash({ panel: { domain: null, ipRoute: true, ipTls: { certPem: "CERT-A", keyPem: "OTHER" } } })).toBe(a); // the key is not an input
+    expect(proxyConfigPreimage({ panel: { domain: null, ipRoute: true, ipTls: { certPem: "CERT-A", keyPem: "KEY-A" } } })).not.toContain("KEY-A");
+  });
+
+  it("the IP certificate is written (0600 key, atomic) BEFORE the router file that references it; the key never appears in clear text", () => {
+    const s = buildProxySetupScript({ panel: { domain: null, ipRoute: true, ipTls: { certPem: "-----BEGIN CERTIFICATE-----\nAAA\n", keyPem: "-----BEGIN PRIVATE KEY-----\nSECRETKEY\n" } } });
+    const key = s.indexOf("/etc/tugra/proxy-dynamic/iptls/.key.pem.tmp");
+    const cert = s.indexOf("/etc/tugra/proxy-dynamic/iptls/.cert.pem.tmp");
+    const router = s.indexOf("/etc/tugra/proxy-dynamic/.panel.yml.tmp");
+    expect(key).toBeGreaterThan(-1);
+    expect(cert).toBeGreaterThan(-1);
+    expect(router).toBeGreaterThan(Math.max(key, cert));
+    expect(s).toContain("( umask 077; printf %s");
+    expect(s).toContain("mv /etc/tugra/proxy-dynamic/iptls/.key.pem.tmp /etc/tugra/proxy-dynamic/iptls/key.pem");
+    expect(s).not.toContain("SECRETKEY");
+    const yaml = Buffer.from(s.match(/printf %s '([A-Za-z0-9+/=]+)' \| base64 -d > \/etc\/tugra\/proxy-dynamic\/\.panel\.yml\.tmp/)![1], "base64").toString();
+    expect(yaml).toContain("certFile: /dynamic/iptls/cert.pem");
+    expect(yaml).toContain("tugra-panel-ip-hub-tls");
+  });
+
+  it("without an IP certificate (or httpOnly) no certificate files are touched", () => {
+    expect(buildProxySetupScript({ panel: { domain: null, ipRoute: true } })).not.toContain("iptls");
+    expect(buildProxySetupScript({ bind: "none", panel: { domain: null, ipRoute: true, ipTls: { certPem: "C", keyPem: "K" } } })).not.toContain("iptls");
+  });
+
+  it("the hot-reload panel write also writes the certificate first", () => {
+    const s = buildPanelRouterWriteScript({ domain: null, ipRoute: true, ipTls: { certPem: "C", keyPem: "K" } });
+    expect(s.indexOf("iptls/.cert.pem.tmp")).toBeGreaterThan(-1);
+    expect(s.indexOf("iptls/.cert.pem.tmp")).toBeLessThan(s.indexOf(".panel.yml.tmp"));
+  });
+
   it("panel + bind:'none' => httpOnly router (no tls block), still keeps the no-host-ports behavior", () => {
     const s = buildProxySetupScript({ acmeEmail: "me@x.com", panel: { domain: "app.example.com" }, bind: "none" });
     const m = s.match(/printf %s '([A-Za-z0-9+/=]+)' \| base64 -d > \/etc\/tugra\/proxy-dynamic\/\.panel\.yml\.tmp/);
