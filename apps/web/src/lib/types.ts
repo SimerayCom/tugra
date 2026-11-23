@@ -405,6 +405,16 @@ export interface PanelDomainJob {
   detail: string | null; // sanitized tail of the proxy's certificate log
   startedAt: string | null;
 }
+/** Remote agents moving to the panel's new address; the old address stays routable for them until all moved / 7 days / released. */
+export type AgentMoveReason = "moved" | "waiting" | "offline" | "old_agent";
+export interface AgentMoveStatus {
+  primaryUrl: string; // the address agents are moving to (wss://…/agent)
+  total: number;
+  moved: number;
+  pending: Array<{ id: string; name: string; reason: AgentMoveReason; error?: string | null }>;
+  expiresAt: string; // the old address stops being routed for agents at the latest then
+  switching: boolean; // the panel change itself is still running
+}
 export interface PanelDomainStatus {
   mode: "ip" | "domain" | "port"; // ip = http://<ip>/ via the proxy · domain = https://<domain> · port = a raw :3001 install
   domain: string | null;
@@ -413,6 +423,7 @@ export interface PanelDomainStatus {
   localServerOnline: boolean;
   acmeEmail: string | null;
   job: PanelDomainJob;
+  agents: AgentMoveStatus | null;
 }
 
 /** Anonymous usage stats status (GET /instance/telemetry). Owner-only. On by default, opt-out. */

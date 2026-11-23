@@ -655,6 +655,10 @@ export const api = {
   removePanelDomain(body: { publicIp?: string } = {}) {
     return apiFetch<PanelDomainStatus>("/instance/panel-domain/remove", { method: "POST", body: JSON.stringify(body) });
   },
+  // Stop waiting for the agents that have not moved to the new address: the old address stops being routed for them now.
+  releasePanelDomainAgents() {
+    return apiFetch<PanelDomainStatus>("/instance/panel-domain/agents/release", { method: "POST" });
+  },
   // Owner-only anonymous usage stats (on by default, opt-out). Status includes a live payload preview.
   getTelemetry() {
     return apiFetch<TelemetryStatus>("/instance/telemetry");

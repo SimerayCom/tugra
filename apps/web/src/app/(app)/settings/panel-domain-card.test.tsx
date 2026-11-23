@@ -16,7 +16,7 @@ vi.mock("../../../lib/auth", () => ({ useAuth: () => ({ user: h.user }) }));
 import { PanelDomainCard } from "./panel-domain-card";
 
 const IDLE = { phase: "idle", action: null, domain: null, targetUrl: null, error: null, code: null, detail: null, startedAt: null } as const;
-const IP_MODE: PanelDomainStatus = { mode: "ip", domain: null, url: "http://203.0.113.9", ipRoute: true, localServerOnline: true, acmeEmail: null, job: { ...IDLE } };
+const IP_MODE: PanelDomainStatus = { mode: "ip", domain: null, url: "http://203.0.113.9", ipRoute: true, localServerOnline: true, acmeEmail: null, job: { ...IDLE }, agents: null };
 const DOMAIN_MODE: PanelDomainStatus = { ...IP_MODE, mode: "domain", domain: "panel.example.com", url: "https://panel.example.com", ipRoute: false };
 
 let qc: QueryClient;
@@ -174,6 +174,89 @@ describe("PanelDomainCard", () => {
     expect(await screen.findByText(/local server is offline/)).toBeTruthy();
     fireEvent.change(screen.getByLabelText("Domain"), { target: { value: "panel.example.com" } });
     expect((screen.getByRole("button", { name: "Set domain" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+});
+
+describe("PanelDomainCard — agents moving to the new address", () => {
+  const MOVING = {
+    primaryUrl: "wss://panel.example.com/agent",
+    total: 3,
+    moved: 1,
+    pending: [
+      { id: "s2", name: "db-2", reason: "offline" as const },
+      { id: "s3", name: "edge-3", reason: "old_agent" as const },
+    ],
+    expiresAt: "2026-12-01T00:00:00.000Z",
+    switching: false,
+  };
+  beforeEach(() => {
+    qc = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    cleanup();
+  });
+
+  it("says how many agents moved and names the ones that did not, with why", async () => {
+    owner();
+    vi.spyOn(api, "getPanelDomain").mockResolvedValue({ ...DOMAIN_MODE, agents: MOVING });
+    wrap();
+    expect(await screen.findByText("1 of 3 agents moved to the new address.")).toBeTruthy();
+    expect(screen.getByText("db-2")).toBeTruthy();
+    expect(screen.getByText(/offline — it moves when it reconnects/)).toBeTruthy();
+    expect(screen.getByText("edge-3")).toBeTruthy();
+    expect(screen.getByText(/agent too old to follow/)).toBeTruthy();
+    expect(screen.getByText(/previous address keeps answering agents/)).toBeTruthy();
+  });
+
+  it("an agent that refused the pushed list shows the reason instead of a generic state", async () => {
+    owner();
+    vi.spyOn(api, "getPanelDomain").mockResolvedValue({ ...DOMAIN_MODE, agents: { ...MOVING, pending: [{ id: "s2", name: "db-2", reason: "waiting", error: "invalid signature" }] } });
+    wrap();
+    expect(await screen.findByText(/refused the new address: invalid signature/)).toBeTruthy();
+  });
+
+  it("'Stop waiting' asks first, then releases the old address for the rest", async () => {
+    owner();
+    vi.spyOn(api, "getPanelDomain").mockResolvedValue({ ...DOMAIN_MODE, agents: MOVING });
+    const release = vi.spyOn(api, "releasePanelDomainAgents").mockResolvedValue({ ...DOMAIN_MODE, agents: null });
+    wrap();
+    fireEvent.click(await screen.findByRole("button", { name: "Stop waiting" }));
+    expect(window.confirm).toHaveBeenCalled();
+    await waitFor(() => expect(release).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(screen.queryByTestId("panel-domain-agents")).toBeNull());
+  });
+
+  it("declining the confirm releases nothing", async () => {
+    owner();
+    (window.confirm as unknown as ReturnType<typeof vi.fn>).mockReturnValue(false);
+    vi.spyOn(api, "getPanelDomain").mockResolvedValue({ ...DOMAIN_MODE, agents: MOVING });
+    const release = vi.spyOn(api, "releasePanelDomainAgents").mockResolvedValue({ ...DOMAIN_MODE });
+    wrap();
+    fireEvent.click(await screen.findByRole("button", { name: "Stop waiting" }));
+    expect(release).not.toHaveBeenCalled();
+  });
+
+  it("while the panel switch itself is still running there is nothing to release yet", async () => {
+    owner();
+    vi.spyOn(api, "getPanelDomain").mockResolvedValue({ ...DOMAIN_MODE, agents: { ...MOVING, switching: true } });
+    wrap();
+    expect(await screen.findByText(/already being pointed at the new address/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Stop waiting" })).toBeNull();
+  });
+
+  it("no agents block at all when nothing is moving", async () => {
+    owner();
+    vi.spyOn(api, "getPanelDomain").mockResolvedValue({ ...DOMAIN_MODE });
+    wrap();
+    await screen.findByText(/Served at/);
+    expect(screen.queryByTestId("panel-domain-agents")).toBeNull();
+  });
+
+  it("every agent reason has its own message (the key is built from the reason)", () => {
+    const dict = settings as Record<string, unknown>;
+    for (const r of ["waiting", "offline", "old_agent"]) expect(typeof dict[`panelDomain_agentReason_${r}`], r).toBe("string");
   });
 });
 

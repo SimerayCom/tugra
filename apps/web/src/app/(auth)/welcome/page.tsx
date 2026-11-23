@@ -11,6 +11,7 @@ import { Btn, Card } from "../../../components/ui";
 import { Field, Select, TextInput } from "../../../components/form";
 import { CenteredSpinner } from "../../../components/shell";
 import { installPhase } from "../../../lib/server-install";
+import { InstallTransportNote } from "../../../components/install-transport-note";
 import { resolveStep, isSkippable, stepNumber, TOTAL_STEPS, type Step } from "../../../lib/onboarding-wizard";
 
 type Tr = ReturnType<typeof useT>;
@@ -455,6 +456,7 @@ function WaitForServer({ t, serverId, onNext, onSkip }: { t: Tr; serverId: strin
             <Btn variant="ghost" onClick={copy}>{copied ? t("onboarding.copied") : t("onboarding.copy")}</Btn>
             <span style={{ fontSize: 13, color: "var(--c-tx3)" }}>{t("onboarding.waitingForServer")}</span>
           </div>
+          <div style={{ marginBottom: 12 }}><InstallTransportNote command={command} /></div>
         </>
       )}
       <div style={{ textAlign: "center" }}>

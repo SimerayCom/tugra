@@ -9,6 +9,7 @@ import { useT } from "../../../../i18n/provider";
 import { BackLink, Btn } from "../../../../components/ui";
 import { Field, Select, TextInput, fieldStyle } from "../../../../components/form";
 import { CopyBtn } from "../../../../components/copy-row";
+import { InstallTransportNote } from "../../../../components/install-transport-note";
 import type { ServerView } from "../../../../lib/types";
 import { HETZNER_LOCATIONS, HETZNER_SERVER_TYPES } from "../../../../lib/hetzner-catalog";
 
@@ -127,6 +128,7 @@ function BulkForm() {
                 <CopyBtn text={c.installCommand} />
               </div>
               <code className="mono" style={{ display: "block", fontSize: 11, color: "var(--c-tx3)", wordBreak: "break-all", marginTop: 6 }}>{c.installCommand}</code>
+              <InstallTransportNote command={c.installCommand} />
             </div>
           ))}
         </div>

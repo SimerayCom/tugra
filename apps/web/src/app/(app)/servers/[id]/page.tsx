@@ -11,6 +11,7 @@ import { ErrorState } from "../../../../components/error-state";
 import { installPhase } from "../../../../lib/server-install";
 import { useTabState } from "../../../../hooks/useTabState";
 import { CopyBtn } from "../../../../components/copy-row";
+import { InstallTransportNote } from "../../../../components/install-transport-note";
 import { useConfirm } from "../../../../components/confirm";
 import { pct, fmtBytesStr, formatUptime } from "../../../../lib/fleet";
 import { diskPctSeries, humanizeRatePair } from "../../../../lib/metrics";
@@ -417,6 +418,7 @@ function ServerInstallCard({ id }: { id: string }) {
         <>
           <pre className="mono" style={{ background: "var(--c-el)", padding: 12, borderRadius: "var(--r1)", fontSize: 12, overflowX: "auto", margin: 0 }}>{cmd}</pre>
           <div style={{ marginTop: 10 }}><CopyBtn text={cmd ?? ""} label={t("servers.copy")} /></div>
+          <InstallTransportNote command={cmd} />
 
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 16 }}>
             <Spinner /><span style={{ color: "var(--c-tx3)", fontSize: 13 }}>{t("servers.waiting")}</span>

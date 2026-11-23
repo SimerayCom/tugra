@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../../lib/api";
 import { useAuth } from "../../../lib/auth";
@@ -8,7 +8,7 @@ import { useT } from "../../../i18n/provider";
 import { useToast } from "../../../components/toast";
 import { Btn, Card } from "../../../components/ui";
 import { Field, TextInput } from "../../../components/form";
-import type { PanelDomainStatus } from "../../../lib/types";
+import type { AgentMoveStatus, PanelDomainStatus } from "../../../lib/types";
 
 // A bare hostname (no scheme, port, path, wildcard or IP literal) — the same shape the hub validates.
 const DOMAIN_RE = /^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
@@ -38,7 +38,7 @@ export function PanelDomainCard() {
     enabled: isOwner,
     refetchOnWindowFocus: false,
     // Poll while a change is running; while the hub is being recreated the request fails and the poll just continues.
-    refetchInterval: (q) => (q.state.data && ACTIVE.has(q.state.data.job.phase) ? 3000 : q.state.error ? 5000 : false),
+    refetchInterval: (q) => (q.state.data && ACTIVE.has(q.state.data.job.phase) ? 3000 : q.state.error ? 5000 : q.state.data?.agents ? 10_000 : false),
     retry: false,
   });
 
@@ -68,6 +68,15 @@ export function PanelDomainCard() {
       if (e instanceof Error && /publicIp/.test(e.message)) setNeedsIp(true);
       failed(e, t("settings.panelDomain_startFailed"));
     },
+  });
+
+  const releaseMut = useMutation({
+    mutationFn: () => api.releasePanelDomainAgents(),
+    onSuccess: (st) => {
+      qc.setQueryData(["panelDomain"], st);
+      toast(t("settings.panelDomain_agentsReleased"), "success");
+    },
+    onError: (e) => failed(e, t("settings.panelDomain_agentsReleaseFailed")),
   });
 
   if (!isOwner) return null;
@@ -144,6 +153,17 @@ export function PanelDomainCard() {
         </div>
       )}
 
+      {data?.agents && (
+        <AgentsMoving
+          agents={data.agents}
+          busy={releaseMut.isPending}
+          onRelease={() => {
+            if (window.confirm(t("settings.panelDomain_agentsReleaseConfirm"))) releaseMut.mutate();
+          }}
+          boxStyle={box}
+        />
+      )}
+
       {job?.phase === "failed" && (
         <div role="alert" style={{ ...box, borderColor: "var(--c-r)" }}>
           <div style={{ fontWeight: 600 }}>{t("settings.panelDomain_failed")}</div>
@@ -196,5 +216,35 @@ export function PanelDomainCard() {
         </form>
       )}
     </Card>
+  );
+}
+
+/** "N of M agents moved to the new address; these did not: …" — the old address keeps answering the rest meanwhile. */
+function AgentsMoving({ agents, busy, onRelease, boxStyle }: { agents: AgentMoveStatus; busy: boolean; onRelease: () => void; boxStyle: CSSProperties }) {
+  const t = useT();
+  const date = new Date(agents.expiresAt).toLocaleDateString();
+  return (
+    <div role="status" aria-live="polite" style={boxStyle} data-testid="panel-domain-agents">
+      <div style={{ fontWeight: 600 }}>{t("settings.panelDomain_agentsTitle")}</div>
+      <div>{agents.switching ? t("settings.panelDomain_agentsSwitching") : t("settings.panelDomain_agentsProgress", { moved: agents.moved, total: agents.total })}</div>
+      {agents.pending.length > 0 && (
+        <>
+          <div style={{ marginTop: 6 }}>{t("settings.panelDomain_agentsPending")}</div>
+          <ul style={{ margin: "4px 0 0", paddingLeft: 18 }}>
+            {agents.pending.map((p) => (
+              <li key={p.id}>
+                <strong>{p.name}</strong> — {p.error ? t("settings.panelDomain_agentRefused", { error: p.error }) : t(`settings.panelDomain_agentReason_${p.reason}`)}
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+      <div style={{ marginTop: 6, color: "var(--c-tx3)" }}>{t("settings.panelDomain_agentsKept", { date })}</div>
+      {agents.pending.length > 0 && !agents.switching && (
+        <Btn variant="ghost" style={{ marginTop: 8 }} disabled={busy} onClick={onRelease}>
+          {busy ? "…" : t("settings.panelDomain_agentsRelease")}
+        </Btn>
+      )}
+    </div>
   );
 }
