@@ -1,3 +1,4 @@
+import { gitSourcesUsableBy } from "../git-sources/source-scope";
 import { Injectable, Logger } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { GitSourcesService } from "../git-sources/git-sources.service";
@@ -122,7 +123,7 @@ export class GitLinkResolverService {
     let candidates: Candidate[] = [];
     let sourcesOk = true;
     try {
-      const all = await this.prisma.gitSource.findMany({ where: { teamId }, select: { id: true, name: true, provider: true, apiUrl: true, installationId: true } });
+      const all = await this.prisma.gitSource.findMany({ where: gitSourcesUsableBy(teamId), select: { id: true, name: true, provider: true, apiUrl: true, installationId: true } });
       candidates = all.flatMap((s): Candidate[] => {
         if (isTokenKind(s.provider)) return s.apiUrl ? [{ id: s.id, name: s.name, kind: "token", host: apiUrlHost(s.apiUrl) }] : [];
         return s.installationId ? [{ id: s.id, name: s.name, kind: "github", host: "github.com" }] : [];

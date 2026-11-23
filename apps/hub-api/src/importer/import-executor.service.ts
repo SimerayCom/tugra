@@ -1,3 +1,4 @@
+import { gitSourcesUsableBy } from "../git-sources/source-scope";
 import { BadRequestException, ConflictException, ForbiddenException, HttpException, Injectable, Logger, NotFoundException, Optional, UnprocessableEntityException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
@@ -921,7 +922,7 @@ export class ImportExecutorService {
       // (re-verified on the target team + installed). If it is absent or un-installed, stay UNLINKED.
       const carried = gitSourceByRef.get(app.gitProviderRef);
       if (!carried) return undefined;
-      const row = await this.prisma.gitSource.findFirst({ where: { id: carried, teamId: server.teamId, installationId: { not: null } }, select: { id: true } });
+      const row = await this.prisma.gitSource.findFirst({ where: { id: carried, ...gitSourcesUsableBy(server.teamId), installationId: { not: null } }, select: { id: true } });
       return row ? row.id : undefined;
     } catch {
       return undefined;

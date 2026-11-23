@@ -1,3 +1,4 @@
+import { gitSourcesUsableBy } from "../git-sources/source-scope";
 import { ConflictException, Injectable, Logger, UnprocessableEntityException } from "@nestjs/common";
 import type { Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
@@ -151,7 +152,7 @@ export class ImportMappingService {
       this.prisma.project.findMany({ where: { teamId }, select: { id: true, name: true, isDefault: true, environments: { select: { id: true, name: true, isDefault: true } } } }),
       this.prisma.application.findMany({ where: { teamId }, select: { id: true, name: true, environmentId: true, serverId: true, containerAlias: true, networkAliases: true } }),
       this.prisma.database.findMany({ where: { teamId }, select: { id: true, name: true, environmentId: true } }),
-      this.prisma.gitSource.findMany({ where: { teamId }, select: { appId: true } }),
+      this.prisma.gitSource.findMany({ where: gitSourcesUsableBy(teamId), select: { appId: true } }),
       itemRefs.length
         ? this.prisma.bulkTask.findMany({ where: { itemRef: { in: itemRefs }, status: "DONE", resourceType: { in: ["application", "database"] } }, select: { itemRef: true, resourceId: true, resourceType: true, serverId: true } })
         : Promise.resolve([] as Array<{ itemRef: string | null; resourceId: string | null; resourceType: string | null; serverId: string }>),

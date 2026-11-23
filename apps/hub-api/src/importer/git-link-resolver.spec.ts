@@ -223,7 +223,7 @@ describe("GitLinkResolverService.resolve", () => {
   it("scopes the sources query to the target team", async () => {
     const { svc, prisma } = make([ghSrc("g1")], { sets: { g1: ["o/r"] } });
     await svc.resolve("team-77", [app("a", "o/r")]);
-    expect(prisma.gitSource.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { teamId: "team-77" } }));
+    expect(prisma.gitSource.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { OR: [{ teamId: "team-77" }, { sharedAllTeams: true }] } }));
   });
 
   it("never exposes a credential: rows carry ids/names/fixed text only", async () => {

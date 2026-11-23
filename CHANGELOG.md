@@ -7,6 +7,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **Connect a Git source once, use it in every team.** The instance owner can mark a GitHub App or Gitea-family source
+  **Share with all teams** (Git Sources). Every team can then import and deploy the repositories it can see: the import's
+  repo linking, app create/link, and the repo/branch pickers all accept a shared source; other teams see it read-only
+  with an "All teams" badge. Only the instance owner can share or stop sharing (`PATCH /git-sources/:id/sharing`, `admin`
+  scope for a token), and each change is audited.
+
 ## [0.1.0-beta.25] - 2026-11-23
 
 - **Servers behind a Cloudflare-proxied hub get their real IP, hostname and OS.** With the panel on Cloudflare's orange

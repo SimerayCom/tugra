@@ -35,6 +35,8 @@ export interface GitSourceView {
   cloneHost: string;
   createdAt: Date;
   canWrite: boolean;
+  /** Shared with every team by the instance owner (usable for imports and apps in any team). */
+  sharedAllTeams: boolean;
 }
 
 export interface RepoView {
@@ -73,13 +75,13 @@ export class GitSourcesService {
   private view(s: {
     id: string; name: string; teamId: string; provider: string; appId: string | null;
     appSlug: string | null; installationId: string | null; htmlUrl: string | null; createdAt: Date;
-    apiUrl?: string | null; tokenEnc?: string | null; privateKeyEnc?: string | null;
+    apiUrl?: string | null; tokenEnc?: string | null; privateKeyEnc?: string | null; sharedAllTeams?: boolean | null;
   }, canWrite: boolean): GitSourceView {
     return {
       id: s.id, name: s.name, teamId: s.teamId, provider: s.provider, kind: s.provider as GitKind, appId: s.appId,
       appSlug: s.appSlug, installationId: s.installationId, htmlUrl: s.htmlUrl,
       apiUrl: s.apiUrl ?? null, hasToken: !!(s.tokenEnc || s.privateKeyEnc), cloneHost: sourceCloneHost({ provider: s.provider, apiUrl: s.apiUrl ?? null }),
-      createdAt: s.createdAt, canWrite,
+      createdAt: s.createdAt, canWrite, sharedAllTeams: s.sharedAllTeams === true,
     };
   }
 
@@ -87,12 +89,26 @@ export class GitSourcesService {
     const permsByTeam = await this.access.permissionsByTeam(userId);
     const teamIds = [...permsByTeam.keys()];
     if (!teamIds.length) return [];
+    // The caller's teams' own sources, plus any the instance owner shared with every team (read-only there).
     const rows = await this.prisma.gitSource.findMany({
-      where: { teamId: { in: teamIds } },
+      where: { OR: [{ teamId: { in: teamIds } }, { sharedAllTeams: true }] },
       orderBy: { createdAt: "desc" },
     });
     const views = rows.map((s) => this.view(s, permsByTeam.get(s.teamId)?.has("integrations") ?? false));
     return filterByQuery(views, q, (g) => [g.name, g.provider, g.appSlug, g.htmlUrl, g.apiUrl]);
+  }
+
+  /** Share a source with every team, or stop sharing it. Instance owner only, and they must manage the owning team's
+   *  integrations: sharing hands every team read access to the repositories the source can see. Audited. */
+  async setSharing(userId: string, id: string, shared: boolean): Promise<GitSourceView> {
+    const s = await this.prisma.gitSource.findUnique({ where: { id } });
+    if (!s) throw new NotFoundException("git source not found");
+    const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { isInstanceOwner: true } });
+    if (!user?.isInstanceOwner) throw new ForbiddenException("only the instance owner can share a git source with every team");
+    await this.access.requirePermission(userId, s.teamId, "integrations");
+    const row = await this.prisma.gitSource.update({ where: { id }, data: { sharedAllTeams: shared } });
+    await this.audit.log({ actor: userId, action: shared ? "git_source.share" : "git_source.unshare", target: id });
+    return this.view(row, true);
   }
 
   async create(userId: string, dto: CreateGitSourceInput): Promise<GitSourceView> {
@@ -227,10 +243,14 @@ export class GitSourcesService {
     return data.token;
   }
 
-  /** Load a source and require the caller to be a member of its team. */
+  /** Load a source and require the caller to be a member of its team (or of any team, for a shared source). */
   private async memberSource(userId: string, id: string) {
     const s = await this.prisma.gitSource.findUnique({ where: { id } });
     if (!s) throw new NotFoundException("git source not found");
+    if (s.sharedAllTeams) {
+      if ((await this.access.permissionsByTeam(userId)).size > 0) return s;
+      throw new ForbiddenException("not a member of any team");
+    }
     if (!(await this.access.teamRole(userId, s.teamId))) {
       throw new ForbiddenException("not a member of this team");
     }

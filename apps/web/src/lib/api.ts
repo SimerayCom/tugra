@@ -1378,6 +1378,9 @@ export const api = {
   listSourceBranches(id: string, repo: string) {
     return apiFetch<SourceBranch[]>(`/git-sources/${id}/branches?repo=${encodeURIComponent(repo)}`);
   },
+  setGitSourceSharing(id: string, sharedAllTeams: boolean) {
+    return apiFetch<GitSource>(`/git-sources/${id}/sharing`, { method: "PATCH", body: JSON.stringify({ sharedAllTeams }) });
+  },
   deleteGitSource(id: string) {
     return apiFetch<{ ok: true }>(`/git-sources/${id}`, { method: "DELETE" });
   },

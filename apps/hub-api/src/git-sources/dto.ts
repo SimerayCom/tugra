@@ -36,5 +36,9 @@ export type CreateTokenSourceInput = z.infer<typeof CreateTokenSourceSchema>;
 export const UpsertGitSourceForImportSchema = CreateGithubAppSourceSchema.omit({ teamId: true, kind: true });
 export type UpsertGitSourceForImportInput = z.infer<typeof UpsertGitSourceForImportSchema>;
 
+/** `PATCH /git-sources/:id/sharing` — instance owner shares a source with every team (or stops). */
+export const GitSourceSharingSchema = z.object({ sharedAllTeams: z.boolean() }).strict();
+export type GitSourceSharingInput = z.infer<typeof GitSourceSharingSchema>;
+
 /** `GET /git-sources/:id/branches?repo=owner/name` */
 export const GitBranchesQuerySchema = z.object({ repo: z.string().min(3).max(300) });

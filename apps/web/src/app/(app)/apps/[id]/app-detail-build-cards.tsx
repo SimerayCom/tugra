@@ -136,7 +136,7 @@ export function SourceCard({ id, source, gitUrl, gitBranch, gitCommit, image, co
         // source is always listed (even when incompatible, or not visible to this viewer) so it can be seen and unlinked.
         const ssh = isSshGitUrl(gitUrl);
         const host = gitUrlHost(gitUrl);
-        const teamSources = (allSources ?? []).filter((s) => s.teamId === teamId);
+        const teamSources = (allSources ?? []).filter((s) => s.teamId === teamId || s.sharedAllTeams === true);
         const linked = gitSourceId ? teamSources.find((s) => s.id === gitSourceId) ?? null : null;
         const options = [
           { value: NO_SOURCE, label: t("apps.sourceProviderNone") },

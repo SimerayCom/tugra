@@ -1,3 +1,4 @@
+import { sourceUsableBy } from "../git-sources/source-scope";
 import type { PrProvider } from "../webhooks/pr-events";
 import {
   BadRequestException,
@@ -726,7 +727,7 @@ export class ApplicationsService {
       dto.environmentId ?? (await this.teamDefaults.resolveDefaultEnvironmentId(server.teamId));
     if (dto.gitSourceId) {
       const gs = await this.prisma.gitSource.findUnique({ where: { id: dto.gitSourceId } });
-      if (!gs || gs.teamId !== server.teamId) throw new BadRequestException("git source not found in this team");
+      if (!gs || !sourceUsableBy(gs, server.teamId)) throw new BadRequestException("git source not found in this team");
       this.assertSourceHost(gs, dto.gitUrl);
     }
 
@@ -4144,7 +4145,7 @@ export class ApplicationsService {
         if (input.gitSourceId === null) nextSourceId = null;
         else {
           const gs = await this.prisma.gitSource.findUnique({ where: { id: input.gitSourceId } });
-          if (!gs || gs.teamId !== app.teamId) throw new BadRequestException("git source not found in this team");
+          if (!gs || !sourceUsableBy(gs, app.teamId)) throw new BadRequestException("git source not found in this team");
           nextSourceId = input.gitSourceId;
         }
       }

@@ -1064,6 +1064,8 @@ export interface GitSource {
   cloneHost: string;
   createdAt: string;
   canWrite: boolean;
+  /** Shared with every team by the instance owner (absent on an older hub). */
+  sharedAllTeams?: boolean;
 }
 
 export type GitSourceKind = "github" | "gitea" | "forgejo" | "codeberg";

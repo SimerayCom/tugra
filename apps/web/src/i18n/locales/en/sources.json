@@ -31,5 +31,11 @@
   "token": "Access token",
   "tokenHint": "Write-only — it cannot be viewed after saving.",
   "connect": "Connect",
-  "noBranches": "No branches found"
+  "noBranches": "No branches found",
+  "share": "Share with all teams",
+  "unshare": "Stop sharing",
+  "shareHint": "Every team can then use this connection to import and deploy the repositories it can see. Only the instance owner can change this.",
+  "sharedBadge": "All teams",
+  "sharedOn": "Shared with every team",
+  "sharedOff": "No longer shared"
 }

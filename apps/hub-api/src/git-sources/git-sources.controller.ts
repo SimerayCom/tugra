@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, HttpCode, Param, Post, Query, UseGuards } from "@nestjs/common";
+import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
 import { ApiTags, ApiSecurity } from "@nestjs/swagger";
 import { ApiZodBody } from "../openapi/openapi";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
@@ -6,9 +6,10 @@ import { Paginated } from "../common/pagination.decorator";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { ApiAuthGuard } from "../api-tokens/api-auth.guard";
 import { ScopesGuard } from "../api-tokens/scopes.guard";
+import { RequireScopes } from "../api-tokens/require-scopes.decorator";
 import { AuthUser } from "../auth/strategies/jwt.strategy";
 import { GitSourcesService } from "./git-sources.service";
-import { CreateGitSourceInput, CreateGitSourceSchema, GitBranchesQuerySchema } from "./dto";
+import { CreateGitSourceInput, CreateGitSourceSchema, GitBranchesQuerySchema, GitSourceSharingInput, GitSourceSharingSchema } from "./dto";
 
 @ApiTags("git-sources")
 @ApiSecurity("pat")
@@ -30,6 +31,17 @@ export class GitSourcesController {
     @Body(new ZodValidationPipe(CreateGitSourceSchema)) body: CreateGitSourceInput,
   ) {
     return this.svc.create(user.userId, body);
+  }
+
+  @Patch(":id/sharing")
+  @RequireScopes("admin")
+  @ApiZodBody(GitSourceSharingSchema)
+  sharing(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(GitSourceSharingSchema)) body: GitSourceSharingInput,
+  ) {
+    return this.svc.setSharing(user.userId, id, body.sharedAllTeams);
   }
 
   @Get(":id/repos")

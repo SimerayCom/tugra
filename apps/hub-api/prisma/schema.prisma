@@ -915,6 +915,8 @@ model GitSource {
   htmlUrl          String?
   apiUrl           String? // token providers: the instance base URL (https, no trailing slash), e.g. https://codeberg.org
   tokenEnc         String? // token providers: the encrypted personal access token
+  /// Instance-owner switch: every team may use this source (import linking, app create/link, repo/branch lists).
+  sharedAllTeams   Boolean       @default(false)
   applications     Application[]
   createdAt        DateTime      @default(now())
 

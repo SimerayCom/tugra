@@ -13,6 +13,7 @@ import { ErrorState } from "../../../components/error-state";
 import { IconBtn } from "../../../components/icon-btn";
 import { useConfirm } from "../../../components/confirm";
 import { Field, Select, TextInput } from "../../../components/form";
+import { useAuth } from "../../../lib/auth";
 
 export default function SourcesPage() {
   const t = useT();
@@ -132,8 +133,19 @@ export default function SourcesPage() {
 
 function SourceRow({ source, onDelete }: { source: GitSource; onDelete: () => void }) {
   const t = useT();
-  const { id, name, appId, installationId, canWrite, kind, apiUrl, hasToken } = source;
+  const { id, name, appId, installationId, canWrite, kind, apiUrl, hasToken, sharedAllTeams } = source;
   const [repos, setRepos] = useState<SourceRepo[] | null>(null);
+  const { user } = useAuth();
+  const qc = useQueryClient();
+  const toast = useToast();
+  const share = useMutation({
+    mutationFn: (next: boolean) => api.setGitSourceSharing(id, next),
+    onSuccess: (s) => {
+      qc.invalidateQueries({ queryKey: ["gitSources"] });
+      toast(t(s.sharedAllTeams ? "sources.sharedOn" : "sources.sharedOff"), "success");
+    },
+    onError: (e) => toast((e as Error).message, "error"),
+  });
   const load = useMutation({ mutationFn: () => api.listSourceRepos(id), onSuccess: (r) => setRepos(r) });
   const kindLabel = sourceKindLabel(kind, t);
   return (
@@ -144,11 +156,23 @@ function SourceRow({ source, onDelete }: { source: GitSource; onDelete: () => vo
             <span style={{ fontWeight: 600, fontSize: 14 }}>{name}</span>
             <Badge tone="gold">{kindLabel}</Badge>
             {hasToken && <Badge tone="ok">{t("sources.connected")}</Badge>}
+            {sharedAllTeams && <Badge tone="muted">{t("sources.sharedBadge")}</Badge>}
           </div>
           <div className="mono" style={{ fontSize: 11, color: "var(--c-tx3)", marginTop: 3, overflowWrap: "anywhere" }}>
             {kind === "github" ? <>app {appId}{installationId ? ` · inst ${installationId}` : ""}</> : apiUrl}
           </div>
         </div>
+        {canWrite && user?.isInstanceOwner && (
+          <Btn
+            variant="ghost"
+            aria-pressed={sharedAllTeams}
+            title={t("sources.shareHint")}
+            loading={share.isPending}
+            onClick={() => share.mutate(!sharedAllTeams)}
+          >
+            {sharedAllTeams ? t("sources.unshare") : t("sources.share")}
+          </Btn>
+        )}
         {canWrite && (
           <>
             <Btn variant="ghost" onClick={() => load.mutate()} disabled={load.isPending}>{load.isPending ? "…" : t("sources.loadRepos")}</Btn>

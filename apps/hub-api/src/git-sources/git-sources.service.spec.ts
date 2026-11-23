@@ -22,6 +22,43 @@ function make(prisma: Partial<PrismaService>, access: Partial<TeamAccessService>
   return new GitSourcesService(prisma as PrismaService, access as TeamAccessService, audit, crypto);
 }
 
+describe("GitSourcesService.setSharing / shared sources", () => {
+  const src = { id: "g1", name: "tugra-mrcandev", teamId: "t1", provider: "github", appId: "1", appSlug: null, installationId: "2", htmlUrl: null, createdAt: new Date(), sharedAllTeams: false };
+
+  it("the instance owner can share a source with every team (audited)", async () => {
+    const update = jest.fn().mockResolvedValue({ ...src, sharedAllTeams: true });
+    const prisma = {
+      gitSource: { findUnique: jest.fn().mockResolvedValue(src), update },
+      user: { findUnique: jest.fn().mockResolvedValue({ isInstanceOwner: true }) },
+    } as unknown as PrismaService;
+    const requirePermission = jest.fn().mockResolvedValue(undefined);
+    const v = await make(prisma, { requirePermission }).setSharing("u1", "g1", true);
+    expect(requirePermission).toHaveBeenCalledWith("u1", "t1", "integrations");
+    expect(update).toHaveBeenCalledWith({ where: { id: "g1" }, data: { sharedAllTeams: true } });
+    expect(v.sharedAllTeams).toBe(true);
+  });
+
+  it("anyone else is refused before anything changes", async () => {
+    const update = jest.fn();
+    const prisma = {
+      gitSource: { findUnique: jest.fn().mockResolvedValue(src), update },
+      user: { findUnique: jest.fn().mockResolvedValue({ isInstanceOwner: false }) },
+    } as unknown as PrismaService;
+    await expect(make(prisma, { requirePermission: jest.fn() }).setSharing("u2", "g1", true)).rejects.toThrow(/instance owner/);
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("lists the caller's teams' sources plus shared ones", async () => {
+    const findMany = jest.fn().mockResolvedValue([{ ...src, teamId: "other", sharedAllTeams: true }]);
+    const prisma = { gitSource: { findMany } } as unknown as PrismaService;
+    const access = { permissionsByTeam: jest.fn().mockResolvedValue(new Map([["t2", new Set(["read"])]])) };
+    const rows = await make(prisma, access as unknown as Partial<TeamAccessService>).list("u1");
+    expect(findMany.mock.calls[0][0].where).toEqual({ OR: [{ teamId: { in: ["t2"] } }, { sharedAllTeams: true }] });
+    expect(rows[0].sharedAllTeams).toBe(true);
+    expect(rows[0].canWrite).toBe(false); // read-only outside its own team
+  });
+});
+
 describe("GitSourcesService", () => {
   it("encrypts secrets on create and never returns them", async () => {
     const create = jest.fn().mockResolvedValue({

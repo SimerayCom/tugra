@@ -141,7 +141,7 @@ describe("ImportMappingService.buildSnapshot", () => {
     expect(prisma.project.findMany.mock.calls[0][0].where).toEqual({ teamId: "team-a" });
     expect(prisma.application.findMany.mock.calls[0][0].where).toEqual({ teamId: "team-a" });
     expect(prisma.database.findMany.mock.calls[0][0].where).toEqual({ teamId: "team-a" });
-    expect(prisma.gitSource.findMany.mock.calls[0][0].where).toEqual({ teamId: "team-a" });
+    expect(prisma.gitSource.findMany.mock.calls[0][0].where).toEqual({ OR: [{ teamId: "team-a" }, { sharedAllTeams: true }] }); // own team + shared with every team
     expect(prisma.server.findMany.mock.calls[0][0].where).toMatchObject({ teamId: "team-a" });
     expect(snap.canCreateProjects).toBe(true);
     expect(snap.defaultEnvironmentId).toBe("e1");

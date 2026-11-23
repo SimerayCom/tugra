@@ -461,7 +461,7 @@ describe("ImportExecutorService — GitHub App carry + link (L2-APPLY)", () => {
     expect(h.gitSources.upsertForImport).toHaveBeenCalledTimes(1);
     expect(h.gitSources.upsertForImport).toHaveBeenCalledWith("user-1", "team-1", expect.objectContaining({ appId: "4242", appSlug: "my-app", installationId: "777", privateKey: PRIV, name: "My App" }));
     // verified on the target team + installed before linking
-    expect(h.prisma.gitSource.findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ id: "gs-new", teamId: "team-1" }) }));
+    expect(h.prisma.gitSource.findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ id: "gs-new", OR: [{ teamId: "team-1" }, { sharedAllTeams: true }] }) }));
     expect(h.apps.create).toHaveBeenCalledWith("user-1", expect.objectContaining({ gitSourceId: "gs-new" }));
   });
 
