@@ -346,11 +346,25 @@ is_cloudflare_ip() {
   [[ "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 1
   n="$(_ip_to_int "$ip")"
   for c in 173.245.48.0/20 103.21.244.0/22 103.22.200.0/22 103.31.4.0/22 141.101.64.0/18 108.162.192.0/18 190.93.240.0/20 \
-           188.114.96.0/20 197.234.240.0/22 198.41.128.0/17 162.158.0.0/15 104.16.0.0/13 104.24.0.0/14 172.64.0.0/13 131.0.0.0/22; do
+           188.114.96.0/20 197.234.240.0/22 198.41.128.0/17 162.158.0.0/15 104.16.0.0/13 104.24.0.0/14 172.64.0.0/13 131.0.72.0/22; do
     net="${c%/*}"; bits="${c#*/}"
     m=$(( (0xFFFFFFFF << (32 - bits)) & 0xFFFFFFFF ))
     if [ $(( n & m )) -eq $(( $(_ip_to_int "$net") & m )) ]; then return 0; fi
   done
+  return 1
+}
+
+# True (0) when IPv4 $1 is private / loopback / link-local / CGNAT: not an address anyone outside can reach (a cloud VM
+# behind NAT reports its interface address, never its public one).
+is_private_ipv4() {
+  local ip="$1" a b
+  [[ "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 1
+  a="${ip%%.*}"; b="${ip#*.}"; b="${b%%.*}"
+  case "$a" in 10|127) return 0 ;; esac
+  [ "$a" = "192" ] && [ "$b" = "168" ] && return 0
+  [ "$a" = "169" ] && [ "$b" = "254" ] && return 0
+  [ "$a" = "172" ] && [ "$b" -ge 16 ] && [ "$b" -le 31 ] && return 0
+  [ "$a" = "100" ] && [ "$b" -ge 64 ] && [ "$b" -le 127 ] && return 0
   return 1
 }
 
@@ -543,14 +557,15 @@ fi
 # URLs are resolved: a fresh install gets it (unless --raw-ports, explicit --hub-url/--web-url, or port 80 is taken by
 # something else); an existing install keeps exactly what it has (a stored PANEL_IP_ROUTE=1 stays on, every other
 # existing install keeps its raw ports) — a flag-less upgrade never moves anyone's panel.
-IP_MODE=0
+IP_PRIVATE_NOTICE=0
+IP_MODE=0; IP_MODE_FRESH=0   # IP_MODE_FRESH: THIS run is the one that first enables IP mode (a fresh install)
 if [ -z "$DOMAIN" ] && [ -z "$HUB_URL" ] && [ -z "$WEB_URL" ]; then
   if env_has HUB_PUBLIC_URL; then
     [ "$(env_get PANEL_IP_ROUTE | tr -d "\"' \r")" = "1" ] && IP_MODE=1
   elif [ "$RAW_PORTS" != "1" ]; then
-    IP_MODE=1
+    IP_MODE=1; IP_MODE_FRESH=1
     if [ "$DRY_RUN" -eq 0 ] && foreign_port_busy 80; then
-      IP_MODE=0
+      IP_MODE=0; IP_MODE_FRESH=0
       note "Port 80 is already in use by another service, so the panel is published on the raw ports (:$HUB_PORT/:$WEB_PORT) instead of http://<ip>/."
       note "Free port 80 and re-run with --hub-url/--web-url removed, or add --domain <host> once your own proxy fronts Tugra."
     fi
@@ -580,6 +595,13 @@ elif [ -z "$HUB_URL" ] || [ -z "$WEB_URL" ]; then
     warn "Could not auto-detect this host's IP; using 'localhost'. If agents run on other machines, re-run with --hub-url http://<host-ip>:$HUB_PORT --web-url http://<host-ip>:$WEB_PORT"
   fi
   if [ "$IP_MODE" = "1" ]; then
+    # A private interface address (cloud VM behind NAT, home LAN) is not reachable from outside: say so instead of
+    # printing it as the address to open. Only when the operator did not pin a public IP themselves.
+    if [ -z "$MANUAL_PUBLIC_IP" ] && is_private_ipv4 "$HOST_IP"; then
+      IP_PRIVATE_NOTICE=1
+      warn "This server's address ($HOST_IP) is a private one — it will only open from inside that network, not from the internet."
+      note "On a cloud server (behind NAT) re-run with --public-ip <the server's public IP> so the panel URL and agents use it."
+    fi
     # Through the proxy on port 80: no port in the URL (agents dial http://<ip>/agent, the browser opens http://<ip>/).
     HUB_URL="${HUB_URL:-http://$HOST_IP}"
     WEB_URL="${WEB_URL:-http://$HOST_IP}"
@@ -628,10 +650,17 @@ fi
 # (the bundled proxy could not bind them). A stored PANEL_TLS (an existing install's choice) is never overridden by a
 # flag-less run, and a re-run with --domain on an install that already decided keeps that decision.
 PANEL_TLS_DECISION=""; PANEL_ACME_EMAIL=""
+STORED_HUB_HTTPS=0
+if env_has HUB_PUBLIC_URL; then case "$(env_get HUB_PUBLIC_URL | tr -d "\"' \r")" in https://*) STORED_HUB_HTTPS=1 ;; esac; fi
 if [ -n "$DOMAIN" ] && [ "$HUB_TRUSTED_PROXY" = "true" ]; then
   _want=""
   if [ "$AUTO_TLS" = "1" ] || [ -n "$ACME_EMAIL_ARG" ] || [ -n "$ACME_DNS_TOKEN_ARG" ]; then _want=1
   elif [ "$AUTO_TLS" = "0" ]; then _want=0
+  elif ! env_has PANEL_TLS && [ "$STORED_HUB_HTTPS" = "1" ]; then
+    # An install that predates PANEL_TLS and is ALREADY https is fronted by the operator's own proxy (possibly on another
+    # host, pointing at host:3001). A flag-less --domain re-run must not start a second proxy and move the raw ports to
+    # loopback underneath it: keep bring-your-own-proxy, and say how to opt in.
+    note "This install is already served over https by your own proxy, so it stays that way. To let Tugra provision the panel's HTTPS instead, re-run with --auto-tls."
   elif ! env_has PANEL_TLS; then
     _want=1
     for _p in 80 443; do
@@ -1151,8 +1180,13 @@ if [ -n "$PANEL_PROXY_KIND" ]; then
           HEALTHY="$_hprev"   # the hub was verified before the rebind attempt; do not flip a good install to failed
         fi
       fi
+    elif [ -n "$_pip" ] && [ "$IP_MODE_FRESH" != "1" ]; then
+      # An EXISTING IP-mode install (a flag-less upgrade re-run): never move it. A slow proxy recreate or a transient
+      # probe miss must not turn a working http://<ip>/ panel into raw public ports; agents and bookmarks keep working.
+      warn "Tugra's proxy did not answer on port 80 yet (setup log: $LOGDIR/panel-run.log). The panel's address was left exactly as it is."
+      note "Check:  docker logs tugra-proxy  ·  is another service on :80?  Re-run this installer once it is fixed."
     elif [ -n "$_pip" ]; then
-      # The URLs already name port 80, so a proxy that did not come up must not leave a panel nobody can open: put the
+      # FRESH install: the URLs already name port 80, so a proxy that did not come up must not leave a panel nobody can open: put the
       # classic raw-port setup back (the same keys --raw-ports writes) and recreate hub/web on it.
       warn "Tugra's proxy did not come up on port 80 (setup log: $LOGDIR/panel-run.log) — falling back to the raw ports so the panel stays reachable."
       _fbh="$(printf '%s' "$WEB_URL" | sed -e 's#^[a-zA-Z][a-zA-Z0-9+.-]*://##' -e 's#[/:].*$##')"
@@ -1193,6 +1227,9 @@ printf '  Web UI:  %s\n' "$WEB_URL"
 printf '  Hub API: %s\n' "$HUB_URL"
 if [ "$IP_MODE" = "1" ] && [ "$PANEL_UP" = "1" ]; then
   printf '  \033[1mOpen %s in your browser\033[0m — Tugra serves the panel on port 80 itself, so only ports 80 and 443 need to be open.\n' "$WEB_URL"
+  if [ "$IP_PRIVATE_NOTICE" = "1" ]; then
+    printf '  \033[33mNote: %s is a private address, reachable only from inside your network. On a cloud server re-run with --public-ip <public IP>.\033[0m\n' "$WEB_URL"
+  fi
   printf '  Have a domain? Point its DNS at this server, then set it in Settings -> Instance -> Panel domain (free HTTPS, no token),\n'
   printf '  or re-run this installer with --domain <host>. (A cloud server behind NAT needs --public-ip <ip> for a reachable URL.)\n'
 elif [ "$(env_get PANEL_TLS)" = "1" ]; then

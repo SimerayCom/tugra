@@ -320,6 +320,17 @@ describe("scripts/install.sh", () => {
         expect(r.status).not.toBe(0);
         expect(existsSync(bad)).toBe(false);
       });
+      it("an https install from before PANEL_TLS existed (own proxy, maybe on another host) is NOT switched to bundled TLS by a flag-less --domain re-run", () => {
+        const p = join(dir, "dom-legacy-https.env");
+        run(["--domain", "a.example.com", "--no-auto-tls"], p);
+        writeFileSync(p, readFileSync(p, "utf8").replace(/^PANEL_TLS=.*\n/m, "").replace(/^HUB_BIND=.*$/m, "HUB_BIND=0.0.0.0").replace(/^WEB_BIND=.*$/m, "WEB_BIND=0.0.0.0"));
+        run(["--domain", "a.example.com"], p);
+        const env = parseEnv(readFileSync(p, "utf8"));
+        expect(env.PANEL_TLS).toBeUndefined();
+        expect(env.HUB_BIND).toBe("0.0.0.0");
+        run(["--domain", "a.example.com", "--auto-tls"], p); // the explicit opt-in still works
+        expect(parseEnv(readFileSync(p, "utf8")).PANEL_TLS).toBe("1");
+      });
       it("a re-run with a new --domain keeps an install's stored PANEL_TLS decision (BYO stays BYO)", () => {
         const p = join(dir, "dom-keep.env");
         run(["--domain", "a.example.com", "--no-auto-tls"], p);
@@ -740,6 +751,10 @@ exit 0
     writeFileSync(join(shims, "getent"), `#!/bin/sh\nfor ip in $SHIM_GETENT; do echo "$ip STREAM $2"; done\nexit 0\n`);
     chmodSync(join(shims, "ss"), 0o755);
     chmodSync(join(shims, "getent"), 0o755);
+    // hostname: SHIM_HOSTNAME_I fakes \`hostname -I\` (the interface address); everything else is the real tool.
+    const REAL_HOSTNAME = execFileSync("sh", ["-c", "command -v hostname"]).toString().trim();
+    writeFileSync(join(shims, "hostname"), `#!/bin/sh\nif [ "$1" = "-I" ] && [ -n "$SHIM_HOSTNAME_I" ]; then echo "$SHIM_HOSTNAME_I"; exit 0; fi\nexec ${REAL_HOSTNAME} "$@"\n`);
+    chmodSync(join(shims, "hostname"), 0o755);
     // df: the faked Docker data root ($SHIM_DOCKER_ROOT) reads $SHIM_LOG.avail (KiB; a removed image raises it), every other
     // path the real filesystem. mktemp: SHIM_MKTEMP_FAIL (a path prefix) makes the temp file for that .env unavailable (the
     // create fails); SHIM_MKTEMP_FULL makes it a file every write to which fails (/dev/full where it exists, else a directory).
@@ -1495,6 +1510,33 @@ exec ${REAL_CP} "$@"
           expect(calls()).toContain("up -d --no-deps hub-api web");
         });
 
+        it("an EXISTING IP-mode install is never moved to the raw ports when the proxy probe misses on a re-run", () => {
+          const p = join(work, "ip-existing-miss.env"); reset();
+          expect(install(p, ["--public-ip", "203.0.113.9"], { env: fast }).code).toBe(0);
+          const before = readEnv(p);
+          reset();
+          const r = install(p, [], { env: { ...fast, SHIM_CURL_FAIL_MATCH: "http://127.0.0.1/health" } });
+          expect(r.code).toBe(0);
+          const after = readEnv(p);
+          expect(after.WEB_PUBLIC_URL).toBe(before.WEB_PUBLIC_URL);
+          expect(after.HUB_PUBLIC_URL).toBe(before.HUB_PUBLIC_URL);
+          expect(after.PANEL_IP_ROUTE).toBe("1");
+          expect(after.HUB_TRUSTED_PROXY).toBe("true");
+          expect(after.HUB_BIND).toBe("127.0.0.1");
+          expect(r.out).not.toMatch(/falling back to the raw ports/);
+          expect(r.out).toMatch(/left exactly as it is/);
+        });
+
+        it("a private interface address (cloud VM behind NAT) is called out instead of printed as the address to open", () => {
+          const p = join(work, "ip-private.env"); reset();
+          const r = install(p, [], { env: { ...fast, SHIM_HOSTNAME_I: "10.1.2.3" } });
+          expect(r.code).toBe(0);
+          expect(r.out).toMatch(/10\.1\.2\.3\) is a private one/);
+          expect(r.out).toContain("--public-ip");
+          const ok = install(join(work, "ip-private-pinned.env"), ["--public-ip", "203.0.113.9"], { env: { ...fast, SHIM_HOSTNAME_I: "10.1.2.3" } });
+          expect(ok.out).not.toMatch(/is a private one/);
+        });
+
         it("port 80 held by another service: the raw-port quick start is used and the operator is told why", () => {
           const p = join(work, "ip-busy.env"); reset();
           const r = install(p, ["--public-ip", "203.0.113.9"], { env: { SHIM_SS: "LISTEN 0 511 0.0.0.0:80 0.0.0.0:*" } });
@@ -1527,6 +1569,13 @@ exec ${REAL_CP} "$@"
           expect(r.out).not.toMatch(/re-run with --acme-dns-cloudflare <token>/);
           expect(readEnv(p).ACME_DNS_TOKEN).toBeUndefined();
           expect(readEnv(p).PANEL_TLS).toBe("1");
+        });
+        it("uses Cloudflare's published 131.0.72.0/22 range (not 131.0.0.0/22)", () => {
+          reset();
+          const inside = install(join(work, "cf-131-in.env"), ["--domain", "panel.example.com"], { env: { SHIM_GETENT: "131.0.72.9" } });
+          expect(inside.out).toMatch(/behind Cloudflare's proxy/);
+          const outside = install(join(work, "cf-131-out.env"), ["--domain", "panel.example.com"], { env: { SHIM_GETENT: "131.0.0.9" } });
+          expect(outside.out).not.toMatch(/behind Cloudflare's proxy/);
         });
         it("the token stays an OPTION (named only as --acme-dns-cloudflare-file), and the other record states are unchanged", () => {
           const p = join(work, "cf-opt.env"); reset();
