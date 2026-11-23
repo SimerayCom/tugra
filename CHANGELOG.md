@@ -7,6 +7,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.0-beta.26] - 2026-11-23
+
 - **Connect a Git source once, use it in every team.** The instance owner can mark a GitHub App or Gitea-family source
   **Share with all teams** (Git Sources). Every team can then import and deploy the repositories it can see: the import's
   repo linking, app create/link, and the repo/branch pickers all accept a shared source; other teams see it read-only
