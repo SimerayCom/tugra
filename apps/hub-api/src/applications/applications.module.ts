@@ -26,6 +26,8 @@ import { ImageUpdateSchedulerService } from "./image-update.scheduler.service";
 import { ProxyService } from "./proxy.service";
 import { PanelTlsService } from "./panel-tls.service";
 import { PanelTlsController } from "./panel-tls.controller";
+import { PanelDomainService } from "./panel-domain.service";
+import { PanelDomainController } from "./panel-domain.controller";
 import { AppPrivilegedController } from "./app-privileged.controller";
 import { AiService } from "./ai.service";
 import { PortAllocatorService } from "./port-allocator.service";
@@ -34,7 +36,7 @@ import { APPLICATIONS_SERVICE, PROXY_SERVICE } from "./applications.tokens";
 
 @Module({
   imports: [AgentGatewayModule, MetricsModule, CryptoModule, MonitorsModule, NotificationsModule, GitSourcesModule, TeamDefaultsModule, CatalogModule, ClustersModule, DnsModule, DatabasesModule, SecretProvidersModule, LogDrainsModule],
-  controllers: [ApplicationsController, PanelTlsController, AppPrivilegedController],
+  controllers: [ApplicationsController, PanelTlsController, PanelDomainController, AppPrivilegedController],
   providers: [
     ApplicationsService,
     AppDatabaseLinksService,
@@ -47,6 +49,7 @@ import { APPLICATIONS_SERVICE, PROXY_SERVICE } from "./applications.tokens";
     ImageUpdateSchedulerService,
     ProxyService,
     PanelTlsService,
+    PanelDomainService,
     AiService,
     PortAllocatorService,
     ContainerLogStreamGuard,

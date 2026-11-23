@@ -392,6 +392,28 @@ export interface PanelTlsStatus {
   routerPresent: boolean;
 }
 
+/** Owner-set panel domain (GET/POST /instance/panel-domain): where the panel is served and the change in flight. */
+export type PanelDomainPhase = "idle" | "proxy" | "certificate" | "switching" | "done" | "failed";
+export type PanelDomainFailCode = "cert_timeout" | "proxy_failed" | "updater_stale" | "updater_failed" | "interrupted";
+export interface PanelDomainJob {
+  phase: PanelDomainPhase;
+  action: "set" | "remove" | null;
+  domain: string | null; // the host being switched to (null while removing)
+  error: string | null;
+  code: PanelDomainFailCode | null; // why it failed; the previous URL kept working
+  detail: string | null; // sanitized tail of the proxy's certificate log
+  startedAt: string | null;
+}
+export interface PanelDomainStatus {
+  mode: "ip" | "domain" | "port"; // ip = http://<ip>/ via the proxy · domain = https://<domain> · port = a raw :3001 install
+  domain: string | null;
+  url: string | null;
+  ipRoute: boolean;
+  localServerOnline: boolean;
+  acmeEmail: string | null;
+  job: PanelDomainJob;
+}
+
 /** Anonymous usage stats status (GET /instance/telemetry). Owner-only. On by default, opt-out. */
 export interface TelemetryStatus {
   /** Effective state: on AND not env-forced-off. */

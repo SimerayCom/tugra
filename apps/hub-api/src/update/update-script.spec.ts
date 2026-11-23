@@ -584,4 +584,115 @@ exec ${REAL_DF} "$@"
       expect(source).toMatch(/is_hex64\(\) \{ \[\[ "\$\{1:-\}" =~ \^\[0-9a-f\]\{64\}\$ \]\]; \}/);
     });
   });
+  describe("panel-domain job (Settings -> Instance -> Panel domain), scripts/lib/paneldomain.sh", () => {
+    const ID = "123e4567-e89b-12d3-a456-426614174000";
+    const now = () => String(Math.floor(Date.now() / 1000));
+    const pdJob = (o: Record<string, string>): string =>
+      JSON.stringify({ action: "panel-domain", jobId: ID, domain: "", acmeEmail: "", publicIp: "", requestedAt: now(), ...o });
+    const dir = mkdtempSync(join(tmpdir(), "update-pd-"));
+    afterAll(() => rmSync(dir, { recursive: true, force: true }));
+    const run = (job: string, extra: Record<string, string> = {}): string => {
+      const envFile = join(dir, ".env");
+      writeFileSync(envFile, "TUGRA_VERSION=0.1.0\nHUB_PUBLIC_URL=http://203.0.113.9\n");
+      return execFileSync("bash", [UPDATE_SH, "--dry-run", "--job", job], {
+        stdio: "pipe",
+        env: { PATH: process.env.PATH, ENV_FILE: envFile, ...extra } as NodeJS.ProcessEnv,
+      }).toString();
+    };
+
+    it("set: switches the URLs to https + the bundled TLS keys, recreates hub-api + web, reports applied", () => {
+      const out = run(pdJob({ domain: "panel.example.com", acmeEmail: "ops@real-domain.io" }));
+      for (const kv of [
+        "HUB_PUBLIC_URL=https://panel.example.com",
+        "WEB_PUBLIC_URL=https://panel.example.com",
+        "COOKIE_SECURE=true",
+        "HUB_TRUSTED_PROXY=true",
+        "PANEL_TLS=1",
+        "PANEL_DOMAIN=panel.example.com",
+        "PANEL_IP_ROUTE=0",
+        "ACME_EMAIL=ops@real-domain.io",
+      ]) {
+        expect(out).toContain(`SET_ENV: ${kv}`);
+      }
+      expect(out).toContain("up -d --no-deps hub-api web");
+      expect(out).toContain('"phase":"applying"');
+      expect(out).toContain(`"jobId":"${ID}","phase":"applied"`);
+      expect(out).toContain("instance:panel-domain:updater");
+      expect(out).not.toContain("instance:update:lock"); // not an update: never touches the update lock or the status key
+      expect(out).not.toContain("instance:update:status");
+      expect(out).not.toContain("HUB_BIND"); // the raw ports are left as they are (remote agents may still dial them)
+    });
+
+    it("set without an email writes no ACME_EMAIL (it is optional)", () => {
+      expect(run(pdJob({ domain: "panel.example.com" }))).not.toContain("ACME_EMAIL");
+    });
+
+    it("remove (empty domain): back to http://<ip>/ behind the same proxy, IP route on, TLS keys off", () => {
+      const out = run(pdJob({ publicIp: "198.51.100.4" }));
+      for (const kv of [
+        "HUB_PUBLIC_URL=http://198.51.100.4",
+        "WEB_PUBLIC_URL=http://198.51.100.4",
+        "COOKIE_SECURE=false",
+        "HUB_TRUSTED_PROXY=true",
+        "HUB_TRUSTED_PROXY_CLOUDFLARE=false",
+        "PANEL_TLS=0",
+        "PANEL_DOMAIN=",
+        "PANEL_IP_ROUTE=1",
+      ]) {
+        expect(out).toContain(`SET_ENV: ${kv}\n`);
+      }
+      expect(out).toContain('"phase":"applied"');
+    });
+
+    it("rejects anything that is not a bare hostname / IPv4 / email BEFORE writing .env or touching docker", () => {
+      for (const bad of [
+        pdJob({ domain: "https://x.example.com" }),
+        pdJob({ domain: "a b.example.com" }),
+        pdJob({ domain: "1.2.3.4" }),
+        pdJob({ domain: "x.example.com\nHUB_SIGNING_KEY=evil" }),
+        pdJob({ domain: "x.example.com", acmeEmail: "a@b.com\nX=1" }),
+        pdJob({ domain: "" }), // remove without an IP
+        pdJob({ publicIp: "999.1.1.1.1" }),
+      ]) {
+        const out = run(bad);
+        expect(out).toContain('"phase":"failed"');
+        expect(out).not.toContain("SET_ENV");
+        expect(out).not.toContain("up -d --no-deps");
+      }
+    });
+
+    it("ignores a job without a valid id, and a STALE job (the hub already gave up on it) is never applied late", () => {
+      const noId = run(JSON.stringify({ action: "panel-domain", jobId: "x", domain: "panel.example.com", requestedAt: now() }));
+      expect(noId).toContain("ignoring a job without a valid id");
+      expect(noId).not.toContain("SET_ENV");
+      const stale = run(pdJob({ domain: "panel.example.com", requestedAt: String(Math.floor(Date.now() / 1000) - 3600) }));
+      expect(stale).toContain("queued too long ago");
+      expect(stale).not.toContain("SET_ENV");
+    });
+
+    it("an unhealthy hub on the new URL: the saved .env goes back, the previous config is recreated and verified, failed is reported", () => {
+      const out = run(pdJob({ domain: "panel.example.com" }), { DRY_HEALTH: "fail-once" });
+      expect(out).toContain("restoring the previous configuration");
+      expect(out).toContain("restore");
+      expect(out.match(/up -d --no-deps hub-api web/g)?.length).toBe(2); // new config, then the restored one
+      expect(out).toContain('"phase":"failed"');
+      expect(out).toContain("the previous URL was restored");
+      expect(out).not.toContain('"phase":"applied"');
+    });
+
+    it("when even the restore cannot be verified it says so and names the saved .env copy", () => {
+      const out = run(pdJob({ domain: "panel.example.com" }), { DRY_HEALTH: "fail" });
+      expect(out).toContain("could not be verified");
+      expect(out).toMatch(/\.env copy: /);
+    });
+
+    it("is wired into the queue handler by its action, only recreates hub-api + web, and the lib is shipped as a host file (scripts/lib/*.sh)", () => {
+      expect(source).toContain('"panel-domain"');
+      const lib = readFileSync(join(__dirname, "..", "..", "..", "..", "scripts", "lib", "paneldomain.sh"), "utf8");
+      const ups = lib.split("\n").filter((l) => /compose up -d/.test(l) && !l.trim().startsWith("#"));
+      expect(ups.length).toBeGreaterThan(0);
+      for (const l of ups) expect(l).toMatch(/up -d --no-deps hub-api web\b/);
+      expect(lib).not.toMatch(/compose (down|stop|rm|kill|run)\b/);
+    });
+  });
 });

@@ -13,7 +13,8 @@ export const UPDATE_LOCK_KEY = "instance:update:lock";
 export const UPDATE_STATUS_KEY = "instance:update:status";
 const LOCK_KEY = UPDATE_LOCK_KEY;
 const STATUS_KEY = UPDATE_STATUS_KEY;
-const QUEUE_KEY = "instance:update:queue";
+export const UPDATE_QUEUE_KEY = "instance:update:queue";
+const QUEUE_KEY = UPDATE_QUEUE_KEY;
 /** Written by the sidecar (no TTL) when .env names a release newer than the one the containers run; see HalfUpdateView. */
 export const UPDATE_HALF_STATE_KEY = "instance:update:half_state";
 const LOCK_TTL_S = 900; // 15-min backstop; the sidecar releases the lock on any terminal status

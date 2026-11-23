@@ -16,6 +16,7 @@ import { TelemetryCard } from "./telemetry-card";
 import { BrandingCard } from "./branding-card";
 import { EmailSettingsCard } from "./email-settings-card";
 import { PanelTlsCard } from "./panel-tls-card";
+import { PanelDomainCard } from "./panel-domain-card";
 import { HubBackupCard } from "./hub-backup-card";
 import { UpdatesCard } from "./updates-card";
 import { AppearanceCard } from "./appearance-card";
@@ -154,6 +155,7 @@ export default function SettingsPage() {
               icon: SlidersHorizontal,
               content: (
                 <SettingsGrid hint={t("settings.sectionInstanceHint")}>
+                  <PanelDomainCard />
                   <PanelTlsCard />
                   <TelemetryCard />
                 </SettingsGrid>

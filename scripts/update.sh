@@ -142,6 +142,9 @@ TUGRA_SNAPSHOT_DRY="$DRY"
 . "$SCRIPT_DIR/lib/hostfiles.sh"
 # shellcheck source=lib/images.sh
 . "$SCRIPT_DIR/lib/images.sh"
+# shellcheck source=lib/paneldomain.sh
+# (guarded: a checkout mid-way through a host-files apply may briefly carry the new update.sh without the new lib)
+if [ -f "$SCRIPT_DIR/lib/paneldomain.sh" ]; then . "$SCRIPT_DIR/lib/paneldomain.sh"; fi
 
 # The sidecar only has the checkout (/repo) mounted. A TUGRA_BACKUP_DIR outside it would be written into the
 # container's ephemeral filesystem and vanish while the log claims success — so refuse it up front.
@@ -866,6 +869,12 @@ job_field() { printf '%s' "$1" | grep -o "\"$2\":\"[^\"]*\"" | head -n1 | cut -d
 # One queue job: {"targetVersion":"X"} (legacy) or {"targetVersion":"X","hubDigest":"<64hex>","webDigest":"<64hex>"}.
 handle_job() {
   local job="$1" target hub web host agentAmd64 agentArm64
+  # A panel-domain change (Settings -> Instance): same queue, its own handler (lib/paneldomain.sh). It never takes
+  # or releases the update lock — it is not an update.
+  if [ "$(job_field "$job" action)" = "panel-domain" ]; then
+    if declare -F panel_domain_job >/dev/null 2>&1; then panel_domain_job "$job"; else log "panel-domain: this updater has no panel-domain support yet — ignoring the job"; fi
+    return 0
+  fi
   target="$(job_field "$job" targetVersion)"
   if [ -z "$target" ]; then
     log "ignoring malformed job: $job"

@@ -19,6 +19,7 @@ import type {
   TelemetryStatus,
   Branding,
   PanelTlsStatus,
+  PanelDomainStatus,
   OwnerInstanceSettings,
   OidcConfig,
   MailSettings,
@@ -643,6 +644,16 @@ export const api = {
   },
   applyPanelTls() {
     return apiFetch<PanelTlsStatus>("/instance/panel-tls/apply", { method: "POST" });
+  },
+  // Owner-only panel domain: set / change / remove it from Settings (the change runs in the background; poll the status).
+  getPanelDomain() {
+    return apiFetch<PanelDomainStatus>("/instance/panel-domain");
+  },
+  setPanelDomain(body: { domain: string; acmeEmail?: string }) {
+    return apiFetch<PanelDomainStatus>("/instance/panel-domain", { method: "POST", body: JSON.stringify(body) });
+  },
+  removePanelDomain(body: { publicIp?: string } = {}) {
+    return apiFetch<PanelDomainStatus>("/instance/panel-domain/remove", { method: "POST", body: JSON.stringify(body) });
   },
   // Owner-only anonymous usage stats (on by default, opt-out). Status includes a live payload preview.
   getTelemetry() {
