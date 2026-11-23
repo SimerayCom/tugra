@@ -213,6 +213,15 @@ describe("renderAgentInstallScript", () => {
       expect(run(["--hub", "ws://localhost:3000/agent"]).code).toBe(0);
       expect(run(["--hub", "ws://hub-api:3000/agent"]).code).toBe(0);
       expect(run(["--hub", "ws://127.0.0.1:3000/agent"]).code).toBe(0);
+      expect(run(["--hub", "ws://127.1.2.3:3000/agent"]).code).toBe(0);
+    });
+
+    it("a name that merely starts with 127. is a public host, not loopback (the agent would refuse it)", () => {
+      const refused = run(["--hub", "ws://127.evil.example.com:3000/agent"]);
+      expect(refused.code).not.toBe(0);
+      expect(refused.stderr).toContain("plain ws://");
+      expect(run(["--hub", "ws://127.0.0.1.example.com/agent"]).code).not.toBe(0);
+      expect(run(["--hub", "ws://127.evil.example.com:3000/agent", "--hub-insecure"]).code).toBe(0);
     });
   });
 });
