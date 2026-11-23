@@ -10,8 +10,10 @@
 # Pass installer flags through after `--`, e.g. a TLS domain:
 #   curl -fsSL .../bootstrap.sh | sh -s -- --domain tugra.example.com
 #
-# Pin what you run: TUGRA_REF may be a branch, a tag or a full commit SHA (default: main), and
-# TUGRA_SHA256=<hex> additionally verifies scripts/install.sh before it is executed:
+# By default it installs the newest PUBLISHED release (the highest vX.Y.Z tag; a stable release wins over
+# pre-releases, and while there is no stable release yet the newest beta is used) with its prebuilt images.
+# Pin what you run: TUGRA_REF may be a branch, a tag or a full commit SHA (TUGRA_REF=main installs the
+# development branch), and TUGRA_SHA256=<hex> additionally verifies scripts/install.sh before it is executed:
 #   curl -fsSL .../bootstrap.sh | TUGRA_REF=v0.1.0 TUGRA_SHA256=<hex> sh
 #
 # Prefer to read before you run (recommended for any root-level installer)? Clone first:
@@ -19,7 +21,7 @@
 set -eu
 
 REPO_URL="${TUGRA_REPO_URL:-https://github.com/SimerayCom/tugra.git}"
-REPO_REF="${TUGRA_REF:-main}"
+REPO_REF="${TUGRA_REF:-}"
 DIR="${TUGRA_DIR:-tugra}"
 
 say() { printf '\033[38;5;179m==>\033[0m %s\n' "$*"; }
@@ -37,6 +39,25 @@ if ! command -v git >/dev/null 2>&1; then
   else die "git is required and no supported package manager was found. Install git, then re-run."
   fi
   command -v git >/dev/null 2>&1 || die "git install failed — install it manually, then re-run."
+fi
+
+# --- which ref: the newest published release unless TUGRA_REF says otherwise ---
+# latest_release: the highest release tag on the remote. Only vMAJOR.MINOR.PATCH[-alpha|beta|rc.N] tags count;
+# a stable release sorts above every pre-release of the same version (rank 9 vs 1-3). Pure git + awk, no API.
+latest_release() {
+  git ls-remote --tags --refs "$REPO_URL" 'v*' 2>/dev/null | awk '{ sub("^refs/tags/", "", $2); print $2 }' | awk '
+    /^v[0-9]+[.][0-9]+[.][0-9]+(-(alpha|beta|rc)[.][0-9]+)?$/ {
+      n = split(substr($0, 2), part, "-"); split(part[1], v, ".")
+      rank = 9; num = 0
+      if (n > 1) { split(part[2], p, "."); rank = (p[1] == "alpha") ? 1 : (p[1] == "beta") ? 2 : 3; num = p[2] }
+      printf "%06d%06d%06d%d%06d %s\n", v[1], v[2], v[3], rank, num, $0
+    }' | sort | tail -n 1 | cut -d' ' -f2
+}
+if [ -z "$REPO_REF" ]; then
+  say "Looking up the latest Tugra release…"
+  REPO_REF="$(latest_release)" || REPO_REF=""
+  [ -n "$REPO_REF" ] || die "could not find a published Tugra release at $REPO_URL — check your network, or set TUGRA_REF=main to install the development branch"
+  say "Latest release: $REPO_REF"
 fi
 
 # --- fetch (clone fresh, or fast-forward an existing checkout) ---
@@ -120,6 +141,11 @@ if [ -n "${TUGRA_SHA256:-}" ]; then
 fi
 
 # --- run the installer (it installs Docker if missing + brings the stack up) ---
+# A release tag installs that release's published images (not a local build of the checkout): pin the version
+# the installer pulls, unless the operator chose one explicitly.
+case "$REPO_REF" in
+  v[0-9]*.[0-9]*.[0-9]*) if [ -z "${TUGRA_VERSION:-}" ]; then TUGRA_VERSION="${REPO_REF#v}"; export TUGRA_VERSION; fi ;;
+esac
 cd "$DIR"
 say "Running the installer…"
 exec ./scripts/install.sh "$@"

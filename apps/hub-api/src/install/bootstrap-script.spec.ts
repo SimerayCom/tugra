@@ -31,7 +31,7 @@ describe("scripts/bootstrap.sh", () => {
     const commit = (marker: string): string => {
       mkdirSync(join(upstream, "scripts"), { recursive: true });
       const f = join(upstream, "scripts", "install.sh");
-      writeFileSync(f, `#!/bin/sh\necho "INSTALLED:${marker} args:$*"\n`);
+      writeFileSync(f, `#!/bin/sh\necho "INSTALLED:${marker} args:$* ver:${"$"}{TUGRA_VERSION:-none}"\n`);
       chmodSync(f, 0o755);
       git(upstream, "add", "-A");
       git(upstream, "commit", "-q", "-m", marker);
@@ -47,10 +47,12 @@ describe("scripts/bootstrap.sh", () => {
       git(upstream, "config", "uploadpack.allowAnySHA1InWant", "true");
       firstSha = commit("first");
       git(upstream, "tag", "v1.0");
+      git(upstream, "tag", "v0.1.0-beta.9");
       git(upstream, "checkout", "-q", "-b", "feature");
       commit("feature");
       git(upstream, "checkout", "-q", "main");
       commit("main");
+      git(upstream, "tag", "v0.1.0-beta.10"); // numerically newer than beta.9 (a plain string sort would pick beta.9)
       mainInstallSha256 = createHash("sha256").update(readFileSync(join(upstream, "scripts", "install.sh"))).digest("hex");
     });
 
@@ -71,10 +73,44 @@ describe("scripts/bootstrap.sh", () => {
       return { cwd, code: r.status, out: `${r.stdout}${r.stderr}` };
     };
 
-    it("defaults to main and passes installer flags through", () => {
+    it("defaults to the newest RELEASE tag (numeric pre-release order), pins its version and passes installer flags through", () => {
       const r = boot({}, ["--domain", "x.example.com"]);
       expect(r.code).toBe(0);
-      expect(r.out).toContain("INSTALLED:main args:--domain x.example.com");
+      expect(r.out).toContain("Latest release: v0.1.0-beta.10");
+      expect(r.out).toContain("INSTALLED:main args:--domain x.example.com ver:0.1.0-beta.10");
+    });
+
+    it("a STABLE release wins over newer-looking pre-releases", () => {
+      git(upstream, "tag", "v0.1.0", firstSha);
+      try {
+        const r = boot({});
+        expect(r.code).toBe(0);
+        expect(r.out).toContain("Latest release: v0.1.0");
+        expect(r.out).toContain("INSTALLED:first");
+        expect(r.out).toContain("ver:0.1.0");
+      } finally {
+        git(upstream, "tag", "-d", "v0.1.0");
+      }
+    });
+
+    it("an explicit TUGRA_VERSION is kept; a branch ref (TUGRA_REF=main) pins nothing", () => {
+      expect(boot({ TUGRA_VERSION: "9.9.9" }).out).toContain("ver:9.9.9");
+      expect(boot({ TUGRA_REF: "main" }).out).toContain("INSTALLED:main args: ver:none");
+    });
+
+    it("no release tag on the remote fails loudly instead of installing a branch", () => {
+      n += 1;
+      const empty = join(root, `empty${n}`);
+      mkdirSync(empty);
+      git(empty, "init", "-q");
+      git(empty, "commit", "-q", "--allow-empty", "-m", "x");
+      const r = spawnSync("sh", [BOOTSTRAP], {
+        cwd: root,
+        encoding: "utf8",
+        env: { PATH: process.env.PATH, HOME: root, TUGRA_REPO_URL: `file://${empty}`, TUGRA_DIR: `noRel${n}` } as NodeJS.ProcessEnv,
+      });
+      expect(r.status).not.toBe(0);
+      expect(`${r.stdout}${r.stderr}`).toContain("could not find a published Tugra release");
     });
 
     it("checks out a BRANCH ref", () => {
@@ -84,14 +120,14 @@ describe("scripts/bootstrap.sh", () => {
     });
 
     it("a branch bootstrap leaves a checkout that TRACKS origin (so `git pull && ./scripts/install.sh` works)", () => {
-      const r = boot({}); // default ref = main
+      const r = boot({ TUGRA_REF: "main" });
       expect(r.code).toBe(0);
       const dir = join(r.cwd, "tugra");
       expect(git(dir, "rev-parse", "--abbrev-ref", "main@{upstream}")).toBe("origin/main");
       expect(git(dir, "rev-parse", "--abbrev-ref", "HEAD")).toBe("main"); // not detached
       expect(() => git(dir, "pull", "-q", "--ff-only")).not.toThrow();
       // re-running bootstrap over the existing checkout keeps it tracking
-      expect(boot({}, [], { cwd: r.cwd }).code).toBe(0);
+      expect(boot({ TUGRA_REF: "main" }, [], { cwd: r.cwd }).code).toBe(0);
       expect(git(dir, "rev-parse", "--abbrev-ref", "main@{upstream}")).toBe("origin/main");
     });
 
@@ -165,10 +201,12 @@ describe("scripts/bootstrap.sh", () => {
       });
     });
 
-    it("checks out a TAG ref", () => {
+    it("checks out a TAG ref (a non-release tag pins no version)", () => {
       const r = boot({ TUGRA_REF: "v1.0" });
       expect(r.code).toBe(0);
       expect(r.out).toContain("INSTALLED:first");
+      expect(r.out).toContain("ver:none");
+      expect(boot({ TUGRA_REF: "v0.1.0-beta.9" }).out).toContain("INSTALLED:first args: ver:0.1.0-beta.9");
     });
 
     it("checks out a full commit SHA (which `git clone --branch` cannot do)", () => {

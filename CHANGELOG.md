@@ -7,6 +7,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **The one-line install now installs the newest published release.** `curl … bootstrap.sh | sh` used to check out
+  the development branch and, with no stable release published yet, fall back to building that unreleased code on
+  the server. It now picks the highest release tag (stable over pre-release, numeric beta order) and its prebuilt
+  images; `TUGRA_REF=main` still installs the development branch on purpose.
 - **The Coolify import plan now says what the dry run used to hide.** Scheduled database backups (and the S3 target they
   upload to, by name only, never its keys) are listed as not carried, with a plan warning to recreate them in Tugra's
   Backups. Apps that are dead or crash-looping at the source (status and restart count) are named in the plan warnings and

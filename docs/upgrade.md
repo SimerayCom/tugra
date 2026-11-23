@@ -226,8 +226,8 @@ already running, first takes the same pre-update restore point as above (abortin
 pinned `TUGRA_VERSION`, or any pull failure other than "no such image for this architecture", stops instead of
 silently building unreleased code from the checkout (use `--build` to build deliberately). Use it when you prefer
 git-driven upgrades or run with update checks turned off. (A checkout made by `bootstrap.sh` with a
-branch `TUGRA_REF` tracks that branch, so `git pull` works. A tag- or SHA-pinned install is detached by design:
-upgrade it by re-running bootstrap with a new `TUGRA_REF`, not with `git pull`.)
+branch `TUGRA_REF` tracks that branch, so `git pull` works. A release install (the default) or a tag- or SHA-pinned install is detached
+by design: upgrade it from the panel, or by re-running bootstrap (it picks the newest release again), not with `git pull`.)
 
 ### GitHub sign-in on a two-port or split-host install
 
