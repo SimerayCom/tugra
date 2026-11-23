@@ -230,3 +230,28 @@ func TestBuildRecreateInvocationRejectsBadInput(t *testing.T) {
 		}
 	}
 }
+
+// An IP-mode agent (wss://<ip>/agent + a leaf pin) must come back with its pin; a pin-less agent's helper stays
+// byte-identical to before.
+func TestBuildRecreateInvocationCarriesHubPin(t *testing.T) {
+	base := RecreateSpec{SelfName: "tugra-agent", DataVolume: "tugra-agent-data", HubURL: "wss://203.0.113.7/agent", NewImageRef: "img@sha256:abc", OldImageRef: "old"}
+	plainArgv, plainScript, err := BuildRecreateInvocation(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(plainScript, "HUB_PIN") || argvHasKey(plainArgv, "HUB_PIN=") {
+		t.Fatalf("no pin must add nothing\n%s", plainScript)
+	}
+	pinned := base
+	pinned.HubPin = "sha256:" + strings.Repeat("ab", 32)
+	argv, script, err := BuildRecreateInvocation(pinned)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !argvHas(argv, "-e", "HUB_PIN="+pinned.HubPin) {
+		t.Fatalf("argv must pass the pin: %#v", argv)
+	}
+	if strings.Count(script, `-e TUGRA_HUB_PIN="$HUB_PIN"`) != 2 {
+		t.Fatalf("both the new and the fallback run must carry the pin\n%s", script)
+	}
+}

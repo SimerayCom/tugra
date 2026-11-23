@@ -13,7 +13,10 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
+
+	"github.com/SimerayCom/tugra/agent/internal/endpoints"
 )
 
 // pathRe is the ONLY shape of path the agent will request: the hub's transfer route plus its exp/sig query. A
@@ -60,6 +63,47 @@ var client = &http.Client{
 	}(),
 }
 
+// pins maps a hub origin to the leaf-certificate pin its (self-signed) hub must present. Set by the client for the
+// endpoint the session is on, so the relay verifies the same certificate the WebSocket does. Origins without a pin
+// use the default client (system roots).
+var (
+	pinMu   sync.Mutex
+	pins    = map[string]string{}
+	pinHTTP = map[string]*http.Client{}
+)
+
+// SetPin pins (or, with an empty pin, unpins) the origin. Call it with the Origin() of the endpoint in use.
+func SetPin(origin, pin string) {
+	pinMu.Lock()
+	defer pinMu.Unlock()
+	if pin == "" {
+		delete(pins, origin)
+		return
+	}
+	pins[origin] = pin
+	delete(pinHTTP, pin)
+}
+
+// clientFor returns the HTTP client for an origin: pinned when the origin has a pin, else the default.
+func clientFor(origin string) *http.Client {
+	pinMu.Lock()
+	defer pinMu.Unlock()
+	pin, ok := pins[origin]
+	if !ok {
+		return client
+	}
+	if c, ok := pinHTTP[pin]; ok {
+		return c
+	}
+	c, err := endpoints.HTTPClient(pin, nil)
+	if err != nil {
+		return client // a malformed pin cannot be enforced: fall back to full chain verification (fails closed on self-signed)
+	}
+	c.Transport.(*http.Transport).DisableCompression = true
+	pinHTTP[pin] = c
+	return c
+}
+
 func build(ctx context.Context, method, origin, path string, body io.Reader) (*http.Request, error) {
 	if !ValidPath(path) {
 		return nil, errors.New("invalid transfer path")
@@ -79,7 +123,7 @@ func Get(ctx context.Context, origin, path string, size int64) (io.ReadCloser, e
 	if err != nil {
 		return nil, err
 	}
-	resp, err := client.Do(req)
+	resp, err := clientFor(origin).Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -107,7 +151,7 @@ func Put(ctx context.Context, origin, path string, body io.Reader, size int64) e
 	}
 	req.ContentLength = size
 	req.Header.Set("Content-Type", "application/octet-stream")
-	resp, err := client.Do(req)
+	resp, err := clientFor(origin).Do(req)
 	if err != nil {
 		return err
 	}

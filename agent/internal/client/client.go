@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"sync"
 	"sync/atomic"
@@ -15,6 +16,7 @@ import (
 	"github.com/SimerayCom/tugra/agent/internal/config"
 	"github.com/SimerayCom/tugra/agent/internal/dockerstats"
 	"github.com/SimerayCom/tugra/agent/internal/drains"
+	"github.com/SimerayCom/tugra/agent/internal/endpoints"
 	"github.com/SimerayCom/tugra/agent/internal/exec"
 	"github.com/SimerayCom/tugra/agent/internal/fsd"
 	"github.com/SimerayCom/tugra/agent/internal/hostinfo"
@@ -38,6 +40,9 @@ const (
 	trafficInterval        = 60 * time.Second // proxy access-log -> per-domain traffic summary window
 	hostInfoInterval       = 12 * time.Hour   // refresh hardware/OS inventory periodically
 	fsOpTimeout            = 30 * time.Second // hard wall-clock bound on one sandboxed file op
+
+	dialTimeout      = 15 * time.Second // TCP + TLS + WebSocket upgrade of one endpoint (a blackholed address must not stall the rotation)
+	handshakeTimeout = 15 * time.Second // challenge -> auth/enroll reply
 
 	// maxMessageBytes bounds one inbound hub frame. coder/websocket defaults to 32768, which a large
 	// signed command (big compose file / env blob / base64 script) exceeds, dropping the connection.
@@ -85,7 +90,21 @@ func Run(ctx context.Context, cfg config.Config, kp *keys.KeyPair, store *config
 // runOnce runs one hub session. forceEnroll takes the enroll path even when a stored identity exists
 // (used for the one-shot re-enroll retry) without touching the persisted identity until enroll succeeds.
 func runOnce(ctx context.Context, cfg config.Config, kp *keys.KeyPair, store *config.Store, onReady func(), forceEnroll bool) error {
-	conn, _, err := websocket.Dial(ctx, cfg.HubURL, nil)
+	plainOK := cfg.Endpoints == nil || cfg.Endpoints.AllowPlain()
+	if err := endpoints.CheckURL(endpoints.Endpoint{URL: cfg.HubURL, Pin: cfg.HubPin}, plainOK); err != nil {
+		return err
+	}
+	var onLeaf func([]byte)
+	if cfg.HubPin != "" && cfg.CACertPath != "" {
+		onLeaf = func(der []byte) { writeCACert(cfg.CACertPath, der) }
+	}
+	httpc, err := endpoints.HTTPClient(cfg.HubPin, onLeaf)
+	if err != nil {
+		return err
+	}
+	dialCtx, cancelDial := context.WithTimeout(ctx, dialTimeout)
+	conn, _, err := websocket.Dial(dialCtx, cfg.HubURL, &websocket.DialOptions{HTTPClient: httpc})
+	cancelDial()
 	if err != nil {
 		return err
 	}
@@ -99,14 +118,22 @@ func runOnce(ctx context.Context, cfg config.Config, kp *keys.KeyPair, store *co
 		defer writeMu.Unlock()
 		return wsjson.Write(ctx, conn, v)
 	}
+	// Handshake reads are bounded: an endpoint that accepts the TCP connection and then says nothing must not hang
+	// the rotation (the live reader below is unbounded on purpose).
+	readHandshake := func(v any) error {
+		hctx, cancel := context.WithTimeout(ctx, handshakeTimeout)
+		defer cancel()
+		return wsjson.Read(hctx, conn, v)
+	}
 
 	var challenge protocol.ServerMsg
-	if err := wsjson.Read(ctx, conn, &challenge); err != nil {
+	if err := readHandshake(&challenge); err != nil {
 		return err
 	}
 	if challenge.Type != "challenge" {
 		return fmt.Errorf("expected challenge, got %q", challenge.Type)
 	}
+	hubNonce := newHubNonce() // the hub signs it back (hubProof) to prove it holds the pinned hub key
 
 	// The durable command journal is process-level (shared across reconnects) when main.go provides it; a nil
 	// one (tests) degrades to a per-connection memory-only registry with the same semantics.
@@ -124,6 +151,7 @@ func runOnce(ctx context.Context, cfg config.Config, kp *keys.KeyPair, store *co
 			Signature:    kp.SignBase64(challenge.Nonce),
 			AgentVersion: cfg.Version, // refresh the hub's stored version on reconnect (e.g. after self-update)
 			Features:     protocol.Features,
+			HubNonce:     hubNonce,
 		}); err != nil {
 			return err
 		}
@@ -142,14 +170,31 @@ func runOnce(ctx context.Context, cfg config.Config, kp *keys.KeyPair, store *co
 			Hostname:     host,
 			Fingerprint:  host,
 			Features:     protocol.Features,
+			HubNonce:     hubNonce,
 		}); err != nil {
 			return err
 		}
 	}
 
 	var resp protocol.ServerMsg
-	if err := wsjson.Read(ctx, conn, &resp); err != nil {
+	if err := readHandshake(&resp); err != nil {
 		return err
+	}
+	var ident hubIdentity
+	switch resp.Type {
+	case "enrolled", "auth_ok":
+		// Is this the hub we enrolled with? A fresh enroll (the operator just handed us a token for THIS address) may
+		// pin a new key; every other connection — the install-time endpoint and every hub-pushed one — must present
+		// the pinned key, and a hub-pushed endpoint must also prove it holds it.
+		var verr error
+		ident, verr = verifyHubIdentity(store, resp, challenge.Nonce, hubNonce, cfg.RepinHubKey || resp.Type == "enrolled", cfg.Endpoints != nil && !cfg.IsBootstrap)
+		if verr != nil {
+			return verr
+		}
+		if ident.newlyPin && store.HubKey != "" {
+			log.Printf("hub signing key changed; pinned the new one (explicit re-enroll / TUGRA_HUB_REPIN)")
+		}
+		commitHubIdentity(store, resp, ident)
 	}
 	switch resp.Type {
 	case "enrolled":
@@ -163,7 +208,9 @@ func runOnce(ctx context.Context, cfg config.Config, kp *keys.KeyPair, store *co
 		// persisted identity here: Run() retries via a forced enroll and the "enrolled" branch above
 		// overwrites serverId/seal only on success. A generic/transient rejection keeps the identity and
 		// the agent simply retries auth — never a silent self-brick (see shouldForgetIdentity).
-		if shouldForgetIdentity(usedAuth, cfg.Token, resp) {
+		// A hub-pushed (learned) endpoint can never trigger a re-enroll: only the install-time address — where the
+		// operator's token was meant to go — may ask for it.
+		if (cfg.Endpoints == nil || cfg.IsBootstrap) && shouldForgetIdentity(usedAuth, cfg.Token, resp) {
 			return errStaleIdentity
 		}
 		if usedAuth {
@@ -187,6 +234,15 @@ func runOnce(ctx context.Context, cfg config.Config, kp *keys.KeyPair, store *co
 		if k, err := protocol.ParseHubKey(resp.HubKey); err == nil {
 			hubPub = k
 		}
+	}
+	if origin, err := xfer.Origin(cfg.HubURL); err == nil {
+		xfer.SetPin(origin, cfg.HubPin) // the signed file-transfer relay verifies the same certificate the socket did
+	}
+	// Tell the hub which list revision we hold and which endpoint this very session is on (the hub shows "moved / not
+	// moved" from it). Additive: a hub without hub_endpoints_v1 ignores the frame.
+	switchReq := make(chan struct{}, 1)
+	if cfg.Endpoints != nil {
+		_ = send(protocol.HubEndpointState{Type: "hub_endpoint_state", Rev: cfg.Endpoints.Rev(), Active: cfg.HubURL, Primary: cfg.Endpoints.Primary().URL, Accepted: true})
 	}
 
 	// Fail-closed capability allowlist, seeded from the flags and then made authoritative by the
@@ -288,7 +344,7 @@ func runOnce(ctx context.Context, cfg config.Config, kp *keys.KeyPair, store *co
 						reg.Untrack(reqID)
 						cancel()
 					}()
-					r := exec.RunStreamingEnv(cmdCtx, command, to, commandEnv(cfg.HubURL, capability), func(chunk string) {
+					r := exec.RunStreamingEnv(cmdCtx, command, to, commandEnvFor(cfg, capability), func(chunk string) {
 						if durable {
 							reg.Chunk(reqID, chunk)
 						}
@@ -466,7 +522,7 @@ func runOnce(ctx context.Context, cfg config.Config, kp *keys.KeyPair, store *co
 				}
 				go func(reqID, targetVersion, image, sha256 string) {
 					handedOff := false
-					selfupdate.Apply(ctx, cfg.HubURL, image, sha256, func(ok bool, phase, errMsg string) {
+					selfupdate.Apply(ctx, bootstrapURL(cfg), bootstrapPin(cfg), image, sha256, func(ok bool, phase, errMsg string) {
 						if ok && phase == "applying" {
 							handedOff = true // helper launched; we'll be recreated shortly
 						}
@@ -505,6 +561,8 @@ func runOnce(ctx context.Context, cfg config.Config, kp *keys.KeyPair, store *co
 				}(m.ReqID, m.Op, m.Volume, m.Path)
 			case "fs2_req":
 				fs2.handle(ctx, m)
+			case "hub_endpoints":
+				handleHubEndpoints(cfg, store, hubPub, ident.proofOK, m, send, switchReq)
 			}
 		}
 	}()
@@ -558,10 +616,23 @@ func runOnce(ctx context.Context, cfg config.Config, kp *keys.KeyPair, store *co
 	ticker := time.NewTicker(metricsInterval)
 	defer ticker.Stop()
 	coll := metrics.NewCollector()
+	// On a fallback endpoint, keep checking whether the primary answers again and go back to it.
+	var primaryTick <-chan time.Time
+	if cfg.IsFallback && cfg.ProbePrimary != nil {
+		pt := time.NewTicker(primaryProbeInterval)
+		defer pt.Stop()
+		primaryTick = pt.C
+	}
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
+		case <-switchReq:
+			return errEndpointSwitch
+		case <-primaryTick:
+			if cfg.ProbePrimary(ctx) {
+				return errPrimaryBack
+			}
 		case <-readerDone:
 			return errors.New("connection closed by hub")
 		case <-hostTicker.C:

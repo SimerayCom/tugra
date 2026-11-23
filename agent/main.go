@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -18,6 +19,7 @@ import (
 	"github.com/SimerayCom/tugra/agent/internal/client"
 	"github.com/SimerayCom/tugra/agent/internal/config"
 	"github.com/SimerayCom/tugra/agent/internal/ctrfs"
+	"github.com/SimerayCom/tugra/agent/internal/endpoints"
 	"github.com/SimerayCom/tugra/agent/internal/fsd"
 	"github.com/SimerayCom/tugra/agent/internal/journal"
 	"github.com/SimerayCom/tugra/agent/internal/keys"
@@ -49,6 +51,8 @@ func main() {
 	}
 
 	hub := flag.String("hub", envOr("TUGRA_HUB", ""), "hub websocket URL, e.g. wss://hub.example.com/agent")
+	hubPin := flag.String("hub-pin", envOr("TUGRA_HUB_PIN", ""), "sha256 fingerprint of the hub's leaf certificate (sha256:<hex>) for a hub on a bare IP with a self-signed certificate")
+	hubInsecure := flag.Bool("hub-insecure", envOr("TUGRA_HUB_INSECURE", "") == "1", "explicit opt-in to a plain ws:// hub URL (traffic, including secrets, is readable on the network)")
 	token := flag.String("token", envOr("TUGRA_TOKEN", ""), "enrollment token (first run only)")
 	caps := flag.String("caps", envOr("TUGRA_CAPS", ""), "\"all\" to disable the fail-closed allowlist (operator/upgrade escape); otherwise the hub pushes the granted set — a bootstrap list here is only used before the hub connects")
 	showVersion := flag.Bool("version", false, "print version and exit")
@@ -71,8 +75,35 @@ func main() {
 		bootstrapCaps = parseCaps(*caps)
 	}
 	home, _ := os.UserHomeDir()
+	bootstrap := endpoints.Endpoint{URL: strings.TrimSpace(*hub)}
+	if p := strings.TrimSpace(*hubPin); p != "" {
+		norm, err := endpoints.NormalizePin(p)
+		if err != nil {
+			log.Fatalf("invalid --hub-pin: %v", err)
+		}
+		bootstrap.Pin = norm
+	}
+	store, _ := config.LoadStore(filepath.Join(home, ".tugra", "agent.json"))
+	// A plain ws:// install that already enrolled before this policy existed keeps working (grandfathered, warned);
+	// a NEW plain ws:// install needs the explicit --hub-insecure.
+	insecure := *hubInsecure || (store.ServerID != "" && endpoints.IsPlain(bootstrap.URL))
+	mgr, err := endpoints.Open(filepath.Join(home, ".tugra", "endpoints.json"), bootstrap, insecure)
+	if err != nil {
+		log.Printf("warning: could not persist the hub endpoint list (%v); continuing with it in memory", err)
+	}
+	if err := endpoints.CheckURL(bootstrap, mgr.AllowPlain()); err != nil {
+		log.Fatalf("%v", err)
+	}
+	if endpoints.IsPlain(bootstrap.URL) {
+		if u, perr := url.Parse(bootstrap.URL); perr == nil && !endpoints.IsLoopbackOrInternal(u.Hostname()) {
+			log.Printf("WARNING: the hub is reached over plain ws:// - commands are signed but environment values and secrets travel readable on the network. Use a wss:// hub address.")
+		}
+	}
 	cfg := config.Config{
-		HubURL:       *hub,
+		HubURL:       bootstrap.URL,
+		HubPin:       bootstrap.Pin,
+		CACertPath:   filepath.Join(home, ".tugra", "hub-cert.pem"),
+		RepinHubKey:  envOr("TUGRA_HUB_REPIN", "") == "1",
 		Token:        *token,
 		Version:      Version,
 		KeyPath:      filepath.Join(home, ".tugra", "agent.key"),
@@ -95,30 +126,12 @@ func main() {
 	if err != nil {
 		log.Fatalf("key error: %v", err)
 	}
-	store, _ := config.LoadStore(cfg.StatePath)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	log.Printf("tugra-agent %s connecting to %s", Version, cfg.HubURL)
-	backoff := time.Second
-	for ctx.Err() == nil {
-		// Reset the backoff as soon as a handshake succeeds, so a blip after a long healthy session
-		// reconnects quickly instead of inheriting a maxed-out delay.
-		onReady := func() { backoff = time.Second }
-		if err := client.Run(ctx, cfg, kp, store, onReady); err != nil && ctx.Err() == nil {
-			log.Printf("connection error: %v; retrying in %s", err, backoff)
-			select {
-			case <-ctx.Done():
-			case <-time.After(backoff):
-			}
-			if backoff < 30*time.Second {
-				backoff *= 2
-			}
-			continue
-		}
-		backoff = time.Second
-	}
+	log.Printf("tugra-agent %s connecting to %s", Version, mgr.Primary().URL)
+	client.Supervise(ctx, cfg, kp, store, mgr)
 }
 
 func envOr(key, fallback string) string {

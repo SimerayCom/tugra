@@ -97,9 +97,12 @@ func cmpVer(a, b [3]int) int {
 
 // RecreateSpec is everything the detached helper needs to recreate this agent onto NewImageRef.
 type RecreateSpec struct {
-	SelfName    string // this agent's container name
-	DataVolume  string // named volume mounted at /root/.tugra (holds the agent's identity)
-	HubURL      string // TUGRA_HUB for the new container (the reconnect uses the volume identity, no token)
+	SelfName   string // this agent's container name
+	DataVolume string // named volume mounted at /root/.tugra (holds the agent's identity)
+	HubURL     string // TUGRA_HUB for the new container (the reconnect uses the volume identity, no token)
+	// HubPin is TUGRA_HUB_PIN for the new container: the leaf-certificate fingerprint of an IP-mode hub (wss://<ip>/agent).
+	// Empty (a hub with a publicly trusted certificate, or plain ws://) adds nothing, so the helper stays byte-identical.
+	HubPin      string
 	NewImageRef string // image@sha256:digest to run
 	OldImageRef string // fallback if the new image fails to start (host must never be left agentless)
 	// Networks the current container is attached to, to RE-ATTACH on recreate. Without this the new container
@@ -147,8 +150,12 @@ func BuildRecreateInvocation(s RecreateSpec) (argv []string, innerScript string,
 		extras = nets[1:]
 		netFlag = ` --network "$NET"`
 	}
-	runNew := `docker run -d --name "$SELF" --restart unless-stopped` + netFlag + ` -v /var/run/docker.sock:/var/run/docker.sock -v "$DATA_VOL":/root/.tugra -v /etc/tugra:/etc/tugra -e TUGRA_HUB="$HUB" -e TUGRA_AGENT_IMAGE="$NEW_IMAGE" "$NEW_IMAGE"`
-	runOld := `docker run -d --name "$SELF" --restart unless-stopped` + netFlag + ` -v /var/run/docker.sock:/var/run/docker.sock -v "$DATA_VOL":/root/.tugra -v /etc/tugra:/etc/tugra -e TUGRA_HUB="$HUB" -e TUGRA_AGENT_IMAGE="$OLD_IMAGE" "$OLD_IMAGE"`
+	pinFlag := ""
+	if s.HubPin != "" {
+		pinFlag = ` -e TUGRA_HUB_PIN="$HUB_PIN"`
+	}
+	runNew := `docker run -d --name "$SELF" --restart unless-stopped` + netFlag + ` -v /var/run/docker.sock:/var/run/docker.sock -v "$DATA_VOL":/root/.tugra -v /etc/tugra:/etc/tugra -e TUGRA_HUB="$HUB"` + pinFlag + ` -e TUGRA_AGENT_IMAGE="$NEW_IMAGE" "$NEW_IMAGE"`
+	runOld := `docker run -d --name "$SELF" --restart unless-stopped` + netFlag + ` -v /var/run/docker.sock:/var/run/docker.sock -v "$DATA_VOL":/root/.tugra -v /etc/tugra:/etc/tugra -e TUGRA_HUB="$HUB"` + pinFlag + ` -e TUGRA_AGENT_IMAGE="$OLD_IMAGE" "$OLD_IMAGE"`
 	// Connect any secondary networks to the just-created container (best-effort; the primary is already on via
 	// --network). Names are charset-validated above, so the unquoted `for` word-split is injection-safe.
 	connectExtras := ""
@@ -186,6 +193,9 @@ func BuildRecreateInvocation(s RecreateSpec) (argv []string, innerScript string,
 		"-e", "NEW_IMAGE=" + s.NewImageRef,
 		"-e", "OLD_IMAGE=" + s.OldImageRef,
 	}
+	if s.HubPin != "" {
+		argv = append(argv, "-e", "HUB_PIN="+s.HubPin)
+	}
 	if primary != "" {
 		argv = append(argv, "-e", "NET="+primary)
 	}
@@ -198,8 +208,8 @@ func BuildRecreateInvocation(s RecreateSpec) (argv []string, innerScript string,
 
 // Resolve inspects this agent's own container to discover its name, current image, and data volume, so the
 // recreate reuses them (handles custom --name / --volume installs). Falls back to the install defaults.
-func Resolve(ctx context.Context, hubURL string) RecreateSpec {
-	spec := RecreateSpec{SelfName: "tugra-agent", DataVolume: "tugra-agent-data", HubURL: hubURL}
+func Resolve(ctx context.Context, hubURL, hubPin string) RecreateSpec {
+	spec := RecreateSpec{SelfName: "tugra-agent", DataVolume: "tugra-agent-data", HubURL: hubURL, HubPin: hubPin}
 	host, _ := os.Hostname() // = the container's short id by default
 	if host == "" {
 		return spec
@@ -241,7 +251,7 @@ func orderNetworks(nets []string) []string {
 // Apply pulls the digest-pinned image (Docker verifies the digest) while the agent is still alive, then
 // launches the detached helper that recreates it. `report` is called with the pre-handoff outcome; success
 // is otherwise observed by the hub when the recreated agent reconnects with the new version.
-func Apply(ctx context.Context, hubURL, image, sha256 string, report func(ok bool, phase, errMsg string)) {
+func Apply(ctx context.Context, hubURL, hubPin, image, sha256 string, report func(ok bool, phase, errMsg string)) {
 	if err := ValidateImageRef(image); err != nil {
 		report(false, "validate", err.Error())
 		return
@@ -255,7 +265,7 @@ func Apply(ctx context.Context, hubURL, image, sha256 string, report func(ok boo
 		report(false, "pull", err.Error()) // agent stays on the old version — pull is before any handoff
 		return
 	}
-	spec := Resolve(ctx, hubURL)
+	spec := Resolve(ctx, hubURL, hubPin)
 	if spec.OldImageRef == "" {
 		report(false, "resolve", "cannot determine current image — aborting to avoid an agentless host")
 		return

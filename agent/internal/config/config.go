@@ -2,19 +2,39 @@
 package config
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
 
+	"github.com/SimerayCom/tugra/agent/internal/endpoints"
 	"github.com/SimerayCom/tugra/agent/internal/journal"
 )
 
 type Config struct {
-	HubURL    string
-	Token     string
-	Version   string
-	KeyPath   string
-	StatePath string
+	// HubURL is the endpoint THIS session dials (the supervisor sets it per attempt from the endpoint list); HubPin is
+	// that endpoint's leaf-certificate pin ("" = trust the system roots).
+	HubURL string
+	HubPin string
+	// Endpoints is the persisted ordered hub endpoint list (nil in tests = single fixed URL, no rotation).
+	Endpoints *endpoints.Manager
+	// IsFallback: this session is on an endpoint other than the primary, so the session periodically checks whether
+	// the primary is reachable again (ProbePrimary) and returns to it.
+	IsFallback   bool
+	ProbePrimary func(ctx context.Context) bool
+	// IsBootstrap: this session dials the install-time endpoint. Only there is a hub "reenroll" honoured, so a
+	// hub-pushed (learned) endpoint can never make the agent resend its enroll token.
+	IsBootstrap bool
+	// CACertPath is where the pinned hub leaf certificate is written (PEM) after a verified connection, so shell
+	// commands (curl) of the backup capability can trust the same self-signed hub (exported as TUGRA_HUB_CACERT).
+	CACertPath string
+	// RepinHubKey (TUGRA_HUB_REPIN=1) accepts a different hub signing key once and pins it — the explicit way to
+	// follow a hub whose HUB_SIGNING_KEY changed. Without it a different key is refused.
+	RepinHubKey bool
+	Token       string
+	Version     string
+	KeyPath     string
+	StatePath   string
 	// Capabilities the agent starts with before the hub pushes the authoritative set (on
 	// enrolled/auth_ok). Enforcement is FAIL-CLOSED: empty = deny all. The hub keeps this in sync
 	// live via the "capabilities" message, so this is only a pre-handshake bootstrap value.
@@ -37,6 +57,12 @@ type Config struct {
 type Store struct {
 	ServerID string `json:"serverId"`
 	Seal     string `json:"seal"`
+	// HubKey is the hub's ed25519 signing key (base64 SPKI) pinned at enroll / first auth. Every endpoint — the
+	// install-time one and each hub-pushed one — must present this key; a different key is refused.
+	HubKey string `json:"hubKey,omitempty"`
+	// HubProof: the hub has proven key possession once (hubNonce -> hubProof). From then on a connection without a
+	// valid proof is refused, so a peer that only replays the public key cannot downgrade the check.
+	HubProof bool `json:"hubProof,omitempty"`
 	path     string
 }
 

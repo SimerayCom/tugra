@@ -408,3 +408,35 @@ func TestFeaturesAdvertiseHubOriginEnv(t *testing.T) {
 		t.Fatalf("Features must advertise hub_origin_env_v1: %v", Features)
 	}
 }
+
+func TestCanonicalHubEndpointsGolden(t *testing.T) {
+	// Identical vector to the TS test in packages/shared (any drift rejects every hub_endpoints frame).
+	got := CanonicalHubEndpoints("srv1", 1731672000000, `[{"url":"wss://h/agent"}]`)
+	if got != "hep\nsrv1\n1731672000000\n[{\"url\":\"wss://h/agent\"}]" {
+		t.Fatalf("CanonicalHubEndpoints mismatch: %q", got)
+	}
+	if CanonicalHubEndpoints("srv2", 1, "[]") == CanonicalHubEndpoints("srv1", 1, "[]") {
+		t.Fatal("serverId must be bound into the signed bytes")
+	}
+	if CanonicalHubEndpoints("srv1", 2, "[]") == CanonicalHubEndpoints("srv1", 1, "[]") {
+		t.Fatal("rev must be bound into the signed bytes")
+	}
+}
+
+func TestCanonicalHubProofGolden(t *testing.T) {
+	if got := CanonicalHubProof("chal", "mine"); got != "hubid\nchal\nmine" {
+		t.Fatalf("CanonicalHubProof mismatch: %q", got)
+	}
+}
+
+func TestFeaturesAdvertiseHubEndpoints(t *testing.T) {
+	found := false
+	for _, f := range Features {
+		if f == FeatureHubEndpoints {
+			found = true
+		}
+	}
+	if !found || FeatureHubEndpoints != "hub_endpoints_v1" {
+		t.Fatalf("Features must advertise hub_endpoints_v1: %v", Features)
+	}
+}

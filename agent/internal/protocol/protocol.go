@@ -66,6 +66,8 @@ type Enroll struct {
 	Fingerprint  string `json:"fingerprint"`
 	// Features are optional per-feature flags (e.g. FeatureCmdJournal). Additive: an older hub ignores them.
 	Features []string `json:"features,omitempty"`
+	// HubNonce is a fresh agent-chosen nonce the hub signs back (ServerMsg.HubProof) to prove it holds the hub key.
+	HubNonce string `json:"hubNonce,omitempty"`
 }
 
 type Auth struct {
@@ -77,6 +79,8 @@ type Auth struct {
 	AgentVersion string `json:"agentVersion,omitempty"`
 	// Features are optional per-feature flags (e.g. FeatureCmdJournal). Additive: an older hub ignores them.
 	Features []string `json:"features,omitempty"`
+	// HubNonce: see Enroll.HubNonce.
+	HubNonce string `json:"hubNonce,omitempty"`
 }
 
 // FeatureCmdJournal: this agent journals `durable` commands on disk, keeps them running across a WebSocket drop,
@@ -104,8 +108,26 @@ const FeatureFs2 = "fs2_v1"
 // Mirrors AGENT_FEATURE_HUB_ORIGIN_ENV in packages/shared.
 const FeatureHubOriginEnv = "hub_origin_env_v1"
 
+// FeatureHubEndpoints: this agent keeps an ordered, persisted list of hub endpoints, accepts the signed
+// "hub_endpoints" frame, verifies the hub's identity proof (hubNonce -> hubProof) and reports "hub_endpoint_state".
+// Mirrors AGENT_FEATURE_HUB_ENDPOINTS in packages/shared.
+const FeatureHubEndpoints = "hub_endpoints_v1"
+
 // Features is the list this agent advertises in enroll/auth.
-var Features = []string{FeatureCmdJournal, FeatureLogDrainsV2, FeatureDrainSyslog, FeatureDrainGelf, FeatureDrainFluentd, FeatureFs2, FeatureHubOriginEnv}
+var Features = []string{FeatureCmdJournal, FeatureLogDrainsV2, FeatureDrainSyslog, FeatureDrainGelf, FeatureDrainFluentd, FeatureFs2, FeatureHubOriginEnv, FeatureHubEndpoints}
+
+// HubEndpointState: Agent -> Hub. Sent right after every successful handshake and as the reply to a "hub_endpoints"
+// frame. It tells the hub which list revision the agent holds and which endpoint this very session is on, so the hub
+// can show which agents have moved to a new address. Accepted/Error answer a pushed list (a refused one is reported,
+// never silently dropped).
+type HubEndpointState struct {
+	Type     string `json:"type"` // "hub_endpoint_state"
+	Rev      int64  `json:"rev"`
+	Active   string `json:"active"`
+	Primary  string `json:"primary"`
+	Accepted bool   `json:"accepted"`
+	Error    string `json:"error,omitempty"`
+}
 
 // CommandState: Agent -> Hub, reply to command_status (what happened to a durable command).
 type CommandState struct {
@@ -352,6 +374,13 @@ type ServerMsg struct {
 	IfMatch string `json:"ifMatch,omitempty"`
 	Xfer    string `json:"xfer,omitempty"`
 	Exp     int64  `json:"exp,omitempty"`
+	// HubProof (enrolled/auth_ok): ed25519 signature, by the hub key, over CanonicalHubProof(challenge nonce, the agent's
+	// HubNonce). The only thing that proves the endpoint just dialled is the hub and not something replaying its
+	// public key. Absent from an older hub.
+	HubProof string `json:"hubProof,omitempty"`
+	// Signed endpoint list (type "hub_endpoints"): Rev (above) is monotonic; EndpointsJSON is the pre-serialised JSON
+	// array of {url, pin?}, signed byte-for-byte via CanonicalHubEndpoints with the agent's OWN stored server id.
+	EndpointsJSON string `json:"endpointsJson,omitempty"`
 }
 
 // FsEntry: one listing entry (metadata only — never content; a symlink is reported, never dereferenced).
@@ -473,6 +502,18 @@ type DrainStatusMsg struct {
 // its OWN stored server id so a frame captured for another server (the hub key is fleet-wide) never verifies.
 func CanonicalLogDrains(serverID string, rev int64, drainsJSON, capability string) string {
 	return "ldrn\n" + serverID + "\n" + strconv.FormatInt(rev, 10) + "\n" + drainsJSON + "\n" + capability
+}
+
+// CanonicalHubEndpoints mirrors @tugra/shared canonicalHubEndpoints (byte-identical input). The agent verifies it with
+// its OWN stored server id, so a list captured for another server (the hub key is fleet-wide) never verifies.
+func CanonicalHubEndpoints(serverID string, rev int64, endpointsJSON string) string {
+	return "hep\n" + serverID + "\n" + strconv.FormatInt(rev, 10) + "\n" + endpointsJSON
+}
+
+// CanonicalHubProof mirrors @tugra/shared canonicalHubProof: the challenge nonce the hub issued plus the nonce the
+// agent chose, so a proof can neither be replayed on another connection nor precomputed.
+func CanonicalHubProof(challenge, hubNonce string) string {
+	return "hubid\n" + challenge + "\n" + hubNonce
 }
 
 // CanonicalCommand mirrors @tugra/shared canonicalCommand (byte-identical input).

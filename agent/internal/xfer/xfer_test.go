@@ -10,6 +10,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/SimerayCom/tugra/agent/internal/endpoints"
 )
 
 const goodPath = "/api/v1/agent-fs/t/AAAAAAAAAAAAAAAAAAAAAAAA?exp=1800000000&sig=BBBBBBBBBBBBBBBBBBBBBBBB"
@@ -256,4 +258,30 @@ func TestNoTransparentCompression(t *testing.T) {
 	if acceptEnc != "" {
 		t.Fatalf("Accept-Encoding = %q, want none", acceptEnc)
 	}
+}
+
+// A relay on a pinned (self-signed) hub verifies the pinned certificate; an unpinned origin keeps full chain
+// verification, and a wrong pin is refused.
+func TestSetPinGovernsTheRelayClient(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", "2")
+		_, _ = w.Write([]byte("ok"))
+	}))
+	defer srv.Close()
+	origin := srv.URL
+	t.Cleanup(func() { SetPin(origin, "") })
+
+	if _, err := Get(context.Background(), origin, goodPath, 2); err == nil {
+		t.Fatal("an unpinned self-signed hub must fail chain verification")
+	}
+	SetPin(origin, "sha256:"+strings.Repeat("00", 32))
+	if _, err := Get(context.Background(), origin, goodPath, 2); err == nil || !strings.Contains(err.Error(), "pinned fingerprint") {
+		t.Fatalf("a wrong pin must be refused: %v", err)
+	}
+	SetPin(origin, endpoints.Fingerprint(srv.Certificate().Raw))
+	rc, err := Get(context.Background(), origin, goodPath, 2)
+	if err != nil {
+		t.Fatalf("the right pin must connect: %v", err)
+	}
+	rc.Close()
 }
