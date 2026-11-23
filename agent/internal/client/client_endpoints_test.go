@@ -54,6 +54,7 @@ type epHub struct {
 	proof   bool                // send a valid hubProof
 	badProf bool                // send a hubProof that does not verify
 	code    string              // reply with an error carrying this code instead of auth_ok
+	replyTy string              // reply type override (a rogue hub answering an auth with "enrolled")
 	push    func(*epHub) []push // frames to send right after auth_ok
 	srv     *httptest.Server
 	url     string
@@ -111,6 +112,9 @@ func (h *epHub) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	reply := map[string]any{"type": "auth_ok", "serverId": "s1", "hubKey": h.keys.spki, "capabilities": []string{"deploy"}}
+	if h.replyTy != "" {
+		reply["type"] = h.replyTy
+	}
 	if hn, _ := first["hubNonce"].(string); hn != "" && h.proof {
 		reply["hubProof"] = h.keys.sign(protocol.CanonicalHubProof(nonce, hn))
 	}
@@ -314,6 +318,31 @@ func TestHubProofRules(t *testing.T) {
 			t.Fatalf("a learned endpoint without a proof must be refused: err=%v ready=%v", err, ready)
 		}
 	})
+}
+
+func TestEnrolledReplyToAuthIsRefused(t *testing.T) {
+	pinned, attacker := newHubKeys(t), newHubKeys(t)
+	for name, mk := range map[string]func(*epHub) config.Config{
+		"bootstrap": func(h *epHub) config.Config { return config.Config{HubURL: h.url} },
+		"learned": func(h *epHub) config.Config {
+			mgr, _ := endpoints.Open("", endpoints.Endpoint{URL: "wss://install.example.com/agent"}, false)
+			return config.Config{HubURL: h.url, Endpoints: mgr, IsBootstrap: false}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := newEpHub(t, attacker) // valid proof, its own key, answers the auth with "enrolled"
+			h.replyTy = "enrolled"
+			st, path := pinnedStore(t, pinned, true)
+			err, ready := runBounded(t, mk(h), st)
+			if ready || err == nil {
+				t.Fatalf("an enrolled reply to an auth must be refused: err=%v ready=%v", err, ready)
+			}
+			again, _ := config.LoadStore(path)
+			if again.HubKey != pinned.spki || again.ServerID != "s1" {
+				t.Fatalf("identity must be untouched: %+v", again)
+			}
+		})
+	}
 }
 
 func TestLearnedEndpointCannotTriggerReenroll(t *testing.T) {
@@ -528,5 +557,45 @@ func TestProbeEndpoint(t *testing.T) {
 	}
 	if !probeEndpoint(context.Background(), endpoints.Endpoint{URL: u, Pin: endpoints.Fingerprint(tlsSrv.Certificate().Raw)}) {
 		t.Fatal("the right pin must probe as reachable")
+	}
+}
+
+// A primary that fails its real handshake right after a probe said it was up must push the next probe out, so the
+// healthy fallback session is not dropped every probe interval.
+func TestFailedReturnToPrimaryBacksOffTheProbe(t *testing.T) {
+	live := newEpHub(t, newHubKeys(t)) // the primary: accepts the upgrade, so an ungated probe would say "back"
+	mgr, _ := endpoints.Open("", endpoints.Endpoint{URL: "wss://boot.example.com/agent"}, true)
+	if _, err := mgr.Apply(1, []endpoints.Endpoint{{URL: live.url}, {URL: "wss://fallback.example.com/agent"}}); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	var probe func(context.Context) bool
+	calls := 0
+	run := func(_ context.Context, cfg config.Config, _ *keys.KeyPair, _ *config.Store, onReady func()) error {
+		calls++
+		switch calls {
+		case 1: // primary down
+			return errors.New("dial: connection refused")
+		case 2: // fallback up; the probe says "primary back"
+			onReady()
+			return errPrimaryBack
+		case 3: // the primary upgrades the socket but fails the handshake
+			return ErrHubKeyMismatch
+		default: // fallback again: this session captures the gated probe
+			probe = cfg.ProbePrimary
+			onReady()
+			cancel()
+			return ctx.Err()
+		}
+	}
+	superviseWith(ctx, config.Config{}, keys.New(), &config.Store{}, mgr, run, func(context.Context, time.Duration) {})
+	if probe == nil {
+		t.Fatal("probe not captured")
+	}
+	if !probeEndpoint(context.Background(), endpoints.Endpoint{URL: live.url}) {
+		t.Fatal("test setup: the primary must accept the upgrade")
+	}
+	if probe(context.Background()) {
+		t.Fatal("right after a failed return the probe must be held back")
 	}
 }

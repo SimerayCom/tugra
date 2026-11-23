@@ -182,6 +182,13 @@ func (r *Registry) Untrack(reqID string) {
 	r.mu.Unlock()
 }
 
+// Running is how many commands (durable or not) are executing right now.
+func (r *Registry) Running() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.cancels)
+}
+
 // Cancel kills a tracked running command. Returns false when nothing by that reqId is running here.
 func (r *Registry) Cancel(reqID string) bool {
 	r.mu.Lock()

@@ -143,6 +143,12 @@ func runOnce(ctx context.Context, cfg config.Config, kp *keys.KeyPair, store *co
 	}
 
 	usedAuth := store.ServerID != "" && !forceEnroll
+	// A hub-pushed (learned) endpoint is never where the operator's enroll token was meant to go, and it never
+	// re-pins the hub key: it can only prove the identity pinned at install.
+	learnedEndpoint := cfg.Endpoints != nil && !cfg.IsBootstrap
+	if !usedAuth && learnedEndpoint {
+		return errors.New("refusing to enroll on a hub-pushed endpoint (the enroll token belongs to the install-time address)")
+	}
 	if usedAuth {
 		if err := send(protocol.Auth{
 			Type:         "auth",
@@ -186,8 +192,14 @@ func runOnce(ctx context.Context, cfg config.Config, kp *keys.KeyPair, store *co
 		// Is this the hub we enrolled with? A fresh enroll (the operator just handed us a token for THIS address) may
 		// pin a new key; every other connection — the install-time endpoint and every hub-pushed one — must present
 		// the pinned key, and a hub-pushed endpoint must also prove it holds it.
+		// "enrolled" is only a valid answer to an enroll we actually sent: a reply of that type to an auth would
+		// otherwise carry its own key, serverId and seal past every check.
+		if resp.Type == "enrolled" && usedAuth {
+			return errors.New("the hub answered an auth with an enrollment (refusing this endpoint)")
+		}
+		repin := !learnedEndpoint && (cfg.RepinHubKey || (resp.Type == "enrolled" && !usedAuth))
 		var verr error
-		ident, verr = verifyHubIdentity(store, resp, challenge.Nonce, hubNonce, cfg.RepinHubKey || resp.Type == "enrolled", cfg.Endpoints != nil && !cfg.IsBootstrap)
+		ident, verr = verifyHubIdentity(store, resp, challenge.Nonce, hubNonce, repin, learnedEndpoint)
 		if verr != nil {
 			return verr
 		}
@@ -630,7 +642,11 @@ func runOnce(ctx context.Context, cfg config.Config, kp *keys.KeyPair, store *co
 		case <-switchReq:
 			return errEndpointSwitch
 		case <-primaryTick:
-			if cfg.ProbePrimary(ctx) {
+			// Only between jobs: leaving the socket kills non-durable commands, terminals and log streams.
+			sessMu.Lock()
+			busy := len(sessions)+len(logStreams) > 0
+			sessMu.Unlock()
+			if !busy && reg.Running() == 0 && cfg.ProbePrimary(ctx) {
 				return errPrimaryBack
 			}
 		case <-readerDone:

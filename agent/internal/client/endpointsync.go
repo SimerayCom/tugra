@@ -22,6 +22,9 @@ var errPrimaryBack = errors.New("primary hub endpoint is reachable again; return
 // primaryProbeInterval is how often a session on a fallback endpoint checks whether the primary is back.
 var primaryProbeInterval = 2 * time.Minute
 
+// maxProbeBackoff caps how far a primary that keeps failing its real handshake pushes the next probe out.
+const maxProbeBackoff = 30 * time.Minute
+
 // bootstrapURL / bootstrapPin are what a self-update passes on as TUGRA_HUB / TUGRA_HUB_PIN: always the install-time
 // endpoint, never a hub-pushed one, so the recreated agent recognises its own persisted list and keeps it.
 func bootstrapURL(cfg config.Config) string {

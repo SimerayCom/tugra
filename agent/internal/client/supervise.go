@@ -39,6 +39,12 @@ func sleepCtx(ctx context.Context, d time.Duration) {
 
 func superviseWith(ctx context.Context, base config.Config, kp *keys.KeyPair, store *config.Store, mgr *endpoints.Manager, run runner, wait func(context.Context, time.Duration)) {
 	backoff := time.Second
+	// A primary that accepts the WebSocket upgrade but then fails the real handshake (pin / key mismatch, a CDN in
+	// front, the hub rejecting us) must not make the agent drop a healthy fallback session over and over: every
+	// failed return to the primary pushes the next probe out (doubling, capped).
+	var probeAfter time.Time
+	probeFails := 0
+	backFromProbe := false
 	for ctx.Err() == nil {
 		order := mgr.Order()
 		if len(order) == 0 {
@@ -57,15 +63,35 @@ func superviseWith(ctx context.Context, base config.Config, kp *keys.KeyPair, st
 			cfg.HubURL, cfg.HubPin = ep.URL, ep.Pin
 			cfg.IsFallback = i > 0
 			cfg.IsBootstrap = ep.URL == mgr.Bootstrap().URL
-			cfg.ProbePrimary = func(c context.Context) bool { return probeEndpoint(c, primary) }
+			cfg.ProbePrimary = func(c context.Context) bool {
+				if time.Now().Before(probeAfter) {
+					return false
+				}
+				return probeEndpoint(c, primary)
+			}
 			ready := false
 			err := run(ctx, cfg, kp, store, func() { ready = true; backoff = time.Second })
 			if ctx.Err() != nil {
 				return
 			}
+			if i == 0 {
+				switch {
+				case ready:
+					probeFails, probeAfter = 0, time.Time{}
+				case backFromProbe:
+					probeFails++
+					d := primaryProbeInterval << min(probeFails, 5)
+					if d > maxProbeBackoff {
+						d = maxProbeBackoff
+					}
+					probeAfter = time.Now().Add(d)
+				}
+				backFromProbe = false
+			}
 			if ready {
 				established = true
 				immediate = errors.Is(err, errEndpointSwitch) || errors.Is(err, errPrimaryBack)
+				backFromProbe = errors.Is(err, errPrimaryBack)
 				log.Printf("hub session on %s ended: %v", ep.URL, err)
 				break
 			}
