@@ -7,6 +7,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **The Coolify import plan now says what the dry run used to hide.** Scheduled database backups (and the S3 target they
+  upload to, by name only, never its keys) are listed as not carried, with a plan warning to recreate them in Tugra's
+  Backups. Apps that are dead or crash-looping at the source (status and restart count) are named in the plan warnings and
+  the preflight. A MinIO volume no longer shows as copied by the import (its data moves through Object migration), service
+  host-path binds now need the same bind-mount acknowledgement as an app's, and source servers that report no operating
+  system get a warning that it is only checked when the agent enrols.
 - **Image cleanup and the disk check no longer misfire on a busy server.** A shell race could make the updater
   miss its own release images: cleanup then removed nothing and the disk check under-estimated the space an update
   needs. The same race could also mislabel a disk-full pull as a generic pull failure.
