@@ -7,6 +7,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **Agents follow the hub when its address changes, and talk to it encrypted even on a bare IP.** The agent used to hold one
+  URL fixed at install: an IP-mode hub meant plaintext `ws://<ip>/agent`, and setting, changing or removing the panel domain
+  dropped the old route so every remote agent was stranded until re-installed by hand. Now each agent keeps an ordered,
+  persisted list of hub endpoints (primary + fallbacks; rotation with backoff, primary first after every drop, survives
+  restarts and self-updates) and the hub pushes it in a signed `hub_endpoints` message on connect and on every change. The
+  panel-domain flow pushes the new address to all connected agents **before** the switch and keeps the old host and the IP
+  route answering `/agent` until every agent reports the new address, you press **Stop waiting**, or 7 days pass; Settings →
+  Panel domain shows "N of M agents moved to the new address" and which ones did not. Every endpoint must present the hub
+  key pinned at enroll and prove it with a per-connection signature; in IP mode the hub serves `wss://<ip>/agent` with one
+  persisted self-signed certificate, the add-server command carries its SHA-256 fingerprint (`--hub-pin`) and the agent pins
+  the leaf. Plain `ws://` now needs an explicit `--hub-insecure` (existing installs keep working) and the UI warns about it.
+  Agents that predate this keep working on their single URL. New owner-only `POST /instance/panel-domain/agents/release`
+  (OpenAPI and CLI schema regenerated).
+
 - **A plain install is reachable on port 80, and HTTPS needs no Cloudflare token.** Without `--domain` the panel now comes
   up on `http://<server-ip>/` through Tugra's own proxy (the same single-origin routing as a domain install), so a host
   that only opens 80/443 works out of the box and the URL is printed at the end of the install. An existing install keeps

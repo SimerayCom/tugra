@@ -130,6 +130,23 @@ queued change the hub has given up on is removed from the update helper's queue 
 back to `http://<server-ip>/` the same way. After a switch you sign in again at the new address (cookies are per
 origin), and agents installed on other servers with the old address need the new one (re-run their install command).
 
+### Agents on a bare-IP install (no domain): encrypted, pinned
+
+With no domain the proxy also answers `https://<server-ip>/` (port 443) with a **self-signed certificate the hub generates
+once and keeps** (its key is encrypted at rest). The *add server* command then looks like
+
+```sh
+curl -fsSLk --pinnedpubkey 'sha256//<spki>' https://<ip>/install/agent.sh | sh -s -- \
+  --hub wss://<ip>/agent --hub-pin sha256:<fingerprint> --token <token>
+```
+
+The installer is fetched over exactly that certificate and the agent talks to **nothing but that certificate**
+(`--hub-pin`), so secrets in deploy environments are not readable on the network. Browsers will warn about the
+self-signed certificate if you open `https://<ip>/` — use the `http://` address for the panel, or give it a domain. Port 443
+must be reachable from your servers. Plain `ws://` is only used when you opt in (`--hub-insecure`; the UI shows a warning
+next to such a command) or for a compose-internal address. A hub restored with a *different* `HUB_SIGNING_KEY` is refused by
+agents that pinned the old one — set `TUGRA_HUB_REPIN=1` on those agents once, or keep the key (it is a required secret).
+
 ### Option B — bring your own reverse proxy
 
 Run `--domain <host> --no-auto-tls` and front the stack with your own TLS proxy (Caddy, Traefik, nginx, …).

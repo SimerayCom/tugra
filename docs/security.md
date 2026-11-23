@@ -8,6 +8,12 @@ vulnerability**, see the [security policy](../SECURITY.md) — please don't open
 - **Signed agent protocol.** The agent dials out to the hub over WSS (no inbound ports); the hub signs
   every command with an ed25519 key that the agent pins, and rejects anything unsigned. Each server is
   granted a capability set the agent enforces fail-closed. See [architecture](architecture.md).
+- **Agent ↔ hub transport and identity.** The agent pins the hub's signing key at enroll and every hub endpoint (including
+  ones the hub later pushes in a signed list) must present that key *and* prove it with a per-connection signature. On a
+  bare-IP install the hub serves `wss://` with a persisted self-signed certificate whose fingerprint is in the install
+  command; the agent pins that leaf. Plain `ws://` requires an explicit `--hub-insecure` (commands stay signed, but
+  environment values and secrets would travel readable) and the UI warns about it. See
+  [architecture](architecture.md#hub--agent-protocol).
 - **Fail-closed secrets.** `HUB_SIGNING_KEY` is required in production (the hub won't boot without it
   outside dev/test). Stored secrets (env vars, credentials, DB connection strings) are encrypted at rest
   with `SECRETS_ENCRYPTION_KEY`; the key can be rotated without downtime (see
