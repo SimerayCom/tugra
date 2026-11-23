@@ -432,7 +432,7 @@ nc_cloud_detect() {
       *7783-7084-3265-9085-8269-3286-77*) NC_CLOUD=azure ;;
     esac
   fi
-  if [ -z "$NC_CLOUD" ] && printf '%s' "$host" | grep -Eq '^vmi[0-9]+'; then NC_CLOUD=contabo; fi
+  if [ -z "$NC_CLOUD" ]; then case "$host" in vmi[0-9]*) NC_CLOUD=contabo ;; esac; fi
   if [ -z "$NC_CLOUD" ]; then
     case "$blob" in *qemu*|*kvm*|*seabios*|*"standard pc"*|*"bochs"*|*"red hat"*|*"openstack"*) NC_CLOUD=kvm ;; esac
   fi

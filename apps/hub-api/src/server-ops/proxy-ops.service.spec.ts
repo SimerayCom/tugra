@@ -133,11 +133,22 @@ describe("ProxyOpsService", () => {
     expect(opsScript).not.toContain("exit 0; fi");
     expect(appScript).toContain("exit 0; fi");
     // Strip ONLY the gate lines from the deploy script → it must be byte-identical to the operator script.
-    const stripGate = (s: string) =>
-      s
-        .split("\n")
-        .filter((l) => !/^(DESIRED=|CUR=|STATE=|if \[ "\$CUR")/.test(l))
-        .join("\n");
+    // The gate is the DESIRED/CUR/STATE lines plus the `if [ "$CUR" … ] then … exit 0; fi` block, whose body may
+    // refresh the dynamic panel file in place (grace routes / IP cert) before skipping the recreate.
+    const stripGate = (s: string) => {
+      const out: string[] = [];
+      let inGate = false;
+      for (const l of s.split("\n")) {
+        if (/^(DESIRED=|CUR=|STATE=)/.test(l)) continue;
+        if (/^if \[ "\$CUR"/.test(l)) inGate = true;
+        if (inGate) {
+          if (/exit 0; fi$/.test(l)) inGate = false;
+          continue;
+        }
+        out.push(l);
+      }
+      return out.join("\n");
+    };
     expect(stripGate(appScript)).toBe(opsScript);
     // ...and both stamp the SAME confighash label (same resolved config ⇒ same hash).
     const label = (s: string) => s.match(/--label tugra\.proxy\.confighash='[a-f0-9]{12}'/)?.[0];
