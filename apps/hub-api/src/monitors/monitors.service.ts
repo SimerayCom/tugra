@@ -423,6 +423,7 @@ export class MonitorsService implements OnApplicationBootstrap {
       status: h.status,
       ms: h.ms,
       msg: h.msg,
+      cause: h.cause ?? null,
       important: h.important,
     }));
   }

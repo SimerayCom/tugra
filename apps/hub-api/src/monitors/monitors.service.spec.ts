@@ -306,3 +306,39 @@ describe("MonitorsService.createForServer / removeForServer", () => {
     expect(deleteMany).toHaveBeenCalledWith({ where: { serverId: "s1" } });
   });
 });
+
+describe("MonitorsService.create — request options", () => {
+  it("stores headers, basic auth and body only as one encrypted blob, and never returns them", async () => {
+    const create = jest.fn(async ({ data }: { data: Record<string, unknown> }) => ({ ...monitor, ...data, id: "new", teamId: "t1" }));
+    const prisma = {
+      monitor: { create },
+      monitorChannel: { createMany: jest.fn() },
+      server: { findFirst: jest.fn() },
+      notificationChannel: { findMany: jest.fn() },
+    } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn() } as unknown as TeamAccessService;
+    const scheduler = { schedule: jest.fn() } as Partial<MonitorSchedulerService>;
+    const view = await make(prisma, access, scheduler).create("u1", {
+      name: "api", type: "HTTP", target: "https://example.com", teamId: "t1",
+      headers: { Authorization: "Bearer s3cr3t" }, basicAuth: { user: "u", pass: "p" }, body: "{}", acceptedStatus: ["200-299", "401"], upsideDown: true,
+    });
+    const data = create.mock.calls[0][0].data;
+    expect(String(data.httpOptionsEnc)).toMatch(/^enc:/);
+    expect(JSON.stringify(data)).not.toContain('"headers"'); // not stored as a plain column
+    expect(data.acceptedStatus).toEqual(["200-299", "401"]);
+    expect(data.upsideDown).toBe(true);
+    expect(JSON.stringify(view)).not.toContain("s3cr3t");
+    expect(view.hasRequestOptions).toBe(true);
+  });
+
+  it("leaves httpOptionsEnc untouched on an update that sends no request options", async () => {
+    const update = jest.fn(async ({ data }: { data: Record<string, unknown> }) => ({ ...monitor, ...data }));
+    const prisma = {
+      monitor: { findUnique: jest.fn().mockResolvedValue(monitor), update },
+      notificationChannel: { findMany: jest.fn() },
+    } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn(), teamRole: jest.fn().mockResolvedValue(Role.OWNER) } as unknown as TeamAccessService;
+    await make(prisma, access, { schedule: jest.fn(), unschedule: jest.fn() }).update("u1", "m1", { upsideDown: true });
+    expect(update.mock.calls[0][0].data.httpOptionsEnc).toBeUndefined();
+  });
+});

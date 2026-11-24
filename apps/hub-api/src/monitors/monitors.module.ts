@@ -1,4 +1,5 @@
 import { Module } from "@nestjs/common";
+import { CryptoModule } from "../crypto/crypto.module";
 import { NotificationsModule } from "../notifications/notifications.module";
 import { MonitorsController } from "./monitors.controller";
 import { MonitorsService } from "./monitors.service";
@@ -7,7 +8,7 @@ import { MonitorRunnerService } from "./runner.service";
 import { MonitorSchedulerService } from "./scheduler.service";
 
 @Module({
-  imports: [NotificationsModule],
+  imports: [NotificationsModule, CryptoModule],
   controllers: [MonitorsController],
   providers: [
     MonitorsService,

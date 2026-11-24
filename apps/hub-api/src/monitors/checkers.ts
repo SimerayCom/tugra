@@ -198,7 +198,7 @@ export const tcpCheck: Checker = (m) =>
   });
 
 /** A hostname or IP literal that is safe to hand to the `ping` binary as a plain argument. */
-const PING_HOST_RE = /^[A-Za-z0-9][A-Za-z0-9.:_-]{0,252}$/;
+export const PING_HOST_RE = /^[A-Za-z0-9][A-Za-z0-9.:_-]{0,252}$/;
 
 export const pingCheck: Checker = (m) =>
   new Promise<CheckResult>((resolve) => {
