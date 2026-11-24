@@ -67,7 +67,7 @@ export const BULK_GRANTABLE: readonly string[] = ["terminal", "files", "files_wr
 
 export type BulkCapabilityResult =
   | { id: string; ok: true; capabilities: string[]; granted: string[]; revoked: string[] }
-  | { id: string; ok: false; error: "not_found" | "forbidden" | "files_write_requires_files" };
+  | { id: string; ok: false; error: "not_found" | "forbidden" | "files_write_requires_files" | "failed" };
 
 export const ServerViewSchema = z.object({
   id: z.string(),
@@ -578,7 +578,9 @@ export class ServersService {
       } catch (e) {
         if (e instanceof NotFoundException) results.push({ id, ok: false, error: "not_found" });
         else if (e instanceof ForbiddenException) results.push({ id, ok: false, error: "forbidden" });
-        else throw e;
+        else {
+          results.push({ id, ok: false, error: "failed" });
+        }
       }
     }
     return results;

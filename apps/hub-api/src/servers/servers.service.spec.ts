@@ -753,6 +753,16 @@ describe("ServersService.setCapabilitiesBulk", () => {
     const res = await svcWith(prisma).setCapabilitiesBulk("u1", { serverIds: ["s1"], grant: ["migrate", "terminal"], revoke: ["backup"] });
     expect(res[0]).toMatchObject({ ok: true, capabilities: ["deploy", "backup", "terminal"], granted: ["terminal"], revoked: [] });
   });
+
+  it("reports an unexpected failure on its own row and still processes the other servers", async () => {
+    const update = jest.fn().mockRejectedValueOnce(new Error("db down")).mockResolvedValue({});
+    const prisma = {
+      server: { findUnique: jest.fn().mockImplementation(({ where }) => Promise.resolve(withCaps(where.id, "teamA", ["deploy"]))), update },
+      ...memberships({ teamA: Role.OWNER }),
+    } as unknown as PrismaService;
+    const res = await svcWith(prisma).setCapabilitiesBulk("u1", { serverIds: ["s1", "s2"], grant: ["terminal"], revoke: [] });
+    expect(res.map((r) => (r.ok ? "ok" : r.error))).toEqual(["failed", "ok"]);
+  });
 });
 
 describe("ServersService.setNetwork", () => {
