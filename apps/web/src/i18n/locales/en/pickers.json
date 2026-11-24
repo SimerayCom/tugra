@@ -1,0 +1,17 @@
+{
+  "project": {
+    "new": "+ New project",
+    "newName": "New project name",
+    "create": "Create",
+    "cancel": "Cancel",
+    "creating": "Creating…",
+    "willCreate": "{name} (new)",
+    "invalid": "Use a name of 1 to 80 characters.",
+    "failed": "Couldn't create the project.",
+    "select": "Choose a project"
+  },
+  "team": {
+    "select": "Choose a team",
+    "label": "Team"
+  }
+}
