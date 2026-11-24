@@ -39,6 +39,8 @@ import {
   CreateServerSchema,
   CreateServersBulkInput,
   CreateServersBulkSchema,
+  BulkCapabilitiesInput,
+  BulkCapabilitiesSchema,
   NetworkSettingsInput,
   NetworkSettingsSchema,
   SetCapabilitiesInput,
@@ -268,6 +270,18 @@ export class ServersController {
   ) {
     await this.servers.setNetwork(user.userId, id, body);
     return { ok: true };
+  }
+
+  /** Grant/revoke opt-in capabilities (terminal, files, files_write, swarm) on many servers. Each server is checked
+   *  against the caller's `servers:manage` on its own team and audited separately; results are per server. */
+  @Post("capabilities/bulk")
+  @HttpCode(200)
+  @ApiZodBody(BulkCapabilitiesSchema)
+  async setCapabilitiesBulk(
+    @CurrentUser() user: AuthUser,
+    @Body(new ZodValidationPipe(BulkCapabilitiesSchema)) body: BulkCapabilitiesInput,
+  ) {
+    return { results: await this.servers.setCapabilitiesBulk(user.userId, body) };
   }
 
   @Put(":id/capabilities")

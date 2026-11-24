@@ -1,5 +1,5 @@
 import { AGENT_CAPABILITIES } from "@tugra/shared";
-import { NetworkSettingsSchema, SetCapabilitiesSchema } from "./servers.schemas";
+import { BulkCapabilitiesSchema, MAX_BULK_CAPABILITY_SERVERS, NetworkSettingsSchema, SetCapabilitiesSchema } from "./servers.schemas";
 
 describe("SetCapabilitiesSchema", () => {
   it("accepts every capability the hub can grant (no drift vs AGENT_CAPABILITIES)", () => {
@@ -10,6 +10,20 @@ describe("SetCapabilitiesSchema", () => {
 
   it("rejects an unknown capability", () => {
     expect(() => SetCapabilitiesSchema.parse({ capabilities: ["not-a-capability"] })).toThrow();
+  });
+});
+
+describe("BulkCapabilitiesSchema", () => {
+  it("accepts opt-in grants/revokes and defaults the missing side to []", () => {
+    const r = BulkCapabilitiesSchema.parse({ serverIds: ["a", "b"], grant: ["terminal", "files"] });
+    expect(r).toEqual({ serverIds: ["a", "b"], grant: ["terminal", "files"], revoke: [] });
+  });
+  it("rejects non-opt-in capabilities, empty requests and oversized batches", () => {
+    expect(BulkCapabilitiesSchema.safeParse({ serverIds: ["a"], grant: ["deploy"] }).success).toBe(false);
+    expect(BulkCapabilitiesSchema.safeParse({ serverIds: ["a"], grant: [], revoke: [] }).success).toBe(false);
+    expect(BulkCapabilitiesSchema.safeParse({ serverIds: [], grant: ["terminal"] }).success).toBe(false);
+    const many = Array.from({ length: MAX_BULK_CAPABILITY_SERVERS + 1 }, (_, i) => `s${i}`);
+    expect(BulkCapabilitiesSchema.safeParse({ serverIds: many, revoke: ["swarm"] }).success).toBe(false);
   });
 });
 

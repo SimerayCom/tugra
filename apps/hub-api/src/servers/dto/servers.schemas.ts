@@ -26,6 +26,18 @@ export const SetCapabilitiesSchema = z.object({
 });
 export type SetCapabilitiesInput = z.infer<typeof SetCapabilitiesSchema>;
 
+// Bulk grant/revoke of the opt-in capabilities only (terminal, files, files_write, swarm) over many servers.
+export const MAX_BULK_CAPABILITY_SERVERS = 100;
+const BulkCapabilityEnum = z.enum(["terminal", "files", "files_write", "swarm"]);
+export const BulkCapabilitiesSchema = z
+  .object({
+    serverIds: z.array(z.string().min(1)).min(1).max(MAX_BULK_CAPABILITY_SERVERS),
+    grant: z.array(BulkCapabilityEnum).default([]),
+    revoke: z.array(BulkCapabilityEnum).default([]),
+  })
+  .refine((d) => d.grant.length + d.revoke.length > 0, { message: "provide at least one capability to grant or revoke" });
+export type BulkCapabilitiesInput = z.infer<typeof BulkCapabilitiesSchema>;
+
 // Per-server network settings: a manual public-IP pin (null → resume observing),
 // a magic-domain wildcard root, and a magic suffix override. IP reachability is
 // validated in the service (isPublicIp); domains are lenient hostnames.

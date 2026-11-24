@@ -671,6 +671,90 @@ describe("ServersService capabilities", () => {
   });
 });
 
+describe("ServersService.setCapabilitiesBulk", () => {
+  const withCaps = (id: string, teamId: string, capabilities: string[]) => ({ ...row(id, teamId), capabilities });
+  const memberships = (roles: Record<string, Role | null>) => ({
+    membership: { findUnique: jest.fn().mockImplementation(({ where }: { where: { userId_teamId: { teamId: string } } }) => {
+      const role = roles[where.userId_teamId.teamId];
+      return Promise.resolve(role ? { role } : null);
+    }) },
+  });
+
+  it("grants terminal to several servers, merges with the existing set and audits each server", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const found: Record<string, ReturnType<typeof withCaps>> = {
+      s1: withCaps("s1", "teamA", ["deploy"]),
+      s2: withCaps("s2", "teamA", ["deploy", "terminal"]),
+    };
+    const prisma = {
+      server: { findUnique: jest.fn().mockImplementation(({ where }: { where: { id: string } }) => Promise.resolve(found[where.id] ?? null)), update },
+      ...memberships({ teamA: Role.OWNER }),
+    } as unknown as PrismaService;
+    const svc = svcWith(prisma);
+    const push = jest.fn();
+    svc.setCapabilityPusher(push);
+    (audit.log as jest.Mock).mockClear();
+    const res = await svc.setCapabilitiesBulk("u1", { serverIds: ["s1", "s2"], grant: ["terminal"], revoke: [] });
+    expect(res).toEqual([
+      { id: "s1", ok: true, capabilities: ["deploy", "terminal"], granted: ["terminal"], revoked: [] },
+      { id: "s2", ok: true, capabilities: ["deploy", "terminal"], granted: [], revoked: [] },
+    ]);
+    // only the server that actually changed is written and pushed; both get an audit entry
+    expect(update).toHaveBeenCalledTimes(1);
+    expect(update).toHaveBeenCalledWith({ where: { id: "s1" }, data: { capabilities: ["deploy", "terminal"] } });
+    expect(push).toHaveBeenCalledTimes(1);
+    expect(audit.log as jest.Mock).toHaveBeenCalledTimes(2);
+    expect(audit.log as jest.Mock).toHaveBeenCalledWith({ actor: "u1", action: "server.capabilities.bulk", target: "s1", meta: { granted: ["terminal"], revoked: [] } });
+  });
+
+  it("revoking files also drops files_write, and files_write alone without files is refused for that server only", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const found: Record<string, ReturnType<typeof withCaps>> = {
+      s1: withCaps("s1", "teamA", ["deploy", "files", "files_write"]),
+      s2: withCaps("s2", "teamA", ["deploy"]),
+    };
+    const prisma = {
+      server: { findUnique: jest.fn().mockImplementation(({ where }: { where: { id: string } }) => Promise.resolve(found[where.id])), update },
+      ...memberships({ teamA: Role.OWNER }),
+    } as unknown as PrismaService;
+    const svc = svcWith(prisma);
+    const revoke = await svc.setCapabilitiesBulk("u1", { serverIds: ["s1"], grant: [], revoke: ["files"] });
+    expect(revoke[0]).toMatchObject({ id: "s1", ok: true, capabilities: ["deploy"], revoked: ["files", "files_write"] });
+    const grant = await svc.setCapabilitiesBulk("u1", { serverIds: ["s1", "s2"], grant: ["files_write"], revoke: [] });
+    expect(grant.map((r) => r.ok)).toEqual([true, false]);
+    expect(grant[1]).toEqual({ id: "s2", ok: false, error: "files_write_requires_files" });
+  });
+
+  it("enforces servers:manage per server team and reports missing servers without blocking the rest", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const found: Record<string, ReturnType<typeof withCaps>> = {
+      s1: withCaps("s1", "teamA", []),
+      s2: withCaps("s2", "teamB", []), // caller is only a VIEWER there
+      s3: withCaps("s3", "teamC", []), // caller is not a member at all
+    };
+    const prisma = {
+      server: { findUnique: jest.fn().mockImplementation(({ where }: { where: { id: string } }) => Promise.resolve(found[where.id] ?? null)), update },
+      ...memberships({ teamA: Role.OWNER, teamB: Role.VIEWER }),
+    } as unknown as PrismaService;
+    (audit.log as jest.Mock).mockClear();
+    const res = await svcWith(prisma).setCapabilitiesBulk("u1", { serverIds: ["s1", "s2", "s3", "missing"], grant: ["terminal"], revoke: [] });
+    expect(res.map((r) => (r.ok ? "ok" : r.error))).toEqual(["ok", "forbidden", "forbidden", "not_found"]);
+    expect(update).toHaveBeenCalledTimes(1);
+    expect(update).toHaveBeenCalledWith({ where: { id: "s1" }, data: { capabilities: ["terminal"] } });
+    expect(audit.log as jest.Mock).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores capabilities outside the opt-in set (never widens a non-opt-in grant through bulk)", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = {
+      server: { findUnique: jest.fn().mockResolvedValue(withCaps("s1", "teamA", ["deploy", "backup"])), update },
+      ...memberships({ teamA: Role.OWNER }),
+    } as unknown as PrismaService;
+    const res = await svcWith(prisma).setCapabilitiesBulk("u1", { serverIds: ["s1"], grant: ["migrate", "terminal"], revoke: ["backup"] });
+    expect(res[0]).toMatchObject({ ok: true, capabilities: ["deploy", "backup", "terminal"], granted: ["terminal"], revoked: [] });
+  });
+});
+
 describe("ServersService.setNetwork", () => {
   beforeEach(() => regenerateMagicForServer.mockClear());
 

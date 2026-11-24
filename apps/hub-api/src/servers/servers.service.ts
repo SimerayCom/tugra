@@ -62,6 +62,13 @@ export const DEFAULT_CAPABILITIES = ["deploy", "database", "backup", "cleanup", 
 // validates against — they can't drift). DEFAULT_CAPABILITIES above is the least-privilege subset.
 const ALL_CAPABILITIES: readonly string[] = AGENT_CAPABILITIES;
 
+/** The opt-in capabilities the bulk grant/revoke endpoint may touch — everything else stays a per-server decision. */
+export const BULK_GRANTABLE: readonly string[] = ["terminal", "files", "files_write", "swarm"];
+
+export type BulkCapabilityResult =
+  | { id: string; ok: true; capabilities: string[]; granted: string[]; revoked: string[] }
+  | { id: string; ok: false; error: "not_found" | "forbidden" | "files_write_requires_files" };
+
 export const ServerViewSchema = z.object({
   id: z.string(),
   name: z.string(),
@@ -529,6 +536,52 @@ export class ServersService {
     // Live-push the new set to the connected agent (fail-closed allowlist updates immediately).
     this.capabilityPusher?.(id, next);
     await this.audit.log({ actor: userId, action: "server.capabilities.update", target: id });
+  }
+
+  /**
+   * Grant and/or revoke opt-in capabilities on many servers in one call. Per server it applies the same rules as
+   * {@link setCapabilities} (team permission `servers:manage` on THAT server's team, files_write needs files,
+   * live push to the agent) and writes one audit entry per server naming exactly what changed. A server the caller
+   * cannot manage, or whose result would be incoherent, fails on its own row without blocking the others.
+   * Revoking `files` also drops `files_write` (write without read is not a grantable state).
+   */
+  async setCapabilitiesBulk(
+    userId: string,
+    input: { serverIds: string[]; grant: string[]; revoke: string[] },
+  ): Promise<BulkCapabilityResult[]> {
+    const grant = [...new Set(input.grant)].filter((c) => BULK_GRANTABLE.includes(c));
+    const revoke = [...new Set(input.revoke)].filter((c) => BULK_GRANTABLE.includes(c) && !grant.includes(c));
+    const ids = [...new Set(input.serverIds)];
+    const results: BulkCapabilityResult[] = [];
+    for (const id of ids) {
+      try {
+        const server = await this.prisma.server.findUnique({ where: { id }, select: { id: true, teamId: true, capabilities: true } });
+        if (!server) throw new NotFoundException("server not found");
+        await this.access.requirePermission(userId, server.teamId, "servers:manage");
+        const next = new Set(server.capabilities);
+        for (const c of revoke) next.delete(c);
+        if (revoke.includes("files")) next.delete("files_write");
+        for (const c of grant) next.add(c);
+        if (next.has("files_write") && !next.has("files")) {
+          results.push({ id, ok: false, error: "files_write_requires_files" });
+          continue;
+        }
+        const nextList = [...next];
+        const granted = grant.filter((c) => !server.capabilities.includes(c));
+        const revoked = server.capabilities.filter((c) => !next.has(c));
+        if (granted.length > 0 || revoked.length > 0) {
+          await this.prisma.server.update({ where: { id }, data: { capabilities: nextList } });
+          this.capabilityPusher?.(id, nextList);
+        }
+        await this.audit.log({ actor: userId, action: "server.capabilities.bulk", target: id, meta: { granted, revoked } });
+        results.push({ id, ok: true, capabilities: nextList, granted, revoked });
+      } catch (e) {
+        if (e instanceof NotFoundException) results.push({ id, ok: false, error: "not_found" });
+        else if (e instanceof ForbiddenException) results.push({ id, ok: false, error: "forbidden" });
+        else throw e;
+      }
+    }
+    return results;
   }
 
   /**
