@@ -27,3 +27,15 @@ export const SetIconSchema = z.object({
   data: z.string().min(1).max(96_000),
 });
 export type SetIconInput = z.infer<typeof SetIconSchema>;
+
+// Move a project to another team (only an empty project can move).
+export const MoveProjectSchema = z.object({
+  teamId: z.string().min(1),
+});
+export type MoveProjectInput = z.infer<typeof MoveProjectSchema>;
+
+// The empty "Default" projects the owner confirmed for removal.
+export const RemoveEmptyDefaultsSchema = z.object({
+  ids: z.array(z.string().min(1)).min(1).max(200),
+});
+export type RemoveEmptyDefaultsInput = z.infer<typeof RemoveEmptyDefaultsSchema>;

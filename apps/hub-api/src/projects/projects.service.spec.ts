@@ -279,6 +279,103 @@ describe("ProjectsService - custom icon", () => {
     expect(update).not.toHaveBeenCalled();
   });
 
+  describe("moveToTeam", () => {
+    function setup(opts: { used?: number; requirePermission?: jest.Mock } = {}) {
+      const projectUpdate = jest.fn().mockReturnValue("project-update");
+      const memberUpdate = jest.fn().mockReturnValue("member-update");
+      const transaction = jest.fn().mockResolvedValue([]);
+      const grant = jest.fn().mockResolvedValue(undefined);
+      const prisma = {
+        project: { findUnique: jest.fn().mockResolvedValue({ id: "p1", teamId: "t1" }), update: projectUpdate },
+        membership: { updateMany: memberUpdate },
+        environment: { findMany: jest.fn().mockResolvedValue([{ id: "e1" }]) },
+        application: { count: jest.fn().mockResolvedValue(opts.used ?? 0) },
+        database: { count: jest.fn().mockResolvedValue(0) },
+        $transaction: transaction,
+      } as unknown as PrismaService;
+      const access = { ...okAccess, grantProjectAccess: grant, ...(opts.requirePermission ? { requirePermission: opts.requirePermission } : {}) };
+      const svc = make(prisma, access);
+      jest.spyOn(svc, "get").mockResolvedValue({ id: "p1" } as never);
+      return { svc, projectUpdate, memberUpdate, transaction, grant };
+    }
+
+    it("moves an empty project, drops it as the target default and clears the old team's grants", async () => {
+      const { svc, projectUpdate, memberUpdate, transaction, grant } = setup();
+      await svc.moveToTeam("u1", "p1", "t2");
+      expect(projectUpdate).toHaveBeenCalledWith({ where: { id: "p1" }, data: { teamId: "t2", isDefault: false } });
+      expect(memberUpdate).toHaveBeenCalledWith({ where: { teamId: "t1", accessedProjects: { has: "p1" } }, data: { accessedProjects: [] } });
+      expect(transaction).toHaveBeenCalled();
+      expect(grant).toHaveBeenCalledWith("u1", "t2", "p1");
+    });
+
+    it("refuses while the project still has apps or databases", async () => {
+      const { svc, transaction } = setup({ used: 2 });
+      await expect(svc.moveToTeam("u1", "p1", "t2")).rejects.toThrow(ConflictException);
+      expect(transaction).not.toHaveBeenCalled();
+    });
+
+    it("needs the projects permission on the target team as well", async () => {
+      const requirePermission = jest.fn().mockResolvedValueOnce(undefined).mockRejectedValueOnce(new ForbiddenException("nope"));
+      const { svc, transaction } = setup({ requirePermission });
+      await expect(svc.moveToTeam("u1", "p1", "t2")).rejects.toThrow(/nope/);
+      expect(requirePermission).toHaveBeenNthCalledWith(2, "u1", "t2", "projects");
+      expect(transaction).not.toHaveBeenCalled();
+    });
+
+    it("is a no-op when the project is already in that team", async () => {
+      const { svc, transaction } = setup();
+      await svc.moveToTeam("u1", "p1", "t1");
+      expect(transaction).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("empty Default projects", () => {
+    const row = (id: string, teamId: string, envs: Array<{ id: string; name: string }>) => ({ id, teamId, createdAt: new Date(1), environments: envs });
+    function setup(roles: Array<[string, Role]>, projects: ReturnType<typeof row>[], usedEnvIds: string[] = []) {
+      const findMany = jest.fn().mockResolvedValue(projects);
+      const del = jest.fn().mockResolvedValue({});
+      const prisma = {
+        project: { findMany, delete: del },
+        application: { findMany: jest.fn().mockResolvedValue(usedEnvIds.map((environmentId) => ({ environmentId }))) },
+        database: { findMany: jest.fn().mockResolvedValue([]) },
+      } as unknown as PrismaService;
+      const svc = make(prisma, { ...okAccess, roleByTeam: jest.fn().mockResolvedValue(new Map(roles)) });
+      return { svc, findMany, del };
+    }
+
+    it("offers only never-customised, resource-free Default projects of teams the caller owns", async () => {
+      const { svc, findMany } = setup(
+        [["t1", Role.OWNER], ["t2", Role.ADMIN]],
+        [
+          row("p-empty", "t1", [{ id: "e1", name: "production" }]),
+          row("p-used", "t1", [{ id: "e2", name: "production" }]),
+          row("p-staging", "t1", [{ id: "e3", name: "production" }, { id: "e4", name: "staging" }]),
+          row("p-renamed-env", "t1", [{ id: "e5", name: "qa" }]),
+        ],
+        ["e2"],
+      );
+      const out = await svc.listEmptyDefaults("u1");
+      expect(out.map((p) => p.id)).toEqual(["p-empty"]);
+      expect(findMany).toHaveBeenCalledWith(expect.objectContaining({
+        where: expect.objectContaining({ teamId: { in: ["t1"] }, name: "Default", description: null, color: null, iconUpdatedAt: null }),
+      }));
+    });
+
+    it("offers nothing to a user who owns no team", async () => {
+      const { svc, findMany } = setup([["t1", Role.ADMIN]], []);
+      expect(await svc.listEmptyDefaults("u1")).toEqual([]);
+      expect(findMany).not.toHaveBeenCalled();
+    });
+
+    it("removes only the ids that are still eligible and reports the rest as skipped", async () => {
+      const { svc, del } = setup([["t1", Role.OWNER]], [row("p-empty", "t1", [{ id: "e1", name: "production" }])]);
+      const r = await svc.removeEmptyDefaults("u1", ["p-empty", "p-other-team", "p-empty"]);
+      expect(r).toEqual({ removed: ["p-empty"], skipped: ["p-other-team"] });
+      expect(del).toHaveBeenCalledTimes(1);
+      expect(del).toHaveBeenCalledWith({ where: { id: "p-empty" } });
+    });
+  });
+
   describe("cloneEnvironment", () => {
     const envRow = { id: "e1", projectId: "p1", name: "production", project: { teamId: "t1" } };
     function setup(opts: {

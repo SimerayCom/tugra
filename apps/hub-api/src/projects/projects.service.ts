@@ -70,6 +70,23 @@ export const ProjectViewSchema = z.object({
 });
 export type ProjectView = z.infer<typeof ProjectViewSchema>;
 
+/** An empty, never-customised "Default" project the owner may clear away (one-time cleanup suggestion). */
+export const EmptyDefaultProjectSchema = z.object({
+  id: z.string(),
+  teamId: z.string(),
+  createdAt: z.date(),
+});
+export type EmptyDefaultProject = z.infer<typeof EmptyDefaultProjectSchema>;
+
+export const RemoveEmptyDefaultsResultSchema = z.object({
+  removed: z.array(z.string()),
+  skipped: z.array(z.string()),
+});
+export type RemoveEmptyDefaultsResult = z.infer<typeof RemoveEmptyDefaultsResultSchema>;
+
+/** The name the old automatic project carried. Only an untouched project with exactly this name is ever offered for cleanup. */
+export const LEGACY_DEFAULT_PROJECT_NAME = "Default";
+
 @Injectable()
 export class ProjectsService {
   constructor(
@@ -306,6 +323,96 @@ export class ProjectsService {
     await this.prisma.project.update({ where: { id: project.id }, data: { name } });
     await this.audit.log({ actor: userId, action: "project.rename", target: id });
     return this.get(userId, id);
+  }
+
+  /**
+   * Move a project to another team the caller also manages. Safe moves only: a project that still has apps or
+   * databases stays where it is (those resources live on the team's servers, so they cannot follow it), and the
+   * caller needs the `projects` permission on BOTH teams. Per-member project grants of the old team are dropped.
+   * It never becomes the target team's default project.
+   */
+  async moveToTeam(userId: string, id: string, targetTeamId: string): Promise<ProjectView> {
+    const project = await this.requireProjectWrite(userId, id);
+    if (project.teamId === targetTeamId) return this.get(userId, id);
+    await this.access.requirePermission(userId, targetTeamId, "projects");
+    const envIds = (
+      await this.prisma.environment.findMany({ where: { projectId: project.id }, select: { id: true } })
+    ).map((e) => e.id);
+    if (await this.envsHaveResources(envIds)) {
+      throw new ConflictException("project has resources; move or remove them first");
+    }
+    await this.prisma.$transaction([
+      this.prisma.project.update({ where: { id: project.id }, data: { teamId: targetTeamId, isDefault: false } }),
+      // Old-team members' per-project grants no longer mean anything (and must not follow the project).
+      this.prisma.membership.updateMany({
+        where: { teamId: project.teamId, accessedProjects: { has: project.id } },
+        data: { accessedProjects: [] },
+      }),
+    ]);
+    await this.access.grantProjectAccess(userId, targetTeamId, project.id);
+    await this.audit.log({
+      actor: userId,
+      action: "project.move",
+      target: project.id,
+      meta: { from: project.teamId, to: targetTeamId },
+    });
+    return this.get(userId, id);
+  }
+
+  /**
+   * Empty "Default" projects the user may clear away: only teams the user OWNS, only a project literally named
+   * "Default" that nobody customised (no description, tags, colour or icon), with at most its one "production"
+   * environment, and no app or database in any environment.
+   */
+  async listEmptyDefaults(userId: string): Promise<EmptyDefaultProject[]> {
+    const roles = await this.access.roleByTeam(userId);
+    const ownedTeamIds = [...roles.entries()].filter(([, r]) => r === Role.OWNER).map(([t]) => t);
+    if (!ownedTeamIds.length) return [];
+    const rows = await this.prisma.project.findMany({
+      where: {
+        teamId: { in: ownedTeamIds },
+        name: LEGACY_DEFAULT_PROJECT_NAME,
+        description: null,
+        color: null,
+        iconUpdatedAt: null,
+        tags: { isEmpty: true },
+      },
+      include: { environments: { select: { id: true, name: true } } },
+      orderBy: { createdAt: "asc" },
+    });
+    const candidates = rows.filter((p) => p.environments.length <= 1 && p.environments.every((e) => e.name === "production"));
+    if (!candidates.length) return [];
+    const envIds = candidates.flatMap((p) => p.environments.map((e) => e.id));
+    const [apps, dbs] = envIds.length
+      ? await Promise.all([
+          this.prisma.application.findMany({ where: { environmentId: { in: envIds } }, select: { environmentId: true } }),
+          this.prisma.database.findMany({ where: { environmentId: { in: envIds } }, select: { environmentId: true } }),
+        ])
+      : [[], []];
+    const used = new Set([...apps, ...dbs].map((r) => r.environmentId));
+    return candidates
+      .filter((p) => p.environments.every((e) => !used.has(e.id)))
+      .map((p) => ({ id: p.id, teamId: p.teamId, createdAt: p.createdAt }));
+  }
+
+  /**
+   * Remove the given empty "Default" projects. Every id is re-validated against {@link listEmptyDefaults} (so only
+   * a truly empty one in a team the caller owns is ever deleted); anything else is reported back as skipped.
+   */
+  async removeEmptyDefaults(userId: string, ids: string[]): Promise<RemoveEmptyDefaultsResult> {
+    const eligible = new Map((await this.listEmptyDefaults(userId)).map((p) => [p.id, p]));
+    const removed: string[] = [];
+    const skipped: string[] = [];
+    for (const id of [...new Set(ids)]) {
+      if (!eligible.has(id)) {
+        skipped.push(id);
+        continue;
+      }
+      await this.prisma.project.delete({ where: { id } }); // environments cascade
+      await this.audit.log({ actor: userId, action: "project.remove", target: id, meta: { via: "empty-defaults-cleanup" } }).catch(() => undefined);
+      removed.push(id);
+    }
+    return { removed, skipped };
   }
 
   async remove(userId: string, id: string): Promise<void> {

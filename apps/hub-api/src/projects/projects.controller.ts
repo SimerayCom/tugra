@@ -22,7 +22,13 @@ import { RequireScopes } from "../api-tokens/require-scopes.decorator";
 import { AuthUser } from "../auth/strategies/jwt.strategy";
 import { ApiZodBody, ApiZodResponse } from "../openapi/openapi";
 import { SetColorInput, SetColorSchema } from "../common/hex-color";
-import { ProjectsService, ProjectViewSchema, CloneEnvironmentResultSchema } from "./projects.service";
+import {
+  ProjectsService,
+  ProjectViewSchema,
+  CloneEnvironmentResultSchema,
+  EmptyDefaultProjectSchema,
+  RemoveEmptyDefaultsResultSchema,
+} from "./projects.service";
 import {
   CloneEnvironmentInput,
   CloneEnvironmentSchema,
@@ -30,6 +36,10 @@ import {
   CreateEnvironmentSchema,
   CreateProjectInput,
   CreateProjectSchema,
+  MoveProjectInput,
+  MoveProjectSchema,
+  RemoveEmptyDefaultsInput,
+  RemoveEmptyDefaultsSchema,
   RenameInput,
   RenameSchema,
   SetIconInput,
@@ -60,7 +70,26 @@ export class ProjectsController {
     return this.projects.create(user.userId, body.teamId, body.name);
   }
 
-  // Static segment before ":id" so it isn't matched as a project id.
+  // The one-time cleanup suggestion: empty, never-customised "Default" projects in teams the caller owns.
+  // Static segments stay above ":id" so they are not matched as a project id.
+  @Get("empty-defaults")
+  @ApiZodResponse(EmptyDefaultProjectSchema, { isArray: true })
+  listEmptyDefaults(@CurrentUser() user: AuthUser) {
+    return this.projects.listEmptyDefaults(user.userId);
+  }
+
+  @Post("empty-defaults/remove")
+  @HttpCode(200)
+  @RequireScopes("admin") // deleting projects is destructive, like DELETE /projects/:id
+  @ApiZodBody(RemoveEmptyDefaultsSchema)
+  @ApiZodResponse(RemoveEmptyDefaultsResultSchema)
+  removeEmptyDefaults(
+    @CurrentUser() user: AuthUser,
+    @Body(new ZodValidationPipe(RemoveEmptyDefaultsSchema)) body: RemoveEmptyDefaultsInput,
+  ) {
+    return this.projects.removeEmptyDefaults(user.userId, body.ids);
+  }
+
   @Put("environments/:envId")
   @HttpCode(200)
   @ApiZodBody(RenameSchema)
@@ -95,6 +124,18 @@ export class ProjectsController {
     @Body(new ZodValidationPipe(RenameSchema)) body: RenameInput,
   ) {
     return this.projects.rename(user.userId, id, body.name);
+  }
+
+  // Move an empty project to another team the caller manages (409 while it still has apps or databases).
+  @Put(":id/team")
+  @ApiZodBody(MoveProjectSchema)
+  @ApiZodResponse(ProjectViewSchema)
+  moveToTeam(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(MoveProjectSchema)) body: MoveProjectInput,
+  ) {
+    return this.projects.moveToTeam(user.userId, id, body.teamId);
   }
 
   @Delete(":id")
