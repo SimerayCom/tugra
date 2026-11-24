@@ -56,6 +56,7 @@ export const REASON_EN: Record<ImportReasonCode, string> = {
   domain_custom_cert: "uses an uploaded certificate — upload it in Tugra (the certificate itself is not carried yet)",
   domain_no_https: "was served without HTTPS — Tugra serves custom domains over HTTPS (Let's Encrypt) and will upgrade it",
   domain_redirect: "redirects to {to} — configure the redirect in Tugra",
+  domain_redirect_mode: "the source redirects to the {target} host name; Tugra could not set that redirect — pick the canonical host in the app's domain options",
   domain_service_not_compose: "targets a named service, but this is not a compose app — Tugra routes the single app container",
   domain_path_invalid: "the path is not a valid Tugra path prefix — served at the host root",
   domain_dup_route: "same host with a different path/port/service — Tugra serves one route per host",

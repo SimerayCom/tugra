@@ -317,6 +317,27 @@ describe("foreignAppToIngressPlan", () => {
     expect(bad.unmapped.map((u) => u.field)).toEqual(["domain:a.com path"]);
   });
 
+  it("the source's www / bare redirect becomes Tugra's canonical-host redirect on the primary domain, next to a path prefix", () => {
+    const apex = foreignAppToIngressPlan(base({ domainRedirect: "www", domains: [d("example.com", { primary: true }), d("www.example.com")] }));
+    expect(apex.domainOptions).toEqual({ domainRedirect: "www" });
+    expect(apex.unmapped.map((u) => u.field)).not.toContain("redirectMode");
+    expect(foreignAppToIngressPlan(base({ domainRedirect: "root", domains: [d("www.example.com", { primary: true })] })).domainOptions).toEqual({ domainRedirect: "root" });
+    expect(foreignAppToIngressPlan(base({ domainRedirect: "root", domains: [d("example.com", { primary: true, path: "/app", stripPath: true })] })).domainOptions).toEqual({ pathPrefix: "/app", stripPrefix: true, domainRedirect: "root" });
+    expect(foreignAppToIngressPlan(base({ domains: [d("example.com", { primary: true })] })).domainOptions).toBeUndefined();
+  });
+
+  it("a redirect that cannot be carried is reported with a fixed reason; an app with no domain says nothing", () => {
+    for (const host of ["app-abcdefghijklmnopqrstuvwx.example.com", "203.0.113.7", "localhost"]) {
+      const plan = foreignAppToIngressPlan(base({ domainRedirect: "www", domains: [d(host, { primary: true })] }));
+      expect(plan.domainOptions).toBeUndefined();
+      expect(plan.unmapped).toContainEqual(expect.objectContaining({ field: "redirectMode", reasonCode: "domain_redirect_mode", reasonParams: { target: "www" } }));
+    }
+    const compose = foreignAppToIngressPlan(base({ kind: "compose", buildPack: "dockercompose", domainRedirect: "root", domains: [d("example.com", { primary: true, serviceRef: "web", port: 80 })] }));
+    expect(compose.domainOptions).toBeUndefined();
+    expect(compose.unmapped).toContainEqual(expect.objectContaining({ field: "redirectMode", reasonParams: { target: "bare" } }));
+    expect(foreignAppToIngressPlan(base({ domainRedirect: "www", domains: [] })).unmapped).toEqual([]);
+  });
+
   it("an alias on a different port or path than the primary is reported (Tugra has one port + an app-wide path)", () => {
     const plan = foreignAppToIngressPlan(base({ ports: [3000], domains: [d("a.com", { primary: true }), d("p.a.com", { port: 9000 }), d("q.a.com", { path: "/q" }), d("ok.a.com")] }));
     expect(plan.extraDomains).toEqual(["ok.a.com"]);

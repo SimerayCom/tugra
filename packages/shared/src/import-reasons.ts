@@ -40,6 +40,7 @@ export const IMPORT_REASON_CODES = [
   "domain_custom_cert",
   "domain_no_https",
   "domain_redirect",
+  "domain_redirect_mode",
   "domain_service_not_compose",
   "domain_path_invalid",
   "domain_dup_route",

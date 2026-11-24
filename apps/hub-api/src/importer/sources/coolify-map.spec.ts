@@ -514,12 +514,18 @@ describe("static site, redirect mode and redis conf (R18 / R19 / R48)", () => {
     expect("staticSpa" in mapApplication({ ...git, build_pack: "nixpacks", is_spa: false }, ctx)).toBe(false);
   });
 
-  it("the www / non-www redirect mode is reported in the plan coverage with its mode; `both` and an unset mode say nothing", () => {
+  it("the www / non-www redirect mode becomes a canonical-host redirect (no warning); `both` and an unset mode say nothing", () => {
     const www = mapApplication({ ...git, build_pack: "nixpacks", redirect: "www" }, ctx);
-    expect(www.notCarried).toEqual([expect.objectContaining({ field: "redirectMode", level: "info", reasonCode: "coolify_redirect", reasonParams: { mode: "www" } })]);
-    expect(mapApplication({ ...git, build_pack: "nixpacks", redirect: "non-www" }, ctx).notCarried?.[0]).toMatchObject({ reasonParams: { mode: "non-www" } });
-    expect(mapApplication({ ...git, build_pack: "nixpacks", redirect: "both" }, ctx).notCarried).toBeUndefined();
-    expect(mapApplication({ ...git, build_pack: "nixpacks" }, ctx).notCarried).toBeUndefined();
+    expect(www.domainRedirect).toBe("www");
+    expect(www.notCarried).toBeUndefined();
+    const bare = mapApplication({ ...git, build_pack: "nixpacks", redirect: "non-www" }, ctx);
+    expect(bare.domainRedirect).toBe("root");
+    expect(bare.notCarried).toBeUndefined();
+    for (const redirect of ["both", undefined, null]) {
+      const m = mapApplication({ ...git, build_pack: "nixpacks", redirect }, ctx);
+      expect("domainRedirect" in m).toBe(false);
+      expect(m.notCarried).toBeUndefined();
+    }
   });
 
   it("a custom redis.conf is reported as a manual step on the redis database and reaches the plan as a warn risk, never its text", () => {

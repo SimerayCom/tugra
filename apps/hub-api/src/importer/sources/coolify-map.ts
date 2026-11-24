@@ -556,8 +556,7 @@ function coolifyNotCarried(app: CoolifyApp, realGit: boolean, kind: ForeignApp["
   if (nonZero(app.limits_memory) || nonZero(app.limits_cpus)) out.push({ field: "limits", level: "info", ...why("coolify_limits") });
   if (app.health_check_enabled === true) out.push({ field: "healthcheck", level: "info", ...why("coolify_healthcheck") });
   if (nonEmpty(app.dockerfile_target_build)) out.push({ field: "dockerBuildTarget", level: "info", ...why("coolify_build_target") });
-  // watch_paths are carried (ForeignApp.watchPaths); R18: the www / non-www redirect has no Tugra setting, so the mode is reported.
-  if (app.redirect === "www" || app.redirect === "non-www") out.push({ field: "redirectMode", level: "info", ...why("coolify_redirect", { mode: app.redirect }) });
+  // watch_paths are carried (ForeignApp.watchPaths), and so is the www / non-www redirect (ForeignApp.domainRedirect).
   // The planner's `app.git.missing` blocker case: a Dockerfile app with no real repo (and no image to fall back to).
   if (app.build_pack === "dockerfile" && !realGit && kind !== "image") {
     out.push({ field: "inlineDockerfile", level: "warn", ...why("coolify_inline_dockerfile") });
@@ -637,6 +636,7 @@ export function mapApplication(
   if (app.build_pack === "dockerfile" && (nonEmpty(app.dockerfile) || nonEmpty(app.dockerfile_raw))) sourceExtras.dockerfile = true;
   const notCarried = coolifyNotCarried(app, realGit, kind);
   const watchPaths = parseWatchPaths(app.watch_paths);
+  const domainRedirect = app.redirect === "www" ? "www" : app.redirect === "non-www" ? "root" : undefined;
   return {
     sourceRef: app.uuid,
     name: app.name ?? app.uuid,
@@ -671,6 +671,7 @@ export function mapApplication(
     ...(appContainerPrefix(app) ? { containerPrefix: appContainerPrefix(app) } : {}),
     ports: parsePorts(app.ports_exposes),
     domains: mapAppDomains(app, kind),
+    ...(domainRedirect ? { domainRedirect } : {}),
     env: ctx.envs.map(mapEnv),
     volumes: ctx.volumes.map((v) => mapVolume(v, app.uuid)),
     internalHost: app.uuid, // Coolify's internal docker hostname is the resource uuid

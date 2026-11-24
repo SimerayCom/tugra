@@ -644,6 +644,16 @@ describe("ImportExecutorService — ingress apply (L7)", () => {
     expect(lastResult(h).result.ingress).toEqual({ applied: ["extraDomains", "domainOptions", "extraPorts"], unmapped: [] });
   });
 
+  it("the source's www / bare redirect is applied as the app's canonical host and nothing is left as a note", async () => {
+    const f = fleetWith({ ...ingressApp, domainRedirect: "www", domains: [{ host: "example.com", https: true, primary: true, port: 3000 }] });
+    const h = harness({ fleet: f });
+    await run(h, f);
+    expect(h.apps.setDomainOptions).toHaveBeenCalledWith("user-1", "app-new", { domainRedirect: "www" });
+    const ingress = lastResult(h).result.ingress!;
+    expect(ingress.applied).toContain("domainOptions");
+    expect(ingress.unmapped.map((u) => u.field)).not.toContain("redirectMode");
+  });
+
   it("is best-effort: a throwing setter becomes unmapped, never fails the task, and its error text is never copied", async () => {
     const f = fleetWith(ingressApp);
     const h = harness({ fleet: f });

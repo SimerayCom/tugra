@@ -9,6 +9,7 @@ import type { SourceAppExtras } from "./import-source";
 import { REASON_EN, why, type Reasoned, type Unmapped } from "./reason";
 import { mapBuildPack } from "./buildpack-map";
 import { mapSourceEnvFlags, type SourceEnvFlags } from "./env-auto-flags";
+import { CUTOVER_HOSTNAME_RE, isGeneratedHost } from "../cutover/cutover.logic";
 
 /** Options for turning a discovered foreign app into a Tugra app to create. */
 export interface AppCreateOptions {
@@ -371,8 +372,8 @@ export interface IngressPlan {
   extraDomains: string[];
   /** `setServiceDomains` — COMPOSE per-service hostnames. */
   serviceDomains: Array<{ service: string; hostname: string; port: number }>;
-  /** `setDomainOptions` — the primary domain's path routing. */
-  domainOptions?: { pathPrefix: string; stripPrefix: boolean };
+  /** `setDomainOptions` — the primary domain's path routing and its canonical www / bare host. */
+  domainOptions?: { pathPrefix?: string; stripPrefix?: boolean; domainRedirect?: "www" | "root" };
   /** `setContainerPort` — only when the primary domain's routing port differs from the create-time guess. */
   containerPort?: number;
   /** `setExtraPorts` — raw host-published ports (classic only), minus the HTTP ingress port. */
@@ -435,6 +436,18 @@ export function foreignAppToIngressPlan(app: ForeignApp, opts?: { noPrimary?: bo
     } else {
       skip(`domain:${cl(primary.host)} path`, why("domain_path_invalid"));
     }
+  }
+
+  // ── Canonical host: the source's www / bare redirect becomes Tugra's own canonical-host redirect on the primary domain
+  //    (it answers for both names and sends the other one to the chosen one). No primary host = nothing to redirect, no note.
+  if (app.domainRedirect && primaryHost) {
+    const carriable =
+      !isGeneratedHost(primaryHost) &&
+      CUTOVER_HOSTNAME_RE.test(primaryBase ?? "") &&
+      !(isCompose && primary?.serviceRef) &&
+      SetDomainOptionsSchema.safeParse({ domainRedirect: app.domainRedirect }).success;
+    if (carriable) out.domainOptions = { ...(out.domainOptions ?? {}), domainRedirect: app.domainRedirect };
+    else skip("redirectMode", why("domain_redirect_mode", { target: app.domainRedirect === "www" ? "www" : "bare" }));
   }
 
   // ── Hostnames beyond the primary.

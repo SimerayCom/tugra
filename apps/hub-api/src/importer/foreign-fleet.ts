@@ -119,6 +119,9 @@ export interface ForeignApp {
    *  (classic apps only). Only rows with a valid host AND container port (1..65535) are present. */
   publishedPorts?: Array<{ hostPort: number; containerPort: number; protocol: "tcp" | "udp" }>;
   domains?: ForeignDomain[];
+  /** The canonical host the source's proxy redirects to (Coolify `redirect`: `www` or `non-www`), in Tugra's vocabulary: `www` sends
+   *  the bare host to www, `root` sends www to the bare host. Applied through `setDomainOptions({ domainRedirect })`. Absent = both served. */
+  domainRedirect?: "www" | "root";
   /** Custom redirect rules (Tugra `setRedirects`, classic + compose). Not secret. */
   redirects?: Array<{ regex: string; replacement: string; permanent: boolean }>;
   /** HTTP basic-auth the source gated this app with: USERNAMES ONLY. Passwords are NEVER in the fleet — the
