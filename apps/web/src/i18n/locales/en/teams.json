@@ -72,5 +72,11 @@
   "renamed": "Team renamed",
   "dangerZone": "Danger zone",
   "dangerZoneDesc": "Permanently removes this team. You'll be asked to type its name.",
-  "groupUnknown": "Other team"
+  "groupUnknown": "Other team",
+  "clientView": "Client (view only)",
+  "clientDeploy": "Client (can deploy)",
+  "clientBadge": "Client",
+  "clientHint": "A client only sees this team's apps, uptime and backups.",
+  "clientRoleNote": "Client roles are managed here. They can only ever deploy.",
+  "inviteClientAs": "You've been invited to {team} as a client. You'll see its apps, uptime and backups."
 }

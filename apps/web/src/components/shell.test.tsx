@@ -369,3 +369,31 @@ describe("tri-state theme", () => {
     expect(resolveTheme("dark", false)).toBe("dark");
   });
 });
+
+describe("sidebar for customer-portal accounts", () => {
+  afterEach(() => mocks.useQuery.mockReturnValue({ data: [] }));
+  const withTeams = (teams: unknown[]) =>
+    mocks.useQuery.mockImplementation((opts: unknown) => ((opts as { queryKey: unknown[] }).queryKey[0] === "teams" ? { data: teams } : { data: [] }));
+  const hrefs = () => screen.getAllByRole("link").filter((a) => a.className.includes("tg-nav-link")).map((a) => a.getAttribute("href"));
+  const personal = { id: "p", name: "Me", role: "OWNER", memberCount: 1 };
+  const client = { id: "c", name: "Acme", role: "VIEWER", memberCount: 4, clientAccess: "view" };
+
+  it("a Client with nothing else sees the portal and settings only", () => {
+    withTeams([personal, client]);
+    render(<I18nProvider><Sidebar openPalette={() => {}} /></I18nProvider>);
+    expect(hrefs()).toEqual(["/portal", "/settings"]);
+  });
+
+  it("someone who also runs a team keeps the full sidebar and gains a portal entry", () => {
+    withTeams([personal, client, { id: "o", name: "Ops", role: "OWNER", memberCount: 3 }]);
+    render(<I18nProvider><Sidebar openPalette={() => {}} /></I18nProvider>);
+    expect(hrefs()).toContain("/servers");
+    expect(hrefs()).toContain("/portal");
+  });
+
+  it("an account with no client team has no portal entry", () => {
+    withTeams([personal]);
+    render(<I18nProvider><Sidebar openPalette={() => {}} /></I18nProvider>);
+    expect(hrefs()).not.toContain("/portal");
+  });
+});

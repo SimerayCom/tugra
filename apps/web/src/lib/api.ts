@@ -24,6 +24,10 @@ import type {
   InstanceUpdateStatus,
   InstanceVersionSummary,
   TelemetryStatus,
+  ClientAccess,
+  PublicStatus,
+  StatusPageInput,
+  StatusPageManage,
   Branding,
   PanelTlsStatus,
   PanelDomainStatus,
@@ -847,11 +851,43 @@ export const api = {
   listTeamMembers(id: string) {
     return apiFetch<TeamMember[]>(`/teams/${id}/members`);
   },
-  inviteTeamMember(id: string, email: string, role: Role) {
+  inviteTeamMember(id: string, email: string, role: Role, clientAccess?: ClientAccess) {
     return apiFetch<TeamInvitation>(`/teams/${id}/members/invite`, {
       method: "POST",
-      body: JSON.stringify({ email, role }),
+      body: JSON.stringify(clientAccess ? { email, role, clientAccess } : { email, role }),
     });
+  },
+  // The customer-portal preset role ("Client" / "Client (deploy)"), created on first use.
+  ensureClientRole(id: string, access: ClientAccess) {
+    return apiFetch<TeamRole>(`/teams/${id}/roles/client`, { method: "POST", body: JSON.stringify({ access }) });
+  },
+  // Status page (owner side) + the public, unauthenticated read.
+  getStatusPage(teamId: string) {
+    return apiFetch<StatusPageManage>(`/teams/${teamId}/status-page`);
+  },
+  saveStatusPage(teamId: string, input: StatusPageInput) {
+    return apiFetch<StatusPageManage>(`/teams/${teamId}/status-page`, { method: "PUT", body: JSON.stringify(input) });
+  },
+  deleteStatusPage(teamId: string) {
+    return apiFetch<{ ok: true }>(`/teams/${teamId}/status-page`, { method: "DELETE" });
+  },
+  addStatusMaintenance(teamId: string, input: { title: string; body: string | null; startsAt: string; endsAt: string }) {
+    return apiFetch<StatusPageManage>(`/teams/${teamId}/status-page/maintenance`, { method: "POST", body: JSON.stringify(input) });
+  },
+  removeStatusMaintenance(teamId: string, id: string) {
+    return apiFetch<StatusPageManage>(`/teams/${teamId}/status-page/maintenance/${encodeURIComponent(id)}`, { method: "DELETE" });
+  },
+  getPublicStatus(slug: string) {
+    return apiFetch<PublicStatus>(`/public/status/${encodeURIComponent(slug)}`, {}, false);
+  },
+  subscribeToStatus(slug: string, email: string) {
+    return apiFetch<{ ok: true }>(`/public/status/${encodeURIComponent(slug)}/subscribe`, { method: "POST", body: JSON.stringify({ email }) }, false);
+  },
+  confirmStatusSubscription(token: string) {
+    return apiFetch<{ slug: string }>("/public/status/subscribers/confirm", { method: "POST", body: JSON.stringify({ token }) }, false);
+  },
+  unsubscribeFromStatus(token: string) {
+    return apiFetch<{ slug: string }>("/public/status/subscribers/unsubscribe", { method: "POST", body: JSON.stringify({ token }) }, false);
   },
   listTeamInvitations(id: string) {
     return apiFetch<TeamInvitation[]>(`/teams/${id}/invitations`);

@@ -21,7 +21,12 @@ export interface Team {
   memberCount?: number;
   iconUpdatedAt?: string | null;
   color?: string | null;
+  /** Set when the caller is a Client of this team (customer portal): view only, or view + deploy. */
+  clientAccess?: ClientAccess | null;
 }
+
+/** Customer-portal access level of a Client member. */
+export type ClientAccess = "view" | "deploy";
 
 export interface TeamMember {
   userId: string;
@@ -30,6 +35,7 @@ export interface TeamMember {
   role: Role;
   teamRoleId: string | null;
   roleName: string | null; // the assigned custom role's name, when one is set
+  clientAccess?: ClientAccess | null;
   restrictedAccess: boolean;
   accessedProjects: string[];
 }
@@ -55,12 +61,14 @@ export interface TeamRole {
   id: string;
   name: string;
   permissions: string[];
+  portal?: boolean; // a Client (customer portal) preset
 }
 
 export interface TeamInvitation {
   id: string;
   email: string;
   role: Role;
+  clientAccess?: ClientAccess | null;
   token: string;
   expiresAt: string;
 }
@@ -76,6 +84,7 @@ export interface InvitationPreview {
   teamName: string;
   inviterName: string | null;
   role: Role;
+  clientAccess?: ClientAccess | null;
   email: string;
   expiresAt: string;
   expired: boolean;
@@ -3452,4 +3461,54 @@ export interface SnapshotInfo {
 export interface SnapshotView {
   snapshot: SnapshotInfo | null;
   destinations: Array<{ id: string; name: string; type: "S3" | "LOCAL" }>;
+}
+
+// ── Public status page ──────────────────────────────────────────────────────────────────────────────
+export type StatusOverall = "operational" | "partial" | "outage" | "maintenance" | "unknown";
+export type StatusMonitorState = "up" | "down" | "checking" | "paused";
+export type MaintenanceState = "scheduled" | "active" | "completed";
+
+export interface StatusMaintenanceView {
+  id: string;
+  title: string;
+  body: string | null;
+  startsAt: string;
+  endsAt: string;
+  state: MaintenanceState;
+}
+
+/** What the public page shows: names, states, uptime, incident times, maintenance notices. */
+export interface PublicStatus {
+  title: string;
+  description: string | null;
+  overall: StatusOverall;
+  updatedAt: string;
+  monitors: { name: string; status: StatusMonitorState; uptime: number | null; days: { date: string; uptime: number | null }[] }[];
+  incidents: { monitor: string; startedAt: string; resolvedAt: string | null }[];
+  maintenance: StatusMaintenanceView[];
+  emailUpdates: boolean;
+}
+
+/** A team's status page settings (owner side). */
+export interface StatusPageSettings {
+  slug: string;
+  title: string;
+  description: string | null;
+  enabled: boolean;
+  monitors: { monitorId: string; label: string | null }[];
+  maintenance: StatusMaintenanceView[];
+  subscribers: { confirmed: number; pending: number };
+  url: string;
+  rssUrl: string;
+}
+export interface StatusPageManage {
+  page: StatusPageSettings | null;
+  emailAvailable: boolean;
+}
+export interface StatusPageInput {
+  slug: string;
+  title: string;
+  description: string | null;
+  enabled: boolean;
+  monitors: { monitorId: string; label: string | null }[];
 }

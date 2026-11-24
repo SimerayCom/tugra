@@ -2,6 +2,9 @@
 
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, type ReactNode } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { api } from "../../lib/api";
+import { isPortalAllowed, isPortalOnly } from "../../lib/portal";
 import { useAuth } from "../../lib/auth";
 import { uiMode, isHomeAllowed } from "../../lib/ui-mode";
 import { AppShell, CenteredSpinner } from "../../components/shell";
@@ -30,7 +33,15 @@ export default function AppLayout({ children }: { children: ReactNode }) {
     }
   }, [loading, user, pathname, router]);
 
+  // A customer account (a Client of a team, nothing of its own) lives on the portal: everything else redirects there.
+  const { data: teams } = useQuery({ queryKey: ["teams"], queryFn: () => api.listTeams(), enabled: !!user, staleTime: 60_000 });
+  const portalOnly = !!teams && isPortalOnly(teams);
+  useEffect(() => {
+    if (portalOnly && !isPortalAllowed(pathname)) router.replace("/portal");
+  }, [portalOnly, pathname, router]);
+
   if (loading || !user) return <CenteredSpinner />;
+  if (portalOnly && !isPortalAllowed(pathname)) return <CenteredSpinner />;
   if (user.twoFaSetupRequired) return <CenteredSpinner />; // redirecting → /two-factor-setup
   // Don't MOUNT a fleet page (and fire its queries) for a Home user who landed off-route — the effect above
   // is redirecting to /home; show the spinner until it does, instead of flashing fleet content.

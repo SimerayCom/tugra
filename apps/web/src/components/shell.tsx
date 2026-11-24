@@ -10,6 +10,7 @@ import type { InstanceUpdateNotice } from "../lib/types";
 import { useAuth } from "../lib/auth";
 import { DOCS_URL, SPONSOR_URL, whatsNewUrl } from "../lib/help-links";
 import { navForMode, uiMode, isHomeAllowed } from "../lib/ui-mode";
+import { hasClientTeam, isPortalOnly } from "../lib/portal";
 import { useT } from "../i18n/provider";
 import { useIsMobile } from "../hooks/useIsMobile";
 import { nextThemeChoice, resolveThemeChoice, useAppearance, type ThemeChoice } from "../lib/appearance";
@@ -50,6 +51,7 @@ import {
   Boxes,
   BookOpen,
   Heart,
+  LifeBuoy,
   Sparkles,
   Rocket,
   Route,
@@ -146,7 +148,12 @@ export const DESTS: CommandDest[] = NAV.flatMap((g) =>
   { labelKey: "nav.apps", href: "/apps" },
   { labelKey: "nav.databases", href: "/databases" },
   { labelKey: "nav.addServer", href: "/servers/new" },
+  { labelKey: "nav.statusPage", href: "/monitors/status" },
+  { labelKey: "nav.portal", href: "/portal" },
 ]);
+
+/** The customer portal entry (not in NAV: only an account that is a Client of a team ever sees it). */
+const PORTAL_ITEM: NavItem = { key: "portal", href: "/portal", icon: LifeBuoy };
 
 export type ThemePref = ThemeChoice;
 
@@ -183,9 +190,17 @@ export function Sidebar({ openPalette, mobile = false, open = false, onNavigate 
   const pathname = usePathname();
   const { logout, user } = useAuth();
   const mode = uiMode(user?.uiMode);
-  const nav = navForMode(NAV, mode);
   const router = useRouter();
   const t = useT();
+  const { data: teams = [] } = useQuery({ queryKey: ["teams"], queryFn: () => api.listTeams(), enabled: !!user, staleTime: 60_000 });
+  // A customer account (Client of a team, nothing of its own) gets the portal and its settings only; anyone who also
+  // runs a team keeps the full sidebar plus a portal entry.
+  const settingsItem = NAV.flatMap((g) => g.items).find((i) => i.key === "settings")!;
+  const nav = isPortalOnly(teams)
+    ? [{ group: "portal", items: [PORTAL_ITEM, settingsItem] }]
+    : hasClientTeam(teams)
+      ? navForMode(NAV, mode).map((g, i) => (i === 0 ? { ...g, items: [...g.items, PORTAL_ITEM] } : g))
+      : navForMode(NAV, mode);
   const [collapsed, setCollapsed] = useState(false);
   useEffect(() => {
     setCollapsed(localStorage.getItem("tugra.sidebar") === "1");

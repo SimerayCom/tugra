@@ -19,6 +19,8 @@
   "fleet": "Fleet",
   "traffic": "Traffic",
   "uptime": "Uptime",
+  "statusPage": "Status page",
+  "portal": "Client portal",
   "servers": "Servers",
   "clusters": "Clusters",
   "rollouts": "Rollouts",
@@ -59,7 +61,8 @@
     "build": "Build",
     "infrastructure": "Infrastructure",
     "integrations": "Integrations",
-    "account": "Account"
+    "account": "Account",
+    "portal": "Portal"
   },
   "activeInGroup": "Current page is in this group",
   "whatsNew": "What's new",

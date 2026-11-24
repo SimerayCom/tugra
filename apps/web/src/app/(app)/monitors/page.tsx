@@ -138,9 +138,14 @@ export default function MonitorsPage() {
         title={t("monitors.title")}
         subtitle={t("monitors.subtitle")}
         actions={
-          <Link href="/monitors/import" style={{ textDecoration: "none" }}>
-            <Btn variant="ghost">{t("monitors.importFromKuma")}</Btn>
-          </Link>
+          <>
+            <Link href="/monitors/status" style={{ textDecoration: "none" }}>
+              <Btn variant="ghost">{t("nav.statusPage")}</Btn>
+            </Link>
+            <Link href="/monitors/import" style={{ textDecoration: "none" }}>
+              <Btn variant="ghost">{t("monitors.importFromKuma")}</Btn>
+            </Link>
+          </>
         }
       />
 

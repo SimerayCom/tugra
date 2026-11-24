@@ -5,7 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Users } from "lucide-react";
 import { api, teamIconUrl } from "../../../../lib/api";
-import type { Role, TeamMember, Project, TeamRole } from "../../../../lib/types";
+import type { ClientAccess, Role, TeamMember, Project, TeamRole } from "../../../../lib/types";
 import { TEAM_PERMISSIONS } from "../../../../lib/types";
 import { useT } from "../../../../i18n/provider";
 import { useToast } from "../../../../components/toast";
@@ -15,6 +15,12 @@ import { IconBtn } from "../../../../components/icon-btn";
 import { useConfirm } from "../../../../components/confirm";
 import { IdentityCard } from "../../../../components/identity-card";
 import { MailNotConfiguredNote } from "../../../../components/mail-not-configured-note";
+
+/** What the invite picker can hold: a built-in role, or one of the two customer-portal presets. */
+type InviteChoice = Role | "CLIENT_VIEW" | "CLIENT_DEPLOY";
+function clientOf(c: InviteChoice): ClientAccess | null {
+  return c === "CLIENT_VIEW" ? "view" : c === "CLIENT_DEPLOY" ? "deploy" : null;
+}
 
 const field: React.CSSProperties = {
   padding: "8px 10px",
@@ -60,15 +66,26 @@ export default function TeamDetailPage() {
   };
 
   const [email, setEmail] = useState("");
-  const [inviteRole, setInviteRole] = useState<Role>("VIEWER");
+  const [inviteRole, setInviteRole] = useState<InviteChoice>("VIEWER");
   const [lastToken, setLastToken] = useState("");
   const invite = useMutation({
-    mutationFn: () => api.inviteTeamMember(id, email, inviteRole),
+    mutationFn: () => {
+      const client = clientOf(inviteRole);
+      return client ? api.inviteTeamMember(id, email, "VIEWER", client) : api.inviteTeamMember(id, email, inviteRole as Role);
+    },
     onSuccess: (inv) => { setEmail(""); setLastToken(inv.token); refetch(); },
   });
   const setRole = useMutation({
     mutationFn: ({ userId, assignment }: { userId: string; assignment: { role: Role } | { teamRoleId: string } }) =>
       api.setTeamMemberRole(id, userId, assignment),
+    onSuccess: refetch,
+  });
+  // Make a member a Client: make sure the team has the preset, then assign it like any custom role.
+  const makeClient = useMutation({
+    mutationFn: async ({ userId, access }: { userId: string; access: ClientAccess }) => {
+      const role = await api.ensureClientRole(id, access);
+      return api.setTeamMemberRole(id, userId, { teamRoleId: role.id });
+    },
     onSuccess: refetch,
   });
   const removeMember = useMutation({ mutationFn: (userId: string) => api.removeTeamMember(id, userId), onSuccess: refetch });
@@ -151,12 +168,18 @@ export default function TeamDetailPage() {
                     <span style={{ fontSize: 13 }}>{m.email}</span>
                     {m.name && <span style={{ fontSize: 11, color: "var(--c-tx3)", marginLeft: 8 }}>{m.name}</span>}
                   </div>
+                  {m.clientAccess && <Badge tone="lapis">{t("teams.clientBadge")}</Badge>}
                   {canManage && !lastOwner ? (
                     <select
                       style={field}
-                      value={m.teamRoleId ?? m.role}
+                      aria-label={m.email}
+                      value={m.clientAccess ? `client:${m.clientAccess}` : m.teamRoleId ?? m.role}
                       onChange={(e) => {
                         const v = e.target.value;
+                        if (v === "client:view" || v === "client:deploy") {
+                          makeClient.mutate({ userId: m.userId, access: v === "client:deploy" ? "deploy" : "view" });
+                          return;
+                        }
                         const builtin = v === "OWNER" || v === "ADMIN" || v === "VIEWER";
                         setRole.mutate({ userId: m.userId, assignment: builtin ? { role: v as Role } : { teamRoleId: v } });
                       }}
@@ -164,9 +187,15 @@ export default function TeamDetailPage() {
                       <option value="VIEWER">VIEWER</option>
                       <option value="ADMIN">ADMIN</option>
                       {isOwner && <option value="OWNER">OWNER</option>}
-                      {teamRoles.length > 0 && (
+                      {m.role !== "OWNER" && (
+                        <optgroup label={t("teams.clientBadge")}>
+                          <option value="client:view">{t("teams.clientView")}</option>
+                          <option value="client:deploy">{t("teams.clientDeploy")}</option>
+                        </optgroup>
+                      )}
+                      {teamRoles.some((r) => !r.portal) && (
                         <optgroup label={t("teams.customRole")}>
-                          {teamRoles.map((r) => (
+                          {teamRoles.filter((r) => !r.portal).map((r) => (
                             <option key={r.id} value={r.id}>{r.name}</option>
                           ))}
                         </optgroup>
@@ -193,13 +222,18 @@ export default function TeamDetailPage() {
           <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 10 }}>{t("teams.invite")}</div>
           <form onSubmit={(e) => { e.preventDefault(); invite.mutate(); }} style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <input style={{ ...field, flex: 1, minWidth: 180 }} type="email" placeholder={t("teams.inviteEmail")} aria-label={t("teams.inviteEmail")} value={email} onChange={(e) => setEmail(e.target.value)} required />
-            <select style={field} value={inviteRole} onChange={(e) => setInviteRole(e.target.value as Role)}>
+            <select style={field} aria-label={t("teams.invite")} value={inviteRole} onChange={(e) => setInviteRole(e.target.value as InviteChoice)}>
               <option value="VIEWER">VIEWER</option>
               <option value="ADMIN">ADMIN</option>
               {isOwner && <option value="OWNER">OWNER</option>}
+              <optgroup label={t("teams.clientBadge")}>
+                <option value="CLIENT_VIEW">{t("teams.clientView")}</option>
+                <option value="CLIENT_DEPLOY">{t("teams.clientDeploy")}</option>
+              </optgroup>
             </select>
             <Btn onClick={() => invite.mutate()} disabled={invite.isPending || !email}>{t("teams.invite")}</Btn>
           </form>
+          {clientOf(inviteRole) && <div style={{ fontSize: 12, color: "var(--c-tx3)", marginTop: 8 }}>{t("teams.clientHint")}</div>}
           {invite.isError && <div style={{ color: "var(--c-r)", fontSize: 12, marginTop: 8 }}>{(invite.error as Error).message}</div>}
           {lastToken && (
             <div style={{ marginTop: 10, fontSize: 12, color: "var(--c-am)" }}>
@@ -214,7 +248,7 @@ export default function TeamDetailPage() {
               {invitations.map((inv) => (
                 <div key={inv.id} style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
                   <span style={{ flex: 1, fontSize: 13 }}>{inv.email}</span>
-                  <span style={{ fontSize: 11, color: "var(--c-tx3)" }}>{inv.role}</span>
+                  <span style={{ fontSize: 11, color: "var(--c-tx3)" }}>{inv.clientAccess ? t("teams.clientBadge") : inv.role}</span>
                   <button onClick={async () => { if (await confirm({ body: t("common.deleteConfirm"), danger: true })) revoke.mutate(inv.id); }} style={{ background: "transparent", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", color: "var(--c-tx3)", fontSize: 11, cursor: "pointer", padding: "2px 8px", fontFamily: "inherit" }}>{t("teams.revoke")}</button>
                 </div>
               ))}
@@ -274,10 +308,11 @@ function RolesCard({ teamId, roles, onChanged }: { teamId: string; roles: TeamRo
           {roles.map((r) => (
             <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 10 }}>
               <span style={{ fontSize: 13, fontWeight: 600 }}>{r.name}</span>
+              {r.portal && <Badge tone="lapis">{t("teams.clientBadge")}</Badge>}
               <span style={{ flex: 1, fontSize: 11, color: "var(--c-tx3)" }}>
-                {r.permissions.length ? r.permissions.map((p) => t(`teams.perm_${p.replace(":", "_")}`)).join(", ") : t("teams.noPermissions")}
+                {r.portal ? t("teams.clientRoleNote") : r.permissions.length ? r.permissions.map((p) => t(`teams.perm_${p.replace(":", "_")}`)).join(", ") : t("teams.noPermissions")}
               </span>
-              <button onClick={() => startEdit(r)} style={{ background: "transparent", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", color: "var(--c-tx2)", fontSize: 11, cursor: "pointer", padding: "2px 8px", fontFamily: "inherit" }}>{t("teams.editRole")}</button>
+              {!r.portal && <button onClick={() => startEdit(r)} style={{ background: "transparent", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", color: "var(--c-tx2)", fontSize: 11, cursor: "pointer", padding: "2px 8px", fontFamily: "inherit" }}>{t("teams.editRole")}</button>}
               <IconBtn label={t("teams.deleteRole")} danger onClick={async () => { if (await confirm({ body: t("common.deleteConfirm"), danger: true })) del.mutate(r.id); }}>×</IconBtn>
             </div>
           ))}

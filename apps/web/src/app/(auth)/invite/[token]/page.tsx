@@ -53,7 +53,7 @@ export default function InvitePage() {
     <Card style={{ padding: 24 }}>
       <h1 style={{ fontSize: 18, fontWeight: 700, margin: "0 0 12px" }}>{t("teams.inviteTitle")}</h1>
       <p style={{ fontSize: 14, color: "var(--c-tx)", lineHeight: 1.5, margin: "0 0 4px" }}>
-        {t("teams.invitePreview", { team: preview.teamName, role: preview.role })}
+        {preview.clientAccess ? t("teams.inviteClientAs", { team: preview.teamName }) : t("teams.invitePreview", { team: preview.teamName, role: preview.role })}
       </p>
       {preview.inviterName && (
         <p style={{ fontSize: 13, color: "var(--c-tx2)", margin: "0 0 4px" }}>{t("teams.inviteBy", { name: preview.inviterName })}</p>

@@ -5,7 +5,7 @@ import React from "react";
 import { I18nProvider } from "../../../../i18n/provider";
 import { ConfirmProvider } from "../../../../components/confirm";
 import { api } from "../../../../lib/api";
-import type { Team } from "../../../../lib/types";
+import type { Team, TeamMember } from "../../../../lib/types";
 
 const nav = vi.hoisted(() => ({ replace: vi.fn() }));
 vi.mock("next/navigation", () => ({ useParams: () => ({ id: "t1" }), useRouter: () => ({ push: vi.fn(), replace: nav.replace }), usePathname: () => "/teams/t1" }));
@@ -21,10 +21,10 @@ afterEach(() => { cleanup(); vi.restoreAllMocks(); nav.replace.mockClear(); loca
 
 const team = (over: Partial<Team> = {}): Team => ({ id: "t1", name: "Acme", role: "OWNER", memberCount: 1, iconUpdatedAt: null, color: null, ...over });
 
-function setup(initial: Team) {
+function setup(initial: Team, members: TeamMember[] = []) {
   let current = initial;
   const getTeam = vi.spyOn(api, "getTeam").mockImplementation(async () => current);
-  vi.spyOn(api, "listTeamMembers").mockResolvedValue([]);
+  vi.spyOn(api, "listTeamMembers").mockResolvedValue(members);
   vi.spyOn(api, "listTeamRoles").mockResolvedValue([]);
   vi.spyOn(api, "listProjects").mockResolvedValue([]);
   vi.spyOn(api, "listTeamInvitations").mockResolvedValue([]);
@@ -94,5 +94,28 @@ describe("team detail page", () => {
     expect(screen.getAllByText(/Email isn't set up/)).toHaveLength(1);
     fireEvent.click(within(banner).getByRole("button", { name: "Dismiss" }));
     expect(screen.queryByText(/Email isn't set up/)).toBeNull();
+  });
+
+  it("invites a Client with the portal access chosen in the role picker", async () => {
+    setup(team());
+    const invite = vi.spyOn(api, "inviteTeamMember").mockResolvedValue({ id: "i1", email: "c@example.com", role: "VIEWER", clientAccess: "deploy", token: "tok", expiresAt: "2030-01-01T00:00:00.000Z" });
+    await screen.findByRole("heading", { level: 1, name: "Acme" });
+    fireEvent.change(screen.getByLabelText("Member email"), { target: { value: "c@example.com" } });
+    fireEvent.change(screen.getByRole("combobox", { name: "Invite" }), { target: { value: "CLIENT_DEPLOY" } });
+    expect(screen.getByText("A client only sees this team's apps, uptime and backups.")).toBeTruthy();
+    fireEvent.submit(screen.getByLabelText("Member email").closest("form")!);
+    await waitFor(() => expect(invite).toHaveBeenCalledWith("t1", "c@example.com", "VIEWER", "deploy"));
+  });
+
+  it("makes an existing member a Client through the preset role", async () => {
+    setup(team(), [
+      { userId: "u1", email: "o@example.com", name: null, role: "OWNER", teamRoleId: null, roleName: null, restrictedAccess: false, accessedProjects: [] },
+      { userId: "u2", email: "v@example.com", name: null, role: "VIEWER", teamRoleId: null, roleName: null, restrictedAccess: false, accessedProjects: [] },
+    ]);
+    const ensure = vi.spyOn(api, "ensureClientRole").mockResolvedValue({ id: "r1", name: "Client", permissions: [], portal: true });
+    const assign = vi.spyOn(api, "setTeamMemberRole").mockResolvedValue({ ok: true });
+    fireEvent.change(await screen.findByRole("combobox", { name: "v@example.com" }), { target: { value: "client:view" } });
+    await waitFor(() => expect(ensure).toHaveBeenCalledWith("t1", "view"));
+    await waitFor(() => expect(assign).toHaveBeenCalledWith("t1", "u2", { teamRoleId: "r1" }));
   });
 });
