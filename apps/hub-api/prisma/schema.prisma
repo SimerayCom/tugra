@@ -335,6 +335,8 @@ model Server {
   bootTime               DateTime?
   gpuInventory           Json? // sanitized GPU probe snapshot (GpuInventory, server-ops/gpu-inventory.ts). NULL = never probed = UNKNOWN, never "no GPU"
   gpuCheckedAt           DateTime? // when gpuInventory was last written
+  scanReport             Json? // sanitized server scan ("What runs on this server", server-ops/server-scan.ts). NULL = never scanned. Holds no env values or secrets.
+  scannedAt              DateTime? // when scanReport was last written
   cleanupEnabled         Boolean                 @default(false)
   cleanupIntervalHours   Int?
   cleanupCron            String? // optional 5-field cron; when set, overrides cleanupIntervalHours

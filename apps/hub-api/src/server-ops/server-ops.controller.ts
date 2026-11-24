@@ -25,6 +25,8 @@ import { AuthUser } from "../auth/strategies/jwt.strategy";
 import { CleanupService } from "./cleanup.service";
 import { GpuInventoryService } from "./gpu-inventory.service";
 import { GpuReportSchema } from "./gpu-inventory";
+import { ServerScanService } from "./server-scan.service";
+import { ScanViewSchema } from "./server-scan";
 import { PatchService } from "./patch.service";
 import { RebootService } from "./reboot.service";
 import { LogDrainService } from "./log-drain.service";
@@ -65,6 +67,7 @@ export class ServerOpsController {
     private readonly logDrains: LogDrainService,
     private readonly proxy: ProxyOpsService,
     private readonly containerOps: ContainerOpsService,
+    private readonly scans: ServerScanService,
   ) {}
 
   /**
@@ -351,6 +354,22 @@ export class ServerOpsController {
   @ApiZodResponse(GpuReportSchema)
   refreshGpus(@CurrentUser() user: AuthUser, @Param("id") id: string) {
     return this.gpus.refresh(user.userId, id);
+  }
+
+  // Stored "What runs on this server" report (membership only, no agent traffic). `report: null` = never scanned.
+  @Get("scan")
+  @ApiZodResponse(ScanViewSchema)
+  getScan(@CurrentUser() user: AuthUser, @Param("id") id: string) {
+    return this.scans.getView(user.userId, id);
+  }
+
+  // Run the read-only scan now (writers; starts a short-lived read-only helper container, changes nothing on the host).
+  @Post("scan")
+  @RequireScopes("deploy")
+  @HttpCode(200)
+  @ApiZodResponse(ScanViewSchema)
+  runScan(@CurrentUser() user: AuthUser, @Param("id") id: string) {
+    return this.scans.run(user.userId, id);
   }
 
   @Put("cleanup-config")

@@ -105,7 +105,7 @@ const TUGRA_DIR_RE = /(^|\/)tugra(\/|$)/;
  * image, or a stack service running from Tugra's install dir. Weaker signals (a look-alike name, a lone
  * `hub-api` service name) hide the container itself but never its siblings.
  */
-function isProjectAnchor(c: { image: string; composeProject: string | null; composeService: string | null; composeWorkingDir: string | null }): boolean {
+export function isProjectAnchor(c: { image: string; composeProject: string | null; composeService: string | null; composeWorkingDir: string | null }): boolean {
   if (!c.composeProject) return false;
   if (isStackAnchorImage(c.image)) return true;
   return c.composeService !== null && STACK_SERVICES.has(c.composeService) && c.composeWorkingDir !== null && TUGRA_DIR_RE.test(c.composeWorkingDir);

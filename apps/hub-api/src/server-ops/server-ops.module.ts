@@ -10,6 +10,7 @@ import { ServerOpsController } from "./server-ops.controller";
 import { FleetController } from "./fleet.controller";
 import { CleanupService } from "./cleanup.service";
 import { GpuInventoryService } from "./gpu-inventory.service";
+import { ServerScanService } from "./server-scan.service";
 import { CleanupRunnerService } from "./cleanup-runner.service";
 import { CleanupSchedulerService } from "./cleanup.scheduler.service";
 import { PatchService } from "./patch.service";
@@ -29,6 +30,6 @@ import { ComposeRestartHealSchedulerService } from "./compose-restart-heal.sched
   controllers: [ServerOpsController, FleetController],
   // RebootService is exported for the MCP tools (the same service the REST routes call); CleanupService for the settings import.
   exports: [RebootService, CleanupService],
-  providers: [CleanupService, GpuInventoryService, CleanupRunnerService, CleanupSchedulerService, PatchService, RebootService, RebootQueueService, LogDrainService, ProxyOpsService, ContainerOpsService, ContainerLogStreamGuard, ContainerHealthRunnerService, ContainerHealthSchedulerService, ComposeRestartHealService, ComposeRestartHealSchedulerService],
+  providers: [CleanupService, GpuInventoryService, ServerScanService, CleanupRunnerService, CleanupSchedulerService, PatchService, RebootService, RebootQueueService, LogDrainService, ProxyOpsService, ContainerOpsService, ContainerLogStreamGuard, ContainerHealthRunnerService, ContainerHealthSchedulerService, ComposeRestartHealService, ComposeRestartHealSchedulerService],
 })
 export class ServerOpsModule {}
