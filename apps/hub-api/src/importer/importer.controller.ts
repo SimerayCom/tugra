@@ -82,6 +82,7 @@ export class ImporterController {
    */
   @Post("test")
   @RequireScopes("write")
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
   @ApiZodBody(ImportTestSchema)
   test(
     @CurrentUser() user: AuthUser,

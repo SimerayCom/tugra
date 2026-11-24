@@ -95,6 +95,7 @@ describe("ImportWizard", () => {
     await screen.findByLabelText("Coolify URL");
     await waitFor(() => expect(qc.getQueryData(["teams"])).toBeTruthy());
     fireEvent.change(screen.getByLabelText("Coolify URL"), { target: { value: "https://coolify.example.com" } });
+    fireEvent.blur(screen.getByLabelText("Coolify URL"));
     fireEvent.change(screen.getByLabelText("API token"), { target: { value: "tok-12345678" } });
   };
   const refusedByIpList = () => vi.spyOn(api, "importTest").mockResolvedValue({ ok: false, code: "allowed-ips", message: 'could not reach Coolify: Coolify API error 403: "You are not allowed to access the API."' });
@@ -199,7 +200,13 @@ describe("ImportWizard", () => {
     fireEvent.change(screen.getByLabelText("Coolify URL"), { target: { value: "https://coolify.example.com" } });
     await new Promise((r) => setTimeout(r, 900));
     expect(api.importTest).not.toHaveBeenCalled();
+    // a token pasted before the address field was left is not sent to a half-typed address
     fireEvent.change(screen.getByLabelText("API token"), { target: { value: "tok-12345678" } });
+    fireEvent.change(screen.getByLabelText("Coolify URL"), { target: { value: "https://coolify.exampl" } });
+    await new Promise((r) => setTimeout(r, 900));
+    expect(api.importTest).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByLabelText("Coolify URL"), { target: { value: "https://coolify.example.com" } });
+    fireEvent.blur(screen.getByLabelText("Coolify URL"));
     await waitFor(() => expect(api.importTest).toHaveBeenCalledWith({ sourceKind: "coolify", teamId: "t1", baseUrl: "https://coolify.example.com", token: "tok-12345678" }));
   });
 

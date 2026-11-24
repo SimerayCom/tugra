@@ -4,7 +4,7 @@ A server joins Tugra when its **agent** connects to your hub. You create the ser
 
 ## Before you start
 
-- A Linux server (amd64) where you can run one command as **root**. If Docker is missing, the command installs it. Without root, install Docker first.
+- A Linux server (amd64 or arm64) where you can run one command as **root**. If Docker is missing, the command installs it. Without root, install Docker first.
 - The server can reach your hub over the network: `https://<your panel domain>` or the IP address of the hub. No inbound ports are needed for the agent.
 - The command is valid for **one hour**. If it expires, press **Get a fresh command**.
 

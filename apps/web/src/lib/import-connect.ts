@@ -1,14 +1,16 @@
 import type { ImportConnectFailureCode, ImportTestResult } from "./types";
 
-/** Whether a pasted URL + token are worth testing: an http(s) address and a token that is not a stub. Pure. */
+/** Whether a pasted URL + token are worth testing: an http(s) address with a dotted host (not a half-typed name) and a token that is not a stub. Pure. */
 export function readyToTest(baseUrl: string, token: string): boolean {
   const url = baseUrl.trim();
   if (!/^https?:\/\/[^\s/]+/i.test(url)) return false;
+  let host: string;
   try {
-    new URL(url);
+    host = new URL(url).hostname;
   } catch {
     return false;
   }
+  if (!/^(\[.+\]|[^.]+(\.[^.]+)*\.[a-z0-9-]{2,}|\d{1,3}(\.\d{1,3}){3})$/i.test(host)) return false;
   return token.trim().length >= 8;
 }
 

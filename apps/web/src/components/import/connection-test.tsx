@@ -15,12 +15,13 @@ const DEBOUNCE_MS = 700;
 export type TestState = { status: "idle" } | { status: "testing" } | { status: "done"; result: ImportTestResult };
 
 /**
- * Tests the token as soon as a URL and token are both filled (debounced, once per distinct pair), so the person sees one line
- * about it instead of reading rules first. Nothing is stored. A newer pair always wins over a slower, older answer.
+ * Tests the token once a URL has been confirmed (the field was left) and a token is filled (debounced, once per distinct pair),
+ * so the person sees one line about it instead of reading rules first. A half-typed address never receives the token.
+ * Nothing is stored. A newer pair always wins over a slower, older answer.
  * `onResult` fires for each finished test (the wizard uses it to fill the source team label).
  */
-export function useConnectionTest(args: { kind: ImportRemoteKind; teamId: string; baseUrl: string; token: string; onResult?: (r: ImportTestResult) => void }): TestState {
-  const { kind, teamId, baseUrl, token } = args;
+export function useConnectionTest(args: { kind: ImportRemoteKind; teamId: string; baseUrl: string; urlConfirmed: boolean; token: string; onResult?: (r: ImportTestResult) => void }): TestState {
+  const { kind, teamId, baseUrl, token, urlConfirmed } = args;
   const [state, setState] = useState<TestState>({ status: "idle" });
   const seq = useRef(0);
   const onResult = useRef(args.onResult);
@@ -28,7 +29,7 @@ export function useConnectionTest(args: { kind: ImportRemoteKind; teamId: string
 
   useEffect(() => {
     const mine = ++seq.current;
-    if (!teamId || !readyToTest(baseUrl, token)) {
+    if (!teamId || !urlConfirmed || !readyToTest(baseUrl, token)) {
       setState({ status: "idle" });
       return;
     }
@@ -45,7 +46,7 @@ export function useConnectionTest(args: { kind: ImportRemoteKind; teamId: string
       onResult.current?.(result);
     }, DEBOUNCE_MS);
     return () => clearTimeout(timer);
-  }, [kind, teamId, baseUrl, token]);
+  }, [kind, teamId, baseUrl, token, urlConfirmed]);
 
   return state;
 }
@@ -98,7 +99,7 @@ export function ConnectionStatus({ test, connectError, source }: { test: TestSta
   const counts = parts.counts.map((c) => t(`import.test.${c.key}_${c.n === 1 ? "one" : "other"}`, { n: c.n }));
   const head = parts.hasTeam ? t("import.test.okTeam", { team: r.team ?? "" }) : t("import.test.ok", { source });
   const tail = parts.sensitive === null ? [] : [parts.sensitive ? t("import.test.sensitiveYes") : t("import.test.sensitiveNo")];
-  const line = [[head, ...counts].join(", "), ...tail].join(" · ");
+  const line = [[head, ...counts].join(t("import.test.sepCounts")), ...tail].join(t("import.test.sepFacts"));
   return (
     <div data-testid="connection-test">
       <p role="status" style={lineStyle(parts.sensitive === false ? "var(--c-am)" : "var(--c-g)")}>{line}</p>

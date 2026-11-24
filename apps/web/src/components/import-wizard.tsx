@@ -58,6 +58,8 @@ export function ImportWizard() {
 
   const [kind, setKind] = useState<ImportRemoteKind>("coolify");
   const [baseUrl, setBaseUrl] = useState("");
+  /** True once the address field was left after its last edit: only then may the token be sent to it for the test. */
+  const [urlConfirmed, setUrlConfirmed] = useState(false);
   const [token, setToken] = useState("");
   const [scopeLabel, setScopeLabel] = useState("");
   // The label is filled from the source team once the token tests; typing in it stops that.
@@ -117,6 +119,7 @@ export function ImportWizard() {
     kind,
     teamId: connectTeam,
     baseUrl,
+    urlConfirmed,
     token,
     onResult: (r) => {
       if (r.ok && r.suggestedLabel && !labelTouchedRef.current) setScopeLabel(r.suggestedLabel);
@@ -128,6 +131,7 @@ export function ImportWizard() {
     if (next === kind) return;
     setKind(next);
     setBaseUrl("");
+    setUrlConfirmed(false);
     setToken("");
     setScopeLabel("");
     setLabelTouched(false);
@@ -219,7 +223,7 @@ export function ImportWizard() {
       </div>
 
       <label style={label} htmlFor="imp-url">{t(src.url)}</label>
-      <input id="imp-url" style={field} value={baseUrl} onChange={(e) => { setBaseUrl(e.target.value); if (connect.isError) connect.reset(); }} placeholder={t(src.ph)} inputMode="url" autoComplete="off" spellCheck={false} />
+      <input id="imp-url" style={field} value={baseUrl} onChange={(e) => { setBaseUrl(e.target.value); setUrlConfirmed(false); if (connect.isError) connect.reset(); }} onBlur={() => setUrlConfirmed(true)} placeholder={t(src.ph)} inputMode="url" autoComplete="off" spellCheck={false} />
 
       <label style={label} htmlFor="imp-token">{t(src.tok)}</label>
       <input id="imp-token" style={field} type="password" value={token} onChange={(e) => { setToken(e.target.value); if (connect.isError) connect.reset(); }} autoComplete="off" aria-describedby="imp-token-hint" />

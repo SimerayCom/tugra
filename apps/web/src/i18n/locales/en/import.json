@@ -959,6 +959,8 @@
     "databases_other": "{n} databases",
     "services_one": "{n} service",
     "services_other": "{n} services",
+    "sepCounts": ", ",
+    "sepFacts": " · ",
     "sensitiveYes": "read:sensitive",
     "sensitiveNo": "no read:sensitive",
     "sensitiveNote": "Without it, build commands and variable values will not move. Create a token with read:sensitive.",

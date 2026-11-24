@@ -12,6 +12,9 @@ describe("readyToTest", () => {
     expect(readyToTest("https://", "12345678")).toBe(false);
     expect(readyToTest("https://coolify.example.com", "short")).toBe(false);
     expect(readyToTest("ftp://coolify.example.com", "12345678")).toBe(false);
+    expect(readyToTest("https://coolify", "12345678")).toBe(false);
+    expect(readyToTest("https://coolify.e", "12345678")).toBe(false);
+    expect(readyToTest("https://203.0.113.7:8000", "12345678")).toBe(true);
   });
 });
 
