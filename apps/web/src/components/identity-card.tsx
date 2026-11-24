@@ -93,8 +93,8 @@ export function IdentityCard({
         </div>
         {canEdit && (
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <Btn variant="ghost" icon={CloudUpload} onClick={() => fileRef.current?.click()} disabled={busy}>
-              {busy ? "…" : iconUrl ? labels.replace : labels.upload}
+            <Btn variant="ghost" icon={CloudUpload} onClick={() => fileRef.current?.click()} disabled={busy} loading={busy}>
+              {iconUrl ? labels.replace : labels.upload}
             </Btn>
             {iconUrl && <Btn variant="ghost" icon={Trash2} onClick={() => remove.mutate()} disabled={busy}>{labels.remove}</Btn>}
           </div>

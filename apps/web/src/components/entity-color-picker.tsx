@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Check } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Ban, Check } from "lucide-react";
 import { useT } from "../i18n/provider";
 import { PRESET_COLORS, normalizeHex } from "../lib/color";
 import { Btn } from "./ui";
@@ -43,6 +43,24 @@ export function EntityColorPicker({
     if (hex !== value) onChange(hex);
   };
 
+  // Radio-group keyboard model: one tab stop (the selected swatch), arrows move + select, Home/End jump.
+  const options: (string | null)[] = [null, ...PRESET_COLORS];
+  const selectedIdx = options.findIndex((o) => o === value);
+  const tabIdx = selectedIdx >= 0 ? selectedIdx : 0;
+  const refs = useRef<(HTMLButtonElement | null)[]>([]);
+  const onSwatchKey = (e: React.KeyboardEvent, i: number) => {
+    const n = options.length;
+    let next = -1;
+    if (e.key === "ArrowRight" || e.key === "ArrowDown") next = (i + 1) % n;
+    else if (e.key === "ArrowLeft" || e.key === "ArrowUp") next = (i - 1 + n) % n;
+    else if (e.key === "Home") next = 0;
+    else if (e.key === "End") next = n - 1;
+    if (next < 0) return;
+    e.preventDefault();
+    refs.current[next]?.focus();
+    onChange(options[next]);
+  };
+
   const showSuggestion = !!suggestion && suggestion !== value;
   return (
     <div role="group" aria-label={t("identity.color")} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -62,20 +80,25 @@ export function EntityColorPicker({
 
       <div role="radiogroup" aria-label={t("identity.color")} style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
         <button
+          ref={(el) => { refs.current[0] = el; }}
           type="button" role="radio" aria-checked={value === null} disabled={disabled}
+          tabIndex={tabIdx === 0 ? 0 : -1}
+          onKeyDown={(e) => onSwatchKey(e, 0)}
           onClick={() => onChange(null)}
-          style={{ ...swatchBase, background: "var(--c-tile)", color: "var(--c-tx2)", fontSize: 10, fontWeight: 700, boxShadow: value === null ? ringShadow : undefined }}
+          style={{ ...swatchBase, background: "var(--c-tile)", color: "var(--c-tx2)", boxShadow: value === null ? ringShadow : undefined }}
         >
           {value === null ? <Check size={14} aria-hidden /> : null}
           <span style={srOnly}>{t("identity.colorDefault")}</span>
-          {value !== null && <span aria-hidden>{"∅"}</span>}
+          {value !== null && <Ban size={14} aria-hidden />}
         </button>
-        {PRESET_COLORS.map((hex) => {
+        {PRESET_COLORS.map((hex, pi) => {
           const name = t(`identity.presets.${PRESET_KEYS[hex]}`);
           const selected = value === hex;
           return (
             <button
-              key={hex} type="button" role="radio" aria-checked={selected} aria-label={t("identity.colorUse", { name })} title={name}
+              key={hex} ref={(el) => { refs.current[pi + 1] = el; }}
+              type="button" role="radio" aria-checked={selected} aria-label={t("identity.colorUse", { name })} title={name}
+              tabIndex={tabIdx === pi + 1 ? 0 : -1} onKeyDown={(e) => onSwatchKey(e, pi + 1)}
               disabled={disabled} onClick={() => onChange(hex)}
               style={{ ...swatchBase, background: hex, boxShadow: selected ? ringShadow : undefined }}
             >

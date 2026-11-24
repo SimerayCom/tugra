@@ -72,4 +72,15 @@ describe("EntityColorPicker", () => {
     draw({ disabled: true });
     expect((screen.getByRole("radio", { name: "Use Blue" }) as HTMLButtonElement).disabled).toBe(true);
   });
+
+  it("is one tab stop on the selected swatch and moves/selects with the arrow keys", () => {
+    const { onChange } = draw({ value: "#46a758" });
+    const green = screen.getByRole("radio", { name: "Use Green" });
+    expect(green.getAttribute("tabindex")).toBe("0");
+    expect(screen.getByRole("radio", { name: "Use Blue" }).getAttribute("tabindex")).toBe("-1");
+    fireEvent.keyDown(green, { key: "ArrowRight" });
+    expect(onChange).toHaveBeenCalledWith("#12a594");
+    fireEvent.keyDown(green, { key: "Home" });
+    expect(onChange).toHaveBeenLastCalledWith(null);
+  });
 });
