@@ -135,4 +135,12 @@ describe("MonitorRunnerService — HTTP options", () => {
     expect(out?.cause).toBeNull();
     expect(fire).toHaveBeenCalledWith("m2", expect.objectContaining({ status: "DOWN" }));
   });
+
+  it("a paused monitor is neither checked nor alerted by the scheduler, but a manual check still runs", async () => {
+    const { svc, fire } = make(httpMonitor({ enabled: false }), null);
+    expect(await svc.runCheck("m2")).toBeNull();
+    expect(fire).not.toHaveBeenCalled();
+    const manual = await svc.runCheck("m2", { manual: true });
+    expect(manual?.status).toBe("DOWN");
+  });
 });

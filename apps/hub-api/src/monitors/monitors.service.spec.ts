@@ -23,7 +23,7 @@ function make(prisma: Partial<PrismaService>, access: Partial<TeamAccessService>
     audit,
     {} as MonitorRunnerService,
     scheduler as MonitorSchedulerService,
-    { encrypt: (v: string) => `enc:${v}` } as unknown as CryptoService,
+    { encrypt: (v: string) => `enc:${v}`, decrypt: (v: string) => v.replace(/^enc:/, "") } as unknown as CryptoService,
   );
 }
 
@@ -340,5 +340,35 @@ describe("MonitorsService.create — request options", () => {
     const access = { requirePermission: jest.fn(), teamRole: jest.fn().mockResolvedValue(Role.OWNER) } as unknown as TeamAccessService;
     await make(prisma, access, { schedule: jest.fn(), unschedule: jest.fn() }).update("u1", "m1", { upsideDown: true });
     expect(update.mock.calls[0][0].data.httpOptionsEnc).toBeUndefined();
+  });
+
+  it("merges a partial request-option update over the stored blob instead of wiping the rest", async () => {
+    const stored = `enc:${JSON.stringify({ headers: { "X-Api-Key": "k" }, basicAuth: { user: "u", pass: "p" }, body: "old" })}`;
+    const update = jest.fn(async ({ data }: { data: Record<string, unknown> }) => ({ ...monitor, ...data }));
+    const prisma = {
+      monitor: { findUnique: jest.fn().mockResolvedValue({ ...monitor, httpOptionsEnc: stored }), update },
+      notificationChannel: { findMany: jest.fn() },
+    } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn(), teamRole: jest.fn().mockResolvedValue(Role.OWNER) } as unknown as TeamAccessService;
+    await make(prisma, access, { schedule: jest.fn(), unschedule: jest.fn() }).update("u1", "m1", { body: "new" });
+    const blob = JSON.parse(String(update.mock.calls[0][0].data.httpOptionsEnc).replace(/^enc:/, ""));
+    expect(blob).toEqual({ headers: { "X-Api-Key": "k" }, basicAuth: { user: "u", pass: "p" }, body: "new" });
+  });
+
+  it("does not schedule a monitor that is created paused", async () => {
+    const create = jest.fn(async ({ data }: { data: Record<string, unknown> }) => ({ ...monitor, ...data, id: "new", teamId: "t1" }));
+    const prisma = {
+      monitor: { create },
+      monitorChannel: { createMany: jest.fn() },
+      server: { findFirst: jest.fn() },
+      notificationChannel: { findMany: jest.fn() },
+    } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn() } as unknown as TeamAccessService;
+    const schedule = jest.fn();
+    await make(prisma, access, { schedule }).create("u1", {
+      name: "api", type: "HTTP", target: "https://example.com", teamId: "t1", enabled: false,
+    });
+    expect(create.mock.calls[0][0].data.enabled).toBe(false);
+    expect(schedule).not.toHaveBeenCalled();
   });
 });

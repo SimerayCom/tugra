@@ -151,12 +151,14 @@ export class MonitorsService implements OnApplicationBootstrap {
       });
     }
     await this.audit.log({ actor: userId, action: "monitor.create", target: m.id });
-    await this.scheduler.schedule(m.id, m.intervalSec);
+    // A monitor created paused (e.g. a paused Uptime Kuma monitor) must not get a repeatable job.
+    if (m.enabled) await this.scheduler.schedule(m.id, m.intervalSec);
     return this.view(m, Role.OWNER, true);
   }
 
   /** The columns for the check options in a create/update body. Request headers, basic auth and the body are
-   *  packed into one encrypted blob (they carry credentials); providing any of them replaces the stored blob. */
+   *  packed into one encrypted blob (they carry credentials). On update, the provided fields are merged over the
+   *  stored blob (`existingEnc`), so editing one of them never wipes the others; send `{}` / `""` to clear one. */
   private optionColumns(dto: {
     method?: string;
     keyword?: string;
@@ -171,11 +173,24 @@ export class MonitorsService implements OnApplicationBootstrap {
     dnsRecordType?: string;
     dnsServer?: string;
     dnsExpect?: string;
-  }) {
+  }, existingEnc?: string | null) {
     const hasRequest = dto.headers !== undefined || dto.basicAuth !== undefined || dto.body !== undefined;
-    const request = hasRequest
-      ? JSON.stringify({ headers: dto.headers, basicAuth: dto.basicAuth, body: dto.body })
-      : undefined;
+    let request: string | undefined;
+    if (hasRequest) {
+      let prev: { headers?: Record<string, string>; basicAuth?: { user: string; pass: string }; body?: string } = {};
+      if (existingEnc) {
+        try {
+          prev = JSON.parse(this.crypto.decrypt(existingEnc));
+        } catch {
+          prev = {};
+        }
+      }
+      request = JSON.stringify({
+        headers: dto.headers ?? prev.headers,
+        basicAuth: dto.basicAuth ?? prev.basicAuth,
+        body: dto.body ?? prev.body,
+      });
+    }
     return {
       method: dto.method,
       keyword: dto.keyword,
@@ -252,7 +267,7 @@ export class MonitorsService implements OnApplicationBootstrap {
         timeoutMs: dto.timeoutMs ?? undefined,
         resendEvery: dto.resendEvery ?? undefined,
         enabled: dto.enabled ?? undefined,
-        ...this.optionColumns(dto),
+        ...this.optionColumns(dto, m.httpOptionsEnc),
       },
     });
     if (dto.channelIds !== undefined) {
@@ -441,7 +456,7 @@ export class MonitorsService implements OnApplicationBootstrap {
   }
 
   check(userId: string, id: string) {
-    return this.require(userId, id).then(() => this.runner.runCheck(id));
+    return this.require(userId, id).then(() => this.runner.runCheck(id, { manual: true }));
   }
 
   private async require(userId: string, id: string): Promise<Monitor> {

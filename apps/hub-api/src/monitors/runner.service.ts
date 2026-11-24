@@ -32,9 +32,11 @@ export class MonitorRunnerService {
     private readonly crypto: CryptoService,
   ) {}
 
-  async runCheck(monitorId: string): Promise<CheckOutcome | null> {
+  /** `manual` = an explicit "check now" from a user, which is allowed on a paused monitor; the scheduler is not. */
+  async runCheck(monitorId: string, opts: { manual?: boolean } = {}): Promise<CheckOutcome | null> {
     const m = await this.prisma.monitor.findUnique({ where: { id: monitorId } });
     if (!m) return null;
+    if (m.enabled === false && !opts.manual) return null; // paused: never check or alert
 
     let r;
     if (m.type === "METRIC") {
