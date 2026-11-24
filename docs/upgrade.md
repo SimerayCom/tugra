@@ -130,7 +130,9 @@ from the hub or Redis: it downloads and verifies everything itself.
    takes effect without an installer run. This happens last, after the update is reported done; if the helper
    cannot start the old updater keeps running and the next update retries. An updater that is still on an older
    image when it starts (for example after a release whose scripts predate this) refreshes itself once, before it
-   takes any job.
+   takes any job. The updater container is named `tugra-updater` (earlier releases showed `tugra-tugra-updater-1`
+   because the compose project name was prefixed to the service name); an existing install moves to the new name
+   through this same refresh, the first time the compose file changes.
 
 6. **Clean up.** Every release adds roughly 8 GB of images (hub, web, agent, updater) and nothing used to remove the old
    ones. After a verified update the sidecar removes Tugra's **own** release images older than the previous release:

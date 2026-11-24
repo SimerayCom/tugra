@@ -179,6 +179,11 @@ services:
   # docker.sock but runs only scripts/update.sh's fixed pull/up command set (see SECURITY.md).
   tugra-updater:
     image: "ghcr.io/simeraycom/tugra-updater:${TUGRA_VERSION:-latest}"
+    # Without this the project prefix doubles the service name (`tugra-tugra-updater-1`). The SERVICE name is kept
+    # on purpose: update.sh, the hub's stack converge and every installed host-files validator address the service
+    # as `tugra-updater`, so an existing install moves to the new container name through the normal updater
+    # refresh (a changed service definition recreates it from the one-shot helper), never killing the running one.
+    container_name: tugra-updater
     build:
       context: ..
       dockerfile: deploy/Dockerfile.updater

@@ -2138,7 +2138,7 @@ exec ${REAL_CP} "$@"
 
   describe("deploy/docker-compose.yml", () => {
     const compose = parseYaml(readFileSync(COMPOSE, "utf8")) as {
-      services: Record<string, { image?: string; build?: unknown; environment?: Record<string, string>; depends_on?: unknown; healthcheck?: unknown; env_file?: unknown }>;
+      services: Record<string, { image?: string; container_name?: string; build?: unknown; environment?: Record<string, string>; depends_on?: unknown; healthcheck?: unknown; env_file?: unknown }>;
     };
 
     it("defines the four production services", () => {
@@ -2202,6 +2202,13 @@ exec ${REAL_CP} "$@"
         expect(compose.services[s].image).toContain("${TUGRA_VERSION");
         expect(compose.services[s].image).not.toMatch(/@sha256:[0-9a-f]{64}/);
       }
+    });
+
+    it("names the updater container tugra-updater (no doubled project prefix) while keeping the service name", () => {
+      // `tugra-tugra-updater-1` came from project `tugra` + service `tugra-updater`. The service name is what update.sh,
+      // the stack converge and the host-files validator address, so only the container name is pinned.
+      expect(compose.services["tugra-updater"].container_name).toBe("tugra-updater");
+      expect(compose.services["tugra-updater"].container_name).not.toMatch(/^tugra-tugra-/);
     });
 
     it("hub-api and web gain the OPTIONAL digest suffix (TUGRA_HUB_DIGEST / TUGRA_WEB_DIGEST), tag still first", () => {
