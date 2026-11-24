@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { render, screen, cleanup } from "@testing-library/react";
-import { MailNotConfiguredNote } from "./mail-not-configured-note";
+import { render, screen, cleanup, fireEvent } from "@testing-library/react";
+import { MailNotConfiguredNote, MAIL_NOTE_DISMISS_KEY } from "./mail-not-configured-note";
 import { I18nProvider } from "../i18n/provider";
 
 // Hoisted spies for the signed-in user and the cached instance status this note reads.
@@ -11,7 +11,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("../lib/auth", () => ({ useAuth: mocks.useAuth }));
 vi.mock("@tanstack/react-query", () => ({ useQuery: mocks.useQuery }));
 
-afterEach(cleanup);
+afterEach(() => { cleanup(); localStorage.clear(); });
 const draw = (node: React.ReactNode) => render(<I18nProvider>{node}</I18nProvider>);
 
 describe("MailNotConfiguredNote", () => {
@@ -41,5 +41,35 @@ describe("MailNotConfiguredNote", () => {
     mocks.useAuth.mockReturnValue({ user: { isInstanceOwner: true } });
     mocks.useQuery.mockReturnValue({ data: undefined });
     expect(draw(<MailNotConfiguredNote />).container.firstChild).toBeNull();
+  });
+
+  describe("dismissible banner", () => {
+    it("can be closed, stays closed on remount, and is shared across surfaces", () => {
+      mocks.useAuth.mockReturnValue({ user: { isInstanceOwner: true } });
+      mocks.useQuery.mockReturnValue({ data: { mailConfigured: false } });
+      const first = draw(<MailNotConfiguredNote dismissible />);
+      fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+      expect(first.container.firstChild).toBeNull();
+      expect(localStorage.getItem(MAIL_NOTE_DISMISS_KEY)).toBe("1");
+      first.unmount();
+      expect(draw(<MailNotConfiguredNote dismissible />).container.firstChild).toBeNull();
+    });
+
+    it("a non-dismissible note ignores the stored dismissal and has no close button", () => {
+      localStorage.setItem(MAIL_NOTE_DISMISS_KEY, "1");
+      mocks.useAuth.mockReturnValue({ user: { isInstanceOwner: true } });
+      mocks.useQuery.mockReturnValue({ data: { mailConfigured: false } });
+      draw(<MailNotConfiguredNote />);
+      expect(screen.getByRole("status")).toBeTruthy();
+      expect(screen.queryByRole("button", { name: "Dismiss" })).toBeNull();
+    });
+
+    it("forgets the dismissal once email is configured, so a later outage warns again", () => {
+      localStorage.setItem(MAIL_NOTE_DISMISS_KEY, "1");
+      mocks.useAuth.mockReturnValue({ user: { isInstanceOwner: true } });
+      mocks.useQuery.mockReturnValue({ data: { mailConfigured: true } });
+      draw(<MailNotConfiguredNote dismissible />);
+      expect(localStorage.getItem(MAIL_NOTE_DISMISS_KEY)).toBeNull();
+    });
   });
 });
