@@ -55,6 +55,22 @@ CREATE TABLE "MigrationSnapshot" (
     CONSTRAINT "MigrationSnapshot_pkey" PRIMARY KEY ("id")
 );
 
+-- CreateTable
+CREATE TABLE "MigrationVerification" (
+    "id" TEXT NOT NULL,
+    "runId" TEXT NOT NULL,
+    "teamId" TEXT NOT NULL,
+    "state" TEXT NOT NULL,
+    "report" JSONB NOT NULL,
+    "createdBy" TEXT NOT NULL,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "MigrationVerification_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateIndex
+CREATE INDEX "MigrationVerification_runId_createdAt_idx" ON "MigrationVerification"("runId", "createdAt");
+
 -- CreateIndex
 CREATE INDEX "HubBackupDrill_createdAt_idx" ON "HubBackupDrill"("createdAt");
 

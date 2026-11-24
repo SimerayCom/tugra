@@ -185,6 +185,7 @@ import type {
   MigrationRunCommandResult,
   MigrationRunSafetyHints,
   MigrationRunReport,
+  VerificationView,
 } from "./types";
 
 // Same-origin path the SPA calls; next.config rewrites proxy it to the hub, so the httpOnly session
@@ -2637,6 +2638,12 @@ export const api = {
   },
   createMigrationRun(input: MigrationRunCreateInput) {
     return apiFetch<MigrationRunView>("/migration-runs", { method: "POST", body: JSON.stringify(input) });
+  },
+  getMigrationRunVerification(id: string) {
+    return apiFetch<VerificationView>(`/migration-runs/${encodeURIComponent(id)}/verification`);
+  },
+  runMigrationRunVerification(id: string, paths: string[] = []) {
+    return apiFetch<VerificationView>(`/migration-runs/${encodeURIComponent(id)}/verification`, { method: "POST", body: JSON.stringify({ paths }) });
   },
   /** QUEUED -> RUNNING; on a DRY_RUN_DONE run it promotes and returns a NEW run (its id differs). */
   startMigrationRun(id: string, body: { sessionId?: string } = {}) {

@@ -3296,3 +3296,34 @@ export interface MigrationRunSafetyHints {
   /** Warning keys of a finished dry run that a pin fixed: they need no acceptance (absent on a hub that predates them). */
   warningsFixed?: string[];
 }
+
+// ───────────── migration safety: verification report (92) and pre-migration snapshot (93) ─────────────
+export type VerifyVerdict = "same" | "similar" | "differs" | "unknown";
+export interface VerifyPageSample {
+  status: number | null;
+  hash: string | null;
+  bytes: number;
+  title: string | null;
+  location: string | null;
+  truncated: boolean;
+  error: string | null;
+}
+export interface VerifyPageRow { host: string; path: string; source: VerifyPageSample; target: VerifyPageSample; verdict: VerifyVerdict; code: string }
+export interface VerifyDbRow { itemRef: string; name: string | null; engine: string | null; verdict: VerifyVerdict; code: string; sourceRows: number | null; targetRows: number | null; tables: Array<{ name: string; source: number; target: number }> }
+export interface VerifyVolumeRow { itemRef: string; name: string | null; verdict: VerifyVerdict; code: string; files: number | null; sourceBytes: number | null; targetBytes: number | null }
+export interface VerifyEnvRow { itemRef: string; name: string | null; verdict: VerifyVerdict; code: string; targetKeys: number | null; missing: Array<{ key: string; reason: string }> }
+export interface VerificationReport {
+  runId: string;
+  at: string;
+  state: "match" | "differences" | "incomplete";
+  counts: { checked: number; same: number; similar: number; differs: number; unknown: number };
+  pages: VerifyPageRow[];
+  databases: VerifyDbRow[];
+  volumes: VerifyVolumeRow[];
+  env: VerifyEnvRow[];
+  previewHosts: string[];
+}
+export interface VerificationView {
+  report: VerificationReport | null;
+  previews: Array<{ host: string; url: string | null }>;
+}

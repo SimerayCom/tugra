@@ -41,6 +41,7 @@ import { MigratorModule } from "./migrator/migrator.module";
 import { ImporterModule } from "./importer/importer.module";
 import { BeszelImportModule } from "./beszel-import/beszel-import.module";
 import { MigrationRunsModule } from "./migration-runs/migration-runs.module";
+import { MigrationSafetyModule } from "./migration-safety/migration-safety.module";
 import { CutoverModule } from "./cutover/cutover.module";
 import { CloudModule } from "./cloud/cloud.module";
 import { TunnelModule } from "./tunnel/tunnel.module";
@@ -118,6 +119,7 @@ import { ApiExceptionFilter } from "./common/api-exception.filter";
     BeszelImportModule, // Beszel hub import (systems, alert rules, channels, history)
     CutoverModule, // SSL/DNS cutover of imported apps
     MigrationRunsModule, // one-click migration orchestrator (P7)
+    MigrationSafetyModule, // verification report + pre-migration snapshot (92, 93)
     CloudModule,
     TunnelModule,
     DnsModule,

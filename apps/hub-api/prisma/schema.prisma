@@ -2046,6 +2046,19 @@ model HubDeadmanConfig {
   updatedAt       DateTime  @updatedAt
 }
 
+// The latest verification reports of a migration run (source vs target), kept as secret-free JSON. Soft run ref.
+model MigrationVerification {
+  id        String   @id @default(cuid())
+  runId     String
+  teamId    String
+  state     String // match | differences | incomplete
+  report    Json
+  createdBy String
+  createdAt DateTime @default(now())
+
+  @@index([runId, createdAt])
+}
+
 // Safety copy of a migration run's data, taken on the target once the final copy has landed and kept 7 days.
 // Soft refs (no FK), like MigrationRun. `items` holds the Backup / VolumeBackup rows the capture created (ids only).
 model MigrationSnapshot {
