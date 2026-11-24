@@ -61,6 +61,7 @@ import {
   Terminal,
   Users,
   Variable,
+  Wallet,
   X,
   type LucideIcon,
 } from "lucide-react";
@@ -102,6 +103,7 @@ export const NAV: { group: string; items: NavItem[] }[] = [
     items: [
       { key: "servers", href: "/servers", icon: Server },
       { key: "clusters", href: "/clusters", icon: Boxes },
+      { key: "costs", href: "/costs", icon: Wallet },
       { key: "rollouts", href: "/rollouts", icon: Rocket },
       { key: "terminal", href: "/shell", icon: Terminal },
       { key: "destinations", href: "/destinations", icon: HardDrive },

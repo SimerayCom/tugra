@@ -4,6 +4,7 @@ import type { BeszelApplyInput, BeszelApplyResult, BeszelConnectResult, BeszelPr
 import type { CoolifyChecklist, CoolifyDetect, CoolifyInventoryView } from "./coolify-takeover";
 import { HUB_UNREACHABLE_CODE, hubUnreachableMessage, isHubDownStatus, isNetworkFailure, reportHubDown } from "./hub-connection";
 import { observeServerDate } from "./clock-skew";
+import type { AdviceReport, CostsReport, CostSyncResult, RescaleView } from "./costs";
 import type {
   BulkCapabilityResult,
   RebootPreview,
@@ -1322,6 +1323,34 @@ export const api = {
   },
   oobUnlink(id: string) {
     return apiFetch<OobStatus>(`/servers/${id}/oob/link`, { method: "DELETE" });
+  },
+  // Costs: prices, per-app shares, before/after bill, size advice, one-click rescale
+  getCosts(teamId?: string) {
+    return apiFetch<CostsReport>(`/costs${teamId ? `?teamId=${encodeURIComponent(teamId)}` : ""}`);
+  },
+  getCostAdvice(teamId?: string) {
+    return apiFetch<AdviceReport>(`/costs/advice${teamId ? `?teamId=${encodeURIComponent(teamId)}` : ""}`);
+  },
+  syncCosts(teamId: string) {
+    return apiFetch<CostSyncResult>(`/costs/sync?teamId=${encodeURIComponent(teamId)}`, { method: "POST" });
+  },
+  setServerCost(serverId: string, body: { monthly: number; currency: string }) {
+    return apiFetch<{ ok: true }>(`/costs/servers/${serverId}`, { method: "PUT", body: JSON.stringify(body) });
+  },
+  clearServerCost(serverId: string) {
+    return apiFetch<{ ok: true }>(`/costs/servers/${serverId}`, { method: "DELETE" });
+  },
+  createCostBaseline(body: { teamId: string; label?: string; monthly?: number; currency?: string }) {
+    return apiFetch<{ id: string }>("/costs/baselines", { method: "POST", body: JSON.stringify(body) });
+  },
+  deleteCostBaseline(id: string) {
+    return apiFetch<{ ok: true }>(`/costs/baselines/${id}`, { method: "DELETE" });
+  },
+  getRescale(serverId: string) {
+    return apiFetch<{ rescale: RescaleView | null }>(`/costs/servers/${serverId}/rescale`);
+  },
+  startRescale(serverId: string, body: { planSlug: string; confirmName: string; upgradeDisk?: boolean }) {
+    return apiFetch<RescaleView>(`/costs/servers/${serverId}/rescale`, { method: "POST", body: JSON.stringify(body) });
   },
   // Cloud provisioning + provider credentials
   listCloudCredentials() {

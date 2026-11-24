@@ -211,7 +211,7 @@ describe("grouped, collapsible sidebar nav", () => {
   const GROUPS = {
     monitor: ["home", "dashboard", "fleet", "traffic", "uptime"],
     build: ["projects", "appStore", "import", "importRuns", "sources", "registries"],
-    infrastructure: ["servers", "clusters", "rollouts", "terminal", "destinations", "domains"],
+    infrastructure: ["servers", "clusters", "costs", "rollouts", "terminal", "destinations", "domains"],
     integrations: ["cloudCredentials", "secretProviders", "sharedVars"],
     account: ["notifications", "audit", "teams", "settings"],
   };

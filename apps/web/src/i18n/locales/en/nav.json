@@ -23,6 +23,7 @@
   "portal": "Client portal",
   "servers": "Servers",
   "clusters": "Clusters",
+  "costs": "Costs",
   "rollouts": "Rollouts",
   "import": "Import",
   "importRuns": "Guided migrations",

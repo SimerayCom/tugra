@@ -1,0 +1,163 @@
+{
+  "title": "Costs",
+  "subtitle": "What your servers cost, what uses it, and where you can save.",
+  "team": "Team",
+  "perMonth": "{amount}/mo",
+  "empty": {
+    "title": "No servers yet",
+    "body": "Add a server and its monthly cost shows up here."
+  },
+  "total": {
+    "title": "Monthly total",
+    "servers": "{n} servers",
+    "none": "No prices yet",
+    "estimates": "{amount} of this is estimated.",
+    "vat": "Prices exclude VAT."
+  },
+  "refresh": {
+    "action": "Read prices from provider",
+    "busy": "Reading…",
+    "done": "Updated {n} prices",
+    "nothing": "Nothing to update",
+    "failed": "{name}: {message}"
+  },
+  "source": {
+    "provider": "From provider",
+    "manual": "Set by you",
+    "estimate": "Estimate",
+    "unknown": "Unknown"
+  },
+  "estimate": {
+    "list": "Estimated from {provider} list prices, {date}.",
+    "reference": "Estimated from a reference price list, {date}. Correct it if your plan differs.",
+    "stale": "This price list may be out of date.",
+    "unknown": "Not enough information about this server to estimate a price."
+  },
+  "price": {
+    "correct": "Correct price",
+    "label": "Monthly price",
+    "currency": "Currency",
+    "save": "Save price",
+    "reset": "Use automatic price",
+    "invalid": "Enter an amount such as 12.50.",
+    "saved": "Price saved",
+    "cleared": "Back to the automatic price"
+  },
+  "apps": {
+    "show": "Show what uses it",
+    "hide": "Hide",
+    "none": "Usage appears here after a few minutes of metrics.",
+    "system": "Tugra and system",
+    "kind": {
+      "app": "App",
+      "db": "Database",
+      "system": "System",
+      "other": "Other"
+    },
+    "share": "{name}, {pct} of this server"
+  },
+  "compare": {
+    "title": "Before and after",
+    "desc": "Save what you pay today, then move. Your savings show up here.",
+    "saveNow": "Save today's bill as “before”",
+    "labelField": "Name",
+    "labelPlaceholder": "Before migration",
+    "typed": "Or type what you paid",
+    "typedAmount": "Monthly bill",
+    "typedSave": "Save this bill",
+    "saved": "Saved",
+    "before": "Before",
+    "after": "Now",
+    "lower": "Your bill went from {before} to {after} a month. That is {saved} less, {yearly} a year.",
+    "higher": "Your bill went from {before} to {after} a month.",
+    "same": "Your bill is unchanged at {after} a month.",
+    "estimates": "Includes estimated prices.",
+    "copy": "Copy summary",
+    "replace": "Save a new “before”",
+    "delete": "Delete this bill",
+    "deleted": "Deleted",
+    "needsPrices": "Add prices to your servers first, or type the total.",
+    "mixed": "Your servers are priced in more than one currency. Type the total instead.",
+    "savedOn": "Saved {date}"
+  },
+  "advice": {
+    "title": "Right-sizing",
+    "desc": "Suggestions from 14 days of metrics.",
+    "allGood": "Every server is the right size.",
+    "learning": "Learning: {days} of {needed} days collected.",
+    "learningSummary": "{n} servers need 14 days of metrics before we can suggest anything.",
+    "downsize": "Can go down to {plan}",
+    "nearLimit": "Near its limit",
+    "saves": "Saves about {amount} a month",
+    "costsMore": "Adds about {amount} a month",
+    "priceBasis": {
+      "provider": "Prices from your provider.",
+      "list": "Prices from public list prices, {date}.",
+      "reference": "Prices from a reference list, {date}."
+    },
+    "usage": "At its busiest it uses {cpu} of CPU and {mem} of memory.",
+    "reason": {
+      "cpu": "CPU is close to full at peak.",
+      "memory": "Memory is close to full.",
+      "disk": "The disk is nearly full."
+    },
+    "growTo": "Consider {plan}",
+    "growNone": "A bigger size at your provider would help.",
+    "diskBlocked": "Disks cannot shrink, so this means moving to a new, smaller server.",
+    "growDisk": "Also grow the disk (cannot be undone)",
+    "resize": "Resize now",
+    "guide": "How to resize",
+    "guideHide": "Hide steps",
+    "hubBox": "This is the machine Tugra runs on. Resize it from your provider's panel.",
+    "running": "A resize is already running."
+  },
+  "guide": {
+    "title": "Resize {name} at {provider}",
+    "titleGeneric": "Resize {name} at your provider",
+    "hetzner": {
+      "s1": "Open Hetzner Console, pick the project and open {name}.",
+      "s2": "Power it off from the Power tab (a graceful shutdown).",
+      "s3": "Open Rescale and choose {plan}. Pick “CPU and RAM only” so the disk stays and you can go back.",
+      "s4": "Rescale, then power it on. Tugra reconnects by itself."
+    },
+    "digitalocean": {
+      "s1": "Open the DigitalOcean control panel and open the droplet {name}.",
+      "s2": "Power it off from the Power tab.",
+      "s3": "Open Resize, choose {plan} and pick “CPU and RAM only” so the disk stays.",
+      "s4": "Resize, then power it on. Tugra reconnects by itself."
+    },
+    "vultr": {
+      "s1": "Open the Vultr customer portal and open {name}.",
+      "s2": "Stop the server from the Settings page.",
+      "s3": "Open Change Plan and choose {plan}. Keep the current disk size.",
+      "s4": "Apply, then start it. Tugra reconnects by itself."
+    },
+    "generic": {
+      "s1": "Open your provider's panel and find {name}.",
+      "s2": "Shut the server down from there.",
+      "s3": "Change its size to {plan}. Keep the current disk size, disks cannot shrink.",
+      "s4": "Power it on. Tugra reconnects by itself."
+    },
+    "downtime": "Expect a few minutes of downtime."
+  },
+  "rescale": {
+    "title": "Resize {name} to {plan}?",
+    "body": "The server shuts down, changes size and starts again. Expect a few minutes of downtime. The disk keeps its size, so you can go back later.",
+    "bodyDisk": "The server shuts down, changes size and starts again. The disk grows with it and cannot be made smaller again.",
+    "token": "Needs a provider token with Read & Write access, under Cloud Providers.",
+    "type": "Type the server name to confirm",
+    "confirm": "Resize",
+    "started": "Resize started",
+    "phase": {
+      "SHUTTING_DOWN": "Shutting down",
+      "RESIZING": "Changing size",
+      "POWERING_ON": "Starting again",
+      "DONE": "Done",
+      "FAILED": "Stopped"
+    },
+    "doneLine": "{name} now runs {plan}.",
+    "failedLine": "The resize stopped: {error}",
+    "failedHint": "Check the server at your provider and power it on if it is off.",
+    "progress": "Resize progress"
+  }
+}

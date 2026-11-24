@@ -6,7 +6,11 @@ import beszelImport from "./beszelImport.json";
 import bulk from "./bulk.json";
 import charts from "./charts.json";
 import common from "./common.json";
+<<<<<<< HEAD
 import coolifyTakeover from "./coolifyTakeover.json";
+=======
+import costs from "./costs.json";
+>>>>>>> 10b46fca (feat(web): costs page with prices, before/after bill, right-sizing suggestions and one-click resize)
 import cutover from "./cutover.json";
 import dashboard from "./dashboard.json";
 import databases from "./databases.json";
@@ -49,6 +53,6 @@ import terminal from "./terminal.json";
 import traffic from "./traffic.json";
 
 // Split into namespace files (this JSON gets large); merged here.
-const en = {  apps, audit, auth, backups, beszelImport, bulk, charts, cloudCredentials, secretProviders, clusters, common, coolifyTakeover, cutover, dashboard, databases, destinations, domains, errors, feedback, fleet, home, identity, import: importNs, logdrains, migrationRun, monitors, nav, notifications, objectMigration, oob, onboarding, patching, pickers, portal, statusPage, projects, reboot, registries, resources, rollouts, servers, settings, sources, shared, tags, teams, templates, terminal, traffic  };
+const en = {   apps, audit, auth, backups, beszelImport, bulk, charts, cloudCredentials, secretProviders, clusters, common, costs, coolifyTakeover, cutover, dashboard, databases, destinations, domains, errors, feedback, fleet, home, identity, import: importNs, logdrains, migrationRun, monitors, nav, notifications, objectMigration, oob, onboarding, patching, pickers, portal, statusPage, projects, reboot, registries, resources, rollouts, servers, settings, sources, shared, tags, teams, templates, terminal, traffic , traffic  ,  apps };
 
 export default en;
