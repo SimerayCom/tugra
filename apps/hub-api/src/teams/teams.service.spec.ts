@@ -162,13 +162,13 @@ describe("TeamsService.previewInvitation", () => {
 });
 
 describe("TeamsService.get", () => {
-  const teamRow = { id: "t1", name: "Shop", iconUpdatedAt: null, _count: { memberships: 3 } };
+  const teamRow = { id: "t1", name: "Shop", iconUpdatedAt: null, color: null, _count: { memberships: 3 } };
 
   it("returns the team view for a member", async () => {
     const prisma = { team: { findUnique: jest.fn().mockResolvedValue(teamRow) } } as unknown as PrismaService;
     const access = { teamRole: jest.fn().mockResolvedValue(Role.ADMIN) } as unknown as TeamAccessService;
     const view = await make(prisma, access).get("u1", "t1");
-    expect(view).toEqual({ id: "t1", name: "Shop", role: Role.ADMIN, memberCount: 3, iconUpdatedAt: null });
+    expect(view).toEqual({ id: "t1", name: "Shop", role: Role.ADMIN, memberCount: 3, iconUpdatedAt: null, color: null });
   });
 
   it("throws NotFound when the team does not exist", async () => {
@@ -267,5 +267,29 @@ describe("TeamsService - custom icon", () => {
     await make(prisma, okAccess).deleteIcon("u1", "t1");
     expect(deleteMany).toHaveBeenCalled();
     expect(update).toHaveBeenCalledWith(expect.objectContaining({ data: { iconUpdatedAt: null } }));
+  });
+});
+
+describe("TeamsService - accent colour", () => {
+  const okAccess = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+
+  it("setColor stores the colour (OWNER/ADMIN)", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    await make({ team: { update } } as unknown as PrismaService, okAccess).setColor("u1", "t1", "#336699");
+    expect(okAccess.requireRole).toHaveBeenCalledWith("u1", "t1", expect.anything());
+    expect(update).toHaveBeenCalledWith({ where: { id: "t1" }, data: { color: "#336699" } });
+  });
+
+  it("setColor(null) clears back to the default accent", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    await make({ team: { update } } as unknown as PrismaService, okAccess).setColor("u1", "t1", null);
+    expect(update).toHaveBeenCalledWith({ where: { id: "t1" }, data: { color: null } });
+  });
+
+  it("setColor is forbidden for a non-manager and writes nothing", async () => {
+    const update = jest.fn();
+    const access = { requireRole: jest.fn().mockRejectedValue(new ForbiddenException("nope")) } as unknown as TeamAccessService;
+    await expect(make({ team: { update } } as unknown as PrismaService, access).setColor("u1", "t1", "#336699")).rejects.toThrow(/nope/);
+    expect(update).not.toHaveBeenCalled();
   });
 });

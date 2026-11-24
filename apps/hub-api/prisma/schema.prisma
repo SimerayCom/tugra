@@ -130,6 +130,7 @@ model Team {
   id                 String                @id @default(cuid())
   name               String
   iconUpdatedAt      DateTime? // list-view marker so the team list never reads the icon bytes
+  color              String? // chosen accent colour as "#rrggbb"; null = the default accent
   icon               TeamIcon?
   memberships        Membership[]
   servers            Server[]
@@ -195,6 +196,7 @@ model Project {
   tags          String[]      @default([]) // source project tags (Dokploy projectTags names), informational
   isDefault     Boolean       @default(false) // the team's default project (exactly one per team)
   iconUpdatedAt DateTime? // list-view marker so the project list never reads the icon bytes
+  color         String? // chosen accent colour as "#rrggbb"; null = the default accent
   icon          ProjectIcon?
   environments  Environment[]
   createdAt     DateTime      @default(now())

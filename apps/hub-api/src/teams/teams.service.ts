@@ -29,6 +29,7 @@ export interface TeamView {
   role: Role;
   memberCount: number;
   iconUpdatedAt: Date | null;
+  color: string | null;
 }
 export interface TeamMemberView {
   userId: string;
@@ -93,6 +94,7 @@ export class TeamsService {
       role: roles.get(t.id)!,
       memberCount: t._count.memberships,
       iconUpdatedAt: t.iconUpdatedAt,
+      color: t.color,
     }));
     return filterByQuery(views, q, (t) => [t.name, t.role]);
   }
@@ -105,7 +107,7 @@ export class TeamsService {
     if (!team) throw new NotFoundException("team not found");
     const role = await this.access.teamRole(userId, id);
     if (!role) throw new ForbiddenException("not a member of this team");
-    return { id: team.id, name: team.name, role, memberCount: team._count.memberships, iconUpdatedAt: team.iconUpdatedAt };
+    return { id: team.id, name: team.name, role, memberCount: team._count.memberships, iconUpdatedAt: team.iconUpdatedAt, color: team.color };
   }
 
   async create(userId: string, name: string): Promise<TeamView> {
@@ -120,13 +122,20 @@ export class TeamsService {
       return created;
     });
     await this.audit.log({ actor: userId, action: "team.create", target: team.id });
-    return { id: team.id, name: team.name, role: Role.OWNER, memberCount: 1, iconUpdatedAt: null };
+    return { id: team.id, name: team.name, role: Role.OWNER, memberCount: 1, iconUpdatedAt: null, color: null };
   }
 
   async rename(userId: string, id: string, name: string): Promise<void> {
     await this.access.requireRole(userId, id, MANAGE);
     await this.prisma.team.update({ where: { id }, data: { name } });
     await this.audit.log({ actor: userId, action: "team.rename", target: id });
+  }
+
+  /** Set (or clear with null) the team's accent colour. OWNER/ADMIN. */
+  async setColor(userId: string, id: string, color: string | null): Promise<void> {
+    await this.access.requireRole(userId, id, MANAGE);
+    await this.prisma.team.update({ where: { id }, data: { color } });
+    await this.audit.log({ actor: userId, action: "team.color.set", target: id });
   }
 
   /** Raw icon bytes for the GET endpoint (any team member). 404 when the team has no custom icon. */

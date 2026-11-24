@@ -257,6 +257,28 @@ describe("ProjectsService - custom icon", () => {
     expect(update).toHaveBeenCalledWith(expect.objectContaining({ data: { iconUpdatedAt: null } }));
   });
 
+  it("setColor stores the colour on a write-authorized project", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = { project: { findUnique: jest.fn().mockResolvedValue({ id: "p1", teamId: "t1" }), update } } as unknown as PrismaService;
+    await make(prisma, okAccess).setColor("u1", "p1", "#336699");
+    expect(update).toHaveBeenCalledWith({ where: { id: "p1" }, data: { color: "#336699" } });
+  });
+
+  it("setColor(null) clears the colour", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = { project: { findUnique: jest.fn().mockResolvedValue({ id: "p1", teamId: "t1" }), update } } as unknown as PrismaService;
+    await make(prisma, okAccess).setColor("u1", "p1", null);
+    expect(update).toHaveBeenCalledWith({ where: { id: "p1" }, data: { color: null } });
+  });
+
+  it("setColor is refused without the projects permission and writes nothing", async () => {
+    const update = jest.fn();
+    const prisma = { project: { findUnique: jest.fn().mockResolvedValue({ id: "p1", teamId: "t1" }), update } } as unknown as PrismaService;
+    const access = { ...okAccess, requirePermission: jest.fn().mockRejectedValue(new ForbiddenException("nope")) };
+    await expect(make(prisma, access).setColor("u1", "p1", "#336699")).rejects.toThrow(/nope/);
+    expect(update).not.toHaveBeenCalled();
+  });
+
   describe("cloneEnvironment", () => {
     const envRow = { id: "e1", projectId: "p1", name: "production", project: { teamId: "t1" } };
     function setup(opts: {

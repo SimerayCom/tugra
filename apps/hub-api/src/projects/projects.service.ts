@@ -65,6 +65,7 @@ export const ProjectViewSchema = z.object({
   role: z.nativeEnum(Role),
   canWrite: z.boolean(),
   iconUpdatedAt: z.date().nullable(), // set when a custom icon was uploaded (list-view cache-bust marker)
+  color: z.string().nullable(), // chosen accent colour (#rrggbb), null = default
   createdAt: z.date(),
 });
 export type ProjectView = z.infer<typeof ProjectViewSchema>;
@@ -112,6 +113,7 @@ export class ProjectsService {
       role: access.get(p.teamId)!.role,
       canWrite: perms.get(p.teamId)?.has("projects") ?? false,
       iconUpdatedAt: p.iconUpdatedAt,
+      color: p.color,
       environments: p.environments.map((e) => ({
         id: e.id,
         name: e.name,
@@ -164,6 +166,7 @@ export class ProjectsService {
       role,
       canWrite,
       iconUpdatedAt: project.iconUpdatedAt,
+      color: project.color,
       environments: project.environments.map((e) => {
         const resources: ProjectResource[] = [
           ...apps.filter((a) => a.environmentId === e.id).map((a) => ({
@@ -442,6 +445,13 @@ export class ProjectsService {
   }
 
   // ── helpers ──
+  /** Set (or clear with null) the project's accent colour. Write-authorized. */
+  async setColor(userId: string, id: string, color: string | null): Promise<void> {
+    const project = await this.requireProjectWrite(userId, id);
+    await this.prisma.project.update({ where: { id: project.id }, data: { color } });
+    await this.audit.log({ actor: userId, action: "project.color.set", target: project.id });
+  }
+
   /** Raw icon bytes for the GET endpoint (read-authorized). 404 when the project has no custom icon. */
   async getIcon(userId: string, id: string): Promise<{ mime: string; data: Buffer }> {
     const project = await this.prisma.project.findUnique({ where: { id }, select: { teamId: true } });

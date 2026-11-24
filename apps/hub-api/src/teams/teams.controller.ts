@@ -23,6 +23,7 @@ import { ApiAuthGuard } from "../api-tokens/api-auth.guard";
 import { ScopesGuard } from "../api-tokens/scopes.guard";
 import { RequireScopes } from "../api-tokens/require-scopes.decorator";
 import { AuthUser } from "../auth/strategies/jwt.strategy";
+import { SetColorInput, SetColorSchema } from "../common/hex-color";
 import { TeamsService } from "./teams.service";
 import {
   CreateTeamInput,
@@ -101,6 +102,18 @@ export class TeamsController {
     @Body(new ZodValidationPipe(RenameTeamSchema)) body: RenameTeamInput,
   ) {
     await this.teams.rename(user.userId, id, body.name);
+    return { ok: true };
+  }
+
+  @Put(":id/color")
+  @HttpCode(200)
+  @ApiZodBody(SetColorSchema)
+  async setColor(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(SetColorSchema)) body: SetColorInput,
+  ) {
+    await this.teams.setColor(user.userId, id, body.color);
     return { ok: true };
   }
 
