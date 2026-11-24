@@ -21,8 +21,8 @@
   "viewAll": "View all →",
   "noActivity": "No recent activity yet.",
   "servers": "Servers",
-  "noProjectsTitle": "No projects yet",
-  "noProjects": "Create a project to get started.",
+  "noProjectsTitle": "Create your first project",
+  "noProjects": "A project groups your apps and databases. Or bring what you already run.",
   "noServersTitle": "No servers yet",
   "noServers": "Connect a server to deploy your first app.",
   "addResource": "New resource",
@@ -212,5 +212,7 @@
     "server_gpus_refresh": "GPU inventory refreshed.",
     "auth_profile_update": "{actor} updated their profile."
   },
-  "showFewer": "Show fewer"
+  "showFewer": "Show fewer",
+  "createFirstProject": "Create project",
+  "importProjects": "Import"
 }

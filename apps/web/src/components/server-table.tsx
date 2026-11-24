@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useGuardedPush } from "../hooks/useUnsavedChanges";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown, ChevronUp, ChevronsUpDown, Power, RefreshCw, SearchX, Server, Terminal } from "lucide-react";
+import { ChevronDown, ChevronRight, ChevronUp, ChevronsUpDown, Power, RefreshCw, SearchX, Server, Terminal } from "lucide-react";
 import type { ServerView, ServerStatus, FleetTrendRow } from "../lib/types";
 import { MiniUsageBars } from "./mini-usage-bars";
 import { CapabilityBadges } from "./capability-badges";
@@ -73,12 +73,15 @@ export function ServerTable({
   const [query, setQuery] = useState("");
   const [teamFilter, setTeamFilter] = useState<string>(ALL_TEAMS);
   const [groupTeams, setGroupTeams] = useState(false);
+  const [collapsedTeams, setCollapsedTeams] = useState<Set<string>>(new Set());
   const [pageSize, setPageSize] = useState<number>(initialPageSize);
   const [sort, setSort] = useState<{ key: ServerSortKey; dir: SortDir } | null>(null);
   const [page, setPage] = useState(0);
   const counts = useMemo(() => statusCounts(servers), [servers]);
   // Teams that actually have servers here → the team filter only appears when there is something to choose.
   const teamsInUse = useMemo(() => [...new Set(servers.map((x) => x.teamId))].map((id) => ({ id, name: teamLabel(teams, id) })).sort((x, y) => x.name.localeCompare(y.name)), [servers, teams]);
+  // The team column and group headers only earn their space when there is more than one team to tell apart.
+  const showTeamCol = teamsInUse.length > 1;
   const activeTeam = teamFilter !== ALL_TEAMS && teamsInUse.some((x) => x.id === teamFilter) ? teamFilter : ALL_TEAMS;
   // filter (status chip + team + text) → sort → group by team → page. Memoised so a keystroke only re-runs the cheap pure steps.
   const rows = useMemo(() => {
@@ -232,7 +235,7 @@ export function ServerTable({
                   {sortBtn("status", t("servers.status"), { secondary: true })}
                 </span>
               </th>
-              <th scope="col" style={cell} aria-sort={ariaSort("team")}>{sortBtn("team", t("servers.team"))}</th>
+              {showTeamCol && <th scope="col" style={cell} aria-sort={ariaSort("team")}>{sortBtn("team", t("servers.team"))}</th>}
               <th scope="col" style={cell} aria-sort={ariaSort("cpu")}>{sortBtn("cpu", t("servers.colTrend"))}</th>
               <th scope="col" style={cell}>{t("servers.access")}</th>
               <th scope="col" style={cell} aria-sort={ariaSort("lastSeen")}>{sortBtn("lastSeen", t("servers.lastSeen"))}</th>
@@ -244,6 +247,7 @@ export function ServerTable({
               const live = serverLiveness(s.status, s.lastSeenAt);
               const team = teams.find((x) => x.id === s.teamId);
               const newGroup = groupTeams && (i === 0 || pageRows[i - 1].teamId !== s.teamId);
+              const hidden = groupTeams && collapsedTeams.has(s.teamId);
               const verState = agentVersionState(s.agentVersion, agentTarget);
               const updating = updatingAgentIds?.has(s.id) ?? false;
               const canAct = s.canWrite;
@@ -253,16 +257,23 @@ export function ServerTable({
                 <Fragment key={s.id}>
                   {newGroup && (
                     <tr data-testid="team-group-row" style={{ background: "var(--c-sb)" }}>
-                      <th scope="rowgroup" colSpan={7} style={{ ...cell, padding: "8px 14px", textAlign: "left", borderTop: "1px solid var(--c-bd)" }}>
-                        <span style={{ display: "inline-flex", alignItems: "center", gap: 10 }}>
+                      <th scope="rowgroup" colSpan={showTeamCol ? 7 : 6} style={{ ...cell, padding: "2px 14px", textAlign: "left", borderTop: "1px solid var(--c-bd)" }}>
+                        <button
+                          type="button"
+                          aria-expanded={!hidden}
+                          onClick={() => setCollapsedTeams((c) => { const n = new Set(c); if (n.has(s.teamId)) n.delete(s.teamId); else n.add(s.teamId); return n; })}
+                          style={{ display: "inline-flex", alignItems: "center", gap: 10, minHeight: 44, background: "transparent", border: "none", padding: 0, fontFamily: "inherit", color: "inherit", cursor: "pointer" }}
+                        >
+                          {hidden ? <ChevronRight size={16} aria-hidden /> : <ChevronDown size={16} aria-hidden />}
                           <TeamChip team={team} fallbackName={teamLabel(teams, s.teamId)} />
                           <span style={{ fontSize: 11, color: "var(--c-tx3)", fontWeight: 400 }}>
                             {t("servers.groupCount", { n: rows.filter((r) => r.teamId === s.teamId).length })}
                           </span>
-                        </span>
+                        </button>
                       </th>
                     </tr>
                   )}
+                  {!hidden && (
                   <tr
                     className="row-link"
                     onClick={(e) => { if (!clickedInteractive(e)) push(`/servers/${s.id}`); }}
@@ -291,9 +302,11 @@ export function ServerTable({
                         </div>
                       </div>
                     </td>
-                    <td style={cell}>
-                      <TeamChip team={team} fallbackName={teamLabel(teams, s.teamId)} />
-                    </td>
+                    {showTeamCol && (
+                      <td style={cell}>
+                        <TeamChip team={team} fallbackName={teamLabel(teams, s.teamId)} />
+                      </td>
+                    )}
                     <td style={cell}>
                       <MiniUsageBars row={trends?.get(s.id)} cpuLabel={t("servers.trendCpuNow")} memLabel={t("servers.trendMemNow")} cpuShort={t("servers.miniCpu")} memShort={t("servers.miniRam")} noDataLabel={t("servers.noRecentData")} />
                     </td>
@@ -319,6 +332,7 @@ export function ServerTable({
                       </div>
                     </td>
                   </tr>
+                  )}
                 </Fragment>
               );
             })}

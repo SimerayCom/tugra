@@ -10,6 +10,7 @@ import type { Application, Database, Project, Team } from "../../lib/types";
 import { useT } from "../../i18n/provider";
 import { Badge, Btn, Card, EmptyState } from "../ui";
 import { useDashboardInsights } from "./insight-cards";
+import { showTeamContext } from "../../lib/team-context";
 import { DashCard, SeeAll } from "./dash-card";
 
 const chip: CSSProperties = {
@@ -27,8 +28,8 @@ const logoBox: CSSProperties = {
 export function ProjectsCard({ projects, teams, apps, databases, teamId }: { projects: Project[]; teams: Team[]; apps: Application[]; databases: Database[]; teamId: string | null }) {
   const t = useT();
   const { data: insights } = useDashboardInsights(teamId);
-  // A single-team view needs no team tag; with several teams every project says which one it belongs to.
-  const showTeam = teams.length > 1;
+  // A single team (or a single selected team) needs no team tag; in the All-teams view every project says which team it is in.
+  const showTeam = showTeamContext(teamId, teams.length);
   const cards = projectCards(projects, teams, apps, databases, insights?.deploys ?? []);
   const { visible, emptyDefaults } = splitEmptyDefaults(cards);
   const { shown, total } = limitRows(visible);
@@ -37,7 +38,12 @@ export function ProjectsCard({ projects, teams, apps, databases, teamId }: { pro
     <DashCard id="projects" title={t("dashboard.projects")} right={<SeeAll href="/projects" total={total} shown={shown.length} />}>
       {projects.length === 0 ? (
         <Card>
-          <EmptyState icon={FolderTree} title={t("dashboard.noProjectsTitle")} action={<Link href="/projects"><Btn>{t("projects.create")}</Btn></Link>}>
+          <EmptyState icon={FolderTree} title={t("dashboard.noProjectsTitle")} action={
+            <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap" }}>
+              <Link href="/projects"><Btn style={{ minHeight: 44 }}>{t("dashboard.createFirstProject")}</Btn></Link>
+              <Link href="/import"><Btn variant="ghost" style={{ minHeight: 44 }}>{t("dashboard.importProjects")}</Btn></Link>
+            </div>
+          }>
             {t("dashboard.noProjects")}
           </EmptyState>
         </Card>

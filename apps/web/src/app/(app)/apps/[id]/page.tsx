@@ -34,6 +34,7 @@ import { useToast } from "../../../../components/toast";
 import { Btn, Card, SectionCard, Spinner } from "../../../../components/ui";
 import { PageHeader } from "../../../../components/page-header";
 import { useProjectColor } from "../../../../components/project-dot";
+import { ScopedTeamBadge, useTeamContext } from "../../../../components/team-scope";
 import { AppLogo } from "../../../../components/app-logo";
 import { ErrorState } from "../../../../components/error-state";
 import { ExtraPortsCard } from "../../../../components/extra-ports-card";
@@ -73,6 +74,7 @@ export default function AppDetailPage() {
     refetchInterval: 5000,
   });
   const projectColor = useProjectColor(appData?.projectId);
+  const { crumb: teamCrumbFor } = useTeamContext();
   // Slim list (no per-row logs: up to 20 × 64 KiB per poll otherwise); a row's full log lives on its own page.
   const { data: deployments = [] } = useQuery({
     queryKey: ["deployments", id],
@@ -368,11 +370,11 @@ export default function AppDetailPage() {
   return (
     <div style={{ padding: "var(--page-pad)" }}>
       <PageHeader
-        breadcrumb={resourceBreadcrumb({ projectId: appData.projectId, projectName: appData.projectName, projectColor, environmentId: appData.environmentId, environmentName: appData.environmentName, name: appData.name, projectsLabel: t("nav.projects"), fallbackLabel: t("nav.apps"), fallbackHref: "/apps" })}
+        breadcrumb={resourceBreadcrumb({ projectId: appData.projectId, projectName: appData.projectName, projectColor, team: teamCrumbFor(appData.teamId), environmentId: appData.environmentId, environmentName: appData.environmentName, name: appData.name, projectsLabel: t("nav.projects"), fallbackLabel: t("nav.apps"), fallbackHref: "/apps" })}
         title={appData.name}
         icon={<AppLogo iconUrl={appIconUrl(appData.id, appData.iconUpdatedAt)} templateSlug={appData.templateSlug} templateLogo={appData.templateLogo} source={appData.source} name={appData.name} size={20} />}
         status={headerStatus}
-        badge={appData.isPreview ? <PreviewBadge provider={appData.prProvider} n={appData.prNumber} /> : undefined}
+        badge={<>{appData.isPreview && <PreviewBadge provider={appData.prProvider} n={appData.prNumber} />}<ScopedTeamBadge teamId={appData.teamId} /></>}
         actions={
           appData.canWrite ? (
             <>

@@ -49,6 +49,7 @@ import { MainIp, ServerAddresses } from "../../../../components/server-addresses
 import { ipSourceKey } from "../../../../lib/server-addresses";
 import { serverDisplayName } from "../../../../lib/server-name";
 import { useStickToBottom } from "../../../../hooks/useStickToBottom";
+import { ScopedTeamBadge, useTeamContext } from "../../../../components/team-scope";
 
 const serverColor = (s: ServerStatus) =>
   s === "ONLINE" ? "var(--c-g)" : s === "PENDING" ? "var(--c-am)" : "var(--c-r)";
@@ -57,6 +58,7 @@ export default function ServerDetailPage() {
   const t = useT();
   const id = String(useParams().id);
   const qc = useQueryClient();
+  const { team: teamOf } = useTeamContext();
 
   const { data: server, isLoading, isError, refetch } = useQuery({
     queryKey: ["server", id],
@@ -143,7 +145,7 @@ export default function ServerDetailPage() {
         breadcrumb={[{ label: t("nav.servers"), href: "/servers" }, { label: serverDisplayName(server, t) }]}
         title={serverDisplayName(server, t)}
         status={{ label: server.status, color: serverColor(server.status) }}
-        badge={!server.canWrite ? <Badge tone="muted">{t("servers.readOnly")}</Badge> : undefined}
+        badge={<>{!server.canWrite && <Badge tone="muted">{t("servers.readOnly")}</Badge>}<ScopedTeamBadge teamId={server.teamId} /></>}
         actions={server.canWrite ? (
           <>
             <Link href={`/resources/new?server=${id}`}><Btn icon={Plus}>{t("servers.addResource")}</Btn></Link>
@@ -182,7 +184,7 @@ export default function ServerDetailPage() {
           <Card style={{ padding: 16, marginBottom: 20, display: "flex", gap: 28, flexWrap: "wrap" }}>
             <Info label={t("servers.status")} value={server.status} />
             <Info label={t("servers.ipAddress")} value={<MainIp server={server} />} />
-            <Info label={t("servers.team")} value={server.teamId.slice(0, 8)} />
+            <Info label={t("servers.team")} value={teamOf(server.teamId)?.name ?? server.teamId.slice(0, 8)} />
             <Info label={t("servers.sealLabel")} value={server.seal ? t("servers.sealed") : "—"} />
             <Info label={t("servers.lastSeen")} value={server.lastSeenAt ? new Date(server.lastSeenAt).toLocaleTimeString() : "—"} />
             {server.clusterId && (

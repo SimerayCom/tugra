@@ -21,13 +21,15 @@ import { TagChips, TagFilter } from "../../../components/tags";
 import { SortBar } from "../../../components/sort-bar";
 import { sortApps, toggleSort, defaultAppSortDir, type AppSortKey, type SortState } from "../../../lib/list-sort";
 import { scopeByTeam } from "../../../lib/team-scope";
-import { useTeamScope } from "../../../components/team-scope";
+import { TeamBadge, useTeamContext, useTeamScope } from "../../../components/team-scope";
+import { TeamGroups } from "../../../components/team-groups";
 import { ProjectDot } from "../../../components/project-dot";
 
 export default function AppsPage() {
   const t = useT();
   const push = useGuardedPush();
   const { teamId } = useTeamScope();
+  const { teams, show: showTeam } = useTeamContext();
   const { data: apps = [], isLoading, isError, refetch } = useQuery({
     queryKey: ["apps"],
     queryFn: () => api.listApps(),
@@ -73,34 +75,46 @@ export default function AppsPage() {
             />
           </div>
           <TagFilter all={allTags} selected={selectedTags} onChange={setSelectedTags} />
+          {visibleApps.length > 0 && (
+          <TeamGroups
+            items={visibleApps}
+            teams={teams}
+            grouped={showTeam}
+            render={(rows) => (
+              <ListCard>
+                {rows.map((a, i) => (
+                  // Whole row navigates on click; the name link is the keyboard path, so the tag chips (real buttons) can live inside.
+                  <ListRow key={a.id} index={i} onClick={() => push(`/apps/${a.id}`)} tabbable={false}>
+                    <span style={{ width: 36, height: 36, borderRadius: 8, background: "var(--c-tile)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                      <AppLogo iconUrl={appIconUrl(a.id, a.iconUpdatedAt)} templateSlug={a.templateSlug} templateLogo={a.templateLogo} source={a.source} name={a.name} size={18} />
+                    </span>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontWeight: 600, fontSize: 14, display: "flex", alignItems: "center", gap: 8 }}>
+                        <Link href={`/apps/${a.id}`} style={{ color: "var(--c-tx)", textDecoration: "none" }}>{a.name}</Link>
+                        <TagChips tags={a.tags} onSelect={toggleTag} selected={selectedTags} />
+                      </div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+                        <div className="mono" style={{ fontSize: 11, color: "var(--c-tx3)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>{appSourceSummary(a)}</div>
+                        <ImageUpdateBadge app={a} />
+                      </div>
+                    </div>
+                    {showTeam && <TeamBadge teamId={a.teamId} teams={teams} />}
+                    {a.projectName && (
+                      <span style={{ fontSize: 12, color: "var(--c-tx3)", whiteSpace: "nowrap", flexShrink: 0, display: "inline-flex", alignItems: "center", gap: 5 }}>
+                        <ProjectDot projectId={a.projectId} />
+                        {a.projectName} / {a.environmentName}
+                      </span>
+                    )}
+                    <StatusPill label={statusLabel(t, appStatusDisplay(a).key)} color={appStatusDisplay(a).color} />
+                  </ListRow>
+                ))}
+              </ListCard>
+            )}
+          />
+          )}
+          {visibleApps.length === 0 && (
           <ListCard>
-            {visibleApps.map((a, i) => (
-              // Whole row navigates on click; the name link is the keyboard path, so the tag chips (real buttons) can live inside.
-              <ListRow key={a.id} index={i} onClick={() => push(`/apps/${a.id}`)} tabbable={false}>
-                <span style={{ width: 36, height: 36, borderRadius: 8, background: "var(--c-tile)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                  <AppLogo iconUrl={appIconUrl(a.id, a.iconUpdatedAt)} templateSlug={a.templateSlug} templateLogo={a.templateLogo} source={a.source} name={a.name} size={18} />
-                </span>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontWeight: 600, fontSize: 14, display: "flex", alignItems: "center", gap: 8 }}>
-                    <Link href={`/apps/${a.id}`} style={{ color: "var(--c-tx)", textDecoration: "none" }}>{a.name}</Link>
-                    <TagChips tags={a.tags} onSelect={toggleTag} selected={selectedTags} />
-                  </div>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
-                    <div className="mono" style={{ fontSize: 11, color: "var(--c-tx3)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>{appSourceSummary(a)}</div>
-                    <ImageUpdateBadge app={a} />
-                  </div>
-                </div>
-                {a.projectName && (
-                  <span style={{ fontSize: 12, color: "var(--c-tx3)", whiteSpace: "nowrap", flexShrink: 0, display: "inline-flex", alignItems: "center", gap: 5 }}>
-                  <ProjectDot projectId={a.projectId} />
-                    {a.projectName} / {a.environmentName}
-                  </span>
-                )}
-                <StatusPill label={statusLabel(t, appStatusDisplay(a).key)} color={appStatusDisplay(a).color} />
-              </ListRow>
-            ))}
-            {visibleApps.length === 0 &&
-              (apps.length === 0 ? (
+            {(apps.length === 0 ? (
                 <EmptyState
                   icon={Box}
                   title={t("apps.emptyTitle")}
@@ -122,6 +136,7 @@ export default function AppsPage() {
                 </EmptyState>
               ))}
           </ListCard>
+          )}
         </>
       )}
     </div>

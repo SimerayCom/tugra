@@ -22,6 +22,7 @@ import { useT } from "../../../../i18n/provider";
 import { Btn, Card, EmptyState, SectionCard, Spinner } from "../../../../components/ui";
 import { PageHeader } from "../../../../components/page-header";
 import { useProjectColor } from "../../../../components/project-dot";
+import { ScopedTeamBadge, useTeamContext } from "../../../../components/team-scope";
 import { LiveLogsCard } from "../../../../components/live-logs-card";
 import { AppMetricsCard } from "../../../../components/app-metrics-card";
 import { Tabs } from "../../../../components/tabs-nav";
@@ -51,6 +52,7 @@ export default function DatabaseDetailPage() {
     refetchInterval: (q) => (q.state.data && isDbTransitional(q.state.data.status) ? 1500 : 5000),
   });
   const projectColor = useProjectColor(db?.projectId);
+  const { crumb: teamCrumbFor } = useTeamContext();
 
   const { data: backups = [] } = useQuery({
     queryKey: ["backups", id],
@@ -233,8 +235,9 @@ export default function DatabaseDetailPage() {
   return (
     <div style={{ padding: "var(--page-pad)" }}>
       <PageHeader
-        breadcrumb={resourceBreadcrumb({ projectId: db.projectId, projectName: db.projectName, projectColor, environmentId: db.environmentId, environmentName: db.environmentName, name: db.name, projectsLabel: t("nav.projects"), fallbackLabel: t("nav.databases"), fallbackHref: "/databases" })}
+        breadcrumb={resourceBreadcrumb({ projectId: db.projectId, projectName: db.projectName, projectColor, team: teamCrumbFor(db.teamId), environmentId: db.environmentId, environmentName: db.environmentName, name: db.name, projectsLabel: t("nav.projects"), fallbackLabel: t("nav.databases"), fallbackHref: "/databases" })}
         title={db.name}
+        badge={<ScopedTeamBadge teamId={db.teamId} />}
         status={{ label: provision.isPending && db.status === "NEW" ? "PROVISIONING" : db.status, color: dbColor(provision.isPending ? "PROVISIONING" : db.status) }}
         actions={
           db.canWrite ? (

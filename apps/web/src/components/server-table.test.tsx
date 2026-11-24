@@ -280,13 +280,20 @@ describe("ServerTable list overhaul", () => {
     expect(within(row).getAllByText("Swarm off")[0]).toBeInTheDocument();
   });
 
-  it("liveness dot: online with a quiet agent reads as not responding, and the team shows with its name", () => {
+  it("liveness dot: online with a quiet agent reads as not responding, and a single team is not repeated on every row", () => {
     const old = new Date(Date.now() - 10 * 60_000).toISOString();
     renderTable([mk({ id: "1", name: "alpha", lastSeenAt: old }), mk({ id: "2", name: "bravo", status: "PENDING" }), mk({ id: "3", name: "delta", status: "OFFLINE" })]);
     expect(within(rowOf("alpha")).getByRole("img", { name: "Not responding" })).toBeInTheDocument();
     expect(within(rowOf("bravo")).getByRole("img", { name: "Waiting to connect" })).toBeInTheDocument();
     expect(within(rowOf("delta")).getByRole("img", { name: "Offline" })).toBeInTheDocument();
+    expect(within(rowOf("alpha")).queryByText("Alpha")).toBeNull();
+    expect(screen.queryByRole("columnheader", { name: /Team/ })).toBeNull();
+  });
+
+  it("with several teams each row names its team", () => {
+    renderTable(fleet);
     expect(within(rowOf("alpha")).getByText("Alpha")).toBeInTheDocument();
+    expect(within(rowOf("charlie")).getByText("Beta")).toBeInTheDocument();
   });
 
   it("last seen is never negative: a timestamp ahead of the browser clock reads just now", () => {
@@ -302,6 +309,18 @@ describe("ServerTable list overhaul", () => {
     fireEvent.click(screen.getByRole("button", { name: "Group by team" }));
     const groups = screen.getAllByTestId("team-group-row");
     expect(groups.map((g) => g.textContent)).toEqual(["AlphaServers: 2", "BetaServers: 1"]);
+    expect(order()).toEqual(["alpha", "bravo", "charlie"]);
+  });
+
+  it("collapses a team group to its header and expands it again", () => {
+    renderTable(fleet);
+    fireEvent.click(screen.getByRole("button", { name: "Group by team" }));
+    const header = screen.getAllByTestId("team-group-row")[0].querySelector("button") as HTMLElement;
+    expect(header.getAttribute("aria-expanded")).toBe("true");
+    fireEvent.click(header);
+    expect(header.getAttribute("aria-expanded")).toBe("false");
+    expect(order()).toEqual(["charlie"]);
+    fireEvent.click(header);
     expect(order()).toEqual(["alpha", "bravo", "charlie"]);
   });
 

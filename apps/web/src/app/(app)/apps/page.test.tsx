@@ -74,3 +74,31 @@ describe("apps list", () => {
     expect(link.getAttribute("href")).toBe("/apps/b");
   });
 });
+
+describe("apps list: team context", () => {
+  const twoTeams = [
+    { id: "t1", name: "Acme", role: "OWNER" },
+    { id: "t2", name: "Zed", role: "OWNER" },
+  ];
+
+  it("with several teams the list is grouped by team and each app carries its team badge", async () => {
+    vi.spyOn(api, "listApps").mockResolvedValue([mk("a", "alpha", { teamId: "t2" }), mk("b", "bravo", { teamId: "t1" })]);
+    vi.spyOn(api, "listTeams").mockResolvedValue(twoTeams as never);
+    show();
+    await screen.findByRole("button", { name: /Acme/ });
+    expect(screen.getByRole("button", { name: /Zed/ })).toBeTruthy();
+    expect(screen.getByRole("region", { name: "Acme" })).toBeTruthy();
+    // collapsing Acme hides bravo only
+    fireEvent.click(screen.getByRole("button", { name: /Acme/ }));
+    expect(screen.queryByText("bravo")).toBeNull();
+    expect(screen.getByText("alpha")).toBeTruthy();
+  });
+
+  it("with one team there are no group headers", async () => {
+    vi.spyOn(api, "listApps").mockResolvedValue([mk("a", "alpha"), mk("b", "bravo")]);
+    vi.spyOn(api, "listTeams").mockResolvedValue([twoTeams[0]] as never);
+    show();
+    await screen.findByText("alpha");
+    expect(screen.queryByRole("button", { name: /Acme/ })).toBeNull();
+  });
+});
