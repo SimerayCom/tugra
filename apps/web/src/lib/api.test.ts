@@ -258,3 +258,23 @@ describe("hub unreachable / restarting mapping", () => {
     expect((err as ApiError).message).toBe("nope");
   });
 });
+
+describe("api.createServer: the name is optional", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  const sentBody = async (name: string | undefined) => {
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => jsonRes(201, { server: { id: "s1" }, enrollToken: "e", installCommand: "c" }));
+    vi.stubGlobal("fetch", fetchMock);
+    await api.createServer(name, "t1");
+    return JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+  };
+
+  it("omits a blank name so the hub uses the host's own hostname", async () => {
+    expect(await sentBody("")).toEqual({ teamId: "t1" });
+    expect(await sentBody("   ")).toEqual({ teamId: "t1" });
+    expect(await sentBody(undefined)).toEqual({ teamId: "t1" });
+  });
+  it("sends a typed name trimmed", async () => {
+    expect(await sentBody(" web-1 ")).toEqual({ name: "web-1", teamId: "t1" });
+  });
+});
