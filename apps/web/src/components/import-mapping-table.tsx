@@ -1,5 +1,6 @@
 "use client";
 
+import { CheckSquare, Square } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useT } from "../i18n/provider";
 import { Btn } from "./ui";
@@ -61,8 +62,15 @@ export function ImportMappingTable({
   const toBulk = (rs: typeof rows): BulkRow[] => rs.map((r) => ({ itemRef: r.item.itemRef, sourceName: r.item.name, name: r.entry?.name ?? r.item.name, environment: r.eff?.environment ?? null }));
   const groups = groupRows(rows);
   let shown = 0;
+  const allIncluded = rows.every((r) => r.entry?.include !== false);
+  const noneIncluded = rows.every((r) => r.entry?.include === false);
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      {/* One click to keep or drop everything listed (the current search/filter), then pick per project below. */}
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <Btn variant="ghost" icon={CheckSquare} disabled={allIncluded} onClick={() => onBulk(toBulk(rows), { type: "include" })}>{t("import.review.includeAll")}</Btn>
+        <Btn variant="ghost" icon={Square} disabled={noneIncluded} onClick={() => onBulk(toBulk(rows), { type: "exclude" })}>{t("import.review.excludeAll")}</Btn>
+      </div>
       <datalist id="imp-projects">
         {(resolved?.projects ?? []).map((p) => (
           <option key={p.name} value={p.name} />
@@ -89,6 +97,11 @@ export function ImportMappingTable({
                 <label htmlFor={`imp-group-${gi}`} style={{ display: "block", fontSize: 11, color: "var(--c-tx3)", marginBottom: 2 }}>{t("import.review.groupProject")}</label>
                 <GroupProjectInput id={`imp-group-${gi}`} value={g.project} placeholder={t("import.review.createNew")} onCommit={(v) => v.trim() && v.trim() !== g.project && onMoveGroup(toBulk(g.rows), v)} />
               </div>
+              {g.rows.every((r) => r.entry?.include === false) ? (
+                <Btn variant="ghost" icon={CheckSquare} onClick={() => onBulk(toBulk(g.rows), { type: "include" })}>{t("import.review.includeGroup")}</Btn>
+              ) : (
+                <Btn variant="ghost" icon={Square} onClick={() => onBulk(toBulk(g.rows), { type: "exclude" })}>{t("import.review.excludeGroup")}</Btn>
+              )}
               <ImportBulkBar count={g.rows.length} onApply={(op) => onBulk(toBulk(g.rows), op)} />
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>

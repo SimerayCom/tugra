@@ -25,6 +25,43 @@ describe("CoolifySource", () => {
     });
   });
 
+  describe("discover: Coolify project tree", () => {
+    it("places every app and database in its Coolify project / environment (like the Dokploy tree)", async () => {
+      const fleet = await new CoolifySource(new FakeClient({
+        "/servers": [{ uuid: "srv-a", name: "box", ip: "1.2.3.4" }],
+        "/servers/srv-a/resources": [{ uuid: "app-1" }, { uuid: "db-1" }, { uuid: "app-2" }],
+        "/applications": [
+          { uuid: "app-1", name: "isbulkibris-api", build_pack: "dockerfile", ports_exposes: "3000", environment_id: 39 },
+          { uuid: "app-2", name: "loose", build_pack: "dockerfile", ports_exposes: "3000", environment_id: 999 },
+        ],
+        "/databases": [{ uuid: "db-1", name: "isbulkibris-postgres", database_type: "standalone-postgresql", image: "postgres:16", environment_id: 39 }],
+        "/services": [],
+        "/projects": [{ uuid: "p-isbul", name: "IsBulKibris" }, { uuid: "p-onixi", name: "OnixiAI" }],
+        "/projects/p-isbul": { uuid: "p-isbul", name: "IsBulKibris", environments: [{ id: 40, name: "staging" }, { id: 39, name: "production" }] },
+        "/projects/p-onixi": { uuid: "p-onixi", name: "OnixiAI", environments: [{ id: 38, name: "production" }] },
+      })).discover();
+      expect(fleet.projects).toEqual([
+        { ref: "p-isbul", name: "IsBulKibris", description: undefined, tags: [], environments: [
+          { ref: "p-isbul#40", name: "staging", isDefault: false },
+          { ref: "p-isbul#39", name: "production", isDefault: true },
+        ] },
+        { ref: "p-onixi", name: "OnixiAI", description: undefined, tags: [], environments: [{ ref: "p-onixi#38", name: "production", isDefault: true }] },
+      ]);
+      expect(fleet.apps.find((a) => a.sourceRef === "app-1")).toMatchObject({ projectRef: "p-isbul", environmentRef: "p-isbul#39" });
+      expect(fleet.databases[0]).toMatchObject({ projectRef: "p-isbul", environmentRef: "p-isbul#39" });
+      // an environment that is not in any readable project stays unplaced (team default), never guessed
+      expect(fleet.apps.find((a) => a.sourceRef === "app-2")?.projectRef).toBeUndefined();
+    });
+
+    it("an unreadable project list leaves the fleet unplaced and says so", async () => {
+      const fleet = await new CoolifySource(new FakeClient({
+        "/servers": [], "/applications": [], "/databases": [], "/services": [], "/projects": new Error("403 nope"),
+      })).discover();
+      expect(fleet.projects).toBeUndefined();
+      expect(fleet.warnings.join(" ")).toMatch(/could not read projects/);
+    });
+  });
+
   describe("discover", () => {
     const client = new FakeClient({
       "/servers": [{ uuid: "srv-a", name: "box", ip: "1.2.3.4" }],

@@ -88,6 +88,16 @@ describe("ImportReviewStep", () => {
     vi.restoreAllMocks();
   });
 
+  it("Exclude all / Include all are one click, visible above the list", async () => {
+    mount();
+    const apply0 = await screen.findByRole("button", { name: /^Apply 2 apps/ });
+    await waitFor(() => expect((apply0 as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(screen.getByRole("button", { name: "Exclude all" }));
+    expect(await screen.findByRole("button", { name: "Apply 0 apps, 0 databases; 3 excluded" }, { timeout: 3000 })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Include all" }));
+    expect(await screen.findByRole("button", { name: "Apply 2 apps, 1 databases; 0 excluded" }, { timeout: 3000 })).toBeTruthy();
+  });
+
   it("resolves on entry, groups servers by team, derives the target team read-only, and enables Apply with counts", async () => {
     mount();
     await waitFor(() => expect(resolveSpy).toHaveBeenCalledTimes(1));

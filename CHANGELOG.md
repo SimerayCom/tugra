@@ -7,6 +7,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **A Coolify import keeps its projects, and the review selects by project in one click.** The import now reads Coolify's
+  project → environment tree (`/projects`, `environment_id` on each app and database), so every resource is placed in a
+  Tugra project/environment named after its Coolify one (IsBulKibris / production) instead of the team default, exactly
+  like a Dokploy import. The review screen shows **Include all / Exclude all** above the list and **Include / Exclude
+  this project** on each project group, so taking one project out of a team is two clicks. An unreadable project list
+  leaves resources in the team default and says so in the plan.
+
 ## [0.1.0-beta.26] - 2026-11-23
 
 - **Connect a Git source once, use it in every team.** The instance owner can mark a GitHub App or Gitea-family source

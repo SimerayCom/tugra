@@ -532,7 +532,11 @@
     "rowFor": "Mapping for {name}",
     "includeFor": "Include {name}",
     "resetField": "Reset {field}",
-    "groupFor": "Group: {project}"
+    "groupFor": "Group: {project}",
+    "includeAll": "Include all",
+    "excludeAll": "Exclude all",
+    "includeGroup": "Include this project",
+    "excludeGroup": "Exclude this project"
   },
   "conflict": {
     "panelTitle": "Conflicts and notes",

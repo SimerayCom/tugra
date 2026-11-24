@@ -1,4 +1,4 @@
-import type { ForeignEnv, ForeignFleet, ServiceBundle } from "../foreign-fleet";
+import type { ForeignEnv, ForeignFleet, ForeignProject, ServiceBundle } from "../foreign-fleet";
 import type { ImportSource, ImportSourceCapabilities, FetchedSecrets, SourceAppExtras, SourceHealthRow } from "../import-source";
 import { why } from "../reason";
 import { mapLimit } from "./map-limit";
@@ -203,7 +203,52 @@ export class CoolifySource implements ImportSource {
       }
     }
 
-    return buildCoolifyFleet({ servers, resourcesByServer, apps, databases, services, envsByResource, envReportByResource, volumesByResource, backupsByResource, s3Storages, warnings });
+    // Read the project tree before the fleet is built so an unreadable /projects lands in the plan's warnings.
+    const tree = await this.readProjectTree([...listedApps, ...databases], tryGet);
+    const fleet = buildCoolifyFleet({ servers, resourcesByServer, apps, databases, services, envsByResource, envReportByResource, volumesByResource, backupsByResource, s3Storages, warnings });
+    return tree ? placeInTree(fleet, tree) : fleet;
+  }
+
+  /**
+   * Mirror Coolify's project → environment tree, like the Dokploy import does: the review then places every app and
+   * database in a Tugra project/environment named after its Coolify one (IsBulKibris / production) instead of the
+   * team default. Coolify rows carry `environment_id`; `/projects/{uuid}` lists each project's environments by id.
+   * Best effort: an unreadable project tree only leaves resources in the team default (and says so).
+   */
+  private async readProjectTree(
+    rows: Array<{ uuid?: string; environment_id?: number | string | null }>,
+    tryGet: <T>(path: string, fallback: T, label: string) => Promise<T>,
+  ): Promise<ProjectTree | undefined> {
+    const list = await tryGet<Array<{ uuid?: string; name?: string; description?: string | null }>>("/projects", [], "projects");
+    if (!Array.isArray(list) || list.length === 0) return undefined;
+    const details = await mapLimit(list.filter((p) => typeof p?.uuid === "string" && p.uuid), DISCOVER_CONCURRENCY, (p) =>
+      tryGet<{ uuid?: string; name?: string; description?: string | null; environments?: Array<{ id?: number | string; name?: string }> }>(
+        `/projects/${encodeURIComponent(p.uuid as string)}`,
+        p,
+        `project ${p.name ?? p.uuid}`,
+      ),
+    );
+    const projects: ForeignProject[] = [];
+    const locByEnvId = new Map<string, { projectRef: string; environmentRef: string }>();
+    for (const d of details) {
+      if (!d?.uuid || !d.name) continue;
+      const envRows = (Array.isArray(d.environments) ? d.environments : []).filter(
+        (e) => e && e.id !== undefined && e.id !== null && typeof e.name === "string" && e.name,
+      );
+      // Exactly one default per project: "production" when present, else the first environment.
+      const defaultIdx = Math.max(0, envRows.findIndex((e) => e.name === "production"));
+      const environments = envRows.map((e, i) => ({ ref: `${d.uuid}#${String(e.id)}`, name: e.name as string, isDefault: i === defaultIdx }));
+      projects.push({ ref: d.uuid, name: d.name, description: d.description ?? undefined, tags: [], environments });
+      for (const e of environments) locByEnvId.set(e.ref.slice(d.uuid.length + 1), { projectRef: d.uuid, environmentRef: e.ref });
+    }
+    if (projects.length === 0) return undefined;
+    const locByUuid = new Map<string, { projectRef: string; environmentRef: string }>();
+    for (const r of rows) {
+      if (!r?.uuid || r.environment_id === undefined || r.environment_id === null) continue;
+      const loc = locByEnvId.get(String(r.environment_id));
+      if (loc) locByUuid.set(r.uuid, loc);
+    }
+    return { projects, locByUuid };
   }
 
   /**
@@ -431,4 +476,19 @@ function extractVolumes(raw: unknown): CoolifyVolume[] {
   const obj = (raw ?? {}) as { persistent_storages?: unknown; persistent?: unknown; data?: unknown };
   const arr = obj.persistent_storages ?? obj.persistent ?? obj.data ?? [];
   return Array.isArray(arr) ? (arr as CoolifyVolume[]) : [];
+}
+
+/** Coolify's project tree: the projects (with environments) and where each app/database (by uuid) lives. */
+interface ProjectTree {
+  projects: ForeignProject[];
+  locByUuid: Map<string, { projectRef: string; environmentRef: string }>;
+}
+
+/** Attach the tree to a built fleet: each app and database gets its source project/environment refs. */
+function placeInTree(fleet: ForeignFleet, tree: ProjectTree): ForeignFleet {
+  const place = <T extends { sourceRef: string; projectRef?: string; environmentRef?: string }>(x: T): T => {
+    const loc = tree.locByUuid.get(x.sourceRef);
+    return loc && !x.projectRef ? { ...x, ...loc } : x;
+  };
+  return { ...fleet, apps: fleet.apps.map(place), databases: fleet.databases.map(place), projects: tree.projects };
 }
