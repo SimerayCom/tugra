@@ -1,5 +1,6 @@
 "use client";
 
+import { TeamPicker } from "../../../components/team-picker";
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Package, Pencil, Trash2 } from "lucide-react";
@@ -81,7 +82,7 @@ export default function RegistriesPage() {
           <form onSubmit={(e) => { e.preventDefault(); if (name && username && password && activeTeam) create.mutate(); }}>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
               <Field label={t("registries.name")} htmlFor="reg-name"><TextInput id="reg-name" value={name} onChange={(e) => setName(e.target.value)} required /></Field>
-              <Field label={t("registries.team")}><Select value={activeTeam} onChange={setTeamId} options={teams.map((tm) => ({ value: tm.id, label: tm.name }))} /></Field>
+              <Field label={t("registries.team")}><TeamPicker value={activeTeam} onChange={setTeamId} teams={teams} /></Field>
               <Field label={t("registries.type")}><Select value={type} onChange={setType} options={TYPES.map((v) => ({ value: v, label: t(`registries.type_${v}`) }))} /></Field>
               <Field label={t("registries.url")} hint={t("registries.urlHint")}><TextInput value={url} onChange={(e) => setUrl(e.target.value)} placeholder="ghcr.io" /></Field>
               <Field label={t("registries.imagePrefix")} hint={t("registries.imagePrefixHint")}><TextInput value={imagePrefix} onChange={(e) => setImagePrefix(e.target.value)} placeholder="my-org" /></Field>

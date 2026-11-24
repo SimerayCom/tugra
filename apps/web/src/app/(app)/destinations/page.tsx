@@ -1,5 +1,6 @@
 "use client";
 
+import { TeamPicker } from "../../../components/team-picker";
 import { useState } from "react";
 import { ShieldAlert, ShieldCheck } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -13,7 +14,6 @@ import { ErrorState } from "../../../components/error-state";
 import { Modal } from "../../../components/modal";
 import { RecoveryKeyDialog } from "./recovery-key-dialog";
 import { useToast } from "../../../components/toast";
-import { Select } from "../../../components/form";
 
 const BANNER_KEY = "tugra.destinations.legacyBannerDismissed";
 const readDismissed = (): boolean => {
@@ -192,9 +192,7 @@ export default function DestinationsPage() {
           onSubmit={(e) => { e.preventDefault(); create.mutate(); }}
           style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}
         >
-          <Select value={teamId} onChange={setTeamId} autoSelectFirst required placeholder={t("common.pickTeam")}
-            style={{ width: "auto", minWidth: 130 }}
-            options={teams.map((tm) => ({ value: tm.id, label: tm.name }))} />
+          <TeamPicker value={teamId} onChange={setTeamId} autoSelectFirst required teams={teams} ariaLabel={t("common.team")} style={{ width: "auto", minWidth: 130 }} />
           <input style={{ ...field, width: 130 }} placeholder={t("destinations.name")} aria-label={t("destinations.name")} value={name} onChange={(e) => setName(e.target.value)} required />
           <input style={{ ...field, width: 140 }} placeholder={t("destinations.bucket")} aria-label={t("destinations.bucket")} value={bucket} onChange={(e) => setBucket(e.target.value)} required />
           <input style={{ ...field, width: 150 }} placeholder={t("destinations.endpoint")} aria-label={t("destinations.endpoint")} value={endpoint} onChange={(e) => setEndpoint(e.target.value)} required />

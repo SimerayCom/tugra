@@ -1,5 +1,6 @@
 "use client";
 
+import { TeamPicker } from "../../../../components/team-picker";
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -78,8 +79,7 @@ function ManualForm() {
         <TextInput value={name} onChange={(e) => setName(e.target.value)} placeholder={t("servers.namePlaceholder")} />
       </Field>
       <Field label={t("common.team")}>
-        <Select value={teamId} onChange={setTeamId} autoSelectFirst required placeholder={t("common.pickTeam")}
-          options={teams.map((tm) => ({ value: tm.id, label: `${tm.name} (${tm.role})` }))} />
+        <TeamPicker value={teamId} onChange={setTeamId} autoSelectFirst required teams={teams.map((tm) => ({ id: tm.id, name: `${tm.name} (${tm.role})` }))} />
       </Field>
       {err && <div style={{ color: "var(--c-r)", fontSize: 13 }}>{err}</div>}
       <div><Btn type="submit" disabled={busy}>{busy ? "…" : t("servers.create")}</Btn></div>
@@ -150,8 +150,7 @@ function BulkForm() {
       </Field>
       <div style={{ fontSize: 12, color: "var(--c-tx3)", marginTop: -6 }}>{t("servers.bulkNamesHint", { n: unique.length })}</div>
       <Field label={t("common.team")}>
-        <Select value={teamId} onChange={setTeamId} autoSelectFirst required placeholder={t("common.pickTeam")}
-          options={teams.map((tm) => ({ value: tm.id, label: `${tm.name} (${tm.role})` }))} />
+        <TeamPicker value={teamId} onChange={setTeamId} autoSelectFirst required teams={teams.map((tm) => ({ id: tm.id, name: `${tm.name} (${tm.role})` }))} />
       </Field>
       {err && <div style={{ color: "var(--c-r)", fontSize: 13 }}>{err}</div>}
       <div><Btn type="submit" disabled={busy || unique.length === 0 || !teamId}>{busy ? "…" : t("servers.bulkCreate", { n: unique.length })}</Btn></div>
@@ -194,8 +193,7 @@ function CloudForm() {
         <TextInput id="cloud-name" value={name} onChange={(e) => setName(e.target.value)} required />
       </Field>
       <Field label={t("common.team")}>
-        <Select value={teamId} onChange={(v) => { setTeamId(v); setCredentialId(""); }} autoSelectFirst required placeholder={t("common.pickTeam")}
-          options={teams.map((tm) => ({ value: tm.id, label: `${tm.name} (${tm.role})` }))} />
+        <TeamPicker value={teamId} onChange={(v) => { setTeamId(v); setCredentialId(""); }} autoSelectFirst required teams={teams.map((tm) => ({ id: tm.id, name: `${tm.name} (${tm.role})` }))} />
       </Field>
       {teamCreds.length === 0 ? (
         <div style={{ fontSize: 13, color: "var(--c-tx3)" }}>

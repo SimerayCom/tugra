@@ -1,5 +1,6 @@
 "use client";
 
+import { TeamPicker } from "../../../components/team-picker";
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Variable } from "lucide-react";
@@ -58,9 +59,7 @@ export default function SharedVariablesPage() {
       <Card style={{ padding: 16, marginBottom: 20 }}>
         <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 12 }}>
           <span style={{ fontSize: 12, color: "var(--c-tx3)" }}>{t("shared.team")}</span>
-          <select style={field} value={activeTeam} onChange={(e) => setTeamId(e.target.value)}>
-            {teams.map((tm) => <option key={tm.id} value={tm.id}>{tm.name}</option>)}
-          </select>
+          <TeamPicker value={activeTeam} onChange={setTeamId} teams={teams} ariaLabel={t("shared.team")} style={{ width: "auto", minWidth: 160 }} />
           <div style={{ flex: 1 }} />
           <button onClick={() => setReveal((v) => !v)} style={{ ...field, cursor: "pointer", border: "none", background: "transparent", color: "var(--c-tx3)" }}>
             {reveal ? t("shared.hide") : t("shared.reveal")}
