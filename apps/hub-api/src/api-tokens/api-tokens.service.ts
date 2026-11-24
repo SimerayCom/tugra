@@ -11,6 +11,10 @@ import {
   tokenPrefix,
 } from "./api-token.util";
 import type { CreateApiTokenInput, UpdateApiTokenInput } from "./dto";
+import { COALESCE_WINDOW_MS, MAX_USES_PER_TOKEN, type UseInfo } from "./api-token-usage";
+
+const OWNER_SELECT = { select: { id: true, name: true, email: true } } as const;
+type TokenRow = ApiToken & { user?: { id: string; name: string | null; email: string } | null };
 
 // zod is the single source of truth for the response shape: it types the service AND generates the OpenAPI
 // response schema (via @ApiZodResponse), so the docs can never drift from what the code returns.
@@ -22,8 +26,20 @@ export const ApiTokenViewSchema = z.object({
   expiresAt: z.date().nullable(),
   lastUsedAt: z.date().nullable(),
   createdAt: z.date(),
+  // Who minted it. Tokens are personal, so this is the owning user.
+  createdBy: z.object({ id: z.string(), name: z.string().nullable(), email: z.string() }).nullable(),
 });
 export type ApiTokenView = z.infer<typeof ApiTokenViewSchema>;
+
+export const ApiTokenUseViewSchema = z.object({
+  id: z.string(),
+  at: z.date(),
+  ip: z.string().nullable(),
+  userAgent: z.string().nullable(),
+  action: z.string().nullable(),
+  count: z.number().int(),
+});
+export type ApiTokenUseView = z.infer<typeof ApiTokenUseViewSchema>;
 
 export const CreateApiTokenResultSchema = z.object({ token: z.string(), view: ApiTokenViewSchema });
 
@@ -51,6 +67,7 @@ export class ApiTokensService {
         prefix: tokenPrefix(raw),
         expiresAt,
       },
+      include: { user: OWNER_SELECT },
     });
     await this.audit.log({ actor: userId, action: "api_token.create", target: t.id });
     return { token: raw, view: this.view(t) };
@@ -60,6 +77,7 @@ export class ApiTokensService {
     const tokens = await this.prisma.apiToken.findMany({
       where: { userId },
       orderBy: { createdAt: "desc" },
+      include: { user: OWNER_SELECT },
     });
     return tokens.map((t) => this.view(t));
   }
@@ -90,6 +108,7 @@ export class ApiTokensService {
         ...(dto.name !== undefined ? { name: dto.name } : {}),
         ...(scopes ? { scopes } : {}),
       },
+      include: { user: OWNER_SELECT },
     });
     await this.audit.log({ actor: userId, action: "api_token.update", target: id, ...(scopes ? { meta: { scopes } } : {}) });
     return this.view(updated);
@@ -109,7 +128,10 @@ export class ApiTokensService {
     const updated = await this.prisma.apiToken.update({
       where: { id },
       data: { tokenHash: hashToken(raw), prefix: tokenPrefix(raw), lastUsedAt: null },
+      include: { user: OWNER_SELECT },
     });
+    // The history belonged to the retired secret; the new one starts clean (matches lastUsedAt: null).
+    await this.prisma.apiTokenUse.deleteMany({ where: { tokenId: id } });
     await this.audit.log({ actor: userId, action: "api_token.rotate", target: id });
     return { token: raw, view: this.view(updated) };
   }
@@ -128,7 +150,44 @@ export class ApiTokensService {
     return { userId: t.userId, scopes: t.scopes, tokenId: t.id };
   }
 
-  private view(t: ApiToken): ApiTokenView {
+  /** Record one authorised call against a token: the newest rows only (bounded), identical back-to-back calls
+   *  coalesced into a counter. Never receives the token — only the address/agent/action the guard derived. */
+  async recordUse(tokenId: string, info: UseInfo): Promise<void> {
+    const now = new Date();
+    const last = await this.prisma.apiTokenUse.findFirst({ where: { tokenId }, orderBy: { at: "desc" } });
+    if (
+      last &&
+      now.getTime() - last.at.getTime() < COALESCE_WINDOW_MS &&
+      last.ip === info.ip &&
+      last.userAgent === info.userAgent &&
+      last.action === info.action
+    ) {
+      await this.prisma.apiTokenUse.update({ where: { id: last.id }, data: { at: now, count: { increment: 1 } } });
+      return;
+    }
+    await this.prisma.apiTokenUse.create({ data: { tokenId, at: now, ip: info.ip, userAgent: info.userAgent, action: info.action } });
+    const stale = await this.prisma.apiTokenUse.findMany({
+      where: { tokenId },
+      orderBy: { at: "desc" },
+      skip: MAX_USES_PER_TOKEN,
+      select: { id: true },
+    });
+    if (stale.length) await this.prisma.apiTokenUse.deleteMany({ where: { id: { in: stale.map((r) => r.id) } } });
+  }
+
+  /** Recent use of one of the caller's OWN tokens (404 for anyone else's — never reveals it exists). */
+  async listUses(userId: string, id: string): Promise<ApiTokenUseView[]> {
+    const t = await this.prisma.apiToken.findFirst({ where: { id, userId }, select: { id: true } });
+    if (!t) throw new NotFoundException("token not found");
+    const rows = await this.prisma.apiTokenUse.findMany({
+      where: { tokenId: id },
+      orderBy: { at: "desc" },
+      take: MAX_USES_PER_TOKEN,
+    });
+    return rows.map((r) => ({ id: r.id, at: r.at, ip: r.ip, userAgent: r.userAgent, action: r.action, count: r.count }));
+  }
+
+  private view(t: TokenRow): ApiTokenView {
     return {
       id: t.id,
       name: t.name,
@@ -137,6 +196,7 @@ export class ApiTokensService {
       expiresAt: t.expiresAt,
       lastUsedAt: t.lastUsedAt,
       createdAt: t.createdAt,
+      createdBy: t.user ? { id: t.user.id, name: t.user.name, email: t.user.email } : null,
     };
   }
 }

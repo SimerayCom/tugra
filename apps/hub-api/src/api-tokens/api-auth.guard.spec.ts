@@ -19,9 +19,9 @@ function ctxFor(remoteAddress: string | undefined, forwardedFor?: string, cfConn
 }
 
 function guard(settings: { apiEnabled: boolean; apiAllowedIps: string[] }, validated = { userId: "u1", scopes: ["read"], tokenId: "t1" } as unknown) {
-  const tokens = { validate: jest.fn().mockResolvedValue(validated) } as unknown as ApiTokensService;
+  const tokens = { validate: jest.fn().mockResolvedValue(validated), recordUse: jest.fn().mockResolvedValue(undefined) } as unknown as ApiTokensService;
   const instance = { get: jest.fn().mockResolvedValue(settings) } as unknown as InstanceSettingsService;
-  return new ApiAuthGuard(tokens, instance);
+  return Object.assign(new ApiAuthGuard(tokens, instance), { __tokens: tokens });
 }
 
 describe("ApiAuthGuard — PAT-only API gating", () => {
@@ -106,5 +106,32 @@ describe("ApiAuthGuard — PAT-only API gating", () => {
     await expect(guard({ apiEnabled: true, apiAllowedIps: [] }, null).canActivate(ctxFor("1.2.3.4"))).rejects.toThrow(
       UnauthorizedException,
     );
+  });
+});
+
+describe("ApiAuthGuard — usage history", () => {
+  it("records ip, agent and tool for an authorised PAT call (never the token)", async () => {
+    const g = guard({ apiEnabled: true, apiAllowedIps: [] });
+    const ctx = ctxFor("203.0.113.7");
+    const req = ctx.switchToHttp().getRequest();
+    req.method = "POST";
+    req.path = "/api/v1/mcp";
+    req.headers["user-agent"] = "claude-code/1.0";
+    req.body = { method: "tools/call", params: { name: "list_servers" } };
+    await g.canActivate(ctx);
+    await new Promise((r) => setImmediate(r));
+    const rec = (g as unknown as { __tokens: { recordUse: jest.Mock } }).__tokens.recordUse;
+    expect(rec).toHaveBeenCalledWith("t1", { ip: "203.0.113.7", userAgent: "claude-code/1.0", action: "mcp:list_servers" });
+    expect(JSON.stringify(rec.mock.calls)).not.toContain(PAT);
+  });
+
+  it("does not record a blocked call and survives a failing recorder", async () => {
+    const blocked = guard({ apiEnabled: false, apiAllowedIps: [] });
+    await expect(blocked.canActivate(ctxFor("1.2.3.4"))).rejects.toThrow(ForbiddenException);
+    expect((blocked as unknown as { __tokens: { recordUse: jest.Mock } }).__tokens.recordUse).not.toHaveBeenCalled();
+
+    const g = guard({ apiEnabled: true, apiAllowedIps: [] });
+    (g as unknown as { __tokens: { recordUse: jest.Mock } }).__tokens.recordUse.mockRejectedValue(new Error("db down"));
+    await expect(g.canActivate(ctxFor("1.2.3.4"))).resolves.toBe(true);
   });
 });

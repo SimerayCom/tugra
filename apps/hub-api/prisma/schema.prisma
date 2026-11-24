@@ -122,8 +122,24 @@ model ApiToken {
   expiresAt  DateTime?
   lastUsedAt DateTime?
   createdAt  DateTime  @default(now())
+  uses       ApiTokenUse[]
 
   @@index([userId])
+}
+
+// Bounded recent-use history of a PAT (newest ~50 per token; repeated identical calls are coalesced). Holds
+// the source IP, user agent and the tool/route that was called — never the token itself.
+model ApiTokenUse {
+  id        String   @id @default(cuid())
+  token     ApiToken @relation(fields: [tokenId], references: [id], onDelete: Cascade)
+  tokenId   String
+  at        DateTime @default(now())
+  ip        String?
+  userAgent String?
+  action    String? // "mcp:<tool>" or "<METHOD> <route>"
+  count     Int      @default(1)
+
+  @@index([tokenId, at])
 }
 
 model Team {

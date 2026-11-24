@@ -57,8 +57,9 @@ describe("ApiTokensService", () => {
     const update = jest
       .fn()
       .mockResolvedValue({ id: "t1", name: "ci", prefix: "p", scopes: ["read"], expiresAt: null, lastUsedAt: null, createdAt: new Date() });
-    const prisma = { apiToken: { findFirst: jest.fn().mockResolvedValue(token), update } } as unknown as PrismaService;
-    return { svc: new ApiTokensService(prisma, audit), update };
+    const deleteUses = jest.fn().mockResolvedValue({});
+    const prisma = { apiToken: { findFirst: jest.fn().mockResolvedValue(token), update }, apiTokenUse: { deleteMany: deleteUses } } as unknown as PrismaService;
+    return { svc: new ApiTokensService(prisma, audit), update, deleteUses };
   }
 
   it("update renames and NARROWS scopes", async () => {
@@ -79,7 +80,7 @@ describe("ApiTokensService", () => {
   });
 
   it("rotate issues a fresh secret (new hash + prefix), keeps identity, resets lastUsedAt", async () => {
-    const { svc, update } = withToken({ id: "t1", userId: "u1", name: "ci", scopes: ["read"], expiresAt: null });
+    const { svc, update, deleteUses } = withToken({ id: "t1", userId: "u1", name: "ci", scopes: ["read"], expiresAt: null });
     const res = await svc.rotate("u1", "t1");
     expect(res.token).toMatch(/^tugra_pat_/);
     const data = update.mock.calls[0][0].data;
@@ -87,6 +88,7 @@ describe("ApiTokensService", () => {
     expect(data.tokenHash).not.toBe(res.token); // stored hashed, never raw
     expect(data.prefix).toBe(res.token.slice(0, 16));
     expect(data.lastUsedAt).toBeNull();
+    expect(deleteUses).toHaveBeenCalledWith({ where: { tokenId: "t1" } }); // history of the retired secret goes
     expect(res.view).not.toHaveProperty("tokenHash");
   });
 
@@ -105,5 +107,69 @@ describe("ApiTokensService", () => {
     const { svc, update } = withToken({ id: "t1", userId: "u1", scopes: ["read", "write"] });
     await svc.update("u1", "t1", { scopes: ["read", "read", "write"] });
     expect(update.mock.calls[0][0].data.scopes).toEqual(["read", "write"]);
+  });
+});
+
+describe("ApiTokensService — usage history", () => {
+  const info = { ip: "203.0.113.7", userAgent: "claude-code/1.0", action: "mcp:list_servers" };
+  function mk(over: Record<string, jest.Mock> = {}) {
+    const use = {
+      findFirst: jest.fn().mockResolvedValue(null),
+      findMany: jest.fn().mockResolvedValue([]),
+      create: jest.fn().mockResolvedValue({}),
+      update: jest.fn().mockResolvedValue({}),
+      deleteMany: jest.fn().mockResolvedValue({}),
+      ...over,
+    };
+    const apiToken = { findFirst: jest.fn().mockResolvedValue({ id: "t1" }) };
+    const prisma = { apiToken, apiTokenUse: use } as unknown as PrismaService;
+    return { svc: new ApiTokensService(prisma, audit), use, apiToken };
+  }
+
+  it("creates a new row for a first use and prunes nothing when under the cap", async () => {
+    const { svc, use } = mk();
+    await svc.recordUse("t1", info);
+    expect(use.create).toHaveBeenCalledWith({ data: expect.objectContaining({ tokenId: "t1", ...info }) });
+    expect(use.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it("coalesces an identical call inside the window into a counter", async () => {
+    const { svc, use } = mk({ findFirst: jest.fn().mockResolvedValue({ id: "u1", at: new Date(Date.now() - 5000), ...info }) });
+    await svc.recordUse("t1", info);
+    expect(use.update).toHaveBeenCalledWith({ where: { id: "u1" }, data: expect.objectContaining({ count: { increment: 1 } }) });
+    expect(use.create).not.toHaveBeenCalled();
+  });
+
+  it("starts a new row when the action, ip or window differs", async () => {
+    const old = { id: "u1", at: new Date(Date.now() - 5000), ...info };
+    for (const last of [{ ...old, action: "mcp:other" }, { ...old, ip: "198.51.100.1" }, { ...old, at: new Date(Date.now() - 3_600_000) }]) {
+      const { svc, use } = mk({ findFirst: jest.fn().mockResolvedValue(last) });
+      await svc.recordUse("t1", info);
+      expect(use.create).toHaveBeenCalledTimes(1);
+      expect(use.update).not.toHaveBeenCalled();
+    }
+  });
+
+  it("keeps the history bounded by deleting everything past the newest 50", async () => {
+    const { svc, use } = mk({ findMany: jest.fn().mockResolvedValue([{ id: "old1" }, { id: "old2" }]) });
+    await svc.recordUse("t1", info);
+    expect(use.findMany).toHaveBeenCalledWith(expect.objectContaining({ skip: 50, where: { tokenId: "t1" } }));
+    expect(use.deleteMany).toHaveBeenCalledWith({ where: { id: { in: ["old1", "old2"] } } });
+  });
+
+  it("lists uses only for the caller's own token", async () => {
+    const { svc, use, apiToken } = mk({ findMany: jest.fn().mockResolvedValue([{ id: "u1", at: new Date(), ip: "1.1.1.1", userAgent: null, action: "GET /x", count: 3, tokenId: "t1" }]) });
+    const rows = await svc.listUses("u1", "t1");
+    expect(apiToken.findFirst).toHaveBeenCalledWith({ where: { id: "t1", userId: "u1" }, select: { id: true } });
+    expect(rows).toEqual([expect.objectContaining({ id: "u1", count: 3 })]);
+    expect(rows[0]).not.toHaveProperty("tokenId");
+    expect(use.findMany).toHaveBeenCalledTimes(1);
+  });
+
+  it("404s (and never reads history) for someone else's or unknown token", async () => {
+    const { svc, use, apiToken } = mk();
+    apiToken.findFirst.mockResolvedValue(null);
+    await expect(svc.listUses("u2", "t1")).rejects.toThrow(/not found/);
+    expect(use.findMany).not.toHaveBeenCalled();
   });
 });

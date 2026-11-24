@@ -10,6 +10,7 @@ import { requestClientIp } from "../common/observed-ip";
 import { ipMatchesAllowlist } from "../common/ip-allowlist";
 import { ApiTokensService } from "./api-tokens.service";
 import { isApiToken } from "./api-token.util";
+import { describeApiUse } from "./api-token-usage";
 
 /**
  * Accepts either a session JWT (delegates to JwtAuthGuard) or a personal access
@@ -37,13 +38,21 @@ export class ApiAuthGuard extends JwtAuthGuard {
       // (which takes the branch below). get() is read-only in steady state, so this is per-request safe.
       const settings = await this.instance.get();
       if (!settings.apiEnabled) throw new ForbiddenException("api access is disabled");
+      const ip = requestClientIp(req);
       if (settings.apiAllowedIps.length > 0) {
-        const ip = requestClientIp(req);
         if (!ip || !ipMatchesAllowlist(ip, settings.apiAllowedIps)) {
           throw new ForbiddenException("api access from this address is not allowed");
         }
       }
       req.user = user;
+      // Recent-use history (ip / agent / tool). Best-effort and off the request path: it must never fail or
+      // slow an authorised call.
+      if (user.tokenId) {
+        const tokenId = user.tokenId;
+        void Promise.resolve()
+          .then(() => this.tokens.recordUse(tokenId, describeApiUse(req, ip ?? null)))
+          .catch(() => undefined);
+      }
       return true;
     }
     return (await super.canActivate(ctx)) as boolean;

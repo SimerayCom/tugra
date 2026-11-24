@@ -15,7 +15,7 @@ import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { AuthUser } from "../auth/strategies/jwt.strategy";
 import { ApiZodBody, ApiZodResponse } from "../openapi/openapi";
-import { ApiTokensService, ApiTokenViewSchema, CreateApiTokenResultSchema } from "./api-tokens.service";
+import { ApiTokensService, ApiTokenUseViewSchema, ApiTokenViewSchema, CreateApiTokenResultSchema } from "./api-tokens.service";
 import { CreateApiTokenInput, CreateApiTokenSchema, UpdateApiTokenInput, UpdateApiTokenSchema } from "./dto";
 
 @ApiTags("api-tokens")
@@ -29,6 +29,13 @@ export class ApiTokensController {
   @ApiZodResponse(ApiTokenViewSchema, { isArray: true })
   list(@CurrentUser() user: AuthUser) {
     return this.tokens.list(user.userId);
+  }
+
+  // Recent use of one of your own tokens (IP, user agent, tool). Bounded; never contains the token.
+  @Get(":id/usage")
+  @ApiZodResponse(ApiTokenUseViewSchema, { isArray: true })
+  usage(@CurrentUser() user: AuthUser, @Param("id") id: string) {
+    return this.tokens.listUses(user.userId, id);
   }
 
   @Post()
