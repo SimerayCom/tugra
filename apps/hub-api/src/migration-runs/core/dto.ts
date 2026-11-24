@@ -297,7 +297,7 @@ export const RunOptionsSchema = z
     deployConcurrency: z.number().int().min(1).max(8).optional(),
     /** Which imported compose services DEPLOY_DARK starts, before the apps that need them (C14/R30); absent = `dependencies` (read it with `serviceStartOf`). */
     serviceStart: z.enum(SERVICE_START_MODES).optional(),
-    /** What happens to a database over the logical cap with no physical lane (R9/R45/R46); absent = `refuse` (read it with `largeDbModeOf`). */
+    /** What happens to a database over the artifact route's cap with no physical lane; absent = `stream-logical`, no size limit (read it with `largeDbModeOf`). */
     largeDbMode: z.enum(LARGE_DB_MODES).optional(),
     /** `seed` copies the source proxy's ACME certs (`--certs`; private keys travel encrypted to the hub, purged after apply). */
     certs: z.enum(CERT_MODES).default("none"),

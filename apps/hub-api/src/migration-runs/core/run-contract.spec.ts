@@ -326,7 +326,8 @@ describe("grup-7 vocabulary", () => {
     expect(hostLoopOf({ hostLoop: { keyDir: "/k", parallel: 3, connectTimeoutSec: 10, retries: 0 } })).toEqual({ keyDir: "/k", parallel: 3, connectTimeoutSec: 10, retries: 0 });
     expect(deployConcurrencyOf({})).toBe(1);
     expect(deployConcurrencyOf({ deployConcurrency: 4 })).toBe(4);
-    expect(largeDbModeOf({})).toBe("refuse");
+    expect(largeDbModeOf({})).toBe("stream-logical");
+    expect(largeDbModeOf({ largeDbMode: "refuse" })).toBe("refuse");
     expect(largeDbModeOf({ largeDbMode: "stream-logical" })).toBe("stream-logical");
   });
 });

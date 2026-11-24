@@ -964,7 +964,7 @@ export function register(program: Command): void {
     .option("--host-loop-connect-timeout <seconds>", "host-loop: SSH connect timeout (5-120, default 15)", num)
     .option("--host-loop-retries <n>", "host-loop: extra attempts per host (0-5, default 1)", num)
     .option("--deploy-concurrency <n>", "builds at a time per target server (1-8, default 1)", num)
-    .option("--large-db-mode <mode>", `${LARGE_DB_MODES.join(" | ")}: what happens to a database too large for a dump artifact (default refuse)`)
+    .option("--large-db-mode <mode>", `${LARGE_DB_MODES.join(" | ")}: what happens to a database too large for a dump artifact (default stream-logical, no size limit)`)
     .option("--service-start <mode>", `${SERVICE_START_MODES.join(" | ")}: which imported services start before the apps that need them (default dependencies)`)
     .option("--certs <mode>", `${CERT_MODES.join(" | ")}: seed the source proxy's ACME certificates`)
     .option("--accept-http01-gap", "accept hosts that only have an HTTP-01 certificate gap at cutover")

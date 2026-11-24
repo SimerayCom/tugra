@@ -1,5 +1,5 @@
 import { dumpDiskVerdict, dumpRawEstimate, dumpStagedBytes, dumpRestoreTimeoutMs, dumpWasCounted } from "./vx-dump";
-import { artifactCapBytes, isStreamDumpEngine, vxDumpEnabled, vxMaxDumpBytes } from "./vx-constants";
+import { artifactCapBytes, isStreamDumpEngine, vxDumpCapIsOperatorSet, vxDumpEnabled, vxMaxDumpBytes } from "./vx-constants";
 import { dbStreamModeRefs, buildVolumeTargets } from "./vx-targets";
 import { VxDbSizesBodySchema } from "./vx.dto";
 
@@ -82,12 +82,20 @@ describe("constants", () => {
     process.env.MIGRATION_MAX_ARTIFACT_BYTES = "garbage";
     expect(artifactCapBytes()).toBe(256 * 1024 ** 2);
   });
-  it("the dump limit is a sanity bound (1 TiB default, clamped), far above the volume limit", () => {
-    expect(vxMaxDumpBytes()).toBe(1024 * GiB);
+  it("the dump has no size cap unless the operator sets one: the structural bound (parts x part size) is the only limit", () => {
+    const structural = 100_000 * 128 * 1024 ** 2;
+    expect(vxMaxDumpBytes()).toBe(structural);
+    expect(vxDumpCapIsOperatorSet()).toBe(false);
     process.env.MIGRATION_VX_MAX_DUMP_BYTES = "5";
     expect(vxMaxDumpBytes()).toBe(1 * GiB);
-    process.env.MIGRATION_VX_MAX_DUMP_BYTES = String(99999 * GiB);
-    expect(vxMaxDumpBytes()).toBe(8192 * GiB);
+    expect(vxDumpCapIsOperatorSet()).toBe(true);
+    process.env.MIGRATION_VX_MAX_DUMP_BYTES = String(500 * GiB);
+    expect(vxMaxDumpBytes()).toBe(500 * GiB);
+    process.env.MIGRATION_VX_MAX_DUMP_BYTES = String(99999 * 1024 * GiB);
+    expect(vxMaxDumpBytes()).toBe(structural);
+    expect(vxDumpCapIsOperatorSet()).toBe(false);
+    process.env.MIGRATION_VX_MAX_DUMP_BYTES = "garbage";
+    expect(vxMaxDumpBytes()).toBe(structural);
   });
   it("the lane has its own kill switch, and follows the volume stream's", () => {
     expect(vxDumpEnabled()).toBe(true);

@@ -49,11 +49,20 @@ export function vxStaleMs(): number {
 }
 
 /**
- * Raw (dump) bytes allowed per STREAMED DATABASE DUMP: default 1 TiB, ceiling 8 TiB. Unlike the artifact route's 256 MiB cap this
- * is only a sanity bound, so a dump of any realistic database streams; part names still bound it to 100000 parts.
+ * Raw (dump) bytes allowed per STREAMED DATABASE DUMP. There is NO size cap by default: the only bound is structural (part names are
+ * 5 digits, so a dump is at most {@link vxMaxParts} parts of {@link vxPartRawBytes} bytes: about 12 TiB at the defaults). An operator
+ * who wants a ceiling sets `MIGRATION_VX_MAX_DUMP_BYTES` (at least 1 GiB, never above the structural bound).
  */
 export function vxMaxDumpBytes(): number {
-  return clampInt(num("MIGRATION_VX_MAX_DUMP_BYTES"), 1024 * GiB, 1 * GiB, 8192 * GiB);
+  const structural = vxMaxParts() * vxPartRawBytes();
+  const cap = num("MIGRATION_VX_MAX_DUMP_BYTES");
+  if (cap === undefined) return structural;
+  return Math.min(structural, Math.max(1 * GiB, Math.floor(cap)));
+}
+
+/** True when the operator set a dump size ceiling (`MIGRATION_VX_MAX_DUMP_BYTES`): the plan then says so, instead of promising no limit. */
+export function vxDumpCapIsOperatorSet(): boolean {
+  return vxMaxDumpBytes() < vxMaxParts() * vxPartRawBytes();
 }
 
 /** Kill switch of the streamed dump lane alone: `MIGRATION_VX_DUMP_ENABLED=false|0|off|no` (the volume stream itself is unaffected). */

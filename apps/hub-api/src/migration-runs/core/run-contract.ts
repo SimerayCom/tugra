@@ -464,13 +464,16 @@ export const DEFAULT_DEPLOY_CONCURRENCY = 1;
 export const deployConcurrencyOf = (o: Pick<RunOptions, "deployConcurrency">): number => o.deployConcurrency ?? DEFAULT_DEPLOY_CONCURRENCY;
 
 /**
- * What DATA_FINAL does with a database whose dump exceeds the logical cap and that has no physical lane (R9/R36/R45/R46):
- * `refuse` (default) fails the capability matrix with a `no-lane` verdict; `stream-logical` opts in to the streaming logical
- * lane (the large-DB lane implements it; it is only offered while the run's window estimate shows it fits).
+ * What DATA_SEED / DATA_FINAL do with a database whose dump exceeds the artifact route's cap and that has no physical lane:
+ * `stream-logical` (default) moves it as a streamed dump (parts with a sha256 each, any size; it runs inside the freeze window, so
+ * the window estimate carries it); `refuse` is the operator's opt-in to stop instead: the capability matrix fails with a
+ * `no-lane` verdict and nothing is moved for that database. No size is ever refused unless the run (or the hub's optional
+ * `MIGRATION_VX_MAX_DUMP_BYTES`) says so.
  */
 export const LARGE_DB_MODES = ["refuse", "stream-logical"] as const;
 export type LargeDbMode = (typeof LARGE_DB_MODES)[number];
-export const largeDbModeOf = (o: Pick<RunOptions, "largeDbMode">): LargeDbMode => o.largeDbMode ?? "refuse";
+export const DEFAULT_LARGE_DB_MODE: LargeDbMode = "stream-logical";
+export const largeDbModeOf = (o: Pick<RunOptions, "largeDbMode">): LargeDbMode => o.largeDbMode ?? DEFAULT_LARGE_DB_MODE;
 
 // ───────────────────────────── source version (grup-7, R4/C18) ─────────────────────────────
 

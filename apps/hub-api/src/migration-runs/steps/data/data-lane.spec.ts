@@ -98,10 +98,11 @@ describe("decideLanes / dbsNeedingMeasure / dbLaneChecks", () => {
   const snapWith = (...dbs: ReturnType<typeof database>[]) => makeSnap({ databases: dbs });
   const run = (mode?: "refuse" | "stream-logical") => makeRun({ options: mode ? { largeDbMode: mode } : {} });
 
-  it("the run option defaults to refuse (fail closed): a large database is a blocker until the owner opts in", () => {
+  it("the run option defaults to the streamed lane (no size limit); `refuse` is the owner's opt-in to stop instead", () => {
     const snap = snapWith(database(DB, { measure: BIG_MEASURE }));
-    expect(decideLanes(run(), snap).get(DB)).toMatchObject({ lane: "blocked" });
+    expect(decideLanes(run(), snap).get(DB)).toMatchObject({ lane: "stream" });
     expect(decideLanes(run("stream-logical"), snap).get(DB)).toMatchObject({ lane: "stream" });
+    expect(decideLanes(run("refuse"), snap).get(DB)).toMatchObject({ lane: "blocked", reason: "refused" });
   });
   it("leaves out an unsupported database; includes a database already on the stream lane", () => {
     const snap = snapWith(database("database:s:x", { plane: "unsupported", measure: null }), database("database:s:y", { plane: "stream", engine: "MARIADB" }));
@@ -118,7 +119,7 @@ describe("decideLanes / dbsNeedingMeasure / dbLaneChecks", () => {
   });
   it("the checks: pass for a lane, unknown for an unmeasured database, fail (with a code per reason) for a blocked one", () => {
     const snap = snapWith(database("database:s:ok", { measure: SMALL_MEASURE }), database("database:s:unm", { measure: null }), database("database:s:big", { measure: BIG_MEASURE }), database("database:s:bad", { measure: failedMeasure }));
-    const checks = dbLaneChecks(run(), snap, CAP);
+    const checks = dbLaneChecks(run("refuse"), snap, CAP);
     const bySubject = Object.fromEntries(checks.map((c) => [c.subject, c]));
     expect(bySubject["database:s:ok"]).toMatchObject({ status: "pass", code: DATA_CODES.seedDbLane, params: { lane: "logical", engine: "POSTGRES", capBytes: CAP } });
     expect(bySubject["database:s:unm"]).toMatchObject({ status: "unknown", code: DATA_CODES.seedDbUnmeasured });
@@ -131,11 +132,11 @@ describe("decideLanes / dbsNeedingMeasure / dbLaneChecks", () => {
     const off = makeSnap({ dumpEnabled: false, databases: [database(DB, { measure: BIG_MEASURE })] });
     expect(dbLaneChecks(run("stream-logical"), off, CAP)[0]).toMatchObject({ status: "fail", code: DATA_CODES.seedDbStreamUnavailable });
     const snap = makeSnap({ databases: [database(DB, { plane: "volume", measure: BIG_MEASURE })], volumes: [volume("volume:srv1:db-big:data", { destType: "db-data", ownerItemRef: DB, gates: [{ id: "layout", status: "fail" }] })] });
-    expect(dbLaneChecks(run(), snap, CAP)[0]).toMatchObject({ status: "fail", code: DATA_CODES.seedDbPhysicalRefused, params: { gate: "layout" } });
+    expect(dbLaneChecks(run("refuse"), snap, CAP)[0]).toMatchObject({ status: "fail", code: DATA_CODES.seedDbPhysicalRefused, params: { gate: "layout" } });
   });
   it("seedChecks carries them (the gate blocks on a large database that has no lane)", () => {
     const snap = snapWith(database(DB, { measure: BIG_MEASURE }));
-    expect(seedChecks(run(), snap, []).some((c) => c.code === DATA_CODES.seedDbOverCapRefused && c.status === "fail")).toBe(true);
+    expect(seedChecks(run("refuse"), snap, []).some((c) => c.code === DATA_CODES.seedDbOverCapRefused && c.status === "fail")).toBe(true);
   });
   it("isMigratorDb: logical and stream databases are the migrator's, a physical copy is not", () => {
     expect([isMigratorDb({ plane: "logical" }), isMigratorDb({ plane: "stream" }), isMigratorDb({ plane: "volume" }), isMigratorDb({ plane: "unsupported" })]).toEqual([true, true, false, false]);
@@ -280,8 +281,8 @@ describe("DataSeedHandler: the lane of every database", () => {
     expect(data.streamed).toEqual([DB]);
   });
 
-  it("without the owner's consent nothing is switched; the gate says why", async () => {
-    const { seed, data, ctx } = build(makeSnap({ databases: [database(DB, { measure: BIG_MEASURE })], volumes: [] }));
+  it("a run that chose to refuse switches nothing; the gate says why", async () => {
+    const { seed, data, ctx } = build(makeSnap({ databases: [database(DB, { measure: BIG_MEASURE })], volumes: [] }), "refuse");
     const h = ctx();
     const obs = await seed.observe(h.ctx);
     const res = await seed.act(h.ctx, obs);
@@ -308,14 +309,14 @@ describe("DataSeedHandler: the lane of every database", () => {
     expect(est.basis.map((b) => b.code)).toContain("data-seed.estimate.stream-in-freeze");
   });
 
-  it("a physical copy that cannot run (PG18 layout) falls back to the stream lane, once, and only with consent", async () => {
+  it("a physical copy that cannot run (PG18 layout) falls back to the stream lane, once, unless the run chose to refuse", async () => {
     const snap = () =>
       makeSnap({ databases: [database(DB, { plane: "volume", measure: BIG_MEASURE })], volumes: [volume("volume:srv1:db-big:data", { destType: "db-data", ownerItemRef: DB, engine: "POSTGRES", inventory: { found: true, rawBytes: 1, entries: 1, running: true, mountType: "volume", pgLayout: "nested" }, disk: { ok: true, unknown: false }, gates: [{ id: "layout", status: "fail" }] })] });
     const yes = build(snap(), "stream-logical");
     const h = yes.ctx();
     expect(await yes.seed.act(h.ctx, await yes.seed.observe(h.ctx))).toEqual({ outcome: "continue", pollAfterMs: 1_000 });
     expect(yes.data.streamed).toEqual([DB]);
-    const no = build(snap());
+    const no = build(snap(), "refuse");
     const h2 = no.ctx();
     await no.seed.act(h2.ctx, await no.seed.observe(h2.ctx));
     expect(no.data.streamed).toEqual([]);

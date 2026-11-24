@@ -1005,7 +1005,7 @@ export const MCP_TOOLS: McpTool[] = [
         options: {
           type: "object",
           description:
-            "run options (ttlPolicy, deployWaves single|earlyStateless|earlyBuild, deployConcurrency 1-8 builds per target server, warmDbSeed, stopSource, sourceRunner operator|agent|coolify-host-loop, hostLoop {keyDir, parallel, connectTimeoutSec, retries} (only the key DIRECTORY on the Coolify host, never a key), largeDbMode refuse|stream-logical, certs, acceptHttp01Gap, freezeAt, observeMinutes, manualFinalize, batchSize, intervalSec, dnsCredentialId, healthPath, rowCountMode, decommissionMinAgeHours, stuckOperatorMinutes)",
+            "run options (ttlPolicy, deployWaves single|earlyStateless|earlyBuild, deployConcurrency 1-8 builds per target server, warmDbSeed, stopSource, sourceRunner operator|agent|coolify-host-loop, hostLoop {keyDir, parallel, connectTimeoutSec, retries} (only the key DIRECTORY on the Coolify host, never a key), largeDbMode stream-logical (default, no size limit)|refuse, certs, acceptHttp01Gap, freezeAt, observeMinutes, manualFinalize, batchSize, intervalSec, dnsCredentialId, healthPath, rowCountMode, decommissionMinAgeHours, stuckOperatorMinutes)",
         },
         inputs: {
           type: "object",
