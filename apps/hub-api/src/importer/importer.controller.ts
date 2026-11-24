@@ -35,6 +35,8 @@ import {
 } from "./dto";
 import { ImportGitLinksService } from "./import-git-links.service";
 import { EgressIpService } from "./egress-ip.service";
+import { ImportSettingsService } from "./settings/import-settings.service";
+import { ImportSettingsApplySchema, ImportSettingsPreviewSchema, type ImportSettingsApplyInput, type ImportSettingsPreviewInput } from "./settings/settings.dto";
 
 @ApiTags("import")
 @ApiSecurity("pat")
@@ -47,6 +49,7 @@ export class ImporterController {
     private readonly gitLinks: ImportGitLinksService,
     private readonly vx: VxService,
     private readonly egress: EgressIpService,
+    private readonly settings: ImportSettingsService,
   ) {}
 
   /**
@@ -101,6 +104,42 @@ export class ImporterController {
     @Body(new ZodValidationPipe(ImportServicesPreviewSchema)) body: ImportServicesPreviewInput,
   ) {
     return this.importer.previewServices(user.userId, body);
+  }
+
+  /**
+   * Preview the SETTINGS the connected source can carry (notification channels, shared variables, storages, scheduled tasks,
+   * server cleanup, tags, members), each entry selectable. Read-only and secret-free: it names what exists and what is
+   * missing ("not available via API" per section), never a token, a webhook URL, a key or a variable value. It reads the
+   * source's secrets server-side to know what is readable, so it needs `read:secrets` like plan.
+   */
+  @Post("settings/preview")
+  @HttpCode(200)
+  @RequireScopes("read:secrets")
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
+  @ApiZodBody(ImportSettingsPreviewSchema)
+  previewSettings(
+    @CurrentUser() user: AuthUser,
+    @Body(new ZodValidationPipe(ImportSettingsPreviewSchema)) body: ImportSettingsPreviewInput,
+  ) {
+    return this.settings.preview(user.userId, body);
+  }
+
+  /**
+   * Carry the selected settings to the session's team. Each write goes through the product's own service, so it needs the
+   * matching team permission (`integrations`, `variables`, `apps:config`, `servers:ops`, team admin). Source secrets are read
+   * server-side and encrypted at rest; the response has fixed codes only (the one secret is a new backup destination's
+   * recovery key, returned once). Invitations are sent only with `confirmInvites: true`.
+   */
+  @Post("settings/apply")
+  @HttpCode(200)
+  @RequireScopes("write", "read:secrets")
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
+  @ApiZodBody(ImportSettingsApplySchema)
+  applySettings(
+    @CurrentUser() user: AuthUser,
+    @Body(new ZodValidationPipe(ImportSettingsApplySchema)) body: ImportSettingsApplyInput,
+  ) {
+    return this.settings.apply(user.userId, body);
   }
 
   /** Apply a reviewed plan (bulk-adopts the host's standalone containers). Deploy-tier: it takes over

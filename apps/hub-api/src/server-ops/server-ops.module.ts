@@ -27,8 +27,8 @@ import { ComposeRestartHealSchedulerService } from "./compose-restart-heal.sched
 @Module({
   imports: [AgentGatewayModule, MetricsModule, CryptoModule, NotificationsModule, ServersModule, ClustersModule, LogDrainsModule],
   controllers: [ServerOpsController, FleetController],
-  // RebootService is exported for the MCP tools (the same service the REST routes call).
-  exports: [RebootService],
+  // RebootService is exported for the MCP tools (the same service the REST routes call); CleanupService for the settings import.
+  exports: [RebootService, CleanupService],
   providers: [CleanupService, GpuInventoryService, CleanupRunnerService, CleanupSchedulerService, PatchService, RebootService, RebootQueueService, LogDrainService, ProxyOpsService, ContainerOpsService, ContainerLogStreamGuard, ContainerHealthRunnerService, ContainerHealthSchedulerService, ComposeRestartHealService, ComposeRestartHealSchedulerService],
 })
 export class ServerOpsModule {}

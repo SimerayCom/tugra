@@ -30,6 +30,13 @@ import { CoolifyClientFactory } from "./sources/coolify-client.factory";
 import { DokployClientFactory } from "./sources/dokploy-client.factory";
 import { ImportSourceFactory } from "./sources/import-source.factory";
 import { EgressIpService } from "./egress-ip.service";
+import { ImportSettingsService } from "./settings/import-settings.service";
+import { NotificationsModule } from "../notifications/notifications.module";
+import { DestinationsModule } from "../destinations/destinations.module";
+import { SharedVariablesModule } from "../shared-variables/shared-variables.module";
+import { ScheduledTasksModule } from "../scheduled-tasks/scheduled-tasks.module";
+import { ServerOpsModule } from "../server-ops/server-ops.module";
+import { TeamsModule } from "../teams/teams.module";
 
 // Reuses MigratorService (MigratorModule) for local-docker adopt/unadopt, ApplicationsService
 // (ApplicationsModule) to create/remove apps and DatabasesService (DatabasesModule) to provision
@@ -37,9 +44,9 @@ import { EgressIpService } from "./egress-ip.service";
 // rest. PrismaService, TeamAccessService and AuditService are provided by @Global modules.
 // ImportSourceFactory maps a source kind → its adapter (it depends on CoolifyClientFactory).
 @Module({
-  imports: [MigratorModule, CryptoModule, ApplicationsModule, DatabasesModule, BackupsModule, VolumeBackupsModule, GitSourcesModule, ProjectsModule, AgentGatewayModule, AppMovesModule],
+  imports: [MigratorModule, CryptoModule, ApplicationsModule, DatabasesModule, BackupsModule, VolumeBackupsModule, GitSourcesModule, ProjectsModule, AgentGatewayModule, AppMovesModule, NotificationsModule, DestinationsModule, SharedVariablesModule, ScheduledTasksModule, ServerOpsModule, TeamsModule],
   controllers: [ImporterController, MigrationIngestController, MigrationArtifactController, MigrationVolumeController],
-  providers: [ImporterService, ImportExecutorService, GitLinkResolverService, ImportGitLinksService, MigrationTokenService, MigrationTokenGuard, MigrationIngestService, EgressIpService, CoolifyClientFactory, DokployClientFactory, ImportSourceFactory, CutoverCertService, ImportMappingService, VxService, VxApplyService, VxRecoveryService, VxPartRegistry],
+  providers: [ImporterService, ImportExecutorService, GitLinkResolverService, ImportGitLinksService, MigrationTokenService, MigrationTokenGuard, MigrationIngestService, EgressIpService, CoolifyClientFactory, DokployClientFactory, ImportSourceFactory, CutoverCertService, ImportMappingService, VxService, VxApplyService, VxRecoveryService, VxPartRegistry, ImportSettingsService],
   exports: [ImporterService, ImportExecutorService, CutoverCertService, ImportMappingService], // the MCP server wraps these as import_* tools
 })
 export class ImporterModule {}
