@@ -463,7 +463,13 @@ export interface ServerView {
   hostname: string | null;
   publicIp: string | null;
   publicIpv6: string | null;
+  /** Where publicIp came from: manual | reported (network interface) | metadata (cloud) | observed. */
   ipSource: string;
+  ipv6Source?: string;
+  /** Every address the host reports (interfaces + cloud metadata), IPv4 and IPv6. */
+  reportedIps?: string[];
+  /** Name left blank at Add server; replaced by the host's real hostname once its agent connects. */
+  nameAuto?: boolean;
   wildcardDomain: string | null;
   magicSuffix: string | null;
   certMode: string;

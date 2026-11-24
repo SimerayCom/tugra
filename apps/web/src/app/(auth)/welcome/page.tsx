@@ -643,8 +643,8 @@ function CreateServerForm({ t, onServer, onSkip }: { t: Tr; onServer: (id: strin
     <>
       <p style={{ fontSize: 14, color: "var(--c-tx2)", margin: "0 0 16px" }}>{t("onboarding.serverBody")}</p>
       <form onSubmit={submit} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-        <Field label={t("onboarding.serverName")} htmlFor="ob-srv">
-          <TextInput id="ob-srv" value={name} onChange={(e) => setName(e.target.value)} required />
+        <Field label={t("onboarding.serverNameOptional")} hint={t("onboarding.serverNameHint")}>
+          <TextInput value={name} onChange={(e) => setName(e.target.value)} />
         </Field>
         <Field label={t("onboarding.team")} htmlFor="ob-team">
           <Select id="ob-team" value={teamId} onChange={setTeamId} autoSelectFirst required options={teams.map((tm) => ({ value: tm.id, label: tm.name }))} />

@@ -282,13 +282,28 @@ describe("WelcomePage wizard", () => {
     const create = vi.spyOn(api, "createServer").mockResolvedValue({ server: { id: "srv1" }, enrollToken: "e", installCommand: "cmd" } as never);
     wrap();
     // the manual add form appears once the (empty) server list loads — and no server is created on mount
-    const nameField = await screen.findByLabelText("Server name");
+    const nameField = await screen.findByLabelText("Server name (optional)");
     expect(create).not.toHaveBeenCalled();
     fireEvent.change(nameField, { target: { value: "prod-1" } });
     await waitFor(() => expect(screen.getByRole("button", { name: "Create server" })).not.toHaveProperty("disabled", true));
     fireEvent.click(screen.getByRole("button", { name: "Create server" }));
     await waitFor(() => expect(create).toHaveBeenCalledWith("prod-1", "t1"));
     await waitFor(() => expect(nav.replace).toHaveBeenCalledWith("/welcome?step=add-first-server&server=srv1"));
+  });
+
+  it("add-first-server: the name is optional - blank creates the server and the hint says the hostname is used", async () => {
+    h.auth = { user: owner, loading: false, initialized: true, reload: vi.fn() };
+    h.search = "step=add-first-server";
+    vi.spyOn(api, "listServers").mockResolvedValue([]);
+    vi.spyOn(api, "listTeams").mockResolvedValue([{ id: "t1", name: "My Team", role: "OWNER" }] as never);
+    const create = vi.spyOn(api, "createServer").mockResolvedValue({ server: { id: "srv1" }, enrollToken: "e", installCommand: "cmd" } as never);
+    wrap();
+    const nameField = await screen.findByLabelText("Server name (optional)");
+    expect((nameField as HTMLInputElement).required).toBe(false);
+    expect(screen.getByText(/server's own hostname is used/)).toBeTruthy();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Create server" })).not.toHaveProperty("disabled", true));
+    fireEvent.click(screen.getByRole("button", { name: "Create server" }));
+    await waitFor(() => expect(create).toHaveBeenCalledWith("", "t1"));
   });
 
   it("add-first-server: auto-shows 'This machine' connecting (no manual add form) when a local server exists", async () => {
@@ -298,7 +313,7 @@ describe("WelcomePage wizard", () => {
     vi.spyOn(api, "getServerInstall").mockResolvedValue({ status: "PENDING", installCommand: null, expiresAt: null } as never);
     wrap();
     expect(await screen.findByText("Connecting this machine…")).toBeTruthy();
-    expect(screen.queryByLabelText("Server name")).toBeNull(); // manual add form is skipped
+    expect(screen.queryByLabelText("Server name (optional)")).toBeNull(); // manual add form is skipped
   });
 
   it("done: a Home-mode owner finishes on the launcher (/home), a Fleet owner on /dashboard", () => {

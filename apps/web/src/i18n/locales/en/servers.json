@@ -251,8 +251,8 @@
   "wildcardDomain": "Wildcard domain (optional)",
   "magicSuffix": "Magic suffix (optional)",
   "manualIp": "Public IP",
-  "ipSourceManual": "manual pin",
-  "ipSourceObserved": "auto-detected",
+  "ipSourceManual": "set by you",
+  "ipSourceObserved": "seen by the hub",
   "certMode": "HTTPS certificates",
   "certModeHttp": "Plain HTTP (no certificate)",
   "certModeLeDns": "Let's Encrypt wildcard (DNS-01)",
@@ -454,5 +454,20 @@
     "kind_tunnel": "a tunnel",
     "kind_log_drain": "{n} log drains",
     "kind_bulk_task": "a running bulk task"
-  }
+  },
+  "nameOptional": "Server name (optional)",
+  "nameHint": "Leave it blank and the server's own hostname is used. You can rename it later.",
+  "namePlaceholder": "e.g. web-1",
+  "ipUnknown": "Unknown",
+  "ipUnknownHint": "Not detected. Enter it under Network.",
+  "ipSourceInterface": "from the server's network interface",
+  "ipSourceMetadata": "from the cloud provider",
+  "allIps": "All addresses ({n})",
+  "ipv4": "IPv4",
+  "ipv6": "IPv6",
+  "ipPublic": "public",
+  "ipPrivate": "private",
+  "ipMain": "Main",
+  "ipUseAsMain": "Use as main",
+  "ipPinFailed": "Could not set the main address."
 }

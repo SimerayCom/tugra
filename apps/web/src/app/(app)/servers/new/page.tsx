@@ -74,8 +74,8 @@ function ManualForm() {
 
   return (
     <form onSubmit={submit} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-      <Field label={t("servers.name")} htmlFor="srv-name">
-        <TextInput id="srv-name" value={name} onChange={(e) => setName(e.target.value)} required />
+      <Field label={t("servers.nameOptional")} hint={t("servers.nameHint")}>
+        <TextInput value={name} onChange={(e) => setName(e.target.value)} placeholder={t("servers.namePlaceholder")} />
       </Field>
       <Field label={t("common.team")}>
         <Select value={teamId} onChange={setTeamId} autoSelectFirst required placeholder={t("common.pickTeam")}

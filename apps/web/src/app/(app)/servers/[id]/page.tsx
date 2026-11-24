@@ -45,6 +45,8 @@ import { containerRuntimeUpdates, interruptedNames, isAgentDropError, isTransien
 import { usePatchLogStream } from "../../../../hooks/useDeployLogStream";
 import { useMetricsStream } from "../../../../hooks/useMetricsStream";
 import { useServerReconnect } from "../../../../hooks/useServerReconnect";
+import { MainIp, ServerAddresses } from "../../../../components/server-addresses";
+import { ipSourceKey } from "../../../../lib/server-addresses";
 import { useStickToBottom } from "../../../../hooks/useStickToBottom";
 
 const serverColor = (s: ServerStatus) =>
@@ -178,7 +180,7 @@ export default function ServerDetailPage() {
           <LiveGauges id={id} nowMs={Date.now()} canWrite={server.canWrite} onOpenMaintenance={() => setTab("maintenance")} />
           <Card style={{ padding: 16, marginBottom: 20, display: "flex", gap: 28, flexWrap: "wrap" }}>
             <Info label={t("servers.status")} value={server.status} />
-            <Info label={t("servers.ipAddress")} value={server.publicIp ?? server.publicIpv6 ?? "—"} />
+            <Info label={t("servers.ipAddress")} value={<MainIp server={server} />} />
             <Info label={t("servers.team")} value={server.teamId.slice(0, 8)} />
             <Info label={t("servers.sealLabel")} value={server.seal ? t("servers.sealed") : "—"} />
             <Info label={t("servers.lastSeen")} value={server.lastSeenAt ? new Date(server.lastSeenAt).toLocaleTimeString() : "—"} />
@@ -193,6 +195,7 @@ export default function ServerDetailPage() {
               />
             )}
           </Card>
+          <ServerAddresses server={server} />
           {(server.os || server.arch || server.cpuCores || server.agentVersion) && (
             <Card style={{ padding: 16, display: "flex", gap: 28, flexWrap: "wrap" }}>
               <Info label={t("servers.os")} value={server.os ? `${server.os} ${server.osVersion ?? ""}`.trim() : "—"} />
@@ -1134,7 +1137,7 @@ function NetworkCard({ id, server }: { id: string; server: ServerView }) {
           <span>
             {t("servers.manualIp")}{" "}
             <span style={{ color: server.ipSource === "manual" ? "var(--c-am)" : "var(--c-tx3)" }}>
-              ({t(server.ipSource === "manual" ? "servers.ipSourceManual" : "servers.ipSourceObserved")})
+              ({t(ipSourceKey(server.ipSource))})
             </span>
           </span>
           <input style={netField} value={publicIp} placeholder={server.publicIp ?? "203.0.113.7"} onChange={(e) => setPublicIp(e.target.value)} />

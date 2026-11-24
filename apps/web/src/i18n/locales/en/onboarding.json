@@ -91,5 +91,7 @@
   "summaryNoServer": "None yet",
   "summaryServerOnline": "{name} (connected)",
   "summaryServerPending": "{name} (connecting)",
-  "summaryEmailVia": "{provider}"
+  "summaryEmailVia": "{provider}",
+  "serverNameOptional": "Server name (optional)",
+  "serverNameHint": "Leave it blank and the server's own hostname is used. You can rename it later."
 }

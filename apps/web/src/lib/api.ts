@@ -1198,14 +1198,15 @@ export const api = {
     });
   },
 
-  createServer(name: string, teamId: string) {
+  /** `name` is optional: blank, the host's real hostname is adopted once its agent connects. */
+  createServer(name: string | undefined, teamId: string) {
     return apiFetch<{
       server: ServerView;
       enrollToken: string;
       installCommand: string;
     }>("/servers", {
       method: "POST",
-      body: JSON.stringify({ name, teamId }),
+      body: JSON.stringify({ name: name?.trim() || undefined, teamId }),
     });
   },
   // Fleet fan-out: add many servers to one team at once, each with its own enroll token + install command.
