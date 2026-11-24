@@ -22,6 +22,8 @@ export interface RenderedMessage {
   critical?: boolean;
   timestamp: string; // ISO-8601
   event: string; // event id, for the structured webhook
+  /** Correlation key shared by an alert and its recovery ("monitor:<id>"); lets incident tools open then resolve. */
+  group?: string;
 }
 
 // Single-source palette (one hex per level). Discord needs the integer form.

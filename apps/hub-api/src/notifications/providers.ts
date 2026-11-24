@@ -4,7 +4,7 @@
  * provider (or a config field) needs zero DB migration. Most providers are fetch-based; SMTP uses
  * nodemailer.
  */
-import { createHmac } from "node:crypto";
+import { createHash, createHmac, randomUUID } from "node:crypto";
 import nodemailer from "nodemailer";
 import {
   escapeHtml,
@@ -21,7 +21,7 @@ import {
   type MsgLevel,
   type RenderedMessage,
 } from "./rendered-message";
-import { allowPrivateTargets, safeSend } from "./safe-url";
+import { allowPrivateTargets, safeRequest, safeSend } from "./safe-url";
 
 export type ChannelConfig = Record<string, unknown>;
 
@@ -143,7 +143,10 @@ class NtfyProvider extends NotificationProvider {
         .map((l) => `view, ${sanitizeNtfyHeader(l.label).replace(/[,;]/g, " ")}, ${sanitizeNtfyHeader(l.url)}`)
         .join("; ");
     }
-    if (config.accessToken) headers["Authorization"] = `Bearer ${String(config.accessToken)}`;
+    if (config.accessToken) headers["Authorization"] = `Bearer ${sanitizeHeader(String(config.accessToken))}`;
+    else if (config.username) {
+      headers["Authorization"] = `Basic ${Buffer.from(`${String(config.username)}:${String(config.password ?? "")}`).toString("base64")}`;
+    }
     // Lossless: if the ASCII header couldn't carry the full (unicode) title, put it in the body.
     const bodyTitle = asciiTitle === msg.title ? "" : msg.title;
     const body = [bodyTitle, msg.summary, fieldsAsLines(msg.fields)].filter(Boolean).join("\n\n");
@@ -357,6 +360,311 @@ class ResendProvider extends NotificationProvider {
   }
 }
 
+// ---- additional channels (Matrix, Google Chat, Rocket.Chat, PagerDuty, Opsgenie, Zulip, Bark, Signal, SMS) ----
+
+/** Markdown body used by Zulip: bold title, summary, then label/value bullets and links. */
+function toMarkdown(msg: RenderedMessage): string {
+  const parts = [`**${msg.title}**`];
+  if (msg.summary && msg.summary !== msg.title) parts.push(msg.summary);
+  if (msg.fields.length) parts.push(msg.fields.map((f) => `- ${f.label}: ${f.value}`).join("\n"));
+  if (msg.links.length) parts.push(msg.links.map((l) => `[${l.label}](${l.url})`).join(" · "));
+  return parts.join("\n\n");
+}
+
+function jsonHeaders(extra: Record<string, string> = {}): Record<string, string> {
+  return { "content-type": "application/json", ...extra };
+}
+
+function formBody(entries: Record<string, string>): string {
+  return new URLSearchParams(entries).toString();
+}
+
+const trimSlash = (u: unknown): string => String(u ?? "").replace(/\/+$/, "");
+
+interface CachedValue {
+  value: string;
+  expires: number;
+}
+/** Small in-process cache (Matrix login tokens, alias → room id). Keyed by a hash so a password is never a map key. */
+class TtlCache {
+  private readonly m = new Map<string, CachedValue>();
+  get(k: string): string | undefined {
+    const hit = this.m.get(k);
+    if (!hit) return undefined;
+    if (hit.expires < Date.now()) {
+      this.m.delete(k);
+      return undefined;
+    }
+    return hit.value;
+  }
+  set(k: string, value: string, ttlMs: number): void {
+    if (this.m.size > 500) this.m.clear();
+    this.m.set(k, { value, expires: Date.now() + ttlMs });
+  }
+  delete(k: string): void {
+    this.m.delete(k);
+  }
+}
+const sha = (...parts: string[]): string => createHash("sha256").update(parts.join("\u0000")).digest("hex");
+
+class MatrixProvider extends NotificationProvider {
+  readonly type = "matrix";
+  private readonly tokens = new TtlCache();
+  private readonly rooms = new TtlCache();
+
+  private async call(method: "GET" | "POST" | "PUT", url: string, body: unknown, token?: string) {
+    return safeRequest(
+      url,
+      body === undefined ? "" : JSON.stringify(body),
+      jsonHeaders(token ? { authorization: `Bearer ${sanitizeHeader(token)}` } : {}),
+      { method, allowPrivate: allowPrivateTargets() },
+    );
+  }
+
+  private async login(base: string, user: string, password: string): Promise<string> {
+    const res = await this.call("POST", `${base}/_matrix/client/v3/login`, {
+      type: "m.login.password",
+      identifier: { type: "m.id.user", user },
+      password,
+      initial_device_display_name: "Tugra",
+    });
+    if (res.status < 200 || res.status >= 300) throw new Error(`matrix: login HTTP ${res.status}`);
+    let token: unknown;
+    try {
+      token = (JSON.parse(res.body) as { access_token?: unknown }).access_token;
+    } catch {
+      /* fallthrough */
+    }
+    if (typeof token !== "string" || !token) throw new Error("matrix: login returned no token");
+    return token;
+  }
+
+  /** Resolve (and join) a room alias to its id; a room id passes through unchanged. */
+  private async resolveRoom(base: string, token: string, room: string): Promise<string> {
+    if (room.startsWith("!")) return room;
+    const key = sha(base, token, room);
+    const cached = this.rooms.get(key);
+    if (cached) return cached;
+    const res = await this.call("POST", `${base}/_matrix/client/v3/join/${encodeURIComponent(room)}`, {}, token);
+    if (res.status < 200 || res.status >= 300) throw new Error(`matrix: join HTTP ${res.status}`);
+    let id: unknown;
+    try {
+      id = (JSON.parse(res.body) as { room_id?: unknown }).room_id;
+    } catch {
+      /* fallthrough */
+    }
+    if (typeof id !== "string" || !id) throw new Error("matrix: room not found");
+    this.rooms.set(key, id, 3_600_000);
+    return id;
+  }
+
+  async send(config: ChannelConfig, msg: RenderedMessage): Promise<void> {
+    const base = trimSlash(config.homeserver);
+    const room = String(config.roomId ?? "");
+    const password = config.password != null ? String(config.password) : "";
+    const user = config.user != null ? String(config.user) : "";
+    const loginKey = password ? sha(base, user, password) : "";
+    const fresh = async (): Promise<string> => {
+      if (config.accessToken) return String(config.accessToken);
+      let t = this.tokens.get(loginKey);
+      if (!t) {
+        t = await this.login(base, user, password);
+        this.tokens.set(loginKey, t, 1_800_000);
+      }
+      return t;
+    };
+    const links = msg.links.map((l) => `<a href="${escapeHtml(l.url)}">${escapeHtml(l.label)}</a>`).join(" · ");
+    const rows = msg.fields.map((f) => `<li><b>${escapeHtml(f.label)}</b>: ${escapeHtml(f.value)}</li>`).join("");
+    const html =
+      `<b>${escapeHtml(msg.title)}</b><br/>${escapeHtml(msg.summary)}` + (rows ? `<ul>${rows}</ul>` : "") + (links ? `<p>${links}</p>` : "");
+    const plain = [toPlain(msg), ...msg.links.map((l) => `${l.label}: ${l.url}`)].join("\n");
+    const body = { msgtype: "m.text", body: plain, format: "org.matrix.custom.html", formatted_body: html };
+
+    const attempt = async (token: string): Promise<{ status: number }> => {
+      const roomId = await this.resolveRoom(base, token, room);
+      return this.call("PUT", `${base}/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/send/m.room.message/${randomUUID()}`, body, token);
+    };
+    let res = await attempt(await fresh());
+    if (res.status === 401 && password) {
+      // The cached login expired or was revoked: sign in again once.
+      this.tokens.delete(loginKey);
+      res = await attempt(await fresh());
+    }
+    if (res.status < 200 || res.status >= 300) throw new Error(`matrix: HTTP ${res.status}`);
+  }
+}
+
+class GoogleChatProvider extends NotificationProvider {
+  readonly type = "googlechat";
+  async send(config: ChannelConfig, msg: RenderedMessage): Promise<void> {
+    const widgets: unknown[] = [];
+    if (msg.summary) widgets.push({ textParagraph: { text: escapeHtml(msg.summary) } });
+    for (const f of msg.fields) widgets.push({ decoratedText: { topLabel: f.label, text: escapeHtml(f.value) } });
+    if (msg.links.length) {
+      widgets.push({
+        buttonList: { buttons: msg.links.map((l) => ({ text: l.label, onClick: { openLink: { url: l.url } } })) },
+      });
+    }
+    await this.postJson(String(config.webhookUrl), {
+      cardsV2: [{ cardId: "tugra", card: { header: { title: clampLen(msg.title, 250), subtitle: "Tugra" }, sections: [{ widgets }] } }],
+    });
+  }
+}
+
+class RocketChatProvider extends NotificationProvider {
+  readonly type = "rocketchat";
+  async send(config: ChannelConfig, msg: RenderedMessage): Promise<void> {
+    const links = msg.links.map((l) => `[${l.label}](${l.url})`).join(" · ");
+    await this.postJson(String(config.webhookUrl), {
+      attachments: [
+        {
+          color: levelColorHex(msg.level),
+          title: msg.title,
+          text: links ? `${msg.summary}\n${links}` : msg.summary,
+          fields: msg.fields.map((f) => ({ title: f.label, value: f.value, short: !!f.inline })),
+        },
+      ],
+    });
+  }
+}
+
+const PD_SEVERITY: Record<MsgLevel, string> = { failure: "error", warning: "warning", info: "info", success: "info" };
+const PD_ENDPOINT: Record<string, string> = {
+  us: "https://events.pagerduty.com/v2/enqueue",
+  eu: "https://events.eu.pagerduty.com/v2/enqueue",
+};
+
+class PagerDutyProvider extends NotificationProvider {
+  readonly type = "pagerduty";
+  async send(config: ChannelConfig, msg: RenderedMessage): Promise<void> {
+    const routingKey = String(config.routingKey ?? "");
+    const url = PD_ENDPOINT[String(config.region ?? "us")] ?? PD_ENDPOINT.us;
+    const dedup = msg.group ? clampLen(`tugra:${msg.group}`, 255) : undefined;
+    if (msg.level === "success") {
+      // A recovery closes the incident its failure opened (same correlation key); good news with nothing to
+      // close never pages anyone.
+      if (!dedup) return;
+      await this.postJson(url, { routing_key: routingKey, event_action: "resolve", dedup_key: dedup });
+      return;
+    }
+    await this.postJson(url, {
+      routing_key: routingKey,
+      event_action: "trigger",
+      ...(dedup ? { dedup_key: dedup } : {}),
+      payload: {
+        summary: clampLen(msg.summary && msg.summary !== msg.title ? `${msg.title}: ${msg.summary}` : msg.title, 1024),
+        source: "tugra",
+        severity: msg.critical ? "critical" : PD_SEVERITY[msg.level],
+        timestamp: msg.timestamp,
+        custom_details: Object.fromEntries(msg.fields.map((f) => [f.label, f.value])),
+      },
+      links: msg.links.map((l) => ({ href: l.url, text: l.label })),
+    });
+  }
+}
+
+const OPSGENIE_PRIORITY: Record<MsgLevel, string> = { failure: "P2", warning: "P3", info: "P5", success: "P5" };
+
+class OpsgenieProvider extends NotificationProvider {
+  readonly type = "opsgenie";
+  async send(config: ChannelConfig, msg: RenderedMessage): Promise<void> {
+    const base = String(config.region) === "eu" ? "https://api.eu.opsgenie.com" : "https://api.opsgenie.com";
+    const headers = jsonHeaders({ authorization: `GenieKey ${sanitizeHeader(String(config.apiKey ?? ""))}` });
+    const alias = msg.group ? clampLen(`tugra:${msg.group}`, 512) : undefined;
+    const opts = { allowPrivate: allowPrivateTargets() };
+    if (msg.level === "success") {
+      if (!alias) return; // nothing to close; do not open an alert for good news
+      await safeSend(
+        `${base}/v2/alerts/${encodeURIComponent(alias)}/close?identifierType=alias`,
+        JSON.stringify({ source: "Tugra", note: clampLen(msg.title, 25000) }),
+        headers,
+        opts,
+      );
+      return;
+    }
+    const body = {
+      message: clampLen(msg.title, 130),
+      ...(alias ? { alias } : {}),
+      description: clampLen(toPlain(msg), 15000),
+      priority: msg.critical ? "P1" : OPSGENIE_PRIORITY[msg.level],
+      source: "Tugra",
+      tags: ["tugra", msg.event],
+      details: Object.fromEntries(msg.fields.map((f) => [clampLen(f.label, 100), clampLen(f.value, 8000)])),
+    };
+    await safeSend(`${base}/v2/alerts`, JSON.stringify(body), headers, opts);
+  }
+}
+
+class ZulipProvider extends NotificationProvider {
+  readonly type = "zulip";
+  async send(config: ChannelConfig, msg: RenderedMessage): Promise<void> {
+    const auth = Buffer.from(`${String(config.email ?? "")}:${String(config.apiKey ?? "")}`).toString("base64");
+    const body = formBody({
+      type: "stream",
+      to: String(config.stream ?? ""),
+      topic: clampLen(String(config.topic ?? "Tugra alerts"), 60),
+      content: clampLen(toMarkdown(msg), 10000),
+    });
+    await safeSend(
+      `${trimSlash(config.server)}/api/v1/messages`,
+      body,
+      { "content-type": "application/x-www-form-urlencoded", authorization: `Basic ${auth}` },
+      { allowPrivate: allowPrivateTargets() },
+    );
+  }
+}
+
+class BarkProvider extends NotificationProvider {
+  readonly type = "bark";
+  async send(config: ChannelConfig, msg: RenderedMessage): Promise<void> {
+    const server = trimSlash(config.server ?? "https://api.day.app");
+    const body: Record<string, unknown> = {
+      device_key: String(config.deviceKey ?? ""),
+      title: msg.title,
+      body: [msg.summary, fieldsAsLines(msg.fields)].filter(Boolean).join("\n"),
+      group: String(config.group ?? "Tugra"),
+      // Time-sensitive breaks through Focus modes; "critical" (always loud) stays opt-in via a critical event.
+      level: msg.critical ? "critical" : msg.level === "failure" ? "timeSensitive" : msg.level === "warning" ? "timeSensitive" : "active",
+    };
+    if (msg.links[0]) body.url = msg.links[0].url;
+    await safeSend(`${server}/push`, JSON.stringify(body), jsonHeaders(), { allowPrivate: allowPrivateTargets() });
+  }
+}
+
+class SignalProvider extends NotificationProvider {
+  readonly type = "signal";
+  async send(config: ChannelConfig, msg: RenderedMessage): Promise<void> {
+    const recipients = (Array.isArray(config.recipients) ? config.recipients.map(String) : String(config.recipients ?? "").split(","))
+      .map((r) => r.trim())
+      .filter(Boolean);
+    const headers = jsonHeaders(config.accessToken ? { authorization: `Bearer ${sanitizeHeader(String(config.accessToken))}` } : {});
+    const text = [toPlain(msg), ...msg.links.map((l) => `${l.label}: ${l.url}`)].join("\n");
+    await safeSend(
+      `${trimSlash(config.server)}/v2/send`,
+      JSON.stringify({ message: clampLen(text, 4000), number: String(config.number ?? ""), recipients }),
+      headers,
+      { allowPrivate: allowPrivateTargets() },
+    );
+  }
+}
+
+/** Generic SMS through Twilio. One recipient per channel (a retry must never double-bill a second number). */
+class SmsProvider extends NotificationProvider {
+  readonly type = "sms";
+  async send(config: ChannelConfig, msg: RenderedMessage): Promise<void> {
+    const sid = String(config.accountSid ?? "");
+    const from = String(config.from ?? "");
+    const text = clampLen(msg.summary && msg.summary !== msg.title ? `${msg.title}: ${msg.summary}` : msg.title, 320);
+    const auth = Buffer.from(`${sid}:${String(config.authToken ?? "")}`).toString("base64");
+    await safeSend(
+      `https://api.twilio.com/2010-04-01/Accounts/${encodeURIComponent(sid)}/Messages.json`,
+      formBody({ To: String(config.to ?? ""), ...(from.startsWith("MG") ? { MessagingServiceSid: from } : { From: from }), Body: text }),
+      { "content-type": "application/x-www-form-urlencoded", authorization: `Basic ${auth}` },
+      { allowPrivate: allowPrivateTargets() },
+    );
+  }
+}
+
 const list: NotificationProvider[] = [
   new WebhookProvider(),
   new TelegramProvider(),
@@ -370,6 +678,15 @@ const list: NotificationProvider[] = [
   new MattermostProvider(),
   new LarkProvider(),
   new ResendProvider(),
+  new MatrixProvider(),
+  new GoogleChatProvider(),
+  new RocketChatProvider(),
+  new PagerDutyProvider(),
+  new OpsgenieProvider(),
+  new ZulipProvider(),
+  new BarkProvider(),
+  new SignalProvider(),
+  new SmsProvider(),
 ];
 
 export const providers: Record<string, NotificationProvider> = Object.fromEntries(

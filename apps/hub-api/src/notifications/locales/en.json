@@ -241,6 +241,37 @@
     "value": { "ms": "{ms} ms" },
     "link": { "viewMonitor": "View monitor" }
   },
+  "summary": {
+    "repeat": {
+      "title": "{title} — {count} more",
+      "fallback": "Alert",
+      "summary": "Happened {count} more times in the last {minutes} min.",
+      "summaryOne": "Happened once more in the last {minutes} min."
+    },
+    "quiet": { "title": "While you were away", "summary": "{count} alerts were held during quiet hours.", "summaryOne": "1 alert was held during quiet hours." },
+    "rate": {
+      "title": "Alerts combined",
+      "summary": "{count} alerts came in faster than this channel allows, so they are combined here.",
+      "summaryOne": "1 alert was held back to stay within this channel's limit."
+    },
+    "field": { "more": "More" }
+  },
+  "digest": {
+    "title": "Your week in Tugra — {team}",
+    "deploys": { "none": "No deploys", "ok": "{total} deploys, all good", "withFailures": "{total} deploys, {failed} failed" },
+    "backups": { "none": "No backups", "ok": "{total} backups, all good", "withFailures": "{total} backups, {failed} failed" },
+    "busiest": { "summary": "busiest server {name}", "value": "{name} (avg CPU {cpu}%)" },
+    "field": { "deploys": "Deploys", "backups": "Backups", "incidents": "Downtime incidents", "busiest": "Busiest server", "suggestions": "Worth a look" },
+    "suggestion": {
+      "failing_deploys": "{app} had {count} failed deploys. Check its logs.",
+      "failing_backups": "{count} backups failed. Check the backup destination.",
+      "no_backups": "{count} databases have no backup this week. Turn on a schedule.",
+      "disk_high": "{name} disk is {pct}% full. Clean up or add space.",
+      "cpu_high": "{name} averaged {pct}% CPU. Consider a bigger server or moving an app.",
+      "incidents": "{count} downtime incidents. Review your monitors."
+    },
+    "link": { "open": "Open Tugra" }
+  },
   "generic": { "link": { "open": "Open" } },
   "test": {
     "title": "Tugra test notification",

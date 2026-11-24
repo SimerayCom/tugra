@@ -5,7 +5,7 @@ jest.mock("node:http");
 import { lookup } from "node:dns/promises";
 import https from "node:https";
 import http from "node:http";
-import { assertSafeUrl, assertSafeHost, resolveSafeAddress, safeSend, SsrfError, normHost } from "./safe-url";
+import { assertSafeUrl, assertSafeHost, resolveSafeAddress, safeRequest, safeSend, SsrfError, normHost } from "./safe-url";
 
 const mockLookup = lookup as unknown as jest.Mock;
 const PUBLIC = [{ address: "203.0.113.7", family: 4 }];
@@ -13,7 +13,7 @@ const PUBLIC = [{ address: "203.0.113.7", family: 4 }];
 /** Make node:https/node:http `request` invoke its callback with a fake response of `status`. */
 function stubRequest(mod: typeof https | typeof http, status: number) {
   (mod.request as jest.Mock).mockImplementation((_opts: unknown, cb: (res: unknown) => void) => {
-    cb({ resume: jest.fn(), statusCode: status });
+    cb({ resume: jest.fn(), statusCode: status, on: (ev: string, fn: () => void) => { if (ev === "end") fn(); } });
     return { on: jest.fn(), write: jest.fn(), end: jest.fn(), destroy: jest.fn() };
   });
 }
@@ -145,5 +145,25 @@ describe("normHost", () => {
   it("strips IPv6 brackets, a trailing dot, and lowercases", () => {
     expect(normHost("[::1]")).toBe("::1");
     expect(normHost("Example.COM.")).toBe("example.com");
+  });
+});
+
+describe("safeRequest — method + response body", () => {
+  it("PUTs through the pinned transport and returns status + body", async () => {
+    (https.request as jest.Mock).mockImplementation((_opts: unknown, cb: (res: unknown) => void) => {
+      const handlers: Record<string, (c?: Buffer) => void> = {};
+      cb({ statusCode: 201, on: (ev: string, fn: (c?: Buffer) => void) => { handlers[ev] = fn; } });
+      handlers.data?.(Buffer.from('{"ok":true}'));
+      handlers.end?.();
+      return { on: jest.fn(), write: jest.fn(), end: jest.fn(), destroy: jest.fn() };
+    });
+    const res = await safeRequest("https://matrix.example.com/x", "{}", { "content-type": "application/json" }, { allowPrivate: false, method: "PUT" });
+    expect(res).toEqual({ status: 201, body: '{"ok":true}' });
+    expect((https.request as jest.Mock).mock.calls[0][0].method).toBe("PUT");
+    expect((https.request as jest.Mock).mock.calls[0][0].host).toBe("203.0.113.7");
+  });
+
+  it("still refuses a blocked target for a GET", async () => {
+    await expect(safeRequest("http://169.254.169.254/", "", {}, { allowPrivate: false, method: "GET" })).rejects.toBeInstanceOf(SsrfError);
   });
 });

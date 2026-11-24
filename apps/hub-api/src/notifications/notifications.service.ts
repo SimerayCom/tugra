@@ -13,7 +13,9 @@ import { TeamAccessService } from "../common/team-access.service";
 import { categoryOfEvent, type NotificationCategory, type NotificationSeverity } from "@tugra/shared";
 import { PROVIDER_TYPES } from "./providers";
 import { type NotificationEvent } from "./event";
-import { WebhookConfigSchema } from "./dto";
+import { CHANNEL_CONFIG_SCHEMAS, WebhookConfigSchema, type PolicyInput } from "./dto";
+import { ChannelUrlError, parseChannelUrl, previewConfig } from "./channel-url";
+import { parsePolicy, type ChannelPolicy } from "./policy";
 import { channelWantsEvent, channelWantsMonitorEvent, eventSeverity } from "./routing";
 import { assertSafeHost, assertSafeUrl, SsrfError } from "./safe-url";
 import { NotificationQueueService } from "./queue.service";
@@ -30,7 +32,19 @@ export interface ChannelView {
   categories: string[];
   minSeverity: string;
   topics: Record<string, number> | null;
+  /** Delivery policy (quiet hours / rate limit / repeat window); {} = defaults. */
+  policy: ChannelPolicy;
   canWrite: boolean;
+}
+
+/** Strip nulls/empties from a policy body so the stored JSON only carries real settings (null/absent = default). */
+export function normalizePolicy(p: PolicyInput | null | undefined): ChannelPolicy | null {
+  if (!p) return null;
+  const out: ChannelPolicy = {};
+  if (p.quietHours) out.quietHours = { ...p.quietHours, allowCritical: p.quietHours.allowCritical !== false };
+  if (p.rateLimitPerMin != null) out.rateLimitPerMin = p.rateLimitPerMin;
+  if (p.dedupeWindowSec != null) out.dedupeWindowSec = p.dedupeWindowSec;
+  return Object.keys(out).length ? out : null;
 }
 
 @Injectable()
@@ -55,6 +69,7 @@ export class NotificationsService {
       categories?: string[] | null;
       minSeverity?: string | null;
       topics?: unknown;
+      policy?: unknown;
     },
     canWrite: boolean,
   ): ChannelView {
@@ -68,6 +83,7 @@ export class NotificationsService {
       categories: c.categories ?? [],
       minSeverity: c.minSeverity ?? "info",
       topics: c.topics && typeof c.topics === "object" ? (c.topics as Record<string, number>) : null,
+      policy: parsePolicy(c.policy),
       canWrite,
     };
   }
@@ -95,8 +111,15 @@ export class NotificationsService {
     teams: "webhookUrl",
     mattermost: "webhookUrl",
     lark: "webhookUrl",
-    // pushover/resend use fixed API hosts (api.pushover.net / api.resend.com) — nothing user-controlled
-    // to validate at create; send-time safeSend still resolves+pins those fixed public hosts.
+    matrix: "homeserver",
+    googlechat: "webhookUrl",
+    rocketchat: "webhookUrl",
+    zulip: "server",
+    bark: "server",
+    signal: "server",
+    // pushover/resend/pagerduty/opsgenie/sms use fixed API hosts (api.pushover.net / api.resend.com / the
+    // PagerDuty, Opsgenie and Twilio APIs) — nothing user-controlled to validate at create; send-time
+    // safeSend still resolves+pins those fixed public hosts.
   };
 
   /**
@@ -108,6 +131,11 @@ export class NotificationsService {
     if (type === "webhook") {
       const parsed = WebhookConfigSchema.safeParse(config);
       if (!parsed.success) throw new BadRequestException(parsed.error.issues.map((i) => i.message).join("; "));
+    }
+    const schema = CHANNEL_CONFIG_SCHEMAS[type];
+    if (schema) {
+      const parsed = schema.safeParse(config);
+      if (!parsed.success) throw new BadRequestException(parsed.error.issues.map((i) => `${i.path.join(".") || "config"}: ${i.message}`).join("; "));
     }
     const field = NotificationsService.HOST_FIELD[type];
     if (!field) return; // telegram (fixed host) — nothing user-controlled to validate
@@ -142,6 +170,7 @@ export class NotificationsService {
       categories?: string[];
       minSeverity?: string;
       topics?: Record<string, number>;
+      policy?: PolicyInput;
       locale?: string;
     },
   ): Promise<ChannelView> {
@@ -161,6 +190,7 @@ export class NotificationsService {
         categories: dto.categories ?? [],
         minSeverity: dto.minSeverity ?? "info",
         ...(dto.topics ? { topics: dto.topics } : {}),
+        ...(normalizePolicy(dto.policy) ? { policy: normalizePolicy(dto.policy) as Prisma.InputJsonValue } : {}),
         locale: dto.locale ?? "en",
       },
     });
@@ -179,6 +209,7 @@ export class NotificationsService {
       minSeverity?: string;
       topics?: Record<string, number> | null;
       config?: Record<string, unknown>;
+      policy?: PolicyInput | null;
       locale?: string;
     },
   ): Promise<ChannelView> {
@@ -198,12 +229,51 @@ export class NotificationsService {
         minSeverity: dto.minSeverity ?? c.minSeverity,
         // undefined = keep, null = clear the map, object = replace it
         ...(dto.topics === undefined ? {} : { topics: dto.topics === null ? Prisma.DbNull : dto.topics }),
+        // undefined = keep, null / all-default = clear, object = replace
+        ...(dto.policy === undefined ? {} : { policy: (normalizePolicy(dto.policy) as Prisma.InputJsonValue | null) ?? Prisma.DbNull }),
         locale: dto.locale ?? c.locale,
         ...(dto.config ? { configEnc: this.crypto.encrypt(JSON.stringify(dto.config)) } : {}),
       },
     });
     await this.audit.log({ actor: userId, action: "channel.update", target: id });
     return this.view(updated, true); // only writers reach here (requireRole above)
+  }
+
+  /** Map a Shoutrrr/Apprise URL to a typed config; a bad URL is a 400 whose message never echoes the URL. */
+  private parseUrl(url: string): { type: string; config: Record<string, unknown>; suggestedName: string } {
+    try {
+      return parseChannelUrl(url);
+    } catch (e) {
+      if (e instanceof ChannelUrlError) throw new BadRequestException(e.message);
+      throw new BadRequestException("that is not a notification URL");
+    }
+  }
+
+  /** Dry run for the "paste a URL" box: what channel would this create? Credentials are masked. */
+  async previewUrl(userId: string, dto: { teamId: string; url: string }): Promise<{ type: string; suggestedName: string; config: Record<string, string> }> {
+    await this.access.requirePermission(userId, dto.teamId, "integrations");
+    const parsed = this.parseUrl(dto.url);
+    await this.validateChannelConfig(parsed.type, parsed.config);
+    return { type: parsed.type, suggestedName: parsed.suggestedName, config: previewConfig(parsed.config) };
+  }
+
+  /** Create a channel from one Shoutrrr/Apprise-style URL (same validation, SSRF guard and encryption as create). */
+  async createFromUrl(
+    userId: string,
+    dto: { teamId: string; url: string; name?: string; eventTypes?: string[]; categories?: string[]; minSeverity?: string; locale?: string },
+  ): Promise<ChannelView> {
+    await this.access.requirePermission(userId, dto.teamId, "integrations");
+    const parsed = this.parseUrl(dto.url);
+    return this.create(userId, {
+      name: dto.name ?? parsed.suggestedName,
+      type: parsed.type,
+      teamId: dto.teamId,
+      config: parsed.config,
+      eventTypes: dto.eventTypes,
+      categories: dto.categories,
+      minSeverity: dto.minSeverity,
+      locale: dto.locale,
+    });
   }
 
   async remove(userId: string, id: string): Promise<void> {
@@ -263,7 +333,7 @@ export class NotificationsService {
       if (!channelWantsMonitorEvent(l.channel, severity)) continue;
       // Per-channel locale → the notification renders in each channel's configured language.
       const event: NotificationEvent = { type, teamId, locale: l.channel.locale, ctx };
-      await this.queue.enqueue(l.channelId, event);
+      await this.queue.enqueue(l.channelId, event, { channel: { type: l.channel.type, policy: l.channel.policy } });
     }
   }
 
@@ -283,7 +353,7 @@ export class NotificationsService {
     const channels = candidates.filter((ch) => channelWantsEvent(ch, eventType, severity));
     for (const ch of channels) {
       const event: NotificationEvent = { type: eventType, teamId, locale: ch.locale, ctx };
-      await this.queue.enqueue(ch.id, event);
+      await this.queue.enqueue(ch.id, event, { channel: { type: ch.type, policy: ch.policy } });
     }
   }
 }

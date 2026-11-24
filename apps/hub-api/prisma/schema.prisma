@@ -153,6 +153,7 @@ model Team {
   monitors           Monitor[]
   rollouts           Rollout[]
   channels           NotificationChannel[]
+  digest             TeamDigest?
   applications       Application[]
   databases          Database[]
   backupDestinations BackupDestination[]
@@ -920,9 +921,25 @@ model NotificationChannel {
   categories  String[]               @default([])
   minSeverity String                 @default("info")
   topics      Json?
+  // Delivery policy: { quietHours?: {from,to,tz,allowCritical}, rateLimitPerMin?, dedupeWindowSec? } (null = defaults).
+  policy      Json?
   monitors    MonitorChannel[]
   deliveries  NotificationDelivery[]
+  digests     TeamDigest[]
   createdAt   DateTime               @default(now())
+}
+
+// Opt-in weekly digest for a team: sent Monday morning (hub time) to the chosen channel. lastSentAt is the
+// atomic claim that keeps a multi-hub / restarted sweep from sending twice in one week.
+model TeamDigest {
+  team       Team                 @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  teamId     String               @id
+  enabled    Boolean              @default(false)
+  channel    NotificationChannel? @relation(fields: [channelId], references: [id], onDelete: SetNull)
+  channelId  String?
+  lastSentAt DateTime?
+  createdAt  DateTime             @default(now())
+  updatedAt  DateTime             @updatedAt
 }
 
 enum NotificationDeliveryStatus {

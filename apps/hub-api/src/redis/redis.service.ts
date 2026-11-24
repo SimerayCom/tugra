@@ -84,6 +84,28 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     return r === "OK";
   }
 
+  /**
+   * Append to a capped "held alerts" ledger: the list keeps the newest `cap` entries, a sibling counter keeps the
+   * true total (so a flood bigger than the cap still reports its real size). Both expire together. Returns the total.
+   */
+  async ledgerAdd(key: string, entry: string, cap: number, ttlSeconds: number): Promise<number> {
+    const res = await this.redis
+      .multi()
+      .incr(`${key}:n`)
+      .rpush(key, entry)
+      .ltrim(key, -cap, -1)
+      .expire(key, ttlSeconds)
+      .expire(`${key}:n`, ttlSeconds)
+      .exec();
+    return Number(res?.[0]?.[1] ?? 0);
+  }
+
+  /** Atomically read and clear a ledger: the total, and the (capped) entries oldest first. */
+  async ledgerDrain(key: string): Promise<{ total: number; entries: string[] }> {
+    const res = await this.redis.multi().get(`${key}:n`).lrange(key, 0, -1).del(key, `${key}:n`).exec();
+    return { total: Number(res?.[0]?.[1] ?? 0), entries: ((res?.[1]?.[1] as string[] | undefined) ?? []) };
+  }
+
   async expire(key: string, ttlSeconds: number): Promise<void> {
     await this.redis.expire(key, ttlSeconds);
   }

@@ -19,6 +19,10 @@ import { ScopesGuard } from "../api-tokens/scopes.guard";
 import { AuthUser } from "../auth/strategies/jwt.strategy";
 import { NotificationsService } from "./notifications.service";
 import {
+  ChannelUrlInput,
+  ChannelUrlSchema,
+  ParseChannelUrlInput,
+  ParseChannelUrlSchema,
   CreateChannelInput,
   CreateChannelSchema,
   EVENT_TYPES,
@@ -65,6 +69,27 @@ export class NotificationsController {
     @Body(new ZodValidationPipe(CreateChannelSchema)) body: CreateChannelInput,
   ) {
     return this.svc.create(user.userId, body);
+  }
+
+  /** Create a channel from one Shoutrrr/Apprise-style URL ("tgram://…", "ntfy://…", "matrix://…"). */
+  @Post("from-url")
+  @ApiZodBody(ChannelUrlSchema)
+  createFromUrl(
+    @CurrentUser() user: AuthUser,
+    @Body(new ZodValidationPipe(ChannelUrlSchema)) body: ChannelUrlInput,
+  ) {
+    return this.svc.createFromUrl(user.userId, body);
+  }
+
+  /** Dry run of from-url: the channel type and its non-secret settings, nothing stored. */
+  @Post("parse-url")
+  @HttpCode(200)
+  @ApiZodBody(ParseChannelUrlSchema)
+  parseUrl(
+    @CurrentUser() user: AuthUser,
+    @Body(new ZodValidationPipe(ParseChannelUrlSchema)) body: ParseChannelUrlInput,
+  ) {
+    return this.svc.previewUrl(user.userId, body);
   }
 
   @Put(":id")

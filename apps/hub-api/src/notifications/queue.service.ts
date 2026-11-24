@@ -1,6 +1,7 @@
 import { Injectable, Logger, OnApplicationBootstrap, OnModuleDestroy } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { redisConnectionOptions } from "../common/redis-connection";
+import { createHash } from "node:crypto";
 import { Job, Queue, Worker } from "bullmq";
 import { DEFAULT_JOB_OPTIONS } from "../common/queue-options";
 import { PrismaService } from "../prisma/prisma.service";
@@ -11,7 +12,9 @@ import { webBaseUrl } from "../common/web-url";
 import { getProvider } from "./providers";
 import { renderEvent, type NotificationEvent, type RenderEnv } from "./event";
 import { NotifI18nService } from "./notif-i18n.service";
-import { routedConfig } from "./routing";
+import { eventSeverity, routedConfig } from "./routing";
+import { entityKey } from "./entity-key";
+import { buildSummaryCtx, inQuietHours, msUntilQuietEnds, parsePolicy, rateLimitFor, type HeldEntry, type HoldReason } from "./policy";
 
 const QUEUE = "notifications";
 
@@ -21,18 +24,6 @@ const QUEUE = "notifications";
 // resend re-alerts AND (worse) suppress a genuine re-DOWN that follows a recovery, leaving the operator's
 // last alert as "recovered" while the service is down. So we skip anything monitor_*.
 const MONITOR_PREFIX = "monitor_";
-
-// Stable, UNIQUE resource-identity fields read from a fired event's ctx to build a dedupe key. Only durable
-// unique ids belong here — NOT display names (e.g. tokenName is a non-unique label → deliberately excluded,
-// else two distinct tokens sharing a name collapse and the second is never alerted) and NOT volatile fields
-// (errorTail/sizeBytes/responseMs/durationMs/days/…). All present values are joined so an app-scoped task
-// keeps appId+taskName distinct. An event carrying none of these has no safe key and is NOT deduped.
-const ID_FIELDS = ["appId", "dbId", "serverId", "domain", "taskName"] as const;
-
-/** A stable entity key for the resource an event is about, or "" when the ctx carries no unique identifier. */
-function entityKey(ctx: Record<string, unknown>): string {
-  return ID_FIELDS.map((f) => ctx[f]).filter((v) => v != null && v !== "").map(String).join(":");
-}
 
 /** Redis key for the dedupe window. event.type is part of the key so distinct event types on the same
  *  resource never collapse into each other. */
@@ -45,6 +36,26 @@ interface DeliverJob {
   channelId: string;
   event: NotificationEvent;
 }
+
+/** A delayed job that turns what a channel held back (repeats / quiet hours / rate limit) into one summary. */
+export interface FlushJob {
+  channelId: string;
+  reason: HoldReason;
+  key: string;
+  teamId: string;
+  locale?: string;
+  windowSec: number;
+}
+
+/** What {@link NotificationQueueService.enqueue} may be told up front, to skip a channel lookup. */
+export interface EnqueueOpts {
+  /** The channel's type + stored policy, when the caller already loaded the row. */
+  channel?: { type: string; policy: unknown };
+  /** Deliver regardless of quiet hours / repeat window / rate limit (digests, summaries). */
+  bypassPolicy?: boolean;
+}
+
+const LEDGER_CAP = 200;
 
 /**
  * Durable notification delivery. Firing sites enqueue one job per channel; a BullMQ worker sends it
@@ -90,7 +101,7 @@ export class NotificationQueueService implements OnApplicationBootstrap, OnModul
     if (process.env.NODE_ENV === "test") return;
     const connection = this.connection();
     this.queue = new Queue(QUEUE, { connection, defaultJobOptions: DEFAULT_JOB_OPTIONS });
-    this.worker = new Worker<DeliverJob>(QUEUE, (job) => this.handleJob(job), { connection });
+    this.worker = new Worker<DeliverJob | FlushJob>(QUEUE, (job) => this.handleJob(job), { connection });
     this.worker.on("failed", (job, err) => void this.handleFailed(job, err));
     this.worker.on("error", (err) => this.logger.error(`worker error: ${err.message}`));
   }
@@ -105,21 +116,12 @@ export class NotificationQueueService implements OnApplicationBootstrap, OnModul
    * NEVER throws: firing sites loop over channels and some callers (the monitor runner) don't guard the
    * await, so one channel's DB/Redis hiccup must not abort the loop or reject to the caller.
    */
-  async enqueue(channelId: string, event: NotificationEvent): Promise<void> {
-    // Dedupe/throttle: suppress a repeat of the same (channel, event, entity) GENERAL alert within the
-    // window, BEFORE the snapshot — a suppressed enqueue creates no delivery row and no job. Skipped for
-    // monitors (the runner throttles them) and for events with no unique entity id (never risk collapsing
-    // two distinct resources). Fail-open: a Redis hiccup must never drop an alert (availability > dedup),
-    // and this check must never throw (enqueue is best-effort). 0/unset window disables dedupe. deliverNow
-    // (the test button) bypasses this entirely.
-    const windowSec = Number(this.config.get<number>("NOTIFY_DEDUPE_WINDOW_SEC") ?? 0);
-    if (windowSec > 0 && !event.type.startsWith(MONITOR_PREFIX)) {
-      const entity = entityKey(event.ctx);
-      if (entity) {
-        const fresh = await this.redis.firstInWindow(dedupeKey(channelId, event.type, entity), windowSec).catch(() => true);
-        if (!fresh) return;
-      }
-    }
+  async enqueue(channelId: string, event: NotificationEvent, opts: EnqueueOpts = {}): Promise<void> {
+    // Policy gate (quiet hours → repeat window → rate limit), BEFORE the snapshot — a held alert creates no
+    // delivery row and no job; it is folded into one summary later. Fail-open: a Redis/DB hiccup must never
+    // drop an alert (availability > policy), and nothing here may throw (enqueue is best-effort). The test
+    // button (deliverNow) and bypassPolicy callers (digests, summaries) skip it entirely.
+    if (!opts.bypassPolicy && !(await this.admit(channelId, event, opts))) return;
     let delivery: { id: string };
     try {
       delivery = await this.snapshot(channelId, event);
@@ -159,6 +161,89 @@ export class NotificationQueueService implements OnApplicationBootstrap, OnModul
     }
   }
 
+  /** true = deliver now; false = held (and folded into a later summary). Never throws. */
+  private async admit(channelId: string, event: NotificationEvent, opts: EnqueueOpts): Promise<boolean> {
+    try {
+      const channel =
+        opts.channel ?? (await this.prisma.notificationChannel.findUnique({ where: { id: channelId }, select: { type: true, policy: true } }));
+      if (!channel) return true; // gone — the snapshot step logs and skips it
+      const policy = parsePolicy(channel.policy);
+      const now = new Date();
+
+      const quiet = policy.quietHours;
+      if (quiet && inQuietHours(quiet, now) && !(quiet.allowCritical && eventSeverity(event) === "critical")) {
+        await this.hold(channelId, "quiet", "all", event, msUntilQuietEnds(quiet, now), 0);
+        return false;
+      }
+
+      // Repeat window. Skipped for monitors (the runner's state machine is their authoritative throttle — a
+      // blind window would swallow configured resend re-alerts and a genuine re-DOWN after recovery) and for
+      // events with no unique entity id (never risk collapsing two distinct resources).
+      const windowSec = policy.dedupeWindowSec ?? Number(this.config.get<number>("NOTIFY_DEDUPE_WINDOW_SEC") ?? 0);
+      if (windowSec > 0 && !event.type.startsWith(MONITOR_PREFIX)) {
+        const entity = entityKey(event.ctx);
+        if (entity) {
+          const fresh = await this.redis.firstInWindow(dedupeKey(channelId, event.type, entity), windowSec).catch(() => true);
+          if (!fresh) {
+            await this.hold(channelId, "repeat", `${event.type}:${entity}`, event, windowSec * 1000, windowSec);
+            return false;
+          }
+        }
+      }
+
+      const limit = rateLimitFor(channel.type, policy);
+      const minute = Math.floor(now.getTime() / 60_000);
+      const used = await this.redis.incr(`notifrate:${channelId}:${minute}`, 120);
+      if (used > limit) {
+        await this.hold(channelId, "rate", String(minute), event, 60_000 - (now.getTime() % 60_000) + 1000, 60);
+        return false;
+      }
+      return true;
+    } catch {
+      return true;
+    }
+  }
+
+  /** Record a held alert and make sure one flush job is waiting to summarise the group. Never throws. */
+  private async hold(channelId: string, reason: HoldReason, group: string, event: NotificationEvent, delayMs: number, windowSec: number): Promise<void> {
+    try {
+      const msg = renderEvent(event, this.renderEnv(event.locale));
+      const key = `notifsup:${channelId}:${reason}:${group}`;
+      const entry: HeldEntry = { type: event.type, title: msg.title.slice(0, 200), level: msg.level, at: new Date().toISOString() };
+      await this.redis.ledgerAdd(key, JSON.stringify(entry), LEDGER_CAP, Math.ceil(delayMs / 1000) + 3600);
+      if (!this.queue) return; // tests / no-Redis: the ledger is kept, flush() is driven directly
+      const job: FlushJob = { channelId, reason, key, teamId: event.teamId, locale: event.locale, windowSec };
+      await this.queue.add("flush", job, {
+        delay: Math.max(1000, delayMs),
+        // Same group → same id → BullMQ ignores the duplicate, so a burst schedules exactly one summary.
+        jobId: `flush-${createHash("sha1").update(key).digest("hex")}`,
+        removeOnComplete: true,
+        removeOnFail: true,
+        attempts: 3,
+        backoff: { type: "fixed", delay: 30_000 },
+      });
+    } catch (err) {
+      this.logger.warn(`hold(${channelId}): ${sanitizeError(err)}`);
+    }
+  }
+
+  /** Turn a held group into one summary message and deliver it (durably, bypassing the policy gate). */
+  async flush(job: FlushJob): Promise<void> {
+    const { total, entries } = await this.redis.ledgerDrain(job.key);
+    const held: HeldEntry[] = [];
+    for (const raw of entries) {
+      try {
+        const e = JSON.parse(raw) as HeldEntry;
+        if (typeof e.title === "string" && typeof e.level === "string") held.push(e);
+      } catch {
+        /* skip a corrupt entry */
+      }
+    }
+    if (!total && held.length === 0) return;
+    const ctx = buildSummaryCtx(job.reason, held, total || held.length, job.windowSec);
+    await this.enqueue(job.channelId, { type: "alert_summary", teamId: job.teamId, locale: job.locale, ctx }, { bypassPolicy: true });
+  }
+
   /** Test button: one synchronous send that records a delivery and RETHROWS so the caller sees pass/fail. */
   async deliverNow(channelId: string, event: NotificationEvent): Promise<void> {
     const delivery = await this.snapshot(channelId, event);
@@ -192,15 +277,16 @@ export class NotificationQueueService implements OnApplicationBootstrap, OnModul
   }
 
   /** BullMQ processor. Throwing schedules a backoff retry; success is recorded inside attempt(). */
-  private async handleJob(job: Job<DeliverJob>): Promise<void> {
-    const { deliveryId, channelId, event } = job.data;
+  private async handleJob(job: Job<DeliverJob | FlushJob>): Promise<void> {
+    if (job.name === "flush") return this.flush(job.data as FlushJob);
+    const { deliveryId, channelId, event } = job.data as DeliverJob;
     await this.attempt(deliveryId, channelId, event, job.attemptsMade + 1);
   }
 
   /** 'failed' handler — fire-and-forget; must never throw. Marks FAILED (interim) or DEAD (final). */
-  private async handleFailed(job: Job<DeliverJob> | undefined, err: Error): Promise<void> {
-    if (!job) return;
-    const { deliveryId, channelId } = job.data;
+  private async handleFailed(job: Job<DeliverJob | FlushJob> | undefined, err: Error): Promise<void> {
+    if (!job || job.name === "flush") return; // a flush has no delivery row; its own retries cover a hiccup
+    const { deliveryId, channelId } = job.data as DeliverJob;
     // In BullMQ v5, attemptsMade is already incremented (includes the attempt that just failed).
     const attempts = job.attemptsMade;
     const dead = attempts >= (job.opts.attempts ?? 1);

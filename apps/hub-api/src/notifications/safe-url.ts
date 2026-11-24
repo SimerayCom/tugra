@@ -98,18 +98,34 @@ export async function assertSafeUrl(rawUrl: string, opts: SsrfOpts): Promise<voi
   await assertSafeHost(url.hostname, opts);
 }
 
+export type SafeMethod = "GET" | "POST" | "PUT";
+
+export interface SafeRequestOpts extends SsrfOpts {
+  /** Default POST. Matrix needs PUT (send) and GET (alias lookup). */
+  method?: SafeMethod;
+}
+
+export interface SafeResponse {
+  status: number;
+  /** Response body, capped at 64 KiB (only the login / alias-lookup callers read it). */
+  body: string;
+}
+
+const MAX_RESPONSE_BYTES = 64 * 1024;
+
 /**
- * SSRF-safe POST: resolve+validate the host, then dial the validated IP directly (pin) so a DNS rebind
+ * SSRF-safe request: resolve+validate the host, then dial the validated IP directly (pin) so a DNS rebind
  * between validation and connect cannot redirect the socket to an internal address; TLS SNI/cert are
  * still checked against the hostname. Redirects are NOT followed (a redirect to an internal host is a
- * classic SSRF bypass). 10s timeout; socket drained so a slow peer cannot stall the dispatch loop.
+ * classic SSRF bypass). 10s timeout. Resolves with the status + a size-capped body for ANY status; callers
+ * that only care about success use {@link safeSend}.
  */
-export async function safeSend(
+export async function safeRequest(
   rawUrl: string,
   body: string,
   headers: Record<string, string>,
-  opts: SsrfOpts,
-): Promise<void> {
+  opts: SafeRequestOpts,
+): Promise<SafeResponse> {
   let url: URL;
   try {
     url = new URL(rawUrl);
@@ -123,27 +139,45 @@ export async function safeSend(
   const hostname = normHost(url.hostname);
   const addr = await resolveSafeAddress(hostname, opts);
   const mod = isHttps ? https : http;
-  await new Promise<void>((resolve, reject) => {
+  const method = opts.method ?? "POST";
+  return new Promise<SafeResponse>((resolve, reject) => {
     const req = mod.request(
       {
         host: addr, // dial the validated IP — the pin (no second DNS resolution)
         servername: isHttps && isIP(hostname) === 0 ? hostname : undefined, // TLS SNI + cert vs the name
         port: url.port ? Number(url.port) : isHttps ? 443 : 80,
-        method: "POST",
+        method,
         path: `${url.pathname}${url.search}`,
         headers: { ...headers, host: url.host }, // preserve vhost routing to the original name
         timeout: 10_000,
       },
       (res) => {
-        res.resume(); // drain to free the socket
-        const status = res.statusCode ?? 0;
-        if (status >= 200 && status < 300) resolve();
-        else reject(new Error(`webhook: HTTP ${status}`)); // 3xx included → deliberately not followed
+        const chunks: Buffer[] = [];
+        let size = 0;
+        res.on("data", (c: Buffer) => {
+          if (size < MAX_RESPONSE_BYTES) {
+            chunks.push(c);
+            size += c.length;
+          }
+        });
+        res.on("end", () => resolve({ status: res.statusCode ?? 0, body: Buffer.concat(chunks).toString("utf8").slice(0, MAX_RESPONSE_BYTES) }));
+        res.on("error", reject);
       },
     );
     req.on("timeout", () => req.destroy(new Error("webhook: timeout")));
     req.on("error", reject);
-    req.write(body);
+    if (method !== "GET") req.write(body);
     req.end();
   });
+}
+
+/** SSRF-safe send: {@link safeRequest}, rejecting on any non-2xx (3xx included — deliberately not followed). */
+export async function safeSend(
+  rawUrl: string,
+  body: string,
+  headers: Record<string, string>,
+  opts: SafeRequestOpts,
+): Promise<void> {
+  const res = await safeRequest(rawUrl, body, headers, opts);
+  if (res.status < 200 || res.status >= 300) throw new Error(`webhook: HTTP ${res.status}`);
 }

@@ -5,6 +5,7 @@
  * (no DI): the web base URL for deep-links AND a locale-bound translator `t` are threaded in via
  * `RenderEnv`. Every user-facing string comes from `t(key, params)` (Dilim 5 server-side i18n).
  */
+import { incidentKey } from "./entity-key";
 import type { MsgField, MsgLevel, RenderedMessage } from "./rendered-message";
 import { deployTemplate } from "./templates/deploy";
 import { backupFailedTemplate, backupSucceededTemplate, restoreFailedTemplate } from "./templates/backup";
@@ -23,6 +24,8 @@ import { rolloutTemplate } from "./templates/rollout";
 import { imageUpdateTemplate } from "./templates/image-update";
 import { appMoveTemplate } from "./templates/app-move";
 import { genericTemplate, testTemplate } from "./templates/generic";
+import { alertSummaryTemplate } from "./templates/alert-summary";
+import { weeklyDigestTemplate } from "./templates/weekly-digest";
 
 /** A locale-bound translator: resolves a dotted key with `{param}` interpolation (NotifI18nService). */
 export type NotifI18n = (key: string, params?: Record<string, string | number>) => string;
@@ -100,7 +103,8 @@ export function fmtDate(iso: string): string {
 
 /** Fill the boilerplate (timestamp + event id) so templates carry only semantic fields. */
 export function base(ev: NotificationEvent, m: Omit<RenderedMessage, "timestamp" | "event">): RenderedMessage {
-  return { ...m, timestamp: new Date().toISOString(), event: ev.type };
+  const group = incidentKey(ev.type, ev.ctx);
+  return { ...m, timestamp: new Date().toISOString(), event: ev.type, ...(group ? { group } : {}) };
 }
 
 const REGISTRY: Record<string, EventTemplate> = {
@@ -144,6 +148,9 @@ const REGISTRY: Record<string, EventTemplate> = {
   app_move_rolled_back: appMoveTemplate,
   app_move_failed: appMoveTemplate,
   test: testTemplate,
+  // Not subscribable (not in EVENT_TYPES): produced by the queue service / digest scheduler only.
+  alert_summary: alertSummaryTemplate,
+  weekly_digest: weeklyDigestTemplate,
 };
 
 /** Select a template by event id (unknown ids → generic) and render the typed event. */

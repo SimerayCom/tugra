@@ -376,3 +376,95 @@ describe("NotificationsService", () => {
     });
   });
 });
+
+describe("NotificationsService — new channel types, URL creation and policy", () => {
+  const okAccess = { requirePermission: jest.fn().mockResolvedValue(undefined) };
+  const createRow = (data: Record<string, unknown>) => ({ id: "cNew", enabled: true, eventTypes: [], categories: [], minSeverity: "info", ...data });
+
+  function svcWithCreate() {
+    const create = jest.fn().mockImplementation(({ data }) => Promise.resolve(createRow(data)));
+    const svc = make({ notificationChannel: { create } } as unknown as PrismaService, okAccess);
+    return { svc, create };
+  }
+
+  it("validates required fields for the new types", async () => {
+    const { svc } = svcWithCreate();
+    await expect(svc.create("u1", { name: "m", type: "matrix", teamId: "t1", config: { homeserver: "https://m.example.com", roomId: "!a:example.com" } })).rejects.toThrow(/access token/);
+    await expect(svc.create("u1", { name: "s", type: "sms", teamId: "t1", config: { accountSid: "nope", authToken: "x", from: "+1555123", to: "+1555987" } })).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.create("u1", { name: "g", type: "googlechat", teamId: "t1", config: { webhookUrl: "https://evil.example.com/hook" } })).rejects.toThrow(/chat\.googleapis\.com/);
+  });
+
+  it("SSRF-guards the user-supplied host of the new types", async () => {
+    const { svc } = svcWithCreate();
+    mockLookup.mockResolvedValue([{ address: "169.254.169.254", family: 4 }]);
+    await expect(svc.create("u1", { name: "z", type: "zulip", teamId: "t1", config: { server: "https://zulip.example.com", email: "b@e.com", apiKey: "k", stream: "ops" } })).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.create("u1", { name: "sig", type: "signal", teamId: "t1", config: { server: "http://127.0.0.1:8080", number: "+15551230000", recipients: "+15559870000" } })).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it("stores a policy only when it carries a real setting", async () => {
+    const { svc, create } = svcWithCreate();
+    await svc.create("u1", { name: "n", type: "webhook", teamId: "t1", config: { url: "https://hook.test" }, policy: { quietHours: null, rateLimitPerMin: null } });
+    expect(create.mock.calls[0][0].data).not.toHaveProperty("policy");
+    await svc.create("u1", {
+      name: "n",
+      type: "webhook",
+      teamId: "t1",
+      config: { url: "https://hook.test" },
+      policy: { quietHours: { from: "22:00", to: "07:00", tz: "UTC", allowCritical: true }, rateLimitPerMin: 10 },
+    });
+    expect(create.mock.calls[1][0].data.policy).toEqual({ quietHours: { from: "22:00", to: "07:00", tz: "UTC", allowCritical: true }, rateLimitPerMin: 10 });
+  });
+
+  it("creates a channel from a Shoutrrr/Apprise URL, encrypted, without leaking the URL", async () => {
+    const { svc, create } = svcWithCreate();
+    const tok = "123456789:AAH-abcdefghijklmnopqrstuvwxyz_0123";
+    const view = await svc.createFromUrl("u1", { teamId: "t1", url: `tgram://${tok}@telegram?chats=@alerts`, categories: ["deploy"] });
+    const data = create.mock.calls[0][0].data;
+    expect(data).toMatchObject({ name: "Telegram", type: "telegram", teamId: "t1", categories: ["deploy"] });
+    expect(JSON.parse(data.configEnc.replace(/^enc\(/, "").replace(/\)$/, ""))).toEqual({ botToken: tok, chatId: "@alerts" });
+    expect(JSON.stringify(view)).not.toContain(tok);
+    expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "channel.create" }));
+    expect(JSON.stringify((audit.log as jest.Mock).mock.calls)).not.toContain(tok);
+  });
+
+  it("a bad URL is a 400 that never repeats the URL", async () => {
+    const { svc } = svcWithCreate();
+    await expect(svc.createFromUrl("u1", { teamId: "t1", url: "tgram://hunter2-secret/abc" })).rejects.toThrow(BadRequestException);
+    try {
+      await svc.createFromUrl("u1", { teamId: "t1", url: "tgram://hunter2-secret/abc" });
+    } catch (e) {
+      expect((e as Error).message).not.toContain("hunter2");
+    }
+  });
+
+  it("a URL pointing at a private address is refused like any other channel", async () => {
+    const { svc } = svcWithCreate();
+    await expect(svc.createFromUrl("u1", { teamId: "t1", url: "ntfy://ntfy.example.com/alerts" })).resolves.toBeTruthy();
+    mockLookup.mockResolvedValue([{ address: "10.0.0.5", family: 4 }]);
+    await expect(svc.createFromUrl("u1", { teamId: "t1", url: "ntfy://ntfy.example.com/alerts" })).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it("requires the integrations permission, for the preview too", async () => {
+    const deny = { requirePermission: jest.fn().mockRejectedValue(new Error("forbidden")) };
+    const svc = make({} as unknown as PrismaService, deny);
+    await expect(svc.createFromUrl("u1", { teamId: "t1", url: "ntfy://alerts" })).rejects.toThrow("forbidden");
+    await expect(svc.previewUrl("u1", { teamId: "t1", url: "ntfy://alerts" })).rejects.toThrow("forbidden");
+  });
+
+  it("previewUrl masks credentials", async () => {
+    const svc = make({} as unknown as PrismaService, okAccess);
+    const out = await svc.previewUrl("u1", { teamId: "t1", url: "discord://abcDEF_ghi-1234567890@123456789012345678" });
+    expect(out).toEqual({ type: "discord", suggestedName: "Discord", config: { webhookUrl: "https://discord.com" } });
+  });
+
+  it("update: null clears the policy, undefined keeps it", async () => {
+    const existing = { id: "c1", teamId: "t1", type: "webhook", name: "n", enabled: true, eventTypes: [], categories: [], minSeverity: "info", locale: "en" };
+    const update = jest.fn().mockImplementation(({ data }) => Promise.resolve({ ...existing, ...data }));
+    const svc = make({ notificationChannel: { findUnique: jest.fn().mockResolvedValue(existing), update } } as unknown as PrismaService, okAccess);
+    await svc.update("u1", "c1", { name: "x" });
+    expect(update.mock.calls[0][0].data).not.toHaveProperty("policy");
+    await svc.update("u1", "c1", { policy: null });
+    expect(update.mock.calls[1][0].data).toHaveProperty("policy");
+    expect(update.mock.calls[1][0].data.policy).toBeDefined();
+  });
+});
