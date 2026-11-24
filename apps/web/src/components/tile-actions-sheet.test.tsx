@@ -26,7 +26,7 @@ const wrap = (ui: React.ReactNode) =>
   );
 
 const tile = (over: Partial<LauncherTile> = {}): LauncherTile =>
-  ({ id: "a1", name: "Ghost", url: "https://g.io", status: "RUNNING", phase: "running", linkKind: "domain", source: "IMAGE", templateSlug: "ghost", templateLogo: null, iconUpdatedAt: null, exposeMode: "magic", domain: "g.io", tunnelExposed: false, canWrite: true, ...over });
+  ({ id: "a1", name: "Ghost", url: "https://g.io", status: "RUNNING", phase: "running", linkKind: "domain", source: "IMAGE", templateSlug: "ghost", templateLogo: null, iconUpdatedAt: null, exposeMode: "magic", domain: "g.io", tunnelExposed: false, canWrite: true, teamId: "t1", projectId: null, projectName: null, serverId: "s1", ...over });
 
 describe("TileActionsSheet", () => {
   it("offers Logs + Update for a running, writable app; Logs opens an inline log view", async () => {

@@ -22,6 +22,10 @@ export interface LauncherTile {
   domain: string | null;
   tunnelExposed: boolean; // reachable via Cloudflare tunnel (secure, no open port)
   canWrite: boolean;
+  teamId: string; // owning team — Home groups tiles by team when there is more than one
+  projectId: string | null;
+  projectName: string | null;
+  serverId: string;
 }
 
 /** Plain-language lifecycle state for the tile's status label. */
@@ -100,6 +104,10 @@ export function launcherTiles(apps: Application[]): LauncherTile[] {
       domain: a.domain,
       tunnelExposed: a.tunnelExposed,
       canWrite: a.canWrite,
+      teamId: a.teamId,
+      projectId: a.projectId,
+      projectName: a.projectName,
+      serverId: a.serverId,
     }))
     .sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name));
 }
