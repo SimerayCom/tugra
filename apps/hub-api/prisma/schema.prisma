@@ -2944,6 +2944,7 @@ model ServerRescale {
   fromPlan    String
   toPlan      String
   upgradeDisk Boolean   @default(false) // also grow the disk (permanent; false keeps the move reversible)
+  wasOff      Boolean   @default(false) // the server was already powered off when the move began (it stays off after)
   phase       String    @default("SHUTTING_DOWN") // SHUTTING_DOWN | RESIZING | POWERING_ON | DONE | FAILED
   error       String? // provider-response text only, never a token
   startedAt   DateTime  @default(now())

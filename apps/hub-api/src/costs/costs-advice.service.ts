@@ -136,11 +136,15 @@ export class CostsAdviceService {
           .filter((p) => !p.deprecated && p.monthlyCentsByLocation[loc] !== undefined)
           .map((p) => ({ slug: p.slug, label: planLabel({ slug: p.slug, cores: p.cores, memoryGb: p.memoryGb, diskGb: p.diskGb }), cores: p.cores, memoryGb: p.memoryGb, diskGb: p.diskGb, arch: p.architecture, monthlyCents: p.monthlyCentsByLocation[loc], currency: p.currency }));
         const price = cur.monthlyCentsByLocation[loc] ?? s.cost.monthlyCents;
+        // A disk grown earlier (it never shrinks) is bigger than the plan names; the host's measured size shows it, since
+        // a file system cannot be larger than its disk. Smaller-disk plans are then no in-place move.
+        const grown = diskBytes !== null && diskBytes / 1e9 > cur.diskGb * 1.02;
+        const diskGb = grown ? Math.max(cur.diskGb, Math.floor((diskBytes / GIB) * 1.1 / 5) * 5) : cur.diskGb;
         return {
           candidates,
           priceBasis: "provider",
           live: true,
-          current: (cores, memBytes) => ({ cores, memBytes, diskGb: cur.diskGb, arch: cur.architecture, comparableMonthlyCents: price, currency: cur.currency, planSlug: cur.slug }),
+          current: (cores, memBytes) => ({ cores, memBytes, diskGb, arch: cur.architecture, comparableMonthlyCents: price, currency: cur.currency, planSlug: cur.slug }),
           currentView: { slug: cur.slug, label: planLabel({ slug: cur.slug, cores: cur.cores, memoryGb: cur.memoryGb, diskGb: cur.diskGb }), cores: cur.cores, memoryGb: cur.memoryGb, diskGb: cur.diskGb, monthlyCents: s.cost.monthlyCents, currency: s.cost.currency },
         };
       }

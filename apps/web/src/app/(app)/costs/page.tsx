@@ -38,7 +38,9 @@ export default function CostsPage() {
   // A server linked to a provider API gets its real price on its own, once per visit and team; failures stay quiet
   // (the estimate stands, and the button reports them).
   const autoSynced = useRef(new Set<string>());
-  const wantsAuto = !!team && team.canOps && team.servers.some((s) => s.canSync && s.source === "estimate");
+  // A provider price older than a day is read again too, so a resize made at the provider shows up.
+  const stale = (s: { source: string; syncedAt: string | null }) => s.source === "estimate" || (s.source === "provider" && (!s.syncedAt || Date.now() - Date.parse(s.syncedAt) > 86_400_000));
+  const wantsAuto = !!team && team.canOps && team.servers.some((s) => s.canSync && stale(s));
   useEffect(() => {
     if (!wantsAuto || autoSynced.current.has(teamId)) return;
     autoSynced.current.add(teamId);

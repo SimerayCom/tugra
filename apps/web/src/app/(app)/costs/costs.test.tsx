@@ -226,4 +226,19 @@ describe("CostsPage", () => {
     await waitFor(() => expect(sync).toHaveBeenCalledTimes(2));
     expect(sync).toHaveBeenCalledWith("t1");
   });
+
+  it("re-reads a provider price that is more than a day old, but not a fresh one", async () => {
+    const sync = vi.spyOn(api, "syncCosts").mockResolvedValue({ synced: 1, failed: [] });
+    mock(team({ servers: [server({ canSync: true, source: "provider", syncedAt: new Date(Date.now() - 2 * 86_400_000).toISOString() })] }));
+    wrap(<CostsPage />);
+    await waitFor(() => expect(sync).toHaveBeenCalledTimes(1));
+  });
+
+  it("leaves a freshly read provider price alone", async () => {
+    const sync = vi.spyOn(api, "syncCosts").mockResolvedValue({ synced: 1, failed: [] });
+    mock(team({ servers: [server({ canSync: true, source: "provider", syncedAt: new Date().toISOString() })] }));
+    wrap(<CostsPage />);
+    await screen.findByText("Read prices from provider");
+    expect(sync).not.toHaveBeenCalled();
+  });
 });

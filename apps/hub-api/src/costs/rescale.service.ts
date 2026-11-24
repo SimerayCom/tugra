@@ -118,7 +118,7 @@ export class RescaleService implements OnApplicationBootstrap, OnModuleDestroy {
     });
     try {
       const state = await link.oob.getServerState(link.token, link.providerServerId);
-      if (state.status === "off") await this.setPhase(row.id, "RESIZING");
+      if (state.status === "off") await this.prisma.serverRescale.update({ where: { id: row.id }, data: { phase: "RESIZING", wasOff: true } });
       else await link.oob.power(link.token, link.providerServerId, "shutdown");
     } catch (e) {
       const mapped = oobHttpError(providerName, e, true);
@@ -181,14 +181,18 @@ export class RescaleService implements OnApplicationBootstrap, OnModuleDestroy {
         const [state, plan] = await Promise.all([link.oob.getServerState(link.token, link.providerServerId), link.plans.getServerPlan(link.token, link.providerServerId)]);
         if (state.locked) return; // the provider is still working on a step
         if (plan.plan.slug === row.toPlan) {
+          if (row.wasOff) return this.complete(row, link); // it was off before the move, and stays off
           await this.setPhase(id, "POWERING_ON");
           row.phase = "POWERING_ON";
         } else {
           try {
             await link.plans.changeType(link.token, link.providerServerId, row.toPlan, row.upgradeDisk);
           } catch (e) {
+            // A change that already went through (the plan now reads as the target) is not a failure.
+            const now = await link.plans.getServerPlan(link.token, link.providerServerId).catch(() => null);
+            if (now?.plan.slug === row.toPlan) return;
             // Put the server back on its feet before reporting: it was shut down for this.
-            await link.oob.power(link.token, link.providerServerId, "power_on").catch(() => undefined);
+            if (!row.wasOff) await link.oob.power(link.token, link.providerServerId, "power_on").catch(() => undefined);
             return this.fail(id, row.requestedBy, oobHttpError(row.provider, e, true).message);
           }
           return;
@@ -213,7 +217,10 @@ export class RescaleService implements OnApplicationBootstrap, OnModuleDestroy {
 
   private async complete(row: ServerRescale, link: Link): Promise<void> {
     const plan = await link.plans.getServerPlan(link.token, link.providerServerId).catch(() => null);
-    if (plan && plan.monthlyCents !== null) {
+    const existing = await this.prisma.serverCost.findUnique({ where: { serverId: row.serverId }, select: { source: true } });
+    if (existing?.source === "manual") {
+      // A price the operator typed is theirs; the move never replaces it.
+    } else if (plan && plan.monthlyCents !== null) {
       const data = { monthlyCents: plan.monthlyCents, currency: plan.currency, source: "provider", provider: row.provider, planSlug: plan.plan.slug, location: plan.location, syncedAt: new Date() };
       await this.prisma.serverCost.upsert({ where: { serverId: row.serverId }, create: { serverId: row.serverId, ...data }, update: data });
     } else {

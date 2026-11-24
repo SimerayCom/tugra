@@ -39,7 +39,7 @@ const idleUsage = (o: Record<string, number> = {}) => ({
   ...o,
 });
 
-function make(o: { servers?: ReturnType<typeof server>[]; usage?: unknown[]; firstDays?: number; catalog?: unknown; catalogError?: boolean; active?: string[] } = {}) {
+function make(o: { servers?: ReturnType<typeof server>[]; usage?: unknown[]; firstDays?: number; catalog?: unknown; catalogError?: boolean; active?: string[]; diskGib?: number } = {}) {
   const prisma = {
     server: { findMany: jest.fn().mockResolvedValue(o.servers ?? [server()]) },
     metricRollup: { groupBy: jest.fn().mockResolvedValue([{ serverId: "s1", _min: { bucket: new Date(Date.now() - (o.firstDays ?? 20) * DAY) } }]) },
@@ -47,7 +47,7 @@ function make(o: { servers?: ReturnType<typeof server>[]; usage?: unknown[]; fir
     cloudCredential: { findUnique: jest.fn().mockResolvedValue({ id: "cc1", teamId: "t1", provider: "hetzner", apiTokenEnc: "enc:TOKEN" }) },
     $queryRaw: jest.fn().mockImplementation(async (q: { strings?: string[]; sql?: string }) => {
       const text = (q.strings ?? [q.sql ?? ""]).join(" ");
-      return text.includes("percentile_cont") ? (o.usage ?? [idleUsage()]) : [{ serverId: "s1", disk: 76 * GIB }];
+      return text.includes("percentile_cont") ? (o.usage ?? [idleUsage()]) : [{ serverId: "s1", disk: (o.diskGib ?? 76) * GIB }];
     }),
   };
   const access = { permissionsByTeam: jest.fn().mockResolvedValue(new Map([["t1", new Set(["servers:manage"])]])) };
@@ -122,6 +122,18 @@ describe("CostsAdviceService", () => {
     const a = (await c.svc.advice("u1")).advice[0];
     expect(a).toMatchObject({ kind: "downsize", diskBlocked: true, rescale: "guide" });
     expect(a.target?.slug).toBe("cx33");
+  });
+
+  it("a disk grown earlier is bigger than its plan names: smaller-disk plans are not an in-place move", async () => {
+    const plan = (slug: string, cores: number, mem: number, disk: number, price: number) => ({ slug, cores, memoryGb: mem, diskGb: disk, architecture: "x86", deprecated: false, monthlyCentsByLocation: { fsn1: price }, currency: "EUR" });
+    const c = make({
+      diskGib: 300, // the host shows ~320 GB although the plan names 160
+      servers: [server({ provider: "hetzner", providerServerId: "42", cloudCredentialId: "cc1", cost: { source: "provider", monthlyCents: 1649, currency: "EUR", provider: "hetzner", planSlug: "cx43", location: "fsn1" } })],
+      catalog: [plan("cx43", 8, 16, 160, 1649), plan("cpx32", 4, 8, 160, 1200)],
+    });
+    const a = (await c.svc.advice("u1")).advice[0];
+    expect(a.rescale).toBe("guide");
+    expect(a.target?.slug === "cpx32" ? a.diskBlocked : true).toBe(true);
   });
 
   it("reads a credential's catalog at most once per hour across servers and calls", async () => {

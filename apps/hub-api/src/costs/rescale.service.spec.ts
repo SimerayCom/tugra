@@ -20,7 +20,7 @@ const baseServer = (o: Record<string, unknown> = {}) => ({
 const plan = (slug: string, disk = 80, arch = "x86") => ({ slug, cores: 4, memoryGb: 8, diskGb: disk, architecture: arch });
 const catalogPlan = (slug: string, disk: number, o: Record<string, unknown> = {}) => ({ ...plan(slug, disk), deprecated: false, monthlyCentsByLocation: { fsn1: 900 }, currency: "EUR", ...o });
 
-function make(o: { server?: ReturnType<typeof baseServer> | null; perms?: string[]; status?: string; locked?: boolean; current?: string; catalog?: unknown[]; existing?: unknown } = {}) {
+function make(o: { server?: ReturnType<typeof baseServer> | null; perms?: string[]; status?: string; locked?: boolean; current?: string; catalog?: unknown[]; existing?: unknown; cost?: unknown } = {}) {
   const perms = new Set(o.perms ?? ["servers:manage"]);
   const rows = new Map<string, Record<string, unknown>>();
   let n = 0;
@@ -43,7 +43,7 @@ function make(o: { server?: ReturnType<typeof baseServer> | null; perms?: string
         return row;
       }),
     },
-    serverCost: { upsert: jest.fn().mockResolvedValue({}), deleteMany: jest.fn().mockResolvedValue({}) },
+    serverCost: { findUnique: jest.fn().mockResolvedValue(o.cost ?? null), upsert: jest.fn().mockResolvedValue({}), deleteMany: jest.fn().mockResolvedValue({}) },
   };
   const state = { status: o.status ?? "running", locked: o.locked ?? false, slug: o.current ?? "cx43" };
   const calls: string[] = [];
@@ -197,7 +197,10 @@ describe("RescaleService.advance", () => {
   });
 
   it("waits while the provider has the server locked, then powers on and finishes with the new price", async () => {
-    const { c, id, row } = await started({ status: "off" });
+    const { c, id, row } = await started();
+    c.state.status = "off"; // the graceful shutdown finished
+    await c.svc.advance(id); // asks for the change
+    c.plans.changeType.mockClear();
     c.state.locked = true;
     await c.svc.advance(id);
     expect(c.plans.changeType).not.toHaveBeenCalled();
@@ -216,13 +219,61 @@ describe("RescaleService.advance", () => {
   });
 
   it("if the change is refused it puts the server back on and reports why", async () => {
-    const { c, id, row } = await started({ status: "off" });
+    const { c, id, row } = await started();
+    c.state.status = "off"; // the graceful shutdown finished
+    await c.svc.advance(id);
+    c.oob.power.mockClear();
     c.plans.changeType.mockRejectedValue(Object.assign(new Error("hetzner: resource unavailable"), { status: 422, hetznerError: { code: "resource_unavailable" } }));
     await c.svc.advance(id);
     expect(c.oob.power).toHaveBeenCalledWith(TOKEN, "42", "power_on");
     expect(row.phase).toBe("FAILED");
     expect(String(row.error)).toContain("resource unavailable");
     expect(String(row.error)).not.toContain(TOKEN);
+  });
+
+  it("a server that was already off stays off: no power-on, even after a refused change", async () => {
+    const { c, id, row } = await started({ status: "off" });
+    expect(row.wasOff).toBe(true);
+    c.plans.changeType.mockRejectedValue(Object.assign(new Error("hetzner: resource unavailable"), { status: 422, hetznerError: { code: "resource_unavailable" } }));
+    await c.svc.advance(id);
+    expect(c.oob.power).not.toHaveBeenCalled();
+    expect(row.phase).toBe("FAILED");
+
+    const d = await started({ status: "off" });
+    d.c.state.slug = "cpx32";
+    await d.c.svc.advance(d.id);
+    expect(d.row.phase).toBe("DONE");
+    expect(d.c.oob.power).not.toHaveBeenCalled();
+  });
+
+  it("a change that already went through is not reported as a failure when the provider says 'same type'", async () => {
+    const { c, id, row } = await started();
+    c.state.status = "off";
+    await c.svc.advance(id); // RESIZING; change requested
+    c.plans.changeType.mockImplementation(async () => {
+      c.state.slug = "cpx32"; // applied meanwhile
+      throw Object.assign(new Error("hetzner: server type is the same"), { status: 422 });
+    });
+    c.oob.power.mockClear();
+    await c.svc.advance(id);
+    expect(row.phase).toBe("RESIZING");
+    expect(c.oob.power).not.toHaveBeenCalled();
+    await c.svc.advance(id);
+    expect(row.phase).toBe("POWERING_ON");
+  });
+
+  it("a price the operator typed survives the move", async () => {
+    const { c, id, row } = await started({ cost: { source: "manual" } });
+    c.state.status = "off";
+    await c.svc.advance(id);
+    c.state.slug = "cpx32";
+    await c.svc.advance(id);
+    c.state.status = "running";
+    await c.svc.advance(id);
+    await c.svc.advance(id);
+    expect(row.phase).toBe("DONE");
+    expect(c.prisma.serverCost.upsert).not.toHaveBeenCalled();
+    expect(c.prisma.serverCost.deleteMany).not.toHaveBeenCalled();
   });
 
   it("gives up after the total time limit", async () => {
