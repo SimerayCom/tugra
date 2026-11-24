@@ -427,5 +427,32 @@
     "err_forbidden": "You cannot manage this server",
     "err_not_found": "Server not found",
     "err_failed": "Something went wrong"
+  },
+  "teamMoveBulk": {
+    "open": "Move to team",
+    "title": "Move {n} servers to another team",
+    "hint": "Each server is checked on its own. Servers that still hold the old team's apps or databases stay where they are.",
+    "review": "Servers to move",
+    "already": "Already in this team",
+    "willMove": "Will move",
+    "confirm": "Move {n} servers",
+    "done": "Moved {ok} of {total}.",
+    "blockedBy": "Stays: has {what}",
+    "status_moved": "Moved",
+    "status_unchanged": "Already there",
+    "status_blocked": "Stays: old team's resources on it",
+    "status_denied": "No permission",
+    "status_failed": "Failed",
+    "kind_application": "{n} apps",
+    "kind_build_server": "build server",
+    "kind_database": "{n} databases",
+    "kind_monitor": "{n} monitors",
+    "kind_cluster": "a cluster",
+    "kind_app_move": "an app move",
+    "kind_migration": "a migration",
+    "kind_reboot": "a reboot",
+    "kind_tunnel": "a tunnel",
+    "kind_log_drain": "{n} log drains",
+    "kind_bulk_task": "a running bulk task"
   }
 }

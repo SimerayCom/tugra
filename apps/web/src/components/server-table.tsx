@@ -21,6 +21,7 @@ import { CleanupBulkModal } from "./cleanup-bulk-modal";
 import { PatchBulkModal } from "./patch-bulk-modal";
 import { AgentUpdateBulkModal } from "./agent-update-bulk-modal";
 import { CapabilitiesBulkModal } from "./capabilities-bulk-modal";
+import { TeamMoveBulkModal } from "./team-move-bulk-modal";
 
 /** Rows per page by default, and the choices offered. Selection persists across pages; the header select-all acts on the visible page only. */
 export const SERVER_PAGE_SIZE = 100;
@@ -67,6 +68,7 @@ export function ServerTable({
   const [showPatch, setShowPatch] = useState(false);
   const [showAgentUpdate, setShowAgentUpdate] = useState(false);
   const [showCaps, setShowCaps] = useState(false);
+  const [showTeamMove, setShowTeamMove] = useState(false);
   const [query, setQuery] = useState("");
   const [teamFilter, setTeamFilter] = useState<string>(ALL_TEAMS);
   const [groupTeams, setGroupTeams] = useState(false);
@@ -375,12 +377,15 @@ export function ServerTable({
       )}
 
       {selected.size > 0 && (
-        <div style={{ position: "sticky", bottom: 16, marginTop: 16, display: "flex", alignItems: "center", gap: 12, padding: "10px 16px", background: "var(--c-sb)", border: "1px solid var(--c-a)", borderRadius: "var(--r2)", boxShadow: "0 10px 30px rgba(0,0,0,0.4)" }}>
+        <div style={{ position: "sticky", bottom: 16, marginTop: 16, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 12, padding: "10px 16px", background: "var(--c-sb)", border: "1px solid var(--c-a)", borderRadius: "var(--r2)", boxShadow: "0 10px 30px rgba(0,0,0,0.4)" }}>
           <span style={{ fontSize: 13, fontWeight: 600 }}>
             {t("servers.selected", { n: writable.length })}
             {skipped > 0 && <span style={{ color: "var(--c-tx3)", fontWeight: 400 }}> {t("servers.skipped", { n: skipped })}</span>}
           </span>
           <div style={{ flex: 1 }} />
+          <Btn variant="ghost" onClick={() => setShowTeamMove(true)} disabled={writable.length === 0}>
+            {t("servers.teamMoveBulk.open")}
+          </Btn>
           <Btn variant="ghost" onClick={() => setShowCaps(true)} disabled={writable.length === 0}>
             {t("servers.bulkCaps.open")}
           </Btn>
@@ -410,6 +415,9 @@ export function ServerTable({
       )}
       {showCaps && (
         <CapabilitiesBulkModal servers={servers} selectedIds={[...selected]} onClose={() => setShowCaps(false)} />
+      )}
+      {showTeamMove && (
+        <TeamMoveBulkModal servers={servers} selectedIds={[...selected]} onClose={() => setShowTeamMove(false)} />
       )}
       {showAgentUpdate && (
         <AgentUpdateBulkModal servers={servers} selectedIds={[...selected]} onClose={() => setShowAgentUpdate(false)} />
