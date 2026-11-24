@@ -62,6 +62,15 @@ describe("GuidedRunLauncher", () => {
     expect(create.mock.calls[0][0]).toMatchObject({ dryRun: false, mode: "takeover", topology: "swap-proxy", inputs: { acmeEmail: "ops@example.org" } });
   });
 
+  it("the '?' points at the Move from Coolify guide, and at the same-server guide once swap-proxy is chosen", async () => {
+    mount();
+    fireEvent.click(screen.getByRole("button", { name: "Run guided migration" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByRole("link", { name: "Guide: Move from Coolify" }).getAttribute("href")).toBe("https://tugra.io/docs/move-from-coolify");
+    fireEvent.change(within(dialog).getByLabelText("Topology"), { target: { value: "swap-proxy" } });
+    expect(within(dialog).getByRole("link", { name: "Guide: Move from Coolify on the same server" }).getAttribute("href")).toBe("https://tugra.io/docs/move-from-coolify-same-server");
+  });
+
   it("blocks an invalid email and an out-of-range observe window", async () => {
     const create = vi.spyOn(api, "createMigrationRun").mockResolvedValue(mkRun());
     mount();

@@ -25,6 +25,7 @@ import {
 } from "../../lib/migration-run";
 import { AdvancedFields, type AdvancedState } from "./launch-advanced";
 import { PlacementFields } from "./launch-placement";
+import { HelpLink } from "../help-link";
 import type { ImportApplyExtras, ImportPlan, ImportRemoteKind, MigrationRunMode, MigrationRunServerMap, MigrationRunTopology } from "../../lib/types";
 
 interface Props {
@@ -112,7 +113,10 @@ function LaunchDialog({ plan, kind, sessionId, servers, extras, onClose }: Props
         }}
         style={{ display: "flex", flexDirection: "column", gap: 14 }}
       >
-        <h2 style={{ fontSize: 15, fontWeight: 700, margin: 0 }}>{t("migrationRun.launch.title")}</h2>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+          <h2 style={{ fontSize: 15, fontWeight: 700, margin: 0 }}>{t("migrationRun.launch.title")}</h2>
+          <HelpLink guide={topology === "swap-proxy" ? "move-from-coolify-same-server" : "move-from-coolify"} />
+        </div>
         <p style={{ margin: 0, fontSize: 12, color: "var(--c-tx3)", lineHeight: 1.5 }}>{t("migrationRun.launch.dialogDesc")}</p>
 
         <Field label={t("migrationRun.launch.target")} hint={t("migrationRun.launch.targetHint")} error={issues.includes("target") ? t("migrationRun.launch.targetMissing") : undefined}>
