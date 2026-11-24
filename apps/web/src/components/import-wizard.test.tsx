@@ -72,7 +72,8 @@ describe("ImportWizard", () => {
     vi.spyOn(api, "getImportOperation").mockResolvedValue(settledOp);
     wrap(<ImportWizard />);
 
-    await screen.findByRole("option", { name: "Team One" });
+    await screen.findByLabelText("Coolify URL");
+    await waitFor(() => expect(qc.getQueryData(["teams"])).toBeTruthy());
     fireEvent.change(screen.getByLabelText("Coolify URL"), { target: { value: "https://coolify.example.com" } });
     fireEvent.change(screen.getByLabelText("API token"), { target: { value: "tok" } });
     fireEvent.click(screen.getByRole("button", { name: "Connect & preview" }));
@@ -133,7 +134,8 @@ describe("ImportWizard", () => {
     const msg = 'Coolify API error 403: "You are not allowed to access the API." (Coolify\'s Allowed IPs list does not include this hub\'s address 203.0.113.7: add it in Coolify under Settings > Advanced > Allowed IPs)';
     vi.spyOn(api, "importConnect").mockRejectedValue(new ApiError(400, `could not reach Coolify: ${msg}`));
     wrap(<ImportWizard />);
-    await screen.findByRole("option", { name: "Team One" });
+    await screen.findByLabelText("Coolify URL");
+    await waitFor(() => expect(qc.getQueryData(["teams"])).toBeTruthy());
     fireEvent.change(screen.getByLabelText("Coolify URL"), { target: { value: "https://coolify.example.com" } });
     fireEvent.change(screen.getByLabelText("API token"), { target: { value: "tok" } });
     fireEvent.click(screen.getByRole("button", { name: "Connect & preview" }));
@@ -147,7 +149,8 @@ describe("ImportWizard", () => {
     vi.spyOn(api, "importPlan").mockResolvedValue(plan);
     wrap(<ImportWizard />);
 
-    await screen.findByRole("option", { name: "Team One" });
+    await screen.findByLabelText("Coolify URL");
+    await waitFor(() => expect(qc.getQueryData(["teams"])).toBeTruthy());
     fireEvent.change(screen.getByLabelText("Coolify URL"), { target: { value: "https://coolify.example.com" } });
     fireEvent.change(screen.getByLabelText("API token"), { target: { value: "tok" } });
     fireEvent.click(screen.getByRole("button", { name: "Connect & preview" }));
@@ -168,7 +171,8 @@ describe("ImportWizard", () => {
     });
     wrap(<ImportWizard />);
 
-    await screen.findByRole("option", { name: "Team One" });
+    await screen.findByLabelText("Coolify URL");
+    await waitFor(() => expect(qc.getQueryData(["teams"])).toBeTruthy());
     fireEvent.change(screen.getByLabelText("Coolify URL"), { target: { value: "https://coolify.example.com" } });
     fireEvent.change(screen.getByLabelText("API token"), { target: { value: "tok" } });
     fireEvent.click(screen.getByRole("button", { name: "Connect & preview" }));
@@ -199,7 +203,8 @@ describe("ImportWizard", () => {
     const applySpy = vi.spyOn(api, "remapEnvApply").mockResolvedValue({ opId: "op1", applied: true, planHash: "p".repeat(32), apps: [{ appId: "a1", name: "web-app", written: 1, keys: ["DATABASE_URL"], needsRedeploy: true, linked: true }], failed: [], linkFailed: [], note: "done" });
     wrap(<ImportWizard />);
 
-    await screen.findByRole("option", { name: "Team One" });
+    await screen.findByLabelText("Coolify URL");
+    await waitFor(() => expect(qc.getQueryData(["teams"])).toBeTruthy());
     fireEvent.change(screen.getByLabelText("Coolify URL"), { target: { value: "https://coolify.example.com" } });
     fireEvent.change(screen.getByLabelText("API token"), { target: { value: "tok" } });
     fireEvent.click(screen.getByRole("button", { name: "Connect & preview" }));
@@ -228,7 +233,8 @@ describe("ImportWizard", () => {
     vi.spyOn(api, "importApply").mockResolvedValue({ opId: "op1" });
     vi.spyOn(api, "getImportOperation").mockResolvedValue(settledOp);
     wrap(<ImportWizard />);
-    await screen.findByRole("option", { name: "Team One" });
+    await screen.findByLabelText("Coolify URL");
+    await waitFor(() => expect(qc.getQueryData(["teams"])).toBeTruthy());
     fireEvent.change(screen.getByLabelText("Coolify URL"), { target: { value: "https://coolify.example.com" } });
     fireEvent.change(screen.getByLabelText("API token"), { target: { value: "tok" } });
     fireEvent.click(screen.getByRole("button", { name: "Connect & preview" }));
@@ -295,7 +301,8 @@ describe("ImportWizard", () => {
       const applySpy = vi.spyOn(api, "importApply").mockResolvedValue({ opId: "op1" });
       vi.spyOn(api, "getImportOperation").mockResolvedValue(settledOp);
       wrap(<ImportWizard />);
-      await screen.findByRole("option", { name: "Team One" });
+      await screen.findByLabelText("Coolify URL");
+    await waitFor(() => expect(qc.getQueryData(["teams"])).toBeTruthy());
       fireEvent.change(screen.getByLabelText("Coolify URL"), { target: { value: "https://coolify.example.com" } });
       fireEvent.change(screen.getByLabelText("API token"), { target: { value: "tok" } });
       fireEvent.click(screen.getByRole("button", { name: "Connect & preview" }));
@@ -316,7 +323,8 @@ describe("ImportWizard", () => {
       vi.spyOn(api, "importConnect").mockResolvedValue({ sessionId: "s1", expiresAt: "2026-01-01T00:00:00.000Z" });
       const planSpy = vi.spyOn(api, "importPlan").mockResolvedValueOnce(pgPlan).mockResolvedValueOnce(volPlan).mockResolvedValue(pgPlan);
       wrap(<ImportWizard />);
-      await screen.findByRole("option", { name: "Team One" });
+      await screen.findByLabelText("Coolify URL");
+    await waitFor(() => expect(qc.getQueryData(["teams"])).toBeTruthy());
       fireEvent.change(screen.getByLabelText("Coolify URL"), { target: { value: "https://coolify.example.com" } });
       fireEvent.change(screen.getByLabelText("API token"), { target: { value: "tok" } });
       fireEvent.click(screen.getByRole("button", { name: "Connect & preview" }));
@@ -330,14 +338,16 @@ describe("ImportWizard", () => {
 
   it("keeps the connect button disabled until url + token are filled", async () => {
     wrap(<ImportWizard />);
-    await screen.findByRole("option", { name: "Team One" });
+    await screen.findByLabelText("Coolify URL");
+    await waitFor(() => expect(qc.getQueryData(["teams"])).toBeTruthy());
     const btn = screen.getByRole("button", { name: "Connect & preview" }) as HTMLButtonElement;
     expect(btn.disabled).toBe(true);
   });
 
   // ── G3-C: Dokploy source, coverage card, timeline "Not carried" ──────────────────────────────────────────
   const connectDokploy = async () => {
-    await screen.findByRole("option", { name: "Team One" });
+    await screen.findByLabelText("Coolify URL");
+    await waitFor(() => expect(qc.getQueryData(["teams"])).toBeTruthy());
     fireEvent.click(screen.getByRole("radio", { name: "Dokploy" }));
     fireEvent.change(screen.getByLabelText("Dokploy URL"), { target: { value: "https://dokploy.example.com" } });
     fireEvent.change(screen.getByLabelText("API key"), { target: { value: "dk" } });
@@ -369,7 +379,8 @@ describe("ImportWizard", () => {
     vi.spyOn(api, "importApply").mockResolvedValue({ opId: "op1" });
     vi.spyOn(api, "getImportOperation").mockResolvedValue(settledOp);
     wrap(<ImportWizard />);
-    await screen.findByRole("option", { name: "Team One" });
+    await screen.findByLabelText("Coolify URL");
+    await waitFor(() => expect(qc.getQueryData(["teams"])).toBeTruthy());
     fireEvent.change(screen.getByLabelText("Coolify URL"), { target: { value: "https://c.example.com" } });
     fireEvent.change(screen.getByLabelText("API token"), { target: { value: "tok" } });
     fireEvent.click(screen.getByRole("button", { name: "Connect & preview" }));
@@ -382,7 +393,8 @@ describe("ImportWizard", () => {
 
   it("switching source clears the URL and token; the source picker is a radiogroup", async () => {
     wrap(<ImportWizard />);
-    await screen.findByRole("option", { name: "Team One" });
+    await screen.findByLabelText("Coolify URL");
+    await waitFor(() => expect(qc.getQueryData(["teams"])).toBeTruthy());
     expect(screen.getByRole("radiogroup")).toBeTruthy();
     expect(screen.getByRole("radio", { name: "Coolify" }).getAttribute("aria-checked")).toBe("true");
     fireEvent.change(screen.getByLabelText("Coolify URL"), { target: { value: "https://c.example.com" } });
@@ -432,7 +444,8 @@ describe("ImportWizard", () => {
     };
     const planSpy = vi.spyOn(api, "importPlan").mockResolvedValue(covered);
     const first = wrap(<ImportWizard />);
-    await screen.findByRole("option", { name: "Team One" });
+    await screen.findByLabelText("Coolify URL");
+    await waitFor(() => expect(qc.getQueryData(["teams"])).toBeTruthy());
     fireEvent.change(screen.getByLabelText("Coolify URL"), { target: { value: "https://c.example.com" } });
     fireEvent.change(screen.getByLabelText("API token"), { target: { value: "tok" } });
     fireEvent.click(screen.getByRole("button", { name: "Connect & preview" }));
@@ -448,7 +461,8 @@ describe("ImportWizard", () => {
 
     planSpy.mockResolvedValue(plan);
     wrap(<ImportWizard />);
-    await screen.findByRole("option", { name: "Team One" });
+    await screen.findByLabelText("Coolify URL");
+    await waitFor(() => expect(qc.getQueryData(["teams"])).toBeTruthy());
     fireEvent.change(screen.getByLabelText("Coolify URL"), { target: { value: "https://c.example.com" } });
     fireEvent.change(screen.getByLabelText("API token"), { target: { value: "tok" } });
     fireEvent.click(screen.getByRole("button", { name: "Connect & preview" }));
@@ -467,7 +481,8 @@ describe("ImportWizard", () => {
       },
     });
     wrap(<ImportWizard />);
-    await screen.findByRole("option", { name: "Team One" });
+    await screen.findByLabelText("Coolify URL");
+    await waitFor(() => expect(qc.getQueryData(["teams"])).toBeTruthy());
     fireEvent.change(screen.getByLabelText("Coolify URL"), { target: { value: "https://c.example.com" } });
     fireEvent.change(screen.getByLabelText("API token"), { target: { value: "tok" } });
     fireEvent.click(screen.getByRole("button", { name: "Connect & preview" }));
@@ -489,7 +504,8 @@ describe("ImportWizard", () => {
       ],
     });
     wrap(<ImportWizard />);
-    await screen.findByRole("option", { name: "Team One" });
+    await screen.findByLabelText("Coolify URL");
+    await waitFor(() => expect(qc.getQueryData(["teams"])).toBeTruthy());
     fireEvent.change(screen.getByLabelText("Coolify URL"), { target: { value: "https://c.example.com" } });
     fireEvent.change(screen.getByLabelText("API token"), { target: { value: "tok" } });
     fireEvent.click(screen.getByRole("button", { name: "Connect & preview" }));
@@ -536,11 +552,13 @@ describe("ImportWizard — editable mapping", () => {
     const resolveSpy = vi.spyOn(api, "importResolve").mockResolvedValue({ version: 1, effective: [], projects: [], gitSources: [], conflicts: [], orphans: [], mappingHash: "m".repeat(32), counts: { renamed: 0, moved: 0, excluded: 0, aliased: 0, newProjects: 0, newEnvironments: 0 } });
     vi.spyOn(api, "importMappingGet").mockResolvedValue({ doc: null, version: null, label: null, lastAppliedAt: null });
     wrap(<ImportWizard />);
-    await screen.findByRole("option", { name: "Team One" });
+    await screen.findByLabelText("Coolify URL");
+    await waitFor(() => expect(qc.getQueryData(["teams"])).toBeTruthy());
     fireEvent.change(screen.getByLabelText("Coolify URL"), { target: { value: "https://coolify.example.com" } });
     fireEvent.change(screen.getByLabelText("API token"), { target: { value: "tok" } });
     fireEvent.change(screen.getByLabelText("Source team label (optional)"), { target: { value: "Team-3" } });
     fireEvent.click(screen.getByRole("button", { name: "Connect & preview" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Continue" })); // the first step: What are you moving? (one source server: Everything)
     await screen.findByText("Import preview");
     expect(connectSpy).toHaveBeenCalledWith({ sourceKind: "coolify", teamId: "t1", baseUrl: "https://coolify.example.com", token: "tok", scopeLabel: "team-3" });
     expect(screen.queryByRole("button", { name: "Import to Tugra" })).toBeNull();
@@ -575,10 +593,12 @@ describe("ImportWizard — editable mapping", () => {
     const applySpy = vi.spyOn(api, "importApply").mockResolvedValue({ opId: "op1", mappingApplied: true });
     vi.spyOn(api, "getImportOperation").mockResolvedValue(settledOp);
     wrap(<ImportWizard />);
-    await screen.findByRole("option", { name: "Team One" });
+    await screen.findByLabelText("Coolify URL");
+    await waitFor(() => expect(qc.getQueryData(["teams"])).toBeTruthy());
     fireEvent.change(screen.getByLabelText("Coolify URL"), { target: { value: "https://c.example.com" } });
     fireEvent.change(screen.getByLabelText("API token"), { target: { value: "tok" } });
     fireEvent.click(screen.getByRole("button", { name: "Connect & preview" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Continue" }));
     const group = await screen.findByRole("radiogroup", { name: "Data mode: orders-db" });
     fireEvent.click(within(group).getByRole("radio", { name: "Volume copy" }));
     await screen.findByText(/Volume copy keeps the source image/);
@@ -597,6 +617,41 @@ describe("ImportWizard — editable mapping", () => {
     expect(applySpy.mock.calls[0][0]).toMatchObject({ planHash: "b".repeat(32), acks: [{ code: "app.env.unresolved", itemRef: ENV }], dbDataModes: { "database:srv:pg": "volume" }, mapping: expect.anything(), mappingHash: "m".repeat(32) });
   }, 15000);
 
+  it("no Team picker on the connect screen; the first step picks a source server, the preview then shows only that server and the guided run steps aside", async () => {
+    const multi: ImportPlan = {
+      ...plan,
+      totals: { apps: 2, databases: 0, volumes: 0, blockers: 0 },
+      items: [
+        { itemRef: "app:s1:web", kind: "app", name: "web-app", proposed: {}, risks: [], dependsOn: [] },
+        { itemRef: "app:s2:api", kind: "app", name: "api-app", proposed: {}, risks: [], dependsOn: [] },
+      ],
+      preflight: { databases: [], services: [], appsWithVolumeData: 0, hosts: [{ ref: "s1", name: "Box One" }, { ref: "s2", name: "Box Two" }] },
+      mapping: { features: ["mapping-v1"], stored: null, storedVersion: null, scopeKey: "team-3" },
+    };
+    vi.spyOn(api, "importConnect").mockResolvedValue({ sessionId: "s1", expiresAt: "2026-01-01T00:00:00.000Z" });
+    vi.spyOn(api, "importPlan").mockResolvedValue(multi);
+    wrap(<ImportWizard />);
+    await screen.findByLabelText("Coolify URL");
+    await waitFor(() => expect(qc.getQueryData(["teams"])).toBeTruthy());
+    expect(screen.queryByLabelText("Team")).toBeNull();
+    fireEvent.change(screen.getByLabelText("Coolify URL"), { target: { value: "https://c.example.com" } });
+    fireEvent.change(screen.getByLabelText("API token"), { target: { value: "tok" } });
+    fireEvent.click(screen.getByRole("button", { name: "Connect & preview" }));
+    await screen.findByText("What are you moving?");
+    expect((screen.getByRole("button", { name: "Continue" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole("checkbox", { name: /Box Two/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await screen.findByText("Import preview");
+    expect(screen.getByText("api-app")).toBeTruthy();
+    expect(screen.queryByText("web-app")).toBeNull();
+    expect(screen.getByText("Guided runs move the whole source. Choose Everything to use one.")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /guided/i })).toBeNull();
+    // Change reopens the first step as it was left
+    fireEvent.click(screen.getByRole("button", { name: "Change" }));
+    await screen.findByText("What are you moving?");
+    expect((screen.getByRole("checkbox", { name: /Box Two/ }) as HTMLInputElement).checked).toBe(true);
+  });
+
   it("an older hub (no mapping feature flag) keeps the legacy one-click apply and never sends mapping fields", async () => {
     vi.spyOn(api, "importConnect").mockResolvedValue({ sessionId: "s1", expiresAt: "2026-01-01T00:00:00.000Z" });
     vi.spyOn(api, "importPlan").mockResolvedValue(plan); // no `mapping` block
@@ -604,7 +659,8 @@ describe("ImportWizard — editable mapping", () => {
     vi.spyOn(api, "getImportOperation").mockResolvedValue(settledOp);
     const resolveSpy = vi.spyOn(api, "importResolve");
     wrap(<ImportWizard />);
-    await screen.findByRole("option", { name: "Team One" });
+    await screen.findByLabelText("Coolify URL");
+    await waitFor(() => expect(qc.getQueryData(["teams"])).toBeTruthy());
     fireEvent.change(screen.getByLabelText("Coolify URL"), { target: { value: "https://c.example.com" } });
     fireEvent.change(screen.getByLabelText("API token"), { target: { value: "tok" } });
     fireEvent.click(screen.getByRole("button", { name: "Connect & preview" }));
@@ -622,7 +678,8 @@ describe("ImportWizard — editable mapping", () => {
     vi.spyOn(api, "importApply").mockResolvedValue({ opId: "op1" });
     vi.spyOn(api, "getImportOperation").mockResolvedValue({ ...settledOp, tasks: [{ ...settledOp.tasks[0], name: "Storefront", sourceName: "web-app", mapped: true }] });
     wrap(<ImportWizard />);
-    await screen.findByRole("option", { name: "Team One" });
+    await screen.findByLabelText("Coolify URL");
+    await waitFor(() => expect(qc.getQueryData(["teams"])).toBeTruthy());
     fireEvent.change(screen.getByLabelText("Coolify URL"), { target: { value: "https://c.example.com" } });
     fireEvent.change(screen.getByLabelText("API token"), { target: { value: "tok" } });
     fireEvent.click(screen.getByRole("button", { name: "Connect & preview" }));

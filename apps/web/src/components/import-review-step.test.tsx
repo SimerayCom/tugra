@@ -7,6 +7,7 @@ import { ConfirmProvider } from "./confirm";
 import { ImportReviewStep } from "./import-review-step";
 import { api } from "../lib/api";
 import { subscribeToast } from "../lib/toast-bus";
+import type { ImportScope } from "../lib/import-scope";
 import type { ImportApplyExtras, ImportMappingDoc, ImportPlan, ImportResolved, ImportEffectiveItem, ImportConflict } from "../lib/types";
 
 afterEach(cleanup);
@@ -69,8 +70,8 @@ const teams = [
   { id: "t2", name: "Team Two", role: "OWNER" },
 ] as never;
 
-const mount = (p: ImportPlan = plan(), over: { onApplied?: (id: string) => void; applyExtras?: ImportApplyExtras } = {}) =>
-  wrap(<ImportReviewStep plan={p} kind="coolify" sessionId="s1" servers={servers} teams={teams} applyExtras={over.applyExtras} onApplied={over.onApplied ?? (() => undefined)} onBack={() => undefined} />);
+const mount = (p: ImportPlan = plan(), over: { onApplied?: (id: string) => void; applyExtras?: ImportApplyExtras; importScope?: ImportScope } = {}) =>
+  wrap(<ImportReviewStep plan={p} kind="coolify" sessionId="s1" servers={servers} teams={teams} applyExtras={over.applyExtras} importScope={over.importScope} onApplied={over.onApplied ?? (() => undefined)} onBack={() => undefined} />);
 
 describe("ImportReviewStep", () => {
   let resolveSpy: ReturnType<typeof vi.spyOn>;
@@ -80,6 +81,7 @@ describe("ImportReviewStep", () => {
     qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     resolveSpy = vi.spyOn(api, "importResolve").mockImplementation(resolveFor() as never);
     vi.spyOn(api, "importMappingGet").mockResolvedValue({ doc: null, version: null, label: null, lastAppliedAt: null });
+    vi.spyOn(api, "listProjects").mockResolvedValue([{ id: "p1", teamId: "t1", name: "Billing", isDefault: false, environments: [], role: "OWNER", canWrite: true, iconUpdatedAt: null, createdAt: "" }] as never);
     toasts = [];
     unsub = subscribeToast((m) => toasts.push(m.message));
   });
@@ -319,5 +321,52 @@ describe("ImportReviewStep", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Confirm" }));
     await waitFor(() => expect(applySpy).toHaveBeenCalled());
     expect(applySpy.mock.calls[0][0]).toMatchObject({ reconcile: true });
+  }, 15000);
+  it("the first step's scope starts everything else excluded, sends its serverMap with the resolve and the apply, and shows where each server goes", async () => {
+    const onApplied = vi.fn();
+    const applySpy = vi.spyOn(api, "importApply").mockResolvedValue({ opId: "op1", mappingApplied: true });
+    const importScope: ImportScope = {
+      selection: { mode: "servers", hosts: new Set(["srv"]), projects: new Set(), extra: new Set(), placement: { srv: "srv2" } },
+      inScope: new Set([APP]),
+      narrowed: true,
+      defaultServerId: "srv2",
+      serverMap: { srv: "srv2", other: "srv1" },
+    };
+    mount(plan(), { onApplied, importScope });
+    await waitFor(() => expect(resolveSpy).toHaveBeenCalled());
+    const first = resolveSpy.mock.calls[0][0] as { targetServerId: string; serverMap: unknown; mapping: ImportMappingDoc };
+    expect(first.targetServerId).toBe("srv2");
+    expect(first.serverMap).toEqual({ srv: "srv2", other: "srv1" });
+    expect(first.mapping.items[WORKER]).toEqual({ include: false });
+    expect(first.mapping.items[DB]).toEqual({ include: false });
+    expect(first.mapping.items[APP]).toBeUndefined();
+    expect(screen.getByText("srv → Server B")).toBeTruthy();
+    const apply = await screen.findByRole("button", { name: /^Apply 1 apps/ });
+    await waitFor(() => expect((apply as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(apply);
+    fireEvent.click(await screen.findByRole("button", { name: "Confirm" }));
+    await waitFor(() => expect(applySpy).toHaveBeenCalledTimes(1));
+    expect(applySpy.mock.calls[0][0]).toMatchObject({ targetServerId: "srv2", serverMap: { srv: "srv2", other: "srv1" } });
+    await waitFor(() => expect(onApplied).toHaveBeenCalledWith("op1"));
+  }, 15000);
+
+  it("Include all brings back what the scope left out", async () => {
+    const importScope: ImportScope = { selection: { mode: "servers", hosts: new Set(), projects: new Set(), extra: new Set(), placement: {} }, inScope: new Set([APP]), narrowed: true, defaultServerId: "srv1", serverMap: undefined };
+    mount(plan(), { importScope });
+    expect(await screen.findByRole("button", { name: /^Apply 1 apps, 0 databases; 2 excluded/ }, { timeout: 3000 })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Include all" }));
+    expect(await screen.findByRole("button", { name: "Apply 2 apps, 1 databases; 0 excluded" }, { timeout: 3000 })).toBeTruthy();
+  }, 15000);
+
+  it("a row's project is a dropdown of the team's projects with '+ New project' first, and the choice lands in the mapping", async () => {
+    mount();
+    const apply0 = await screen.findByRole("button", { name: /^Apply 2 apps/ });
+    await waitFor(() => expect((apply0 as HTMLButtonElement).disabled).toBe(false));
+    await waitFor(() => expect(Array.from((screen.getAllByLabelText("Project")[0] as HTMLSelectElement).options).map((o) => o.textContent)).toContain("Billing"));
+    const select = screen.getAllByLabelText("Project")[0] as HTMLSelectElement;
+    expect(select.tagName).toBe("SELECT");
+    expect(select.options[0].textContent).toBe("+ New project");
+    fireEvent.change(select, { target: { value: "Billing" } });
+    await waitFor(() => expect(resolveSpy.mock.calls.at(-1)?.[0]).toMatchObject({ mapping: { items: { [APP]: { project: "Billing" } } } }), { timeout: 3000 });
   }, 15000);
 });

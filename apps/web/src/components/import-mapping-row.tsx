@@ -5,6 +5,7 @@ import { Box, CircleAlert, Database, RotateCcw, TriangleAlert } from "lucide-rea
 import { useT } from "../i18n/provider";
 import { checkAlias, isValidDbIdentifier, validateName, type ItemField } from "../lib/import-mapping";
 import type { ImportConflict, ImportEffectiveItem, ImportMappingItem, ImportPlanItem } from "../lib/types";
+import { ProjectPicker, type ProjectChoice } from "./project-picker";
 
 const cellInput: React.CSSProperties = { width: "100%", minHeight: 44, padding: "8px 10px", fontSize: 14, background: "var(--c-el)", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", color: "var(--c-tx)", fontFamily: "inherit", boxSizing: "border-box" };
 const STATUS_KEY = { pending: "pending", blocked: "blocked", already_imported: "alreadyImported", excluded: "excluded" } as const;
@@ -82,6 +83,41 @@ function Cell({ id, label, value, placeholder, error: serverError, check, hint, 
   );
 }
 
+/** The project cell: the shared project picker (existing projects, "+ New project" first) in the row's cell layout. An empty choice
+ *  means "no override": the project the source already puts the item in. */
+function ProjectCell({ id, label, value, noneLabel, projects, error, changed, disabled, onCommit, onReset }: {
+  id: string;
+  label: string;
+  value: string;
+  noneLabel: string;
+  projects: ProjectChoice[];
+  error?: string | null;
+  changed?: boolean;
+  disabled?: boolean;
+  onCommit: (v: string) => void;
+  onReset: () => void;
+}) {
+  const t = useT();
+  return (
+    <div style={{ minWidth: 0 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 4, marginBottom: 2 }}>
+        <label htmlFor={id} style={{ fontSize: 11, color: "var(--c-tx3)", flex: 1 }}>{label}</label>
+        {changed && (
+          <button type="button" onClick={onReset} aria-label={t("import.review.resetField", { field: label })} title={t("import.review.reset")} style={{ all: "unset", cursor: "pointer", minWidth: 24, minHeight: 24, display: "inline-flex", alignItems: "center", justifyContent: "center", color: "var(--c-tx3)" }}>
+            <RotateCcw size={12} aria-hidden />
+          </button>
+        )}
+      </div>
+      <ProjectPicker id={id} value={value} projects={projects} noneLabel={noneLabel} disabled={disabled} invalid={!!error} describedBy={error ? `${id}-err` : undefined} onChange={onCommit} />
+      {error && (
+        <div id={`${id}-err`} style={{ display: "flex", gap: 4, alignItems: "flex-start", fontSize: 11, color: "var(--c-r)", marginTop: 2 }}>
+          <CircleAlert size={12} aria-hidden style={{ flexShrink: 0, marginTop: 1 }} /> <span>{error}</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** One import item: include checkbox, source name (read-only), and the editable name / project / environment /
  *  alias cells. Responsive: the cells wrap into a card on narrow screens (touch targets are 44px). */
 export function ImportMappingRow({
@@ -90,6 +126,7 @@ export function ImportMappingRow({
   entry,
   conflicts,
   rowKey,
+  projects,
   onEdit,
   onReset,
 }: {
@@ -98,6 +135,8 @@ export function ImportMappingRow({
   entry?: ImportMappingItem;
   conflicts: ImportConflict[];
   rowKey: string;
+  /** What the project picker offers (the target team's projects, the ones this import will create). */
+  projects: ProjectChoice[];
   onEdit: (field: ItemField, value: string | boolean | null | undefined) => void;
   onReset: () => void;
 }) {
@@ -111,7 +150,7 @@ export function ImportMappingRow({
     const r = validateName(kind, v);
     return r.ok ? null : t(`import.conflict.${r.code}`, { max: kind === "database" ? 60 : 100 });
   };
-  const optChk = (k: "project" | "environment") => (v: string) => {
+  const optChk = (k: "environment") => (v: string) => {
     if (!v) return null;
     const r = validateName(k, v);
     return r.ok ? null : t(`import.conflict.${r.code}`, { max: 80 });
@@ -171,17 +210,16 @@ export function ImportMappingRow({
           onCommit={(v) => onEdit("name", v)}
           onReset={() => onEdit("name", item.name)}
         />
-        <Cell
+        <ProjectCell
           id={`${rowKey}-project`}
           label={t("import.review.col.project")}
           value={entry?.project ?? ""}
-          placeholder={eff?.project ?? t("import.review.origin.default")}
-          list="imp-projects"
+          noneLabel={eff?.project ?? t("import.review.origin.default")}
+          projects={projects}
           disabled={!included}
-          check={optChk("project")}
           error={fieldError("project")}
           changed={entry?.project !== undefined}
-          onCommit={(v) => onEdit("project", v)}
+          onCommit={(v) => onEdit("project", v === "" ? undefined : v)}
           onReset={() => onEdit("project", undefined)}
         />
         <Cell

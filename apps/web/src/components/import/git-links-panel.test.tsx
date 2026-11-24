@@ -109,9 +109,10 @@ describe("ImportWizard — git panel gating and timeline", () => {
   });
   afterEach(() => vi.restoreAllMocks());
   const connect = async () => {
-    await screen.findByRole("option", { name: "Team One" });
+    await screen.findByLabelText("Coolify URL");
     fireEvent.change(screen.getByLabelText("Coolify URL"), { target: { value: "https://coolify.example.com" } });
     fireEvent.change(screen.getByLabelText("API token"), { target: { value: "tok" } });
+    await waitFor(() => expect((screen.getByRole("button", { name: "Connect & preview" }) as HTMLButtonElement).disabled).toBe(false)); // the connection team has loaded
     fireEvent.click(screen.getByRole("button", { name: "Connect & preview" }));
     await screen.findByRole("option", { name: "Server A" });
   };

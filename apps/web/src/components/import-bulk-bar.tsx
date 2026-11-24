@@ -5,6 +5,7 @@ import { Wand2 } from "lucide-react";
 import { useT } from "../i18n/provider";
 import { Btn } from "./ui";
 import { Modal } from "./modal";
+import { ProjectPicker, type ProjectChoice } from "./project-picker";
 import type { BulkOp } from "../lib/import-mapping";
 
 type OpKind = "prefix" | "suffix" | "replace" | "lowercase" | "move" | "exclude" | "include" | "reset";
@@ -14,7 +15,7 @@ const input: React.CSSProperties = { width: "100%", minHeight: 44, padding: "8px
 
 /** A bulk-edit button + sheet. "Apply to all" does not store a rule: the caller expands the action into explicit
  *  per-row edits (what you see is what is saved). On narrow screens the sheet sits at the bottom. */
-export function ImportBulkBar({ count, onApply, label }: { count: number; onApply: (op: BulkOp) => void; label?: string }) {
+export function ImportBulkBar({ count, onApply, label, projects = [] }: { count: number; onApply: (op: BulkOp) => void; label?: string; /** What the "Move to project" picker offers. */ projects?: ProjectChoice[] }) {
   const t = useT();
   const [open, setOpen] = useState(false);
   const [kind, setKind] = useState<OpKind>("prefix");
@@ -69,7 +70,9 @@ export function ImportBulkBar({ count, onApply, label }: { count: number; onAppl
           {kind === "move" && (
             <>
               <label htmlFor="imp-bulk-project" style={{ display: "block", fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("import.review.bulk.project")}</label>
-              <input id="imp-bulk-project" style={{ ...input, marginBottom: 12 }} value={project} onChange={(e) => setProject(e.target.value)} autoComplete="off" spellCheck={false} />
+              <div style={{ marginBottom: 12 }}>
+                <ProjectPicker id="imp-bulk-project" value={project} projects={projects} onChange={setProject} />
+              </div>
               <label htmlFor="imp-bulk-env" style={{ display: "block", fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("import.review.bulk.environment")}</label>
               <input id="imp-bulk-env" style={{ ...input, marginBottom: 12 }} value={environment} onChange={(e) => setEnvironment(e.target.value)} autoComplete="off" spellCheck={false} />
             </>

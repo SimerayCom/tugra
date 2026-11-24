@@ -108,9 +108,10 @@ describe("ImportWizard — strict env gating", () => {
     const applySpy = vi.spyOn(api, "importApply").mockResolvedValue({ opId: "op1" });
     vi.spyOn(api, "getImportOperation").mockResolvedValue({ id: "op1", sourceKind: "coolify", serverId: "srv1", planHash: "a".repeat(32), status: "RUNNING", cancelRequested: false, createdAt: "2026-10-18T00:00:00.000Z", totals: { total: 1, done: 0, failed: 0, skipped: 0, running: 1, pending: 0, cancelled: 0, rolledBack: 0 }, tasks: [] });
     wrap(<ImportWizard />);
-    await screen.findByRole("option", { name: "Team One" });
+    await screen.findByLabelText("Coolify URL");
     fireEvent.change(screen.getByLabelText("Coolify URL"), { target: { value: "https://coolify.example.com" } });
     fireEvent.change(screen.getByLabelText("API token"), { target: { value: "tok" } });
+    await waitFor(() => expect((screen.getByRole("button", { name: "Connect & preview" }) as HTMLButtonElement).disabled).toBe(false)); // the connection team has loaded
     fireEvent.click(screen.getByRole("button", { name: "Connect & preview" }));
     await screen.findByText("Variables that cannot be carried");
     await screen.findByRole("option", { name: "Server A" });
@@ -140,9 +141,10 @@ describe("ImportWizard — strict env gating", () => {
     });
     vi.spyOn(api, "getMigrateCommand").mockResolvedValue({ opId: "op1", active: false, expiresAt: null, commandTemplate: "x" });
     wrap(<ImportWizard />);
-    await screen.findByRole("option", { name: "Team One" });
+    await screen.findByLabelText("Coolify URL");
     fireEvent.change(screen.getByLabelText("Coolify URL"), { target: { value: "https://coolify.example.com" } });
     fireEvent.change(screen.getByLabelText("API token"), { target: { value: "tok" } });
+    await waitFor(() => expect((screen.getByRole("button", { name: "Connect & preview" }) as HTMLButtonElement).disabled).toBe(false)); // the connection team has loaded
     fireEvent.click(screen.getByRole("button", { name: "Connect & preview" }));
     await screen.findByRole("option", { name: "Server A" });
     fireEvent.click(screen.getByLabelText("Acknowledge all 2"));

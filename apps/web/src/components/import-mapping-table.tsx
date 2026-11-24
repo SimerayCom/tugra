@@ -6,13 +6,12 @@ import { useT } from "../i18n/provider";
 import { Btn } from "./ui";
 import { ImportBulkBar } from "./import-bulk-bar";
 import { ImportMappingRow } from "./import-mapping-row";
+import { ProjectPicker, type ProjectChoice } from "./project-picker";
 import { conflictsFor, groupRows, mappableItems, type BulkOp, type BulkRow, type ItemField } from "../lib/import-mapping";
 import type { ImportMappingDoc, ImportPlan, ImportResolved } from "../lib/types";
 
 export type ReviewFilter = "all" | "changed" | "conflicts" | "excluded";
 const PAGE = 100;
-
-const input: React.CSSProperties = { width: "100%", minHeight: 44, padding: "8px 10px", fontSize: 14, background: "var(--c-el)", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", color: "var(--c-tx)", fontFamily: "inherit", boxSizing: "border-box" };
 
 /** The grouped, filterable list of mapping rows. Groups are the effective target project ("Ungrouped" when none);
  *  a group header re-targets the whole group and opens the bulk menu. Above 100 rows it renders in pages. */
@@ -22,6 +21,7 @@ export function ImportMappingTable({
   resolved,
   search,
   filter,
+  projects,
   onEdit,
   onResetItem,
   onBulk,
@@ -32,6 +32,8 @@ export function ImportMappingTable({
   resolved: ImportResolved | null;
   search: string;
   filter: ReviewFilter;
+  /** What the project pickers offer (the target team's projects plus the ones this import will create). */
+  projects: ProjectChoice[];
   onEdit: (itemRef: string, field: ItemField, value: string | boolean | null | undefined, sourceName: string) => void;
   onResetItem: (itemRef: string) => void;
   onBulk: (rows: BulkRow[], op: BulkOp) => void;
@@ -71,11 +73,6 @@ export function ImportMappingTable({
         <Btn variant="ghost" icon={CheckSquare} disabled={allIncluded} onClick={() => onBulk(toBulk(rows), { type: "include" })}>{t("import.review.includeAll")}</Btn>
         <Btn variant="ghost" icon={Square} disabled={noneIncluded} onClick={() => onBulk(toBulk(rows), { type: "exclude" })}>{t("import.review.excludeAll")}</Btn>
       </div>
-      <datalist id="imp-projects">
-        {(resolved?.projects ?? []).map((p) => (
-          <option key={p.name} value={p.name} />
-        ))}
-      </datalist>
       <datalist id="imp-environments">
         {[...new Set((resolved?.projects ?? []).flatMap((p) => p.environments))].map((e) => (
           <option key={e} value={e} />
@@ -95,14 +92,14 @@ export function ImportMappingTable({
               </div>
               <div style={{ flex: "1 1 200px", maxWidth: 280 }}>
                 <label htmlFor={`imp-group-${gi}`} style={{ display: "block", fontSize: 11, color: "var(--c-tx3)", marginBottom: 2 }}>{t("import.review.groupProject")}</label>
-                <GroupProjectInput id={`imp-group-${gi}`} value={g.project} placeholder={t("import.review.createNew")} onCommit={(v) => v.trim() && v.trim() !== g.project && onMoveGroup(toBulk(g.rows), v)} />
+                <ProjectPicker id={`imp-group-${gi}`} value={g.project} projects={projects} onChange={(v) => v.trim() && v.trim() !== g.project && onMoveGroup(toBulk(g.rows), v)} />
               </div>
               {g.rows.every((r) => r.entry?.include === false) ? (
                 <Btn variant="ghost" icon={CheckSquare} onClick={() => onBulk(toBulk(g.rows), { type: "include" })}>{t("import.review.includeGroup")}</Btn>
               ) : (
                 <Btn variant="ghost" icon={Square} onClick={() => onBulk(toBulk(g.rows), { type: "exclude" })}>{t("import.review.excludeGroup")}</Btn>
               )}
-              <ImportBulkBar count={g.rows.length} onApply={(op) => onBulk(toBulk(g.rows), op)} />
+              <ImportBulkBar count={g.rows.length} projects={projects} onApply={(op) => onBulk(toBulk(g.rows), op)} />
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               {slice.map((r) => (
@@ -113,6 +110,7 @@ export function ImportMappingTable({
                   eff={r.eff}
                   entry={r.entry}
                   conflicts={r.conflicts}
+                  projects={projects}
                   onEdit={(field, value) => onEdit(r.item.itemRef, field, value, r.item.name)}
                   onReset={() => onResetItem(r.item.itemRef)}
                 />
@@ -127,32 +125,5 @@ export function ImportMappingTable({
         </div>
       )}
     </div>
-  );
-}
-
-/** The editable group header: commits on Enter/blur, Esc reverts. */
-function GroupProjectInput({ id, value, placeholder, onCommit }: { id: string; value: string; placeholder: string; onCommit: (v: string) => void }) {
-  const [draft, setDraft] = useState(value);
-  const [seen, setSeen] = useState(value);
-  if (value !== seen) {
-    setSeen(value);
-    setDraft(value);
-  }
-  return (
-    <input
-      id={id}
-      style={input}
-      value={draft}
-      placeholder={placeholder}
-      list="imp-projects"
-      autoComplete="off"
-      spellCheck={false}
-      onChange={(e) => setDraft(e.target.value)}
-      onBlur={() => draft !== value && onCommit(draft)}
-      onKeyDown={(e) => {
-        if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-        else if (e.key === "Escape") setDraft(value);
-      }}
-    />
   );
 }

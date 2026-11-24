@@ -10,6 +10,8 @@ import { useToast } from "./toast";
 import { useConfirm } from "./confirm";
 import { CopyBtn } from "./copy-row";
 import { ImportReviewStep } from "./import-review-step";
+import { ImportScopeStep } from "./import-scope-step";
+import { scopedPlan, scopeServiceSkips, type ImportScope, type ScopeSelection } from "../lib/import-scope";
 import { CutoverPanel } from "./cutover-panel";
 import { planSummary, itemsByKind, riskTone, opProgress, coverageApps, coverageCounts, hasDeferredCoverage, reasonText, ackableItems, buildAcks, runnableAfterAcks, serviceChoicesPayload, volumeCopyCandidates, selectedDbModes, vxCommandsWithFlags } from "../lib/import";
 import { ImportVolumeTransfers } from "./import-volume-transfers";
@@ -78,7 +80,6 @@ export function ImportWizard() {
   const { data: servers = [] } = useQuery({ queryKey: ["servers"], queryFn: () => api.listServers() });
 
   const [kind, setKind] = useState<ImportRemoteKind>("coolify");
-  const [teamId, setTeamId] = useState("");
   const [baseUrl, setBaseUrl] = useState("");
   const [token, setToken] = useState("");
   const [scopeLabel, setScopeLabel] = useState("");
@@ -88,8 +89,16 @@ export function ImportWizard() {
   // Per-database data mode chosen at review (PostgreSQL volume copy). Part of the plan: changing it re-plans, so the
   // planHash the apply is bound to always reflects what the owner reviewed.
   const [dbModes, setDbModes] = useState<Record<string, "volume">>({});
+  // The first step's choice (what is moving, where each source server goes). Null until it is made.
+  const [scope, setScope] = useState<ImportScope | null>(null);
+  // What was picked last, so "Change" reopens the first step as it was left.
+  const [lastSelection, setLastSelection] = useState<ScopeSelection | undefined>(undefined);
 
-  const effectiveTeam = teamId || teams[0]?.id || "";
+  // There is no team to pick up front: the connection belongs to the team of the first server you can write to (else your first
+  // team), and the target team follows from the server the import lands on.
+  const writableServers = servers.filter((s) => s.canWrite);
+  const connectTeam = writableServers[0]?.teamId ?? teams[0]?.id ?? "";
+  const effectiveTeam = (scope && servers.find((s) => s.id === scope.defaultServerId)?.teamId) || connectTeam;
   const src = SRC[kind];
 
   // The wizard's state is in-memory, so keep the running op in the URL (?op=<id>): a reload or a shared link
@@ -113,9 +122,11 @@ export function ImportWizard() {
     onError: (e) => toast((e as Error).message, "error"),
   });
   const connect = useMutation({
-    mutationFn: () => api.importConnect({ sourceKind: kind, teamId: effectiveTeam, baseUrl: baseUrl.trim(), token: token.trim(), ...(scopeLabel.trim() ? { scopeLabel: scopeLabel.trim() } : {}) }),
+    mutationFn: () => api.importConnect({ sourceKind: kind, teamId: connectTeam, baseUrl: baseUrl.trim(), token: token.trim(), ...(scopeLabel.trim() ? { scopeLabel: scopeLabel.trim() } : {}) }),
     onSuccess: (s) => {
       setSessionId(s.sessionId);
+      setScope(null);
+      setLastSelection(undefined);
       planM.mutate({ sid: s.sessionId });
     },
     onError: (e) => toast((e as Error).message || t(src.fail), "error"),
@@ -135,6 +146,8 @@ export function ImportWizard() {
   const reset = () => {
     setDbModes({});
     setPlan(null);
+    setScope(null);
+    setLastSelection(undefined);
     setSessionId(null);
     setOpId(null);
     setToken("");
@@ -145,10 +158,17 @@ export function ImportWizard() {
   const busy = connect.isPending || planM.isPending;
   if (opId) return <Timeline opId={opId} onReset={reset} />;
 
+  if (plan && sessionId && !scope && plan.mapping?.features?.includes("mapping-v1")) {
+    return <ImportScopeStep plan={plan} servers={writableServers} teams={teams} initial={lastSelection} onContinue={(sc) => { setScope(sc); setLastSelection(sc.selection); }} onStartOver={reset} />;
+  }
+
   if (plan && sessionId) {
     return (
       <PlanView
-        plan={plan}
+        plan={scope ? scopedPlan(plan, scope.inScope) : plan}
+        fullPlan={plan}
+        scope={scope}
+        onChangeScope={() => setScope(null)}
         kind={kind}
         servers={servers.filter((s) => s.teamId === effectiveTeam).map((s) => ({ id: s.id, name: s.name }))}
         writableServers={servers.filter((s) => s.canWrite).map((s) => ({ id: s.id, name: s.name, teamId: s.teamId }))}
@@ -201,13 +221,6 @@ export function ImportWizard() {
         })}
       </div>
 
-      <label style={label} htmlFor="imp-team">{t("import.team")}</label>
-      <select id="imp-team" style={field} value={effectiveTeam} onChange={(e) => setTeamId(e.target.value)}>
-        {teams.map((tm) => (
-          <option key={tm.id} value={tm.id}>{tm.name}</option>
-        ))}
-      </select>
-
       <label style={label} htmlFor="imp-url">{t(src.url)}</label>
       <input id="imp-url" style={field} value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder={t(src.ph)} inputMode="url" autoComplete="off" spellCheck={false} />
 
@@ -222,7 +235,7 @@ export function ImportWizard() {
 
       {connect.isError && <div role="alert" style={{ color: "var(--c-r)", fontSize: 12, marginBottom: 10, overflowWrap: "anywhere" }}>{(connect.error as Error).message}</div>}
 
-      <Btn onClick={() => connect.mutate()} disabled={busy || !effectiveTeam || !baseUrl.trim() || !token.trim()}>
+      <Btn onClick={() => connect.mutate()} disabled={busy || !connectTeam || !baseUrl.trim() || !token.trim()}>
         {connect.isPending ? t("import.connecting") : planM.isPending ? t("import.planning") : t("import.connect")}
       </Btn>
 
@@ -233,6 +246,9 @@ export function ImportWizard() {
 
 function PlanView({
   plan,
+  fullPlan,
+  scope,
+  onChangeScope,
   kind,
   servers,
   writableServers,
@@ -244,7 +260,12 @@ function PlanView({
   onApplied,
   onReset,
 }: {
+  /** The plan as shown here: only what the first step left in scope. */
   plan: ImportPlan;
+  /** The whole plan (the review step lists everything so an item left out can be brought back). */
+  fullPlan: ImportPlan;
+  scope: ImportScope | null;
+  onChangeScope: () => void;
   kind: ImportRemoteKind;
   servers: { id: string; name: string }[];
   writableServers: { id: string; name: string; teamId: string }[];
@@ -262,7 +283,7 @@ function PlanView({
   const groups = itemsByKind(plan);
   const [targetServerId, setTargetServerId] = useState("");
   const [reviewing, setReviewing] = useState(false);
-  const target = targetServerId || servers[0]?.id || "";
+  const target = targetServerId || (scope && servers.some((s) => s.id === scope.defaultServerId) ? scope.defaultServerId : "") || servers[0]?.id || "";
   // Strict env (Coolify): apps acknowledged to be created WITHOUT the variables Tugra cannot carry. Apply stays
   // disabled until every ackable blocker is acknowledged; a non-ackable blocker (token cannot read values) never is.
   const [acked, setAcked] = useState<ReadonlySet<string>>(new Set());
@@ -279,7 +300,10 @@ function PlanView({
       else next[ref] = patch;
       return next;
     });
-  const serviceChoices = serviceChoicesPayload(plan, choices);
+  // A service stack the first step left out is skipped by choice; what the operator chose for the rest rides on top.
+  const scopeSkips = scope?.narrowed ? scopeServiceSkips(fullPlan, scope.inScope) : {};
+  const chosen = serviceChoicesPayload(plan, choices);
+  const serviceChoices = Object.keys(scopeSkips).length || chosen ? { ...scopeSkips, ...(chosen ?? {}) } : undefined;
 
   // An older hub omits the feature flag: keep the original one-click apply, no review step.
   const mappingSupported = !!plan.mapping?.features?.includes("mapping-v1");
@@ -296,14 +320,19 @@ function PlanView({
   });
 
   if (reviewing && mappingSupported) {
-    return <ImportReviewStep plan={plan} kind={kind} sessionId={sessionId} servers={writableServers} teams={teams} applyExtras={applyExtras} onApplied={onApplied} onBack={() => setReviewing(false)} />;
+    return <ImportReviewStep plan={fullPlan} importScope={scope} kind={kind} sessionId={sessionId} servers={writableServers} teams={teams} applyExtras={applyExtras} onApplied={onApplied} onBack={() => setReviewing(false)} />;
   }
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16, maxWidth: 720 }}>
       <SectionCard
         title={t("import.planTitle")}
-        right={<Btn variant="ghost" onClick={onReset}>{t("import.startOver")}</Btn>}
+        right={
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {scope && <Btn variant="ghost" onClick={onChangeScope}>{t("import.scope.change")}</Btn>}
+            <Btn variant="ghost" onClick={onReset}>{t("import.startOver")}</Btn>
+          </div>
+        }
         style={{ padding: 20, marginBottom: 0 }}
       >
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
@@ -413,7 +442,11 @@ function PlanView({
         </Btn>
         </>
         )}
-        <GuidedRunLauncher plan={plan} kind={kind} sessionId={sessionId} servers={writableServers} extras={applyExtras} disabled={replanning || runnable === 0 || unackedCount > 0 || missingTargets > 0} />
+        {scope?.narrowed ? (
+          <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "16px 0 0" }}>{t("import.scope.narrowedGuided")}</p>
+        ) : (
+          <GuidedRunLauncher plan={plan} kind={kind} sessionId={sessionId} servers={writableServers} extras={applyExtras} disabled={replanning || runnable === 0 || unackedCount > 0 || missingTargets > 0} />
+        )}
       </SectionCard>
 
       <EnvBlockers plan={plan} acked={acked} onChange={setAcked} />

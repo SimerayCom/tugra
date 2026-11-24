@@ -222,7 +222,8 @@ describe("ImportWizard — services", () => {
 
   async function toPlan() {
     wrap(<ImportWizard />);
-    await screen.findByRole("option", { name: "Team One" });
+    await screen.findByLabelText("Coolify URL");
+    await waitFor(() => expect(qc.getQueryData(["teams"])).toBeTruthy());
     fireEvent.change(screen.getByLabelText("Coolify URL"), { target: { value: "https://coolify.example.com" } });
     fireEvent.change(screen.getByLabelText("API token"), { target: { value: "tok" } });
     fireEvent.click(screen.getByRole("button", { name: "Connect & preview" }));

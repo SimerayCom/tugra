@@ -12,6 +12,8 @@ import { ImportMappingTable, type ReviewFilter } from "./import-mapping-table";
 import { ImportBulkBar } from "./import-bulk-bar";
 import { ImportConflictsPanel } from "./import-conflicts-panel";
 import { ImportMappingIo } from "./import-mapping-io";
+import { useProjectChoices } from "./project-picker";
+import { applyScopeToDoc, projectChoicesFor, type ImportScope } from "../lib/import-scope";
 import {
   applyBulk,
   buildTemplate,
@@ -51,6 +53,7 @@ export function ImportReviewStep({
   servers,
   teams,
   applyExtras,
+  importScope,
   onApplied,
   onBack,
 }: {
@@ -62,6 +65,8 @@ export function ImportReviewStep({
   /** The plan step's env acks / service choices / data modes: sent with the resolve (acks, data modes) and with BOTH
    *  applies so the hub re-plans to the same hash and honours what the operator chose there. */
   applyExtras?: ImportApplyExtras;
+  /** The first step's choice: what is in, where each source server goes. Out-of-scope items start excluded (the review can still bring them back). */
+  importScope?: ImportScope | null;
   onApplied: (opId: string) => void;
   onBack: () => void;
 }) {
@@ -72,9 +77,11 @@ export function ImportReviewStep({
   const scopeKey = plan.mapping?.scopeKey ?? "";
   const scope = useMemo(() => ({ sourceKind: kind, ...(scopeKey ? { scopeKey } : {}) }), [kind, scopeKey]);
 
-  const [state, dispatch] = useReducer(mappingReducer, undefined, () => initMappingState(plan.mapping?.stored ? { ...plan.mapping.stored, scope } : emptyDoc(scope)));
+  const inScopeDoc = (d: ImportMappingDoc) => (importScope?.narrowed ? applyScopeToDoc(d, plan, importScope.inScope) : d);
+  const [state, dispatch] = useReducer(mappingReducer, undefined, () => initMappingState(inScopeDoc(plan.mapping?.stored ? { ...plan.mapping.stored, scope } : emptyDoc(scope))));
   const doc = state.doc;
-  const [serverId, setServerId] = useState(servers[0]?.id ?? "");
+  const [serverId, setServerId] = useState(importScope?.defaultServerId && servers.some((s) => s.id === importScope.defaultServerId) ? importScope.defaultServerId : servers[0]?.id ?? "");
+  const serverMap = importScope?.serverMap;
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<ReviewFilter>("all");
   const [reconcile, setReconcile] = useState(false);
@@ -91,10 +98,13 @@ export function ImportReviewStep({
   const target = servers.find((s) => s.id === serverId);
   const targetTeam = teams.find((x) => x.id === target?.teamId)?.name ?? target?.teamId ?? "";
 
+  const existingProjects = useProjectChoices(target?.teamId);
+  const projectChoices = useMemo(() => projectChoicesFor(existingProjects, rs.resolved?.projects, (plan.preflight?.projects ?? []).map((p) => p.name)), [existingProjects, rs.resolved, plan.preflight?.projects]);
+
   const { data: stored } = useQuery({ queryKey: ["import-mapping", sessionId], queryFn: () => api.importMappingGet(sessionId), enabled: bannerShown });
 
   // Debounced, authoritative resolve (instant on entry). A stale response is dropped via `cancelled`.
-  const docKey = useMemo(() => JSON.stringify([doc, serverId, reconcile, nonce]), [doc, serverId, reconcile, nonce]);
+  const docKey = useMemo(() => JSON.stringify([doc, serverId, reconcile, nonce, serverMap ?? null]), [doc, serverId, reconcile, nonce, serverMap]);
   useEffect(() => {
     if (!serverId || ignoreSaved) return;
     let cancelled = false;
@@ -102,7 +112,7 @@ export function ImportReviewStep({
     const handle = setTimeout(
       () => {
         api
-          .importResolve({ sessionId, sourceKind: kind, planHash: plan.planHash, targetServerId: serverId, reconcile, ...(applyExtras?.acks ? { acks: applyExtras.acks } : {}), ...(applyExtras?.dbDataModes ? { dbDataModes: applyExtras.dbDataModes } : {}), mapping: doc })
+          .importResolve({ sessionId, sourceKind: kind, planHash: plan.planHash, targetServerId: serverId, reconcile, ...(serverMap ? { serverMap } : {}), ...(applyExtras?.acks ? { acks: applyExtras.acks } : {}), ...(applyExtras?.dbDataModes ? { dbDataModes: applyExtras.dbDataModes } : {}), mapping: doc })
           .then((r) => !cancelled && setRs({ resolved: r, key: docKey, pending: false, error: null }))
           .catch((e) => !cancelled && setRs((s) => ({ ...s, pending: false, error: (e as Error).message })));
       },
@@ -139,7 +149,7 @@ export function ImportReviewStep({
     onSuccess: () => {
       setBannerShown(false);
       setStoredVersion(null);
-      edit(emptyDoc(scope));
+      edit(inScopeDoc(emptyDoc(scope)));
     },
     onError: (e) => toast(errText(e, t), "error"),
   });
@@ -147,8 +157,8 @@ export function ImportReviewStep({
   const apply = useMutation({
     mutationFn: () =>
       ignoreSaved
-        ? api.importApply({ sourceKind: kind, sessionId, targetServerId: serverId, planHash: plan.planHash, ...applyExtras, ignoreStoredMapping: true })
-        : api.importApply({ sourceKind: kind, sessionId, targetServerId: serverId, planHash: plan.planHash, ...applyExtras, mapping: doc, mappingHash: resolved!.mappingHash, ...(reconcile ? { reconcile: true } : {}) }),
+        ? api.importApply({ sourceKind: kind, sessionId, targetServerId: serverId, planHash: plan.planHash, ...applyExtras, ...(serverMap ? { serverMap } : {}), ignoreStoredMapping: true })
+        : api.importApply({ sourceKind: kind, sessionId, targetServerId: serverId, planHash: plan.planHash, ...applyExtras, ...(serverMap ? { serverMap } : {}), mapping: doc, mappingHash: resolved!.mappingHash, ...(reconcile ? { reconcile: true } : {}) }),
     onSuccess: (r) => {
       // The hub echoes whether it applied the mapping; an old hub that ignored it must not pass silently.
       if (!ignoreSaved && r.mappingApplied !== true) toast(t("import.review.notApplied"), "error");
@@ -206,8 +216,19 @@ export function ImportReviewStep({
           </div>
         )}
 
-        <label style={label} htmlFor="imp-review-target">{t("import.review.targetServer")}</label>
-        {servers.length === 0 ? (
+        {serverMap ? (
+          <>
+            <div style={label}>{t("import.review.placement")}</div>
+            <ul style={{ margin: "0 0 4px", padding: 0, listStyle: "none", display: "flex", flexDirection: "column", gap: 2, fontSize: 13 }}>
+              {Object.entries(serverMap).map(([ref, id]) => (
+                <li key={ref}>{t("import.review.placementRow", { from: sourceHostName(plan, ref), to: servers.find((x) => x.id === id)?.name ?? id })}</li>
+              ))}
+            </ul>
+          </>
+        ) : (
+          <label style={label} htmlFor="imp-review-target">{t("import.review.targetServer")}</label>
+        )}
+        {serverMap ? null : servers.length === 0 ? (
           <p style={{ fontSize: 12, color: "var(--c-am)", margin: "0 0 8px" }}>{t("import.review.noTarget")}</p>
         ) : (
           <select id="imp-review-target" style={{ ...field, maxWidth: 360 }} value={serverId} onChange={(e) => setServerId(e.target.value)}>
@@ -243,8 +264,9 @@ export function ImportReviewStep({
 
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
               <Btn variant="ghost" icon={Undo2} onClick={() => dispatch({ type: "undo" })} disabled={state.past.length === 0}>{t("import.review.undo")}</Btn>
-              <Btn variant="ghost" onClick={() => edit(resetAll(doc))} disabled={Object.keys(doc.items).length === 0 && doc.acks.length === 0}>{t("import.review.resetAll")}</Btn>
+              <Btn variant="ghost" onClick={() => edit(inScopeDoc(resetAll(doc)))} disabled={Object.keys(doc.items).length === 0 && doc.acks.length === 0}>{t("import.review.resetAll")}</Btn>
               <ImportBulkBar
+                projects={projectChoices}
                 count={items.length}
                 label={t("import.review.bulk.title")}
                 onApply={(op) =>
@@ -277,6 +299,7 @@ export function ImportReviewStep({
               resolved={resolved}
               search={search}
               filter={filter}
+              projects={projectChoices}
               onEdit={(ref, f, v, src) => edit(setItemField(doc, ref, f, v, src))}
               onResetItem={(ref) => edit(resetItem(doc, ref))}
               onBulk={(rows, op) => edit(applyBulk(doc, rows, op))}
@@ -316,6 +339,11 @@ export function ImportReviewStep({
       </SectionCard>
     </div>
   );
+}
+
+/** The source server's name as the plan lists it, else its ref. */
+function sourceHostName(plan: ImportPlan, ref: string): string {
+  return plan.preflight?.hosts?.find((h) => h.ref === ref)?.name || (ref === "_" ? "?" : ref);
 }
 
 /** A user-facing message for a failed call: the hub's mapping codes get a fixed translation, anything else its message. */
