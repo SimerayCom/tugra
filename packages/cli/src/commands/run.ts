@@ -75,6 +75,8 @@ export interface RunOpts {
   /** Multi-host placement: source server uuid -> Tugra server id (from `--map` and/or `--server-map-file`). */
   serverMap?: Record<string, string>;
   campaign?: string;
+  /** Move only part of the source (from `--scope-server`, `--scope-project`, `--include`, `--exclude`); the hub builds the exclusions. */
+  runScope?: { sourceServers?: string[]; projects?: string[]; include?: string[]; exclude?: string[] };
   hostLoopKeyDir?: string;
   hostLoopParallel?: number;
   hostLoopConnectTimeout?: number;
@@ -194,6 +196,13 @@ export function parseServerMap(pairs: readonly string[]): Record<string, string>
   return { ...out };
 }
 
+/** Validate a narrowed scope the way the hub does, before any request is made. */
+export function validateScope(scope: NonNullable<RunOpts["runScope"]>): void {
+  need((scope.sourceServers?.length ?? 0) + (scope.projects?.length ?? 0) + (scope.include?.length ?? 0) > 0, "a scope needs at least one --scope-server, --scope-project or --include");
+  for (const r of [...(scope.sourceServers ?? []), ...(scope.projects ?? [])]) need(/^[\x21-\x7e]{1,200}$/.test(r), `--scope-server / --scope-project: "${r}" is not a valid ref`);
+  for (const r of [...(scope.include ?? []), ...(scope.exclude ?? [])]) need(/^(app|database|service):[\x21-\x7e]{1,280}$/.test(r), `--include / --exclude: "${r}" is not an app:, database: or service: item ref of the plan`);
+}
+
 /** Validate a placement map the way the hub does, before any request is made. */
 function validateServerMap(map: Record<string, string>): void {
   const entries = Object.entries(map);
@@ -235,6 +244,10 @@ export function buildCreateRequest(o: RunOpts): Req {
   int(o.hostLoopRetries, 0, 5, "--host-loop-retries");
   if (o.campaign !== undefined) validateCampaign(o.campaign);
   if (o.serverMap !== undefined) validateServerMap(o.serverMap);
+  if (o.runScope !== undefined) {
+    validateScope(o.runScope);
+    need(o.mapping === undefined, "--scope cannot be combined with --mapping-file: the hub builds the mapping from the scope");
+  }
   const hostLoopFlags = o.hostLoopKeyDir !== undefined || o.hostLoopParallel !== undefined || o.hostLoopConnectTimeout !== undefined || o.hostLoopRetries !== undefined;
   need(!hostLoopFlags || o.sourceRunner === "coolify-host-loop", "the --host-loop-* flags need --source-runner coolify-host-loop");
   if (o.hostLoopKeyDir !== undefined) need(validKeyDir(o.hostLoopKeyDir), "--host-loop-key-dir must be an absolute path of letters, digits and . _ / - without ..");
@@ -309,6 +322,7 @@ export function buildCreateRequest(o: RunOpts): Req {
       ...(Object.keys(inputs).length ? { inputs } : {}),
       ...(o.serverMap !== undefined ? { serverMap: o.serverMap } : {}),
       ...(o.campaign !== undefined ? { campaign: o.campaign.trim() } : {}),
+      ...(o.runScope !== undefined ? { scope: o.runScope } : {}),
     },
   };
 }
@@ -959,6 +973,10 @@ export function register(program: Command): void {
     .option("--map <source=target>", "multi-host placement: <source server uuid>=<Tugra server id>; repeat for each source host. Every source host must be listed once a map is given", (v: string, prev: string[] = []) => [...prev, v])
     .option("--server-map-file <path>", "multi-host placement as a JSON object {sourceServerUuid: tugraServerId}")
     .option("--campaign <label>", "group the runs of one migration campaign")
+    .option("--scope-server <ref>", "move only this source server (its Coolify uuid); repeat for more", (v: string, prev: string[] = []) => [...prev, v])
+    .option("--scope-project <ref>", "move only this source project; repeat for more", (v: string, prev: string[] = []) => [...prev, v])
+    .option("--include <itemRef>", "with a scope: also move this item (app:/database:/service: ref of the plan); repeat for more", (v: string, prev: string[] = []) => [...prev, v])
+    .option("--exclude <itemRef>", "with a scope: leave this item out; repeat for more", (v: string, prev: string[] = []) => [...prev, v])
     .option("--host-loop-key-dir <path>", `host-loop: the directory of Coolify's SSH keys on the Coolify host (default ${HOST_LOOP_DEFAULT_KEY_DIR}); only the path is stored`)
     .option("--host-loop-parallel <n>", "host-loop: hosts handled at a time (1-8, default 1)", num)
     .option("--host-loop-connect-timeout <seconds>", "host-loop: SSH connect timeout (5-120, default 15)", num)
@@ -989,14 +1007,17 @@ export function register(program: Command): void {
     .option("--unlisted-db-policy <policy>", `owner input: ${UNLISTED_DB_POLICIES.join(" | ")}: database containers the source API does not list (default block)`)
     .option("--orphan-volume-policy <policy>", `owner input: ${ORPHAN_VOLUME_POLICIES.join(" | ")}: volumes no container uses (default block)`)
     .option("--json", "output as JSON")
-    .action(async (o: RunOpts & { map?: string[]; serverMapFile?: string; mappingFile?: string; acksFile?: string; serviceChoicesFile?: string; dbDataModesFile?: string; json?: boolean }) => {
+    .action(async (o: RunOpts & { map?: string[]; scopeServer?: string[]; scopeProject?: string[]; include?: string[]; exclude?: string[]; serverMapFile?: string; mappingFile?: string; acksFile?: string; serviceChoicesFile?: string; dbDataModesFile?: string; json?: boolean }) => {
       const file = (path: string | undefined, flag: string) => (path ? readJson(path, flag) : undefined);
       const fromFile = file(o.serverMapFile, "--server-map-file");
       need(fromFile === undefined || (typeof fromFile === "object" && fromFile !== null && !Array.isArray(fromFile)), "--server-map-file must hold a JSON object {sourceServerUuid: tugraServerId}");
       const serverMap = o.map?.length || fromFile ? { ...(fromFile as Record<string, string> | undefined), ...parseServerMap(o.map ?? []) } : undefined;
+      const scoped = { sourceServers: o.scopeServer, projects: o.scopeProject, include: o.include, exclude: o.exclude };
+      const scope = Object.values(scoped).some((v) => v?.length) ? Object.fromEntries(Object.entries(scoped).filter(([, v]) => v?.length)) : undefined;
       const req = buildCreateRequest({
         ...o,
         ...(serverMap ? { serverMap } : {}),
+        ...(scope ? { runScope: scope } : {}),
         mapping: file(o.mappingFile, "--mapping-file"),
         acks: file(o.acksFile, "--acks-file"),
         serviceChoices: file(o.serviceChoicesFile, "--service-choices-file"),

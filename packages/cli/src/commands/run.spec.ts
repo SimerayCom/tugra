@@ -344,6 +344,16 @@ describe("tugra import run: fleet runs", () => {
     expect(() => parseServerMap(["has space=srv1"])).toThrow(/not a valid source server ref/);
   });
 
+  it("sends a narrowed scope as the run-level scope, and refuses an empty or malformed one before any request", () => {
+    const req = buildCreateRequest({ ...create, runScope: { sourceServers: ["host-a"], include: ["database:host-b:db1"], exclude: ["app:host-a:web"] } });
+    expect(req.body).toMatchObject({ scope: { sourceServers: ["host-a"], include: ["database:host-b:db1"], exclude: ["app:host-a:web"] } });
+    expect(buildCreateRequest(create).body).not.toHaveProperty("scope");
+    expect(() => buildCreateRequest({ ...create, runScope: { exclude: ["app:host-a:web"] } })).toThrow(/at least one/);
+    expect(() => buildCreateRequest({ ...create, runScope: { include: ["volume:a:b"] } })).toThrow(/item ref/);
+    expect(() => buildCreateRequest({ ...create, runScope: { projects: ["a b"] } })).toThrow(/not a valid ref/);
+    expect(() => buildCreateRequest({ ...create, runScope: { projects: ["p1"] }, mapping: { version: 1 }, mappingHash: "a".repeat(32) })).toThrow(/cannot be combined/);
+  });
+
   it("sends the placement as the run-level serverMap and the campaign label, trimmed", () => {
     const req = buildCreateRequest({ ...create, serverMap: { "host-a": "srv1", "host-b": "srv2" }, campaign: " wave-1 " });
     expect(req.body).toMatchObject({ targetServerId: "srv1", serverMap: { "host-a": "srv1", "host-b": "srv2" }, campaign: "wave-1" });
