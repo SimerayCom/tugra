@@ -55,6 +55,20 @@ func Collect() (protocol.HostInfo, error) {
 	if ips := HostReportedIPs(ctx, os.Getenv("TUGRA_AGENT_IMAGE")); len(ips) > 0 {
 		info.ReportedIps = ips
 	}
+	// Cloud metadata (link-local, never an outbound probe): the instance's public address when the interfaces only
+	// carry a private one (AWS, GCP, ...). In-container first; the host-network helper covers the IMDSv2 hop limit.
+	cloud := DetectCloudIPs(ctx)
+	if cloud.Empty() {
+		cloud = HostCloudIPs(ctx, os.Getenv("TUGRA_AGENT_IMAGE"))
+	}
+	if !cloud.Empty() {
+		info.CloudProvider = cloud.Provider
+		for _, ip := range []string{cloud.IPv4, cloud.IPv6} {
+			if ip != "" {
+				info.MetadataIps = append(info.MetadataIps, ip)
+			}
+		}
+	}
 	return info, nil
 }
 

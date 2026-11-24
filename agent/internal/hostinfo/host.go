@@ -81,7 +81,12 @@ var imageRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/:@-]*$`)
 // HostIPArgs is the `docker run` argv for the short-lived helper that reads the HOST's interfaces: the agent's own
 // image (already local, nothing pulled) on the host network, read-only, capability-stripped, no privileges, tiny
 // limits, printing a JSON list of addresses and exiting.
-func HostIPArgs(image string) ([]string, error) {
+func HostIPArgs(image string) ([]string, error) { return hostHelperArgs(image, "hostips") }
+
+// HostMetaArgs is the same sandboxed helper running the `hostmeta` subcommand (cloud metadata public-IP lookup).
+func HostMetaArgs(image string) ([]string, error) { return hostHelperArgs(image, "hostmeta") }
+
+func hostHelperArgs(image, sub string) ([]string, error) {
 	if image == "" || !imageRe.MatchString(image) {
 		return nil, errors.New("invalid image reference")
 	}
@@ -95,7 +100,7 @@ func HostIPArgs(image string) ([]string, error) {
 		"--memory", "32m",
 		"--entrypoint", "tugra-agent",
 		image,
-		"hostips",
+		sub,
 	}, nil
 }
 
@@ -117,6 +122,31 @@ func HostReportedIPs(ctx context.Context, image string) []string {
 		return nil
 	}
 	return ips
+}
+
+// HostCloudIPs runs the host-network helper's `hostmeta` subcommand: the IMDSv2 hop limit of 1 blocks a bridged
+// container, the host network does not. Empty on any error.
+func HostCloudIPs(ctx context.Context, image string) CloudIPs {
+	args, err := HostMetaArgs(image)
+	if err != nil {
+		return CloudIPs{}
+	}
+	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, args[0], args[1:]...).Output()
+	if err != nil {
+		return CloudIPs{}
+	}
+	var c CloudIPs
+	if err := json.Unmarshal(out, &c); err != nil {
+		return CloudIPs{}
+	}
+	// Re-validate: the helper's output is parsed, not trusted.
+	c.IPv4, c.IPv6 = publicIP(c.IPv4, false), publicIP(c.IPv6, true)
+	if c.Empty() {
+		return CloudIPs{}
+	}
+	return c
 }
 
 // PrintHostIPs is the `hostips` subcommand: run on the host network, it prints the interface IPs as JSON.

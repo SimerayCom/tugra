@@ -260,6 +260,10 @@ type HostInfo struct {
 	BootTime      int64    `json:"bootTime"`
 	ReportedIps   []string `json:"reportedIps"`        // non-virtual, non-loopback interface IPs (reconcile)
 	Hostname      string   `json:"hostname,omitempty"` // the HOST's hostname (from the Docker daemon)
+	// Public addresses the cloud provider's link-local metadata service reports for this instance (no outbound
+	// probe), and which provider answered. Omitted off-cloud.
+	MetadataIps   []string `json:"metadataIps,omitempty"`
+	CloudProvider string   `json:"cloudProvider,omitempty"`
 }
 
 type HostInfoMsg struct {

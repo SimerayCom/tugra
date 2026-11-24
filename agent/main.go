@@ -41,6 +41,11 @@ func main() {
 		os.Exit(hostinfo.PrintHostIPs())
 	}
 
+	// `hostmeta` is the same helper container asking the cloud metadata service for the instance's public IPs.
+	if len(os.Args) > 1 && os.Args[1] == "hostmeta" {
+		os.Exit(hostinfo.PrintCloudIPs(os.Stdout))
+	}
+
 	if len(os.Args) > 1 && os.Args[1] == "fsd" {
 		os.Exit(fsd.RunCLI(os.Args[2:]))
 	}
