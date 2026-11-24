@@ -27,6 +27,9 @@ export const SCAN_HOST_BEGIN = "TUGRA_SCAN_HOST_BEGIN";
 export const SCAN_HOST_END = "TUGRA_SCAN_HOST_END";
 export const SCAN_HOST_UNAVAILABLE = "TUGRA_SCAN_HOST_UNAVAILABLE";
 export const SCAN_HOST_FAILED = "TUGRA_SCAN_HOST_FAILED";
+export const SCAN_HOST_OUTDATED = "TUGRA_SCAN_HOST_OUTDATED";
+/** What `tugra-agent scan --probe` prints: only an agent image that has the scan subcommand says it. */
+export const SCAN_PROBE_REPLY = "tugra-scan-v1";
 
 /** Most containers one scan reads (the agent's command output is capped at 64 KB). */
 export const MAX_SCAN_CONTAINERS = 250;
@@ -73,7 +76,10 @@ export function buildHostScanScript(): string {
     "  --network host --pid host --userns host --read-only --cap-drop ALL --cap-add DAC_READ_SEARCH \\",
     "  --security-opt no-new-privileges --security-opt label=disable --pids-limit 32 --memory 128m \\",
     '  -v /:/host:ro --entrypoint tugra-agent "$IMG" scan --root=/host --proc=/proc 2>/dev/null); rc=$?',
-    '[ $rc -eq 0 ] || { timeout 10 docker rm -f "$pn" >/dev/null 2>&1; echo "' + SCAN_HOST_FAILED + ' rc=$rc"; }',
+    // A failed run is either a docker problem or an agent image that predates the subcommand: ask the image itself.
+    '[ $rc -eq 0 ] || { timeout 10 docker rm -f "$pn" >/dev/null 2>&1;',
+    '  pr=$(timeout 20 docker run --rm --pull never --network none --read-only --cap-drop ALL --security-opt no-new-privileges --pids-limit 16 --memory 64m --entrypoint tugra-agent "$IMG" scan --probe 2>/dev/null);',
+    `  if [ "$pr" = "${SCAN_PROBE_REPLY}" ]; then echo "${SCAN_HOST_FAILED} rc=$rc"; else echo "${SCAN_HOST_OUTDATED} rc=$rc"; fi; }`,
     `[ $rc -eq 0 ] && printf '%s\\n' "$out" | head -c 48000`,
     `echo ${SCAN_HOST_END}`,
     "exit 0",
@@ -308,6 +314,7 @@ export type HostScanResult = { status: "ok"; data: HostScan } | { status: "unava
 
 export function parseHostScan(output: string): HostScanResult {
   if (output.includes(`${SCAN_HOST_UNAVAILABLE} reason=no-image`)) return { status: "unavailable", reason: "no_image" };
+  if (output.includes(SCAN_HOST_OUTDATED)) return { status: "unavailable", reason: "agent_outdated" };
   if (output.includes(SCAN_HOST_FAILED)) return { status: "unavailable", reason: "failed" };
   const lines = output.split(/\r?\n/);
   const begin = lines.findIndex((l) => l.trim() === SCAN_HOST_BEGIN);

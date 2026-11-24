@@ -127,9 +127,19 @@ func readDump(fs rootFS, p string, live map[string]bool) ([]PM2Proc, error) {
 		return nil, err
 	}
 	out := []PM2Proc{}
+	byName := map[string]int{}
+	counts := map[string]int{}
 	for _, r := range raw {
 		name := clean(r.Name, 120)
 		if name == "" {
+			continue
+		}
+		// PM2 saves every cluster instance as its own entry with the same name: one row, counted.
+		if i, dup := byName[name]; dup {
+			counts[name]++
+			if counts[name] > out[i].Instances {
+				out[i].Instances = counts[name]
+			}
 			continue
 		}
 		p := PM2Proc{Name: name, Status: "stopped"}
@@ -156,6 +166,8 @@ func readDump(fs rootFS, p string, live map[string]bool) ([]PM2Proc, error) {
 				p.Port = validPort(strconv.Itoa(int(t)))
 			}
 		}
+		byName[name] = len(out)
+		counts[name] = 1
 		out = append(out, p)
 	}
 	return out, nil

@@ -381,3 +381,45 @@ func TestCleanStripsControlAndCaps(t *testing.T) {
 		t.Fatalf("not capped: %d", len(got))
 	}
 }
+
+func TestPM2ClusterEntriesMergeIntoOneRow(t *testing.T) {
+	root := t.TempDir()
+	proc := fakeProc(t, map[string]string{"4242": "node"}, tcpHeader, tcpHeader)
+	entry := `{"name":"web","pm_exec_path":"/srv/web.js","exec_mode":"cluster_mode","env":{}}`
+	write(t, root, "root/.pm2/dump.pm2", "["+entry+","+entry+","+entry+","+entry+"]")
+	write(t, root, "root/.pm2/pids/web-0.pid", "4242")
+	var errs []string
+	users := collectPM2(newRootFS(root), proc, &errs)
+	if len(users) != 1 || len(users[0].Procs) != 1 {
+		t.Fatalf("users: %+v", users)
+	}
+	if p := users[0].Procs[0]; p.Name != "web" || p.Instances != 4 || p.Status != "online" {
+		t.Fatalf("proc: %+v", p)
+	}
+}
+
+func TestFitDropsItemsNotJSON(t *testing.T) {
+	r := Report{V: Version, Markers: []string{}, PM2: []PM2User{}, Sites: []Site{}, Services: []Service{}, Ports: []Port{}, Errors: []string{}}
+	for i := 0; i < 150; i++ {
+		r.Sites = append(r.Sites, Site{Server: "nginx", Names: []string{strings.Repeat("a", 100) + ".example.com"}, Root: strings.Repeat("/r", 90), Kind: "php"})
+	}
+	out := fit(r, 20000)
+	b, _ := json.Marshal(out)
+	if len(b) > 20000 || len(out.Sites) == 0 || len(out.Sites) >= 150 {
+		t.Fatalf("size %d sites %d", len(b), len(out.Sites))
+	}
+	if !hasMarker(out.Errors, "truncated") {
+		t.Fatalf("errors: %v", out.Errors)
+	}
+	small := fit(Report{V: Version}, 20000)
+	if len(small.Errors) != 0 {
+		t.Fatalf("small report must be untouched: %v", small.Errors)
+	}
+}
+
+func TestProbeReply(t *testing.T) {
+	var out, errb strings.Builder
+	if code := RunCLI([]string{"--probe"}, &out, &errb); code != 0 || strings.TrimSpace(out.String()) != ProbeReply {
+		t.Fatalf("code %d out %q", code, out.String())
+	}
+}

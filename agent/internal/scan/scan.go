@@ -16,6 +16,9 @@ import (
 	"strings"
 )
 
+// ProbeReply is what `scan --probe` prints: proof that this agent image has the scan subcommand.
+const ProbeReply = "tugra-scan-v1"
+
 // Version is the report schema version (the hub rejects a different one).
 const Version = 1
 
@@ -27,6 +30,7 @@ const (
 	maxPorts      = 150
 	maxStr        = 160
 	maxFile       = 512 << 10 // largest config / dump file read
+	maxOutput     = 44000     // the hub keeps at most 48 KB of the helper's stdout; stay under it by dropping items, never by cutting JSON
 )
 
 // Options configures a scan. The zero value is not usable; use DefaultOptions.
@@ -122,6 +126,11 @@ func Run(o Options) Report {
 func RunCLI(args []string, stdout, stderr io.Writer) int {
 	o := DefaultOptions()
 	for _, a := range args {
+		if a == "--probe" {
+			// The hub asks this when a scan failed, to tell an agent image that has the scan subcommand from one that does not.
+			_, _ = io.WriteString(stdout, ProbeReply+"\n")
+			return 0
+		}
 		k, v, ok := strings.Cut(a, "=")
 		if !ok {
 			continue
@@ -133,7 +142,7 @@ func RunCLI(args []string, stdout, stderr io.Writer) int {
 			o.Proc = v
 		}
 	}
-	if err := json.NewEncoder(stdout).Encode(Run(o)); err != nil {
+	if err := json.NewEncoder(stdout).Encode(fit(Run(o), maxOutput)); err != nil {
 		_, _ = io.WriteString(stderr, "scan: encode failed\n")
 		return 1
 	}
@@ -167,4 +176,42 @@ func clean(s string, max int) string {
 		out = strings.ToValidUTF8(out[:max], "")
 	}
 	return out
+}
+
+// fit drops items from the largest section until the encoded report is at most budget bytes, and records "truncated".
+// The report stays valid JSON; a huge host loses its tail rather than the whole report.
+func fit(r Report, budget int) Report {
+	size := func() int {
+		b, err := json.Marshal(r)
+		if err != nil {
+			return 0
+		}
+		return len(b)
+	}
+	if size() <= budget {
+		return r
+	}
+	r.Errors = append(r.Errors, "truncated")
+	for i := 0; i < 64 && size() > budget; i++ {
+		// Halve whichever section currently holds the most items (PM2 users count their processes).
+		pm2Items := 0
+		for _, u := range r.PM2 {
+			pm2Items += len(u.Procs)
+		}
+		switch {
+		case pm2Items >= len(r.Sites) && pm2Items >= len(r.Services) && pm2Items >= len(r.Ports) && pm2Items > 0:
+			for j := range r.PM2 {
+				r.PM2[j].Procs = r.PM2[j].Procs[:len(r.PM2[j].Procs)/2]
+			}
+		case len(r.Sites) >= len(r.Services) && len(r.Sites) >= len(r.Ports) && len(r.Sites) > 0:
+			r.Sites = r.Sites[:len(r.Sites)/2]
+		case len(r.Ports) >= len(r.Services) && len(r.Ports) > 0:
+			r.Ports = r.Ports[:len(r.Ports)/2]
+		case len(r.Services) > 0:
+			r.Services = r.Services[:len(r.Services)/2]
+		default:
+			return r
+		}
+	}
+	return r
 }

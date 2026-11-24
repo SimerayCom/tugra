@@ -86,6 +86,14 @@ describe("parseHostScan", () => {
     expect(parseHostScan("TUGRA_SCAN_HOST_BEGIN\nTUGRA_SCAN_HOST_FAILED rc=125\nTUGRA_SCAN_HOST_END")).toEqual({ status: "unavailable", reason: "failed" });
     expect(parseHostScan("")).toEqual({ status: "unavailable", reason: "failed" });
   });
+  it("a failed run on an image that fails the probe is agent_outdated", () => {
+    expect(parseHostScan("TUGRA_SCAN_HOST_BEGIN\nTUGRA_SCAN_HOST_OUTDATED rc=1\nTUGRA_SCAN_HOST_END")).toEqual({ status: "unavailable", reason: "agent_outdated" });
+  });
+  it("the host script probes the image only after a failed run", () => {
+    const s = buildHostScanScript();
+    expect(s).toContain("scan --probe");
+    expect(s.indexOf("scan --probe")).toBeGreaterThan(s.indexOf("[ $rc -eq 0 ] ||"));
+  });
   it("an agent image without the subcommand prints nothing: agent_outdated", () => {
     expect(parseHostScan("TUGRA_SCAN_HOST_BEGIN\n\nTUGRA_SCAN_HOST_END\n")).toEqual({ status: "unavailable", reason: "agent_outdated" });
   });
