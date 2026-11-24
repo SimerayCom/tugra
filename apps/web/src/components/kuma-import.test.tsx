@@ -53,6 +53,9 @@ async function uploadAndPreview() {
   const file = new File(['{"monitorList":[]}'], "kuma-backup.json", { type: "application/json" });
   fireEvent.change(input, { target: { files: [file] } });
   await screen.findByText("kuma-backup.json is ready.");
+  // The team is auto-selected once the teams load; preview only after it settled, or the click can run with a stale team.
+  await waitFor(() => expect((document.getElementById("kuma-team") as HTMLSelectElement).value).toBe("t1"));
+  await waitFor(() => expect((screen.getByRole("button", { name: "Preview" }) as HTMLButtonElement).disabled).toBe(false));
   fireEvent.click(screen.getByRole("button", { name: "Preview" }));
 }
 
