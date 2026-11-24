@@ -8,6 +8,7 @@ import { TrendCell } from "./trend-cell";
 import { metricTone, tempTone, batteryTone, type FleetRow, type FleetSortKey, type SortDir, type MetricTone } from "../lib/fleet-view";
 import { useT } from "../i18n/provider";
 import { Card, EmptyState, StatusDot } from "./ui";
+import { TeamDot } from "./team-scope";
 import { MeterBar } from "./meter-bar";
 import { Server, Cpu, MemoryStick, HardDrive, ArrowDownUp, Thermometer, Gpu, BatteryMedium, Clock, type LucideIcon } from "lucide-react";
 
@@ -107,6 +108,7 @@ const FleetRowView = memo(
         <Td>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <StatusDot status={s.status} stale={row.stale} />
+            <TeamDot teamId={s.teamId} />
             <div style={{ minWidth: 0 }}>
               <Link href={`/servers/${enc(s.id)}`} className="fleet-namelink" style={{ color: "var(--c-tx)", textDecoration: "none", fontWeight: 500 }}>
                 {s.name}
@@ -168,6 +170,7 @@ const FleetCardView = memo(
       <li className="fleet-card" style={{ listStyle: "none", position: "relative", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: 12 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
           <StatusDot status={s.status} stale={row.stale} />
+          <TeamDot teamId={s.teamId} />
           <Link href={`/servers/${enc(s.id)}`} className="fleet-namelink" style={{ color: "var(--c-tx)", textDecoration: "none", fontWeight: 600, fontSize: 14, minWidth: 0 }}>
             {s.name}
             {row.stale && <span className="sr-only"> — {staleLabel}</span>}

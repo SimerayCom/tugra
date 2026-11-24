@@ -8,6 +8,7 @@ import { wallSeries, wallValue, type WallMetric } from "../lib/fleet-wall";
 import type { FleetTrendRow } from "../lib/types";
 import { useT } from "../i18n/provider";
 import { Card, EmptyState, StatusDot } from "./ui";
+import { TeamDot } from "./team-scope";
 import { MetricChart } from "./charts";
 import { MeterBar } from "./meter-bar";
 
@@ -90,6 +91,7 @@ const WallCard = memo(
       <li ref={ref} className="fleet-wall-card" data-testid="fleet-wall-card" data-server-id={s.id} style={{ position: "relative", listStyle: "none" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0, marginBottom: 8 }}>
           <StatusDot status={s.status} stale={row.stale} />
+          <TeamDot teamId={s.teamId} />
           <Link
             href={`/servers/${enc(s.id)}`}
             className="fleet-namelink"

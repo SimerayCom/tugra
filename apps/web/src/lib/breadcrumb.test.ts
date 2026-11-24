@@ -44,4 +44,9 @@ describe("resourceBreadcrumb", () => {
       { label: "web-1" },
     ]);
   });
+
+  it("carries the project colour on the project and environment crumbs only", () => {
+    const crumbs = resourceBreadcrumb({ ...base, projectId: "p1", projectName: "Shop", projectColor: "#46a758", environmentId: "e1", environmentName: "production" });
+    expect(crumbs.map((c) => c.color)).toEqual([undefined, "#46a758", "#46a758", undefined]);
+  });
 });

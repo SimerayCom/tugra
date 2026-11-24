@@ -10,6 +10,7 @@ import { buildHeatmap, heatHasTrend, heatStep, HEAT_PAGE, HEAT_STEPS, type HeatR
 import { useT } from "../i18n/provider";
 import { useChartTimes } from "../lib/appearance";
 import { Card, EmptyState, StatusDot } from "./ui";
+import { TeamDot } from "./team-scope";
 import { Skeleton } from "./skeleton";
 import { formatStamp, formatTick, pickTimeTicks } from "./charts";
 
@@ -44,6 +45,7 @@ const HeatRowView = memo(
       >
         <div role="rowheader" style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
           <StatusDot status={s.status} stale={hr.row.stale} />
+          <TeamDot teamId={s.teamId} />
           <Link
             href={`/servers/${enc(s.id)}`}
             className="fleet-heat-name"

@@ -1,6 +1,8 @@
 export interface Crumb {
   label: string;
   href?: string;
+  /** Team / project identity colour: the crumb gets a dot of this colour. */
+  color?: string | null;
 }
 
 /**
@@ -12,6 +14,7 @@ export interface Crumb {
 export function resourceBreadcrumb(opts: {
   projectId: string | null;
   projectName: string | null;
+  projectColor?: string | null;
   environmentId: string | null;
   environmentName: string | null;
   name: string;
@@ -23,12 +26,13 @@ export function resourceBreadcrumb(opts: {
     const projectHref = `/projects/${opts.projectId}`;
     const crumbs: Crumb[] = [
       { label: opts.projectsLabel, href: "/projects" },
-      { label: opts.projectName, href: projectHref },
+      { label: opts.projectName, href: projectHref, color: opts.projectColor },
     ];
     if (opts.environmentName) {
       crumbs.push({
         label: opts.environmentName,
         href: opts.environmentId ? `${projectHref}#env-${opts.environmentId}` : projectHref,
+        color: opts.projectColor,
       });
     }
     crumbs.push({ label: opts.name });

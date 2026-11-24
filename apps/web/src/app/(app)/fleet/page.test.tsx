@@ -53,6 +53,7 @@ beforeEach(() => {
     { serverId: "b", points: pts(88, 20) },
   ]);
   vi.spyOn(api, "listClusters").mockResolvedValue([]);
+  vi.spyOn(api, "listTeams").mockResolvedValue([{ id: "t1", name: "Acme", role: "OWNER", color: "#2f6fdb" }] as never);
 });
 afterEach(() => vi.restoreAllMocks());
 

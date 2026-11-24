@@ -21,6 +21,7 @@ import { CopyRow } from "../../../../components/copy-row";
 import { useT } from "../../../../i18n/provider";
 import { Btn, Card, EmptyState, SectionCard, Spinner } from "../../../../components/ui";
 import { PageHeader } from "../../../../components/page-header";
+import { useProjectColor } from "../../../../components/project-dot";
 import { LiveLogsCard } from "../../../../components/live-logs-card";
 import { AppMetricsCard } from "../../../../components/app-metrics-card";
 import { Tabs } from "../../../../components/tabs-nav";
@@ -49,6 +50,7 @@ export default function DatabaseDetailPage() {
     // Poll fast while the database is on its way to RUNNING so the UI feels live.
     refetchInterval: (q) => (q.state.data && isDbTransitional(q.state.data.status) ? 1500 : 5000),
   });
+  const projectColor = useProjectColor(db?.projectId);
 
   const { data: backups = [] } = useQuery({
     queryKey: ["backups", id],
@@ -231,7 +233,7 @@ export default function DatabaseDetailPage() {
   return (
     <div style={{ padding: "var(--page-pad)" }}>
       <PageHeader
-        breadcrumb={resourceBreadcrumb({ projectId: db.projectId, projectName: db.projectName, environmentId: db.environmentId, environmentName: db.environmentName, name: db.name, projectsLabel: t("nav.projects"), fallbackLabel: t("nav.databases"), fallbackHref: "/databases" })}
+        breadcrumb={resourceBreadcrumb({ projectId: db.projectId, projectName: db.projectName, projectColor, environmentId: db.environmentId, environmentName: db.environmentName, name: db.name, projectsLabel: t("nav.projects"), fallbackLabel: t("nav.databases"), fallbackHref: "/databases" })}
         title={db.name}
         status={{ label: provision.isPending && db.status === "NEW" ? "PROVISIONING" : db.status, color: dbColor(provision.isPending ? "PROVISIONING" : db.status) }}
         actions={

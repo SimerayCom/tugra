@@ -5,7 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import { useT } from "../i18n/provider";
 import { Select } from "./form";
-import { EntityBadge } from "./entity-identity";
+import { EntityBadge, EntityDot } from "./entity-identity";
 
 const KEY = "tugra.teamScope";
 
@@ -66,4 +66,16 @@ export function TeamBadge({ teamId, teams }: { teamId: string; teams?: { id: str
   const team = (teams ?? data).find((tm) => tm.id === teamId);
   if (!team) return null;
   return <EntityBadge color={team.color}>{team.name}</EntityBadge>;
+}
+
+/** Colour dot for the team an item belongs to (nothing when the team has no colour); the title names the team. */
+export function TeamDot({ teamId }: { teamId: string }) {
+  const { data = [] } = useQuery({ queryKey: ["teams"], queryFn: () => api.listTeams() });
+  const team = data.find((tm) => tm.id === teamId);
+  if (!team?.color) return null;
+  return (
+    <span title={team.name} style={{ display: "inline-flex", flexShrink: 0 }}>
+      <EntityDot color={team.color} />
+    </span>
+  );
 }

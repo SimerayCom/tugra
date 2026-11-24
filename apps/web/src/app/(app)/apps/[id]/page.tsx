@@ -33,6 +33,7 @@ import { useT } from "../../../../i18n/provider";
 import { useToast } from "../../../../components/toast";
 import { Btn, Card, SectionCard, Spinner } from "../../../../components/ui";
 import { PageHeader } from "../../../../components/page-header";
+import { useProjectColor } from "../../../../components/project-dot";
 import { AppLogo } from "../../../../components/app-logo";
 import { ErrorState } from "../../../../components/error-state";
 import { ExtraPortsCard } from "../../../../components/extra-ports-card";
@@ -71,6 +72,7 @@ export default function AppDetailPage() {
     queryFn: () => api.getApp(id),
     refetchInterval: 5000,
   });
+  const projectColor = useProjectColor(appData?.projectId);
   // Slim list (no per-row logs: up to 20 × 64 KiB per poll otherwise); a row's full log lives on its own page.
   const { data: deployments = [] } = useQuery({
     queryKey: ["deployments", id],
@@ -366,7 +368,7 @@ export default function AppDetailPage() {
   return (
     <div style={{ padding: "var(--page-pad)" }}>
       <PageHeader
-        breadcrumb={resourceBreadcrumb({ projectId: appData.projectId, projectName: appData.projectName, environmentId: appData.environmentId, environmentName: appData.environmentName, name: appData.name, projectsLabel: t("nav.projects"), fallbackLabel: t("nav.apps"), fallbackHref: "/apps" })}
+        breadcrumb={resourceBreadcrumb({ projectId: appData.projectId, projectName: appData.projectName, projectColor, environmentId: appData.environmentId, environmentName: appData.environmentName, name: appData.name, projectsLabel: t("nav.projects"), fallbackLabel: t("nav.apps"), fallbackHref: "/apps" })}
         title={appData.name}
         icon={<AppLogo iconUrl={appIconUrl(appData.id, appData.iconUpdatedAt)} templateSlug={appData.templateSlug} templateLogo={appData.templateLogo} source={appData.source} name={appData.name} size={20} />}
         status={headerStatus}

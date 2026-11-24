@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { ChevronRight } from "lucide-react";
 import type { CSSProperties, ReactNode } from "react";
+import type { Crumb } from "../lib/breadcrumb";
 import { StatusPill } from "./ui";
 import { EntityDot } from "./entity-identity";
 
@@ -17,7 +18,7 @@ export function PageHeader({
   actions,
   children,
 }: {
-  breadcrumb?: { label: string; href?: string }[];
+  breadcrumb?: Crumb[];
   title: ReactNode;
   icon?: ReactNode;
   status?: { label: string; color: string };
@@ -36,12 +37,13 @@ export function PageHeader({
             return (
               <span key={i} style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
                 {b.href && !last ? (
-                  <Link href={b.href} className="tg-link" style={{ fontSize: 12 }}>
+                  <Link href={b.href} className="tg-link" style={{ fontSize: 12, display: "inline-flex", alignItems: "center", gap: 5 }}>
+                    <EntityDot color={b.color} size={7} />
                     {b.label}
                   </Link>
                 ) : (
                   <span aria-current={last ? "page" : undefined} style={{ fontSize: 12, color: last ? "var(--c-tx2)" : "var(--c-tx3)", display: "inline-flex", alignItems: "center", gap: 5 }}>
-                    {last && <EntityDot color={accent} size={7} />}
+                    <EntityDot color={last ? accent ?? b.color : b.color} size={7} />
                     {b.label}
                   </span>
                 )}

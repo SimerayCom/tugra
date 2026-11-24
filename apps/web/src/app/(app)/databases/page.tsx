@@ -14,6 +14,7 @@ import { TextInput } from "../../../components/form";
 import { TemplateLogo, ENGINE_LOGO } from "../../../lib/template-icons";
 import { scopeByTeam } from "../../../lib/team-scope";
 import { useTeamScope } from "../../../components/team-scope";
+import { ProjectDot } from "../../../components/project-dot";
 import { writableIds } from "../../../lib/fleet";
 import { BackupBulkModal } from "../../../components/backup-bulk-modal";
 
@@ -97,7 +98,8 @@ export default function DatabasesPage() {
                     <div className="mono" style={{ fontSize: 11, color: "var(--c-tx3)" }}>{engineLabel(d.engine)} · {d.version}</div>
                   </div>
                   {d.projectName && (
-                    <span style={{ fontSize: 12, color: "var(--c-tx3)", whiteSpace: "nowrap", flexShrink: 0 }}>
+                    <span style={{ fontSize: 12, color: "var(--c-tx3)", whiteSpace: "nowrap", flexShrink: 0, display: "inline-flex", alignItems: "center", gap: 5 }}>
+                    <ProjectDot projectId={d.projectId} />
                       {d.projectName} / {d.environmentName}
                     </span>
                   )}

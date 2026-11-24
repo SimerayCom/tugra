@@ -22,6 +22,7 @@ import { SortBar } from "../../../components/sort-bar";
 import { sortApps, toggleSort, defaultAppSortDir, type AppSortKey, type SortState } from "../../../lib/list-sort";
 import { scopeByTeam } from "../../../lib/team-scope";
 import { useTeamScope } from "../../../components/team-scope";
+import { ProjectDot } from "../../../components/project-dot";
 
 export default function AppsPage() {
   const t = useT();
@@ -90,7 +91,8 @@ export default function AppsPage() {
                   </div>
                 </div>
                 {a.projectName && (
-                  <span style={{ fontSize: 12, color: "var(--c-tx3)", whiteSpace: "nowrap", flexShrink: 0 }}>
+                  <span style={{ fontSize: 12, color: "var(--c-tx3)", whiteSpace: "nowrap", flexShrink: 0, display: "inline-flex", alignItems: "center", gap: 5 }}>
+                  <ProjectDot projectId={a.projectId} />
                     {a.projectName} / {a.environmentName}
                   </span>
                 )}
