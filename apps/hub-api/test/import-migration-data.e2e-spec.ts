@@ -126,34 +126,34 @@ describe("Importer migration DATA ingest (e2e)", () => {
   it("serves the per-engine dump recipes (secret-free) and the explicit unsupported set", async () => {
     const res = await request(api()).get("/api/v1/import/migration/recipes").set(H()).expect(200);
     expect(res.body.v).toBe(1);
-    expect(Object.keys(res.body.recipes).sort()).toEqual(["DRAGONFLY", "KEYDB", "MARIADB", "MYSQL", "POSTGRES", "REDIS"]);
+    expect(Object.keys(res.body.recipes).sort()).toEqual(["CLICKHOUSE", "DRAGONFLY", "KEYDB", "MARIADB", "MONGO", "MYSQL", "POSTGRES", "REDIS"]);
     for (const r of Object.values<{ command: string }>(res.body.recipes)) {
       expect(r.command.startsWith("docker exec ")).toBe(true);
       expect(r.command).not.toContain("TUGRA_SENT_"); // no sentinel leaked
       expect(r.command).not.toContain("TUGRA_SRC_PW"); // password never a host-expanded ref
     }
     expect(res.body.recipes.POSTGRES).toMatchObject({ format: "pg_custom", pgFormat: "custom", env: [{ name: "PGPASSWORD", from: "pw" }] });
-    // ClickHouse + Mongo are explicitly flagged, not silently absent
-    expect(res.body.unsupported).toMatchObject({ CLICKHOUSE: "requires-S4b", MONGO: "requires-S4b", LIBSQL: "no-logical-dump" });
-    expect(res.body.recipes.MONGO).toBeUndefined();
+    // Mongo and ClickHouse stream too now; the one engine without a logical dump is flagged, not silently absent
+    expect(res.body.unsupported).toEqual({ LIBSQL: "no-logical-dump" });
+    expect(res.body.recipes.LIBSQL).toBeUndefined();
   });
 
   it("marks an unstreamable engine's target dataPlane=unsupported so the source skips it explicitly", async () => {
-    const mdb = (await request(api()).post("/api/v1/databases").set("Authorization", `Bearer ${tokenA}`).send({ name: "mongo-src", serverId, engine: "MONGO" }).expect(201)).body.id;
-    const mop = await prisma.bulkOperation.create({ data: { actorId: userAId, command: "", kind: "import", planId: "h", meta: { sourceKind: "coolify", serverId } } });
-    await prisma.bulkTask.create({ data: { opId: mop.id, serverId, kind: "database", itemRef: "database:_:mongo-src", status: "DONE", resourceType: "database", resourceId: mdb } });
-    const mtok = (await request(api()).post(`/api/v1/import/operations/${mop.id}/migration-token`).set("Authorization", `Bearer ${tokenA}`).expect(201)).body.token;
-    const res = await request(api()).get("/api/v1/import/migration/targets").set("Authorization", `Bearer ${mtok}`).expect(200);
-    expect(res.body.targets).toEqual([expect.objectContaining({ kind: "database", engine: "MONGO", dataPlane: "unsupported", reason: "requires-S4b" })]);
+    const ldb = (await request(api()).post("/api/v1/databases").set("Authorization", `Bearer ${tokenA}`).send({ name: "libsql-src", serverId, engine: "LIBSQL" }).expect(201)).body.id;
+    const lop = await prisma.bulkOperation.create({ data: { actorId: userAId, command: "", kind: "import", planId: "h", meta: { sourceKind: "coolify", serverId } } });
+    await prisma.bulkTask.create({ data: { opId: lop.id, serverId, kind: "database", itemRef: "database:_:libsql-src", status: "DONE", resourceType: "database", resourceId: ldb } });
+    const ltok = (await request(api()).post(`/api/v1/import/operations/${lop.id}/migration-token`).set("Authorization", `Bearer ${tokenA}`).expect(201)).body.token;
+    const res = await request(api()).get("/api/v1/import/migration/targets").set("Authorization", `Bearer ${ltok}`).expect(200);
+    expect(res.body.targets).toEqual([expect.objectContaining({ kind: "database", engine: "LIBSQL", dataPlane: "unsupported", reason: "no-logical-dump" })]);
     // the contract is SERVER-ENFORCED, not just advertised: a non-conforming client cannot stage an unsupported engine
     await request(api())
-      .put(`/api/v1/import/migration/artifacts/${encodeURIComponent("database:_:mongo-src")}?gzip=0&format=custom`)
-      .set("Authorization", `Bearer ${mtok}`)
+      .put(`/api/v1/import/migration/artifacts/${encodeURIComponent("database:_:libsql-src")}?gzip=0&format=custom`)
+      .set("Authorization", `Bearer ${ltok}`)
       .set("Content-Type", "application/octet-stream")
       .send(Buffer.from("x"))
       .expect(400);
-    await prisma.bulkOperation.deleteMany({ where: { id: mop.id } }).catch(() => undefined);
-    await prisma.database.deleteMany({ where: { id: mdb } }).catch(() => undefined);
+    await prisma.bulkOperation.deleteMany({ where: { id: lop.id } }).catch(() => undefined);
+    await prisma.database.deleteMany({ where: { id: ldb } }).catch(() => undefined);
   });
 
   it("stages an artifact with the HUB-computed byte count + sha256 (never a host-claimed hash)", async () => {
