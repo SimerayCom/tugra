@@ -88,6 +88,7 @@ Rules that trip people up:
 | Environment variables | Strict: a variable the import cannot carry (unresolved shared, magic, invalid name, or an API token without `read:sensitive`) is a plan blocker; acknowledge it to create the app without it (see "Strict environment variables" below) |
 | Private git repositories | Linked at apply to the connected GitHub/Gitea source that can see the repo (see "Git links" below) |
 | **MinIO / S3 object data** | **Object migration** (below): `mc mirror` run by the target agent, bucket by bucket |
+| **Settings** (notification channels, shared variables, backup storages, scheduled tasks, server cleanup, tags, team members) | The **Settings** section of the import review ([details below](#settings)): each entry is selectable, secrets stay encrypted, and what the Coolify API does not expose is shown as "Not available via the Coolify API" |
 | SSL + DNS cutover | **Cutover panel** / `tugra import cutover` (certificate pre-issue, paced Cloudflare flip, ledger revert; [runbook](runbooks/cutover.md)), or the same step inside a [guided run](runbooks/guided-migration.md). A zone Tugra cannot write to stays manual: the panel prints the records. |
 
 ---
@@ -581,6 +582,24 @@ carrying the code); the applied set is recorded in the operation. Dokploy and lo
 An env value that still points at an old Coolify service host (for example the MinIO service) is listed under
 "review" in the env-remap preview; it is never rewritten automatically. Set the new endpoint after you have migrated that
 service's data.
+
+# Settings
+
+The import review has a **Settings** section (and the same section again after the apps are imported). It reads the team's settings with the same API token and lists each entry so you can pick what to bring. `POST /import/settings/preview` is read-only and secret-free; `POST /import/settings/apply` writes through the same services the product screens use, so every write needs the matching team permission and lands in the team of the connection.
+
+| Setting | What Tugra does | Needs |
+|---|---|---|
+| Notification channels (Telegram, Discord, Slack, email, webhook, Pushover) | Creates a Tugra channel per Coolify channel, with the Coolify events mapped to Tugra events (a deploy failure becomes `deploy_failed`, an unreachable server `server_offline`, and so on). A Telegram topic per event becomes one channel per topic. Events Tugra has no equivalent for (server patch, disk usage, proxy outdated, image vulnerabilities) are listed as not carried. A channel that is off in Coolify is imported off. **Send test message** is offered per carried channel; turn the Coolify channel off afterwards so messages are not sent twice. | A token with `read:sensitive` (otherwise the bot token and webhook URLs are not returned). Email that uses Coolify's own instance mail settings cannot be read. |
+| Shared variables (team, project, environment) | Creates team shared variables, never overwriting an existing key. Never pre-selected: Tugra injects a shared variable into **every** app of the team, Coolify only into the apps that reference it. | `read:sensitive`; a locked variable's value is hidden by Coolify. |
+| Backup storages | Creates an S3 backup destination (name, endpoint, bucket, region). **Coolify's API never returns the access key or secret**, so you type them in the review. The new destination is encrypted by default and its recovery key is shown once. Backup schedules on databases are not carried. | Only S3 storages; SFTP, FTPS and WebDAV are listed as unsupported. |
+| Scheduled tasks | Creates the task on the imported app (the cadence converted to cron). | An import operation (the apps must exist). |
+| Server cleanup | Sets the Docker cleanup schedule (cron, disk threshold, unused volumes) on the Tugra server you pick. Unused-network cleanup is not carried. | A target server in the same team. |
+| Tags | Adds the tag to the imported apps and databases that had it. | An import operation. |
+| Team members | Sends an invitation with the same email and a role you choose (never Owner). **Nothing is sent without the confirmation checkbox.** | Team admin. |
+
+Coolify releases before the ones that added these endpoints answer 404: the section then reads "Not available via the Coolify API" and nothing is guessed. Secret values (bot tokens, webhook URLs, S3 keys, variable values) are read on the hub, encrypted at rest by the target service, and never put in a preview, a result or an audit row.
+
+---
 
 # Git links
 

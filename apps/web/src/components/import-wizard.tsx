@@ -17,6 +17,7 @@ import { planSummary, itemsByKind, riskTone, opProgress, coverageApps, coverageC
 import { ImportVolumeTransfers } from "./import-volume-transfers";
 import { EnvBlockers } from "./import/env-blockers";
 import { GitLinksPanel, GitRelinkCard, DeployKeyBlock } from "./import/git-links-panel";
+import { ImportSettingsPanel } from "./import/settings-panel";
 import { ImportServicesPanel } from "./import-services-panel";
 import { ImportChecklist } from "./import-checklist";
 import { GuidedRunLauncher } from "./migration-run/guided-run-launcher";
@@ -156,7 +157,11 @@ export function ImportWizard() {
   };
 
   const busy = connect.isPending || planM.isPending;
-  if (opId) return <Timeline opId={opId} onReset={reset} />;
+  if (opId) {
+    // The settings step needs the live source session: after a reload (?op=) there is none, so it is simply not offered.
+    const teamServers = servers.filter((sv) => sv.teamId === effectiveTeam).map((sv) => ({ id: sv.id, name: sv.name }));
+    return <Timeline opId={opId} onReset={reset} settings={sessionId ? { sessionId, kind, servers: teamServers, defaultServerId: scope?.defaultServerId } : undefined} />;
+  }
 
   if (plan && sessionId && !scope && plan.mapping?.features?.includes("mapping-v1")) {
     return <ImportScopeStep plan={plan} servers={writableServers} teams={teams} initial={lastSelection} onContinue={(sc) => { setScope(sc); setLastSelection(sc.selection); }} onStartOver={reset} />;
@@ -452,6 +457,7 @@ function PlanView({
       <EnvBlockers plan={plan} acked={acked} onChange={setAcked} />
       {target && (plan.preflight?.git?.hosts.length ?? 0) > 0 && <GitLinksPanel sessionId={sessionId} targetServerId={target} plan={plan} />}
       <CoverageCard plan={plan} />
+      <ImportSettingsPanel sessionId={sessionId} kind={kind} servers={servers} defaultServerId={target} />
       <ImportServicesPanel sessionId={sessionId} kind={kind} plan={plan} servers={servers} choices={choices} onChoice={onChoice} onMissingTargets={setMissingTargets} />
       <Section title={t("import.appsSection")} items={groups.app} />
       <Section title={t("import.databasesSection")} items={groups.database} />
@@ -460,7 +466,7 @@ function PlanView({
   );
 }
 
-function Timeline({ opId, onReset }: { opId: string; onReset: () => void }) {
+function Timeline({ opId, onReset, settings }: { opId: string; onReset: () => void; settings?: { sessionId: string; kind: ImportRemoteKind; servers: Array<{ id: string; name: string }>; defaultServerId?: string } }) {
   const t = useT();
   const toast = useToast();
   const qc = useQueryClient();
@@ -555,6 +561,7 @@ function Timeline({ opId, onReset }: { opId: string; onReset: () => void }) {
         <ImportVolumeTransfers opId={opId} />
         <RemapEnvCard opId={opId} sourceKind={asRemoteKind(op.sourceKind)} />
         {op.tasks.some((task) => task.git && task.git.status !== "linked" && task.git.status !== "public_ok") && <GitRelinkCard opId={opId} />}
+        {settings && <ImportSettingsPanel sessionId={settings.sessionId} kind={settings.kind} opId={opId} servers={settings.servers} defaultServerId={settings.defaultServerId} />}
         <CutoverPanel opId={opId} />
       </>
     )}

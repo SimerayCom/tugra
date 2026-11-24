@@ -1,3 +1,4 @@
+import type { SettingsApplyBody, SettingsApplyResult, SettingsPreview } from "./import-settings";
 import type { BulkTransferResponse, TransferPlan } from "./server-transfer";
 import type { BeszelApplyInput, BeszelApplyResult, BeszelConnectResult, BeszelPreview, BeszelSavedConnection } from "./beszel-import";
 import { HUB_UNREACHABLE_CODE, hubUnreachableMessage, isHubDownStatus, isNetworkFailure, reportHubDown } from "./hub-connection";
@@ -2446,6 +2447,13 @@ export const api = {
   // Preview the SERVICE import (read-only, secret-free): per service its verdict, members, variable names, volumes, domains.
   previewImportServices(input: { sessionId: string; sourceKind?: ImportRemoteKind; choices?: Record<string, ImportServiceChoice> }) {
     return apiFetch<{ services: ImportServicePreview[] }>("/import/services/preview", { method: "POST", body: JSON.stringify(input) });
+  },
+  // Settings the source can carry (notification channels, variables, storages, tasks, cleanup, tags, members): read-only, secret-free preview + apply.
+  importSettingsPreview(input: { sessionId: string; sourceKind?: ImportRemoteKind; opId?: string }) {
+    return apiFetch<SettingsPreview>("/import/settings/preview", { method: "POST", body: JSON.stringify(input) });
+  },
+  importSettingsApply(input: SettingsApplyBody) {
+    return apiFetch<SettingsApplyResult>("/import/settings/apply", { method: "POST", body: JSON.stringify(input) });
   },
   getImportOperation(opId: string) {
     return apiFetch<ImportOperation>(`/import/operations/${encodeURIComponent(opId)}`);

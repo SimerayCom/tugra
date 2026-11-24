@@ -785,5 +785,153 @@
     "narrowedGuided": "Guided runs move the whole source. Choose Everything to use one.",
     "more": "More",
     "moreBody": "Nothing is changed or stopped on the source. You can still rename, move and leave out apps and databases on the next steps."
+  },
+  "settings": {
+    "title": "Settings",
+    "desc": "Bring alerts, variables, storages, tasks and people along, not just apps.",
+    "refresh": "Refresh",
+    "loading": "Reading settings...",
+    "failed": "Settings could not be read.",
+    "retry": "Try again",
+    "partial": "Some of it could not be read.",
+    "empty": "Nothing to bring.",
+    "more": "More",
+    "selected": "{n} selected",
+    "import": "Import selected",
+    "importing": "Importing...",
+    "importDone": "{created} imported, {skipped} skipped, {failed} failed.",
+    "needsInput": "Fill in the missing fields to include it.",
+    "section": {
+      "notifications": {
+        "title": "Notification channels",
+        "hint": "Telegram, Discord, Slack, email, webhook and Pushover, with their events."
+      },
+      "sharedVariables": {
+        "title": "Shared variables",
+        "hint": "Team, project and environment variables."
+      },
+      "storages": {
+        "title": "Backup storages",
+        "hint": "S3 destinations for your backups."
+      },
+      "scheduledTasks": {
+        "title": "Scheduled tasks",
+        "hint": "Cron commands of your apps."
+      },
+      "serverSettings": {
+        "title": "Server cleanup",
+        "hint": "The Docker cleanup schedule of each server."
+      },
+      "tags": {
+        "title": "Tags",
+        "hint": "Tags on the apps and databases you imported."
+      },
+      "members": {
+        "title": "Team members",
+        "hint": "Invite people with the same email and a role."
+      }
+    },
+    "unavailable": {
+      "not_exposed": "Not available via the Coolify API.",
+      "forbidden": "This token is not allowed to read it.",
+      "error": "It could not be read. Try Refresh."
+    },
+    "channelType": {
+      "telegram": "Telegram",
+      "discord": "Discord",
+      "slack": "Slack",
+      "pushover": "Pushover",
+      "webhook": "Webhook",
+      "email": "Email"
+    },
+    "summary": {
+      "events": "{n} events carried",
+      "topic": "Topic {id}",
+      "noEvents": "No events selected in Coolify",
+      "scopeTeam": "Team variable",
+      "scopeProject": "Project: {project}",
+      "scopeEnvironment": "Environment: {project} / {environment}",
+      "storage": "{bucket} at {endpoint}",
+      "task": "{resource}, {schedule}",
+      "server": "Cleans {schedule}",
+      "serverThreshold": "Cleans {schedule}, above {pct}% disk",
+      "tag": "{imported} of {total} resources imported",
+      "member": "Suggested role: {role}"
+    },
+    "blocked": {
+      "needs_sensitive": "Needs a Coolify token with read:sensitive.",
+      "email_instance_settings": "Uses Coolify's own mail settings, which cannot be read.",
+      "exists": "Already in Tugra.",
+      "locked": "The value is hidden in Coolify.",
+      "invalid_key": "Not a valid variable name.",
+      "multiline": "Multi-line values are not supported.",
+      "duplicate_key": "Same name as another variable.",
+      "unsupported_type": "Only S3 storages can be carried.",
+      "no_endpoint": "It has no endpoint.",
+      "invalid_bucket": "Not a valid bucket name.",
+      "needs_import": "Available after the apps are imported.",
+      "app_not_imported": "Its app was not imported.",
+      "invalid_schedule": "The schedule cannot be converted.",
+      "invalid_name": "Not a valid tag name.",
+      "no_imported_resources": "No imported app or database has it.",
+      "self": "That is you."
+    },
+    "note": {
+      "events_not_carried": "Not carried, Tugra has no event for: {events}.",
+      "topics_split": "{n} Telegram topics become {n} channels.",
+      "source_disabled": "It is off in Coolify, so it is imported off.",
+      "double_send": "After the test, turn it off in Coolify so messages are not sent twice.",
+      "team_wide": "Applies to every app in this team.",
+      "credentials_not_exposed": "Coolify never shares the keys. Enter them here.",
+      "schedules_not_carried": "Backup schedules are not carried.",
+      "tls_verification_skipped": "TLS checks are off in Coolify. Tugra always checks.",
+      "container_ignored": "It runs in the app's container.",
+      "name_truncated": "The name is shortened to 80 characters.",
+      "cleanup_always": "Tugra cleans on every run, not only above the disk limit.",
+      "volumes_pruned": "This also removes unused volumes.",
+      "networks_not_carried": "Cleaning unused networks is not carried.",
+      "tag_normalized": "Saved as {as}.",
+      "role_unknown": "Coolify did not report a role. Pick one.",
+      "owner_not_carried": "Ownership is not transferred. Invited as admin.",
+      "invite_pending": "An invitation is already pending."
+    },
+    "field": {
+      "accessKey": "Access key",
+      "secretKey": "Secret key",
+      "server": "Target server",
+      "role": "Role",
+      "pickServer": "Choose a server"
+    },
+    "role": {
+      "ADMIN": "Admin",
+      "VIEWER": "Viewer"
+    },
+    "confirmInvites": "Send invitation emails to the people selected.",
+    "result": {
+      "title": "Result",
+      "created": "Imported",
+      "skipped": "Skipped",
+      "failed": "Failed",
+      "code": {
+        "unknown_entry": "It is no longer offered.",
+        "forbidden": "You do not have permission for this.",
+        "conflict": "It conflicts with something that exists.",
+        "not_found": "It was not found.",
+        "invalid": "Tugra rejected the values.",
+        "failed": "It could not be created.",
+        "credentials_required": "Enter the access key and secret key.",
+        "server_required": "Choose a target server.",
+        "server_not_found": "That server is not in this team.",
+        "confirmation_required": "Confirm the invitations first."
+      }
+    },
+    "test": "Send test message",
+    "testing": "Sending...",
+    "testOk": "Test message sent.",
+    "testFailed": "The test message could not be sent.",
+    "recovery": {
+      "title": "Recovery key",
+      "body": "Save it now. It is shown only once."
+    }
   }
 }
