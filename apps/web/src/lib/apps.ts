@@ -86,3 +86,17 @@ export function previewRefLabelKey(provider: PrProvider | null | undefined): "ap
 export function previewBadgeKey(provider: PrProvider | null | undefined): "apps.previewBadgeMr" | "apps.previewBadge" {
   return provider === "gitlab" ? "apps.previewBadgeMr" : "apps.previewBadge";
 }
+
+/**
+ * The deployment a one-tap "Roll back" returns to: the newest SUCCESS row is what is live now, so the target is the
+ * next-older SUCCESS row whose artifact is still retained (and did not run on a server the app has since left).
+ * `deployments` is newest-first, as the API returns it. Null when there is nothing earlier to go back to.
+ */
+export function quickRollbackTarget(
+  deployments: ReadonlyArray<{ id: string; status: DeploymentStatus; rollbackable: boolean; rollbackPredatesMove?: boolean }>,
+): string | null {
+  const live = deployments.findIndex((d) => d.status === "SUCCESS");
+  if (live < 0) return null;
+  const prev = deployments.slice(live + 1).find((d) => d.status === "SUCCESS" && d.rollbackable && !d.rollbackPredatesMove);
+  return prev ? prev.id : null;
+}

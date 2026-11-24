@@ -4,7 +4,7 @@ import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "
 import { useParams, usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, appIconUrl } from "../../../../lib/api";
-import { appStatusDisplay, appSourceSummary, deleteCleanupOptions, webhookUrl } from "../../../../lib/apps";
+import { appStatusDisplay, appSourceSummary, deleteCleanupOptions, quickRollbackTarget, webhookUrl } from "../../../../lib/apps";
 import { statusLabel } from "../../../../lib/status";
 import { linkServices } from "../../../../lib/log-container";
 import { useDeployLogStream } from "../../../../hooks/useDeployLogStream";
@@ -21,6 +21,8 @@ import { RenameModal } from "../../../../components/rename-modal";
 import { ExposeModal } from "../../../../components/expose-modal";
 import { resourceBreadcrumb } from "../../../../lib/breadcrumb";
 import { useTabState } from "../../../../hooks/useTabState";
+import { useIsMobile } from "../../../../hooks/useIsMobile";
+import { AppQuickActions } from "../../../../components/app-quick-actions";
 import { useLeaveGuard } from "../../../../hooks/useUnsavedChanges";
 import { CopyRow } from "../../../../components/copy-row";
 import { Menu } from "../../../../components/menu";
@@ -119,6 +121,17 @@ export default function AppDetailPage() {
   const stop = useMutation({ mutationFn: () => api.stopApp(id), onSuccess: lifecycleDone("apps.stopped"), onError: (e) => toast(errMsg(e), "error") });
   const start = useMutation({ mutationFn: () => api.startApp(id), onSuccess: lifecycleDone("apps.started"), onError: (e) => toast(errMsg(e), "error") });
   const restart = useMutation({ mutationFn: () => api.restartApp(id), onSuccess: lifecycleDone("apps.restarted"), onError: (e) => toast(errMsg(e), "error") });
+  // One-tap rollback (mobile quick actions): back to the previous good version, then watch it on its deployment page.
+  const quickRollback = useMutation({
+    mutationFn: (deploymentId: string) => api.rollbackApp(id, deploymentId),
+    onSuccess: (r) => {
+      invalidate();
+      toast(t("apps.quickRolledBack", { name: appData?.name ?? "" }), "success");
+      if (r?.id) router.push(`/apps/${id}/deployments/${r.id}`);
+    },
+    onError: (e) => toast(errMsg(e), "error"),
+  });
+  const isMobile = useIsMobile();
   // Read at mutate() time (a stable ref, not a captured state value) so the keep-volumes choice the user
   // ticked in the confirm dialog isn't lost to a stale closure inside the async handler.
   const keepVolumes = useRef(false);
@@ -367,8 +380,11 @@ export default function AppDetailPage() {
     ),
   };
 
+  const rollbackTarget = quickRollbackTarget(deployments);
+  // Room under the content for the fixed phone action bar (3 x 44px buttons + padding), so nothing hides behind it.
+  const quickBar = isMobile && (appData.canWrite || tab !== "logs");
   return (
-    <div style={{ padding: "var(--page-pad)" }}>
+    <div style={{ padding: "var(--page-pad)", paddingBottom: quickBar ? "calc(84px + env(safe-area-inset-bottom, 0px))" : undefined }}>
       <PageHeader
         breadcrumb={resourceBreadcrumb({ projectId: appData.projectId, projectName: appData.projectName, projectColor, team: teamCrumbFor(appData.teamId), environmentId: appData.environmentId, environmentName: appData.environmentName, name: appData.name, projectsLabel: t("nav.projects"), fallbackLabel: t("nav.apps"), fallbackHref: "/apps" })}
         title={appData.name}
@@ -580,6 +596,21 @@ export default function AppDetailPage() {
       )}
 
       {tab === "files" && appData.canWrite && <FilesTab id={id} app={appData} />}
+
+      {quickBar && (
+        <AppQuickActions
+          canWrite={appData.canWrite}
+          running={isRunning}
+          locked={moveLocked}
+          lockTitle={lockTitle}
+          restartPending={restart.isPending}
+          rollbackPending={quickRollback.isPending}
+          canRollback={rollbackTarget !== null}
+          onRestart={() => restart.mutate()}
+          onRollback={async () => { if (rollbackTarget && (await confirm({ body: t("apps.rollbackConfirm"), danger: true }))) quickRollback.mutate(rollbackTarget); }}
+          onLogs={() => setTab("logs")}
+        />
+      )}
     </div>
   );
 }

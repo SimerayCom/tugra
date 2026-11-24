@@ -49,6 +49,8 @@ function show() {
 
 describe("app page while the app is being moved", () => {
   beforeEach(() => {
+    // jsdom has no matchMedia; the page reads it (useIsMobile) to decide on the phone quick-action bar. Desktop stub.
+    window.matchMedia = vi.fn().mockReturnValue({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }) as unknown as typeof window.matchMedia;
     vi.spyOn(api, "getDeployments").mockResolvedValue([]);
     vi.spyOn(api, "listServers").mockResolvedValue([]);
     vi.spyOn(api, "getAppMoves").mockResolvedValue([]);

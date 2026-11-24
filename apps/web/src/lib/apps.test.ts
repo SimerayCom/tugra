@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { appColor, appStatusDisplay, deleteCleanupOptions, appSourceSummary, appUrl, deploymentColor, shortDigest, webhookUrl, previewBadgeKey, previewRefLabelKey, imageUpdateChip, imageUpdateErrorKey } from "./apps";
+import { appColor, appStatusDisplay, deleteCleanupOptions, appSourceSummary, appUrl, deploymentColor, shortDigest, webhookUrl, previewBadgeKey, previewRefLabelKey, imageUpdateChip, imageUpdateErrorKey, quickRollbackTarget } from "./apps";
 
 describe("app helpers", () => {
   it("maps app status to a color", () => {
@@ -108,5 +108,21 @@ describe("preview labels", () => {
     }
     expect(previewBadgeKey("gitlab")).toBe("apps.previewBadgeMr");
     expect(previewBadgeKey(null)).toBe("apps.previewBadge");
+  });
+});
+
+describe("quickRollbackTarget", () => {
+  const d = (id: string, status: "SUCCESS" | "FAILED" | "RUNNING", rollbackable = true, rollbackPredatesMove = false) => ({ id, status, rollbackable, rollbackPredatesMove });
+
+  it("picks the next-older successful, retained deployment (newest-first input)", () => {
+    expect(quickRollbackTarget([d("c", "SUCCESS"), d("b", "SUCCESS"), d("a", "SUCCESS")])).toBe("b");
+  });
+  it("skips failed rows and rows whose artifact is gone or predates a move", () => {
+    expect(quickRollbackTarget([d("e", "FAILED"), d("d", "SUCCESS"), d("c", "FAILED"), d("b", "SUCCESS", false), d("m", "SUCCESS", true, true), d("a", "SUCCESS")])).toBe("a");
+  });
+  it("is null with nothing earlier, or nothing live", () => {
+    expect(quickRollbackTarget([d("a", "SUCCESS")])).toBeNull();
+    expect(quickRollbackTarget([d("x", "FAILED"), d("y", "RUNNING")])).toBeNull();
+    expect(quickRollbackTarget([])).toBeNull();
   });
 });
