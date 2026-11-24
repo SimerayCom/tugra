@@ -472,6 +472,7 @@
   "ipPinFailed": "Could not set the main address.",
   "agentFleetBehind": "{n}/{total} agents are on an older version",
   "agentFleetAuto": "They are updating one by one.",
+  "agentFleetWaitingHub": "The hub updates first, then the agents follow.",
   "agentFleetManual": "Update them all in one click.",
   "agentFleetUpdateAll": "Update all",
   "agentFleetSent": "Update sent to {n} agents",

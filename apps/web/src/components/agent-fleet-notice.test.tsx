@@ -21,6 +21,7 @@ const status = (over: Partial<AgentFleetStatus> = {}): AgentFleetStatus => ({
   outdated: 3,
   outdatedServerIds: ["a", "b", "c"],
   autoUpdate: false,
+  hubBehind: false,
   ...over,
 });
 const res = (over: Partial<AgentUpdateResponse> = {}): AgentUpdateResponse => ({ status: "ok", total: 3, sent: 3, offline: 0, skipped: 0, results: [], ...over });
@@ -47,6 +48,13 @@ describe("AgentFleetNotice", () => {
     vi.spyOn(api, "getAgentFleetStatus").mockResolvedValue(status({ autoUpdate: true }));
     renderIt();
     expect(await screen.findByText("They are updating one by one.")).toBeTruthy();
+  });
+
+  it("does not claim the agents are updating while the hub itself is still behind", async () => {
+    vi.spyOn(api, "getAgentFleetStatus").mockResolvedValue(status({ autoUpdate: true, hubBehind: true }));
+    renderIt();
+    expect(await screen.findByText("The hub updates first, then the agents follow.")).toBeTruthy();
+    expect(screen.queryByText("They are updating one by one.")).toBeNull();
   });
 
   it("renders nothing when every agent is current (or the status is unavailable)", async () => {

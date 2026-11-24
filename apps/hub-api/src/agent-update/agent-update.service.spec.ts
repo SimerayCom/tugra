@@ -20,7 +20,7 @@ function make(over: {
   sent?: boolean;
   online?: boolean;
   agentImage?: string;
-  hub?: { current: string; autoUpdate: boolean };
+  hub?: { current: string; autoUpdate: boolean; updateAvailable?: boolean };
 }) {
   const audit = { log: jest.fn().mockResolvedValue(undefined) } as unknown as AuditService;
   const requirePermission = jest.fn().mockResolvedValue(undefined);
@@ -170,7 +170,14 @@ describe("AgentUpdateService.fleetStatus (the '3/24 agents' notice)", () => {
       outdated: 2,
       outdatedServerIds: ["s1", "s3"],
       autoUpdate: true,
+      hubBehind: false,
     });
+  });
+
+  it("flags a hub that is behind the published release so the notice does not claim agents are updating", async () => {
+    const perms = new Map([["t1", new Set(["servers:manage"])]]);
+    const { svc } = make({ servers: rows, perms, hub: { current: "0.2.0", autoUpdate: true, updateAvailable: true } });
+    expect(await svc.fleetStatus("u1")).toMatchObject({ autoUpdate: true, hubBehind: true });
   });
 
   it("queries only manageable teams, remote servers with an enrolled agent (team scoping)", async () => {

@@ -790,6 +790,7 @@ export interface AgentFleetStatus {
   outdated: number;
   outdatedServerIds: string[];
   autoUpdate: boolean; // "Apply updates automatically" is on: the hub rolls them out one by one by itself
+  hubBehind: boolean; // a newer release is published than the hub runs: the hub updates first, agents follow
 }
 export interface AgentUpdateResponse {
   status: "ok" | "unconfigured" | "error" | "hub-behind"; // unconfigured = no signed manifest; error = couldn't verify it; hub-behind = a newer release is published: update the hub first

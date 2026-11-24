@@ -40,6 +40,8 @@ export interface AgentFleetStatus {
   outdatedServerIds: string[];
   /** "Apply updates automatically" is on, so the hub rolls agents out by itself once it is on the latest release. */
   autoUpdate: boolean;
+  /** A newer release is published than the one this hub runs: the hub goes first, agents follow afterwards. */
+  hubBehind: boolean;
 }
 
 type FleetRow = { id: string; teamId: string; arch: string | null; agentVersion: string | null };
@@ -126,10 +128,10 @@ export class AgentUpdateService {
    * manifest fetch, so the panel can poll it freely. Servers of teams the caller cannot manage are never counted.
    */
   async fleetStatus(userId: string): Promise<AgentFleetStatus> {
-    const { current, autoUpdate } = await this.update.getStatus();
+    const { current, autoUpdate, updateAvailable } = await this.update.getStatus();
     const servers = await this.managedAgents(userId);
     const outdated = outdatedAgents(servers, current);
-    return { current, total: servers.length, outdated: outdated.length, outdatedServerIds: outdated.map((s) => s.id), autoUpdate };
+    return { current, total: servers.length, outdated: outdated.length, outdatedServerIds: outdated.map((s) => s.id), autoUpdate, hubBehind: updateAvailable === true };
   }
 
   /** One click: update every outdated agent the caller manages to the hub's release (same signed, digest-pinned path

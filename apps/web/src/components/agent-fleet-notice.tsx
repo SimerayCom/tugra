@@ -45,7 +45,7 @@ export function AgentFleetNotice() {
     >
       <div style={{ minWidth: 200 }}>
         <div style={{ fontSize: 14, fontWeight: 600 }}>{t("servers.agentFleetBehind", { n: data.outdated, total: data.total })}</div>
-        <div style={{ fontSize: 12, color: "var(--c-tx3)" }}>{t(data.autoUpdate ? "servers.agentFleetAuto" : "servers.agentFleetManual")}</div>
+        <div style={{ fontSize: 12, color: "var(--c-tx3)" }}>{t(!data.autoUpdate ? "servers.agentFleetManual" : data.hubBehind ? "servers.agentFleetWaitingHub" : "servers.agentFleetAuto")}</div>
       </div>
       <Btn variant="ghost" style={{ minHeight: 44 }} onClick={() => updateAll.mutate()} loading={updateAll.isPending} disabled={updateAll.isPending}>
         {t("servers.agentFleetUpdateAll")}
