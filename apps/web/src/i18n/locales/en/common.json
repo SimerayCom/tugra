@@ -11,6 +11,8 @@
   "deletedNamed": "{name} deleted",
   "revokedNamed": "{name} revoked",
   "dismiss": "Dismiss",
+  "undo": "Undo",
+  "somethingWentWrong": "Something went wrong.",
   "unsaved": "Unsaved changes",
   "leaveUnsavedTitle": "Unsaved changes",
   "leaveUnsavedBody": "You have unsaved changes — leave without saving?",

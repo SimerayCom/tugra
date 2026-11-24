@@ -489,5 +489,11 @@
   "require2faSwitch": "Require two-factor authentication",
   "require2faNeedsOwn": "Turn on 2FA for your own account first.",
   "require2faSaved": "Saved",
-  "require2faSaveFailed": "Couldn't save the setting."
+  "require2faSaveFailed": "Couldn't save the setting.",
+  "savedThem": "I've saved them",
+  "uiModeConfirmTitle": "Switch to Home mode?",
+  "uiModeConfirmBodyServers": "You have {servers}. Home mode shows only this machine and hides the Servers page.",
+  "uiModeConfirmBodyTeams": "You have {servers} and {teams}. Home mode shows only this machine and hides the Servers page and team views.",
+  "uiModeConfirmAction": "Switch to Home",
+  "uiModeUndone": "Back to {mode} mode"
 }

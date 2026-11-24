@@ -31,6 +31,7 @@ import { useConfirm } from "../../../components/confirm";
 import { useToast } from "../../../components/toast";
 import { Modal } from "../../../components/modal";
 import { Tabs } from "../../../components/tabs-nav";
+import { useUiModeSwitch } from "../../../hooks/useUiModeSwitch";
 import { ConfigLayout } from "../../../components/config-layout";
 import { useTabState } from "../../../hooks/useTabState";
 
@@ -286,13 +287,7 @@ function AccountCard() {
 
 function UiModeCard() {
   const t = useT();
-  const { user, reload } = useAuth();
-  const toast = useToast();
-  const mode = user?.uiMode ?? "fleet";
-  const set = useMutation({
-    mutationFn: (uiMode: "fleet" | "home") => api.updateProfile({ uiMode }),
-    onSuccess: async () => { await reload(); toast(t("settings.uiModeSaved"), "success"); },
-  });
+  const { mode, switchTo, pending } = useUiModeSwitch();
   const opts: { value: "fleet" | "home"; label: string; desc: string; icon: typeof Home }[] = [
     { value: "fleet", label: t("settings.uiModeFleet"), desc: t("settings.uiModeFleetDesc"), icon: Server },
     { value: "home", label: t("settings.uiModeHome"), desc: t("settings.uiModeHomeDesc"), icon: Home },
@@ -308,8 +303,8 @@ function UiModeCard() {
           return (
             <button
               key={o.value}
-              onClick={() => { if (!active) set.mutate(o.value); }}
-              disabled={set.isPending}
+              onClick={() => { if (!active) void switchTo(o.value); }}
+              disabled={pending}
               aria-pressed={active}
               style={{
                 flex: "1 1 200px", textAlign: "left", cursor: active ? "default" : "pointer",
