@@ -6,6 +6,7 @@
   "connect": {
     "title": "Connect to Beszel",
     "desc": "Sign in with the account you use in Beszel. Nothing there is changed.",
+    "team": "Team",
     "url": "Beszel address",
     "urlPlaceholder": "https://beszel.example.com",
     "identity": "Email or username",
@@ -130,7 +131,8 @@
     "button": "Import",
     "applying": "Importing…",
     "nothing": "Pick at least one part to import.",
-    "stale": "Beszel or your team changed since the preview. Review it again."
+    "stale": "Beszel or your team changed since the preview. Review it again.",
+    "refresh": "Refresh preview"
   },
   "parts": {
     "alerts": "Import alert rules",

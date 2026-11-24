@@ -145,6 +145,11 @@ describe("BeszelImport", () => {
     await screen.findByText(messages.review.title);
     fireEvent.click(screen.getByRole("button", { name: messages.apply.button }));
     expect((await screen.findByText(messages.apply.stale))).toBeTruthy();
+    const before = (api.beszelPreview as unknown as { mock: { calls: unknown[] } }).mock.calls.length;
+    fireEvent.click(screen.getByRole("button", { name: messages.apply.refresh }));
+    await waitFor(() => expect((api.beszelPreview as unknown as { mock: { calls: unknown[] } }).mock.calls.length).toBe(before + 1));
+    expect(api.beszelPreview).toHaveBeenLastCalledWith({ sessionId: "s1" });
+    await waitFor(() => expect(screen.queryByText(messages.apply.stale)).toBeNull());
   });
 
   it("offers a kept connection and previews it without a sign-in", async () => {

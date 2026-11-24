@@ -93,8 +93,9 @@ export function BeszelImport() {
   const toast = useToast();
   const { data: teams = [] } = useQuery({ queryKey: ["teams"], queryFn: () => api.listTeams() });
   const { data: servers = [] } = useQuery({ queryKey: ["servers"], queryFn: () => api.listServers() });
-  // The import belongs to the team of the first server you can write to (else your first team), like the fleet importer.
-  const teamId = servers.find((s) => s.canWrite)?.teamId ?? teams[0]?.id ?? "";
+  // Default: the team of the first server you can write to (else your first team); with several teams you can pick.
+  const [pickedTeam, setPickedTeam] = useState("");
+  const teamId = teams.some((x) => x.id === pickedTeam) ? pickedTeam : (servers.find((s) => s.canWrite)?.teamId ?? teams[0]?.id ?? "");
 
   const [baseUrl, setBaseUrl] = useState("");
   const [identity, setIdentity] = useState("");
@@ -211,6 +212,18 @@ export function BeszelImport() {
             connectM.mutate();
           }}
         >
+          {teams.length > 1 && (
+            <>
+              <Field label={t("beszelImport.connect.team")} htmlFor="bz-team">
+                <select id="bz-team" style={{ ...fieldStyle, minHeight: 44 }} value={teamId} onChange={(e) => setPickedTeam(e.target.value)}>
+                  {teams.map((x) => (
+                    <option key={x.id} value={x.id}>{x.name}</option>
+                  ))}
+                </select>
+              </Field>
+              <div style={{ height: 12 }} />
+            </>
+          )}
           <Field label={t("beszelImport.connect.url")} htmlFor="bz-url">
             <input id="bz-url" style={fieldStyle} value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder={t("beszelImport.connect.urlPlaceholder")} inputMode="url" autoComplete="off" spellCheck={false} required />
           </Field>
@@ -368,6 +381,9 @@ export function BeszelImport() {
         <Btn loading={applyM.isPending} disabled={noneSelected || refreshing} onClick={() => applyM.mutate()}>
           {applyM.isPending ? t("beszelImport.apply.applying") : t("beszelImport.apply.button")}
         </Btn>
+        {applyM.isError && (applyM.error as { status?: number }).status === 409 && (
+          <Btn variant="ghost" loading={refreshing} onClick={() => { applyM.reset(); previewM.mutate({ sid: sessionId, overrides }); }}>{t("beszelImport.apply.refresh")}</Btn>
+        )}
         <Btn variant="ghost" onClick={reset}>{t("beszelImport.result.again")}</Btn>
         {noneSelected && <span style={hint}>{t("beszelImport.apply.nothing")}</span>}
       </div>
