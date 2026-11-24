@@ -22,8 +22,11 @@ export function ApiTokenReveal({ token, mcp, onDone }: { token: string; mcp: boo
   const [copied, setCopied] = useState<"token" | "command" | null>(null);
   const [saved, setSaved] = useState(false);
   // The hub's public origin (the SPA's own origin can differ in the two-port quick start).
-  const { data: origin } = useQuery({ queryKey: ["hubPublicUrl"], queryFn: () => ensureHubPublicUrl(), enabled: mcp, staleTime: Infinity });
+  const { data: origin, isFetched } = useQuery({ queryKey: ["hubPublicUrl"], queryFn: () => ensureHubPublicUrl(), enabled: mcp, staleTime: Infinity });
   const command = claudeMcpAddCommand(origin ?? hubPublicUrl(), token);
+  // Never offer a copyable command until the hub origin has resolved (the SPA origin may be the wrong port).
+  // Once the lookup has settled (even empty) the best-known origin is used.
+  const commandReady = isFetched;
 
   useEffect(() => {
     setCopied(null);
@@ -66,8 +69,8 @@ export function ApiTokenReveal({ token, mcp, onDone }: { token: string; mcp: boo
           <div style={{ fontSize: 13, fontWeight: 600 }}>{t("settings.tokenMcpCommandTitle")}</div>
           <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 6 }}>{t("settings.tokenMcpCommandHint")}</div>
           <div style={box}>
-            <code className="mono" aria-label={t("settings.tokenMcpCommandLabel")} style={code}>{command}</code>
-            <Btn variant={copied === "command" ? "ghost" : "primary"} onClick={() => void copy("command")} style={{ minHeight: 44 }}>
+            <code className="mono" aria-label={t("settings.tokenMcpCommandLabel")} style={code}>{commandReady ? command : t("common.loading")}</code>
+            <Btn variant={copied === "command" ? "ghost" : "primary"} disabled={!commandReady} onClick={() => void copy("command")} style={{ minHeight: 44 }}>
               {copied === "command" ? t("settings.tokenCopied") : t("settings.tokenCopyCommand")}
             </Btn>
           </div>

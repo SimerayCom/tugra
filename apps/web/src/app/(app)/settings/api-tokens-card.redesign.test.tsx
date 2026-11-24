@@ -129,6 +129,9 @@ describe("Token for MCP preset", () => {
     await waitFor(() => expect(createFn).toHaveBeenCalledWith("MCP", ["read"], 90));
 
     const cmd = await screen.findByLabelText("Command to add this hub to Claude Code");
+    // The command (and its Copy button) only appear once the hub's public origin has resolved.
+    await waitFor(() => expect(cmd.textContent).toMatch(/^claude mcp add /));
+    expect((screen.getByRole("button", { name: "Copy command" }) as HTMLButtonElement).disabled).toBe(false);
     expect(cmd.textContent).toMatch(/^claude mcp add --transport http tugra https?:\/\/[^ ]+\/api\/v1\/mcp --header "Authorization: Bearer tugra_pat_MCPTOKEN"$/);
     fireEvent.click(screen.getByRole("button", { name: "Copy command" }));
     await waitFor(() => expect(h.copy).toHaveBeenCalledWith(cmd.textContent));
