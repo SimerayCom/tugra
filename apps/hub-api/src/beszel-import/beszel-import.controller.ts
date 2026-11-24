@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, HttpCode, Param, Post, UseGuards } from "@nestjs/common";
+import { Body, Controller, Delete, Get, HttpCode, Param, Post, UseGuards } from "@nestjs/common";
 import { Throttle } from "@nestjs/throttler";
 import { ApiSecurity, ApiTags } from "@nestjs/swagger";
 import { ApiZodBody } from "../openapi/openapi";
@@ -29,6 +29,12 @@ export class BeszelImportController {
   @ApiZodBody(BeszelConnectSchema)
   connect(@CurrentUser() user: AuthUser, @Body(new ZodValidationPipe(BeszelConnectSchema)) body: BeszelConnectInput) {
     return this.beszel.connect(user.userId, body);
+  }
+
+  /** The caller's kept Beszel connections (opt-in "keep credentials"), newest first. No secret is returned. */
+  @Get("sessions")
+  list(@CurrentUser() user: AuthUser) {
+    return this.beszel.listKept(user.userId);
   }
 
   /** Dry-run: systems and how they match Tugra servers, alert rules, channels and the history that would be imported. */

@@ -116,6 +116,21 @@ describe("BeszelImportService session guards", () => {
   });
 });
 
+describe("BeszelImportService.listKept", () => {
+  it("lists only the caller's own kept, unexpired connections the member may still use, without secrets", async () => {
+    const t = setup();
+    t.prisma.importSession.findMany = jest.fn().mockResolvedValue([
+      { id: "k1", teamId: "t1", baseUrl: "https://beszel.example.com/path", expiresAt: new Date(NOW + 1000) },
+      { id: "k2", teamId: "gone", baseUrl: "https://other.example.com", expiresAt: new Date(NOW + 1000) },
+    ]);
+    t.access.membershipPermissions.mockImplementation(async (_u: string, team: string) => (team === "t1" ? new Set(["monitors"]) : null));
+    const out = await t.svc.listKept("u1");
+    expect(out).toEqual([{ sessionId: "k1", teamId: "t1", host: "beszel.example.com", expiresAt: expect.any(Date) }]);
+    expect(t.prisma.importSession.findMany.mock.calls[0][0].where).toMatchObject({ actorId: "u1", sourceKind: "beszel", scopeKey: "keep", status: "active" });
+    expect(JSON.stringify(out)).not.toContain("enc");
+  });
+});
+
 describe("BeszelImportService.preview", () => {
   it("returns the dry-run without writing anything and without a secret", async () => {
     const { svc, notifications, monitors, prisma } = setup();

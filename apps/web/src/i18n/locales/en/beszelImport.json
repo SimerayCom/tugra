@@ -1,0 +1,157 @@
+{
+  "title": "Import from Beszel",
+  "subtitle": "Bring your servers, alerts and notification channels over from Beszel.",
+  "back": "Back to import",
+  "linkHint": "Coming from Beszel? Import its servers, alerts, channels and history.",
+  "connect": {
+    "title": "Connect to Beszel",
+    "desc": "Sign in with the account you use in Beszel. Nothing there is changed.",
+    "url": "Beszel address",
+    "urlPlaceholder": "https://beszel.example.com",
+    "identity": "Email or username",
+    "password": "Password",
+    "keep": "Keep these credentials for later syncs",
+    "keepHelp": "Off by default: they are encrypted and deleted when the import finishes.",
+    "submit": "Connect",
+    "submitting": "Connecting…"
+  },
+  "saved": {
+    "title": "Saved connections",
+    "desc": "You chose to keep these.",
+    "use": "Use {host}",
+    "forget": "Forget {host}"
+  },
+  "err": {
+    "badCredentials": "Beszel did not accept that email and password.",
+    "notBeszel": "That address does not look like a Beszel hub.",
+    "unreachable": "Tugra could not reach Beszel at that address.",
+    "mfa": "This account needs a second factor. Use an account without one for the import.",
+    "forbidden": "This account is not allowed to read Beszel's data.",
+    "generic": "Could not connect to Beszel."
+  },
+  "review": {
+    "title": "Review",
+    "desc": "Nothing is imported until you press Import.",
+    "chipSystems": "{n} servers matched",
+    "chipAlerts": "{n} alerts",
+    "chipChannels": "{n} channels",
+    "chipHistory": "{n} history points",
+    "refreshing": "Updating…"
+  },
+  "systems": {
+    "title": "Servers",
+    "desc": "Beszel's systems, matched to your Tugra servers by address or name.",
+    "include": "Include {name}",
+    "matchedTo": "Matched to {server}",
+    "leaveOut": "Leave out",
+    "pick": "Match to a Tugra server",
+    "pickLabel": "Tugra server for {name}",
+    "noServers": "Add the server to Tugra first, then preview again.",
+    "by": {
+      "ip": "by address",
+      "hostname": "by hostname",
+      "name": "by name",
+      "manual": "by you"
+    },
+    "unmatched": {
+      "none": "No Tugra server has this address or name.",
+      "ambiguous": "More than one Tugra server fits. Pick one.",
+      "duplicate": "Another Beszel system already matches that server.",
+      "socket": "This is the Beszel hub's own box, reached over a socket."
+    }
+  },
+  "alerts": {
+    "title": "Alert rules",
+    "desc": "Become metric monitors that watch each server once a minute.",
+    "line": "{metric} at {limit}{unit} for {minutes} min",
+    "lineNoLimit": "{name}",
+    "more": "Details",
+    "none": "Beszel has no alert rules for this login.",
+    "metric": {
+      "CPU": "CPU",
+      "MEM": "Memory",
+      "DISK": "Disk",
+      "LOAD1": "Load 1m",
+      "LOAD5": "Load 5m",
+      "LOAD15": "Load 15m",
+      "TEMP": "Temperature",
+      "NET": "Bandwidth"
+    },
+    "outcome": {
+      "create": "Will import",
+      "exists": "Already in Tugra",
+      "covered": "Built in",
+      "skip": "Not carried",
+      "noServer": "Needs a server match"
+    },
+    "coveredHelp": "Tugra already alerts when a server goes offline.",
+    "approx": "Beszel averages over the window. Tugra alerts after that many one-minute checks in a row.",
+    "skip": {
+      "battery": "Battery alerts are not supported.",
+      "gpu": "GPU alerts are not supported.",
+      "cpuState": "CPU I/O wait and steal alerts are not supported.",
+      "container": "Container alerts are not carried.",
+      "systemd": "Service alerts are not carried.",
+      "network": "Network monitor alerts are not carried.",
+      "smart": "Disk health alerts are not carried.",
+      "other": "This alert type is not supported."
+    }
+  },
+  "channels": {
+    "title": "Notification channels",
+    "desc": "Beszel's notification URLs become Tugra channels.",
+    "none": "Beszel has no notification URLs for this login.",
+    "outcome": {
+      "create": "Will import",
+      "exists": "Already in Tugra",
+      "skip": "Not carried"
+    },
+    "skip": {
+      "invalidUrl": "This URL could not be read.",
+      "unsupportedService": "Tugra has no channel for this service yet.",
+      "unsupportedAuth": "Sign-in details on this URL are not supported.",
+      "unsupportedBot": "Only incoming webhooks are supported, not bot tokens.",
+      "duplicate": "Same as another channel above."
+    },
+    "note": {
+      "genericPayload": "Tugra sends its own webhook format, so the receiver may need adjusting.",
+      "multipleChats": "One channel per chat."
+    },
+    "emails": "{n} email addresses in Beszel are not imported. Add an email channel in Tugra and attach it to the monitors."
+  },
+  "history": {
+    "title": "History",
+    "desc": "The last {days} days of CPU, memory, disk, network and load.",
+    "line": "{points} points across {servers} servers.",
+    "none": "Nothing new to import. Tugra already has this period or Beszel has none.",
+    "note": "Temperature history and per-container history stay in Beszel. Existing Tugra data is never overwritten."
+  },
+  "apply": {
+    "button": "Import",
+    "applying": "Importing…",
+    "nothing": "Pick at least one part to import.",
+    "stale": "Beszel or your team changed since the preview. Review it again."
+  },
+  "parts": {
+    "alerts": "Import alert rules",
+    "channels": "Import channels",
+    "history": "Import history"
+  },
+  "result": {
+    "title": "Imported",
+    "monitors": "{created} monitors created, {existing} already existed, {covered} covered by the built-in offline alert.",
+    "channels": "{created} channels created, {existing} already existed.",
+    "history": "{points} history points for {systems} servers.",
+    "failed": "{n} items could not be imported.",
+    "failure": {
+      "rejected": "Tugra refused it (for example a private address).",
+      "error": "Something went wrong."
+    },
+    "dropped": "Your Beszel credentials were deleted.",
+    "kept": "Your Beszel credentials are kept, encrypted.",
+    "forget": "Forget credentials",
+    "monitorsLink": "View monitors",
+    "channelsLink": "View channels",
+    "again": "Start over"
+  }
+}

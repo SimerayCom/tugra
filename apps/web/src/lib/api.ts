@@ -1,4 +1,5 @@
 import type { BulkTransferResponse, TransferPlan } from "./server-transfer";
+import type { BeszelApplyInput, BeszelApplyResult, BeszelConnectResult, BeszelPreview, BeszelSavedConnection } from "./beszel-import";
 import { HUB_UNREACHABLE_CODE, hubUnreachableMessage, isHubDownStatus, isNetworkFailure, reportHubDown } from "./hub-connection";
 import { observeServerDate } from "./clock-skew";
 import type {
@@ -2367,6 +2368,22 @@ export const api = {
   // Store an encrypted, short-lived connection to a source PaaS (the token is never returned/logged).
   importConnect(input: { sourceKind: ImportRemoteKind; teamId: string; baseUrl: string; token: string; scopeLabel?: string }) {
     return apiFetch<ImportSession>("/import/connect", { method: "POST", body: JSON.stringify(input) });
+  },
+  // Beszel import (dry-run preview, then an apply bound to the reviewed preview's hash). Credentials are stored encrypted for the import only.
+  beszelConnect(input: { teamId: string; baseUrl: string; identity: string; password: string; keepCredentials?: boolean }) {
+    return apiFetch<BeszelConnectResult>("/import/beszel/connect", { method: "POST", body: JSON.stringify(input) });
+  },
+  beszelSessions() {
+    return apiFetch<BeszelSavedConnection[]>("/import/beszel/sessions");
+  },
+  beszelPreview(input: { sessionId: string; serverOverrides?: Record<string, string | null> }) {
+    return apiFetch<BeszelPreview>("/import/beszel/preview", { method: "POST", body: JSON.stringify(input) });
+  },
+  beszelApply(input: BeszelApplyInput) {
+    return apiFetch<BeszelApplyResult>("/import/beszel/apply", { method: "POST", body: JSON.stringify(input) });
+  },
+  beszelDisconnect(sessionId: string) {
+    return apiFetch<void>(`/import/beszel/sessions/${encodeURIComponent(sessionId)}`, { method: "DELETE" });
   },
   // The hub's public egress IP for the wizard ("add this to the source's Allowed IPs"); `ip: null` = unknown, never guessed.
   importEgressIp() {

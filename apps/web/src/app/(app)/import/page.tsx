@@ -12,6 +12,9 @@ export default function ImportPage() {
       <p style={{ fontSize: 13, color: "var(--c-tx3)", margin: "0 0 20px" }}>{t("import.subtitle")}</p>
       <ImportWizard />
       <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "16px 0 0" }}>
+        <Link href="/import/beszel">{t("beszelImport.title")}</Link> - {t("beszelImport.linkHint")}
+      </p>
+      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "8px 0 0" }}>
         <Link href="/migrations/objects">{t("objectMigration.title")}</Link> - {t("objectMigration.migrateObjectsHint")}
       </p>
     </div>

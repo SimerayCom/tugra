@@ -1043,6 +1043,7 @@ export interface Monitor {
   serverId: string | null;
   metric: string | null;
   thresholdPct: number | null;
+  thresholdValue?: number | null; // load average, °C or MB/s limit for LOAD*, TEMP and NET metric monitors
   status: MonitorStatus;
   intervalSec: number;
   retries: number;

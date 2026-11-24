@@ -117,6 +117,22 @@ export class BeszelImportService {
     return { sessionId: session.id, expiresAt, host, credentialsKept: keep };
   }
 
+  /** The caller's own kept (opt-in) connections, so a later visit can reuse one without signing in again. */
+  async listKept(userId: string): Promise<Array<{ sessionId: string; teamId: string; host: string; expiresAt: Date }>> {
+    const rows = await this.prisma.importSession.findMany({
+      where: { actorId: userId, sourceKind: BESZEL_SOURCE_KIND, scopeKey: KEEP_MARK, status: "active", expiresAt: { gt: new Date() } },
+      orderBy: { createdAt: "desc" },
+      select: { id: true, teamId: true, baseUrl: true, expiresAt: true },
+    });
+    const out: Array<{ sessionId: string; teamId: string; host: string; expiresAt: Date }> = [];
+    for (const r of rows) {
+      // a member removed from the team since, or one who lost every import permission, no longer sees it
+      const perms = await this.access.membershipPermissions(userId, r.teamId);
+      if (perms && (perms.has("monitors") || perms.has("integrations") || perms.has("servers:ops"))) out.push({ sessionId: r.id, teamId: r.teamId, host: this.hostOf(r.baseUrl), expiresAt: r.expiresAt });
+    }
+    return out;
+  }
+
   /** Drop the stored credentials now. Only the member who connected may. */
   async disconnect(userId: string, sessionId: string): Promise<void> {
     const s = await this.requireSession(userId, sessionId, false);
