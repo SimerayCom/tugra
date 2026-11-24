@@ -46,7 +46,7 @@ function setup(opts: { perms?: string[] | null; snap?: BeszelSnapshot; session?:
   const crypto: any = { encrypt: jest.fn((s: string) => `enc(${s})`), decrypt: jest.fn(() => JSON.stringify({ identity: "me@example.com", password: "pw" })) };
   const audit: any = { log: jest.fn().mockResolvedValue(undefined) };
   const config: any = { get: jest.fn().mockReturnValue(undefined) };
-  const notifications: any = { create: jest.fn().mockResolvedValue({ id: "ch-new" }) };
+  const notifications: any = { create: jest.fn().mockResolvedValue({ id: "ch-new" }), update: jest.fn().mockResolvedValue({}) };
   const monitors: any = { create: jest.fn().mockResolvedValue({ id: "m-new" }) };
   const svc = new BeszelImportService(prisma, crypto, access, audit, config, notifications, monitors, () => source);
   return { svc, source, prisma, access, crypto, audit, notifications, monitors };
@@ -202,7 +202,7 @@ describe("BeszelImportService.apply", () => {
 
   it("reuses an equal channel and an existing monitor instead of duplicating (idempotent re-run)", async () => {
     const t = setup();
-    t.prisma.notificationChannel.findMany.mockResolvedValue([{ id: "ch-old", type: "telegram", configEnc: "x" }]);
+    t.prisma.notificationChannel.findMany.mockResolvedValue([{ id: "ch-old", type: "telegram", configEnc: "x", eventTypes: [] }]);
     t.crypto.decrypt.mockImplementation((s: string) => (s === "x" ? JSON.stringify({ chatId: "@ops", botToken: "1:AAA" }) : JSON.stringify({ identity: "a", password: "b" })));
     t.prisma.monitor.findMany.mockResolvedValue([{ serverId: "srv1", metric: "CPU", auto: false, thresholdPct: 80, thresholdValue: null, retries: 4 }]);
     const p = await t.svc.preview("u1", { sessionId: "sess1" });
@@ -211,6 +211,8 @@ describe("BeszelImportService.apply", () => {
     expect(t.monitors.create).not.toHaveBeenCalled();
     expect(r.channels.existing).toBe(1);
     expect(r.monitors.existing).toBe(1);
+    // the reused channel is subscribed to server down/up so the covered Status alert reaches it
+    expect(t.notifications.update).toHaveBeenCalledWith("u1", "ch-old", { eventTypes: ["server_offline", "server_online"] });
   });
 
   it("reports a rejected channel or monitor without echoing the reason and keeps going", async () => {

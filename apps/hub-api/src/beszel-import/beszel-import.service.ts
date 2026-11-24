@@ -17,6 +17,7 @@ import type { BeszelApplyInput, BeszelConnectInput, BeszelPreviewInput } from ".
 export const BESZEL_SOURCE_KIND = "beszel";
 const SESSION_TTL_MS = 60 * 60_000;
 const KEPT_TTL_MS = 30 * 86_400_000;
+const STATUS_EVENTS = ["server_offline", "server_online"] as const;
 const KEEP_MARK = "keep";
 
 /** The part of {@link BeszelClient} the service uses, so a spec can hand in a fake. */
@@ -175,8 +176,19 @@ export class BeszelImportService {
           continue;
         }
         if (c.outcome === "exists") {
-          const id = existing.get(ctx.internals.channelKeys.get(c.index) ?? "");
-          if (id) channelIds.push(id);
+          const found = existing.get(ctx.internals.channelKeys.get(c.index) ?? "");
+          if (found) {
+            channelIds.push(found.id);
+            // a reused channel must also hear about a server going down, since the Status alert is covered by that
+            const missing = STATUS_EVENTS.filter((e) => !found.eventTypes.includes(e));
+            if (ctx.internals.hasStatusAlert && input.parts.channels && missing.length) {
+              try {
+                await this.notifications.update(userId, found.id, { eventTypes: [...found.eventTypes, ...missing] });
+              } catch {
+                result.failures.push({ kind: "channel", ref: String(c.index), reason: "error" });
+              }
+            }
+          }
           result.channels.existing++;
           continue;
         }
@@ -190,7 +202,7 @@ export class BeszelImportService {
             type: cfg.type,
             teamId: session.teamId,
             config: cfg.config,
-            eventTypes: ctx.internals.hasStatusAlert ? ["server_offline", "server_online"] : [],
+            eventTypes: ctx.internals.hasStatusAlert ? [...STATUS_EVENTS] : [],
           });
           channelIds.push(created.id);
           result.channels.created++;
@@ -313,12 +325,12 @@ export class BeszelImportService {
     return { session, source };
   }
 
-  private async existingChannels(teamId: string): Promise<Map<string, string>> {
-    const rows = await this.prisma.notificationChannel.findMany({ where: { teamId }, select: { id: true, type: true, configEnc: true } });
-    const out = new Map<string, string>();
+  private async existingChannels(teamId: string): Promise<Map<string, { id: string; eventTypes: string[] }>> {
+    const rows = await this.prisma.notificationChannel.findMany({ where: { teamId }, select: { id: true, type: true, configEnc: true, eventTypes: true } });
+    const out = new Map<string, { id: string; eventTypes: string[] }>();
     for (const r of rows) {
       try {
-        out.set(channelKey(r.type, JSON.parse(this.crypto.decrypt(r.configEnc)) as Record<string, unknown>), r.id);
+        out.set(channelKey(r.type, JSON.parse(this.crypto.decrypt(r.configEnc)) as Record<string, unknown>), { id: r.id, eventTypes: r.eventTypes ?? [] });
       } catch {
         // a channel whose config cannot be read is never matched
       }
