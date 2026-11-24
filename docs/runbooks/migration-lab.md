@@ -296,8 +296,8 @@ nothing is stopped.
   it through the throttle proxy: the "L1c" run of the big database on a slow link.
 - **18**: the `layout` gate refuses with its exact text **after** the migrator stopped the source, and the migrator **restarts** it (asserted:
   the source is running again). The lane the gate leaves is the logical dump: a second op in `--data-mode dump` runs `--arms databases` and
-  fails `dump-too-big` (the hub's artifact cap is 256 MiB of gzip): **that is the DEFAULT policy (`largeDbMode` `refuse`), and it stays the
-  expectation.** The lane for exactly this database is `stream-logical`: a fresh op in `--data-mode stream` on the same running source
+  fails `dump-too-big` (the single-file route's cap is 256 MiB of gzip): **that stays the expectation of a bare importer op.** A guided run's
+  default `largeDbMode` is `stream-logical`, and that is the lane for exactly this database: a fresh op in `--data-mode stream` on the same running source
   (never stopped, asserted by its `StartedAt`) runs `--arms volumes`, with a measuring dry run first. The destination the hub starts is
   compared by fingerprint (`L9_STREAM=0` skips the leg; the copy time is `L9_STREAM_SECONDS`). **Until the hub keeps a PostgreSQL 18
   destination (`vx-dest-gate.ts` `dumpDestLayout` refuses it), this leg fails with a `PRODUCT FINDING` line naming that gate**: the
@@ -427,8 +427,7 @@ and ACL of `lab_own` are not: **that is a product finding, the dump lanes do not
 1. **The biggest database has an automatic physical lane only on PostgreSQL 16 and 17** (L9). On 18 the layout gate refuses the copy and
    the artifact route is over the cap; the lane for it is `stream-logical` (L9, L15), which restores into a new PostgreSQL 18 destination
    (L15, green since run 5). Which version it runs is an owner fact, asked before the wave that contains it.
-2. **A MariaDB over 256 MiB of dump has no automatic lane under the default policy** (L10), and the 1.8 GB one is over it; `stream-logical`
-   carries it (L10, L15).
+2. **A MariaDB over 256 MiB of dump is carried by the streamed lane, which a guided run now chooses by default** (`largeDbMode` `stream-logical`; L10, L15). A bare importer op still stops at the single-file cap.
 3. **Volume size is not dump size** (L10): decide on the dump.
 4. **Bind-mounted data is invisible to docker's inventory** (L11) and only `--allow-bind` measures it. Its size feeds the downtime window.
 5. **A running source is the normal case** (L12): `--stop-source` stops exactly one container, an ambiguous pair is refused untouched, a

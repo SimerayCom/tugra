@@ -122,7 +122,7 @@ export function classifyDbDataPlane(engine: string): { dataPlane: DbDataPlane; r
   if ((MIGRATOR_ENGINES as string[]).includes(engine)) {
     return {
       dataPlane: "one-click",
-      reason: `migrator-assisted: run the migrator on the source host to stream the dump (per-database ~${DEFAULT_CAP_MIB} MiB cap by default)`,
+      reason: `migrator-assisted: run the migrator on the source host; a database of any size moves (up to ~${DEFAULT_CAP_MIB} MiB as one dump, bigger as a checked stream in a guided run)`,
     };
   }
   return { dataPlane: "manual", reason: "config imports, but the data has no automated dump yet — dump and restore it manually" };

@@ -29,6 +29,7 @@ import { mintArtifactUrl, verifyArtifactSig } from "./migration-artifact";
 import {
   ArtifactTooLargeError,
   assertDiskHeadroom,
+  stagingFullMessage,
   cleanupArtifact,
   DEFAULT_MAX_ARTIFACT_BYTES,
   discardPart,
@@ -242,9 +243,9 @@ export class MigrationIngestService {
       const len = Number(req.headers["content-length"]);
       if (!Number.isFinite(len) || len <= 0) throw new HttpException("Content-Length is required", HttpStatus.LENGTH_REQUIRED);
       const cap = this.maxBytes();
-      if (len > cap) throw new PayloadTooLargeException(`artifact exceeds the ${cap}-byte cap (larger artifacts arrive in S6)`);
+      if (len > cap) throw new PayloadTooLargeException(`this dump is over the ${cap}-byte limit of the single-file route; a guided migration run moves a database of any size as a checked stream`);
       await assertDiskHeadroom(len).catch((e) => {
-        if ((e as { code?: string }).code === "ENOSPC") throw new HttpException("insufficient staging storage", 507);
+        if ((e as { code?: string }).code === "ENOSPC") throw new HttpException(stagingFullMessage(e), 507);
         throw e;
       });
 
@@ -531,7 +532,7 @@ export class MigrationIngestService {
       const cap = maxVolumeBytes();
       if (len > cap) throw new PayloadTooLargeException(`the volume exceeds the ${cap}-byte cap — copy a larger volume manually (tar + rsync/scp) before the first deploy`);
       await assertDiskHeadroom(len).catch((e) => {
-        if ((e as { code?: string }).code === "ENOSPC") throw new HttpException("insufficient staging storage", 507);
+        if ((e as { code?: string }).code === "ENOSPC") throw new HttpException(stagingFullMessage(e), 507);
         throw e;
       });
 

@@ -69,6 +69,15 @@ export function looksGzip(head: number[]): boolean {
   return head[0] === 0x1f && head[1] === 0x8b;
 }
 
+/** The sentence of a 507 for a staging disk that is too small: what the hub has and what it needs, when known. Secret-free. */
+export function stagingFullMessage(e: unknown): string {
+  const x = e as { needBytes?: unknown; freeBytes?: unknown };
+  const gib = (n: number) => `${(n / 1024 ** 3).toFixed(1)} GiB`;
+  return typeof x?.needBytes === "number" && typeof x?.freeBytes === "number"
+    ? `insufficient staging storage: the hub has ${gib(x.freeBytes)} free and needs about ${gib(x.needBytes)}`
+    : "insufficient staging storage";
+}
+
 /** Refuse to stage when free disk is under 2x the declared length (leaves headroom for the restore read). */
 export async function assertDiskHeadroom(declaredBytes: number): Promise<void> {
   try {
@@ -77,7 +86,7 @@ export async function assertDiskHeadroom(declaredBytes: number): Promise<void> {
     const free = Number(fs.bavail) * Number(fs.bsize);
     if (free < declaredBytes * 2) {
       const err = new Error("insufficient staging disk space");
-      (err as { code?: string }).code = "ENOSPC";
+      Object.assign(err, { code: "ENOSPC", needBytes: declaredBytes * 2, freeBytes: free });
       throw err;
     }
   } catch (e) {

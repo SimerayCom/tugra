@@ -20,10 +20,12 @@ describe("classifyDbDataPlane", () => {
     expect(classifyDbDataPlane("LIBSQL")).toMatchObject({ dataPlane: "blocked" });
     expect(classifyDbDataPlane("UNKNOWN").dataPlane).toBe("blocked");
   });
-  it("one-click reason names the migrator + the size cap (no over-promise)", () => {
+  it("one-click reason names the migrator and says any size moves, never a manual path", () => {
     const c = classifyDbDataPlane("POSTGRES");
     expect(c.reason).toMatch(/migrator/i);
-    expect(c.reason).toMatch(/MiB/);
+    expect(c.reason).toMatch(/any size/);
+    expect(c.reason).toMatch(/stream/);
+    expect(c.reason).not.toMatch(/manual|by hand/i);
   });
 });
 

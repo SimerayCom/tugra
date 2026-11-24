@@ -116,10 +116,13 @@ live replication — so the cutover discipline at the end of this page still app
 - **The hub never receives your database passwords.** They are read locally on the Coolify host (from
   `docker inspect`) and used only inside the source container; only the dump bytes (and their hub-computed
   sha256 + size) reach the hub.
-- **Size cap:** each dump is gzip-compressed and must fit the hub's per-artifact cap (default **256 MiB**,
-  `MIGRATION_MAX_ARTIFACT_BYTES`). Larger databases fail (`dump-too-big`/`too-large`) — use the manual path, or,
-  for a PostgreSQL database, the **volume copy** data mode of the [streamed volume
-  copy](#streamed-volume-copy) (a physical copy with no size cap, under strict conditions).
+- **No size limit.** A dump of up to 256 MiB (gzip, `MIGRATION_MAX_ARTIFACT_BYTES`) travels as one file. A bigger
+  PostgreSQL, MySQL or MariaDB database (or a PostgreSQL one that cannot be copied as files) moves as a **checked
+  stream** in a guided migration run: the dump is cut into parts, every part carries a sha256 that the hub and the target
+  both verify, the target restores it as it arrives, and nothing is capped by default. The run chooses the route per
+  database from its measured size and says which one it took; a dry run shows it before anything moves. Set
+  `MIGRATION_VX_MAX_DUMP_BYTES` on the hub only if you want a ceiling of your own. The target server's free disk is
+  checked first and the answer names what is free and what is needed.
 
 ### Prerequisites
 
@@ -244,12 +247,12 @@ fresh dump).
   Redis ACL user, or MySQL/MariaDB with no `*_DATABASE`). Use the manual dump for these.
 - `token-expiring` — fewer than 2 minutes of token life left mid-run; the remaining items are skipped and
   the run exits 1. Reissue and re-run (already-restored items are skipped). A long run spans one token hour.
-- `dump-too-big` / `too-large` — over the artifact cap; manual path.
+- `dump-too-big` / `too-large` — over the single-file cap. A guided migration run moves such a database as a checked stream (its default); only a run set to "Stop and ask me" stops here.
 - `dest-dirty` — the Tugra destination was already started/used; it must be a fresh, just-provisioned DB.
 - `restored-differs` — a different dump is already restored; pass `--resync` to overwrite.
 - `restore-timeout` / `restore-unconfirmed` — the hub restore outran the client wait; it may still finish —
   re-run to re-check its status.
-- state `unsupported` (reason `requires-S4b` / `no-logical-dump`) — ClickHouse / MongoDB / LibSQL; manual path.
+- state `unsupported` (reason `requires-S4b` / `no-logical-dump`) — ClickHouse / MongoDB / LibSQL have no dump route yet (LibSQL moves with its volume).
 
 ### Security model
 

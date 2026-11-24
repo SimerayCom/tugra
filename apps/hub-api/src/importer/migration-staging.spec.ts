@@ -17,6 +17,8 @@ afterAll(async () => {
 // Imported AFTER the env is set so stagingDir() picks it up at call time (it reads process.env per call).
 import {
   ArtifactTooLargeError,
+  assertDiskHeadroom,
+  stagingFullMessage,
   cleanupArtifact,
   cleanupOpStaging,
   discardPart,
@@ -29,6 +31,20 @@ import {
 } from "./migration-staging";
 
 const sha = (b: Buffer) => createHash("sha256").update(b).digest("hex");
+
+describe("staging disk headroom", () => {
+  it("passes for a small upload and refuses an impossible one with what the hub has and what it needs", async () => {
+    await expect(assertDiskHeadroom(1024)).resolves.toBeUndefined();
+    const err = await assertDiskHeadroom(Number.MAX_SAFE_INTEGER / 4).then(() => null, (e: unknown) => e);
+    expect(err).toMatchObject({ code: "ENOSPC", needBytes: (Number.MAX_SAFE_INTEGER / 4) * 2 });
+    expect(typeof (err as { freeBytes: unknown }).freeBytes).toBe("number");
+    expect(stagingFullMessage(err)).toMatch(/^insufficient staging storage: the hub has [0-9.]+ GiB free and needs about [0-9.]+ GiB$/);
+  });
+  it("falls back to the plain sentence when the numbers are unknown", () => {
+    expect(stagingFullMessage(new Error("x"))).toBe("insufficient staging storage");
+    expect(stagingFullMessage(null)).toBe("insufficient staging storage");
+  });
+});
 
 describe("migration-staging", () => {
   it("streams to a unique .part and computes the hub's OWN byte count + sha256, then finalizes", async () => {
