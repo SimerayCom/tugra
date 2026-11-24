@@ -117,6 +117,7 @@ func (v *volRunner) dryRunDump(ctx context.Context, tg Target) itemResult {
 	}
 	est := v.dumpEstimate(tg)
 	res.RawBytes = est
+	v.logSpoolRoom()
 	res.State, res.Reason = "planned", "would-stream-dump"
 	if est > 0 {
 		d, err := v.hub.VxDiskCheck(ctx, tg.ItemRef, v.runID, &est)
@@ -204,20 +205,12 @@ func (v *volRunner) runDump(ctx context.Context, tg Target) (res itemResult) {
 	}
 
 	started := time.Now()
+	v.logSpoolRoom()
 	sr, serr := StreamDump(ctx, v.hub, f.plan, tg.ItemRef, StreamOpts{
 		PartRawBytes: partRaw, RunID: v.runID, TotalRaw: est, MaxParts: v.policy.MaxParts,
 		Spool: DumpSpoolOpts{Dir: v.c.dumpSpoolDir, CapBytes: int64(v.c.dumpSpoolMiB) * mib, Logf: v.logf},
 		Progress: func(p Progress) {
-			secs := time.Since(started).Seconds()
-			rate := 0.0
-			if secs > 0 {
-				rate = float64(p.Committed) / secs / 1e6
-			}
-			if p.RawTotal > 0 {
-				v.logf("  part %d  %.2f GiB dumped of about %.2f GiB  (%.1f MB/s compressed)", p.Part, float64(p.RawDone)/(1<<30), float64(p.RawTotal)/(1<<30), rate)
-			} else {
-				v.logf("  part %d  %.2f GiB dumped  (%.1f MB/s compressed)", p.Part, float64(p.RawDone)/(1<<30), rate)
-			}
+			v.logf("%s", dumpProgressLine(p.Part, p.RawDone, p.RawTotal, p.Committed, time.Since(started)))
 		},
 	})
 	res.SpoolPeakBytes = sr.SpoolPeakBytes
@@ -269,4 +262,15 @@ func nonEmpty(s, def string) string {
 		return def
 	}
 	return s
+}
+
+// logSpoolRoom says how much room the source's dump spool has (see spoolRoomLine). Best effort: a probe that fails is a line, never an error.
+func (v *volRunner) logSpoolRoom() {
+	dir := v.c.dumpSpoolDir
+	if dir == "" {
+		dir = os.TempDir()
+	}
+	free, ok := spoolFreeBytes(dir)
+	line, _ := spoolRoomLine(dir, free, ok, int64(v.c.dumpSpoolMiB)*mib, defaultDumpSpoolMargin)
+	v.logf("%s", line)
 }
