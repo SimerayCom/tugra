@@ -163,6 +163,7 @@ model Team {
   gitSources         GitSource[]
   registries         Registry[]
   cloudCredentials   CloudCredential[]
+  costBaselines      CostBaseline[]
   dnsCredentials     DnsCredential[]
   secretProviders    SecretProvider[]
   savedViews         SavedView[]
@@ -426,6 +427,11 @@ model Server {
   reboots                ServerReboot[]
   coolifyInventory       CoolifyInventory?
   tunnel                 ServerTunnel?
+  cost                   ServerCost?
+  rescales               ServerRescale[]
+  // Cloud provider the host's own metadata service / DMI vendor says it runs on (agent-reported, allow-listed slug).
+  // A hint for price estimates only; `provider` (above) is the provider an operator linked or Tugra provisioned.
+  cloudHint              String?
   createdAt              DateTime                @default(now())
 
   @@index([clusterId])
@@ -2892,4 +2898,57 @@ model StatusSubscriber {
   mailedAt    DateTime   @default(now())
 
   @@unique([pageId, email])
+}
+// The monthly price of one server. Only a price the hub READ from the provider ("provider") or an operator TYPED
+// ("manual") is stored; an estimate from the bundled public price snapshot is computed on read and never persisted.
+// Money is integer minor units (cents) in `currency`, excluding VAT. No secret lives here.
+model ServerCost {
+  server       Server    @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  serverId     String    @id
+  monthlyCents Int
+  currency     String    @default("EUR")
+  source       String // "provider" | "manual"
+  provider     String? // provider slug the price belongs to (hetzner | digitalocean | vultr | ...)
+  planSlug     String? // provider plan id (e.g. a Hetzner server type), when known
+  location     String? // provider location of a provider-read price (needed to price rescale candidates)
+  syncedAt     DateTime? // when a provider price was last read
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+}
+
+// A saved "before" bill for the before/after comparison (taken from the current prices or typed by hand). `lines`
+// holds [{ name, monthlyCents }] for a snapshot of the servers (names only), [] for a typed total.
+model CostBaseline {
+  id           String   @id @default(cuid())
+  team         Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  teamId       String
+  label        String
+  monthlyCents Int
+  currency     String   @default("EUR")
+  lines        Json     @default("[]")
+  createdBy    String
+  createdAt    DateTime @default(now())
+
+  @@index([teamId, createdAt])
+}
+
+// A one-click rescale of a cloud-linked server through its provider API: graceful shutdown, change type (disk kept,
+// so the move stays reversible), power on. Driven by the hub and resumed after a restart; `phase` is the step reached.
+// Migration adds a partial unique index so only one rescale per server is active at a time.
+model ServerRescale {
+  id          String    @id @default(cuid())
+  server      Server    @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  serverId    String
+  requestedBy String
+  provider    String
+  fromPlan    String
+  toPlan      String
+  upgradeDisk Boolean   @default(false) // also grow the disk (permanent; false keeps the move reversible)
+  phase       String    @default("SHUTTING_DOWN") // SHUTTING_DOWN | RESIZING | POWERING_ON | DONE | FAILED
+  error       String? // provider-response text only, never a token
+  startedAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  finishedAt  DateTime?
+
+  @@index([serverId, startedAt])
 }

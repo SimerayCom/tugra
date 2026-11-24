@@ -46,6 +46,7 @@ import { dnsProviderEnvCreds } from "../deploy/panel-router";
 import type { ProxyService } from "../applications/proxy.service";
 import type { NetworkSettingsInput } from "./dto/servers.schemas";
 import { MAX_BULK_SERVERS } from "./dto/servers.schemas";
+import { cleanCloudHint } from "../costs/cost-size";
 
 const ENROLL_TTL_MS = 60 * 60 * 1000; // 1 hour
 // The capabilities a NEW server is granted by default — everything except `terminal`
@@ -833,6 +834,7 @@ export class ServersService {
       Array.isArray(list) ? list.filter((x): x is string => typeof x === "string" && isIP(x) !== 0).slice(0, 64) : [];
     const ifaceIps = clean(info.reportedIps);
     const metadataIps = clean(info.metadataIps);
+    const cloudHint = cleanCloudHint(info.cloudProvider);
     // Reconcile the reported interface IPs and the cloud-metadata answer against what is stored, per family:
     // never overriding a manual pin. Best-effort like the update below: a read blip must never throw and tear
     // down the agent connection (host_info arrives on every reconnect).
@@ -859,6 +861,8 @@ export class ServersService {
           memTotalBytes: info.memTotalBytes ? BigInt(Math.round(info.memTotalBytes)) : null,
           bootTime: info.bootTime ? new Date(info.bootTime * 1000) : null,
           reportedIps: allIps,
+          // The provider the host says it runs on (a hint for price estimates); an old agent reports none: keep what we had.
+          ...(cloudHint ? { cloudHint } : {}),
           ...(realHostname ? { hostname: realHostname } : {}),
           ...(realHostname && server?.nameAuto ? { name: realHostname, nameAuto: false } : {}),
           ...(reconcile ?? {}),

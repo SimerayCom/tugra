@@ -1,6 +1,7 @@
 import { Injectable } from "@nestjs/common";
 import type {
   CloudOobProvider,
+  CloudPlanProvider,
   CloudProvider,
   CloudServerCreateOpts,
   CloudServerCreateResult,
@@ -8,6 +9,8 @@ import type {
   EnableRescueResult,
   OobPowerAction,
   ProviderActionResult,
+  ProviderPlan,
+  ProviderServerPlan,
   ProviderServerState,
 } from "./cloud-provider.interface";
 
@@ -49,8 +52,27 @@ const POWER_ENDPOINT: Record<OobPowerAction, string> = {
   shutdown: "shutdown",
 };
 
+interface HetznerPrice {
+  location?: string;
+  price_monthly?: { net?: string | number; gross?: string | number } | null;
+}
+
+interface HetznerServerType {
+  name?: string;
+  cores?: number;
+  memory?: number;
+  disk?: number;
+  architecture?: string;
+  deprecated?: boolean | null;
+  deprecation?: unknown;
+  prices?: HetznerPrice[] | null;
+}
+
 interface HetznerServer {
   id: number | string;
+  server_type?: HetznerServerType | null;
+  datacenter?: { location?: { name?: string } | null } | null;
+  location?: { name?: string } | null;
   name?: string;
   status?: string;
   locked?: boolean;
@@ -65,7 +87,7 @@ interface HetznerServer {
  * message — a leaked exception must not reveal the credential from the Authorization header.
  */
 @Injectable()
-export class HetznerApiClient implements CloudProvider, CloudOobProvider {
+export class HetznerApiClient implements CloudProvider, CloudOobProvider, CloudPlanProvider {
   readonly name = "hetzner";
 
   /** GET /locations — cheapest authenticated call. 200 → valid; 401/403 → invalid (not a throw). */
@@ -173,6 +195,72 @@ export class HetznerApiClient implements CloudProvider, CloudOobProvider {
     return { action: toAction(res.action), wssUrl: res.wss_url, password: res.password, validForSeconds: CONSOLE_URL_VALID_SECONDS };
   }
 
+  /** GET /servers (bounded pages): each VM with its plan and the plan's monthly net price at the VM's location. */
+  async listServerPlans(token: string): Promise<ProviderServerPlan[]> {
+    const out: ProviderServerPlan[] = [];
+    let page = 1;
+    while (page <= LIST_MAX_PAGES) {
+      const res = await this.request<{ servers?: HetznerServer[]; meta?: { pagination?: { next_page?: number | null } } }>(
+        "GET",
+        `/servers?per_page=${LIST_PER_PAGE}&page=${page}`,
+        token,
+      );
+      for (const s of res?.servers ?? []) {
+        const p = toServerPlan(s);
+        if (p) out.push(p);
+      }
+      const next = res?.meta?.pagination?.next_page;
+      if (!next || next <= page) break;
+      page = next;
+    }
+    return out;
+  }
+
+  /** GET /server_types (bounded pages): every plan with its monthly net price per location. */
+  async listPlanCatalog(token: string): Promise<ProviderPlan[]> {
+    const out: ProviderPlan[] = [];
+    let page = 1;
+    while (page <= LIST_MAX_PAGES) {
+      const res = await this.request<{ server_types?: HetznerServerType[]; meta?: { pagination?: { next_page?: number | null } } }>(
+        "GET",
+        `/server_types?per_page=${LIST_PER_PAGE}&page=${page}`,
+        token,
+      );
+      for (const t of res?.server_types ?? []) {
+        const spec = toPlanSpec(t);
+        if (!spec) continue;
+        const monthlyCentsByLocation: Record<string, number> = {};
+        for (const pr of t.prices ?? []) {
+          const c = pr?.location ? netCents(pr.price_monthly?.net) : null;
+          if (c !== null && pr.location) monthlyCentsByLocation[pr.location] = c;
+        }
+        out.push({ ...spec, deprecated: t.deprecated === true || (t.deprecation !== null && t.deprecation !== undefined), monthlyCentsByLocation, currency: "EUR" });
+      }
+      const next = res?.meta?.pagination?.next_page;
+      if (!next || next <= page) break;
+      page = next;
+    }
+    return out;
+  }
+
+  /** GET /servers/{id} read as plan + price. */
+  async getServerPlan(token: string, providerServerId: string): Promise<ProviderServerPlan> {
+    const res = await this.request<{ server?: HetznerServer }>("GET", `/servers/${serverPathId(providerServerId)}`, token);
+    const p = res?.server ? toServerPlan(res.server) : null;
+    if (!p) throw new HetznerApiError("hetzner did not return the server plan", 502);
+    return p;
+  }
+
+  /** POST change_type: the VM must be off. `upgrade_disk: false` keeps the disk so the VM can be moved back later. */
+  async changeType(token: string, providerServerId: string, planSlug: string, upgradeDisk: boolean): Promise<ProviderActionResult> {
+    if (!/^[a-z0-9]{2,16}$/.test(planSlug)) throw new HetznerApiError("invalid hetzner server type", 422);
+    const res = await this.request<{ action?: HetznerAction }>("POST", `/servers/${serverPathId(providerServerId)}/actions/change_type`, token, {
+      server_type: planSlug,
+      upgrade_disk: upgradeDisk,
+    });
+    return toAction(res?.action);
+  }
+
   private async request<T = unknown>(method: string, path: string, token: string, body?: unknown): Promise<T> {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), HETZNER_TIMEOUT_MS);
@@ -239,4 +327,24 @@ function toAction(a: HetznerAction | undefined): ProviderActionResult {
   const status = a.status === "success" || a.status === "error" ? a.status : "running";
   if (status === "error") throw new HetznerApiError(hetznerErrorMessage(a.error ?? undefined) ?? "hetzner action failed", 502, a.error);
   return { id: String(a.id), status, command: typeof a.command === "string" ? a.command : "" };
+}
+
+/** "5.8300000000" (a net price string, as Hetzner sends it) to integer cents; null when it is not a usable number. */
+export function netCents(v: string | number | null | undefined): number | null {
+  const n = typeof v === "number" ? v : typeof v === "string" ? Number(v) : NaN;
+  return Number.isFinite(n) && n >= 0 ? Math.round(n * 100) : null;
+}
+
+function toPlanSpec(t: HetznerServerType | null | undefined): ProviderServerPlan["plan"] | null {
+  if (!t || typeof t.name !== "string" || !/^[a-z0-9]{2,16}$/.test(t.name)) return null;
+  if (!Number.isFinite(t.cores) || !Number.isFinite(t.memory) || !Number.isFinite(t.disk)) return null;
+  return { slug: t.name, cores: Number(t.cores), memoryGb: Number(t.memory), diskGb: Number(t.disk), architecture: t.architecture === "arm" ? "arm" : "x86" };
+}
+
+function toServerPlan(s: HetznerServer): ProviderServerPlan | null {
+  const plan = toPlanSpec(s.server_type);
+  if (!s.id || !plan) return null;
+  const location = s.location?.name ?? s.datacenter?.location?.name ?? null;
+  const price = (s.server_type?.prices ?? []).find((p) => p?.location === location);
+  return { providerServerId: String(s.id), plan, location, monthlyCents: netCents(price?.price_monthly?.net), currency: "EUR" };
 }

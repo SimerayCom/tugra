@@ -29,6 +29,6 @@ import { PROVISIONING_SERVICE } from "./cloud.tokens";
     OobService,
     { provide: PROVISIONING_SERVICE, useExisting: ProvisioningService },
   ],
-  exports: [ProvisioningService, PROVISIONING_SERVICE, CloudCredentialsService, OobService],
+  exports: [ProvisioningService, PROVISIONING_SERVICE, CloudCredentialsService, OobService, CloudProviderFactory],
 })
 export class CloudModule {}

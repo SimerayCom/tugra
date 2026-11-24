@@ -82,3 +82,45 @@ export interface CloudOobProvider {
   disableRescue(token: string, providerServerId: string): Promise<ProviderActionResult>;
   requestConsole(token: string, providerServerId: string): Promise<ConsoleSession>;
 }
+
+/** A provider plan (server type) with the resources it offers; the disk of an existing VM never shrinks. */
+export interface ProviderPlanSpec {
+  slug: string;
+  cores: number;
+  memoryGb: number;
+  diskGb: number;
+  /** "x86" | "arm": a VM cannot move between architectures. */
+  architecture: string;
+}
+
+/** One cloud VM with the plan it runs and what that plan costs per month at its location (excluding VAT). */
+export interface ProviderServerPlan {
+  providerServerId: string;
+  plan: ProviderPlanSpec;
+  location: string | null;
+  /** Integer cents, or null when the provider did not price that plan at that location. */
+  monthlyCents: number | null;
+  currency: string;
+}
+
+/** A plan that can be ordered, priced per location (cents per month, excluding VAT). */
+export interface ProviderPlan extends ProviderPlanSpec {
+  deprecated: boolean;
+  monthlyCentsByLocation: Record<string, number>;
+  currency: string;
+}
+
+/**
+ * Providers whose API reports plan prices and can change a VM's plan. Same contract as CloudProvider: the token is an
+ * explicit argument, never kept, never in a thrown message. Hetzner is the first.
+ */
+export interface CloudPlanProvider {
+  readonly name: string;
+  /** The VMs of the token's project with the plan they run and its price (first pages only: bounded). */
+  listServerPlans(token: string): Promise<ProviderServerPlan[]>;
+  /** The plans one can switch to, with prices per location. */
+  listPlanCatalog(token: string): Promise<ProviderPlan[]>;
+  getServerPlan(token: string, providerServerId: string): Promise<ProviderServerPlan>;
+  /** Change the plan of a VM that is powered off. `upgradeDisk` false keeps the disk size (the move stays reversible). */
+  changeType(token: string, providerServerId: string, planSlug: string, upgradeDisk: boolean): Promise<ProviderActionResult>;
+}

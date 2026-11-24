@@ -46,6 +46,7 @@ import { MigrationRunsModule } from "./migration-runs/migration-runs.module";
 import { MigrationSafetyModule } from "./migration-safety/migration-safety.module";
 import { CutoverModule } from "./cutover/cutover.module";
 import { CloudModule } from "./cloud/cloud.module";
+import { CostsModule } from "./costs/costs.module";
 import { TunnelModule } from "./tunnel/tunnel.module";
 import { DnsModule } from "./dns/dns.module";
 import { SecretProvidersModule } from "./secret-providers/secret-providers.module";
@@ -126,6 +127,7 @@ import { ApiExceptionFilter } from "./common/api-exception.filter";
     MigrationRunsModule, // one-click migration orchestrator (P7)
     MigrationSafetyModule, // verification report + pre-migration snapshot (92, 93)
     CloudModule,
+    CostsModule,
     TunnelModule,
     DnsModule,
     SecretProvidersModule,

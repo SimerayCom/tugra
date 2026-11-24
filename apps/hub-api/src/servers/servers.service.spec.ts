@@ -561,6 +561,17 @@ describe("ServersService.saveHostInfo + uptime view", () => {
     expect(data.ipSource).toBe("reported");
   });
 
+  it("keeps the cloud provider the host names as a price-estimate hint, only as a clean slug", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = { server: { findUnique: jest.fn().mockResolvedValue(null), update } } as unknown as PrismaService;
+    await svcWith(prisma).saveHostInfo("s1", hostInfo({ cloudProvider: "Hetzner" }));
+    expect(update.mock.calls[0][0].data.cloudHint).toBe("hetzner");
+    await svcWith(prisma).saveHostInfo("s1", hostInfo({ cloudProvider: "x; drop table" }));
+    expect(update.mock.calls[1][0].data.cloudHint).toBeUndefined();
+    await svcWith(prisma).saveHostInfo("s1", hostInfo()); // an older agent reports none: keep what is stored
+    expect(update.mock.calls[2][0].data.cloudHint).toBeUndefined();
+  });
+
   it("stores the HOST hostname reported via the Docker daemon, ignoring an invalid one", async () => {
     const update = jest.fn().mockResolvedValue({});
     const prisma = { server: { findUnique: jest.fn().mockResolvedValue(null), update } } as unknown as PrismaService;
