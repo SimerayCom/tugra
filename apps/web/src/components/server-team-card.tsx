@@ -63,7 +63,7 @@ export function ServerTeamCard({ id, server }: { id: string; server: ServerView 
     queryKey: ["server-team-targets", id, server.teamId],
     queryFn: () => api.getServerTeamTargets(id),
   });
-  const current = teams.find((tm) => tm.id === server.teamId)?.name ?? server.teamId.slice(0, 8);
+  const current = teams.find((tm) => tm.id === server.teamId)?.name ?? "—";
   const targetName = targets.find((tm) => tm.id === target)?.name ?? "";
 
   const preview = useQuery({
