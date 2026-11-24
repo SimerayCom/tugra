@@ -18,6 +18,7 @@ import { TeamAccessService } from "../common/team-access.service";
 import { webBaseUrl } from "../common/web-url";
 import { filterByQuery } from "../common/query-filter";
 import { validatePngIcon } from "../common/png-icon";
+import { type ClientAccess, clientAccessOf, clientPermissions, ensureClientRole } from "./client-role";
 
 const MANAGE: Role[] = [Role.OWNER, Role.ADMIN];
 const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -29,6 +30,8 @@ export interface TeamView {
   memberCount: number;
   iconUpdatedAt: Date | null;
   color: string | null;
+  /** Set when the caller is a Client of this team (customer portal): what the role grants. null for everyone else. */
+  clientAccess: ClientAccess | null;
 }
 export interface TeamMemberView {
   userId: string;
@@ -37,6 +40,7 @@ export interface TeamMemberView {
   role: Role;
   teamRoleId: string | null;
   roleName: string | null; // the custom role's name, when one is assigned
+  clientAccess: ClientAccess | null; // set for a Client (customer portal) member
   restrictedAccess: boolean;
   accessedProjects: string[];
 }
@@ -44,11 +48,13 @@ export interface TeamRoleView {
   id: string;
   name: string;
   permissions: string[];
+  portal: boolean; // a Client (customer portal) preset
 }
 export interface InvitationView {
   id: string;
   email: string;
   role: Role;
+  clientAccess: ClientAccess | null;
   token: string;
   expiresAt: Date;
 }
@@ -62,6 +68,7 @@ export interface InvitationPreviewView {
   teamName: string;
   inviterName: string | null;
   role: Role;
+  clientAccess: ClientAccess | null;
   email: string;
   expiresAt: Date;
   expired: boolean;
@@ -86,6 +93,7 @@ export class TeamsService {
       include: { _count: { select: { memberships: true } } },
       orderBy: { createdAt: "asc" },
     });
+    const client = await this.clientAccessByTeam(userId);
     const views = teams.map((t) => ({
       id: t.id,
       name: t.name,
@@ -93,6 +101,7 @@ export class TeamsService {
       memberCount: t._count.memberships,
       iconUpdatedAt: t.iconUpdatedAt,
       color: t.color,
+      clientAccess: client.get(t.id) ?? null,
     }));
     return filterByQuery(views, q, (t) => [t.name, t.role]);
   }
@@ -105,7 +114,23 @@ export class TeamsService {
     if (!team) throw new NotFoundException("team not found");
     const role = await this.access.teamRole(userId, id);
     if (!role) throw new ForbiddenException("not a member of this team");
-    return { id: team.id, name: team.name, role, memberCount: team._count.memberships, iconUpdatedAt: team.iconUpdatedAt, color: team.color };
+    const mine = await this.prisma.membership.findUnique({ where: { userId_teamId: { userId, teamId: id } }, select: { teamRole: { select: { portal: true, permissions: true } } } });
+    const clientAccess = clientAccessOf(mine?.teamRole);
+    return { id: team.id, name: team.name, role, memberCount: team._count.memberships, iconUpdatedAt: team.iconUpdatedAt, color: team.color, clientAccess };
+  }
+
+  /** The teams where the caller is a Client (customer portal), with what the role grants. */
+  private async clientAccessByTeam(userId: string): Promise<Map<string, ClientAccess>> {
+    const rows = await this.prisma.membership.findMany({
+      where: { userId, teamRole: { is: { portal: true } } },
+      select: { teamId: true, teamRole: { select: { portal: true, permissions: true } } },
+    });
+    const out = new Map<string, ClientAccess>();
+    for (const r of rows) {
+      const a = clientAccessOf(r.teamRole);
+      if (a) out.set(r.teamId, a);
+    }
+    return out;
   }
 
   async create(userId: string, name: string): Promise<TeamView> {
@@ -115,7 +140,7 @@ export class TeamsService {
       data: { name, memberships: { create: { userId, role: Role.OWNER } } },
     });
     await this.audit.log({ actor: userId, action: "team.create", target: team.id });
-    return { id: team.id, name: team.name, role: Role.OWNER, memberCount: 1, iconUpdatedAt: null, color: null };
+    return { id: team.id, name: team.name, role: Role.OWNER, memberCount: 1, iconUpdatedAt: null, color: null, clientAccess: null };
   }
 
   async rename(userId: string, id: string, name: string): Promise<void> {
@@ -184,7 +209,7 @@ export class TeamsService {
     if (!(await this.access.teamRole(userId, id))) throw new ForbiddenException("not a member");
     const ms = await this.prisma.membership.findMany({
       where: { teamId: id },
-      include: { user: { select: { id: true, email: true, name: true } }, teamRole: { select: { name: true } } },
+      include: { user: { select: { id: true, email: true, name: true } }, teamRole: { select: { name: true, portal: true, permissions: true } } },
       orderBy: { role: "asc" },
     });
     return ms.map((m) => ({
@@ -194,6 +219,7 @@ export class TeamsService {
       role: m.role,
       teamRoleId: m.teamRoleId,
       roleName: m.teamRole?.name ?? null,
+      clientAccess: clientAccessOf(m.teamRole),
       restrictedAccess: m.restrictedAccess,
       accessedProjects: m.accessedProjects,
     }));
@@ -291,7 +317,7 @@ export class TeamsService {
   async listRoles(userId: string, id: string): Promise<TeamRoleView[]> {
     if (!(await this.access.teamRole(userId, id))) throw new ForbiddenException("not a member");
     const roles = await this.prisma.teamRole.findMany({ where: { teamId: id }, orderBy: { name: "asc" } });
-    return roles.map((r) => ({ id: r.id, name: r.name, permissions: r.permissions }));
+    return roles.map((r) => ({ id: r.id, name: r.name, permissions: r.permissions, portal: r.portal }));
   }
 
   async createRole(userId: string, id: string, input: { name: string; permissions: string[] }): Promise<TeamRoleView> {
@@ -305,7 +331,14 @@ export class TeamsService {
         throw new ConflictException("a role with this name already exists");
       });
     await this.audit.log({ actor: userId, action: "team.role.create", target: id, meta: { name } });
-    return { id: created.id, name: created.name, permissions: created.permissions };
+    return { id: created.id, name: created.name, permissions: created.permissions, portal: created.portal };
+  }
+
+  /** The team's customer-portal preset for `access`, created on first use. Assign it to a member with setRole. */
+  async ensureClientPreset(userId: string, id: string, access: ClientAccess): Promise<TeamRoleView> {
+    await this.access.requireRole(userId, id, MANAGE);
+    const r = await ensureClientRole(this.prisma, id, access);
+    return { id: r.id, name: r.name, permissions: r.permissions, portal: r.portal };
   }
 
   async updateRole(
@@ -317,23 +350,36 @@ export class TeamsService {
     await this.access.requireRole(userId, id, MANAGE);
     const role = await this.prisma.teamRole.findFirst({ where: { id: roleId, teamId: id } });
     if (!role) throw new NotFoundException("role not found");
+    // A Client preset keeps its name and can only ever carry the portal permissions (deploy), so editing it can't
+    // turn a customer account into a team operator.
+    if (role.portal && input.name !== undefined && input.name.trim() !== role.name) {
+      throw new ConflictException("a client role cannot be renamed");
+    }
     const updated = await this.prisma.teamRole
       .update({
         where: { id: roleId },
         data: {
           ...(input.name !== undefined ? { name: input.name.trim() } : {}),
-          ...(input.permissions !== undefined ? { permissions: this.validPermissions(input.permissions) } : {}),
+          ...(input.permissions !== undefined
+            ? { permissions: role.portal ? clientPermissions(input.permissions) : this.validPermissions(input.permissions) }
+            : {}),
         },
       })
       .catch(() => {
         throw new ConflictException("a role with this name already exists");
       });
     await this.audit.log({ actor: userId, action: "team.role.update", target: id, meta: { roleId } });
-    return { id: updated.id, name: updated.name, permissions: updated.permissions };
+    return { id: updated.id, name: updated.name, permissions: updated.permissions, portal: updated.portal };
   }
 
   async deleteRole(userId: string, id: string, roleId: string): Promise<void> {
     await this.access.requireRole(userId, id, MANAGE);
+    // Deleting a client role would turn its members into plain viewers (full read of the team), so it is refused
+    // until the clients are removed or moved.
+    const target = await this.prisma.teamRole.findFirst({ where: { id: roleId, teamId: id }, select: { portal: true } });
+    if (target?.portal && (await this.prisma.membership.count({ where: { teamId: id, teamRoleId: roleId } })) > 0) {
+      throw new ConflictException("remove or move the clients with this role first");
+    }
     // Members assigned this role revert to their enum role (teamRoleId → null via onDelete: SetNull).
     await this.prisma.teamRole.deleteMany({ where: { id: roleId, teamId: id } });
     await this.audit.log({ actor: userId, action: "team.role.delete", target: id, meta: { roleId } });
@@ -355,8 +401,9 @@ export class TeamsService {
     await this.audit.log({ actor: userId, action: "team.member.remove", target: id, meta: { targetUserId } });
   }
 
-  async invite(userId: string, id: string, email: string, role: Role): Promise<InvitationView> {
+  async invite(userId: string, id: string, email: string, role: Role, clientAccess?: ClientAccess): Promise<InvitationView> {
     await this.access.requireRole(userId, id, MANAGE);
+    if (role === Role.OWNER && clientAccess) throw new ConflictException("an owner cannot be a client");
     if (role === Role.OWNER) await this.requireOwner(userId, id);
     const addr = email.trim().toLowerCase();
     const existing = await this.prisma.user.findUnique({ where: { email: addr } });
@@ -365,12 +412,15 @@ export class TeamsService {
     }
     const token = `tugra_inv_${randomBytes(24).toString("base64url")}`;
     const expiresAt = new Date(Date.now() + INVITE_TTL_MS);
+    // A Client invitation lands in the team's portal preset (a VIEWER-based custom role), never a built-in tier.
+    const clientRole = clientAccess ? await ensureClientRole(this.prisma, id, clientAccess) : null;
+    const teamRoleId = clientRole?.id ?? null;
     const inv = await this.prisma.teamInvitation.upsert({
       where: { teamId_email: { teamId: id, email: addr } },
-      create: { teamId: id, email: addr, role, token, invitedBy: userId, expiresAt },
-      update: { role, token, invitedBy: userId, expiresAt },
+      create: { teamId: id, email: addr, role: clientRole ? Role.VIEWER : role, teamRoleId, token, invitedBy: userId, expiresAt },
+      update: { role: clientRole ? Role.VIEWER : role, teamRoleId, token, invitedBy: userId, expiresAt },
     });
-    await this.audit.log({ actor: userId, action: "team.invite", target: id, meta: { email: addr, role } });
+    await this.audit.log({ actor: userId, action: "team.invite", target: id, meta: { email: addr, role: inv.role, ...(clientAccess ? { clientAccess } : {}) } });
     // Email the invite too (on top of the copy-link the caller still gets back). Load the
     // personalization, then FIRE-AND-FORGET the SMTP send AFTER the DB write so a mail hiccup can
     // never block invitation creation (MailService.send is already fail-soft / never-throws).
@@ -383,13 +433,17 @@ export class TeamsService {
       .send(addr, teamInviteEmail({ inviterName: inviter?.name ?? null, teamName: team?.name ?? "a team", acceptUrl }))
       .then((sent) => this.audit.log({ actor: userId, action: "team.invite.sent", target: id, meta: { email: addr, delivered: sent } }))
       .catch(() => undefined);
-    return { id: inv.id, email: inv.email, role: inv.role, token: inv.token, expiresAt: inv.expiresAt };
+    return { id: inv.id, email: inv.email, role: inv.role, clientAccess: clientRole ? clientAccessOf(clientRole) : null, token: inv.token, expiresAt: inv.expiresAt };
   }
 
   async teamInvitations(userId: string, id: string): Promise<InvitationView[]> {
     await this.access.requireRole(userId, id, MANAGE);
-    const invs = await this.prisma.teamInvitation.findMany({ where: { teamId: id }, orderBy: { createdAt: "desc" } });
-    return invs.map((i) => ({ id: i.id, email: i.email, role: i.role, token: i.token, expiresAt: i.expiresAt }));
+    const invs = await this.prisma.teamInvitation.findMany({
+      where: { teamId: id },
+      include: { teamRole: { select: { portal: true, permissions: true } } },
+      orderBy: { createdAt: "desc" },
+    });
+    return invs.map((i) => ({ id: i.id, email: i.email, role: i.role, clientAccess: clientAccessOf(i.teamRole), token: i.token, expiresAt: i.expiresAt }));
   }
 
   async revokeInvitation(userId: string, id: string, invId: string): Promise<void> {
@@ -416,7 +470,7 @@ export class TeamsService {
    * and acceptance is still gated by email-match + expiry, so a leaked token can't join.
    */
   async previewInvitation(token: string): Promise<InvitationPreviewView> {
-    const inv = await this.prisma.teamInvitation.findUnique({ where: { token } });
+    const inv = await this.prisma.teamInvitation.findUnique({ where: { token }, include: { teamRole: { select: { portal: true, permissions: true } } } });
     if (!inv) throw new NotFoundException("invitation not found");
     const [team, inviter] = await Promise.all([
       this.prisma.team.findUnique({ where: { id: inv.teamId }, select: { name: true } }),
@@ -426,6 +480,7 @@ export class TeamsService {
       teamName: team?.name ?? "a team",
       inviterName: inviter?.name ?? null,
       role: inv.role,
+      clientAccess: clientAccessOf(inv.teamRole),
       email: inv.email,
       expiresAt: inv.expiresAt,
       expired: inv.expiresAt.getTime() < Date.now(),
@@ -443,8 +498,8 @@ export class TeamsService {
     await this.prisma.$transaction([
       this.prisma.membership.upsert({
         where: { userId_teamId: { userId, teamId: inv.teamId } },
-        create: { userId, teamId: inv.teamId, role: inv.role },
-        update: { role: inv.role },
+        create: { userId, teamId: inv.teamId, role: inv.role, teamRoleId: inv.teamRoleId },
+        update: { role: inv.role, teamRoleId: inv.teamRoleId },
       }),
       this.prisma.teamInvitation.delete({ where: { id: inv.id } }),
     ]);

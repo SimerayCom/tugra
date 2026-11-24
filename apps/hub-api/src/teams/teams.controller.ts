@@ -26,6 +26,8 @@ import { AuthUser } from "../auth/strategies/jwt.strategy";
 import { SetColorInput, SetColorSchema } from "../common/hex-color";
 import { TeamsService } from "./teams.service";
 import {
+  ClientRoleInput,
+  ClientRoleSchema,
   CreateTeamInput,
   CreateTeamSchema,
   InviteInput,
@@ -172,7 +174,7 @@ export class TeamsController {
     @Param("id") id: string,
     @Body(new ZodValidationPipe(InviteSchema)) body: InviteInput,
   ) {
-    return this.teams.invite(user.userId, id, body.email, body.role as Role);
+    return this.teams.invite(user.userId, id, body.email, body.role as Role, body.clientAccess);
   }
 
   // Lists pending invites INCLUDING their raw tokens — a PAT needs read:secrets to read them.
@@ -218,6 +220,19 @@ export class TeamsController {
     @Body(new ZodValidationPipe(TeamRoleSchema)) body: TeamRoleInput,
   ) {
     return this.teams.createRole(user.userId, id, body);
+  }
+
+  // The customer-portal presets ("Client" / "Client (deploy)"), created on first use.
+  @Post(":id/roles/client")
+  @HttpCode(200)
+  @RequireScopes("admin")
+  @ApiZodBody(ClientRoleSchema)
+  ensureClientRole(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(ClientRoleSchema)) body: ClientRoleInput,
+  ) {
+    return this.teams.ensureClientPreset(user.userId, id, body.access);
   }
 
   @Put(":id/roles/:roleId")

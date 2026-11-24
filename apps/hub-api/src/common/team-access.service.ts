@@ -2,6 +2,7 @@ import { ForbiddenException, Injectable } from "@nestjs/common";
 import { Role } from "@prisma/client";
 import { TEAM_PERMISSIONS, type TeamPermission } from "@tugra/shared";
 import { PrismaService } from "../prisma/prisma.service";
+import { portalMembershipsHidden } from "./portal-surface";
 
 /** Roles that bypass per-resource scoping entirely — they manage the whole team. */
 const BYPASS_ROLES: Role[] = [Role.OWNER, Role.ADMIN];
@@ -56,6 +57,14 @@ export function canAccessResource(
   return m.accessedResources.includes(resourceId) || (projectId != null && m.accessedProjects.includes(projectId));
 }
 
+/** A customer-portal (Client) membership is invisible outside the portal surface (see portal-surface.ts): every
+ *  membership read below goes through this, so any route off the surface answers as "not a member". */
+function visible(m: { teamRole?: { portal: boolean } | null } | null | undefined): boolean {
+  return !(portalMembershipsHidden() && m?.teamRole?.portal);
+}
+
+const PORTAL_FLAG = { teamRole: { select: { portal: true } } } as const;
+
 /** Shared team membership / role checks (used by servers, monitors, channels). */
 @Injectable()
 export class TeamAccessService {
@@ -64,9 +73,9 @@ export class TeamAccessService {
   async roleByTeam(userId: string): Promise<Map<string, Role>> {
     const ms = await this.prisma.membership.findMany({
       where: { userId },
-      select: { teamId: true, role: true },
+      select: { teamId: true, role: true, ...PORTAL_FLAG },
     });
-    return new Map(ms.map((m) => [m.teamId, m.role]));
+    return new Map(ms.filter(visible).map((m) => [m.teamId, m.role]));
   }
 
   async teamIds(userId: string): Promise<string[]> {
@@ -76,9 +85,9 @@ export class TeamAccessService {
   async teamRole(userId: string, teamId: string): Promise<Role | null> {
     const m = await this.prisma.membership.findUnique({
       where: { userId_teamId: { userId, teamId } },
-      select: { role: true },
+      select: { role: true, ...PORTAL_FLAG },
     });
-    return m?.role ?? null;
+    return m && visible(m) ? m.role : null;
   }
 
   async requireRole(
@@ -98,9 +107,9 @@ export class TeamAccessService {
   async requirePermission(userId: string, teamId: string, permission: TeamPermission): Promise<void> {
     const m = await this.prisma.membership.findUnique({
       where: { userId_teamId: { userId, teamId } },
-      select: { role: true, teamRole: { select: { permissions: true } } },
+      select: { role: true, teamRole: { select: { permissions: true, portal: true } } },
     });
-    if (!resolvePermissions(m).has(permission)) {
+    if (!visible(m) || !resolvePermissions(m).has(permission)) {
       throw new ForbiddenException("insufficient permission for this team");
     }
   }
@@ -109,18 +118,18 @@ export class TeamAccessService {
   async membershipPermissions(userId: string, teamId: string): Promise<Set<TeamPermission> | null> {
     const m = await this.prisma.membership.findUnique({
       where: { userId_teamId: { userId, teamId } },
-      select: { role: true, teamRole: { select: { permissions: true } } },
+      select: { role: true, teamRole: { select: { permissions: true, portal: true } } },
     });
-    return m ? resolvePermissions(m) : null;
+    return m && visible(m) ? resolvePermissions(m) : null;
   }
 
   /** Bulk effective permissions for every team the user belongs to (list-view canWrite, no N+1). */
   async permissionsByTeam(userId: string): Promise<Map<string, Set<TeamPermission>>> {
     const ms = await this.prisma.membership.findMany({
       where: { userId },
-      select: { teamId: true, role: true, teamRole: { select: { permissions: true } } },
+      select: { teamId: true, role: true, teamRole: { select: { permissions: true, portal: true } } },
     });
-    return new Map(ms.map((m) => [m.teamId, resolvePermissions(m)]));
+    return new Map(ms.filter(visible).map((m) => [m.teamId, resolvePermissions(m)]));
   }
 
   // ---- per-resource scoping -------------------------------------------------
@@ -129,18 +138,18 @@ export class TeamAccessService {
   async membershipAccess(userId: string, teamId: string): Promise<MembershipAccess | null> {
     const m = await this.prisma.membership.findUnique({
       where: { userId_teamId: { userId, teamId } },
-      select: { role: true, teamRoleId: true, restrictedAccess: true, accessedProjects: true, accessedResources: true },
+      select: { role: true, teamRoleId: true, restrictedAccess: true, accessedProjects: true, accessedResources: true, ...PORTAL_FLAG },
     });
-    return m ?? null;
+    return m && visible(m) ? m : null;
   }
 
   /** Bulk scoping for every team the user belongs to (for list-view filtering, no N+1). */
   async accessByTeam(userId: string): Promise<Map<string, MembershipAccess>> {
     const ms = await this.prisma.membership.findMany({
       where: { userId },
-      select: { teamId: true, role: true, teamRoleId: true, restrictedAccess: true, accessedProjects: true, accessedResources: true },
+      select: { teamId: true, role: true, teamRoleId: true, restrictedAccess: true, accessedProjects: true, accessedResources: true, ...PORTAL_FLAG },
     });
-    return new Map(ms.map((m) => [m.teamId, m]));
+    return new Map(ms.filter(visible).map((m) => [m.teamId, m]));
   }
 
   /**

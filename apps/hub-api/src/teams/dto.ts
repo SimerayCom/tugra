@@ -9,6 +9,8 @@ export type RenameTeamInput = z.infer<typeof RenameTeamSchema>;
 export const InviteSchema = z.object({
   email: z.string().email(),
   role: z.enum(["OWNER", "ADMIN", "VIEWER"]),
+  // Customer portal: invite as a Client (sees only the team's apps, uptime and backups; "deploy" may also deploy).
+  clientAccess: z.enum(["view", "deploy"]).optional(),
 });
 export type InviteInput = z.infer<typeof InviteSchema>;
 
@@ -34,6 +36,10 @@ export const UpdateTeamRoleSchema = z
   })
   .refine((v) => v.name !== undefined || v.permissions !== undefined, "nothing to update");
 export type UpdateTeamRoleInput = z.infer<typeof UpdateTeamRoleSchema>;
+
+// The customer-portal presets ("Client" / "Client (deploy)"): created on first use, reused after.
+export const ClientRoleSchema = z.object({ access: z.enum(["view", "deploy"]) });
+export type ClientRoleInput = z.infer<typeof ClientRoleSchema>;
 
 export const SetMemberAccessSchema = z.object({
   restrictedAccess: z.boolean(),

@@ -23,6 +23,7 @@ import { ServersModule } from "./servers/servers.module";
 import { AgentGatewayModule } from "./agent-gateway/agent-gateway.module";
 import { NotificationsModule } from "./notifications/notifications.module";
 import { MonitorsModule } from "./monitors/monitors.module";
+import { StatusPageModule } from "./status-page/status-page.module";
 import { KumaImportModule } from "./monitors/kuma/kuma-import.module";
 import { CoolifyTakeoverModule } from "./coolify-takeover/coolify-takeover.module";
 import { BulkModule } from "./bulk/bulk.module";
@@ -70,6 +71,7 @@ import { ClustersModule } from "./clusters/clusters.module";
 import { McpModule } from "./mcp/mcp.module";
 import { ApiRateLimitInterceptor } from "./api-tokens/api-rate-limit.interceptor";
 import { AuditContextInterceptor } from "./audit/audit-context.interceptor";
+import { PortalSurfaceInterceptor } from "./common/portal-surface.interceptor";
 import { IdempotencyInterceptor } from "./common/idempotency.interceptor";
 import { PaginationInterceptor } from "./common/pagination.interceptor";
 import { ApiExceptionFilter } from "./common/api-exception.filter";
@@ -101,6 +103,7 @@ import { ApiExceptionFilter } from "./common/api-exception.filter";
     AgentGatewayModule,
     NotificationsModule,
     MonitorsModule,
+    StatusPageModule, // public per-team status pages + RSS/email subscribe
     KumaImportModule,
     CoolifyTakeoverModule,
     BulkModule,
@@ -155,6 +158,9 @@ import { ApiExceptionFilter } from "./common/api-exception.filter";
     { provide: APP_GUARD, useClass: TwoFactorRequiredGuard },
     // Per-PAT rate limit (X-RateLimit-* + Retry-After); runs after the auth guard so req.user.tokenId is set.
     { provide: APP_INTERCEPTOR, useClass: ApiRateLimitInterceptor },
+    // Customer portal: marks whether the request is on the Client surface (memberships of a Client role are
+    // invisible to every other route; see common/portal-surface.ts).
+    { provide: APP_INTERCEPTOR, useClass: PortalSurfaceInterceptor },
     // Establishes the per-request audit auth-context (pat+tokenId | session) that AuditService.log stamps.
     { provide: APP_INTERCEPTOR, useClass: AuditContextInterceptor },
     // Idempotency-Key replay for POSTs (closest-but-one to the handler it dedupes).

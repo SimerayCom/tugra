@@ -133,7 +133,7 @@ describe("TeamsService.previewInvitation", () => {
   it("returns team/inviter/role/email without an email match (public), expired=false when live", async () => {
     const prisma = prismaFor({ email: "b@x.com", role: Role.ADMIN, teamId: "t1", invitedBy: "u1", expiresAt: new Date(Date.now() + 1e6) });
     const res = await make(prisma, {} as TeamAccessService).previewInvitation("tok");
-    expect(res).toEqual({ teamName: "Acme", inviterName: "Ada", role: Role.ADMIN, email: "b@x.com", expiresAt: expect.any(Date), expired: false });
+    expect(res).toEqual({ teamName: "Acme", inviterName: "Ada", role: Role.ADMIN, clientAccess: null, email: "b@x.com", expiresAt: expect.any(Date), expired: false });
   });
 
   it("flags an expired invitation", async () => {
@@ -159,10 +159,19 @@ describe("TeamsService.get", () => {
   const teamRow = { id: "t1", name: "Shop", iconUpdatedAt: null, color: null, _count: { memberships: 3 } };
 
   it("returns the team view for a member", async () => {
-    const prisma = { team: { findUnique: jest.fn().mockResolvedValue(teamRow) } } as unknown as PrismaService;
+    const prisma = { team: { findUnique: jest.fn().mockResolvedValue(teamRow) }, membership: { findUnique: jest.fn().mockResolvedValue({ teamRole: null }) } } as unknown as PrismaService;
     const access = { teamRole: jest.fn().mockResolvedValue(Role.ADMIN) } as unknown as TeamAccessService;
     const view = await make(prisma, access).get("u1", "t1");
-    expect(view).toEqual({ id: "t1", name: "Shop", role: Role.ADMIN, memberCount: 3, iconUpdatedAt: null, color: null });
+    expect(view).toEqual({ id: "t1", name: "Shop", role: Role.ADMIN, memberCount: 3, iconUpdatedAt: null, color: null, clientAccess: null });
+  });
+
+  it("tells a Client what the portal role grants", async () => {
+    const prisma = {
+      team: { findUnique: jest.fn().mockResolvedValue(teamRow) },
+      membership: { findUnique: jest.fn().mockResolvedValue({ teamRole: { portal: true, permissions: ["apps:deploy"] } }) },
+    } as unknown as PrismaService;
+    const access = { teamRole: jest.fn().mockResolvedValue(Role.VIEWER) } as unknown as TeamAccessService;
+    expect((await make(prisma, access).get("u1", "t1")).clientAccess).toBe("deploy");
   });
 
   it("throws NotFound when the team does not exist", async () => {
@@ -285,5 +294,76 @@ describe("TeamsService - accent colour", () => {
     const access = { requireRole: jest.fn().mockRejectedValue(new ForbiddenException("nope")) } as unknown as TeamAccessService;
     await expect(make({ team: { update } } as unknown as PrismaService, access).setColor("u1", "t1", "#336699")).rejects.toThrow(/nope/);
     expect(update).not.toHaveBeenCalled();
+  });
+});
+
+describe("TeamsService - customer portal (Client role)", () => {
+  const manage = { requireRole: jest.fn().mockResolvedValue(undefined), teamRole: jest.fn().mockResolvedValue(null) } as unknown as TeamAccessService;
+
+  it("invites a Client into the portal preset on a VIEWER base and stores the role on the invitation", async () => {
+    const role = { id: "r1", name: "Client (deploy)", portal: true, permissions: ["apps:deploy"] };
+    const upsert = jest.fn().mockResolvedValue({ id: "i1", email: "c@example.com", role: Role.VIEWER, token: "tok", expiresAt: new Date() });
+    const prisma = {
+      user: { findUnique: jest.fn().mockResolvedValue(null) },
+      team: { findUnique: jest.fn().mockResolvedValue({ name: "Acme" }) },
+      teamRole: { findUnique: jest.fn().mockResolvedValue(null), create: jest.fn().mockResolvedValue(role) },
+      teamInvitation: { upsert },
+    } as unknown as PrismaService;
+    const inv = await make(prisma, manage).invite("u1", "t1", "c@example.com", Role.ADMIN, "deploy");
+    expect(prisma.teamRole.create).toHaveBeenCalledWith({ data: { teamId: "t1", name: "Client (deploy)", portal: true, permissions: ["apps:deploy"] } });
+    expect(upsert.mock.calls[0][0].create).toMatchObject({ role: Role.VIEWER, teamRoleId: "r1" }); // never the requested ADMIN tier
+    expect(inv.clientAccess).toBe("deploy");
+  });
+
+  it("reuses an existing preset and refuses a hand-made role that squats on the preset name", async () => {
+    const hand = { id: "r9", name: "Client", portal: false, permissions: ["servers:manage"] };
+    const prisma = { user: { findUnique: jest.fn().mockResolvedValue(null) }, teamRole: { findUnique: jest.fn().mockResolvedValue(hand) } } as unknown as PrismaService;
+    await expect(make(prisma, manage).invite("u1", "t1", "c@example.com", Role.VIEWER, "view")).rejects.toThrow(/not a client role/);
+  });
+
+  it("an owner cannot be invited as a Client", async () => {
+    await expect(make({} as PrismaService, manage).invite("u1", "t1", "c@example.com", Role.OWNER, "view")).rejects.toThrow(ConflictException);
+  });
+
+  it("accepting a Client invitation joins the member with the preset role", async () => {
+    const tx = jest.fn().mockResolvedValue([]);
+    const upsert = jest.fn().mockReturnValue("m");
+    const prisma = {
+      teamInvitation: { findUnique: jest.fn().mockResolvedValue({ id: "i1", email: "c@example.com", teamId: "t1", role: Role.VIEWER, teamRoleId: "r1", expiresAt: new Date(Date.now() + 1e6) }), delete: jest.fn() },
+      user: { findUnique: jest.fn().mockResolvedValue({ email: "c@example.com" }) },
+      membership: { upsert },
+      $transaction: tx,
+    } as unknown as PrismaService;
+    await make(prisma, {} as TeamAccessService).acceptInvitation("u2", "tok");
+    expect(upsert.mock.calls[0][0].create).toMatchObject({ role: Role.VIEWER, teamRoleId: "r1" });
+  });
+
+  it("a client role keeps its name and can only carry the deploy permission", async () => {
+    const portalRole = { id: "r1", teamId: "t1", name: "Client", portal: true, permissions: [] };
+    const update = jest.fn().mockImplementation(({ data }) => Promise.resolve({ ...portalRole, ...data }));
+    const prisma = { teamRole: { findFirst: jest.fn().mockResolvedValue(portalRole), update } } as unknown as PrismaService;
+    const svc = make(prisma, manage);
+    await expect(svc.updateRole("u1", "t1", "r1", { name: "Boss" })).rejects.toThrow(/cannot be renamed/);
+    const out = await svc.updateRole("u1", "t1", "r1", { permissions: ["apps:deploy", "servers:manage", "terminal", "bulk"] });
+    expect(update.mock.calls[0][0].data.permissions).toEqual(["apps:deploy"]);
+    expect(out.permissions).toEqual(["apps:deploy"]);
+  });
+
+  it("refuses to delete a client role while clients still hold it (they would become full-read viewers)", async () => {
+    const prisma = {
+      teamRole: { findFirst: jest.fn().mockResolvedValue({ portal: true }), deleteMany: jest.fn() },
+      membership: { count: jest.fn().mockResolvedValue(2) },
+    } as unknown as PrismaService;
+    await expect(make(prisma, manage).deleteRole("u1", "t1", "r1")).rejects.toThrow(ConflictException);
+    expect(prisma.teamRole.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it("deletes an unused client role and an ordinary role as before", async () => {
+    const prisma = {
+      teamRole: { findFirst: jest.fn().mockResolvedValue({ portal: true }), deleteMany: jest.fn().mockResolvedValue({ count: 1 }) },
+      membership: { count: jest.fn().mockResolvedValue(0) },
+    } as unknown as PrismaService;
+    await make(prisma, manage).deleteRole("u1", "t1", "r1");
+    expect(prisma.teamRole.deleteMany).toHaveBeenCalled();
   });
 });
