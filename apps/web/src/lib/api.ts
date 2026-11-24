@@ -1,3 +1,4 @@
+import type { BulkTransferResponse, TransferPlan } from "./server-transfer";
 import { HUB_UNREACHABLE_CODE, hubUnreachableMessage, isHubDownStatus, isNetworkFailure, reportHubDown } from "./hub-connection";
 import type {
   RebootPreview,
@@ -1870,6 +1871,21 @@ export const api = {
   },
   setServerDetails(id: string, body: { description?: string | null; timezone?: string | null }) {
     return apiFetch<{ ok: true }>(`/servers/${id}/details`, { method: "PUT", body: JSON.stringify(body) });
+  },
+  // Move a server to another team. The teams it may go to, a dry run (blockers + links that get dropped), the move
+  // itself (409 `server_transfer_blocked` when resources of the old team are still on it) and the bulk form (one
+  // result per server) that the Servers list calls.
+  getServerTeamTargets(id: string) {
+    return apiFetch<{ id: string; name: string }[]>(`/servers/${id}/team-targets`);
+  },
+  previewServerTeamChange(id: string, teamId: string) {
+    return apiFetch<TransferPlan>(`/servers/${id}/team/preview`, { method: "POST", body: JSON.stringify({ teamId }) });
+  },
+  changeServerTeam(id: string, teamId: string) {
+    return apiFetch<{ ok: true; serverId: string; fromTeamId: string; toTeamId: string }>(`/servers/${id}/team`, { method: "PUT", body: JSON.stringify({ teamId }) });
+  },
+  changeServersTeam(serverIds: string[], teamId: string) {
+    return apiFetch<BulkTransferResponse>("/servers/bulk/team", { method: "POST", body: JSON.stringify({ serverIds, teamId }) });
   },
   importDatabaseFromUrl(id: string, body: { url: string; gzip: boolean; encrypted: boolean; encryptionKey?: string }) {
     return apiFetch<{ ok: true }>(`/databases/${id}/backups/import-from-url`, { method: "POST", body: JSON.stringify(body) });

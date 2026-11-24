@@ -31,6 +31,7 @@ import { RenameModal } from "../../../../components/rename-modal";
 import { TagsCard } from "../../../../components/tags";
 import { LogDrainCard } from "../../../../components/log-drains/log-drain-card";
 import { CapabilitiesCard } from "../../../../components/server-capabilities-card";
+import { ServerTeamCard } from "../../../../components/server-team-card";
 import { AcmeDnsCredentialPicker } from "../../../../components/acme-dns-credential-picker";
 import { useToast } from "../../../../components/toast";
 import { TrafficAnalyticsCard } from "../../../../components/traffic-analytics-card";
@@ -304,6 +305,7 @@ export default function ServerDetailPage() {
           <TunnelCard id={id} server={server} />
           {server.canWrite && <CapabilitiesCard id={id} server={server} />}
           {server.canWrite && <ServerDetailsCard id={id} server={server} />}
+          {server.canWrite && <ServerTeamCard id={id} server={server} />}
           {server.canWrite && <CleanupCard id={id} server={server} />}
           {server.canWrite && <DiscoverAdoptCard id={id} />}
           {server.canWrite && <DeleteServerCard id={id} server={server} />}
