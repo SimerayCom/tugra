@@ -7,6 +7,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.0-beta.27] - 2026-11-24
+
 - **A Coolify import keeps its projects, and the review selects by project in one click.** The import now reads Coolify's
   project → environment tree (`/projects`, `environment_id` on each app and database), so every resource is placed in a
   Tugra project/environment named after its Coolify one (IsBulKibris / production) instead of the team default, exactly
