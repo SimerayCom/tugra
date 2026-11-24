@@ -1,6 +1,6 @@
 {
   "title": "Uptime",
-  "subtitle": "http/tcp service monitoring — get alerted on downtime.",
+  "subtitle": "Uptime checks for sites, ports, DNS and servers. Get alerted on downtime.",
   "name": "Name",
   "typeLabel": "Type",
   "targetHttp": "URL",
@@ -26,7 +26,7 @@
   "manageChannels": "Manage channels →",
   "autoBadge": "auto",
   "emptyTitle": "No monitors yet",
-  "empty": "Add an HTTP, TCP, or metric check to watch uptime.",
+  "empty": "Add a website, port, DNS or server check to watch uptime.",
   "status": "Status",
   "uptime24h": "24h uptime",
   "checkNow": "Check now",

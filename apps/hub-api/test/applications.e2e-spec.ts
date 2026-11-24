@@ -1664,7 +1664,9 @@ describe("Applications / deploy (e2e)", () => {
     const other = await request(app.getHttpServer()).post("/auth/register").send({ email: otherEmail, password, name: "Other" }).expect(201);
     const otherTeamId = (await prisma.membership.findFirst({ where: { userId: other.body.user.id } }))!.teamId;
     try {
-      const foreignEnv = await prisma.environment.findFirstOrThrow({ where: { project: { teamId: otherTeamId } } });
+      // New teams start without a project: give the other team one so it has an environment to target.
+      const foreignProject = await prisma.project.create({ data: { name: "other-p", teamId: otherTeamId } });
+      const foreignEnv = await prisma.environment.create({ data: { name: "production", projectId: foreignProject.id } });
       const refused = await request(app.getHttpServer())
         .post(`/apps/${srcRes.body.id}/clone`)
         .set("Authorization", `Bearer ${token}`)

@@ -145,7 +145,10 @@ describe("Bulk ops (e2e)", () => {
   it("bulk-applies backup schedule to writable databases and skips foreign ones", async () => {
     const dbData = { serverId: "srv-x", name: "d", engine: "POSTGRES" as const, version: "16", image: "postgres:16-alpine", port: 5432, credentials: "x" };
     // Databases require an environment (FK). Reuse my team's default env; give the foreign team its own.
-    const mineEnv = (await prisma.environment.findFirst({ where: { project: { teamId } } }))!;
+    // New teams start without a project: create one for my team (reuse it if an earlier test already did).
+    const mineEnv =
+      (await prisma.environment.findFirst({ where: { project: { teamId } } })) ??
+      (await prisma.environment.create({ data: { name: "production", project: { create: { name: "bulk-p", teamId } } } }));
     const mineDb = await prisma.database.create({ data: { ...dbData, teamId, environmentId: mineEnv.id, name: "bulk-db" } });
     const otherTeam = await prisma.team.create({ data: { name: "db-other" } });
     const otherProject = await prisma.project.create({ data: { name: "p", teamId: otherTeam.id } });
