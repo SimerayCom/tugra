@@ -110,6 +110,29 @@ describe("ServerTeamCard", () => {
     expect(change).not.toHaveBeenCalled();
   });
 
+  it("names the tunnel and log drains that block the move", async () => {
+    mount();
+    vi.spyOn(api, "previewServerTeamChange").mockResolvedValue(
+      plan({
+        canMove: false,
+        blockers: [
+          { kind: "tunnel", count: 1, items: [] },
+          { kind: "log_drain", count: 2, items: [] },
+        ],
+      }),
+    );
+    await openDialog();
+    expect(await screen.findByText(/Cloudflare tunnel/)).toBeTruthy();
+    expect(screen.getByText(/Server-wide log drains/)).toBeTruthy();
+  });
+
+  it("tells that the copied DNS token is deleted when the move is allowed", async () => {
+    mount();
+    vi.spyOn(api, "previewServerTeamChange").mockResolvedValue(plan({ detaches: [{ kind: "dns_secret" }] }));
+    await openDialog();
+    expect(await screen.findByText(/copied DNS token is deleted/)).toBeTruthy();
+  });
+
   it("shows the new blockers when a resource appeared between preview and confirm", async () => {
     mount();
     vi.spyOn(api, "previewServerTeamChange").mockResolvedValue(plan());

@@ -16,6 +16,7 @@ const SERVER = {
   swarmRole: null,
   cloudCredentialId: null as string | null,
   dnsCredentialId: null as string | null,
+  dnsCredsEnc: null as string | null,
 };
 
 /** A table delegate: count/findMany resolve from a fixed row list (the where is recorded, not interpreted). */
@@ -29,7 +30,7 @@ interface World {
   memberships?: Record<string, { role: Role; teamRole?: { permissions: string[] } | null }>;
   server?: typeof SERVER | null;
   teams?: Record<string, string>; // id -> name
-  blockers?: Partial<Record<"application" | "database" | "monitor" | "appMove" | "migrationRun" | "objectMigration" | "serverReboot", Rows[]>>;
+  blockers?: Partial<Record<"application" | "database" | "monitor" | "appMove" | "migrationRun" | "objectMigration" | "serverReboot" | "serverTunnel" | "logDrain" | "bulkTask", Rows[]>>;
   lockCount?: number;
   autoMonitors?: { id: string }[];
   channelLinks?: number;
@@ -57,6 +58,9 @@ function build(w: World = {}) {
     migrationRunServerLock: { count: jest.fn().mockResolvedValue(w.lockCount ?? 0) },
     objectMigration: table(b.objectMigration),
     serverReboot: table(b.serverReboot),
+    serverTunnel: table(b.serverTunnel),
+    logDrain: table(b.logDrain),
+    bulkTask: table(b.bulkTask),
   };
   const prisma = {
     ...tx,
@@ -187,6 +191,19 @@ describe("ServerTeamTransferService blockers", () => {
     expect(blockerKinds(err)).toEqual(["monitor", "cluster", "app_move", "migration", "reboot"]);
   });
 
+  it("blocks on a Cloudflare tunnel, a server-wide log drain and a running importer task", async () => {
+    const { svc, tx } = build({
+      ...both,
+      blockers: { serverTunnel: [{ id: "t1" }], logDrain: [{ id: "l1", name: "ship" }], bulkTask: [{ id: "bt1" }] },
+    });
+    const err = await svc.transfer("u1", "srv1", "teamB").catch((e) => e);
+    expect(blockerKinds(err)).toEqual(["tunnel", "log_drain", "bulk_task"]);
+    expect(tx.server.updateMany).not.toHaveBeenCalled();
+    // only server-wide drains (appId null) and live non-command importer tasks count
+    expect(tx.logDrain.count).toHaveBeenCalledWith({ where: { serverId: "srv1", appId: null } });
+    expect(tx.bulkTask.count).toHaveBeenCalledWith({ where: { serverId: "srv1", status: { in: ["PENDING", "RUNNING"] }, kind: { not: "command" } } });
+  });
+
   it("scans only hand-made monitors (auto=false) so the auto disk monitor never blocks", async () => {
     const { svc, tx } = build(both);
     await svc.transfer("u1", "srv1", "teamB");
@@ -235,6 +252,29 @@ describe("ServerTeamTransferService side effects", () => {
     const { svc, audit } = build({ ...both, server: { ...SERVER, cloudCredentialId: "cc1", dnsCredentialId: "dc1" }, channelLinks: 2 });
     await svc.transfer("u1", "srv1", "teamB");
     expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ meta: { fromTeamId: "teamA", toTeamId: "teamB", detached: ["cloud_credential", "dns_credential", "alert_channels"] } }));
+  });
+});
+
+describe("ServerTeamTransferService DNS-01 secret", () => {
+  const withSecret = { ...both, server: { ...SERVER, dnsCredsEnc: "enc-blob" } };
+
+  it("wipes the copied DNS-01 token, provider and wildcard policy in the same write and reports it", async () => {
+    const { svc, tx, audit } = build(withSecret);
+    await svc.transfer("u1", "srv1", "teamB");
+    expect(tx.server.updateMany).toHaveBeenCalledWith({
+      where: { id: "srv1", teamId: "teamA" },
+      data: expect.objectContaining({ teamId: "teamB", dnsCredsEnc: null, dnsProvider: null, certMode: "http" }),
+    });
+    expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ meta: expect.objectContaining({ detached: ["dns_secret"] }) }));
+  });
+
+  it("does not touch the DNS columns when no token was copied, and lists the wipe in the preview", async () => {
+    const plain = build(both);
+    await plain.svc.transfer("u1", "srv1", "teamB");
+    expect((plain.tx.server.updateMany.mock.calls[0][0] as { data: object }).data).not.toHaveProperty("dnsCredsEnc");
+    const preview = await build(withSecret).svc.preview("u1", "srv1", "teamB");
+    expect(preview.detaches).toEqual([{ kind: "dns_secret" }]);
+    expect(preview.canMove).toBe(true);
   });
 });
 

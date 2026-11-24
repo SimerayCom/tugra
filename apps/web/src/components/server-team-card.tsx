@@ -43,6 +43,7 @@ function BlockerList({ blockers }: { blockers: TransferBlocker[] }) {
 function detachLine(t: ReturnType<typeof useT>, d: TransferDetach): string {
   if (d.kind === "cloud_credential") return d.name ? t("servers.teamMoveDetachCloud", { name: d.name }) : t("servers.teamMoveDetachCloudUnnamed");
   if (d.kind === "dns_credential") return d.name ? t("servers.teamMoveDetachDns", { name: d.name }) : t("servers.teamMoveDetachDnsUnnamed");
+  if (d.kind === "dns_secret") return t("servers.teamMoveDetachDnsSecret");
   return t("servers.teamMoveDetachChannels");
 }
 

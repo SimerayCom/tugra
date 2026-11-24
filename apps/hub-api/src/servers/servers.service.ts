@@ -7,6 +7,7 @@ import {
   UnauthorizedException,
 } from "@nestjs/common";
 import { ModuleRef } from "@nestjs/core";
+import { Subject, type Observable } from "rxjs";
 import { z } from "zod";
 import { Prisma, Role, ServerStatus } from "@prisma/client";
 import { DEFAULT_CLEANUP_DATA } from "../server-ops/cleanup-defaults";
@@ -497,9 +498,17 @@ export class ServersService {
     this.teamChangeListener = fn;
   }
 
+  private readonly teamChanges = new Subject<string>();
+
+  /** Emits the server id whenever a server moves team; live HTTP streams (SSE) end themselves on their own server's id. */
+  teamChanged$(): Observable<string> {
+    return this.teamChanges.asObservable();
+  }
+
   /** Announce that a server now belongs to another team (called by the team-transfer service after the write). */
   emitTeamChanged(serverId: string): void {
     this.teamChangeListener?.(serverId);
+    this.teamChanges.next(serverId);
   }
 
   /** Set the granted capabilities (least-privilege toggle). Deduped + restricted to the known

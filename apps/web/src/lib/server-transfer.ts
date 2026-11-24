@@ -1,6 +1,6 @@
 /** Moving a server to another team: the wire shapes of the hub's team-transfer endpoints plus small pure helpers. */
 
-export type TransferBlockerKind = "application" | "build_server" | "database" | "monitor" | "cluster" | "app_move" | "migration" | "reboot";
+export type TransferBlockerKind = "application" | "build_server" | "database" | "monitor" | "cluster" | "app_move" | "migration" | "reboot" | "tunnel" | "log_drain" | "bulk_task";
 
 export interface TransferBlocker {
   kind: TransferBlockerKind;
@@ -10,7 +10,7 @@ export interface TransferBlocker {
   items: { id: string; name: string }[];
 }
 
-export type TransferDetachKind = "cloud_credential" | "dns_credential" | "alert_channels";
+export type TransferDetachKind = "cloud_credential" | "dns_credential" | "dns_secret" | "alert_channels";
 
 export interface TransferDetach {
   kind: TransferDetachKind;

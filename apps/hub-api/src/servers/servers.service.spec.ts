@@ -1059,4 +1059,14 @@ describe("ServersService team-change hook", () => {
     svc.emitTeamChanged("s1");
     expect(listener).toHaveBeenCalledWith("s1");
   });
+
+  it("also publishes the id on teamChanged$ so live streams of that server can end", () => {
+    const svc = svcWith({} as Partial<PrismaService>);
+    const seen: string[] = [];
+    const sub = svc.teamChanged$().subscribe((id) => seen.push(id));
+    svc.emitTeamChanged("s1");
+    sub.unsubscribe();
+    svc.emitTeamChanged("s2");
+    expect(seen).toEqual(["s1"]);
+  });
 });

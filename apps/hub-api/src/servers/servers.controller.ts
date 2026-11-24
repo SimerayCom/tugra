@@ -14,7 +14,7 @@ import {
   type MessageEvent,
 } from "@nestjs/common";
 import { z } from "zod";
-import { from, interval, map, merge, mergeMap, type Observable } from "rxjs";
+import { filter, from, interval, map, merge, mergeMap, takeUntil, type Observable } from "rxjs";
 import { ApiTags, ApiSecurity } from "@nestjs/swagger";
 import { ApiZodBody, ApiZodResponse } from "../openapi/openapi";
 import { publicUrlFrom, type ReqLike } from "../common/hub-url";
@@ -137,6 +137,9 @@ export class ServersController {
             .subscribe(id)
             .pipe(map((sample) => ({ data: JSON.stringify(sample) }) as MessageEvent)),
           interval(25_000).pipe(map(() => ({ data: JSON.stringify({ type: "ping" }) }) as MessageEvent)),
+        ).pipe(
+          // A team move ends every open stream at once; clients reconnect and are re-authorized against the new team.
+          takeUntil(this.servers.teamChanged$().pipe(filter((moved) => moved === id))),
         ),
       ),
     );

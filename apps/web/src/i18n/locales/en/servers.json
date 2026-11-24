@@ -360,8 +360,9 @@
   "teamMoveMoreMonitor": "Its default disk monitor moves with it.",
   "teamMoveDetachCloud": "The cloud provider link ({name}) is removed. Link a provider key of the new team to restore power and rescue actions.",
   "teamMoveDetachCloudUnnamed": "The cloud provider link is removed. Link a provider key of the new team to restore power and rescue actions.",
-  "teamMoveDetachDns": "The DNS credential marker ({name}) is cleared. Existing certificate settings keep working.",
-  "teamMoveDetachDnsUnnamed": "The DNS credential marker is cleared. Existing certificate settings keep working.",
+  "teamMoveDetachDns": "The DNS credential link ({name}) is cleared.",
+  "teamMoveDetachDnsUnnamed": "The DNS credential link is cleared.",
+  "teamMoveDetachDnsSecret": "The copied DNS token is deleted and wildcard certificates switch to HTTP. Add a DNS credential of the new team to restore them.",
   "teamMoveDetachChannels": "Alerts from its default disk monitor stop going to the old team's channels.",
   "teamMoveOpenShells": "Open terminals on this server are closed.",
   "teamMoveBlocker_application": "Apps on this server",
@@ -372,5 +373,8 @@
   "teamMoveBlocker_app_move": "App moves in progress or awaiting cleanup",
   "teamMoveBlocker_migration": "Migrations in progress",
   "teamMoveBlocker_reboot": "A reboot in progress or scheduled",
+  "teamMoveBlocker_tunnel": "Cloudflare tunnel (remove it first)",
+  "teamMoveBlocker_log_drain": "Server-wide log drains",
+  "teamMoveBlocker_bulk_task": "Import tasks still running",
   "teamMoveMoreItems": "and {n} more"
 }

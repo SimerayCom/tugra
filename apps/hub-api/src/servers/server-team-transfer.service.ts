@@ -17,11 +17,12 @@ import { ServersService } from "./servers.service";
  * being silently dragged along or severed. The operator moves or removes them first (app moves between servers,
  * project/team moves are separate flows), then the server is free to change team.
  *
- * What does travel with the server: its settings (proxy, DNS-01 creds, tunnel, log drains, capabilities, tags),
- * its history (metrics/traffic/audit are keyed by server id) and its auto-created disk monitor (re-homed to the
- * new team with the old team's alert channels detached). Two team-owned LINKS cannot follow it and are cleared
- * and reported up front: the cloud-provider credential (power/rescue/destroy-VM) and the "copied from this DNS
- * credential" marker.
+ * What does travel with the server: its plain settings (proxy, capabilities, tags), its history
+ * (metrics/traffic/audit are keyed by server id) and its auto-created disk monitor (re-homed to the new team with
+ * the old team's alert channels detached). Anything that carries the old team's SECRETS or data sinks does not: a
+ * Cloudflare tunnel (holds the old team's API token) and server-wide log drains (endpoint + auth token) BLOCK the
+ * move; the cloud-provider credential, the "copied from this DNS credential" marker and the copied DNS-01 token are
+ * cleared and reported up front.
  */
 
 /** How many example resources a blocker lists (the count is always exact). */
@@ -29,7 +30,7 @@ export const TRANSFER_BLOCKER_SAMPLE = 10;
 /** Upper bound of one bulk request. */
 export const MAX_BULK_TRANSFER = 50;
 
-export type TransferBlockerKind = "application" | "build_server" | "database" | "monitor" | "cluster" | "app_move" | "migration" | "reboot";
+export type TransferBlockerKind = "application" | "build_server" | "database" | "monitor" | "cluster" | "app_move" | "migration" | "reboot" | "tunnel" | "log_drain" | "bulk_task";
 
 export interface TransferBlocker {
   kind: TransferBlockerKind;
@@ -38,7 +39,7 @@ export interface TransferBlocker {
   items: { id: string; name: string }[];
 }
 
-export type TransferDetachKind = "cloud_credential" | "dns_credential" | "alert_channels";
+export type TransferDetachKind = "cloud_credential" | "dns_credential" | "dns_secret" | "alert_channels";
 
 export interface TransferDetach {
   kind: TransferDetachKind;
@@ -85,7 +86,18 @@ function blockedException(blockers: TransferBlocker[]): ConflictException {
 /** The slice of PrismaService / a transaction client the blocker scan reads. */
 type Db = Pick<
   PrismaService,
-  "application" | "database" | "monitor" | "cluster" | "appMove" | "migrationRun" | "migrationRunServerLock" | "objectMigration" | "serverReboot"
+  | "application"
+  | "database"
+  | "monitor"
+  | "cluster"
+  | "appMove"
+  | "migrationRun"
+  | "migrationRunServerLock"
+  | "objectMigration"
+  | "serverReboot"
+  | "serverTunnel"
+  | "logDrain"
+  | "bulkTask"
 >;
 
 interface Counted {
@@ -153,7 +165,7 @@ export class ServerTeamTransferService {
   private async plan(userId: string, serverId: string, toTeamId: string) {
     const server = await this.prisma.server.findUnique({
       where: { id: serverId },
-      select: { id: true, name: true, teamId: true, clusterId: true, swarmRole: true, cloudCredentialId: true, dnsCredentialId: true },
+      select: { id: true, name: true, teamId: true, clusterId: true, swarmRole: true, cloudCredentialId: true, dnsCredentialId: true, dnsCredsEnc: true },
     });
     if (!server) throw new NotFoundException("server not found");
     const owner = await this.isInstanceOwner(userId);
@@ -189,7 +201,14 @@ export class ServerTeamTransferService {
           // Guarded on the team we validated against, so two racing moves cannot both pass.
           const res = await tx.server.updateMany({
             where: { id: serverId, teamId: server.teamId },
-            data: { teamId: toTeamId, clusterId: null, cloudCredentialId: null, dnsCredentialId: null },
+            data: {
+              teamId: toTeamId,
+              clusterId: null,
+              cloudCredentialId: null,
+              dnsCredentialId: null,
+              // The copied DNS-01 token is the old team's secret: wipe it (and the wildcard-cert policy that needs it).
+              ...(server.dnsCredsEnc ? { dnsCredsEnc: null, dnsProvider: null, certMode: "http" } : {}),
+            },
           });
           if (res.count !== 1) throw new ConflictException("the server changed while it was being moved — try again");
           // The auto disk monitor follows its server. The old team's alert channels cannot follow it.
@@ -314,10 +333,23 @@ export class ServerTeamTransferService {
     if (migrationCount > 0) push("migration", { count: migrationCount, items: [...runs.items, ...objectMigrations.items] });
 
     push("reboot", await this.count(db.serverReboot as never, { serverId: id, state: { not: "DONE" } }, false));
+
+    // A Cloudflare tunnel holds the old team's API token + tunnel token and a DNS record in its zone: release it first.
+    push("tunnel", await this.count(db.serverTunnel as never, { serverId: id }, false));
+    // Server-wide log drains (appId null) ship this host's logs to the old team's endpoint with its auth token.
+    // (App-scoped drains belong to apps, which already block.)
+    push("log_drain", await this.count(db.logDrain as never, { serverId: id, appId: null }));
+    // Legacy importer tasks still queued/running here could create old-team apps or databases after the move.
+    push("bulk_task", await this.count(db.bulkTask as never, { serverId: id, status: { in: ["PENDING", "RUNNING"] }, kind: { not: "command" } }, false));
     return out;
   }
 
-  private async collectDetaches(server: { id: string; cloudCredentialId: string | null; dnsCredentialId: string | null }): Promise<TransferDetach[]> {
+  private async collectDetaches(server: {
+    id: string;
+    cloudCredentialId: string | null;
+    dnsCredentialId: string | null;
+    dnsCredsEnc?: string | null;
+  }): Promise<TransferDetach[]> {
     const out: TransferDetach[] = [];
     if (server.cloudCredentialId) {
       const c = await this.prisma.cloudCredential.findUnique({ where: { id: server.cloudCredentialId }, select: { name: true } });
@@ -327,6 +359,7 @@ export class ServerTeamTransferService {
       const c = await this.prisma.dnsCredential.findUnique({ where: { id: server.dnsCredentialId }, select: { name: true } });
       out.push({ kind: "dns_credential", ...(c ? { name: c.name } : {}) });
     }
+    if (server.dnsCredsEnc) out.push({ kind: "dns_secret" });
     const channelLinks = await this.prisma.monitorChannel.count({ where: { monitor: { serverId: server.id, auto: true } } });
     if (channelLinks > 0) out.push({ kind: "alert_channels", count: channelLinks });
     return out;
