@@ -183,6 +183,19 @@ describe("renderEvent — typed per-event templates", () => {
     expect(linkUrl(m, "View monitor")).toBe("https://web.test/monitors/mon1");
   });
 
+  it("monitor_down: a Cloudflare 522 cause adds the likely-reason field", () => {
+    const m = render("monitor_down", {
+      monitorId: "mon1", monitorName: "site", target: "https://example.com", monitorType: "HTTP",
+      resultMsg: "HTTP 522 (Cloudflare <-> origin)", cause: "cf:522",
+    });
+    expect(fieldVal(m, "Cloudflare <-> origin")).toContain("firewall blocks Cloudflare");
+  });
+
+  it("monitor_down: no cloudflare field for an ordinary failure", () => {
+    const m = render("monitor_down", { monitorName: "site", target: "https://example.com", monitorType: "HTTP", resultMsg: "HTTP 503" });
+    expect(fieldVal(m, "Cloudflare <-> origin")).toBeUndefined();
+  });
+
   it("monitor_up: success, not critical, back UP summary", () => {
     const m = render("monitor_up", { monitorName: "api", target: "https://api.io", monitorType: "HTTP" });
     expect(m.level).toBe("success");

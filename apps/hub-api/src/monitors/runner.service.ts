@@ -1,7 +1,8 @@
 import { Injectable } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { NotificationsService } from "../notifications/notifications.service";
-import { checkers, metricCheckResult, type MetricKind } from "./checkers";
+import { CryptoService } from "../crypto/crypto.service";
+import { applyUpsideDown, checkers, metricCheckResult, type HttpOptions, type MetricKind } from "./checkers";
 import { nextState } from "./transition";
 
 export interface CheckOutcome {
@@ -9,6 +10,18 @@ export interface CheckOutcome {
   ms: number;
   msg: string;
   important: boolean;
+  cause?: string | null;
+}
+
+/** Decrypt a monitor's request options; a value that cannot be opened degrades to "no options" (the check then
+ *  fails visibly on auth) rather than breaking the whole scheduler. */
+function readOptions(crypto: CryptoService, enc: string | null | undefined): HttpOptions | undefined {
+  if (!enc) return undefined;
+  try {
+    return JSON.parse(crypto.decrypt(enc)) as HttpOptions;
+  } catch {
+    return undefined;
+  }
 }
 
 @Injectable()
@@ -16,6 +29,7 @@ export class MonitorRunnerService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly notifications: NotificationsService,
+    private readonly crypto: CryptoService,
   ) {}
 
   async runCheck(monitorId: string): Promise<CheckOutcome | null> {
@@ -58,7 +72,11 @@ export class MonitorRunnerService {
         noDataIsDown: m.status === "DOWN" || established,
       });
     } else {
-      r = await checkers[m.type](m);
+      const checker = checkers[m.type];
+      r = checker
+        ? await checker(m, readOptions(this.crypto, m.httpOptionsEnc))
+        : { up: false, ms: 0, msg: `unsupported monitor type ${m.type}` };
+      if (m.upsideDown) r = applyUpsideDown(r);
     }
     const t = nextState(
       { status: m.status, failCount: m.failCount, downCount: m.downCount },
@@ -72,6 +90,7 @@ export class MonitorRunnerService {
         status: t.status,
         ms: r.ms,
         msg: r.msg,
+        cause: r.cause ?? null,
         important: t.important,
       },
     });
@@ -89,11 +108,12 @@ export class MonitorRunnerService {
         target: m.target,
         monitorType: m.type,
         resultMsg: r.msg,
+        cause: r.cause ?? undefined,
         responseMs: r.ms,
         teamId: m.teamId,
       });
     }
 
-    return { status: t.status, ms: r.ms, msg: r.msg, important: t.important };
+    return { status: t.status, ms: r.ms, msg: r.msg, important: t.important, cause: r.cause ?? null };
   }
 }

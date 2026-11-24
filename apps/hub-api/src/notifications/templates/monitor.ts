@@ -1,3 +1,4 @@
+import { cloudflareReason } from "../../monitors/cloudflare";
 import { base, clamp, fields, num, s, type EventTemplate } from "../event";
 
 /** monitor_up | monitor_down — one template, direction from ev.type (derived from ctx.status). */
@@ -9,6 +10,7 @@ export const monitorTemplate: EventTemplate = {
     const up = ev.type === "monitor_up";
     const monitorId = s(c, "monitorId");
     const dir = up ? "monitor.up" : "monitor.down";
+    const reason = up ? null : cloudflareReason(s(c, "cause"));
     return base(ev, {
       level: up ? "success" : "failure",
       title: env.t(`${dir}.title`, { monitor: name }),
@@ -19,6 +21,7 @@ export const monitorTemplate: EventTemplate = {
         { label: env.t("monitor.field.type"), value: s(c, "monitorType"), inline: true },
         { label: env.t("monitor.field.response"), value: c.responseMs == null ? "" : env.t("monitor.value.ms", { ms: num(c, "responseMs") }), inline: true },
         { label: env.t("monitor.field.detail"), value: clamp(s(c, "resultMsg")) },
+        ...(reason ? [{ label: env.t("monitor.field.cloudflare"), value: env.t(`monitor.cause.${reason}`) }] : []),
       ]),
       links: monitorId ? [{ label: env.t("monitor.link.viewMonitor"), url: `${env.webBaseUrl}/monitors/${monitorId}` }] : [],
     });

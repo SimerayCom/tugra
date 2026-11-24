@@ -4,6 +4,7 @@ import { MonitorsService } from "./monitors.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { TeamAccessService } from "../common/team-access.service";
 import { AuditService } from "../audit/audit.service";
+import { CryptoService } from "../crypto/crypto.service";
 import { MonitorRunnerService } from "./runner.service";
 import { MonitorSchedulerService } from "./scheduler.service";
 
@@ -22,6 +23,7 @@ function make(prisma: Partial<PrismaService>, access: Partial<TeamAccessService>
     audit,
     {} as MonitorRunnerService,
     scheduler as MonitorSchedulerService,
+    { encrypt: (v: string) => `enc:${v}` } as unknown as CryptoService,
   );
 }
 

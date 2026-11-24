@@ -832,6 +832,9 @@ enum MonitorType {
   HTTP
   TCP
   METRIC
+  KEYWORD // HTTP + the body must (or must not) contain a keyword
+  PING // ICMP echo
+  DNS // resolve a record
 }
 
 enum MonitorStatus {
@@ -861,6 +864,19 @@ model Monitor {
   // Auto-created uptime monitor for an app's domain (auto=true, appId set).
   appId        String?
   auto         Boolean          @default(false)
+  // HTTP / KEYWORD options (all optional; null/empty = the previous plain GET behaviour).
+  method         String? // GET | HEAD | POST | PUT | PATCH | DELETE | OPTIONS
+  keyword        String? // KEYWORD: text the response body must contain (case-sensitive)
+  keywordInvert  Boolean  @default(false) // KEYWORD: DOWN when the keyword IS present
+  acceptedStatus String[] @default([]) // e.g. ["200-299","401"]; empty = 200-399
+  httpOptionsEnc String? // encrypted JSON {headers?, basicAuth?, body?} (secrets never stored plaintext)
+  ignoreTls      Boolean  @default(false)
+  maxRedirects   Int      @default(10)
+  upsideDown     Boolean  @default(false) // UP when the check FAILS (and vice versa)
+  // DNS options.
+  dnsRecordType  String? // A | AAAA | CNAME | MX | NS | TXT | SRV | CAA | PTR
+  dnsServer      String? // resolver address; null = the hub's system resolver
+  dnsExpect      String? // optional: an answer must contain this value
   heartbeats   Heartbeat[]
   channels     MonitorChannel[]
   createdAt    DateTime         @default(now())
@@ -875,6 +891,7 @@ model Heartbeat {
   status    MonitorStatus
   ms        Int // latency
   msg       String?
+  cause     String? // machine-readable failure class, e.g. "cf:522" (Cloudflare <-> origin); the UI localizes it
   important Boolean       @default(false)
   ts        DateTime      @default(now())
 

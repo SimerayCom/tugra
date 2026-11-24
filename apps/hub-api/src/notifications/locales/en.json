@@ -227,7 +227,16 @@
   "monitor": {
     "up": { "title": "Monitor recovered — {monitor}", "summary": "{monitor} ({target}) is back UP." },
     "down": { "title": "Monitor down — {monitor}", "summary": "{monitor} ({target}) is DOWN." },
-    "field": { "target": "Target", "type": "Type", "response": "Response", "detail": "Detail" },
+    "field": { "target": "Target", "type": "Type", "response": "Response", "detail": "Detail", "cloudflare": "Cloudflare <-> origin" },
+    "cause": {
+      "unknown_response": "Your server sent an empty or invalid answer to Cloudflare. Check the app logs.",
+      "origin_down": "Cloudflare could not connect: the web server is stopped or not listening.",
+      "connect_timeout": "Cloudflare timed out connecting. The server may be down, or a firewall blocks Cloudflare.",
+      "unreachable": "Cloudflare cannot find a route to the server. Check the DNS record's IP.",
+      "timeout": "The server accepted the connection but answered too slowly.",
+      "ssl_handshake": "TLS handshake with your server failed. Check Cloudflare's SSL mode and the server certificate.",
+      "ssl_invalid": "Your server's certificate was rejected by Cloudflare's Full (strict) mode."
+    },
     "value": { "ms": "{ms} ms" },
     "link": { "viewMonitor": "View monitor" }
   },

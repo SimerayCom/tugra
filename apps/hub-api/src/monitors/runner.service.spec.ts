@@ -1,6 +1,7 @@
 import { MonitorRunnerService } from "./runner.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { NotificationsService } from "../notifications/notifications.service";
+import { CryptoService } from "../crypto/crypto.service";
 
 function make(monitor: Record<string, unknown>, latestMetric: Record<string, unknown> | null) {
   const fire = jest.fn().mockResolvedValue(undefined);
@@ -13,7 +14,8 @@ function make(monitor: Record<string, unknown>, latestMetric: Record<string, unk
     heartbeat: { create: jest.fn().mockResolvedValue({}) },
   } as unknown as PrismaService;
   const notifications = { fireForMonitor: fire } as unknown as NotificationsService;
-  return { svc: new MonitorRunnerService(prisma, notifications), fire };
+  const crypto = { decrypt: (v: string) => v.replace(/^enc:/, "") } as unknown as CryptoService;
+  return { svc: new MonitorRunnerService(prisma, notifications, crypto), fire };
 }
 
 const metricMonitor = (over: Record<string, unknown> = {}) => ({
@@ -109,5 +111,28 @@ describe("MonitorRunnerService — METRIC", () => {
     const out = await svc.runCheck("m1");
     expect(out?.status).not.toBe("UP");
     expect(fire).not.toHaveBeenCalled();
+  });
+});
+
+describe("MonitorRunnerService — HTTP options", () => {
+  const httpMonitor = (over: Record<string, unknown> = {}) => ({
+    id: "m2", name: "site", type: "HTTP", target: "http://127.0.0.1:1", status: "UP", failCount: 0, downCount: 0,
+    retries: 0, resendEvery: 0, timeoutMs: 2000, maxRedirects: 10, acceptedStatus: [], upsideDown: false, httpOptionsEnc: null,
+    createdAt: new Date(), ...over,
+  });
+
+  it("an upside-down monitor is UP when the target is unreachable", async () => {
+    const { svc } = make(httpMonitor({ upsideDown: true, status: "PENDING" }), null);
+    const out = await svc.runCheck("m2");
+    expect(out?.status).toBe("UP");
+    expect(out?.msg).toContain("(inverted)");
+  });
+
+  it("an unreachable ordinary monitor goes DOWN and carries no cause", async () => {
+    const { svc, fire } = make(httpMonitor(), null);
+    const out = await svc.runCheck("m2");
+    expect(out?.status).toBe("DOWN");
+    expect(out?.cause).toBeNull();
+    expect(fire).toHaveBeenCalledWith("m2", expect.objectContaining({ status: "DOWN" }));
   });
 });

@@ -16,6 +16,7 @@ export const ENCRYPTED_COLUMNS: ReadonlyArray<{ model: string; columns: string[]
   { model: "logDrain", columns: ["authTokenEnc"] },
   { model: "serverTunnel", columns: ["cfApiTokenEnc", "cfTunnelTokenEnc"] },
   { model: "notificationChannel", columns: ["configEnc"] },
+  { model: "monitor", columns: ["httpOptionsEnc"] },
   { model: "gitSource", columns: ["clientSecretEnc", "privateKeyEnc", "webhookSecretEnc", "tokenEnc"] },
   { model: "registry", columns: ["passwordEnc"] },
   { model: "cloudCredential", columns: ["apiTokenEnc"] },

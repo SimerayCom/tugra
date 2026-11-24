@@ -1,5 +1,18 @@
+import http from "node:http";
+import net from "node:net";
+import type { AddressInfo } from "node:net";
 import type { Monitor } from "@prisma/client";
-import { httpCheck, metricCheckResult } from "./checkers";
+import {
+  applyUpsideDown,
+  dnsAnswers,
+  dnsCheck,
+  httpCheck,
+  metricCheckResult,
+  parseStatusRanges,
+  pingCheck,
+  statusAccepted,
+  tcpCheck,
+} from "./checkers";
 
 const monitor = (target: string): Monitor =>
   ({
@@ -16,29 +29,175 @@ const monitor = (target: string): Monitor =>
     failCount: 0,
     downCount: 0,
     enabled: true,
+    method: null,
+    keyword: null,
+    keywordInvert: false,
+    acceptedStatus: [],
+    ignoreTls: false,
+    maxRedirects: 10,
+    upsideDown: false,
+    dnsRecordType: null,
+    dnsServer: null,
+    dnsExpect: null,
     createdAt: new Date(),
-  }) as Monitor;
+  }) as unknown as Monitor;
 
 describe("httpCheck", () => {
-  afterEach(() => jest.restoreAllMocks());
+  let server: http.Server;
+  let base = "";
+  const seen: Array<{ method?: string; headers: http.IncomingHttpHeaders; body: string }> = [];
+
+  beforeAll(async () => {
+    server = http.createServer((req, res) => {
+      const chunks: Buffer[] = [];
+      req.on("data", (c: Buffer) => chunks.push(c));
+      req.on("end", () => {
+        seen.push({ method: req.method, headers: req.headers, body: Buffer.concat(chunks).toString() });
+        const url = req.url ?? "/";
+        if (url.startsWith("/status/")) {
+          res.statusCode = Number(url.slice("/status/".length));
+          return res.end("status");
+        }
+        if (url === "/redirect") {
+          res.statusCode = 302;
+          res.setHeader("location", "/ok");
+          return res.end();
+        }
+        if (url === "/loop") {
+          res.statusCode = 302;
+          res.setHeader("location", "/loop");
+          return res.end();
+        }
+        res.statusCode = 200;
+        res.end("hello world, all systems operational");
+      });
+    });
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+    base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  });
+  afterAll(() => new Promise<void>((r) => server.close(() => r())));
+  beforeEach(() => {
+    seen.length = 0;
+  });
 
   it("is up on a 2xx response", async () => {
-    jest.spyOn(global, "fetch").mockResolvedValue({ status: 200 } as Response);
-    const r = await httpCheck(monitor("http://x"));
+    const r = await httpCheck(monitor(`${base}/ok`));
     expect(r.up).toBe(true);
-    expect(r.msg).toContain("200");
+    expect(r.msg).toBe("HTTP 200");
   });
 
   it("is down on a 5xx response", async () => {
-    jest.spyOn(global, "fetch").mockResolvedValue({ status: 503 } as Response);
-    expect((await httpCheck(monitor("http://x"))).up).toBe(false);
+    const r = await httpCheck(monitor(`${base}/status/503`));
+    expect(r.up).toBe(false);
+    expect(r.msg).toBe("HTTP 503");
+    expect(r.cause).toBeUndefined();
   });
 
-  it("is down when the request throws", async () => {
-    jest.spyOn(global, "fetch").mockRejectedValue(new Error("ECONNREFUSED"));
-    const r = await httpCheck(monitor("http://x"));
+  it("is down when the connection is refused", async () => {
+    const r = await httpCheck(monitor("http://127.0.0.1:1"));
     expect(r.up).toBe(false);
     expect(r.msg).toContain("ECONNREFUSED");
+  });
+
+  it("honors accepted status codes and ranges", async () => {
+    const m = { ...monitor(`${base}/status/401`), acceptedStatus: ["200-299", "401"] };
+    expect((await httpCheck(m)).up).toBe(true);
+    const n = { ...monitor(`${base}/status/404`), acceptedStatus: ["200-299", "401"] };
+    expect((await httpCheck(n)).up).toBe(false);
+  });
+
+  it("follows redirects and gives up on a loop", async () => {
+    expect((await httpCheck(monitor(`${base}/redirect`))).up).toBe(true);
+    const loop = await httpCheck({ ...monitor(`${base}/loop`), maxRedirects: 3 });
+    expect(loop.up).toBe(false);
+    expect(loop.msg).toBe("too many redirects");
+  });
+
+  it("with maxRedirects 0 judges the redirect response itself", async () => {
+    const m = { ...monitor(`${base}/redirect`), maxRedirects: 0, acceptedStatus: ["302"] };
+    expect(await httpCheck(m)).toMatchObject({ up: true, msg: "HTTP 302" });
+  });
+
+  it("sends the method, headers, basic auth and body", async () => {
+    const m = { ...monitor(`${base}/ok`), method: "POST" };
+    const r = await httpCheck(m, { headers: { "X-Probe": "1" }, basicAuth: { user: "u", pass: "p" }, body: "ping" });
+    expect(r.up).toBe(true);
+    const req = seen[0];
+    expect(req.method).toBe("POST");
+    expect(req.headers["x-probe"]).toBe("1");
+    expect(req.headers.authorization).toBe("Basic " + Buffer.from("u:p").toString("base64"));
+    expect(req.body).toBe("ping");
+  });
+
+  it("KEYWORD: up when the body contains it, down when it does not", async () => {
+    const found = { ...monitor(`${base}/ok`), type: "KEYWORD", keyword: "operational" } as Monitor;
+    expect((await httpCheck(found)).up).toBe(true);
+    const missing = { ...monitor(`${base}/ok`), type: "KEYWORD", keyword: "maintenance" } as Monitor;
+    const r = await httpCheck(missing);
+    expect(r.up).toBe(false);
+    expect(r.msg).toBe("HTTP 200, keyword not found");
+  });
+
+  it("KEYWORD inverted: down when the keyword is present", async () => {
+    const m = { ...monitor(`${base}/ok`), type: "KEYWORD", keyword: "operational", keywordInvert: true } as Monitor;
+    const r = await httpCheck(m);
+    expect(r.up).toBe(false);
+    expect(r.msg).toBe("HTTP 200, keyword present");
+  });
+
+  it.each([520, 521, 522, 523, 524, 525, 526])("labels Cloudflare %i as a Cloudflare <-> origin failure", async (code) => {
+    const r = await httpCheck(monitor(`${base}/status/${code}`));
+    expect(r.up).toBe(false);
+    expect(r.cause).toBe(`cf:${code}`);
+    expect(r.msg).toBe(`HTTP ${code} (Cloudflare <-> origin)`);
+  });
+});
+
+describe("status helpers", () => {
+  it("parses ranges and singles, ignoring junk", () => {
+    expect(parseStatusRanges(["200-299", "301", "x", "500-400"])).toEqual([[200, 299], [301, 301]]);
+  });
+
+  it("defaults to 2xx/3xx when no list is given", () => {
+    expect(statusAccepted(200, [])).toBe(true);
+    expect(statusAccepted(399, undefined)).toBe(true);
+    expect(statusAccepted(400, [])).toBe(false);
+  });
+
+  it("applyUpsideDown flips the verdict and drops the cause when it becomes UP", () => {
+    expect(applyUpsideDown({ up: true, ms: 5, msg: "HTTP 200" })).toMatchObject({ up: false, msg: "HTTP 200 (inverted)" });
+    const flipped = applyUpsideDown({ up: false, ms: 5, msg: "HTTP 522", cause: "cf:522" });
+    expect(flipped.up).toBe(true);
+    expect(flipped.cause).toBeNull();
+  });
+});
+
+describe("tcp / ping / dns checks", () => {
+  it("tcpCheck is up against a listening port", async () => {
+    const srv = net.createServer((s) => s.end());
+    await new Promise<void>((r) => srv.listen(0, "127.0.0.1", r));
+    const port = (srv.address() as AddressInfo).port;
+    const r = await tcpCheck({ ...monitor(`127.0.0.1:${port}`), type: "TCP" } as Monitor);
+    srv.close();
+    expect(r.up).toBe(true);
+  });
+
+  it("pingCheck refuses a host that could be read as an option", async () => {
+    const r = await pingCheck({ ...monitor("-f"), type: "PING" } as Monitor);
+    expect(r).toMatchObject({ up: false, msg: "invalid host" });
+  });
+
+  it("dnsCheck rejects an unsupported record type without querying", async () => {
+    const r = await dnsCheck({ ...monitor("example.com"), type: "DNS", dnsRecordType: "ANY" } as Monitor);
+    expect(r.up).toBe(false);
+    expect(r.msg).toContain("unsupported record type");
+  });
+
+  it("dnsAnswers flattens MX, SRV and TXT answers", () => {
+    expect(dnsAnswers("MX", [{ priority: 10, exchange: "mx.example.com" }])).toEqual(["10 mx.example.com"]);
+    expect(dnsAnswers("SRV", [{ priority: 1, weight: 2, port: 443, name: "h.example.com" }])).toEqual(["1 2 443 h.example.com"]);
+    expect(dnsAnswers("TXT", [["v=spf1 ", "-all"]])).toEqual(["v=spf1 -all"]);
+    expect(dnsAnswers("A", ["192.0.2.1"])).toEqual(["192.0.2.1"]);
   });
 });
 

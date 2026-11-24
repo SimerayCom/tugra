@@ -9,6 +9,7 @@ import { z } from "zod";
 import { Monitor, MonitorStatus, MonitorType, Role } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
+import { CryptoService } from "../crypto/crypto.service";
 import { TeamAccessService, canAccessResource } from "../common/team-access.service";
 import { loadProjectCtx, loadProjectCtxMany } from "../common/resource-project";
 import { MonitorRunnerService } from "./runner.service";
@@ -35,6 +36,17 @@ export const MonitorViewSchema = z.object({
   timeoutMs: z.number(),
   resendEvery: z.number(),
   enabled: z.boolean(),
+  method: z.string().nullable(),
+  keyword: z.string().nullable(),
+  keywordInvert: z.boolean(),
+  acceptedStatus: z.array(z.string()),
+  hasRequestOptions: z.boolean(), // headers / basic auth / body are set (their values are never returned)
+  ignoreTls: z.boolean(),
+  maxRedirects: z.number(),
+  upsideDown: z.boolean(),
+  dnsRecordType: z.string().nullable(),
+  dnsServer: z.string().nullable(),
+  dnsExpect: z.string().nullable(),
   auto: z.boolean(),
   appId: z.string().nullable(),
   channelIds: z.array(z.string()),
@@ -55,6 +67,7 @@ export class MonitorsService implements OnApplicationBootstrap {
     private readonly audit: AuditService,
     private readonly runner: MonitorRunnerService,
     private readonly scheduler: MonitorSchedulerService,
+    private readonly crypto: CryptoService,
   ) {}
 
   async onApplicationBootstrap(): Promise<void> {
@@ -127,6 +140,8 @@ export class MonitorsService implements OnApplicationBootstrap {
         retries: dto.retries ?? 1,
         timeoutMs: dto.timeoutMs ?? 10000,
         resendEvery: dto.resendEvery ?? 0,
+        enabled: dto.enabled ?? true,
+        ...this.optionColumns(dto),
       },
     });
     if (dto.channelIds?.length) {
@@ -138,6 +153,42 @@ export class MonitorsService implements OnApplicationBootstrap {
     await this.audit.log({ actor: userId, action: "monitor.create", target: m.id });
     await this.scheduler.schedule(m.id, m.intervalSec);
     return this.view(m, Role.OWNER, true);
+  }
+
+  /** The columns for the check options in a create/update body. Request headers, basic auth and the body are
+   *  packed into one encrypted blob (they carry credentials); providing any of them replaces the stored blob. */
+  private optionColumns(dto: {
+    method?: string;
+    keyword?: string;
+    keywordInvert?: boolean;
+    acceptedStatus?: string[];
+    headers?: Record<string, string>;
+    basicAuth?: { user: string; pass: string };
+    body?: string;
+    ignoreTls?: boolean;
+    maxRedirects?: number;
+    upsideDown?: boolean;
+    dnsRecordType?: string;
+    dnsServer?: string;
+    dnsExpect?: string;
+  }) {
+    const hasRequest = dto.headers !== undefined || dto.basicAuth !== undefined || dto.body !== undefined;
+    const request = hasRequest
+      ? JSON.stringify({ headers: dto.headers, basicAuth: dto.basicAuth, body: dto.body })
+      : undefined;
+    return {
+      method: dto.method,
+      keyword: dto.keyword,
+      keywordInvert: dto.keywordInvert,
+      acceptedStatus: dto.acceptedStatus,
+      httpOptionsEnc: request === undefined ? undefined : this.crypto.encrypt(request),
+      ignoreTls: dto.ignoreTls,
+      maxRedirects: dto.maxRedirects,
+      upsideDown: dto.upsideDown,
+      dnsRecordType: dto.dnsRecordType,
+      dnsServer: dto.dnsServer,
+      dnsExpect: dto.dnsExpect,
+    };
   }
 
   async list(userId: string, q?: string): Promise<MonitorView[]> {
@@ -201,6 +252,7 @@ export class MonitorsService implements OnApplicationBootstrap {
         timeoutMs: dto.timeoutMs ?? undefined,
         resendEvery: dto.resendEvery ?? undefined,
         enabled: dto.enabled ?? undefined,
+        ...this.optionColumns(dto),
       },
     });
     if (dto.channelIds !== undefined) {
@@ -420,6 +472,17 @@ export class MonitorsService implements OnApplicationBootstrap {
       timeoutMs: m.timeoutMs,
       resendEvery: m.resendEvery,
       enabled: m.enabled,
+      method: m.method ?? null,
+      keyword: m.keyword ?? null,
+      keywordInvert: m.keywordInvert ?? false,
+      acceptedStatus: m.acceptedStatus ?? [],
+      hasRequestOptions: !!m.httpOptionsEnc,
+      ignoreTls: m.ignoreTls ?? false,
+      maxRedirects: m.maxRedirects ?? 10,
+      upsideDown: m.upsideDown ?? false,
+      dnsRecordType: m.dnsRecordType ?? null,
+      dnsServer: m.dnsServer ?? null,
+      dnsExpect: m.dnsExpect ?? null,
       auto: m.auto,
       appId: m.appId,
       channelIds,
