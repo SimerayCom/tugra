@@ -133,4 +133,86 @@ describe("Projects / Environments (e2e)", () => {
       .expect(400);
     await prisma.team.delete({ where: { id: otherTeam.id } }).catch(() => undefined);
   });
+  describe("empty Default cleanup and moving a project to another team", () => {
+    const auth = () => ({ Authorization: `Bearer ${token}` });
+    const extraTeams: string[] = [];
+    const extraEmails: string[] = [];
+    const legacyDefault = async (name = "Default") =>
+      prisma.project.create({
+        data: { teamId, name, environments: { create: { name: "production" } } },
+        include: { environments: true },
+      });
+    afterAll(async () => {
+      await prisma.team.deleteMany({ where: { id: { in: extraTeams } } }).catch(() => undefined);
+      await prisma.user.deleteMany({ where: { email: { in: extraEmails } } }).catch(() => undefined);
+    });
+
+    it("lists empty Default projects only to the team owner and removes only the truly empty ones", async () => {
+      const empty = await legacyDefault();
+      const used = await legacyDefault();
+      await request(app.getHttpServer())
+        .post("/apps")
+        .set(auth())
+        .send({ name: "in-default", serverId, image: "nginx:alpine", environmentId: used.environments[0].id })
+        .expect(201);
+
+      // an ADMIN of the same team is not an owner: nothing is offered
+      const adminEmail = `proj-admin-${Date.now()}-${Math.floor(Math.random() * 1e6)}@tugra.test`;
+      extraEmails.push(adminEmail);
+      const reg = await request(app.getHttpServer()).post("/auth/register").send({ email: adminEmail, password, name: "Adm" }).expect(201);
+      await prisma.membership.create({ data: { teamId, userId: reg.body.user.id, role: "ADMIN" } });
+      const asAdmin = await request(app.getHttpServer())
+        .get("/projects/empty-defaults")
+        .set("Authorization", `Bearer ${reg.body.tokens.accessToken}`)
+        .expect(200);
+      expect(asAdmin.body).toEqual([]);
+
+      const offered = await request(app.getHttpServer()).get("/projects/empty-defaults").set(auth()).expect(200);
+      const ids = offered.body.map((p: { id: string }) => p.id);
+      expect(ids).toContain(empty.id);
+      expect(ids).not.toContain(used.id);
+
+      // the admin cannot remove either (owner-only), the owner can; a project with resources is skipped, not deleted
+      const denied = await request(app.getHttpServer())
+        .post("/projects/empty-defaults/remove")
+        .set("Authorization", `Bearer ${reg.body.tokens.accessToken}`)
+        .send({ ids: [empty.id] })
+        .expect(200);
+      expect(denied.body).toEqual({ removed: [], skipped: [empty.id] });
+
+      const res = await request(app.getHttpServer())
+        .post("/projects/empty-defaults/remove")
+        .set(auth())
+        .send({ ids: [empty.id, used.id] })
+        .expect(200);
+      expect(res.body).toEqual({ removed: [empty.id], skipped: [used.id] });
+      expect(await prisma.project.findUnique({ where: { id: empty.id } })).toBeNull();
+      expect(await prisma.project.findUnique({ where: { id: used.id } })).not.toBeNull();
+    });
+
+    it("moves an empty project to another team the caller manages, refuses one with resources (409) and a team the caller is not in (403)", async () => {
+      const second = await prisma.team.create({ data: { name: "second" } });
+      extraTeams.push(second.id);
+      const meId = (await prisma.membership.findFirst({ where: { teamId } }))!.userId;
+      await prisma.membership.create({ data: { teamId: second.id, userId: meId, role: "OWNER" } });
+      const stranger = await prisma.team.create({ data: { name: "stranger" } });
+      extraTeams.push(stranger.id);
+
+      const empty = await request(app.getHttpServer()).post("/projects").set(auth()).send({ teamId, name: "movable" }).expect(201);
+      const full = await request(app.getHttpServer()).post("/projects").set(auth()).send({ teamId, name: "pinned" }).expect(201);
+      await request(app.getHttpServer())
+        .post("/apps")
+        .set(auth())
+        .send({ name: "pinned-app", serverId, image: "nginx:alpine", environmentId: full.body.environments[0].id })
+        .expect(201);
+
+      await request(app.getHttpServer()).put(`/projects/${full.body.id}/team`).set(auth()).send({ teamId: second.id }).expect(409);
+      await request(app.getHttpServer()).put(`/projects/${empty.body.id}/team`).set(auth()).send({ teamId: stranger.id }).expect(403);
+      expect((await prisma.project.findUnique({ where: { id: empty.body.id } }))!.teamId).toBe(teamId);
+
+      const moved = await request(app.getHttpServer()).put(`/projects/${empty.body.id}/team`).set(auth()).send({ teamId: second.id }).expect(200);
+      expect(moved.body.teamId).toBe(second.id);
+      expect((await prisma.project.findUnique({ where: { id: full.body.id } }))!.teamId).toBe(teamId);
+    });
+  });
 });

@@ -1,5 +1,5 @@
 import { ConflictException, ForbiddenException } from "@nestjs/common";
-import { Role } from "@prisma/client";
+import { Prisma, Role } from "@prisma/client";
 import { ProjectsService } from "./projects.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { TeamAccessService } from "../common/team-access.service";
@@ -280,10 +280,9 @@ describe("ProjectsService - custom icon", () => {
   });
 
   describe("moveToTeam", () => {
-    function setup(opts: { used?: number; requirePermission?: jest.Mock } = {}) {
+    function setup(opts: { used?: number; abort?: boolean; requirePermission?: jest.Mock } = {}) {
       const projectUpdate = jest.fn().mockReturnValue("project-update");
       const memberUpdate = jest.fn().mockReturnValue("member-update");
-      const transaction = jest.fn().mockResolvedValue([]);
       const grant = jest.fn().mockResolvedValue(undefined);
       const prisma = {
         project: { findUnique: jest.fn().mockResolvedValue({ id: "p1", teamId: "t1" }), update: projectUpdate },
@@ -291,10 +290,15 @@ describe("ProjectsService - custom icon", () => {
         environment: { findMany: jest.fn().mockResolvedValue([{ id: "e1" }]) },
         application: { count: jest.fn().mockResolvedValue(opts.used ?? 0) },
         database: { count: jest.fn().mockResolvedValue(0) },
-        $transaction: transaction,
-      } as unknown as PrismaService;
+      } as Record<string, unknown>;
+      // The emptiness check and the update run in one interactive (serializable) transaction on the same client.
+      const transaction = jest.fn().mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) => {
+        if (opts.abort) throw new Prisma.PrismaClientKnownRequestError("write conflict", { code: "P2034", clientVersion: "x" });
+        return fn(prisma);
+      });
+      prisma.$transaction = transaction;
       const access = { ...okAccess, grantProjectAccess: grant, ...(opts.requirePermission ? { requirePermission: opts.requirePermission } : {}) };
-      const svc = make(prisma, access);
+      const svc = make(prisma as unknown as PrismaService, access);
       jest.spyOn(svc, "get").mockResolvedValue({ id: "p1" } as never);
       return { svc, projectUpdate, memberUpdate, transaction, grant };
     }
@@ -304,14 +308,21 @@ describe("ProjectsService - custom icon", () => {
       await svc.moveToTeam("u1", "p1", "t2");
       expect(projectUpdate).toHaveBeenCalledWith({ where: { id: "p1" }, data: { teamId: "t2", isDefault: false } });
       expect(memberUpdate).toHaveBeenCalledWith({ where: { teamId: "t1", accessedProjects: { has: "p1" } }, data: { accessedProjects: [] } });
-      expect(transaction).toHaveBeenCalled();
+      expect(transaction).toHaveBeenCalledWith(expect.any(Function), { isolationLevel: "Serializable" });
       expect(grant).toHaveBeenCalledWith("u1", "t2", "p1");
     });
 
     it("refuses while the project still has apps or databases", async () => {
-      const { svc, transaction } = setup({ used: 2 });
+      const { svc, projectUpdate, grant } = setup({ used: 2 });
       await expect(svc.moveToTeam("u1", "p1", "t2")).rejects.toThrow(ConflictException);
-      expect(transaction).not.toHaveBeenCalled();
+      expect(projectUpdate).not.toHaveBeenCalled();
+      expect(grant).not.toHaveBeenCalled();
+    });
+
+    it("reports a conflict when a concurrent write aborts the transaction", async () => {
+      const { svc, grant } = setup({ abort: true });
+      await expect(svc.moveToTeam("u1", "p1", "t2")).rejects.toThrow(ConflictException);
+      expect(grant).not.toHaveBeenCalled();
     });
 
     it("needs the projects permission on the target team as well", async () => {
@@ -373,6 +384,20 @@ describe("ProjectsService - custom icon", () => {
       expect(r).toEqual({ removed: ["p-empty"], skipped: ["p-other-team"] });
       expect(del).toHaveBeenCalledTimes(1);
       expect(del).toHaveBeenCalledWith({ where: { id: "p-empty" } });
+    });
+  });
+
+  describe("removeEmptyDefaults races", () => {
+    it("reports an id whose delete fails as skipped and carries on with the rest", async () => {
+      const row = (id: string) => ({ id, teamId: "t1", createdAt: new Date(1), environments: [{ id: `${id}-e`, name: "production" }] });
+      const del = jest.fn().mockRejectedValueOnce(new Error("fk")).mockResolvedValueOnce({});
+      const prisma = {
+        project: { findMany: jest.fn().mockResolvedValue([row("a"), row("b")]), delete: del },
+        application: { findMany: jest.fn().mockResolvedValue([]) },
+        database: { findMany: jest.fn().mockResolvedValue([]) },
+      } as unknown as PrismaService;
+      const svc = make(prisma, { ...okAccess, roleByTeam: jest.fn().mockResolvedValue(new Map([["t1", Role.OWNER]])) });
+      expect(await svc.removeEmptyDefaults("u1", ["a", "b"])).toEqual({ removed: ["b"], skipped: ["a"] });
     });
   });
 

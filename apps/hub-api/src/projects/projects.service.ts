@@ -6,7 +6,7 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import { z } from "zod";
-import { Role } from "@prisma/client";
+import { Prisma, Role } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { TeamAccessService, canAccessProject } from "../common/team-access.service";
@@ -335,20 +335,31 @@ export class ProjectsService {
     const project = await this.requireProjectWrite(userId, id);
     if (project.teamId === targetTeamId) return this.get(userId, id);
     await this.access.requirePermission(userId, targetTeamId, "projects");
-    const envIds = (
-      await this.prisma.environment.findMany({ where: { projectId: project.id }, select: { id: true } })
-    ).map((e) => e.id);
-    if (await this.envsHaveResources(envIds)) {
-      throw new ConflictException("project has resources; move or remove them first");
+    // The emptiness check and the move share one serializable transaction, so an app or database created in
+    // between cannot end up in a project that now belongs to the other team.
+    try {
+      await this.prisma.$transaction(
+        async (tx) => {
+          const envIds = (await tx.environment.findMany({ where: { projectId: project.id }, select: { id: true } })).map((e) => e.id);
+          if (await this.envsHaveResources(envIds, tx)) {
+            throw new ConflictException("project has resources; move or remove them first");
+          }
+          await tx.project.update({ where: { id: project.id }, data: { teamId: targetTeamId, isDefault: false } });
+          // Old-team members' per-project grants no longer mean anything (and must not follow the project).
+          await tx.membership.updateMany({
+            where: { teamId: project.teamId, accessedProjects: { has: project.id } },
+            data: { accessedProjects: [] },
+          });
+        },
+        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+      );
+    } catch (e) {
+      // A concurrent write to this project's resources aborts the serializable transaction.
+      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2034") {
+        throw new ConflictException("project changed while moving; try again");
+      }
+      throw e;
     }
-    await this.prisma.$transaction([
-      this.prisma.project.update({ where: { id: project.id }, data: { teamId: targetTeamId, isDefault: false } }),
-      // Old-team members' per-project grants no longer mean anything (and must not follow the project).
-      this.prisma.membership.updateMany({
-        where: { teamId: project.teamId, accessedProjects: { has: project.id } },
-        data: { accessedProjects: [] },
-      }),
-    ]);
     await this.access.grantProjectAccess(userId, targetTeamId, project.id);
     await this.audit.log({
       actor: userId,
@@ -408,7 +419,13 @@ export class ProjectsService {
         skipped.push(id);
         continue;
       }
-      await this.prisma.project.delete({ where: { id } }); // environments cascade
+      try {
+        await this.prisma.project.delete({ where: { id } }); // environments cascade
+      } catch {
+        // Raced with a new resource (foreign key) or a concurrent delete: report it, keep going.
+        skipped.push(id);
+        continue;
+      }
       await this.audit.log({ actor: userId, action: "project.remove", target: id, meta: { via: "empty-defaults-cleanup" } }).catch(() => undefined);
       removed.push(id);
     }
@@ -614,11 +631,11 @@ export class ProjectsService {
     return env;
   }
 
-  private async envsHaveResources(envIds: string[]): Promise<boolean> {
+  private async envsHaveResources(envIds: string[], db: Pick<Prisma.TransactionClient, "application" | "database"> = this.prisma): Promise<boolean> {
     if (!envIds.length) return false;
     const [apps, dbs] = await Promise.all([
-      this.prisma.application.count({ where: { environmentId: { in: envIds } } }),
-      this.prisma.database.count({ where: { environmentId: { in: envIds } } }),
+      db.application.count({ where: { environmentId: { in: envIds } } }),
+      db.database.count({ where: { environmentId: { in: envIds } } }),
     ]);
     return apps + dbs > 0;
   }
