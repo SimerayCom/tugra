@@ -32,6 +32,7 @@ import portal from "./portal.json";
 import statusPage from "./statusPage.json";
 import pickers from "./pickers.json";
 import projects from "./projects.json";
+import pwa from "./pwa.json";
 import reboot from "./reboot.json";
 import registries from "./registries.json";
 import cloudCredentials from "./cloudCredentials.json";
@@ -50,6 +51,7 @@ import terminal from "./terminal.json";
 import traffic from "./traffic.json";
 
 // Split into namespace files (this JSON gets large); merged here.
-const en = { apps, audit, auth, backups, beszelImport, bulk, charts, cloudCredentials, secretProviders, clusters, common, costs, coolifyTakeover, cutover, dashboard, databases, destinations, domains, errors, feedback, fleet, home, identity, import: importNs, logdrains, migrationRun, monitors, nav, notifications, objectMigration, oob, onboarding, patching, pickers, portal, statusPage, projects, reboot, registries, resources, rollouts, servers, settings, sources, shared, tags, teams, templates, terminal, traffic };
+
+const en = { apps, audit, auth, backups, beszelImport, bulk, charts, common, coolifyTakeover, costs, cutover, dashboard, databases, logdrains, destinations, domains, errors, feedback, fleet, home, identity, import: importNs, migrationRun, monitors, nav, notifications, objectMigration, oob, onboarding, patching, portal, statusPage, pickers, projects, pwa, reboot, registries, cloudCredentials, secretProviders, clusters, resources, rollouts, servers, settings, sources, shared, tags, teams, templates, terminal, traffic };
 
 export default en;

@@ -1,13 +1,22 @@
 import "./globals.css";
 import type { ReactNode } from "react";
+import type { Metadata, Viewport } from "next";
 import { GeistSans } from "geist/font/sans";
 import { GeistMono } from "geist/font/mono";
 import { Providers } from "../lib/providers";
 import { APPEARANCE_PREPAINT } from "../lib/appearance-script";
+import { PwaRegister } from "../components/pwa-register";
 
-export const metadata = {
+export const metadata: Metadata = {
   title: "Tugra",
   description: "Your seal on every server.",
+  // The manifest itself is app/manifest.ts (Next links it automatically); these cover iOS home-screen installs.
+  icons: { apple: "/pwa/apple-touch-icon.png" },
+  appleWebApp: { capable: true, title: "Tugra", statusBarStyle: "default" },
+};
+
+export const viewport: Viewport = {
+  themeColor: "#080809",
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {
@@ -28,6 +37,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
             values match lib/appearance.ts; the script lives in lib/appearance-script.ts (pinned by a test). */}
         <script dangerouslySetInnerHTML={{ __html: APPEARANCE_PREPAINT }} />
         <Providers>{children}</Providers>
+        <PwaRegister />
       </body>
     </html>
   );

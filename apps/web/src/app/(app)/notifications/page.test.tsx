@@ -212,6 +212,21 @@ describe("NotificationsPage — routing by category and severity", () => {
     );
   });
 
+  it("push: no config fields, a calm default routing (uptime, deploy, server from warning up), and an empty config", async () => {
+    vi.spyOn(api, "listChannels").mockResolvedValue([] as never);
+    const createSpy = vi.spyOn(api, "createChannel").mockResolvedValue({} as never);
+    wrap(<NotificationsPage />);
+    await screen.findByLabelText("Uptime");
+    fireEvent.change(screen.getByDisplayValue("SMTP"), { target: { value: "push" } });
+    expect(screen.getByRole("note")).toHaveTextContent("Alerts go to the devices you turned push on for");
+    for (const c of ["Uptime", "Deploy", "Server"]) expect((screen.getByLabelText(c) as HTMLInputElement).checked).toBe(true);
+    for (const c of ["Backup", "Security", "Updates"]) expect((screen.getByLabelText(c) as HTMLInputElement).checked).toBe(false);
+    fireEvent.change(screen.getByLabelText("Channel name"), { target: { value: "My phone" } });
+    fireEvent.click(screen.getByText("Add channel"));
+    await waitFor(() => expect(createSpy).toHaveBeenCalled());
+    expect(createSpy).toHaveBeenCalledWith(expect.objectContaining({ type: "push", config: {}, categories: ["uptime", "deploy", "server"], minSeverity: "warning" }));
+  });
+
   it("refuses to create with an invalid topic id", async () => {
     vi.spyOn(api, "listChannels").mockResolvedValue([] as never);
     const createSpy = vi.spyOn(api, "createChannel").mockResolvedValue({} as never);

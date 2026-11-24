@@ -24,7 +24,7 @@ import { parseTopics, toggleIn, type RoutingDraft } from "../../../lib/notificat
 
 const TYPES = [
   "smtp", "webhook", "discord", "slack", "telegram", "ntfy", "gotify", "pushover", "teams", "mattermost", "lark", "resend",
-  "matrix", "googlechat", "rocketchat", "pagerduty", "opsgenie", "zulip", "bark", "signal", "sms",
+  "matrix", "googlechat", "rocketchat", "pagerduty", "opsgenie", "zulip", "bark", "signal", "sms", "push",
 ];
 
 // config fields per channel type (key → i18n label key f_<key>). Webhook `headers` are handled by a
@@ -51,6 +51,7 @@ const FIELDS: Record<string, string[]> = {
   bark: ["server", "deviceKey", "group"],
   signal: ["server", "number", "recipients", "accessToken"],
   sms: ["accountSid", "authToken", "from", "to"],
+  push: [], // no settings: the recipient is you, and the devices are managed in Settings
 };
 const SECRET_FIELDS = new Set(["pass", "password", "token", "botToken", "userKey", "apiKey", "signingSecret", "accessToken", "routingKey", "authToken", "deviceKey"]);
 const NEW_TYPES = new Set(["matrix", "googlechat", "rocketchat", "pagerduty", "opsgenie", "zulip", "bark", "signal", "sms"]);
@@ -112,6 +113,12 @@ const EVENT_LABEL: Record<string, string> = {
   app_move_rolled_back: "eventAppMoveRolledBack",
   app_move_failed: "eventAppMoveFailed",
 };
+
+/** A push channel starts calm: the categories worth a buzz in a pocket (server down, deploys, uptime), warnings and up. */
+const PUSH_CATEGORIES = ["uptime", "deploy", "server"];
+function pushDefaults(vocab: RoutingVocab): RoutingDraft {
+  return { categories: vocab.categories.filter((c) => PUSH_CATEGORIES.includes(c)), minSeverity: "warning", topics: {} };
+}
 
 export default function NotificationsPage() {
   const t = useT();
@@ -338,7 +345,7 @@ export default function NotificationsPage() {
               <TextInput id="ch-name" value={name} onChange={(e) => setName(e.target.value)} required />
             </Field>
             <Field label={t("notifications.channelType")}>
-              <Select value={type} onChange={(v) => { setType(v); setConfig({}); setHeaders([]); setSecure(false); }} options={TYPES.map((tp) => ({ value: tp, label: t(`notifications.type_${tp}`) }))} />
+              <Select value={type} onChange={(v) => { setType(v); setConfig({}); setHeaders([]); setSecure(false); setPicked(v === "push" ? pushDefaults(vocab) : null); }} options={TYPES.map((tp) => ({ value: tp, label: t(`notifications.type_${tp}`) }))} />
             </Field>
             {(FIELDS[type] ?? []).map((k) => (
               <Field key={k} label={t(`notifications.${FIELD_LABEL[`${type}.${k}`] ?? `f_${k}`}`)} hint={FIELD_HINTS[k] ? t(`notifications.${FIELD_HINTS[k]}`) : undefined}>
@@ -359,6 +366,8 @@ export default function NotificationsPage() {
               </Field>
             ))}
           </div>
+
+          {type === "push" && <p role="note" style={{ fontSize: 12, color: "var(--c-tx3)", margin: "10px 0 0" }}>{t("notifications.hint_push")}</p>}
 
           {type === "smtp" && (
             <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "var(--c-tx2)", marginTop: 10 }}>

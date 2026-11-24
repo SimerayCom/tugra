@@ -23,6 +23,15 @@ const nextConfig = {
   // is never meant to be framed, so frame-ancestors 'none' (+ the legacy X-Frame-Options for old browsers).
   async headers() {
     return [
+      // The service worker must always be revalidated (an update that is not picked up is a stuck old worker) and may
+      // control the whole origin even though it is a single file.
+      {
+        source: "/sw.js",
+        headers: [
+          { key: "Cache-Control", value: "no-cache, no-store, must-revalidate" },
+          { key: "Service-Worker-Allowed", value: "/" },
+        ],
+      },
       {
         source: "/:path*",
         headers: [

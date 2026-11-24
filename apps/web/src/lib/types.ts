@@ -1199,6 +1199,14 @@ export interface TeamDigest {
   /** Hour of day (hub time zone) it goes out, on Mondays. */
   hour: number;
   timezone: string;
+/** One browser/device registered for Web Push by the signed-in user (GET /push/devices). */
+export interface PushDevice {
+  id: string;
+  deviceLabel: string | null;
+  /** The push service host (the full endpoint URL is never returned). */
+  service: string;
+  createdAt: string;
+  lastUsedAt: string | null;
 }
 
 /** GET /channels/events — the subscribable event ids plus the routing vocabulary (category + severity ids). */

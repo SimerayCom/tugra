@@ -70,6 +70,7 @@ import type {
   AuditPage,
   Channel,
   ChannelPolicyInput,
+  PushDevice,
   ChannelVocabulary,
   ParsedChannelUrl,
   TeamDigest,
@@ -1589,6 +1590,26 @@ export const api = {
   },
   deleteChannel(id: string) {
     return apiFetch<{ ok: true }>(`/channels/${id}`, { method: "DELETE" });
+  },
+
+  // ── Web Push (this user's devices) ──
+  /** The hub's VAPID public key: the applicationServerKey a browser subscribes with. */
+  pushPublicKey() {
+    return apiFetch<{ publicKey: string }>("/push/public-key");
+  },
+  listPushDevices() {
+    return apiFetch<PushDevice[]>("/push/devices");
+  },
+  /** Register (or refresh) this browser; the same endpoint always maps to one device. */
+  addPushDevice(input: { endpoint: string; keys: { p256dh: string; auth: string }; deviceLabel?: string }) {
+    return apiFetch<PushDevice>("/push/devices", { method: "POST", body: JSON.stringify(input) });
+  },
+  removePushDevice(id: string) {
+    return apiFetch<{ ok: true }>(`/push/devices/${encodeURIComponent(id)}`, { method: "DELETE" });
+  },
+  /** Send a test notification to all of the caller's devices; 409 when none is registered. */
+  testPush(input: { title?: string; body?: string } = {}) {
+    return apiFetch<{ sent: number; removed: number; failed: number }>("/push/test", { method: "POST", body: JSON.stringify(input) });
   },
 
   // ── git sources (GitHub App) ──

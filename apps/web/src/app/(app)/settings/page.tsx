@@ -21,6 +21,7 @@ import { PanelDomainCard } from "./panel-domain-card";
 import { HubBackupCard } from "./hub-backup-card";
 import { UpdatesCard } from "./updates-card";
 import { AppearanceCard } from "./appearance-card";
+import { InstallAppCard, PushDevicesCard } from "./pwa-card";
 import { useT } from "../../../i18n/provider";
 import { Btn, Card } from "../../../components/ui";
 import { MailNotConfiguredNote } from "../../../components/mail-not-configured-note";
@@ -129,6 +130,8 @@ export default function SettingsPage() {
         <SettingsGrid>
           <AccountCard />
           <UiModeCard />
+          <InstallAppCard />
+          <PushDevicesCard />
           <FeedbackCard />
         </SettingsGrid>
       )}
