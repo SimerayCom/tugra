@@ -3327,3 +3327,21 @@ export interface VerificationView {
   report: VerificationReport | null;
   previews: Array<{ host: string; url: string | null }>;
 }
+
+export interface SnapshotItemView { id: string | null; kind: "database" | "volume"; name: string | null; status: "SUCCESS" | "FAILED"; sizeBytes: string | null; error: string | null }
+export interface SnapshotInfo {
+  status: "PLANNED" | "CAPTURING" | "SUCCESS" | "PARTIAL" | "FAILED" | "EXPIRED" | "SKIPPED";
+  destinationId: string | null;
+  destinationName: string | null;
+  destinationType: "S3" | "LOCAL";
+  items: SnapshotItemView[];
+  keepDays: number;
+  capturedAt: string | null;
+  expiresAt: string | null;
+  restoredAt: string | null;
+  note: string | null;
+}
+export interface SnapshotView {
+  snapshot: SnapshotInfo | null;
+  destinations: Array<{ id: string; name: string; type: "S3" | "LOCAL" }>;
+}

@@ -11,6 +11,8 @@ import { AuthUser } from "../auth/strategies/jwt.strategy";
 import { runActorFromAuth } from "../migration-runs/core/run-contract";
 import { VerificationService } from "./verification.service";
 import { RunVerificationSchema, type RunVerificationInput } from "./verification.dto";
+import { SnapshotService } from "./snapshot.service";
+import { PlanSnapshotSchema, RestoreSnapshotSchema, type PlanSnapshotInput, type RestoreSnapshotInput } from "./snapshot.dto";
 
 /**
  * Migration safety: the verification report (source vs target, before the DNS change). Every route goes through the run
@@ -22,7 +24,10 @@ import { RunVerificationSchema, type RunVerificationInput } from "./verification
 @Controller("migration-runs")
 @UseGuards(ApiAuthGuard, ScopesGuard)
 export class MigrationSafetyController {
-  constructor(private readonly verification: VerificationService) {}
+  constructor(
+    private readonly verification: VerificationService,
+    private readonly snapshots: SnapshotService,
+  ) {}
 
   /** The latest stored verification report (null until one ran), plus the preview addresses the owner can open. */
   @Get(":id/verification")
@@ -38,5 +43,39 @@ export class MigrationSafetyController {
   @ApiZodBody(RunVerificationSchema)
   verificationRun(@CurrentUser() user: AuthUser, @Param("id") id: string, @Body(new ZodValidationPipe(RunVerificationSchema)) body: RunVerificationInput) {
     return this.verification.run(runActorFromAuth(user), id, body.paths);
+  }
+
+  /** The safety copy of this run (null until one is planned) and the destinations the team can send it to. */
+  @Get(":id/snapshot")
+  snapshotView(@CurrentUser() user: AuthUser, @Param("id") id: string) {
+    return this.snapshots.view(runActorFromAuth(user), id);
+  }
+
+  /** Choose where the safety copy goes (a destination, or the target's disk with `destinationId: null`), or skip it. */
+  @Post(":id/snapshot")
+  @HttpCode(200)
+  @RequireScopes("deploy")
+  @ApiZodBody(PlanSnapshotSchema)
+  snapshotPlan(@CurrentUser() user: AuthUser, @Param("id") id: string, @Body(new ZodValidationPipe(PlanSnapshotSchema)) body: PlanSnapshotInput) {
+    return this.snapshots.plan(runActorFromAuth(user), id, body);
+  }
+
+  /** Take the safety copy now (it otherwise starts by itself once the final data copy has landed). */
+  @Post(":id/snapshot/capture")
+  @HttpCode(200)
+  @RequireScopes("deploy")
+  @Throttle({ default: { limit: 6, ttl: 60_000 } })
+  snapshotCapture(@CurrentUser() user: AuthUser, @Param("id") id: string) {
+    return this.snapshots.captureNow(runActorFromAuth(user), id);
+  }
+
+  /** Go back: restore one item of the safety copy through the normal restore (it overwrites that database or volume). */
+  @Post(":id/snapshot/restore")
+  @HttpCode(200)
+  @RequireScopes("deploy")
+  @Throttle({ default: { limit: 6, ttl: 60_000 } })
+  @ApiZodBody(RestoreSnapshotSchema)
+  snapshotRestore(@CurrentUser() user: AuthUser, @Param("id") id: string, @Body(new ZodValidationPipe(RestoreSnapshotSchema)) body: RestoreSnapshotInput) {
+    return this.snapshots.restore(runActorFromAuth(user), id, body.itemId);
   }
 }

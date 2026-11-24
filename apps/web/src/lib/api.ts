@@ -186,6 +186,7 @@ import type {
   MigrationRunSafetyHints,
   MigrationRunReport,
   VerificationView,
+  SnapshotView,
 } from "./types";
 
 // Same-origin path the SPA calls; next.config rewrites proxy it to the hub, so the httpOnly session
@@ -2641,6 +2642,18 @@ export const api = {
   },
   getMigrationRunVerification(id: string) {
     return apiFetch<VerificationView>(`/migration-runs/${encodeURIComponent(id)}/verification`);
+  },
+  getMigrationRunSnapshot(id: string) {
+    return apiFetch<SnapshotView>(`/migration-runs/${encodeURIComponent(id)}/snapshot`);
+  },
+  planMigrationRunSnapshot(id: string, body: { destinationId: string | null; skip?: boolean }) {
+    return apiFetch<SnapshotView>(`/migration-runs/${encodeURIComponent(id)}/snapshot`, { method: "POST", body: JSON.stringify(body) });
+  },
+  captureMigrationRunSnapshot(id: string) {
+    return apiFetch<SnapshotView>(`/migration-runs/${encodeURIComponent(id)}/snapshot/capture`, { method: "POST" });
+  },
+  restoreMigrationRunSnapshot(id: string, itemId: string) {
+    return apiFetch<SnapshotView>(`/migration-runs/${encodeURIComponent(id)}/snapshot/restore`, { method: "POST", body: JSON.stringify({ itemId }) });
   },
   runMigrationRunVerification(id: string, paths: string[] = []) {
     return apiFetch<VerificationView>(`/migration-runs/${encodeURIComponent(id)}/verification`, { method: "POST", body: JSON.stringify({ paths }) });

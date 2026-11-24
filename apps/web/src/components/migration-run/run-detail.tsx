@@ -22,6 +22,7 @@ import { RecoveryCard, RunHeaderActions } from "./run-actions";
 import { RunDrawers } from "./run-drawers";
 import { PlacementCard, RunBanners, RunFacts } from "./run-summary";
 import { SafetyCard } from "./safety-card";
+import { SnapshotCard } from "./snapshot-card";
 import { VerifyReportCard } from "./verify-report-card";
 import { StepTimeline } from "./step-timeline";
 import { runQueryKey } from "./use-run-actions";
@@ -101,6 +102,7 @@ function RunBody({ run, events, error, settled, safetyFocus }: { run: MigrationR
       <HeldWorkersCard run={run} />
       <OwnerInputsCard key={JSON.stringify(run.inputs)} run={run} />
       <SafetyCard run={run} focusToken={safetyFocus} />
+      {!run.dryRun && <SnapshotCard run={run} />}
       {run.opId && !run.dryRun && <VerifyReportCard run={run} />}
       <RunDrawers run={run} />
       <RecoveryCard run={run} />
