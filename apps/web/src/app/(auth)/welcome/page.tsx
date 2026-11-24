@@ -371,6 +371,7 @@ function EmailStep({ t, onNext, onSkip }: { t: Tr; onNext: () => void; onSkip: (
   const [resendKey, setResendKey] = useState("");
   const [host, setHost] = useState("");
   const [port, setPort] = useState("587");
+  const [secure, setSecure] = useState(false);
   const [mailUser, setMailUser] = useState("");
   const [password, setPassword] = useState("");
   const [from, setFrom] = useState("");
@@ -382,6 +383,7 @@ function EmailStep({ t, onNext, onSkip }: { t: Tr; onNext: () => void; onSkip: (
     if (data.provider !== "none") setProvider(data.provider);
     setHost(data.host ?? "");
     setPort(String(data.port ?? 587));
+    setSecure(!!data.secure);
     setMailUser(data.user ?? "");
     setFrom(data.from ?? "");
   }, [data]);
@@ -401,7 +403,7 @@ function EmailStep({ t, onNext, onSkip }: { t: Tr; onNext: () => void; onSkip: (
       await api.updateMailSettings({
         provider,
         from: from.trim(),
-        ...(provider === "smtp" ? { host: host.trim(), port: portNum, user: mailUser.trim(), ...(password ? { password } : {}) } : {}),
+        ...(provider === "smtp" ? { host: host.trim(), port: portNum, secure, user: mailUser.trim(), ...(password ? { password } : {}) } : {}),
         ...(provider === "resend" && resendKey ? { resendKey } : {}),
       });
       onNext();
@@ -449,8 +451,15 @@ function EmailStep({ t, onNext, onSkip }: { t: Tr; onNext: () => void; onSkip: (
               <TextInput id="ob-mail-host" value={host} onChange={(e) => setHost(e.target.value)} placeholder="smtp.example.com" autoComplete="off" />
             </Field>
             <Field label={t("settings.mail_port")} htmlFor="ob-mail-port">
-              <TextInput id="ob-mail-port" inputMode="numeric" value={port} onChange={(e) => setPort(e.target.value.replace(/\D/g, ""))} />
+              <TextInput id="ob-mail-port" inputMode="numeric" value={port} onChange={(e) => {
+                const v = e.target.value.replace(/\D/g, "");
+                setPort(v);
+                // Port 465 is implicit TLS and 587 is STARTTLS: follow the port so the common cases just work.
+                if (v === "465") setSecure(true);
+                else if (v === "587") setSecure(false);
+              }} />
             </Field>
+            <Checkbox id="ob-mail-secure" checked={secure} onChange={setSecure} label={t("settings.mail_secure")} />
             <Field label={t("settings.mail_user")} htmlFor="ob-mail-user">
               <TextInput id="ob-mail-user" value={mailUser} onChange={(e) => setMailUser(e.target.value)} autoComplete="off" />
             </Field>
