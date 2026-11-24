@@ -99,6 +99,9 @@ export const DatabaseViewSchema = z.object({
   baseBackupCron: z.string().nullable(),
   tags: z.array(z.string()),
   volumes: z.array(z.object({ name: z.string(), path: z.string() })),
+  // A custom config file is set (presence only; the text is a secret and has its own read:secrets endpoint) / this engine takes one.
+  hasConfigFile: z.boolean(),
+  configFileSupported: z.boolean(),
   // Set for a PostgreSQL 18+ database provisioned before the data volume was mounted where that major keeps its cluster: its data sits in an
   // anonymous Docker volume. Back it up and restore it into a new database (which persists correctly). Null/absent when the layout is sound.
   dataLayoutWarning: z.enum(["pg_anonymous_volume"]).nullable().optional(),
@@ -967,8 +970,15 @@ export class DatabasesService {
     return db.configFileEnc ? this.crypto.decrypt(db.configFileEnc) : null;
   }
 
+  /** A database's custom config file text (writer-only; it can hold secrets, so the route needs read:secrets). Null when none is set. */
+  async getConfigFile(userId: string, id: string): Promise<{ supported: boolean; content: string | null }> {
+    const db = await this.requireWrite(userId, id);
+    return { supported: supportsConfigFile(db.engine as DbEngine), content: this.dbConfigFile(db) };
+  }
+
   /**
-   * Set (or clear with null) the custom config file of a database (writer-only): a Redis redis.conf, mounted read-only at the next
+   * Set (or clear with null) the custom config file of a database (writer-only): the engine's config file (redis.conf, keydb.conf,
+   * postgresql.conf, a MySQL/MariaDB conf.d file or mongod.conf), mounted read-only at the next
    * provision. Stored encrypted, never returned by any read, never written to the audit log. An empty text clears it.
    * Throws BadRequest for an engine without config-file support, a NUL byte or a text over the size cap.
    */
@@ -1154,6 +1164,8 @@ export class DatabasesService {
       baseBackupCron: db.baseBackupCron,
       tags: db.tags,
       volumes: this.dbVolumes(db),
+      hasConfigFile: !!db.configFileEnc,
+      configFileSupported: supportsConfigFile(db.engine as DbEngine),
       dataLayoutWarning: pgDataLayout(db) === "legacy-anon" && !pgLayoutUnsettled(db.status) ? "pg_anonymous_volume" : null,
       role,
       canWrite,

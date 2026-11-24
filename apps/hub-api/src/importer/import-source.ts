@@ -116,10 +116,10 @@ export interface ImportSource {
    *  discovered DB's `sourceRef`. `undefined` when unavailable. A source that does not implement it (Coolify,
    *  local-docker) makes the executor mint fresh credentials instead. */
   fetchDbCredentials?(ref: string): Promise<FetchedDbCredentials | undefined>;
-  /** OPTIONAL secret path: a database's custom config file text (Coolify `redis_conf`), re-fetched server-side at apply time and keyed by
+  /** OPTIONAL secret path: a database's custom config file text (Coolify `redis_conf`, `postgres_conf`, ...), re-fetched server-side at apply time and keyed by
    *  the discovered DB's `sourceRef`. `undefined` when it has none or the token cannot read it. A genuine read error MUST throw (the
    *  executor turns it into a fixed note; it never fails the database task). NEVER part of discover()/the fleet: it can hold secrets. */
-  fetchDbConfigFile?(ref: string): Promise<string | undefined>;
+  fetchDbConfigFile?(ref: string, engine?: string): Promise<string | undefined>;
   /** OPTIONAL secret path: an app's HTTP basic-auth credentials (username + plaintext password), re-fetched
    *  server-side at apply time and keyed by the app's `sourceRef`. NEVER part of discover()/the fleet. `undefined`
    *  when the app has none. A genuine read error MUST throw (the executor reports it as unmapped rather than

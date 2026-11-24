@@ -91,3 +91,9 @@ export const SetIconSchema = z.object({
   data: z.string().min(1).max(96_000),
 });
 export type SetIconInput = z.infer<typeof SetIconSchema>;
+
+// A database's custom config file: the full text, or null/blank to clear it. Size and NUL checks live in the service.
+export const SetDatabaseConfigFileSchema = z.object({ content: z.string().max(70_000).nullable() });
+export type SetDatabaseConfigFileInput = z.infer<typeof SetDatabaseConfigFileSchema>;
+export const DatabaseConfigFileSchema = z.object({ supported: z.boolean(), content: z.string().nullable() });
+export const SetDatabaseConfigFileResultSchema = z.object({ restartRequired: z.boolean() });

@@ -1,4 +1,4 @@
-import type { ForeignEnv, ForeignFleet, ForeignProject, ServiceBundle } from "../foreign-fleet";
+import type { ForeignEnv, ForeignFleet, TugraDbEngine, ForeignProject, ServiceBundle } from "../foreign-fleet";
 import type { ImportSource, ImportSourceCapabilities, FetchedSecrets, SourceAppExtras, SourceHealthRow, SourceProbe } from "../import-source";
 import { isSensitiveVisible } from "./coolify-sensitive";
 import { why } from "../reason";
@@ -7,6 +7,7 @@ import { buildEnvReport, classifyEnvRow } from "../env-report";
 import {
   appStaticFlags,
   buildCoolifyFleet,
+  coolifyConfText,
   coolifyEngine,
   coolifyNeedsSettings,
   containerPrefixKnown,
@@ -406,15 +407,15 @@ export class CoolifySource implements ImportSource {
   }
 
   /**
-   * Re-read one database's custom config file (`redis_conf`, `read:sensitive`-gated on Coolify; absent for a plain token → nothing
+   * Re-read one database's custom config file (`redis_conf`, `postgres_conf`, ... by engine; `read:sensitive`-gated on Coolify; absent for a plain token → nothing
    * carried). ONE guarded GET; a transport/permission error PROPAGATES (the executor turns it into a fixed note). The text lives in
    * memory only: it can hold secrets, so it never enters the fleet, the plan or a task row.
    */
-  async fetchDbConfigFile(ref: string): Promise<string | undefined> {
+  async fetchDbConfigFile(ref: string, engine?: string): Promise<string | undefined> {
     const row = await this.client.get<unknown>(`/databases/${encodeURIComponent(ref)}`);
     if (!row || typeof row !== "object" || Array.isArray(row)) return undefined;
-    const conf = (row as CoolifyDatabase).redis_conf;
-    return typeof conf === "string" && conf.trim() ? conf : undefined;
+    const db = row as CoolifyDatabase;
+    return coolifyConfText(db, (engine as TugraDbEngine | undefined) ?? coolifyEngine(db));
   }
 
   /**

@@ -151,8 +151,13 @@ export interface CoolifyDatabase {
   /** The source's TLS switch and the `sslmode` it tells clients to use (PostgreSQL). Both are config, not secrets. */
   enable_ssl?: boolean | null;
   ssl_mode?: string | null;
-  /** A custom redis.conf (Redis only). Presence-only: the text is never read into the fleet. */
+  /** A custom engine config file (one field per engine, `read:sensitive`-gated). Presence-only: the text is never read into the fleet. */
   redis_conf?: string | null;
+  keydb_conf?: string | null;
+  postgres_conf?: string | null;
+  mysql_conf?: string | null;
+  mariadb_conf?: string | null;
+  mongo_conf?: string | null;
 }
 export interface CoolifyService {
   uuid: string;
@@ -252,6 +257,23 @@ export function coolifyEngine(db: CoolifyDatabase): TugraDbEngine | "UNKNOWN" {
   if (/mongo/.test(image)) return "MONGO";
   if (/redis|valkey/.test(image)) return "REDIS"; // Valkey speaks the Redis protocol; Coolify 4.7 gives it `standalone-redis` too
   return "UNKNOWN";
+}
+
+/** The Coolify field holding each engine's custom config file (the engines Tugra can mount one for). */
+const CONF_FIELD = {
+  REDIS: "redis_conf",
+  KEYDB: "keydb_conf",
+  POSTGRES: "postgres_conf",
+  MYSQL: "mysql_conf",
+  MARIADB: "mariadb_conf",
+  MONGO: "mongo_conf",
+} as const satisfies Partial<Record<TugraDbEngine, keyof CoolifyDatabase>>;
+
+/** The custom config file text of a Coolify database row for an engine; undefined when the engine takes none, or the field is absent or blank. */
+export function coolifyConfText(db: CoolifyDatabase, engine: TugraDbEngine | "UNKNOWN"): string | undefined {
+  const field = (CONF_FIELD as Partial<Record<string, keyof CoolifyDatabase>>)[engine];
+  const v = field ? db[field] : undefined;
+  return typeof v === "string" && v.trim() ? v : undefined;
 }
 
 /** Whether a database image is Valkey (the Redis fork Coolify 4.7 defaults new `standalone-redis` databases to): `valkey/valkey:9-alpine`, a mirror's `valkey`. */
@@ -715,8 +737,9 @@ export function mapDatabase(
   const valkey = engine === "REDIS" && isValkeyImage(db.image);
   const notCarried: NonNullable<ForeignDb["notCarried"]> = [];
   if (valkey) notCarried.push({ field: "engineFamily", level: "info", ...why("coolify_valkey") });
-  // A custom redis.conf is carried (presence here; the text is read at apply time, see fetchDbConfigFile): no warning.
-  const hasConfigFile = engine === "REDIS" && nonEmpty(db.redis_conf);
+  // A custom engine config file (redis/keydb/postgres/mysql/mariadb/mongo `*_conf`) is carried (presence here; the text is read at apply
+  // time, see fetchDbConfigFile): no warning.
+  const hasConfigFile = coolifyConfText(db, engine) !== undefined;
   // A scheduled backup (and its S3 target) is not carried: Tugra needs the destination credentials, which the importer never reads.
   const backupSchedule = mapBackupSchedule(ctx.backups, ctx.s3);
   if (backupSchedule) {

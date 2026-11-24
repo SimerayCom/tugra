@@ -211,7 +211,7 @@ export interface ForeignDb {
    *  `enabled` = the source really serves TLS; `mode` = the client-facing sslmode it advertises. Config only, never a secret.
    *  Absent = no TLS expectation. Not part of the plan (planHash is unchanged). */
   tls?: { enabled: boolean; mode?: "require" | "verify-ca" | "verify-full" };
-  /** The source database runs with a custom config file Tugra carries (Coolify `redis_conf`, Redis only). PRESENCE only: the text can hold
+  /** The source database runs with a custom config file Tugra carries (Coolify `redis_conf`, `keydb_conf`, `postgres_conf`, `mysql_conf`, `mariadb_conf` or `mongo_conf`). PRESENCE only: the text can hold
    *  secrets, so it is read at apply time (`ImportSource.fetchDbConfigFile`) and never enters the fleet, the plan or a task row. */
   hasConfigFile?: boolean;
   /** Fields PRESENT on the source database that Tugra cannot carry (a scheduled backup). Names + fixed reasons only, never values.

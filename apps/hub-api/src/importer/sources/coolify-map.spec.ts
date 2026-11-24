@@ -528,6 +528,27 @@ describe("static site, redirect mode and redis conf (R18 / R19 / R48)", () => {
     }
   });
 
+  it("every engine's *_conf is carried as a presence marker; the field of another engine does not count", () => {
+    const cases: Array<[string, string, string]> = [
+      ["standalone-postgresql", "postgres:17", "postgres_conf"],
+      ["standalone-mysql", "mysql:8", "mysql_conf"],
+      ["standalone-mariadb", "mariadb:11", "mariadb_conf"],
+      ["standalone-mongodb", "mongo:7", "mongo_conf"],
+      ["standalone-keydb", "eqalpha/keydb:latest", "keydb_conf"],
+    ];
+    for (const [type, image, key] of cases) {
+      const db = { uuid: "d1", name: "n", database_type: type, image, [key]: "setting=SUPERSECRET" } as never;
+      const m = mapDatabase(db, { volumes: [] });
+      expect([key, m.hasConfigFile]).toEqual([key, true]);
+      expect(JSON.stringify(m)).not.toContain("SUPERSECRET");
+      expect("hasConfigFile" in mapDatabase({ ...(db as object), [key]: " " } as never, { volumes: [] })).toBe(false);
+    }
+    // KeyDB rows carry no database_type (a Coolify bug): the image decides, and keydb_conf still counts
+    expect(mapDatabase({ uuid: "k", image: "eqalpha/keydb:x86_64_v6.3.4", keydb_conf: "x" } as never, { volumes: [] }).hasConfigFile).toBe(true);
+    // a ClickHouse row has no config field
+    expect("hasConfigFile" in mapDatabase({ uuid: "c", database_type: "standalone-clickhouse", image: "clickhouse/clickhouse-server:24", postgres_conf: "x" } as never, { volumes: [] })).toBe(false);
+  });
+
   it("a custom redis.conf is carried (a presence marker only, no warning) and its text never enters the fleet or the plan", () => {
     const db = { uuid: "r1", name: "cache", database_type: "standalone-redis", image: "redis:7", redis_conf: "maxmemory 2gb\nrequirepass SUPERSECRET" };
     const mapped = mapDatabase(db, { volumes: [] });

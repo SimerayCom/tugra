@@ -2003,6 +2003,12 @@ export const api = {
   setDatabaseEnv(id: string, env: Record<string, string>) {
     return apiFetch<{ ok: true }>(`/databases/${id}/env`, { method: "PUT", body: JSON.stringify({ env }) });
   },
+  getDatabaseConfigFile(id: string) {
+    return apiFetch<{ supported: boolean; content: string | null }>(`/databases/${id}/config-file`);
+  },
+  setDatabaseConfigFile(id: string, content: string | null) {
+    return apiFetch<{ restartRequired: boolean }>(`/databases/${id}/config-file`, { method: "PUT", body: JSON.stringify({ content }) });
+  },
   setDatabaseVolumes(id: string, volumes: { name: string; path: string }[]) {
     return apiFetch<{ ok: true }>(`/databases/${id}/volumes`, { method: "PUT", body: JSON.stringify({ volumes }) });
   },

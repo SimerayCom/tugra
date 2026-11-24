@@ -685,12 +685,55 @@ describe("database-script: custom config file (Redis redis.conf)", () => {
     }
   });
 
-  it("only Redis takes it: other engines ignore a stray value", () => {
-    expect(supportsConfigFile("REDIS")).toBe(true);
-    for (const e of ["POSTGRES", "MYSQL", "MARIADB", "MONGO", "KEYDB", "DRAGONFLY", "CLICKHOUSE", "LIBSQL"] as DbEngine[]) {
+  it("engines without a config file ignore a stray value", () => {
+    for (const e of ["DRAGONFLY", "CLICKHOUSE", "LIBSQL"] as DbEngine[]) {
       expect(supportsConfigFile(e)).toBe(false);
       expect(buildDatabaseRunScript(spec(e, { configFile: conf }))).toBe(buildDatabaseRunScript(spec(e)));
     }
+    for (const e of ["REDIS", "KEYDB", "POSTGRES", "MYSQL", "MARIADB", "MONGO"] as DbEngine[]) expect(supportsConfigFile(e)).toBe(true);
+  });
+
+  it("KeyDB loads /etc/keydb/keydb.conf first and keeps the password a command-line argument", () => {
+    const s = buildDatabaseRunScript(spec("KEYDB", { configFile: conf }));
+    expect(s).toContain(`-v ${dbConfigHostDir("db1")}/keydb.conf:/etc/keydb/keydb.conf:ro`);
+    expect(s).toMatch(/keydb-server \/etc\/keydb\/keydb\.conf --requirepass 'p@ss'/);
+    expect(buildDatabaseRunScript(spec("KEYDB", { configFile: null }))).toBe(buildDatabaseRunScript(spec("KEYDB")));
+  });
+
+  it("Postgres mounts postgresql.conf, points config_file at it and still listens on every address", () => {
+    const s = buildDatabaseRunScript(spec("POSTGRES", { configFile: conf }));
+    expect(s).toContain(`-v ${dbConfigHostDir("db1")}/postgresql.conf:/etc/postgresql/postgresql.conf:ro`);
+    expect(s).toContain("-c config_file=/etc/postgresql/postgresql.conf -c 'listen_addresses=*'");
+    expect(s.indexOf("base64 -d")).toBeLessThan(s.indexOf("docker run"));
+    expect(buildDatabaseRunScript(spec("POSTGRES", { configFile: null }))).not.toContain("config_file");
+  });
+
+  it("Postgres: the config flags sit before the PITR archive args and inside the TLS wrapper's arguments", () => {
+    const pitr = buildDatabaseRunScript(spec("POSTGRES", { configFile: conf, pitr: true }));
+    expect(pitr.indexOf("config_file=")).toBeLessThan(pitr.indexOf("archive_mode=on"));
+    const tls = buildDatabaseRunScript(spec("POSTGRES", { configFile: conf, ssl: true }));
+    expect(tls).toMatch(/sh -c '.*' sh -c config_file=\/etc\/postgresql\/postgresql\.conf/);
+  });
+
+  it("MySQL and MariaDB drop the file into conf.d (no flag) read-only", () => {
+    for (const e of ["MYSQL", "MARIADB"] as DbEngine[]) {
+      const s = buildDatabaseRunScript(spec(e, { configFile: conf }));
+      expect(s).toContain(`-v ${dbConfigHostDir("db1")}/tugra-custom.cnf:/etc/mysql/conf.d/tugra-custom.cnf:ro`);
+      expect(s).not.toContain("--defaults");
+      expect(s).toContain(`> ${dbConfigHostDir("db1")}/tugra-custom.cnf`);
+    }
+  });
+
+  it("Mongo mounts mongod.conf and starts mongod with --config", () => {
+    const s = buildDatabaseRunScript(spec("MONGO", { configFile: conf }));
+    expect(s).toContain(`-v ${dbConfigHostDir("db1")}/mongod.conf:/etc/mongo/mongod.conf:ro`);
+    expect(s).toMatch(/mongo:[^ ']+'? --config \/etc\/mongo\/mongod\.conf\s*\n/);
+  });
+
+  it("each engine's file is written under its own name", () => {
+    expect(dbConfigPrepareScript("db1", "x", "POSTGRES")).toContain(`> ${dbConfigHostDir("db1")}/postgresql.conf`);
+    expect(dbConfigPrepareScript("db1", "x", "MONGO")).toContain(`> ${dbConfigHostDir("db1")}/mongod.conf`);
+    expect(dbConfigPrepareScript("db1", "x")).toContain(`> ${dbConfigHostDir("db1")}/redis.conf`);
   });
 
   it("the remove script drops the host copy only when asked", () => {

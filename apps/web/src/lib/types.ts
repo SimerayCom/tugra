@@ -2293,6 +2293,9 @@ export interface Database {
   baseBackupCron: string | null;
   tags: string[];
   volumes: { name: string; path: string }[];
+  /** A custom config file is set / this engine takes one (the text itself is fetched on demand). */
+  hasConfigFile: boolean;
+  configFileSupported: boolean;
   dataLayoutWarning?: "pg_anonymous_volume" | null;
   role: Role;
   canWrite: boolean;

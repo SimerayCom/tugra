@@ -1215,12 +1215,12 @@ export class ImportExecutorService {
           notes.push("the CPU/memory limit was not applied — set it on the Tugra database");
         }
       }
-      // Carry the custom config file (Coolify redis_conf) as the database's config-file mount. Best-effort like the limits above: the
+      // Carry the custom config file (Coolify *_conf) as the database's config-file mount. Best-effort like the limits above: the
       // row exists, so a failure is a FIXED note (the text can hold secrets, so it is never echoed) and never fails the task.
       let configFile = false;
       if (db.hasConfigFile) {
         try {
-          const text = await source.fetchDbConfigFile?.(db.sourceRef);
+          const text = await source.fetchDbConfigFile?.(db.sourceRef, db.engine);
           if (text === undefined) {
             notes.push("the source's custom config file could not be read (the Coolify token needs read:sensitive) - add it on the Tugra database");
           } else {

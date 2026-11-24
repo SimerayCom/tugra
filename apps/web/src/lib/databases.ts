@@ -113,3 +113,16 @@ export function pitrPickerBounds(w: { earliest: string | null; latest: string | 
   const initialDate = new Date(Math.max(minDate.getTime(), maxDate.getTime() - PITR_DEFAULT_MARGIN_MS));
   return { min: toDatetimeLocal(minDate), max: toDatetimeLocal(maxDate), initial: toDatetimeLocal(initialDate) };
 }
+
+/** Where each engine reads its custom config file inside the container (mirrors the hub), with the hint key shown under the field. */
+export const DB_CONFIG_FILES: Record<string, { path: string; hint: "Postgres" | "Mysql" | "Mongo" | "Redis" }> = {
+  POSTGRES: { path: "/etc/postgresql/postgresql.conf", hint: "Postgres" },
+  MYSQL: { path: "/etc/mysql/conf.d/tugra-custom.cnf", hint: "Mysql" },
+  MARIADB: { path: "/etc/mysql/conf.d/tugra-custom.cnf", hint: "Mysql" },
+  MONGO: { path: "/etc/mongo/mongod.conf", hint: "Mongo" },
+  REDIS: { path: "/usr/local/etc/redis/redis.conf", hint: "Redis" },
+  KEYDB: { path: "/etc/keydb/keydb.conf", hint: "Redis" },
+};
+
+/** The hub's cap on a config file (bytes). */
+export const DB_CONFIG_MAX_BYTES = 64 * 1024;

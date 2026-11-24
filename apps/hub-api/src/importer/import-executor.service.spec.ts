@@ -930,13 +930,22 @@ describe("ImportExecutorService — DB credential carry (L4)", () => {
       const f = redisFleet();
       const h = harness({ fleet: f, dbCreds: creds, dbConfigFile: async () => CONF });
       await run(h, f);
-      expect(h.source.fetchDbConfigFile).toHaveBeenCalledWith("db-1");
+      expect(h.source.fetchDbConfigFile).toHaveBeenCalledWith("db-1", "REDIS");
       expect(h.dbs.setConfigFile).toHaveBeenCalledWith("user-1", "db-new", CONF);
       const upd = dbTaskUpdate(h);
       expect(upd.status).toBe("DONE");
       expect(upd.result).toMatchObject({ configFile: true });
       expect(JSON.stringify(h.prisma.bulkTask.update.mock.calls)).not.toContain("CONF-SECRET-SENTINEL");
       expect(JSON.stringify(h.audit.log.mock.calls)).not.toContain("CONF-SECRET-SENTINEL");
+    });
+
+    it("passes the engine, so a Postgres source's postgres_conf is the text that is fetched and set", async () => {
+      const f = dbFleet({ engine: "POSTGRES", version: "16", image: undefined, externalPort: undefined, hasConfigFile: true });
+      const h = harness({ fleet: f, dbCreds: creds, dbConfigFile: async () => "max_connections = 40\n" });
+      await run(h, f);
+      expect(h.source.fetchDbConfigFile).toHaveBeenCalledWith("db-1", "POSTGRES");
+      expect(h.dbs.setConfigFile).toHaveBeenCalledWith("user-1", "db-new", "max_connections = 40\n");
+      expect(dbTaskUpdate(h).result).toMatchObject({ configFile: true });
     });
 
     it("also works on the fresh-credentials path", async () => {

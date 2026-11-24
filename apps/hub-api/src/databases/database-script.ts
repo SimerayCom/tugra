@@ -107,18 +107,41 @@ export function sslPrepareScript(dbId: string): string {
   ].join("\n");
 }
 
-// ── Custom engine config file (Redis: redis.conf) ──────────────────────────────────────────────────────────────────────
+// ── Custom engine config file ──────────────────────────────────────────────────────────────────────────────────────────
 // The text is stored encrypted on the row and written to the host at every provision (so a recreate or a restore always gets the
-// current text), then bind-mounted READ-ONLY at the path the server is told to load. Only Redis supports it today; the managed
-// credentials still win because the password stays a command-line argument (it overrides a `requirepass` in the file).
+// current text), then bind-mounted READ-ONLY at the path the engine loads. Redis/KeyDB/Mongo are told to load it on the command
+// line, Postgres via `-c config_file=`, MySQL/MariaDB pick it up from conf.d (no flag). The managed credentials always win:
+// Redis/KeyDB keep the password as a command-line argument, the SQL engines and Mongo take theirs from the env.
 export const DB_CONFIG_HOST_ROOT = "/etc/tugra/dbconf";
 export const REDIS_CONFIG_CONTAINER_PATH = "/usr/local/etc/redis/redis.conf";
-/** Larger than any real redis.conf; it rides inside the provision command, so it is bounded. */
+/** Larger than any real config file; it rides inside the provision command, so it is bounded. */
 export const DB_CONFIG_MAX_BYTES = 64 * 1024;
+
+interface ConfigFileDef {
+  /** File name under the per-database host dir. */
+  hostFile: string;
+  /** Where the engine reads it inside the container. */
+  containerPath: string;
+}
+
+const CONFIG_FILES: Partial<Record<DbEngine, ConfigFileDef>> = {
+  REDIS: { hostFile: "redis.conf", containerPath: REDIS_CONFIG_CONTAINER_PATH },
+  KEYDB: { hostFile: "keydb.conf", containerPath: "/etc/keydb/keydb.conf" },
+  POSTGRES: { hostFile: "postgresql.conf", containerPath: "/etc/postgresql/postgresql.conf" },
+  // The official mysql/mariadb images `!includedir /etc/mysql/conf.d/`, so a file dropped there is read on top of the defaults.
+  MYSQL: { hostFile: "tugra-custom.cnf", containerPath: "/etc/mysql/conf.d/tugra-custom.cnf" },
+  MARIADB: { hostFile: "tugra-custom.cnf", containerPath: "/etc/mysql/conf.d/tugra-custom.cnf" },
+  MONGO: { hostFile: "mongod.conf", containerPath: "/etc/mongo/mongod.conf" },
+};
 
 /** Whether an engine can load a custom config file. */
 export function supportsConfigFile(engine: DbEngine): boolean {
-  return engine === "REDIS";
+  return CONFIG_FILES[engine] !== undefined;
+}
+
+/** The config file's container path for an engine (null when it takes none). */
+export function configFileContainerPath(engine: DbEngine): string | null {
+  return CONFIG_FILES[engine]?.containerPath ?? null;
 }
 
 /** The per-database host dir holding the config file. Keyed on the row id, never user input. */
@@ -127,10 +150,11 @@ export function dbConfigHostDir(dbId: string): string {
 }
 
 /** Host-side step: write the config file (base64 on the wire, so no quoting or heredoc can break out of it). Readable by the container's user, writable by root only. */
-export function dbConfigPrepareScript(dbId: string, content: string): string {
+export function dbConfigPrepareScript(dbId: string, content: string, engine: DbEngine = "REDIS"): string {
   const d = dbConfigHostDir(dbId);
+  const f = `${d}/${(CONFIG_FILES[engine] ?? CONFIG_FILES.REDIS!).hostFile}`;
   const b64 = Buffer.from(content, "utf8").toString("base64");
-  return [`mkdir -p ${d} && chmod 755 ${d}`, `printf %s ${shq(b64)} | base64 -d > ${d}/redis.conf`, `chmod 644 ${d}/redis.conf`].join("\n");
+  return [`mkdir -p ${d} && chmod 755 ${d}`, `printf %s ${shq(b64)} | base64 -d > ${f}`, `chmod 644 ${f}`].join("\n");
 }
 
 /** The wrapper the container runs instead of the image's default command: install the pair, then hand over to the stock entrypoint. */
@@ -222,7 +246,7 @@ export interface DbSpec {
   ssl?: boolean;
   // PostgreSQL data layout (see PgDataLayout). Absent → "data": the run script is byte-identical to a pre-18 database.
   pgLayout?: PgDataLayout;
-  // Custom config file text (Redis only, see supportsConfigFile). Absent/empty → the run script is byte-identical to today.
+  // Custom config file text (see supportsConfigFile). Absent/empty → the run script is byte-identical to today.
   configFile?: string | null;
 }
 
@@ -412,7 +436,14 @@ export function engineCommand(engine: DbEngine, creds: DbCredentials, opts: { co
       // The config file is the first argument (redis-server loads it, then applies the options that follow over it).
       return `redis-server ${opts.configFile ? `${REDIS_CONFIG_CONTAINER_PATH} ` : ""}--requirepass ${shq(creds.password)}`;
     case "KEYDB":
-      return `keydb-server --requirepass ${shq(creds.password)}`;
+      return `keydb-server ${opts.configFile ? `${CONFIG_FILES.KEYDB!.containerPath} ` : ""}--requirepass ${shq(creds.password)}`;
+    case "POSTGRES":
+      // A custom postgresql.conf REPLACES the image's sample, which is the one that sets listen_addresses='*': without it the server
+      // would listen on localhost only and no app could reach it. PGDATA (an env of the image) still names the data directory.
+      return opts.configFile ? `-c config_file=${CONFIG_FILES.POSTGRES!.containerPath} -c ${shq("listen_addresses=*")}` : "";
+    case "MONGO":
+      // The image entrypoint reads the file itself (bindIp, auth) before it adds its own defaults.
+      return opts.configFile ? `--config ${CONFIG_FILES.MONGO!.containerPath}` : "";
     case "DRAGONFLY":
       return `--requirepass ${shq(creds.password)}`; // image entrypoint is `dragonfly`
     default:
@@ -518,7 +549,8 @@ export function buildDatabaseRunScript(db: DbSpec): string {
   const recovery = db.engine === "POSTGRES" && db.recovery ? db.recovery : null;
   const recFlag = recovery ? `-v ${walRestoreHostDir(db.id)}:${WAL_RESTORE_CONTAINER_DIR}:ro` : "";
   const configFile = supportsConfigFile(db.engine) && !!db.configFile;
-  const configFlag = configFile ? `-v ${dbConfigHostDir(db.id)}/redis.conf:${REDIS_CONFIG_CONTAINER_PATH}:ro` : "";
+  const configDef = CONFIG_FILES[db.engine];
+  const configFlag = configFile && configDef ? `-v ${dbConfigHostDir(db.id)}/${configDef.hostFile}:${configDef.containerPath}:ro` : "";
   const baseCommand = engineCommand(db.engine, db.credentials, { configFile });
   const serverArgs = recovery
     ? [baseCommand, pgRecoveryArgs(recovery.targetTime)].filter(Boolean).join(" ")
@@ -579,7 +611,7 @@ export function buildDatabaseRunScript(db: DbSpec): string {
     // are emitted only when pitr is on, so the off-path script is byte-identical to today.
     ...(pitr ? [`mkdir -p ${walHostDir(db.id)} && chmod 700 ${walHostDir(db.id)}`] : []),
     ...(ssl ? [sslPrepareScript(db.id)] : []),
-    ...(configFile ? [dbConfigPrepareScript(db.id, db.configFile!)] : []),
+    ...(configFile ? [dbConfigPrepareScript(db.id, db.configFile!, db.engine)] : []),
     `docker pull ${shq(db.image)}`,
     ...(legacyAnon ? legacyAnonRecreate(name, runArgs) : [`docker rm -f ${name} 2>/dev/null || true`, runArgs]),
     ...(pitr ? [`docker exec -u root ${name} chown postgres:postgres ${WAL_CONTAINER_DIR}`] : []),

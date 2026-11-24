@@ -38,6 +38,10 @@ import {
   CreateDatabaseSchema,
   SetDatabaseEnvInput,
   SetDatabaseEnvSchema,
+  SetDatabaseConfigFileInput,
+  SetDatabaseConfigFileSchema,
+  DatabaseConfigFileSchema,
+  SetDatabaseConfigFileResultSchema,
   SetDatabaseVolumesInput,
   SetDatabaseVolumesSchema,
   RenameInput,
@@ -245,6 +249,27 @@ export class DatabasesController {
   ) {
     await this.databases.setEnv(user.userId, id, body.env);
     return { ok: true };
+  }
+
+  // The custom engine config file. The text can hold secrets (a `requirepass`, TLS key paths), so the GET needs read:secrets like
+  // the env endpoints; both are writer-gated ("databases" permission) in the service. Applying it is a (re)provision.
+  @Get(":id/config-file")
+  @RequireScopes("read:secrets")
+  @ApiZodResponse(DatabaseConfigFileSchema)
+  getConfigFile(@CurrentUser() user: AuthUser, @Param("id") id: string) {
+    return this.databases.getConfigFile(user.userId, id);
+  }
+
+  @Put(":id/config-file")
+  @HttpCode(200)
+  @ApiZodBody(SetDatabaseConfigFileSchema)
+  @ApiZodResponse(SetDatabaseConfigFileResultSchema)
+  setConfigFile(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(SetDatabaseConfigFileSchema)) body: SetDatabaseConfigFileInput,
+  ) {
+    return this.databases.setConfigFile(user.userId, id, body.content);
   }
 
   // Extra persistent volumes for this database (names + absolute container paths). Writer-gated; not secret,

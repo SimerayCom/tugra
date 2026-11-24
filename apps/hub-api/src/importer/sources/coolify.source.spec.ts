@@ -502,6 +502,16 @@ describe("CoolifySource.fetchDbConfigFile", () => {
     await expect(new CoolifySource(new FakeClient({ "/databases/db-1": new Error("500 boom") })).fetchDbConfigFile("db-1")).rejects.toThrow("500 boom");
   });
 
+  it("reads the field of the database's own engine (from the type, the image or the executor's hint)", async () => {
+    const row = { uuid: "db-1", postgres_conf: "max_connections=10\n", mysql_conf: "[mysqld]\nx=1\n", redis_conf: "r" };
+    expect(await new CoolifySource(new FakeClient({ "/databases/db-1": { ...row, database_type: "standalone-postgresql" } })).fetchDbConfigFile("db-1")).toBe("max_connections=10\n");
+    expect(await new CoolifySource(new FakeClient({ "/databases/db-1": { ...row, image: "mysql:8" } })).fetchDbConfigFile("db-1")).toBe("[mysqld]\nx=1\n");
+    expect(await new CoolifySource(new FakeClient({ "/databases/db-1": row })).fetchDbConfigFile("db-1", "MYSQL")).toBe("[mysqld]\nx=1\n");
+    expect(await new CoolifySource(new FakeClient({ "/databases/db-1": { uuid: "db-1", keydb_conf: "k" } })).fetchDbConfigFile("db-1", "KEYDB")).toBe("k");
+    expect(await new CoolifySource(new FakeClient({ "/databases/db-1": { uuid: "db-1", mongo_conf: "m" } })).fetchDbConfigFile("db-1", "MONGO")).toBe("m");
+    expect(await new CoolifySource(new FakeClient({ "/databases/db-1": row })).fetchDbConfigFile("db-1", "DRAGONFLY")).toBeUndefined();
+  });
+
   it("encodes the ref in the path", async () => {
     const client = new FakeClient({ "/databases/a%2Fb": { uuid: "x", redis_conf: "x" } });
     await new CoolifySource(client).fetchDbConfigFile("a/b");

@@ -28,6 +28,7 @@ import { AppMetricsCard } from "../../../../components/app-metrics-card";
 import { Tabs } from "../../../../components/tabs-nav";
 import { EnvironmentCard } from "../../../../components/environment-card";
 import { EnvCard } from "../../../../components/env-card";
+import { DbConfigFileCard } from "../../../../components/db-config-file-card";
 import { TagsCard } from "../../../../components/tags";
 import { RenameModal } from "../../../../components/rename-modal";
 import { TerminalPanel } from "../../../../components/terminal-panel";
@@ -400,6 +401,11 @@ export default function DatabaseDetailPage() {
               relatedKey={["database", id]}
             />
           </div>
+          {db.configFileSupported && (
+            <div style={{ marginTop: 16 }}>
+              <DbConfigFileCard id={id} name={db.name} engine={db.engine} status={db.status} supported={db.configFileSupported} redeploying={provision.isPending} onRedeploy={() => provision.mutate()} />
+            </div>
+          )}
           <div style={{ marginTop: 16 }}>
             <DbVolumesCard id={id} volumes={db.volumes} />
           </div>

@@ -945,7 +945,7 @@ describe("DatabasesService custom config file", () => {
   });
 
   it("refuses an engine without support, a NUL byte and an oversized text", async () => {
-    await expect(run({ engine: "POSTGRES" }).svc.setConfigFile("u1", "db1", "x")).rejects.toBeInstanceOf(BadRequestException);
+    await expect(run({ engine: "DRAGONFLY" }).svc.setConfigFile("u1", "db1", "x")).rejects.toBeInstanceOf(BadRequestException);
     await expect(run({}).svc.setConfigFile("u1", "db1", "a\0b")).rejects.toBeInstanceOf(BadRequestException);
     await expect(run({}).svc.setConfigFile("u1", "db1", "x".repeat(64 * 1024 + 1))).rejects.toBeInstanceOf(BadRequestException);
     const ok = run({});
@@ -959,6 +959,40 @@ describe("DatabasesService custom config file", () => {
     const script = sendCommand.mock.calls[0][1] as string;
     expect(script).toContain("redis-server /usr/local/etc/redis/redis.conf --requirepass");
     expect(script).toContain(Buffer.from("appendonly yes\n").toString("base64"));
+  });
+
+  it("reads the decrypted text (writer-only) and says whether the engine takes one", async () => {
+    const { svc, access } = run({ configFileEnc: "enc:appendonly yes\n" });
+    await expect(svc.getConfigFile("u1", "db1")).resolves.toEqual({ supported: true, content: "appendonly yes\n" });
+    expect(access.requirePermission).toHaveBeenCalledWith("u1", "t1", "databases");
+    await expect(run({}).svc.getConfigFile("u1", "db1")).resolves.toEqual({ supported: true, content: null });
+    await expect(run({ engine: "DRAGONFLY" }).svc.getConfigFile("u1", "db1")).resolves.toEqual({ supported: false, content: null });
+  });
+
+  it("every engine with a config file accepts it and audits without the text", async () => {
+    for (const engine of ["KEYDB", "POSTGRES", "MYSQL", "MARIADB", "MONGO"]) {
+      const { svc, update } = run({ engine });
+      (audit.log as jest.Mock).mockClear();
+      await svc.setConfigFile("u1", "db1", "# custom\nsetting=1\n");
+      expect(update).toHaveBeenCalledWith({ where: { id: "db1" }, data: { configFileEnc: "enc:# custom\nsetting=1\n" } });
+      expect(JSON.stringify((audit.log as jest.Mock).mock.calls[0][0])).not.toContain("setting=1");
+    }
+  });
+
+  it("provisioning a Postgres database mounts its stored postgresql.conf", async () => {
+    const { svc, sendCommand } = run({ engine: "POSTGRES", image: "postgres:16", port: 5432, configFileEnc: "enc:max_connections = 50\n", credentials: `enc:${JSON.stringify({ username: "u", password: "pw", database: "d" })}` });
+    await svc.provision("u1", "db1");
+    const script = sendCommand.mock.calls[0][1] as string;
+    expect(script).toContain("-c config_file=/etc/postgresql/postgresql.conf");
+    expect(script).toContain(Buffer.from("max_connections = 50\n").toString("base64"));
+  });
+
+  it("the view carries a presence flag, never the text", async () => {
+    const withConf = await run({ configFileEnc: "enc:maxmemory 1gb" }).svc.provision("u1", "db1");
+    expect(withConf).toMatchObject({ hasConfigFile: true, configFileSupported: true });
+    expect(JSON.stringify(withConf)).not.toContain("maxmemory");
+    expect(await run({}).svc.provision("u1", "db1")).toMatchObject({ hasConfigFile: false, configFileSupported: true });
+    expect(await run({ engine: "CLICKHOUSE", image: "clickhouse/clickhouse-server:24" }).svc.provision("u1", "db1")).toMatchObject({ hasConfigFile: false, configFileSupported: false });
   });
 
   it("a write-less member cannot set it", async () => {
