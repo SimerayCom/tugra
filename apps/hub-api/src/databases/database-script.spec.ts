@@ -10,6 +10,10 @@ import {
   buildDatabaseRunScript,
   pgSslWrapper,
   sslHostDir,
+  dbConfigHostDir,
+  dbConfigPrepareScript,
+  supportsConfigFile,
+  REDIS_CONFIG_CONTAINER_PATH,
   sslPrepareScript,
   reservedDbEnvKeys,
   buildDbRemoveScript,
@@ -635,5 +639,62 @@ describe("database-script: the PostgreSQL data layout (16 / 17 / 18)", () => {
       expect(rmScript({})).not.toContain("PGANON");
       expect(rmScript({})).toBe(buildDbRemoveScript({ id: "db1" }));
     });
+  });
+});
+
+describe("database-script: custom config file (Redis redis.conf)", () => {
+  const conf = "maxmemory 256mb\nappendonly yes\n# it's a 'quoted' $HOME `line`\n";
+
+  it("no config file: the run script is byte-identical to before", () => {
+    const plain = buildDatabaseRunScript(spec("REDIS"));
+    expect(buildDatabaseRunScript(spec("REDIS", { configFile: null }))).toBe(plain);
+    expect(buildDatabaseRunScript(spec("REDIS", { configFile: "" }))).toBe(plain);
+    expect(plain).not.toContain("redis.conf");
+    expect(plain).not.toContain("base64");
+  });
+
+  it("writes the file on the host before the container starts, mounts it read-only and tells redis-server to load it first", () => {
+    const s = buildDatabaseRunScript(spec("REDIS", { configFile: conf }));
+    const dir = dbConfigHostDir("db1");
+    expect(s).toContain(`-v ${dir}/redis.conf:${REDIS_CONFIG_CONTAINER_PATH}:ro`);
+    expect(s).toContain(`redis-server ${REDIS_CONFIG_CONTAINER_PATH} --requirepass`);
+    expect(s.indexOf("base64 -d")).toBeLessThan(s.indexOf("docker run"));
+    // the managed password stays a command-line argument, so a `requirepass` in the file can never replace it
+    expect(s).toMatch(/--requirepass 'p@ss'\s*\n/);
+  });
+
+  it("the text rides as base64: no quote, dollar sign or backtick of it can reach the shell", () => {
+    const p = dbConfigPrepareScript("db1", conf);
+    expect(p).not.toContain("maxmemory");
+    expect(p).not.toContain("$HOME");
+    expect(p).toContain(`mkdir -p ${dbConfigHostDir("db1")}`);
+    const b64 = /printf %s '([A-Za-z0-9+/=]+)'/.exec(p)![1];
+    expect(Buffer.from(b64, "base64").toString("utf8")).toBe(conf);
+    expect(p).toContain("chmod 644");
+  });
+
+  it("the script really writes the file byte for byte (run with sh on a scratch dir)", () => {
+    const scratch = mkdtempSync(join(tmpdir(), "dbconf-"));
+    try {
+      const script = dbConfigPrepareScript("db1", conf).split(dbConfigHostDir("db1")).join(scratch);
+      const r = spawnSync("sh", ["-c", script], { encoding: "utf8" });
+      expect(r.status).toBe(0);
+      expect(readFileSync(join(scratch, "redis.conf"), "utf8")).toBe(conf);
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  });
+
+  it("only Redis takes it: other engines ignore a stray value", () => {
+    expect(supportsConfigFile("REDIS")).toBe(true);
+    for (const e of ["POSTGRES", "MYSQL", "MARIADB", "MONGO", "KEYDB", "DRAGONFLY", "CLICKHOUSE", "LIBSQL"] as DbEngine[]) {
+      expect(supportsConfigFile(e)).toBe(false);
+      expect(buildDatabaseRunScript(spec(e, { configFile: conf }))).toBe(buildDatabaseRunScript(spec(e)));
+    }
+  });
+
+  it("the remove script drops the host copy only when asked", () => {
+    expect(buildDbRemoveScript({ id: "db1" })).not.toContain("dbconf");
+    expect(buildDbRemoveScript({ id: "db1" }, { configFile: true })).toContain(`rm -rf ${dbConfigHostDir("db1")}`);
   });
 });

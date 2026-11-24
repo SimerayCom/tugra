@@ -371,6 +371,18 @@ export class CoolifySource implements ImportSource {
   }
 
   /**
+   * Re-read one database's custom config file (`redis_conf`, `read:sensitive`-gated on Coolify; absent for a plain token → nothing
+   * carried). ONE guarded GET; a transport/permission error PROPAGATES (the executor turns it into a fixed note). The text lives in
+   * memory only: it can hold secrets, so it never enters the fleet, the plan or a task row.
+   */
+  async fetchDbConfigFile(ref: string): Promise<string | undefined> {
+    const row = await this.client.get<unknown>(`/databases/${encodeURIComponent(ref)}`);
+    if (!row || typeof row !== "object" || Array.isArray(row)) return undefined;
+    const conf = (row as CoolifyDatabase).redis_conf;
+    return typeof conf === "string" && conf.trim() ? conf : undefined;
+  }
+
+  /**
    * Re-read one application's container labels and inline Dockerfile text at apply time (both `read:sensitive`-gated
    * on Coolify; absent for a plain token → nothing carried). ONE guarded GET; a transport/permission error PROPAGATES
    * (the executor turns it into a fixed unmapped note). The text lives in memory only — never in the fleet, plan or

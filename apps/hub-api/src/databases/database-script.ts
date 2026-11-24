@@ -107,6 +107,32 @@ export function sslPrepareScript(dbId: string): string {
   ].join("\n");
 }
 
+// ── Custom engine config file (Redis: redis.conf) ──────────────────────────────────────────────────────────────────────
+// The text is stored encrypted on the row and written to the host at every provision (so a recreate or a restore always gets the
+// current text), then bind-mounted READ-ONLY at the path the server is told to load. Only Redis supports it today; the managed
+// credentials still win because the password stays a command-line argument (it overrides a `requirepass` in the file).
+export const DB_CONFIG_HOST_ROOT = "/etc/tugra/dbconf";
+export const REDIS_CONFIG_CONTAINER_PATH = "/usr/local/etc/redis/redis.conf";
+/** Larger than any real redis.conf; it rides inside the provision command, so it is bounded. */
+export const DB_CONFIG_MAX_BYTES = 64 * 1024;
+
+/** Whether an engine can load a custom config file. */
+export function supportsConfigFile(engine: DbEngine): boolean {
+  return engine === "REDIS";
+}
+
+/** The per-database host dir holding the config file. Keyed on the row id, never user input. */
+export function dbConfigHostDir(dbId: string): string {
+  return `${DB_CONFIG_HOST_ROOT}/${dbId}`;
+}
+
+/** Host-side step: write the config file (base64 on the wire, so no quoting or heredoc can break out of it). Readable by the container's user, writable by root only. */
+export function dbConfigPrepareScript(dbId: string, content: string): string {
+  const d = dbConfigHostDir(dbId);
+  const b64 = Buffer.from(content, "utf8").toString("base64");
+  return [`mkdir -p ${d} && chmod 755 ${d}`, `printf %s ${shq(b64)} | base64 -d > ${d}/redis.conf`, `chmod 644 ${d}/redis.conf`].join("\n");
+}
+
 /** The wrapper the container runs instead of the image's default command: install the pair, then hand over to the stock entrypoint. */
 export function pgSslWrapper(): string {
   const d = SSL_CONTAINER_DIR;
@@ -196,6 +222,8 @@ export interface DbSpec {
   ssl?: boolean;
   // PostgreSQL data layout (see PgDataLayout). Absent → "data": the run script is byte-identical to a pre-18 database.
   pgLayout?: PgDataLayout;
+  // Custom config file text (Redis only, see supportsConfigFile). Absent/empty → the run script is byte-identical to today.
+  configFile?: string | null;
 }
 
 export interface DbVolume {
@@ -378,10 +406,11 @@ export function reservedDbEnvKeys(engine: DbEngine): Set<string> {
 }
 
 /** Redis-family engines carry their password as a server arg; others return "". */
-export function engineCommand(engine: DbEngine, creds: DbCredentials): string {
+export function engineCommand(engine: DbEngine, creds: DbCredentials, opts: { configFile?: boolean } = {}): string {
   switch (engine) {
     case "REDIS":
-      return `redis-server --requirepass ${shq(creds.password)}`;
+      // The config file is the first argument (redis-server loads it, then applies the options that follow over it).
+      return `redis-server ${opts.configFile ? `${REDIS_CONFIG_CONTAINER_PATH} ` : ""}--requirepass ${shq(creds.password)}`;
     case "KEYDB":
       return `keydb-server --requirepass ${shq(creds.password)}`;
     case "DRAGONFLY":
@@ -488,7 +517,9 @@ export function buildDatabaseRunScript(db: DbSpec): string {
   // exclusive with archiving (a recovering copy never archives). Absent → "" / unchanged → byte-identical.
   const recovery = db.engine === "POSTGRES" && db.recovery ? db.recovery : null;
   const recFlag = recovery ? `-v ${walRestoreHostDir(db.id)}:${WAL_RESTORE_CONTAINER_DIR}:ro` : "";
-  const baseCommand = engineCommand(db.engine, db.credentials);
+  const configFile = supportsConfigFile(db.engine) && !!db.configFile;
+  const configFlag = configFile ? `-v ${dbConfigHostDir(db.id)}/redis.conf:${REDIS_CONFIG_CONTAINER_PATH}:ro` : "";
+  const baseCommand = engineCommand(db.engine, db.credentials, { configFile });
   const serverArgs = recovery
     ? [baseCommand, pgRecoveryArgs(recovery.targetTime)].filter(Boolean).join(" ")
     : pitr
@@ -528,6 +559,7 @@ export function buildDatabaseRunScript(db: DbSpec): string {
     walFlag,
     recFlag,
     sslFlag,
+    configFlag,
     limitArgs.join(" "),
     userEnvFlags,
     credEnvFlags,
@@ -547,6 +579,7 @@ export function buildDatabaseRunScript(db: DbSpec): string {
     // are emitted only when pitr is on, so the off-path script is byte-identical to today.
     ...(pitr ? [`mkdir -p ${walHostDir(db.id)} && chmod 700 ${walHostDir(db.id)}`] : []),
     ...(ssl ? [sslPrepareScript(db.id)] : []),
+    ...(configFile ? [dbConfigPrepareScript(db.id, db.configFile!)] : []),
     `docker pull ${shq(db.image)}`,
     ...(legacyAnon ? legacyAnonRecreate(name, runArgs) : [`docker rm -f ${name} 2>/dev/null || true`, runArgs]),
     ...(pitr ? [`docker exec -u root ${name} chown postgres:postgres ${WAL_CONTAINER_DIR}`] : []),
@@ -568,7 +601,7 @@ export function buildDbStopScript(db: { id: string }, opts: { graceSec?: number;
 /** Destroy: remove the container AND its volumes (the data is intentionally dropped). */
 export function buildDbRemoveScript(
   db: { id: string; volumes?: DbVolume[] | null },
-  opts: { keepVolume?: boolean; walSpool?: boolean; walRestore?: boolean; ssl?: boolean; legacyAnon?: boolean } = {},
+  opts: { keepVolume?: boolean; walSpool?: boolean; walRestore?: boolean; ssl?: boolean; legacyAnon?: boolean; configFile?: boolean } = {},
 ): string {
   const lines: string[] = [];
   // legacyAnon: the cluster of a PG >= 18 database created before the parent mount lives in an anonymous volume that only the container
@@ -593,5 +626,7 @@ export function buildDbRemoveScript(
   if (opts.walRestore) lines.push(`rm -rf ${walRestoreHostDir(db.id)} 2>/dev/null || true`);
   // ssl: this DB served TLS, so its self-signed pair on the host goes with it (opt-in, like the WAL dirs).
   if (opts.ssl && !opts.keepVolume) lines.push(`rm -rf ${sslHostDir(db.id)} 2>/dev/null || true`);
+  // configFile: the host copy of its custom config goes with it (opt-in; it is rewritten at every provision, so keeping the volume loses nothing).
+  if (opts.configFile) lines.push(`rm -rf ${dbConfigHostDir(db.id)} 2>/dev/null || true`);
   return lines.join("\n");
 }

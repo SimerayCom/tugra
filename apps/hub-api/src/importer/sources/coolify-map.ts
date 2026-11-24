@@ -715,7 +715,8 @@ export function mapDatabase(
   const valkey = engine === "REDIS" && isValkeyImage(db.image);
   const notCarried: NonNullable<ForeignDb["notCarried"]> = [];
   if (valkey) notCarried.push({ field: "engineFamily", level: "info", ...why("coolify_valkey") });
-  if (engine === "REDIS" && nonEmpty(db.redis_conf)) notCarried.push({ field: "redisConf", level: "warn", ...why("coolify_redis_conf") });
+  // A custom redis.conf is carried (presence here; the text is read at apply time, see fetchDbConfigFile): no warning.
+  const hasConfigFile = engine === "REDIS" && nonEmpty(db.redis_conf);
   // A scheduled backup (and its S3 target) is not carried: Tugra needs the destination credentials, which the importer never reads.
   const backupSchedule = mapBackupSchedule(ctx.backups, ctx.s3);
   if (backupSchedule) {
@@ -739,7 +740,7 @@ export function mapDatabase(
     serverRef: ctx.serverRef,
     ...(backupSchedule ? { backupSchedule } : {}),
     ...(tls ? { tls } : {}),
-    // R48: Tugra's Redis has no custom redis.conf. Presence only; the plan says the config must be re-applied by hand.
+    ...(hasConfigFile ? { hasConfigFile: true } : {}),
     ...(notCarried.length ? { notCarried } : {}),
   };
 }

@@ -1,4 +1,4 @@
-import { Logger } from "@nestjs/common";
+import { BadRequestException, Logger } from "@nestjs/common";
 import { ImportExecutorService } from "./import-executor.service";
 import { planImport } from "./import-planner";
 import type { ForeignApp, ForeignFleet } from "./foreign-fleet";
@@ -23,7 +23,7 @@ function fleet(): ForeignFleet {
 
 const DB_ITEMREF = "database:srv-a:db-1";
 
-function harness(over: { dbCreds?: (ref: string) => { user?: string; password?: string; rootPassword?: string; database?: string } | undefined | Promise<unknown>; takenHostPorts?: number[]; priorImported?: Array<{ itemRef: string; resourceId: string; resourceType: string }>; liveDbIds?: string[]; liveAppIds?: string[]; gitSources?: Array<{ id: string }>; fleet?: ForeignFleet; carriedSource?: { id: string } | null; clusterId?: string | null; upsert?: jest.Mock; secrets?: (ref: string) => { values: Record<string, string>; unresolved: [] }; findOrCreateProject?: jest.Mock; basicAuthCreds?: (ref: string) => Promise<Array<{ user: string; password: string }> | undefined>; appExtras?: (ref: string) => Promise<unknown>; gitLinkRows?: jest.Mock } = {}) {
+function harness(over: { dbConfigFile?: (ref: string) => Promise<string | undefined>; dbCreds?: (ref: string) => { user?: string; password?: string; rootPassword?: string; database?: string } | undefined | Promise<unknown>; takenHostPorts?: number[]; priorImported?: Array<{ itemRef: string; resourceId: string; resourceType: string }>; liveDbIds?: string[]; liveAppIds?: string[]; gitSources?: Array<{ id: string }>; fleet?: ForeignFleet; carriedSource?: { id: string } | null; clusterId?: string | null; upsert?: jest.Mock; secrets?: (ref: string) => { values: Record<string, string>; unresolved: [] }; findOrCreateProject?: jest.Mock; basicAuthCreds?: (ref: string) => Promise<Array<{ user: string; password: string }> | undefined>; appExtras?: (ref: string) => Promise<unknown>; gitLinkRows?: jest.Mock } = {}) {
   let seq = 0;
   const created: Array<{ id: string; data: Record<string, unknown> }> = [];
   const prisma = {
@@ -55,6 +55,7 @@ function harness(over: { dbCreds?: (ref: string) => { user?: string; password?: 
     discover: jest.fn().mockResolvedValue(over.fleet ?? fleet()),
     fetchSecrets: jest.fn().mockImplementation(async (ref: string) => (over.secrets ? over.secrets(ref) : { values: {}, unresolved: [] })),
     close: jest.fn().mockResolvedValue(undefined),
+    ...(over.dbConfigFile ? { fetchDbConfigFile: jest.fn().mockImplementation(async (ref: string) => over.dbConfigFile!(ref)) } : {}),
     ...(over.dbCreds ? { fetchDbCredentials: jest.fn().mockImplementation(async (ref: string) => over.dbCreds!(ref)) } : {}),
     ...(over.basicAuthCreds ? { fetchBasicAuthCredentials: jest.fn().mockImplementation(async (ref: string) => over.basicAuthCreds!(ref)) } : {}),
     ...(over.appExtras ? { fetchAppExtras: jest.fn().mockImplementation(async (ref: string) => over.appExtras!(ref)) } : {}),
@@ -78,7 +79,7 @@ function harness(over: { dbCreds?: (ref: string) => { user?: string; password?: 
       return { projectId: idOf(`p:${spec.name}`), created: first, environments, createdEnvironments };
     }),
   };
-  const dbs = { create: jest.fn().mockResolvedValue({ id: "db-new", name: "orders" }), createForImport: jest.fn().mockResolvedValue({ id: "db-new", name: "orders" }), setLimits: jest.fn().mockResolvedValue(undefined) };
+  const dbs = { create: jest.fn().mockResolvedValue({ id: "db-new", name: "orders" }), createForImport: jest.fn().mockResolvedValue({ id: "db-new", name: "orders" }), setLimits: jest.fn().mockResolvedValue(undefined), setConfigFile: jest.fn().mockResolvedValue({ restartRequired: false }) };
   const migrationTokens = { issue: jest.fn(), reissue: jest.fn(), revoke: jest.fn().mockResolvedValue(false), validate: jest.fn() };
   const svc = new ImportExecutorService(
     prisma as never,
@@ -94,7 +95,7 @@ function harness(over: { dbCreds?: (ref: string) => { user?: string; password?: 
     projects as never,
     gitLinks as never,
   );
-  return { svc, prisma, audit, source: source as typeof source & { fetchDbCredentials?: jest.Mock; fetchBasicAuthCredentials?: jest.Mock; fetchAppExtras?: jest.Mock }, apps, dbs, created, gitSources, projects, gitLinks };
+  return { svc, prisma, audit, source: source as typeof source & { fetchDbCredentials?: jest.Mock; fetchDbConfigFile?: jest.Mock; fetchBasicAuthCredentials?: jest.Mock; fetchAppExtras?: jest.Mock }, apps, dbs, created, gitSources, projects, gitLinks };
 }
 
 function input(f: ForeignFleet = fleet()) {
@@ -919,6 +920,61 @@ describe("ImportExecutorService — DB credential carry (L4)", () => {
     await run(h, f);
     expect(h.dbs.setLimits).toHaveBeenCalledWith("user-1", "db-new", { memoryMb: 512, cpus: 1 });
     expect(dbTaskUpdate(h)).toEqual(expect.objectContaining({ status: "DONE" })); // a limits failure would NOT fail the task
+  });
+
+  describe("custom config file (redis.conf)", () => {
+    const CONF = "maxmemory 1gb\nmasterauth CONF-SECRET-SENTINEL\n";
+    const redisFleet = () => dbFleet({ engine: "REDIS", version: "7", image: undefined, externalPort: undefined, hasConfigFile: true });
+
+    it("reads the text at apply time and sets it on the created database; the task row carries a flag, never the text", async () => {
+      const f = redisFleet();
+      const h = harness({ fleet: f, dbCreds: creds, dbConfigFile: async () => CONF });
+      await run(h, f);
+      expect(h.source.fetchDbConfigFile).toHaveBeenCalledWith("db-1");
+      expect(h.dbs.setConfigFile).toHaveBeenCalledWith("user-1", "db-new", CONF);
+      const upd = dbTaskUpdate(h);
+      expect(upd.status).toBe("DONE");
+      expect(upd.result).toMatchObject({ configFile: true });
+      expect(JSON.stringify(h.prisma.bulkTask.update.mock.calls)).not.toContain("CONF-SECRET-SENTINEL");
+      expect(JSON.stringify(h.audit.log.mock.calls)).not.toContain("CONF-SECRET-SENTINEL");
+    });
+
+    it("also works on the fresh-credentials path", async () => {
+      const f = redisFleet();
+      const h = harness({ fleet: f, dbConfigFile: async () => CONF });
+      await run(h, f);
+      expect(h.dbs.create).toHaveBeenCalled();
+      expect(h.dbs.setConfigFile).toHaveBeenCalledWith("user-1", "db-new", CONF);
+    });
+
+    it("a database without the marker never asks the source", async () => {
+      const f = dbFleet({ engine: "REDIS", image: undefined, externalPort: undefined });
+      const h = harness({ fleet: f, dbCreds: creds, dbConfigFile: async () => CONF });
+      await run(h, f);
+      expect(h.source.fetchDbConfigFile).not.toHaveBeenCalled();
+      expect(h.dbs.setConfigFile).not.toHaveBeenCalled();
+    });
+
+    it("an unreadable text, a source without the method, a source error or a refused text each leave a FIXED note and never fail the task", async () => {
+      const cases: Array<[string, Parameters<typeof harness>[0], RegExp, (h: ReturnType<typeof harness>) => void]> = [
+        ["token cannot read it", { dbConfigFile: async () => undefined }, /read:sensitive/, () => undefined],
+        ["source has no method", {}, /read:sensitive/, () => undefined],
+        ["source throws", { dbConfigFile: async () => { throw new Error("500 CONF-SECRET-SENTINEL"); } }, /was not carried/, () => undefined],
+        ["Tugra refuses it", { dbConfigFile: async () => CONF }, /larger than/, (h) => h.dbs.setConfigFile.mockRejectedValue(new BadRequestException("the config file is larger than 64 KiB"))],
+      ];
+      for (const [, over, note, arrange] of cases) {
+        const f = redisFleet();
+        const h = harness({ fleet: f, dbCreds: creds, ...over });
+        arrange(h);
+        await run(h, f);
+        const upd = dbTaskUpdate(h);
+        expect(upd.status).toBe("DONE");
+        expect(upd.output).toMatch(/custom config file/);
+        expect(upd.output).toMatch(note);
+        expect(upd.result.configFile).toBeUndefined();
+        expect(JSON.stringify(upd)).not.toContain("CONF-SECRET-SENTINEL");
+      }
+    });
   });
 
   it("falls back to fresh credentials + a warning when the source has no fetchDbCredentials", async () => {

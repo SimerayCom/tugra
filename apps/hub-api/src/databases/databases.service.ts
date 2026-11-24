@@ -23,6 +23,8 @@ import { CryptoService } from "../crypto/crypto.service";
 import { TeamDefaultsService } from "../teams/team-defaults.service";
 import {
   buildDatabaseRunScript,
+  DB_CONFIG_MAX_BYTES,
+  supportsConfigFile,
   buildDbRemoveScript,
   buildDbStopScript,
   connectionInfo,
@@ -329,7 +331,7 @@ export class DatabasesService {
       creds: DbCredentials;
     },
     // Optional carried config (PITR replay target copies the source's). Absent for every existing caller.
-    extra: Pick<Prisma.DatabaseUncheckedCreateInput, "status" | "backupDestinationId" | "healthCmd" | "memoryMb" | "cpus" | "tags" | "envEnc" | "volumes" | "ssl"> = {},
+    extra: Pick<Prisma.DatabaseUncheckedCreateInput, "status" | "backupDestinationId" | "healthCmd" | "memoryMb" | "cpus" | "tags" | "envEnc" | "configFileEnc" | "volumes" | "ssl"> = {},
   ): Promise<Database> {
     return this.prisma.database.create({
       data: {
@@ -566,6 +568,7 @@ export class DatabasesService {
         cpus: src.cpus,
         tags: src.tags,
         envEnc: src.envEnc,
+        configFileEnc: src.configFileEnc,
         ...(src.volumes ? { volumes: src.volumes as Prisma.InputJsonValue } : {}),
       },
     );
@@ -656,6 +659,7 @@ export class DatabasesService {
           ...this.toSpec(db),
           env: this.dbEnv(db),
           volumes: this.dbVolumes(db),
+          configFile: this.dbConfigFile(db),
           pitr: opts.pitr ?? db.pitrEnabled,
           ssl: db.ssl,
           // PITR replay only (never persisted): start in archive recovery toward the target time.
@@ -717,7 +721,7 @@ export class DatabasesService {
     await this.agentWs
       .sendCommand(
         db.serverId,
-        buildDbRemoveScript({ id: db.id, volumes: this.dbVolumes(db) }, { ...opts, walSpool: db.pitrEnabled, walRestore: opts.walRestore ?? db.engine === "POSTGRES", ssl: db.ssl, legacyAnon: pgDataLayout(db) === "legacy-anon" }),
+        buildDbRemoveScript({ id: db.id, volumes: this.dbVolumes(db) }, { ...opts, walSpool: db.pitrEnabled, walRestore: opts.walRestore ?? db.engine === "POSTGRES", ssl: db.ssl, legacyAnon: pgDataLayout(db) === "legacy-anon", configFile: !!db.configFileEnc }),
         "database",
       )
       .catch(() => undefined);
@@ -861,6 +865,7 @@ export class DatabasesService {
         cpus: src.cpus,
         tags: src.tags,
         envEnc: src.envEnc, // user env is config → carried to the clone
+        configFileEnc: src.configFileEnc, // so is the custom config file
         // volume DEFINITIONS carry, but the docker volume name derives from the new id → fresh empty
         // volumes, no data shared (structural copy, same as app clone).
         ...(src.volumes ? { volumes: src.volumes as Prisma.InputJsonValue } : {}),
@@ -955,6 +960,29 @@ export class DatabasesService {
   private dbEnv(db: Database): Record<string, string> {
     if (!db.envEnc) return {};
     return JSON.parse(this.crypto.decrypt(db.envEnc)) as Record<string, string>;
+  }
+
+  /** Decrypt a database's custom config file text (null when none). */
+  private dbConfigFile(db: Database): string | null {
+    return db.configFileEnc ? this.crypto.decrypt(db.configFileEnc) : null;
+  }
+
+  /**
+   * Set (or clear with null) the custom config file of a database (writer-only): a Redis redis.conf, mounted read-only at the next
+   * provision. Stored encrypted, never returned by any read, never written to the audit log. An empty text clears it.
+   * Throws BadRequest for an engine without config-file support, a NUL byte or a text over the size cap.
+   */
+  async setConfigFile(userId: string, id: string, content: string | null): Promise<{ restartRequired: boolean }> {
+    const db = await this.requireWrite(userId, id);
+    if (!supportsConfigFile(db.engine as DbEngine)) throw new BadRequestException("this engine does not take a custom config file");
+    const text = content && content.trim() ? content : null;
+    if (text !== null) {
+      if (text.includes("\0")) throw new BadRequestException("the config file must not contain a NUL byte");
+      if (Buffer.byteLength(text, "utf8") > DB_CONFIG_MAX_BYTES) throw new BadRequestException(`the config file is larger than ${DB_CONFIG_MAX_BYTES / 1024} KiB`);
+    }
+    await this.prisma.database.update({ where: { id }, data: { configFileEnc: text === null ? null : this.crypto.encrypt(text) } });
+    await this.audit.log({ actor: userId, action: "database.configFile.update", target: id, meta: { set: text !== null } });
+    return { restartRequired: db.status === DbStatus.RUNNING || db.status === DbStatus.PROVISIONING };
   }
 
   /** A database's extra persistent volumes ([] when none). */

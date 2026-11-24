@@ -1217,13 +1217,29 @@ export class ImportExecutorService {
           notes.push("the CPU/memory limit was not applied — set it on the Tugra database");
         }
       }
+      // Carry the custom config file (Coolify redis_conf) as the database's config-file mount. Best-effort like the limits above: the
+      // row exists, so a failure is a FIXED note (the text can hold secrets, so it is never echoed) and never fails the task.
+      let configFile = false;
+      if (db.hasConfigFile) {
+        try {
+          const text = await source.fetchDbConfigFile?.(db.sourceRef);
+          if (text === undefined) {
+            notes.push("the source's custom config file could not be read (the Coolify token needs read:sensitive) - add it on the Tugra database");
+          } else {
+            await this.dbs.setConfigFile(userId, created.id, text);
+            configFile = true;
+          }
+        } catch (e) {
+          notes.push(e instanceof BadRequestException ? `the custom config file was not carried (${msg(e).slice(0, 120)}) - add it on the Tugra database` : "the custom config file was not carried - add it on the Tugra database");
+        }
+      }
       await this.prisma.bulkTask.update({
         where: { id: taskId },
         data: {
           status: "DONE",
           resourceType: "database",
           resourceId: created.id,
-          result: { name: created.name, ...(eff ? { sourceName: db.name, mapped: true } : {}), databaseId: created.id, ...flags, ...(wantsTls ? { tls: true } : {}) }, // flags only — never a credential value
+          result: { name: created.name, ...(eff ? { sourceName: db.name, mapped: true } : {}), databaseId: created.id, ...flags, ...(wantsTls ? { tls: true } : {}), ...(configFile ? { configFile: true } : {}) }, // flags only — never a credential value
           ...(notes.length ? { output: notes.join("; ") } : {}),
           finishedAt: new Date(),
         },

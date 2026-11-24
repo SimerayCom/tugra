@@ -528,16 +528,18 @@ describe("static site, redirect mode and redis conf (R18 / R19 / R48)", () => {
     }
   });
 
-  it("a custom redis.conf is reported as a manual step on the redis database and reaches the plan as a warn risk, never its text", () => {
+  it("a custom redis.conf is carried (a presence marker only, no warning) and its text never enters the fleet or the plan", () => {
     const db = { uuid: "r1", name: "cache", database_type: "standalone-redis", image: "redis:7", redis_conf: "maxmemory 2gb\nrequirepass SUPERSECRET" };
     const mapped = mapDatabase(db, { volumes: [] });
-    expect(mapped.notCarried).toEqual([expect.objectContaining({ field: "redisConf", level: "warn", reasonCode: "coolify_redis_conf" })]);
+    expect(mapped.hasConfigFile).toBe(true);
+    expect(mapped.notCarried).toBeUndefined();
     expect(JSON.stringify(mapped)).not.toMatch(/SUPERSECRET|maxmemory/);
     const plan = planImport({ servers: [], apps: [], databases: [mapped], services: [], volumes: [], sharedEnv: [], warnings: [] }, { sourceKind: "coolify" });
-    expect(plan.items[0].risks).toContainEqual(expect.objectContaining({ level: "warn", code: "db.notCarried.redisConf" }));
+    expect(plan.items[0].risks).toContainEqual(expect.objectContaining({ level: "info", code: "db.configFile" }));
+    expect(plan.items[0].risks.filter((r) => r.level === "warn" || r.level === "blocker")).toEqual([]);
     expect(JSON.stringify(plan)).not.toMatch(/SUPERSECRET|maxmemory/);
-    expect("notCarried" in mapDatabase({ ...db, redis_conf: "" }, { volumes: [] })).toBe(false);
-    expect("notCarried" in mapDatabase({ ...db, database_type: "standalone-postgresql", image: "postgres:17", redis_conf: "x" }, { volumes: [] })).toBe(false);
+    expect("hasConfigFile" in mapDatabase({ ...db, redis_conf: "" }, { volumes: [] })).toBe(false);
+    expect("hasConfigFile" in mapDatabase({ ...db, database_type: "standalone-postgresql", image: "postgres:17", redis_conf: "x" }, { volumes: [] })).toBe(false);
   });
 });
 
@@ -793,9 +795,10 @@ describe("Valkey databases (R12, standalone-redis on valkey/valkey)", () => {
     expect(buildCoolifyFleet({ servers: [], resourcesByServer: {}, apps: [], databases: [valkey], services: [], envsByResource: {}, volumesByResource: {} }).warnings.filter((w) => /no Tugra equivalent/.test(w))).toEqual([]);
   });
 
-  it("says so in the plan (info row, no blocker) and combines with a custom redis.conf", () => {
+  it("says so in the plan (info row, no blocker) and still carries a custom redis.conf", () => {
     const m = mapDatabase({ ...valkey, redis_conf: "maxmemory 1gb" }, { volumes: [] });
-    expect(m.notCarried).toEqual([expect.objectContaining({ field: "engineFamily", level: "info", reasonCode: "coolify_valkey" }), expect.objectContaining({ field: "redisConf", level: "warn" })]);
+    expect(m.notCarried).toEqual([expect.objectContaining({ field: "engineFamily", level: "info", reasonCode: "coolify_valkey" })]);
+    expect(m.hasConfigFile).toBe(true);
     const plan = planImport({ servers: [], apps: [], databases: [m], services: [], volumes: [], sharedEnv: [], warnings: [] }, { sourceKind: "coolify" });
     expect(plan.items[0].risks.filter((r) => r.level === "blocker")).toEqual([]);
     expect(plan.items[0].risks).toContainEqual(expect.objectContaining({ code: "db.notCarried.engineFamily", level: "info" }));

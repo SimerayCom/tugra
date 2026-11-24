@@ -913,3 +913,59 @@ describe("DatabasesService carry marker (R2)", () => {
     await svc.dropMarker("missing", marker);
   });
 });
+
+describe("DatabasesService custom config file", () => {
+  const redis = { ...db, engine: "REDIS", image: "redis:7-alpine", port: 6379, credentials: `enc:${JSON.stringify({ username: "", password: "pw", database: "" })}` };
+  const run = (row: Record<string, unknown>) => {
+    const update = jest.fn().mockResolvedValue({ ...redis, ...row });
+    const prisma = { database: { findUnique: jest.fn().mockResolvedValue({ ...redis, ...row }), update } } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined), teamRole: jest.fn().mockResolvedValue("OWNER") } as unknown as TeamAccessService;
+    const sendCommand = jest.fn().mockResolvedValue({ exitCode: 0, output: "Up" });
+    return { svc: make(prisma, access, { sendCommand } as unknown as AgentWsServer), update, access, sendCommand };
+  };
+
+  it("stores the text encrypted, audits without it and needs the databases permission", async () => {
+    const { svc, update, access } = run({});
+    (audit.log as jest.Mock).mockClear();
+    await expect(svc.setConfigFile("u1", "db1", "maxmemory 1gb\n")).resolves.toEqual({ restartRequired: false });
+    expect(access.requirePermission).toHaveBeenCalledWith("u1", "t1", "databases");
+    expect(update).toHaveBeenCalledWith({ where: { id: "db1" }, data: { configFileEnc: "enc:maxmemory 1gb\n" } });
+    const entry = (audit.log as jest.Mock).mock.calls[0][0];
+    expect(entry).toMatchObject({ action: "database.configFile.update", target: "db1", meta: { set: true } });
+    expect(JSON.stringify(entry)).not.toContain("maxmemory");
+  });
+
+  it("clears it with null or a blank text; a running database is told to restart", async () => {
+    const a = run({ status: "RUNNING", configFileEnc: "enc:x" });
+    await expect(a.svc.setConfigFile("u1", "db1", null)).resolves.toEqual({ restartRequired: true });
+    expect(a.update).toHaveBeenCalledWith({ where: { id: "db1" }, data: { configFileEnc: null } });
+    const b = run({});
+    await b.svc.setConfigFile("u1", "db1", "  \n ");
+    expect(b.update).toHaveBeenCalledWith({ where: { id: "db1" }, data: { configFileEnc: null } });
+  });
+
+  it("refuses an engine without support, a NUL byte and an oversized text", async () => {
+    await expect(run({ engine: "POSTGRES" }).svc.setConfigFile("u1", "db1", "x")).rejects.toBeInstanceOf(BadRequestException);
+    await expect(run({}).svc.setConfigFile("u1", "db1", "a\0b")).rejects.toBeInstanceOf(BadRequestException);
+    await expect(run({}).svc.setConfigFile("u1", "db1", "x".repeat(64 * 1024 + 1))).rejects.toBeInstanceOf(BadRequestException);
+    const ok = run({});
+    await ok.svc.setConfigFile("u1", "db1", "x".repeat(64 * 1024));
+    expect(ok.update).toHaveBeenCalled();
+  });
+
+  it("provision mounts the stored file (decrypted only into the run script)", async () => {
+    const { svc, sendCommand } = run({ configFileEnc: "enc:appendonly yes\n" });
+    await svc.provision("u1", "db1");
+    const script = sendCommand.mock.calls[0][1] as string;
+    expect(script).toContain("redis-server /usr/local/etc/redis/redis.conf --requirepass");
+    expect(script).toContain(Buffer.from("appendonly yes\n").toString("base64"));
+  });
+
+  it("a write-less member cannot set it", async () => {
+    const prisma = { database: { findUnique: jest.fn().mockResolvedValue(redis), update: jest.fn() } } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockRejectedValue(new ForbiddenException("no")) } as unknown as TeamAccessService;
+    const svc = make(prisma, access);
+    await expect(svc.setConfigFile("u1", "db1", "x")).rejects.toBeInstanceOf(ForbiddenException);
+    expect(prisma.database.update).not.toHaveBeenCalled();
+  });
+});

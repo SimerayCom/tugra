@@ -1721,6 +1721,9 @@ model Database {
   // Encrypted JSON of user-set container env vars ({ KEY: "value" }), injected at provision BEFORE the
   // engine's credential env so a user var can never shadow the managed credentials. Null = none.
   envEnc                  String?
+  // Encrypted text of the engine's custom config file (Redis: redis.conf), written to the host and bind-mounted read-only into the
+  // container at provision (it can hold secrets such as masterauth). Null = the engine's defaults. Redis only.
+  configFileEnc           String?
   // Extra persistent volumes beyond the managed data volume: JSON [{ name, path }]. The real docker volume
   // name is derived per-database (tugra_dbv_<id>_<name>). Not secret, so stored plain. Null = none.
   volumes                 Json?

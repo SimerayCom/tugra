@@ -102,6 +102,7 @@ function planDatabase(db: ForeignDb, tree?: ImportRisk, volumeMode = false): Imp
   if (db.engine === "MONGO") {
     risks.push({ level: "warn", code: "db.mongo.name", message: "name the target so its slug equals the source database name — mongorestore restores into the archive's DB names" });
   }
+  if (db.hasConfigFile) risks.push({ level: "info", code: "db.configFile", message: "the custom config file is carried and mounted read-only on the imported database" });
   for (const n of db.notCarried ?? []) risks.push({ level: n.level, code: `db.notCarried.${n.field}`, message: `${n.field}: ${n.reason}` });
   // A Valkey database has no Redis version to pin (its image tag, `9-alpine`, names no Redis release; the image is kept on the target).
   const valkey = db.engine === "REDIS" && (db.notCarried ?? []).some((n) => n.reasonCode === "coolify_valkey");

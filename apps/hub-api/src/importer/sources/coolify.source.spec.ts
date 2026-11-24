@@ -475,6 +475,27 @@ describe("CoolifySource.fetchSecrets — per-variable flags", () => {
   });
 });
 
+describe("CoolifySource.fetchDbConfigFile", () => {
+  it("does ONE GET of the database and returns the redis.conf text as is", async () => {
+    const client = new FakeClient({ "/databases/db-1": { uuid: "db-1", database_type: "standalone-redis", redis_conf: "maxmemory 1gb\nappendonly yes\n" } });
+    expect(await new CoolifySource(client).fetchDbConfigFile("db-1")).toBe("maxmemory 1gb\nappendonly yes\n");
+    expect(client.calls).toEqual(["/databases/db-1"]);
+  });
+
+  it("a row without the text (plain token), a blank text or a non-object gives undefined; a client error propagates", async () => {
+    expect(await new CoolifySource(new FakeClient({ "/databases/db-1": { uuid: "db-1" } })).fetchDbConfigFile("db-1")).toBeUndefined();
+    expect(await new CoolifySource(new FakeClient({ "/databases/db-1": { uuid: "db-1", redis_conf: "  \n" } })).fetchDbConfigFile("db-1")).toBeUndefined();
+    expect(await new CoolifySource(new FakeClient({ "/databases/db-1": [] })).fetchDbConfigFile("db-1")).toBeUndefined();
+    await expect(new CoolifySource(new FakeClient({ "/databases/db-1": new Error("500 boom") })).fetchDbConfigFile("db-1")).rejects.toThrow("500 boom");
+  });
+
+  it("encodes the ref in the path", async () => {
+    const client = new FakeClient({ "/databases/a%2Fb": { uuid: "x", redis_conf: "x" } });
+    await new CoolifySource(client).fetchDbConfigFile("a/b");
+    expect(client.calls).toEqual(["/databases/a%2Fb"]);
+  });
+});
+
 describe("CoolifySource.fetchAppExtras", () => {
   const b64 = (t: string) => Buffer.from(t, "utf8").toString("base64");
   // Hand-built Coolify v4 shape; field names/encodings UNVERIFIED until the live lab check (spec G3-C section 11).
