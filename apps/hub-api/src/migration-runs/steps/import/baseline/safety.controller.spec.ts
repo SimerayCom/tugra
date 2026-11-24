@@ -1,6 +1,6 @@
 import { ConflictException, ForbiddenException, NotFoundException } from "@nestjs/common";
 import { RunSafetyController } from "./safety.controller";
-import { SafetyHintsSchema, SetImagePinsSchema, SetWorkerMarksSchema } from "./hints.dto";
+import { SafetyHintsSchema, SetImagePinsSchema, SetWarningAcksSchema, SetWorkerMarksSchema } from "./hints.dto";
 import { InMemoryRunHints } from "./run-hints";
 import type { AuthUser } from "../../../../auth/strategies/jwt.strategy";
 
@@ -52,7 +52,7 @@ describe("RunSafetyController", () => {
 
   it("writing needs the team permissions driving the run needs; reading needs membership only", async () => {
     const s = setup({}, ["apps:config"]);
-    await expect(s.c.get(user(), "r1")).resolves.toEqual({ imagePins: [], workerMarks: [] });
+    await expect(s.c.get(user(), "r1")).resolves.toEqual({ imagePins: [], workerMarks: [], warningAcks: [] });
     await expect(s.c.setMarks(user(), "r1", SetWorkerMarksSchema.parse({ marks: [{ itemRef: "app:s:q", role: "web" }] }))).rejects.toBeInstanceOf(ForbiddenException);
   });
 
@@ -61,6 +61,58 @@ describe("RunSafetyController", () => {
       await expect(setup(run).c.setPins(user(), "r1", SetImagePinsSchema.parse({ pins: [{ image: "a:latest", digest: D }] }))).rejects.toBeInstanceOf(ConflictException);
     }
     await expect(setup({ status: "DRY_RUN_DONE" }).c.setPins(user(), "r1", SetImagePinsSchema.parse({ pins: [{ image: "a:latest", digest: D }] }))).resolves.toBeDefined(); // a dry-run takes them for its promotion
+  });
+});
+
+describe("RunSafetyController warning acks", () => {
+  const done = { status: "DRY_RUN_DONE" };
+
+  it("records, answers and takes back the warnings accepted on a finished dry-run", async () => {
+    const { c, hints } = setup(done);
+    const a = await c.setWarningAcks(user(), "r1", SetWarningAcksSchema.parse({ acks: [{ key: "import.risk-warning:service.image.floating", accepted: true }, { key: "data-seed.volume-excluded", accepted: true }] }));
+    expect(a.warningAcks).toEqual(["data-seed.volume-excluded", "import.risk-warning:service.image.floating"]);
+    expect(SafetyHintsSchema.parse(a)).toEqual(a);
+    expect((await hints.list("r1")).every((h) => h.kind === "warning-ack" && h.value === "accepted" && h.evidence === "operator-attested")).toBe(true);
+    const b = await c.setWarningAcks(user(), "r1", SetWarningAcksSchema.parse({ acks: [{ key: "data-seed.volume-excluded", accepted: false }] }));
+    expect(b.warningAcks).toEqual(["import.risk-warning:service.image.floating"]);
+  });
+
+  it("is idempotent and keeps the pins and marks apart", async () => {
+    const { c } = setup(done);
+    await c.setMarks(user(), "r1", SetWorkerMarksSchema.parse({ marks: [{ itemRef: "app:s:q", role: "web" }] }));
+    const body = SetWarningAcksSchema.parse({ acks: [{ key: "a.b", accepted: true }] });
+    await c.setWarningAcks(user(), "r1", body);
+    const r = await c.setWarningAcks(user(), "r1", body);
+    expect(r.warningAcks).toEqual(["a.b"]);
+    expect(r.workerMarks).toHaveLength(1);
+  });
+
+  it("a promoted run shows the acks of the dry-run it came from", async () => {
+    const { c, hints } = setup({ promotedFromId: "dry1" });
+    await hints.upsert("dry1", [{ kind: "warning-ack", key: "a.b", scope: "", value: "accepted", evidence: "operator-attested" }]);
+    expect((await c.get(user(), "r1")).warningAcks).toEqual(["a.b"]);
+  });
+
+  it("only a finished dry-run takes them: every other state is a 409", async () => {
+    for (const status of ["QUEUED", "RUNNING", "WAITING", "COMPLETED", "ABORTED", "FAILED"]) {
+      await expect(setup({ status }).c.setWarningAcks(user(), "r1", SetWarningAcksSchema.parse({ acks: [{ key: "a.b", accepted: true }] }))).rejects.toBeInstanceOf(ConflictException);
+    }
+  });
+
+  it("is scoped to the creator and to team members who may drive the run", async () => {
+    const body = SetWarningAcksSchema.parse({ acks: [{ key: "a.b", accepted: true }] });
+    await expect(setup({ ...done, actorId: "other" }).c.setWarningAcks(user(), "r1", body)).rejects.toBeInstanceOf(NotFoundException);
+    await expect(setup(null).c.setWarningAcks(user(), "r1", body)).rejects.toBeInstanceOf(NotFoundException);
+    await expect(setup(done, null).c.setWarningAcks(user(), "r1", body)).rejects.toBeInstanceOf(NotFoundException);
+    await expect(setup(done, ["apps:config"]).c.setWarningAcks(user(), "r1", body)).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it("the body takes only well-formed keys", () => {
+    expect(SetWarningAcksSchema.safeParse({ acks: [] }).success).toBe(false);
+    expect(SetWarningAcksSchema.safeParse({ acks: [{ key: "Bad Key", accepted: true }] }).success).toBe(false);
+    expect(SetWarningAcksSchema.safeParse({ acks: [{ key: "a.b", accepted: true, x: 1 }] }).success).toBe(false);
+    expect(SetWarningAcksSchema.safeParse({ acks: [{ key: "import.risk-warning:service.image.floating", accepted: false }] }).success).toBe(true);
+    expect(SetWarningAcksSchema.safeParse({ acks: Array.from({ length: 201 }, (_, i) => ({ key: `a.k${i}`, accepted: true })) }).success).toBe(false);
   });
 });
 

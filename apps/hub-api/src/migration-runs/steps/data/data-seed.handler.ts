@@ -15,7 +15,7 @@ import {
   type StepHandlerRegistry,
 } from "../../core/run-contract";
 import { DATA_CODES, DATA_PORT, OBJECT_PORT, type DataPort, type DataSnapshot, type ObjectPort, type ObjectView } from "./data-contract";
-import { byteProgress, checkKey, dbsNeedingMeasure, decideLanes, estimateEquals, estimateWindow, hasLiveTransfer, migratorFlags, objectIsActive, seedChecks, windowExtrasOf } from "./data-logic";
+import { byteProgress, checkKey, dbsNeedingMeasure, decideLanes, estimateEquals, estimateWindow, estimateWindowDetail, hasLiveTransfer, migratorFlags, objectIsActive, seedChecks, windowExtrasOf } from "./data-logic";
 import { compOf, gateFrom, loadObjects, loadSnapshot, takeObjectStart, type StepComp } from "./handler-util";
 import { MigratorRunner } from "./launcher/migrator-runner.service";
 import { OBJECT_PLAN_ID, objectPlanChecks } from "./object-plan-check";
@@ -80,7 +80,7 @@ export class DataSeedHandler implements StepHandler<SeedObs>, OnModuleInit {
     if (run.options.sourceRunner === "agent" && run.topology !== "swap-proxy") items.push({ code: DATA_CODES.agentNeedsSameHost, level: "block" });
     if (!run.opId) return items; // no import yet: nothing to project from
     const snap = await loadSnapshot(this.data, ctx);
-    const est = estimateWindow(snap, ctx.now(), windowExtrasOf(run, snap));
+    const { estimate: est, terms } = estimateWindowDetail(snap, ctx.now(), windowExtrasOf(run, snap));
     if (run.options.sourceRunner === "coolify-host-loop") {
       const hosts = sourceHostsOf(run, snap);
       items.push(hosts.length ? { code: HOST_LOOP_CODES.dryPlan, level: "info", params: { hosts: hosts.length, keyDir: hostLoopOf(run.options).keyDir, parallel: hostLoopOf(run.options).parallel } } : { code: HOST_LOOP_CODES.noHosts, level: "block" });
@@ -109,7 +109,7 @@ export class DataSeedHandler implements StepHandler<SeedObs>, OnModuleInit {
     for (const c of objectPlanChecks(run, snap, (await loadObjects(this.objects, ctx)).views)) {
       items.push({ code: c.code, level: c.status === "fail" ? "block" : c.status === "warn" ? "warn" : "info", ...(c.params ? { params: c.params } : {}) });
     }
-    items.push({ code: DATA_CODES.seedEstimate, level: est.freezeToFlipSec === null ? "unknown" : "info", params: { seconds: est.freezeToFlipSec } });
+    items.push({ code: DATA_CODES.seedEstimate, level: est.freezeToFlipSec === null ? "unknown" : "info", params: { seconds: est.freezeToFlipSec, bytes: terms.bytes, copySeconds: terms.dataSec } });
     return items;
   }
 

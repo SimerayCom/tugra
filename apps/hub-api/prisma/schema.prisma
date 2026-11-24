@@ -2513,10 +2513,10 @@ model MigrationRunServerLock {
 model MigrationRunHint {
   run       MigrationRun @relation(fields: [runId], references: [id], onDelete: Cascade)
   runId     String
-  kind      String // image-pin | worker-mark
+  kind      String // image-pin | worker-mark | warning-ack
   key       String
   scope     String       @default("")
-  value     String // sha256:<64 hex> | job-runner | web
+  value     String // sha256:<64 hex> | job-runner | web | accepted
   evidence  String // operator-attested | host-loop-reported | source-api-reported
   createdAt DateTime     @default(now())
 

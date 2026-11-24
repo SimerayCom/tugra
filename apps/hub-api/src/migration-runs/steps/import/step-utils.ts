@@ -83,6 +83,38 @@ export function unackedBlockers(plan: ImportPlanResponse, run: RunSnapshot): Map
   return out;
 }
 
+/**
+ * Plan risks of level `warn` that the dry-run result screen shows (and the operator can fix or accept): each one is something the
+ * import still does, but that the operator may want to settle before the real run. A warn risk not listed here stays in the plan
+ * review only, so the result screen is not flooded by notes that have no decision in them.
+ */
+export const DRY_RUN_WARNING_RISKS: readonly string[] = [
+  "service.image.floating",
+  "service.files.needed",
+  "service.data.manual-large",
+  "service.volume.size-unknown",
+  "app.git.private",
+  "app.image.transfer",
+  "app.privileged",
+  "app.compose.path",
+  "db.creds.missing",
+  "db.version.missing",
+];
+
+/** Items of the plan that carry a listed warn risk, per risk code (item names, in plan order). */
+export function warningRisks(plan: ImportPlanResponse, run: RunSnapshot): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  for (const it of includedItems(plan, run)) {
+    for (const r of it.risks) {
+      if (r.level !== "warn" || !DRY_RUN_WARNING_RISKS.includes(r.code)) continue;
+      const list = out.get(r.code) ?? [];
+      if (!list.includes(it.name)) list.push(it.name);
+      out.set(r.code, list);
+    }
+  }
+  return out;
+}
+
 /** The dry-run projection of a list of gate checks (fail blocks, unknown would block, warn warns, pass informs). */
 export function itemsFromChecks(checks: readonly GateCheck[]): DryRunItem[] {
   return checks.map((c) => ({

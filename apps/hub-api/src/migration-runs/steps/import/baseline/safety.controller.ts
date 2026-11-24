@@ -9,7 +9,7 @@ import { RequireScopes } from "../../../../api-tokens/require-scopes.decorator";
 import { AuthUser } from "../../../../auth/strategies/jwt.strategy";
 import { PrismaService } from "../../../../prisma/prisma.service";
 import { TeamAccessService } from "../../../../common/team-access.service";
-import { SafetyHintsSchema, SetImagePinsSchema, SetWorkerMarksSchema, type SafetyHints, type SetImagePinsInput, type SetWorkerMarksInput } from "./hints.dto";
+import { SafetyHintsSchema, SetImagePinsSchema, SetWarningAcksSchema, SetWorkerMarksSchema, type SafetyHints, type SetImagePinsInput, type SetWarningAcksInput, type SetWorkerMarksInput } from "./hints.dto";
 import { RUN_HINTS, type RunHint, type RunHintStore } from "./run-hints";
 
 /** A run in one of these has nothing left to decide: the hints would change nothing. */
@@ -69,6 +69,24 @@ export class RunSafetyController {
     return view(await this.hints.list(v.id, v.promotedFromId));
   }
 
+  /**
+   * Accept (`accepted: true`) or take back the acceptance of the warnings a finished dry-run showed. Only a dry-run that is
+   * done takes them (409 otherwise): a real run has no decision screen. The promoted run reads them from its parent.
+   */
+  @Put(":id/warning-acks")
+  @HttpCode(200)
+  @RequireScopes("deploy")
+  @ApiZodBody(SetWarningAcksSchema)
+  @ApiZodResponse(SafetyHintsSchema)
+  async setWarningAcks(@CurrentUser() user: AuthUser, @Param("id") id: string, @Body(new ZodValidationPipe(SetWarningAcksSchema)) body: SetWarningAcksInput): Promise<SafetyHints> {
+    const v = await this.load(user, id, true);
+    if (v.status !== "DRY_RUN_DONE") throw new ConflictException("not-a-finished-dry-run");
+    const ref = (k: string) => ({ kind: "warning-ack" as const, key: k, scope: "" });
+    await this.hints.upsert(v.id, body.acks.filter((a) => a.accepted).map((a) => ({ ...ref(a.key), value: "accepted", evidence: "operator-attested" as const })));
+    await this.hints.remove(v.id, body.acks.filter((a) => !a.accepted).map((a) => ref(a.key)));
+    return view(await this.hints.list(v.id, v.promotedFromId));
+  }
+
   private async load(user: AuthUser, id: string, acting: boolean) {
     const v = await this.prisma.migrationRun.findUnique({ where: { id }, select: { id: true, teamId: true, actorId: true, status: true, ponrAt: true, promotedFromId: true } });
     if (!v || v.actorId !== user.userId) throw new NotFoundException("run-not-found");
@@ -89,5 +107,6 @@ function view(hints: readonly RunHint[]): SafetyHints {
   return {
     imagePins: hints.filter((h) => h.kind === "image-pin").map((h) => ({ image: h.key, scope: h.scope, digest: h.value, evidence: h.evidence })),
     workerMarks: hints.filter((h) => h.kind === "worker-mark" && (h.value === "job-runner" || h.value === "web")).map((h) => ({ itemRef: h.key, role: h.value as "job-runner" | "web" })),
+    warningAcks: hints.filter((h) => h.kind === "warning-ack" && h.value === "accepted").map((h) => h.key).sort(),
   };
 }

@@ -116,6 +116,18 @@ describe("IMPORT", () => {
     expect(items.map((i) => i.code)).toEqual(expect.arrayContaining(["import.projection", "import.plan-fresh", "import.item-skipped"]));
     expect(w.port.calls).toEqual([]);
   });
+
+  it("dry-run lists the warn risks that have a decision in them, once per code, and none of the others", async () => {
+    const w = new RunWorld();
+    const item = (name: string, code: string, level: "warn" | "info" = "warn") => ({ itemRef: `service:_:${name}`, kind: "service" as const, name, proposed: {}, risks: [{ level, code, message: "x" }], dependsOn: [] });
+    w.port.plan_ = defaultPlan({
+      items: [item("search", "service.image.floating"), item("cache", "service.image.floating"), item("blog", "service.deploy.manual"), item("mail", "app.git.private", "info")],
+    });
+    const id = await w.create({ dryRun: true });
+    await w.settle(id);
+    const items = (await importStep(w, id)).progress!.dryRun!.filter((i) => i.code === "import.risk-warning");
+    expect(items).toEqual([{ code: "import.risk-warning", level: "warn", params: { risk: "service.image.floating", count: 2, items: ["search", "cache"] } }]);
+  });
 });
 
 describe("IMPORT abort covers what IMPORT itself left behind", () => {

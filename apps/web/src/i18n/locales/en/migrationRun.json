@@ -1180,7 +1180,8 @@
     "decommission_control-plane-owed": "The Coolify control plane is still to stop, and this run will not print it again. Once every other run of this source is finished, stop it yourself on the Coolify host: {stop}. Remove it only when you are sure of your backups: {remove}.",
     "decommission_control-plane-last-ok": "This server carries the Coolify control plane, and no other run of the same source is still running.",
     "decommission_siblings-unreadable": "This server carries the Coolify control plane, and the other runs of this source could not be read, so it is not clear whether it is the last one.",
-    "decommission_hosts-pending": "{runs} other finished runs of this source have not stopped their own hosts yet. The Coolify host should go after them."
+    "decommission_hosts-pending": "{runs} other finished runs of this source have not stopped their own hosts yet. The Coolify host should go after them.",
+    "import_risk-warning": "Heads-up for {count} items ({risk}): {items}."
   },
   "version": {
     "title": "Source version",

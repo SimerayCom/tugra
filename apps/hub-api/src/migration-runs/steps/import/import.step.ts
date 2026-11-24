@@ -44,7 +44,7 @@ import { CLEANUP_REQUEST_KEY, RunAbortRequestedError, type CleanupRequest } from
 import { SESSION_EXPIRED_CODE } from "../../core/run-logic";
 import { UNKNOWN_SERVER_REF, serverRefOfItemRef } from "../../../importer/server-map";
 import { IMPORT_STEPS_PORT, type DeploymentRef, type ImportStepsPort, type OpSnapshot, type SessionState } from "./import-ports";
-import { applyInputOf, deployKeyBase, failureOf, hasActive, hasBad, includedItems, isConflict, itemTasks, stopRunApps, unackedBlockers } from "./step-utils";
+import { applyInputOf, deployKeyBase, failureOf, hasActive, hasBad, includedItems, isConflict, itemTasks, stopRunApps, unackedBlockers, warningRisks } from "./step-utils";
 import { appTasksOf, duePinsOf, pinFloatingImages, targetOfTask, workerSetsOfOp } from "./baseline/op-safety";
 import { RUN_HINTS, type RunHint, type RunHintStore } from "./baseline/run-hints";
 
@@ -461,6 +461,7 @@ export class ImportStep implements StepHandler<ImportObs>, OnModuleInit {
       { code: plan.planHash === run.planHash ? "import.plan-fresh" : "import.plan-changed", level: plan.planHash === run.planHash ? "info" : "block" },
     ];
     for (const [code, names] of blocked) out.push({ code: "import.item-skipped", level: "warn", params: { risk: code, count: names.length, items: names.slice(0, 10) } });
+    for (const [code, names] of warningRisks(plan, run)) out.push({ code: "import.risk-warning", level: "warn", params: { risk: code, count: names.length, items: names.slice(0, 10) } });
     if (hasMap(ctx)) {
       const sources = new Set(
         includedItems(plan, run)

@@ -57,8 +57,25 @@ export const SetWorkerMarksSchema = z
   .strict();
 export type SetWorkerMarksInput = z.infer<typeof SetWorkerMarksSchema>;
 
+/** A dry-run warning key: the code of the dry-run item, plus `:<risk>` for an import risk warning (`import.risk-warning:service.image.floating`). */
+export const WARNING_ACK_KEY = z
+  .string()
+  .min(3)
+  .max(120)
+  .regex(/^[a-z0-9][a-z0-9.:_-]*$/, "invalid warning key");
+
+/** `PUT /migration-runs/:id/warning-acks`: accept (or take back the acceptance of) warnings of a finished dry-run. */
+export const SetWarningAcksSchema = z
+  .object({
+    acks: z.array(z.object({ key: WARNING_ACK_KEY, accepted: z.boolean() }).strict()).min(1).max(200),
+  })
+  .strict();
+export type SetWarningAcksInput = z.infer<typeof SetWarningAcksSchema>;
+
 export const SafetyHintsSchema = z.object({
   imagePins: z.array(z.object({ image: z.string(), scope: z.string(), digest: z.string(), evidence: z.string() })),
   workerMarks: z.array(z.object({ itemRef: z.string(), role: z.enum(WORKER_MARKS) })),
+  /** The dry-run warning keys the operator accepted. */
+  warningAcks: z.array(z.string()),
 });
 export type SafetyHints = z.infer<typeof SafetyHintsSchema>;
