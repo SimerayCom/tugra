@@ -71,6 +71,21 @@ describe("projects page: team context and first run", () => {
     await vi.waitFor(() => expect(create).toHaveBeenCalledWith("t1", "Acme"));
   });
 
+  it("an empty team that is scoped on a multi-team account gets the first-project call, not a dead end", async () => {
+    localStorage.setItem("tugra.teamScope", "t2");
+    vi.spyOn(api, "listProjects").mockResolvedValue([proj("p1", "Shop", "2026-01-01T00:00:00Z", 1)]);
+    vi.spyOn(api, "listTeams").mockResolvedValue([
+      { id: "t1", name: "Acme", role: "OWNER" },
+      { id: "t2", name: "Zed", role: "OWNER" },
+    ] as never);
+    const create = vi.spyOn(api, "createProject").mockResolvedValue({} as never);
+    renderPage();
+    await screen.findByText("Create your first project");
+    expect(screen.queryByText("Shop")).toBeNull();
+    fireEvent.click(await screen.findByRole("button", { name: "Create “Zed”" }));
+    await vi.waitFor(() => expect(create).toHaveBeenCalledWith("t2", "Zed"));
+  });
+
   it("with several teams the list is grouped by team and every project carries its team badge", async () => {
     vi.spyOn(api, "listProjects").mockResolvedValue([
       { ...proj("p1", "Shop", "2026-01-01T00:00:00Z", 1), teamId: "t1" },

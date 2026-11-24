@@ -8,7 +8,8 @@ import { useT } from "../../../../i18n/provider";
 import { useTeamScope } from "../../../../components/team-scope";
 import { defaultTeamId } from "../../../../lib/team-scope";
 import { BackLink, Btn, Card } from "../../../../components/ui";
-import { Field, Select, TextInput } from "../../../../components/form";
+import { Field, TextInput } from "../../../../components/form";
+import { TeamPicker } from "../../../../components/team-picker";
 
 export default function NewProjectPage() {
   const t = useT();
@@ -39,7 +40,7 @@ export default function NewProjectPage() {
           {teams.length > 1 && (
             <div style={{ marginTop: 12 }}>
               <Field label={t("common.team")}>
-                <Select value={target} onChange={setCreateTeam} options={teams.map((tm) => ({ value: tm.id, label: tm.name }))} />
+                <TeamPicker value={target} teams={teams} onChange={setCreateTeam} />
               </Field>
             </div>
           )}

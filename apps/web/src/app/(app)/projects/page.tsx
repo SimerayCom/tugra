@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useGuardedPush } from "../../../hooks/useUnsavedChanges";
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { FolderTree, Plus, SearchX, Settings } from "lucide-react";
+import { FolderTree, Plus, Settings } from "lucide-react";
 import { api, projectIconUrl } from "../../../lib/api";
 import { useT } from "../../../i18n/provider";
 import { Badge, Btn, Card, EmptyState } from "../../../components/ui";
@@ -149,28 +149,23 @@ export default function ProjectsPage() {
           />
         ) : (
           <ListCard>
-            {projects.length === 0 ? (
-              // First run (a new team has no project): one clear next step, or bring existing work over.
-              <EmptyState
-                icon={FolderTree}
-                title={t("projects.firstTitle")}
-                action={
-                  <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap" }}>
-                    {target && targetTeamName && (
-                      <Btn onClick={() => create.mutate(targetTeamName)} loading={create.isPending} style={{ minHeight: 44 }}>
-                        {t("projects.firstQuick", { name: targetTeamName })}
-                      </Btn>
-                    )}
-                    <Link href="/import" style={{ ...rowChip, minHeight: 44, padding: "0 14px", fontSize: 13 }}>{t("projects.firstImport")}</Link>
-                  </div>
-                }
-              >
-                {t("projects.first")}
-              </EmptyState>
-            ) : (
-              // Projects exist, but the global team scope hides them all — not a first-run state.
-              <EmptyState icon={SearchX} title={t("common.noResults")}>{t("projects.noneInScope")}</EmptyState>
-            )}
+            {/* An empty team (or a brand-new account) is a first run: one clear next step, or bring existing work over. */}
+            <EmptyState
+              icon={FolderTree}
+              title={t("projects.firstTitle")}
+              action={
+                <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap" }}>
+                  {target && targetTeamName && (
+                    <Btn onClick={() => create.mutate(targetTeamName)} loading={create.isPending} style={{ minHeight: 44 }}>
+                      {t("projects.firstQuick", { name: targetTeamName })}
+                    </Btn>
+                  )}
+                  <Link href="/import" style={{ ...rowChip, minHeight: 44, padding: "0 14px", fontSize: 13 }}>{t("projects.firstImport")}</Link>
+                </div>
+              }
+            >
+              {t("projects.first")}
+            </EmptyState>
           </ListCard>
         )}
         </>
