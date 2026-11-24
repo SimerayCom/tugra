@@ -72,6 +72,10 @@ describe("decideDbLane: only the DUMP size decides the cap", () => {
   it("a database already on the lane stays there (the choice is sticky once transfers exist)", () => {
     expect(input(database(DB, { plane: "stream", measure: counted(1 * MiB) }), { largeDbMode: "refuse" })).toMatchObject({ lane: "stream", reason: "sticky" });
   });
+  it("a sticky stream database still honours an operator dump ceiling set later", () => {
+    expect(input(database(DB, { plane: "stream", measure: counted(2 * GiB) }), { streamCapBytes: GiB })).toMatchObject({ lane: "blocked", reason: "over-dump-cap" });
+    expect(input(database(DB, { plane: "stream", measure: counted(2 * GiB) }), { streamCapBytes: 8 * GiB })).toMatchObject({ lane: "stream", reason: "sticky" });
+  });
 });
 
 describe("decideDbLane: the physical copy (PG18 nested layout, an Alpine image under Tugra's Debian one)", () => {

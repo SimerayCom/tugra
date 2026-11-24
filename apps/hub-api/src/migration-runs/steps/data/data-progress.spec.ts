@@ -36,4 +36,16 @@ describe("byteProgress: bytes, percent and time left of the data that is moving"
     });
     expect(byteProgress(snap)).toMatchObject({ total: GiB, done: GiB, etaSec: 0 });
   });
+
+  it("counts a row that has not started with its known size, so the percentage never drops when it starts", () => {
+    const rows = (second: "NONE" | "COPYING") => [
+      inspected("volume:s:a:data", 5 * GiB, 1, { state: "DONE", rawBytesDone: 5 * GiB }),
+      inspected("volume:s:b:data", 100 * GiB, 1, { state: second, rawBytesDone: 0 }),
+      inspected("volume:s:c:data", GiB, 1, { state: "COPYING", rawBytesDone: 0 }),
+    ];
+    const before = byteProgress(makeSnap({ volumes: rows("NONE") }))!;
+    const after = byteProgress(makeSnap({ volumes: rows("COPYING") }))!;
+    expect(before.total).toBe(106 * GiB);
+    expect(after.total).toBe(before.total);
+  });
 });

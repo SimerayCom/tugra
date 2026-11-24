@@ -164,7 +164,7 @@ export function decideDbLane(i: LaneInput): LaneDecision {
   const base = { dumpBytes, gzBytes, counted, capBytes };
   const canStream = i.largeDbMode === "stream-logical" && isStreamDumpEngine(db.engine);
 
-  if (db.plane === "stream") return { ...base, lane: "stream", reason: "sticky" };
+  if (db.plane === "stream") return overStreamCap(i, dumpBytes) ? { ...base, lane: "blocked", reason: "over-dump-cap" } : { ...base, lane: "stream", reason: "sticky" };
   if (!isStreamDumpEngine(db.engine)) return { ...base, lane: db.plane === "volume" ? "physical" : "logical", reason: "engine-no-lane" };
 
   // a physical copy that passes every gate knowable before the freeze keeps its lane
@@ -266,7 +266,9 @@ export function dbLaneChecks(run: Pick<RunSnapshot, "options">, snap: DataSnapsh
  * row completes.
  */
 export function byteProgress(snap: Pick<DataSnapshot, "volumes">): StepProgress | null {
-  const rows = snap.volumes.filter((v) => !v.excluded && v.state !== "NONE");
+  const inScope = snap.volumes.filter((v) => !v.excluded);
+  // rows not started yet count with their known size so the total (and the percentage) never jumps when the next row starts
+  const rows = inScope.filter((v) => v.state !== "NONE" || v.rawBytesTotal != null || v.inventory?.found);
   if (!rows.some((v) => v.state === "COPYING" || v.state === "COPIED" || v.state === "APPLYING")) return null;
   let total = 0;
   let done = 0;
