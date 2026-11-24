@@ -73,7 +73,7 @@ function LaunchDialog({ plan, kind, sessionId, servers, extras, onClose }: Props
     hostLoop: { ...HOST_LOOP_FORM_DEFAULTS },
     deployWaves: "single",
     deployConcurrency: "",
-    largeDbMode: "refuse",
+    largeDbMode: "stream-logical",
     serviceStart: "dependencies",
     stopSource: false,
     policies: { ...EMPTY_POLICIES },

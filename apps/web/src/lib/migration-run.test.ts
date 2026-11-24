@@ -462,10 +462,10 @@ describe("launch form: placement, runner, policies", () => {
     expect(buildLaunchInput({ ...base, sourceRunner: "operator", hostLoop }).options).toEqual({ observeMinutes: 30 });
   });
   it("sends the build, large-db and stop-source options only when they differ from the defaults", () => {
-    expect(buildLaunchInput({ ...base, deployWaves: "earlyBuild", deployConcurrency: "2", largeDbMode: "stream-logical", stopSource: true }).options).toEqual({
-      observeMinutes: 30, deployWaves: "earlyBuild", deployConcurrency: 2, largeDbMode: "stream-logical", stopSource: true,
+    expect(buildLaunchInput({ ...base, deployWaves: "earlyBuild", deployConcurrency: "2", largeDbMode: "refuse", stopSource: true }).options).toEqual({
+      observeMinutes: 30, deployWaves: "earlyBuild", deployConcurrency: 2, largeDbMode: "refuse", stopSource: true,
     });
-    expect(buildLaunchInput({ ...base, deployWaves: "single", deployConcurrency: " ", largeDbMode: "refuse", stopSource: false }).options).toEqual({ observeMinutes: 30 });
+    expect(buildLaunchInput({ ...base, deployWaves: "single", deployConcurrency: " ", largeDbMode: "stream-logical", stopSource: false }).options).toEqual({ observeMinutes: 30 });
   });
   it("sends the service start choice only when it is not the default", () => {
     expect(buildLaunchInput({ ...base, serviceStart: "none" }).options).toEqual({ observeMinutes: 30, serviceStart: "none" });

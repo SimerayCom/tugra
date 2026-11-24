@@ -141,11 +141,11 @@ describe("GuidedRunLauncher", () => {
       mount({ plan: fleetPlan });
       fireEvent.click(screen.getByRole("button", { name: "Run guided migration" }));
       const dialog = await screen.findByRole("dialog");
-      expect(within(dialog).getByText(/stops at the data copy and the run waits for you/)).toBeTruthy();
+      expect(within(dialog).getByText(/counts as downtime/)).toBeTruthy();
+      expect(within(dialog).queryByText(/pauses the run/)).toBeNull();
+      fireEvent.change(within(dialog).getByLabelText("Very large databases"), { target: { value: "refuse" } });
+      expect(within(dialog).getByText(/pauses the run/)).toBeTruthy();
       expect(within(dialog).queryByText(/counts as downtime/)).toBeNull();
-      fireEvent.change(within(dialog).getByLabelText("Databases too large for a dump artifact"), { target: { value: "stream-logical" } });
-      expect(within(dialog).getByText(/whole duration counts as downtime/)).toBeTruthy();
-      expect(within(dialog).queryByText(/stops at the data copy and the run waits for you/)).toBeNull();
     });
 
     it("a plain run sends no serverMap, and placement is hidden when there is only one server to choose", async () => {
@@ -197,7 +197,7 @@ describe("GuidedRunLauncher", () => {
       fireEvent.change(within(dialog).getByLabelText("SSH key directory on the Coolify host"), { target: { value: "/data/coolify/ssh/keys" } });
       fireEvent.change(within(dialog).getByLabelText("Hosts at a time"), { target: { value: "3" } });
       fireEvent.change(within(dialog).getByLabelText("When apps are built and started"), { target: { value: "earlyBuild" } });
-      fireEvent.change(within(dialog).getByLabelText("Databases too large for a dump artifact"), { target: { value: "stream-logical" } });
+      fireEvent.change(within(dialog).getByLabelText("Very large databases"), { target: { value: "refuse" } });
       fireEvent.change(within(dialog).getByLabelText("Which services are started before the apps"), { target: { value: "all" } });
       fireEvent.change(within(dialog).getByLabelText("Hosts that use the source's object storage"), { target: { value: "mirror" } });
       fireEvent.change(within(dialog).getByLabelText("Campaign"), { target: { value: "wave-1" } });
@@ -205,7 +205,7 @@ describe("GuidedRunLauncher", () => {
       fireEvent.click(submit);
       await waitFor(() => expect(create).toHaveBeenCalled());
       const body = create.mock.calls[0][0];
-      expect(body.options).toMatchObject({ sourceRunner: "coolify-host-loop", hostLoop: { keyDir: "/data/coolify/ssh/keys", parallel: 3, connectTimeoutSec: 15, retries: 1 }, deployWaves: "earlyBuild", largeDbMode: "stream-logical", serviceStart: "all" });
+      expect(body.options).toMatchObject({ sourceRunner: "coolify-host-loop", hostLoop: { keyDir: "/data/coolify/ssh/keys", parallel: 3, connectTimeoutSec: 15, retries: 1 }, deployWaves: "earlyBuild", largeDbMode: "refuse", serviceStart: "all" });
       expect(body.inputs).toMatchObject({ minioPolicy: "mirror" });
       expect(body.inputs).not.toHaveProperty("workerPolicy"); // unanswered: the hub's safe default applies
       expect(body.campaign).toBe("wave-1");

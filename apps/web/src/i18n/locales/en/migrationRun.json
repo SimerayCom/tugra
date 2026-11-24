@@ -506,16 +506,16 @@
         "all": "Every imported service except held tunnel connectors"
       },
       "serviceStartHint": "Search engines and document converters start before the apps that call them, so the apps can answer their health check. An object store starts when a dark app depends on it; its buckets always move through an object migration, never through a volume copy.",
-      "largeDbMode": "Databases too large for a dump artifact",
-      "largeDbModeHint": "Stream a logical dump has no size cap but runs inside the freeze window, so it adds to the downtime.",
+      "largeDbMode": "Very large databases",
+      "largeDbModeHint": "Any size moves, in checked parts. Big ones copy while the source is stopped.",
       "largeDbChoice": {
-        "refuse": "Stop the run (default)",
-        "stream-logical": "Stream a logical dump"
+        "stream-logical": "Move them (default)",
+        "refuse": "Stop and ask me"
       },
       "stopSource": "Let the migrator stop the source writers itself",
       "stopSourceHint": "Off by default. Without it the freeze step asks you to stop the writers.",
-      "largeDbHintRefuse": "A PostgreSQL, MySQL or MariaDB database whose dump is over the size cap stops at the data copy and the run waits for you. Nothing is moved for it. Pick Stream a logical dump if the plan has databases that large.",
-      "largeDbHintStream": "A database over the cap is dumped and restored as a stream in resumable parts, with no size cap. The source stays stopped while it runs, so its whole duration counts as downtime. Rehearse it with a dry run first."
+      "largeDbHintRefuse": "A database over the dump limit pauses the run. Nothing moves for it until you decide.",
+      "largeDbHintStream": "Its whole copy counts as downtime. A dry run shows how long it takes."
     }
   },
   "units": {
