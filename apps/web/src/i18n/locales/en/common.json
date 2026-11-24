@@ -59,5 +59,18 @@
   "sortBy": "Sort by",
   "sortedAsc": "(sorted ascending)",
   "sortedDesc": "(sorted descending)",
-  "disabled": "Disabled"
+  "disabled": "Disabled",
+  "time": {
+    "justNow": "just now",
+    "secondsAgo": "{n}s ago",
+    "minutesAgo": "{n}m ago",
+    "hoursAgo": "{n}h ago",
+    "daysAgo": "{n}d ago"
+  },
+  "liveness": {
+    "online": "Online",
+    "stale": "Not responding",
+    "pending": "Waiting to connect",
+    "offline": "Offline"
+  }
 }

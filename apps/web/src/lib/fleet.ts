@@ -1,4 +1,7 @@
 import type { ServerView, ServerStatus } from "./types";
+import en from "../i18n/locales/en";
+import { translate } from "../i18n/translate";
+import { hubNow } from "./clock-skew";
 
 export function statusCounts(
   servers: ServerView[],
@@ -105,15 +108,27 @@ export function pct(used: number, total: number): number {
   return total > 0 ? Math.round((used / total) * 100) : 0;
 }
 
-export function relativeTime(iso: string | null): string {
+type TimeT = (key: string, vars?: Record<string, string | number>) => string;
+const defaultTimeT: TimeT = (key, vars) => translate(en, key, vars);
+
+/** Seconds since `iso`, measured on the hub's clock (browser clock + measured skew) and never negative: a browser
+ *  running a few seconds behind the hub must not show a timestamp "from the future". */
+export function secondsSince(iso: string, browserNowMs: number = Date.now()): number {
+  return Math.max(0, Math.floor((hubNow(browserNowMs) - new Date(iso).getTime()) / 1000));
+}
+
+/** "just now" / "12s ago" / "5m ago" / "3h ago" / "2d ago". Pass the component's `t` to get the active locale. */
+export function relativeTime(iso: string | null, t: TimeT = defaultTimeT, browserNowMs: number = Date.now()): string {
   if (!iso) return "—";
-  const s = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
-  if (s < 60) return `${s}s ago`;
+  const s = secondsSince(iso, browserNowMs);
+  if (Number.isNaN(s)) return "—";
+  if (s < 5) return t("common.time.justNow");
+  if (s < 60) return t("common.time.secondsAgo", { n: s });
   const m = Math.floor(s / 60);
-  if (m < 60) return `${m}m ago`;
+  if (m < 60) return t("common.time.minutesAgo", { n: m });
   const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h ago`;
-  return `${Math.floor(h / 24)}d ago`;
+  if (h < 24) return t("common.time.hoursAgo", { n: h });
+  return t("common.time.daysAgo", { n: Math.floor(h / 24) });
 }
 
 export function fmtBytes(n: number): string {
@@ -139,4 +154,24 @@ export function formatUptime(sec: number | null): string {
   if (d > 0) return `${d}d ${h}h`;
   if (h > 0) return `${h}h ${m}m`;
   return `${m}m`;
+}
+
+export type Liveness = "online" | "stale" | "pending" | "offline";
+/** An ONLINE server whose newest signal is older than this reads as "not responding" before the hub flips it OFFLINE. */
+export const LIVENESS_STALE_S = 90;
+
+/** Liveness of a server for the small status dots: online / stale (online but quiet) / pending / offline. */
+export function serverLiveness(status: ServerStatus, lastSeenAt: string | null, browserNowMs: number = Date.now()): Liveness {
+  if (status === "PENDING") return "pending";
+  if (status === "OFFLINE") return "offline";
+  return lastSeenAt && secondsSince(lastSeenAt, browserNowMs) > LIVENESS_STALE_S ? "stale" : "online";
+}
+
+/** Cluster rows by team (A→Z by team name) while keeping the incoming order inside each team, so "group by team"
+ *  composes with whatever column sort is active. */
+export function clusterByTeam(servers: ServerView[], teams: { id: string; name: string }[]): ServerView[] {
+  return servers
+    .map((s, i) => ({ s, i, label: teamLabel(teams, s.teamId) }))
+    .sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: "base" }) || (a.s.teamId < b.s.teamId ? -1 : a.s.teamId > b.s.teamId ? 1 : 0) || a.i - b.i)
+    .map((x) => x.s);
 }

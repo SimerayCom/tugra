@@ -760,6 +760,11 @@ export interface FleetPatchApplyResult {
 
 // Signed, digest-pinned self-update of the Go agent (one server or a fleet). The target version/image/sha256
 // come only from the hub's ed25519-verified release manifest — never the request.
+/** One server's outcome of a bulk capability grant/revoke (POST /servers/capabilities/bulk). */
+export type BulkCapabilityResult =
+  | { id: string; ok: true; capabilities: string[]; granted: string[]; revoked: string[] }
+  | { id: string; ok: false; error: "not_found" | "forbidden" | "files_write_requires_files" };
+
 export interface AgentUpdateItem {
   serverId: string;
   status: "sent" | "offline" | "skipped"; // sent = dispatched; the new version shows once the agent reconnects

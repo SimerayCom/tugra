@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { groupByTeam, statusCounts, writableIds, pct, formatUptime, fmtBytesStr, teamLabel, filterByStatus } from "./fleet";
+import { clusterByTeam, relativeTime, secondsSince, serverLiveness, groupByTeam, statusCounts, writableIds, pct, formatUptime, fmtBytesStr, teamLabel, filterByStatus } from "./fleet";
 import type { ServerView } from "./types";
 
 const s = (
@@ -115,5 +115,48 @@ describe("fleet helpers", () => {
     expect(filterByStatus(servers, null)).toHaveLength(3);
     expect(filterByStatus(servers, "ONLINE").map((x) => x.id)).toEqual(["a", "c"]);
     expect(filterByStatus(servers, "PENDING")).toEqual([]);
+  });
+});
+
+describe("relativeTime / skew", () => {
+  const now = Date.UTC(2026, 10, 24, 12, 0, 0);
+  const ago = (s: number) => new Date(now - s * 1000).toISOString();
+
+  it("never goes negative: a timestamp slightly in the browser's future reads 'just now'", () => {
+    expect(secondsSince(new Date(now + 3000).toISOString(), now)).toBe(0);
+    expect(relativeTime(new Date(now + 3000).toISOString(), undefined, now)).toBe("just now");
+    expect(relativeTime(new Date(now + 3_600_000).toISOString(), undefined, now)).toBe("just now");
+  });
+  it("formats seconds, minutes, hours and days", () => {
+    expect(relativeTime(ago(2), undefined, now)).toBe("just now");
+    expect(relativeTime(ago(30), undefined, now)).toBe("30s ago");
+    expect(relativeTime(ago(5 * 60), undefined, now)).toBe("5m ago");
+    expect(relativeTime(ago(3 * 3600), undefined, now)).toBe("3h ago");
+    expect(relativeTime(ago(2 * 86400), undefined, now)).toBe("2d ago");
+  });
+  it("uses the caller's translator and tolerates null / junk", () => {
+    expect(relativeTime(ago(30), (k, v) => `${k}:${v?.n ?? ""}`, now)).toBe("common.time.secondsAgo:30");
+    expect(relativeTime(null)).toBe("—");
+    expect(relativeTime("garbage")).toBe("—");
+  });
+});
+
+describe("serverLiveness", () => {
+  const now = Date.UTC(2026, 10, 24, 12, 0, 0);
+  it("maps status and quiet-online to a dot state", () => {
+    expect(serverLiveness("PENDING", null, now)).toBe("pending");
+    expect(serverLiveness("OFFLINE", new Date(now).toISOString(), now)).toBe("offline");
+    expect(serverLiveness("ONLINE", new Date(now - 10_000).toISOString(), now)).toBe("online");
+    expect(serverLiveness("ONLINE", new Date(now - 200_000).toISOString(), now)).toBe("stale");
+    expect(serverLiveness("ONLINE", null, now)).toBe("online");
+  });
+});
+
+describe("clusterByTeam", () => {
+  const sv = (id: string, teamId: string) => ({ id, teamId }) as unknown as ServerView;
+  it("groups by team name and keeps the incoming order within a team", () => {
+    const teams = [{ id: "t1", name: "Zeta" }, { id: "t2", name: "Acme" }];
+    const out = clusterByTeam([sv("a", "t1"), sv("b", "t2"), sv("c", "t1"), sv("d", "t2")], teams);
+    expect(out.map((x) => x.id)).toEqual(["b", "d", "a", "c"]);
   });
 });

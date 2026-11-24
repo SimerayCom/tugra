@@ -1,6 +1,8 @@
 import type { BulkTransferResponse, TransferPlan } from "./server-transfer";
 import { HUB_UNREACHABLE_CODE, hubUnreachableMessage, isHubDownStatus, isNetworkFailure, reportHubDown } from "./hub-connection";
+import { observeServerDate } from "./clock-skew";
 import type {
+  BulkCapabilityResult,
   RebootPreview,
   RebootRequest,
   RebootStatus,
@@ -338,8 +340,11 @@ export async function apiFetch<T>(
   }
 
   let res: Response;
+  const sentAt = Date.now();
   try {
     res = await fetch(`${API_BASE}${path}`, { ...init, headers, credentials: "include" });
+    // Free clock-skew sample (hub vs browser) from the response's Date header; see lib/clock-skew.
+    observeServerDate(res.headers?.get?.("date"), sentAt, Date.now(), res.headers?.get?.("age"));
   } catch (e) {
     // Network failure / timeout abort: the hub is restarting or unreachable. Say that instead of a raw
     // "Failed to fetch", and let the shell banner start watching for it to come back.
@@ -1012,6 +1017,13 @@ export const api = {
     return apiFetch<{ ok: true }>(`/servers/${id}/capabilities`, {
       method: "PUT",
       body: JSON.stringify({ capabilities }),
+    });
+  },
+  /** Grant and/or revoke opt-in capabilities (terminal, files, files_write, swarm) on many servers; per-server results. */
+  bulkSetServerCapabilities(serverIds: string[], grant: string[], revoke: string[]) {
+    return apiFetch<{ results: BulkCapabilityResult[] }>(`/servers/capabilities/bulk`, {
+      method: "POST",
+      body: JSON.stringify({ serverIds, grant, revoke }),
     });
   },
   checkUpdates(id: string) {
