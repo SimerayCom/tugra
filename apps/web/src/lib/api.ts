@@ -59,6 +59,7 @@ import type {
   HubBackupItem,
   AuditPage,
   Channel,
+  ChannelVocabulary,
   Delivery,
   Database,
   DatabaseLinkView,
@@ -1381,7 +1382,7 @@ export const api = {
   },
   /** The canonical subscribable event ids — the single source the UI renders from (no drift). */
   listChannelEvents() {
-    return apiFetch<{ events: string[] }>("/channels/events");
+    return apiFetch<ChannelVocabulary>("/channels/events");
   },
   /** Recent delivery attempts for a channel (newest first, up to 100) — any team member may read. */
   listDeliveries(channelId: string) {
@@ -1393,17 +1394,33 @@ export const api = {
     teamId: string;
     config: Record<string, unknown>;
     eventTypes?: string[];
+    categories?: string[];
+    minSeverity?: string;
+    topics?: Record<string, number>;
   }) {
     return apiFetch<Channel>("/channels", {
       method: "POST",
       body: JSON.stringify(input),
     });
   },
-  updateChannel(id: string, input: { name?: string; enabled?: boolean; eventTypes?: string[]; config?: Record<string, unknown> }) {
+  updateChannel(
+    id: string,
+    input: {
+      name?: string;
+      enabled?: boolean;
+      eventTypes?: string[];
+      categories?: string[];
+      minSeverity?: string;
+      /** null clears the Telegram topic map */
+      topics?: Record<string, number> | null;
+      config?: Record<string, unknown>;
+    },
+  ) {
     return apiFetch<Channel>(`/channels/${id}`, { method: "PUT", body: JSON.stringify(input) });
   },
-  testChannel(id: string) {
-    return apiFetch<{ ok: true }>(`/channels/${id}/test`, { method: "POST" });
+  /** Send a test; with a category it goes the way that category routes (its Telegram topic). */
+  testChannel(id: string, category?: string) {
+    return apiFetch<{ ok: true }>(`/channels/${id}/test`, { method: "POST", body: JSON.stringify(category ? { category } : {}) });
   },
   deleteChannel(id: string) {
     return apiFetch<{ ok: true }>(`/channels/${id}`, { method: "DELETE" });

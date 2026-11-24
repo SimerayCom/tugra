@@ -1058,7 +1058,19 @@ export interface Channel {
   teamId: string;
   enabled: boolean;
   eventTypes: string[];
+  /** Routing rule: category ids (empty = eventTypes only), minimum severity, Telegram topic per category. */
+  categories: string[];
+  minSeverity: string;
+  topics: Record<string, number> | null;
   canWrite: boolean;
+}
+
+/** GET /channels/events — the subscribable event ids plus the routing vocabulary (category + severity ids). */
+export interface ChannelVocabulary {
+  events: string[];
+  categories?: string[];
+  eventCategories?: Record<string, string>;
+  severities?: string[];
 }
 
 export type DeliveryStatus = "PENDING" | "SENT" | "FAILED" | "DEAD";

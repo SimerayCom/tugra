@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bell, Pencil, Trash2, X } from "lucide-react";
+import { Bell, Pencil, SlidersHorizontal, Trash2, X } from "lucide-react";
 import { api } from "../../../lib/api";
 import { useTeamScope } from "../../../components/team-scope";
 import { scopeByTeam, defaultTeamId } from "../../../lib/team-scope";
@@ -14,6 +14,8 @@ import { Badge, Btn, Card, EmptyState, Spinner } from "../../../components/ui";
 import { ErrorState } from "../../../components/error-state";
 import { Field, Select, TextInput } from "../../../components/form";
 import { DeliveryHistory } from "./delivery-history";
+import { ChannelRoutingPanel, RoutingEditor, type RoutingVocab } from "./routing-editor";
+import { parseTopics, toggleIn, type RoutingDraft } from "../../../lib/notification-routing";
 
 const TYPES = ["smtp", "webhook", "discord", "slack", "telegram", "ntfy", "gotify", "pushover", "teams", "mattermost", "lark", "resend"];
 
@@ -95,6 +97,7 @@ export default function NotificationsPage() {
   // Single source of truth for the event list — the backend enum, so the UI can't drift.
   const { data: eventsData } = useQuery({ queryKey: ["channelEvents"], queryFn: () => api.listChannelEvents() });
   const EVENTS = eventsData?.events ?? [];
+  const vocab: RoutingVocab = { categories: eventsData?.categories ?? [], severities: eventsData?.severities ?? [] };
 
   // List follows the global scope (filter); create needs a concrete target team.
   const visible = scopeByTeam(channels, scope);
@@ -111,7 +114,11 @@ export default function NotificationsPage() {
   const [config, setConfig] = useState<Record<string, string>>({});
   const [secure, setSecure] = useState(false);
   const [headers, setHeaders] = useState<{ key: string; value: string }[]>([]);
-  const [events, setEvents] = useState<string[]>(["deploy_failed", "server_offline"]);
+  // Default: every category, every severity ("one channel, all events"); individual events are optional extras.
+  const [events, setEvents] = useState<string[]>([]);
+  const [picked, setPicked] = useState<RoutingDraft | null>(null);
+  const draft: RoutingDraft = picked ?? { categories: vocab.categories, minSeverity: "info", topics: {} };
+  const [routingId, setRoutingId] = useState<string | null>(null);
 
   // Assemble the opaque config bag submitted on create: smtp keeps its `secure` toggle; webhook folds the
   // key/value editor rows into a `headers` object (empty keys dropped, omitted entirely when empty).
@@ -128,8 +135,21 @@ export default function NotificationsPage() {
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ["channels"] });
   const create = useMutation({
-    mutationFn: () => api.createChannel({ name, type, teamId: target, config: buildConfig(), eventTypes: events }),
-    onSuccess: () => { setName(""); setConfig({}); setSecure(false); setHeaders([]); setCreateTeam(""); invalidate(); },
+    mutationFn: () => {
+      const { topics, invalid } = parseTopics(draft.topics, draft.categories);
+      if (invalid.length) throw new Error(t("notifications.topicInvalid"));
+      return api.createChannel({
+        name,
+        type,
+        teamId: target,
+        config: buildConfig(),
+        eventTypes: events,
+        categories: draft.categories,
+        minSeverity: draft.minSeverity,
+        ...(type === "telegram" && Object.keys(topics).length ? { topics } : {}),
+      });
+    },
+    onSuccess: () => { setName(""); setConfig({}); setSecure(false); setHeaders([]); setCreateTeam(""); setEvents([]); setPicked(null); invalidate(); },
   });
   const test = useMutation({
     mutationFn: (id: string) => api.testChannel(id),
@@ -150,7 +170,17 @@ export default function NotificationsPage() {
   const setField = (k: string, v: string) => setConfig((c) => ({ ...c, [k]: v }));
   const setHeaderRow = (i: number, patch: Partial<{ key: string; value: string }>) =>
     setHeaders((rs) => rs.map((r, j) => (j === i ? { ...r, ...patch } : r)));
-  const toggleEvent = (e: string) => setEvents((es) => (es.includes(e) ? es.filter((x) => x !== e) : [...es, e]));
+  const toggleEvent = (e: string) => setEvents((es) => toggleIn(es, e));
+  // One-line "what this channel gets": categories (+ level) for a routed channel, event names for a legacy one.
+  const summarize = (c: { categories?: string[]; minSeverity?: string; eventTypes: string[] }) => {
+    const cats = c.categories ?? [];
+    const parts: string[] = [];
+    if (cats.length === vocab.categories.length && cats.length > 0) parts.push(t("notifications.allAlerts"));
+    else if (cats.length) parts.push(cats.map((x) => t(`notifications.category_${x}`)).join(" · "));
+    if (c.eventTypes.length) parts.push(c.eventTypes.map((e) => t(`notifications.${EVENT_LABEL[e] ?? e}`)).join(" · "));
+    if (c.minSeverity && c.minSeverity !== "info") parts.push(t(`notifications.severity_${c.minSeverity}`));
+    return parts.length ? parts.join(" — ") : "—";
+  };
 
   return (
     <div style={{ padding: "var(--page-pad)", maxWidth: 880 }}>
@@ -195,7 +225,7 @@ export default function NotificationsPage() {
                   )}
                 </div>
                 <div style={{ fontSize: 11, color: "var(--c-tx3)", marginTop: 3 }}>
-                  {c.eventTypes.length ? c.eventTypes.map((e) => t(`notifications.${EVENT_LABEL[e] ?? e}`)).join(" · ") : "—"}
+                  {summarize(c)}
                 </div>
               </div>
               {c.canWrite && (
@@ -203,10 +233,14 @@ export default function NotificationsPage() {
                   <Btn variant="ghost" onClick={() => test.mutate(c.id)} loading={test.isPending && test.variables === c.id} disabled={test.isPending}>
                     {test.isPending && test.variables === c.id ? "…" : t("notifications.test")}
                   </Btn>
+                  {vocab.categories.length > 0 && (
+                    <IconBtn label={t("notifications.routing")} pressed={routingId === c.id} onClick={() => setRoutingId(routingId === c.id ? null : c.id)}><SlidersHorizontal size={15} /></IconBtn>
+                  )}
                   <IconBtn label={t("notifications.editName")} onClick={() => { setRName(c.name); setRenamingId(renamingId === c.id ? null : c.id); }}><Pencil size={15} /></IconBtn>
                   <IconBtn label={t("notifications.delete")} danger onClick={async () => { if (await confirm({ body: t("common.deleteConfirm"), danger: true })) del.mutate(c.id); }}><Trash2 size={15} /></IconBtn>
                 </>
               )}
+              {routingId === c.id && <ChannelRoutingPanel key={c.id} channel={c} vocab={vocab} onClose={() => setRoutingId(null)} />}
               <DeliveryHistory channelId={c.id} />
             </Card>
           ))}
@@ -266,20 +300,31 @@ export default function NotificationsPage() {
           )}
 
           <div style={{ marginTop: 14 }}>
-            <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 6 }}>{t("notifications.events")}</div>
-            <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
-              {EVENTS.map((e) => (
-                <label key={e} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "var(--c-tx2)" }}>
-                  <input type="checkbox" checked={events.includes(e)} onChange={() => toggleEvent(e)} /> {t(`notifications.${EVENT_LABEL[e] ?? e}`)}
-                </label>
-              ))}
-            </div>
+            <RoutingEditor
+              idPrefix="create-route"
+              vocab={vocab}
+              draft={draft}
+              onChange={setPicked}
+              telegram={type === "telegram"}
+              extra={
+                <div style={{ marginTop: 10 }}>
+                  <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 2 }}>{t("notifications.individualEvents")}</div>
+                  <div style={{ display: "flex", columnGap: 14, flexWrap: "wrap" }}>
+                    {EVENTS.map((e) => (
+                      <label key={e} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "var(--c-tx2)", minHeight: 44 }}>
+                        <input type="checkbox" checked={events.includes(e)} onChange={() => toggleEvent(e)} /> {t(`notifications.${EVENT_LABEL[e] ?? e}`)}
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              }
+            />
           </div>
 
           <div style={{ marginTop: 14 }}>
             <Btn type="submit" disabled={create.isPending || !name || !target}>{create.isPending ? "…" : t("notifications.add")}</Btn>
           </div>
-          {create.isError && <div style={{ color: "var(--c-r)", fontSize: 12, marginTop: 8 }}>{(create.error as Error).message}</div>}
+          {create.isError && <div role="alert" style={{ color: "var(--c-r)", fontSize: 12, marginTop: 8 }}>{(create.error as Error).message}</div>}
         </form>
       </Card>
       )}

@@ -162,3 +162,133 @@ describe("NotificationsPage — channel test feedback", () => {
     off();
   });
 });
+
+const VOCAB = {
+  events: ["deploy_failed", "backup_failed"],
+  categories: ["uptime", "deploy", "backup", "server", "security", "updates"],
+  eventCategories: { deploy_failed: "deploy", backup_failed: "backup" },
+  severities: ["info", "warning", "critical"],
+};
+
+describe("NotificationsPage — routing by category and severity", () => {
+  beforeEach(() => {
+    qc = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    vi.spyOn(api, "listTeams").mockResolvedValue([{ id: "t1", name: "Team", role: "OWNER" }] as never);
+    vi.spyOn(api, "listChannelEvents").mockResolvedValue(VOCAB);
+    vi.spyOn(api, "listDeliveries").mockResolvedValue([] as never);
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  it("create defaults to every category and every level (one channel, all events)", async () => {
+    vi.spyOn(api, "listChannels").mockResolvedValue([] as never);
+    const createSpy = vi.spyOn(api, "createChannel").mockResolvedValue({} as never);
+    wrap(<NotificationsPage />);
+    const uptime = (await screen.findByLabelText("Uptime")) as HTMLInputElement;
+    expect(uptime.checked).toBe(true);
+    for (const c of ["Deploy", "Backup", "Server", "Security", "Updates"]) expect((screen.getByLabelText(c) as HTMLInputElement).checked).toBe(true);
+    fireEvent.change(screen.getByLabelText("Channel name"), { target: { value: "all" } });
+    fireEvent.click(screen.getByText("Add channel"));
+    await waitFor(() => expect(createSpy).toHaveBeenCalled());
+    expect(createSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ categories: ["uptime", "deploy", "backup", "server", "security", "updates"], minSeverity: "info", eventTypes: [] }),
+    );
+    expect(createSpy.mock.calls[0][0]).not.toHaveProperty("topics");
+  });
+
+  it("create sends the narrowed categories, the level and telegram topics for the selected categories only", async () => {
+    vi.spyOn(api, "listChannels").mockResolvedValue([] as never);
+    const createSpy = vi.spyOn(api, "createChannel").mockResolvedValue({} as never);
+    wrap(<NotificationsPage />);
+    await screen.findByLabelText("Uptime");
+    fireEvent.change(screen.getByDisplayValue("SMTP"), { target: { value: "telegram" } });
+    for (const c of ["Uptime", "Server", "Security", "Updates"]) fireEvent.click(screen.getByLabelText(c)); // keep Deploy + Backup
+    fireEvent.change(screen.getByLabelText("Alert level"), { target: { value: "critical" } });
+    fireEvent.change(screen.getByLabelText("Deploy — Topic ID"), { target: { value: "11" } });
+    fireEvent.change(screen.getByLabelText("Channel name"), { target: { value: "tg" } });
+    fireEvent.click(screen.getByText("Add channel"));
+    await waitFor(() => expect(createSpy).toHaveBeenCalled());
+    expect(createSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "telegram", categories: ["deploy", "backup"], minSeverity: "critical", topics: { deploy: 11 } }),
+    );
+  });
+
+  it("refuses to create with an invalid topic id", async () => {
+    vi.spyOn(api, "listChannels").mockResolvedValue([] as never);
+    const createSpy = vi.spyOn(api, "createChannel").mockResolvedValue({} as never);
+    wrap(<NotificationsPage />);
+    await screen.findByLabelText("Uptime");
+    fireEvent.change(screen.getByDisplayValue("SMTP"), { target: { value: "telegram" } });
+    fireEvent.change(screen.getByLabelText("Deploy — Topic ID"), { target: { value: "0" } });
+    fireEvent.change(screen.getByLabelText("Channel name"), { target: { value: "tg" } });
+    fireEvent.click(screen.getByText("Add channel"));
+    expect(await screen.findByText("Topic IDs are whole numbers above 0.")).toBeTruthy();
+    expect(createSpy).not.toHaveBeenCalled();
+  });
+
+  const channel = (over: Record<string, unknown> = {}) => ({
+    id: "c1", name: "Ops", type: "telegram", teamId: "t1", enabled: true, canWrite: true,
+    eventTypes: [], categories: ["deploy"], minSeverity: "warning", topics: { deploy: 5 }, ...over,
+  });
+
+  it("summarises the rule on the channel row, and a legacy channel still lists its events", async () => {
+    vi.spyOn(api, "listChannels").mockResolvedValue([
+      channel(),
+      channel({ id: "c2", name: "Old", type: "slack", eventTypes: ["deploy_failed"], categories: [], minSeverity: "info", topics: null }),
+    ] as never);
+    wrap(<NotificationsPage />);
+    expect(await screen.findByText("Deploy — Warnings and failures")).toBeTruthy();
+    // the legacy row renders the event label (also present in the create form's event list, hence getAllByText)
+    expect(screen.getAllByText("Deploy failed").length).toBeGreaterThan(1);
+  });
+
+  it("edits a saved channel's routing and saves it with one update (topics null for non-telegram)", async () => {
+    vi.spyOn(api, "listChannels").mockResolvedValue([channel({ type: "slack", topics: null })] as never);
+    const updateSpy = vi.spyOn(api, "updateChannel").mockResolvedValue({} as never);
+    wrap(<NotificationsPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Routing" }));
+    const panel = document.getElementById("route-c1-level")!.closest("div[style*='border-top']") as HTMLElement;
+    expect(panel).toBeTruthy();
+    const inPanel = (label: string) => Array.from(panel.querySelectorAll("label")).find((l) => l.textContent === label)!.querySelector("input")!;
+    fireEvent.click(inPanel("Backup"));
+    fireEvent.change(document.getElementById("route-c1-level")!, { target: { value: "info" } });
+    fireEvent.click(Array.from(panel.querySelectorAll("button")).find((b) => b.textContent === "Save")!);
+    await waitFor(() => expect(updateSpy).toHaveBeenCalled());
+    expect(updateSpy).toHaveBeenCalledWith("c1", { categories: ["deploy", "backup"], minSeverity: "info" });
+  });
+
+  it("telegram: saves topics, and clears the map with null when none are set", async () => {
+    vi.spyOn(api, "listChannels").mockResolvedValue([channel()] as never);
+    const updateSpy = vi.spyOn(api, "updateChannel").mockResolvedValue({} as never);
+    wrap(<NotificationsPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Routing" }));
+    const panel = document.getElementById("route-c1-level")!.closest("div[style*='border-top']") as HTMLElement;
+    const save = () => Array.from(panel.querySelectorAll("button")).find((b) => b.textContent === "Save")!;
+    const topic = panel.querySelector('input[aria-label="Deploy — Topic ID"]') as HTMLInputElement;
+    expect(topic.value).toBe("5");
+    fireEvent.change(topic, { target: { value: "8" } });
+    fireEvent.click(save());
+    await waitFor(() => expect(updateSpy).toHaveBeenCalledWith("c1", expect.objectContaining({ topics: { deploy: 8 } })));
+  });
+
+  it("sends a test for one category and names the channel in the toast", async () => {
+    vi.spyOn(api, "listChannels").mockResolvedValue([channel({ categories: ["deploy", "backup"] })] as never);
+    const testSpy = vi.spyOn(api, "testChannel").mockResolvedValue({ ok: true } as never);
+    const toasts: string[] = [];
+    const off = subscribeToast((x) => toasts.push(x.message));
+    wrap(<NotificationsPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Routing" }));
+    // the per-category tests live under More (the create form has its own More toggle too)
+    fireEvent.click(screen.getAllByRole("button", { name: "▸ More" }).find((b) => b.getAttribute("aria-controls") === "route-c1-more")!);
+    fireEvent.click(await screen.findByRole("button", { name: "Send a test for Backup" }));
+    await waitFor(() => expect(testSpy).toHaveBeenCalledWith("c1", "backup"));
+    await waitFor(() => expect(toasts).toContain("Test sent to Ops"));
+    off();
+  });
+
+  it("read-only members get no routing editor", async () => {
+    vi.spyOn(api, "listChannels").mockResolvedValue([channel({ canWrite: false })] as never);
+    wrap(<NotificationsPage />);
+    await screen.findByText("Ops");
+    expect(screen.queryByRole("button", { name: "Routing" })).toBeNull();
+  });
+});
