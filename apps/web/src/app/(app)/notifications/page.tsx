@@ -53,6 +53,7 @@ const EVENT_LABEL: Record<string, string> = {
   deploy_failed: "eventDeployFailed",
   deploy_rolled_back: "eventDeployRolledBack",
   server_offline: "eventServerOffline",
+  hub_outage: "eventHubOutage",
   server_online: "eventServerOnline",
   swarm_degraded: "eventSwarmDegraded",
   ssl_expiring: "eventSslExpiring",

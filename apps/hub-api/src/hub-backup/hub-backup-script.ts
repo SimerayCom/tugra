@@ -8,8 +8,8 @@
  */
 
 import { createHmac } from "node:crypto";
-import { buildDumpUploadScript } from "../backups/backup-script";
-import type { DestinationSpec } from "../backups/destination";
+import { GPG_PREFLIGHT, buildDumpUploadScript, decodeChain, storedObjectSourceCmd } from "../backups/backup-script";
+import { MC_INSTALL, type DestinationSpec } from "../backups/destination";
 
 /** Storage namespace (S3 object prefix / local subdir) for hub backups → /etc/tugra/backups/hub/. */
 export const HUB_NS = "hub";
@@ -71,4 +71,68 @@ export function hubBackupFilename(ts: string): string {
 /** The full hub-backup script: existence-guard prelude → pg_dump → gzip → gpg → sink (S3 mc pipe or LOCAL file). */
 export function buildHubBackupScript(target: { user: string; db: string; project: string }, filename: string, dest: DestinationSpec): string {
   return buildDumpUploadScript(hubDumpCommand(target), HUB_NS, filename, dest, hubPgPrelude(target.project));
+}
+
+// ───────────────────────────── restore drill ─────────────────────────────
+
+
+/** Tables the drill counts after the restore; a fixed allow-list (the names are interpolated into SQL). */
+export const DRILL_TABLES = ["User", "Team", "Server"] as const;
+
+/**
+ * Restore the stored hub dump into a THROWAWAY Postgres container on the local agent and print marker lines the hub
+ * parses (never data): `TUGRA_DRILL rc=<pg_restore exit> tables=<public tables>` and `TUGRA_DRILL_COUNT <table> <rows>`.
+ * The container has no network, runs the same image as the hub's own postgres, and is removed on every exit path.
+ */
+export function buildHubDrillScript(target: { project: string }, filename: string, dest: DestinationSpec): string {
+  if (!/^[a-z0-9][a-z0-9_-]*$/.test(target.project)) throw new Error("invalid compose project name");
+  const decode = decodeChain(dest, storedObjectSourceCmd(dest, HUB_NS, filename), { gzip: true });
+  const lines = ["set -e", "set -o pipefail", GPG_PREFLIGHT];
+  if (dest.type === "S3" && dest.s3) lines.push(MC_INSTALL);
+  lines.push(
+    `SRC=$(docker ps -q --filter label=com.docker.compose.project=${target.project} --filter label=com.docker.compose.service=postgres | head -n1)`,
+    `[ -n "$SRC" ] || { echo "tugra: hub postgres container not found" >&2; exit 3; }`,
+    `IMG=$(docker inspect -f '{{.Config.Image}}' "$SRC")`,
+    `NAME="tugra-drill-$$"`,
+    `trap 'docker rm -f "$NAME" >/dev/null 2>&1 || true' EXIT`,
+    `docker run -d --rm --name "$NAME" --network none -e POSTGRES_PASSWORD=drill -e POSTGRES_DB=drill "$IMG" >/dev/null`,
+    `for i in $(seq 1 90); do docker exec "$NAME" pg_isready -U postgres -d drill >/dev/null 2>&1 && break; sleep 1; done`,
+    `docker exec "$NAME" pg_isready -U postgres -d drill >/dev/null`,
+    "set +e",
+    `${decode} | docker exec -i "$NAME" pg_restore --no-owner --no-acl -U postgres -d drill`,
+    "RC=$?",
+    `T=$(docker exec "$NAME" psql -U postgres -d drill -tA -c "SELECT count(*) FROM information_schema.tables WHERE table_schema='public'" 2>/dev/null || echo -1)`,
+    `echo "TUGRA_DRILL rc=$RC tables=$T"`,
+    ...DRILL_TABLES.map((t) => `echo "TUGRA_DRILL_COUNT ${t} $(docker exec "$NAME" psql -U postgres -d drill -tA -c 'SELECT count(*) FROM "${t}"' 2>/dev/null || echo -1)"`),
+    "exit 0",
+  );
+  return lines.join("\n");
+}
+
+export interface DrillResult {
+  ok: boolean;
+  tables: number;
+  checks: Record<string, number>;
+  rc: number | null;
+  reason: string | null;
+}
+
+/**
+ * Judge the marker lines. The restore passes when the dump produced tables and the account tables hold rows: a hub
+ * always has at least one user and one team. A cut output (no marker) is a failure, never a pass.
+ */
+export function parseDrillOutput(output: string, exitCode: number): DrillResult {
+  const fail = (reason: string, extra: Partial<DrillResult> = {}): DrillResult => ({ ok: false, tables: 0, checks: {}, rc: null, reason, ...extra });
+  if (exitCode !== 0) return fail("script-failed");
+  const head = /^TUGRA_DRILL rc=(\d+) tables=(-?\d+)$/m.exec(output);
+  if (!head) return fail("no-marker");
+  const rc = Number(head[1]);
+  const tables = Number(head[2]);
+  const checks: Record<string, number> = {};
+  for (const m of output.matchAll(/^TUGRA_DRILL_COUNT (\w+) (-?\d+)$/gm)) {
+    if ((DRILL_TABLES as readonly string[]).includes(m[1])) checks[m[1]] = Number(m[2]);
+  }
+  if (tables < 1) return fail("no-tables", { tables: Math.max(tables, 0), checks, rc });
+  if (!(checks.User >= 1) || !(checks.Team >= 1)) return fail("empty-accounts", { tables, checks, rc });
+  return { ok: true, tables, checks, rc, reason: null };
 }

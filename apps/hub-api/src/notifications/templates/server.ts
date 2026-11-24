@@ -40,3 +40,23 @@ export const serverOfflineTemplate: EventTemplate = {
     });
   },
 };
+
+/** hub_outage — the hub's own dead-man check-in went silent (a gap in its heartbeat) or keeps failing. */
+export const hubOutageTemplate: EventTemplate = {
+  render(ev, env) {
+    const c = ev.ctx;
+    const gap = s(c, "kind") === "gap";
+    const minutes = s(c, "minutes");
+    return base(ev, {
+      level: "failure",
+      title: env.t("server.hubOutage.title"),
+      summary: env.t("server.hubOutage.summary", { detail: gap ? env.t("server.hubOutage.gap", { minutes }) : env.t("server.hubOutage.failing") }),
+      critical: true,
+      fields: fields([
+        { label: env.t("server.hubOutage.field.silent"), value: gap && minutes ? `${minutes} min` : "", inline: true },
+        { label: env.t("server.hubOutage.field.failures"), value: gap ? "" : s(c, "failures"), inline: true },
+      ]),
+      links: [],
+    });
+  },
+};

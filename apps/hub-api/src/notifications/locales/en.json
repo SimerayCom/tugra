@@ -109,6 +109,7 @@
   },
   "server": {
     "offline": { "title": "Server offline — {server}", "summary": "Server {server} stopped responding." },
+    "hubOutage": { "title": "Tugra hub was unreachable", "summary": "The hub stopped checking in. {detail}", "gap": "No check-in for about {minutes} minutes; it is back now.", "failing": "The hub cannot reach its check-in address.", "field": { "silent": "Silent for", "failures": "Failed check-ins" } },
     "online": { "title": "Server online — {server}", "summary": "Server {server} is back online." },
     "field": { "hostname": "Hostname", "lastSeen": "Last seen", "ip": "IP" },
     "link": { "openServer": "Open server" }

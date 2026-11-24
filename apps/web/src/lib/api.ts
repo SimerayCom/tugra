@@ -59,6 +59,8 @@ import type {
   SealedKeyExport,
   HubBackupView,
   HubBackupItem,
+  HubDrillItem,
+  HubDeadmanView,
   AuditPage,
   Channel,
   ChannelVocabulary,
@@ -625,11 +627,20 @@ export const api = {
   getHubBackup() {
     return apiFetch<HubBackupView>("/instance/backup");
   },
-  setHubBackup(body: { enabled: boolean; intervalHours: number; cron?: string | null; retention: number; retentionDays?: number | null; maxSizeGb?: number | null; destinationId: string | null }) {
+  setHubBackup(body: { enabled: boolean; intervalHours: number; cron?: string | null; retention: number; retentionDays?: number | null; maxSizeGb?: number | null; destinationId: string | null; extraDestinationId?: string | null; drillEnabled?: boolean }) {
     return apiFetch<HubBackupView>("/instance/backup", { method: "PUT", body: JSON.stringify(body) });
   },
   runHubBackup() {
     return apiFetch<HubBackupItem>("/instance/backup/run", { method: "POST" });
+  },
+  runHubDrill() {
+    return apiFetch<HubDrillItem>("/instance/backup/drill", { method: "POST" });
+  },
+  setHubDeadman(body: { enabled: boolean; intervalMinutes: number; url?: string | null }) {
+    return apiFetch<HubDeadmanView>("/instance/backup/deadman", { method: "PUT", body: JSON.stringify(body) });
+  },
+  testHubDeadman() {
+    return apiFetch<{ ok: boolean; status: number | null; error: string | null }>("/instance/backup/deadman/test", { method: "POST" });
   },
   testHubBackup() {
     return apiFetch<{ ok: boolean; output: string }>("/instance/backup/test", { method: "POST" });

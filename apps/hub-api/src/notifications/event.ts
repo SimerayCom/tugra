@@ -10,7 +10,7 @@ import { deployTemplate } from "./templates/deploy";
 import { backupFailedTemplate, backupSucceededTemplate, restoreFailedTemplate } from "./templates/backup";
 import { backupMissingTemplate, backupRecoveredTemplate } from "./templates/backup-health";
 import { verifyMissingTemplate, verifyRecoveredTemplate } from "./templates/backup-verify";
-import { serverOfflineTemplate, serverOnlineTemplate } from "./templates/server";
+import { hubOutageTemplate, serverOfflineTemplate, serverOnlineTemplate } from "./templates/server";
 import { serverRebootTemplate } from "./templates/server-reboot";
 import { swarmDegradedTemplate } from "./templates/swarm";
 import { sslExpiringTemplate, tokenExpiringTemplate } from "./templates/expiry";
@@ -117,6 +117,7 @@ const REGISTRY: Record<string, EventTemplate> = {
   ssl_expiring: sslExpiringTemplate,
   token_expiring: tokenExpiringTemplate,
   server_offline: serverOfflineTemplate,
+  hub_outage: hubOutageTemplate,
   server_online: serverOnlineTemplate,
   server_reboot_verified: serverRebootTemplate,
   server_reboot_degraded: serverRebootTemplate,

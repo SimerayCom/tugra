@@ -38,7 +38,7 @@ describe("HubBackupService.update — persists the new fields only when sent", (
     } as unknown as PrismaService;
     const runner = { localServer: jest.fn().mockResolvedValue({ id: "s", teamId: "t1", capabilities: ["backup"] }) };
     const apply = jest.fn();
-    const svc = new HubBackupService(prisma, { log: jest.fn() } as unknown as AuditService, {} as never, runner as never, { apply } as never, {} as never);
+    const svc = new HubBackupService(prisma, { log: jest.fn() } as unknown as AuditService, {} as never, runner as never, { apply } as never, {} as never, { list: jest.fn().mockResolvedValue([]) } as never, { get: jest.fn() } as never);
     return { svc, upsert, apply };
   }
   it("absent leaves, null clears, a value sets; the scheduler gets the cron", async () => {

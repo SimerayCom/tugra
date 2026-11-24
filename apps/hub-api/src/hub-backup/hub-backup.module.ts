@@ -7,11 +7,14 @@ import { HubBackupController } from "./hub-backup.controller";
 import { HubBackupService } from "./hub-backup.service";
 import { HubBackupRunnerService } from "./hub-backup-runner.service";
 import { HubBackupSchedulerService } from "./hub-backup-scheduler.service";
+import { HubRestoreDrillService } from "./hub-restore-drill.service";
+import { HubDeadmanService } from "./hub-deadman.service";
+import { HubWatchSchedulerService } from "./hub-watch-scheduler.service";
 import { DestinationKeysExportService } from "./destination-keys-export.service";
 
 @Module({
   imports: [AgentGatewayModule, NotificationsModule, BackupsModule, CryptoModule],
   controllers: [HubBackupController],
-  providers: [HubBackupService, HubBackupRunnerService, HubBackupSchedulerService, DestinationKeysExportService],
+  providers: [HubBackupService, HubBackupRunnerService, HubBackupSchedulerService, DestinationKeysExportService, HubRestoreDrillService, HubDeadmanService, HubWatchSchedulerService],
 })
 export class HubBackupModule {}

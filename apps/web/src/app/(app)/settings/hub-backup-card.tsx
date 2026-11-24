@@ -9,6 +9,7 @@ import { useToast } from "../../../components/toast";
 import { Btn, Card } from "../../../components/ui";
 import { ScheduleField, scheduleFromFields, scheduleToFields, type ScheduleValue } from "../../../components/backups/schedule-field";
 import { KeysExportModal } from "./keys-export-modal";
+import { DeadmanSection, OffBoxNudge, RestoreDrillSection } from "./hub-backup-safety";
 
 /**
  * Owner-only scheduled backup of the HUB's OWN Postgres (control-plane DB). Runs on the local agent, always
@@ -31,6 +32,8 @@ export function HubBackupCard() {
   const [retentionDays, setRetentionDays] = useState("");
   const [maxSizeGb, setMaxSizeGb] = useState("");
   const [destinationId, setDestinationId] = useState<string>("");
+  const [extraDestinationId, setExtraDestinationId] = useState<string>("");
+  const [drillEnabled, setDrillEnabled] = useState(true);
   const [showKeys, setShowKeys] = useState(false);
   useEffect(() => {
     if (!data) return;
@@ -40,6 +43,8 @@ export function HubBackupCard() {
     setRetentionDays(data.retentionDays != null ? String(data.retentionDays) : "");
     setMaxSizeGb(data.maxSizeGb != null ? String(data.maxSizeGb) : "");
     setDestinationId(data.destinationId ?? "");
+    setExtraDestinationId(data.extraDestinationId ?? "");
+    setDrillEnabled(data.drillEnabled);
   }, [data]);
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ["hubBackup"] });
@@ -56,6 +61,8 @@ export function HubBackupCard() {
         retentionDays: posInt(retentionDays),
         maxSizeGb: posInt(maxSizeGb),
         destinationId: destinationId || null,
+        extraDestinationId: extraDestinationId && extraDestinationId !== destinationId ? extraDestinationId : null,
+        drillEnabled,
       });
     },
     onSuccess: () => { invalidate(); toast(t("settings.hubBackup_saved"), "success"); },
@@ -112,7 +119,20 @@ export function HubBackupCard() {
 
       <div style={{ fontSize: 12, color: "var(--c-tx3)", marginTop: 12 }}>{t("settings.hubBackup_alwaysEncrypted")}</div>
       {warn(t("settings.hubBackup_envWarning"))}
-      {!destinationId && warn(t("settings.hubBackup_localWarning"))}
+      {!destinationId && <OffBoxNudge />}
+
+      <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 12, color: "var(--c-tx3)", marginTop: 12, maxWidth: 320 }}>
+        {t("settings.hubBackup_extra")}
+        <select style={fieldStyle} value={extraDestinationId} onChange={(e) => setExtraDestinationId(e.target.value)} aria-label={t("settings.hubBackup_extra")}>
+          <option value="">{t("settings.hubBackup_extraNone")}</option>
+          {(destinations ?? []).filter((d) => d.id !== destinationId).map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+        </select>
+      </label>
+      <div style={{ fontSize: 12, color: "var(--c-tx3)", marginTop: 4 }}>{t("settings.hubBackup_extraHint")}</div>
+      <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, marginTop: 12 }}>
+        <input type="checkbox" checked={drillEnabled} onChange={(e) => setDrillEnabled(e.target.checked)} />
+        {t("settings.hubBackup_drillEnable")}
+      </label>
 
       <div style={{ display: "flex", gap: 8, marginTop: 16, flexWrap: "wrap" }}>
         <Btn onClick={() => save.mutate()} disabled={save.isPending}>{t("settings.save")}</Btn>
@@ -120,6 +140,8 @@ export function HubBackupCard() {
         <Btn variant="ghost" onClick={() => setShowKeys(true)}>{t("settings.keysExport_title")}</Btn>
       </div>
       {showKeys && <KeysExportModal onClose={() => setShowKeys(false)} />}
+      {data && <RestoreDrillSection data={data} />}
+      {data && <DeadmanSection data={data} />}
 
       {data?.last && (
         <div style={{ fontSize: 12, color: "var(--c-tx3)", marginTop: 14 }}>

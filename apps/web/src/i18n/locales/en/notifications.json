@@ -32,6 +32,7 @@
   "eventAppMoveRolledBack": "App move rolled back",
   "eventAppMoveFailed": "App move failed (needs attention)",
   "eventServerOffline": "Server offline",
+  "eventHubOutage": "Hub unreachable",
   "eventServerOnline": "Server back online",
   "eventSwarmDegraded": "Swarm degraded",
   "eventSslExpiring": "SSL certificate expiring",

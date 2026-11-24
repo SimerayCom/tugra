@@ -8,6 +8,8 @@ import { buildDeleteBackupScript, buildDestinationTestScript } from "../backups/
 import { HUB_NS } from "./hub-backup-script";
 import { HubBackupRunnerService } from "./hub-backup-runner.service";
 import { HubBackupSchedulerService } from "./hub-backup-scheduler.service";
+import { HubRestoreDrillService, DRILL_OVERDUE_DAYS, type HubDrillItem } from "./hub-restore-drill.service";
+import { HubDeadmanService, type HubDeadmanView } from "./hub-deadman.service";
 import type { HubBackupConfigInput } from "./dto";
 
 export interface HubBackupView {
@@ -18,6 +20,14 @@ export interface HubBackupView {
   retentionDays: number | null;
   maxSizeGb: number | null;
   destinationId: string | null;
+  /** The optional third copy's destination. */
+  extraDestinationId: string | null;
+  /** True when a backup destination is set that is not this server's own disk. */
+  offBox: boolean;
+  drillEnabled: boolean;
+  /** The newest restore drill, and whether the monthly drill is overdue (never ran, or older than the schedule allows). */
+  drill: { last: HubDrillItem | null; overdue: boolean };
+  deadman: HubDeadmanView;
   last: { status: string; at: string | null; sizeBytes: string | null } | null;
   items: HubBackupItem[];
 }
@@ -40,6 +50,8 @@ export class HubBackupService {
     private readonly runner: HubBackupRunnerService,
     private readonly scheduler: HubBackupSchedulerService,
     private readonly backups: BackupRunnerService,
+    private readonly drills: HubRestoreDrillService,
+    private readonly deadman: HubDeadmanService,
   ) {}
 
   /** Resolve the local server, asserting it exists AND has the backup capability. */
@@ -54,6 +66,9 @@ export class HubBackupService {
     const cfg = await this.prisma.hubBackupConfig.findUnique({ where: { id: "singleton" } });
     const items = await this.prisma.hubBackup.findMany({ orderBy: { createdAt: "desc" }, take: 50 });
     const latest = items[0] ?? null;
+    const [lastDrill] = await this.drills.list();
+    const drillEnabled = cfg?.drillEnabled ?? true;
+    const overdue = drillEnabled && !!latest && (!lastDrill || Date.now() - new Date(lastDrill.createdAt).getTime() > DRILL_OVERDUE_DAYS * 86_400_000);
     return {
       enabled: cfg?.enabled ?? false,
       intervalHours: cfg?.intervalHours ?? 24,
@@ -62,6 +77,11 @@ export class HubBackupService {
       retentionDays: cfg?.retentionDays ?? null,
       maxSizeGb: cfg?.maxSizeGb ?? null,
       destinationId: cfg?.destinationId ?? null,
+      extraDestinationId: cfg?.extraDestinationId ?? null,
+      offBox: !!cfg?.destinationId,
+      drillEnabled,
+      drill: { last: lastDrill ?? null, overdue },
+      deadman: await this.deadman.get(),
       last: latest ? { status: latest.status, at: (latest.completedAt ?? latest.createdAt).toISOString(), sizeBytes: latest.sizeBytes != null ? latest.sizeBytes.toString() : null } : null,
       items: items.map((b) => this.item(b)),
     };
@@ -73,12 +93,19 @@ export class HubBackupService {
       const dest = await this.prisma.backupDestination.findUnique({ where: { id: input.destinationId } });
       if (!dest || dest.teamId !== local.teamId) throw new BadRequestException("backup destination not found in this team");
     }
+    if (input.extraDestinationId) {
+      const dest = await this.prisma.backupDestination.findUnique({ where: { id: input.extraDestinationId } });
+      if (!dest || dest.teamId !== local.teamId) throw new BadRequestException("backup destination not found in this team");
+      if (input.extraDestinationId === input.destinationId) throw new BadRequestException("the third copy must go somewhere else");
+    }
     const data = {
       enabled: input.enabled,
       intervalHours: input.intervalHours,
       retention: input.retention,
       destinationId: input.destinationId ?? null,
       // absent leaves the stored value, null clears it
+      ...(input.extraDestinationId !== undefined ? { extraDestinationId: input.extraDestinationId } : {}),
+      ...(input.drillEnabled !== undefined ? { drillEnabled: input.drillEnabled } : {}),
       ...(input.cron !== undefined ? { cron: input.cron } : {}),
       ...(input.retentionDays !== undefined ? { retentionDays: input.retentionDays } : {}),
       ...(input.maxSizeGb !== undefined ? { maxSizeGb: input.maxSizeGb } : {}),

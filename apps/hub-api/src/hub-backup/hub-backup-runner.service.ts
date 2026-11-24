@@ -63,17 +63,28 @@ export class HubBackupRunnerService {
     }
 
     const cfg = await this.prisma.hubBackupConfig.findUnique({ where: { id: "singleton" } });
-    const baseDest = await this.backups.destinationSpecById(cfg?.destinationId ?? null);
+    const ts = new Date().toISOString().replace(/[:.]/g, "-");
+    const primary = await this.dumpTo(local, cfg?.destinationId ?? null, ts, actor);
+    // The optional third copy: a failure there is recorded and alerted like any other, but never fails the primary run.
+    if (cfg?.extraDestinationId && cfg.extraDestinationId !== (cfg.destinationId ?? null)) {
+      await this.dumpTo(local, cfg.extraDestinationId, ts, actor).catch((e) => this.logger.warn(`hub backup extra copy failed: ${e instanceof Error ? e.message : e}`));
+    }
+    await this.prune({ retention: cfg?.retention ?? 7, retentionDays: cfg?.retentionDays ?? null, maxSizeGb: cfg?.maxSizeGb ?? null }, local.id);
+    return (await this.prisma.hubBackup.findUnique({ where: { id: primary.id } })) as HubBackup;
+  }
+
+  /** One dump into one destination (`null` = this server's disk), recorded as its own HubBackup row. */
+  private async dumpTo(local: { id: string; teamId: string }, destinationId: string | null, ts: string, actor: string): Promise<HubBackup> {
+    const baseDest = await this.backups.destinationSpecById(destinationId);
     const passphrase = hubBackupPassphrase(this.config.get<string>("SECRETS_ENCRYPTION_KEY") ?? "");
     const dest: DestinationSpec = hubDest(baseDest, passphrase); // always gpg-encrypted
 
-    const ts = new Date().toISOString().replace(/[:.]/g, "-");
     const filename = hubBackupFilename(ts);
     const key = dest.type === "S3" && dest.s3 ? objectKey(dest.s3, HUB_NS, filename) : null;
     const target = { ...parseHubDbTarget(this.config.get<string>("DATABASE_URL") ?? ""), project: hubComposeProject() };
 
     const row = await this.prisma.hubBackup.create({
-      data: { status: "RUNNING", filename, path: backupPath(HUB_NS, filename), destinationId: cfg?.destinationId ?? null, objectKey: key, createdBy: actor },
+      data: { status: "RUNNING", filename, path: backupPath(HUB_NS, filename), destinationId: destinationId, objectKey: key, createdBy: actor },
     });
 
     let succeeded = false;
@@ -110,7 +121,6 @@ export class HubBackupRunnerService {
         succeeded ? { ...ctx, sizeBytes: sizeBytes != null ? sizeBytes.toString() : "" } : { ...ctx, errorTail: scrubRestoreOutput(errorText) },
       )
       .catch(() => undefined);
-    await this.prune({ retention: cfg?.retention ?? 7, retentionDays: cfg?.retentionDays ?? null, maxSizeGb: cfg?.maxSizeGb ?? null }, local.id);
     return (await this.prisma.hubBackup.findUnique({ where: { id: row.id } })) as HubBackup;
   }
 
@@ -119,7 +129,7 @@ export class HubBackupRunnerService {
   async prune(cfg: { retention: number; retentionDays: number | null; maxSizeGb: number | null }, localServerId: string): Promise<void> {
     const rows = await this.prisma.hubBackup.findMany({ where: { status: "SUCCESS" }, orderBy: { createdAt: "desc" } });
     const plan = planRetention(
-      rows.map((b) => ({ id: b.id, series: "hub", createdAt: b.createdAt, sizeBytes: b.sizeBytes })),
+      rows.map((b) => ({ id: b.id, series: b.destinationId ?? "local", createdAt: b.createdAt, sizeBytes: b.sizeBytes })),
       { keep: cfg.retention, maxAgeDays: cfg.retentionDays, maxBytes: cfg.maxSizeGb != null ? BigInt(cfg.maxSizeGb) * GIB : null },
     );
     if (plan.overBudget) this.logger.warn(`hub backups exceed the ${cfg.maxSizeGb} GiB budget with only the newest backup left`);

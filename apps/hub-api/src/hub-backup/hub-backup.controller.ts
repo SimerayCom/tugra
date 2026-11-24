@@ -10,7 +10,9 @@ import { InstanceOwnerGuard } from "../instance/instance-owner.guard";
 import { z } from "zod";
 import { HubBackupService } from "./hub-backup.service";
 import { DestinationKeysExportService } from "./destination-keys-export.service";
-import { DestinationKeysExportSchema, HubBackupConfigSchema, type DestinationKeysExportInput, type HubBackupConfigInput } from "./dto";
+import { HubRestoreDrillService } from "./hub-restore-drill.service";
+import { HubDeadmanService } from "./hub-deadman.service";
+import { DestinationKeysExportSchema, HubBackupConfigSchema, HubDeadmanSchema, type DestinationKeysExportInput, type HubBackupConfigInput, type HubDeadmanInput } from "./dto";
 
 const SealedKeyExportSchema = z.object({
   filename: z.string(),
@@ -32,6 +34,8 @@ export class HubBackupController {
   constructor(
     private readonly hub: HubBackupService,
     private readonly keysExport: DestinationKeysExportService,
+    private readonly drills: HubRestoreDrillService,
+    private readonly deadman: HubDeadmanService,
   ) {}
 
   @Get()
@@ -57,6 +61,39 @@ export class HubBackupController {
   async test() {
     const cfg = await this.hub.get();
     return this.hub.testDestination(cfg.destinationId);
+  }
+
+  /** Restore the newest hub backup into a throwaway container and check it (the monthly drill, on demand). */
+  @Post("drill")
+  @HttpCode(200)
+  @Throttle({ default: { limit: 6, ttl: 3_600_000 } })
+  runDrill(@CurrentUser() user: AuthUser) {
+    return this.drills.run("manual", user.userId);
+  }
+
+  @Get("drills")
+  listDrills() {
+    return this.drills.list();
+  }
+
+  @Get("deadman")
+  getDeadman() {
+    return this.deadman.get();
+  }
+
+  @Put("deadman")
+  @HttpCode(200)
+  @ApiZodBody(HubDeadmanSchema)
+  setDeadman(@CurrentUser() user: AuthUser, @Body(new ZodValidationPipe(HubDeadmanSchema)) body: HubDeadmanInput) {
+    return this.deadman.update(user.userId, body);
+  }
+
+  /** One immediate check-in to the saved address, so a wrong address shows at setup time. */
+  @Post("deadman/test")
+  @HttpCode(200)
+  @Throttle({ default: { limit: 10, ttl: 3_600_000 } })
+  testDeadman() {
+    return this.deadman.test();
   }
 
   @Get("items")

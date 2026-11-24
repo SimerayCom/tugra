@@ -83,3 +83,48 @@ describe("buildHubBackupScript", () => {
     expect(s).toContain("--symmetric --cipher-algo AES256"); // always encrypted
   });
 });
+
+import { buildHubDrillScript, parseDrillOutput, DRILL_TABLES } from "./hub-backup-script";
+
+describe("buildHubDrillScript", () => {
+  const dest = hubDest(S3, "pass-phrase");
+  const script = buildHubDrillScript({ project: "tugra" }, "tugra-hub-x.dump.gz.gpg", dest);
+  it("restores into a throwaway container with no network, removed on every exit", () => {
+    expect(script).toContain("--network none");
+    expect(script).toContain("trap 'docker rm -f \"$NAME\"");
+    expect(script).toContain("pg_restore --no-owner --no-acl -U postgres -d drill");
+  });
+  it("reads the stored object through the gpg decode chain (S3 and local)", () => {
+    expect(script).toContain("mc cat");
+    expect(script).toContain("--decrypt");
+    expect(script).toContain("gunzip");
+    const local = buildHubDrillScript({ project: "tugra" }, "f.dump.gz.gpg", hubDest(LOCAL_DEST, "p"));
+    expect(local).toContain("cat /etc/tugra/backups/hub/f.dump.gz.gpg");
+  });
+  it("counts only the fixed table list", () => {
+    for (const t of DRILL_TABLES) expect(script).toContain(`FROM "${t}"`);
+  });
+  it("rejects a project name with shell metacharacters", () => {
+    expect(() => buildHubDrillScript({ project: "a; rm -rf /" }, "f", dest)).toThrow();
+  });
+});
+
+describe("parseDrillOutput", () => {
+  const good = "TUGRA_DRILL rc=0 tables=42\nTUGRA_DRILL_COUNT User 3\nTUGRA_DRILL_COUNT Team 2\nTUGRA_DRILL_COUNT Server 1\n";
+  it("passes when tables exist and the account tables hold rows", () => {
+    expect(parseDrillOutput(good, 0)).toMatchObject({ ok: true, tables: 42, checks: { User: 3, Team: 2, Server: 1 }, rc: 0 });
+  });
+  it("tolerates a pg_restore warning exit when the checks pass", () => {
+    expect(parseDrillOutput(good.replace("rc=0", "rc=1"), 0).ok).toBe(true);
+  });
+  it("fails on a script failure, a cut output, no tables and empty accounts", () => {
+    expect(parseDrillOutput(good, 3)).toMatchObject({ ok: false, reason: "script-failed" });
+    expect(parseDrillOutput("nothing", 0)).toMatchObject({ ok: false, reason: "no-marker" });
+    expect(parseDrillOutput("TUGRA_DRILL rc=1 tables=0\n", 0)).toMatchObject({ ok: false, reason: "no-tables" });
+    expect(parseDrillOutput("TUGRA_DRILL rc=0 tables=5\nTUGRA_DRILL_COUNT User 0\nTUGRA_DRILL_COUNT Team 0\n", 0)).toMatchObject({ ok: false, reason: "empty-accounts" });
+  });
+  it("ignores count lines for tables that are not on the list", () => {
+    const r = parseDrillOutput(good + "TUGRA_DRILL_COUNT Secrets 9\n", 0);
+    expect(r.checks).not.toHaveProperty("Secrets");
+  });
+});

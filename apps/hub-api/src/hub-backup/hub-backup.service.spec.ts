@@ -22,7 +22,7 @@ function make(over: { local?: unknown; dest?: unknown } = {}) {
   const apply = jest.fn().mockResolvedValue(undefined);
   const scheduler = { apply } as unknown as HubBackupSchedulerService;
   const backups = { destinationSpecById: jest.fn() } as unknown as BackupRunnerService;
-  return { svc: new HubBackupService(prisma, audit, agentWs, runner, scheduler, backups), upsert, apply };
+  return { svc: new HubBackupService(prisma, audit, agentWs, runner, scheduler, backups, { list: jest.fn().mockResolvedValue([]) } as never, { get: jest.fn() } as never), upsert, apply };
 }
 
 describe("HubBackupService.update", () => {

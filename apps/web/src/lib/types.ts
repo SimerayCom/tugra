@@ -2157,8 +2157,35 @@ export interface HubBackupView {
   retentionDays: number | null;
   maxSizeGb: number | null;
   destinationId: string | null;
+  extraDestinationId: string | null;
+  offBox: boolean;
+  drillEnabled: boolean;
+  drill: { last: HubDrillItem | null; overdue: boolean };
+  deadman: HubDeadmanView;
   last: { status: string; at: string | null; sizeBytes: string | null } | null;
   items: HubBackupItem[];
+}
+export interface HubDrillItem {
+  id: string;
+  status: string;
+  trigger: string;
+  backupFilename: string | null;
+  tables: number | null;
+  checks: Record<string, number> | null;
+  errorTail: string | null;
+  durationMs: number | null;
+  createdAt: string;
+  completedAt: string | null;
+}
+export interface HubDeadmanView {
+  enabled: boolean;
+  intervalMinutes: number;
+  urlSet: boolean;
+  urlHost: string | null;
+  lastPingAt: string | null;
+  lastOkAt: string | null;
+  lastError: string | null;
+  failStreak: number;
 }
 
 export interface ConfigChange {

@@ -2005,7 +2005,66 @@ model HubBackupConfig {
   cron          String?
   retentionDays Int?
   maxSizeGb     Int?
+  // Optional third copy: every run also writes to this destination (null = none). Soft ref like destinationId.
+  extraDestinationId String?
+  // Monthly restore drill into a throwaway container (on unless switched off).
+  drillEnabled  Boolean  @default(true)
   updatedAt     DateTime @updatedAt
+}
+
+// One restore drill of the hub's own backup: the latest dump is restored into a throwaway Postgres container and
+// checked. History is bounded (the runner keeps the newest 24).
+model HubBackupDrill {
+  id             String    @id @default(cuid())
+  status         String // RUNNING | SUCCESS | FAILED
+  trigger        String // schedule | manual
+  backupId       String? // soft ref to HubBackup
+  backupFilename String?
+  tables         Int?
+  checks         Json? // { table: rowCount } of the sanity tables
+  errorTail      String?
+  durationMs     Int?
+  createdAt      DateTime  @default(now())
+  completedAt    DateTime?
+
+  @@index([createdAt])
+}
+
+// Dead-man check-in of the hub: pings an external URL on an interval so a monitor outside the hub can alert when the
+// pings stop. The URL is a secret (push-monitor URLs carry a token), encrypted at rest.
+model HubDeadmanConfig {
+  id              String    @id @default("singleton")
+  enabled         Boolean   @default(false)
+  urlEnc          String?
+  intervalMinutes Int       @default(5)
+  lastTickAt      DateTime? // last time the scheduler ran (a gap on boot = the hub was down)
+  lastPingAt      DateTime?
+  lastOkAt        DateTime?
+  lastError       String?
+  failStreak      Int       @default(0)
+  alertedAt       DateTime? // an outage alert was sent for the current streak
+  updatedAt       DateTime  @updatedAt
+}
+
+// Safety copy of a migration run's data, taken on the target once the final copy has landed and kept 7 days.
+// Soft refs (no FK), like MigrationRun. `items` holds the Backup / VolumeBackup rows the capture created (ids only).
+model MigrationSnapshot {
+  id            String    @id @default(cuid())
+  runId         String    @unique
+  teamId        String
+  destinationId String? // null = the target server's local disk
+  status        String    @default("PLANNED") // PLANNED | CAPTURING | SUCCESS | PARTIAL | FAILED | EXPIRED | SKIPPED
+  items         Json      @default("[]") // [{ kind: "database"|"volume", ref, name, rowId, status, sizeBytes, error }]
+  note          String?
+  expiresAt     DateTime?
+  createdBy     String
+  createdAt     DateTime  @default(now())
+  capturedAt    DateTime?
+  restoredAt    DateTime?
+  updatedAt     DateTime  @updatedAt
+
+  @@index([teamId])
+  @@index([status, expiresAt])
 }
 
 // Per-volume backup policy: overrides the app's volume-backup schedule/retention for ONE named volume.

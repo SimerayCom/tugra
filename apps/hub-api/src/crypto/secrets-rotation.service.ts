@@ -27,6 +27,7 @@ export const ENCRYPTED_COLUMNS: ReadonlyArray<{ model: string; columns: string[]
   { model: "application", columns: ["gitTokenEnc", "gitSshKeyEnc", "registryAuthEnc", "envEnc", "envMetaEnc", "buildArgsEnc", "buildSecretsEnc", "certKeyEnc", "webhookSecret"] },
   { model: "secretProvider", columns: ["tokenEnc"] },
   { model: "database", columns: ["credentials", "envEnc", "configFileEnc"] },
+  { model: "hubDeadmanConfig", columns: ["urlEnc"] },
   { model: "instanceSettings", columns: ["oidcClientSecretEnc", "mailPassEnc", "mailResendKeyEnc", "ipTlsKeyEnc"] },
 ];
 

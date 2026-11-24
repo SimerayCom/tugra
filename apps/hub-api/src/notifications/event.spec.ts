@@ -168,6 +168,18 @@ describe("renderEvent — typed per-event templates", () => {
     expect(linkUrl(m, "Open server")).toBe("https://web.test/servers/srv1");
   });
 
+  it("hub_outage: critical, names the silent minutes or the failing check-ins", () => {
+    const gap = render("hub_outage", { kind: "gap", minutes: "42" });
+    expect(gap.level).toBe("failure");
+    expect(gap.critical).toBe(true);
+    expect(gap.summary).toContain("42 minutes");
+    expect(fieldVal(gap, "Silent for")).toBe("42 min");
+    const failing = render("hub_outage", { kind: "failing", failures: "3" });
+    expect(failing.summary).toContain("cannot reach");
+    expect(fieldVal(failing, "Failed check-ins")).toBe("3");
+    expect(JSON.stringify(render("hub_outage", {}))).not.toContain("undefined");
+  });
+
   it("monitor_down: failure + critical, target/response, monitor link", () => {
     const m = render("monitor_down", {
       monitorId: "mon1", monitorName: "api", target: "https://api.io/health",

@@ -74,4 +74,26 @@ describe("HubBackupRunnerService.runBackup", () => {
     expect((r as { id: string }).id).toBe("running");
     expect(hubBackup.create).not.toHaveBeenCalled();
   });
+
+  it("writes a second copy to the optional third-copy destination, as its own row, without failing the primary", async () => {
+    const sendCommand = jest.fn().mockResolvedValue({ exitCode: 0, output: "10" });
+    const { svc, hubBackup } = make(sendCommand, { cfg: { id: "singleton", retention: 7, destinationId: "d1", extraDestinationId: "d2" } });
+    await svc.runBackup("u1");
+    expect(sendCommand).toHaveBeenCalledTimes(2);
+    const dests = (hubBackup.create as jest.Mock).mock.calls.map((c) => c[0].data.destinationId);
+    expect(dests).toEqual(["d1", "d2"]);
+  });
+
+  it("a failing third copy never fails the primary run", async () => {
+    const sendCommand = jest.fn().mockResolvedValueOnce({ exitCode: 0, output: "10" }).mockRejectedValueOnce(new Error("nope"));
+    const { svc } = make(sendCommand, { cfg: { id: "singleton", retention: 7, destinationId: null, extraDestinationId: "d2" } });
+    await expect(svc.runBackup("u1")).resolves.toBeDefined();
+  });
+
+  it("does not write the same destination twice", async () => {
+    const sendCommand = jest.fn().mockResolvedValue({ exitCode: 0, output: "10" });
+    const { svc } = make(sendCommand, { cfg: { id: "singleton", retention: 7, destinationId: "d1", extraDestinationId: "d1" } });
+    await svc.runBackup("u1");
+    expect(sendCommand).toHaveBeenCalledTimes(1);
+  });
 });
