@@ -1588,6 +1588,9 @@
                       }
                     ],
                     "nullable": true
+                  },
+                  "require2fa": {
+                    "type": "boolean"
                   }
                 },
                 "additionalProperties": false
@@ -3431,6 +3434,40 @@
         ]
       }
     },
+    "/api/v1/auth/sessions/revoke-others": {
+      "post": {
+        "operationId": "AuthController_revokeOtherSessions",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "auth"
+        ]
+      }
+    },
     "/api/v1/auth/2fa/setup": {
       "post": {
         "operationId": "AuthController_setup2fa",
@@ -5168,6 +5205,403 @@
         ]
       }
     },
+    "/api/v1/servers/bulk/team": {
+      "post": {
+        "operationId": "ServersController_transferBulk",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "serverIds": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 64
+                    },
+                    "minItems": 1,
+                    "maxItems": 50
+                  },
+                  "teamId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  }
+                },
+                "required": [
+                  "serverIds",
+                  "teamId"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          },
+          "400": {
+            "description": "Invalid or malformed request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "servers"
+        ]
+      }
+    },
+    "/api/v1/servers/{id}/team-targets": {
+      "get": {
+        "operationId": "ServersController_teamTargets",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "servers"
+        ]
+      }
+    },
+    "/api/v1/servers/{id}/team/preview": {
+      "post": {
+        "operationId": "ServersController_previewTeamMove",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "teamId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  }
+                },
+                "required": [
+                  "teamId"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          },
+          "400": {
+            "description": "Invalid or malformed request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "servers"
+        ]
+      }
+    },
+    "/api/v1/servers/{id}/team": {
+      "put": {
+        "operationId": "ServersController_changeTeam",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "teamId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  }
+                },
+                "required": [
+                  "teamId"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          },
+          "400": {
+            "description": "Invalid or malformed request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "servers"
+        ]
+      }
+    },
     "/api/v1/servers/{id}/install": {
       "get": {
         "operationId": "ServersController_getInstall",
@@ -5779,6 +6213,126 @@
           },
           "404": {
             "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "servers"
+        ]
+      }
+    },
+    "/api/v1/servers/capabilities/bulk": {
+      "post": {
+        "operationId": "ServersController_setCapabilitiesBulk",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "serverIds": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "minItems": 1,
+                    "maxItems": 100
+                  },
+                  "grant": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "terminal",
+                        "files",
+                        "files_write",
+                        "swarm"
+                      ]
+                    },
+                    "default": []
+                  },
+                  "revoke": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "terminal",
+                        "files",
+                        "files_write",
+                        "swarm"
+                      ]
+                    },
+                    "default": []
+                  }
+                },
+                "required": [
+                  "serverIds"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          },
+          "400": {
+            "description": "Invalid or malformed request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
             "content": {
               "application/json": {
                 "schema": {
@@ -60190,6 +60744,12 @@
                       "service": {
                         "type": "string"
                       },
+                      "project": {
+                        "type": "string"
+                      },
+                      "environment": {
+                        "type": "string"
+                      },
                       "cpu": {
                         "type": "number"
                       },
@@ -71461,6 +72021,122 @@
                       },
                       "maxItems": 5000
                     },
+                    "dataIntegrity": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "itemRef": {
+                            "type": "string",
+                            "maxLength": 300
+                          },
+                          "name": {
+                            "type": "string",
+                            "maxLength": 300
+                          },
+                          "engine": {
+                            "type": "string",
+                            "maxLength": 40
+                          },
+                          "lane": {
+                            "type": "string",
+                            "enum": [
+                              "dump",
+                              "stream",
+                              "files"
+                            ]
+                          },
+                          "bytes": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "nullable": true
+                          },
+                          "parts": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "nullable": true
+                          },
+                          "sha256": {
+                            "type": "string",
+                            "pattern": "^[0-9a-f]{64}$",
+                            "nullable": true
+                          },
+                          "rows": {
+                            "type": "object",
+                            "properties": {
+                              "status": {
+                                "type": "string",
+                                "enum": [
+                                  "match",
+                                  "close",
+                                  "mismatch",
+                                  "unverified"
+                                ]
+                              },
+                              "mode": {
+                                "type": "string",
+                                "enum": [
+                                  "exact",
+                                  "estimate"
+                                ],
+                                "nullable": true
+                              },
+                              "relations": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "nullable": true
+                              },
+                              "differing": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "nullable": true
+                              },
+                              "sourceRows": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "nullable": true
+                              },
+                              "targetRows": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "nullable": true
+                              },
+                              "names": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string",
+                                  "maxLength": 200
+                                },
+                                "maxItems": 10
+                              }
+                            },
+                            "required": [
+                              "status",
+                              "mode",
+                              "relations",
+                              "differing",
+                              "sourceRows",
+                              "targetRows",
+                              "names"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "required": [
+                          "itemRef",
+                          "name",
+                          "engine",
+                          "lane",
+                          "bytes",
+                          "parts",
+                          "sha256",
+                          "rows"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "maxItems": 2000,
+                      "default": []
+                    },
                     "evidenceSummary": {
                       "type": "object",
                       "properties": {
@@ -71707,11 +72383,18 @@
                         ],
                         "additionalProperties": false
                       }
+                    },
+                    "warningAcks": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
                     }
                   },
                   "required": [
                     "imagePins",
-                    "workerMarks"
+                    "workerMarks",
+                    "warningAcks"
                   ],
                   "additionalProperties": false
                 }
@@ -71905,11 +72588,18 @@
                         ],
                         "additionalProperties": false
                       }
+                    },
+                    "warningAcks": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
                     }
                   },
                   "required": [
                     "imagePins",
-                    "workerMarks"
+                    "workerMarks",
+                    "warningAcks"
                   ],
                   "additionalProperties": false
                 }
@@ -72101,11 +72791,217 @@
                         ],
                         "additionalProperties": false
                       }
+                    },
+                    "warningAcks": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
                     }
                   },
                   "required": [
                     "imagePins",
-                    "workerMarks"
+                    "workerMarks",
+                    "warningAcks"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid or malformed request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "import"
+        ]
+      }
+    },
+    "/api/v1/migration-runs/{id}/warning-acks": {
+      "put": {
+        "operationId": "RunSafetyController_setWarningAcks",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "acks": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "key": {
+                          "type": "string",
+                          "minLength": 3,
+                          "maxLength": 120,
+                          "pattern": "^[a-z0-9][a-z0-9.:_-]*$"
+                        },
+                        "accepted": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "key",
+                        "accepted"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "minItems": 1,
+                    "maxItems": 200
+                  }
+                },
+                "required": [
+                  "acks"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "imagePins": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "image": {
+                            "type": "string"
+                          },
+                          "scope": {
+                            "type": "string"
+                          },
+                          "digest": {
+                            "type": "string"
+                          },
+                          "evidence": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "image",
+                          "scope",
+                          "digest",
+                          "evidence"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "workerMarks": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "itemRef": {
+                            "type": "string"
+                          },
+                          "role": {
+                            "type": "string",
+                            "enum": [
+                              "job-runner",
+                              "web"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "itemRef",
+                          "role"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "warningAcks": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "imagePins",
+                    "workerMarks",
+                    "warningAcks"
                   ],
                   "additionalProperties": false
                 }
@@ -75349,6 +76245,249 @@
         ],
         "tags": [
           "saved-views"
+        ]
+      }
+    },
+    "/api/v1/dashboard/insights": {
+      "get": {
+        "operationId": "DashboardController_insights",
+        "parameters": [
+          {
+            "name": "teamId",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "diskForecast": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "serverId": {
+                            "type": "string"
+                          },
+                          "serverName": {
+                            "type": "string"
+                          },
+                          "usedPct": {
+                            "type": "number"
+                          },
+                          "freeBytes": {
+                            "type": "number"
+                          },
+                          "growthBytesPerDay": {
+                            "type": "number",
+                            "nullable": true
+                          },
+                          "daysToFull": {
+                            "type": "number",
+                            "nullable": true
+                          }
+                        },
+                        "required": [
+                          "serverId",
+                          "serverName",
+                          "usedPct",
+                          "freeBytes",
+                          "growthBytesPerDay",
+                          "daysToFull"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "backups": {
+                      "type": "object",
+                      "properties": {
+                        "windowDays": {
+                          "type": "number"
+                        },
+                        "ok": {
+                          "type": "number"
+                        },
+                        "failed": {
+                          "type": "number"
+                        },
+                        "running": {
+                          "type": "number"
+                        },
+                        "recent": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "database",
+                                  "volume"
+                                ]
+                              },
+                              "resourceId": {
+                                "type": "string"
+                              },
+                              "resourceName": {
+                                "type": "string"
+                              },
+                              "status": {
+                                "type": "string",
+                                "enum": [
+                                  "PENDING",
+                                  "RUNNING",
+                                  "SUCCESS",
+                                  "FAILED"
+                                ]
+                              },
+                              "createdAt": {
+                                "type": "string"
+                              },
+                              "sizeBytes": {
+                                "type": "number",
+                                "nullable": true
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "kind",
+                              "resourceId",
+                              "resourceName",
+                              "status",
+                              "createdAt",
+                              "sizeBytes"
+                            ],
+                            "additionalProperties": false
+                          }
+                        }
+                      },
+                      "required": [
+                        "windowDays",
+                        "ok",
+                        "failed",
+                        "running",
+                        "recent"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "deploys": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "appId": {
+                            "type": "string"
+                          },
+                          "appName": {
+                            "type": "string"
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "QUEUED",
+                              "RUNNING",
+                              "SUCCESS",
+                              "FAILED",
+                              "CANCELLED"
+                            ]
+                          },
+                          "trigger": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "createdAt": {
+                            "type": "string"
+                          },
+                          "durationMs": {
+                            "type": "number",
+                            "nullable": true
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "appId",
+                          "appName",
+                          "status",
+                          "trigger",
+                          "createdAt",
+                          "durationMs"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "diskForecast",
+                    "backups",
+                    "deploys"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "dashboard"
         ]
       }
     },
