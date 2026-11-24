@@ -6,7 +6,7 @@ import { gitUrlHost } from "../deploy/deploy-script";
 import { DEFAULT_MAX_ARTIFACT_BYTES } from "./migration-staging";
 import { maxVolumeBytes } from "./migration-volume";
 import { vxEnabled, vxPartRawBytes } from "./volume-stream/vx-constants";
-import type { DbDataPlane, ForeignApp, ForeignDb, ForeignFleet, ImportCutoverHint, ImportOptions, ImportPreflight, PreflightHost, VolumeDataPlane } from "./foreign-fleet";
+import type { DbDataPlane, ForeignApp, ForeignDb, ForeignFleet, ImportCutoverHint, ImportOptions, ImportPreflight, PreflightHost, PreflightProject, VolumeDataPlane } from "./foreign-fleet";
 import { isDegradedHealth } from "./import-source";
 import { counterpartOf, isGeneratedHost } from "../cutover/cutover.logic";
 
@@ -236,6 +236,8 @@ export function buildPreflight(fleet: ForeignFleet, options: ImportOptions, inve
     ...(s.os ? { os: s.os } : {}),
   }));
 
+  const projects = carried ? [] : sourceProjectsOf(fleet);
+
   // apps that were already failing at the source (a dead or crash-looping app is otherwise invisible in the plan)
   const sourceHealth = carried
     ? []
@@ -264,6 +266,25 @@ export function buildPreflight(fleet: ForeignFleet, options: ImportOptions, inve
     ...(carried ? {} : { cutover: buildCutoverHint(fleet) }),
     // the source servers by name with their classification facts; a local-docker source has only its own anonymous server
     ...(hosts.length > 0 && !carried ? { hosts } : {}),
+    ...(projects.length ? { projects } : {}),
     ...(sourceHealth.length ? { sourceHealth } : {}),
   };
+}
+
+/** The source projects that hold at least one app, database or service, each with the itemRefs in it (sorted by name, then ref). */
+export function sourceProjectsOf(fleet: Pick<ForeignFleet, "projects" | "apps" | "databases" | "services">): PreflightProject[] {
+  const byRef = new Map<string, string[]>();
+  const put = (kind: string, r: { serverRef?: string; sourceRef: string; projectRef?: string }) => {
+    if (!r.projectRef) return;
+    byRef.set(r.projectRef, [...(byRef.get(r.projectRef) ?? []), ns(kind, r.serverRef, r.sourceRef)]);
+  };
+  for (const a of fleet.apps) put("app", a);
+  for (const d of fleet.databases) put("database", d);
+  for (const s of fleet.services ?? []) put("service", s);
+  const out: PreflightProject[] = [];
+  for (const p of fleet.projects ?? []) {
+    const itemRefs = byRef.get(p.ref);
+    if (itemRefs?.length) out.push({ ref: p.ref, name: p.name, itemRefs: [...itemRefs].sort() });
+  }
+  return out.sort((a, b) => (a.name.toLowerCase() < b.name.toLowerCase() ? -1 : a.name.toLowerCase() > b.name.toLowerCase() ? 1 : a.ref < b.ref ? -1 : 1));
 }

@@ -258,6 +258,9 @@ export interface ForeignService {
   members?: ForeignServiceMember[];
   /** The source server's display name (display only). */
   serverName?: string;
+  /** The source project / environment the stack lives in (Coolify). Used to select a whole project at the first import step. */
+  projectRef?: string;
+  environmentRef?: string;
 }
 
 /** One compose service of a {@link ForeignService}. `name` IS the compose service key. */
@@ -413,6 +416,9 @@ export interface ImportPreflight {
   cutover?: ImportCutoverHint;
   /** The source servers with the facts a run classifies them by (control-plane box, reachability, OS). Additive; NOT part of planHash. */
   hosts?: PreflightHost[];
+  /** The source projects with the plan items that live in each (apps, databases and services), so the first import step can
+   *  select "these projects" without guessing. Absent for a source with no project tree. Additive; NOT part of planHash. */
+  projects?: PreflightProject[];
   /** Apps already failing at the source (exited, unhealthy, crash-looping) when the plan was read: they migrate as they are. Additive; NOT part of planHash. */
   sourceHealth?: Array<{ itemRef: string; name: string; health: "unhealthy" | "unknown" | "exited"; status?: string; restartCount: number | null }>;
 }
@@ -424,6 +430,13 @@ export interface PreflightHost {
   controlPlane?: true;
   unreachableCount?: number;
   os?: string;
+}
+
+/** One source project of the plan: its name and the itemRefs (apps, databases, services) that live in it. Names and refs only. */
+export interface PreflightProject {
+  ref: string;
+  name: string;
+  itemRefs: string[];
 }
 
 export interface ImportCutoverHint {

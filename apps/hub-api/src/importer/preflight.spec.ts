@@ -311,3 +311,36 @@ describe("buildPreflight: source hosts", () => {
     expect(buildPreflight(fleet({ servers: [] }), { sourceKind: "coolify" } as ImportOptions).hosts).toBeUndefined();
   });
 });
+
+describe("buildPreflight: source projects (additive, outside planHash)", () => {
+  const o: ImportOptions = { sourceKind: "coolify", targetServerId: "t1" };
+  const base = { buildPack: "image" as const, kind: "image" as const, image: "x" };
+  const tree = [
+    { ref: "p-acme", name: "Acme", tags: [], environments: [{ ref: "p-acme#1", name: "production", isDefault: true }] },
+    { ref: "p-beta", name: "beta", tags: [], environments: [{ ref: "p-beta#2", name: "production", isDefault: true }] },
+    { ref: "p-empty", name: "Empty", tags: [], environments: [] },
+  ];
+  it("lists each project that holds something with its itemRefs, sorted by name; an empty project is left out", () => {
+    const f = fleet({
+      projects: tree,
+      apps: [
+        { ...base, sourceRef: "a1", name: "web", serverRef: "s1", projectRef: "p-acme", environmentRef: "p-acme#1" },
+        { ...base, sourceRef: "a2", name: "api", serverRef: "s2", projectRef: "p-beta", environmentRef: "p-beta#2" },
+        { ...base, sourceRef: "a3", name: "loose" },
+      ],
+      databases: [{ sourceRef: "d1", name: "db", engine: "POSTGRES", serverRef: "s1", projectRef: "p-acme", environmentRef: "p-acme#1" } as ForeignFleet["databases"][number]],
+      services: [{ sourceRef: "sv1", name: "search", memberApps: [], memberDbs: [], serverRef: "s2", projectRef: "p-acme", environmentRef: "p-acme#1" }],
+    });
+    expect(buildPreflight(f, o).projects).toEqual([
+      { ref: "p-acme", name: "Acme", itemRefs: ["app:s1:a1", "database:s1:d1", "service:s2:sv1"] },
+      { ref: "p-beta", name: "beta", itemRefs: ["app:s2:a2"] },
+    ]);
+  });
+  it("is absent without a project tree, and never changes the plan hash", () => {
+    expect(buildPreflight(fleet({ apps: [{ ...base, sourceRef: "a1", name: "web" }] }), o).projects).toBeUndefined();
+    const withTree = fleet({ projects: tree, apps: [{ ...base, sourceRef: "a1", name: "web", projectRef: "p-acme", environmentRef: "p-acme#1" }] });
+    const noTree = fleet({ apps: [{ ...base, sourceRef: "a1", name: "web", projectRef: "p-acme", environmentRef: "p-acme#1" }] });
+    expect(planImport(withTree, o).planHash).toBe(planImport(withTree, o).planHash);
+    expect(buildPreflight(noTree, o).projects).toBeUndefined();
+  });
+});

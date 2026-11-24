@@ -71,6 +71,19 @@ describe("CoolifySource", () => {
       expect(fleet.services.find((x) => x.sourceRef === "svc-2")).toMatchObject({ projectRef: "p-acme", environmentRef: "p-acme#38" });
     });
 
+    it("places a service stack in its project too, so a whole project can be selected with its stacks", async () => {
+      const fleet = await new CoolifySource(new FakeClient({
+        "/servers": [{ uuid: "srv-a", name: "box", ip: "1.2.3.4" }],
+        "/servers/srv-a/resources": [{ uuid: "svc-1" }],
+        "/applications": [],
+        "/databases": [],
+        "/services": [{ uuid: "svc-1", name: "search", service_type: "meilisearch", environment_id: 7, applications: [], databases: [], docker_compose_raw: "services: {}" }],
+        "/projects": [{ uuid: "p-acme", name: "Acme" }],
+        "/projects/p-acme": { uuid: "p-acme", name: "Acme", environments: [{ id: 7, name: "production" }] },
+      })).discover();
+      expect(fleet.services[0]).toMatchObject({ sourceRef: "svc-1", projectRef: "p-acme", environmentRef: "p-acme#7" });
+    });
+
     it("an unreadable project list leaves the fleet unplaced and says so", async () => {
       const fleet = await new CoolifySource(new FakeClient({
         "/servers": [], "/applications": [], "/databases": [], "/services": [], "/projects": new Error("403 nope"),
