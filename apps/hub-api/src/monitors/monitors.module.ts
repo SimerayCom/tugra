@@ -1,5 +1,6 @@
 import { Module } from "@nestjs/common";
 import { CryptoModule } from "../crypto/crypto.module";
+import { StatusPageModule } from "../status-page/status-page.module";
 import { NotificationsModule } from "../notifications/notifications.module";
 import { MonitorsController } from "./monitors.controller";
 import { MonitorsService } from "./monitors.service";
@@ -8,7 +9,7 @@ import { MonitorRunnerService } from "./runner.service";
 import { MonitorSchedulerService } from "./scheduler.service";
 
 @Module({
-  imports: [NotificationsModule, CryptoModule],
+  imports: [NotificationsModule, CryptoModule, StatusPageModule],
   controllers: [MonitorsController],
   providers: [
     MonitorsService,

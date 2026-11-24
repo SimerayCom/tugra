@@ -1,9 +1,10 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, Optional } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { NotificationsService } from "../notifications/notifications.service";
 import { CryptoService } from "../crypto/crypto.service";
 import { applyUpsideDown, checkers, isPctMetric, metricCheckResult, type HttpOptions, type MetricKind } from "./checkers";
 import { nextState } from "./transition";
+import { StatusSubscribersService } from "../status-page/status-subscribers.service";
 
 export interface CheckOutcome {
   status: string;
@@ -30,6 +31,8 @@ export class MonitorRunnerService {
     private readonly prisma: PrismaService,
     private readonly notifications: NotificationsService,
     private readonly crypto: CryptoService,
+    // Email updates for a public status page that lists this monitor (only does anything while mail is configured).
+    @Optional() private readonly statusSubscribers?: StatusSubscribersService,
   ) {}
 
   /** `manual` = an explicit "check now" from a user, which is allowed on a paused monitor; the scheduler is not. */
@@ -122,6 +125,10 @@ export class MonitorRunnerService {
         responseMs: r.ms,
         teamId: m.teamId,
       });
+      // Only the real edges (first DOWN, recovery) — a long DOWN's resend beats must not re-email subscribers.
+      if ((t.status === "UP" || t.status === "DOWN") && t.status !== m.status) {
+        void this.statusSubscribers?.notifyMonitor(m.id, t.status).catch(() => undefined);
+      }
     }
 
     return { status: t.status, ms: r.ms, msg: r.msg, important: t.important, cause: r.cause ?? null };

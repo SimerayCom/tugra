@@ -152,3 +152,30 @@ describe("MonitorRunnerService — HTTP options", () => {
     expect(manual?.status).toBe("DOWN");
   });
 });
+
+describe("MonitorRunnerService - status page email updates", () => {
+  const httpMonitor = (over: Record<string, unknown> = {}) => ({
+    id: "m3", name: "site", type: "HTTP", target: "http://127.0.0.1:1", status: "UP", failCount: 0, downCount: 0,
+    retries: 0, resendEvery: 1, timeoutMs: 2000, maxRedirects: 10, acceptedStatus: [], upsideDown: false, httpOptionsEnc: null,
+    ...over,
+  });
+  function build(monitor: Record<string, unknown>) {
+    const prisma = {
+      monitor: { findUnique: jest.fn().mockResolvedValue(monitor), update: jest.fn().mockResolvedValue({}) },
+      heartbeat: { create: jest.fn().mockResolvedValue({}) },
+    } as unknown as PrismaService;
+    const notifications = { fireForMonitor: jest.fn().mockResolvedValue(undefined) } as unknown as NotificationsService;
+    const crypto = { decrypt: (v: string) => v } as unknown as CryptoService;
+    const status = { notifyMonitor: jest.fn().mockResolvedValue(undefined) };
+    return { svc: new MonitorRunnerService(prisma, notifications, crypto, status as never), status };
+  }
+
+  it("emails subscribers on the first DOWN, not on a resend of a long DOWN", async () => {
+    const first = build(httpMonitor());
+    expect((await first.svc.runCheck("m3"))?.status).toBe("DOWN");
+    expect(first.status.notifyMonitor).toHaveBeenCalledWith("m3", "DOWN");
+    const resend = build(httpMonitor({ status: "DOWN", failCount: 1, downCount: 1 }));
+    expect((await resend.svc.runCheck("m3"))?.important).toBe(true);
+    expect(resend.status.notifyMonitor).not.toHaveBeenCalled();
+  });
+});

@@ -167,6 +167,7 @@ model Team {
   secretProviders    SecretProvider[]
   savedViews         SavedView[]
   customRoles        TeamRole[]
+  statusPage         StatusPage?
   clusters           Cluster[]
   objectMigrations   ObjectMigration[]
   importMappings     ImportMapping[]
@@ -183,7 +184,11 @@ model TeamRole {
   teamId      String
   name        String
   permissions String[]     @default([])
+  // Customer-portal preset ("Client"): a member with this role only reaches the portal surface (their team's apps,
+  // uptime and backups, plus deploy when granted) - every other route answers as if they were not a member.
+  portal      Boolean      @default(false)
   memberships Membership[]
+  invitations TeamInvitation[]
   createdAt   DateTime     @default(now())
 
   @@unique([teamId, name])
@@ -196,6 +201,9 @@ model TeamInvitation {
   teamId    String
   email     String
   role      Role     @default(VIEWER)
+  // Invite straight into a custom role (the Client portal presets); a deleted role revokes the pending invite.
+  teamRole   TeamRole? @relation(fields: [teamRoleId], references: [id], onDelete: Cascade)
+  teamRoleId String?
   token     String   @unique
   invitedBy String
   expiresAt DateTime
@@ -885,6 +893,7 @@ model Monitor {
   dnsExpect      String? // optional: an answer must contain this value
   heartbeats   Heartbeat[]
   channels     MonitorChannel[]
+  statusPages  StatusPageMonitor[]
   createdAt    DateTime         @default(now())
 
   @@index([appId])
@@ -2826,4 +2835,59 @@ model CoolifyInventory {
   updatedAt    DateTime  @updatedAt
 
   @@index([teamId])
+}
+
+// A team's public status page, served unauthenticated at /status/<slug>. Only the chosen monitors' public label and
+// state, the incident history derived from their state changes and the maintenance notices ever leave the hub.
+model StatusPage {
+  id          String              @id @default(cuid())
+  team        Team                @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  teamId      String              @unique
+  slug        String              @unique
+  title       String
+  description String?
+  enabled     Boolean             @default(false) // published; an unpublished page answers 404
+  monitors    StatusPageMonitor[]
+  maintenance StatusMaintenance[]
+  subscribers StatusSubscriber[]
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+}
+
+model StatusPageMonitor {
+  page      StatusPage @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  pageId    String
+  monitor   Monitor    @relation(fields: [monitorId], references: [id], onDelete: Cascade)
+  monitorId String
+  label     String? // public name; null = the monitor's own name
+  position  Int        @default(0)
+
+  @@id([pageId, monitorId])
+}
+
+model StatusMaintenance {
+  id        String     @id @default(cuid())
+  page      StatusPage @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  pageId    String
+  title     String
+  body      String?
+  startsAt  DateTime
+  endsAt    DateTime
+  createdAt DateTime   @default(now())
+
+  @@index([pageId, startsAt])
+}
+
+// An email subscriber of a status page (only used while the hub has mail configured). Double opt-in: confirmedAt is
+// set when the address follows the emailed link. The confirm/unsubscribe tokens are keyed MACs of the row id, so
+// nothing secret is stored.
+model StatusSubscriber {
+  id          String     @id @default(cuid())
+  page        StatusPage @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  pageId      String
+  email       String
+  confirmedAt DateTime?
+  createdAt   DateTime   @default(now())
+
+  @@unique([pageId, email])
 }

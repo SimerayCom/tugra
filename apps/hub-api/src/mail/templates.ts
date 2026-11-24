@@ -21,16 +21,16 @@ export function escapeHtml(s: string): string {
 }
 
 /** Shared responsive wrapper — inline styles only (email clients strip <style>/<head>). */
-function layout(preheader: string, bodyHtml: string): string {
+function layout(preheader: string, bodyHtml: string, opts: { brand?: string; footerHtml?: string } = {}): string {
   return [
     `<!doctype html><html><body style="margin:0;padding:0;background:#f5f5f7;">`,
     `<span style="display:none;max-height:0;overflow:hidden;opacity:0;">${escapeHtml(preheader)}</span>`,
     `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f5f5f7;padding:24px 0;">`,
     `<tr><td align="center">`,
     `<table role="presentation" width="480" cellpadding="0" cellspacing="0" style="max-width:480px;width:100%;background:#ffffff;border-radius:12px;padding:32px;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#1a1a1a;">`,
-    `<tr><td style="font-size:18px;font-weight:700;padding-bottom:16px;">Tugra</td></tr>`,
+    `<tr><td style="font-size:18px;font-weight:700;padding-bottom:16px;">${escapeHtml(opts.brand ?? "Tugra")}</td></tr>`,
     `<tr><td style="font-size:14px;line-height:1.6;color:#333;">${bodyHtml}</td></tr>`,
-    `<tr><td style="font-size:12px;color:#999;padding-top:24px;border-top:1px solid #eee;">If you didn't expect this email you can safely ignore it.</td></tr>`,
+    `<tr><td style="font-size:12px;color:#999;padding-top:24px;border-top:1px solid #eee;">${opts.footerHtml ?? "If you didn't expect this email you can safely ignore it."}</td></tr>`,
     `</table></td></tr></table></body></html>`,
   ].join("");
 }
@@ -109,5 +109,34 @@ export function mailTestEmail(): RenderedEmail {
       `<p style="margin:0 0 12px;">Hi,</p><p style="margin:0;">This is a test message from your Tugra control panel. If you can read it, outgoing email is configured correctly.</p>`,
     ),
     text: "Hi,\n\nThis is a test message from your Tugra control panel. If you can read it, outgoing email is configured correctly.",
+  };
+}
+
+/** Double opt-in for a status page's email updates. */
+export function statusConfirmEmail(v: { title: string; confirmUrl: string }): RenderedEmail {
+  return {
+    subject: `Confirm updates from ${v.title}`,
+    html: layout(
+      `Confirm updates from ${v.title}`,
+      `<p style="margin:0 0 20px;">Get an email when <strong>${escapeHtml(v.title)}</strong> has an incident or planned maintenance.</p>` +
+        `<p style="margin:0 0 20px;">${button(v.confirmUrl, "Confirm")}</p>`,
+      { brand: v.title },
+    ),
+    text: `Get an email when ${v.title} has an incident or planned maintenance.\n\nConfirm:\n${v.confirmUrl}\n\nIf you didn't ask for this, ignore this email.`,
+  };
+}
+
+/** An incident or maintenance update for a confirmed subscriber, with a one-click unsubscribe. */
+export function statusUpdateEmail(v: { title: string; headline: string; detail: string | null; pageUrl: string; unsubscribeUrl: string }): RenderedEmail {
+  return {
+    subject: `${v.title}: ${v.headline}`,
+    html: layout(
+      v.headline,
+      `<p style="margin:0 0 12px;font-weight:600;">${escapeHtml(v.headline)}</p>` +
+        (v.detail ? `<p style="margin:0 0 20px;">${escapeHtml(v.detail)}</p>` : "") +
+        `<p style="margin:0;">${button(v.pageUrl, "View status")}</p>`,
+      { brand: v.title, footerHtml: `<a href="${escapeHtml(v.unsubscribeUrl)}" style="color:#999;">Unsubscribe</a>` },
+    ),
+    text: `${v.headline}\n${v.detail ? `\n${v.detail}\n` : ""}\nStatus: ${v.pageUrl}\nUnsubscribe: ${v.unsubscribeUrl}`,
   };
 }
