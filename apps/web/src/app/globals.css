@@ -109,6 +109,19 @@
   --heat-8: #0d366b;
 }
 
+/* The app shell (sidebar + header + .tg-main) fills the viewport and .tg-main is its ONE vertical scroll area.
+   Lock the document itself while the shell is mounted, so rounding/zoom/overscroll can never add a second page
+   scrollbar next to it (the "page scrolls half, then only the table scrolls" symptom). Auth and error pages have
+   no shell and keep normal document scrolling. */
+html:has(.tg-shell),
+html:has(.tg-shell) body {
+  overflow: hidden;
+}
+.tg-main {
+  min-height: 0;
+  overscroll-behavior-y: contain;
+}
+
 * {
   box-sizing: border-box;
 }
@@ -242,6 +255,49 @@ body {
   .skeleton-shimmer {
     animation: none;
     background-image: none;
+  }
+}
+
+/* Wide tables scroll sideways inside their own frame but never vertically: the page (.tg-main) is the only
+   vertical scroll area, so a long list can't leave the page half-scrolled with a second scrollbar inside it. */
+.tg-tablewrap {
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+/* Liveness dot (StatusDot). online pulses softly; stale/pending/offline stay still. The pulse is a ring that
+   scales and fades on a pseudo-element, so it costs no layout, and it is removed for reduced-motion users. */
+.tg-dot {
+  position: relative;
+  display: inline-block;
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--tg-dot-c);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--tg-dot-c) 14%, transparent);
+}
+.tg-dot-online { --tg-dot-c: var(--c-g); }
+.tg-dot-stale { --tg-dot-c: var(--c-am); }
+.tg-dot-pending { --tg-dot-c: var(--c-am); background: transparent; box-shadow: inset 0 0 0 2px var(--tg-dot-c); }
+.tg-dot-offline { --tg-dot-c: var(--c-r); }
+.tg-dot-online::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: var(--tg-dot-c);
+  opacity: 0;
+  animation: tg-dot-pulse 2.4s ease-out infinite;
+}
+@keyframes tg-dot-pulse {
+  0% { transform: scale(1); opacity: 0.55; }
+  70%, 100% { transform: scale(2.6); opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tg-dot-online::after {
+    animation: none;
+    display: none;
   }
 }
 

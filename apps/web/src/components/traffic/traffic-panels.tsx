@@ -274,7 +274,7 @@ export function CountriesList({ rows, totalRequests, lang }: { rows: { country: 
             tabIndex={0}
             role="region"
             aria-label={t("traffic.countriesList")}
-            style={{ flex: "1 1 min(100%, 260px)", minWidth: 0, listStyle: "none", margin: 0, padding: 0, display: "flex", flexDirection: "column", gap: 10, maxHeight: 480, overflowY: "auto" }}
+            style={{ flex: "1 1 min(100%, 260px)", minWidth: 0, listStyle: "none", margin: 0, padding: 0, display: "flex", flexDirection: "column", gap: 10 }}
           >
             {shares.map((c) => {
               const name = countryName(c.country, lang) ?? t("traffic.otherCountry");
@@ -346,7 +346,7 @@ export function BreakdownCard({ dim, onDim, range, teamId, domain, appId }: { di
           tabIndex={0}
           role="region"
           aria-label={`${t("traffic.breakdownTitle")}: ${dimLabel}`}
-          style={{ listStyle: "none", margin: 0, padding: 0, display: "flex", flexDirection: "column", gap: 10, maxHeight: 480, overflowY: "auto" }}
+          style={{ listStyle: "none", margin: 0, padding: 0, display: "flex", flexDirection: "column", gap: 10 }}
         >
           {rows.map((r) => (
             <li key={r.isOther ? "(other)" : r.key} data-testid="traffic-breakdown-row">
