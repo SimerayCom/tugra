@@ -1049,3 +1049,14 @@ describe("ServersService install command transport (IP mode / domain / plain)", 
     expect(plainWsNeedsOptIn("garbage")).toBe(false);
   });
 });
+
+describe("ServersService team-change hook", () => {
+  it("notifies the registered listener with the server id and is inert without one", () => {
+    const svc = svcWith({} as Partial<PrismaService>);
+    expect(() => svc.emitTeamChanged("s1")).not.toThrow();
+    const listener = jest.fn();
+    svc.setTeamChangeListener(listener);
+    svc.emitTeamChanged("s1");
+    expect(listener).toHaveBeenCalledWith("s1");
+  });
+});

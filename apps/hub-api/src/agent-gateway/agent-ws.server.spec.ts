@@ -398,7 +398,7 @@ describe("AgentWsServer capability delivery (agent fail-closed)", () => {
 
   it("registers a pusher that live-sends the granted set as a 'capabilities' message", () => {
     const setCapabilityPusher = jest.fn();
-    const servers = { markOffline: jest.fn(), healOnline: jest.fn(), setCapabilityPusher } as any;
+    const servers = { markOffline: jest.fn(), healOnline: jest.fn(), setCapabilityPusher, setTeamChangeListener: jest.fn() } as any;
     const fakeHttp = { on: jest.fn() };
     const httpAdapterHost = { httpAdapter: { getHttpServer: () => fakeHttp } } as any;
     const server = new AgentWsServer(httpAdapterHost, servers, {} as any, {} as any, hubSign, {} as any);
@@ -1062,7 +1062,7 @@ describe("AgentWsServer log drains (D7)", () => {
 
   it("re-invokes the log-drain provider after a capability change (revoke / re-grant re-drives drains)", () => {
     const setCapabilityPusher = jest.fn();
-    const servers = { markOffline: jest.fn(), healOnline: jest.fn(), setCapabilityPusher } as any;
+    const servers = { markOffline: jest.fn(), healOnline: jest.fn(), setCapabilityPusher, setTeamChangeListener: jest.fn() } as any;
     const fakeHttp = { on: jest.fn() };
     const httpAdapterHost = { httpAdapter: { getHttpServer: () => fakeHttp } } as any;
     const server = new AgentWsServer(httpAdapterHost, servers, {} as any, {} as any, hubSign, {} as any);
@@ -1074,6 +1074,33 @@ describe("AgentWsServer log drains (D7)", () => {
     (setCapabilityPusher.mock.calls[0][0] as (id: string, caps: string[]) => void)("s1", ["deploy"]);
     expect(JSON.parse(socket.send.mock.calls.at(-1)![0])).toEqual({ type: "capabilities", capabilities: ["deploy"] });
     expect(provider).toHaveBeenCalledWith("s1");
+    void server.onModuleDestroy();
+  });
+});
+
+describe("AgentWsServer team change", () => {
+  it("cuts terminals and log streams of a server that moved team, but keeps its agent socket", () => {
+    const setTeamChangeListener = jest.fn();
+    const servers = { markOffline: jest.fn(), healOnline: jest.fn(), setCapabilityPusher: jest.fn(), setTeamChangeListener } as any;
+    const fakeHttp = { on: jest.fn() };
+    const httpAdapterHost = { httpAdapter: { getHttpServer: () => fakeHttp } } as any;
+    const server = new AgentWsServer(httpAdapterHost, servers, {} as any, {} as any, hubSign, {} as any);
+    const endServerSessions = jest.fn();
+    server.setTerminalDelegate({ handleAgentTerminal: jest.fn(), handleServerDisconnect: jest.fn(), endServerSessions });
+    server.onApplicationBootstrap();
+    expect(setTeamChangeListener).toHaveBeenCalledTimes(1);
+
+    const socket = { readyState: 1, send: jest.fn(), terminate: jest.fn() } as any;
+    (server as any).sockets.set("s1", socket);
+    const onExit = jest.fn();
+    (server as any).logListeners.set("L1", { onChunk: jest.fn(), onExit });
+    (server as any).logStreamsByServer.set("s1", new Set(["L1"]));
+
+    (setTeamChangeListener.mock.calls[0][0] as (id: string) => void)("s1");
+    expect(endServerSessions).toHaveBeenCalledWith("s1");
+    expect(onExit).toHaveBeenCalledWith(-1);
+    expect(socket.terminate).not.toHaveBeenCalled(); // the agent stays connected
+    expect((server as any).sockets.get("s1")).toBe(socket);
     void server.onModuleDestroy();
   });
 });

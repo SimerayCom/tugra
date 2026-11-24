@@ -60,3 +60,14 @@ export const NetworkSettingsSchema = z
   .refine((d) => Object.keys(d).length > 0, { message: "provide at least one field" })
   .refine((d) => !(d.dnsFromCredentialId && d.dnsCreds), { message: "dnsFromCredentialId and dnsCreds are mutually exclusive" });
 export type NetworkSettingsInput = z.infer<typeof NetworkSettingsSchema>;
+
+/** Move ONE server to another team (single, preview and bulk share the destination shape). */
+export const TransferServerSchema = z.object({ teamId: z.string().min(1).max(64) });
+export type TransferServerInput = z.infer<typeof TransferServerSchema>;
+
+/** Move MANY servers to one team in a single call (per-server results; capped like the bulk create). */
+export const TransferServersBulkSchema = z.object({
+  serverIds: z.array(z.string().min(1).max(64)).min(1).max(MAX_BULK_SERVERS),
+  teamId: z.string().min(1).max(64),
+});
+export type TransferServersBulkInput = z.infer<typeof TransferServersBulkSchema>;

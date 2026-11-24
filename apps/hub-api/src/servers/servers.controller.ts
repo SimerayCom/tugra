@@ -33,6 +33,7 @@ import { MetricsService } from "../metrics/metrics.service";
 import { MetricsLiveService } from "../metrics/metrics-live.service";
 import { ContainerMetricsService } from "../metrics/container-metrics.service";
 import { ServersService, ServerViewSchema } from "./servers.service";
+import { ServerTeamTransferService } from "./server-team-transfer.service";
 import {
   CreateServerInput,
   CreateServerSchema,
@@ -42,6 +43,10 @@ import {
   NetworkSettingsSchema,
   SetCapabilitiesInput,
   SetCapabilitiesSchema,
+  TransferServerInput,
+  TransferServerSchema,
+  TransferServersBulkInput,
+  TransferServersBulkSchema,
 } from "./dto/servers.schemas";
 
 // trim() first so a whitespace-only name fails min(1) instead of persisting a blank name.
@@ -62,6 +67,7 @@ const SetServerDetailsSchema = z
 export class ServersController {
   constructor(
     private readonly servers: ServersService,
+    private readonly teamTransfer: ServerTeamTransferService,
     private readonly metrics: MetricsService,
     private readonly metricsLive: MetricsLiveService,
     private readonly containerMetrics: ContainerMetricsService,
@@ -155,6 +161,47 @@ export class ServersController {
     @Req() req: ReqLike,
   ) {
     return this.servers.createServersBulk(user.userId, body.names, body.teamId, publicUrlFrom(req));
+  }
+
+  // Move many servers to one team (per-server results). Declared before the ":id" routes so "bulk" is never read as an id.
+  @Post("bulk/team")
+  @HttpCode(200)
+  @ApiZodBody(TransferServersBulkSchema)
+  transferBulk(
+    @CurrentUser() user: AuthUser,
+    @Body(new ZodValidationPipe(TransferServersBulkSchema)) body: TransferServersBulkInput,
+  ) {
+    return this.teamTransfer.transferBulk(user.userId, body.serverIds, body.teamId);
+  }
+
+  // The teams this server may move to (those where the caller has servers:manage; every team for the instance owner).
+  @Get(":id/team-targets")
+  teamTargets(@CurrentUser() user: AuthUser, @Param("id") id: string) {
+    return this.teamTransfer.listTargets(user.userId, id);
+  }
+
+  // Dry run of a team move: what blocks it, which links it would drop. Read-only despite the POST.
+  @Post(":id/team/preview")
+  @RequireScopes("read")
+  @HttpCode(200)
+  @ApiZodBody(TransferServerSchema)
+  previewTeamMove(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(TransferServerSchema)) body: TransferServerInput,
+  ) {
+    return this.teamTransfer.preview(user.userId, id, body.teamId);
+  }
+
+  @Put(":id/team")
+  @HttpCode(200)
+  @ApiZodBody(TransferServerSchema)
+  async changeTeam(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(TransferServerSchema)) body: TransferServerInput,
+  ) {
+    return { ok: true, ...(await this.teamTransfer.transfer(user.userId, id, body.teamId)) };
   }
 
   // The install command embeds the server enroll token — a bearer credential that lets its holder

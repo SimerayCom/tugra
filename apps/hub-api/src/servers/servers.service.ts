@@ -488,6 +488,20 @@ export class ServersService {
     this.capabilityPusher = fn;
   }
 
+  // Callback set by AgentWsServer at boot (same cycle-avoiding shape as the capability pusher): runs after a server
+  // moved to another team so live sessions authorized against the OLD team (host terminals, log streams) are cut.
+  // The agent socket itself is keyed by the server id and the seal/identity never change, so it stays connected.
+  private teamChangeListener?: (serverId: string) => void;
+
+  setTeamChangeListener(fn: (serverId: string) => void): void {
+    this.teamChangeListener = fn;
+  }
+
+  /** Announce that a server now belongs to another team (called by the team-transfer service after the write). */
+  emitTeamChanged(serverId: string): void {
+    this.teamChangeListener?.(serverId);
+  }
+
   /** Set the granted capabilities (least-privilege toggle). Deduped + restricted to the known
    *  capability set and stored verbatim — an empty set means deny-all (fail-safe), NOT "all",
    *  so unchecking everything can never invert into granting everything. */

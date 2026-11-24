@@ -40,6 +40,8 @@ export interface LogListener {
 export interface TerminalDelegate {
   handleAgentTerminal(serverId: string, msg: TermOutputMsg | TermExitMsg): void;
   handleServerDisconnect(serverId: string): void;
+  /** End every live session on a server whose team changed (they were authorized against the old team). */
+  endServerSessions?(serverId: string): void;
 }
 import { MetricsService } from "../metrics/metrics.service";
 import { ContainerMetricsService } from "../metrics/container-metrics.service";
@@ -210,6 +212,13 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
       // Log drains are gated on the `logs` capability: re-drive them after every change so a revoke is
       // reflected (the agent clears its v2 sinks) and a re-grant restores them.
       this.logDrainProvider?.(serverId);
+    });
+
+    // A server moved to another team: cut the live sessions that were authorized against the OLD team (host
+    // terminals, log streams). The agent socket stays up — it is keyed by server id, not by team.
+    this.servers.setTeamChangeListener((serverId) => {
+      this.terminalDelegate?.endServerSessions?.(serverId);
+      this.failLogStreamsFor(serverId);
     });
 
     // ws keepalive: ping every socket each interval; terminate one that didn't pong since the last tick.

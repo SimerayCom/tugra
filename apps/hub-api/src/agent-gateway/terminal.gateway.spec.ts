@@ -263,6 +263,33 @@ describe("TerminalGateway", () => {
     expect((gw as any).byServer.size).toBe(0);
   });
 
+  it("cuts every host shell of a server that moved to another team and tells the agent to stop the PTY", async () => {
+    const { gw, agentWs } = make({
+      verifyAsync: jest.fn().mockResolvedValue({ sub: "u1", type: "access" }),
+      server: { id: "s1", teamId: "t1" },
+    });
+    const ws = fakeWs();
+    await connect(gw, ws, req("/terminal?server=s1"));
+    const sessionId = agentWs.sendToAgent.mock.calls[0][1].sessionId;
+    gw.endServerSessions("s1");
+    expect(ws.close).toHaveBeenCalledWith(1008, "server moved to another team");
+    expect(agentWs.sendToAgent).toHaveBeenLastCalledWith("s1", { type: "term_close", sessionId });
+    expect((gw as any).sessions.size).toBe(0);
+    expect((gw as any).byServer.size).toBe(0);
+  });
+
+  it("leaves other servers' shells alone when one server moves team", async () => {
+    const { gw } = make({
+      verifyAsync: jest.fn().mockResolvedValue({ sub: "u1", type: "access" }),
+      server: { id: "s1", teamId: "t1" },
+    });
+    const ws = fakeWs();
+    await connect(gw, ws, req("/terminal?server=s1"));
+    gw.endServerSessions("other");
+    expect(ws.close).not.toHaveBeenCalled();
+    expect((gw as any).sessions.size).toBe(1);
+  });
+
   it("accepts a short-lived term_ticket JWT (subprotocol)", async () => {
     const { gw, agentWs } = make({
       verifyAsync: jest.fn().mockResolvedValue({ sub: "u1", type: "term_ticket" }),

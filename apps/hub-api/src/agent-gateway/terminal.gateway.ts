@@ -243,6 +243,16 @@ export class TerminalGateway
     }
   }
 
+  /** The server moved to another team: close every shell opened against the old team (the close handler tells the agent). */
+  endServerSessions(serverId: string): void {
+    for (const id of [...(this.byServer.get(serverId) ?? [])]) {
+      const sess = this.sessions.get(id);
+      if (!sess) continue;
+      if (sess.ws.readyState === WebSocket.OPEN) sess.ws.close(1008, "server moved to another team");
+      this.endSession(id, true); // idempotent with the ws close handler (the session is already gone by then)
+    }
+  }
+
   // ── helpers ──
 
   private endSession(sessionId: string, notifyAgent: boolean): void {
