@@ -44,10 +44,11 @@ describe("realHostname / looksLikeContainerId", () => {
 });
 
 describe("teamColor", () => {
-  it("is stable per id and differs between ids", () => {
+  it("is stable per id, spreads across ids and prefers the picked colour", () => {
     expect(teamColor("t1")).toBe(teamColor("t1"));
-    expect(teamColor("t1")).not.toBe(teamColor("t2"));
-    expect(teamColor("t1")).toMatch(/^hsl\(\d+ 55% 50%\)$/);
+    expect(teamColor("t1")).toMatch(/^#[0-9A-Fa-f]{6}$/);
+    expect(new Set(["t1", "t2", "t3", "t4", "t5", "t6", "t7", "t8"].map((id) => teamColor(id))).size).toBeGreaterThan(1);
+    expect(teamColor("t1", "#112233")).toBe("#112233");
   });
 });
 
