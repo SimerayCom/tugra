@@ -962,10 +962,46 @@ model GitSource {
   /// Instance-owner switch: every team may use this source (import linking, app create/link, repo/branch lists).
   sharedAllTeams   Boolean       @default(false)
   applications     Application[]
+  /// GitHub App: every account / organization the App is installed on (the legacy `installationId` stays the primary).
+  installations    GitSourceInstallation[]
   createdAt        DateTime      @default(now())
 
   @@unique([teamId, appId])
   @@index([teamId])
+}
+
+/// One installation of a GitHub App source (a personal account or an organization) with the account details GitHub
+/// reports, so the Git Sources screen can show who it is installed for and pick the right installation per repo owner.
+model GitSourceInstallation {
+  id             String    @id @default(cuid())
+  source         GitSource @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  sourceId       String
+  installationId String
+  accountLogin   String?
+  accountType    String? // User | Organization
+  avatarUrl      String?
+  createdAt      DateTime  @default(now())
+
+  @@unique([sourceId, installationId])
+}
+
+/// A short-lived, single-use, user-bound ticket for the GitHub App manifest flow. Only the SHA-256 of the random `state`
+/// is stored. `kind` "manifest" = waiting for GitHub to redirect back with the manifest code; "install" = waiting for the
+/// installation redirect. `sourceId` is the id the GitSource gets (the webhook URL needs it before the row exists).
+model GitSourceSetup {
+  id             String    @id @default(cuid())
+  stateHash      String    @unique
+  kind           String // manifest | install
+  userId         String
+  teamId         String
+  sourceId       String
+  name           String?
+  sharedAllTeams Boolean   @default(false)
+  expiresAt      DateTime
+  usedAt         DateTime?
+  createdAt      DateTime  @default(now())
+
+  @@index([expiresAt])
 }
 
 // A team-scoped container registry for pushing built images (portable rollback / multi-server).

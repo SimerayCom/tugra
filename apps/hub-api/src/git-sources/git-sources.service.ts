@@ -1,4 +1,5 @@
-import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException, Optional } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
 import { createPrivateKey, createSign } from "node:crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
@@ -13,6 +14,14 @@ const GH_API = "https://api.github.com";
 /** Hard cap on how many installation repositories one resolve reads (20 pages of 100). */
 const INSTALLATION_REPO_CAP = 2000;
 const GH_HEADERS = { Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" };
+
+/** One account / organization a GitHub App source is installed on. */
+export interface InstallationView {
+  installationId: string;
+  accountLogin: string | null;
+  accountType: string | null;
+  avatarUrl: string | null;
+}
 
 export interface GitSourceView {
   id: string;
@@ -37,6 +46,12 @@ export interface GitSourceView {
   canWrite: boolean;
   /** Shared with every team by the instance owner (usable for imports and apps in any team). */
   sharedAllTeams: boolean;
+  /** GitHub App: where it is installed (personal account and / or organizations). Empty until the first install. */
+  installations: InstallationView[];
+  /** GitHub App: the URL GitHub delivers push / pull request events to (set automatically by the manifest flow). */
+  webhookUrl: string | null;
+  /** GitHub App: a webhook secret is stored. */
+  hasWebhook: boolean;
 }
 
 export interface RepoView {
@@ -60,9 +75,18 @@ function b64url(s: string | Buffer): string {
   return (typeof s === "string" ? Buffer.from(s) : s).toString("base64url");
 }
 
+/** The columns of a GitSource row the view needs (plus its installations when loaded). */
+export interface SourceRow {
+    id: string; name: string; teamId: string; provider: string; appId: string | null;
+    appSlug: string | null; installationId: string | null; htmlUrl: string | null; createdAt: Date;
+    apiUrl?: string | null; tokenEnc?: string | null; privateKeyEnc?: string | null; sharedAllTeams?: boolean | null;
+    webhookSecretEnc?: string | null;
+    installations?: { installationId: string; accountLogin: string | null; accountType: string | null; avatarUrl: string | null }[];
+}
+
 @Injectable()
 export class GitSourcesService {
-  /** sourceId → short-lived installation token cache. */
+  /** `sourceId:installationId` → short-lived installation token cache. */
   private readonly tokenCache = new Map<string, { token: string; exp: number }>();
 
   constructor(
@@ -70,19 +94,36 @@ export class GitSourcesService {
     private readonly access: TeamAccessService,
     private readonly audit: AuditService,
     private readonly crypto: CryptoService,
+    @Optional() private readonly config?: ConfigService,
   ) {}
 
-  private view(s: {
-    id: string; name: string; teamId: string; provider: string; appId: string | null;
-    appSlug: string | null; installationId: string | null; htmlUrl: string | null; createdAt: Date;
-    apiUrl?: string | null; tokenEnc?: string | null; privateKeyEnc?: string | null; sharedAllTeams?: boolean | null;
-  }, canWrite: boolean): GitSourceView {
+  /** Drop every cached installation token of a source (credentials or installations changed, or it was removed). */
+  dropTokens(sourceId: string): void {
+    for (const k of this.tokenCache.keys()) if (k.startsWith(`${sourceId}:`)) this.tokenCache.delete(k);
+  }
+
+  /** Public origin of the hub (where GitHub delivers webhooks); HUB_PUBLIC_URL, else the panel origin. */
+  hubBase(): string {
+    const v = this.config?.get<string>("HUB_PUBLIC_URL") || this.config?.get<string>("WEB_PUBLIC_URL") || "http://localhost:3000";
+    return v.replace(/\/+$/, "");
+  }
+
+  private view(s: SourceRow, canWrite: boolean): GitSourceView {
+    const isGithub = !isTokenKind(s.provider);
     return {
       id: s.id, name: s.name, teamId: s.teamId, provider: s.provider, kind: s.provider as GitKind, appId: s.appId,
       appSlug: s.appSlug, installationId: s.installationId, htmlUrl: s.htmlUrl,
       apiUrl: s.apiUrl ?? null, hasToken: !!(s.tokenEnc || s.privateKeyEnc), cloneHost: sourceCloneHost({ provider: s.provider, apiUrl: s.apiUrl ?? null }),
       createdAt: s.createdAt, canWrite, sharedAllTeams: s.sharedAllTeams === true,
+      installations: (s.installations ?? []).map((i) => ({ installationId: i.installationId, accountLogin: i.accountLogin, accountType: i.accountType, avatarUrl: i.avatarUrl })),
+      webhookUrl: isGithub && s.webhookSecretEnc ? `${this.hubBase()}/webhooks/github/${s.id}` : null,
+      hasWebhook: isGithub && !!s.webhookSecretEnc,
     };
+  }
+
+  /** Public so the manifest flow renders a row exactly like the list does. */
+  viewOf(s: SourceRow, canWrite: boolean): GitSourceView {
+    return this.view(s, canWrite);
   }
 
   async list(userId: string, q?: string): Promise<GitSourceView[]> {
@@ -93,6 +134,7 @@ export class GitSourcesService {
     const rows = await this.prisma.gitSource.findMany({
       where: { OR: [{ teamId: { in: teamIds } }, { sharedAllTeams: true }] },
       orderBy: { createdAt: "desc" },
+      include: { installations: { orderBy: { createdAt: "asc" } } },
     });
     const views = rows.map((s) => this.view(s, permsByTeam.get(s.teamId)?.has("integrations") ?? false));
     return filterByQuery(views, q, (g) => [g.name, g.provider, g.appSlug, g.htmlUrl, g.apiUrl]);
@@ -200,7 +242,7 @@ export class GitSourcesService {
       update: { privateKeyEnc, ...optional },
       select: { id: true },
     });
-    this.tokenCache.delete(s.id); // new credentials/installation → drop any cached installation token
+    this.dropTokens(s.id); // new credentials/installation → drop any cached installation token
     await this.audit.log({ actor: userId, action: "git_source.import_upsert", target: s.id });
     return s.id;
   }
@@ -209,7 +251,7 @@ export class GitSourcesService {
     const s = await this.prisma.gitSource.findUnique({ where: { id } });
     if (!s) throw new NotFoundException("git source not found");
     await this.access.requirePermission(userId, s.teamId, "integrations");
-    this.tokenCache.delete(id);
+    this.dropTokens(id);
     await this.prisma.gitSource.delete({ where: { id } });
     await this.audit.log({ actor: userId, action: "git_source.remove", target: id });
   }
@@ -224,28 +266,85 @@ export class GitSourcesService {
     return `${data}.${b64url(sig)}`;
   }
 
-  /** A fresh (cached) installation access token for cloning private repos. */
-  async installationToken(sourceId: string): Promise<string> {
-    const cached = this.tokenCache.get(sourceId);
-    if (cached && cached.exp > Date.now() + 60_000) return cached.token;
-    const s = await this.prisma.gitSource.findUnique({ where: { id: sourceId } });
+  /** The installations a GitHub App source can mint tokens for: its per-account rows, plus the legacy primary
+   *  `installationId` (manual add / older rows) when it has no row of its own. */
+  private installationsOf(s: { installationId: string | null; installations?: { installationId: string; accountLogin: string | null }[] }): { installationId: string; accountLogin: string | null }[] {
+    const rows = [...(s.installations ?? [])];
+    if (s.installationId && !rows.some((r) => r.installationId === s.installationId)) rows.unshift({ installationId: s.installationId, accountLogin: null });
+    return rows;
+  }
+
+  /** The installation that covers a repo owned by `owner`: the one installed on that account, else the primary. */
+  private pickInstallation(s: { installationId: string | null; installations?: { installationId: string; accountLogin: string | null }[] }, owner?: string | null): string | null {
+    const all = this.installationsOf(s);
+    if (owner) {
+      const hit = all.find((i) => i.accountLogin && i.accountLogin.toLowerCase() === owner.toLowerCase());
+      if (hit) return hit.installationId;
+    }
+    return s.installationId ?? all[0]?.installationId ?? null;
+  }
+
+  /** A fresh (cached) installation access token for cloning private repos. `installationId` selects one of the App's
+   *  installations; by default the primary one. */
+  async installationToken(sourceId: string, installationId?: string | null): Promise<string> {
+    const s = await this.prisma.gitSource.findUnique({ where: { id: sourceId }, include: { installations: true } });
     if (!s) throw new NotFoundException("git source not found");
     if (isTokenKind(s.provider) || !s.appId || !s.privateKeyEnc) throw new BadRequestException("git source is not a GitHub App");
-    if (!s.installationId) throw new BadRequestException("git source is not installed yet");
+    const inst = installationId ?? this.pickInstallation(s);
+    if (!inst) throw new BadRequestException("git source is not installed yet");
+    if (installationId && !this.installationsOf(s).some((i) => i.installationId === installationId)) throw new BadRequestException("unknown installation for this git source");
+    const key = `${sourceId}:${inst}`;
+    const cached = this.tokenCache.get(key);
+    if (cached && cached.exp > Date.now() + 60_000) return cached.token;
     const jwt = this.appJwt(s.appId, this.crypto.decrypt(s.privateKeyEnc));
-    const res = await fetch(`${GH_API}/app/installations/${s.installationId}/access_tokens`, {
+    const res = await fetch(`${GH_API}/app/installations/${inst}/access_tokens`, {
       method: "POST",
       headers: { ...GH_HEADERS, Authorization: `Bearer ${jwt}` },
     });
     if (!res.ok) throw new BadRequestException(`github: installation token failed (HTTP ${res.status})`);
     const data = (await res.json()) as { token: string; expires_at: string };
-    this.tokenCache.set(sourceId, { token: data.token, exp: new Date(data.expires_at).getTime() });
+    this.tokenCache.set(key, { token: data.token, exp: new Date(data.expires_at).getTime() });
     return data.token;
+  }
+
+  /** Every repository one installation can see (100 per page, capped at {@link INSTALLATION_REPO_CAP}). */
+  private async readInstallationRepos(token: string): Promise<RepoView[]> {
+    const out: RepoView[] = [];
+    for (let page = 1; out.length < INSTALLATION_REPO_CAP && page <= INSTALLATION_REPO_CAP / 100; page++) {
+      const res = await fetch(`${GH_API}/installation/repositories?per_page=100&page=${page}`, {
+        headers: { ...GH_HEADERS, Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new BadRequestException(`github: list repos failed (HTTP ${res.status})`);
+      const data = (await res.json()) as {
+        repositories?: { full_name?: string; clone_url?: string; private?: boolean; default_branch?: string | null }[];
+        total_count?: number;
+      };
+      const rows = Array.isArray(data.repositories) ? data.repositories : [];
+      for (const r of rows) {
+        if (typeof r?.full_name === "string") out.push({ fullName: r.full_name, cloneUrl: r.clone_url ?? `https://github.com/${r.full_name}.git`, private: r.private === true, defaultBranch: r.default_branch ?? null });
+      }
+      if (rows.length < 100) break;
+      if (typeof data.total_count === "number" && out.length >= data.total_count) break;
+    }
+    return out;
+  }
+
+  /** Repositories across ALL of a GitHub App source's installations, de-duplicated by name. */
+  private async allInstallationRepos(sourceId: string): Promise<RepoView[]> {
+    const s = await this.prisma.gitSource.findUnique({ where: { id: sourceId }, include: { installations: true } });
+    if (!s) throw new NotFoundException("git source not found");
+    const ids = this.installationsOf(s).map((i) => i.installationId);
+    if (!ids.length) throw new BadRequestException("git source is not installed yet");
+    const seen = new Map<string, RepoView>();
+    for (const id of ids) {
+      for (const r of await this.readInstallationRepos(await this.installationToken(sourceId, id))) if (!seen.has(r.fullName.toLowerCase())) seen.set(r.fullName.toLowerCase(), r);
+    }
+    return [...seen.values()];
   }
 
   /** Load a source and require the caller to be a member of its team (or of any team, for a shared source). */
   private async memberSource(userId: string, id: string) {
-    const s = await this.prisma.gitSource.findUnique({ where: { id } });
+    const s = await this.prisma.gitSource.findUnique({ where: { id }, include: { installations: true } });
     if (!s) throw new NotFoundException("git source not found");
     if (s.sharedAllTeams) {
       if ((await this.access.permissionsByTeam(userId)).size > 0) return s;
@@ -280,39 +379,18 @@ export class GitSourcesService {
       const { client, token } = this.giteaFor(s);
       return this.guarded(s.provider, token, () => client.listRepos());
     }
-    const token = await this.installationToken(id);
-    const res = await fetch(`${GH_API}/installation/repositories?per_page=100`, {
-      headers: { ...GH_HEADERS, Authorization: `Bearer ${token}` },
-    });
-    if (!res.ok) throw new BadRequestException(`github: list repos failed (HTTP ${res.status})`);
-    const data = (await res.json()) as {
-      repositories: { full_name: string; clone_url: string; private: boolean; default_branch?: string | null }[];
-    };
-    return data.repositories.map((r) => ({ fullName: r.full_name, cloneUrl: r.clone_url, private: r.private, defaultBranch: r.default_branch ?? null }));
+    return this.allInstallationRepos(id);
   }
 
   /**
-   * Every repository a GitHub App installation can see, as lowercase `owner/name`. TEAM-SCOPED by the caller (the
+   * Every repository a GitHub App source can see (across all its installations), as lowercase `owner/name`. TEAM-SCOPED by the caller (the
    * importer resolver has already authorized the team) so there is no per-user check here. The call is pinned to
    * api.github.com with the installation token (never a user-supplied host), paginated (100 per page) and capped at
-   * 2000 repositories. A non-OK answer throws: the caller treats that source as "unknown", never as "sees nothing".
+   * 2000 repositories per installation. A non-OK answer throws: the caller treats that source as "unknown", never as "sees nothing".
    * `listRepos` (the user-facing picker) is deliberately untouched.
    */
   async installationRepoSet(sourceId: string): Promise<Set<string>> {
-    const token = await this.installationToken(sourceId);
-    const out = new Set<string>();
-    for (let page = 1; out.size < INSTALLATION_REPO_CAP && page <= INSTALLATION_REPO_CAP / 100; page++) {
-      const res = await fetch(`${GH_API}/installation/repositories?per_page=100&page=${page}`, {
-        headers: { ...GH_HEADERS, Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) throw new BadRequestException(`github: list repos failed (HTTP ${res.status})`);
-      const data = (await res.json()) as { repositories?: { full_name?: string }[]; total_count?: number };
-      const rows = Array.isArray(data.repositories) ? data.repositories : [];
-      for (const r of rows) if (typeof r?.full_name === "string") out.add(r.full_name.toLowerCase());
-      if (rows.length < 100) break;
-      if (typeof data.total_count === "number" && out.size >= data.total_count) break;
-    }
-    return out;
+    return new Set((await this.allInstallationRepos(sourceId)).map((r) => r.fullName.toLowerCase()));
   }
 
   /** Can a token source (Gitea / Forgejo / Codeberg) see `owner/name`? Team-scoped like {@link installationRepoSet}. */
@@ -333,7 +411,7 @@ export class GitSourcesService {
       const names = await this.guarded(s.provider, token, () => client.listBranches(full.owner, full.repo));
       return names.map((name) => ({ name }));
     }
-    const token = await this.installationToken(id);
+    const token = await this.installationToken(id, this.pickInstallation(s, full.owner));
     const res = await fetch(`${GH_API}/repos/${encodeURIComponent(full.owner)}/${encodeURIComponent(full.repo)}/branches?per_page=100`, {
       headers: { ...GH_HEADERS, Authorization: `Bearer ${token}` },
     });
@@ -350,7 +428,7 @@ export class GitSourcesService {
    * to git through GIT_ASKPASS (never argv / the URL / .git/config / logs), so it cannot appear in clone output.
    */
   async cloneToken(sourceId: string, gitUrl: string | null | undefined): Promise<string> {
-    const s = await this.prisma.gitSource.findUnique({ where: { id: sourceId } });
+    const s = await this.prisma.gitSource.findUnique({ where: { id: sourceId }, include: { installations: true } });
     if (!s) throw new NotFoundException("git source not found");
     // An ssh:// / git@ repo authenticates with its deploy key, not an HTTP token — never a host-mismatch error.
     if (isSshGitUrl(gitUrl ?? "")) return "";
@@ -360,8 +438,14 @@ export class GitSourcesService {
       throw new BadRequestException(`the linked ${s.provider} source only authenticates ${want} repositories — unlink it or point the repo at ${want}`);
     }
     if (isTokenKind(s.provider)) return this.giteaFor(s).token;
-    return this.installationToken(sourceId);
+    return this.installationToken(sourceId, this.pickInstallation(s, gitUrlOwner(gitUrl)));
   }
+}
+
+/** The owner (user / organization) segment of an https or scp-style git URL, or null. */
+export function gitUrlOwner(gitUrl: string | null | undefined): string | null {
+  const m = /^(?:https?:\/\/[^/]+\/|[\w.-]+@[^:]+:|ssh:\/\/[^/]+\/)([^/]+)\/[^/]+/.exec((gitUrl ?? "").trim());
+  return m ? m[1] : null;
 }
 
 /** Remove every occurrence of a secret from a message so an upstream error can never echo it. */

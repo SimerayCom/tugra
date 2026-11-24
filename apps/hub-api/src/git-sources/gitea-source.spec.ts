@@ -278,13 +278,14 @@ describe("installationRepoSet / tokenSourceCanSee — team-scoped visibility (im
     await expect(svc.installationRepoSet("g1")).rejects.toThrow(/HTTP 403/);
   });
 
-  it("listRepos (the picker) is unchanged: one page, per_page=100 only", async () => {
+  it("listRepos (the picker) reads 100 per page and stops after a short page", async () => {
     const svc = make({ gitSource: { findUnique: jest.fn().mockResolvedValue(gh) } }, { teamRole: jest.fn().mockResolvedValue("OWNER") } as never);
     jest.spyOn(svc, "installationToken").mockResolvedValue("ghs_t");
     const fetchMock = jest.fn().mockResolvedValue({ ok: true, json: async () => ({ repositories: [] }) });
     (global as unknown as { fetch: typeof fetch }).fetch = fetchMock as unknown as typeof fetch;
     await svc.listRepos("u1", "g1");
-    expect(fetchMock.mock.calls[0][0]).toBe("https://api.github.com/installation/repositories?per_page=100");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][0]).toBe("https://api.github.com/installation/repositories?per_page=100&page=1");
   });
 
   it("gitea canSeeRepo: 200 yes, 404/403 no, other failures unknown (never guessed)", async () => {

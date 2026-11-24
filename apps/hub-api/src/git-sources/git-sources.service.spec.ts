@@ -209,3 +209,50 @@ describe("GitSourcesService", () => {
     });
   });
 });
+
+describe("GitSourcesService: several installations of one GitHub App", () => {
+  const future = new Date(Date.now() + 3600_000).toISOString();
+  const row = {
+    id: "g1", name: "gh", teamId: "t1", provider: "github", appId: "1", appSlug: "a", installationId: "10", htmlUrl: null, createdAt: new Date(),
+    privateKeyEnc: `enc(${PEM})`,
+    installations: [
+      { installationId: "10", accountLogin: "alice", accountType: "User", avatarUrl: null },
+      { installationId: "20", accountLogin: "Acme-Inc", accountType: "Organization", avatarUrl: null },
+    ],
+  };
+
+  it("mints the token of the installation that owns the repo (case-insensitive), the primary otherwise", async () => {
+    const urls: string[] = [];
+    (global as unknown as { fetch: typeof fetch }).fetch = jest.fn(async (u: string) => {
+      urls.push(u);
+      return { ok: true, json: async () => ({ token: `tok${urls.length}`, expires_at: future }) };
+    }) as unknown as typeof fetch;
+    const svc = make({ gitSource: { findUnique: jest.fn().mockResolvedValue(row) } } as unknown as PrismaService, {});
+    await svc.cloneToken("g1", "https://github.com/acme-inc/web.git");
+    await svc.cloneToken("g1", "https://github.com/someone-else/web.git");
+    expect(urls[0]).toContain("/app/installations/20/access_tokens");
+    expect(urls[1]).toContain("/app/installations/10/access_tokens");
+  });
+
+  it("lists the repos of every installation once, de-duplicated", async () => {
+    const fetchMock = jest.fn(async (u: string) => {
+      if (u.includes("/access_tokens")) return { ok: true, json: async () => ({ token: "t", expires_at: future }) };
+      const repos = u.includes("/installation/repositories") ? [{ full_name: "alice/one", clone_url: "https://github.com/alice/one.git", private: true }, { full_name: "Acme-Inc/two", clone_url: "https://github.com/Acme-Inc/two.git", private: false }] : [];
+      return { ok: true, json: async () => ({ repositories: repos }) };
+    });
+    (global as unknown as { fetch: typeof fetch }).fetch = fetchMock as unknown as typeof fetch;
+    const svc = make({ gitSource: { findUnique: jest.fn().mockResolvedValue(row) } } as unknown as PrismaService, { teamRole: jest.fn().mockResolvedValue(Role.OWNER) });
+    const repos = await svc.listRepos("u1", "g1");
+    expect(repos.map((r) => r.fullName)).toEqual(["alice/one", "Acme-Inc/two"]);
+  });
+
+  it("list() exposes installations and the webhook URL, never a secret", async () => {
+    const prisma = { gitSource: { findMany: jest.fn().mockResolvedValue([{ ...row, webhookSecretEnc: "enc(x)" }]) } } as unknown as PrismaService;
+    const svc = new GitSourcesService(prisma, { permissionsByTeam: jest.fn().mockResolvedValue(new Map([["t1", new Set(["integrations"])]])) } as unknown as TeamAccessService, audit, crypto, { get: (k: string) => (k === "HUB_PUBLIC_URL" ? "https://hub.example.com/" : undefined) } as never);
+    const [v] = await svc.list("u1");
+    expect(v.installations.map((i) => i.accountLogin)).toEqual(["alice", "Acme-Inc"]);
+    expect(v.webhookUrl).toBe("https://hub.example.com/webhooks/github/g1");
+    expect(v.hasWebhook).toBe(true);
+    expect(JSON.stringify(v)).not.toContain("enc(");
+  });
+});

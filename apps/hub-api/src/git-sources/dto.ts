@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { TOKEN_GIT_KINDS } from "./gitea-client";
+import { GITHUB_LOGIN_RE } from "./github-manifest";
 
 /** A GitHub App source (the reference provider). `kind` is optional so the pre-existing payload still validates. */
 const CreateGithubAppSourceSchema = z.object({
@@ -42,3 +43,24 @@ export type GitSourceSharingInput = z.infer<typeof GitSourceSharingSchema>;
 
 /** `GET /git-sources/:id/branches?repo=owner/name` */
 export const GitBranchesQuerySchema = z.object({ repo: z.string().min(3).max(300) });
+
+/** `POST /git-sources/github/manifest` — begin the GitHub App manifest flow. `org` creates the App under that
+ *  organization instead of the user's own account; `anyAccount` lets it be installed on other accounts too. */
+export const GithubManifestStartSchema = z
+  .object({
+    teamId: z.string().min(1),
+    name: z.string().max(80).optional(),
+    org: z.string().regex(GITHUB_LOGIN_RE).optional(),
+    anyAccount: z.boolean().optional(),
+    sharedAllTeams: z.boolean().optional(),
+  })
+  .strict();
+export type GithubManifestStartInput = z.infer<typeof GithubManifestStartSchema>;
+
+/** `POST /git-sources/github/manifest/complete` — the browser came back from GitHub with `code` and our `state`. */
+export const GithubManifestCompleteSchema = z.object({ code: z.string().min(1).max(256), state: z.string().min(1).max(256) }).strict();
+export type GithubManifestCompleteInput = z.infer<typeof GithubManifestCompleteSchema>;
+
+/** `POST /git-sources/github/installation` — the browser came back from the install page with `installation_id`. */
+export const GithubInstallationSchema = z.object({ state: z.string().min(1).max(256), installationId: z.string().regex(/^\d{1,20}$/) }).strict();
+export type GithubInstallationInput = z.infer<typeof GithubInstallationSchema>;
