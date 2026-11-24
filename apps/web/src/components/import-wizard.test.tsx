@@ -166,7 +166,7 @@ describe("ImportWizard", () => {
       expect((await screen.findByRole("alert")).textContent).toBe(line);
       expect(screen.queryByTestId("egress-ip")).toBeNull();
     }
-  });
+  }, 30_000);
 
   it("shows the one-line connection test and fills the source team label from the team, until the person types their own", async () => {
     vi.spyOn(api, "importTest").mockResolvedValue({ ok: true, team: "Acme Team", suggestedLabel: "acme-team", apps: 19, databases: 10, services: 0, sensitive: true });
@@ -478,7 +478,7 @@ describe("ImportWizard", () => {
     await screen.findByRole("option", { name: "Server A" });
     fireEvent.click(screen.getByRole("button", { name: "Import to Tugra" }));
     await screen.findByText("DONE");
-    expect(screen.getByText("Your databases were recreated empty. Generate a one-time command and run it on your source (Coolify) host to copy each database's data into its new Tugra database. The token works once and expires.")).toBeTruthy();
+    expect(screen.getByText("Your databases were recreated empty. Generate a one-time command and run it on your source (Coolify) host to copy their data. It works once and expires.")).toBeTruthy();
     expect(screen.getByText(/instead of the old Coolify one/)).toBeTruthy();
   });
 

@@ -51,7 +51,7 @@
   "volumesSection": "Volumes",
   "none": "None",
   "target": "Target server",
-  "targetHint": "Where the imported apps and database records are created. Database DATA is moved by the separate migrator step; app volume data is copied manually.",
+  "targetHint": "Where imported apps and database records are created. Database data moves in a separate step.",
   "noTarget": "Add a server to this team first, then come back to import.",
   "apply": "Import to Tugra",
   "applying": "Starting…",
@@ -73,14 +73,14 @@
   "sourceNameCoolify": "Coolify",
   "sourceNameDokploy": "Dokploy",
   "migrateTitle": "Migrate database data",
-  "migrateDesc": "Your databases were recreated empty. Generate a one-time command and run it on your source ({source}) host to copy each database's data into its new Tugra database. The token works once and expires.",
+  "migrateDesc": "Your databases were recreated empty. Generate a one-time command and run it on your source ({source}) host to copy their data. It works once and expires.",
   "migrateGenerate": "Generate migration command",
   "migrateReissue": "Reissue command",
   "migrateTokenOnce": "Copy this now — the token is shown only once.",
   "migrateActive": "A migration command is active until {date}.",
   "migrateExpires": "Expires {date}.",
   "remapTitle": "Point apps at their new databases",
-  "remapDesc": "Rewrite each migrated app's environment so it connects to its new Tugra database instead of the old {source} one. Preview the exact (secret-masked) changes first, then apply — changes take effect on each app's next deploy, and an undo is available.",
+  "remapDesc": "Point each migrated app at its new Tugra database instead of the old {source} one. Preview the changes (secrets masked), then apply. They take effect on the next deploy and can be undone.",
   "remapPreview": "Preview env changes",
   "remapSummary": "{apps} app(s) · {changes} change(s)",
   "remapManual": "{n} need manual review",
@@ -181,7 +181,7 @@
   "env": {
     "blockers": {
       "title": "Variables that cannot be carried",
-      "body": "These apps have variables Tugra cannot read or that are not valid environment names. Fix the source (or the token) and re-run the plan, or acknowledge to create the app without them."
+      "body": "Tugra cannot read these variables, or their names are not valid. Fix the source and re-run the plan, or create the app without them."
     },
     "reason": {
       "noValue": "no value returned",
@@ -209,7 +209,7 @@
   },
   "git": {
     "title": "Git repositories",
-    "body": "Private repositories are linked to the connected GitHub/Gitea source that can actually see them. Connect a GitHub App once, then re-check: every app it covers is linked in one step.",
+    "body": "Private repositories link to the connected source that can see them. Connect a GitHub App once, then re-check.",
     "loading": "Checking which connected sources can see each repository…",
     "error": "Could not check the repositories",
     "group": {
@@ -257,7 +257,7 @@
   },
   "services": {
     "title": "Service stacks",
-    "desc": "Each Coolify service becomes one stopped Tugra compose app built from the service's own compose file. Secrets are carried, never regenerated, and nothing is deployed until you do it.",
+    "desc": "Each Coolify service becomes one stopped compose app. Secrets are carried, never regenerated, and nothing deploys until you do it.",
     "loading": "Reading the services…",
     "previewFailed": "Could not read the service details",
     "summary": "{importable} ready · {partial} partial · {skipped} not imported",
