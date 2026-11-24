@@ -55,10 +55,13 @@ export function ImportScopeStep({
   const hosts = useMemo(() => sourceHostRows(plan), [plan]);
   const projects = useMemo(() => sourceProjectRows(plan), [plan]);
   const teamIds = useMemo(() => [...new Set(servers.map((s) => s.teamId))], [servers]);
-  const [teamId, setTeamId] = useState(() => (initial?.placement && servers.find((s) => s.id === Object.values(initial.placement)[0])?.teamId) || teamIds[0] || "");
+  const [sel, setSel] = useState<ScopeSelection>(() => initial ?? { ...emptySelection(), mode: hosts.length > 1 ? "servers" : "everything" });
+  // derived at render so a servers list that arrives late still yields a team
+  const teamId = sel.teamId && teamIds.includes(sel.teamId)
+    ? sel.teamId
+    : servers.find((s) => s.id === Object.values(sel.placement)[0])?.teamId ?? teamIds[0] ?? "";
   const teamServers = useMemo(() => servers.filter((s) => s.teamId === teamId), [servers, teamId]);
   const fallback = teamServers[0]?.id ?? "";
-  const [sel, setSel] = useState<ScopeSelection>(() => initial ?? { ...emptySelection(), mode: hosts.length > 1 ? "servers" : "everything" });
 
   const inScope = useMemo(() => inScopeRefs(plan, sel), [plan, sel]);
   const involved = useMemo(() => involvedHosts(plan, inScope), [plan, inScope]);
@@ -87,9 +90,8 @@ export function ImportScopeStep({
     });
   const place = (ref: string, id: string) => setSel((s) => ({ ...s, placement: { ...s.placement, [ref]: id } }));
   const pickTeam = (id: string) => {
-    setTeamId(id);
     // the old picks belong to the other team's servers
-    setSel((s) => ({ ...s, placement: {} }));
+    setSel((s) => ({ ...s, teamId: id, placement: {} }));
   };
   const hostLabel = (ref: string, name?: string) => (ref === UNKNOWN_SOURCE_HOST ? t("import.scope.unknownHost") : name ?? ref);
   const countsText = (c: { apps: number; databases: number; services: number }) => t("import.scope.counts", c);

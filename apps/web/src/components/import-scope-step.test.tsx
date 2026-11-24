@@ -3,7 +3,7 @@ import { render, screen, cleanup, fireEvent, within } from "@testing-library/rea
 import React from "react";
 import { I18nProvider } from "../i18n/provider";
 import { ImportScopeStep } from "./import-scope-step";
-import type { ImportScope } from "../lib/import-scope";
+import type { ImportScope, ScopeSelection } from "../lib/import-scope";
 import type { ImportPlan, ImportPlanItem } from "../lib/types";
 
 afterEach(cleanup);
@@ -38,10 +38,10 @@ const servers = [
 ];
 const teams = [{ id: "team1", name: "Team One", role: "OWNER" }] as never;
 
-const mount = (over: { servers?: typeof servers; teams?: never; onContinue?: (s: ImportScope) => void; plan?: ImportPlan } = {}) =>
+const mount = (over: { servers?: typeof servers; teams?: never; onContinue?: (s: ImportScope) => void; plan?: ImportPlan; initial?: ScopeSelection } = {}) =>
   render(
     <I18nProvider>
-      <ImportScopeStep plan={over.plan ?? plan} servers={over.servers ?? servers} teams={over.teams ?? teams} onContinue={over.onContinue ?? (() => undefined)} onStartOver={() => undefined} />
+      <ImportScopeStep initial={over.initial} plan={over.plan ?? plan} servers={over.servers ?? servers} teams={over.teams ?? teams} onContinue={over.onContinue ?? (() => undefined)} onStartOver={() => undefined} />
     </I18nProvider>,
   );
 
@@ -111,6 +111,20 @@ describe("ImportScopeStep", () => {
     const team = screen.getByLabelText("Team");
     fireEvent.change(team, { target: { value: "team2" } });
     expect(screen.getByText("Moves to Target C.")).toBeTruthy();
+  });
+
+  it("reopening the step restores the picked team", () => {
+    const multi = [...servers, { id: "t3", name: "Target C", teamId: "team2" }];
+    const twoTeams = [{ id: "team1", name: "Team One" }, { id: "team2", name: "Team Two" }] as never;
+    let got: ImportScope | undefined;
+    const first = mount({ servers: multi, teams: twoTeams, onContinue: (s) => (got = s) });
+    fireEvent.click(screen.getByRole("checkbox", { name: /Box One/ }));
+    fireEvent.change(screen.getByLabelText("Team"), { target: { value: "team2" } });
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    expect(got?.selection.teamId).toBe("team2");
+    first.unmount();
+    mount({ servers: multi, teams: twoTeams, initial: got!.selection });
+    expect((screen.getByLabelText("Team") as HTMLSelectElement).value).toBe("team2");
   });
 
   it("one team: no team picker; the team is named, not asked", () => {

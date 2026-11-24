@@ -65,7 +65,7 @@ export function ImportReviewStep({
   /** The plan step's env acks / service choices / data modes: sent with the resolve (acks, data modes) and with BOTH
    *  applies so the hub re-plans to the same hash and honours what the operator chose there. */
   applyExtras?: ImportApplyExtras;
-  /** The first step's choice: what is in, where each source server goes. Out-of-scope items start excluded (the review can still bring them back). */
+  /** The first step's choice: what is in, where each source server goes. Out-of-scope apps and databases start excluded (the review can bring them back); out-of-scope services are skipped and come back only through Change on the preview. */
   importScope?: ImportScope | null;
   onApplied: (opId: string) => void;
   onBack: () => void;
@@ -221,7 +221,7 @@ export function ImportReviewStep({
             <div style={label}>{t("import.review.placement")}</div>
             <ul style={{ margin: "0 0 4px", padding: 0, listStyle: "none", display: "flex", flexDirection: "column", gap: 2, fontSize: 13 }}>
               {Object.entries(serverMap).map(([ref, id]) => (
-                <li key={ref}>{t("import.review.placementRow", { from: sourceHostName(plan, ref), to: servers.find((x) => x.id === id)?.name ?? id })}</li>
+                <li key={ref}>{t("import.review.placementRow", { from: sourceHostName(plan, ref, t), to: servers.find((x) => x.id === id)?.name ?? id })}</li>
               ))}
             </ul>
           </>
@@ -342,8 +342,8 @@ export function ImportReviewStep({
 }
 
 /** The source server's name as the plan lists it, else its ref. */
-function sourceHostName(plan: ImportPlan, ref: string): string {
-  return plan.preflight?.hosts?.find((h) => h.ref === ref)?.name || (ref === "_" ? "?" : ref);
+function sourceHostName(plan: ImportPlan, ref: string, t: (k: string) => string): string {
+  return plan.preflight?.hosts?.find((h) => h.ref === ref)?.name || (ref === "_" ? t("import.scope.unknownHost") : ref);
 }
 
 /** A user-facing message for a failed call: the hub's mapping codes get a fixed translation, anything else its message. */

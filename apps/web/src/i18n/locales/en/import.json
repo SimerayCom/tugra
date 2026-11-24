@@ -784,6 +784,6 @@
     "change": "Change",
     "narrowedGuided": "Guided runs move the whole source. Choose Everything to use one.",
     "more": "More",
-    "moreBody": "Nothing is changed or stopped on the source. You can still rename, move and leave out items on the next steps."
+    "moreBody": "Nothing is changed or stopped on the source. You can still rename, move and leave out apps and databases on the next steps."
   }
 }

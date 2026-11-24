@@ -338,9 +338,11 @@ describe("buildPreflight: source projects (additive, outside planHash)", () => {
   });
   it("is absent without a project tree, and never changes the plan hash", () => {
     expect(buildPreflight(fleet({ apps: [{ ...base, sourceRef: "a1", name: "web" }] }), o).projects).toBeUndefined();
-    const withTree = fleet({ projects: tree, apps: [{ ...base, sourceRef: "a1", name: "web", projectRef: "p-acme", environmentRef: "p-acme#1" }] });
     const noTree = fleet({ apps: [{ ...base, sourceRef: "a1", name: "web", projectRef: "p-acme", environmentRef: "p-acme#1" }] });
-    expect(planImport(withTree, o).planHash).toBe(planImport(withTree, o).planHash);
+    // a service's project placement is not part of the plan hash (app/db tree info risks already were before this change)
+    const svc = (extra: Record<string, string>) =>
+      fleet({ projects: tree, services: [{ sourceRef: "sv1", name: "search", memberApps: [], memberDbs: [], serverRef: "s2", ...extra }] });
+    expect(planImport(svc({ projectRef: "p-acme", environmentRef: "p-acme#1" }), o).planHash).toBe(planImport(svc({}), o).planHash);
     expect(buildPreflight(noTree, o).projects).toBeUndefined();
   });
 });

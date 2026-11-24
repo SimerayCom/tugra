@@ -18,6 +18,8 @@ export interface ScopeSelection {
   extra: ReadonlySet<string>;
   /** Source server ref to Tugra server id, for every source server that has something in scope. */
   placement: Readonly<Record<string, string>>;
+  /** The target team picked when the writable servers belong to several teams (kept so reopening the step restores it). */
+  teamId?: string;
 }
 
 export const emptySelection = (): ScopeSelection => ({ mode: "everything", hosts: new Set(), projects: new Set(), extra: new Set(), placement: {} });
