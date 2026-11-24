@@ -8,6 +8,7 @@ import { BackupsService } from "../backups/backups.service";
 import { VolumeBackupsService } from "../volume-backups/volume-backups.service";
 import { backupFilename, backupPath, buildBackupScript, buildDeleteBackupScript, gpgMissingTail, scrubRunOutput } from "../backups/backup-script";
 import { objectKey, type DestinationSpec } from "../backups/destination";
+import { MIGRATION_SNAPSHOT_PREFIX } from "../backups/retention";
 import { buildVolumeBackupScript, buildVolumeDeleteScript, volumeBackupFilename, volumeBackupPath } from "../volume-backups/volume-backup-script";
 import { appVolumeName, type AppVolume } from "../deploy/deploy-script";
 import { supportsBackup, type DbEngine } from "../databases/database-script";
@@ -17,7 +18,9 @@ import type { PlanSnapshotInput } from "./snapshot.dto";
 
 const DB_TIMEOUT_MS = 900_000;
 const VOLUME_TIMEOUT_MS = 1_800_000;
-const CREATED_BY = (runId: string) => `migration-snapshot:${runId}`;
+const CREATED_BY = (runId: string) => `${MIGRATION_SNAPSHOT_PREFIX}${runId}`;
+/** A capture that has not touched its row for this long is dead (a restart or crash): the longest single item is the volume timeout. */
+const STUCK_AFTER_MS = VOLUME_TIMEOUT_MS + 600_000;
 
 export interface SnapshotView {
   snapshot: {
@@ -37,11 +40,13 @@ export interface SnapshotView {
 }
 
 /**
- * The pre-migration safety copy of a run's data (item 93). It is taken ON THE TARGET once the final copy has landed
- * (DATA_FINAL passed), which is exactly the source's frozen state, and written with the same dump and volume-archive
- * scripts every Tugra backup uses, to the destination the owner chose (any S3-compatible storage, or the target server's
- * disk with a warning). The copy is recorded as ordinary `Backup` / `VolumeBackup` rows, so restoring it is the existing
- * restore (one click), and it is removed after 7 days.
+ * The pre-migration safety copy of a run's data (item 93). SCOPE: the hub has no direct reach into the source host's data
+ * (only the migrator or the same-host agent does), so the copy is taken ON THE TARGET the moment the final data copy has
+ * landed (DATA_FINAL passed). That is the source's frozen state, and it exists off the hosts at the owner's chosen
+ * destination (any S3-compatible storage, or the target server's disk with a warning) for 7 days, so it survives writes
+ * Tugra makes after the flip and the retirement of the source. It is NOT a capture of the source taken before the first
+ * data copy; restoring puts the target's database or volume back to the frozen state. It is recorded as `Backup` /
+ * `VolumeBackup` rows (marked by `createdBy`, which normal retention never prunes), so restore is the existing restore.
  */
 @Injectable()
 export class SnapshotService {
@@ -141,10 +146,14 @@ export class SnapshotService {
       for (const db of await this.prisma.database.findMany({ where: { id: { in: dbIds } } })) {
         if (!supportsBackup(db.engine as DbEngine)) continue;
         items.push(await this.copyDatabase(db, dest, snap));
+        await this.heartbeat(snapshotId);
       }
       for (const app of await this.prisma.application.findMany({ where: { id: { in: appIds } } })) {
         const vols = Array.isArray(app.volumes) ? (app.volumes as unknown as AppVolume[]) : [];
-        for (const v of vols) items.push(await this.copyVolume(app, v.name, dest, snap));
+        for (const v of vols) {
+          items.push(await this.copyVolume(app, v.name, dest, snap));
+          await this.heartbeat(snapshotId);
+        }
       }
       if (items.length === 0) return void (await this.prisma.migrationSnapshot.update({ where: { id: snapshotId }, data: { status: "SKIPPED", note: "nothing-to-copy", capturedAt: new Date() } }));
       await finish(overallStatus(items), items, null);
@@ -155,6 +164,27 @@ export class SnapshotService {
     } finally {
       this.capturing.delete(snapshotId);
     }
+  }
+
+  /** Touch the row between items so a live capture is never mistaken for a dead one. */
+  private async heartbeat(snapshotId: string): Promise<void> {
+    await this.prisma.migrationSnapshot.updateMany({ where: { id: snapshotId, status: "CAPTURING" }, data: { note: null } }).catch(() => undefined);
+  }
+
+  /** A capture left in CAPTURING by a restart or crash is failed (retryable by hand) and its half-written rows are closed. */
+  async recoverStuck(now: Date = new Date()): Promise<number> {
+    const stuck = await this.prisma.migrationSnapshot.findMany({ where: { status: "CAPTURING", updatedAt: { lt: new Date(now.getTime() - STUCK_AFTER_MS) } }, take: 20 });
+    let n = 0;
+    for (const s of stuck) {
+      if (this.capturing.has(s.id)) continue;
+      const moved = await this.prisma.migrationSnapshot.updateMany({ where: { id: s.id, status: "CAPTURING", updatedAt: s.updatedAt }, data: { status: "FAILED", note: "interrupted", capturedAt: now, expiresAt: expiryOf(now) } });
+      if (moved.count === 0) continue;
+      const closed = { status: "FAILED" as const, errorTail: "interrupted", completedAt: now };
+      await this.prisma.backup.updateMany({ where: { createdBy: CREATED_BY(s.runId), status: "RUNNING" }, data: closed });
+      await this.prisma.volumeBackup.updateMany({ where: { createdBy: CREATED_BY(s.runId), status: "RUNNING" }, data: closed });
+      n++;
+    }
+    return n;
   }
 
   private async copyDatabase(db: Awaited<ReturnType<PrismaService["database"]["findMany"]>>[number], dest: DestinationSpec, snap: { runId: string; destinationId: string | null }): Promise<SnapshotItem> {
@@ -222,6 +252,7 @@ export class SnapshotService {
 
   /** Take every planned copy whose data copy has finished. */
   async runDue(): Promise<void> {
+    await this.recoverStuck();
     const planned = await this.prisma.migrationSnapshot.findMany({ where: { status: "PLANNED" }, take: 5, orderBy: { createdAt: "asc" } });
     for (const s of planned) {
       const run = await this.prisma.migrationRun.findUnique({ where: { id: s.runId }, select: { status: true, steps: { select: { key: true, status: true } } } });

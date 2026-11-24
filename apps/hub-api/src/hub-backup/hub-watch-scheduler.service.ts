@@ -49,7 +49,8 @@ export class HubWatchSchedulerService implements OnApplicationBootstrap, OnModul
   private async runDrillIfEnabled(): Promise<void> {
     const cfg = await this.prisma.hubBackupConfig.findUnique({ where: { id: "singleton" } });
     if (cfg && !cfg.drillEnabled) return;
-    if (!cfg?.enabled) return; // no scheduled backup, nothing to drill
+    // nothing to drill without a stored hub backup (a manual one counts: the schedule need not be on)
+    if ((await this.prisma.hubBackup.count({ where: { status: "SUCCESS" } })) === 0) return;
     await this.drills.run("schedule").catch((e) => this.logger.warn(`scheduled restore drill could not run: ${e instanceof Error ? e.message : e}`));
   }
 

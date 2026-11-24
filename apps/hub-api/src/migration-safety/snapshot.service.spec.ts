@@ -34,8 +34,8 @@ function make(o: { snap?: Partial<Snap> | null; dest?: unknown; send?: jest.Mock
     bulkTask: { findMany: jest.fn().mockResolvedValue([{ resourceType: "database", resourceId: "db1" }, { resourceType: "application", resourceId: "a1" }]) },
     database: { findMany: jest.fn().mockResolvedValue([{ id: "db1", name: "main", engine: "POSTGRES", serverId: "s1" }]) },
     application: { findMany: jest.fn().mockResolvedValue([{ id: "a1", name: "api", serverId: "s1", volumes: [{ name: "uploads", path: "/data" }] }]) },
-    backup: { create: jest.fn().mockResolvedValue({ id: "b1" }), update: jest.fn(), findUnique: jest.fn(), delete: jest.fn() },
-    volumeBackup: { create: jest.fn().mockResolvedValue({ id: "v1" }), update: jest.fn(), findUnique: jest.fn(), delete: jest.fn() },
+    backup: { create: jest.fn().mockResolvedValue({ id: "b1" }), update: jest.fn(), updateMany: jest.fn().mockResolvedValue({ count: 1 }), findUnique: jest.fn(), delete: jest.fn() },
+    volumeBackup: { create: jest.fn().mockResolvedValue({ id: "v1" }), update: jest.fn(), updateMany: jest.fn().mockResolvedValue({ count: 1 }), findUnique: jest.fn(), delete: jest.fn() },
   };
   const audit = { log: jest.fn() };
   const backups = { destinationSpecById: jest.fn().mockResolvedValue("dest" in o ? o.dest : S3), toSpec: jest.fn().mockReturnValue({ id: "db1", engine: "POSTGRES", image: "postgres:16", port: 5432, hostPort: null, credentials: { username: "u", password: "p", database: "d" } }) };
@@ -156,6 +156,22 @@ describe("SnapshotService.runDue / captureNow", () => {
     const t = make({ snap: { status: "FAILED" } });
     await t.svc.captureNow(ACTOR, "r1");
     expect(t.state.snap!.status).toBe("SUCCESS");
+  });
+  it("fails a capture a restart left in CAPTURING and closes its half-written rows, so it can be retried", async () => {
+    const t = make({ snap: { status: "CAPTURING", updatedAt: new Date(Date.now() - 3 * 3_600_000) } as never });
+    expect(await t.svc.recoverStuck()).toBe(1);
+    expect(t.state.snap).toMatchObject({ status: "FAILED", note: "interrupted" });
+    expect(t.state.snap!.expiresAt).toBeInstanceOf(Date);
+    expect(t.prisma.backup.updateMany).toHaveBeenCalledWith({ where: { createdBy: "migration-snapshot:r1", status: "RUNNING" }, data: expect.objectContaining({ status: "FAILED" }) });
+    expect(t.prisma.volumeBackup.updateMany).toHaveBeenCalled();
+    await t.svc.captureNow(ACTOR, "r1");
+    expect(t.state.snap!.status).toBe("SUCCESS");
+  });
+  it("leaves a capture this process is still running alone", async () => {
+    const t = make({ snap: { status: "CAPTURING" } });
+    (t.svc as unknown as { capturing: Set<string> }).capturing.add("sn1");
+    expect(await t.svc.recoverStuck(new Date(Date.now() + 10 * 3_600_000))).toBe(0);
+    expect(t.state.snap!.status).toBe("CAPTURING");
   });
   it("the scheduler tick drives due copies and never stacks", async () => {
     const t = make();

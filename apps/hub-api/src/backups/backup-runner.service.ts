@@ -26,7 +26,7 @@ import {
 import { BackupAlertsService } from "./backup-alerts.service";
 import { LOCAL_DEST, objectKey, type DestinationSpec } from "./destination";
 import { resolveDestinationSpec } from "./destination-resolver";
-import { GIB, planRetention } from "./retention";
+import { GIB, MIGRATION_SNAPSHOT_PREFIX, planRetention } from "./retention";
 
 const BACKUP_TIMEOUT_MS = 300_000; // dumps can be slow
 const RESTORE_TIMEOUT_MS = 300_000;
@@ -379,7 +379,7 @@ export class BackupRunnerService {
    *  backup is always kept. With no age and no size set this is exactly the original keep-N rule. */
   async prune(db: Database): Promise<void> {
     const all = await this.prisma.backup.findMany({
-      where: { databaseId: db.id, status: "SUCCESS" },
+      where: { databaseId: db.id, status: "SUCCESS", NOT: { createdBy: { startsWith: MIGRATION_SNAPSHOT_PREFIX } } },
       orderBy: { createdAt: "desc" },
     });
     const plan = planRetention(

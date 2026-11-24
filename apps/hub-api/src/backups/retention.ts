@@ -87,3 +87,6 @@ export function planRetention(
     overBudget: p.maxBytes != null && used > p.maxBytes,
   };
 }
+
+/** `createdBy` prefix of the rows a pre-migration safety copy writes; normal retention never prunes them (they expire with the snapshot). */
+export const MIGRATION_SNAPSHOT_PREFIX = "migration-snapshot:";

@@ -265,6 +265,14 @@ describe("BackupRunnerService.prune — per-backup destination", () => {
     expect(del).toHaveBeenCalledTimes(2);
   });
 
+  it("never counts or prunes the rows of a pre-migration safety copy", async () => {
+    const findMany = jest.fn().mockResolvedValue([]);
+    const prisma = { backup: { findMany, delete: jest.fn() } } as unknown as PrismaService;
+    const svc = new BackupRunnerService(prisma, { log: jest.fn() } as unknown as AuditService, {} as unknown as CryptoService, { sendCommand: jest.fn() } as unknown as AgentWsServer, {} as unknown as NotificationsService, noAlerts(), noDbs());
+    await svc.prune({ id: "db1", serverId: "s1", backupRetention: 1 } as never);
+    expect(findMany.mock.calls[0][0].where).toMatchObject({ NOT: { createdBy: { startsWith: "migration-snapshot:" } } });
+  });
+
   it("age retention: deletes SUCCESS backups older than backupRetentionDays, always keeping the newest", async () => {
     const day = 86_400_000;
     const now = Date.now();

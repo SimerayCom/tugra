@@ -643,7 +643,7 @@
   },
   "snapshot": {
     "title": "Safety copy",
-    "desc": "A copy of your data, kept for {days} days, in case you need to go back.",
+    "desc": "A copy of your data as it stood when the source was frozen, kept for {days} days.",
     "reassure": "Your data stays safe during the move.",
     "chooseTitle": "Where should the copy go?",
     "destination": "Keep it in",

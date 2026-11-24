@@ -83,6 +83,18 @@ describe("HubDeadmanService config", () => {
     await expect(make(null).svc.update("u1", { enabled: true, intervalMinutes: 5, url: "http://169.254.169.254/latest" })).rejects.toBeInstanceOf(BadRequestException);
     await expect(make(null).svc.update("u1", { enabled: true, intervalMinutes: 5, url: "http://127.0.0.1:9/x" })).rejects.toBeInstanceOf(BadRequestException);
   });
+  it("starts a fresh clock when it is turned on again, so the switched-off time is no outage", async () => {
+    const t = make({ ...base, enabled: false, lastTickAt: min(600), lastPingAt: min(600) });
+    await t.svc.update("u1", { enabled: true, intervalMinutes: 5 });
+    expect(t.upsert.mock.calls[0][0].update).toMatchObject({ enabled: true, lastTickAt: null, lastPingAt: null });
+    await t.svc.tick(NOW);
+    expect(t.notifications.fireForEvent).not.toHaveBeenCalled();
+  });
+  it("keeps the clock when an already running check-in is only edited", async () => {
+    const t = make(base);
+    await t.svc.update("u1", { enabled: true, intervalMinutes: 10 });
+    expect(t.upsert.mock.calls[0][0].update).not.toHaveProperty("lastTickAt");
+  });
   it("keeps the stored address when url is absent and clears it on null", async () => {
     const t = make(base);
     await t.svc.update("u1", { enabled: false, intervalMinutes: 10 });

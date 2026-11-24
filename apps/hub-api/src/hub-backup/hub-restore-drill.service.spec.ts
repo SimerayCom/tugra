@@ -1,7 +1,7 @@
 import { ConflictException } from "@nestjs/common";
 import { HubRestoreDrillService } from "./hub-restore-drill.service";
 
-const GOOD = "TUGRA_DRILL rc=0 tables=30\nTUGRA_DRILL_COUNT User 2\nTUGRA_DRILL_COUNT Team 1\nTUGRA_DRILL_COUNT Server 1\n";
+const GOOD = "TUGRA_DRILL rc=0 tables=30\nTUGRA_DRILL_COUNT User 2\nTUGRA_DRILL_COUNT Team 1\nTUGRA_DRILL_COUNT Server 1\nTUGRA_DRILL_COUNT Application 0\nTUGRA_DRILL_COUNT Database 0\nTUGRA_DRILL_COUNT BackupDestination 0\nTUGRA_DRILL_COUNT Deployment 0\n";
 
 function make(o: { local?: unknown; backup?: unknown; run?: { exitCode: number; output: string } | Error; inflight?: unknown } = {}) {
   const created = { id: "dr1", status: "RUNNING", trigger: "manual", backupFilename: null, tables: null, checks: null, errorTail: null, durationMs: null, createdAt: new Date(), completedAt: null };
@@ -30,7 +30,7 @@ describe("HubRestoreDrillService.run", () => {
     const r = await t.svc.run("manual", "u1");
     expect(r.status).toBe("SUCCESS");
     expect(r.tables).toBe(30);
-    expect(r.checks).toEqual({ User: 2, Team: 1, Server: 1 });
+    expect(r.checks).toMatchObject({ User: 2, Team: 1, Server: 1, Application: 0 });
     expect(t.notifications.fireForEvent).not.toHaveBeenCalled();
     expect(t.sendCommand).toHaveBeenCalledWith("s1", expect.stringContaining("--network none"), "backup", expect.any(Number));
   });

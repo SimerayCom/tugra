@@ -110,9 +110,9 @@ describe("buildHubDrillScript", () => {
 });
 
 describe("parseDrillOutput", () => {
-  const good = "TUGRA_DRILL rc=0 tables=42\nTUGRA_DRILL_COUNT User 3\nTUGRA_DRILL_COUNT Team 2\nTUGRA_DRILL_COUNT Server 1\n";
+  const good = "TUGRA_DRILL rc=0 tables=42\nTUGRA_DRILL_COUNT User 3\nTUGRA_DRILL_COUNT Team 2\nTUGRA_DRILL_COUNT Server 1\nTUGRA_DRILL_COUNT Application 0\nTUGRA_DRILL_COUNT Database 0\nTUGRA_DRILL_COUNT BackupDestination 0\nTUGRA_DRILL_COUNT Deployment 0\n";
   it("passes when tables exist and the account tables hold rows", () => {
-    expect(parseDrillOutput(good, 0)).toMatchObject({ ok: true, tables: 42, checks: { User: 3, Team: 2, Server: 1 }, rc: 0 });
+    expect(parseDrillOutput(good, 0)).toMatchObject({ ok: true, tables: 42, checks: expect.objectContaining({ User: 3, Team: 2, Server: 1 }), rc: 0 });
   });
   it("tolerates a pg_restore warning exit when the checks pass", () => {
     expect(parseDrillOutput(good.replace("rc=0", "rc=1"), 0).ok).toBe(true);
@@ -121,7 +121,12 @@ describe("parseDrillOutput", () => {
     expect(parseDrillOutput(good, 3)).toMatchObject({ ok: false, reason: "script-failed" });
     expect(parseDrillOutput("nothing", 0)).toMatchObject({ ok: false, reason: "no-marker" });
     expect(parseDrillOutput("TUGRA_DRILL rc=1 tables=0\n", 0)).toMatchObject({ ok: false, reason: "no-tables" });
-    expect(parseDrillOutput("TUGRA_DRILL rc=0 tables=5\nTUGRA_DRILL_COUNT User 0\nTUGRA_DRILL_COUNT Team 0\n", 0)).toMatchObject({ ok: false, reason: "empty-accounts" });
+    expect(parseDrillOutput(good.replace("User 3", "User 0").replace("Team 2", "Team 0"), 0)).toMatchObject({ ok: false, reason: "empty-accounts" });
+  });
+  it("fails on a fatal pg_restore exit and on a core table missing from the restored dump", () => {
+    expect(parseDrillOutput(good.replace("rc=0", "rc=2"), 0)).toMatchObject({ ok: false, reason: "restore-failed" });
+    expect(parseDrillOutput(good.replace("Deployment 0", "Deployment -1"), 0)).toMatchObject({ ok: false, reason: "missing-tables" });
+    expect(parseDrillOutput(good.replace("TUGRA_DRILL_COUNT Deployment 0\n", ""), 0)).toMatchObject({ ok: false, reason: "missing-tables" });
   });
   it("ignores count lines for tables that are not on the list", () => {
     const r = parseDrillOutput(good + "TUGRA_DRILL_COUNT Secrets 9\n", 0);

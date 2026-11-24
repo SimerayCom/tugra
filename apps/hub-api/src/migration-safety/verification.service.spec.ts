@@ -30,7 +30,7 @@ function make(o: { run?: unknown; transport?: PageTransport; topology?: string }
       findMany: jest.fn(async ({ where }: { where: { kind: string } }) =>
         where.kind === "database"
           ? [{ itemRef: "database:s:db1", result: { name: "main" } }]
-          : [{ itemRef: "app:s:a1", resourceId: "a1", result: { name: "api", unresolvedKeys: ["STRIPE_KEY"], droppedInvalidKeys: [] } }],
+          : [{ itemRef: "app:s:a1", resourceId: "a1", result: { name: "api", unresolvedKeys: ["STRIPE_KEY"], droppedInvalidKeys: [], sourceEnvKeys: ["A", "B", "C", "STRIPE_KEY", "OLD_FLAG"] } }],
       ),
     },
     migrationVolumeTransfer: { findMany: jest.fn().mockResolvedValue([{ itemRef: "volume:_:x:uploads", state: "DONE", entries: 40, rawBytesFinal: 1000n, rawBytesDone: 1000n }]) },
@@ -60,7 +60,7 @@ describe("VerificationService.run", () => {
     expect(r.databases).toHaveLength(1);
     expect(r.databases[0]).toMatchObject({ verdict: "differs", name: "main", sourceRows: 15, targetRows: 14, tables: [{ name: "orders", source: 5, target: 4 }] });
     expect(r.volumes[0]).toMatchObject({ verdict: "same", files: 40, name: "uploads" });
-    expect(r.env[0]).toMatchObject({ verdict: "differs", targetKeys: 3, missing: [{ key: "STRIPE_KEY", reason: "unresolved" }] });
+    expect(r.env[0]).toMatchObject({ verdict: "differs", targetKeys: 3, missing: [{ key: "STRIPE_KEY", reason: "unresolved" }, { key: "OLD_FLAG", reason: "missing" }] });
     expect(r.state).toBe("differences");
     expect(JSON.stringify(r)).not.toMatch(/secret-a|secret-b|203\.0\.113\.7/); // no env value, no target address
     expect(t.created).toHaveLength(1);

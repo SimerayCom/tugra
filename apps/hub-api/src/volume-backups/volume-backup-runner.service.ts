@@ -9,7 +9,7 @@ import { appVolumeName, type AppVolume } from "../deploy/deploy-script";
 import { LOCAL_DEST, objectKey, type DestinationSpec } from "../backups/destination";
 import { resolveDestinationSpec } from "../backups/destination-resolver";
 import { gpgMissingTail, scrubRunOutput } from "../backups/backup-script";
-import { GIB, planRetention, type RetentionRow } from "../backups/retention";
+import { GIB, MIGRATION_SNAPSHOT_PREFIX, planRetention, type RetentionRow } from "../backups/retention";
 import { SHARED_POOL, isCarvedOut, policyAlertId, poolBudgetGb, poolKeyOf } from "./policy";
 import { BackupAlertsService } from "../backups/backup-alerts.service";
 import { AppMoveInProgressException, findActiveMove } from "../common/app-move-guard";
@@ -197,7 +197,7 @@ export class VolumeBackupRunnerService {
   async prune(app: Application): Promise<void> {
     const declared = new Set(this.volumesOf(app).map((v) => v.name));
     const rows = (
-      await this.prisma.volumeBackup.findMany({ where: { appId: app.id, status: "SUCCESS" }, orderBy: { createdAt: "desc" } })
+      await this.prisma.volumeBackup.findMany({ where: { appId: app.id, status: "SUCCESS", NOT: { createdBy: { startsWith: MIGRATION_SNAPSHOT_PREFIX } } }, orderBy: { createdAt: "desc" } })
     ).filter((b) => declared.has(b.volumeName));
     if (!rows.length) return;
     const policies = new Map((await this.prisma.volumeBackupPolicy.findMany({ where: { appId: app.id } })).map((p) => [p.volumeName, p]));

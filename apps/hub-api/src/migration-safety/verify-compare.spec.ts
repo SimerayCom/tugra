@@ -80,6 +80,12 @@ describe("volumeRow / envRow", () => {
     expect(envRow({ itemRef: "a", name: "api", targetKeys: 5, unresolved: [], dropped: [] }).verdict).toBe("same");
     expect(envRow({ itemRef: "a", name: "api", targetKeys: null, unresolved: [], dropped: [] }).verdict).toBe("unknown");
   });
+  it("compares the source's variable names with the target's: a name only the source has is missing, extras on the target are fine", () => {
+    const r = envRow({ itemRef: "a", name: "api", targetKeys: 3, unresolved: ["X"], dropped: [], sourceKeys: ["A", "B", "X", "Z"], targetKeyNames: ["A", "B", "EXTRA"] });
+    expect(r.missing).toEqual([{ key: "X", reason: "unresolved" }, { key: "Z", reason: "missing" }]);
+    expect(envRow({ itemRef: "a", name: "api", targetKeys: 2, unresolved: [], dropped: [], sourceKeys: ["A"], targetKeyNames: ["A", "EXTRA"] }).verdict).toBe("same");
+    expect(envRow({ itemRef: "a", name: "api", targetKeys: 2, unresolved: [], dropped: [], sourceKeys: null, targetKeyNames: ["A"] }).verdict).toBe("same");
+  });
 });
 
 describe("summarize", () => {

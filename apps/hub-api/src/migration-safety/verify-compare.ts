@@ -186,8 +186,28 @@ export interface EnvRow {
   missing: Array<{ key: string; reason: string }>;
 }
 
-export function envRow(f: { itemRef: string; name: string | null; targetKeys: number | null; unresolved: readonly string[]; dropped: readonly string[] }): EnvRow {
-  const missing = [...f.unresolved.map((key) => ({ key, reason: "unresolved" })), ...f.dropped.map((key) => ({ key, reason: "invalid" }))].slice(0, 50);
+/**
+ * `sourceKeys` = the variable names the source app had (recorded by the import, names only); `targetKeyNames` = the names the
+ * target app holds now. A source name the target lacks is `missing`; the importer's own unresolved / invalid reasons win over
+ * that for the same name. Without the recorded source names (a run imported before they were kept) only the importer's own
+ * list is judged.
+ */
+export function envRow(f: {
+  itemRef: string;
+  name: string | null;
+  targetKeys: number | null;
+  unresolved: readonly string[];
+  dropped: readonly string[];
+  sourceKeys?: readonly string[] | null;
+  targetKeyNames?: readonly string[] | null;
+}): EnvRow {
+  const found = [...f.unresolved.map((key) => ({ key, reason: "unresolved" })), ...f.dropped.map((key) => ({ key, reason: "invalid" }))];
+  if (f.sourceKeys && f.targetKeyNames) {
+    const have = new Set(f.targetKeyNames);
+    const known = new Set(found.map((m) => m.key));
+    for (const key of f.sourceKeys) if (!have.has(key) && !known.has(key)) found.push({ key, reason: "missing" });
+  }
+  const missing = found.slice(0, 50);
   return { itemRef: f.itemRef, name: f.name, targetKeys: f.targetKeys, missing, verdict: missing.length ? "differs" : f.targetKeys === null ? "unknown" : "same", code: missing.length ? "keys-missing" : f.targetKeys === null ? "target-unreadable" : "same-keys" };
 }
 

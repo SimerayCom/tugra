@@ -770,6 +770,8 @@ export class ImportExecutorService {
       const fetched = await source.fetchSecrets(app.sourceRef); // real env values (server-side only)
       const { unresolved } = fetched;
       let { values, flags } = fetched;
+      // the NAMES the source app has (never a value), kept so the verification report can compare them with the target's
+      const sourceEnvKeys = Object.keys(values).sort().slice(0, 500);
       // STRICT ENV (Coolify): never create an app that silently lacks variables. Keys that are not valid env names are
       // dropped here (this closes the importer's bypass of the zod env-key check), and any unresolved/invalid key that
       // the operator did not acknowledge for THIS item fails the task BEFORE apps.create: no row exists, so a retry can
@@ -867,7 +869,7 @@ export class ImportExecutorService {
           resourceType: "application",
           resourceId: created.id,
           // count only — never the values; `volumes` omitted entirely for an app with no mounts (byte-identical to before)
-          result: { name: created.name, ...(eff ? { sourceName: app.name, mapped: true } : {}), appId: created.id, unresolvedEnv: unresolved.length, ...(alias ? { aliasApplied: alias.applied } : {}), ...(unresolvedKeys.length ? { unresolvedKeys: unresolvedKeys.slice(0, 50) } : {}), ...(droppedInvalid.length ? { droppedInvalidKeys: droppedInvalid.slice(0, 50) } : {}), ...(git ? { git: git.result } : {}), ...(volumes ? { volumes } : {}), ...(postCreate.applied.length || postCreate.unmapped.length ? { postCreate: { applied: postCreate.applied, unmapped: postCreate.unmapped } } : {}), ...(postCreate.aliases ? { networkAliases: postCreate.aliases } : {}), ...(ingress.applied.length || ingress.unmapped.length ? { ingress } : {}) },
+          result: { name: created.name, ...(eff ? { sourceName: app.name, mapped: true } : {}), appId: created.id, unresolvedEnv: unresolved.length, ...(alias ? { aliasApplied: alias.applied } : {}), ...(unresolvedKeys.length ? { unresolvedKeys: unresolvedKeys.slice(0, 50) } : {}), ...(droppedInvalid.length ? { droppedInvalidKeys: droppedInvalid.slice(0, 50) } : {}), ...(sourceEnvKeys.length ? { sourceEnvKeys } : {}), ...(git ? { git: git.result } : {}), ...(volumes ? { volumes } : {}), ...(postCreate.applied.length || postCreate.unmapped.length ? { postCreate: { applied: postCreate.applied, unmapped: postCreate.unmapped } } : {}), ...(postCreate.aliases ? { networkAliases: postCreate.aliases } : {}), ...(ingress.applied.length || ingress.unmapped.length ? { ingress } : {}) },
           ...(note ? { output: note } : {}),
           finishedAt: new Date(),
         },

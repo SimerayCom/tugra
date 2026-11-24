@@ -77,7 +77,7 @@ export function buildHubBackupScript(target: { user: string; db: string; project
 
 
 /** Tables the drill counts after the restore; a fixed allow-list (the names are interpolated into SQL). */
-export const DRILL_TABLES = ["User", "Team", "Server"] as const;
+export const DRILL_TABLES = ["User", "Team", "Server", "Application", "Database", "BackupDestination", "Deployment"] as const;
 
 /**
  * Restore the stored hub dump into a THROWAWAY Postgres container on the local agent and print marker lines the hub
@@ -118,8 +118,10 @@ export interface DrillResult {
 }
 
 /**
- * Judge the marker lines. The restore passes when the dump produced tables and the account tables hold rows: a hub
- * always has at least one user and one team. A cut output (no marker) is a failure, never a pass.
+ * Judge the marker lines. The restore passes when the dump produced tables, EVERY core table exists (a count of -1 means
+ * a truncated or damaged dump) and the account tables hold rows: a hub always has at least one user and one team.
+ * `pg_restore` exits 1 for ignored warnings and for fatal errors alike, so its code alone cannot decide; an exit above 1
+ * is a failure. A cut output (no marker) is a failure, never a pass.
  */
 export function parseDrillOutput(output: string, exitCode: number): DrillResult {
   const fail = (reason: string, extra: Partial<DrillResult> = {}): DrillResult => ({ ok: false, tables: 0, checks: {}, rc: null, reason, ...extra });
@@ -133,6 +135,8 @@ export function parseDrillOutput(output: string, exitCode: number): DrillResult 
     if ((DRILL_TABLES as readonly string[]).includes(m[1])) checks[m[1]] = Number(m[2]);
   }
   if (tables < 1) return fail("no-tables", { tables: Math.max(tables, 0), checks, rc });
+  if (rc > 1) return fail("restore-failed", { tables, checks, rc });
+  if (DRILL_TABLES.some((t) => !(checks[t] >= 0))) return fail("missing-tables", { tables, checks, rc });
   if (!(checks.User >= 1) || !(checks.Team >= 1)) return fail("empty-accounts", { tables, checks, rc });
   return { ok: true, tables, checks, rc, reason: null };
 }

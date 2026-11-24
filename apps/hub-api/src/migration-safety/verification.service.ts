@@ -186,22 +186,28 @@ export class VerificationService {
     const tasks = await this.prisma.bulkTask.findMany({ where: { opId, kind: "app", status: "DONE", resourceType: "application" }, select: { itemRef: true, resourceId: true, result: true }, take: 200 });
     const ids = tasks.map((t) => t.resourceId).filter((x): x is string => !!x);
     const apps = ids.length ? await this.prisma.application.findMany({ where: { id: { in: ids } }, select: { id: true, name: true, envEnc: true } }) : [];
-    const names = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string").slice(0, 50) : []);
+    const names = (v: unknown, cap = 50): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string").slice(0, cap) : []);
     return tasks
       .filter((t) => t.itemRef)
       .map((t) => {
         const a = apps.find((x) => x.id === t.resourceId);
-        const res = (t.result && typeof t.result === "object" ? t.result : {}) as { unresolvedKeys?: unknown; droppedInvalidKeys?: unknown };
+        const res = (t.result && typeof t.result === "object" ? t.result : {}) as { unresolvedKeys?: unknown; droppedInvalidKeys?: unknown; sourceEnvKeys?: unknown };
+        const sourceKeys = Array.isArray(res.sourceEnvKeys) ? names(res.sourceEnvKeys, 500) : null;
         let targetKeys: number | null = null;
+        let targetKeyNames: string[] | null = null;
         if (a?.envEnc) {
           try {
             const parsed = JSON.parse(this.crypto.decrypt(a.envEnc)) as Record<string, unknown>;
-            targetKeys = Object.keys(parsed).length; // names only: the values are not read further
+            targetKeyNames = Object.keys(parsed); // names only: the values are not read further
+            targetKeys = targetKeyNames.length;
           } catch {
             targetKeys = null;
           }
-        } else if (a) targetKeys = 0;
-        return envRow({ itemRef: t.itemRef as string, name: a?.name ?? null, targetKeys, unresolved: names(res.unresolvedKeys), dropped: names(res.droppedInvalidKeys) });
+        } else if (a) {
+          targetKeys = 0;
+          targetKeyNames = [];
+        }
+        return envRow({ itemRef: t.itemRef as string, name: a?.name ?? null, targetKeys, unresolved: names(res.unresolvedKeys), dropped: names(res.droppedInvalidKeys), sourceKeys, targetKeyNames });
       });
   }
 }

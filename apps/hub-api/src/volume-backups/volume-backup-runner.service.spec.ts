@@ -11,6 +11,14 @@ const noAlerts = () =>
   ({ shouldNotifyFailure: jest.fn().mockResolvedValue(true), recover: jest.fn().mockResolvedValue(false) }) as unknown as BackupAlertsService;
 
 describe("VolumeBackupRunnerService.prune — per-backup destination", () => {
+  it("never counts or prunes the rows of a pre-migration safety copy", async () => {
+    const findMany = jest.fn().mockResolvedValue([]);
+    const prisma = { volumeBackup: { findMany, delete: jest.fn() }, volumeBackupPolicy: { findMany: jest.fn().mockResolvedValue([]) } } as unknown as PrismaService;
+    const svc = new VolumeBackupRunnerService(prisma, { log: jest.fn() } as unknown as AuditService, {} as unknown as CryptoService, { sendCommand: jest.fn() } as unknown as AgentWsServer, { fireForEvent: jest.fn() } as unknown as NotificationsService, noAlerts());
+    await svc.prune({ id: "app1", serverId: "s1", volumes: [{ name: "data" }], volumeBackupRetention: 1 } as never);
+    expect(findMany.mock.calls[0][0].where).toMatchObject({ NOT: { createdBy: { startsWith: "migration-snapshot:" } } });
+  });
+
   it("deletes each stale volume backup from its OWN destination", async () => {
     const rows = [
       { id: "keep", filename: "k", volumeName: "data", destinationId: "d0" },

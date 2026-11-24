@@ -25,6 +25,21 @@ function make(over: { local?: unknown; dest?: unknown } = {}) {
   return { svc: new HubBackupService(prisma, audit, agentWs, runner, scheduler, backups, { list: jest.fn().mockResolvedValue([]) } as never, { get: jest.fn() } as never), upsert, apply };
 }
 
+describe("HubBackupService.get offBox", () => {
+  const view = async (dest: unknown) => {
+    const t = make({ dest });
+    const prisma = (t.svc as unknown as { prisma: { hubBackupConfig: { findUnique: jest.Mock } } }).prisma;
+    prisma.hubBackupConfig.findUnique.mockResolvedValue({ id: "singleton", destinationId: "d1" });
+    (t.svc as unknown as { deadman: { get: jest.Mock } }).deadman.get.mockResolvedValue({});
+    return t.svc.get();
+  };
+  it("is off-box only for an S3 destination, never for the same disk", async () => {
+    expect((await view({ type: "S3" })).offBox).toBe(true);
+    expect((await view({ type: "LOCAL" })).offBox).toBe(false);
+    expect((await view(null)).offBox).toBe(false);
+  });
+});
+
 describe("HubBackupService.update", () => {
   it("upserts the config and re-applies the schedule", async () => {
     const { svc, upsert, apply } = make();

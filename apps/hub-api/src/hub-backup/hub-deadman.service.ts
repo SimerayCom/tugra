@@ -87,7 +87,15 @@ export class HubDeadmanService {
       }
     }
     if (input.enabled && !urlEnc) throw new BadRequestException("a check-in address is required to turn this on");
-    const data = { enabled: input.enabled, intervalMinutes: input.intervalMinutes, urlEnc, ...(input.url !== undefined ? { failStreak: 0, alertedAt: null, lastError: null } : {}) };
+    // Turning it on after it was off starts a fresh clock: the switched-off time is not an outage.
+    const turnedOn = input.enabled && !prev?.enabled;
+    const data = {
+      enabled: input.enabled,
+      intervalMinutes: input.intervalMinutes,
+      urlEnc,
+      ...(input.url !== undefined ? { failStreak: 0, alertedAt: null, lastError: null } : {}),
+      ...(turnedOn ? { lastTickAt: null, lastPingAt: null } : {}),
+    };
     await this.prisma.hubDeadmanConfig.upsert({ where: { id: "singleton" }, create: { id: "singleton", ...data }, update: data });
     await this.audit.log({ actor: userId, action: "hub.deadman.config", target: "hub" });
     return this.get();

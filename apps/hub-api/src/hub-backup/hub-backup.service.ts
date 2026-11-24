@@ -67,6 +67,7 @@ export class HubBackupService {
     const items = await this.prisma.hubBackup.findMany({ orderBy: { createdAt: "desc" }, take: 50 });
     const latest = items[0] ?? null;
     const [lastDrill] = await this.drills.list();
+    const dest = cfg?.destinationId ? await this.prisma.backupDestination.findUnique({ where: { id: cfg.destinationId }, select: { type: true } }) : null;
     const drillEnabled = cfg?.drillEnabled ?? true;
     const overdue = drillEnabled && !!latest && (!lastDrill || Date.now() - new Date(lastDrill.createdAt).getTime() > DRILL_OVERDUE_DAYS * 86_400_000);
     return {
@@ -78,7 +79,8 @@ export class HubBackupService {
       maxSizeGb: cfg?.maxSizeGb ?? null,
       destinationId: cfg?.destinationId ?? null,
       extraDestinationId: cfg?.extraDestinationId ?? null,
-      offBox: !!cfg?.destinationId,
+      // off-box = an S3-compatible destination; a LOCAL destination is the same disk
+      offBox: dest?.type === "S3",
       drillEnabled,
       drill: { last: lastDrill ?? null, overdue },
       deadman: await this.deadman.get(),
