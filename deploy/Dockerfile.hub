@@ -6,6 +6,8 @@
 FROM node:22 AS build
 
 RUN corepack enable && corepack prepare pnpm@9.12.0 --activate
+# ICMP ping checks (uptime monitors of type PING) shell out to the standard `ping` binary.
+RUN command -v ping >/dev/null 2>&1 || (apt-get update && apt-get install -y --no-install-recommends iputils-ping && rm -rf /var/lib/apt/lists/*)
 WORKDIR /app
 
 # Full monorepo (node_modules excluded via .dockerignore → fresh linux install).
