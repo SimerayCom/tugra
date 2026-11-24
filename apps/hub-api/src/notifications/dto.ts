@@ -31,7 +31,17 @@ export const WebhookConfigSchema = z
 
 const CategoryEnum = z.enum(NOTIFICATION_CATEGORIES);
 /** Telegram forum topics: category → message_thread_id (a positive 32-bit int). */
-export const TopicsSchema = z.record(CategoryEnum, z.number().int().positive().max(2147483647));
+const TopicId = z.number().int().positive().max(2147483647);
+export const TopicsSchema = z
+  .object({
+    uptime: TopicId.optional(),
+    deploy: TopicId.optional(),
+    backup: TopicId.optional(),
+    server: TopicId.optional(),
+    security: TopicId.optional(),
+    updates: TopicId.optional(),
+  })
+  .strict();
 
 export const CreateChannelSchema = z.object({
   name: z.string().min(1),
