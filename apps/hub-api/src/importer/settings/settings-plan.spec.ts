@@ -60,6 +60,10 @@ describe("buildSettingsPlan", () => {
     const tg = find(plan, "notification:telegram");
     expect(tg).toMatchObject({ selectable: true, defaultSelected: true });
     expect((tg.detail.groups as unknown[]).length).toBe(2);
+    // each Coolify event is shown with the Tugra event(s) it becomes
+    const shown = (tg.detail.groups as Array<{ events: Array<{ from: string; to: string[] }> }>).flatMap((g) => g.events);
+    expect(shown.length).toBeGreaterThan(0);
+    for (const e of shown) expect(e.to.length).toBeGreaterThan(0);
     expect(tg.notes.map((n) => n.code)).toEqual(expect.arrayContaining(["events_not_carried", "topics_split", "double_send"]));
     expect(find(plan, "notification:discord")).toMatchObject({ selectable: false, blocked: "needs_sensitive" });
     expect(find(plan, "notification:email")).toMatchObject({ selectable: false, blocked: "email_instance_settings" });
@@ -116,6 +120,9 @@ describe("buildSettingsPlan", () => {
     expect(plan.sections[3].entries.map((e) => e.blocked ?? "ok")).toEqual(["ok", "invalid_schedule", "app_not_imported", "exists"]);
     expect(plan.planned.get("task:app-1:a")).toMatchObject({ section: "scheduledTasks", appId: "tugra-app-1", cron: "0 0 * * *" });
     expect(JSON.stringify(plan.sections)).not.toContain("secret-command");
+    // the source keeps running the same task until cutover: warned about and never pre-selected
+    expect(find(plan, "task:app-1:a").notes.map((n) => n.code)).toContain("double_run");
+    expect(find(plan, "task:app-1:a").defaultSelected).toBe(false);
   });
 
   it("server settings: carries the cleanup schedule, needs a target server, warns about volumes", () => {
@@ -123,6 +130,8 @@ describe("buildSettingsPlan", () => {
     expect(find(plan, "server:s1")).toMatchObject({ selectable: true, needs: ["server"], detail: { schedule: "0 4 * * *", thresholdPct: 80, volumes: true } });
     expect(find(plan, "server:s1").notes.map((n) => n.code)).toEqual(expect.arrayContaining(["volumes_pruned", "cleanup_always"]));
     expect(find(plan, "server:s2")).toMatchObject({ selectable: false, blocked: "invalid_schedule" });
+    // a cleanup rewrites a server's schedule (volumes too): never pre-selected
+    expect(find(plan, "server:s1").defaultSelected).toBe(false);
   });
 
   it("tags: only tags that reach an imported resource are offered", () => {

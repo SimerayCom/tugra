@@ -1,5 +1,6 @@
 import { BadRequestException, ConflictException, ForbiddenException, HttpException, Injectable, Logger, NotFoundException } from "@nestjs/common";
 import { PrismaService } from "../../prisma/prisma.service";
+import { TeamAccessService } from "../../common/team-access.service";
 import { AuditService } from "../../audit/audit.service";
 import { ImporterService } from "../importer.service";
 import { NotificationsService } from "../../notifications/notifications.service";
@@ -34,6 +35,12 @@ export interface SettingsApplyResult {
 }
 
 /** The status a thrown service error maps to, as a fixed code. */
+interface ImportedRow {
+  ref: string;
+  kind: "application" | "database";
+  id: string;
+}
+
 function failureCode(e: unknown): string {
   if (e instanceof ForbiddenException) return "forbidden";
   if (e instanceof ConflictException) return "conflict";
@@ -66,18 +73,22 @@ export class ImportSettingsService {
     private readonly teams: TeamsService,
     private readonly apps: ApplicationsService,
     private readonly databases: DatabasesService,
+    private readonly access: TeamAccessService,
   ) {}
 
   async preview(userId: string, input: ImportSettingsPreviewInput): Promise<SettingsPreview> {
-    const { plan } = await this.load(userId, input.sessionId, input.sourceKind, input.opId);
+    const { plan } = await this.load(userId, input);
     return plan ? { supported: true, sections: plan.sections } : { supported: false, sections: [] };
   }
 
   async apply(userId: string, input: ImportSettingsApplyInput): Promise<SettingsApplyResult> {
-    const { plan, teamId } = await this.load(userId, input.sessionId, input.sourceKind, input.opId);
+    // Only the sections that hold a selected entry are read from the source (the full read is a few hundred paced GETs).
+    const only = new Set(input.select.map(sectionOf));
+    const { plan, teamId } = await this.load(userId, input, only);
     if (!plan) throw new BadRequestException("this source carries no settings");
     const blockedById = new Map(plan.sections.flatMap((s) => s.entries.map((e) => [e.id, e.blocked] as const)));
     const results: SettingsEntryResult[] = [];
+    const usedServers = new Set<string>();
     for (const id of [...new Set(input.select)]) {
       const entry = plan.planned.get(id);
       if (!entry) {
@@ -85,7 +96,7 @@ export class ImportSettingsService {
         continue;
       }
       try {
-        results.push(await this.applyOne(userId, teamId, id, entry, input));
+        results.push(await this.applyOne(userId, teamId, id, entry, input, usedServers));
       } catch (e) {
         this.logger.warn(`settings import: ${entry.section} entry failed (${failureCode(e)})`);
         results.push({ id, section: entry.section, status: "failed", code: failureCode(e) });
@@ -101,21 +112,28 @@ export class ImportSettingsService {
 
   // ── reading ────────────────────────────────────────────────────────────────────────────────────
 
-  /** Open the session (ownership + `apps:config`), read the source's settings and plan them against the session's team. */
-  private async load(userId: string, sessionId: string, kind: ImportSettingsPreviewInput["sourceKind"], opId?: string): Promise<{ plan?: SettingsPlan; teamId: string }> {
-    const { source, session } = await this.importer.openSession(userId, sessionId, kind);
+  /**
+   * Open the session (ownership + `apps:config`), read the source's settings and plan them against the TARGET team: the team
+   * the import landed in (taken from the operation's imported resources), else the `teamId` the caller names (checked for
+   * `apps:config`), else the session's own team.
+   */
+  private async load(userId: string, input: ImportSettingsPreviewInput, only?: ReadonlySet<SettingsSection>): Promise<{ plan?: SettingsPlan; teamId: string }> {
+    const { source, session } = await this.importer.openSession(userId, input.sessionId, input.sourceKind);
     try {
       if (!source.readSettings) return { teamId: session.teamId };
-      const raw: RawSettings = await source.readSettings();
-      const ctx = await this.targetContext(userId, session.teamId, opId);
-      return { plan: buildSettingsPlan(raw, ctx), teamId: session.teamId };
+      const imp = input.opId ? await this.importedResources(userId, input.opId) : undefined;
+      const teamId = imp?.teamId ?? input.teamId ?? session.teamId;
+      if (teamId !== session.teamId) await this.access.requirePermission(userId, teamId, "apps:config");
+      const raw: RawSettings = await source.readSettings(only);
+      const ctx = await this.targetContext(userId, teamId, imp?.rows);
+      return { plan: buildSettingsPlan(raw, ctx), teamId };
     } finally {
       await source.close();
     }
   }
 
   /** What the session's team already has (names/keys only), and which source resources the operation imported. */
-  private async targetContext(userId: string, teamId: string, opId?: string): Promise<TargetContext> {
+  private async targetContext(userId: string, teamId: string, importedRows?: ImportedRow[]): Promise<TargetContext> {
     const [channels, vars, dests, members, invites, actor] = await Promise.all([
       this.prisma.notificationChannel.findMany({ where: { teamId }, select: { name: true } }),
       this.prisma.sharedVariable.findMany({ where: { teamId }, select: { key: true } }),
@@ -124,7 +142,7 @@ export class ImportSettingsService {
       this.prisma.teamInvitation.findMany({ where: { teamId }, select: { email: true } }),
       this.prisma.user.findUnique({ where: { id: userId }, select: { email: true } }),
     ]);
-    const imported = opId ? await this.importedResources(userId, teamId, opId) : new Map<string, { kind: "application" | "database"; id: string }>();
+    const imported = new Map((importedRows ?? []).map((r) => [r.ref, { kind: r.kind, id: r.id }] as const));
     const appIds = [...imported.values()].filter((v) => v.kind === "application").map((v) => v.id);
     const existingTasks = appIds.length ? await this.prisma.scheduledTask.findMany({ where: { appId: { in: appIds } }, select: { appId: true, name: true, command: true } }) : [];
     return {
@@ -135,35 +153,39 @@ export class ImportSettingsService {
       pendingInviteEmails: new Set(invites.map((i) => i.email.toLowerCase())),
       actorEmail: actor?.email,
       imported,
-      hasOperation: !!opId,
+      hasOperation: !!importedRows,
       taskKeys: new Set(existingTasks.map((t) => taskKey(t.appId, t.name, t.command))),
     };
   }
 
   /**
-   * Source ref -> the Tugra app/database an import operation created for it. The operation must be the caller's own import
-   * and land in the session's team; only resources that really sit in that team are returned.
+   * The Tugra apps/databases an import operation created, by source ref, and the team they sit in. The operation must be
+   * the caller's own import. The team is the one most of those resources are in (an import lands in its target server's
+   * team); only resources that really sit in that team are returned. `teamId` is undefined when nothing was created.
    */
-  private async importedResources(userId: string, teamId: string, opId: string): Promise<Map<string, { kind: "application" | "database"; id: string }>> {
+  private async importedResources(userId: string, opId: string): Promise<{ teamId?: string; rows: ImportedRow[] }> {
     const op = await this.prisma.bulkOperation.findUnique({ where: { id: opId }, include: { tasks: { where: { status: "DONE", resourceType: { in: ["application", "database"] } }, select: { itemRef: true, resourceType: true, resourceId: true } } } });
     if (!op || op.kind !== "import") throw new NotFoundException("import operation not found");
     if (op.actorId !== userId) throw new ForbiddenException("not your operation");
-    const rows: Array<{ ref: string; kind: "application" | "database"; id: string }> = [];
+    const rows: ImportedRow[] = [];
     for (const t of op.tasks) {
       const ref = (t.itemRef ?? "").split(":").slice(2).join(":");
       if (ref && t.resourceId && (t.resourceType === "application" || t.resourceType === "database")) rows.push({ ref, kind: t.resourceType, id: t.resourceId });
     }
     const [apps, dbs] = await Promise.all([
-      this.prisma.application.findMany({ where: { id: { in: rows.filter((r) => r.kind === "application").map((r) => r.id) }, teamId }, select: { id: true } }),
-      this.prisma.database.findMany({ where: { id: { in: rows.filter((r) => r.kind === "database").map((r) => r.id) }, teamId }, select: { id: true } }),
+      this.prisma.application.findMany({ where: { id: { in: rows.filter((r) => r.kind === "application").map((r) => r.id) } }, select: { id: true, teamId: true } }),
+      this.prisma.database.findMany({ where: { id: { in: rows.filter((r) => r.kind === "database").map((r) => r.id) } }, select: { id: true, teamId: true } }),
     ]);
-    const inTeam = new Set([...apps.map((a) => a.id), ...dbs.map((d) => d.id)]);
-    return new Map(rows.filter((r) => inTeam.has(r.id)).map((r) => [r.ref, { kind: r.kind, id: r.id }]));
+    const teamOf = new Map([...apps, ...dbs].map((r) => [r.id, r.teamId] as const));
+    const counts = new Map<string, number>();
+    for (const tid of teamOf.values()) counts.set(tid, (counts.get(tid) ?? 0) + 1);
+    const teamId = [...counts.entries()].sort((x, y) => y[1] - x[1])[0]?.[0];
+    return { teamId, rows: rows.filter((r) => teamOf.get(r.id) === teamId) };
   }
 
   // ── applying ───────────────────────────────────────────────────────────────────────────────────
 
-  private async applyOne(userId: string, teamId: string, id: string, p: PlannedEntry, input: ImportSettingsApplyInput): Promise<SettingsEntryResult> {
+  private async applyOne(userId: string, teamId: string, id: string, p: PlannedEntry, input: ImportSettingsApplyInput, usedServers: Set<string>): Promise<SettingsEntryResult> {
     switch (p.section) {
       case "notifications": {
         const channels: NonNullable<SettingsEntryResult["channels"]> = [];
@@ -174,9 +196,15 @@ export class ImportSettingsService {
             channels.push({ id: "", name, skipped: true });
             continue;
           }
-          const created = await this.notifications.create(userId, { name, type: p.channel.providerType, teamId, config: providerConfig(p.channel, g), eventTypes: g.tugraEvents });
-          if (!p.channel.enabled) await this.notifications.update(userId, created.id, { enabled: false });
-          channels.push({ id: created.id, name });
+          try {
+            const created = await this.notifications.create(userId, { name, type: p.channel.providerType, teamId, config: providerConfig(p.channel, g), eventTypes: g.tugraEvents });
+            channels.push({ id: created.id, name });
+            if (!p.channel.enabled) await this.notifications.update(userId, created.id, { enabled: false });
+          } catch (e) {
+            // Channels already created stay listed (with their test button): a retry then reports them as existing.
+            if (channels.some((c) => !c.skipped)) return { id, section: "notifications", status: "failed", code: failureCode(e), channels };
+            throw e;
+          }
         }
         const made = channels.filter((c) => !c.skipped);
         return { id, section: "notifications", status: made.length ? "created" : "skipped", ...(made.length ? {} : { code: "exists" }), channels };
@@ -214,6 +242,9 @@ export class ImportSettingsService {
         // The cleanup is written to a server of the SESSION's team only (the service checks the caller's `servers:ops` there).
         const server = await this.prisma.server.findFirst({ where: { id: serverId, teamId }, select: { id: true } });
         if (!server) return { id, section: "serverSettings", status: "failed", code: "server_not_found" };
+        // Each Tugra server holds ONE cleanup config: two source servers mapped onto it would overwrite each other.
+        if (usedServers.has(server.id)) return { id, section: "serverSettings", status: "failed", code: "server_duplicate" };
+        usedServers.add(server.id);
         await this.cleanup.setConfig(userId, server.id, { enabled: true, cron: p.cron, ...(p.cleanup.thresholdPct ? { thresholdPct: p.cleanup.thresholdPct } : {}), volumes: p.cleanup.deleteVolumes });
         return { id, section: "serverSettings", status: "created", targetId: server.id };
       }

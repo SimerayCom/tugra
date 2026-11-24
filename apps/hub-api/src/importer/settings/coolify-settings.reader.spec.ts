@@ -87,4 +87,12 @@ describe("readCoolifySettings", () => {
     await readCoolifySettings(client);
     expect(client.calls.some((c) => c.endsWith("/tags") && c !== "/tags")).toBe(false);
   });
+
+  it("reads only the requested sections", async () => {
+    const client = new FakeClient({ "/team/members": [{ email: "a@example.com", name: "Ann" }] });
+    const raw = await readCoolifySettings(client, new Set(["members"]));
+    expect(client.calls).toEqual(["/team/members"]);
+    expect(raw.members.ok).toBe(true);
+    expect(raw.notifications).toEqual({ ok: false, reason: "not_exposed" });
+  });
 });

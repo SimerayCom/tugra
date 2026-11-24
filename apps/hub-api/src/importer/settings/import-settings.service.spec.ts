@@ -17,7 +17,7 @@ function make(settings: RawSettings, opts: { supported?: boolean; opTasks?: unkn
     user: { findUnique: jest.fn().mockResolvedValue({ email: "me@example.com" }) },
     scheduledTask: { findMany: jest.fn().mockResolvedValue([]) },
     server: { findFirst: jest.fn().mockResolvedValue({ id: "tugra-srv" }) },
-    application: { findMany: jest.fn().mockResolvedValue([{ id: "tugra-app-1" }]), findFirst: jest.fn().mockResolvedValue({ tags: ["x"] }) },
+    application: { findMany: jest.fn().mockResolvedValue([{ id: "tugra-app-1", teamId: "team-1" }]), findFirst: jest.fn().mockResolvedValue({ tags: ["x"] }) },
     database: { findMany: jest.fn().mockResolvedValue([]), findFirst: jest.fn().mockResolvedValue({ tags: [] }) },
     bulkOperation: { findUnique: jest.fn().mockResolvedValue({ id: "op-1", kind: "import", actorId: opts.opActor ?? "u1", tasks: opts.opTasks ?? [{ itemRef: "app:_:app-1", resourceType: "application", resourceId: "tugra-app-1" }] }) },
   };
@@ -30,8 +30,9 @@ function make(settings: RawSettings, opts: { supported?: boolean; opTasks?: unkn
   const teams = { invite: jest.fn().mockResolvedValue({ id: "inv-1" }) };
   const apps = { setTags: jest.fn().mockResolvedValue(undefined) };
   const databases = { setTags: jest.fn().mockResolvedValue(undefined) };
-  const svc = new ImportSettingsService(prisma as never, audit as never, importer as never, notifications as never, destinations as never, sharedVars as never, tasks as never, cleanup as never, teams as never, apps as never, databases as never);
-  return { svc, source, importer, prisma, audit, notifications, destinations, sharedVars, tasks, cleanup, teams, apps, databases };
+  const access = { requirePermission: jest.fn().mockResolvedValue(undefined) };
+  const svc = new ImportSettingsService(prisma as never, audit as never, importer as never, notifications as never, destinations as never, sharedVars as never, tasks as never, cleanup as never, teams as never, apps as never, databases as never, access as never);
+  return { access, svc, source, importer, prisma, audit, notifications, destinations, sharedVars, tasks, cleanup, teams, apps, databases };
 }
 
 const telegram: RawSettings["notifications"] = {
@@ -80,6 +81,13 @@ describe("ImportSettingsService.apply: notifications", () => {
     // no secret in the response or the audit row
     expect(JSON.stringify(out)).not.toContain("bot-token-1");
     expect(JSON.stringify(audit.log.mock.calls)).not.toContain("bot-token-1");
+  });
+
+  it("a failure after the first topic channel keeps that channel in the result", async () => {
+    const { svc, notifications } = make(raw({ notifications: telegram }));
+    notifications.create.mockImplementationOnce(async (_u: string, d: { name: string }) => ({ id: `ch-${d.name}` })).mockRejectedValueOnce(new ConflictException("x"));
+    const out = await svc.apply("u1", { sessionId: "sess", select: ["notification:telegram"] });
+    expect(out.results[0]).toMatchObject({ status: "failed", code: "conflict", channels: [{ id: "ch-Telegram (Coolify) - topic 5" }] });
   });
 
   it("is idempotent: a second run skips the channels that exist", async () => {
@@ -141,14 +149,44 @@ describe("ImportSettingsService.apply: other sections", () => {
     expect(out.results[0].status).toBe("created");
   });
 
-  it("an operation's app of ANOTHER team is not mapped (team scoping)", async () => {
+  it("settings land in the team the import landed in, not the connection's team (multi-team)", async () => {
+    const vars: RawSettings["sharedVariables"] = { ok: true, items: [{ scope: "team", key: "API_URL", value: "v", locked: false }] };
     const t: RawSettings["scheduledTasks"] = { ok: true, items: [{ resourceKind: "application", resourceRef: "app-1", resourceName: "web", ref: "t1", name: "Nightly", command: "run-it", frequency: "daily", enabled: true }] };
-    const { svc, tasks, prisma } = make(raw({ scheduledTasks: t }));
-    prisma.application.findMany.mockResolvedValue([]); // not in the session's team
-    const out = await svc.apply("u1", { sessionId: "sess", opId: "op-1", select: ["task:app-1:t1"] });
-    expect(tasks.create).not.toHaveBeenCalled();
-    expect(out.results[0]).toMatchObject({ status: "skipped", code: "app_not_imported" });
-    expect(prisma.application.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ teamId: "team-1" }) }));
+    const { svc, sharedVars, tasks, prisma, access } = make(raw({ sharedVariables: vars, scheduledTasks: t }));
+    prisma.application.findMany.mockResolvedValue([{ id: "tugra-app-1", teamId: "team-2" }]);
+    const out = await svc.apply("u1", { sessionId: "sess", opId: "op-1", select: ["variable:team:API_URL", "task:app-1:t1"] });
+    expect(access.requirePermission).toHaveBeenCalledWith("u1", "team-2", "apps:config");
+    expect(sharedVars.upsert).toHaveBeenCalledWith("u1", "team-2", "API_URL", "v");
+    expect(tasks.create).toHaveBeenCalled();
+    expect(out.counts.created).toBe(2);
+    expect(prisma.notificationChannel.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { teamId: "team-2" } }));
+  });
+
+  it("a caller without apps:config on the target team is refused", async () => {
+    const { svc, access, prisma } = make(raw());
+    prisma.application.findMany.mockResolvedValue([{ id: "tugra-app-1", teamId: "team-2" }]);
+    access.requirePermission.mockRejectedValue(new ForbiddenException("no"));
+    await expect(svc.preview("u1", { sessionId: "sess", opId: "op-1" })).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it("an explicit teamId (no operation yet) is checked and used for the plan and the writes", async () => {
+    const vars: RawSettings["sharedVariables"] = { ok: true, items: [{ scope: "team", key: "API_URL", value: "v", locked: false }] };
+    const { svc, access, sharedVars } = make(raw({ sharedVariables: vars }));
+    await svc.apply("u1", { sessionId: "sess", teamId: "team-3", select: ["variable:team:API_URL"] });
+    expect(access.requirePermission).toHaveBeenCalledWith("u1", "team-3", "apps:config");
+    expect(sharedVars.upsert).toHaveBeenCalledWith("u1", "team-3", "API_URL", "v");
+  });
+
+  it("the session's own team needs no extra permission check", async () => {
+    const { svc, access } = make(raw());
+    await svc.preview("u1", { sessionId: "sess", teamId: "team-1" });
+    expect(access.requirePermission).not.toHaveBeenCalled();
+  });
+
+  it("apply reads only the sections that hold a selected entry", async () => {
+    const { svc, source } = make(raw());
+    await svc.apply("u1", { sessionId: "sess", select: ["variable:team:A", "tag:x"] });
+    expect(source.readSettings).toHaveBeenCalledWith(new Set(["sharedVariables", "tags"]));
   });
 
   it("server settings: needs a mapped server of the session's team, then writes through the cleanup service", async () => {
@@ -161,6 +199,17 @@ describe("ImportSettingsService.apply: other sections", () => {
     const ok = await svc.apply("u1", { sessionId: "sess", select: ["server:s1"], serverMap: { s1: "tugra-srv" } });
     expect(cleanup.setConfig).toHaveBeenCalledWith("u1", "tugra-srv", { enabled: true, cron: "0 4 * * *", thresholdPct: 80, volumes: false });
     expect(ok.results[0].status).toBe("created");
+  });
+
+  it("server settings: two source servers cannot be mapped onto the same Tugra server", async () => {
+    const c: RawSettings["serverSettings"] = { ok: true, items: [
+      { serverRef: "s1", serverName: "app-1", frequency: "0 4 * * *", deleteVolumes: false, deleteNetworks: false, forceCleanup: true },
+      { serverRef: "s2", serverName: "app-2", frequency: "0 5 * * *", deleteVolumes: true, deleteNetworks: false, forceCleanup: true },
+    ] };
+    const { svc, cleanup } = make(raw({ serverSettings: c }));
+    const out = await svc.apply("u1", { sessionId: "sess", select: ["server:s1", "server:s2"], serverMap: { s1: "tugra-srv", s2: "tugra-srv" } });
+    expect(cleanup.setConfig).toHaveBeenCalledTimes(1);
+    expect(out.results.map((r) => [r.status, r.code])).toEqual([["created", undefined], ["failed", "server_duplicate"]]);
   });
 
   it("tags: adds the tag to each imported resource that does not have it", async () => {

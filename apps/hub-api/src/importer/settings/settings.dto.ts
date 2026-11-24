@@ -7,6 +7,8 @@ export const ImportSettingsPreviewSchema = z.object({
   sessionId: z.string().min(1),
   sourceKind: z.enum(REMOTE_SOURCE_KINDS).optional(),
   opId: z.string().min(1).optional(),
+  /** The team the import lands in (the target server's team). Checked for `apps:config`; ignored when `opId` names the team. */
+  teamId: z.string().min(1).max(100).optional(),
 });
 export type ImportSettingsPreviewInput = z.infer<typeof ImportSettingsPreviewSchema>;
 
@@ -21,6 +23,7 @@ export const ImportSettingsApplySchema = z.object({
   sessionId: z.string().min(1),
   sourceKind: z.enum(REMOTE_SOURCE_KINDS).optional(),
   opId: z.string().min(1).optional(),
+  teamId: z.string().min(1).max(100).optional(),
   select: z.array(entryId).min(1).max(500),
   /** Source server ref -> Tugra server id (server settings). */
   serverMap: z.record(z.string().min(1).max(200), z.string().min(1).max(100)).optional(),

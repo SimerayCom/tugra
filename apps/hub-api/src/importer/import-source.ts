@@ -1,6 +1,6 @@
 import type { ForeignEnv, ForeignFleet, ServiceBundle } from "./foreign-fleet";
 import type { Unmapped } from "./reason";
-import type { RawSettings } from "./settings/settings-types";
+import type { RawSettings, SettingsSection } from "./settings/settings-types";
 
 /** What transports/data a source adapter offers, so the planner/UI can adapt (e.g. warn that volume data
  *  cannot move without SSH, or that DB passwords need a `read:sensitive` token). */
@@ -127,7 +127,7 @@ export interface ImportSource {
    *  cleanup, tags, members), read with the session's token. The result holds secret values (a bot token, a variable value): it is
    *  consumed in memory by the settings import and NEVER serialised (the preview is derived from it by `buildSettingsPlan`). A
    *  section the source cannot answer is `{ ok: false, reason }`, never a guess. A source without it carries no settings. */
-  readSettings?(): Promise<RawSettings>;
+  readSettings?(only?: ReadonlySet<SettingsSection>): Promise<RawSettings>;
   /** Dump a database's contents (requires capabilities().dbDataDump). */
   dumpDb?(ref: string): Promise<DumpHandle>;
   /** Open a volume's bytes as a tar stream (requires capabilities().volumeRead). */

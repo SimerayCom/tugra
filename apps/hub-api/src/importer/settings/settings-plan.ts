@@ -6,6 +6,7 @@
 import { isValidEnvKey, isSafeEnvValue } from "../../common/env-key";
 import { normalizeTags } from "../../common/tags";
 import {
+  COOLIFY_EVENT_MAP,
   channelName,
   cronFromFrequency,
   planChannelGroups,
@@ -100,7 +101,7 @@ const notifications: Builder = (raw, ctx, planned) => {
       detail: {
         kind: ch.kind,
         enabled: ch.enabled,
-        groups: groups.map((g) => ({ ...(g.threadId ? { threadId: g.threadId } : {}), coolifyEvents: g.coolifyEvents, tugraEvents: g.tugraEvents })),
+        groups: groups.map((g) => ({ ...(g.threadId ? { threadId: g.threadId } : {}), coolifyEvents: g.coolifyEvents, tugraEvents: g.tugraEvents, events: g.coolifyEvents.map((from) => ({ from, to: [...(COOLIFY_EVENT_MAP[from] ?? [])] })) })),
         targetNames: names,
       },
     });
@@ -183,13 +184,16 @@ const scheduledTasks: Builder = (raw, ctx, planned) => {
     if (t.container) notes.push(note("info", "container_ignored"));
     if (t.name.length > TASK_NAME_MAX) notes.push(note("info", "name_truncated"));
     if (!t.enabled) notes.push(note("info", "source_disabled"));
+    // Until cutover the source keeps running the same task against the old stack.
+    notes.push(note("warn", "double_run"));
     if (!blocked && appId && cron) planned.set(id, { section: "scheduledTasks", task: { ...t, name }, cron, appId });
     return entry({
       id,
       section: "scheduledTasks",
       name: t.name,
       blocked,
-      defaultSelected: t.enabled,
+      // Not pre-selected: the source still runs the same task until cutover, so scheduling it here is a deliberate choice.
+      defaultSelected: false,
       notes,
       // The command is NOT shown: it can carry secrets.
       detail: { resource: t.resourceName, resourceKind: t.resourceKind, ...(cron ? { schedule: cron } : {}), enabled: t.enabled, ...(t.timeoutSec ? { timeoutSec: t.timeoutSec } : {}) },
@@ -215,7 +219,8 @@ const serverSettings: Builder = (raw, _ctx, planned) => {
       section: "serverSettings",
       name: c.serverName,
       blocked,
-      defaultSelected: true,
+      // Not pre-selected: it rewrites a Tugra server's cleanup schedule, so the operator picks which server it is for.
+      defaultSelected: false,
       needs: blocked ? undefined : ["server"],
       notes,
       detail: { server: c.serverName, ...(cron ? { schedule: cron } : {}), ...(c.thresholdPct ? { thresholdPct: c.thresholdPct } : {}), volumes: c.deleteVolumes },

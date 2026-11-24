@@ -15,7 +15,7 @@
  */
 import type { CoolifyClient } from "../sources/coolify.source";
 import { mapLimit } from "../sources/map-limit";
-import type { Read, RawChannel, RawServerCleanup, RawSharedVar, RawSettings, RawTag, RawTask, UnavailableReason } from "./settings-types";
+import type { Read, RawChannel, SettingsSection, RawServerCleanup, RawSharedVar, RawSettings, RawTag, RawTask, UnavailableReason } from "./settings-types";
 import { CHANNEL_KINDS, mergeTags, parseCleanup, parseCoolifyChannel, parseMembers, parseResourceTags, parseSharedRows, parseStorageRows, parseTagNames, parseTaskRows } from "./coolify-settings-map";
 
 const CONCURRENCY = 6;
@@ -55,19 +55,25 @@ const listOf = (rows: unknown): Listed[] =>
         .map((r) => ({ uuid: r.uuid, name: typeof r.name === "string" && r.name ? r.name : r.uuid }))
     : [];
 
-export async function readCoolifySettings(client: CoolifyClient): Promise<RawSettings> {
+/**
+ * `only` limits the read to those sections (the apply reads just what was selected; a section left out is reported as not
+ * read, never as data). Without it every section is read (the preview).
+ */
+export async function readCoolifySettings(client: CoolifyClient, only?: ReadonlySet<SettingsSection>): Promise<RawSettings> {
   // The resource lists are shared by the task and tag reads; fetched at most once each.
   const lists: Partial<Record<"applications" | "services" | "databases" | "servers", Promise<Got<unknown>>>> = {};
   const listing = (kind: "applications" | "services" | "databases" | "servers") => (lists[kind] ??= attempt<unknown>(client, `/${kind}`));
 
+  const skipped = { ok: false, reason: "not_exposed" } as const;
+  const want = (section: SettingsSection) => !only || only.has(section);
   const [notifications, sharedVariables, storages, scheduledTasks, serverSettings, tags, members] = await Promise.all([
-    readNotifications(client),
-    readSharedVariables(client),
-    readStorages(client),
-    readTasks(client, listing),
-    readCleanup(client, listing),
-    readTags(client, listing),
-    readMembers(client),
+    want("notifications") ? readNotifications(client) : skipped,
+    want("sharedVariables") ? readSharedVariables(client) : skipped,
+    want("storages") ? readStorages(client) : skipped,
+    want("scheduledTasks") ? readTasks(client, listing) : skipped,
+    want("serverSettings") ? readCleanup(client, listing) : skipped,
+    want("tags") ? readTags(client, listing) : skipped,
+    want("members") ? readMembers(client) : skipped,
   ]);
   return { notifications, sharedVariables, storages, scheduledTasks, serverSettings, tags, members };
 }
