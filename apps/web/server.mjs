@@ -7,12 +7,17 @@ import { fileURLToPath } from "node:url";
 import { dirname } from "node:path";
 import next from "next";
 import { clientIpPolicyFromEnv, guardForwardedHeaders } from "./server/forwarded-guard.mjs";
+import { standaloneConfigEnv } from "./server/standalone-config.mjs";
 
 const port = Number(process.env.PORT ?? 3001);
 const hostname = process.env.WEB_LISTEN_HOST || undefined; // unset = all interfaces, like `next start`
 const policy = clientIpPolicyFromEnv();
 
-const app = next({ dev: false, dir: dirname(fileURLToPath(import.meta.url)), hostname: hostname ?? "0.0.0.0", port });
+const dir = dirname(fileURLToPath(import.meta.url));
+const standaloneConfig = standaloneConfigEnv(dir);
+if (standaloneConfig) process.env.__NEXT_PRIVATE_STANDALONE_CONFIG = standaloneConfig;
+
+const app = next({ dev: false, dir, hostname: hostname ?? "0.0.0.0", port });
 await app.prepare();
 const handle = app.getRequestHandler();
 const upgrade = app.getUpgradeHandler();

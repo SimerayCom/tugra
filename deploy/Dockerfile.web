@@ -3,19 +3,14 @@
 # published image: the SPA resolves the hub's public origin at RUNTIME (window.location.origin) when
 # this is unset, so a single published image works for any single-origin (reverse-proxy) deployment.
 # A split-port deployment that needs a fixed absolute hub URL should build from source with this set.
+# Multi-stage: the build stage is the full node:22 image; the shipped image is node:22-slim with only Next's
+# traced standalone output (server files + the node_modules the build actually uses), the static assets and our
+# server.mjs entry — no sources, dev dependencies, pnpm store or build caches.
 # node:22 LTS — Node 20 reached end-of-life; 22 is the active LTS that still gets security patches.
-FROM node:22
+FROM node:22 AS build
 
 RUN corepack enable && corepack prepare pnpm@9.12.0 --activate
 WORKDIR /app
-
-# OCI metadata so the GHCR package links to the repo (and shows its README + logo) with license/vendor.
-LABEL org.opencontainers.image.source="https://github.com/SimerayCom/tugra" \
-      org.opencontainers.image.url="https://github.com/SimerayCom/tugra" \
-      org.opencontainers.image.title="Tugra Web" \
-      org.opencontainers.image.description="Tugra web dashboard — the UI for the self-hostable container PaaS." \
-      org.opencontainers.image.licenses="AGPL-3.0" \
-      org.opencontainers.image.vendor="Simeray Ltd"
 
 COPY . .
 RUN pnpm install --frozen-lockfile
@@ -30,11 +25,42 @@ ARG HUB_INTERNAL_URL=http://hub-api:3000
 ENV HUB_INTERNAL_URL=$HUB_INTERNAL_URL
 # No phone-home: Next.js collects anonymous telemetry during `next build` unless this is set.
 ENV NEXT_TELEMETRY_DISABLED=1
-# Run Next in production mode at runtime (no error message/stack in rendered HTML). server.mjs also defaults this.
 ENV NODE_ENV=production
 RUN pnpm --filter @tugra/shared build \
  && pnpm --filter @tugra/web build
+# Assemble the runtime tree: traced standalone output (apps/web/... + node_modules at the root), then the
+# assets Next does not trace (static chunks, public/), our server entry + its helpers, and the built
+# @tugra/shared that those helpers import (server.mjs sits outside Next's file tracing). server.mjs boots Next
+# through its programmatic `next()` API, whose config loader requires files the standalone trace leaves out, so
+# the `next` package itself is overlaid in full (its SWC compiler is a separate package and stays out).
+RUN mkdir /out \
+ && cp -r apps/web/.next/standalone/. /out/ \
+ && cp -r apps/web/.next/static /out/apps/web/.next/static \
+ && cp -r apps/web/public /out/apps/web/public \
+ && cp apps/web/server.mjs apps/web/next.config.mjs apps/web/package.json /out/apps/web/ \
+ && cp -r apps/web/server /out/apps/web/server \
+ && NEXT_DIR="$(readlink -f apps/web/node_modules/next)" \
+ && cp -r "$NEXT_DIR/." "/out/${NEXT_DIR#/app/}/" \
+ && mkdir -p /out/apps/web/node_modules/@tugra/shared \
+ && cp -r packages/shared/package.json packages/shared/dist /out/apps/web/node_modules/@tugra/shared/
+
+FROM node:22-slim
+
+# OCI metadata so the GHCR package links to the repo (and shows its README + logo) with license/vendor.
+LABEL org.opencontainers.image.source="https://github.com/SimerayCom/tugra" \
+      org.opencontainers.image.url="https://github.com/SimerayCom/tugra" \
+      org.opencontainers.image.title="Tugra Web" \
+      org.opencontainers.image.description="Tugra web dashboard — the UI for the self-hostable container PaaS." \
+      org.opencontainers.image.licenses="AGPL-3.0" \
+      org.opencontainers.image.vendor="Simeray Ltd"
+
+WORKDIR /app
+COPY --from=build /out/ ./
+# No phone-home: Next.js collects anonymous telemetry unless this is set.
+ENV NEXT_TELEMETRY_DISABLED=1
+# Run Next in production mode at runtime (no error message/stack in rendered HTML). server.mjs also defaults this.
+ENV NODE_ENV=production
 
 WORKDIR /app/apps/web
 EXPOSE 3001
-CMD ["pnpm", "start"]
+CMD ["node", "server.mjs"]

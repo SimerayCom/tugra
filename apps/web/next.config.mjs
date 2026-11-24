@@ -1,5 +1,14 @@
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // Self-contained production output (.next/standalone): the server files plus only the node_modules the build
+  // traced, which is what lets the release image ship without the whole workspace. The tracing root is the
+  // monorepo root so workspace packages and the hoisted pnpm store are found. Our own server.mjs (not Next's
+  // generated server.js) stays the entry point; the image copies it next to the traced output.
+  output: "standalone",
+  outputFileTracingRoot: path.join(path.dirname(fileURLToPath(import.meta.url)), "../.."),
   reactStrictMode: true,
   // Next's default gzip buffers text/event-stream responses proxied through the /api rewrite, which breaks
   // live logs/metrics/update-progress in the quick start. A reverse proxy does compression anyway.
