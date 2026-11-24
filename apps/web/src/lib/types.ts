@@ -869,6 +869,9 @@ export interface HottestContainerRow {
   kind: "app" | "db" | "system" | "other";
   resourceId?: string;
   service?: string;
+  /** Project / environment the container belongs to when its labels say so (Coolify-managed containers). */
+  project?: string;
+  environment?: string;
   cpu: number;
   memUsed: number;
   memTotal: number;
@@ -877,6 +880,40 @@ export interface HottestContainerRow {
   netTx: number;
   blkRead: number;
   blkWrite: number;
+}
+
+/** GET /dashboard/insights: read-only digests behind the Command Center cards. */
+export interface DashboardDiskForecastRow {
+  serverId: string;
+  serverName: string;
+  usedPct: number;
+  freeBytes: number;
+  growthBytesPerDay: number | null;
+  /** null = not filling up / not enough history; 0 = already full. */
+  daysToFull: number | null;
+}
+export interface DashboardBackupRow {
+  id: string;
+  kind: "database" | "volume";
+  resourceId: string;
+  resourceName: string;
+  status: "PENDING" | "RUNNING" | "SUCCESS" | "FAILED";
+  createdAt: string;
+  sizeBytes: number | null;
+}
+export interface DashboardDeployRow {
+  id: string;
+  appId: string;
+  appName: string;
+  status: "QUEUED" | "RUNNING" | "SUCCESS" | "FAILED" | "CANCELLED";
+  trigger: string | null;
+  createdAt: string;
+  durationMs: number | null;
+}
+export interface DashboardInsights {
+  diskForecast: DashboardDiskForecastRow[];
+  backups: { windowDays: number; ok: number; failed: number; running: number; recent: DashboardBackupRow[] };
+  deploys: DashboardDeployRow[];
 }
 
 export interface ContainerMetricSample {

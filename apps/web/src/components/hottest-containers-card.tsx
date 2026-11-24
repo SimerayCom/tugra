@@ -14,8 +14,8 @@ import { MeterBar } from "./meter-bar";
 import { SkeletonTable } from "./skeleton";
 import { useShowSystemContainers, splitSystem } from "../lib/system-containers";
 
-const HOTTEST_LIMIT = 10;
-// Over-fetch so hiding Tugra's own containers still leaves a full top-10 of the user's.
+const HOTTEST_LIMIT = 8;
+// Over-fetch so hiding Tugra's own containers still leaves a full list of the user's.
 const HOTTEST_FETCH = 30;
 const KIND_ICON: Record<HottestContainerRow["kind"], LucideIcon> = { app: Boxes, db: Database, system: Server, other: Box };
 
@@ -32,6 +32,7 @@ export function HottestContainersCard({ teamId }: { teamId?: string | null }) {
   });
   const { visible, system } = splitSystem(data ?? [], showSystem);
   const rows = visible.slice(0, HOTTEST_LIMIT);
+  const total = visible.length;
   const title = t("dashboard.hottest");
   return (
     <section aria-labelledby="hottest-title" style={{ marginBottom: 28 }}>
@@ -83,6 +84,11 @@ export function HottestContainersCard({ teamId }: { teamId?: string | null }) {
               {rows.map((r, i) => <HottestRow key={`${r.serverId}/${r.containerName}`} row={r} rank={i + 1} />)}
             </tbody>
           </table>
+          {total > rows.length && (
+            <div style={{ padding: "10px 14px", borderTop: "1px solid var(--c-bd)", fontSize: 12 }}>
+              <Link href="/fleet" style={{ color: "var(--c-lapis)", textDecoration: "none", fontWeight: 500 }}>{t("dashboard.seeAll", { n: total })}</Link>
+            </div>
+          )}
         </Card>
       )}
     </section>
@@ -91,17 +97,23 @@ export function HottestContainersCard({ teamId }: { teamId?: string | null }) {
 
 function HottestRow({ row, rank }: { row: HottestContainerRow; rank: number }) {
   const t = useT();
-  const href = row.resourceId ? (row.kind === "db" ? `/databases/${row.resourceId}` : `/apps/${row.resourceId}`) : null;
+  // An app/database opens its own page; any other container (Coolify-managed, compose, Tugra's own) opens the
+  // server's Containers tab, so every row leads somewhere.
+  const href = row.resourceId
+    ? row.kind === "db" ? `/databases/${row.resourceId}` : `/apps/${row.resourceId}`
+    : `/servers/${row.serverId}?tab=containers`;
   const Icon = KIND_ICON[row.kind] ?? Box;
+  const where = [row.project, row.environment].filter(Boolean).join(" · ");
   return (
     <tr style={{ borderBottom: "1px solid var(--c-bd)" }}>
       <th scope="row" className="mono" style={{ padding: "10px 14px", fontWeight: 500, color: "var(--c-tx3)", textAlign: "left" }}>{rank}</th>
       <Td>
         <div style={{ fontWeight: 500, display: "flex", alignItems: "center", gap: 6 }}>
           <Icon size={15} strokeWidth={2} aria-hidden style={{ flexShrink: 0, opacity: 0.65 }} />
-          {href ? <Link href={href} style={{ color: "var(--c-tx)", textDecoration: "none" }}>{row.label}</Link> : row.label}
+          <Link href={href} style={{ color: "var(--c-tx)", textDecoration: "none" }}>{row.label}</Link>
         </div>
-        <div className="mono" style={{ fontSize: 11, color: "var(--c-tx3)", wordBreak: "break-all", marginTop: 2 }}>{row.containerName}</div>
+        {where && <div style={{ fontSize: 11, color: "var(--c-tx2)", marginTop: 2 }}>{where}</div>}
+        {row.label !== row.containerName && <div className="mono" style={{ fontSize: 11, color: "var(--c-tx3)", wordBreak: "break-all", marginTop: 2 }}>{row.containerName}</div>}
       </Td>
       <Td><Link href={`/servers/${row.serverId}`} style={{ color: "var(--c-tx2)", textDecoration: "none" }}>{row.serverName}</Link></Td>
       <Td><MeterBar value={row.cpu} tone={metricTone(row.cpu)} text={`${row.cpu.toFixed(0)}%`} label={t("servers.cpu")} /></Td>

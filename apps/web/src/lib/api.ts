@@ -99,6 +99,7 @@ import type {
   MyInvitation,
   InvitationPreview,
   PatchInfo,
+  DashboardInsights,
   FleetPatchCheckResult,
   FleetPatchApplyResult,
   AgentUpdateResponse,
@@ -939,6 +940,10 @@ export const api = {
     const qs = new URLSearchParams({ limit: String(limit) });
     if (teamId) qs.set("teamId", teamId);
     return apiFetch<HottestContainerRow[]>(`/fleet/containers/hottest?${qs}`);
+  },
+  // Digests behind the Command Center cards (disk-fill forecast, backup digest, recent deploys); team-scoped on the hub.
+  getDashboardInsights(teamId?: string) {
+    return apiFetch<DashboardInsights>(`/dashboard/insights${teamId ? `?teamId=${encodeURIComponent(teamId)}` : ""}`);
   },
   containerAction(id: string, container: string, action: "start" | "restart" | "stop" | "remove", confirmName?: string) {
     return apiFetch<{ ok: true }>(`/servers/${id}/containers/action`, {

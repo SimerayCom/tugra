@@ -39,13 +39,14 @@ describe("HottestContainersCard", () => {
     ]);
     wrap(<HottestContainersCard teamId="t1" />);
     expect(await screen.findByText("WordPress")).toBeTruthy();
-    expect(spy).toHaveBeenCalledWith(30, "t1"); // over-fetch so hidden system rows still leave a top-10
+    expect(spy).toHaveBeenCalledWith(30, "t1"); // over-fetch so hidden system rows still leave a full list
     expect(screen.getByRole("table", { name: "Hottest containers" })).toBeTruthy();
     expect(screen.getByRole("link", { name: "WordPress" }).getAttribute("href")).toBe("/apps/app1");
     expect(screen.getByRole("link", { name: "main-pg" }).getAttribute("href")).toBe("/databases/d1");
     expect(screen.getByRole("link", { name: "alpha" }).getAttribute("href")).toBe("/servers/s1");
     expect(screen.getAllByRole("link", { name: "beta" })).toHaveLength(2);
-    expect(screen.queryByRole("link", { name: "nginx" })).toBeNull(); // no resourceId → plain label
+    // no resourceId (a container Tugra doesn't manage) → opens the server's Containers tab instead of going nowhere
+    expect(screen.getByRole("link", { name: "nginx" }).getAttribute("href")).toBe("/servers/s2?tab=containers");
     const rows = screen.getAllByRole("row").slice(1);
     expect(rows).toHaveLength(3);
     expect(within(rows[0]).getByText("1")).toBeTruthy();
@@ -70,6 +71,26 @@ describe("HottestContainersCard", () => {
     expect(screen.getAllByRole("row").slice(1)).toHaveLength(3);
     expect(localStorage.getItem("tugra.showSystemContainers")).toBe("1");
     expect(screen.getByRole("button", { name: "Hide Tugra system containers" })).toBeTruthy();
+  });
+
+  it("names a Coolify container after its app and shows project and environment instead of the raw id", async () => {
+    vi.spyOn(api, "getFleetHottestContainers").mockResolvedValue([
+      row({ containerName: "kgr3jx23x9ck5w2h8n7p4q1z-123456", label: "Blog", kind: "other", resourceId: undefined, project: "Acme Site", environment: "production" }),
+    ]);
+    wrap(<HottestContainersCard />);
+    expect(await screen.findByRole("link", { name: "Blog" })).toBeTruthy();
+    expect(screen.getByText("Acme Site · production")).toBeTruthy();
+    expect(screen.getByText("kgr3jx23x9ck5w2h8n7p4q1z-123456")).toBeTruthy(); // the raw name stays, but as the small print
+  });
+
+  it("shows at most 8 rows and a 'See all' link with the real total", async () => {
+    vi.spyOn(api, "getFleetHottestContainers").mockResolvedValue(
+      Array.from({ length: 11 }, (_, i) => row({ containerName: `c${i}`, label: `svc-${i}`, resourceId: undefined, kind: "other", cpu: 50 - i })),
+    );
+    wrap(<HottestContainersCard />);
+    expect(await screen.findByText("svc-0")).toBeTruthy();
+    expect(screen.getAllByRole("row").slice(1)).toHaveLength(8);
+    expect(screen.getByRole("link", { name: "See all (11) →" }).getAttribute("href")).toBe("/fleet");
   });
 
   it("shows an empty state when nothing is live", async () => {

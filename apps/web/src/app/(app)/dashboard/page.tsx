@@ -1,41 +1,39 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { AlertTriangle, ArrowDownRight, ArrowRight, ArrowUpRight, Box, Database, FolderTree, Plus, ScrollText, Server, Settings } from "lucide-react";
+import { AlertTriangle, ArrowDownRight, ArrowRight, ArrowUpRight, Box, Database, FolderTree, SlidersHorizontal, Server } from "lucide-react";
 import { api } from "../../../lib/api";
-import { statusCounts, relativeTime } from "../../../lib/fleet";
+import { statusCounts } from "../../../lib/fleet";
 import { aggregateFleetTrend, busiestServers, DISK_PRESSURE_PCT, finiteOnly, fleetAttention, fleetSnapshot, trendDelta } from "../../../lib/dashboard";
 import { buildFleetRows, metricTone } from "../../../lib/fleet-view";
 import { useFleetTrend } from "../../../hooks/useFleetTrend";
 import { scopeByTeam } from "../../../lib/team-scope";
+import { LIST_LIMIT, limitRows } from "../../../lib/dashboard-lists";
+import { useDashboardLayout, visibleCards, type DashboardCardId } from "../../../lib/dashboard-layout";
+import { useAuth } from "../../../lib/auth";
 import { useTeamScope } from "../../../components/team-scope";
 import type { FleetLatestRow, ServerStatus } from "../../../lib/types";
 import { useT } from "../../../i18n/provider";
-import { Badge, Btn, Card, EmptyState, StatusPill } from "../../../components/ui";
-import { ErrorState } from "../../../components/error-state";
+import { Btn, Card, LinkBtn } from "../../../components/ui";
 import { ListCard, ListRow } from "../../../components/list";
 import { ChartCard, MetricChart, Sparkline } from "../../../components/charts";
 import { TrendCell } from "../../../components/trend-cell";
 import { HottestContainersCard } from "../../../components/hottest-containers-card";
 import { statusLabel } from "../../../lib/status";
 import { Skeleton, SkeletonCard, SkeletonStat, SkeletonTable } from "../../../components/skeleton";
-
-const serverColor = (s: ServerStatus) =>
-  s === "ONLINE" ? "var(--c-g)" : s === "PENDING" ? "var(--c-am)" : "var(--c-r)";
-const logoBox: React.CSSProperties = {
-  width: 40, height: 40, borderRadius: 9, background: "var(--c-tile)",
-  display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
-};
+import { DashCard, SeeAll, sectionTitle } from "../../../components/dashboard/dash-card";
+import { ActivityCard } from "../../../components/dashboard/activity-card";
+import { CustomizePanel } from "../../../components/dashboard/customize-panel";
+import { ProjectsCard } from "../../../components/dashboard/projects-card";
+import { ServersCard } from "../../../components/dashboard/servers-card";
+import { BackupsCard, CertsCard, DeploysCard, DiskForecastCard, MigrationsCard, UpdatesCard, UptimeCard } from "../../../components/dashboard/insight-cards";
 /** Window of the fleet trend (the shared useFleetTrend hook asks /fleet/metrics/trend for 30 minutes). */
 const TREND_MINUTES = 30;
 const EMPTY_METRICS: FleetLatestRow[] = []; // stable identity → keeps the memos below from re-running every render
 const toneColor = (tone: "ok" | "warn" | "crit") => (tone === "crit" ? "var(--c-r)" : tone === "warn" ? "var(--c-am)" : "var(--c-tx)");
-const sectionTitle: React.CSSProperties = {
-  fontSize: 11, color: "var(--c-tx3)", margin: "0 0 10px", fontWeight: 700,
-  textTransform: "uppercase", letterSpacing: "0.06em",
-};
+const loadingTitle: React.CSSProperties = { ...sectionTitle, margin: "0 0 10px" };
 
 /**
  * Fleet tile grid, shared by the loading skeleton and the loaded cockpit. `auto-fill` (NOT `auto-fit`) keeps the
@@ -67,12 +65,15 @@ export default function DashboardPage() {
   const { teamId } = useTeamScope();
   const { data: allServers = [], isLoading, isError: serversError, refetch: refetchServers } = useQuery({ queryKey: ["servers"], queryFn: () => api.listServers() });
   const { data: allProjects = [] } = useQuery({ queryKey: ["projects"], queryFn: () => api.listProjects() });
-  const { data: allApps = [] } = useQuery({ queryKey: ["apps"], queryFn: () => api.listApps() });
-  const { data: allDatabases = [] } = useQuery({ queryKey: ["databases"], queryFn: () => api.listDatabases() });
+  const { data: allApps = [], isSuccess: appsLoaded } = useQuery({ queryKey: ["apps"], queryFn: () => api.listApps() });
+  const { data: allDatabases = [], isSuccess: dbsLoaded } = useQuery({ queryKey: ["databases"], queryFn: () => api.listDatabases() });
+  const { data: teams = [] } = useQuery({ queryKey: ["teams"], queryFn: () => api.listTeams() });
   const { data: allMonitors = [] } = useQuery({ queryKey: ["monitors"], queryFn: () => api.listMonitors() });
   const { data: allDomains = [] } = useQuery({ queryKey: ["domains"], queryFn: () => api.listDomains() });
-  // Own key (not ["audit"]) so this plain {entries} result never collides with the Audit page's useInfiniteQuery.
-  const { data: audit } = useQuery({ queryKey: ["audit-recent", teamId], queryFn: () => api.listAudit(teamId ?? undefined) });
+  const { user } = useAuth();
+  const [layout, setLayout, resetLayout] = useDashboardLayout(user?.id);
+  const [customizing, setCustomizing] = useState(false);
+  const [allAttention, setAllAttention] = useState(false);
   // Fleet cockpit data: newest sample per server + the batched 30-min trend (both fleet-wide single calls; no
   // per-server history fan-out). A failure just hides the live tiles — decoration, never a reason to break the page.
   const { data: latest = EMPTY_METRICS } = useQuery({
@@ -96,7 +97,6 @@ export default function DashboardPage() {
   const domains = scopeByTeam(allDomains, teamId);
   const counts = statusCounts(servers);
   const attention = fleetAttention(servers, monitors, domains);
-  const recent = audit?.entries.slice(0, 8) ?? [];
   // Servers is the dashboard's spine (fleet stats, attention, server list all derive
   // from it). When its fetch fails with nothing cached we can't claim "all normal" or
   // invite "Add server" — surface the error in the Servers section and neutralize the
@@ -118,12 +118,12 @@ export default function DashboardPage() {
         <h1 style={{ fontSize: 22, fontWeight: 700, margin: "0 0 4px" }}>{t("dashboard.title")}</h1>
         <p style={{ color: "var(--c-tx3)", fontSize: 14, margin: "0 0 22px" }}>{t("dashboard.subtitle")}</p>
 
-        <div style={sectionTitle}>{t("dashboard.attention")}</div>
+        <div style={loadingTitle}>{t("dashboard.attention")}</div>
         <div style={{ marginBottom: 28 }}>
           <SkeletonTable rows={2} />
         </div>
 
-        <div style={sectionTitle}>{t("dashboard.fleet")}</div>
+        <div style={loadingTitle}>{t("dashboard.fleet")}</div>
         <div style={{ ...FLEET_GRID, marginBottom: 28 }}>
           {Array.from({ length: 6 }).map((_, i) => (
             <div key={i} data-testid="fleet-skeleton-tile" style={{ border: "1px solid var(--c-bd)", borderRadius: "var(--r2)", padding: 18, minHeight: FLEET_TILE_MIN_H, boxSizing: "border-box" }}>
@@ -133,12 +133,12 @@ export default function DashboardPage() {
           ))}
         </div>
 
-        <div style={sectionTitle}>{t("dashboard.resources")}</div>
+        <div style={loadingTitle}>{t("dashboard.resources")}</div>
         <div style={{ display: "flex", gap: 14, marginBottom: 24, flexWrap: "wrap" }}>
           <SkeletonStat /><SkeletonStat /><SkeletonStat /><SkeletonStat />
         </div>
 
-        <div style={sectionTitle}>{t("dashboard.projects")}</div>
+        <div style={loadingTitle}>{t("dashboard.projects")}</div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 12, marginBottom: 28 }}>
           {Array.from({ length: 3 }).map((_, i) => (
             <SkeletonCard key={i} style={{ padding: 14 }}>
@@ -153,10 +153,10 @@ export default function DashboardPage() {
           ))}
         </div>
 
-        <div style={sectionTitle}>{t("dashboard.servers")}</div>
+        <div style={loadingTitle}>{t("dashboard.servers")}</div>
         <SkeletonTable rows={4} />
 
-        <div style={{ ...sectionTitle, marginTop: 28 }}>{t("dashboard.recentActivity")}</div>
+        <div style={{ ...loadingTitle, marginTop: 28 }}>{t("dashboard.recentActivity")}</div>
         <SkeletonTable rows={5} />
       </div>
     );
@@ -223,209 +223,169 @@ export default function DashboardPage() {
     </Link>
   );
 
-  return (
-    <div style={{ padding: "var(--page-pad)" }}>
-      <h1 style={{ fontSize: 22, fontWeight: 700, margin: "0 0 4px" }}>{t("dashboard.title")}</h1>
-      <p style={{ color: "var(--c-tx3)", fontSize: 14, margin: "0 0 22px" }}>{t("dashboard.subtitle")}</p>
+  const noResources = appsLoaded && dbsLoaded && apps.length === 0 && databases.length === 0;
+  const attentionShown = allAttention ? attention : attention.slice(0, LIST_LIMIT);
 
-      <div style={sectionTitle}>{t("dashboard.attention")}</div>
-      {attention.length === 0 ? (
-        serversDown ? null : (
-        <Card style={{ padding: 14, marginBottom: 28, fontSize: 13, color: "var(--c-tx2)", display: "flex", alignItems: "center", gap: 8 }}>
-          <span style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--c-g)" }} /> {t("dashboard.allGood")}
-        </Card>
-        )
-      ) : (
-        <ListCard style={{ marginBottom: 28 }}>
-          {attention.map((it, i) => {
-            const href = it.kind === "server" ? `/servers/${it.id}` : it.kind === "monitor" ? `/monitors/${it.id}` : `/apps/${it.id}`;
-            const amber = it.kind === "domain" && it.status === "expiring";
-            const color = amber ? "var(--c-am)" : "var(--c-r)";
-            const label = it.kind === "server" ? t("dashboard.attentionServer") : it.kind === "monitor" ? t("dashboard.attentionMonitor") : amber ? t("dashboard.attentionSslExpiring") : t("dashboard.attentionSslError");
-            return (
-              <ListRow key={`${it.kind}-${it.id}`} index={i} href={href} style={{ gap: 10, padding: "11px 16px" }}>
-                <AlertTriangle size={15} color={color} style={{ flexShrink: 0 }} />
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontWeight: 600, fontSize: 14 }}>{it.name}</div>
-                  <div style={{ fontSize: 11, color: "var(--c-tx3)" }}>{label}</div>
-                </div>
-                <span style={{ fontSize: 12, color, fontWeight: 600 }}>{it.kind === "domain" ? (amber ? t("domains.expiring") : t("domains.noCert")) : statusLabel(t, it.status)}</span>
-              </ListRow>
-            );
+  const cards: Record<DashboardCardId, ReactNode> = {
+    attention: (
+      <DashCard
+        id="attention"
+        title={t("dashboard.attention")}
+        right={attention.length > LIST_LIMIT ? (
+          <button type="button" onClick={() => setAllAttention((v) => !v)} aria-expanded={allAttention} style={{ background: "none", border: "none", padding: 0, cursor: "pointer", fontSize: 11, color: "var(--c-lapis)", fontWeight: 500 }}>
+            {allAttention ? t("dashboard.showFewer") : t("dashboard.seeAll", { n: attention.length })}
+          </button>
+        ) : null}
+      >
+        {attention.length === 0 ? (
+          serversDown ? null : (
+            <Card style={{ padding: 14, fontSize: 13, color: "var(--c-tx2)", display: "flex", alignItems: "center", gap: 8 }}>
+              <span style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--c-g)" }} /> {t("dashboard.allGood")}
+            </Card>
+          )
+        ) : (
+          <ListCard>
+            {attentionShown.map((it, i) => {
+              const href = it.kind === "server" ? `/servers/${it.id}` : it.kind === "monitor" ? `/monitors/${it.id}` : `/apps/${it.id}`;
+              const amber = it.kind === "domain" && it.status === "expiring";
+              const color = amber ? "var(--c-am)" : "var(--c-r)";
+              const label = it.kind === "server" ? t("dashboard.attentionServer") : it.kind === "monitor" ? t("dashboard.attentionMonitor") : amber ? t("dashboard.attentionSslExpiring") : t("dashboard.attentionSslError");
+              return (
+                <ListRow key={`${it.kind}-${it.id}`} index={i} href={href} style={{ gap: 10, padding: "11px 16px" }}>
+                  <AlertTriangle size={15} color={color} style={{ flexShrink: 0 }} aria-hidden />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontWeight: 600, fontSize: 14 }}>{it.name}</div>
+                    <div style={{ fontSize: 11, color: "var(--c-tx3)" }}>{label}</div>
+                  </div>
+                  <span style={{ fontSize: 12, color, fontWeight: 600 }}>{it.kind === "domain" ? (amber ? t("domains.expiring") : t("domains.noCert")) : statusLabel(t, it.status)}</span>
+                </ListRow>
+              );
+            })}
+          </ListCard>
+        )}
+      </DashCard>
+    ),
+
+    // Fleet cockpit: clickable status tiles + live health tiles (placeholder-until-loaded) + trend chart + busiest servers
+    fleet: (
+      <DashCard id="fleet" title={t("dashboard.fleet")} style={{ marginBottom: 14 }}>
+        <div data-testid="fleet-grid" style={{ ...FLEET_GRID, marginBottom: 14 }}>
+          {statusTile("ONLINE", t("dashboard.online"), counts.ONLINE, "var(--c-g)")}
+          {statusTile("PENDING", t("dashboard.pending"), counts.PENDING, "var(--c-am)")}
+          {statusTile("OFFLINE", t("dashboard.offline"), counts.OFFLINE, counts.OFFLINE > 0 ? "var(--c-r)" : "var(--c-tx3)", counts.OFFLINE > 0 && !serversDown ? <AlertTriangle size={13} color="var(--c-r)" aria-hidden="true" /> : null)}
+          {/* Always rendered (placeholder value until the metrics land) so the row keeps one height from first paint. */}
+          {healthTile({
+            label: t("dashboard.fleetCpu"), value: snap.cpu !== null ? `${Math.round(snap.cpu)}%` : "—", color: snap.cpu !== null ? toneColor(metricTone(snap.cpu)) : "var(--c-tx3)",
+            series: cpuSeries, sparkColor: "var(--c-a)", sparkLabel: t("dashboard.fleetCpuTrend", { n: TREND_MINUTES }),
           })}
-        </ListCard>
-      )}
-
-      {/* Fleet cockpit: clickable status tiles + live health tiles (placeholder-until-loaded) + trend chart + busiest servers */}
-      <div style={sectionTitle}>{t("dashboard.fleet")}</div>
-      <div data-testid="fleet-grid" style={{ ...FLEET_GRID, marginBottom: 14 }}>
-        {statusTile("ONLINE", t("dashboard.online"), counts.ONLINE, "var(--c-g)")}
-        {statusTile("PENDING", t("dashboard.pending"), counts.PENDING, "var(--c-am)")}
-        {statusTile("OFFLINE", t("dashboard.offline"), counts.OFFLINE, counts.OFFLINE > 0 ? "var(--c-r)" : "var(--c-tx3)", counts.OFFLINE > 0 && !serversDown ? <AlertTriangle size={13} color="var(--c-r)" aria-hidden="true" /> : null)}
-        {/* Always rendered (placeholder value until the metrics land) so the row keeps one height from first paint. */}
-        {healthTile({
-          label: t("dashboard.fleetCpu"), value: snap.cpu !== null ? `${Math.round(snap.cpu)}%` : "—", color: snap.cpu !== null ? toneColor(metricTone(snap.cpu)) : "var(--c-tx3)",
-          series: cpuSeries, sparkColor: "var(--c-a)", sparkLabel: t("dashboard.fleetCpuTrend", { n: TREND_MINUTES }),
-        })}
-        {healthTile({
-          label: t("dashboard.fleetRam"), value: snap.mem !== null ? `${Math.round(snap.mem)}%` : "—", color: snap.mem !== null ? toneColor(metricTone(snap.mem)) : "var(--c-tx3)",
-          series: memSeries, sparkColor: "var(--c-lapis)", sparkLabel: t("dashboard.fleetRamTrend", { n: TREND_MINUTES }),
-        })}
-        <div style={{ borderRadius: "var(--r2)", display: "block" }}>
-          <Card style={{ padding: 18, height: "100%", minHeight: FLEET_TILE_MIN_H, boxSizing: "border-box" }}>
-            <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 6 }}>{t("dashboard.diskPressure")}</div>
-            <div style={{ fontSize: 26, fontWeight: 700, color: !snap.diskKnown ? "var(--c-tx3)" : snap.diskPressure > 0 ? "var(--c-r)" : "var(--c-g)", display: "flex", alignItems: "center", gap: 8 }}>
-              {snap.diskKnown && snap.diskPressure > 0 && <AlertTriangle size={18} aria-hidden="true" />}{snap.diskKnown ? snap.diskPressure : "—"}
-            </div>
-            <div style={{ fontSize: 11, color: "var(--c-tx3)", marginTop: 6 }}>{t("dashboard.diskPressureSub", { pct: DISK_PRESSURE_PCT })}</div>
-          </Card>
-        </div>
-      </div>
-      {(hasChart || busiest.length > 0) && (
-        // Fixed two-slot grid: BOTH slots are always rendered once the block shows, so the chart keeps one width from
-        // first paint — a late-loading "Busiest" list fills its reserved slot instead of splitting a full-width chart.
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 420px), 1fr))", gap: 14, marginBottom: 28, alignItems: "start" }}>
-          <ChartCard title={t("dashboard.chartTitle")} description={t("dashboard.chartDesc", { n: TREND_MINUTES })}>
-            {hasChart ? (
-              <MetricChart
-                bare
-                label={t("dashboard.chartTitle")}
-                unit="%"
-                height={140}
-                times={agg.times}
-                series={[
-                  { key: "cpu", label: t("servers.cpu"), values: agg.cpu, kind: "line" },
-                  { key: "mem", label: t("servers.ram"), values: agg.mem, kind: "line" },
-                ]}
-              />
-            ) : (
-              <SlotPlaceholder height={140} text={t("dashboard.waitingForData")} />
-            )}
-          </ChartCard>
-          <div>
-            <div style={{ fontSize: 13, fontWeight: 600, color: "var(--c-tx)" }}>{t("dashboard.busiest")}</div>
-            <div style={{ fontSize: 11, lineHeight: 1.4, color: "var(--c-tx3)", margin: "2px 0 10px" }}>{t("dashboard.busiestHint")}</div>
-            {busiest.length > 0 ? (
-              <ListCard>
-                {busiest.map((r, i) => (
-                  <ListRow key={r.server.id} index={i} href={`/servers/${r.server.id}`} style={{ padding: "10px 16px" }}>
-                    <div style={{ flex: 1, minWidth: 0, fontWeight: 600, fontSize: 14, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.server.name}</div>
-                    <TrendCell row={trends.get(r.server.id)} cpuLabel={t("fleet.trendCpu")} memLabel={t("fleet.trendMem")} width={44} height={20} />
-                    <span className="mono" style={{ fontSize: 12, fontWeight: 600, minWidth: 64, textAlign: "right", color: toneColor(metricTone(r.cpu)) }}>{t("dashboard.busiestCpu", { n: Math.round(r.cpu as number) })}</span>
-                  </ListRow>
-                ))}
-              </ListCard>
-            ) : (
-              <Card style={{ padding: 16 }}>
-                <SlotPlaceholder height={140} text={t("dashboard.busiestEmpty")} />
-              </Card>
-            )}
+          {healthTile({
+            label: t("dashboard.fleetRam"), value: snap.mem !== null ? `${Math.round(snap.mem)}%` : "—", color: snap.mem !== null ? toneColor(metricTone(snap.mem)) : "var(--c-tx3)",
+            series: memSeries, sparkColor: "var(--c-lapis)", sparkLabel: t("dashboard.fleetRamTrend", { n: TREND_MINUTES }),
+          })}
+          <div style={{ borderRadius: "var(--r2)", display: "block" }}>
+            <Card style={{ padding: 18, height: "100%", minHeight: FLEET_TILE_MIN_H, boxSizing: "border-box" }}>
+              <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 6 }}>{t("dashboard.diskPressure")}</div>
+              <div style={{ fontSize: 26, fontWeight: 700, color: !snap.diskKnown ? "var(--c-tx3)" : snap.diskPressure > 0 ? "var(--c-r)" : "var(--c-g)", display: "flex", alignItems: "center", gap: 8 }}>
+                {snap.diskKnown && snap.diskPressure > 0 && <AlertTriangle size={18} aria-hidden />}{snap.diskKnown ? snap.diskPressure : "—"}
+              </div>
+              <div style={{ fontSize: 11, color: "var(--c-tx3)", marginTop: 6 }}>{t("dashboard.diskPressureSub", { pct: DISK_PRESSURE_PCT })}</div>
+            </Card>
           </div>
         </div>
-      )}
-      {!serversDown && servers.length > 0 && <HottestContainersCard teamId={teamId} />}
-
-      <div style={sectionTitle}>{t("dashboard.resources")}</div>
-      <div style={{ display: "flex", gap: 14, marginBottom: 24, flexWrap: "wrap" }}>
-        {resource("/projects", FolderTree, t("dashboard.projects"), projects.length)}
-        {resource("/apps", Box, t("dashboard.apps"), apps.length)}
-        {resource("/databases", Database, t("dashboard.databases"), databases.length)}
-        {resource("/servers", Server, t("dashboard.totalServers"), isLoading ? "…" : serversDown ? "—" : servers.length)}
-      </div>
-
-      {/* Projects (Coolify-style cards with quick actions) */}
-      <div style={sectionTitle}>{t("dashboard.projects")}</div>
-      {projects.length === 0 ? (
-        <Card style={{ marginBottom: 28 }}>
-          <EmptyState
-            icon={FolderTree}
-            title={t("dashboard.noProjectsTitle")}
-            action={<Link href="/projects"><Btn>{t("projects.create")}</Btn></Link>}
-          >
-            {t("dashboard.noProjects")}
-          </EmptyState>
-        </Card>
-      ) : (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 12, marginBottom: 28 }}>
-          {projects.map((p) => {
-            const appCount = p.environments.reduce((n, e) => n + e.appCount, 0);
-            const dbCount = p.environments.reduce((n, e) => n + e.dbCount, 0);
-            const env = p.environments[0]?.id ?? "";
-            return (
-              <Card key={p.id} style={{ padding: 14 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <span style={logoBox}><FolderTree size={20} color="var(--c-a)" /></span>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <Link href={`/projects/${p.id}`} style={{ fontWeight: 600, fontSize: 14, color: "var(--c-tx)", textDecoration: "none" }}>{p.name}</Link>
-                    <div style={{ display: "flex", gap: 6, marginTop: 4, flexWrap: "wrap" }}>
-                      <Badge>{p.environments.length} env</Badge>
-                      <Badge>{appCount} apps</Badge>
-                      <Badge>{dbCount} dbs</Badge>
-                    </div>
-                  </div>
-                </div>
-                <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-                  <Link href={`/resources/new?project=${p.id}&env=${env}`} style={chip}><Plus size={13} /> {t("dashboard.addResource")}</Link>
-                  <Link href={`/projects/${p.id}`} style={chip}><Settings size={13} /> {t("dashboard.settings")}</Link>
-                </div>
-              </Card>
-            );
-          })}
-        </div>
-      )}
-
-      {/* Servers */}
-      <div style={sectionTitle}>{t("dashboard.servers")}</div>
-      <ListCard>
-        {servers.map((s, i) => (
-          <ListRow key={s.id} index={i} href={`/servers/${s.id}`} style={{ padding: "11px 16px" }}>
-            <span style={logoBox}><Server size={18} color="var(--c-a)" /></span>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontWeight: 600, fontSize: 14 }}>{s.name}</div>
-              {s.hostname && <div className="mono" style={{ fontSize: 11, color: "var(--c-tx3)" }}>{s.hostname}</div>}
+        {(hasChart || busiest.length > 0) && (
+          // Fixed two-slot grid: BOTH slots are always rendered once the block shows, so the chart keeps one width from
+          // first paint — a late-loading "Busiest" list fills its reserved slot instead of splitting a full-width chart.
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 420px), 1fr))", gap: 14, alignItems: "start" }}>
+            <ChartCard title={t("dashboard.chartTitle")} description={t("dashboard.chartDesc", { n: TREND_MINUTES })}>
+              {hasChart ? (
+                <MetricChart
+                  bare
+                  label={t("dashboard.chartTitle")}
+                  unit="%"
+                  height={140}
+                  times={agg.times}
+                  series={[
+                    { key: "cpu", label: t("servers.cpu"), values: agg.cpu, kind: "line" },
+                    { key: "mem", label: t("servers.ram"), values: agg.mem, kind: "line" },
+                  ]}
+                />
+              ) : (
+                <SlotPlaceholder height={140} text={t("dashboard.waitingForData")} />
+              )}
+            </ChartCard>
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 600, color: "var(--c-tx)" }}>{t("dashboard.busiest")}</div>
+              <div style={{ fontSize: 11, lineHeight: 1.4, color: "var(--c-tx3)", margin: "2px 0 10px" }}>{t("dashboard.busiestHint")}</div>
+              {busiest.length > 0 ? (
+                <ListCard>
+                  {busiest.map((r, i) => (
+                    <ListRow key={r.server.id} index={i} href={`/servers/${r.server.id}`} style={{ padding: "10px 16px" }}>
+                      <div style={{ flex: 1, minWidth: 0, fontWeight: 600, fontSize: 14, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.server.name}</div>
+                      <TrendCell row={trends.get(r.server.id)} cpuLabel={t("fleet.trendCpu")} memLabel={t("fleet.trendMem")} width={44} height={20} />
+                      <span className="mono" style={{ fontSize: 12, fontWeight: 600, minWidth: 64, textAlign: "right", color: toneColor(metricTone(r.cpu)) }}>{t("dashboard.busiestCpu", { n: Math.round(r.cpu as number) })}</span>
+                    </ListRow>
+                  ))}
+                </ListCard>
+              ) : (
+                <Card style={{ padding: 16 }}>
+                  <SlotPlaceholder height={140} text={t("dashboard.busiestEmpty")} />
+                </Card>
+              )}
             </div>
-            <StatusPill label={statusLabel(t, s.status)} color={serverColor(s.status)} />
-          </ListRow>
-        ))}
-        {serversDown ? (
-          <ErrorState onRetry={() => refetchServers()} />
-        ) : servers.length === 0 && (
-          <EmptyState
-            icon={Server}
-            title={t("dashboard.noServersTitle")}
-            action={<Link href="/servers/new"><Btn>{t("dashboard.addServer")}</Btn></Link>}
-          >
-            {t("dashboard.noServers")}
-          </EmptyState>
+          </div>
         )}
-      </ListCard>
+      </DashCard>
+    ),
 
-      <div style={{ ...sectionTitle, marginTop: 28, display: "flex", alignItems: "center", gap: 8 }}>
-        {t("dashboard.recentActivity")}
-        <div style={{ flex: 1 }} />
-        <Link href="/audit" style={{ fontSize: 11, color: "var(--c-lapis)", textTransform: "none", letterSpacing: 0, fontWeight: 500, textDecoration: "none" }}>{t("dashboard.viewAll")}</Link>
-      </div>
-      {recent.length === 0 ? (
-        <div style={{ fontSize: 13, color: "var(--c-tx3)" }}>{t("dashboard.noActivity")}</div>
-      ) : (
-        <div style={{ border: "1px solid var(--c-bd)", borderRadius: "var(--r2)", overflow: "hidden" }}>
-          {recent.map((e) => (
-            <div key={e.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 16px", borderTop: "1px solid var(--c-bd)", fontSize: 13 }}>
-              <ScrollText size={13} color="var(--c-tx3)" style={{ flexShrink: 0 }} />
-              <span style={{ color: "var(--c-tx2)", maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{e.actor}</span>
-              <code style={{ fontSize: 12, color: "var(--c-tx3)" }}>{e.action}</code>
-              <div style={{ flex: 1 }} />
-              <span style={{ color: "var(--c-tx3)", fontSize: 11, whiteSpace: "nowrap" }}>{relativeTime(e.createdAt)}</span>
-            </div>
-          ))}
+    hottest: !serversDown && servers.length > 0 ? <HottestContainersCard teamId={teamId} /> : null,
+    diskForecast: <DiskForecastCard teamId={teamId} />,
+    certs: <CertsCard domains={domains} />,
+    backups: <BackupsCard teamId={teamId} />,
+    updates: <UpdatesCard servers={servers} />,
+    uptime: <UptimeCard servers={servers} monitors={monitors} />,
+    deploys: <DeploysCard teamId={teamId} />,
+    migrations: <MigrationsCard teamId={teamId} />,
+
+    resources: (
+      <DashCard id="resources" title={t("dashboard.resources")} style={{ marginBottom: 24 }}>
+        <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
+          {resource("/projects", FolderTree, t("dashboard.projects"), projects.length)}
+          {resource("/apps", Box, t("dashboard.apps"), apps.length)}
+          {resource("/databases", Database, t("dashboard.databases"), databases.length)}
+          {resource("/servers", Server, t("dashboard.totalServers"), isLoading ? "…" : serversDown ? "—" : servers.length)}
         </div>
-      )}
+        {noResources && (
+          <Card style={{ marginTop: 14, padding: 16, display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+            <div style={{ flex: "1 1 220px", minWidth: 0 }}>
+              <div style={{ fontSize: 14, fontWeight: 600 }}>{t("dashboard.ctaTitle")}</div>
+              <div style={{ fontSize: 12, color: "var(--c-tx3)", marginTop: 2 }}>{t("dashboard.ctaBody")}</div>
+            </div>
+            <LinkBtn href="/import" variant="ghost">{t("dashboard.ctaImport")}</LinkBtn>
+            <LinkBtn href="/resources/new">{t("dashboard.ctaDeploy")}</LinkBtn>
+          </Card>
+        )}
+      </DashCard>
+    ),
+
+    projects: <ProjectsCard projects={projects} teams={teams} apps={apps} databases={databases} teamId={teamId} />,
+    servers: <ServersCard rows={rows} down={serversDown} onRetry={() => refetchServers()} />,
+    activity: <ActivityCard teamId={teamId} />,
+  };
+  const shown = visibleCards(layout);
+
+  return (
+    <div style={{ padding: "var(--page-pad)" }}>
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 12, flexWrap: "wrap", margin: "0 0 22px" }}>
+        <div style={{ flex: "1 1 240px", minWidth: 0 }}>
+          <h1 style={{ fontSize: 22, fontWeight: 700, margin: "0 0 4px" }}>{t("dashboard.title")}</h1>
+          <p style={{ color: "var(--c-tx3)", fontSize: 14, margin: 0 }}>{t("dashboard.subtitle")}</p>
+        </div>
+        <Btn variant="ghost" icon={SlidersHorizontal} aria-expanded={customizing} onClick={() => setCustomizing((v) => !v)}>{t("dashboard.customize")}</Btn>
+      </div>
+
+      {customizing && <CustomizePanel layout={layout} onChange={setLayout} onReset={resetLayout} onClose={() => setCustomizing(false)} />}
+      {shown.length === 0 && <Card style={{ padding: 16, fontSize: 13, color: "var(--c-tx3)" }}>{t("dashboard.allCardsHidden")}</Card>}
+      {shown.map((id) => <div key={id}>{cards[id]}</div>)}
     </div>
   );
 }
-
-const chip: React.CSSProperties = {
-  display: "inline-flex", alignItems: "center", gap: 4, fontSize: 12, fontWeight: 600,
-  color: "var(--c-a)", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)",
-  padding: "5px 11px", textDecoration: "none",
-};
