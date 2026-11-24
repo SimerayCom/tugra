@@ -124,6 +124,7 @@ import type {
   TrafficAnalyticsState,
   PublicUser,
   Project,
+  EmptyDefaultProject,
   Role,
   ScheduledTask,
   ScheduledTaskRun,
@@ -2131,6 +2132,17 @@ export const api = {
   },
   deleteProject(id: string) {
     return apiFetch<{ ok: true }>(`/projects/${id}`, { method: "DELETE" });
+  },
+  /** Move an empty project to another team (409 while it still has apps or databases). */
+  moveProject(id: string, teamId: string) {
+    return apiFetch<Project>(`/projects/${id}/team`, { method: "PUT", body: JSON.stringify({ teamId }) });
+  },
+  /** Empty, never-customised "Default" projects in teams the caller owns (the one-time cleanup suggestion). */
+  listEmptyDefaultProjects() {
+    return apiFetch<EmptyDefaultProject[]>("/projects/empty-defaults");
+  },
+  removeEmptyDefaultProjects(ids: string[]) {
+    return apiFetch<{ removed: string[]; skipped: string[] }>("/projects/empty-defaults/remove", { method: "POST", body: JSON.stringify({ ids }) });
   },
   addEnvironment(projectId: string, name: string) {
     return apiFetch<Project>(`/projects/${projectId}/environments`, { method: "POST", body: JSON.stringify({ name }) });

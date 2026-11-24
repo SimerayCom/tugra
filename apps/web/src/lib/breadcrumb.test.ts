@@ -49,4 +49,17 @@ describe("resourceBreadcrumb", () => {
     const crumbs = resourceBreadcrumb({ ...base, projectId: "p1", projectName: "Shop", projectColor: "#46a758", environmentId: "e1", environmentName: "production" });
     expect(crumbs.map((c) => c.color)).toEqual([undefined, "#46a758", "#46a758", undefined]);
   });
+
+  it("leads with the team crumb (in place of Projects) when one is given", () => {
+    const team = { label: "Acme", href: "/projects", color: "#c9a84c" };
+    const crumbs = resourceBreadcrumb({ ...base, team, projectId: "p1", projectName: "Shop", environmentId: "e1", environmentName: "production" });
+    expect(crumbs.map((c) => c.label)).toEqual(["Acme", "Shop", "production", "web-1"]);
+    expect(crumbs[0]).toBe(team);
+  });
+
+  it("puts the team crumb in front of the flat fallback too", () => {
+    const team = { label: "Acme", href: "/projects" };
+    const crumbs = resourceBreadcrumb({ ...base, team, projectId: null, projectName: null, environmentId: null, environmentName: null });
+    expect(crumbs.map((c) => c.label)).toEqual(["Acme", "Apps", "web-1"]);
+  });
 });

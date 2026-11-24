@@ -21,6 +21,9 @@ import { PageHeader } from "../../../../components/page-header";
 import { IdentityCard } from "../../../../components/identity-card";
 import { TagChips, TagFilter } from "../../../../components/tags";
 import { useConfirm } from "../../../../components/confirm";
+import { TeamPicker } from "../../../../components/team-picker";
+import { ScopedTeamBadge, useTeamContext } from "../../../../components/team-scope";
+import { moveTargets } from "../../../../lib/project-move";
 import { useScrollToHash } from "../../../../hooks/useScrollToHash";
 
 const field: React.CSSProperties = {
@@ -60,23 +63,43 @@ export default function ProjectDetailPage() {
     onSuccess: () => { setRenaming(false); invalidate(); qc.invalidateQueries({ queryKey: ["projects"] }); },
   });
 
+  const [moving, setMoving] = useState(false);
+  const [moveTeam, setMoveTeam] = useState("");
+  const { teams, crumb } = useTeamContext();
+  const move = useMutation({
+    mutationFn: () => api.moveProject(id, moveTeam),
+    onSuccess: () => {
+      setMoving(false);
+      setMoveTeam("");
+      invalidate();
+      qc.invalidateQueries({ queryKey: ["projects"] });
+      toast(t("projects.movedToTeam", { name: teams.find((tm) => tm.id === moveTeam)?.name ?? "" }), "success");
+    },
+  });
+
   // #env-<id> deep link (from an app/database breadcrumb) scrolls to that environment's card.
   useScrollToHash("env-", !!project);
 
   if (isError && !project) return <div style={{ padding: "var(--page-pad)" }}><ErrorState onRetry={() => refetch()} /></div>;
   if (isLoading || !project) return <ProjectDetailSkeleton />;
   const empty = project.environments.every((e) => e.appCount + e.dbCount === 0);
+  // Moving to another team is only offered when it is safe (nothing runs in the project) and the user manages both teams.
+  const targets = project.canWrite && empty ? moveTargets(teams, project.teamId) : [];
 
   return (
     <div style={{ padding: "var(--page-pad)" }}>
       <PageHeader
-        breadcrumb={[{ label: t("nav.projects"), href: "/projects" }, { label: project.name }]}
+        breadcrumb={[crumb(project.teamId) ?? { label: t("nav.projects"), href: "/projects" }, { label: project.name }]}
         title={project.name}
         accent={project.color}
+        badge={<ScopedTeamBadge teamId={project.teamId} />}
         actions={
           project.canWrite ? (
-            <div style={{ display: "flex", gap: 8 }}>
-              <Btn variant="ghost" onClick={() => { setRname(project.name); setRenaming(true); }}>{t("projects.rename")}</Btn>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <Btn variant="ghost" onClick={() => { setRname(project.name); setRenaming(true); setMoving(false); }}>{t("projects.rename")}</Btn>
+              {targets.length > 0 && (
+                <Btn variant="ghost" onClick={() => { setMoving(true); setRenaming(false); setMoveTeam(targets[0].id); }}>{t("projects.moveToTeam")}</Btn>
+              )}
               {empty && (
                 <Btn variant="danger" onClick={async () => { if (await confirm({ title: t("projects.deleteProject"), body: t("projects.deleteConfirm"), danger: true, confirmText: project.name })) del.mutate(); }}>{t("projects.deleteProject")}</Btn>
               )}
@@ -105,11 +128,24 @@ export default function ProjectDetailPage() {
       {renaming && (
         <Card style={{ padding: 12, marginBottom: 12 }}>
           <form onSubmit={(e) => { e.preventDefault(); if (rname.trim()) rename.mutate(); }} style={{ display: "flex", gap: 8 }}>
-            <input style={{ ...field, flex: 1 }} value={rname} onChange={(e) => setRname(e.target.value)} autoFocus required />
+            <input style={{ ...field, minHeight: 44, flex: 1 }} aria-label={t("projects.rename")} value={rname} onChange={(e) => setRname(e.target.value)} autoFocus required />
             <Btn type="submit" disabled={rename.isPending || !rname.trim()}>{rename.isPending ? "…" : t("common.save")}</Btn>
             <Btn variant="ghost" onClick={() => setRenaming(false)}>{t("common.cancel")}</Btn>
           </form>
           {rename.isError && <div style={{ color: "var(--c-r)", fontSize: 12, marginTop: 8 }}>{(rename.error as Error).message}</div>}
+        </Card>
+      )}
+
+      {moving && targets.length > 0 && (
+        <Card style={{ padding: 12, marginBottom: 12 }}>
+          <form onSubmit={(e) => { e.preventDefault(); if (moveTeam) move.mutate(); }} style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+            <div style={{ flex: "1 1 200px", minWidth: 0 }}>
+              <TeamPicker value={moveTeam} teams={targets} onChange={setMoveTeam} ariaLabel={t("projects.moveToTeam")} />
+            </div>
+            <Btn type="submit" disabled={move.isPending || !moveTeam} style={{ minHeight: 44 }}>{move.isPending ? "…" : t("projects.moveConfirm")}</Btn>
+            <Btn variant="ghost" onClick={() => setMoving(false)} style={{ minHeight: 44 }}>{t("common.cancel")}</Btn>
+          </form>
+          {move.isError && <div role="alert" style={{ color: "var(--c-r)", fontSize: 12, marginTop: 8 }}>{(move.error as Error).message}</div>}
         </Card>
       )}
 

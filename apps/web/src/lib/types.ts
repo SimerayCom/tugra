@@ -1838,6 +1838,13 @@ export interface Project {
   createdAt: string;
 }
 
+/** An empty, never-customised "Default" project the owner may clear away. */
+export interface EmptyDefaultProject {
+  id: string;
+  teamId: string;
+  createdAt: string;
+}
+
 export interface DomainView {
   id: string;
   appId: string;

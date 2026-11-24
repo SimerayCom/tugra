@@ -6,6 +6,9 @@ import { api } from "../lib/api";
 import { useT } from "../i18n/provider";
 import { Select } from "./form";
 import { EntityBadge, EntityDot } from "./entity-identity";
+import { showTeamContext, teamCrumb } from "../lib/team-context";
+import type { Team } from "../lib/types";
+import type { Crumb } from "../lib/breadcrumb";
 
 const KEY = "tugra.teamScope";
 
@@ -78,4 +81,20 @@ export function TeamDot({ teamId }: { teamId: string }) {
       <EntityDot color={team.color} />
     </span>
   );
+}
+
+/** The ['teams'] list plus whether this screen should name teams at all (All-teams view of a multi-team account). */
+export function useTeamContext(): { teams: Team[]; show: boolean; team: (id: string) => Team | undefined; crumb: (id: string, href?: string) => Crumb | null } {
+  const { teamId: scope } = useTeamScope();
+  const { data: teams = [] } = useQuery({ queryKey: ["teams"], queryFn: () => api.listTeams() });
+  const show = showTeamContext(scope, teams.length);
+  const team = (id: string) => teams.find((tm) => tm.id === id);
+  return { teams, show, team, crumb: (id, href = "/projects") => (show ? teamCrumb(team(id), href) : null) };
+}
+
+/** The team badge for a card or detail header: shown only where the team is not already obvious, else nothing. */
+export function ScopedTeamBadge({ teamId }: { teamId: string }) {
+  const { teams, show } = useTeamContext();
+  if (!show) return null;
+  return <TeamBadge teamId={teamId} teams={teams} />;
 }

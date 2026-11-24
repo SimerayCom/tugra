@@ -48,5 +48,19 @@
   "moveDesc": "Assign this resource to a project environment.",
   "sortName": "Name",
   "sortResources": "Resources",
-  "sortCreated": "Created"
+  "sortCreated": "Created",
+  "cleanupTitle": "Remove empty Default projects?",
+  "cleanupBody": "Empty projects named Default are not needed any more.",
+  "cleanupConfirm": "Remove the empty Default projects ({n})? Projects with anything in them are never touched.",
+  "cleanupRemove": "Remove",
+  "cleanupLater": "Not now",
+  "cleanupDone": "Removed the empty Default projects ({n})",
+  "cleanupFailed": "Couldn't remove the projects.",
+  "firstTitle": "Create your first project",
+  "first": "A project groups your apps and databases. Or bring what you already run.",
+  "firstQuick": "Create “{name}”",
+  "firstImport": "Import",
+  "moveToTeam": "Move to team",
+  "moveConfirm": "Move",
+  "movedToTeam": "Moved to {name}"
 }
