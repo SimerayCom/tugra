@@ -75352,6 +75352,28 @@
                       "createdAt": {
                         "type": "string",
                         "format": "date-time"
+                      },
+                      "createdBy": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "email": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "name",
+                          "email"
+                        ],
+                        "additionalProperties": false,
+                        "nullable": true
                       }
                     },
                     "required": [
@@ -75361,7 +75383,8 @@
                       "scopes",
                       "expiresAt",
                       "lastUsedAt",
-                      "createdAt"
+                      "createdAt",
+                      "createdBy"
                     ],
                     "additionalProperties": false
                   }
@@ -75507,6 +75530,28 @@
                         "createdAt": {
                           "type": "string",
                           "format": "date-time"
+                        },
+                        "createdBy": {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "email": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "name",
+                            "email"
+                          ],
+                          "additionalProperties": false,
+                          "nullable": true
                         }
                       },
                       "required": [
@@ -75516,7 +75561,8 @@
                         "scopes",
                         "expiresAt",
                         "lastUsedAt",
-                        "createdAt"
+                        "createdAt",
+                        "createdBy"
                       ],
                       "additionalProperties": false
                     }
@@ -75552,6 +75598,127 @@
           },
           "403": {
             "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "tags": [
+          "api-tokens"
+        ]
+      }
+    },
+    "/api/v1/api-tokens/{id}/usage": {
+      "get": {
+        "operationId": "ApiTokensController_usage",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string"
+                      },
+                      "at": {
+                        "type": "string",
+                        "format": "date-time"
+                      },
+                      "ip": {
+                        "type": "string",
+                        "nullable": true
+                      },
+                      "userAgent": {
+                        "type": "string",
+                        "nullable": true
+                      },
+                      "action": {
+                        "type": "string",
+                        "nullable": true
+                      },
+                      "count": {
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "at",
+                      "ip",
+                      "userAgent",
+                      "action",
+                      "count"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
             "content": {
               "application/json": {
                 "schema": {
@@ -75672,6 +75839,28 @@
                     "createdAt": {
                       "type": "string",
                       "format": "date-time"
+                    },
+                    "createdBy": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "email": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "name",
+                        "email"
+                      ],
+                      "additionalProperties": false,
+                      "nullable": true
                     }
                   },
                   "required": [
@@ -75681,7 +75870,8 @@
                     "scopes",
                     "expiresAt",
                     "lastUsedAt",
-                    "createdAt"
+                    "createdAt",
+                    "createdBy"
                   ],
                   "additionalProperties": false
                 }
@@ -75890,6 +76080,28 @@
                         "createdAt": {
                           "type": "string",
                           "format": "date-time"
+                        },
+                        "createdBy": {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "email": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "name",
+                            "email"
+                          ],
+                          "additionalProperties": false,
+                          "nullable": true
                         }
                       },
                       "required": [
@@ -75899,7 +76111,8 @@
                         "scopes",
                         "expiresAt",
                         "lastUsedAt",
-                        "createdAt"
+                        "createdAt",
+                        "createdBy"
                       ],
                       "additionalProperties": false
                     }
