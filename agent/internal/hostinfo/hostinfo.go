@@ -69,6 +69,11 @@ func Collect() (protocol.HostInfo, error) {
 			}
 		}
 	}
+	// No metadata answer (or none that names the provider): the hypervisor's DMI vendor string usually does. It only
+	// names the provider (used for a price estimate); it never carries an address.
+	if info.CloudProvider == "" {
+		info.CloudProvider = DMIProvider()
+	}
 	return info, nil
 }
 
