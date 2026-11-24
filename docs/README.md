@@ -18,6 +18,7 @@ control plane for your servers. New here? Start with the [project overview](../R
 - [Out-of-band cloud access](runbooks/out-of-band-cloud.md) — power, rescue and console for cloud-linked servers, straight from the provider, with the agent offline.
 - [Log drains](log-drains.md) — ship container logs to HTTP, Loki, Datadog, syslog, GELF or fluentd, per server or per app; filters, egress policy, delivery status and guarantees.
 - [Traffic Analytics geo](traffic-analytics.md) — built-in country geolocation (DB-IP Lite), optional city database, and how to refresh it.
+- [Importing from Uptime Kuma](uptime-kuma-import.md) — bring monitors and alert links over from a Kuma backup file or straight from its database; preview first.
 - [Migrating from Coolify](coolify-migration.md) — one-command database-data migration (Postgres/MySQL/MariaDB/Redis/KeyDB/Dragonfly) plus the manual runbook for apps, volumes and the other engines.
 
 ## Understanding Tugra
