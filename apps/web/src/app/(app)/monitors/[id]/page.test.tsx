@@ -70,3 +70,28 @@ describe("MonitorDetailPage — feedback", () => {
     await waitFor(() => expect(toasts).toContain("Monitor settings saved"));
   });
 });
+
+describe("MonitorDetailPage — Cloudflare origin failures", () => {
+  it("labels a 522 heartbeat as Cloudflare <-> origin with the likely cause", async () => {
+    vi.spyOn(api, "getHeartbeats").mockResolvedValue([
+      { ts: 1, status: "DOWN", ms: 30, msg: "HTTP 522 (Cloudflare <-> origin)", cause: "cf:522", important: true },
+    ]);
+    show();
+    expect(await screen.findByText("Cloudflare ↔ origin")).toBeTruthy();
+    expect(screen.getByText(/a firewall blocks Cloudflare/)).toBeTruthy();
+  });
+
+  it("shows no label for an ordinary failure", async () => {
+    vi.spyOn(api, "getHeartbeats").mockResolvedValue([{ ts: 1, status: "DOWN", ms: 30, msg: "HTTP 503", cause: null, important: true }]);
+    show();
+    await screen.findByText("HTTP 503");
+    expect(screen.queryByText("Cloudflare ↔ origin")).toBeNull();
+  });
+
+  it("Check now adds the likely cause to the failure toast", async () => {
+    vi.spyOn(api, "checkMonitor").mockResolvedValue({ status: "DOWN", ms: 40, msg: "HTTP 525 (Cloudflare <-> origin)", cause: "cf:525" });
+    show();
+    fireEvent.click(await screen.findByRole("button", { name: "Check now" }));
+    await waitFor(() => expect(toasts.some((x) => x.includes("SSL mode") || x.includes("secure handshake"))).toBe(true));
+  });
+});

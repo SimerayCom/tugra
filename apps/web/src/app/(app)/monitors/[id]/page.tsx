@@ -7,7 +7,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../../../lib/api";
 import { ErrorState } from "../../../../components/error-state";
 import { scopeByTeam } from "../../../../lib/team-scope";
-import { monitorColor, uptimeText, heartbeatSummary } from "../../../../lib/monitors";
+import { monitorColor, uptimeText, heartbeatSummary, cloudflareReasonKey } from "../../../../lib/monitors";
 import type { Monitor } from "../../../../lib/types";
 import { useT } from "../../../../i18n/provider";
 import { Btn, Card, Spinner } from "../../../../components/ui";
@@ -45,7 +45,9 @@ export default function MonitorDetailPage() {
       qc.invalidateQueries({ queryKey: ["monitor", id] });
       // The check runs synchronously, so the click answers with the actual result (status + latency).
       const up = r.status === "UP";
-      toast(t(up ? "monitors.checkUp" : "monitors.checkDown", { name: m?.name ?? "", status: r.status, ms: r.ms, msg: r.msg }), up ? "success" : "error");
+      const reason = cloudflareReasonKey(r.cause);
+      const msg = reason ? `${r.msg}. ${t(`monitors.cf.reason.${reason}`)}` : r.msg;
+      toast(t(up ? "monitors.checkUp" : "monitors.checkDown", { name: m?.name ?? "", status: r.status, ms: r.ms, msg }), up ? "success" : "error");
     },
   });
 
@@ -94,13 +96,21 @@ export default function MonitorDetailPage() {
           {beats.length === 0 && <span style={{ color: "var(--c-tx3)", fontSize: 13 }}>{t("monitors.noChecks")}</span>}
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-          {[...beats].reverse().slice(0, 8).map((b, i) => (
-            <div key={i} style={{ display: "flex", gap: 10, fontSize: 12 }}>
-              <span style={{ color: monitorColor(b.status), fontWeight: 600, width: 60 }}>{b.status}</span>
-              <span className="mono" style={{ color: "var(--c-tx3)", width: 60 }}>{b.ms}ms</span>
-              <span style={{ color: "var(--c-tx2)" }}>{b.msg ?? ""}</span>
-            </div>
-          ))}
+          {[...beats].reverse().slice(0, 8).map((b, i) => {
+            const reason = cloudflareReasonKey(b.cause);
+            return (
+              <div key={i} style={{ display: "flex", gap: 10, fontSize: 12, flexWrap: "wrap" }}>
+                <span style={{ color: monitorColor(b.status), fontWeight: 600, width: 60 }}>{b.status}</span>
+                <span className="mono" style={{ color: "var(--c-tx3)", width: 60 }}>{b.ms}ms</span>
+                <span style={{ color: "var(--c-tx2)" }}>{b.msg ?? ""}</span>
+                {reason && (
+                  <span style={{ flexBasis: "100%", color: "var(--c-tx3)" }}>
+                    <strong style={{ color: "var(--c-am)" }}>{t("monitors.cf.title")}</strong> · {t(`monitors.cf.reason.${reason}`)}
+                  </span>
+                )}
+              </div>
+            );
+          })}
         </div>
       </Card>
 

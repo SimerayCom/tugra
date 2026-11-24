@@ -8,7 +8,8 @@ import { Activity } from "lucide-react";
 import { api } from "../../../lib/api";
 import { scopeByTeam } from "../../../lib/team-scope";
 import { writableIds } from "../../../lib/fleet";
-import { monitorColor } from "../../../lib/monitors";
+import { MANUAL_MONITOR_TYPES, monitorColor } from "../../../lib/monitors";
+import type { MonitorType } from "../../../lib/types";
 import { useT } from "../../../i18n/provider";
 import { Btn, Card, EmptyState } from "../../../components/ui";
 import { ErrorState } from "../../../components/error-state";
@@ -19,6 +20,17 @@ import { SkeletonTable } from "../../../components/skeleton";
 import { ListCard, ListRow } from "../../../components/list";
 import { PageTitle } from "../../../components/page-header";
 import { statusLabel } from "../../../lib/status";
+
+function typeLabel(t: ReturnType<typeof useT>, v: (typeof MANUAL_MONITOR_TYPES)[number]): string {
+  switch (v) {
+    case "HTTP": return t("monitors.typeHttp");
+    case "KEYWORD": return t("monitors.typeKeyword");
+    case "TCP": return t("monitors.typeTcp");
+    case "PING": return t("monitors.typePing");
+    case "DNS": return t("monitors.typeDns");
+    default: return t("monitors.metric");
+  }
+}
 
 const formGrid: React.CSSProperties = {
   display: "grid",
@@ -53,7 +65,9 @@ export default function MonitorsPage() {
   const { data: channels = [] } = useQuery({ queryKey: ["channels"], queryFn: () => api.listChannels() });
 
   const [name, setName] = useState("");
-  const [type, setType] = useState<"HTTP" | "TCP" | "METRIC">("HTTP");
+  const [type, setType] = useState<MonitorType>("HTTP");
+  const [keyword, setKeyword] = useState("");
+  const [dnsRecordType, setDnsRecordType] = useState("A");
   const [target, setTarget] = useState("");
   const [serverId, setServerId] = useState("");
   const [metric, setMetric] = useState<"DISK" | "CPU" | "MEM">("DISK");
@@ -89,11 +103,21 @@ export default function MonitorsPage() {
               channelIds,
               ...tuning,
             }
-          : { name, type, target, teamId, channelIds, ...tuning },
+          : {
+              name,
+              type,
+              target,
+              teamId,
+              channelIds,
+              ...(type === "KEYWORD" ? { keyword } : {}),
+              ...(type === "DNS" ? { dnsRecordType } : {}),
+              ...tuning,
+            },
       ),
     onSuccess: () => {
       setName("");
       setTarget("");
+      setKeyword("");
       setChannelIds([]);
       qc.invalidateQueries({ queryKey: ["monitors"] });
     },
@@ -101,7 +125,15 @@ export default function MonitorsPage() {
 
   return (
     <div style={{ padding: "var(--page-pad)" }}>
-      <PageTitle title={t("monitors.title")} subtitle={t("monitors.subtitle")} />
+      <PageTitle
+        title={t("monitors.title")}
+        subtitle={t("monitors.subtitle")}
+        actions={
+          <Link href="/monitors/import" style={{ textDecoration: "none" }}>
+            <Btn variant="ghost">{t("monitors.importFromKuma")}</Btn>
+          </Link>
+        }
+      />
 
       <Card style={{ padding: 16, marginBottom: 20 }}>
         <form
@@ -117,12 +149,8 @@ export default function MonitorsPage() {
             <Field label={t("monitors.typeLabel")}>
               <Select
                 value={type}
-                onChange={(v) => setType(v as "HTTP" | "TCP" | "METRIC")}
-                options={[
-                  { value: "HTTP", label: "HTTP" },
-                  { value: "TCP", label: "TCP" },
-                  { value: "METRIC", label: t("monitors.metric") },
-                ]}
+                onChange={(v) => setType(v as MonitorType)}
+                options={MANUAL_MONITOR_TYPES.map((v) => ({ value: v, label: typeLabel(t, v) }))}
               />
             </Field>
             {type === "METRIC" ? (
@@ -144,10 +172,23 @@ export default function MonitorsPage() {
                 </Field>
               </>
             ) : (
-              <Field label={type === "HTTP" ? t("monitors.targetHttp") : t("monitors.targetTcp")} style={{ gridColumn: "span 2" }}>
-                <TextInput value={target} onChange={(e) => setTarget(e.target.value)} required
-                  placeholder={type === "HTTP" ? "https://example.com" : "host:port"} />
-              </Field>
+              <>
+                <Field label={type === "HTTP" || type === "KEYWORD" ? t("monitors.targetHttp") : type === "TCP" ? t("monitors.targetTcp") : t("monitors.targetHost")} style={{ gridColumn: "span 2" }}>
+                  <TextInput value={target} onChange={(e) => setTarget(e.target.value)} required
+                    placeholder={type === "HTTP" || type === "KEYWORD" ? "https://example.com" : type === "TCP" ? "host:port" : "example.com"} />
+                </Field>
+                {type === "KEYWORD" && (
+                  <Field label={t("monitors.keyword")} hint={t("monitors.keywordHint")}>
+                    <TextInput value={keyword} onChange={(e) => setKeyword(e.target.value)} required />
+                  </Field>
+                )}
+                {type === "DNS" && (
+                  <Field label={t("monitors.dnsRecordType")}>
+                    <Select value={dnsRecordType} onChange={setDnsRecordType}
+                      options={["A", "AAAA", "CNAME", "MX", "NS", "TXT", "SRV", "CAA", "PTR"].map((v) => ({ value: v, label: v }))} />
+                  </Field>
+                )}
+              </>
             )}
             <Field label={t("common.team")}>
               <Select value={teamId} onChange={setTeamId} autoSelectFirst required placeholder={t("common.pickTeam")}

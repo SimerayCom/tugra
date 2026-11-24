@@ -1032,7 +1032,7 @@ export interface TokenPair {
   refreshToken: string;
 }
 
-export type MonitorType = "HTTP" | "TCP" | "METRIC";
+export type MonitorType = "HTTP" | "TCP" | "METRIC" | "KEYWORD" | "PING" | "DNS";
 export type MonitorStatus = "UP" | "DOWN" | "PENDING";
 
 export interface Monitor {
@@ -1049,6 +1049,18 @@ export interface Monitor {
   timeoutMs: number;
   resendEvery: number;
   enabled: boolean;
+  method?: string | null;
+  keyword?: string | null;
+  keywordInvert?: boolean;
+  acceptedStatus?: string[];
+  /** Headers / basic auth / body are set (their values are never returned). */
+  hasRequestOptions?: boolean;
+  ignoreTls?: boolean;
+  maxRedirects?: number;
+  upsideDown?: boolean;
+  dnsRecordType?: string | null;
+  dnsServer?: string | null;
+  dnsExpect?: string | null;
   auto: boolean;
   appId: string | null;
   channelIds: string[];
@@ -1063,7 +1075,70 @@ export interface Heartbeat {
   status: MonitorStatus;
   ms: number;
   msg: string | null;
+  /** Machine-readable failure class, e.g. "cf:522" (Cloudflare to origin). */
+  cause?: string | null;
   important: boolean;
+}
+
+// ── Uptime Kuma import ──
+export type KumaSource =
+  | { kind: "backup"; json: string }
+  | { kind: "server"; serverId: string; container?: string };
+
+export interface KumaWarning {
+  code: string;
+  params?: Record<string, string | number>;
+}
+
+export interface KumaPlanMonitor {
+  ref: string;
+  name: string;
+  kumaType: string;
+  type: string | null;
+  target: string | null;
+  action: "create" | "exists" | "unsupported" | "group";
+  reason?: string;
+  warnings: KumaWarning[];
+  channelRefs: string[];
+}
+
+export interface KumaPlanChannel {
+  ref: string;
+  name: string;
+  kumaType: string;
+  type: string | null;
+  action: "create" | "reuse" | "unsupported";
+  reason?: string;
+  warnings: KumaWarning[];
+  usedBy: number;
+  existingId?: string;
+}
+
+export interface KumaPlan {
+  monitors: KumaPlanMonitor[];
+  channels: KumaPlanChannel[];
+  totals: { monitors: number; create: number; exists: number; unsupported: number; channelsToCreate: number };
+}
+
+export interface KumaApplyItem {
+  ref: string;
+  name: string;
+  status: "created" | "reused" | "exists" | "skipped" | "failed";
+  id?: string;
+  error?: string;
+}
+
+export interface KumaApplyResult {
+  channels: KumaApplyItem[];
+  monitors: KumaApplyItem[];
+  totals: { monitorsCreated: number; monitorsFailed: number; channelsCreated: number; channelsFailed: number };
+}
+
+export interface KumaContainer {
+  container: string;
+  image: string;
+  state: string;
+  hasData: boolean;
 }
 
 export interface Channel {

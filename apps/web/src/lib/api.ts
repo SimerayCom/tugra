@@ -75,6 +75,10 @@ import type {
   Deployment,
   DomainView,
   Heartbeat,
+  KumaApplyResult,
+  KumaContainer,
+  KumaPlan,
+  KumaSource,
   MetricsSample,
   FleetLatestRow,
   MetricsRange,
@@ -96,6 +100,7 @@ import type {
   DnsAutoSetupResult,
   DnsManualRecords,
   Monitor,
+  MonitorType,
   LogDrain,
   LogDrainInput,
   AppDrainSummary,
@@ -1338,8 +1343,10 @@ export const api = {
   },
   createMonitor(input: {
     name: string;
-    type: "HTTP" | "TCP" | "METRIC";
+    type: MonitorType;
     target?: string;
+    keyword?: string;
+    dnsRecordType?: string;
     serverId?: string;
     metric?: "DISK" | "CPU" | "MEM";
     thresholdPct?: number;
@@ -1372,10 +1379,19 @@ export const api = {
     });
   },
   checkMonitor(id: string) {
-    return apiFetch<{ status: string; ms: number; msg: string }>(
+    return apiFetch<{ status: string; ms: number; msg: string; cause?: string | null }>(
       `/monitors/${id}/check`,
       { method: "POST" },
     );
+  },
+  kumaDetect(input: { teamId: string; serverId: string }) {
+    return apiFetch<{ containers: KumaContainer[] }>("/monitors/import/kuma/detect", { method: "POST", body: JSON.stringify(input) });
+  },
+  kumaPreview(input: { teamId: string; source: KumaSource }) {
+    return apiFetch<KumaPlan>("/monitors/import/kuma/preview", { method: "POST", body: JSON.stringify(input) });
+  },
+  kumaApply(input: { teamId: string; source: KumaSource; monitorRefs?: string[]; createChannelRefs?: string[] }) {
+    return apiFetch<KumaApplyResult>("/monitors/import/kuma/apply", { method: "POST", body: JSON.stringify(input) });
   },
   getHeartbeats(id: string, limit = 60) {
     return apiFetch<Heartbeat[]>(`/monitors/${id}/heartbeats?limit=${limit}`);
