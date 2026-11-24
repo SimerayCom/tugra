@@ -6,12 +6,12 @@ function fakeReq(method: string, url: string, body: string, type = "application/
   const r = Readable.from([Buffer.from(body)]) as unknown as Record<string, unknown>;
   r.method = method;
   r.url = url;
-  r.headers = { "content-type": type };
+  r.headers = { "content-type": type, authorization: "Bearer t" };
   r.destroy = jest.fn();
   return r;
 }
 function fakeRes() {
-  const res = { statusCode: 200, headers: {} as Record<string, string>, ended: "", setHeader(k: string, v: string) { this.headers[k] = v; }, end(b: string) { this.ended = b; } };
+  const res = { statusCode: 200, headers: {} as Record<string, string>, ended: "", setHeader(k: string, v: string) { this.headers[k] = v; }, end(b: string, cb?: () => void) { this.ended = b; cb?.(); } };
   return res;
 }
 const run = (mw: ReturnType<typeof largeJsonBody>, req: unknown, res = fakeRes()) =>
@@ -56,5 +56,21 @@ describe("largeJsonBody", () => {
     const out = await run(mw, fakeReq("POST", "/api/v1/monitors/import/kuma/apply", "{nope"));
     expect(out.next).toBe(false);
     expect(out.res.statusCode).toBe(400);
+  });
+
+  it("leaves an anonymous request (no credentials) to the default parser", async () => {
+    const req = fakeReq("POST", "/api/v1/monitors/import/kuma/apply", '{"a":1}');
+    (req.headers as Record<string, string>).authorization = "";
+    const out = await run(mw, req);
+    expect(out.next).toBe(true);
+    expect(out.req.body).toBeUndefined();
+  });
+
+  it("answers 413 up front when Content-Length already exceeds the cap", async () => {
+    const req = fakeReq("POST", "/api/v1/monitors/import/kuma/apply", '{"a":1}');
+    (req.headers as Record<string, string>)["content-length"] = "5000";
+    const out = await run(mw, req);
+    expect(out.next).toBe(false);
+    expect(out.res.statusCode).toBe(413);
   });
 });

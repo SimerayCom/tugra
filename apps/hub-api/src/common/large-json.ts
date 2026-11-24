@@ -7,13 +7,25 @@ type Req = IncomingMessage & { body?: unknown; _body?: boolean; originalUrl?: st
  * A JSON body parser with a higher size limit for ONE route family (the framework's default is 100 kB, far too small
  * for a monitoring backup with a few hundred entries). Mounted in main.ts before the framework's parser; it marks the
  * request as already parsed (`_body`), so the default parser skips it and the limit everywhere else is unchanged.
- * Only POST + application/json under `prefix` is touched; the body is read with a hard byte cap (413 beyond it).
+ * Only POST + application/json under `prefix` is touched, and only when the request carries credentials (an
+ * Authorization header or a cookie) so an anonymous client never gets the larger pre-auth buffer: it falls through
+ * to the default 100 kB parser and the auth guard. The body is read with a hard byte cap (413 beyond it, also when
+ * the declared Content-Length already exceeds it).
  */
 export function largeJsonBody(prefix: string, maxBytes: number) {
   return (req: Req, res: ServerResponse, next: Next): void => {
     const url = (req.originalUrl ?? req.url ?? "").split("?")[0];
     const type = String(req.headers["content-type"] ?? "").toLowerCase();
     if (req.method !== "POST" || !url.startsWith(prefix) || !type.startsWith("application/json")) return next();
+    if (!req.headers.authorization && !req.headers.cookie) return next();
+    const declared = Number(req.headers["content-length"]);
+    if (Number.isFinite(declared) && declared > maxBytes) {
+      res.statusCode = 413;
+      res.setHeader("content-type", "application/json");
+      res.setHeader("connection", "close");
+      res.end(JSON.stringify({ statusCode: 413, message: "request body too large" }), () => req.destroy());
+      return;
+    }
 
     const chunks: Buffer[] = [];
     let size = 0;
@@ -23,8 +35,9 @@ export function largeJsonBody(prefix: string, maxBytes: number) {
       done = true;
       res.statusCode = status;
       res.setHeader("content-type", "application/json");
-      res.end(JSON.stringify({ statusCode: status, message }));
-      req.destroy();
+      res.setHeader("connection", "close");
+      // Destroy the socket only once the reply is flushed, or the client may never see the 413.
+      res.end(JSON.stringify({ statusCode: status, message }), () => req.destroy());
     };
     req.on("data", (c: Buffer) => {
       if (done) return;
