@@ -4,9 +4,9 @@ import { useQuery } from "@tanstack/react-query";
 import { api, migrationRunReportMdUrl } from "../../lib/api";
 import { useT } from "../../i18n/provider";
 import { Badge, SectionCard, Spinner } from "../ui";
-import { formatDuration } from "../../lib/import";
+import { formatBytes, formatDuration } from "../../lib/import";
 import { EVIDENCE_KINDS, STEP_TITLE_KEY, codeText } from "../../lib/migration-run";
-import type { MigrationRunReport } from "../../lib/types";
+import type { MigrationRunDataIntegrity, MigrationRunReport } from "../../lib/types";
 import { EvidenceBadge } from "./badges";
 import { CommandBlock } from "./command-block";
 
@@ -28,6 +28,18 @@ const KIND_KEY = {
   bucket: "migrationRun.report.kind.bucket",
   domain: "migrationRun.report.kind.domain",
 } as const;
+const LANE_KEY = {
+  dump: "migrationRun.report.data.lane.dump",
+  stream: "migrationRun.report.data.lane.stream",
+  files: "migrationRun.report.data.lane.files",
+} as const;
+const ROWS_KEY = {
+  match: "migrationRun.report.data.rows.match",
+  close: "migrationRun.report.data.rows.close",
+  mismatch: "migrationRun.report.data.rows.mismatch",
+  unverified: "migrationRun.report.data.rows.unverified",
+} as const;
+const ROWS_TONE = { match: "ok", close: "warn", mismatch: "danger", unverified: "muted" } as const;
 const OUTCOME_TONE = { moved: "ok", skipped: "muted", acked: "warn", failed: "danger", "not-cut-over": "warn" } as const;
 
 /** The secret-free run report: what moved, what did not and why, which evidence the run relied on, and the measured
@@ -87,6 +99,7 @@ export function ReportBody({ report }: { report: MigrationRunReport }) {
           ))}
         </ul>
       )}
+      {(report.dataIntegrity?.length ?? 0) > 0 && <DataChecks items={report.dataIntegrity!} />}
       {report.manual.length > 0 && (
         <div>
           <div style={{ fontSize: 12, fontWeight: 700, color: "var(--c-am)", marginBottom: 6 }}>{t("migrationRun.report.manual")}</div>
@@ -114,5 +127,41 @@ export function ReportBody({ report }: { report: MigrationRunReport }) {
         ))}
       </ul>
     </div>
+  );
+}
+
+const num = (n: number | null): string => (n === null ? "-" : n.toLocaleString("en-US"));
+
+/** One row per migrated database: the route it took and a one-sentence row check; size, parts and the checksum sit behind More. */
+function DataChecks({ items }: { items: MigrationRunDataIntegrity[] }) {
+  const t = useT();
+  return (
+    <section aria-label={t("migrationRun.report.data.title")}>
+      <div style={{ fontSize: 12, fontWeight: 700, color: "var(--c-tx3)", marginBottom: 8 }}>{t("migrationRun.report.data.title")}</div>
+      <ul style={{ margin: 0, padding: 0, listStyle: "none", display: "flex", flexDirection: "column", gap: 12 }}>
+        {items.map((d) => {
+          const total = d.rows.sourceRows ?? d.rows.targetRows;
+          return (
+            <li key={d.itemRef} style={{ display: "flex", flexDirection: "column", gap: 4, minWidth: 0 }}>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 10px", alignItems: "center", fontSize: 13 }}>
+                <span className="mono" style={{ flex: "1 1 160px", minWidth: 0, wordBreak: "break-all" }}>{d.name}</span>
+                <Badge tone="muted">{t(LANE_KEY[d.lane])}</Badge>
+                <Badge tone={ROWS_TONE[d.rows.status]}>{t(ROWS_KEY[d.rows.status], { relations: num(d.rows.relations), rows: num(total), differing: num(d.rows.differing), names: d.rows.names.join(", ") || "-" })}</Badge>
+              </div>
+              <details style={{ fontSize: 12, color: "var(--c-tx3)" }}>
+                <summary style={{ cursor: "pointer", minHeight: 24 }}>{t("migrationRun.report.data.more")}</summary>
+                <div style={{ display: "flex", flexDirection: "column", gap: 4, paddingTop: 6 }}>
+                  <span>{d.bytes === null ? "-" : t("migrationRun.report.data.size", { size: formatBytes(d.bytes) })}</span>
+                  {d.parts !== null && <span>{t("migrationRun.report.data.parts", { parts: num(d.parts) })}</span>}
+                  <span>{t("migrationRun.report.data.sourceRows", { rows: num(d.rows.sourceRows) })} · {t("migrationRun.report.data.targetRows", { rows: num(d.rows.targetRows) })}</span>
+                  <span>{t("migrationRun.report.data.checksum")}</span>
+                  {d.sha256 ? <span className="mono" style={{ wordBreak: "break-all", color: "var(--c-tx2)" }}>{d.sha256}</span> : <span>{t("migrationRun.report.data.noChecksum")}</span>}
+                </div>
+              </details>
+            </li>
+          );
+        })}
+      </ul>
+    </section>
   );
 }

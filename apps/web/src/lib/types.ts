@@ -3020,8 +3020,29 @@ export interface MigrationRunReport {
   window: { estimatedSec: number | null; measuredSec: number | null };
   steps: Array<{ key: MigrationRunStepKey; status: MigrationRunStepStatus; attempts: number; durationSec: number | null; code: string | null }>;
   items: Array<{ kind: "app" | "database" | "service" | "volume" | "bucket" | "domain"; name: string; outcome: "moved" | "skipped" | "acked" | "failed" | "not-cut-over"; code: string | null; evidence: MigrationRunEvidenceKind | null }>;
+  /** Per database: how its data travelled, its size, one checksum of the whole artifact and the row check against the source. Absent on a hub that predates it. */
+  dataIntegrity?: MigrationRunDataIntegrity[];
   evidenceSummary: Partial<Record<MigrationRunEvidenceKind, number>>;
   manual: Array<{ code: string; params?: MigrationRunParams }>;
+}
+export interface MigrationRunDataIntegrity {
+  itemRef: string;
+  name: string;
+  engine: string;
+  /** `dump`: one gzip dump; `stream`: a checked stream of parts; `files`: a copy of the data directory. */
+  lane: "dump" | "stream" | "files";
+  bytes: number | null;
+  parts: number | null;
+  sha256: string | null;
+  rows: {
+    status: "match" | "close" | "mismatch" | "unverified";
+    mode: "exact" | "estimate" | null;
+    relations: number | null;
+    differing: number | null;
+    sourceRows: number | null;
+    targetRows: number | null;
+    names: string[];
+  };
 }
 
 /** `GET /migration-runs/:id/safety-hints`: facts attested by the people who can see the SOURCE HOST (secret-free). */

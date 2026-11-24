@@ -411,6 +411,27 @@
     "measured": "Measured window: {time}",
     "evidence": "Evidence relied on:",
     "manual": "Still to do by hand",
+    "data": {
+      "title": "Data checks",
+      "lane": {
+        "dump": "One dump",
+        "stream": "Checked stream",
+        "files": "File copy"
+      },
+      "rows": {
+        "match": "Rows match: {relations} tables, {rows} rows.",
+        "close": "Rows are close: {relations} tables, {rows} rows. An estimate was used for big tables.",
+        "mismatch": "Rows are missing in {differing} of {relations} tables: {names}.",
+        "unverified": "Rows not compared yet."
+      },
+      "more": "More",
+      "size": "Size: {size}",
+      "parts": "Parts: {parts}",
+      "checksum": "Checksum (sha256)",
+      "noChecksum": "No checksum was recorded.",
+      "sourceRows": "Source: {rows} rows",
+      "targetRows": "Target: {rows} rows"
+    },
     "kind": {
       "app": "App",
       "database": "Database",
