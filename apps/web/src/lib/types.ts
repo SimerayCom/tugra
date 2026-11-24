@@ -1127,6 +1127,26 @@ export interface GitSource {
   canWrite: boolean;
   /** Shared with every team by the instance owner (absent on an older hub). */
   sharedAllTeams?: boolean;
+  /** GitHub App: the accounts / organizations it is installed on (absent on an older hub). */
+  installations?: GitSourceInstallation[];
+  /** GitHub App: where GitHub delivers push events (null when no webhook secret is stored). */
+  webhookUrl?: string | null;
+  hasWebhook?: boolean;
+}
+
+export interface GitSourceInstallation {
+  installationId: string;
+  accountLogin: string | null;
+  accountType: string | null;
+  avatarUrl: string | null;
+}
+
+/** The pre-filled GitHub App manifest the browser posts to GitHub (opaque to the UI). */
+export interface GithubManifestStart {
+  postUrl: string;
+  manifest: Record<string, unknown>;
+  /** false when the hub cannot receive webhooks from the internet. */
+  webhookActive: boolean;
 }
 
 export type GitSourceKind = "github" | "gitea" | "forgejo" | "codeberg";

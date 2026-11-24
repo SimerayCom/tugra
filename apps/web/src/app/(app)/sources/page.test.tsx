@@ -50,3 +50,25 @@ describe("Git sources: share with every team", () => {
     expect(screen.queryByRole("button", { name: "Share with all teams" })).toBeNull();
   });
 });
+
+describe("Git sources: one-click layout", () => {
+  it("leads with Connect GitHub and keeps manual setup under Advanced", async () => {
+    vi.spyOn(api, "listTeams").mockResolvedValue([{ id: "t1", name: "Acme", role: "OWNER" }] as never);
+    vi.spyOn(api, "listGitSources").mockResolvedValue([]);
+    wrap();
+    expect(await screen.findByText("Connect your first Git host")).toBeTruthy();
+    expect(screen.getAllByRole("button", { name: "Connect GitHub" }).length).toBe(1);
+    const adv = screen.getByText("Advanced").closest("details") as HTMLDetailsElement;
+    expect(adv.open).toBe(false);
+    expect(adv.textContent).toContain("GitHub App you created yourself");
+  });
+
+  it("lists connected sources as cards with the team they belong to", async () => {
+    vi.spyOn(api, "listTeams").mockResolvedValue([{ id: "t1", name: "Acme", role: "OWNER" }] as never);
+    vi.spyOn(api, "listGitSources").mockResolvedValue([src()]);
+    vi.spyOn(api, "listSourceRepos").mockResolvedValue([{ fullName: "acme/web", cloneUrl: "u", private: true, defaultBranch: "main" }]);
+    wrap();
+    expect(await screen.findByText("tugra-mrcandev")).toBeTruthy();
+    expect(await screen.findByText("1 repository")).toBeTruthy();
+  });
+});

@@ -66,6 +66,7 @@ import type {
   SecretProvider,
   SecretRefView,
   GitSource,
+  GithubManifestStart,
   SourceRepo,
   SourceBranch,
   Registry,
@@ -1455,6 +1456,18 @@ export const api = {
       | { kind: "gitea" | "forgejo" | "codeberg"; name: string; teamId: string; apiUrl?: string; token: string },
   ) {
     return apiFetch<GitSource>("/git-sources", { method: "POST", body: JSON.stringify(input) });
+  },
+  startGithubManifest(input: { teamId: string; name?: string; org?: string; anyAccount?: boolean; sharedAllTeams?: boolean }) {
+    return apiFetch<GithubManifestStart>("/git-sources/github/manifest", { method: "POST", body: JSON.stringify(input) });
+  },
+  completeGithubManifest(input: { code: string; state: string }) {
+    return apiFetch<{ source: GitSource; installUrl: string }>("/git-sources/github/manifest/complete", { method: "POST", body: JSON.stringify(input) });
+  },
+  captureGithubInstallation(input: { state: string; installationId: string }) {
+    return apiFetch<GitSource>("/git-sources/github/installation", { method: "POST", body: JSON.stringify(input) });
+  },
+  startGithubInstall(id: string) {
+    return apiFetch<{ installUrl: string }>(`/git-sources/${id}/installations`, { method: "POST" });
   },
   listSourceRepos(id: string) {
     return apiFetch<SourceRepo[]>(`/git-sources/${id}/repos`);
