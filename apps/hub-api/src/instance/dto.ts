@@ -19,6 +19,8 @@ export const UpdateInstanceSettingsSchema = z.object({
     }),
   publicUrl: z.union([z.string().url(), z.literal("")]).nullable().optional(),
   acmeEmail: z.union([z.string().email(), z.literal("")]).nullable().optional(),
+  // "Require 2FA for owners/admins". Turning it ON needs the acting owner to have 2FA already (controller check).
+  require2fa: z.boolean().optional(),
 });
 export type UpdateInstanceSettingsInput = z.infer<typeof UpdateInstanceSettingsSchema>;
 

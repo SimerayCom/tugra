@@ -383,6 +383,18 @@ describe("AuthService session hardening", () => {
     expect(rotated.refreshToken).toBeTruthy();
   });
 
+  it("revokeOtherSessions kills every other device but hands the caller a fresh, working session", async () => {
+    const svc = makeService();
+    const here = await svc.issueTokens("u1");
+    const elsewhere = await svc.issueTokens("u1");
+
+    const fresh = await svc.revokeOtherSessions("u1");
+
+    await expect(svc.refresh(here.refreshToken)).rejects.toThrow(); // the old token of this device is replaced too
+    await expect(svc.refresh(elsewhere.refreshToken)).rejects.toThrow();
+    expect((await svc.refresh(fresh.refreshToken)).refreshToken).toBeTruthy(); // the re-issued pair survives
+  });
+
   it("changing the password revokes all existing sessions", async () => {
     const passwordHash = await argon2.hash("old-pass-1234", { type: argon2.argon2id });
     const prisma = {
@@ -436,19 +448,20 @@ describe("AuthService.register — registration gating", () => {
     const userCreate = jest.fn().mockResolvedValue({ id: "u1", email: "a@x.io", name: null, emailVerified: false, twoFaEnabled: false, uiMode: "fleet" });
     const updateMany = jest.fn().mockResolvedValue({ count: 1 });
     const invFind = jest.fn().mockResolvedValue(null);
+    const teamCreate = jest.fn().mockResolvedValue({ id: "t1" });
     const prisma = {
       user: { findUnique: jest.fn().mockResolvedValue(null), create: userCreate },
       teamInvitation: { findFirst: invFind },
       $transaction: jest.fn(async (cb: (tx: unknown) => unknown) =>
         cb({
           user: { create: userCreate },
-          team: { create: jest.fn().mockResolvedValue({ id: "t1" }) },
+          team: { create: teamCreate },
           membership: { create: jest.fn().mockResolvedValue({}) },
           instanceSettings: { updateMany },
         }),
       ),
     } as unknown as PrismaService;
-    return { prisma, userCreate, updateMany, invFind };
+    return { prisma, userCreate, updateMany, invFind, teamCreate };
   }
   const settings = (over: Record<string, unknown>) => ({
     get: jest.fn().mockResolvedValue({ initializedAt: null, allowRegistration: false, ...over }),
@@ -462,6 +475,14 @@ describe("AuthService.register — registration gating", () => {
     await svc.register("a@x.io", "password123");
     expect(updateMany).toHaveBeenCalledWith({ where: { id: "singleton", initializedAt: null }, data: { initializedAt: expect.any(Date) } });
     expect(userCreate).toHaveBeenCalledWith({ data: expect.objectContaining({ isInstanceOwner: true }) });
+  });
+
+  it("never names the first team after the person (onboarding asks for the real team name)", async () => {
+    const { prisma, teamCreate } = registerPrisma();
+    const svc = makeService(prisma, undefined, settings({ initializedAt: null }));
+    jest.spyOn(svc, "issueTokens").mockResolvedValue({ accessToken: "a", refreshToken: "b" });
+    await svc.register("a@x.io", "password123", "Jane Doe");
+    expect(teamCreate).toHaveBeenCalledWith({ data: { name: "My Team" } });
   });
 
   it("a subsequent register is 403 when registration is closed and there is no invite", async () => {

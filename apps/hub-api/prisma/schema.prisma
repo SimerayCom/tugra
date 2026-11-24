@@ -2027,6 +2027,9 @@ model InstanceSettings {
   updateLastCheckError String?
   apiEnabled          Boolean   @default(true)
   apiAllowedIps       String[]  @default([])
+  // Owner-set policy: owners/admins must have two-factor authentication on. Enforced by TwoFactorRequiredGuard
+  // (a user without 2FA is limited to the account self-service routes until they enrol).
+  require2faForAdmins Boolean   @default(false)
   // OIDC single sign-on (Pro edition). Owner-configured IdP; the client secret is stored encrypted
   // (CryptoService) and never surfaced in any view. Empty allowedDomains = no JIT domain restriction.
   oidcEnabled         Boolean   @default(false)

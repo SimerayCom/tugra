@@ -32,6 +32,9 @@ import { hashToken } from "../api-tokens/api-token.util";
 import { webBaseUrl } from "../common/web-url";
 import { DEFAULT_CLEANUP_DATA } from "../server-ops/cleanup-defaults";
 
+/** Name of the personal team created with an account. Never derived from the person's name; onboarding asks the owner for the real team/company name. */
+const DEFAULT_TEAM_NAME = "My Team";
+
 const ACCESS_TTL = "15m";
 const REFRESH_TTL_SECONDS = 7 * 24 * 60 * 60;
 
@@ -230,7 +233,7 @@ export class AuthService {
         data: { email, password: passwordHash, name: name ?? null, isInstanceOwner: firstUser, uiMode: this.defaultUiMode() },
       });
       const team = await tx.team.create({
-        data: { name: name ? `${name}'s Team` : "My Team" },
+        data: { name: DEFAULT_TEAM_NAME },
       });
       await tx.membership.create({
         data: { userId: created.id, teamId: team.id, role: Role.OWNER },
@@ -270,7 +273,7 @@ export class AuthService {
           data: { email, password: passwordHash, name: name ?? null, emailVerified: true, emailVerifiedAt: new Date(), isInstanceOwner: firstUser, uiMode: this.defaultUiMode() },
         });
         const team = await tx.team.create({
-          data: { name: name ? `${name}'s Team` : "My Team" },
+          data: { name: DEFAULT_TEAM_NAME },
         });
         await tx.membership.create({
           data: { userId: created.id, teamId: team.id, role: Role.OWNER },
@@ -319,7 +322,7 @@ export class AuthService {
           data: { email, password: passwordHash, name: name ?? null, emailVerified: true, emailVerifiedAt: new Date(), isInstanceOwner: firstUser, uiMode: this.defaultUiMode() },
         });
         const team = await tx.team.create({
-          data: { name: name ? `${name}'s Team` : "My Team" },
+          data: { name: DEFAULT_TEAM_NAME },
         });
         await tx.membership.create({
           data: { userId: created.id, teamId: team.id, role: Role.OWNER },
@@ -498,6 +501,13 @@ export class AuthService {
   async logoutAll(userId: string): Promise<void> {
     await this.redis.incr(`rtgen:${userId}`);
     await this.audit.log({ actor: userId, action: "auth.logout_all" });
+  }
+
+  /** Revoke every session except the caller's device: bump the refresh generation (all older tokens die), then
+   *  re-issue this device a fresh pair so the user who asked isn't bounced to the login screen. */
+  async revokeOtherSessions(userId: string): Promise<TokenPair> {
+    await this.logoutAll(userId);
+    return this.issueTokens(userId);
   }
 
   private async revokeFamily(family: string): Promise<void> {

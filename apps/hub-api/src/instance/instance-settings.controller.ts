@@ -1,4 +1,4 @@
-import { BadRequestException, Body, ConflictException, Controller, Get, Header, HttpCode, type MessageEvent, Param, Patch, Post, Sse, UseGuards } from "@nestjs/common";
+import { BadRequestException, Body, ConflictException, Controller, Get, Header, HttpCode, type MessageEvent, Param, Patch, Post, Req, Sse, UseGuards } from "@nestjs/common";
 import { distinctUntilChanged, from, interval, map, mergeMap, type Observable, takeWhile } from "rxjs";
 import { ApiTags, ApiCookieAuth } from "@nestjs/swagger";
 import { ApiZodBody, ApiZodResponse } from "../openapi/openapi";
@@ -41,6 +41,10 @@ import { UpdaterService, isTerminalPhase } from "../update/updater.service";
 import { StackConvergeService } from "../update/stack-converge.service";
 import { OwnerUpdateStatusViewSchema, UpdateApplyResultSchema } from "../update/dto";
 import { TelemetryService } from "../telemetry/telemetry.service";
+import { ConfigService } from "@nestjs/config";
+import { AuthService } from "../auth/auth.service";
+import { publicUrlFrom, type ReqLike } from "../common/hub-url";
+import { suggestOnboardingDefaults } from "./onboarding-defaults";
 
 /**
  * Owner-only instance settings, managed with the login SESSION (JwtAuthGuard, not ApiAuthGuard) — like API
@@ -64,6 +68,8 @@ export class InstanceSettingsController {
     private readonly rotation: SecretsRotationService,
     private readonly keyring: KeyRingService,
     private readonly converge: StackConvergeService,
+    private readonly config: ConfigService,
+    private readonly auth: AuthService,
   ) {}
 
   /** The update status plus the update helper's own version (read from Redis, never from docker). */
@@ -207,16 +213,27 @@ export class InstanceSettingsController {
   }
 
   @Get("settings")
-  async getSettings() {
+  async getSettings(@CurrentUser() user: AuthUser, @Req() req: ReqLike) {
     const s = await this.settings.get();
     // `edition` is env/license-driven and read-only here (deliberately absent from PATCH) — surfacing it
     // lets the owner see their tier without being able to grant themselves a higher one. publicUrl/acmeEmail
-    // are surfaced so the onboarding wizard can pre-fill them on resume.
+    // are surfaced so the onboarding wizard can pre-fill them on resume; `suggested` carries what the installer
+    // already knew (HUB_PUBLIC_URL / PANEL_DOMAIN / ACME_EMAIL / the owner's email) for the still-empty fields.
+    const owner = await this.auth.me(user.userId);
+    const suggested = suggestOnboardingDefaults({
+      envPublicUrl: this.config.get<string>("HUB_PUBLIC_URL"),
+      panelDomain: this.config.get<string>("PANEL_DOMAIN") || s.panelDomain || undefined,
+      envAcmeEmail: this.config.get<string>("ACME_EMAIL"),
+      requestUrl: publicUrlFrom(req),
+      ownerEmail: owner.email,
+    });
     return {
       apiEnabled: s.apiEnabled,
       apiAllowedIps: s.apiAllowedIps,
       publicUrl: s.publicUrl,
       acmeEmail: s.acmeEmail,
+      require2fa: s.require2faForAdmins,
+      suggested,
       edition: currentEdition(),
     };
   }
@@ -227,7 +244,7 @@ export class InstanceSettingsController {
     @CurrentUser() user: AuthUser,
     @Body(new ZodValidationPipe(UpdateInstanceSettingsSchema)) body: UpdateInstanceSettingsInput,
   ) {
-    const patch: { apiEnabled?: boolean; apiAllowedIps?: string[]; publicUrl?: string | null; acmeEmail?: string | null } = {};
+    const patch: { apiEnabled?: boolean; apiAllowedIps?: string[]; publicUrl?: string | null; acmeEmail?: string | null; require2faForAdmins?: boolean } = {};
     if (body.apiEnabled !== undefined) patch.apiEnabled = body.apiEnabled;
     if (body.apiAllowedIps !== undefined) {
       patch.apiAllowedIps = body.apiAllowedIps.map((e) => e.trim()).filter(Boolean);
@@ -235,9 +252,23 @@ export class InstanceSettingsController {
     // Map a falsy value ("" or null) to null so the owner can CLEAR the field; a real value is stored as-is.
     if (body.publicUrl !== undefined) patch.publicUrl = body.publicUrl || null;
     if (body.acmeEmail !== undefined) patch.acmeEmail = body.acmeEmail || null;
+    if (body.require2fa !== undefined) {
+      // Never lock the owner out: the policy can only be switched ON by an owner who has 2FA themselves, so at
+      // least one account always satisfies it (and everyone else is steered to enrol, never stranded).
+      if (body.require2fa) {
+        const me = await this.auth.me(user.userId);
+        if (!me.twoFaEnabled) throw new BadRequestException("turn on two-factor authentication for your own account first");
+      }
+      patch.require2faForAdmins = body.require2fa;
+    }
     const s = await this.settings.update(patch);
-    await this.audit.log({ actor: user.userId, action: "instance_settings.update", target: "singleton" });
-    return { apiEnabled: s.apiEnabled, apiAllowedIps: s.apiAllowedIps, publicUrl: s.publicUrl, acmeEmail: s.acmeEmail };
+    await this.audit.log({
+      actor: user.userId,
+      action: "instance_settings.update",
+      target: "singleton",
+      ...(body.require2fa !== undefined ? { meta: { require2fa: body.require2fa } } : {}),
+    });
+    return { apiEnabled: s.apiEnabled, apiAllowedIps: s.apiAllowedIps, publicUrl: s.publicUrl, acmeEmail: s.acmeEmail, require2fa: s.require2faForAdmins };
   }
 
   /**

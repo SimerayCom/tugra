@@ -5,6 +5,8 @@ import type { AuthUser } from "../auth/strategies/jwt.strategy";
 import type { UpdateService } from "../update/update.service";
 import type { UpdaterService } from "../update/updater.service";
 import type { StackConvergeService } from "../update/stack-converge.service";
+import type { ConfigService } from "@nestjs/config";
+import type { AuthService } from "../auth/auth.service";
 import type { CryptoService } from "../crypto/crypto.service";
 import type { LicenseService } from "../license/license.service";
 import type { TelemetryService } from "../telemetry/telemetry.service";
@@ -26,6 +28,7 @@ const mockAssertSafeUrl = assertSafeUrl as jest.Mock;
 beforeEach(() => mockAssertSafeUrl.mockReset().mockResolvedValue(undefined));
 
 const OWNER = { userId: "owner1", scopes: ["*"] } as AuthUser;
+const REQ = { headers: { host: "hub.acme.test" } };
 
 interface CurrentSettings {
   apiEnabled: boolean;
@@ -37,9 +40,11 @@ interface CurrentSettings {
   oidcClientId?: string | null;
   oidcClientSecretEnc?: string | null;
   oidcAllowedDomains?: string[];
+  require2faForAdmins?: boolean;
+  panelDomain?: string | null;
 }
 
-function make(current: CurrentSettings) {
+function make(current: CurrentSettings, opts: { env?: Record<string, string>; ownerTwoFa?: boolean } = {}) {
   const full = {
     publicUrl: null,
     acmeEmail: null,
@@ -48,6 +53,8 @@ function make(current: CurrentSettings) {
     oidcClientId: null,
     oidcClientSecretEnc: null,
     oidcAllowedDomains: [] as string[],
+    require2faForAdmins: false,
+    panelDomain: null as string | null,
     ...current,
   };
   const updated = { ...full };
@@ -106,7 +113,9 @@ function make(current: CurrentSettings) {
     retire: jest.fn().mockResolvedValue({ keyId: "0123456789abcdef", state: "RETIRED" }),
     restore: jest.fn().mockResolvedValue({ keyId: "0123456789abcdef", state: "DECRYPT_ONLY" }),
   };
-  return { ctrl: new InstanceSettingsController(settings, audit, update, updater, crypto, license, telemetry, mail, rotation as never, keyring as never, converge), converge, settings, audit, update, updater, crypto, license, telemetry, mail, rotation, keyring };
+  const config = { get: jest.fn((k: string) => opts.env?.[k]) } as unknown as ConfigService;
+  const auth = { me: jest.fn().mockResolvedValue({ id: "owner1", email: "owner@acme.test", twoFaEnabled: opts.ownerTwoFa ?? false }) } as unknown as AuthService;
+  return { ctrl: new InstanceSettingsController(settings, audit, update, updater, crypto, license, telemetry, mail, rotation as never, keyring as never, converge, config, auth), auth, converge, settings, audit, update, updater, crypto, license, telemetry, mail, rotation, keyring };
 }
 
 const ORIGINAL_EDITION = process.env.TUGRA_EDITION;
@@ -119,20 +128,49 @@ describe("InstanceSettingsController", () => {
   it("returns the API-gating fields, onboarding basics, plus the read-only env edition", async () => {
     process.env.TUGRA_EDITION = "pro";
     const { ctrl } = make({ apiEnabled: true, apiAllowedIps: ["10.0.0.0/8"], publicUrl: "https://hub.example.com", acmeEmail: "a@b.co" });
-    expect(await ctrl.getSettings()).toEqual({
+    expect(await ctrl.getSettings(OWNER, REQ)).toEqual({
       apiEnabled: true,
       apiAllowedIps: ["10.0.0.0/8"],
       publicUrl: "https://hub.example.com",
       acmeEmail: "a@b.co",
+      require2fa: false,
+      suggested: { publicUrl: "http://hub.acme.test", acmeEmail: "owner@acme.test" },
       edition: "pro",
     });
+  });
+
+  it("suggests the install-time values (HUB_PUBLIC_URL, ACME_EMAIL) for the still-empty onboarding fields", async () => {
+    const { ctrl } = make({ apiEnabled: true, apiAllowedIps: [] }, { env: { HUB_PUBLIC_URL: "https://hub.acme.test/", ACME_EMAIL: "ops@acme.test" } });
+    expect(await ctrl.getSettings(OWNER, REQ)).toMatchObject({ publicUrl: null, acmeEmail: null, suggested: { publicUrl: "https://hub.acme.test", acmeEmail: "ops@acme.test" } });
+  });
+
+  it("falls back to the panel domain, then the owner's email, when there is no HUB_PUBLIC_URL / real ACME_EMAIL", async () => {
+    const { ctrl } = make({ apiEnabled: true, apiAllowedIps: [] }, { env: { PANEL_DOMAIN: "panel.acme.test", ACME_EMAIL: "admin@example.com" } });
+    expect(await ctrl.getSettings(OWNER, REQ)).toMatchObject({ suggested: { publicUrl: "https://panel.acme.test", acmeEmail: "owner@acme.test" } });
+  });
+
+  it("turning 'Require 2FA' on is refused for an owner without 2FA (never strand the owner)", async () => {
+    const { ctrl, settings } = make({ apiEnabled: true, apiAllowedIps: [] }, { ownerTwoFa: false });
+    await expect(ctrl.updateSettings(OWNER, { require2fa: true })).rejects.toThrow(/two-factor/);
+    expect(settings.update).not.toHaveBeenCalled();
+  });
+
+  it("turning 'Require 2FA' on works once the owner has 2FA; turning it off needs no 2FA and both are audited", async () => {
+    const { ctrl, settings, audit } = make({ apiEnabled: true, apiAllowedIps: [] }, { ownerTwoFa: true });
+    const on = await ctrl.updateSettings(OWNER, { require2fa: true });
+    expect(settings.update).toHaveBeenCalledWith({ require2faForAdmins: true });
+    expect(on.require2fa).toBe(true);
+    expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "instance_settings.update", meta: { require2fa: true } }));
+    const noTwoFa = make({ apiEnabled: true, apiAllowedIps: [] }, { ownerTwoFa: false });
+    await noTwoFa.ctrl.updateSettings(OWNER, { require2fa: false });
+    expect(noTwoFa.settings.update).toHaveBeenCalledWith({ require2faForAdmins: false });
   });
 
   it("patches apiEnabled + apiAllowedIps (dropping blanks) and audits", async () => {
     const { ctrl, settings, audit } = make({ apiEnabled: true, apiAllowedIps: [] });
     const res = await ctrl.updateSettings(OWNER, { apiEnabled: false, apiAllowedIps: ["1.2.3.4", "", "  ", "10.0.0.0/8"] });
     expect(settings.update).toHaveBeenCalledWith({ apiEnabled: false, apiAllowedIps: ["1.2.3.4", "10.0.0.0/8"] });
-    expect(res).toEqual({ apiEnabled: false, apiAllowedIps: ["1.2.3.4", "10.0.0.0/8"], publicUrl: null, acmeEmail: null });
+    expect(res).toEqual({ apiEnabled: false, apiAllowedIps: ["1.2.3.4", "10.0.0.0/8"], publicUrl: null, acmeEmail: null, require2fa: false });
     expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "instance_settings.update", actor: "owner1" }));
   });
 

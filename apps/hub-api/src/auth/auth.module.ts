@@ -11,11 +11,12 @@ import { OidcController } from "./oidc.controller";
 import { OidcService } from "./oidc.service";
 import { JwtStrategy } from "./strategies/jwt.strategy";
 import { TotpService } from "./totp.service";
+import { TwoFactorPolicyService } from "./two-factor-policy.service";
 
 @Module({
   imports: [PassportModule, JwtModule.register({}), CryptoModule, TeamDefaultsModule],
   controllers: [AuthController, GithubOAuthController, OidcController],
-  providers: [AuthService, GithubOAuthService, OidcService, TotpService, JwtStrategy],
-  exports: [AuthService],
+  providers: [AuthService, GithubOAuthService, OidcService, TotpService, TwoFactorPolicyService, JwtStrategy],
+  exports: [AuthService, TwoFactorPolicyService],
 })
 export class AuthModule {}

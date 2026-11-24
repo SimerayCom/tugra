@@ -26,6 +26,7 @@ import { CsrfExempt } from "../common/csrf-exempt.decorator";
 import { publicUrlFrom, type ReqLike } from "../common/hub-url";
 import { AllowUnverified } from "../common/allow-unverified.decorator";
 import { AuthService } from "./auth.service";
+import { TwoFactorPolicyService } from "./two-factor-policy.service";
 import { CurrentUser } from "./decorators/current-user.decorator";
 import { JwtAuthGuard } from "./guards/jwt-auth.guard";
 import { AuthUser } from "./strategies/jwt.strategy";
@@ -61,7 +62,10 @@ interface CookieRequest {
 @Controller("auth")
 @AllowUnverified() // every auth self-service route stays reachable for unverified users
 export class AuthController {
-  constructor(private readonly auth: AuthService) {}
+  constructor(
+    private readonly auth: AuthService,
+    private readonly twoFactorPolicy: TwoFactorPolicyService,
+  ) {}
 
   @Post("register")
   @CsrfExempt()
@@ -182,8 +186,10 @@ export class AuthController {
 
   @Get("me")
   @UseGuards(JwtAuthGuard)
-  me(@CurrentUser() user: AuthUser) {
-    return this.auth.me(user.userId);
+  async me(@CurrentUser() user: AuthUser) {
+    // `twoFaSetupRequired`: the instance requires 2FA for owners/admins and this account hasn't enrolled — the web
+    // sends the user to the setup screen (the hub also confines such a session to account self-service).
+    return { ...(await this.auth.me(user.userId)), twoFaSetupRequired: await this.twoFactorPolicy.setupRequired(user.userId) };
   }
 
   @Patch("me")
@@ -211,6 +217,24 @@ export class AuthController {
     // them in so the current session survives the password change seamlessly.
     const tokens = await this.auth.changePassword(user.userId, body.currentPassword, body.newPassword);
     // Refresh the cookies too (preserving CSRF), so a cookie session survives the password change.
+    setAuthCookies(res, tokens, { csrf: parseCookies(req.headers?.cookie)[TG_CSRF] });
+    return { ok: true, tokens };
+  }
+
+  /**
+   * Sign this account out everywhere EXCEPT the calling device: every other session is revoked and this device is
+   * re-issued fresh cookies in place (same mechanics as a password change). Offered after enabling 2FA.
+   */
+  @Post("sessions/revoke-others")
+  @HttpCode(200)
+  @UseGuards(JwtAuthGuard)
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  async revokeOtherSessions(
+    @CurrentUser() user: AuthUser,
+    @Req() req: CookieRequest,
+    @Res({ passthrough: true }) res: CookieResponse,
+  ) {
+    const tokens = await this.auth.revokeOtherSessions(user.userId);
     setAuthCookies(res, tokens, { csrf: parseCookies(req.headers?.cookie)[TG_CSRF] });
     return { ok: true, tokens };
   }

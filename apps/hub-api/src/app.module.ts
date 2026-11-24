@@ -6,6 +6,7 @@ import { JwtModule } from "@nestjs/jwt";
 import { validateEnv } from "./config/env";
 import { CsrfGuard } from "./common/csrf.guard";
 import { EmailVerifiedGuard } from "./common/email-verified.guard";
+import { TwoFactorRequiredGuard } from "./common/two-factor-required.guard";
 import { HealthController } from "./health/health.controller";
 import { VersionController } from "./health/version.controller";
 import { InstanceController } from "./instance/instance.controller";
@@ -142,6 +143,8 @@ import { ApiExceptionFilter } from "./common/api-exception.filter";
     { provide: APP_GUARD, useClass: ThrottlerGuard },
     { provide: APP_GUARD, useClass: CsrfGuard },
     { provide: APP_GUARD, useClass: EmailVerifiedGuard },
+    // Instance policy "Require 2FA for owners/admins": an un-enrolled owner/admin only reaches account self-service.
+    { provide: APP_GUARD, useClass: TwoFactorRequiredGuard },
     // Per-PAT rate limit (X-RateLimit-* + Retry-After); runs after the auth guard so req.user.tokenId is set.
     { provide: APP_INTERCEPTOR, useClass: ApiRateLimitInterceptor },
     // Establishes the per-request audit auth-context (pat+tokenId | session) that AuditService.log stamps.
