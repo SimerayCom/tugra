@@ -21,6 +21,8 @@ import {
   type CoolifyService,
   type CoolifyVolume,
 } from "./coolify-map";
+import { readCoolifySettings } from "../settings/coolify-settings.reader";
+import type { RawSettings } from "../settings/settings-types";
 import { coolifyHealthRows, coolifyVersionToken, type CoolifyHealthRow } from "./coolify-health";
 
 /**
@@ -99,6 +101,11 @@ export class CoolifySource implements ImportSource {
       }
     });
     return [...coolifyHealthRows("app", apps, serverOf), ...coolifyHealthRows("database", databases, serverOf), ...coolifyHealthRows("service", services, serverOf)];
+  }
+
+  /** The team's settings (notification channels, shared variables, storages, tasks, cleanup, tags, members). See {@link readCoolifySettings}. */
+  readSettings(): Promise<RawSettings> {
+    return readCoolifySettings(this.client);
   }
 
   async discover(): Promise<ForeignFleet> {

@@ -1,5 +1,6 @@
 import type { ForeignEnv, ForeignFleet, ServiceBundle } from "./foreign-fleet";
 import type { Unmapped } from "./reason";
+import type { RawSettings } from "./settings/settings-types";
 
 /** What transports/data a source adapter offers, so the planner/UI can adapt (e.g. warn that volume data
  *  cannot move without SSH, or that DB passwords need a `read:sensitive` token). */
@@ -122,6 +123,11 @@ export interface ImportSource {
    *  counter), keyed by the same refs as the plan. Called by the run's PREFLIGHT to take the health baseline; a source that does
    *  not implement it simply has no baseline. A failure MUST throw (a half-read baseline would be read as "healthy"). */
   healthBaseline?(): Promise<SourceHealthRow[]>;
+  /** OPTIONAL read-only: the SETTINGS of the source team (notification channels, shared variables, storages, scheduled tasks, server
+   *  cleanup, tags, members), read with the session's token. The result holds secret values (a bot token, a variable value): it is
+   *  consumed in memory by the settings import and NEVER serialised (the preview is derived from it by `buildSettingsPlan`). A
+   *  section the source cannot answer is `{ ok: false, reason }`, never a guess. A source without it carries no settings. */
+  readSettings?(): Promise<RawSettings>;
   /** Dump a database's contents (requires capabilities().dbDataDump). */
   dumpDb?(ref: string): Promise<DumpHandle>;
   /** Open a volume's bytes as a tar stream (requires capabilities().volumeRead). */
