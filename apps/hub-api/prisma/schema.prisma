@@ -881,18 +881,24 @@ model Heartbeat {
 }
 
 model NotificationChannel {
-  id         String                 @id @default(cuid())
-  team       Team                   @relation(fields: [teamId], references: [id], onDelete: Cascade)
-  teamId     String
-  name       String
-  type       String // webhook | telegram | ntfy | discord | slack | smtp | gotify
-  configEnc  String // encrypted JSON config (secrets never stored plaintext)
-  enabled    Boolean                @default(true)
-  eventTypes String[]               @default([]) // deploy_success | deploy_failed | server_offline …
-  locale     String                 @default("en") // notification language (server-side i18n)
-  monitors   MonitorChannel[]
-  deliveries NotificationDelivery[]
-  createdAt  DateTime               @default(now())
+  id          String                 @id @default(cuid())
+  team        Team                   @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  teamId      String
+  name        String
+  type        String // webhook | telegram | ntfy | discord | slack | smtp | gotify
+  configEnc   String // encrypted JSON config (secrets never stored plaintext)
+  enabled     Boolean                @default(true)
+  eventTypes  String[]               @default([]) // deploy_success | deploy_failed | server_offline …
+  locale      String                 @default("en") // notification language (server-side i18n)
+  // Routing rule (additive to eventTypes): categories uptime|deploy|backup|server|security|updates select
+  // events by category ([] = none, so legacy channels keep their eventTypes-only behaviour); minSeverity
+  // info|warning|critical drops anything milder; topics maps category → Telegram message_thread_id.
+  categories  String[]               @default([])
+  minSeverity String                 @default("info")
+  topics      Json?
+  monitors    MonitorChannel[]
+  deliveries  NotificationDelivery[]
+  createdAt   DateTime               @default(now())
 }
 
 enum NotificationDeliveryStatus {
@@ -2005,88 +2011,88 @@ model CatalogSnapshot {
 // registration gating, edition, self-update and API gating. Consumed by later features; created on
 // first access via InstanceSettingsService (get-or-create).
 model InstanceSettings {
-  id                  String    @id @default("singleton")
-  initializedAt       DateTime? // set when the first user registers (bootstrap complete)
-  allowRegistration   Boolean   @default(false) // closed after the first user; owner re-opens or invites
-  edition             String    @default("community") // community | pro | cloud
-  publicUrl           String?
-  acmeEmail           String?
+  id                   String    @id @default("singleton")
+  initializedAt        DateTime? // set when the first user registers (bootstrap complete)
+  allowRegistration    Boolean   @default(false) // closed after the first user; owner re-opens or invites
+  edition              String    @default("community") // community | pro | cloud
+  publicUrl            String?
+  acmeEmail            String?
   // Panel-TLS (DİLİM 1): the control panel's own HTTPS hostname (opt-in). When set (install.sh --auto-tls
   // or env PANEL_DOMAIN), the hub provisions a Traefik file-provider router for the panel. env PANEL_TLS=1 +
   // PANEL_DOMAIN win over this (synced to DB at bootstrap). Null = bring-your-own-proxy (unchanged).
-  panelDomain         String?
+  panelDomain          String?
   // IP-mode transport (http://<ip>/ install): the self-signed leaf certificate the proxy serves on :443 for the host-less
   // routes, generated once and persisted so its fingerprint (the agent pin) never changes. PEM + encrypted PEM key.
-  ipTlsCertPem        String?
-  ipTlsKeyEnc         String?
+  ipTlsCertPem         String?
+  ipTlsKeyEnc          String?
   // Fingerprint (sha256:<hex>) of the certificate the LOCAL proxy was last successfully configured to serve; the agent
   // install command only switches to wss://<ip> once this equals the persisted certificate (a path that is really up).
-  ipTlsServedFp       String?
+  ipTlsServedFp        String?
   // Agent address grace after the panel address moved: the old hosts / the IP route stay routable for `/agent` until every
   // agent reports the new endpoint, the owner confirms, or `expiresAt`. Shape: AgentEndpointGrace (agent-endpoints/grace.ts).
-  agentEndpointGrace  Json?
-  autoUpdate          Boolean   @default(false)
+  agentEndpointGrace   Json?
+  autoUpdate           Boolean   @default(false)
   // Release channel to track. "auto" (the default) = automatic: a prerelease build (0.1.0-beta.N) tracks "beta",
   // a release build tracks "stable" (see @tugra/shared autoUpdateChannel); "stable" / "beta" are explicit owner
   // pins. A sentinel rather than NULL so the PREVIOUS hub image (required-string client) can still read the row
   // after a rollback of the upgrade that introduced it.
-  updateChannel       String    @default("auto")
-  cachedLatestVersion String?
+  updateChannel        String    @default("auto")
+  cachedLatestVersion  String?
   // The channel `cachedLatestVersion` was read from; a cache from another channel is ignored after a pin change.
-  cachedLatestChannel String?
-  cachedNotice        Json? // signed top-level operator notice from the update manifest, or null
+  cachedLatestChannel  String?
+  cachedNotice         Json? // signed top-level operator notice from the update manifest, or null
   // Last SUCCESSFUL signed manifest check (set even when the tracked channel has no entry — the check itself
   // worked). Drives "Last checked" in the Updates card and the panel-load stale refresh.
-  updateLastCheckedAt DateTime?
+  updateLastCheckedAt  DateTime?
   // Machine reason of the most recent FAILED attempt (fetch / bad signature / settings / persist …); NULL when
   // the most recent attempt succeeded. Owner-visible so "why no update?" has an answer.
   updateLastCheckError String?
-  apiEnabled          Boolean   @default(true)
-  apiAllowedIps       String[]  @default([])
+  apiEnabled           Boolean   @default(true)
+  apiAllowedIps        String[]  @default([])
   // Owner-set policy: owners/admins must have two-factor authentication on. Enforced by TwoFactorRequiredGuard
   // (a user without 2FA is limited to the account self-service routes until they enrol).
-  require2faForAdmins Boolean   @default(false)
+  require2faForAdmins  Boolean   @default(false)
   // OIDC single sign-on (Pro edition). Owner-configured IdP; the client secret is stored encrypted
   // (CryptoService) and never surfaced in any view. Empty allowedDomains = no JIT domain restriction.
-  oidcEnabled         Boolean   @default(false)
-  oidcIssuer          String?
-  oidcClientId        String?
-  oidcClientSecretEnc String? // libsodium-encrypted; decrypted only at token exchange
-  oidcAllowedDomains  String[]  @default([]) // JIT provisioning is limited to these email domains when non-empty
+  oidcEnabled          Boolean   @default(false)
+  oidcIssuer           String?
+  oidcClientId         String?
+  oidcClientSecretEnc  String? // libsodium-encrypted; decrypted only at token exchange
+  oidcAllowedDomains   String[]  @default([]) // JIT provisioning is limited to these email domains when non-empty
   // A signed license (EdDSA JWT, issued by Tugra's proprietary billing service) that unlocks the Pro/Cloud
   // edition. Safe to store: it is signature-protected, so a DB write can't forge an entitlement — the hub
   // verifies it against TUGRA_LICENSE_PUBLISHER_KEY on every load. Null = no license (env/community edition).
-  licenseToken        String?
+  licenseToken         String?
   // Anonymous usage stats (ON by default, opt-out). `telemetryEnabled` is the owner-UI off-switch; the
   // env var TUGRA_TELEMETRY=0 is a deployment-level HARD off that overrides it (install --no-telemetry /
   // headless CI). `telemetryInstanceId` is a random, anonymous id minted once and kept stable across
   // restarts — the ONLY identifier ever sent; no IP, hostname, domain, email, app name or user data leaves
   // the box. `telemetryLastSentAt` is the last successful send (drives the UI + avoids double-sends).
-  telemetryEnabled    Boolean   @default(true)
-  telemetryInstanceId String?
-  telemetryLastSentAt DateTime?
+  telemetryEnabled     Boolean   @default(true)
+  telemetryInstanceId  String?
+  telemetryLastSentAt  DateTime?
   // White-label (Pro edition). Owner-set branding that replaces the Tugra name/logo/favicon/accent and can
   // hide the "Powered by Tugra" footer. Read publicly (the login page themes before auth) BUT only applied
   // while the instance is Pro+ — a Community or lapsed-license instance always shows the Tugra defaults, so
   // these can't become a free rebrand. URLs are http(s), accent is a #rrggbb hex (validated in the DTO).
-  brandName           String?
-  brandLogoUrl        String?
-  brandFaviconUrl     String?
-  brandAccentColor    String?
-  brandHidePoweredBy  Boolean   @default(false)
+  brandName            String?
+  brandLogoUrl         String?
+  brandFaviconUrl      String?
+  brandAccentColor     String?
+  brandHidePoweredBy   Boolean   @default(false)
   // Outbound mail (in-panel Email settings). mailProvider: "none" (default → fall back to the MAIL_* env) |
   // "smtp" | "resend". The SMTP password and the Resend API key are stored ENCRYPTED (CryptoService) and are
   // never surfaced in any view — write-only. Resend is a preset SMTP transport (smtp.resend.com:465) so it
   // needs only the key + from. When the provider is "none" the env config (MAIL_*) is used unchanged.
-  mailProvider        String    @default("none")
-  mailHost            String?
-  mailPort            Int?
-  mailSecure          Boolean   @default(false)
-  mailUser            String?
-  mailPassEnc         String? // libsodium-encrypted SMTP password
-  mailFrom            String?
-  mailResendKeyEnc    String? // libsodium-encrypted Resend API key
-  updatedAt           DateTime  @updatedAt
+  mailProvider         String    @default("none")
+  mailHost             String?
+  mailPort             Int?
+  mailSecure           Boolean   @default(false)
+  mailUser             String?
+  mailPassEnc          String? // libsodium-encrypted SMTP password
+  mailFrom             String?
+  mailResendKeyEnc     String? // libsodium-encrypted Resend API key
+  updatedAt            DateTime  @updatedAt
 }
 
 // ── Fleet rollouts (canary → waves → health gate → halt/resume) ─────────────────────────────────────────────

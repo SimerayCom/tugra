@@ -18,7 +18,18 @@ import { ApiAuthGuard } from "../api-tokens/api-auth.guard";
 import { ScopesGuard } from "../api-tokens/scopes.guard";
 import { AuthUser } from "../auth/strategies/jwt.strategy";
 import { NotificationsService } from "./notifications.service";
-import { CreateChannelInput, CreateChannelSchema, EVENT_TYPES, UpdateChannelInput, UpdateChannelSchema } from "./dto";
+import {
+  CreateChannelInput,
+  CreateChannelSchema,
+  EVENT_TYPES,
+  NOTIFICATION_CATEGORIES,
+  NOTIFICATION_SEVERITIES,
+  TestChannelInput,
+  TestChannelSchema,
+  UpdateChannelInput,
+  UpdateChannelSchema,
+} from "./dto";
+import { EVENT_CATEGORY } from "@tugra/shared";
 import { Paginated } from "../common/pagination.decorator";
 
 @ApiTags("channels")
@@ -38,7 +49,13 @@ export class NotificationsController {
    *  (so its event list never drifts from the backend enum). */
   @Get("events")
   events() {
-    return { events: EVENT_TYPES };
+    return {
+      events: EVENT_TYPES,
+      // Routing vocabulary, so the UI never hardcodes it: category ids, each event's category, severity tiers.
+      categories: NOTIFICATION_CATEGORIES,
+      eventCategories: Object.fromEntries(EVENT_TYPES.map((e) => [e, EVENT_CATEGORY[e]])),
+      severities: NOTIFICATION_SEVERITIES,
+    };
   }
 
   @Post()
@@ -63,8 +80,13 @@ export class NotificationsController {
 
   @Post(":id/test")
   @HttpCode(200)
-  async test(@CurrentUser() user: AuthUser, @Param("id") id: string) {
-    await this.svc.test(user.userId, id);
+  @ApiZodBody(TestChannelSchema)
+  async test(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(TestChannelSchema)) body: TestChannelInput,
+  ) {
+    await this.svc.test(user.userId, id, body.category);
     return { ok: true };
   }
 

@@ -1,4 +1,4 @@
-import { CreateChannelSchema, UpdateChannelSchema, WebhookConfigSchema, EVENT_TYPES } from "./dto";
+import { CreateChannelSchema, UpdateChannelSchema, WebhookConfigSchema, EVENT_TYPES, TestChannelSchema } from "./dto";
 
 describe("notification channel schemas — event types", () => {
   const base = { name: "ops", type: "slack", teamId: "t1", config: {} };
@@ -90,5 +90,30 @@ describe("WebhookConfigSchema", () => {
 
   it("rejects a header value containing CR/LF", () => {
     expect(WebhookConfigSchema.safeParse({ url: "https://hook.test/x", headers: { "X-Evil": "a\r\nX-I: 1" } }).success).toBe(false);
+  });
+});
+
+describe("notification channel schemas — routing rule", () => {
+  const base = { name: "ops", type: "telegram", teamId: "t1", config: {} };
+
+  it("accepts categories, a severity floor and a topic map", () => {
+    const out = CreateChannelSchema.parse({ ...base, categories: ["deploy", "uptime"], minSeverity: "warning", topics: { deploy: 5, uptime: 9 } });
+    expect(out.topics).toEqual({ deploy: 5, uptime: 9 });
+  });
+  it("rejects unknown categories, severities and bad topic ids", () => {
+    expect(() => CreateChannelSchema.parse({ ...base, categories: ["nope"] })).toThrow();
+    expect(() => CreateChannelSchema.parse({ ...base, minSeverity: "fatal" })).toThrow();
+    expect(() => CreateChannelSchema.parse({ ...base, topics: { nope: 1 } })).toThrow();
+    expect(() => CreateChannelSchema.parse({ ...base, topics: { deploy: 0 } })).toThrow();
+    expect(() => CreateChannelSchema.parse({ ...base, topics: { deploy: 1.5 } })).toThrow();
+  });
+  it("update: null clears the topic map; routing fields are all optional", () => {
+    expect(UpdateChannelSchema.parse({ topics: null }).topics).toBeNull();
+    expect(UpdateChannelSchema.parse({})).toEqual({});
+  });
+  it("test body: optional category, defaults to {} when the client sends nothing", () => {
+    expect(TestChannelSchema.parse(undefined)).toEqual({});
+    expect(TestChannelSchema.parse({ category: "backup" })).toEqual({ category: "backup" });
+    expect(() => TestChannelSchema.parse({ category: "x" })).toThrow();
   });
 });

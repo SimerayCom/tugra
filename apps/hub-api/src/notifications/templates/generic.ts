@@ -1,4 +1,5 @@
-import { asLevel, base, s, type EventTemplate } from "../event";
+import { asLevel, base, fields, s, type EventTemplate } from "../event";
+import { isCategory } from "../routing";
 import type { MsgField, MsgLink } from "../rendered-message";
 
 /** Fallback for any event id not in the registry — reads a best-effort shape from ctx (caller-supplied
@@ -37,7 +38,10 @@ export const testTemplate: EventTemplate = {
       level: "info",
       title: env.t("test.title"),
       summary: env.t("test.summary"),
-      fields: [],
+      // A per-category test names the category it was routed as.
+      fields: isCategory(ev.ctx.category)
+        ? fields([{ label: env.t("test.field.category"), value: env.t(`category.${ev.ctx.category}`) }])
+        : [],
       links: [],
     });
   },

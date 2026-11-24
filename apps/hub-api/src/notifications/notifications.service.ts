@@ -5,13 +5,16 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
+import { Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { CryptoService } from "../crypto/crypto.service";
 import { TeamAccessService } from "../common/team-access.service";
+import { categoryOfEvent, type NotificationCategory, type NotificationSeverity } from "@tugra/shared";
 import { PROVIDER_TYPES } from "./providers";
 import { type NotificationEvent } from "./event";
 import { WebhookConfigSchema } from "./dto";
+import { channelWantsEvent, channelWantsMonitorEvent, eventSeverity } from "./routing";
 import { assertSafeHost, assertSafeUrl, SsrfError } from "./safe-url";
 import { NotificationQueueService } from "./queue.service";
 import { filterByQuery } from "../common/query-filter";
@@ -23,6 +26,10 @@ export interface ChannelView {
   teamId: string;
   enabled: boolean;
   eventTypes: string[];
+  /** Routing rule: categories (empty = eventTypes only), minimum severity, Telegram topic per category. */
+  categories: string[];
+  minSeverity: string;
+  topics: Record<string, number> | null;
   canWrite: boolean;
 }
 
@@ -45,10 +52,24 @@ export class NotificationsService {
       teamId: string;
       enabled: boolean;
       eventTypes: string[];
+      categories?: string[] | null;
+      minSeverity?: string | null;
+      topics?: unknown;
     },
     canWrite: boolean,
   ): ChannelView {
-    return { id: c.id, name: c.name, type: c.type, teamId: c.teamId, enabled: c.enabled, eventTypes: c.eventTypes, canWrite };
+    return {
+      id: c.id,
+      name: c.name,
+      type: c.type,
+      teamId: c.teamId,
+      enabled: c.enabled,
+      eventTypes: c.eventTypes,
+      categories: c.categories ?? [],
+      minSeverity: c.minSeverity ?? "info",
+      topics: c.topics && typeof c.topics === "object" ? (c.topics as Record<string, number>) : null,
+      canWrite,
+    };
   }
 
   async list(userId: string, q?: string): Promise<ChannelView[]> {
@@ -103,15 +124,33 @@ export class NotificationsService {
     }
   }
 
+  /** Forum topics are a Telegram concept; refuse a topic map on any other channel type. */
+  private assertTopicsAllowed(type: string, topics: Record<string, number> | null | undefined): void {
+    if (topics && Object.keys(topics).length > 0 && type !== "telegram") {
+      throw new BadRequestException("topics are only supported on telegram channels");
+    }
+  }
+
   async create(
     userId: string,
-    dto: { name: string; type: string; teamId: string; config: Record<string, unknown>; eventTypes?: string[]; locale?: string },
+    dto: {
+      name: string;
+      type: string;
+      teamId: string;
+      config: Record<string, unknown>;
+      eventTypes?: string[];
+      categories?: string[];
+      minSeverity?: string;
+      topics?: Record<string, number>;
+      locale?: string;
+    },
   ): Promise<ChannelView> {
     await this.access.requirePermission(userId, dto.teamId, "integrations");
     if (!PROVIDER_TYPES.includes(dto.type)) {
       throw new BadRequestException(`unsupported channel type: ${dto.type}`);
     }
     await this.validateChannelConfig(dto.type, dto.config);
+    this.assertTopicsAllowed(dto.type, dto.topics);
     const c = await this.prisma.notificationChannel.create({
       data: {
         name: dto.name,
@@ -119,6 +158,9 @@ export class NotificationsService {
         teamId: dto.teamId,
         configEnc: this.crypto.encrypt(JSON.stringify(dto.config)),
         eventTypes: dto.eventTypes ?? [],
+        categories: dto.categories ?? [],
+        minSeverity: dto.minSeverity ?? "info",
+        ...(dto.topics ? { topics: dto.topics } : {}),
         locale: dto.locale ?? "en",
       },
     });
@@ -129,19 +171,33 @@ export class NotificationsService {
   async update(
     userId: string,
     id: string,
-    dto: { name?: string; enabled?: boolean; eventTypes?: string[]; config?: Record<string, unknown>; locale?: string },
+    dto: {
+      name?: string;
+      enabled?: boolean;
+      eventTypes?: string[];
+      categories?: string[];
+      minSeverity?: string;
+      topics?: Record<string, number> | null;
+      config?: Record<string, unknown>;
+      locale?: string;
+    },
   ): Promise<ChannelView> {
     const c = await this.prisma.notificationChannel.findUnique({ where: { id } });
     if (!c) throw new NotFoundException("channel not found");
     await this.access.requirePermission(userId, c.teamId, "integrations");
     // The update DTO has no `type`, so validate against the stored channel's type.
     if (dto.config) await this.validateChannelConfig(c.type, dto.config);
+    this.assertTopicsAllowed(c.type, dto.topics);
     const updated = await this.prisma.notificationChannel.update({
       where: { id },
       data: {
         name: dto.name ?? c.name,
         enabled: dto.enabled ?? c.enabled,
         eventTypes: dto.eventTypes ?? c.eventTypes,
+        categories: dto.categories ?? c.categories,
+        minSeverity: dto.minSeverity ?? c.minSeverity,
+        // undefined = keep, null = clear the map, object = replace it
+        ...(dto.topics === undefined ? {} : { topics: dto.topics === null ? Prisma.DbNull : dto.topics }),
         locale: dto.locale ?? c.locale,
         ...(dto.config ? { configEnc: this.crypto.encrypt(JSON.stringify(dto.config)) } : {}),
       },
@@ -158,7 +214,7 @@ export class NotificationsService {
     await this.audit.log({ actor: userId, action: "channel.remove", target: id });
   }
 
-  async test(userId: string, id: string): Promise<void> {
+  async test(userId: string, id: string, category?: NotificationCategory): Promise<void> {
     const c = await this.prisma.notificationChannel.findUnique({ where: { id } });
     if (!c) throw new NotFoundException("channel not found");
     if (!(await this.access.teamRole(userId, c.teamId))) {
@@ -166,7 +222,10 @@ export class NotificationsService {
     }
     // Synchronous send (the button reports pass/fail immediately) that also records a delivery row.
     // The testTemplate renders the (localized) confirmation message; ctx carries nothing.
-    await this.queue.deliverNow(c.id, { type: "test", teamId: c.teamId, locale: c.locale, ctx: {} });
+    // With a category the test is sent the way that category routes (its Telegram topic) and names it, so
+    // the operator can see each route work. The test deliberately ignores the channel's category/severity
+    // filter: it checks the transport and the topic, not the rule.
+    await this.queue.deliverNow(c.id, { type: "test", teamId: c.teamId, locale: c.locale, ctx: category ? { category } : {} });
   }
 
   /** A channel's recent delivery history — any team member may read it (mirrors test()/list()). */
@@ -197,7 +256,11 @@ export class NotificationsService {
     if (!enabled.length) return;
     const type = String(ctx.status).toUpperCase() === "UP" ? "monitor_up" : "monitor_down";
     const teamId = String(ctx.teamId ?? "");
+    // The link is the recipient list; the channel's routing rule can still narrow it (uptime category,
+    // minimum severity). A legacy channel (no rule) passes everything, as before.
+    const severity = eventSeverity({ type, teamId, ctx });
     for (const l of enabled) {
+      if (!channelWantsMonitorEvent(l.channel, severity)) continue;
       // Per-channel locale → the notification renders in each channel's configured language.
       const event: NotificationEvent = { type, teamId, locale: l.channel.locale, ctx };
       await this.queue.enqueue(l.channelId, event);
@@ -206,10 +269,18 @@ export class NotificationsService {
 
   /** Fire all enabled team channels subscribed to a global event (deploy/server/backup/ssl). */
   async fireForEvent(teamId: string, eventType: string, ctx: Record<string, unknown> = {}): Promise<void> {
-    const channels = await this.prisma.notificationChannel.findMany({
-      where: { teamId, enabled: true, eventTypes: { has: eventType } },
+    // Subscribed by event id (legacy/fine-grained) or by the event's category (routing rule).
+    const category = categoryOfEvent(eventType);
+    const candidates = await this.prisma.notificationChannel.findMany({
+      where: {
+        teamId,
+        enabled: true,
+        OR: [{ eventTypes: { has: eventType } }, ...(category ? [{ categories: { has: category } }] : [])],
+      },
     });
-    if (!channels.length) return;
+    if (!candidates.length) return;
+    const severity: NotificationSeverity = eventSeverity({ type: eventType, teamId, ctx });
+    const channels = candidates.filter((ch) => channelWantsEvent(ch, eventType, severity));
     for (const ch of channels) {
       const event: NotificationEvent = { type: eventType, teamId, locale: ch.locale, ctx };
       await this.queue.enqueue(ch.id, event);

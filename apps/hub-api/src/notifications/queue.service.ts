@@ -11,6 +11,7 @@ import { webBaseUrl } from "../common/web-url";
 import { getProvider } from "./providers";
 import { renderEvent, type NotificationEvent, type RenderEnv } from "./event";
 import { NotifI18nService } from "./notif-i18n.service";
+import { routedConfig } from "./routing";
 
 const QUEUE = "notifications";
 
@@ -182,7 +183,10 @@ export class NotificationQueueService implements OnApplicationBootstrap, OnModul
     const ch = await this.prisma.notificationChannel.findUnique({ where: { id: channelId } });
     if (!ch) return; // channel was deleted (its deliveries cascade away) — nothing to send, no retry
     const msg = renderEvent(event, this.renderEnv(event.locale));
-    await getProvider(ch.type).send(this.decodeConfig(ch.configEnc), msg); // throws → inline caller / BullMQ retry
+    // Telegram: the event's category may select a forum topic (resolved here, from the fresh channel row,
+    // so a topic edited between enqueue and a retry applies). Other types are untouched.
+    const cfg = routedConfig(ch.type, this.decodeConfig(ch.configEnc), ch.topics, event);
+    await getProvider(ch.type).send(cfg, msg); // throws → inline caller / BullMQ retry
     // The send already happened — a DB hiccup here must NOT reject the job (that would re-send). Swallow.
     await this.markSent(deliveryId, attempts).catch((e) => this.logger.error(`markSent: ${e.message}`));
   }

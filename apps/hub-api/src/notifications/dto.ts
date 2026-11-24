@@ -1,7 +1,7 @@
 import { z } from "zod";
-import { EVENT_TYPES } from "@tugra/shared";
+import { EVENT_TYPES, NOTIFICATION_CATEGORIES, NOTIFICATION_SEVERITIES } from "@tugra/shared";
 
-export { EVENT_TYPES };
+export { EVENT_TYPES, NOTIFICATION_CATEGORIES, NOTIFICATION_SEVERITIES };
 
 // Reserved outbound headers a user's custom headers may not set: the ones we control (content-type +
 // signature) plus request-framing / hop-by-hop headers (a user Content-Length/Transfer-Encoding would
@@ -29,12 +29,19 @@ export const WebhookConfigSchema = z
   })
   .passthrough();
 
+const CategoryEnum = z.enum(NOTIFICATION_CATEGORIES);
+/** Telegram forum topics: category → message_thread_id (a positive 32-bit int). */
+export const TopicsSchema = z.record(CategoryEnum, z.number().int().positive().max(2147483647));
+
 export const CreateChannelSchema = z.object({
   name: z.string().min(1),
   type: z.string().min(1),
   teamId: z.string().min(1),
   config: z.record(z.unknown()),
   eventTypes: z.array(z.enum(EVENT_TYPES)).optional(),
+  categories: z.array(CategoryEnum).optional(),
+  minSeverity: z.enum(NOTIFICATION_SEVERITIES).optional(),
+  topics: TopicsSchema.optional(),
   locale: z.string().min(1).default("en"),
 });
 export type CreateChannelInput = z.infer<typeof CreateChannelSchema>;
@@ -43,7 +50,14 @@ export const UpdateChannelSchema = z.object({
   name: z.string().min(1).optional(),
   enabled: z.boolean().optional(),
   eventTypes: z.array(z.enum(EVENT_TYPES)).optional(),
+  categories: z.array(CategoryEnum).optional(),
+  minSeverity: z.enum(NOTIFICATION_SEVERITIES).optional(),
+  topics: TopicsSchema.nullable().optional(), // null clears the map
   config: z.record(z.unknown()).optional(),
   locale: z.string().min(1).optional(),
 });
 export type UpdateChannelInput = z.infer<typeof UpdateChannelSchema>;
+
+/** Body of POST /channels/:id/test — an optional category sends the test the way that category routes. */
+export const TestChannelSchema = z.object({ category: CategoryEnum.optional() }).default({});
+export type TestChannelInput = z.infer<typeof TestChannelSchema>;

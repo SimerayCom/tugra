@@ -66,6 +66,64 @@ export const EVENT_TYPES = [
 export type EventType = (typeof EVENT_TYPES)[number];
 
 /**
+ * Notification routing vocabulary. Every event maps to ONE category; a channel rule selects categories
+ * plus a minimum severity. Monitor up/down are not in EVENT_TYPES (they fire through the monitor↔channel
+ * link) but still belong to the "uptime" category, so they are keyed here too.
+ */
+export const NOTIFICATION_CATEGORIES = ["uptime", "deploy", "backup", "server", "security", "updates"] as const;
+export type NotificationCategory = (typeof NOTIFICATION_CATEGORIES)[number];
+
+/** Severity tiers a channel can filter on (ascending): info < warning < critical. */
+export const NOTIFICATION_SEVERITIES = ["info", "warning", "critical"] as const;
+export type NotificationSeverity = (typeof NOTIFICATION_SEVERITIES)[number];
+
+export const EVENT_CATEGORY: Record<EventType | "monitor_up" | "monitor_down", NotificationCategory> = {
+  monitor_up: "uptime",
+  monitor_down: "uptime",
+  deploy_success: "deploy",
+  deploy_failed: "deploy",
+  deploy_rolled_back: "deploy",
+  rollout_halted: "deploy",
+  rollout_completed: "deploy",
+  rollout_rolled_back: "deploy",
+  rollout_rollback_failed: "deploy",
+  app_move_completed: "deploy",
+  app_move_rolled_back: "deploy",
+  app_move_failed: "deploy",
+  scheduled_task_success: "deploy",
+  scheduled_task_failed: "deploy",
+  backup_failed: "backup",
+  backup_success: "backup",
+  backup_missing: "backup",
+  backup_recovered: "backup",
+  backup_restore_failed: "backup",
+  verify_missing: "backup",
+  verify_recovered: "backup",
+  volume_backup_success: "backup",
+  volume_backup_failed: "backup",
+  server_offline: "server",
+  server_online: "server",
+  server_reboot_verified: "server",
+  server_reboot_degraded: "server",
+  server_reboot_failed: "server",
+  swarm_degraded: "server",
+  docker_cleanup_success: "server",
+  docker_cleanup_failed: "server",
+  container_crashed: "server",
+  container_oom: "server",
+  container_unhealthy: "server",
+  container_mem_pressure: "server",
+  ssl_expiring: "security",
+  token_expiring: "security",
+  image_update_available: "updates",
+};
+
+/** The category an event id belongs to, or undefined for an unknown id. */
+export function categoryOfEvent(eventType: string): NotificationCategory | undefined {
+  return (EVENT_CATEGORY as Record<string, NotificationCategory | undefined>)[eventType];
+}
+
+/**
  * Granular resource permissions a team's custom role can grant. Built-in roles resolve to fixed
  * sets (OWNER/ADMIN → all of these; VIEWER → none). These cover RESOURCE actions only — member /
  * role / team administration stays reserved for the built-in OWNER/ADMIN roles (a custom role can

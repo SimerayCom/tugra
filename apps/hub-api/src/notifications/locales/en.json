@@ -232,5 +232,17 @@
     "link": { "viewMonitor": "View monitor" }
   },
   "generic": { "link": { "open": "Open" } },
-  "test": { "title": "Tugra test notification", "summary": "This channel is working." }
+  "test": {
+    "title": "Tugra test notification",
+    "summary": "This channel is working.",
+    "field": { "category": "Category" }
+  },
+  "category": {
+    "uptime": "Uptime",
+    "deploy": "Deploy",
+    "backup": "Backup",
+    "server": "Server",
+    "security": "Security",
+    "updates": "Updates"
+  }
 }
