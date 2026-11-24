@@ -255,4 +255,58 @@ describe("GitSourcesService: several installations of one GitHub App", () => {
     expect(v.hasWebhook).toBe(true);
     expect(JSON.stringify(v)).not.toContain("enc(");
   });
+
+  describe("a stale installation", () => {
+    const ok = (body: unknown) => ({ ok: true, status: 200, json: async () => body });
+    const mockFetch = (goneIds: string[]) => {
+      (global as unknown as { fetch: typeof fetch }).fetch = jest.fn(async (u: string) => {
+        const gone = goneIds.find((id) => u.includes(`/app/installations/${id}/access_tokens`));
+        if (gone) return { ok: false, status: 404, json: async () => ({}) };
+        if (u.includes("/access_tokens")) return ok({ token: u.includes("/20/") ? "tok20" : "tok10", expires_at: future });
+        return ok({ total_count: 3, repositories: [{ full_name: "alice/one", clone_url: "x", private: true }] });
+      }) as unknown as typeof fetch;
+    };
+
+    it("is skipped: the other installations still list their repositories", async () => {
+      mockFetch(["10"]);
+      const svc = make({ gitSource: { findUnique: jest.fn().mockResolvedValue(row) } } as unknown as PrismaService, { teamRole: jest.fn().mockResolvedValue(Role.OWNER) });
+      expect((await svc.listRepos("u1", "g1")).map((r) => r.fullName)).toEqual(["alice/one"]);
+    });
+
+    it("fails clearly when every installation is gone (the source is not treated as 'sees nothing')", async () => {
+      mockFetch(["10", "20"]);
+      const svc = make({ gitSource: { findUnique: jest.fn().mockResolvedValue(row) } } as unknown as PrismaService, {});
+      await expect(svc.installationRepoSet("g1")).rejects.toThrow(/no longer available/);
+    });
+
+    it("repoCount sums GitHub's totals without listing, skips a gone installation and is team-checked", async () => {
+      mockFetch(["10"]);
+      const svc = make({ gitSource: { findUnique: jest.fn().mockResolvedValue(row) } } as unknown as PrismaService, { teamRole: jest.fn().mockResolvedValue(null) });
+      await expect(svc.repoCount("u9", "g1")).rejects.toThrow(ForbiddenException);
+      const member = make({ gitSource: { findUnique: jest.fn().mockResolvedValue(row) } } as unknown as PrismaService, { teamRole: jest.fn().mockResolvedValue(Role.OWNER) });
+      mockFetch([]);
+      expect(await member.repoCount("u1", "g1")).toEqual({ count: 6 });
+      const calls = (global.fetch as unknown as jest.Mock).mock.calls.map((c) => c[0] as string);
+      expect(calls.filter((u) => u.includes("/installation/repositories")).every((u) => u.includes("per_page=1"))).toBe(true);
+    });
+
+    it("removeInstallation drops the row, hands the primary to another installation and needs the integrations permission", async () => {
+      const del = jest.fn().mockResolvedValue({});
+      const update = jest.fn().mockResolvedValue({});
+      const after = { ...row, installationId: "20", installations: [row.installations[1]] };
+      const prisma = {
+        gitSource: { findUnique: jest.fn().mockResolvedValue(row), update, findUniqueOrThrow: jest.fn().mockResolvedValue(after) },
+        gitSourceInstallation: { delete: del },
+      } as unknown as PrismaService;
+      const requirePermission = jest.fn().mockResolvedValue(undefined);
+      const v = await make(prisma, { requirePermission }).removeInstallation("u1", "g1", "10");
+      expect(requirePermission).toHaveBeenCalledWith("u1", "t1", "integrations");
+      expect(del).toHaveBeenCalledWith({ where: { sourceId_installationId: { sourceId: "g1", installationId: "10" } } });
+      expect(update).toHaveBeenCalledWith({ where: { id: "g1" }, data: { installationId: "20" } });
+      expect(v.installations.map((i) => i.installationId)).toEqual(["20"]);
+      await expect(make(prisma, { requirePermission }).removeInstallation("u1", "g1", "999")).rejects.toThrow(/installation not found/);
+      const denied = make(prisma, { requirePermission: jest.fn().mockRejectedValue(new ForbiddenException()) });
+      await expect(denied.removeInstallation("u2", "g1", "10")).rejects.toThrow(ForbiddenException);
+    });
+  });
 });

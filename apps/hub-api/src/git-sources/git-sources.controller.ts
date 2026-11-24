@@ -68,6 +68,13 @@ export class GitSourcesController {
     return this.manifest.startInstall(user.userId, id);
   }
 
+  /** Forget one installation (App uninstalled on GitHub, or the account is no longer wanted). */
+  @Delete(":id/installations/:installationId")
+  @HttpCode(200)
+  removeInstallation(@CurrentUser() user: AuthUser, @Param("id") id: string, @Param("installationId") installationId: string) {
+    return this.svc.removeInstallation(user.userId, id, installationId);
+  }
+
   @Patch(":id/sharing")
   @RequireScopes("admin")
   @ApiZodBody(GitSourceSharingSchema)
@@ -82,6 +89,11 @@ export class GitSourcesController {
   @Get(":id/repos")
   repos(@CurrentUser() user: AuthUser, @Param("id") id: string) {
     return this.svc.listRepos(user.userId, id);
+  }
+
+  @Get(":id/repos/count")
+  repoCount(@CurrentUser() user: AuthUser, @Param("id") id: string) {
+    return this.svc.repoCount(user.userId, id);
   }
 
   @Get(":id/branches")

@@ -13,6 +13,7 @@ import { GiteaClient, apiUrlHost, isTokenKind, normalizeApiUrl, parseRepoFullNam
 const GH_API = "https://api.github.com";
 /** Hard cap on how many installation repositories one resolve reads (20 pages of 100). */
 const INSTALLATION_REPO_CAP = 2000;
+const COUNT_TTL_MS = 60_000;
 const GH_HEADERS = { Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" };
 
 /** One account / organization a GitHub App source is installed on. */
@@ -71,6 +72,14 @@ export function sourceCloneHost(s: { provider: string; apiUrl: string | null }):
   return isTokenKind(s.provider) && s.apiUrl ? apiUrlHost(s.apiUrl) : "github.com";
 }
 
+/** GitHub says the installation is gone (App uninstalled from that account) or suspended. Distinct from other
+ *  failures so one dead installation never takes the whole source's repo list down. */
+export class InstallationGoneError extends BadRequestException {
+  constructor(readonly installationId: string, status: number) {
+    super(`github: installation ${installationId} is no longer available (HTTP ${status}) — remove it or reinstall the App`);
+  }
+}
+
 function b64url(s: string | Buffer): string {
   return (typeof s === "string" ? Buffer.from(s) : s).toString("base64url");
 }
@@ -88,6 +97,8 @@ export interface SourceRow {
 export class GitSourcesService {
   /** `sourceId:installationId` → short-lived installation token cache. */
   private readonly tokenCache = new Map<string, { token: string; exp: number }>();
+  /** `sourceId` → repository count shown on the source card. */
+  private readonly countCache = new Map<string, { count: number; exp: number }>();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -100,6 +111,7 @@ export class GitSourcesService {
   /** Drop every cached installation token of a source (credentials or installations changed, or it was removed). */
   dropTokens(sourceId: string): void {
     for (const k of this.tokenCache.keys()) if (k.startsWith(`${sourceId}:`)) this.tokenCache.delete(k);
+    this.countCache.delete(sourceId);
   }
 
   /** Public origin of the hub (where GitHub delivers webhooks); HUB_PUBLIC_URL, else the panel origin. */
@@ -301,6 +313,10 @@ export class GitSourcesService {
       method: "POST",
       headers: { ...GH_HEADERS, Authorization: `Bearer ${jwt}` },
     });
+    if (res.status === 404 || res.status === 403) {
+      this.tokenCache.delete(key);
+      throw new InstallationGoneError(inst, res.status);
+    }
     if (!res.ok) throw new BadRequestException(`github: installation token failed (HTTP ${res.status})`);
     const data = (await res.json()) as { token: string; expires_at: string };
     this.tokenCache.set(key, { token: data.token, exp: new Date(data.expires_at).getTime() });
@@ -329,17 +345,81 @@ export class GitSourcesService {
     return out;
   }
 
-  /** Repositories across ALL of a GitHub App source's installations, de-duplicated by name. */
-  private async allInstallationRepos(sourceId: string): Promise<RepoView[]> {
+  /** Run `fn` against every live installation of a GitHub App source. An installation GitHub reports as gone
+   *  (uninstalled / suspended) is skipped so the others still work; if EVERY installation is gone the error is
+   *  rethrown (the source is unusable, which is not the same as "sees nothing"). */
+  private async eachInstallation<T>(sourceId: string, fn: (token: string) => Promise<T>): Promise<T[]> {
     const s = await this.prisma.gitSource.findUnique({ where: { id: sourceId }, include: { installations: true } });
     if (!s) throw new NotFoundException("git source not found");
     const ids = this.installationsOf(s).map((i) => i.installationId);
     if (!ids.length) throw new BadRequestException("git source is not installed yet");
-    const seen = new Map<string, RepoView>();
+    const out: T[] = [];
+    let gone: InstallationGoneError | null = null;
     for (const id of ids) {
-      for (const r of await this.readInstallationRepos(await this.installationToken(sourceId, id))) if (!seen.has(r.fullName.toLowerCase())) seen.set(r.fullName.toLowerCase(), r);
+      try {
+        out.push(await fn(await this.installationToken(sourceId, id)));
+      } catch (e) {
+        if (!(e instanceof InstallationGoneError)) throw e;
+        gone = e;
+      }
+    }
+    if (!out.length && gone) throw gone;
+    return out;
+  }
+
+  /** Repositories across ALL of a GitHub App source's installations, de-duplicated by name. */
+  private async allInstallationRepos(sourceId: string): Promise<RepoView[]> {
+    const seen = new Map<string, RepoView>();
+    for (const repos of await this.eachInstallation(sourceId, (token) => this.readInstallationRepos(token))) {
+      for (const r of repos) if (!seen.has(r.fullName.toLowerCase())) seen.set(r.fullName.toLowerCase(), r);
     }
     return [...seen.values()];
+  }
+
+  /** How many repositories one installation can see: a single one-item request reading GitHub's `total_count`. */
+  private async readInstallationCount(token: string): Promise<number> {
+    const res = await fetch(`${GH_API}/installation/repositories?per_page=1`, { headers: { ...GH_HEADERS, Authorization: `Bearer ${token}` } });
+    if (!res.ok) throw new BadRequestException(`github: list repos failed (HTTP ${res.status})`);
+    const data = (await res.json()) as { total_count?: number };
+    return typeof data.total_count === "number" ? data.total_count : 0;
+  }
+
+  /** The repository count shown on a source card, without listing every repository (one small request per
+   *  installation; a token source lists once). Cached for a minute per source. Team-checked like {@link listRepos}. */
+  async repoCount(userId: string, id: string): Promise<{ count: number }> {
+    const s = await this.memberSource(userId, id);
+    const hit = this.countCache.get(id);
+    if (hit && hit.exp > Date.now()) return { count: hit.count };
+    let count: number;
+    if (isTokenKind(s.provider)) {
+      const { client, token } = this.giteaFor(s);
+      count = (await this.guarded(s.provider, token, () => client.listRepos())).length;
+    } else {
+      count = (await this.eachInstallation(id, (token) => this.readInstallationCount(token))).reduce((a, b) => a + b, 0);
+    }
+    this.countCache.set(id, { count, exp: Date.now() + COUNT_TTL_MS });
+    return { count };
+  }
+
+  /** Forget one installation of a GitHub App source (the App was uninstalled on GitHub, or the account is no longer
+   *  wanted). Needs the integrations permission on the owning team. If it was the primary installation another one
+   *  takes over. Nothing is changed on GitHub. */
+  async removeInstallation(userId: string, sourceId: string, installationId: string): Promise<GitSourceView> {
+    const s = await this.prisma.gitSource.findUnique({ where: { id: sourceId }, include: { installations: { orderBy: { createdAt: "asc" } } } });
+    if (!s || isTokenKind(s.provider)) throw new NotFoundException("git source not found");
+    await this.access.requirePermission(userId, s.teamId, "integrations");
+    const hasRow = s.installations.some((i) => i.installationId === installationId);
+    if (!hasRow && s.installationId !== installationId) throw new NotFoundException("installation not found");
+    if (hasRow) await this.prisma.gitSourceInstallation.delete({ where: { sourceId_installationId: { sourceId, installationId } } });
+    const rest = s.installations.filter((i) => i.installationId !== installationId);
+    if (s.installationId === installationId) {
+      await this.prisma.gitSource.update({ where: { id: sourceId }, data: { installationId: rest[0]?.installationId ?? null } });
+    }
+    this.dropTokens(sourceId);
+    this.countCache.delete(sourceId);
+    await this.audit.log({ actor: userId, action: "git_source.installation_remove", target: sourceId, meta: { installationId } });
+    const row = await this.prisma.gitSource.findUniqueOrThrow({ where: { id: sourceId }, include: { installations: { orderBy: { createdAt: "asc" } } } });
+    return this.view(row, true);
   }
 
   /** Load a source and require the caller to be a member of its team (or of any team, for a shared source). */

@@ -25,6 +25,9 @@ const GH_TIMEOUT_MS = 15_000;
 /** Setup tickets are only useful for minutes; rows older than this are swept on the next start. */
 const SETUP_RETENTION_MS = 24 * 3_600_000;
 
+/** GitHub could not be reached or answered 5xx: nothing was created there, so the single-use ticket is given back. */
+class GithubTransientError extends BadRequestException {}
+
 export interface ManifestStartView {
   /** Where the browser POSTs the manifest (github.com, or the organization's settings). Carries our `state`. */
   postUrl: string;
@@ -76,6 +79,11 @@ export class GithubManifestService {
   }
 
   private async gh<T>(path: string, init: RequestInit & { jwt?: string } = {}): Promise<T> {
+    return (await this.ghCall<T>(path, init)).data;
+  }
+
+  /** Like {@link gh}, but a failure says whether it was transient (GitHub unreachable or a 5xx) so the caller can let the user retry. */
+  private async ghCall<T>(path: string, init: RequestInit & { jwt?: string } = {}): Promise<{ data: T }> {
     const { jwt, ...rest } = init;
     let res: Response;
     try {
@@ -85,10 +93,11 @@ export class GithubManifestService {
         signal: AbortSignal.timeout(GH_TIMEOUT_MS),
       });
     } catch {
-      throw new BadRequestException("github: could not be reached");
+      throw new GithubTransientError("github: could not be reached — try again");
     }
+    if (res.status >= 500) throw new GithubTransientError(`github: temporarily unavailable (HTTP ${res.status}) — try again`);
     if (!res.ok) throw new BadRequestException(`github: request failed (HTTP ${res.status})`);
-    return (await res.json()) as T;
+    return { data: (await res.json()) as T };
   }
 
   private async mint(userId: string, kind: "manifest" | "install", t: { teamId: string; sourceId: string; name?: string | null; sharedAllTeams?: boolean }): Promise<string> {
@@ -128,7 +137,18 @@ export class GithubManifestService {
     const t = await this.claim(userId, input.state, "manifest");
     await this.access.requirePermission(userId, t.teamId, "integrations");
     await this.requireShareRight(userId, t.sharedAllTeams);
-    const app = await this.gh<ConvertedApp>(`/app-manifests/${encodeURIComponent(input.code)}/conversions`, { method: "POST" });
+    let app: ConvertedApp;
+    try {
+      app = await this.gh<ConvertedApp>(`/app-manifests/${encodeURIComponent(input.code)}/conversions`, { method: "POST" });
+    } catch (e) {
+      if (e instanceof GithubTransientError) {
+        // Nothing was created on GitHub: hand the ticket back so "try again" works without starting over.
+        await this.prisma.gitSourceSetup.updateMany({ where: { id: t.id }, data: { usedAt: null } });
+        throw e;
+      }
+      // The code is spent or expired. If the App was already created on github.com its name is taken, so say so.
+      throw new BadRequestException("github: this link was already used or has expired — if the App now exists on GitHub, delete it there and start again");
+    }
     if (app.id === undefined || !app.slug || !app.pem) throw new BadRequestException("github: the App could not be created — start again");
     try {
       createPrivateKey(app.pem);

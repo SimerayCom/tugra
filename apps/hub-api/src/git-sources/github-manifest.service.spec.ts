@@ -27,7 +27,7 @@ function fakePrisma(opts: { owner?: boolean } = {}) {
       create: jest.fn(async ({ data }: any) => { const r = { id: `setup${setups.length}`, usedAt: null, createdAt: new Date(), ...data }; setups.push(r); return r; }),
       findUnique: jest.fn(async ({ where }: any) => setups.find((s) => s.stateHash === where.stateHash) ?? null),
       updateMany: jest.fn(async ({ where, data }: any) => {
-        const hit = setups.filter((s) => s.id === where.id && s.usedAt === null && s.expiresAt > where.expiresAt.gt);
+        const hit = setups.filter((s) => s.id === where.id && (!where.expiresAt || (s.usedAt === null && s.expiresAt > where.expiresAt.gt)));
         hit.forEach((h) => Object.assign(h, data));
         return { count: hit.length };
       }),
@@ -130,6 +130,32 @@ describe("GithubManifestService", () => {
     await svc.complete("u1", { code: "c", state });
     await expect(svc.complete("u1", { code: "c", state })).rejects.toThrow(/invalid or expired/);
     expect(f.sources).toHaveLength(1);
+  });
+
+  it("complete: a transient GitHub failure hands the ticket back so the user can retry", async () => {
+    const f = fakePrisma();
+    const svc = make(f);
+    const started = await svc.start("u1", { teamId: "t1" });
+    const state = stateOf(started.postUrl);
+    (global as unknown as { fetch: typeof fetch }).fetch = jest.fn(async () => ({ ok: false, status: 503, json: async () => ({}) })) as unknown as typeof fetch;
+    await expect(svc.complete("u1", { code: "c", state })).rejects.toThrow(/try again/);
+    expect(f.setups[0].usedAt).toBeNull();
+    (global as unknown as { fetch: typeof fetch }).fetch = jest.fn(async () => { throw new Error("offline"); }) as unknown as typeof fetch;
+    await expect(svc.complete("u1", { code: "c", state })).rejects.toThrow(/could not be reached/);
+    expect(f.setups[0].usedAt).toBeNull();
+    mockGithub({ "/app-manifests/": () => ({ id: 1, slug: "a", pem: PEM }) });
+    await svc.complete("u1", { code: "c", state });
+    expect(f.sources).toHaveLength(1);
+  });
+
+  it("complete: a spent or expired code keeps the ticket used and explains the App may already exist", async () => {
+    const f = fakePrisma();
+    const svc = make(f);
+    const started = await svc.start("u1", { teamId: "t1" });
+    mockGithub({}); // 404 for the conversion
+    await expect(svc.complete("u1", { code: "c", state: stateOf(started.postUrl) })).rejects.toThrow(/delete it there/);
+    expect(f.setups[0].usedAt).not.toBeNull();
+    expect(f.sources).toHaveLength(0);
   });
 
   it("complete: another user's browser cannot use the ticket, and the ticket survives", async () => {
