@@ -16,6 +16,8 @@ import { VxDiskCheckBodySchema, VxExcludeBodySchema, type VxDiskCheckBody, type 
 import {
   ImportConnectSchema,
   type ImportConnectInput,
+  ImportTestSchema,
+  type ImportTestInput,
   ImportPlanRequestSchema,
   type ImportPlanRequestInput,
   ImportApplySchema,
@@ -71,6 +73,21 @@ export class ImporterController {
     @Body(new ZodValidationPipe(ImportConnectSchema)) body: ImportConnectInput,
   ) {
     return this.importer.connect(user.userId, body);
+  }
+
+  /**
+   * The connection test: reachable, the source team's name, how many apps/databases the token sees and whether it has
+   * `read:sensitive`. Nothing is stored. It sends the token to the source exactly like connect, so it needs the same
+   * `write` scope and the team's `apps:config` permission (checked in the service).
+   */
+  @Post("test")
+  @RequireScopes("write")
+  @ApiZodBody(ImportTestSchema)
+  test(
+    @CurrentUser() user: AuthUser,
+    @Body(new ZodValidationPipe(ImportTestSchema)) body: ImportTestInput,
+  ) {
+    return this.importer.test(user.userId, body);
   }
 
   /**

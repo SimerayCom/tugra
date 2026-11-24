@@ -12,15 +12,21 @@ import { buildPreflight } from "./preflight";
 import { buildCoverage } from "./coverage";
 import type { ImportPlan } from "./foreign-fleet";
 import type { ImportSource } from "./import-source";
-import { isRemoteSourceKind, type ImportConnectInput, type ImportMappingPutInput, type ImportMappingResolveInput, type ImportPlanRequestInput, type ImportServicesPreviewInput, type RemoteSourceKind } from "./dto";
+import { isRemoteSourceKind, type ImportConnectInput, type ImportTestInput, type ImportMappingPutInput, type ImportMappingResolveInput, type ImportPlanRequestInput, type ImportServicesPreviewInput, type RemoteSourceKind } from "./dto";
 import { mapLimit } from "./sources/map-limit";
 import { validateServiceChoices } from "./service-choices";
 import { buildServicePreview, type ServicePreview } from "./service-preview";
 import { ImportMappingService, type MappingSession } from "./import-mapping.service";
 import type { ResolvedMapping } from "./import-mapping";
+import { classifyConnectFailure, suggestScopeLabel, type ConnectFailureCode } from "./connect-check";
 
 /** The plan as returned to a client: the (planHash-covered) plan plus the additive, hash-excluded mapping block. */
 export type ImportPlanResponse = ImportPlan & { mapping?: { features: string[]; stored: unknown; storedVersion: number | null; scopeKey: string } };
+
+/** The connection test's answer: a refusal (`ok: false`) carries a stable `code`; a success carries the one-line facts (null = the source cannot tell). */
+export type ImportTestResult =
+  | { ok: false; code: ConnectFailureCode; message: string }
+  | { ok: true; team?: string; suggestedLabel?: string; apps: number | null; databases: number | null; services: number | null; sensitive: boolean | null };
 
 const SESSION_TTL_MS = 60 * 60_000; // 1h — long enough to review → apply, short enough to limit a stored token
 
@@ -62,7 +68,13 @@ export class ImporterService {
     } finally {
       await source.close();
     }
-    if (!ok.ok) throw new BadRequestException(`could not reach ${this.sources.label(input.sourceKind)}: ${ok.detail ?? "verification failed"}`);
+    if (!ok.ok) {
+      throw new BadRequestException({
+        statusCode: 400,
+        message: `could not reach ${this.sources.label(input.sourceKind)}: ${ok.detail ?? "verification failed"}`,
+        code: classifyConnectFailure(ok.detail),
+      });
+    }
 
     const expiresAt = new Date(Date.now() + SESSION_TTL_MS);
     const session = await this.prisma.importSession.create({
@@ -79,6 +91,36 @@ export class ImporterService {
     });
     await this.audit.log({ actor: userId, action: "import.connect", target: session.id, meta: { sourceKind: input.sourceKind, teamId: input.teamId, baseUrl: input.baseUrl } });
     return { sessionId: session.id, expiresAt };
+  }
+
+  /**
+   * Check a token the moment it is pasted: reachable, which team it belongs to, how many apps/databases it sees and whether it
+   * can read sensitive fields. Nothing is stored and no session is created. A refusal is a normal answer (`ok: false` with a
+   * stable `code`), not an error, so the wizard can show only the note that fits the cause. Needs the same team permission as connect.
+   */
+  async test(userId: string, input: ImportTestInput): Promise<ImportTestResult> {
+    await this.access.requirePermission(userId, input.teamId, "apps:config");
+    try {
+      assertAllowedUrl(input.baseUrl);
+    } catch (e) {
+      throw new BadRequestException(e instanceof Error ? e.message : "invalid base URL");
+    }
+    const label = this.sources.label(input.sourceKind);
+    const source = this.sources.create(input.sourceKind, input.baseUrl, input.token);
+    try {
+      const ok = await source.verify();
+      if (!ok.ok) return { ok: false, code: classifyConnectFailure(ok.detail), message: `could not reach ${label}: ${ok.detail ?? "verification failed"}` };
+      if (!source.probe) return { ok: true, apps: null, databases: null, services: null, sensitive: null };
+      try {
+        const p = await source.probe();
+        return { ok: true, ...(p.team ? { team: p.team, suggestedLabel: suggestScopeLabel(p.team) } : {}), apps: p.apps, databases: p.databases, services: p.services, sensitive: p.sensitive };
+      } catch (e) {
+        const detail = e instanceof Error ? e.message : "verification failed";
+        return { ok: false, code: classifyConnectFailure(detail), message: `could not reach ${label}: ${detail}` };
+      }
+    } finally {
+      await source.close();
+    }
   }
 
   async plan(userId: string, input: ImportPlanRequestInput): Promise<ImportPlanResponse> {

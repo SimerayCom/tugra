@@ -28,6 +28,10 @@ export const ImportConnectSchema = z.object({
 });
 export type ImportConnectInput = z.infer<typeof ImportConnectSchema>;
 
+/** The one-line connection test shown as soon as the token is pasted: the same credentials as connect, nothing is stored. */
+export const ImportTestSchema = ImportConnectSchema.omit({ scopeLabel: true });
+export type ImportTestInput = z.infer<typeof ImportTestSchema>;
+
 /** Per-database data mode (`volume` = physical copy of a PostgreSQL data directory). Bounded; keys are database itemRefs. */
 export const ImportDbDataModesSchema = z.record(z.string().min(1).max(256), z.literal("volume")).refine((r) => Object.keys(r).length <= 500, "too many entries");
 

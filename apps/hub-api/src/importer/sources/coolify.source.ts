@@ -1,5 +1,6 @@
 import type { ForeignEnv, ForeignFleet, ForeignProject, ServiceBundle } from "../foreign-fleet";
-import type { ImportSource, ImportSourceCapabilities, FetchedSecrets, SourceAppExtras, SourceHealthRow } from "../import-source";
+import type { ImportSource, ImportSourceCapabilities, FetchedSecrets, SourceAppExtras, SourceHealthRow, SourceProbe } from "../import-source";
+import { isSensitiveVisible } from "./coolify-sensitive";
 import { why } from "../reason";
 import { mapLimit } from "./map-limit";
 import { buildEnvReport, classifyEnvRow } from "../env-report";
@@ -66,6 +67,33 @@ export class CoolifySource implements ImportSource {
     } catch (e) {
       return { ok: false, detail: e instanceof Error ? e.message : "verification failed" };
     }
+  }
+
+  /**
+   * What the connection test shows: the team the token belongs to, how many apps and databases it can see, and whether it can read
+   * sensitive fields. Three list reads, no secrets. The team name is best effort (an older Coolify has no `/teams/current`);
+   * the counts are the core and let a bad token fail here.
+   */
+  async probe(): Promise<SourceProbe> {
+    const apps = (await this.client.get<unknown[]>("/applications")) ?? [];
+    const databases = (await this.client.get<unknown[]>("/databases")) ?? [];
+    let services: unknown[] = [];
+    try {
+      services = (await this.client.get<unknown[]>("/services")) ?? [];
+    } catch {
+      services = [];
+    }
+    let team: string | undefined;
+    try {
+      const t = await this.client.get<{ name?: unknown }>("/teams/current");
+      if (typeof t?.name === "string" && t.name.trim()) team = t.name.trim().slice(0, 120);
+    } catch {
+      team = undefined;
+    }
+    // The hidden keys are removed from the row for a token without read:sensitive; a visible key on any app/database row proves it can read them.
+    const rows = [...apps.map((r) => [r, "application"] as const), ...databases.map((r) => [r, "database"] as const)];
+    const sensitive = rows.length === 0 ? null : rows.some(([r, kind]) => isSensitiveVisible(r, kind));
+    return { ...(team ? { team } : {}), apps: Array.isArray(apps) ? apps.length : 0, databases: Array.isArray(databases) ? databases.length : 0, services: Array.isArray(services) ? services.length : 0, sensitive };
   }
 
   private async readVersion(): Promise<string | null> {

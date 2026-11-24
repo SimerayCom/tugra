@@ -84,6 +84,17 @@ export interface SourceHealthRow {
   restartCount: number | null;
 }
 
+/** The one-line "does this token work" facts shown right after a token is pasted: read-only, secret-free (a team name, counts, a flag). */
+export interface SourceProbe {
+  /** The source's own name for the team the token belongs to, when the source has teams. */
+  team?: string;
+  apps: number;
+  databases: number;
+  services: number;
+  /** Whether the token can read sensitive fields (Coolify `read:sensitive`); null when no row exists to tell. */
+  sensitive: boolean | null;
+}
+
 /**
  * One competitor adapter. Every source (Coolify/Dokploy/CapRover/Dokku + local-docker + a pasted compose
  * file) implements this, so the planner and executor stay source-independent. The adapter is constructed
@@ -96,6 +107,9 @@ export interface ImportSource {
   capabilities(): ImportSourceCapabilities;
   verify(): Promise<{ ok: boolean; version?: string; detail?: string }>;
   discover(): Promise<ForeignFleet>;
+  /** OPTIONAL cheap read-only summary for the connection test (team name, resource counts, `read:sensitive`). A source without it
+   *  is only verified. A failure of the core reads MUST throw. */
+  probe?(): Promise<SourceProbe>;
   /** Re-fetch real secret values for one resource at apply time (never sent to the client). */
   fetchSecrets(ref: string): Promise<FetchedSecrets>;
   /** OPTIONAL secret path: a database's real credentials, re-fetched server-side at apply time and keyed by the

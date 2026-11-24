@@ -302,3 +302,73 @@ describe("ImporterService — editable mapping (additive)", () => {
     await expect(withMappings({}, { ...liveSession, expiresAt: new Date(0) }).svc.requireSession("u1", "sess-1")).rejects.toBeInstanceOf(BadRequestException);
   });
 });
+
+describe("ImporterService.test — the connection test", () => {
+  const input = { sourceKind: "coolify" as const, teamId: "t1", baseUrl: "https://coolify.example.com", token: "tok-123456" };
+  const cfg = (extra: Record<string, unknown> = {}) => ({
+    "/servers": [],
+    "/applications": [{ uuid: "a1", build_command: null }, { uuid: "a2", build_command: "npm run build" }],
+    "/databases": [{ uuid: "d1" }],
+    "/services": [],
+    "/teams/current": { id: 1, name: "Acme Team" },
+    ...extra,
+  });
+  const routed = (routes: Record<string, unknown>) =>
+    jest.fn(async (p: string) => {
+      if (p in routes) {
+        const v = routes[p];
+        if (v instanceof Error) throw v;
+        return v;
+      }
+      throw new Error(`404 ${p}`);
+    });
+
+  it("returns the team, counts, read:sensitive and a suggested label, and stores nothing", async () => {
+    const { svc, access, importSession } = make({ clientGet: routed(cfg()) });
+    const r = await svc.test("u1", input);
+    expect(access.requirePermission).toHaveBeenCalledWith("u1", "t1", "apps:config");
+    expect(r).toEqual({ ok: true, team: "Acme Team", suggestedLabel: "acme-team", apps: 2, databases: 1, services: 0, sensitive: true });
+    expect(importSession.create).not.toHaveBeenCalled();
+    expect(JSON.stringify(r)).not.toContain("tok-123456");
+  });
+
+  it("says sensitive=false when no row carries a sensitive field, and null when there is no row to tell", async () => {
+    const { svc } = make({ clientGet: routed(cfg({ "/applications": [{ uuid: "a1" }], "/databases": [] })) });
+    expect((await svc.test("u1", input))).toMatchObject({ ok: true, sensitive: false, apps: 1 });
+    const empty = make({ clientGet: routed(cfg({ "/applications": [], "/databases": [] })) });
+    expect((await empty.svc.test("u1", input))).toMatchObject({ ok: true, sensitive: null, apps: 0, databases: 0 });
+  });
+
+  it("an older Coolify without /teams/current still passes, just without a team name", async () => {
+    const { svc } = make({ clientGet: routed(cfg({ "/teams/current": new Error("404") })) });
+    const r = await svc.test("u1", input);
+    expect(r).toMatchObject({ ok: true, apps: 2 });
+    expect(r).not.toHaveProperty("team");
+  });
+
+  it("a refusal is an answer with a stable code, not an exception", async () => {
+    const e = new Error('Coolify API error 403: "You are not allowed to access the API." (hint)');
+    const { svc } = make({ clientGet: routed({ "/servers": e }) });
+    const r = await svc.test("u1", input);
+    expect(r).toMatchObject({ ok: false, code: "allowed-ips" });
+    expect((r as { message: string }).message).toContain("could not reach Coolify");
+  });
+
+  it("is team-scoped: a caller without apps:config is refused before any request is made", async () => {
+    const { svc, access, sources } = make({ clientGet: routed(cfg()) });
+    access.requirePermission.mockRejectedValue(new ForbiddenException());
+    await expect(svc.test("u1", input)).rejects.toBeInstanceOf(ForbiddenException);
+    expect(sources.create).not.toHaveBeenCalled();
+  });
+
+  it("a blocked URL is a 400", async () => {
+    const { svc } = make({ clientGet: routed(cfg()) });
+    await expect(svc.test("u1", { ...input, baseUrl: "http://169.254.169.254" })).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it("connect failures carry the same stable code", async () => {
+    const e = new Error('Coolify API error 403: "API is disabled." (hint)');
+    const { svc } = make({ clientGet: routed({ "/servers": e }) });
+    await expect(svc.connect("u1", input)).rejects.toMatchObject({ response: { code: "api-disabled" } });
+  });
+});
