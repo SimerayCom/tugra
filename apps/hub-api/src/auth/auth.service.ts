@@ -46,6 +46,10 @@ function personalTeamName(name: string | null | undefined, isInstanceOwner: bool
 
 const ACCESS_TTL = "15m";
 const REFRESH_TTL_SECONDS = 7 * 24 * 60 * 60;
+/** How long a just-rotated refresh token is recognised as "raced, not stolen". Two browser tabs (or a laptop waking
+ *  up) refresh with the same cookie at the same moment; the loser must not revoke the whole family. It still gets
+ *  no tokens: it is told the session was already rotated and retries with the cookie the winner set. */
+const REFRESH_REUSE_GRACE_SECONDS = 30;
 
 // Per-email login defence (complements the per-IP throttle, which shared NAT egress can defeat).
 // A high per-email burst backstop that never trips for a human but caps a scripted flood; the
@@ -463,6 +467,10 @@ export class AuthService {
     }
 
     const stored = await this.redis.get(`rt:${payload.jti}`);
+    if (!stored && (await this.redis.get(`rtused:${payload.jti}`))) {
+      // Rotated moments ago by a concurrent refresh of the same session: no tokens, no revocation.
+      throw new UnauthorizedException({ statusCode: 401, code: "refresh_rotated", message: "session already refreshed" });
+    }
     if (!stored) {
       // Reuse (or already-revoked): nuke the whole family.
       await this.revokeFamily(payload.family);
@@ -483,7 +491,9 @@ export class AuthService {
       throw new UnauthorizedException("session revoked");
     }
 
-    // Rotate: invalidate the used token, issue a new pair in the same family.
+    // Rotate: invalidate the used token, issue a new pair in the same family. Remember the used jti briefly so a
+    // concurrent refresh with the same cookie is recognised as a race instead of a replay.
+    await this.redis.set(`rtused:${payload.jti}`, "1", REFRESH_REUSE_GRACE_SECONDS);
     await this.redis.del(`rt:${payload.jti}`);
     await this.redis.srem(`rtfam:${payload.family}`, payload.jti);
     return this.issueTokens(payload.sub, payload.family);

@@ -40,6 +40,34 @@ describe("apiFetch 401 → cookie refresh → retry", () => {
     expect(calls[0].url).toBe("/api/v1/servers");
   });
 
+  it("treats a refresh the hub reports as already rotated by another tab as success and retries", async () => {
+    let serverHits = 0;
+    const urls: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      urls.push(String(url));
+      if (String(url).endsWith("/auth/refresh")) return jsonRes(401, { code: "refresh_rotated", message: "session already refreshed" });
+      serverHits += 1;
+      return serverHits === 1 ? jsonRes(401, { message: "expired" }) : jsonRes(200, { ok: true });
+    }));
+    await expect(apiFetch<{ ok: boolean }>("/servers")).resolves.toEqual({ ok: true });
+    expect(urls.filter((u) => u.endsWith("/servers"))).toHaveLength(2);
+  });
+
+  it("with a cross-tab lock, skips its own refresh when another tab refreshed moments ago", async () => {
+    window.localStorage.setItem("tg_refreshed_at", String(Date.now()));
+    vi.stubGlobal("navigator", { ...navigator, locks: { request: (_n: string, cb: () => Promise<boolean>) => cb() } });
+    let serverHits = 0;
+    const urls: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      urls.push(String(url));
+      serverHits += 1;
+      return serverHits === 1 ? jsonRes(401, { message: "expired" }) : jsonRes(200, { ok: true });
+    }));
+    await expect(apiFetch<{ ok: boolean }>("/servers")).resolves.toEqual({ ok: true });
+    expect(urls.some((u) => u.endsWith("/auth/refresh"))).toBe(false);
+    window.localStorage.removeItem("tg_refreshed_at");
+  });
+
   it("sends the X-CSRF-Token header (from the tg_csrf cookie) on mutations", async () => {
     document.cookie = "tg_csrf=csrf-abc";
     let csrf: string | null = null;

@@ -313,7 +313,34 @@ export function tryRefresh(): Promise<boolean> {
   if (!refreshing) refreshing = doRefresh().finally(() => { refreshing = null; });
   return refreshing;
 }
+// Other tabs share the same refresh cookie, so the in-tab single-flight above is not enough: two tabs (or a laptop
+// waking with several tabs open) would rotate the same cookie at once. A cross-tab lock serialises them, and a tab
+// that gets the lock right after another tab refreshed just reuses the new cookie instead of rotating again.
+const REFRESHED_AT_KEY = "tg_refreshed_at";
+const RECENT_REFRESH_MS = 10_000;
+function readRefreshedAt(): number {
+  try {
+    return Number(window.localStorage.getItem(REFRESHED_AT_KEY)) || 0;
+  } catch {
+    return 0;
+  }
+}
+function markRefreshed(): void {
+  try {
+    window.localStorage.setItem(REFRESHED_AT_KEY, String(Date.now()));
+  } catch {
+    /* storage blocked: the hub's reuse grace still covers the race */
+  }
+}
 async function doRefresh(): Promise<boolean> {
+  const locks = typeof navigator !== "undefined" ? (navigator as Navigator & { locks?: LockManager }).locks : undefined;
+  if (!locks?.request) return refreshOnce();
+  return locks.request("tugra-auth-refresh", async () => {
+    if (Date.now() - readRefreshedAt() < RECENT_REFRESH_MS) return true; // another tab just did it
+    return refreshOnce();
+  });
+}
+async function refreshOnce(): Promise<boolean> {
   const headers = new Headers({ "content-type": "application/json" });
   const csrf = readCookie(TG_CSRF);
   if (csrf) headers.set("x-csrf-token", csrf);
@@ -323,7 +350,16 @@ async function doRefresh(): Promise<boolean> {
     credentials: "include",
     body: "{}",
   });
-  return res.ok;
+  if (res.ok) {
+    markRefreshed();
+    return true;
+  }
+  // The hub says another tab rotated this session a moment ago: the shared cookie is already fresh.
+  if (res.status === 401) {
+    const body = (await res.json().catch(() => null)) as { code?: unknown } | null;
+    if (body?.code === "refresh_rotated") return true;
+  }
+  return false;
 }
 
 export async function apiFetch<T>(

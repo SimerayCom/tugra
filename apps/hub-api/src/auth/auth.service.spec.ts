@@ -22,6 +22,10 @@ class FakeRedis {
   async get(k: string): Promise<string | null> {
     return this.kv.get(k) ?? null;
   }
+  /** Simulate TTL expiry of every key with this prefix. */
+  expirePrefix(prefix: string): void {
+    for (const k of [...this.kv.keys()]) if (k.startsWith(prefix)) this.kv.delete(k);
+  }
   async del(...keys: string[]): Promise<void> {
     for (const k of keys) {
       this.kv.delete(k);
@@ -66,6 +70,7 @@ function makeService(
     get: jest.fn().mockResolvedValue({ initializedAt: null, allowRegistration: false }),
     update: jest.fn().mockResolvedValue({}),
   },
+  redis: FakeRedis = new FakeRedis(),
 ): AuthService {
   return new AuthService(
     prisma as PrismaService,
@@ -74,7 +79,7 @@ function makeService(
     {} as CryptoService,
     {} as TotpService,
     { log: jest.fn() } as unknown as AuditService,
-    new FakeRedis() as unknown as RedisService,
+    redis as unknown as RedisService,
     teamDefaults as unknown as TeamDefaultsService,
     mail,
     instanceSettings as unknown as InstanceSettingsService,
@@ -90,20 +95,29 @@ describe("AuthService tokens", () => {
     expect(pair.accessToken).not.toBe(pair.refreshToken);
   });
 
-  it("rotates the refresh token and invalidates the old one (reuse → revoke)", async () => {
-    const svc = makeService();
+  it("rotates the refresh token; a replay after the grace window revokes the whole family", async () => {
+    const redis = new FakeRedis();
+    const svc = makeService(undefined, undefined, undefined, redis);
     const first = await svc.issueTokens("user-1");
 
     const rotated = await svc.refresh(first.refreshToken);
     expect(rotated.refreshToken).not.toBe(first.refreshToken);
 
-    // Reusing the original (already-rotated) token must be rejected.
-    await expect(svc.refresh(first.refreshToken)).rejects.toThrow(
-      /reuse detected/,
-    );
-
-    // And reuse detection revokes the whole family, so the rotated one dies too.
+    redis.expirePrefix("rtused:"); // the race window is over
+    await expect(svc.refresh(first.refreshToken)).rejects.toThrow(/reuse detected/);
+    // Reuse detection revokes the whole family, so the rotated one dies too.
     await expect(svc.refresh(rotated.refreshToken)).rejects.toThrow();
+  });
+
+  it("a concurrent refresh with the same token (two tabs) gets no tokens and does not revoke the session", async () => {
+    const svc = makeService();
+    const first = await svc.issueTokens("user-1");
+    const rotated = await svc.refresh(first.refreshToken);
+
+    const raced = await svc.refresh(first.refreshToken).catch((e: { getResponse?: () => unknown }) => e.getResponse?.());
+    expect(raced).toMatchObject({ code: "refresh_rotated" });
+    // The winner's session is intact.
+    await expect(svc.refresh(rotated.refreshToken)).resolves.toHaveProperty("refreshToken");
   });
 
   it("rejects a malformed refresh token", async () => {
