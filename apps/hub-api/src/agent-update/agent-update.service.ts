@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
+import { ServerStatus } from "@prisma/client";
 import { isNewer, parseVersion } from "@tugra/shared";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
@@ -18,7 +19,8 @@ export interface AgentUpdateItem {
   reason?: string;
 }
 export interface AgentUpdateResponse {
-  status: "ok" | "unconfigured" | "error";
+  /** `hub-behind` = the published release is newer than this hub: update the hub first, agents never run ahead of it. */
+  status: "ok" | "unconfigured" | "error" | "hub-behind";
   total: number;
   sent: number;
   offline: number;
@@ -27,6 +29,26 @@ export interface AgentUpdateResponse {
 }
 
 type ServerRow = { id: string; teamId: string; arch: string | null; agentVersion: string | null };
+
+/** The agents the hub has not caught up with: how many of the team-managed remote agents run an older version than the hub. */
+export interface AgentFleetStatus {
+  /** The hub's own release: what every agent should be on. */
+  current: string;
+  /** Remote servers that have an agent (enrolled, not the hub's own box). */
+  total: number;
+  outdated: number;
+  outdatedServerIds: string[];
+  /** "Apply updates automatically" is on, so the hub rolls agents out by itself once it is on the latest release. */
+  autoUpdate: boolean;
+}
+
+type FleetRow = { id: string; teamId: string; arch: string | null; agentVersion: string | null };
+
+/** Which agents run an older version than `hubVersion`. Unknown/unparseable agent versions are never counted (we
+ *  cannot tell they are behind, and a guess must not trigger an update). Pure. */
+export function outdatedAgents<T extends { agentVersion: string | null }>(servers: T[], hubVersion: string): T[] {
+  return servers.filter((s) => !!parseVersion(s.agentVersion ?? "") && isNewer(hubVersion, s.agentVersion as string));
+}
 
 const EMPTY = { total: 0, sent: 0, offline: 0, skipped: 0, results: [] as AgentUpdateItem[] };
 
@@ -96,6 +118,48 @@ export class AgentUpdateService {
       results.push(await this.applyServer(server, verified.entry, userId));
     }
     return this.summarize(results);
+  }
+
+  /**
+   * The remote agents (enrolled, not the hub's own box) of every team the caller manages that run an older version
+   * than the hub: the "3/24 agents are on an older version" notice. Reads only the DB + the running version — no
+   * manifest fetch, so the panel can poll it freely. Servers of teams the caller cannot manage are never counted.
+   */
+  async fleetStatus(userId: string): Promise<AgentFleetStatus> {
+    const { current, autoUpdate } = await this.update.getStatus();
+    const servers = await this.managedAgents(userId);
+    const outdated = outdatedAgents(servers, current);
+    return { current, total: servers.length, outdated: outdated.length, outdatedServerIds: outdated.map((s) => s.id), autoUpdate };
+  }
+
+  /** One click: update every outdated agent the caller manages to the hub's release (same signed, digest-pinned path
+   *  as the single update). Refuses while the hub itself is behind the published release. */
+  async updateOutdated(userId: string): Promise<AgentUpdateResponse> {
+    const { current } = await this.update.getStatus();
+    const outdated = outdatedAgents(await this.managedAgents(userId), current);
+    if (outdated.length === 0) return this.summarize([]);
+    const verified = await this.update.verifyLatestEntry();
+    if (verified.status !== "ok") return { status: verified.status, ...EMPTY };
+    if (isNewer(verified.entry.version, current)) return { status: "hub-behind", ...EMPTY };
+    const results: AgentUpdateItem[] = [];
+    for (const s of outdated) results.push(await this.applyServer(s, verified.entry, userId));
+    return this.summarize(results);
+  }
+
+  /** Remote servers with an enrolled agent in teams where the user holds servers:manage. */
+  private async managedAgents(userId: string): Promise<FleetRow[]> {
+    const perms = await this.access.permissionsByTeam(userId);
+    const teamIds = [...perms.entries()].filter(([, p]) => p.has("servers:manage")).map(([id]) => id);
+    if (teamIds.length === 0) return [];
+    return (await this.prisma.server.findMany({
+      where: { teamId: { in: teamIds }, isLocal: false, status: { not: ServerStatus.PENDING } },
+      select: { id: true, teamId: true, arch: true, agentVersion: true },
+    })) as FleetRow[];
+  }
+
+  /** The hub updating an agent by itself (auto-rollout): no user, audited as the system actor. */
+  async applyAuto(server: ServerRow, entry: ChannelEntry): Promise<AgentUpdateItem> {
+    return this.applyServer(server, entry, "auto-update");
   }
 
   private async applyServer(server: ServerRow, entry: ChannelEntry, userId: string): Promise<AgentUpdateItem> {

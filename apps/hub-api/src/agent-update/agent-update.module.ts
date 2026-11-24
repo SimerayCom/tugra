@@ -3,12 +3,13 @@ import { AgentGatewayModule } from "../agent-gateway/agent-gateway.module";
 import { UpdateModule } from "../update/update.module";
 import { AgentUpdateController } from "./agent-update.controller";
 import { AgentUpdateService } from "./agent-update.service";
+import { AgentRolloutService } from "./agent-rollout.service";
 
-// Owner-triggered agent self-update. Depends on AgentWsServer (AgentGatewayModule) to send the signed
+// Owner-triggered agent self-update, plus the automatic one-by-one rollout once the hub is on the latest release. Depends on AgentWsServer (AgentGatewayModule) to send the signed
 // command and UpdateService (UpdateModule) for the verified manifest; Prisma/Audit/TeamAccess are @Global.
 @Module({
   imports: [AgentGatewayModule, UpdateModule],
   controllers: [AgentUpdateController],
-  providers: [AgentUpdateService],
+  providers: [AgentUpdateService, AgentRolloutService],
 })
 export class AgentUpdateModule {}
