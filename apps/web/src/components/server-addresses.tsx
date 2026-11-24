@@ -40,6 +40,12 @@ export function ServerAddresses({ server }: { server: ServerView }) {
     mutationFn: (ip: string) => api.setServerNetwork(server.id, ip.includes(":") ? { publicIpv6: ip } : { publicIp: ip }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["server", server.id] }),
   });
+  // A pinned main address goes back to automatic detection (that family only) when the pin is cleared.
+  const unpin = useMutation({
+    mutationFn: (family: 4 | 6) => api.setServerNetwork(server.id, family === 6 ? { publicIpv6: null } : { publicIp: null }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["server", server.id] }),
+  });
+  const pinError = pin.error ?? unpin.error;
   if (rows.length === 0) return null;
   return (
     <details style={{ margin: "-8px 0 20px", fontSize: 13 }}>
@@ -58,7 +64,20 @@ export function ServerAddresses({ server }: { server: ServerView }) {
               {r.main && r.source ? ` · ${t(ipSourceKey(r.source))}` : ""}
             </span>
             {r.main ? (
-              <span style={{ fontSize: 11, color: "var(--c-g)" }}>{t("servers.ipMain")}</span>
+              <>
+                <span style={{ fontSize: 11, color: "var(--c-g)" }}>{t("servers.ipMain")}</span>
+                {server.canWrite && r.source === "manual" && (
+                  <Btn
+                    variant="ghost"
+                    style={{ minHeight: 44 }}
+                    onClick={() => unpin.mutate(r.family)}
+                    loading={unpin.isPending && unpin.variables === r.family}
+                    disabled={unpin.isPending}
+                  >
+                    {t("servers.ipUseAutomatic")}
+                  </Btn>
+                )}
+              </>
             ) : (
               server.canWrite &&
               r.kind === "public" && (
@@ -76,7 +95,11 @@ export function ServerAddresses({ server }: { server: ServerView }) {
           </li>
         ))}
       </ul>
-      {pin.isError && <div role="alert" style={{ color: "var(--c-r)", fontSize: 12 }}>{pin.error instanceof Error ? pin.error.message : t("servers.ipPinFailed")}</div>}
+      {(pin.isError || unpin.isError) && (
+        <div role="alert" style={{ color: "var(--c-r)", fontSize: 12 }}>
+          {pinError instanceof Error ? pinError.message : t("servers.ipPinFailed")}
+        </div>
+      )}
     </details>
   );
 }

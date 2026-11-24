@@ -60,6 +60,18 @@ describe("ServerAddresses", () => {
     fireEvent.click(buttons[0]);
     await waitFor(() => expect(spy).toHaveBeenCalledWith("s1", { publicIp: "203.0.113.8" }));
   });
+  it("lets a writer clear a pinned IPv6 (and IPv4) so detection resumes for that family", async () => {
+    const spy = vi.spyOn(api, "setServerNetwork").mockResolvedValue({ ok: true });
+    render(wrap(<ServerAddresses server={server({ ipv6Source: "manual" })} />));
+    const buttons = screen.getAllByRole("button", { name: "Detect automatically" });
+    expect(buttons.length).toBe(1); // only the IPv6 main is pinned
+    fireEvent.click(buttons[0]);
+    await waitFor(() => expect(spy).toHaveBeenCalledWith("s1", { publicIpv6: null }));
+  });
+  it("offers no reset when the main address is detected, not pinned", () => {
+    render(wrap(<ServerAddresses server={server()} />));
+    expect(screen.queryByRole("button", { name: "Detect automatically" })).toBeNull();
+  });
   it("offers no action to a read-only viewer", () => {
     render(wrap(<ServerAddresses server={server({ canWrite: false })} />));
     expect(screen.queryByRole("button", { name: "Use as main" })).toBeNull();

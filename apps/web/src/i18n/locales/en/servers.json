@@ -469,6 +469,7 @@
   "ipPrivate": "private",
   "ipMain": "Main",
   "ipUseAsMain": "Use as main",
+  "ipUseAutomatic": "Detect automatically",
   "ipPinFailed": "Could not set the main address.",
   "agentFleetBehind": "{n}/{total} agents are on an older version",
   "agentFleetAuto": "They are updating one by one.",
