@@ -1302,6 +1302,8 @@
     "undo": "Undo",
     "undoAria": "Undo accepting: {what}",
     "acceptedTag": "Accepted.",
+    "mustFix": "Fix this one before you start.",
+    "noDecision": "Nothing to decide here. It does not stop the migration.",
     "saved": "Saved.",
     "more": "More",
     "details": "Details",
@@ -1323,7 +1325,7 @@
     },
     "fix": {
       "connectGit": "Connect GitHub",
-      "pinInReview": "Pin the version in the review",
+      "pinInReview": "Pin it in Details",
       "reviewAgain": "Open the import review"
     },
     "warn": {

@@ -7,7 +7,7 @@ import { api } from "../../lib/api";
 import { useT } from "../../i18n/provider";
 import { Btn, LinkBtn, SectionCard } from "../ui";
 import { formatBytes, formatDuration } from "../../lib/import";
-import { ROLLBACK_PATH_KEY, blockerSpec, canAccept, decisionOf, warningSpec, type DecisionIssue, type WarningFix } from "../../lib/dry-run-decision";
+import { ROLLBACK_PATH_KEY, blockerSpec, canAccept, decisionOf, isAckableKey, warningSpec, type DecisionIssue, type WarningFix } from "../../lib/dry-run-decision";
 import { codeText, paramVars } from "../../lib/migration-run";
 import type { MigrationRunSafetyHints, MigrationRunView } from "../../lib/types";
 import { useStartRun } from "./run-actions";
@@ -22,8 +22,16 @@ function subjectsText(subjects: string[]): string {
   return subjects.length > SHOWN_SUBJECTS ? `${head} +${subjects.length - SHOWN_SUBJECTS}` : head;
 }
 
-function FixLink({ fix }: { fix: WarningFix }) {
+function FixLink({ fix, onOpenSafety }: { fix: WarningFix; onOpenSafety?: () => void }) {
   const t = useT();
+  if (fix.kind === "safety") {
+    // the pin field lives in the run's Details; without a way to open them the fix is not offered
+    return onOpenSafety ? (
+      <Btn variant="ghost" onClick={onOpenSafety}>
+        {t(fix.labelKey)}
+      </Btn>
+    ) : null;
+  }
   return (
     <LinkBtn href={fix.href} variant="ghost">
       {t(fix.labelKey)}
@@ -32,7 +40,7 @@ function FixLink({ fix }: { fix: WarningFix }) {
 }
 
 /** One warning: a sentence, what accepting means behind "More", and the actions the registry knows (a fix, accept and continue). */
-function WarningRow({ issue, accepted, busy, onToggle }: { issue: DecisionIssue; accepted: boolean; busy: boolean; onToggle: (accept: boolean) => void }) {
+function WarningRow({ issue, accepted, busy, onToggle, onOpenSafety }: { issue: DecisionIssue; accepted: boolean; busy: boolean; onToggle: (accept: boolean) => void; onOpenSafety?: () => void }) {
   const t = useT();
   const spec = warningSpec(issue.key);
   const items = issue.params?.items;
@@ -48,15 +56,16 @@ function WarningRow({ issue, accepted, busy, onToggle }: { issue: DecisionIssue;
         </div>
       </div>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", paddingLeft: 26 }}>
-        {!accepted && spec.fix && <FixLink fix={spec.fix} />}
+        {!accepted && spec.fix && <FixLink fix={spec.fix} onOpenSafety={onOpenSafety} />}
         {canAccept(issue.key) && (
           <Btn variant="ghost" disabled={busy} onClick={() => onToggle(!accepted)} aria-label={t(accepted ? "migrationRun.decision.undoAria" : "migrationRun.decision.acceptAria", { what: title })}>
             {accepted ? t("migrationRun.decision.undo") : t("migrationRun.decision.accept")}
           </Btn>
         )}
+        {!accepted && !canAccept(issue.key) && <span style={{ fontSize: 12, color: "var(--c-tx2)" }}>{t(isAckableKey(issue.key) ? "migrationRun.decision.mustFix" : "migrationRun.decision.noDecision")}</span>}
       </div>
       <details style={{ paddingLeft: 26 }}>
-        <summary style={{ cursor: "pointer", fontSize: 12, color: "var(--c-tx3)", minHeight: 24 }}>{t("migrationRun.decision.more")}</summary>
+        <summary style={{ cursor: "pointer", fontSize: 12, color: "var(--c-tx3)", minHeight: 44, display: "flex", alignItems: "center" }}>{t("migrationRun.decision.more")}</summary>
         <div style={{ marginTop: 6, fontSize: 12, color: "var(--c-tx2)", lineHeight: 1.5, wordBreak: "break-word" }}>
           {spec.hintKey && <p style={{ margin: "0 0 6px" }}>{t(spec.hintKey)}</p>}
           <p style={{ margin: 0 }}>{codeText(t, issue.code, issue.params)}</p>
@@ -106,13 +115,13 @@ function Fact({ label, children }: { label: string; children: React.ReactNode })
  * technical step list and events stay on the page, behind "Details". Accepting a warning is stored on the dry run (`warning-acks`)
  * and travels to the real run it is promoted into.
  */
-export function DryRunDecision({ run }: { run: MigrationRunView }) {
+export function DryRunDecision({ run, onOpenSafety }: { run: MigrationRunView; onOpenSafety?: () => void }) {
   const t = useT();
   const qc = useQueryClient();
   const { onError, toast } = useRunPlumbing(run.id);
   const hints = useQuery<MigrationRunSafetyHints>({ queryKey: runHintsKey(run.id), queryFn: () => api.getMigrationRunSafetyHints(run.id), staleTime: 15_000 });
-  const accepted = hints.data?.warningAcks ?? [];
-  const d = useMemo(() => decisionOf(run, accepted), [run, accepted]);
+  const accepted = hints.data?.warningAcks;
+  const d = useMemo(() => decisionOf(run, accepted ?? []), [run, accepted]);
   const { onStart, pending: starting } = useStartRun(run);
   const save = useMutation({
     mutationFn: (acks: Array<{ key: string; accepted: boolean }>) => api.setMigrationRunWarningAcks(run.id, { acks }),
@@ -145,9 +154,9 @@ export function DryRunDecision({ run }: { run: MigrationRunView }) {
   return (
     <SectionCard title={t("migrationRun.decision.title")} style={{ marginBottom: 0 }}>
       <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-        <div role="status" aria-live="polite" style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap", border: `1px solid ${tone}`, borderRadius: "var(--r1)", padding: "12px 14px", background: `color-mix(in srgb, ${tone} 8%, transparent)` }}>
+        <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap", border: `1px solid ${tone}`, borderRadius: "var(--r1)", padding: "12px 14px", background: `color-mix(in srgb, ${tone} 8%, transparent)` }}>
           <Icon size={22} aria-hidden color={tone} style={{ flexShrink: 0 }} />
-          <div style={{ flex: "1 1 220px", minWidth: 0 }}>
+          <div role="status" aria-live="polite" style={{ flex: "1 1 220px", minWidth: 0 }}>
             <div style={{ fontSize: 15, fontWeight: 600, lineHeight: 1.4 }}>{headline}</div>
             {d.verdict === "blocked" && <div style={{ fontSize: 12, color: "var(--c-tx2)", marginTop: 2 }}>{t("migrationRun.decision.blockedHint")}</div>}
             {d.verdict === "warnings" && <div style={{ fontSize: 12, color: "var(--c-tx2)", marginTop: 2 }}>{t("migrationRun.decision.warningsHint")}</div>}
@@ -177,7 +186,7 @@ export function DryRunDecision({ run }: { run: MigrationRunView }) {
             <ul style={{ margin: "6px 0 0", padding: 0 }}>
               {d.warnings.map((w) => {
                 const isAccepted = d.accepted.includes(w);
-                return <WarningRow key={w.key} issue={w} accepted={isAccepted} busy={save.isPending} onToggle={(accept) => save.mutate([{ key: w.key, accepted: accept }])} />;
+                return <WarningRow key={w.key} issue={w} accepted={isAccepted} busy={save.isPending} onToggle={(accept) => save.mutate([{ key: w.key, accepted: accept }])} onOpenSafety={onOpenSafety} />;
               })}
             </ul>
           </section>

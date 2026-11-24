@@ -7,7 +7,7 @@ import type { MigrationRunDryRunItem, MigrationRunMode, MigrationRunParams, Migr
  */
 
 /** A fix the operator can take for a warning. New kinds are added here and rendered in `dry-run-decision.tsx`. */
-export type WarningFix = { kind: "link"; href: string; labelKey: string };
+export type WarningFix = { kind: "link"; href: string; labelKey: string } | { kind: "safety"; labelKey: string };
 
 /** What the screen knows about one warning code. Everything is optional: an unknown warning still shows, with its own sentence and "Accept and continue". */
 export interface WarningSpec {
@@ -41,7 +41,7 @@ export const WARNING_REGISTRY: Record<string, WarningSpec> = {
   "import.risk-warning:service.image.floating": {
     titleKey: "migrationRun.decision.warn.imageFloating",
     hintKey: "migrationRun.decision.warn.imageFloatingHint",
-    fix: { kind: "link", href: "/import", labelKey: "migrationRun.decision.fix.pinInReview" },
+    fix: { kind: "safety", labelKey: "migrationRun.decision.fix.pinInReview" },
   },
   "import.risk-warning:app.image.transfer": {
     titleKey: "migrationRun.decision.warn.imageTransfer",
@@ -123,7 +123,7 @@ export interface DecisionSummary {
   dataBytes: number | null;
   /** The window in which the source's writers are stopped; null = not estimated. */
   downtimeSec: number | null;
-  /** The warm copy plus that window; null when either is not known. */
+  /** The warm pass of the volumes (before the freeze) plus that window; null when either is not known. */
   durationSec: number | null;
 }
 
@@ -133,7 +133,7 @@ export interface DryRunDecision {
   verdict: DecisionVerdict;
   blockers: DecisionIssue[];
   warnings: DecisionIssue[];
-  /** The warnings the operator has not accepted. */
+  /** The warnings the operator has not accepted (and can accept: a key the hub cannot store is only shown). */
   open: DecisionIssue[];
   accepted: DecisionIssue[];
   summary: DecisionSummary;
@@ -182,14 +182,14 @@ export function summaryOf(run: Pick<MigrationRunView, "steps">): DecisionSummary
   // the hub's own total (volumes, dumps and unmeasured sizes it knows of) wins over the sum of what the rows show
   const dataBytes = num(est?.bytes) ?? (measured ? sum : null);
   const downtimeSec = num(est?.seconds);
-  const copySec = num(est?.copySeconds);
+  const warmSec = num(est?.warmSeconds);
   return {
     apps: num(proj?.apps),
     databases: num(proj?.databases),
     services: num(proj?.services),
     dataBytes,
     downtimeSec,
-    durationSec: downtimeSec !== null && copySec !== null ? downtimeSec + copySec : null,
+    durationSec: downtimeSec !== null && warmSec !== null ? downtimeSec + warmSec : null,
   };
 }
 
@@ -200,7 +200,8 @@ export function decisionOf(run: Pick<MigrationRunView, "steps">, accepted: Itera
   // block and unknown would stop the real run (the hub's contract for a dry-run item)
   const blockers = issues.filter((i) => i.level === "block" || i.level === "unknown");
   const warnings = issues.filter((i) => i.level === "warn");
-  const open = warnings.filter((w) => !ok.has(w.key));
+  // a warning whose key the hub cannot store has no decision to take (nothing to accept), so it never holds Start back
+  const open = warnings.filter((w) => !ok.has(w.key) && isAckableKey(w.key));
   const done = warnings.filter((w) => ok.has(w.key));
   return { verdict: blockers.length > 0 ? "blocked" : open.length > 0 ? "warnings" : "clean", blockers, warnings, open, accepted: done, summary: summaryOf(run) };
 }

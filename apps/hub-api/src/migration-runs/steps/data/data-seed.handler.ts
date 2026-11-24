@@ -109,7 +109,7 @@ export class DataSeedHandler implements StepHandler<SeedObs>, OnModuleInit {
     for (const c of objectPlanChecks(run, snap, (await loadObjects(this.objects, ctx)).views)) {
       items.push({ code: c.code, level: c.status === "fail" ? "block" : c.status === "warn" ? "warn" : "info", ...(c.params ? { params: c.params } : {}) });
     }
-    items.push({ code: DATA_CODES.seedEstimate, level: est.freezeToFlipSec === null ? "unknown" : "info", params: { seconds: est.freezeToFlipSec, bytes: terms.bytes, copySeconds: terms.dataSec } });
+    items.push({ code: DATA_CODES.seedEstimate, level: est.freezeToFlipSec === null ? "unknown" : "info", params: { seconds: est.freezeToFlipSec, bytes: terms.bytes, warmSeconds: terms.warmVolumeSec } });
     return items;
   }
 

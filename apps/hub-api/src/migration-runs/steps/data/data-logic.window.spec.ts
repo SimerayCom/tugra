@@ -70,4 +70,15 @@ describe("estimateWindow shows the 2x hub bytes (R38)", () => {
     expect(terms.hubBytes).toBe(10 * gib);
     expect(estimate.basis.find((b) => b.code === "data-seed.estimate.hub-bytes")).toEqual({ code: "data-seed.estimate.hub-bytes", params: { bytes: 10 * gib, factor: 2 } });
   });
+
+  it("the warm pass counts the volumes only: a streamed dump (which runs inside the freeze) adds nothing to it", () => {
+    const gib = 1024 ** 3;
+    const vol = inspected("volume:s:a:data", 3 * gib);
+    const dump = { ...inspected("volume:s:db:dump", 2 * gib), destType: "db-dump" as const, engine: "POSTGRES" };
+    const withDump = estimateWindowDetail(makeSnap({ apps: [], volumes: [vol, dump] }), NOW).terms;
+    const volOnly = estimateWindowDetail(makeSnap({ apps: [], volumes: [vol] }), NOW).terms;
+    expect(withDump.warmVolumeSec).toBe(volOnly.warmVolumeSec);
+    expect(withDump.warmVolumeSec).toBeGreaterThan(0);
+    expect(withDump.warmVolumeSec).toBeLessThan(withDump.dataSec);
+  });
 });

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../lib/api";
 import { useT } from "../../i18n/provider";
@@ -17,14 +17,23 @@ function useHints(runId: string, enabled: boolean) {
 /** The facts only someone with eyes on the source host can give (R11 image digests, R26 job runners), recorded as
  *  attested by the operator. The hub cannot check either, so the card says so; it takes them only while the run can
  *  still use them (before the point of no return). The list loads when the card is opened. */
-export function SafetyCard({ run }: { run: MigrationRunView }) {
+export function SafetyCard({ run, focusToken = 0 }: { run: MigrationRunView; focusToken?: number }) {
   const t = useT();
   const [open, setOpen] = useState(false);
+  const detailsRef = useRef<HTMLDetailsElement>(null);
+  // a link elsewhere on the page (the dry-run result's "pin it") bumps `focusToken`: open the card, bring it into view
+  useEffect(() => {
+    if (focusToken <= 0 || !detailsRef.current) return;
+    detailsRef.current.open = true;
+    setOpen(true);
+    detailsRef.current.scrollIntoView?.({ block: "center" });
+    detailsRef.current.querySelector("summary")?.focus();
+  }, [focusToken]);
   const closed = hintsClosed(run);
   const q = useHints(run.id, open);
   return (
     <SectionCard title={t("migrationRun.safety.title")} desc={t("migrationRun.safety.desc")} style={{ marginBottom: 0 }}>
-      <details onToggle={(e) => setOpen((e.currentTarget as HTMLDetailsElement).open)}>
+      <details ref={detailsRef} onToggle={(e) => setOpen((e.currentTarget as HTMLDetailsElement).open)}>
         <summary style={{ cursor: "pointer", fontSize: 13, fontWeight: 600, minHeight: 28 }}>{t("migrationRun.safety.open")}</summary>
         <div style={{ display: "flex", flexDirection: "column", gap: 18, marginTop: 12 }}>
           {closed && <div role="note" style={{ fontSize: 12, color: "var(--c-am)", lineHeight: 1.5 }}>{t("migrationRun.safety.closed")}</div>}

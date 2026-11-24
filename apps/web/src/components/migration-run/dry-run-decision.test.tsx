@@ -26,12 +26,12 @@ const dryRun = (items: Partial<Record<MigrationRunStepKey, MigrationRunDryRunIte
   return mkRun({ dryRun: true, status: "DRY_RUN_DONE", currentStep: null, allowed: { ...mkRun().allowed, start: true, pause: false, abort: false }, ...over }, steps);
 };
 const risk = (r: string, items: string[]): MigrationRunDryRunItem => ({ code: "import.risk-warning", level: "warn", params: { risk: r, count: items.length, items } });
-const wrap = (run: MigrationRunView) =>
+const wrap = (run: MigrationRunView, onOpenSafety?: () => void) =>
   render(
     <QueryClientProvider client={qc}>
       <I18nProvider>
         <ConfirmProvider>
-          <DryRunDecision run={run} />
+          <DryRunDecision run={run} onOpenSafety={onOpenSafety} />
         </ConfirmProvider>
       </I18nProvider>
     </QueryClientProvider>,
@@ -57,7 +57,7 @@ describe("DryRunDecision", () => {
     wrap(
       dryRun({
         IMPORT: [{ code: "import.projection", level: "info", params: { apps: 2, databases: 1, services: 3 } }],
-        DATA_SEED: [{ code: "data-seed.estimate", level: "info", params: { seconds: 120, bytes: 5 * 1024 ** 3, copySeconds: 600 } }],
+        DATA_SEED: [{ code: "data-seed.estimate", level: "info", params: { seconds: 120, bytes: 5 * 1024 ** 3, warmSeconds: 600 } }],
       }),
     );
     await screen.findByText("No problems found. You can start the real migration.");
@@ -82,16 +82,31 @@ describe("DryRunDecision", () => {
     await screen.findByText(/After it, you can reverse/);
   });
 
+  it("the pin fix opens the safety card in Details through the callback", async () => {
+    vi.spyOn(api, "getMigrationRunSafetyHints").mockResolvedValue(hints());
+    const open = vi.fn();
+    wrap(dryRun({ IMPORT: [risk("service.image.floating", ["search"])] }), open);
+    fireEvent.click(await screen.findByRole("button", { name: "Pin it in Details" }));
+    expect(open).toHaveBeenCalledTimes(1);
+  });
+
+  it("a warning the hub cannot store says so and does not hold Start back", async () => {
+    vi.spyOn(api, "getMigrationRunSafetyHints").mockResolvedValue(hints());
+    wrap(dryRun({ IMPORT: [{ code: "Odd Code", level: "warn" }] }));
+    await screen.findByText("Nothing to decide here. It does not stop the migration.");
+    expect((screen.getByRole("button", { name: "Start migration" }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
   it("yellow: each warning carries its fix and Accept and continue, and Start waits until all are settled", async () => {
     vi.spyOn(api, "getMigrationRunSafetyHints").mockResolvedValue(hints());
     const save = vi.spyOn(api, "setMigrationRunWarningAcks").mockResolvedValue(hints(["import.risk-warning:app.git.private"]));
-    wrap(dryRun({ IMPORT: [risk("app.git.private", ["web"]), risk("service.image.floating", ["search", "cache"])] }));
+    wrap(dryRun({ IMPORT: [risk("app.git.private", ["web"]), risk("service.image.floating", ["search", "cache"])] }), vi.fn());
     await screen.findByText("2 warnings");
     expect((screen.getByRole("button", { name: "Start migration" }) as HTMLButtonElement).disabled).toBe(true);
     expect(screen.getByText("Private GitHub repositories need a connected GitHub.")).toBeTruthy();
     expect(screen.getByText("2 items use a floating image tag: search, cache.")).toBeTruthy();
     expect(screen.getByRole("link", { name: "Connect GitHub" }).getAttribute("href")).toBe("/sources");
-    expect(screen.getByRole("link", { name: "Pin the version in the review" }).getAttribute("href")).toBe("/import");
+    expect(screen.getByRole("button", { name: "Pin it in Details" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Accept and continue: Private GitHub repositories need a connected GitHub." }));
     await waitFor(() => expect(save).toHaveBeenCalledWith("run12345abcdef", { acks: [{ key: "import.risk-warning:app.git.private", accepted: true }] }));
     await screen.findByText("1 warning");

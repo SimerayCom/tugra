@@ -1,4 +1,4 @@
-import { Body, ConflictException, Controller, ForbiddenException, Get, HttpCode, Inject, NotFoundException, Param, Put, UseGuards } from "@nestjs/common";
+import { BadRequestException, Body, ConflictException, Controller, ForbiddenException, Get, HttpCode, Inject, NotFoundException, Param, Put, UseGuards } from "@nestjs/common";
 import { ApiSecurity, ApiTags } from "@nestjs/swagger";
 import { ApiZodBody, ApiZodResponse } from "../../../../openapi/openapi";
 import { ZodValidationPipe } from "../../../../common/zod-validation.pipe";
@@ -11,6 +11,9 @@ import { PrismaService } from "../../../../prisma/prisma.service";
 import { TeamAccessService } from "../../../../common/team-access.service";
 import { SafetyHintsSchema, SetImagePinsSchema, SetWarningAcksSchema, SetWorkerMarksSchema, type SafetyHints, type SetImagePinsInput, type SetWarningAcksInput, type SetWorkerMarksInput } from "./hints.dto";
 import { RUN_HINTS, type RunHint, type RunHintStore } from "./run-hints";
+
+/** The most warning keys one run keeps accepted. */
+const MAX_WARNING_ACKS = 200;
 
 /** A run in one of these has nothing left to decide: the hints would change nothing. */
 const CLOSED = new Set(["COMPLETED", "ABORTED", "ROLLING_BACK", "ROLLED_BACK", "REVERSING", "REVERSED"]);
@@ -82,6 +85,10 @@ export class RunSafetyController {
     const v = await this.load(user, id, true);
     if (v.status !== "DRY_RUN_DONE") throw new ConflictException("not-a-finished-dry-run");
     const ref = (k: string) => ({ kind: "warning-ack" as const, key: k, scope: "" });
+    // a dry run shows a few dozen distinct warnings at most: the total is capped so repeated calls cannot grow the table
+    const next = new Set((await this.hints.list(v.id)).filter((h) => h.kind === "warning-ack").map((h) => h.key));
+    for (const a of body.acks) a.accepted ? next.add(a.key) : next.delete(a.key);
+    if (next.size > MAX_WARNING_ACKS) throw new BadRequestException("too-many-warning-acks");
     await this.hints.upsert(v.id, body.acks.filter((a) => a.accepted).map((a) => ({ ...ref(a.key), value: "accepted", evidence: "operator-attested" as const })));
     await this.hints.remove(v.id, body.acks.filter((a) => !a.accepted).map((a) => ref(a.key)));
     return view(await this.hints.list(v.id, v.promotedFromId));

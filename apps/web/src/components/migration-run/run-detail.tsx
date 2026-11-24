@@ -38,6 +38,8 @@ export function RunDetail({ id }: { id: string }) {
   });
   const { events, error } = useRunEvents(id, run?.eventSeq);
   const [showDetails, setShowDetails] = useState(false);
+  // bumped by a warning fix that lives in Details (the image pin): opens them and the safety card
+  const [safetyFocus, setSafetyFocus] = useState(0);
 
   if (isLoading) return <SkeletonCard />;
   if (isError && !run) return <ErrorState onRetry={() => refetch()} />;
@@ -66,10 +68,16 @@ export function RunDetail({ id }: { id: string }) {
       <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
         {decided ? (
           <>
-            <DryRunDecision run={run} />
+            <DryRunDecision
+              run={run}
+              onOpenSafety={() => {
+                setShowDetails(true);
+                setSafetyFocus((n) => n + 1);
+              }}
+            />
             {run.allowed.sourceSession && <NextActionCard run={run} />}
             <DetailsToggle open={showDetails} onToggle={() => setShowDetails((v) => !v)} />
-            {showDetails && <RunBody run={run} events={events} error={error} settled={settled} />}
+            {showDetails && <RunBody run={run} events={events} error={error} settled={settled} safetyFocus={safetyFocus} />}
           </>
         ) : (
           <>
@@ -83,7 +91,7 @@ export function RunDetail({ id }: { id: string }) {
 }
 
 /** The technical view of a run: steps, facts, placement, inputs, safety, recovery, events and the report. */
-function RunBody({ run, events, error, settled }: { run: MigrationRunView; events: ReturnType<typeof useRunEvents>["events"]; error: ReturnType<typeof useRunEvents>["error"]; settled: boolean }) {
+function RunBody({ run, events, error, settled, safetyFocus }: { run: MigrationRunView; events: ReturnType<typeof useRunEvents>["events"]; error: ReturnType<typeof useRunEvents>["error"]; settled: boolean; safetyFocus?: number }) {
   return (
     <div id="mr-run-details" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <StepTimeline run={run} />
@@ -91,7 +99,7 @@ function RunBody({ run, events, error, settled }: { run: MigrationRunView; event
       <PlacementCard run={run} />
       <HeldWorkersCard run={run} />
       <OwnerInputsCard key={JSON.stringify(run.inputs)} run={run} />
-      <SafetyCard run={run} />
+      <SafetyCard run={run} focusToken={safetyFocus} />
       <RunDrawers run={run} />
       <RecoveryCard run={run} />
       <EventLog events={events} error={error} />

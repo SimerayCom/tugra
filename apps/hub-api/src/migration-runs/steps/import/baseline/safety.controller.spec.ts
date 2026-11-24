@@ -1,4 +1,4 @@
-import { ConflictException, ForbiddenException, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from "@nestjs/common";
 import { RunSafetyController } from "./safety.controller";
 import { SafetyHintsSchema, SetImagePinsSchema, SetWarningAcksSchema, SetWorkerMarksSchema } from "./hints.dto";
 import { InMemoryRunHints } from "./run-hints";
@@ -97,6 +97,14 @@ describe("RunSafetyController warning acks", () => {
     for (const status of ["QUEUED", "RUNNING", "WAITING", "COMPLETED", "ABORTED", "FAILED"]) {
       await expect(setup({ status }).c.setWarningAcks(user(), "r1", SetWarningAcksSchema.parse({ acks: [{ key: "a.b", accepted: true }] }))).rejects.toBeInstanceOf(ConflictException);
     }
+  });
+
+  it("keeps at most 200 accepted keys per run, however many calls it takes", async () => {
+    const { c } = setup(done);
+    const batch = (from: number, n: number) => SetWarningAcksSchema.parse({ acks: Array.from({ length: n }, (_, i) => ({ key: `a.k${from + i}`, accepted: true })) });
+    await c.setWarningAcks(user(), "r1", batch(0, 200));
+    await expect(c.setWarningAcks(user(), "r1", batch(200, 1))).rejects.toBeInstanceOf(BadRequestException);
+    await expect(c.setWarningAcks(user(), "r1", batch(0, 200))).resolves.toBeDefined(); // the same keys again change nothing
   });
 
   it("is scoped to the creator and to team members who may drive the run", async () => {

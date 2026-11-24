@@ -51,6 +51,13 @@ describe("decisionOf", () => {
     expect(d.blockers).toHaveLength(1);
   });
 
+  it("a warning the hub cannot store is shown but never holds Start back", () => {
+    const d = decisionOf({ steps: steps({ IMPORT: [{ code: "Bad Code", level: "warn" }] }) });
+    expect(d.warnings).toHaveLength(1);
+    expect(d.open).toHaveLength(0);
+    expect(d.verdict).toBe("clean");
+  });
+
   it("accepted warnings stop counting as open; accepting every one makes it clean", () => {
     const run = { steps: steps({ IMPORT: [{ code: "import.risk-warning", level: "warn", params: { risk: "service.image.floating" } }, { code: "data-seed.volume-excluded", level: "warn" }] }) };
     const none = decisionOf(run);
@@ -77,7 +84,7 @@ describe("summaryOf", () => {
     const s = summaryOf({
       steps: steps({
         IMPORT: [{ code: "import.projection", level: "info", params: { apps: 4, databases: 2, services: 1 } }],
-        DATA_SEED: [vol(100), vol(50), { code: "data-seed.estimate", level: "info", params: { seconds: 300, bytes: 2048, copySeconds: 120 } }],
+        DATA_SEED: [vol(100), vol(50), { code: "data-seed.estimate", level: "info", params: { seconds: 300, bytes: 2048, warmSeconds: 120 } }],
       }),
     });
     expect(s).toEqual({ apps: 4, databases: 2, services: 1, dataBytes: 2048, downtimeSec: 300, durationSec: 420 });
@@ -89,7 +96,7 @@ describe("summaryOf", () => {
   });
 
   it("an estimate that could not be made stays unknown, and so does the duration", () => {
-    const s = summaryOf({ steps: steps({ DATA_SEED: [{ code: "data-seed.estimate", level: "unknown", params: { seconds: null, bytes: 10, copySeconds: 5 } }] }) });
+    const s = summaryOf({ steps: steps({ DATA_SEED: [{ code: "data-seed.estimate", level: "unknown", params: { seconds: null, bytes: 10, warmSeconds: 5 } }] }) });
     expect(s).toMatchObject({ dataBytes: 10, downtimeSec: null, durationSec: null });
   });
 
@@ -115,7 +122,7 @@ describe("registries", () => {
   });
 
   it("every fix links inside the app", () => {
-    for (const w of Object.values(WARNING_REGISTRY)) if (w.fix) expect(w.fix.href.startsWith("/")).toBe(true);
+    for (const w of Object.values(WARNING_REGISTRY)) if (w.fix?.kind === "link") expect(w.fix.href.startsWith("/")).toBe(true);
   });
 
   it("every registered warning key is a key the hub accepts", () => {

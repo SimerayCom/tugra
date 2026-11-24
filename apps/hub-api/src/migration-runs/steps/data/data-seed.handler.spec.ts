@@ -305,7 +305,7 @@ describe("DataSeedHandler.dryRun", () => {
     expect(withOp.some((i) => i.code === DATA_CODES.seedVolumeNotInspected && i.level === "unknown")).toBe(true);
     expect(withOp.some((i) => i.code === DATA_CODES.seedEstimate)).toBe(true);
     // the result screen's summary card reads the data size and the copy time next to the window
-    expect(withOp.find((i) => i.code === DATA_CODES.seedEstimate)?.params).toEqual(expect.objectContaining({ bytes: expect.any(Number), copySeconds: expect.any(Number) }));
+    expect(withOp.find((i) => i.code === DATA_CODES.seedEstimate)?.params).toEqual(expect.objectContaining({ bytes: expect.any(Number), warmSeconds: expect.any(Number) }));
     const bad = await handler.dryRun(ctx({ run: makeRun({ dryRun: true, opId: null, options: { sourceRunner: "agent" } }) }).ctx);
     expect(bad.some((i) => i.level === "block")).toBe(true);
   });

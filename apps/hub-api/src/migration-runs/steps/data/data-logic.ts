@@ -551,6 +551,8 @@ export function windowExtrasOf(run: Pick<RunSnapshot, "options" | "serverMap" | 
 /** The parts of the estimate, in seconds (and bytes), for the FREEZE approval and the report. */
 export interface WindowTerms {
   dataSec: number;
+  /** The warm pass of the volumes only (move plus extract): it runs before the freeze. Dumps, per-database overhead and the base overhead are not in it. */
+  warmVolumeSec: number;
   buildSec: number;
   startSec: number;
   healthSec: number;
@@ -631,7 +633,7 @@ export function estimateWindowDetail(snap: DataSnapshot, now: Date, extras: Wind
   const totalSec = unknownSizes > 0 ? null : total;
   return {
     estimate: { freezeToFlipSec: totalSec, basis, estimatedAt: now.toISOString() },
-    terms: { dataSec, buildSec: deploy.buildSec, startSec: deploy.startSec, healthSec, acmeSec, bytes: bytes + dumpBytes, hubBytes, totalSec },
+    terms: { dataSec, warmVolumeSec: copySec + extractSec, buildSec: deploy.buildSec, startSec: deploy.startSec, healthSec, acmeSec, bytes: bytes + dumpBytes, hubBytes, totalSec },
   };
 }
 
