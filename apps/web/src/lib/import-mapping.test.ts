@@ -23,6 +23,7 @@ import {
   canApply,
   reviewCounts,
   groupRows,
+  dropProject,
   errorsOf,
   unackedOf,
 } from "./import-mapping";
@@ -252,5 +253,16 @@ describe("apply gate", () => {
   });
   it("groupRows keeps order and buckets a null project as Ungrouped (empty key)", () => {
     expect(groupRows([{ project: "B" }, { project: null }, { project: "B" }, { project: "A" }]).map((g) => [g.project, g.rows.length])).toEqual([["B", 2], ["", 1], ["A", 1]]);
+  });
+});
+
+describe("dropProject (drag an item onto a group)", () => {
+  it("re-targets to the group's project", () => {
+    expect(dropProject("Shop", "Blog")).toBe("Blog");
+    expect(dropProject(null, "Blog")).toBe("Blog");
+  });
+  it("does nothing on its own group or on the Ungrouped bucket", () => {
+    expect(dropProject("Blog", "Blog")).toBeNull();
+    expect(dropProject("Blog", "")).toBeNull();
   });
 });

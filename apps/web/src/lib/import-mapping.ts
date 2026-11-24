@@ -268,3 +268,12 @@ export function groupRows<T extends { project: string | null }>(rows: T[]): Arra
   for (const r of rows) m.set(r.project ?? "", [...(m.get(r.project ?? "") ?? []), r]);
   return [...m.entries()].map(([project, rs]) => ({ project, rows: rs }));
 }
+
+/**
+ * Dropping a dragged item on a project group re-targets it to that project. Nothing happens for the "Ungrouped" bucket
+ * (there is no project to drop on) or when the item already is in that group.
+ */
+export function dropProject(currentProject: string | null, groupProject: string): string | null {
+  if (groupProject === "") return null;
+  return (currentProject ?? "") === groupProject ? null : groupProject;
+}

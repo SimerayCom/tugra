@@ -539,7 +539,8 @@
     "includeGroup": "Include this project",
     "excludeGroup": "Exclude this project",
     "placement": "Where each server goes",
-    "placementRow": "{from} → {to}"
+    "placementRow": "{from} → {to}",
+    "dragHint": "Drag onto another project to move it"
   },
   "conflict": {
     "panelTitle": "Conflicts and notes",
