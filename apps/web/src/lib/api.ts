@@ -373,6 +373,12 @@ export async function apiFetch<T>(
     } catch {
       /* ignore */
     }
+    // The instance requires 2FA for owners/admins and this account hasn't enrolled: every route but account
+    // self-service answers this. Send the browser to the setup screen (a stale in-flight request lands here
+    // before the layout's own redirect does).
+    if (res.status === 403 && parsed.code === "two_factor_required" && typeof window !== "undefined" && !window.location.pathname.startsWith("/two-factor-setup")) {
+      window.location.assign("/two-factor-setup");
+    }
     throw new ApiError(res.status, parsed.message || fallback, parsed.code, parsed.data);
   }
   if (res.status === 204) return undefined as T;
@@ -555,6 +561,7 @@ export const api = {
     apiAllowedIps?: string[];
     publicUrl?: string | null;
     acmeEmail?: string | null;
+    require2fa?: boolean;
   }) {
     return apiFetch<OwnerInstanceSettings>("/instance/settings", { method: "PATCH", body: JSON.stringify(patch) });
   },
@@ -716,6 +723,11 @@ export const api = {
   /** Revoke every session for the current user (all devices); the hub clears this one's cookies. */
   async logoutAll() {
     await apiFetch<{ ok: true }>("/auth/logout-all", { method: "POST" }).catch(() => undefined);
+  },
+
+  /** Sign out every session except this device (the hub re-issues this device's cookies in place). */
+  revokeOtherSessions() {
+    return apiFetch<{ ok: true }>("/auth/sessions/revoke-others", { method: "POST" });
   },
 
   /** Mint a short-lived terminal ticket (browser can't read the httpOnly access cookie for the WS). */

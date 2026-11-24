@@ -16,6 +16,12 @@ export default function AppLayout({ children }: { children: ReactNode }) {
     if (!loading && !user) router.replace(initialized === false ? "/welcome" : "/login");
   }, [loading, user, initialized, router]);
 
+  // The instance requires 2FA for owners/admins and this account hasn't enrolled: the hub confines the session to
+  // account self-service, so send the user to the setup screen instead of a shell full of 403s.
+  useEffect(() => {
+    if (!loading && user?.twoFaSetupRequired) router.replace("/two-factor-setup");
+  }, [loading, user, router]);
+
   // Home mode keeps the user on the simplified surface; fleet routes reached by
   // URL or ⌘K redirect back to the launcher.
   useEffect(() => {
@@ -25,6 +31,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
   }, [loading, user, pathname, router]);
 
   if (loading || !user) return <CenteredSpinner />;
+  if (user.twoFaSetupRequired) return <CenteredSpinner />; // redirecting → /two-factor-setup
   // Don't MOUNT a fleet page (and fire its queries) for a Home user who landed off-route — the effect above
   // is redirecting to /home; show the spinner until it does, instead of flashing fleet content.
   if (uiMode(user.uiMode) === "home" && !isHomeAllowed(pathname)) return <CenteredSpinner />;

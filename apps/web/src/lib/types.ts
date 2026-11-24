@@ -90,6 +90,8 @@ export interface PublicUser {
   uiMode: "fleet" | "home";
   /** First registered user / sole owner of this self-hosted instance — gates owner-only UI. */
   isInstanceOwner: boolean;
+  /** The instance requires 2FA for owners/admins and this account hasn't enrolled yet (GET /auth/me only). */
+  twoFaSetupRequired?: boolean;
 }
 
 /** A server group (cluster) — fleet organization. */
@@ -247,6 +249,10 @@ export interface OwnerInstanceSettings {
   publicUrl: string | null;
   /** Let's Encrypt account email used when issuing SSL certs; null when unset. */
   acmeEmail: string | null;
+  /** Owners/admins without two-factor are confined to account self-service until they enrol. */
+  require2fa?: boolean;
+  /** What the installer already knew, to pre-fill the still-empty fields (GET only). */
+  suggested?: { publicUrl: string | null; acmeEmail: string | null };
   /** Read-only env/license edition (surfaced by GET, never PATCHable). */
   edition?: string;
 }
