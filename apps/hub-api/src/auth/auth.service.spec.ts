@@ -444,9 +444,9 @@ describe("AuthService session hardening", () => {
 });
 
 describe("AuthService.register — registration gating", () => {
-  function registerPrisma() {
+  function registerPrisma(opts: { firstUser?: boolean } = {}) {
     const userCreate = jest.fn().mockResolvedValue({ id: "u1", email: "a@x.io", name: null, emailVerified: false, twoFaEnabled: false, uiMode: "fleet" });
-    const updateMany = jest.fn().mockResolvedValue({ count: 1 });
+    const updateMany = jest.fn().mockResolvedValue({ count: opts.firstUser === false ? 0 : 1 });
     const invFind = jest.fn().mockResolvedValue(null);
     const teamCreate = jest.fn().mockResolvedValue({ id: "t1" });
     const prisma = {
@@ -483,6 +483,14 @@ describe("AuthService.register — registration gating", () => {
     jest.spyOn(svc, "issueTokens").mockResolvedValue({ accessToken: "a", refreshToken: "b" });
     await svc.register("a@x.io", "password123", "Jane Doe");
     expect(teamCreate).toHaveBeenCalledWith({ data: { name: "My Team" } });
+  });
+
+  it("later sign-ups keep a personalised team name (they get no onboarding prompt)", async () => {
+    const { prisma, teamCreate } = registerPrisma({ firstUser: false });
+    const svc = makeService(prisma, undefined, settings({ initializedAt: new Date(), allowRegistration: true }));
+    jest.spyOn(svc, "issueTokens").mockResolvedValue({ accessToken: "a", refreshToken: "b" });
+    await svc.register("b@x.io", "password123", "Jane Doe");
+    expect(teamCreate).toHaveBeenCalledWith({ data: { name: "Jane Doe's Team" } });
   });
 
   it("a subsequent register is 403 when registration is closed and there is no invite", async () => {

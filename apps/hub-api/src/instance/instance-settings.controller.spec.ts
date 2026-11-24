@@ -115,7 +115,7 @@ function make(current: CurrentSettings, opts: { env?: Record<string, string>; ow
   };
   const config = { get: jest.fn((k: string) => opts.env?.[k]) } as unknown as ConfigService;
   const auth = { me: jest.fn().mockResolvedValue({ id: "owner1", email: "owner@acme.test", twoFaEnabled: opts.ownerTwoFa ?? false }) } as unknown as AuthService;
-  return { ctrl: new InstanceSettingsController(settings, audit, update, updater, crypto, license, telemetry, mail, rotation as never, keyring as never, converge, config, auth), auth, converge, settings, audit, update, updater, crypto, license, telemetry, mail, rotation, keyring };
+  return { ctrl: new InstanceSettingsController(settings, audit, update, updater, crypto, license, telemetry, mail, rotation as never, keyring as never, converge, config, auth, { invalidate: jest.fn() } as never), auth, converge, settings, audit, update, updater, crypto, license, telemetry, mail, rotation, keyring };
 }
 
 const ORIGINAL_EDITION = process.env.TUGRA_EDITION;

@@ -2,6 +2,8 @@ import { Injectable } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { InstanceSettingsService } from "../instance/instance-settings.service";
 
+const POLICY_CACHE_MS = 5_000;
+
 /** The slice of a user the policy decides on. */
 export interface PolicySubject {
   isInstanceOwner: boolean;
@@ -33,8 +35,19 @@ export class TwoFactorPolicyService {
     private readonly settings: InstanceSettingsService,
   ) {}
 
+  private cached: { value: boolean; at: number } | null = null;
+
+  /** The flag is read on every authenticated request, so it is cached briefly; a PATCH calls invalidate(). */
   async policyEnabled(): Promise<boolean> {
-    return (await this.settings.get()).require2faForAdmins;
+    const now = Date.now();
+    if (this.cached && now - this.cached.at < POLICY_CACHE_MS) return this.cached.value;
+    const value = (await this.settings.get()).require2faForAdmins;
+    this.cached = { value, at: now };
+    return value;
+  }
+
+  invalidate(): void {
+    this.cached = null;
   }
 
   /** Load the policy-relevant slice of a user (null when it doesn't exist). */

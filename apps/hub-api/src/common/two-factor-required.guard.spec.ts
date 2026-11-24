@@ -24,14 +24,14 @@ const authed = (path: string, method = "GET"): Req => ({ method, path, headers: 
 
 describe("TwoFactorRequiredGuard", () => {
   it("lets an owner who still has to enrol reach account self-service and the public bootstrap reads", async () => {
-    expect(await make({ jwtSub: "u1", required: true, exempt: true }).guard.canActivate(ctx(authed("/auth/2fa/setup", "POST")))).toBe(true);
-    for (const p of ["/instance/status", "/instance/branding", "/instance/version", "/health", "/version"]) {
+    expect(await make({ jwtSub: "u1", required: true, exempt: true }).guard.canActivate(ctx(authed("/api/v1/auth/2fa/setup", "POST")))).toBe(true);
+    for (const p of ["/api/v1/instance/status", "/api/v1/instance/branding", "/api/v1/instance/version", "/health", "/version"]) {
       expect(await make({ jwtSub: "u1", required: true }).guard.canActivate(ctx(authed(p)))).toBe(true);
     }
   });
 
   it("blocks everything else with a 403 two_factor_required (reads included)", async () => {
-    for (const [path, method] of [["/applications", "GET"], ["/servers/s1", "DELETE"], ["/instance/settings", "PATCH"]] as const) {
+    for (const [path, method] of [["/api/v1/applications", "GET"], ["/api/v1/servers/s1", "DELETE"], ["/api/v1/instance/settings", "PATCH"], ["/api/v1/instance/status-extra", "GET"]] as const) {
       const { guard } = make({ jwtSub: "u1", required: true });
       const err = await guard.canActivate(ctx(authed(`${path}?x=1`, method))).catch((e) => e);
       expect(err).toBeInstanceOf(ForbiddenException);

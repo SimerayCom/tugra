@@ -35,6 +35,15 @@ import { DEFAULT_CLEANUP_DATA } from "../server-ops/cleanup-defaults";
 /** Name of the personal team created with an account. Never derived from the person's name; onboarding asks the owner for the real team/company name. */
 const DEFAULT_TEAM_NAME = "My Team";
 
+/**
+ * Name of a new account's personal team. The instance owner is asked for the real team name by the first-run
+ * wizard, so theirs starts neutral; every later sign-up (invite, GitHub, OIDC) gets no such prompt, so they keep a
+ * personalised name and the team selector never fills with identical "My Team" entries.
+ */
+function personalTeamName(name: string | null | undefined, isInstanceOwner: boolean): string {
+  return !isInstanceOwner && name ? `${name}'s Team` : DEFAULT_TEAM_NAME;
+}
+
 const ACCESS_TTL = "15m";
 const REFRESH_TTL_SECONDS = 7 * 24 * 60 * 60;
 
@@ -233,7 +242,7 @@ export class AuthService {
         data: { email, password: passwordHash, name: name ?? null, isInstanceOwner: firstUser, uiMode: this.defaultUiMode() },
       });
       const team = await tx.team.create({
-        data: { name: DEFAULT_TEAM_NAME },
+        data: { name: personalTeamName(name, firstUser) },
       });
       await tx.membership.create({
         data: { userId: created.id, teamId: team.id, role: Role.OWNER },
@@ -273,7 +282,7 @@ export class AuthService {
           data: { email, password: passwordHash, name: name ?? null, emailVerified: true, emailVerifiedAt: new Date(), isInstanceOwner: firstUser, uiMode: this.defaultUiMode() },
         });
         const team = await tx.team.create({
-          data: { name: DEFAULT_TEAM_NAME },
+          data: { name: personalTeamName(name, firstUser) },
         });
         await tx.membership.create({
           data: { userId: created.id, teamId: team.id, role: Role.OWNER },
@@ -322,7 +331,7 @@ export class AuthService {
           data: { email, password: passwordHash, name: name ?? null, emailVerified: true, emailVerifiedAt: new Date(), isInstanceOwner: firstUser, uiMode: this.defaultUiMode() },
         });
         const team = await tx.team.create({
-          data: { name: DEFAULT_TEAM_NAME },
+          data: { name: personalTeamName(name, firstUser) },
         });
         await tx.membership.create({
           data: { userId: created.id, teamId: team.id, role: Role.OWNER },

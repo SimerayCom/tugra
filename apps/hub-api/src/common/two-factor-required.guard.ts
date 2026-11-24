@@ -16,7 +16,7 @@ const PUBLIC_PATHS = new Set(["/instance/status", "/instance/branding", "/instan
  * answers 403 `two_factor_required`, which the web turns into the setup screen. Like EmailVerifiedGuard it is an
  * ADDITIONAL gate resolved from the access token itself (a global guard runs before JwtAuthGuard); a missing,
  * forged or expired token falls through to the route's own guard, and PAT / agent credentials are not user
- * sessions so they are unaffected. With the policy off it costs one settings-row read per authenticated request.
+ * sessions so they are unaffected. With the policy off the flag is served from a short in-memory cache (TwoFactorPolicyService), so it adds no query.
  */
 @Injectable()
 export class TwoFactorRequiredGuard implements CanActivate {
@@ -31,7 +31,8 @@ export class TwoFactorRequiredGuard implements CanActivate {
     if (ctx.getType() !== "http") return true;
     const req = ctx.switchToHttp().getRequest();
     if (this.reflector.getAllAndOverride<boolean>(ALLOW_UNVERIFIED, [ctx.getHandler(), ctx.getClass()])) return true;
-    const path = String(req.path ?? req.url ?? "").split("?")[0].replace(/\/+$/, "");
+    // Routes are served under the global `/api/v1` prefix (a few probes are exempt and stay bare) → strip it first.
+    const path = String(req.path ?? req.url ?? "").split("?")[0].replace(/\/+$/, "").replace(/^\/api\/v1(?=\/|$)/, "");
     if (PUBLIC_PATHS.has(path)) return true;
     const userId = await this.resolveUserId(req);
     if (!userId) return true; // public route / PAT / bad token → the route's own guard decides

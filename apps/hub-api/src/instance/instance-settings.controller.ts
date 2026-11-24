@@ -43,6 +43,7 @@ import { OwnerUpdateStatusViewSchema, UpdateApplyResultSchema } from "../update/
 import { TelemetryService } from "../telemetry/telemetry.service";
 import { ConfigService } from "@nestjs/config";
 import { AuthService } from "../auth/auth.service";
+import { TwoFactorPolicyService } from "../auth/two-factor-policy.service";
 import { publicUrlFrom, type ReqLike } from "../common/hub-url";
 import { suggestOnboardingDefaults } from "./onboarding-defaults";
 
@@ -70,6 +71,7 @@ export class InstanceSettingsController {
     private readonly converge: StackConvergeService,
     private readonly config: ConfigService,
     private readonly auth: AuthService,
+    private readonly twoFactorPolicy: TwoFactorPolicyService,
   ) {}
 
   /** The update status plus the update helper's own version (read from Redis, never from docker). */
@@ -262,6 +264,7 @@ export class InstanceSettingsController {
       patch.require2faForAdmins = body.require2fa;
     }
     const s = await this.settings.update(patch);
+    if (body.require2fa !== undefined) this.twoFactorPolicy.invalidate();
     await this.audit.log({
       actor: user.userId,
       action: "instance_settings.update",
