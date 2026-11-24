@@ -7,6 +7,52 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.0-beta.28] - 2026-11-24
+
+- **Migration: choose what you move, see it verified, keep a safety copy.** The import starts with "What are you
+  moving?" (source servers, projects or everything) and maps source servers to target servers on the same screen; a
+  guided run can be scoped the same way (include/exclude). Warnings carry their fix or an explicit "accept and continue",
+  enforced by the hub as well as the UI, and an image can be pinned to the source version in one click. The dry run ends
+  on a green/amber/red result with time, data, downtime and rollback estimates. Before DNS moves, a verification report
+  compares pages (by IP and Host), database row counts, volumes and env key names while the app runs on a temporary
+  address, and a 7-day migration safety copy is kept out of prune.
+- **Databases of any size, more engines, their config files.** The streamed dump lane is the default with no size cap,
+  for the guided run and the plain importer alike; MongoDB (archive stream, password never on argv) and ClickHouse join
+  PostgreSQL and MySQL/MariaDB with count checks. Custom `redis.conf`, KeyDB, PostgreSQL, MySQL/MariaDB and MongoDB
+  config files move with the database, and a Configuration file card lets you view, edit and redeploy them.
+- **More of Coolify comes across.** Services land in their Coolify project, www → apex redirects become redirect rules,
+  and notification channels, shared variables, S3 storages, scheduled tasks, tags and members are imported as a
+  selectable Settings section. "Read this Coolify" reads a Coolify host's database read-only through the agent (secrets
+  only shown as present), keeps the inventory in the hub, and gives a copyable checklist to add every Coolify server.
+- **Uptime Kuma and Beszel import.** Monitors from a Kuma JSON backup or SQLite database (read with a digest-pinned
+  image), Beszel systems, alerts and channels; Cloudflare 520/522/525 responses are labelled as edge ↔ origin problems,
+  and metric monitors gain load, temperature and network.
+- **Notifications.** Matrix, Google Chat, Rocket.Chat, PagerDuty, Opsgenie, Zulip, Bark, Signal, SMS (Twilio) and Web
+  Push join the existing channels; a channel can be created from a Shoutrrr/Apprise URL; rules route by category
+  (uptime, deploy, backup, server, security, updates), severity and Telegram topic, with rate limits, dedupe and quiet
+  hours; a weekly team digest summarises deploys, failures, backups and suggestions.
+- **Servers.** Move a server (or many) to another team with a preview and blockers; turn terminal/files/swarm
+  capabilities on or off in bulk, with defaults for new servers; liveness, capability and agent-version badges; one
+  scroll area on long lists; no more "-1s ago". The server scan shows what runs on a host (containers, compose, PM2,
+  CloudPanel, systemd, ports, vhosts) with icons. Host facts: cloud metadata IP, IPv6 kept separately, name optional
+  (the hostname is used), updater container named `updater`, and remote agents update themselves in order after the hub.
+- **Dashboard, teams and projects.** Cards show at most a few rows with "See all", problem servers first; noisy
+  activity is grouped; hottest containers show the app name. Teams get a colour picker with a colour suggested from
+  their icon (projects too), and danger actions move to a Danger zone. New teams start without a "Default" project,
+  pickers are shared everywhere with "+ New project", and team badges and breadcrumbs appear on every view.
+- **Setup and access.** Onboarding has Back, prefilled instance fields, a summary step, a team-name step, optional 2FA
+  and email steps, downloadable/printable recovery codes and "sign out other devices"; an instance can require 2FA for
+  owners and admins. The API tokens screen is a table with usage history, a ready MCP command and a warning when API
+  access is off. GitHub connects in one click through the App manifest flow, and Git Sources is redesigned.
+- **New: status pages, client portal, cost advisor, installable panel.** Public `/status/<slug>` pages with incidents,
+  maintenance, RSS and email; a client role for a customer portal; server prices from the Hetzner API or a dated price
+  table, per-app cost share, before/after bill and 14-day rightsizing with one-click Hetzner rescale; the panel installs
+  as a PWA with push and quick mobile actions. Hub backup suggests an off-box target, a monthly restore drill and a
+  dead-man check-in.
+- **Fixes.** Sessions no longer end when several tabs refresh at once (a cross-tab lock and a short reuse grace window;
+  real token reuse still revokes the family). The server page never shows a raw team id. Images are much smaller
+  (multi-stage, slim, standalone builds), so updates download faster.
+
 ## [0.1.0-beta.27] - 2026-11-24
 
 - **A Coolify import keeps its projects, and the review selects by project in one click.** The import now reads Coolify's
