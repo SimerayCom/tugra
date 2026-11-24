@@ -154,18 +154,24 @@ export class ApiTokensService {
    *  coalesced into a counter. Never receives the token — only the address/agent/action the guard derived. */
   async recordUse(tokenId: string, info: UseInfo): Promise<void> {
     const now = new Date();
-    const last = await this.prisma.apiTokenUse.findFirst({ where: { tokenId }, orderBy: { at: "desc" } });
-    if (
-      last &&
-      now.getTime() - last.at.getTime() < COALESCE_WINDOW_MS &&
-      last.ip === info.ip &&
-      last.userAgent === info.userAgent &&
-      last.action === info.action
-    ) {
+    // Coalesce against ANY identical row inside the window, so a client alternating two tools does not flood the cap.
+    const last = await this.prisma.apiTokenUse.findFirst({
+      where: {
+        tokenId,
+        ip: info.ip,
+        userAgent: info.userAgent,
+        action: info.action,
+        at: { gte: new Date(now.getTime() - COALESCE_WINDOW_MS) },
+      },
+      orderBy: { at: "desc" },
+    });
+    if (last) {
       await this.prisma.apiTokenUse.update({ where: { id: last.id }, data: { at: now, count: { increment: 1 } } });
       return;
     }
     await this.prisma.apiTokenUse.create({ data: { tokenId, at: now, ip: info.ip, userAgent: info.userAgent, action: info.action } });
+    // Prune only once the table is actually over the cap.
+    if ((await this.prisma.apiTokenUse.count({ where: { tokenId } })) <= MAX_USES_PER_TOKEN) return;
     const stale = await this.prisma.apiTokenUse.findMany({
       where: { tokenId },
       orderBy: { at: "desc" },

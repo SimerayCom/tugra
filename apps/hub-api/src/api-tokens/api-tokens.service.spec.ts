@@ -116,6 +116,7 @@ describe("ApiTokensService — usage history", () => {
     const use = {
       findFirst: jest.fn().mockResolvedValue(null),
       findMany: jest.fn().mockResolvedValue([]),
+      count: jest.fn().mockResolvedValue(1),
       create: jest.fn().mockResolvedValue({}),
       update: jest.fn().mockResolvedValue({}),
       deleteMany: jest.fn().mockResolvedValue({}),
@@ -129,6 +130,7 @@ describe("ApiTokensService — usage history", () => {
   it("creates a new row for a first use and prunes nothing when under the cap", async () => {
     const { svc, use } = mk();
     await svc.recordUse("t1", info);
+    expect(use.findMany).not.toHaveBeenCalled();
     expect(use.create).toHaveBeenCalledWith({ data: expect.objectContaining({ tokenId: "t1", ...info }) });
     expect(use.deleteMany).not.toHaveBeenCalled();
   });
@@ -136,22 +138,20 @@ describe("ApiTokensService — usage history", () => {
   it("coalesces an identical call inside the window into a counter", async () => {
     const { svc, use } = mk({ findFirst: jest.fn().mockResolvedValue({ id: "u1", at: new Date(Date.now() - 5000), ...info }) });
     await svc.recordUse("t1", info);
+    expect(use.findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ tokenId: "t1", ...info, at: { gte: expect.any(Date) } }) }));
     expect(use.update).toHaveBeenCalledWith({ where: { id: "u1" }, data: expect.objectContaining({ count: { increment: 1 } }) });
     expect(use.create).not.toHaveBeenCalled();
   });
 
-  it("starts a new row when the action, ip or window differs", async () => {
-    const old = { id: "u1", at: new Date(Date.now() - 5000), ...info };
-    for (const last of [{ ...old, action: "mcp:other" }, { ...old, ip: "198.51.100.1" }, { ...old, at: new Date(Date.now() - 3_600_000) }]) {
-      const { svc, use } = mk({ findFirst: jest.fn().mockResolvedValue(last) });
-      await svc.recordUse("t1", info);
-      expect(use.create).toHaveBeenCalledTimes(1);
-      expect(use.update).not.toHaveBeenCalled();
-    }
+  it("starts a new row when no identical call is inside the window", async () => {
+    const { svc, use } = mk();
+    await svc.recordUse("t1", info);
+    expect(use.create).toHaveBeenCalledTimes(1);
+    expect(use.update).not.toHaveBeenCalled();
   });
 
   it("keeps the history bounded by deleting everything past the newest 50", async () => {
-    const { svc, use } = mk({ findMany: jest.fn().mockResolvedValue([{ id: "old1" }, { id: "old2" }]) });
+    const { svc, use } = mk({ count: jest.fn().mockResolvedValue(52), findMany: jest.fn().mockResolvedValue([{ id: "old1" }, { id: "old2" }]) });
     await svc.recordUse("t1", info);
     expect(use.findMany).toHaveBeenCalledWith(expect.objectContaining({ skip: 50, where: { tokenId: "t1" } }));
     expect(use.deleteMany).toHaveBeenCalledWith({ where: { id: { in: ["old1", "old2"] } } });
