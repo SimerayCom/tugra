@@ -74,5 +74,17 @@
     "stale": "Not responding",
     "pending": "Waiting to connect",
     "offline": "Offline"
+  },
+  "more": "More",
+  "help": {
+    "open": "Open the guide",
+    "guide": {
+      "connect-github": "Guide: Connect GitHub",
+      "move-from-coolify": "Guide: Move from Coolify",
+      "move-from-coolify-same-server": "Guide: Move from Coolify on the same server",
+      "add-a-server": "Guide: Add a server",
+      "first-setup": "Guide: First setup",
+      "domains-and-cloudflare": "Guide: Domains and Cloudflare"
+    }
   }
 }

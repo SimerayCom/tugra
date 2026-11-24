@@ -150,6 +150,7 @@ import type {
   ImportRemoteKind,
   ImportSession,
   ImportEgressIp,
+  ImportTestResult,
   ImportOperation,
   MigrateCommand,
   MintedMigrationToken,
@@ -2400,6 +2401,10 @@ export const api = {
   },
   beszelDisconnect(sessionId: string) {
     return apiFetch<void>(`/import/beszel/sessions/${encodeURIComponent(sessionId)}`, { method: "DELETE" });
+  },
+  // The connection test: checks a pasted token (team, counts, read:sensitive) without storing anything.
+  importTest(input: { sourceKind: ImportRemoteKind; teamId: string; baseUrl: string; token: string }) {
+    return apiFetch<ImportTestResult>("/import/test", { method: "POST", body: JSON.stringify(input) });
   },
   // The hub's public egress IP for the wizard ("add this to the source's Allowed IPs"); `ip: null` = unknown, never guessed.
   importEgressIp() {

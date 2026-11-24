@@ -1505,6 +1505,13 @@ export interface ImportEgressIp {
   source: "env" | "server" | "unknown";
 }
 
+/** Why a source refused the connection (a stable code from the hub); drives which single note the wizard shows. */
+export type ImportConnectFailureCode = "allowed-ips" | "api-disabled" | "scoped-token" | "exceeds-access" | "ability" | "forbidden" | "unauthorized" | "rate-limited" | "other";
+/** The one-line connection test: a refusal with its code, or the facts a pasted token can see (null = the source cannot tell). */
+export type ImportTestResult =
+  | { ok: false; code: ImportConnectFailureCode; message: string }
+  | { ok: true; team?: string; suggestedLabel?: string; apps: number | null; databases: number | null; services: number | null; sensitive: boolean | null };
+
 export interface ImportSession {
   sessionId: string;
   expiresAt: string;

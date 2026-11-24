@@ -56,6 +56,8 @@ describe("ImportWizard", () => {
     vi.spyOn(api, "getCutover").mockRejectedValue(new ApiError(404, "not found"));
     vi.spyOn(api, "listDnsCredentials").mockResolvedValue([]);
     vi.spyOn(api, "importEgressIp").mockResolvedValue({ ip: null, source: "unknown" });
+    // The connection test fires as soon as a URL and token are filled; default to a source that cannot say more than "reachable".
+    vi.spyOn(api, "importTest").mockResolvedValue({ ok: true, apps: null, databases: null, services: null, sensitive: null });
     vi.spyOn(api, "listTeams").mockResolvedValue([{ id: "t1", name: "Team One" }] as never);
     vi.spyOn(api, "listServers").mockResolvedValue([{ id: "srv1", name: "Server A", teamId: "t1", status: "ONLINE", clusterId: null, tags: [] }] as never);
     // The post-import MigrateDataCard reads this on mount once the timeline settles — default to "no live token".
@@ -89,27 +91,51 @@ describe("ImportWizard", () => {
     expect(screen.getByText(/Importing/)).toBeTruthy(); // timeline header
   });
 
-  it("shows the hub's egress IP for Coolify's Allowed IPs, with a copy button and the proxy note", async () => {
-    vi.spyOn(api, "importEgressIp").mockResolvedValue({ ip: "203.0.113.7", source: "server" });
+  const fillCoolify = async () => {
+    await screen.findByLabelText("Coolify URL");
+    await waitFor(() => expect(qc.getQueryData(["teams"])).toBeTruthy());
+    fireEvent.change(screen.getByLabelText("Coolify URL"), { target: { value: "https://coolify.example.com" } });
+    fireEvent.change(screen.getByLabelText("API token"), { target: { value: "tok-12345678" } });
+  };
+  const refusedByIpList = () => vi.spyOn(api, "importTest").mockResolvedValue({ ok: false, code: "allowed-ips", message: 'could not reach Coolify: Coolify API error 403: "You are not allowed to access the API."' });
+
+  it("shows no Allowed IPs help up front, nor when the token simply works", async () => {
     wrap(<ImportWizard />);
+    await screen.findByLabelText("Coolify URL");
+    expect(screen.queryByTestId("egress-ip")).toBeNull();
+    await fillCoolify();
+    await waitFor(() => expect(api.importTest).toHaveBeenCalled());
+    await screen.findByTestId("connection-test");
+    expect(screen.queryByTestId("egress-ip")).toBeNull();
+  });
+
+  it("shows the hub's egress IP only after Coolify names its Allowed IPs list, with a copy button and the proxy note", async () => {
+    vi.spyOn(api, "importEgressIp").mockResolvedValue({ ip: "203.0.113.7", source: "server" });
+    refusedByIpList();
+    wrap(<ImportWizard />);
+    await fillCoolify();
     const box = await screen.findByTestId("egress-ip");
     expect(within(box).getByText("203.0.113.7")).toBeTruthy();
     expect(within(box).getByRole("button", { name: "Copy address" })).toBeTruthy();
     expect(box.textContent).toMatch(/Allowed IPs/);
     expect(box.textContent).toMatch(/reverse proxy or Cloudflare/);
     expect(box.textContent).toMatch(/Taken from the public address of the server this hub runs on/);
+    expect(screen.getByRole("alert").textContent).toBe("Coolify does not allow this hub's address.");
   });
 
   it("says plainly when the hub cannot tell its address, and when the operator set it", async () => {
+    refusedByIpList();
     wrap(<ImportWizard />);
+    await fillCoolify();
     const unknown = await screen.findByTestId("egress-ip");
-    expect(unknown.textContent).toMatch(/cannot tell which public address/);
+    expect(unknown.textContent).toMatch(/the address Coolify sees this hub connect from/);
     expect(unknown.textContent).toMatch(/IMPORT_EGRESS_IP/);
     expect(within(unknown).queryByRole("button", { name: "Copy address" })).toBeNull();
     cleanup();
     vi.spyOn(api, "importEgressIp").mockResolvedValue({ ip: "198.51.100.4", source: "env" });
     qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     wrap(<ImportWizard />);
+    await fillCoolify();
     const env = await screen.findByTestId("egress-ip");
     expect(within(env).getByText("198.51.100.4")).toBeTruthy();
     expect(env.textContent).toMatch(/Set by the operator/);
@@ -117,31 +143,96 @@ describe("ImportWizard", () => {
 
   it("a failed lookup does not block connecting and is not shown as an address", async () => {
     vi.spyOn(api, "importEgressIp").mockRejectedValue(new ApiError(500, "boom"));
+    refusedByIpList();
     wrap(<ImportWizard />);
+    await fillCoolify();
     const box = await screen.findByTestId("egress-ip");
     expect(box.textContent).toMatch(/could not be asked for its address/);
     expect(screen.getByRole("button", { name: "Connect & preview" })).toBeTruthy();
   });
 
-  it("the egress note is Coolify only: a Dokploy source has no allow-list", async () => {
-    wrap(<ImportWizard />);
-    await screen.findByTestId("egress-ip");
-    fireEvent.click(screen.getByRole("radio", { name: "Dokploy" }));
-    await waitFor(() => expect(screen.queryByTestId("egress-ip")).toBeNull());
+  it("other refusals show their own single line and never the Allowed IPs box", async () => {
+    for (const [code, line] of [
+      ["api-disabled", "The Coolify API is off. Turn it on under Settings, Advanced."],
+      ["scoped-token", "This token covers only some projects. Create one for the whole team."],
+      ["rate-limited", "Coolify is limiting requests. Wait a minute and try again."],
+      ["forbidden", "Coolify refused the token."],
+    ] as const) {
+      cleanup();
+      qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      vi.spyOn(api, "importTest").mockResolvedValue({ ok: false, code, message: "raw" });
+      wrap(<ImportWizard />);
+      await fillCoolify();
+      expect((await screen.findByRole("alert")).textContent).toBe(line);
+      expect(screen.queryByTestId("egress-ip")).toBeNull();
+    }
   });
 
-  it("shows the hub's 403 message with the single cause and the egress address in the connect error", async () => {
-    const msg = 'Coolify API error 403: "You are not allowed to access the API." (Coolify\'s Allowed IPs list does not include this hub\'s address 203.0.113.7: add it in Coolify under Settings > Advanced > Allowed IPs)';
-    vi.spyOn(api, "importConnect").mockRejectedValue(new ApiError(400, `could not reach Coolify: ${msg}`));
+  it("shows the one-line connection test and fills the source team label from the team, until the person types their own", async () => {
+    vi.spyOn(api, "importTest").mockResolvedValue({ ok: true, team: "Acme Team", suggestedLabel: "acme-team", apps: 19, databases: 10, services: 0, sensitive: true });
+    wrap(<ImportWizard />);
+    await fillCoolify();
+    const line = await screen.findByTestId("connection-test");
+    expect(line.textContent).toBe("✓ Acme Team, 19 apps, 10 databases · read:sensitive");
+    await waitFor(() => expect((screen.getByLabelText("Source team label") as HTMLInputElement).value).toBe("acme-team"));
+    // a label the person typed is kept when the token is tested again
+    fireEvent.change(screen.getByLabelText("Source team label"), { target: { value: "mine" } });
+    fireEvent.change(screen.getByLabelText("API token"), { target: { value: "tok-87654321" } });
+    await waitFor(() => expect(api.importTest).toHaveBeenCalledTimes(2));
+    await screen.findByTestId("connection-test");
+    expect((screen.getByLabelText("Source team label") as HTMLInputElement).value).toBe("mine");
+  });
+
+  it("warns in one line when the token cannot read sensitive values", async () => {
+    vi.spyOn(api, "importTest").mockResolvedValue({ ok: true, team: "Acme", apps: 1, databases: 0, services: 0, sensitive: false });
+    wrap(<ImportWizard />);
+    await fillCoolify();
+    const line = await screen.findByTestId("connection-test");
+    expect(line.textContent).toContain("✓ Acme, 1 app, 0 databases · no read:sensitive");
+    expect(line.textContent).toContain("Create a token with read:sensitive");
+  });
+
+  it("does not test until a URL and a token are filled, and sends the token to the test endpoint only", async () => {
     wrap(<ImportWizard />);
     await screen.findByLabelText("Coolify URL");
     await waitFor(() => expect(qc.getQueryData(["teams"])).toBeTruthy());
     fireEvent.change(screen.getByLabelText("Coolify URL"), { target: { value: "https://coolify.example.com" } });
-    fireEvent.change(screen.getByLabelText("API token"), { target: { value: "tok" } });
+    await new Promise((r) => setTimeout(r, 900));
+    expect(api.importTest).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByLabelText("API token"), { target: { value: "tok-12345678" } });
+    await waitFor(() => expect(api.importTest).toHaveBeenCalledWith({ sourceKind: "coolify", teamId: "t1", baseUrl: "https://coolify.example.com", token: "tok-12345678" }));
+  });
+
+  it("keeps the token hint to one line and the rules behind More", async () => {
+    wrap(<ImportWizard />);
+    await screen.findByLabelText("Coolify URL");
+    expect(screen.getByText("Coolify, Keys & Tokens, API token with read and read:sensitive.")).toBeTruthy();
+    const more = screen.getAllByText("More")[0].closest("details") as HTMLDetailsElement;
+    expect(more.open).toBe(false);
+    expect(more.textContent).toMatch(/team admin or owner/);
+    expect(more.textContent).toMatch(/200 requests a minute/);
+  });
+
+  it("shows the hub's refusal as one line with the single cause and keeps the raw message under Details", async () => {
+    vi.spyOn(api, "importEgressIp").mockResolvedValue({ ip: "203.0.113.7", source: "server" });
+    const msg = 'could not reach Coolify: Coolify API error 403: "You are not allowed to access the API."';
+    vi.spyOn(api, "importConnect").mockRejectedValue(new ApiError(400, msg, "allowed-ips"));
+    wrap(<ImportWizard />);
+    await fillCoolify();
     fireEvent.click(screen.getByRole("button", { name: "Connect & preview" }));
     const alert = await screen.findByRole("alert");
-    expect(alert.textContent).toContain("You are not allowed to access the API.");
-    expect(alert.textContent).toContain("203.0.113.7");
+    expect(alert.textContent).toBe("Coolify does not allow this hub's address.");
+    expect((await screen.findByTestId("egress-ip")).textContent).toContain("203.0.113.7");
+    expect(screen.getByTestId("connection-failure").textContent).toContain("You are not allowed to access the API.");
+  });
+
+  it("the Allowed IPs help is Coolify only: switching to Dokploy drops it", async () => {
+    refusedByIpList();
+    wrap(<ImportWizard />);
+    await fillCoolify();
+    await screen.findByTestId("egress-ip");
+    fireEvent.click(screen.getByRole("radio", { name: "Dokploy" }));
+    await waitFor(() => expect(screen.queryByTestId("egress-ip")).toBeNull());
   });
 
   it("offers the guided run next to the manual apply, which stays", async () => {
@@ -403,7 +494,7 @@ describe("ImportWizard", () => {
     expect(screen.getByRole("radio", { name: "Dokploy" }).getAttribute("aria-checked")).toBe("true");
     expect((screen.getByLabelText("Dokploy URL") as HTMLInputElement).value).toBe("");
     expect((screen.getByLabelText("API key") as HTMLInputElement).value).toBe("");
-    expect(screen.getByText("Connect with a Dokploy API key to preview all of its projects.")).toBeTruthy();
+    expect(screen.getByText("Paste an API key to see what will move.")).toBeTruthy();
   });
 
   it("start over keeps the chosen source", async () => {
@@ -556,7 +647,7 @@ describe("ImportWizard — editable mapping", () => {
     await waitFor(() => expect(qc.getQueryData(["teams"])).toBeTruthy());
     fireEvent.change(screen.getByLabelText("Coolify URL"), { target: { value: "https://coolify.example.com" } });
     fireEvent.change(screen.getByLabelText("API token"), { target: { value: "tok" } });
-    fireEvent.change(screen.getByLabelText("Source team label (optional)"), { target: { value: "Team-3" } });
+    fireEvent.change(screen.getByLabelText("Source team label"), { target: { value: "Team-3" } });
     fireEvent.click(screen.getByRole("button", { name: "Connect & preview" }));
     fireEvent.click(await screen.findByRole("button", { name: "Continue" })); // the first step: What are you moving? (one source server: Everything)
     await screen.findByText("Import preview");

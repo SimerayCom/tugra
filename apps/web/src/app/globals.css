@@ -805,6 +805,67 @@ body {
   }
 }
 
+/* The "?" guide link at the top right of a screen: a quiet round badge, 44px on touch. */
+.tg-help {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 1px solid var(--c-bd);
+  color: var(--c-tx2);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1;
+  text-decoration: none;
+  transition: color 0.12s ease, border-color 0.12s ease;
+}
+.tg-help:focus-visible {
+  outline: 2px solid var(--c-a);
+  outline-offset: 2px;
+}
+@media (hover: hover) {
+  .tg-help:hover {
+    color: var(--c-tx);
+    border-color: var(--c-tx3);
+  }
+}
+@media (pointer: coarse) {
+  .tg-help {
+    width: 44px;
+    height: 44px;
+  }
+}
+
+/* "More" disclosure: a muted link-like summary (44px tall on touch) over a short indented body. */
+.tg-more {
+  margin: 2px 0 14px;
+  font-size: 12px;
+  color: var(--c-tx3);
+}
+.tg-more > summary {
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  color: var(--c-tx2);
+  min-height: 24px;
+}
+.tg-more > summary:focus-visible {
+  outline: 2px solid var(--c-a);
+  outline-offset: 2px;
+}
+.tg-more-body {
+  margin-top: 6px;
+  line-height: 1.55;
+}
+@media (pointer: coarse) {
+  .tg-more > summary {
+    min-height: 44px;
+  }
+}
+
 /* Text link in muted chrome (breadcrumbs, back links): brighten + underline on hover. */
 .tg-link {
   color: var(--c-tx3);
