@@ -1,5 +1,7 @@
 # Migrating from Coolify to Tugra
 
+> New to this? Follow the step-by-step guides first: [Move from Coolify](move-from-coolify.md) (to a new server) or [on the same server](move-from-coolify-same-server.md). This page is the full reference.
+
 Two paths, used **together**:
 
 - **One-click data migrator** (first section) — moves the **database contents** of six engines

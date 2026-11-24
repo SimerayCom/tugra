@@ -12,10 +12,10 @@ install reference; the [project README](../README.md) has the short version.
 
 ## Quick start
 
-One line on the host. No domain, no Cloudflare token and no extra setup are needed:
+One line on the host. No domain, no Cloudflare token and no extra setup are needed. `tugra.io/install` serves [`scripts/bootstrap.sh`](../scripts/bootstrap.sh) from this repository, so you can read exactly what it runs:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/SimerayCom/tugra/main/scripts/bootstrap.sh | sh
+curl -fsSL https://tugra.io/install | sh
 ```
 
 The panel comes up on **`http://<server-ip>/`** (port 80), served by Tugra's own proxy with the same
@@ -26,7 +26,7 @@ domain** (see [Set the domain later](#set-the-domain-later-settings--instance--p
 With a domain from the start (point its DNS at the server first), pass it to the same command:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/SimerayCom/tugra/main/scripts/bootstrap.sh | sh -s -- --domain panel.example.com
+curl -fsSL https://tugra.io/install | sh -s -- --domain panel.example.com
 ```
 
 (or clone first, then run the installer directly — same result:)
@@ -273,7 +273,7 @@ multi-arch, so managed servers of any architecture are supported.
 
 ```bash
 ./scripts/install.sh --doctor                                   # from the checkout
-curl -fsSL https://raw.githubusercontent.com/SimerayCom/tugra/main/scripts/bootstrap.sh | sh -s -- --doctor   # on a fresh or installed host
+curl -fsSL https://tugra.io/install | sh -s -- --doctor   # on a fresh or installed host
 ```
 
 The doctor is **read-only**: it never stops, starts, edits or installs anything, never writes `.env`, and the hosting
@@ -345,6 +345,8 @@ issues. `docker logs tugra-proxy 2>&1 | grep -i acme` says why; re-run `./script
 
 ## Next steps
 
+- [First setup](first-setup.md) — the guided first ten minutes.
+- [Add a server](add-a-server.md) and [Domains and Cloudflare](domains-and-cloudflare.md).
 - [Upgrade](upgrade.md) — keep Tugra current (`git pull && ./scripts/install.sh`, or in-app updates).
 - [CLI](cli.md) — drive Tugra from the terminal.
 - [Architecture](architecture.md) — understand the moving parts.
