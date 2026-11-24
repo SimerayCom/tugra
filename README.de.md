@@ -118,7 +118,7 @@ Ein direkter Vergleich mit den selbst hostbaren PaaS-Tools, die tatsächlich eva
 Auf einem frischen Linux-Host installiert **ein Befehl** die Voraussetzungen (git, Docker), klont das Repo und fährt den Stack hoch:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/SimerayCom/tugra/main/scripts/bootstrap.sh | sh
+curl -fsSL https://tugra.io/install | sh
 ```
 
 <p align="center"><img src="docs/assets/install.png" alt="Tugra-Installation mit einem Befehl auf einem frischen Ubuntu-Host: Voraussetzungen installiert, Konfiguration geschrieben, der Stack startet fehlerfrei, und der Setup-Code für den Owner" width="840" /></p>

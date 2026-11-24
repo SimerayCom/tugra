@@ -118,13 +118,13 @@ A side-by-side with the self-hostable PaaS tools people actually evaluate (compe
 On a fresh Linux host, **one command** installs the prerequisites (git, Docker), clones the repo and brings the stack up. No domain, no Cloudflare token, no extra setup — the panel comes up on `http://<server-ip>/` (port 80, served by Tugra's own proxy, so only ports 80/443 need to be open):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/SimerayCom/tugra/main/scripts/bootstrap.sh | sh
+curl -fsSL https://tugra.io/install | sh
 ```
 
 Then open the printed URL, create the owner account, and — when you have a domain — set it under **Settings → Instance → Panel domain** (free HTTPS from Let's Encrypt, no token needed, works behind Cloudflare's orange cloud). Prefer to have the domain from the first minute? Point its DNS at the server and add it to the same command:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/SimerayCom/tugra/main/scripts/bootstrap.sh | sh -s -- --domain panel.example.com
+curl -fsSL https://tugra.io/install | sh -s -- --domain panel.example.com
 ```
 
 <p align="center"><img src="docs/assets/install.png" alt="Tugra one-command install on a fresh Ubuntu host: prerequisites installed, configuration written, the stack coming up healthy, and the owner setup code" width="840" /></p>

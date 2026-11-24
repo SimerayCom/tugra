@@ -118,7 +118,7 @@ Una comparación directa con las herramientas PaaS autoalojables que la gente ev
 En un host Linux recién instalado, **un solo comando** instala los requisitos previos (git, Docker), clona el repositorio y levanta el stack:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/SimerayCom/tugra/main/scripts/bootstrap.sh | sh
+curl -fsSL https://tugra.io/install | sh
 ```
 
 <p align="center"><img src="docs/assets/install.png" alt="Instalación de Tugra con un solo comando en un host Ubuntu recién instalado: requisitos previos instalados, configuración escrita, el stack arrancando correctamente y el código de configuración del propietario" width="840" /></p>

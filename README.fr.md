@@ -118,7 +118,7 @@ Une comparaison côte à côte avec les outils PaaS auto-hébergeables que l'on 
 Sur un hôte Linux vierge, **une seule commande** installe les prérequis (git, Docker), clone le dépôt et démarre la stack :
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/SimerayCom/tugra/main/scripts/bootstrap.sh | sh
+curl -fsSL https://tugra.io/install | sh
 ```
 
 <p align="center"><img src="docs/assets/install.png" alt="Installation de Tugra en une commande sur un hôte Ubuntu vierge : prérequis installés, configuration écrite, stack démarrée et en bonne santé, et code de configuration du propriétaire" width="840" /></p>

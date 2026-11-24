@@ -1,23 +1,23 @@
 #!/bin/sh
 # Tugra one-command installer.
 #
-#   curl -fsSL https://raw.githubusercontent.com/SimerayCom/tugra/main/scripts/bootstrap.sh | sh
+#   curl -fsSL https://tugra.io/install | sh
 #
 # It installs the prerequisites it can (git), clones the repo, and runs
 # scripts/install.sh — which installs Docker if missing and brings the stack up,
 # so a fresh Linux box goes from nothing to a running Tugra in one command.
 #
 # Pass installer flags through after `--`, e.g. a TLS domain:
-#   curl -fsSL .../bootstrap.sh | sh -s -- --domain tugra.example.com
+#   curl -fsSL https://tugra.io/install | sh -s -- --domain tugra.example.com
 #
 # Check a host without changing anything (never installs git, never touches an existing checkout):
-#   curl -fsSL .../bootstrap.sh | sh -s -- --doctor
+#   curl -fsSL https://tugra.io/install | sh -s -- --doctor
 #
 # By default it installs the newest PUBLISHED release (the highest vX.Y.Z tag; a stable release wins over
 # pre-releases, and while there is no stable release yet the newest beta is used) with its prebuilt images.
 # Pin what you run: TUGRA_REF may be a branch, a tag or a full commit SHA (TUGRA_REF=main installs the
 # development branch), and TUGRA_SHA256=<hex> additionally verifies scripts/install.sh before it is executed:
-#   curl -fsSL .../bootstrap.sh | TUGRA_REF=v0.1.0 TUGRA_SHA256=<hex> sh
+#   curl -fsSL https://tugra.io/install | TUGRA_REF=v0.1.0 TUGRA_SHA256=<hex> sh
 #
 # Prefer to read before you run (recommended for any root-level installer)? Clone first:
 #   git clone https://github.com/SimerayCom/tugra.git && cd tugra && less scripts/install.sh && ./scripts/install.sh

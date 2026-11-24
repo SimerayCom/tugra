@@ -62,7 +62,7 @@
 #                       80/443, the host firewall (ufw / firewalld / nftables / iptables), the hosting provider's cloud
 #                       firewall, IPv6 / AAAA, DNS, the Tugra containers, the proxy routes, the panel's certificate and
 #                       the local agent, each problem with its fix. Exit 0 = no problems, 1 = problems. Works on a fresh
-#                       host and on an installed one:  curl -fsSL .../bootstrap.sh | sh -s -- --doctor
+#                       host and on an installed one:  curl -fsSL https://tugra.io/install | sh -s -- --doctor
 #   --restore-from <f>  Restore a hub bundle made by `scripts/hub-migrate.sh pack` onto THIS host (moves an
 #                       existing hub here, no pg_dump). Overwrites this host's .env + hub volume. See
 #                       docs/disaster-recovery.md.
@@ -713,7 +713,7 @@ if [ -n "$DOMAIN" ] && [ "$HUB_TRUSTED_PROXY" = "true" ]; then
       if [ "$DRY_RUN" -eq 0 ] && foreign_port_busy "$_p"; then
         _want=0
         note "Port ${_p} is already in use by another service, so Tugra's own HTTPS proxy can't bind it: keeping bring-your-own-proxy for $DOMAIN."
-        note "Front Tugra with that proxy (docs/install.md has the routing table), or free :80/:443 and re-run with --auto-tls."
+        note "Front Tugra with that proxy (tugra.io/docs/install has the routing table), or free :80/:443 and re-run with --auto-tls."
       fi
     done
   fi
@@ -1302,8 +1302,9 @@ elif [ "$HUB_TRUSTED_PROXY" = "true" ]; then
 else
   printf "  For TLS + a public domain: re-run with --domain <host> (automatic HTTPS), or front the stack with your own reverse proxy.\n"
 fi
-printf '  Back up the hub: keep %s offsite and schedule a pg_dump of the hub database (see docs/disaster-recovery.md).\n' "$ENV_FILE"
+printf '  Back up the hub: keep %s offsite and schedule a pg_dump of the hub database (see tugra.io/docs/disaster-recovery).\n' "$ENV_FILE"
 printf '  Open the Web UI and create the owner account (enter the setup code if one is shown below). This machine connects itself as your first server; add more from Settings -> Servers.\n'
+printf '  \033[2mGuides: https://tugra.io/docs/first-setup (add a server: https://tugra.io/docs/add-a-server).\033[0m\n'
 # Trust-wedge hints: say plainly what is ON/OFF and how to change it.
 if ! env_has LOCAL_SERVER_PUBLIC_IP; then
   printf '  \033[2mPublic IP: found automatically once this machine connects (its network interface, then the cloud provider metadata; no outbound probe). Behind NAT or a floating IP, pin it with --public-ip <ip> or LOCAL_SERVER_PUBLIC_IP in %s.\033[0m\n' "$ENV_FILE"
@@ -1317,7 +1318,7 @@ fi
 # log). `|| true` + quote-stripping keep this safe under `set -euo pipefail` and for a blank `MAIL_HOST=""`.
 _mail_host="$( { env_get MAIL_HOST || true; } | tr -d "\"' " )"
 if [ -z "$_mail_host" ]; then
-  printf '  \033[2mEmail: not configured — set MAIL_* in %s to enable password reset / invites (see docs/email.md).\033[0m\n' "$ENV_FILE"
+  printf '  \033[2mEmail: not configured — set MAIL_* in %s to enable password reset / invites (see tugra.io/docs/email).\033[0m\n' "$ENV_FILE"
 fi
 if [ "$(env_get TUGRA_TELEMETRY)" = "0" ]; then
   printf '  \033[2mAnonymous usage stats are OFF.\033[0m\n'

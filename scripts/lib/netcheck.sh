@@ -107,20 +107,20 @@ nc_advise_holder() {
   fi
   case "$kind" in
     nginx)
-      note "That is a system web server, not Tugra. Tugra did not touch it: it falls back to the raw ports (:3000/:3001), or you put Tugra behind nginx with --domain (routing table: docs/install.md#option-b--bring-your-own-reverse-proxy)."
+      note "That is a system web server, not Tugra. Tugra did not touch it: it falls back to the raw ports (:3000/:3001), or you put Tugra behind nginx with --domain (routing table: tugra.io/docs/install#option-b--bring-your-own-reverse-proxy)."
       note "To give Tugra the port instead:  ${s}systemctl disable --now nginx  -- every site nginx serves goes offline until you start it again (${s}systemctl enable --now nginx)." ;;
     apache)
-      note "That is a system web server, not Tugra. Tugra did not touch it: it falls back to the raw ports (:3000/:3001), or you put Tugra behind Apache with --domain (docs/install.md#option-b--bring-your-own-reverse-proxy)."
+      note "That is a system web server, not Tugra. Tugra did not touch it: it falls back to the raw ports (:3000/:3001), or you put Tugra behind Apache with --domain (tugra.io/docs/install#option-b--bring-your-own-reverse-proxy)."
       note "To give Tugra the port instead:  ${s}systemctl disable --now ${unit:-apache2}  -- every site it serves goes offline until you start it again." ;;
     caddy)
-      note "Caddy can front Tugra itself (reverse_proxy to 127.0.0.1:3001, /agent* and the other hub paths to :3000 -- docs/install.md#option-b--bring-your-own-reverse-proxy), or Tugra can use the raw ports (:3000/:3001) meanwhile."
+      note "Caddy can front Tugra itself (reverse_proxy to 127.0.0.1:3001, /agent* and the other hub paths to :3000 -- tugra.io/docs/install#option-b--bring-your-own-reverse-proxy), or Tugra can use the raw ports (:3000/:3001) meanwhile."
       note "To give Tugra the port instead:  ${s}systemctl disable --now caddy  -- every site Caddy serves goes offline until you start it again." ;;
     cloudpanel)
       note "That is CloudPanel's web server. Do NOT stop it for Tugra: ${s}systemctl stop nginx would take every site CloudPanel hosts offline (and the CloudPanel admin on :8443)."
-      note "Keep CloudPanel on 80/443 and let it front Tugra: add a site for the panel domain with a custom vhost that sends / to 127.0.0.1:3001 and /agent, /terminal, /install, /webhooks, /auth/ to 127.0.0.1:3000, then run the installer with --domain <host> --no-auto-tls (docs/install.md#option-b--bring-your-own-reverse-proxy). Until then Tugra stays on the raw ports (:3000/:3001)." ;;
+      note "Keep CloudPanel on 80/443 and let it front Tugra: add a site for the panel domain with a custom vhost that sends / to 127.0.0.1:3001 and /agent, /terminal, /install, /webhooks, /auth/ to 127.0.0.1:3000, then run the installer with --domain <host> --no-auto-tls (tugra.io/docs/install#option-b--bring-your-own-reverse-proxy). Until then Tugra stays on the raw ports (:3000/:3001)." ;;
     plesk)
       note "That is Plesk's web server (Plesk regenerates its config, so hand edits are overwritten and stopping it takes every Plesk-hosted site offline)."
-      note "Keep it: front Tugra from Plesk (Apache & nginx Settings of the panel domain -> additional nginx directives, routing table in docs/install.md#option-b--bring-your-own-reverse-proxy), or run Tugra on the raw ports (:3000/:3001) or on its own server." ;;
+      note "Keep it: front Tugra from Plesk (Apache & nginx Settings of the panel domain -> additional nginx directives, routing table in tugra.io/docs/install#option-b--bring-your-own-reverse-proxy), or run Tugra on the raw ports (:3000/:3001) or on its own server." ;;
     cpanel)
       note "That is cPanel/WHM's web server (Apache, or ea-nginx in front of it): cPanel rewrites its config, and stopping it takes every cPanel-hosted site offline."
       note "Keep it and run Tugra on the raw ports (:3000/:3001) or on its own server; cPanel has no supported way to put a custom reverse proxy in front of a whole domain, so a hand-made vhost may be overwritten on the next rebuild." ;;
@@ -133,10 +133,10 @@ nc_advise_holder() {
     tugra)
       note "That is another Tugra container (${cont:-tugra}) holding a port this install needs. Stop that stack from its own directory (docker compose down) or choose other HUB_PORT/WEB_PORT." ;;
     haproxy|traefik)
-      note "That is another reverse proxy. Tugra did not touch it: it falls back to the raw ports (:3000/:3001), or you route to Tugra from it with --domain (docs/install.md#option-b--bring-your-own-reverse-proxy)."
+      note "That is another reverse proxy. Tugra did not touch it: it falls back to the raw ports (:3000/:3001), or you route to Tugra from it with --domain (tugra.io/docs/install#option-b--bring-your-own-reverse-proxy)."
       note "To give Tugra the port instead:  ${s}systemctl disable --now ${unit:-$kind}  -- whatever it serves goes offline." ;;
     container)
-      note "Tugra did not touch it: it falls back to the raw ports (:3000/:3001) or you route to Tugra from that proxy (docs/install.md#option-b--bring-your-own-reverse-proxy)."
+      note "Tugra did not touch it: it falls back to the raw ports (:3000/:3001) or you route to Tugra from that proxy (tugra.io/docs/install#option-b--bring-your-own-reverse-proxy)."
       note "To give Tugra the port instead:  ${s}docker stop $cont  -- whatever that container serves goes offline." ;;
     *)
       note "Tugra did not touch it: it falls back to the raw ports (:3000/:3001), or you free the port."

@@ -118,7 +118,7 @@ Tugra 是一个可自托管的开源核心（open-core）控制平面，用于�
 在一台全新的 Linux 主机上，**一条命令**即可安装前置依赖（git、Docker）、克隆仓库并启动整套服务：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/SimerayCom/tugra/main/scripts/bootstrap.sh | sh
+curl -fsSL https://tugra.io/install | sh
 ```
 
 <p align="center"><img src="docs/assets/install.png" alt="在全新的 Ubuntu 主机上一条命令安装 Tugra：安装前置依赖、写入配置、整套服务健康启动，并显示所有者设置码" width="840" /></p>

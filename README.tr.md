@@ -118,7 +118,7 @@ Tuğra; uygulamaları ve veritabanlarını kendi sunucularınızda deploy etmek,
 Yeni bir Linux host'unda **tek bir komut** ön koşulları (git, Docker) kurar, repoyu klonlar ve stack'i ayağa kaldırır:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/SimerayCom/tugra/main/scripts/bootstrap.sh | sh
+curl -fsSL https://tugra.io/install | sh
 ```
 
 <p align="center"><img src="docs/assets/install.png" alt="Yeni bir Ubuntu host'ta Tuğra'nın tek komutla kurulumu: ön koşullar kuruldu, yapılandırma yazıldı, stack sağlıklı biçimde ayağa kalkıyor ve owner kurulum kodu görünüyor" width="840" /></p>

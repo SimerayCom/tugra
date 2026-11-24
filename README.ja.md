@@ -118,7 +118,7 @@ Tugra は、自分たちのサーバー群にまたがってアプリとデー�
 新しい Linux ホストなら、**コマンド 1 つ** で前提ツール(git、Docker)のインストール、リポジトリのクローン、スタックの起動までが完了します。
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/SimerayCom/tugra/main/scripts/bootstrap.sh | sh
+curl -fsSL https://tugra.io/install | sh
 ```
 
 <p align="center"><img src="docs/assets/install.png" alt="新しい Ubuntu ホストでの Tugra ワンコマンドインストール: 前提ツールのインストール、設定の書き込み、スタックの正常な起動、オーナー用セットアップコード" width="840" /></p>

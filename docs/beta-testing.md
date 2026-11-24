@@ -8,7 +8,7 @@ expect, and how to tell us when something breaks". Ten minutes is enough for the
 On a fresh Ubuntu/Debian host with Docker (the installer installs Docker if it is missing):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/SimerayCom/tugra/main/scripts/bootstrap.sh | bash
+curl -fsSL https://tugra.io/install | bash
 ```
 
 Then open the printed URL (`http://<server-ip>/`), create the owner account and finish onboarding. For a real domain
