@@ -178,14 +178,17 @@ export class NotificationsService {
     if (!PROVIDER_TYPES.includes(dto.type)) {
       throw new BadRequestException(`unsupported channel type: ${dto.type}`);
     }
-    await this.validateChannelConfig(dto.type, dto.config);
+    // A push channel always targets the creating user's own devices: the recipient is written here, never taken
+    // from the request (otherwise a writer could point it at someone else's devices).
+    const config = dto.type === "push" ? { userId, teamId: dto.teamId } : dto.config;
+    await this.validateChannelConfig(dto.type, config);
     this.assertTopicsAllowed(dto.type, dto.topics);
     const c = await this.prisma.notificationChannel.create({
       data: {
         name: dto.name,
         type: dto.type,
         teamId: dto.teamId,
-        configEnc: this.crypto.encrypt(JSON.stringify(dto.config)),
+        configEnc: this.crypto.encrypt(JSON.stringify(config)),
         eventTypes: dto.eventTypes ?? [],
         categories: dto.categories ?? [],
         minSeverity: dto.minSeverity ?? "info",
@@ -217,7 +220,9 @@ export class NotificationsService {
     if (!c) throw new NotFoundException("channel not found");
     await this.access.requirePermission(userId, c.teamId, "integrations");
     // The update DTO has no `type`, so validate against the stored channel's type.
-    if (dto.config) await this.validateChannelConfig(c.type, dto.config);
+    // A push channel's config is the hub-written recipient; an edit can never retarget it.
+    const newConfig = c.type === "push" ? undefined : dto.config;
+    if (newConfig) await this.validateChannelConfig(c.type, newConfig);
     this.assertTopicsAllowed(c.type, dto.topics);
     const updated = await this.prisma.notificationChannel.update({
       where: { id },
@@ -232,7 +237,7 @@ export class NotificationsService {
         // undefined = keep, null / all-default = clear, object = replace
         ...(dto.policy === undefined ? {} : { policy: (normalizePolicy(dto.policy) as Prisma.InputJsonValue | null) ?? Prisma.DbNull }),
         locale: dto.locale ?? c.locale,
-        ...(dto.config ? { configEnc: this.crypto.encrypt(JSON.stringify(dto.config)) } : {}),
+        ...(newConfig ? { configEnc: this.crypto.encrypt(JSON.stringify(newConfig)) } : {}),
       },
     });
     await this.audit.log({ actor: userId, action: "channel.update", target: id });
@@ -289,6 +294,16 @@ export class NotificationsService {
     if (!c) throw new NotFoundException("channel not found");
     if (!(await this.access.teamRole(userId, c.teamId))) {
       throw new ForbiddenException("not a member of this team");
+    }
+    // A push channel buzzes its recipient's own devices, so only that person may fire its test.
+    if (c.type === "push") {
+      let recipient: unknown;
+      try {
+        recipient = (JSON.parse(this.crypto.decrypt(c.configEnc)) as { userId?: unknown }).userId;
+      } catch {
+        recipient = undefined;
+      }
+      if (recipient !== userId) throw new ForbiddenException("only the recipient can test a push channel");
     }
     // Synchronous send (the button reports pass/fail immediately) that also records a delivery row.
     // The testTemplate renders the (localized) confirmation message; ctx carries nothing.

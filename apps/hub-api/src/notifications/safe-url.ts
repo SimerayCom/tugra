@@ -15,6 +15,14 @@ export interface SsrfOpts {
   allowPrivate: boolean;
 }
 
+/** A non-2xx reply from the target. Carries the numeric status so callers (Web Push: 404/410 = gone) can branch on it. */
+export class HttpStatusError extends Error {
+  constructor(readonly status: number) {
+    super(`webhook: HTTP ${status}`); // message kept stable: delivery history and existing specs read it
+    this.name = "HttpStatusError";
+  }
+}
+
 /** Thrown when a target URL/host is rejected by the SSRF guard. The service maps this to a 400. */
 export class SsrfError extends Error {
   constructor(message: string) {
@@ -122,7 +130,7 @@ const MAX_RESPONSE_BYTES = 64 * 1024;
  */
 export async function safeRequest(
   rawUrl: string,
-  body: string,
+  body: string | Buffer,
   headers: Record<string, string>,
   opts: SafeRequestOpts,
 ): Promise<SafeResponse> {
@@ -174,10 +182,10 @@ export async function safeRequest(
 /** SSRF-safe send: {@link safeRequest}, rejecting on any non-2xx (3xx included — deliberately not followed). */
 export async function safeSend(
   rawUrl: string,
-  body: string,
+  body: string | Buffer,
   headers: Record<string, string>,
   opts: SafeRequestOpts,
 ): Promise<void> {
   const res = await safeRequest(rawUrl, body, headers, opts);
-  if (res.status < 200 || res.status >= 300) throw new Error(`webhook: HTTP ${res.status}`);
+  if (res.status < 200 || res.status >= 300) throw new HttpStatusError(res.status);
 }

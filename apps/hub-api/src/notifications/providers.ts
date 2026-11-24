@@ -662,6 +662,22 @@ class SmsProvider extends NotificationProvider {
       { "content-type": "application/x-www-form-urlencoded", authorization: `Basic ${auth}` },
       { allowPrivate: allowPrivateTargets() },
     );
+/** The database-backed half of the "push" channel (push.service.ts). Providers are DI-less singletons, so the service
+ *  registers itself here when the hub boots. */
+export interface PushDelegate {
+  deliver(config: ChannelConfig, msg: RenderedMessage): Promise<void>;
+}
+let pushDelegate: PushDelegate | undefined;
+export function setPushDelegate(d: PushDelegate | undefined): void {
+  pushDelegate = d;
+}
+
+/** Web Push to the devices of the channel's recipient. The config is written by the hub ({userId, teamId}), never the client. */
+class PushProvider extends NotificationProvider {
+  readonly type = "push";
+  async send(config: ChannelConfig, msg: RenderedMessage): Promise<void> {
+    if (!pushDelegate) throw new Error("push: not available");
+    await pushDelegate.deliver(config, msg);
   }
 }
 
@@ -687,6 +703,7 @@ const list: NotificationProvider[] = [
   new BarkProvider(),
   new SignalProvider(),
   new SmsProvider(),
+  new PushProvider(),
 ];
 
 export const providers: Record<string, NotificationProvider> = Object.fromEntries(

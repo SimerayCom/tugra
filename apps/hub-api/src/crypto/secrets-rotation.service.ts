@@ -28,7 +28,8 @@ export const ENCRYPTED_COLUMNS: ReadonlyArray<{ model: string; columns: string[]
   { model: "secretProvider", columns: ["tokenEnc"] },
   { model: "database", columns: ["credentials", "envEnc", "configFileEnc"] },
   { model: "hubDeadmanConfig", columns: ["urlEnc"] },
-  { model: "instanceSettings", columns: ["oidcClientSecretEnc", "mailPassEnc", "mailResendKeyEnc", "ipTlsKeyEnc"] },
+  { model: "instanceSettings", columns: ["oidcClientSecretEnc", "mailPassEnc", "mailResendKeyEnc", "ipTlsKeyEnc", "vapidPrivateKeyEnc"] },
+  { model: "pushSubscription", columns: ["authEnc"] },
 ];
 
 /** Ciphertext columns whose name does not end in `Enc` (the completeness spec needs the list; a new one must be

@@ -7,6 +7,7 @@ import { CloudCredentialsController } from "../cloud/cloud-credentials.controlle
 import { AuditController } from "../audit/audit.controller";
 import { SavedViewsController } from "../saved-views/saved-views.controller";
 import { ApiTokensController } from "./api-tokens.controller";
+import { PushController } from "../push/push.controller";
 import { ApiAuthGuard } from "./api-auth.guard";
 import { ScopesGuard } from "./scopes.guard";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
@@ -41,6 +42,12 @@ describe("PAT surface parity", () => {
     expect(g).toContain(JwtAuthGuard);
     expect(g).not.toContain(ApiAuthGuard);
     expect(g).not.toContain(ScopesGuard);
+  });
+
+  it("push device registration is session-only — a leaked token must not be able to subscribe an attacker's endpoint to a user's alerts", () => {
+    const g = guards(PushController);
+    expect(g).toContain(JwtAuthGuard);
+    expect(g).not.toContain(ApiAuthGuard);
   });
 
   it("team routes that expose raw invite tokens require read:secrets", () => {

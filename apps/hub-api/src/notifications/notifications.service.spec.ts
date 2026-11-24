@@ -45,6 +45,40 @@ beforeEach(() => {
   mockSend.mockResolvedValue(undefined);
 });
 
+describe("NotificationsService push channels", () => {
+  const row = { id: "c1", name: "Phone", type: "push", teamId: "t1", enabled: true, eventTypes: [], categories: ["server"] };
+
+  it("pins the recipient to the creator, ignoring any config the client sent", async () => {
+    const create = jest.fn().mockResolvedValue(row);
+    const svc = make({ notificationChannel: { create } } as unknown as PrismaService, { requirePermission: jest.fn().mockResolvedValue(undefined) });
+    await svc.create("u1", { name: "Phone", type: "push", teamId: "t1", config: { userId: "victim", teamId: "other" }, categories: ["server"] });
+    expect(create.mock.calls[0][0].data.configEnc).toBe(`enc(${JSON.stringify({ userId: "u1", teamId: "t1" })})`);
+  });
+
+  it("never lets an update retarget the recipient", async () => {
+    const update = jest.fn().mockResolvedValue(row);
+    const svc = make(
+      { notificationChannel: { findUnique: jest.fn().mockResolvedValue({ ...row, configEnc: "enc({})" }), update } } as unknown as PrismaService,
+      { requirePermission: jest.fn().mockResolvedValue(undefined) },
+    );
+    await svc.update("u2", "c1", { config: { userId: "u2" }, minSeverity: "critical" });
+    const data = update.mock.calls[0][0].data;
+    expect(data).not.toHaveProperty("configEnc");
+    expect(data.minSeverity).toBe("critical");
+  });
+
+  it("lets only the recipient fire a push channel's test", async () => {
+    const find = jest.fn().mockResolvedValue({ ...row, locale: "en", configEnc: `enc(${JSON.stringify({ userId: "u1", teamId: "t1" })})` });
+    const svc = make({ notificationChannel: { findUnique: find } } as unknown as PrismaService, { teamRole: jest.fn().mockResolvedValue("ADMIN") });
+    await expect(svc.test("u2", "c1")).rejects.toThrow(/only the recipient/);
+  });
+
+  it("requires the integrations permission like every other channel type", async () => {
+    const svc = make({} as unknown as PrismaService, { requirePermission: jest.fn().mockRejectedValue(new Error("forbidden")) });
+    await expect(svc.create("u1", { name: "Phone", type: "push", teamId: "t1", config: {} })).rejects.toThrow("forbidden");
+  });
+});
+
 describe("NotificationsService", () => {
   it("encrypts the config blob on create (never plaintext)", async () => {
     const create = jest.fn().mockResolvedValue({ id: "c1", name: "n", type: "webhook", teamId: "t1", enabled: true, eventTypes: [] });

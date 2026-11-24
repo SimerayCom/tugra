@@ -3,7 +3,7 @@ jest.mock("./safe-url");
 import { createHmac } from "node:crypto";
 import nodemailer from "nodemailer";
 import { safeSend } from "./safe-url";
-import { getProvider } from "./providers";
+import { getProvider, PROVIDER_TYPES, setPushDelegate } from "./providers";
 import { levelColorHex, levelColorInt, levelPriorityGotify, levelPriorityPushover, levelTag, type RenderedMessage } from "./rendered-message";
 
 const mockSend = safeSend as jest.Mock;
@@ -352,6 +352,23 @@ describe("notification providers — rich rendering over the SSRF-guarded transp
       const auth = sentHeaders().authorization;
       expect(auth).not.toMatch(/[\r\n]/);
       expect(auth.startsWith("Bearer ")).toBe(true);
+    });
+  });
+
+  describe("push", () => {
+    afterEach(() => setPushDelegate(undefined));
+
+    it("is a registered channel type and hands the message and hub-written config to the push service", async () => {
+      expect(PROVIDER_TYPES).toContain("push");
+      const deliver = jest.fn().mockResolvedValue(undefined);
+      setPushDelegate({ deliver });
+      await getProvider("push").send({ userId: "u1", teamId: "t1" }, RM());
+      expect(deliver).toHaveBeenCalledWith({ userId: "u1", teamId: "t1" }, expect.objectContaining({ event: "deploy_failed" }));
+      expect(mockSend).not.toHaveBeenCalled(); // it never posts anywhere itself
+    });
+
+    it("fails clearly when the push service is not running", async () => {
+      await expect(getProvider("push").send({}, RM())).rejects.toThrow(/push: not available/);
     });
   });
 

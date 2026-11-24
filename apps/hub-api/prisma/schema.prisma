@@ -55,8 +55,26 @@ model User {
   savedViews         SavedView[]
   recoveryCodes      TwoFactorRecoveryCode[]
   verificationTokens VerificationToken[]
+  pushSubscriptions  PushSubscription[]
   createdAt          DateTime                @default(now())
   updatedAt          DateTime                @updatedAt
+}
+
+// One browser/device registered for Web Push (RFC 8030/8291). `endpoint` is the push service URL the browser
+// handed out (unique per browser profile); `p256dh` is the browser's public ECDH key (not secret); `authEnc` is its
+// 16-byte auth secret, stored ENCRYPTED. Owned by a user (not a team): a push channel targets its creator's devices.
+model PushSubscription {
+  id          String    @id @default(cuid())
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId      String
+  endpoint    String    @unique
+  p256dh      String
+  authEnc     String
+  deviceLabel String?
+  createdAt   DateTime  @default(now())
+  lastUsedAt  DateTime?
+
+  @@index([userId])
 }
 
 // Purpose of an emailed single-use token. EMAIL_VERIFY is reserved for email verification;
@@ -2235,6 +2253,10 @@ model InstanceSettings {
   telemetryEnabled    Boolean   @default(true)
   telemetryInstanceId String?
   telemetryLastSentAt DateTime?
+  // Web Push (VAPID, RFC 8292): the hub's P-256 application-server key pair, generated once on first use. The public key
+  // (uncompressed point, base64url) is handed to browsers as applicationServerKey; the private key (PKCS8 PEM) is encrypted.
+  vapidPublicKey      String?
+  vapidPrivateKeyEnc  String?
   // White-label (Pro edition). Owner-set branding that replaces the Tugra name/logo/favicon/accent and can
   // hide the "Powered by Tugra" footer. Read publicly (the login page themes before auth) BUT only applied
   // while the instance is Pro+ — a Community or lapsed-license instance always shows the Tugra defaults, so

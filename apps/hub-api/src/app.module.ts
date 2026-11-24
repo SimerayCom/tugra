@@ -22,6 +22,7 @@ import { AuthModule } from "./auth/auth.module";
 import { ServersModule } from "./servers/servers.module";
 import { AgentGatewayModule } from "./agent-gateway/agent-gateway.module";
 import { NotificationsModule } from "./notifications/notifications.module";
+import { PushModule } from "./push/push.module";
 import { MonitorsModule } from "./monitors/monitors.module";
 import { StatusPageModule } from "./status-page/status-page.module";
 import { KumaImportModule } from "./monitors/kuma/kuma-import.module";
@@ -103,6 +104,7 @@ import { ApiExceptionFilter } from "./common/api-exception.filter";
     ServersModule,
     AgentGatewayModule,
     NotificationsModule,
+    PushModule,
     MonitorsModule,
     StatusPageModule, // public per-team status pages + RSS/email subscribe
     KumaImportModule,
