@@ -83,6 +83,8 @@ describe("instance API gating (e2e)", () => {
         publicUrl: null,
         acmeEmail: null,
         edition: expect.any(String),
+        require2fa: false,
+        suggested: expect.any(Object),
       });
 
       const patched = await request(srv())
