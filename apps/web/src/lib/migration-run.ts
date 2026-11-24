@@ -290,12 +290,12 @@ export function paramText(v: MigrationRunParamValue | undefined): string {
   return String(v);
 }
 
-/** Params as interpolation vars; a list that is long is cut with a "+N" tail so a message never floods the screen. */
+/** Params as interpolation vars; a list that is long is cut with a "+N" tail so a message never floods the screen. A number under a key ending in `Bytes` is shown as a size ("1.2 GiB"). */
 export function paramVars(params: MigrationRunParams | null | undefined): Record<string, string | number> {
   const out: Record<string, string | number> = {};
   for (const [k, v] of Object.entries(params ?? {})) {
     if (Array.isArray(v) && v.length > 5) out[k] = `${paramText(v.slice(0, 5))} +${v.length - 5}`;
-    else if (typeof v === "number") out[k] = v;
+    else if (typeof v === "number") out[k] = /Bytes$/.test(k) && v >= 0 ? formatBytes(v) : v;
     else out[k] = paramText(v);
   }
   return out;

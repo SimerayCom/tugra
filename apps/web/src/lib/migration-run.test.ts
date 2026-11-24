@@ -1,3 +1,4 @@
+import { formatBytes } from "./import";
 import { describe, it, expect } from "vitest";
 import {
   MIGRATION_RUN_STEP_KEYS,
@@ -154,6 +155,18 @@ describe("codes and params", () => {
     expect(vars.n).toBe(3);
     expect(vars.ok).toBe("false");
     expect(paramVars(null)).toEqual({});
+  });
+  it("shows a number under a key ending in Bytes as a size", () => {
+    const vars = paramVars({ dumpBytes: 3 * 1024 ** 3, capBytes: 256 * 1024 ** 2, bytes: 5, n: 4 });
+    expect(vars.dumpBytes).toBe(formatBytes(3 * 1024 ** 3));
+    expect(vars.capBytes).toBe(formatBytes(256 * 1024 ** 2));
+    expect(vars.bytes).toBe(5); // only the `...Bytes` convention is a size
+    expect(vars.n).toBe(4);
+    expect(paramVars({ dumpBytes: null }).dumpBytes).toBe("-");
+  });
+  it("describes the route of a database in plain words, with its size", () => {
+    expect(codeText(t, "data-seed.db-lane-stream", { engine: "POSTGRES", dumpBytes: 3 * 1024 ** 3 })).toBe(`This POSTGRES database (${formatBytes(3 * 1024 ** 3)}) moves as a checked stream. Any size works.`);
+    expect(codeText(t, "data-seed.disk-insufficient", { needBytes: 10 * 1024 ** 3, freeBytes: 2 * 1024 ** 3 })).toContain(`${formatBytes(2 * 1024 ** 3)} free`);
   });
   it("interpolates params into a known code", () => {
     expect(t("migrationRun.progressOf", { done: 3, total: 9, unit: "volumes" })).toBe("3 / 9 volumes");
