@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
-import { describeDevice, pushSupport, sameBytes, subscriptionBody, urlBase64ToUint8Array } from "./pwa";
+import { PUSH_DEVICE_KEY, describeDevice, pushSupport, releasePushDevice, storedDeviceId, sameBytes, subscriptionBody, urlBase64ToUint8Array } from "./pwa";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -61,5 +61,24 @@ describe("subscriptionBody", () => {
     const sub = { toJSON: () => ({ endpoint: "https://push.example.com/x", keys: { p256dh: "P", auth: "A" } }) } as unknown as PushSubscription;
     expect(subscriptionBody(sub, "Chrome on macOS")).toEqual({ endpoint: "https://push.example.com/x", keys: { p256dh: "P", auth: "A" }, deviceLabel: "Chrome on macOS" });
     expect(subscriptionBody(sub)).not.toHaveProperty("deviceLabel");
+  });
+});
+
+describe("releasePushDevice", () => {
+  it("deletes the device on the hub and forgets it locally", async () => {
+    localStorage.setItem(PUSH_DEVICE_KEY, "dev1");
+    const remove = vi.fn().mockResolvedValue({ ok: true });
+    await releasePushDevice(remove);
+    expect(remove).toHaveBeenCalledWith("dev1");
+    expect(storedDeviceId()).toBeNull();
+  });
+
+  it("still forgets the device when the hub call fails, and does nothing without one", async () => {
+    localStorage.setItem(PUSH_DEVICE_KEY, "dev2");
+    await releasePushDevice(vi.fn().mockRejectedValue(new Error("offline")));
+    expect(storedDeviceId()).toBeNull();
+    const remove = vi.fn();
+    await releasePushDevice(remove);
+    expect(remove).not.toHaveBeenCalled();
   });
 });

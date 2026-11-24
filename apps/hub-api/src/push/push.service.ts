@@ -228,12 +228,21 @@ export class PushService implements OnModuleInit {
     if (!userId || !teamId) throw new Error("push: channel has no recipient");
     const member = await this.prisma.membership.findFirst({ where: { userId, teamId }, select: { id: true } });
     if (!member) throw new Error("push: recipient is no longer a member of this team");
-    const url = msg.links.find((l) => l.url.startsWith(webBaseUrl(this.config)))?.url ?? "/";
+    const url = msg.links.find((l) => sameOrigin(l.url, webBaseUrl(this.config)))?.url ?? "/";
     const r = await this.sendToUser(
       userId,
       { title: clip(msg.title, 120), body: clip(msg.summary, 400), url, tag: msg.event, level: msg.level },
       msg.level === "failure" ? "high" : "normal",
     );
     if (r.sent === 0) throw new Error(r.failed + r.removed === 0 ? "push: no devices registered" : "push: no device accepted the message");
+  }
+}
+
+/** True when both URLs parse and share an origin (a plain prefix check would accept `https://panel.io.evil.com`). */
+export function sameOrigin(a: string, b: string): boolean {
+  try {
+    return new URL(a).origin === new URL(b).origin;
+  } catch {
+    return false;
   }
 }

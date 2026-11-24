@@ -178,3 +178,30 @@ export function subscriptionBody(sub: PushSubscription, deviceLabel?: string): {
     ...(deviceLabel ? { deviceLabel } : {}),
   };
 }
+
+/**
+ * Sign-out cleanup: this browser must stop receiving the signed-out user's pushes, and the next person to sign in here
+ * must not inherit the device. Best effort and never throws; call it BEFORE the session cookie is dropped (the delete
+ * is authenticated).
+ */
+export async function releasePushDevice(remove: (id: string) => Promise<unknown>): Promise<void> {
+  const id = storedDeviceId();
+  if (id === null) return;
+  try {
+    await remove(id);
+  } catch {
+    /* the hub also prunes dead subscriptions on send */
+  }
+  try {
+    const sub = await currentSubscription();
+    await sub?.unsubscribe();
+  } catch {
+    /* nothing to unsubscribe */
+  }
+  storeDeviceId(null);
+  try {
+    sessionStorage.removeItem("tugra.pushResynced");
+  } catch {
+    /* ignore */
+  }
+}

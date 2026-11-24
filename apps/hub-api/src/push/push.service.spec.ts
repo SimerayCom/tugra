@@ -5,7 +5,7 @@ import { BadRequestException, ConflictException, NotFoundException } from "@nest
 import { ConfigService } from "@nestjs/config";
 import { createECDH } from "node:crypto";
 import { lookup } from "node:dns/promises";
-import { PushService, MAX_DEVICES_PER_USER } from "./push.service";
+import { PushService, MAX_DEVICES_PER_USER, sameOrigin } from "./push.service";
 import { HttpStatusError, safeSend } from "../notifications/safe-url";
 import { b64u, generateVapidKeys } from "./webpush";
 import type { RenderedMessage } from "../notifications/rendered-message";
@@ -187,5 +187,13 @@ describe("PushService.deliverChannel", () => {
     );
     await svc.deliverChannel({ userId: "u1", teamId: "t1" }, msg());
     expect(mockSend.mock.calls[0][2].urgency).toBe("high");
+  });
+});
+
+describe("sameOrigin", () => {
+  it("rejects lookalike hosts and bad input, accepts the panel origin", () => {
+    expect(sameOrigin("https://panel.example.com/servers/s1", "https://panel.example.com")).toBe(true);
+    expect(sameOrigin("https://panel.example.com.evil.test/x", "https://panel.example.com")).toBe(false);
+    expect(sameOrigin("not a url", "https://panel.example.com")).toBe(false);
   });
 });

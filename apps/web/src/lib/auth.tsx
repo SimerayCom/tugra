@@ -8,6 +8,7 @@ import {
   type ReactNode,
 } from "react";
 import { api } from "./api";
+import { releasePushDevice } from "./pwa";
 import type { PublicUser } from "./types";
 
 interface AuthCtx {
@@ -57,6 +58,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const logout = async () => {
+    await releasePushDevice((id) => api.removePushDevice(id));
     await api.logout();
     setUser(null);
   };
