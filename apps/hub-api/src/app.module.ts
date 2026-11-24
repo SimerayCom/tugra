@@ -24,6 +24,7 @@ import { AgentGatewayModule } from "./agent-gateway/agent-gateway.module";
 import { NotificationsModule } from "./notifications/notifications.module";
 import { MonitorsModule } from "./monitors/monitors.module";
 import { KumaImportModule } from "./monitors/kuma/kuma-import.module";
+import { CoolifyTakeoverModule } from "./coolify-takeover/coolify-takeover.module";
 import { BulkModule } from "./bulk/bulk.module";
 import { RolloutsModule } from "./rollouts/rollouts.module";
 import { AgentUpdateModule } from "./agent-update/agent-update.module";
@@ -101,6 +102,7 @@ import { ApiExceptionFilter } from "./common/api-exception.filter";
     NotificationsModule,
     MonitorsModule,
     KumaImportModule,
+    CoolifyTakeoverModule,
     BulkModule,
     RolloutsModule,
     AgentUpdateModule,

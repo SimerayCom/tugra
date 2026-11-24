@@ -169,6 +169,7 @@ model Team {
   clusters           Cluster[]
   objectMigrations   ObjectMigration[]
   importMappings     ImportMapping[]
+  coolifyInventories CoolifyInventory[]
   createdAt          DateTime              @default(now())
 }
 
@@ -414,6 +415,7 @@ model Server {
   logDrains              LogDrain[]
   proxyDynamicConfigs    ProxyDynamicConfig[]
   reboots                ServerReboot[]
+  coolifyInventory       CoolifyInventory?
   tunnel                 ServerTunnel?
   createdAt              DateTime                @default(now())
 
@@ -2782,4 +2784,29 @@ model ServerReboot {
 
   @@index([serverId, createdAt])
   @@index([state])
+}
+
+// "Read this Coolify": a read-only snapshot of a Coolify instance, read through the Tugra agent on its host (the agent
+// runs a read-only psql inside `coolify-db`). One row per agent server, created by an explicit owner/admin opt-in.
+// The snapshot is metadata only (names, addresses, statuses, counts); secret fields are recorded as "present" and their
+// values never leave Coolify's own database, so there is nothing to encrypt (no *Enc column).
+model CoolifyInventory {
+  id           String    @id @default(cuid())
+  team         Team      @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  teamId       String
+  server       Server    @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  serverId     String    @unique // the agent server that runs Coolify
+  enabledById  String // who opted this server in
+  enabledAt    DateTime  @default(now())
+  coolifyImage String? // image reference of the `coolify` container at the last read (the version)
+  snapshot     Json? // normalised inventory (coolify-inventory.ts); null until the first read
+  counts       Json? // headline counts for the list view
+  readAt       DateTime?
+  readById     String?
+  // Coolify server uuid -> { teamId, serverId }: the Tugra servers created for "Add all Coolify servers".
+  serverLinks  Json      @default("{}")
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@index([teamId])
 }
