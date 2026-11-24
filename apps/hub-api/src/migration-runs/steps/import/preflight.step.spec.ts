@@ -443,6 +443,25 @@ describe("PREFLIGHT safety checks over the plan (R11, R26/C13, R27/C5)", () => {
   const byId = (cs: ReturnType<typeof preflightChecks>, id: string) => cs.find((c) => c.id === id);
   const answered = (k: string, value: string) => OwnerInputsSchema.parse({ [k]: { value, source: "request", setBy: "u1", at: "2026-11-23T00:00:00.000Z" } });
 
+  it("the unpinned check carries the images (item, member, the image the source writes, the version it shows) for the result screen's pin", () => {
+    const p = plan([
+      { itemRef: "app:s1:img", kind: "app", name: "proxy", proposed: { source: "IMAGE", image: "img/proxy:latest", domain: "p.example.test" } },
+      { itemRef: "service:s1:svc", kind: "service", name: "search", proposed: { imageFloating: ["meili"] } },
+    ]);
+    const withRows = { ...p, preflight: { ...p.preflight!, services: [{ name: "search", itemRef: "service:s1:svc", floating: [{ member: "meili", image: "getmeili/meilisearch:latest", seen: "getmeili/meilisearch:v1.8.0" }], members: 1, note: "" }] } } as never;
+    const check = byId(preflightChecks(baseRun(), baseObs({ plan: withRows })), "preflight.images");
+    expect(check?.params).toMatchObject({
+      imageCount: 2,
+      imageItems: ["app:s1:img", "service:s1:svc"],
+      imageMembers: ["", "meili"],
+      images: ["img/proxy:latest", "getmeili/meilisearch:latest"],
+      imageSeen: ["", "getmeili/meilisearch:v1.8.0"],
+    });
+    // a pin recorded on the dry run (service-pin hint) counts as pinned for the member
+    const hints = [{ kind: "service-pin" as const, key: "service:s1:svc#meili", scope: "", value: "getmeili/meilisearch:v1.8.0", evidence: "operator-attested" as const }];
+    expect(byId(preflightChecks(baseRun(), baseObs({ plan: withRows, hints })), "preflight.images")?.params).toMatchObject({ count: 1, imageItems: ["app:s1:img"] });
+  });
+
   it("floating image apps and service members with no recorded digest fail with an acknowledgement; a recorded digest passes", () => {
     const p = plan([
       { itemRef: "app:s1:img", kind: "app", name: "proxy", proposed: { source: "IMAGE", image: "img/proxy:latest", domain: "p.example.test" } },

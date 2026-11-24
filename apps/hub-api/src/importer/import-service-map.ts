@@ -88,6 +88,8 @@ export interface ServiceTransformResult {
   domainHints: Array<{ service: string; port: number }>;
   /** Services still on a floating tag (`:latest` / untagged) after pinning. */
   floating: string[];
+  /** The image each floating service is written with in the source's compose (what a pin has to replace), by service key. */
+  floatingRefs: Record<string, string>;
   pinned: string[];
   hold: boolean;
 }
@@ -181,6 +183,7 @@ function emptyResult(over: Partial<ServiceTransformResult>): ServiceTransformRes
     domains: [],
     domainHints: [],
     floating: [],
+    floatingRefs: {},
     pinned: [],
     hold: false,
     ...over,
@@ -226,6 +229,8 @@ function isFloating(image: string): boolean {
   if (colon < 0) return true;
   return last.slice(colon + 1) === "latest";
 }
+/** True when `candidate` is a version the transform would accept as the pin of the floating `image` (same repository, not floating, a valid ref). */
+export const isPinFor = (image: string, candidate: string): boolean => PIN_REF_RE.test(candidate) && IMAGE_REPO_RE.test(image) && imageRepo(candidate) === imageRepo(image) && !isFloating(candidate);
 const imageRepo = (image: string): string => {
   const noDigest = image.split("@")[0];
   const last = noDigest.split("/").pop() ?? noDigest;
@@ -449,6 +454,7 @@ export function transformServiceCompose(input: ServiceTransformInput): ServiceTr
 
   // R10 — floating tags.
   const floating: string[] = [];
+  const floatingRefs: Record<string, string> = {};
   const pinned: string[] = [];
   for (const name of survivorNames) {
     const def = services[name];
@@ -460,6 +466,7 @@ export function transformServiceCompose(input: ServiceTransformInput): ServiceTr
       note(`${name}.image`, "pinned to the version the source is running", "info");
     } else {
       floating.push(name);
+      floatingRefs[name] = def.image;
     }
   }
 
@@ -511,6 +518,7 @@ export function transformServiceCompose(input: ServiceTransformInput): ServiceTr
     domains,
     domainHints: sortBy(domainHints, (h) => `${h.service}:${h.port}`),
     floating: floating.sort(),
+    floatingRefs,
     pinned: pinned.sort(),
     hold,
   };

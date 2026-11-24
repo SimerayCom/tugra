@@ -300,6 +300,7 @@ describe("DEPLOY_DARK workers (R26/C13)", () => {
     const dry = await w.create({ dryRun: true });
     await hints.upsert(dry, [{ kind: "worker-mark", key: "app:_:queue", scope: "", value: "web", evidence: "operator-attested" }]);
     await w.settle(dry);
+    await w.acceptWarnings(dry);
     const real = (await w.service.start(ACTOR, dry, {})).id;
     expect(real).not.toBe(dry);
     await w.settle(real);

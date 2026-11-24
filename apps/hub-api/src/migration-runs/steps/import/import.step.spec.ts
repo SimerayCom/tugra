@@ -130,6 +130,29 @@ describe("IMPORT", () => {
   });
 });
 
+describe("IMPORT dry-run: the floating images behind the warning", () => {
+  it("carry the member, the image the source writes and the version it shows, so the result screen can pin them", async () => {
+    const w = new RunWorld();
+    const svc = (name: string) => ({ itemRef: `service:_:${name}`, kind: "service" as const, name, proposed: { imageFloating: ["meili"] }, risks: [{ level: "warn" as const, code: "service.image.floating", message: "x" }], dependsOn: [] });
+    const plan = defaultPlan({ items: [svc("search"), svc("cache")] });
+    w.port.plan_ = { ...plan, preflight: { ...plan.preflight!, services: [{ name: "search", itemRef: "service:_:search", floating: [{ member: "meili", image: "getmeili/meilisearch:latest", seen: "getmeili/meilisearch:v1.8.0" }], members: 1, note: "" }, { name: "cache", itemRef: "service:_:cache", floating: [{ member: "meili", image: "getmeili/meilisearch:latest" }], members: 1, note: "" }] } } as never;
+    const id = await w.create({ dryRun: true });
+    await w.settle(id);
+    const item = (await importStep(w, id)).progress!.dryRun!.find((i) => i.code === "import.risk-warning")!;
+    expect(item.params).toMatchObject({ risk: "service.image.floating", count: 2, imageCount: 2, imageItems: ["service:_:cache", "service:_:search"], imageMembers: ["meili", "meili"], images: ["getmeili/meilisearch:latest", "getmeili/meilisearch:latest"], imageSeen: ["", "getmeili/meilisearch:v1.8.0"] });
+  });
+
+  it("a member pinned by the stack's own choices is not listed", async () => {
+    const w = new RunWorld();
+    const it1 = { itemRef: "service:_:search", kind: "service" as const, name: "search", proposed: { imageFloating: ["meili"] }, risks: [{ level: "warn" as const, code: "service.image.floating", message: "x" }], dependsOn: [] };
+    w.port.plan_ = defaultPlan({ items: [it1] });
+    const id = await w.create({ dryRun: true, serviceChoices: { "service:_:search": { pins: { meili: "getmeili/meilisearch:v1.8.0" } } } });
+    await w.settle(id);
+    const item = (await importStep(w, id)).progress!.dryRun!.find((i) => i.code === "import.risk-warning")!;
+    expect(item.params).not.toHaveProperty("imageItems");
+  });
+});
+
 describe("IMPORT abort covers what IMPORT itself left behind", () => {
   it("earlyStateless: an abort before DEPLOY_DARK starts stops the apps the early wave deployed", async () => {
     const w = new RunWorld({ stubs: { DNS_PREPARE: { blocked: (x) => !x.done.has("go") } } });

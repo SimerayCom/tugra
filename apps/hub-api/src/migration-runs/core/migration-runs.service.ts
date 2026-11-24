@@ -10,6 +10,7 @@
  */
 import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, NotFoundException, Optional } from "@nestjs/common";
 import { scopeSatisfies, type Scope } from "../../api-tokens/scopes";
+import type { ServiceChoice } from "../../importer/dto";
 import {
   OwnerInputsSchema,
   RunApplyInputSchema,
@@ -28,6 +29,7 @@ import {
   type RunOptions,
   type ReverseRunInput,
   type RunCommandInput,
+  type RunApplyInput,
   type RunCommandResult,
   type RunEventsPage,
   type RunEventsQuery,
@@ -67,6 +69,9 @@ import {
 import { CLEANUP_REQUEST_KEY, RunEngineService, type CleanupRequest } from "./run-engine.service";
 import { ATTACH_STEPS, COMMAND_STEPS, OPEN_STATUSES, approvalExpiry, deriveStepAllowed, hashOf, isTerminal, isWaitingStep, serverMapOf, stripSince } from "./run-logic";
 import { RUN_ENV, RUN_IMPORT, RUN_SINK, RUN_STORE, type RunEnvPort, type RunImportPort, type RunSessionInfo, type RunSinkPort } from "./run-ports";
+import { RUN_HINTS, type RunHint, type RunHintStore } from "../steps/import/baseline/run-hints";
+import { servicePinKey } from "../steps/import/baseline/image-pins";
+import { openWarnings } from "./dry-run-warnings";
 import { INVENTORY_ATTEST } from "../steps/data/inventory/cross-check";
 import { TICK_GAP_CHECK, TICK_GAP_GATE_CHECK, tickGapNote } from "../steps/data/tick-gap";
 import { HOST_REPORT_PORT, HostCommandError, RUN_HOST_COMMANDS, type HostReportPort, type RunHostCommandPort } from "../steps/data/inventory/inventory-contract";
@@ -89,6 +94,8 @@ export class MigrationRunsService implements MigrationRunsFacade {
     // classic single-host facade, and specs that do not need them, work without)
     @Optional() @Inject(RUN_HOST_COMMANDS) private readonly hostCommands?: RunHostCommandPort,
     @Optional() @Inject(HOST_REPORT_PORT) private readonly hostReports?: HostReportPort,
+    // the run hints (accepted warnings, pins): a finished dry run is promoted only with its warnings settled
+    @Optional() @Inject(RUN_HINTS) private readonly hints?: RunHintStore,
   ) {
     this.engine.terminalHook = (runId) => this.persistReport(runId);
   }
@@ -158,8 +165,10 @@ export class MigrationRunsService implements MigrationRunsFacade {
     const serverMap = serverMapOf(body.serverMap ?? {});
     await this.assertTargetsInTeam(server.teamId, serverMap);
 
-    const applyInput = RunApplyInputSchema.parse(pickApply(body));
-    await this.assertPlanFresh(actor, session, applyInput);
+    const base = RunApplyInputSchema.parse(pickApply(body));
+    await this.assertPlanFresh(actor, session, base);
+    const scoped = body.scope ? await this.scopedApply(actor, session, body, base, serverMap) : null;
+    const applyInput = scoped?.applyInput ?? base;
     const sourceVersion = await this.captureSourceVersion(actor, session);
 
     const run = await this.insert(actor, {
@@ -180,11 +189,41 @@ export class MigrationRunsService implements MigrationRunsFacade {
       options: RunOptionsSchema.parse(body.options),
       inputs: stampInputs(body.inputs, actor.userId, this.engine.clock.now()),
     });
-    await this.event(run.id, actor, "run.created", "info", null, { dryRun: run.dryRun, mode: run.mode, topology: run.topology, targets: this.targetIds(run).length });
+    const scopeParams = scoped ? { scoped: true, kept: scoped.kept, excluded: scoped.excluded } : {};
+    await this.event(run.id, actor, "run.created", "info", null, { dryRun: run.dryRun, mode: run.mode, topology: run.topology, targets: this.targetIds(run).length, ...scopeParams });
     await this.sourceVersionEvent(run, actor);
-    await this.audit(actor, "create", run.id, { dryRun: run.dryRun, mode: run.mode, topology: run.topology, serverId: server.id, serverIds: this.targetIds(run), planHash: body.planHash, ...(run.campaign ? { campaign: run.campaign } : {}) });
+    await this.audit(actor, "create", run.id, { dryRun: run.dryRun, mode: run.mode, topology: run.topology, serverId: server.id, serverIds: this.targetIds(run), planHash: body.planHash, ...(run.campaign ? { campaign: run.campaign } : {}), ...scopeParams });
     if (run.dryRun) this.engine.kick(run.id, "enter");
     return this.view(run);
+  }
+
+  /**
+   * Turn the create body's `scope` into the frozen apply input of a narrowed run: the importer's own exclusions (`include: false` rows
+   * of a mapping document, skipped service stacks) bound by the mapping hash the later steps re-check. The importer port resolves it
+   * against the live plan, so a server, project or item the plan does not have is a 400 and a scope that keeps nothing is a 400.
+   */
+  private async scopedApply(actor: RunActor, session: RunSessionInfo, body: CreateMigrationRunInput, base: RunApplyInput, serverMap: Record<string, string>): Promise<{ applyInput: RunApplyInput; kept: number; excluded: number }> {
+    if (!this.imp.scopeApply || !body.scope) throw bad("scope-unsupported");
+    const r = await this.imp.scopeApply(actor.userId, {
+      sessionId: session.id,
+      sourceKind: body.sourceKind,
+      planHash: body.planHash,
+      targetServerId: body.targetServerId,
+      ...(base.environmentId ? { environmentId: base.environmentId } : {}),
+      ...(base.reconcile !== undefined ? { reconcile: base.reconcile } : {}),
+      ...(base.dbDataModes ? { dbDataModes: base.dbDataModes } : {}),
+      ...(base.acks ? { acks: base.acks } : {}),
+      ...(Object.keys(serverMap).length ? { serverMap } : {}),
+      ...(base.serviceChoices ? { serviceChoices: base.serviceChoices } : {}),
+      scope: body.scope,
+    });
+    if (!r.ok) throw bad(r.code);
+    if (r.serviceChoices && Object.keys(r.serviceChoices).length > MAX_SERVICE_CHOICES) throw bad("too-many-service-choices");
+    return {
+      applyInput: RunApplyInputSchema.parse({ ...base, mapping: r.mapping, mappingHash: r.mappingHash, ...(r.serviceChoices ? { serviceChoices: r.serviceChoices } : {}) }),
+      kept: r.kept,
+      excluded: r.excluded,
+    };
   }
 
   /**
@@ -282,10 +321,14 @@ export class MigrationRunsService implements MigrationRunsFacade {
 
   /** A dry-run becomes a NEW real run: frozen inputs copied, the plan hash re-validated against the live source. */
   private async promote(actor: RunActor, from: RunRow, body: StartRunInput): Promise<MigrationRunView> {
+    const hints = this.hints ? await this.hints.list(from.id) : [];
+    // the decision screen's rule, kept on the hub: a warning is accepted or fixed before the real run starts
+    const open = openWarnings(await this.store.steps(from.id), hints);
+    if (open.length) throw new ConflictException({ statusCode: 409, message: "dry-run-warnings-open", warnings: open });
     const sessionId = body.sessionId ?? from.sessionId;
     if (!sessionId) throw bad("session-required");
     const session = await this.requireSession(actor, sessionId, from.sourceKind);
-    const apply = RunApplyInputSchema.parse(from.applyInput);
+    const apply = withServicePins(RunApplyInputSchema.parse(from.applyInput), hints);
     await this.assertPlanFresh(actor, session, apply);
     this.assertHandlers(from.mode as RunMode);
     const serverMap = serverMapOf(from.serverMap);
@@ -796,6 +839,28 @@ function eventView(e: EventRow): RunEventsPage["events"][number] {
     params: (e.params as RunEventsPage["events"][number]["params"]) ?? null,
     actorId: e.actorId,
   };
+}
+
+/** The most per-service choices an apply input holds (the importer's own limit). */
+const MAX_SERVICE_CHOICES = 64;
+
+/**
+ * Write the pins recorded on a dry run (`service-pin` hints) into the stacks' choices, so the real run deploys the pinned version of
+ * each member. A skipped stack takes none. More stacks than the importer takes choices for is a 400.
+ */
+export function withServicePins(apply: RunApplyInput, hints: readonly RunHint[]): RunApplyInput {
+  const pins = hints.filter((h) => h.kind === "service-pin");
+  if (!pins.length) return apply;
+  const choices: Record<string, ServiceChoice> = { ...(apply.serviceChoices ?? {}) };
+  for (const h of pins) {
+    const at = h.key.lastIndexOf("#");
+    const itemRef = h.key.slice(0, at);
+    const member = h.key.slice(at + 1);
+    if (h.key !== servicePinKey(itemRef, member) || choices[itemRef]?.skip) continue;
+    choices[itemRef] = { ...(choices[itemRef] ?? {}), pins: { ...(choices[itemRef]?.pins ?? {}), [member]: h.value } };
+  }
+  if (Object.keys(choices).length > MAX_SERVICE_CHOICES) throw bad("too-many-service-choices");
+  return RunApplyInputSchema.parse({ ...apply, serviceChoices: choices });
 }
 
 /** The apply fields of a create body (the same names the importer's apply takes), without the undefined ones. */

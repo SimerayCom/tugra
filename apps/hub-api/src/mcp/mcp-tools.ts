@@ -1002,6 +1002,18 @@ export const MCP_TOOLS: McpTool[] = [
         dryRun: { type: "boolean", description: "default TRUE for agents" },
         serverMap: { type: "object", description: "multi-host placement: { <source server uuid>: <Tugra server id> }, at most 64 entries, every source server listed; targetServerId is the default for none", additionalProperties: { type: "string" } },
         campaign: { type: "string", description: "a label (1-80 printable characters) that groups the runs of one campaign" },
+        scope: {
+          type: "object",
+          description:
+            "move only part of the source: sourceServers (source server uuids from the plan's item refs) and/or projects (source project refs from the plan's preflight.projects) bring their items; include adds item refs on top, exclude leaves item refs out and always wins (item refs are app:/database:/service: refs from the plan). The hub leaves everything else out of the run, so it moves exactly the chosen items; a ref the plan does not have, or a scope that keeps nothing, is refused. Do not combine with mapping. Absent = the whole source.",
+          properties: {
+            sourceServers: { type: "array", items: { type: "string" } },
+            projects: { type: "array", items: { type: "string" } },
+            include: { type: "array", items: { type: "string" } },
+            exclude: { type: "array", items: { type: "string" } },
+          },
+          additionalProperties: false,
+        },
         options: {
           type: "object",
           description:
@@ -1060,7 +1072,7 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "migration_run_start",
     description:
-      "Start a QUEUED run, or PROMOTE a DRY_RUN_DONE run: promotion creates a NEW real run (frozen inputs copied, planHash re-validated) and returns THAT run, whose id differs from the one you passed. sessionId is only needed when the dry run's source session expired. The run then drives itself and stops at every step that needs an operator, an approval or a timer: read migration_run_status.nextAction.",
+      "Start a QUEUED run, or PROMOTE a DRY_RUN_DONE run: promotion creates a NEW real run (frozen inputs copied, planHash re-validated) and returns THAT run, whose id differs from the one you passed. sessionId is only needed when the dry run's source session expired. Promotion is refused with 409 dry-run-warnings-open (and the list of warning keys) while the dry run still has warnings that a person has neither accepted nor fixed on its result screen: an agent cannot accept them, tell the human. The run then drives itself and stops at every step that needs an operator, an approval or a timer: read migration_run_status.nextAction.",
     scope: "deploy",
     inputSchema: { type: "object", properties: { runId: { type: "string" }, sessionId: { type: "string" } }, required: ["runId"] },
     execute: async (d, userId, a, ctx) => d.migrationRuns.start(mcpActor(userId, ctx), reqRunId(a), parseWith(StartRunSchema, optStr(a, "sessionId") ? { sessionId: optStr(a, "sessionId") } : {})),

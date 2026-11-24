@@ -1,15 +1,20 @@
 import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from "@nestjs/common";
 import { RunSafetyController } from "./safety.controller";
-import { SafetyHintsSchema, SetImagePinsSchema, SetWarningAcksSchema, SetWorkerMarksSchema } from "./hints.dto";
+import { SafetyHintsSchema, SetImagePinsSchema, SetServicePinsSchema, SetWarningAcksSchema, SetWorkerMarksSchema } from "./hints.dto";
 import { InMemoryRunHints } from "./run-hints";
 import type { AuthUser } from "../../../../auth/strategies/jwt.strategy";
 
 const D = `sha256:${"e".repeat(64)}`;
 const user = (userId = "u1") => ({ userId, scopes: ["*"] }) as unknown as AuthUser;
 
-function setup(run: Record<string, unknown> | null = {}, perms: string[] | null = ["apps:config", "databases"]) {
+/** The progress of a dry-run step that shows one warn item per key (`code:risk` for a risk warning), plus any ready-made items. */
+const warnStep = (keys: string[], extra: Array<Record<string, unknown>> = []) => ({
+  progress: { dryRun: [...keys.map((k) => (k.startsWith("import.risk-warning:") ? { code: "import.risk-warning", level: "warn", params: { risk: k.slice("import.risk-warning:".length) } } : { code: k, level: "warn" })), ...extra] },
+});
+
+function setup(run: Record<string, unknown> | null = {}, perms: string[] | null = ["apps:config", "databases"], steps: Array<{ progress: unknown }> = []) {
   const row = run === null ? null : { id: "r1", teamId: "t1", actorId: "u1", status: "WAITING", ponrAt: null, promotedFromId: null, ...run };
-  const prisma = { migrationRun: { findUnique: jest.fn().mockResolvedValue(row) } };
+  const prisma = { migrationRun: { findUnique: jest.fn().mockResolvedValue(row) }, migrationRunStep: { findMany: jest.fn().mockResolvedValue(steps) } };
   const access = { membershipPermissions: jest.fn().mockResolvedValue(perms ? new Set(perms) : null) };
   const hints = new InMemoryRunHints();
   return { c: new RunSafetyController(prisma as never, access as never, hints), hints, prisma, access };
@@ -52,7 +57,7 @@ describe("RunSafetyController", () => {
 
   it("writing needs the team permissions driving the run needs; reading needs membership only", async () => {
     const s = setup({}, ["apps:config"]);
-    await expect(s.c.get(user(), "r1")).resolves.toEqual({ imagePins: [], workerMarks: [], warningAcks: [] });
+    await expect(s.c.get(user(), "r1")).resolves.toEqual({ imagePins: [], workerMarks: [], warningAcks: [], servicePins: [], warningsFixed: [] });
     await expect(s.c.setMarks(user(), "r1", SetWorkerMarksSchema.parse({ marks: [{ itemRef: "app:s:q", role: "web" }] }))).rejects.toBeInstanceOf(ForbiddenException);
   });
 
@@ -68,7 +73,7 @@ describe("RunSafetyController warning acks", () => {
   const done = { status: "DRY_RUN_DONE" };
 
   it("records, answers and takes back the warnings accepted on a finished dry-run", async () => {
-    const { c, hints } = setup(done);
+    const { c, hints } = setup(done, undefined, [warnStep(["import.risk-warning:service.image.floating", "data-seed.volume-excluded"])]);
     const a = await c.setWarningAcks(user(), "r1", SetWarningAcksSchema.parse({ acks: [{ key: "import.risk-warning:service.image.floating", accepted: true }, { key: "data-seed.volume-excluded", accepted: true }] }));
     expect(a.warningAcks).toEqual(["data-seed.volume-excluded", "import.risk-warning:service.image.floating"]);
     expect(SafetyHintsSchema.parse(a)).toEqual(a);
@@ -78,7 +83,7 @@ describe("RunSafetyController warning acks", () => {
   });
 
   it("is idempotent and keeps the pins and marks apart", async () => {
-    const { c } = setup(done);
+    const { c } = setup(done, undefined, [warnStep(["a.b"])]);
     await c.setMarks(user(), "r1", SetWorkerMarksSchema.parse({ marks: [{ itemRef: "app:s:q", role: "web" }] }));
     const body = SetWarningAcksSchema.parse({ acks: [{ key: "a.b", accepted: true }] });
     await c.setWarningAcks(user(), "r1", body);
@@ -100,11 +105,17 @@ describe("RunSafetyController warning acks", () => {
   });
 
   it("keeps at most 200 accepted keys per run, however many calls it takes", async () => {
-    const { c } = setup(done);
+    const { c } = setup(done, undefined, [warnStep(Array.from({ length: 201 }, (_, i) => `a.k${i}`))]);
     const batch = (from: number, n: number) => SetWarningAcksSchema.parse({ acks: Array.from({ length: n }, (_, i) => ({ key: `a.k${from + i}`, accepted: true })) });
     await c.setWarningAcks(user(), "r1", batch(0, 200));
     await expect(c.setWarningAcks(user(), "r1", batch(200, 1))).rejects.toBeInstanceOf(BadRequestException);
     await expect(c.setWarningAcks(user(), "r1", batch(0, 200))).resolves.toBeDefined(); // the same keys again change nothing
+  });
+
+  it("takes only a warning this dry run showed: another key is a 400, taking one back is always fine", async () => {
+    const { c } = setup(done, undefined, [warnStep(["a.b"])]);
+    await expect(c.setWarningAcks(user(), "r1", SetWarningAcksSchema.parse({ acks: [{ key: "x.y", accepted: true }] }))).rejects.toBeInstanceOf(BadRequestException);
+    await expect(c.setWarningAcks(user(), "r1", SetWarningAcksSchema.parse({ acks: [{ key: "x.y", accepted: false }] }))).resolves.toBeDefined();
   });
 
   it("is scoped to the creator and to team members who may drive the run", async () => {
@@ -121,6 +132,55 @@ describe("RunSafetyController warning acks", () => {
     expect(SetWarningAcksSchema.safeParse({ acks: [{ key: "a.b", accepted: true, x: 1 }] }).success).toBe(false);
     expect(SetWarningAcksSchema.safeParse({ acks: [{ key: "import.risk-warning:service.image.floating", accepted: false }] }).success).toBe(true);
     expect(SetWarningAcksSchema.safeParse({ acks: Array.from({ length: 201 }, (_, i) => ({ key: `a.k${i}`, accepted: true })) }).success).toBe(false);
+  });
+});
+
+describe("RunSafetyController service pins", () => {
+  const done = { status: "DRY_RUN_DONE" };
+  const IT = "service:src-a:svc1";
+  const floating = {
+    code: "import.risk-warning",
+    level: "warn",
+    params: { risk: "service.image.floating", count: 1, imageCount: 2, imageItems: [IT, IT], imageMembers: ["meili", "web"], images: ["getmeili/meilisearch:latest", "ghcr.io/acme/web"], imageSeen: ["getmeili/meilisearch:v1.8.0", ""] },
+  };
+  const steps = [{ progress: { dryRun: [floating] } }];
+  const body = (pins: Array<{ itemRef: string; member: string; ref: string | null }>) => SetServicePinsSchema.parse({ pins });
+
+  it("pins a listed member to a version of its own repository, answers the whole set and marks what is fixed", async () => {
+    const { c, hints } = setup(done, undefined, steps);
+    const a = await c.setServicePins(user(), "r1", body([{ itemRef: IT, member: "meili", ref: "getmeili/meilisearch:v1.8.0" }]));
+    expect(a.servicePins).toEqual([{ itemRef: IT, member: "meili", ref: "getmeili/meilisearch:v1.8.0", evidence: "source-api-reported" }]);
+    expect(a.warningsFixed).toEqual([]); // the second image is still floating
+    const b = await c.setServicePins(user(), "r1", body([{ itemRef: IT, member: "web", ref: `ghcr.io/acme/web@sha256:${"a".repeat(64)}` }]));
+    expect(b.servicePins.find((p) => p.member === "web")?.evidence).toBe("operator-attested");
+    expect(b.warningsFixed).toEqual(["import.risk-warning:service.image.floating"]);
+    expect(SafetyHintsSchema.parse(b)).toEqual(b);
+    const d = await c.setServicePins(user(), "r1", body([{ itemRef: IT, member: "web", ref: null }]));
+    expect(d.servicePins).toHaveLength(1);
+    expect(d.warningsFixed).toEqual([]);
+    expect((await hints.list("r1")).filter((h) => h.kind === "service-pin")).toHaveLength(1);
+  });
+
+  it("refuses a member the dry run did not list, another repository, a floating ref and too many pins", async () => {
+    const { c } = setup(done, undefined, steps);
+    await expect(c.setServicePins(user(), "r1", body([{ itemRef: IT, member: "ghost", ref: "getmeili/meilisearch:v1" }]))).rejects.toBeInstanceOf(BadRequestException);
+    await expect(c.setServicePins(user(), "r1", body([{ itemRef: IT, member: "meili", ref: "evil/meilisearch:v1" }]))).rejects.toBeInstanceOf(BadRequestException);
+    await expect(c.setServicePins(user(), "r1", body([{ itemRef: IT, member: "meili", ref: "getmeili/meilisearch:latest" }]))).rejects.toBeInstanceOf(BadRequestException);
+    await expect(c.setServicePins(user(), "r1", body([{ itemRef: IT, member: "meili", ref: "getmeili/meilisearch" }]))).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it("only a finished dry-run takes pins, only for the creator who may drive the run", async () => {
+    const b = body([{ itemRef: IT, member: "meili", ref: "getmeili/meilisearch:v1" }]);
+    await expect(setup({ status: "WAITING" }, undefined, steps).c.setServicePins(user(), "r1", b)).rejects.toBeInstanceOf(ConflictException);
+    await expect(setup({ ...done, actorId: "other" }, undefined, steps).c.setServicePins(user(), "r1", b)).rejects.toBeInstanceOf(NotFoundException);
+    await expect(setup(done, ["apps:config"], steps).c.setServicePins(user(), "r1", b)).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it("the body takes a service item, a compose key and a well-formed ref", () => {
+    expect(SetServicePinsSchema.safeParse({ pins: [{ itemRef: "app:s:x", member: "m", ref: "a:b" }] }).success).toBe(false);
+    expect(SetServicePinsSchema.safeParse({ pins: [{ itemRef: IT, member: "m m", ref: "a:b" }] }).success).toBe(false);
+    expect(SetServicePinsSchema.safeParse({ pins: [{ itemRef: IT, member: "m", ref: "a b" }] }).success).toBe(false);
+    expect(SetServicePinsSchema.safeParse({ pins: [{ itemRef: IT, member: "m", ref: "a:b", x: 1 }] }).success).toBe(false);
   });
 });
 

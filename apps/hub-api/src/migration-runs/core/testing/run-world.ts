@@ -17,6 +17,7 @@ import type { RollbackOptions } from "../../../importer/import-executor.service"
 import { DeployDarkStep } from "../../steps/import/deploy-dark.step";
 import { ImportStep } from "../../steps/import/import.step";
 import type { DeploymentRef, ImportStepsPort, OpSnapshot, OpTask, RemapApplyResult, RemapSummary, ResourceState, SessionState, TargetFacts } from "../../steps/import/import-ports";
+import { InMemoryRunHints } from "../../steps/import/baseline/run-hints";
 import { PreflightStep } from "../../steps/import/preflight.step";
 import { RemapEnvStep } from "../../steps/import/remap-env.step";
 import { MigrationRunsService } from "../migration-runs.service";
@@ -41,7 +42,9 @@ import {
 } from "../run-contract";
 import { RunEngineService } from "../run-engine.service";
 import { RunRecoveryService } from "../run-recovery.service";
-import type { RunEnvPort, RunNotification, RunSessionInfo, RunSinkPort } from "../run-ports";
+import type { RunEnvPort, RunImportPort, RunNotification, RunSessionInfo, RunSinkPort } from "../run-ports";
+import { applyScope, resolveScope } from "../run-scope";
+import { openWarnings } from "../dry-run-warnings";
 import {
   ServerHasLiveRunError,
   type EventInput,
@@ -521,6 +524,16 @@ export class ScriptedImportPort implements ImportStepsPort {
     this.reads.push("planHash");
     return this.plan_.planHash;
   }
+  /** The last scope request the service made (what the real port would resolve against the live plan). */
+  scopeCalls: Array<Parameters<NonNullable<ScriptedImportPort["scopeApply"]>>[1]> = [];
+  async scopeApply(_u: string, i: Parameters<NonNullable<RunImportPort["scopeApply"]>>[1]): ReturnType<NonNullable<RunImportPort["scopeApply"]>> {
+    this.reads.push("scopeApply");
+    this.scopeCalls.push(i);
+    const r = resolveScope(this.plan_, i.scope);
+    if ("fail" in r) return { ok: false, code: r.fail };
+    const { mapping, serviceChoices } = applyScope(this.plan_, r.inScope, { ...(i.serviceChoices ? { serviceChoices: i.serviceChoices } : {}) });
+    return { ok: true, mapping, mappingHash: "f".repeat(32), ...(serviceChoices ? { serviceChoices } : {}), kept: r.kept, excluded: r.excluded };
+  }
   async resolveMapping(_u: string, _i: ImportMappingResolveInput): Promise<ResolvedMapping> {
     this.reads.push("resolveMapping");
     if (!this.mappingResult) throw new Error("no mapping");
@@ -800,6 +813,8 @@ export class RunWorld {
   readonly env = new FakeEnv(this.clock);
   readonly sink = new FakeSink();
   readonly port = new ScriptedImportPort(this.clock);
+  /** the run hints (accepted warnings, pins) the service reads when it promotes a dry-run */
+  readonly hints = new InMemoryRunHints();
   /** the effects of stand-in steps, in order (e.g. `flip`) */
   readonly effects: string[] = [];
   readonly done = new Set<string>();
@@ -832,7 +847,7 @@ export class RunWorld {
     this.engine.clock = this.clock;
     this.engine.options = { heartbeatMs: 0 };
     if (!this.opts.autoKick) this.engine.kick = () => undefined;
-    this.service = new MigrationRunsService(this.store, this.engine, this.registry, this.env, this.sink, this.port);
+    this.service = new MigrationRunsService(this.store, this.engine, this.registry, this.env, this.sink, this.port, undefined, undefined, this.hints);
     this.recovery = new RunRecoveryService(this.store, this.engine, this.sink);
   }
 
@@ -861,6 +876,13 @@ export class RunWorld {
   async create(over: Partial<CreateMigrationRunInput> = {}, actor: RunActor = ACTOR): Promise<string> {
     const v = await this.service.create(actor, this.createBody(over));
     return v.id;
+  }
+
+  /** The operator's "Accept all" on a finished dry-run: every open warning is accepted, so the spec can promote it. */
+  async acceptWarnings(id: string): Promise<string[]> {
+    const keys = openWarnings(await this.store.steps(id), await this.hints.list(id));
+    await this.hints.upsert(id, keys.map((key) => ({ kind: "warning-ack" as const, key, scope: "", value: "accepted", evidence: "operator-attested" as const })));
+    return keys;
   }
 
   async start(id: string, actor: RunActor = ACTOR): Promise<void> {

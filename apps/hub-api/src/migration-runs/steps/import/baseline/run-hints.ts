@@ -1,8 +1,10 @@
 /**
  * Run hints (grup-7 safety lane): the operator- or host-attested facts the import-side steps consult and the run's own columns
- * cannot hold. Three kinds, all secret-free:
+ * cannot hold. Four kinds, all secret-free:
  *  - `image-pin`: key = the image ref as the plan shows it, scope = the source server uuid ("" = every server), value = `sha256:<64 hex>`;
  *  - `worker-mark`: key = the plan itemRef, scope = "", value = `job-runner` | `web`;
+ *  - `service-pin`: key = `<service itemRef>#<member>`, scope = "", value = the image ref (a version tag or `repo@sha256:...` of the member's own
+ *    repository) a compose stack's floating member is pinned to; a promoted run writes it into the stack's `serviceChoices.pins`;
  *  - `warning-ack`: key = the dry-run warning key (see `WARNING_ACK_KEY`), scope = "", value = `accepted`: the operator read that
  *    warning on the dry-run result and accepts it. It changes no step: it is the record the result screen and the promoted run show.
  * They are keyed by run; a run promoted from a dry-run also reads its parent's (see {@link RunHintStore.list}).
@@ -13,7 +15,7 @@ import { PrismaService } from "../../../../prisma/prisma.service";
 /** Nest token of the {@link RunHintStore}. */
 export const RUN_HINTS = Symbol("MIGRATION_RUN_HINTS");
 
-export const HINT_KINDS = ["image-pin", "worker-mark", "warning-ack"] as const;
+export const HINT_KINDS = ["image-pin", "worker-mark", "warning-ack", "service-pin"] as const;
 export type HintKind = (typeof HINT_KINDS)[number];
 /** Who vouches for a hint. The hub verifies none of them: it cannot see the source host. */
 export const HINT_EVIDENCE = ["operator-attested", "host-loop-reported", "source-api-reported"] as const;

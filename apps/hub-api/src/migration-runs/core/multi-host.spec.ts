@@ -166,6 +166,7 @@ describe("one live run per target server covers every mapped server", () => {
     const w = world();
     const d = await w.create({ serverMap: MAP, campaign: "wave-1", dryRun: true });
     await w.settle(d);
+    await w.acceptWarnings(d);
     const real = await w.service.start(ACTOR, d, {});
     expect(w.store.row(real.id)).toMatchObject({ serverMap: MAP, campaign: "wave-1", promotedFromId: d });
     expect([...w.store.serverLocks.keys()].sort()).toEqual([SERVER, "srv2", "srv3"]);
@@ -330,6 +331,7 @@ describe("source version, baseline and run patches", () => {
     w.port.version_ = "4.2.0";
     const d = await w.create({ dryRun: true });
     await w.settle(d);
+    await w.acceptWarnings(d);
     w.port.version_ = null;
     const real = await w.service.start(ACTOR, d, {});
     expect(real.sourceVersion).toBe("4.2.0");

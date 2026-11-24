@@ -72,10 +72,41 @@ export const SetWarningAcksSchema = z
   .strict();
 export type SetWarningAcksInput = z.infer<typeof SetWarningAcksSchema>;
 
+/** The image ref a compose stack's floating member is pinned to: a version tag or a digest of its own repository (the hub checks the repository against the dry-run's own item). */
+const SERVICE_PIN_REF = z
+  .string()
+  .max(300)
+  .regex(/^[A-Za-z0-9][A-Za-z0-9._/-]{0,200}(:[A-Za-z0-9_][A-Za-z0-9._-]{0,127})?(@sha256:[a-f0-9]{64})?$/, "invalid image reference");
+
+/** `PUT /migration-runs/:id/service-pins`: pin (or, with `ref: null`, unpin) floating members of the compose stacks a finished dry run lists. */
+export const SetServicePinsSchema = z
+  .object({
+    pins: z
+      .array(
+        z
+          .object({
+            /** The plan itemRef of the service (`service:<server>:<uuid>`). */
+            itemRef: z.string().regex(/^service:[\x21-\x7e]{1,200}$/).max(340),
+            /** The compose service key. */
+            member: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$/),
+            ref: SERVICE_PIN_REF.nullable(),
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(100),
+  })
+  .strict();
+export type SetServicePinsInput = z.infer<typeof SetServicePinsSchema>;
+
 export const SafetyHintsSchema = z.object({
   imagePins: z.array(z.object({ image: z.string(), scope: z.string(), digest: z.string(), evidence: z.string() })),
   workerMarks: z.array(z.object({ itemRef: z.string(), role: z.enum(WORKER_MARKS) })),
   /** The dry-run warning keys the operator accepted. */
   warningAcks: z.array(z.string()),
+  /** The pins of compose-stack members recorded on a dry run (a promoted run carries them into its stack choices). */
+  servicePins: z.array(z.object({ itemRef: z.string(), member: z.string(), ref: z.string(), evidence: z.string() })),
+  /** The warning keys of a finished dry run that are settled by a fix (every floating image behind them is pinned); empty for any other run. */
+  warningsFixed: z.array(z.string()),
 });
 export type SafetyHints = z.infer<typeof SafetyHintsSchema>;

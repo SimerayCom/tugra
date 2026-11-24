@@ -1,5 +1,5 @@
 import { Logger } from "@nestjs/common";
-import { ACTOR, RunWorld, SERVER, TEAM } from "./testing/run-world";
+import { ACTOR, RunWorld, SERVER, TEAM, defaultPlan } from "./testing/run-world";
 import { confirmMatches } from "./migration-runs.service";
 import { RunReportSchema, MigrationRunViewSchema, MigrationRunSummarySchema, RunEventsPageSchema } from "./dto";
 import type { ApprovalBinding } from "./dto";
@@ -99,6 +99,7 @@ describe("start and pause rules", () => {
     const w = new RunWorld();
     const d = await w.create({ dryRun: true });
     await w.settle(d);
+    await w.acceptWarnings(d);
     w.env.sessions.get("s1")!.state = "expired";
     await expect(w.service.start(ACTOR, d, {})).rejects.toThrow(/session-expired/);
     const s2 = await w.service.sourceSession(ACTOR, d, { token: "t" }).catch((e: Error) => e.message);
@@ -110,8 +111,140 @@ describe("start and pause rules", () => {
     w.env.sessions.get("s1")!.state = "active";
     const d2 = await w.create({ dryRun: true });
     await w.settle(d2);
+    await w.acceptWarnings(d2);
     w.port.plan_ = { ...w.port.plan_, planHash: "e".repeat(32) };
     await expect(w.service.start(ACTOR, d2, {})).rejects.toThrow(/plan-changed/);
+  });
+});
+
+/** Put dry-run items on the first step of a (finished) dry-run, as its handlers would have projected them. */
+function seedDryRun(w: RunWorld, id: string, items: Array<Record<string, unknown>>): void {
+  const row = w.store.stepRows.get(id)![0];
+  (row as { progress: unknown }).progress = { done: 0, total: 0, unit: "items", dryRun: items };
+}
+
+describe("promoting a finished dry-run with warnings", () => {
+  const warn = { code: "import.risk-warning", level: "warn", params: { risk: "app.git.private", count: 1, items: ["web"] } };
+  const KEY = "import.risk-warning:app.git.private";
+
+  it("refuses with the open warnings (409) until each is accepted, and then promotes", async () => {
+    const w = new RunWorld();
+    const d = await w.create({ dryRun: true });
+    await w.settle(d);
+    seedDryRun(w, d, [warn, { code: "data-seed.volume-excluded", level: "warn" }]);
+    const err = await w.service.start(ACTOR, d, {}).catch((e) => e);
+    expect(err.getStatus()).toBe(409);
+    expect(err.getResponse()).toMatchObject({ message: "dry-run-warnings-open", warnings: ["data-seed.volume-excluded", KEY] });
+    expect(await w.service.list(ACTOR, { limit: 10 })).toHaveLength(1); // nothing was created
+    await w.hints.upsert(d, [{ kind: "warning-ack", key: KEY, scope: "", value: "accepted", evidence: "operator-attested" }]);
+    await expect(w.service.start(ACTOR, d, {})).rejects.toMatchObject({ response: { warnings: ["data-seed.volume-excluded"] } });
+    await w.hints.upsert(d, [{ kind: "warning-ack", key: "data-seed.volume-excluded", scope: "", value: "accepted", evidence: "operator-attested" }]);
+    const ok = await w.service.start(ACTOR, d, {});
+    expect(ok.promotedFromId).toBe(d);
+  });
+
+  it("taking an acceptance back holds Start again; info and blocking items are not warnings", async () => {
+    const w = new RunWorld();
+    const d = await w.create({ dryRun: true });
+    await w.settle(d);
+    seedDryRun(w, d, [{ code: "x.info", level: "info" }, warn]);
+    const hint = { kind: "warning-ack" as const, key: KEY, scope: "", value: "accepted", evidence: "operator-attested" as const };
+    await w.hints.upsert(d, [hint]);
+    await w.hints.remove(d, [hint]);
+    await expect(w.service.start(ACTOR, d, {})).rejects.toThrow(/dry-run-warnings-open/);
+    seedDryRun(w, d, [{ code: "x.info", level: "info" }, { code: "x.block", level: "block" }]);
+    await expect(w.service.start(ACTOR, d, {})).resolves.toBeDefined();
+  });
+
+  it("a warning fixed by pins needs no acceptance, and the pins reach the promoted run's stack choices", async () => {
+    const w = new RunWorld();
+    const d = await w.create({ dryRun: true });
+    await w.settle(d);
+    const svc = "service:_:abc";
+    const floating = { code: "import.risk-warning", level: "warn", params: { risk: "service.image.floating", count: 1, imageCount: 1, imageItems: [svc], imageMembers: ["meili"], images: ["getmeili/meilisearch:latest"], imageSeen: [""] } };
+    seedDryRun(w, d, [floating]);
+    await expect(w.service.start(ACTOR, d, {})).rejects.toThrow(/dry-run-warnings-open/);
+    await w.hints.upsert(d, [{ kind: "service-pin", key: `${svc}#meili`, scope: "", value: "getmeili/meilisearch:v1.8.0", evidence: "operator-attested" }]);
+    const run = await w.service.start(ACTOR, d, {});
+    expect(w.store.row(run.id).applyInput).toMatchObject({ serviceChoices: { [svc]: { pins: { meili: "getmeili/meilisearch:v1.8.0" } } } });
+    expect(w.store.row(d).applyInput).not.toHaveProperty("serviceChoices"); // the dry-run's own frozen input is untouched
+  });
+
+  it("pins never reach a stack the run skips, and more stacks than the importer takes choices for is a 400", async () => {
+    const w = new RunWorld();
+    const svc = "service:_:abc";
+    const d = await w.create({ dryRun: true, serviceChoices: { [svc]: { skip: true } } });
+    await w.settle(d);
+    await w.acceptWarnings(d);
+    await w.hints.upsert(d, [{ kind: "service-pin", key: `${svc}#meili`, scope: "", value: "a/b:v1", evidence: "operator-attested" }]);
+    const run = await w.service.start(ACTOR, d, {});
+    expect(w.store.row(run.id).applyInput).toMatchObject({ serviceChoices: { [svc]: { skip: true } } });
+    expect(JSON.stringify(w.store.row(run.id).applyInput)).not.toContain("a/b:v1");
+    const choices = Object.fromEntries(Array.from({ length: 64 }, (_, i) => [`service:_:s${i}`, { name: `n${i}` }]));
+    const d2 = await w.create({ dryRun: true, serviceChoices: choices });
+    await w.settle(d2);
+    await w.acceptWarnings(d2);
+    await w.hints.upsert(d2, [{ kind: "service-pin", key: "service:_:extra#m", scope: "", value: "a/b:v1", evidence: "operator-attested" }]);
+    await expect(w.service.start(ACTOR, d2, {})).rejects.toThrow(/too-many-service-choices/);
+  });
+});
+
+describe("a scoped run", () => {
+  const plan = () =>
+    defaultPlan({
+      items: [
+        { itemRef: "database:srvA:db1", kind: "database", name: "pg-main", proposed: {}, risks: [], dependsOn: [] },
+        { itemRef: "app:srvA:web", kind: "app", name: "web", proposed: { domain: "web.example.com" }, risks: [], dependsOn: ["database:srvA:db1"] },
+        { itemRef: "app:srvB:api", kind: "app", name: "api", proposed: { domain: "api.example.com" }, risks: [], dependsOn: [] },
+        { itemRef: "service:srvB:meili", kind: "service", name: "meili", proposed: {}, risks: [], dependsOn: [] },
+      ],
+      preflight: { databases: [], services: [], appsWithVolumeData: 0, hosts: [{ ref: "srvA" }, { ref: "srvB" }] },
+    });
+
+  it("freezes the importer's own exclusions and the mapping hash, and says so on the run", async () => {
+    const w = new RunWorld();
+    w.port.plan_ = plan();
+    const id = await w.create({ scope: { sourceServers: ["srvA"] }, serverMap: { srvA: SERVER }, acks: [{ code: "app.env.unresolved", itemRef: "app:srvA:web" }] });
+    const row = w.store.row(id);
+    expect(row.applyInput).toMatchObject({
+      mapping: { items: { "app:srvB:api": { include: false } } },
+      mappingHash: "f".repeat(32),
+      serviceChoices: { "service:srvB:meili": { skip: true } },
+    });
+    expect(w.port.scopeCalls[0]).toMatchObject({ planHash: "d".repeat(32), targetServerId: SERVER, serverMap: { srvA: SERVER }, scope: { sourceServers: ["srvA"] } });
+    expect(w.port.scopeCalls[0].acks).toHaveLength(1);
+    const created = (await w.service.events(ACTOR, id, { afterSeq: 0, limit: 10 })).events.find((e) => e.code === "run.created");
+    expect(created?.params).toMatchObject({ scoped: true, kept: 2, excluded: 2 });
+    expect(w.sink.audits.find((a) => a.action === "migration.run.create")?.meta).toMatchObject({ scoped: true, kept: 2, excluded: 2 });
+  });
+
+  it("a promoted dry-run keeps the narrowed scope", async () => {
+    const w = new RunWorld();
+    w.port.plan_ = plan();
+    const d = await w.create({ dryRun: true, scope: { sourceServers: ["srvB"] } });
+    await w.settle(d);
+    await w.acceptWarnings(d);
+    const run = await w.service.start(ACTOR, d, {});
+    expect(w.store.row(run.id).applyInput).toMatchObject({ mapping: { items: { "app:srvA:web": { include: false }, "database:srvA:db1": { include: false } } } });
+  });
+
+  it("answers a scope the plan cannot satisfy with a stable 400 and creates nothing", async () => {
+    const w = new RunWorld();
+    w.port.plan_ = plan();
+    await expect(w.create({ scope: { sourceServers: ["ghost"] } })).rejects.toThrow(/scope-unknown-server/);
+    await expect(w.create({ scope: { projects: ["ghost"] } })).rejects.toThrow(/scope-unknown-project/);
+    await expect(w.create({ scope: { sourceServers: ["srvA"], exclude: ["app:srvA:ghost"] } })).rejects.toThrow(/scope-unknown-item/);
+    await expect(w.create({ scope: { sourceServers: ["srvA"], exclude: ["app:srvA:web", "database:srvA:db1"] } })).rejects.toThrow(/scope-empty/);
+    expect(await w.service.list(ACTOR, { limit: 10 })).toEqual([]);
+  });
+
+  it("a stale plan wins over the scope (409), and a run without a scope is untouched by all of it", async () => {
+    const w = new RunWorld();
+    w.port.plan_ = plan();
+    await expect(w.create({ scope: { sourceServers: ["srvA"] }, planHash: "e".repeat(32) })).rejects.toThrow(/plan-changed/);
+    const id = await w.create();
+    expect(w.store.row(id).applyInput).not.toHaveProperty("mapping");
+    expect(w.port.scopeCalls).toEqual([]);
   });
 });
 

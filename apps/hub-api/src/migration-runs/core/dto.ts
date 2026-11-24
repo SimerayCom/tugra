@@ -428,6 +428,25 @@ const mappingPair = (v: { mapping?: unknown; mappingHash?: unknown }, ctx: z.Ref
 export const RunApplyInputSchema = z.object(applyFields).strict().superRefine(mappingPair);
 export type RunApplyInput = z.infer<typeof RunApplyInputSchema>;
 
+const ScopeRef = z.string().regex(/^[\x21-\x7e]{1,200}$/, "invalid ref");
+const ScopeItemRef = z.string().regex(/^(app|database|service):[\x21-\x7e]{1,280}$/, "invalid item ref");
+
+/**
+ * What a guided run moves when it is not the whole source: source servers and source projects to move (their items are in), items to
+ * pull in on top, items to leave out (always wins). Refs are the ones the plan shows. At least one of `sourceServers`, `projects`
+ * and `include` is needed; absent `scope` = everything. The hub turns it into the importer's own exclusions (see `run-scope.ts`).
+ */
+export const RunScopeSchema = z
+  .object({
+    sourceServers: z.array(ScopeRef).max(SERVER_MAP_MAX * 4).optional(),
+    projects: z.array(ScopeRef).max(500).optional(),
+    include: z.array(ScopeItemRef).max(2000).optional(),
+    exclude: z.array(ScopeItemRef).max(2000).optional(),
+  })
+  .strict()
+  .refine((s) => (s.sourceServers?.length ?? 0) + (s.projects?.length ?? 0) + (s.include?.length ?? 0) > 0, "a scope names at least one source server, project or item");
+export type RunScope = z.infer<typeof RunScopeSchema>;
+
 /**
  * `POST /migration-runs`. `sessionId` + `planHash` bind the run to the plan the caller reviewed (409 when the source
  * changed). `dryRun: true` creates a run that only projects (never writes outside its own rows) and ends `DRY_RUN_DONE`.
@@ -447,9 +466,16 @@ export const CreateMigrationRunSchema = z
     serverMap: ServerMapSchema.optional(),
     /** Groups the runs of one campaign (see {@link CampaignSchema}). */
     campaign: CampaignSchema.optional(),
+    /** Narrow the run to some source servers / projects / items (see {@link RunScopeSchema}). Absent = the whole source. Not combined with `mapping`. */
+    scope: RunScopeSchema.optional(),
   })
   .strict()
-  .superRefine(mappingPair);
+  .superRefine(mappingPair)
+  .superRefine((v, ctx) => {
+    if (v.scope && (v.mapping !== undefined || v.mappingHash !== undefined)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["scope"], message: "scope cannot be combined with mapping: the hub builds the mapping from the scope" });
+    }
+  });
 export type CreateMigrationRunInput = z.infer<typeof CreateMigrationRunSchema>;
 
 // ───────────────────────────── step / run action bodies ─────────────────────────────

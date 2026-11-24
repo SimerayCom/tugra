@@ -38,7 +38,7 @@ import { deployWindow } from "./baseline/build-window";
 import { preflightCrossCheck } from "./baseline/preflight-crosscheck";
 import { emptyHostView, loadHostView, type HostView } from "../data/inventory/host-view";
 import { HOST_REPORT_PORT, type HostReportPort } from "../data/inventory/inventory-contract";
-import { floatingImages } from "./baseline/image-pins";
+import { floatingImages, imageParams } from "./baseline/image-pins";
 import { RUN_HINTS, type RunHint, type RunHintStore } from "./baseline/run-hints";
 import { baselineItemRef, buildSourceBaseline, isDegradedAtSource, sameBaseline } from "./baseline/source-health";
 import { isWorker, markConflicts, unmatchedMarks, workerMarks, workerSets } from "./baseline/workers";
@@ -128,12 +128,12 @@ function safetyChecks(run: RunSnapshot, obs: PreflightObs, plan: ImportPlanRespo
   }
 
   // R11: a floating image is whatever the registry serves today, not what the source runs
-  const floating = floatingImages(items, run.applyInput, hints);
+  const floating = floatingImages(items, run.applyInput, hints, plan.preflight?.services);
   if (floating.length) {
     const open = floating.filter((f) => !f.pinned);
     out.push(
       open.length
-        ? { id: "preflight.images", status: "fail", code: "preflight.images-unpinned", params: { count: open.length, items: names(open.map((f) => (f.member ? `${f.name}/${f.member}` : f.name))) }, ackable: true, ...ev }
+        ? { id: "preflight.images", status: "fail", code: "preflight.images-unpinned", params: { count: open.length, items: names(open.map((f) => (f.member ? `${f.name}/${f.member}` : f.name))), ...imageParams(open) }, ackable: true, ...ev }
         : { id: "preflight.images", status: "pass", code: "preflight.images-pinned", params: { count: floating.length }, ...ev },
     );
   }

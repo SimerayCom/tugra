@@ -135,6 +135,7 @@ describe("RunEngine: dry-run writes nothing outside its own rows", () => {
     const w = new RunWorld();
     const d = await w.create({ dryRun: true, inputs: { allowBind: true } });
     await w.settle(d);
+    await w.acceptWarnings(d);
     const promoted = await w.service.start(ACTOR, d, {});
     expect(promoted.id).not.toBe(d);
     expect(promoted.promotedFromId).toBe(d);

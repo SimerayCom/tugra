@@ -3,8 +3,10 @@
  * service, the importer or the audit log directly: they go through these two seams, which the production module binds to
  * the real services and `testing/run-world.ts` binds to fakes.
  */
-import type { RemoteSourceKind } from "../../importer/dto";
-import type { RunReport } from "./dto";
+import type { ImportAck, RemoteSourceKind, ServiceChoice } from "../../importer/dto";
+import type { ImportMappingDoc } from "../../importer/import-mapping";
+import type { RunReport, RunScope } from "./dto";
+import type { ScopeFailure } from "./run-scope";
 import type { RunMode } from "./run-contract";
 
 /** Nest token of the {@link RunEnvPort}. */
@@ -71,6 +73,27 @@ export interface RunImportPort {
    * create/promote; a missing method, a throw or a null leave the version unknown for PREFLIGHT to fill.
    */
   sourceVersion?(userId: string, input: { sessionId: string; sourceKind: RemoteSourceKind }): Promise<string | null>;
+  /**
+   * OPTIONAL: resolve a run's `scope` against the live plan into the importer's own exclusions: the mapping document (`include: false`
+   * rows), the service choices (skipped stacks) and the mapping hash the later steps re-check. Read-only. `ok: false` carries the
+   * stable code of an unknown server / project / item or an empty scope. A missing method means the port cannot narrow a run.
+   */
+  scopeApply?(
+    userId: string,
+    input: {
+      sessionId: string;
+      sourceKind: RemoteSourceKind;
+      planHash: string;
+      targetServerId: string;
+      environmentId?: string;
+      reconcile?: boolean;
+      dbDataModes?: Record<string, "volume">;
+      acks?: ImportAck[];
+      serverMap?: Record<string, string>;
+      serviceChoices?: Record<string, ServiceChoice>;
+      scope: RunScope;
+    },
+  ): Promise<{ ok: true; mapping: ImportMappingDoc; mappingHash: string; serviceChoices?: Record<string, ServiceChoice>; kept: number; excluded: number } | { ok: false; code: ScopeFailure }>;
   /** The coverage ledger of an import op for the final report (secret-free; empty when the op is unknown). */
   opItems(userId: string, opId: string): Promise<RunReport["items"]>;
   /**

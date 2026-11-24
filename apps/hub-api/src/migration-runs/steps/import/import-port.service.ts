@@ -3,7 +3,7 @@
  * {@link RunImportPort}) to the existing importer, executor, apps, databases, DNS and proxy-config services. It adds no
  * business logic: every call is made AS the run's actor and re-checks permissions inside the wrapped service.
  */
-import { Injectable } from "@nestjs/common";
+import { ConflictException, Injectable } from "@nestjs/common";
 import type { Prisma } from "@prisma/client";
 import { PrismaService } from "../../../prisma/prisma.service";
 import { AgentWsServer } from "../../../agent-gateway/agent-ws.server";
@@ -30,6 +30,8 @@ import type { ResolvedMapping } from "../../../importer/import-mapping";
 import type { ServicePreview } from "../../../importer/service-preview";
 import type { RunReport } from "../../core/dto";
 import { stable } from "../../core/run-logic";
+import { applyScope, resolveScope } from "../../core/run-scope";
+import type { RunImportPort } from "../../core/run-ports";
 import { diskReadingOf } from "./baseline/host-class";
 import type {
   DeploymentRef,
@@ -117,6 +119,28 @@ export class ImportPortService implements ImportStepsPort {
     } finally {
       await source.close();
     }
+  }
+
+  /** Resolve a run's scope against a fresh plan into mapping exclusions and skipped stacks, bound by the mapping hash PREFLIGHT re-checks. Read-only. */
+  async scopeApply(userId: string, i: Parameters<NonNullable<RunImportPort["scopeApply"]>>[1]): ReturnType<NonNullable<RunImportPort["scopeApply"]>> {
+    const plan = await this.discoverPlan(userId, { sessionId: i.sessionId, sourceKind: i.sourceKind, ...(i.dbDataModes ? { dbDataModes: i.dbDataModes } : {}) });
+    if (plan.planHash !== i.planHash) throw new ConflictException("plan-changed");
+    const scope = resolveScope(plan, i.scope);
+    if ("fail" in scope) return { ok: false, code: scope.fail };
+    const { mapping, serviceChoices } = applyScope(plan, scope.inScope, { ...(i.serviceChoices ? { serviceChoices: i.serviceChoices } : {}) });
+    const res = await this.importer.resolveMapping(userId, {
+      sessionId: i.sessionId,
+      sourceKind: i.sourceKind,
+      planHash: i.planHash,
+      targetServerId: i.targetServerId,
+      ...(i.environmentId ? { environmentId: i.environmentId } : {}),
+      ...(i.reconcile !== undefined ? { reconcile: i.reconcile } : {}),
+      ...(i.dbDataModes ? { dbDataModes: i.dbDataModes } : {}),
+      ...(i.acks ? { acks: i.acks } : {}),
+      ...(i.serverMap ? { serverMap: i.serverMap } : {}),
+      mapping,
+    });
+    return { ok: true, mapping, mappingHash: res.mappingHash, ...(serviceChoices ? { serviceChoices } : {}), kept: scope.kept, excluded: scope.excluded };
   }
 
   resolveMapping(userId: string, input: ImportMappingResolveInput): Promise<ResolvedMapping> {

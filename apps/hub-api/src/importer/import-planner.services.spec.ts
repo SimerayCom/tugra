@@ -178,3 +178,24 @@ describe("buildCoverage — services", () => {
     expect(JSON.stringify(cov)).not.toMatch(/s3cr3t|password":/i);
   });
 });
+
+describe("buildPreflight — floating service members for the dry-run pin", () => {
+  const rows = () => buildPreflight(fleetOf(), opts).services;
+  it("a floating stack lists its itemRef and the image the source writes; a pinned or clean one stays byte-identical", () => {
+    const alpha = fixtureByName("alpha-meilisearch").svc;
+    const row = rows().find((r) => r.name === "alpha-meilisearch")!;
+    expect(row.itemRef).toBe(`service:${alpha.serverRef}:${alpha.sourceRef}`);
+    expect(row.floating).toEqual([{ member: "meilisearch", image: "getmeili/meilisearch:latest" }]);
+    const pinned = rows().find((r) => r.name === "delta-meilisearch")!;
+    expect(pinned).not.toHaveProperty("itemRef");
+    expect(pinned).not.toHaveProperty("floating");
+  });
+  it("shows the version the source's own member record carries when it is a pin of the same repository", () => {
+    const base = fixtureByName("alpha-meilisearch").svc;
+    const withSeen = (image: string) => ({ ...base, members: (base.members ?? []).map((m) => ({ ...m, image })) });
+    const floating = (image: string) => buildPreflight(fleetOf([withSeen(image)]), opts).services[0].floating;
+    expect(floating("getmeili/meilisearch:v1.8.0")).toEqual([{ member: "meilisearch", image: "getmeili/meilisearch:latest", seen: "getmeili/meilisearch:v1.8.0" }]);
+    expect(floating("evil/other:v1")).toEqual([{ member: "meilisearch", image: "getmeili/meilisearch:latest" }]); // another repository is not a pin
+    expect(floating("getmeili/meilisearch:latest")).toEqual([{ member: "meilisearch", image: "getmeili/meilisearch:latest" }]); // still floating
+  });
+});

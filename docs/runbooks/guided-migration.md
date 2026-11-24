@@ -185,8 +185,21 @@ Set the hub and a PAT with `deploy` **and** `read:secrets` (`tugra login`). Clea
 
    It ends `DRY_RUN_DONE` and shows, per step, what would happen and every blocker or unknown. It wrote nothing outside
    the run's own rows. Fix blockers (acks, mapping, ACME email, DNS credential) and repeat.
+   **Move only part of the source.** When you narrowed the first import step to some source servers or projects, the run
+   carries that choice (`scope`: `sourceServers`, `projects`, `include`, `exclude`, next to `serverMap`). The hub turns it
+   into the importer's own exclusions and binds it with the mapping hash, so PREFLIGHT, IMPORT, the data steps and the
+   cutover see exactly the chosen items. A server, project or item the plan does not have is a 400
+   (`scope-unknown-server`, `scope-unknown-project`, `scope-unknown-item`), and so is a scope that keeps nothing
+   (`scope-empty`). Do not combine `scope` with `mapping`.
 3. **Start for real.** Starting a finished dry run *promotes* it: a **new** run is created with the frozen inputs, the
    plan hash is re-validated against the live source, and the new run's id is returned.
+
+   The hub refuses it (`dry-run-warnings-open`, 409, with the list of warning keys) while a warning of the dry run is
+   neither **accepted** nor **fixed**. A person accepts warnings on the result screen (`PUT /migration-runs/:id/warning-acks`;
+   only a warning that dry run showed can be accepted) and an agent cannot. A floating image is **fixed** by pinning it: for
+   the members of a compose stack, `PUT /migration-runs/:id/service-pins` pins a version of the same image the source
+   writes (one click when the importer saw the version on the source's record, otherwise the operator types a tag or a
+   digest); the promoted run writes the pins into the stack's choices. Image apps are pinned by digest under Details.
 
    ```bash
    tugra import run start <dryRunId>          # prints the NEW run
@@ -480,6 +493,8 @@ CLI:
 | Error / code | Meaning |
 |---|---|
 | `plan-changed` (409) | The source changed since you reviewed the plan (create, or promoting a dry run). Re-plan and review again. |
+| `dry-run-warnings-open` (409) | Promoting a dry run whose warnings are not all accepted or fixed. The body lists the keys; settle them on the result screen. |
+| `scope-unknown-server` / `scope-unknown-project` / `scope-unknown-item` / `scope-empty` (400) | The `scope` names something the live plan does not have, or keeps nothing. |
 | `server-has-live-run` (409) | Another real run is live on one of the target servers (the default or any mapped one). Finish or abort it first. |
 | `server-not-found` (404) | A target server in the `serverMap` does not exist or belongs to another team. |
 | `command-kind-unavailable` (409) | The host-loop or inventory script is not available for this run: it needs `sourceRunner: coolify-host-loop` (or, for a single-host inventory, a run that can build one) and a known list of source hosts. |

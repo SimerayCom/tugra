@@ -1,7 +1,7 @@
 import { MIGRATOR_ENGINES } from "./migrator-recipe";
 import { UNSUPPORTED_DB_IMPORT, analyzeService, ns } from "./import-planner";
 import { foreignAppToVolumes } from "./apply-map";
-import { isMinioService } from "./import-service-map";
+import { isMinioService, isPinFor } from "./import-service-map";
 import { gitUrlHost } from "../deploy/deploy-script";
 import { DEFAULT_MAX_ARTIFACT_BYTES } from "./migration-staging";
 import { maxVolumeBytes } from "./migration-volume";
@@ -198,8 +198,15 @@ export function buildPreflight(fleet: ForeignFleet, options: ImportOptions, inve
   const services = fleet.services.map((s) => {
     const a = analyzeService(s);
     const r = a.result;
+    const floating = (r?.floating ?? []).flatMap((member) => {
+      const image = r?.floatingRefs[member];
+      if (!image) return [];
+      const seen = (s.members ?? []).find((m) => m.name === member)?.image;
+      return [{ member, image, ...(seen && isPinFor(image, seen) ? { seen } : {}) }];
+    });
     return {
       name: s.name,
+      ...(floating.length ? { itemRef: ns("service", s.serverRef, s.sourceRef), floating } : {}),
       members: s.memberApps.length + s.memberDbs.length,
       note: isMinioService(s) ? MINIO_SERVICE_NOTE : serviceNote(a),
       // Only a MinIO service carries the flag (the key is ABSENT otherwise).

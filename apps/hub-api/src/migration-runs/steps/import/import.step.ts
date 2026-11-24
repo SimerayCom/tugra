@@ -47,6 +47,7 @@ import { IMPORT_STEPS_PORT, type DeploymentRef, type ImportStepsPort, type OpSna
 import { applyInputOf, deployKeyBase, failureOf, hasActive, hasBad, includedItems, isConflict, itemTasks, stopRunApps, unackedBlockers, warningRisks } from "./step-utils";
 import { appTasksOf, duePinsOf, pinFloatingImages, targetOfTask, workerSetsOfOp } from "./baseline/op-safety";
 import { RUN_HINTS, type RunHint, type RunHintStore } from "./baseline/run-hints";
+import { floatingImages, imageParams } from "./baseline/image-pins";
 
 /** How long a redo waits for orphaned RUNNING tasks to settle before it gives up (the importer's reaper frees them after 10 min). */
 const REDO_PATIENCE_MS = 15 * 60_000;
@@ -461,7 +462,12 @@ export class ImportStep implements StepHandler<ImportObs>, OnModuleInit {
       { code: plan.planHash === run.planHash ? "import.plan-fresh" : "import.plan-changed", level: plan.planHash === run.planHash ? "info" : "block" },
     ];
     for (const [code, names] of blocked) out.push({ code: "import.item-skipped", level: "warn", params: { risk: code, count: names.length, items: names.slice(0, 10) } });
-    for (const [code, names] of warningRisks(plan, run)) out.push({ code: "import.risk-warning", level: "warn", params: { risk: code, count: names.length, items: names.slice(0, 10) } });
+    // the floating images behind a `service.image.floating` warning travel with it (image as the source writes it, the version the source
+    // shows), so the result screen can pin them without asking the operator to look the names up again
+    const unpinned = floatingImages(items.filter((i) => i.kind === "service"), run.applyInput, await this.hints(run), plan.preflight?.services).filter((f) => !f.pinned);
+    for (const [code, names] of warningRisks(plan, run)) {
+      out.push({ code: "import.risk-warning", level: "warn", params: { risk: code, count: names.length, items: names.slice(0, 10), ...(code === "service.image.floating" && unpinned.length ? imageParams(unpinned) : {}) } });
+    }
     if (hasMap(ctx)) {
       const sources = new Set(
         includedItems(plan, run)

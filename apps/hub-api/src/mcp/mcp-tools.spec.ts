@@ -1,6 +1,6 @@
 import { Logger } from "@nestjs/common";
 import { MCP_TOOLS, type McpDeps } from "./mcp-tools";
-import { RunWorld } from "../migration-runs/core/testing/run-world";
+import { RunWorld, defaultPlan } from "../migration-runs/core/testing/run-world";
 import type { ApprovalBinding } from "../migration-runs/core/dto";
 
 function tool(name: string) {
@@ -984,6 +984,14 @@ describe("guided migration run tools", () => {
     expect(w.store.row(v.id).dryRun).toBe(true);
     await w.settle(v.id);
     expect(w.status(v.id)).toBe("DRY_RUN_DONE");
+    // the warnings of a dry run are accepted by a person (the panel or the REST route), never by an agent: start refuses until they are
+    if ((await w.acceptWarnings(v.id)).length) {
+      // (acceptWarnings recorded them; take one back to prove the refusal, then accept again)
+      const [first] = (await w.hints.list(v.id)).filter((h) => h.kind === "warning-ack");
+      await w.hints.remove(v.id, [first]);
+      await expect(run("migration_run_start", w, { runId: v.id })).rejects.toThrow(/dry-run-warnings-open/);
+      await w.hints.upsert(v.id, [first]);
+    }
     const real = (await run("migration_run_start", w, { runId: v.id })) as { id: string; promotedFromId: string | null; dryRun: boolean };
     expect(real.id).not.toBe(v.id);
     expect(real).toMatchObject({ promotedFromId: v.id, dryRun: false });
@@ -1068,6 +1076,19 @@ describe("guided migration run tools", () => {
       expect(v.serverMap).toEqual({ "host-a": "srv1", "host-b": "srv2" });
       expect(v.campaign).toBe("wave-1");
       expect(v.targetServers.map((x) => [x.serverId, x.primary])).toEqual([["srv1", true], ["srv2", false]]);
+    });
+
+    it("create takes a scope, and the run moves only what it names", async () => {
+      const w = withTwoServers();
+      w.port.plan_ = defaultPlan({ items: [
+        { itemRef: "app:host-a:web", kind: "app", name: "web", proposed: {}, risks: [], dependsOn: [] },
+        { itemRef: "app:host-b:api", kind: "app", name: "api", proposed: {}, risks: [], dependsOn: [] },
+      ] as never });
+      const v = (await run("migration_run_create", w, { ...base, scope: { sourceServers: ["host-b"] } })) as { id: string };
+      expect(w.store.row(v.id).applyInput).toMatchObject({ mapping: { items: { "app:host-a:web": { include: false } } } });
+      await expect(run("migration_run_create", w, { ...base, scope: { sourceServers: ["host-z"] } })).rejects.toThrow(/scope-unknown-server/);
+      await expect(run("migration_run_create", w, { ...base, scope: {} })).rejects.toThrow(/invalid arguments/);
+      await expect(run("migration_run_create", w, { ...base, scope: { projects: ["p"], typo: 1 } })).rejects.toThrow(/invalid arguments/);
     });
 
     it("create refuses a target server of another team, a prototype name and an oversized map before anything is written", async () => {
