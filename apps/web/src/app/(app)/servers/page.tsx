@@ -9,6 +9,7 @@ import { useT } from "../../../i18n/provider";
 import { useFleetTrend } from "../../../hooks/useFleetTrend";
 import { ServerTable } from "../../../components/server-table";
 import { SavedViewsBar } from "../../../components/saved-views-bar";
+import { AgentFleetNotice } from "../../../components/agent-fleet-notice";
 import { TagFilter } from "../../../components/tags";
 import { Btn } from "../../../components/ui";
 import { ErrorState } from "../../../components/error-state";
@@ -74,6 +75,7 @@ function ServersPageInner() {
           <Btn>{t("servers.add")}</Btn>
         </Link>
       </div>
+      <AgentFleetNotice />
       {isLoading && <SkeletonTable rows={6} />}
       {isError && !servers && <ErrorState onRetry={() => refetch()} />}
       {servers && (

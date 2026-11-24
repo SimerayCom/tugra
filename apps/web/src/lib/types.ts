@@ -783,8 +783,16 @@ export interface AgentUpdateItem {
   status: "sent" | "offline" | "skipped"; // sent = dispatched; the new version shows once the agent reconnects
   reason?: string; // skip reason: already-current | no-digest-for-arch | capability-not-granted | not-permitted
 }
+/** How many remote agents run an older version than the hub (the "3/24 agents" notice). */
+export interface AgentFleetStatus {
+  current: string; // the hub's own release
+  total: number; // remote servers with an enrolled agent, in teams the caller manages
+  outdated: number;
+  outdatedServerIds: string[];
+  autoUpdate: boolean; // "Apply updates automatically" is on: the hub rolls them out one by one by itself
+}
 export interface AgentUpdateResponse {
-  status: "ok" | "unconfigured" | "error"; // unconfigured = no signed manifest; error = couldn't verify it
+  status: "ok" | "unconfigured" | "error" | "hub-behind"; // unconfigured = no signed manifest; error = couldn't verify it; hub-behind = a newer release is published: update the hub first
   total: number;
   sent: number;
   offline: number;

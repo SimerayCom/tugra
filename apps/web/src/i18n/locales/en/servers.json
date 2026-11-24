@@ -469,5 +469,13 @@
   "ipPrivate": "private",
   "ipMain": "Main",
   "ipUseAsMain": "Use as main",
-  "ipPinFailed": "Could not set the main address."
+  "ipPinFailed": "Could not set the main address.",
+  "agentFleetBehind": "{n}/{total} agents are on an older version",
+  "agentFleetAuto": "They are updating one by one.",
+  "agentFleetManual": "Update them all in one click.",
+  "agentFleetUpdateAll": "Update all",
+  "agentFleetSent": "Update sent to {n} agents",
+  "agentFleetNone": "Nothing could be updated right now.",
+  "agentFleetHubBehind": "Update the hub first. Agents never run ahead of it.",
+  "agentFleetFailed": "Could not start the update."
 }

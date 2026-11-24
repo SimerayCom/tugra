@@ -106,6 +106,7 @@ import type {
   FleetPatchCheckResult,
   FleetPatchApplyResult,
   AgentUpdateResponse,
+  AgentFleetStatus,
   ProxyStatus,
   TrafficSummary,
   TrafficPaths,
@@ -1190,6 +1191,13 @@ export const api = {
   listServerAudit(id: string, cursor?: string) {
     const qs = cursor ? `?cursor=${encodeURIComponent(cursor)}` : "";
     return apiFetch<AuditPage>(`/servers/${id}/audit${qs}`);
+  },
+  getAgentFleetStatus() {
+    return apiFetch<AgentFleetStatus>(`/fleet/agent-update/status`);
+  },
+  /** One click: update every outdated agent of the teams the caller manages to the hub's release. */
+  updateOutdatedAgents() {
+    return apiFetch<AgentUpdateResponse>(`/fleet/agent-update/outdated`, { method: "POST" });
   },
   bulkUpdateAgent(serverIds: string[]) {
     return apiFetch<AgentUpdateResponse>(`/fleet/agent-update`, {
