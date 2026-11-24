@@ -11,11 +11,7 @@ import { Btn, Card, Spinner } from "../../../components/ui";
 import { ErrorState } from "../../../components/error-state";
 import { Modal } from "../../../components/modal";
 import { Field, TextInput } from "../../../components/form";
-
-const selectStyle: React.CSSProperties = {
-  width: "100%", padding: "8px 10px", background: "var(--c-el)", border: "1px solid var(--c-bd)",
-  borderRadius: "var(--r1)", color: "var(--c-tx)", fontSize: 13, fontFamily: "inherit", boxSizing: "border-box",
-};
+import { TeamPicker } from "../../../components/team-picker";
 
 export default function ClustersPage() {
   const t = useT();
@@ -75,9 +71,7 @@ function CreateClusterModal({ defaultTeamId, onClose }: { defaultTeamId: string 
       <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
         {teams.length > 1 && (
           <Field label={t("clusters.team")} htmlFor="cl-team">
-            <select id="cl-team" value={effectiveTeam} onChange={(e) => setTeamId(e.target.value)} style={selectStyle}>
-              {teams.map((tm) => <option key={tm.id} value={tm.id}>{tm.name}</option>)}
-            </select>
+            <TeamPicker id="cl-team" value={effectiveTeam} onChange={setTeamId} teams={teams} />
           </Field>
         )}
         <Field label={t("clusters.name")} htmlFor="cl-name">

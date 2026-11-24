@@ -13,6 +13,7 @@ import { useT } from "../../../i18n/provider";
 import { Badge, Btn, Card, EmptyState, Spinner } from "../../../components/ui";
 import { ErrorState } from "../../../components/error-state";
 import { Field, Select, TextInput } from "../../../components/form";
+import { TeamPicker } from "../../../components/team-picker";
 import { DeliveryHistory } from "./delivery-history";
 import { ChannelRoutingPanel, RoutingEditor, type RoutingVocab } from "./routing-editor";
 import { parseTopics, toggleIn, type RoutingDraft } from "../../../lib/notification-routing";
@@ -255,7 +256,7 @@ export default function NotificationsPage() {
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
             {teams.length > 1 && (
               <Field label={t("common.team")}>
-                <Select value={target} onChange={setCreateTeam} options={teams.map((tm) => ({ value: tm.id, label: tm.name }))} />
+                <TeamPicker value={target} onChange={setCreateTeam} teams={teams} />
               </Field>
             )}
             <Field label={t("notifications.channelName")} htmlFor="ch-name">

@@ -1,15 +1,16 @@
 "use client";
 
 import { useState } from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useGuardedPush } from "../hooks/useUnsavedChanges";
 import { api } from "../lib/api";
-import { envOptions } from "../lib/project-options";
+import { defaultEnvId } from "../lib/resource-new";
 import { useToast } from "./toast";
 import { useT } from "../i18n/provider";
 import { Modal } from "./modal";
 import { Btn } from "./ui";
 import { Select, fieldStyle } from "./form";
+import { ProjectPicker } from "./project-picker";
 
 /** Machine-readable warning keys the hub's clone() can return; each has an `apps.cloneWarn_<key>` string. */
 const CLONE_WARNINGS = new Set([
@@ -56,13 +57,35 @@ export function CloneAppModal({
   const { data: servers } = useQuery({ queryKey: ["servers", teamId], queryFn: () => api.listServers({ teamId }) });
   // The hub refuses an environment from another team, so only this team's projects are offered.
   const { data: projects } = useQuery({ queryKey: ["projects"], queryFn: () => api.listProjects() });
-  const envChoices = envOptions((projects ?? []).filter((p) => p.teamId === teamId)).map((e) => ({
-    value: e.value,
-    label: e.value === currentEnvironmentId ? `${e.label} ${t("apps.cloneEnvironmentCurrent")}` : e.label,
-  }));
+  const qc = useQueryClient();
+  const pool = (projects ?? []).filter((p) => p.teamId === teamId);
+  const currentProject = currentEnvironmentId ? pool.find((p) => p.environments.some((e) => e.id === currentEnvironmentId)) : undefined;
+  const [pickedProject, setPickedProject] = useState<string | null>(null);
   const [pickedEnv, setPickedEnv] = useState<string | null>(null);
-  const defaultEnv = currentEnvironmentId && envChoices.some((e) => e.value === currentEnvironmentId) ? currentEnvironmentId : "";
-  const environmentId = pickedEnv ?? defaultEnv;
+  // Starts on where the source lives; "" is "same as the source" (the source's environment is not listed).
+  const projectId = pickedProject ?? currentProject?.id ?? "";
+  const chosen = pool.find((p) => p.id === projectId);
+  const environmentId = pickedEnv ?? (chosen && chosen.id === currentProject?.id ? currentEnvironmentId ?? "" : "");
+  const chooseProject = (name: string) => {
+    const hit = pool.find((p) => p.name.toLowerCase() === name.toLowerCase());
+    if (name === "") {
+      setPickedProject("");
+      setPickedEnv("");
+    } else if (hit) {
+      setPickedProject(hit.id);
+      setPickedEnv(defaultEnvId(hit));
+    } // else: a project just created from the picker; createProject() already selected it.
+  };
+  const createProject = async (name: string) => {
+    const created = await api.createProject(teamId, name);
+    await qc.refetchQueries({ queryKey: ["projects"] });
+    setPickedProject(created.id);
+    setPickedEnv(defaultEnvId(created));
+  };
+  const envChoices = (chosen?.environments ?? []).map((e) => ({
+    value: e.id,
+    label: e.id === currentEnvironmentId ? `${e.name} ${t("apps.cloneEnvironmentCurrent")}` : e.name,
+  }));
   const clone = useMutation({
     mutationFn: () =>
       api.cloneApp(appId, {
@@ -100,10 +123,23 @@ export function CloneAppModal({
           style={{ ...fieldStyle, width: "100%" }}
         />
       </label>
-      <label style={{ display: "block", marginBottom: 12 }}>
-        <span style={{ display: "block", fontSize: 12, color: "var(--c-tx2)", marginBottom: 6 }}>{t("apps.cloneEnvironment")}</span>
-        <Select value={environmentId} onChange={setPickedEnv} options={envChoices} placeholder={t("apps.cloneEnvironmentPlaceholder")} ariaLabel={t("apps.cloneEnvironment")} />
-      </label>
+      <div style={{ marginBottom: 12 }}>
+        <span style={{ display: "block", fontSize: 12, color: "var(--c-tx2)", marginBottom: 6 }}>{t("apps.cloneProject")}</span>
+        <ProjectPicker
+          value={chosen?.name ?? ""}
+          projects={pool.map((p) => ({ name: p.name }))}
+          onChange={chooseProject}
+          onCreate={createProject}
+          noneLabel={t("apps.cloneEnvironmentPlaceholder")}
+          ariaLabel={t("apps.cloneProject")}
+        />
+      </div>
+      {chosen && (
+        <label style={{ display: "block", marginBottom: 12 }}>
+          <span style={{ display: "block", fontSize: 12, color: "var(--c-tx2)", marginBottom: 6 }}>{t("apps.cloneEnvironment")}</span>
+          <Select value={environmentId} onChange={setPickedEnv} options={envChoices} ariaLabel={t("apps.cloneEnvironment")} />
+        </label>
+      )}
       <label style={{ display: "block", marginBottom: 12 }}>
         <span style={{ display: "block", fontSize: 12, color: "var(--c-tx2)", marginBottom: 6 }}>{t("apps.cloneServer")}</span>
         <Select value={serverId} onChange={setServerId} options={options} ariaLabel={t("apps.cloneServer")} />

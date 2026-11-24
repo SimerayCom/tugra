@@ -8,7 +8,8 @@ import { copyText } from "../../../lib/clipboard";
 import { useAuth } from "../../../lib/auth";
 import { useT } from "../../../i18n/provider";
 import { Btn, Card } from "../../../components/ui";
-import { Checkbox, Field, Select, TextInput } from "../../../components/form";
+import { Checkbox, Field, TextInput } from "../../../components/form";
+import { TeamPicker } from "../../../components/team-picker";
 import { TwoFactorEnroll } from "../../../components/two-factor";
 import type { MailProvider } from "../../../lib/types";
 import { CenteredSpinner } from "../../../components/shell";
@@ -647,7 +648,7 @@ function CreateServerForm({ t, onServer, onSkip }: { t: Tr; onServer: (id: strin
           <TextInput value={name} onChange={(e) => setName(e.target.value)} />
         </Field>
         <Field label={t("onboarding.team")} htmlFor="ob-team">
-          <Select id="ob-team" value={teamId} onChange={setTeamId} autoSelectFirst required options={teams.map((tm) => ({ value: tm.id, label: tm.name }))} />
+          <TeamPicker id="ob-team" value={teamId} onChange={setTeamId} autoSelectFirst required teams={teams} />
         </Field>
         {err && <div style={errStyle}>{err}</div>}
         <div style={{ display: "flex", gap: 10 }}>

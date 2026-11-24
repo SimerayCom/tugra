@@ -17,7 +17,8 @@ import { ListCard, ListRow } from "../../../components/list";
 import { PageTitle } from "../../../components/page-header";
 import { MeterBar } from "../../../components/meter-bar";
 import { Modal } from "../../../components/modal";
-import { Checkbox, Field, NumberInput, Select, TextInput } from "../../../components/form";
+import { Checkbox, Field, NumberInput, TextInput } from "../../../components/form";
+import { TeamPicker } from "../../../components/team-picker";
 import { SkeletonTable } from "../../../components/skeleton";
 import { useToast } from "../../../components/toast";
 
@@ -142,13 +143,13 @@ function NewRolloutModal({ onClose, onCreated }: { onClose: () => void; onCreate
         <p style={{ margin: 0, fontSize: 12, color: "var(--c-tx3)" }}>{t("rollouts.redeployNote")}</p>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
           <Field label={t("rollouts.team")}>
-            <Select
+            <TeamPicker
               value={effectiveTeam}
               onChange={(v) => {
                 setTeamId(v);
                 setPicked([]);
               }}
-              options={teams.map((tm) => ({ value: tm.id, label: tm.name }))}
+              teams={teams}
             />
           </Field>
           <Field label={t("rollouts.name")}>

@@ -10,7 +10,8 @@ import { Badge, Btn, Card, EmptyState, Spinner } from "../../../components/ui";
 import { ErrorState } from "../../../components/error-state";
 import { IconBtn } from "../../../components/icon-btn";
 import { useConfirm } from "../../../components/confirm";
-import { Field, Select, TextInput } from "../../../components/form";
+import { Field, TextInput } from "../../../components/form";
+import { TeamPicker } from "../../../components/team-picker";
 
 export default function CloudCredentialsPage() {
   const t = useT();
@@ -71,7 +72,7 @@ export default function CloudCredentialsPage() {
           <form onSubmit={(e) => { e.preventDefault(); if (name && apiToken && activeTeam) create.mutate(); }}>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
               <Field label={t("cloudCredentials.name")} htmlFor="cc-name"><TextInput id="cc-name" value={name} onChange={(e) => setName(e.target.value)} required /></Field>
-              <Field label={t("cloudCredentials.team")}><Select value={activeTeam} onChange={setTeamId} options={teams.map((tm) => ({ value: tm.id, label: tm.name }))} /></Field>
+              <Field label={t("cloudCredentials.team")}><TeamPicker value={activeTeam} onChange={setTeamId} teams={teams} /></Field>
               <Field label={t("cloudCredentials.provider")}><div style={{ paddingTop: 6 }}><Badge tone="gold">Hetzner</Badge></div></Field>
               <Field label={t("cloudCredentials.apiToken")} htmlFor="cc-token" hint={t("cloudCredentials.apiTokenHint")}><TextInput id="cc-token" type="password" value={apiToken} onChange={(e) => setApiToken(e.target.value)} required /></Field>
             </div>

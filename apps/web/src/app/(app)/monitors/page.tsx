@@ -14,6 +14,7 @@ import { useT } from "../../../i18n/provider";
 import { Btn, Card, EmptyState } from "../../../components/ui";
 import { ErrorState } from "../../../components/error-state";
 import { Field, Select, TextInput } from "../../../components/form";
+import { TeamPicker } from "../../../components/team-picker";
 import { MonitorFavicon } from "../../../components/monitor-favicon";
 import { MonitorChannelsBulkModal } from "../../../components/monitor-channels-bulk-modal";
 import { SkeletonTable } from "../../../components/skeleton";
@@ -195,8 +196,7 @@ export default function MonitorsPage() {
               </>
             )}
             <Field label={t("common.team")}>
-              <Select value={teamId} onChange={setTeamId} autoSelectFirst required placeholder={t("common.pickTeam")}
-                options={teams.map((tm) => ({ value: tm.id, label: tm.name }))} />
+              <TeamPicker value={teamId} onChange={setTeamId} autoSelectFirst required teams={teams} />
             </Field>
             <Field label={t("monitors.intervalSec")} hint={t("monitors.intervalHint")}>
               <TextInput type="number" min={10} value={intervalSec} onChange={(e) => setIntervalSec(e.target.value)} />

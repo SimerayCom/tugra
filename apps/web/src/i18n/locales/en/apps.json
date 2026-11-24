@@ -415,6 +415,7 @@
   "cloneName": "Name",
   "cloneServer": "Server",
   "cloneServerCurrent": "(current)",
+  "cloneProject": "Project",
   "cloneEnvironment": "Environment",
   "cloneEnvironmentCurrent": "(current)",
   "cloneEnvironmentPlaceholder": "Same as the source",

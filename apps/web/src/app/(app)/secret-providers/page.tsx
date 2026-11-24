@@ -10,7 +10,8 @@ import { Badge, Btn, Card, EmptyState, Spinner } from "../../../components/ui";
 import { ErrorState } from "../../../components/error-state";
 import { IconBtn } from "../../../components/icon-btn";
 import { useConfirm } from "../../../components/confirm";
-import { Field, Select, TextInput } from "../../../components/form";
+import { Field, TextInput } from "../../../components/form";
+import { TeamPicker } from "../../../components/team-picker";
 import type { SecretProvider } from "../../../lib/types";
 
 export default function SecretProvidersPage() {
@@ -71,7 +72,7 @@ export default function SecretProvidersPage() {
             <fieldset disabled={!isPro} style={{ border: "none", padding: 0, margin: 0, opacity: isPro ? 1 : 0.55 }}>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
                 <Field label={t("secretProviders.name")} htmlFor="sp-name"><TextInput id="sp-name" value={name} onChange={(e) => setName(e.target.value)} required disabled={!isPro} /></Field>
-                <Field label={t("secretProviders.team")}><Select value={activeTeam} onChange={setTeamId} options={teams.map((tm) => ({ value: tm.id, label: tm.name }))} disabled={!isPro} /></Field>
+                <Field label={t("secretProviders.team")}><TeamPicker value={activeTeam} onChange={setTeamId} teams={teams} disabled={!isPro} /></Field>
                 <Field label={t("secretProviders.kind")}><div style={{ paddingTop: 6 }}><Badge tone="gold">{t("secretProviders.kindVault")}</Badge></div></Field>
                 <Field label={t("secretProviders.address")} htmlFor="sp-addr">
                   <TextInput id="sp-addr" type="url" value={address} onChange={(e) => setAddress(e.target.value)} placeholder={t("secretProviders.addressPlaceholder")} required disabled={!isPro} />

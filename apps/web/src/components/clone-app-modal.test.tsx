@@ -19,7 +19,7 @@ const SERVERS = [
 ] as unknown as ServerView[];
 
 const proj = (id: string, teamId: string, name: string, envs: Array<[string, string]>) =>
-  ({ id, teamId, name, environments: envs.map(([eid, ename]) => ({ id: eid, name: ename })) }) as unknown as Project;
+  ({ id, teamId, name, environments: envs.map(([eid, ename], i) => ({ id: eid, name: ename, isDefault: i === 0 })) }) as unknown as Project;
 
 const PROJECTS = [
   proj("p1", "t1", "Shop", [["e1", "production"], ["e2", "staging"]]),
@@ -54,9 +54,13 @@ describe("CloneAppModal", () => {
     const select = (await screen.findByLabelText("Environment")) as HTMLSelectElement;
     await waitFor(() => expect(select.value).toBe("e1"));
     const labels = Array.from(select.options).map((o) => o.textContent);
-    expect(labels).toContain("Shop / production (current)");
-    expect(labels).toContain("Shop / staging");
-    expect(labels.some((l) => l?.includes("Other"))).toBe(false);
+    expect(labels).toContain("production (current)");
+    expect(labels).toContain("staging");
+    expect(labels.some((l) => l?.includes("secret"))).toBe(false);
+    const project = screen.getByLabelText("Project") as HTMLSelectElement;
+    const projects = Array.from(project.options).map((o) => o.textContent);
+    expect(projects).toContain("Shop");
+    expect(projects).not.toContain("Other");
   });
 
   it("the default request carries no environmentId", async () => {
@@ -81,12 +85,30 @@ describe("CloneAppModal", () => {
 
   it("falls back to a same-as-source placeholder when the current environment is not listed", async () => {
     show("gone");
-    const select = (await screen.findByLabelText("Environment")) as HTMLSelectElement;
-    await waitFor(() => expect(select.options.length).toBeGreaterThan(1));
+    const select = (await screen.findByLabelText("Project")) as HTMLSelectElement;
+    await waitFor(() => expect(select.options.length).toBeGreaterThan(2));
     expect(select.value).toBe("");
+    expect(screen.queryByLabelText("Environment")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Clone" }));
     await waitFor(() => expect(clone).toHaveBeenCalled());
     expect(clone).toHaveBeenCalledWith("a1", { name: "web (copy)", serverId: "s1" });
+  });
+
+  it("a project created from the picker is cloned into its default environment", async () => {
+    const created = proj("p3", "t1", "Fresh", [["e30", "production"]]);
+    vi.spyOn(api, "createProject").mockImplementation(async () => {
+      vi.spyOn(api, "listProjects").mockResolvedValue([...PROJECTS, created]);
+      return created;
+    });
+    show();
+    await waitFor(() => expect((screen.getByLabelText("Environment") as HTMLSelectElement).value).toBe("e1"));
+    fireEvent.change(screen.getByLabelText("Project"), { target: { value: "::new-project::" } });
+    fireEvent.change(screen.getByLabelText("New project name"), { target: { value: "Fresh" } });
+    fireEvent.keyDown(screen.getByLabelText("New project name"), { key: "Enter" });
+    await waitFor(() => expect((screen.getByLabelText("Environment") as HTMLSelectElement).value).toBe("e30"));
+    fireEvent.click(screen.getByRole("button", { name: "Clone" }));
+    await waitFor(() => expect(clone).toHaveBeenCalled());
+    expect(clone).toHaveBeenCalledWith("a1", { name: "web (copy)", serverId: "s1", environmentId: "e30" });
   });
 
   it("shows the hub's error message", async () => {
