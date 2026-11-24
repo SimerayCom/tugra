@@ -41,6 +41,9 @@ type Target struct {
 	// ContainerPrefix is the owning app's custom container name prefix (Coolify settings.custom_container_name_prefix): its
 	// container is `<prefix>-<deploy timestamp>` instead of `<uuid>-<deploy timestamp>`. Additive and optional; app volumes only.
 	ContainerPrefix string `json:"containerPrefix"`
+	// StreamedByMigrator marks a streamed-dump row a plain migrator run asked for itself (its dump was over the artifact cap): a
+	// re-run of the databases arm resumes it. Additive and optional.
+	StreamedByMigrator bool `json:"streamedByMigrator"`
 }
 
 // containerPrefixRe is the shape of a container name prefix the hub puts into a target: a plain docker-name-safe token, the same
@@ -389,7 +392,7 @@ func isForbiddenName(name string) bool {
 	return forbiddenExact[l]
 }
 
-// classifyEngine maps an image to one of the six streamable engine keys, with an env-signature
+// classifyEngine maps an image to one of the streamable engine keys, with an env-signature
 // fallback for an unrecognised image. The image-name precedence mirrors coolify-map.ts: keydb and
 // dragonfly BEFORE redis, mariadb BEFORE mysql/postgres. An unknown engine returns "" (the item is
 // then refused, never run with an unproven engine).
@@ -408,6 +411,11 @@ func classifyEngine(image string, env map[string]string) string {
 		return "MYSQL"
 	case strings.Contains(base, "redis"):
 		return "REDIS"
+	case base == "mongo" || base == "mongodb" || base == "mongodb-community-server" || base == "mongodb-enterprise-server":
+		// an exact name: mongo-express (a web UI) must never read as a database
+		return "MONGO"
+	case base == "clickhouse" || base == "clickhouse-server":
+		return "CLICKHOUSE"
 	case strings.Contains(base, "valkey"):
 		// Valkey (the image Coolify 4.7 gives a new Redis database) speaks the Redis protocol and ships redis-cli, so the Redis
 		// recipe dumps it; the hub keeps the source image on the target, so the RDB stays loadable. Named, not left to the env fallback.
@@ -425,6 +433,10 @@ func classifyEngine(image string, env map[string]string) string {
 		return "KEYDB"
 	case has(env, "REDIS_PASSWORD"):
 		return "REDIS"
+	case has(env, "MONGO_INITDB_ROOT_USERNAME"):
+		return "MONGO"
+	case has(env, "CLICKHOUSE_USER") || has(env, "CLICKHOUSE_ADMIN_USER") || has(env, "CLICKHOUSE_DB"):
+		return "CLICKHOUSE"
 	}
 	return ""
 }

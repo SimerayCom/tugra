@@ -60,7 +60,7 @@ type dbSizeReq struct {
 // dumpEngines are the engines whose dump the streamed lane (and so this measurement) understands.
 func isDumpEngine(engine string) bool {
 	switch engine {
-	case "POSTGRES", "MARIADB", "MYSQL":
+	case "POSTGRES", "MARIADB", "MYSQL", "MONGO", "CLICKHOUSE":
 		return true
 	}
 	return false
@@ -85,12 +85,24 @@ func buildSizePlan(engine string, c Creds, dockerPath string, lookup func(string
 	if !validUser(c.User) {
 		return Plan{}, &errInvalidCred{field: "user"}
 	}
-	if !validDB(c.DB) {
+	if engine != "MONGO" && !validDB(c.DB) {
 		return Plan{}, &errInvalidCred{field: "db"}
 	}
 	bind, _ := verifyBind(engine)
 	var argv []string
 	switch engine {
+	case "MONGO", "CLICKHOUSE":
+		if !validConfigPassword(c.PW) {
+			return Plan{}, &errInvalidCred{field: "password"}
+		}
+		if engine == "MONGO" {
+			argv = []string{dockerPath, "exec", "-e", dbPwEnv, c.Ctr, "sh", "-c", mongoShellBody, "tugra-size", c.User, "exact", "1", mongoSizeJS}
+		} else {
+			if !validPlainDB(c.DB) {
+				return Plan{}, &errInvalidCred{field: "db"}
+			}
+			argv = []string{dockerPath, "exec", "-e", dbPwEnv, c.Ctr, "sh", "-c", chSizeBody, "tugra-size", c.User, c.DB}
+		}
 	case "POSTGRES":
 		argv = []string{dockerPath, "exec", "-e", "PGPASSWORD", c.Ctr, "psql", "-X", "-q", "-A", "-t", "-U", c.User, "-d", c.DB, "-c", pgSizeSQL}
 	case "MYSQL":
@@ -200,6 +212,7 @@ func (r *runner) measureOne(ctx context.Context, tg Target) DbSizeItem {
 		dplan, derr2 := BuildPlan(r.parsed[tg.Engine], creds, r.dockerPath, os.LookupEnv)
 		if derr2 == nil {
 			ds, merr := MeasureDump(ctx, dplan, r.c.dumpTimeout)
+			cleanupDumpLeftovers(tg.Engine, src.ID, r.dockerPath, r.dockerEnv)
 			switch {
 			case merr == nil:
 				raw, gz := ds.RawBytes, ds.GzBytes

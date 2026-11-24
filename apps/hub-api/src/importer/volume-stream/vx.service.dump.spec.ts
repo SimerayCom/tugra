@@ -359,3 +359,53 @@ describe("the streamed dump lane: the disk dry-run and the lane switch", () => {
     await expect(harness().svc.setStreamMode("user-1", OP, DB_REF, true)).rejects.toBeInstanceOf(ConflictException);
   });
 });
+
+describe("the streamed dump lane for a plain run (a database over the artifact cap)", () => {
+  it("requestStream puts the database on the lane, marks it as the migrator's own request and answers the dump row", async () => {
+    const h = harness();
+    await expect(h.svc.requestStream(ctxOp, { itemRef: DB_REF })).resolves.toMatchObject({ itemRef: DB_REF, stream: true, volumeItemRef: DB_DUMP_REF });
+    const sql = h.prisma.$executeRaw.mock.calls[0][0] as { strings: string[]; values: unknown[] };
+    expect(sql.strings.join("?")).toContain("{vxStream}");
+    expect(JSON.parse(sql.values[0] as string)[DB_REF]).toMatchObject({ by: "user-1", via: "migrator" });
+    expect(h.tokens.extend).toHaveBeenCalledWith(OP);
+  });
+
+  it("a run whose owner chose `refuse` keeps the decision: 409, nothing written", async () => {
+    const h = harness({ run: { options: { largeDbMode: "refuse" } } });
+    await expect(h.svc.requestStream(ctxOp, { itemRef: DB_REF })).rejects.toThrow(/chose not to stream/);
+    expect(h.prisma.$executeRaw).not.toHaveBeenCalled();
+    // a run that streams (the default) takes it
+    await expect(harness({ run: { options: { largeDbMode: "stream-logical" } } }).svc.requestStream(ctxOp, { itemRef: DB_REF })).resolves.toMatchObject({ stream: true });
+    await expect(harness({ run: { options: {} } }).svc.requestStream(ctxOp, { itemRef: DB_REF })).resolves.toMatchObject({ stream: true });
+  });
+
+  it("keeps every refusal of setStreamMode (already restored, copied as files, no lane, switched off) and re-checks the actor's permissions", async () => {
+    await expect(harness({ db: { engine: "REDIS", version: "7" } }).svc.requestStream(ctxOp, { itemRef: DB_REF })).rejects.toBeInstanceOf(ConflictException);
+    const restored = harness({ op: { tasks: [appTask(), dbTask(), { id: "t-data", itemRef: `data:${DB_REF}`, kind: "data", status: "DONE", resourceType: null, resourceId: null, result: null, steps: null }] } });
+    await expect(restored.svc.requestStream(ctxOp, { itemRef: DB_REF })).rejects.toThrow(/already restored by the artifact route/);
+    process.env.MIGRATION_VX_DUMP_ENABLED = "off";
+    await expect(harness().svc.requestStream(ctxOp, { itemRef: DB_REF })).rejects.toBeInstanceOf(ConflictException);
+    delete process.env.MIGRATION_VX_DUMP_ENABLED;
+    const h = harness();
+    await h.svc.requestStream(ctxOp, { itemRef: DB_REF });
+    expect(h.access.requirePermission).toHaveBeenCalledWith("user-1", expect.any(String), "databases");
+  });
+
+  it("the row of a database the migrator itself put on the lane says so (a re-run resumes it); a guided run's row does not", async () => {
+    const own = dumpHarness({ op: { meta: streamMeta({ vxStream: { [DB_REF]: { at: "2026-11-16T00:00:00Z", by: "user-1", via: "migrator" } } }) } });
+    const ownRows = await own.svc.targetRows({ ...own.op, tasks: own.op.tasks as never });
+    expect(ownRows.rows.find((r) => (r as { itemRef: string }).itemRef === DB_DUMP_REF)).toMatchObject({ streamedByMigrator: true });
+    const guided = dumpHarness();
+    const guidedRows = await guided.svc.targetRows({ ...guided.op, tasks: guided.op.tasks as never });
+    expect(guidedRows.rows.find((r) => (r as { itemRef: string }).itemRef === DB_DUMP_REF)).not.toHaveProperty("streamedByMigrator");
+  });
+
+  it("MongoDB and ClickHouse databases get a dump row too, and the size report accepts their engines", async () => {
+    for (const engine of ["MONGO", "CLICKHOUSE"]) {
+      const h = dumpHarness({ db: { engine, version: "7" } });
+      const targets = await h.svc.volumeTargetsOf({ ...h.op, tasks: h.op.tasks as never });
+      expect(targets.filter((t) => t.destType === "db-dump").map((t) => [t.itemRef, t.engine])).toEqual([[DB_DUMP_REF, engine]]);
+      await expect(h.svc.dbSizes(ctxOp, { runId: RUN, items: [{ itemRef: DB_REF, engine, state: "measured", dbBytes: 1, measuredBy: "catalog" }] } as never)).resolves.toMatchObject({ stored: 1 });
+    }
+  });
+});

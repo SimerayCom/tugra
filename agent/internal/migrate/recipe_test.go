@@ -1,6 +1,8 @@
 package migrate
 
 import (
+	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 )
@@ -16,6 +18,55 @@ var goldenCommands = map[string]string{
 	"REDIS":     `docker exec -e REDISCLI_AUTH "$TUGRA_SRC_CTR" sh -c 'r=$(redis-cli --no-auth-warning SAVE 2>&1); if [ "$r" = OK ]; then cat /data/dump.rdb; else echo "REDIS SAVE failed: $r" >&2; exit 1; fi'`,
 	"KEYDB":     `docker exec -e REDISCLI_AUTH "$TUGRA_SRC_CTR" sh -c 'r=$(keydb-cli --no-auth-warning SAVE 2>&1); if [ "$r" = OK ]; then cat /data/dump.rdb; else echo "KEYDB SAVE failed: $r" >&2; exit 1; fi'`,
 	"DRAGONFLY": `docker exec -e REDISCLI_AUTH "$TUGRA_SRC_CTR" sh -c 'rm -f /data/tugra_backup.rdb; r=$(redis-cli --no-auth-warning SAVE RDB tugra_backup 2>&1); if [ "$r" = OK ]; then cat /data/tugra_backup.rdb; rc=0; else echo "dragonfly SAVE failed: $r" >&2; rc=1; fi; rm -f /data/tugra_backup.rdb; exit $rc'`,
+}
+
+func init() {
+	// MONGO and CLICKHOUSE: the golden is assembled from the shared fixture, independent of the Go constants under test.
+	raw, err := os.ReadFile("testdata/safe-db-scripts.json")
+	if err != nil {
+		panic(err)
+	}
+	var fx map[string]string
+	if err := json.Unmarshal(raw, &fx); err != nil {
+		panic(err)
+	}
+	goldenCommands["MONGO"] = `docker exec -e TUGRA_DB_PW "$TUGRA_SRC_CTR" sh -c '` + fx["mongoDump"] + `' tugra-mongo "$TUGRA_SRC_USER"`
+	goldenCommands["CLICKHOUSE"] = `docker exec -e TUGRA_DB_PW "$TUGRA_SRC_CTR" sh -c '` + fx["chDump"] + `' tugra-clickhouse "$TUGRA_SRC_USER" "$TUGRA_SRC_DB"`
+}
+
+// safeFixture reads the shared fixture the hub's safe-db-scripts spec pins its constants to.
+func safeFixture(t *testing.T) map[string]string {
+	t.Helper()
+	raw, err := os.ReadFile("testdata/safe-db-scripts.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]string
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatal(err)
+	}
+	return m
+}
+
+// The Go copies of the in-container scripts are byte-identical to the shared fixture (the hub test pins the TypeScript side to the
+// same file): a change on one side only breaks CI.
+func TestSafeBodiesMatchTheSharedFixture(t *testing.T) {
+	fx := safeFixture(t)
+	want := map[string]string{
+		"mongoDump": mongoDumpBody, "mongoRestore": mongoRestoreBody, "mongoShell": mongoShellBody, "mongoStatsJs": mongoStatsJS, "mongoSizeJs": mongoSizeJS,
+		"chDump": chDumpBody, "chRestore": chRestoreBody, "chStats": chStatsBody, "chSize": chSizeBody,
+	}
+	if len(fx) != len(want) {
+		t.Fatalf("fixture has %d scripts, the migrator %d", len(fx), len(want))
+	}
+	for k, got := range want {
+		if fx[k] != got {
+			t.Errorf("%s drifted from testdata/safe-db-scripts.json", k)
+		}
+		if strings.Contains(got, "'") || strings.ContainsAny(got, "\r\n\x00") {
+			t.Errorf("%s must be one line without a single quote (it sits inside sh -c '...')", k)
+		}
+	}
 }
 
 func TestGoldenMatchesSpec(t *testing.T) {
@@ -72,8 +123,13 @@ func TestParseRecipeRejectsDrift(t *testing.T) {
 			}
 		})
 	}
-	if _, err := ParseRecipe("CLICKHOUSE", good); err == nil {
+	if _, err := ParseRecipe("LIBSQL", good); err == nil {
 		t.Fatal("expected a non-streamable engine to be rejected")
+	}
+	// a MongoDB recipe with the password on the command line (the stock backup command) is drift, not a recipe
+	mongo := engineSpecs["MONGO"]
+	if _, err := ParseRecipe("MONGO", Recipe{Command: `docker exec "$TUGRA_SRC_CTR" mongodump --username "$TUGRA_SRC_USER" --password x --archive`, Format: mongo.format, Env: []Bind{mongo.bind}}); err == nil {
+		t.Fatal("a mongodump with --password on its argv must be rejected")
 	}
 }
 

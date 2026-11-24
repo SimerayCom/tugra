@@ -4,13 +4,12 @@
 
 Two paths, used **together**:
 
-- **One-click data migrator** (first section) — moves the **database contents** of six engines
-  (Postgres, MySQL, MariaDB, Redis, KeyDB, Dragonfly) from your Coolify host into the Tugra databases an
+- **One-click data migrator** (first section) — moves the **database contents** of eight engines
+  (Postgres, MySQL, MariaDB, MongoDB, ClickHouse, Redis, KeyDB, Dragonfly) from your Coolify host into the Tugra databases an
   import created, with **one pasted command** on the Coolify server. No SSH, no manual dump files.
 - **Manual runbook** (second section) — recreate apps, move volume data, rewrite `DATABASE_URL`, cut over
-  DNS, and move the databases the one-click path does not: **MongoDB** (guided dump-and-restore below),
-  **ClickHouse** (a by-hand dump — no tool yet), **LibSQL** (a volume copy), DBs larger than the artifact
-  cap, and sources whose password isn't in the container env (rotated / `*_FILE` / trust-auth).
+  DNS, and move the databases the one-click path does not: **LibSQL** (a volume copy) and sources whose
+  password isn't in the container env (rotated / `*_FILE` / trust-auth).
 
 > **Golden rule:** Tugra never changes your Coolify configuration and deletes nothing on it. The one-click
 > migrator only *reads* source databases via `docker exec` dumps — though Redis/KeyDB `SAVE` does refresh the
@@ -81,8 +80,8 @@ Rules that trip people up:
 |---|---|
 | App definitions, env vars, domains | Coolify **import** (`connect → plan → apply`) — creates the apps and the **empty** destination DBs |
 | **Postgres / MySQL / MariaDB / Redis / KeyDB / Dragonfly** data | **One-click data migrator** (below) |
-| **MongoDB** data | **Manual** runbook (one-click deferred) |
-| **ClickHouse** data | **Manual** dump by hand (no tool yet) |
+| **MongoDB** data | **One-click migrator**: `mongodump --archive` of the whole instance, restored with `mongorestore --archive` (the source's `admin` database is never restored over the target's own root user); verified by document counts per collection |
+| **ClickHouse** data | **One-click migrator**: `BACKUP DATABASE` to a file on the source, streamed out and restored as `RESTORE DATABASE` on the target (the destination database may be named differently); verified by row counts per table |
 | **LibSQL** data | **Manual** — it's a single SQLite file; copy the volume (`tar`/`rsync`) |
 | Coolify **services** (Meilisearch, MinIO, Gotenberg, SigNoz, Beszel, cloudflared, your own compose stacks) | **Import** creates ONE **stopped** compose app per service from the service's own compose file (nothing is deployed). Secrets are carried, never regenerated; named volumes are declared (a host folder bind becomes a named volume); `container_name`, published ports and `coolify.*` / `traefik.*` labels are stripped (reported); members that need the Docker socket, privileged mode or host namespaces are dropped (a standalone Beszel agent is skipped; SigNoz imports without its ClickHouse data); config files kept next to the compose (SigNoz) become config mounts when the token can read them. An internal-only service joins a private network under a stable alias instead of a public domain. A floating `:latest` can be pinned to the version the source runs in the review screen. cloudflared is always created stopped: stop the source connector and repoint the Cloudflare routes by hand first. Service **data** is copied by hand (stop the source first); the review screen and the post-import checklist say what is left to do. |
 | App **volume** data | **Streamed volume copy** — the migrator (run on the source server) copies each declared app volume of a **stopped** container to the target in resumable parts through the hub's memory relay: no size cap, owner/group/mode kept, no hub disk, resumable after an interruption ([details below](#streamed-volume-copy)). A small volume can still be uploaded by hand to the hub (`tar` + `curl -T`, up to ~256 MiB gzip, ownership **not** preserved). |
@@ -104,8 +103,8 @@ live replication — so the cutover discipline at the end of this page still app
 
 ### What it does, and what it does NOT do
 
-- **Moves:** the data of Postgres, MySQL, MariaDB, Redis, KeyDB and Dragonfly databases.
-- **Does not move:** DNS, or **MongoDB / ClickHouse / LibSQL** data — use the manual runbook for those. App
+- **Moves:** the data of Postgres, MySQL, MariaDB, MongoDB, ClickHouse, Redis, KeyDB and Dragonfly databases.
+- **Does not move:** DNS, or **LibSQL** data — it moves with its volume. App
   **volume** data is moved by the migrator's **volume arm** ([Streamed volume copy](#streamed-volume-copy)),
   done before the first deploy and gated so a started app's volume is never wiped; a tiny volume can still use
   the hub-staged upload (tar the declared volume and `curl -T` it to
@@ -126,9 +125,16 @@ live replication — so the cutover discipline at the end of this page still app
   database from its measured size and says which one it took; a dry run shows it before anything moves. Set
   `MIGRATION_VX_MAX_DUMP_BYTES` on the hub only if you want a ceiling of your own. The target server's free disk is
   checked first and the answer names what is free and what is needed.
+  MongoDB and ClickHouse use the same streamed route: the Mongo archive is cut as it is dumped; a ClickHouse backup is a
+  file for the server on both ends, so it needs room for itself next to the database (on the source while it is
+  written, on the target while it is restored: the disk check counts it). Neither client ever gets the password on its
+  command line: it goes into a client config file (mode 0600, in the container's tmpfs) that is removed on every exit.
   Redis, KeyDB and Dragonfly snapshots still travel as one file and keep the `MIGRATION_MAX_ARTIFACT_BYTES` limit (raise
-  it on the hub if you need a bigger one); MongoDB and ClickHouse have no dump route yet. A streamed route for those is an
-  open item, so "any size" is not claimed for them.
+  it on the hub if you need a bigger one).
+- **Outside a guided run.** A plain `tugra-agent migrate` run no longer stops at the cap: a database whose dump goes over
+  it is moved by the streamed route (the hub is asked for it; a guided run whose owner chose `refuse` keeps that
+  decision). Re-running the same command resumes such a stream. `--no-stream-large` keeps the old failure
+  (`dump-too-big`) instead.
 - **Where disk is needed.** The source host needs none for a streamed dump: the dump is read as fast as it is uploaded,
   and the agent logs how much room its optional read-ahead spool has (a small spool is slower, never wrong). The hub
   relays each part straight from the source to the target and stores nothing on its own disk, so there is no relay disk
@@ -264,7 +270,7 @@ fresh dump).
 - `restored-differs` — a different dump is already restored; pass `--resync` to overwrite.
 - `restore-timeout` / `restore-unconfirmed` — the hub restore outran the client wait; it may still finish —
   re-run to re-check its status.
-- state `unsupported` (reason `requires-S4b` / `no-logical-dump`) — ClickHouse / MongoDB / LibSQL have no dump route yet (LibSQL moves with its volume).
+- state `unsupported` (reason `no-logical-dump`) — LibSQL has no dump route (it moves with its volume).
 
 ### Security model
 
@@ -401,8 +407,8 @@ tugra import volumes <opId> --reset <itemRef>     # discard its parts and start 
 # Manual migration (apps, volumes, and other databases)
 
 This is the hand-driven path: recreate each app on Tugra and move data with a dump-and-restore. Use it for
-apps and volumes, for **MongoDB**, and whenever the one-click migrator skips a database. (ClickHouse has no
-documented dump procedure here yet; LibSQL is a plain volume copy.)
+apps and volumes, and whenever the one-click migrator skips a database. (MongoDB and ClickHouse have a one-click
+route now; the by-hand MongoDB steps below stay for sources the migrator cannot read. LibSQL is a plain volume copy.)
 
 ## What this covers / does not
 
@@ -414,8 +420,7 @@ documented dump procedure here yet; LibSQL is a plain volume copy.)
   endpoint). **App volume data** has an automated path: the [streamed volume copy](#streamed-volume-copy).
 - **Prefer the one-click migrator** for Postgres, MySQL, MariaDB, Redis, KeyDB and Dragonfly data; the manual
   Redis/KeyDB `BGSAVE`/`dump.rdb` dance below is only needed when the one-click path can't be used.
-- **Not covered by either path yet:** ClickHouse and LibSQL data (ClickHouse + MongoDB are one-click-deferred;
-  LibSQL has no logical dump — copy its volume); adopting Coolify's running (compose-managed) containers in
+- **Not covered by either path yet:** LibSQL data (it has no logical dump — copy its volume); adopting Coolify's running (compose-managed) containers in
   place; Bitbucket sources; Caddy/Nginx custom proxy; per-DB SSL/init-scripts.
 
 ## Before you start

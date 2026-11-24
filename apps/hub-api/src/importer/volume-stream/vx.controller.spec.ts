@@ -17,7 +17,7 @@ describe("MigrationVolumeController (routes, guard, strict bodies)", () => {
   let app: INestApplication;
   const TOKEN = generateMigrationToken();
   const vx = Object.fromEntries(
-    ["inventory", "dbSizes", "diskCheck", "begin", "registerPart", "commitPart", "finish", "status", "beat", "reset", "abort", "speedtestPart", "speedtestCommit", "speedtestEnd"].map((m) => [m, jest.fn().mockResolvedValue({ ok: true })]),
+    ["inventory", "dbSizes", "requestStream", "diskCheck", "begin", "registerPart", "commitPart", "finish", "status", "beat", "reset", "abort", "speedtestPart", "speedtestCommit", "speedtestEnd"].map((m) => [m, jest.fn().mockResolvedValue({ ok: true })]),
   );
   const tokens = { validate: jest.fn(async (raw: string) => (raw === TOKEN ? { opId: "op-1", actorId: "user-1", expiresAt: new Date(Date.now() + 3_600_000) } : null)) };
 
@@ -58,6 +58,17 @@ describe("MigrationVolumeController (routes, guard, strict bodies)", () => {
     await post("db-sizes", { runId: RUN, items: [item], opId: "another-op" }).expect(400);
     expect(vx.dbSizes).not.toHaveBeenCalled();
     expect((await request(app.getHttpServer()).post("/api/v1/import/migration/vx/db-sizes").send({ runId: RUN, items: [item] })).status).toBe(401);
+  });
+
+  it("db-stream: a plain run asks for the streamed lane; the body is strict and the opId comes from the token", async () => {
+    await post("db-stream", { itemRef: "database:srv1:pg1" }).expect(200);
+    expect(vx.requestStream).toHaveBeenCalledWith(expect.objectContaining({ opId: "op-1" }), { itemRef: "database:srv1:pg1" });
+    vx.requestStream.mockClear();
+    await post("db-stream", { itemRef: "volume:srv1:pg1:dump" }).expect(400); // a database itemRef only
+    await post("db-stream", { itemRef: "database:srv1:pg1", opId: "another-op" }).expect(400);
+    await post("db-stream", {}).expect(400);
+    expect(vx.requestStream).not.toHaveBeenCalled();
+    expect((await request(app.getHttpServer()).post("/api/v1/import/migration/vx/db-stream").send({ itemRef: "database:srv1:pg1" })).status).toBe(401);
   });
 
   it("bodies are strict: unknown keys, bad hashes, bad run ids and bad ints are 400 and never reach the service", async () => {

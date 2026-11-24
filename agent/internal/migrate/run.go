@@ -141,6 +141,7 @@ type cli struct {
 	verifyExactBelow int64  // estimate mode counts exactly below this row estimate
 
 	// --dry-run database size measurement (the hub chooses a lane per database from it).
+	noStreamLarge    bool  // do not move a database over the artifact cap by the streamed dump lane
 	measureDBs       bool  // measure every dump-capable database (read-only) and report it to the hub
 	measureDump      bool  // count the dump itself for every database, whatever its size
 	measureDumpBelow int64 // count the dump itself for databases whose catalog size is at or below this
@@ -330,7 +331,10 @@ func RunCLI(args []string, version string, stdout, stderr io.Writer) (code int) 
 
 	run := &runner{hub: hub, dockerPath: dockerPath, dockerEnv: dockerEnv, spoolDir: spoolDir,
 		maxGz: maxGz, c: c, sc: sc, logf: logf, parsed: parsed, rejected: rejected, overrides: mapOverrides,
-		usedIDs: map[string]string{}}
+		usedIDs: map[string]string{}, allTgts: targets.Targets, expiry: probe.expiresAt}
+	if targets.VxProtocol == vxProtocolVersion && targets.Vx != nil {
+		run.vxPolicy = targets.Vx
+	}
 
 	// --verify measures every database the plan lists (a physically-copied one is usually stopped and reports `skipped`),
 	// independent of which arm moved the data, so a verify-only re-run after the copy works.
@@ -495,6 +499,14 @@ type runner struct {
 	rejected   map[string]bool
 	overrides  map[string]string
 	usedIDs    map[string]string // container ID -> the itemRef that first resolved it
+
+	// The streamed dump lane, for a database whose dump goes over the artifact cap (or that an earlier run already put on the stream):
+	// the hub's streamed-copy policy (nil = this hub offers none), the rows of the targets list this run started from, and the volume
+	// runner built from them on first use.
+	vxPolicy *VxPolicy
+	allTgts  []Target
+	expiry   time.Time
+	vr       *volRunner
 }
 
 // item runs one target end to end. The second return is a non-zero abort exit code when the whole
@@ -513,6 +525,11 @@ func (r *runner) item(ctx context.Context, tg Target) (res itemResult, abort int
 		return res, 0
 	}
 	if tg.DataPlane == "volume" { // moved by the volume arm; the hub refuses the logical route
+		// ...except a database this very command put on the streamed lane because its dump was over the cap (a re-run resumes it here,
+		// since no volume arm runs in this invocation)
+		if sres, sabort, ok := r.resumeStreamed(ctx, tg); ok {
+			return sres, sabort
+		}
 		res.State, res.Reason = "skipped", "volume-mode"
 		return res, 0
 	}
@@ -599,10 +616,18 @@ func (r *runner) item(ctx context.Context, tg Target) (res itemResult, abort int
 	if tg.Engine == "DRAGONFLY" {
 		defer cleanupInContainer(src.ID, r.dockerPath, r.dockerEnv)
 	}
+	// MongoDB / ClickHouse: the config file (it holds the password) and a ClickHouse backup file must not outlive a killed dump.
+	defer cleanupDumpLeftovers(tg.Engine, src.ID, r.dockerPath, r.dockerEnv)
 
 	// --- dump ---
 	dr, dumpErr := dumpOne(ctx, r.dockerPath, plan, r.spoolDir, r.maxGz, r.c.dumpTimeout)
 	if dumpErr != nil {
+		// Over the artifact route's cap: a database of any size moves, so the streamed dump lane takes over instead of stopping.
+		if errors.Is(dumpErr, errDumpTooBig) {
+			if sres, sabort, ok := r.streamOverCap(ctx, tg); ok {
+				return sres, sabort
+			}
+		}
 		res.State, res.Reason = "failed", dumpReason(dumpErr)
 		return res, 0
 	}
@@ -741,6 +766,7 @@ func parseFlags(args []string, stderr io.Writer) (*cli, error) {
 	fs.BoolVar(&c.verify, "verify", false, "after the data arms, measure each source database's row/key counts (read-only) and report them to the hub as logical-parity evidence")
 	fs.StringVar(&c.verifyMode, "verify-mode", verifyModeEstimate, "verify cost mode: exact (count every table) or estimate (planner estimate for big tables)")
 	fs.Int64Var(&c.verifyExactBelow, "verify-exact-below", defaultVerifyExactBelow, "estimate mode: tables under this many estimated rows are still counted exactly")
+	fs.BoolVar(&c.noStreamLarge, "no-stream-large", false, "keep a database whose dump is over the hub's artifact size cap as a failed item instead of moving it by the streamed dump lane")
 	fs.BoolVar(&c.measureDBs, "measure-dbs", false, "--dry-run: measure every dump-capable database (catalog size, plus the counted dump when cheap) read-only and report it to the hub, which chooses each database's lane from it")
 	fs.BoolVar(&c.measureDump, "measure-dump", false, "--dry-run: count every database's dump (raw and gzip bytes, nothing written) whatever its size, so the hub decides its lane from the real dump")
 	fs.Int64Var(&c.measureDumpBelow, "measure-dump-below", defaultMeasureDumpBelow, "--dry-run: count the dump of databases whose catalog size is at or below this many bytes (larger ones are reported by catalog size)")

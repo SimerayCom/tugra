@@ -159,6 +159,7 @@ func (v *volRunner) runDump(ctx context.Context, tg Target) (res itemResult) {
 		res.State, res.Reason = f.state, f.reason
 		return res
 	}
+	defer cleanupDumpLeftovers(tg.Engine, f.src.ID, v.dockerPath, v.dockerEnv)
 	partRaw, perr := v.partRawBytes()
 	if perr != nil {
 		res.State, res.Reason = "failed", "part-size"

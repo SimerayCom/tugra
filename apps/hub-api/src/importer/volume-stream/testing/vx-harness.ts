@@ -19,6 +19,8 @@ export interface HarnessOpts {
   /** Free KiB reported by the target probe (both staging and docker root, same device). */
   freeKb?: number;
   relayConcurrency?: number;
+  /** The guided run this op belongs to (its stored options), or none: a plain `migrate` op. */
+  run?: { options: unknown } | null;
 }
 
 const sha = (b: Buffer | string) => createHash("sha256").update(b).digest("hex");
@@ -40,6 +42,7 @@ export function harness(o: HarnessOpts = {}) {
     backup: { count: jest.fn().mockResolvedValue(0) },
     deployment: { count: jest.fn().mockResolvedValue(0) },
     bulkOperation: { findUnique: jest.fn().mockImplementation(async () => ({ meta: op.meta })) },
+    migrationRun: { findFirst: jest.fn().mockResolvedValue(o.run ?? null) },
     bulkTask: tasks,
     migrationVolumeTransfer: transfers,
     migrationVolumePart: parts,

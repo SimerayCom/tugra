@@ -1,6 +1,7 @@
 import { buildImporterDump } from "./db-dump";
 import type { DumpFormat } from "./import-source";
 import type { DbEngine } from "../databases/database-script";
+import { CH_DUMP_BODY, DB_PW_ENV, MONGO_DUMP_BODY } from "./safe-db-scripts";
 
 /**
  * Migrator dump RECIPES — the per-engine `docker exec …` command the one-click migrator runs on the UNTRUSTED
@@ -13,7 +14,9 @@ import type { DbEngine } from "../databases/database-script";
  *  - NO credential is ever inlined into the command text. Every secret is forwarded with `docker exec -e NAME`
  *    (from the migrator's child env, read locally via `docker inspect`), so it never lands on an argv that host
  *    `ps` / /proc/<pid>/cmdline can read, and it never reaches the hub. (ClickHouse is NOT served here for
- *    exactly this reason — see MIGRATOR_UNSUPPORTED.)
+ *    exactly this reason.) MongoDB and ClickHouse are the engines whose clients want the password on their own command line, so
+ *    their recipes are NOT derived from the backup commands: they are the hand-written, argv-safe bodies of {@link ./safe-db-scripts}
+ *    (the password goes through a 0600 config file in the container's tmpfs, never an argv).
  *  - Credential VALUES travel ONLY via env; the command text references them as `"$TUGRA_SRC_CTR/USER/DB"`
  *    (host-expanded, so a `$(…)` in a value is inert) or as a bound `-e NAME`. The password is never a
  *    host-expanded `$TUGRA_SRC_*`, so it is never put on the docker-client argv either.
@@ -60,24 +63,44 @@ export interface MigratorRecipe {
 
 /**
  * Engines whose logical dump the migrator can stream, keeping every secret off every argv (host AND container).
- * CLICKHOUSE and MONGO are deferred to S4b: ClickHouse's clickhouse-client takes `--password` on the argv
- * (host-`ps`-visible inside the container) and its archive restore needs a matching DB name; mongodump has the
- * same argv exposure. Both need a bespoke, argv-safe reconstruction. LIBSQL has no logical dump.
+ * MONGO and CLICKHOUSE use bespoke recipes ({@link BESPOKE_RECIPES}); the rest are rendered from Tugra's own backup commands.
+ * LIBSQL has no logical dump.
  */
-export const MIGRATOR_ENGINES: DbEngine[] = ["POSTGRES", "MYSQL", "MARIADB", "REDIS", "KEYDB", "DRAGONFLY"];
+export const MIGRATOR_ENGINES: DbEngine[] = ["POSTGRES", "MYSQL", "MARIADB", "REDIS", "KEYDB", "DRAGONFLY", "MONGO", "CLICKHOUSE"];
 
 /** Engines the migrator CANNOT stream yet, with a machine-readable reason — so the endpoint + the Go side skip
  *  them EXPLICITLY (a missing recipe must never read as an empty, silently-successful dump). */
 export const MIGRATOR_UNSUPPORTED: Record<string, string> = {
-  CLICKHOUSE: "requires-S4b", // --password on the in-container argv + source/target DB-name match
-  MONGO: "requires-S4b", // --password on the in-container argv + archive namespace match
   LIBSQL: "no-logical-dump", // single SQLite file — moved by a volume copy, not a logical dump
+};
+
+/**
+ * The hand-written recipes of the engines whose client takes the password on its own argv. Each runs ONE constant script in the
+ * container (`sh -c '<body>'`), the user (and ClickHouse's database) as positional parameters from the validated host-expanded words,
+ * and the password only as the bound `-e TUGRA_DB_PW`. Mirrored byte for byte by the Go migrator (`engineSpecs`).
+ */
+const BESPOKE_RECIPES: Partial<Record<DbEngine, MigratorRecipe>> = {
+  MONGO: {
+    command: `docker exec -e ${DB_PW_ENV} "$TUGRA_SRC_CTR" sh -c '${MONGO_DUMP_BODY}' tugra-mongo "$TUGRA_SRC_USER"`,
+    format: "mongo_archive",
+    env: [{ name: DB_PW_ENV, from: "pw" }],
+  },
+  CLICKHOUSE: {
+    command: `docker exec -e ${DB_PW_ENV} "$TUGRA_SRC_CTR" sh -c '${CH_DUMP_BODY}' tugra-clickhouse "$TUGRA_SRC_USER" "$TUGRA_SRC_DB"`,
+    format: "clickhouse_zip",
+    env: [{ name: DB_PW_ENV, from: "pw" }],
+  },
 };
 
 /** Build the migrator dump recipe for one engine (throws for an engine the migrator does not yet stream). */
 export function buildMigratorRecipe(engine: DbEngine): MigratorRecipe {
   if (!MIGRATOR_ENGINES.includes(engine)) {
     throw new Error(`migrator recipe not available for ${engine}${MIGRATOR_UNSUPPORTED[engine] ? ` (${MIGRATOR_UNSUPPORTED[engine]})` : ""}`);
+  }
+  const bespoke = BESPOKE_RECIPES[engine];
+  if (bespoke) {
+    assertBespokeShape(engine, bespoke);
+    return structuredClone(bespoke);
   }
   const plan = buildImporterDump(engine, SENT.CTR, { username: SENT.USER, password: SENT.PW, database: SENT.DB });
   assertSentinelsNotNested(engine, plan.command);
@@ -117,6 +140,17 @@ export function buildAllMigratorRecipes(): Record<string, MigratorRecipe> {
   const out: Record<string, MigratorRecipe> = {};
   for (const engine of MIGRATOR_ENGINES) out[engine] = buildMigratorRecipe(engine);
   return out;
+}
+
+/** A bespoke recipe must be one line, carry no single quote outside its one `sh -c` body, and reference only the known `$TUGRA_SRC_*` words outside it. */
+function assertBespokeShape(engine: DbEngine, r: MigratorRecipe): void {
+  if (!r.command.startsWith("docker exec ")) throw new Error(`migrator recipe for ${engine} must start with 'docker exec '`);
+  if (/[\n\r\0]/.test(r.command)) throw new Error(`migrator recipe for ${engine} must be a single line`);
+  const open = r.command.indexOf("'");
+  const close = r.command.lastIndexOf("'");
+  if (open < 0 || close <= open || r.command.slice(open + 1, close).includes("'")) throw new Error(`migrator recipe for ${engine} must have exactly one single-quoted sh -c body`);
+  if (r.command.includes("TUGRA_SRC_PW")) throw new Error(`migrator recipe for ${engine} must not reference the password as a host-expanded var`);
+  assertRefsOutsideSingleQuotes(engine, r.command);
 }
 
 /** Replace a single inlined `-e NAME='SENT_PW'` with its bare passthrough, recording the env binding. A no-op

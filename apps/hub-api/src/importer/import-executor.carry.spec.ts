@@ -121,7 +121,7 @@ describe("ImportExecutorService.carryUnlistedDb (R2)", () => {
 
   it("refuses an engine the migrator cannot dump, a non-Coolify op, a rolled-back or cancelled op, and a caller without the databases permission", async () => {
     const h = harness();
-    await expect(h.svc.carryUnlistedDb("user-1", "op-1", { ...db(), engine: "MONGO" }, "tgt-1")).rejects.toBeInstanceOf(BadRequestException);
+    await expect(h.svc.carryUnlistedDb("user-1", "op-1", { ...db(), engine: "LIBSQL" }, "tgt-1")).rejects.toBeInstanceOf(BadRequestException);
     await expect(harness({ meta: { sourceKind: "dokploy" } }).svc.carryUnlistedDb("user-1", "op-1", db(), "tgt-1")).rejects.toBeInstanceOf(ConflictException);
     await expect(harness({ meta: { rolledBackAt: "2026-11-20T10:00:00.000Z" } }).svc.carryUnlistedDb("user-1", "op-1", db(), "tgt-1")).rejects.toBeInstanceOf(ConflictException);
     await expect(harness({ cancelled: true }).svc.carryUnlistedDb("user-1", "op-1", db(), "tgt-1")).rejects.toBeInstanceOf(ConflictException);

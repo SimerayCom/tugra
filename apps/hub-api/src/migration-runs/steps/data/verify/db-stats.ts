@@ -14,6 +14,7 @@
 import type { CodeParams } from "../../../core/dto";
 import type { CheckStatusValue, DbStats, StatsTable } from "../data-contract";
 import { shq } from "../source-control/source-scripts";
+import { safeStatsCommand } from "../../../../importer/safe-db-scripts";
 
 export const STATS_TAB = "\t";
 export const DEFAULT_EXACT_BELOW = 1_000_000;
@@ -92,6 +93,10 @@ export function buildDbStatsScript(engine: string, container: string, creds: Sta
       return `docker exec -e REDISCLI_AUTH=${shq(creds.password)} ${container} redis-cli --no-auth-warning INFO keyspace`;
     case "KEYDB":
       return `docker exec -e REDISCLI_AUTH=${shq(creds.password)} ${container} keydb-cli --no-auth-warning INFO keyspace`;
+    case "MONGO":
+    case "CLICKHOUSE":
+      // the clients of these two take the password on their own command line: the statement reads it from a 0600 config file / the environment
+      return safeStatsCommand(engine, container, creds.username, creds.password, creds.database, mode, below);
     default:
       throw new Error("engine has no stats statement");
   }
@@ -101,7 +106,7 @@ function assertIdents(c: StatsCreds): void {
   if (!IDENT_RE.test(c.username) || !/^[A-Za-z0-9_][A-Za-z0-9_.+-]{0,63}$/.test(c.database)) throw new Error("invalid database identifier");
 }
 
-export const statsKindOf = (engine: string): "tables" | "keys" | null => (["REDIS", "KEYDB", "DRAGONFLY"].includes(engine) ? "keys" : ["POSTGRES", "MYSQL", "MARIADB"].includes(engine) ? "tables" : null);
+export const statsKindOf = (engine: string): "tables" | "keys" | null => (["REDIS", "KEYDB", "DRAGONFLY"].includes(engine) ? "keys" : ["POSTGRES", "MYSQL", "MARIADB", "MONGO", "CLICKHOUSE"].includes(engine) ? "tables" : null);
 
 // ───────────────────────────── parsers (mirror of verify.go) ─────────────────────────────
 

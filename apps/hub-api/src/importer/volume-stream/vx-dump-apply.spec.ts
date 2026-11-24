@@ -11,8 +11,8 @@ const ID = "cktransferabcdefghijklmnopq";
 const spec = (engine: DbSpec["engine"], over: Partial<DbSpec> = {}): DbSpec => ({
   id: "ckdb000000000000000000001",
   engine,
-  image: engine === "POSTGRES" ? "postgres:16" : "mariadb:11",
-  port: engine === "POSTGRES" ? 5432 : 3306,
+  image: engine === "POSTGRES" ? "postgres:16" : engine === "MONGO" ? "mongo:7" : engine === "CLICKHOUSE" ? "clickhouse/clickhouse-server:24" : "mariadb:11",
+  port: engine === "POSTGRES" ? 5432 : engine === "MONGO" ? 27017 : engine === "CLICKHOUSE" ? 9000 : 3306,
   credentials: { username: "app", password: "p'w d", database: "appdb" },
   ...over,
 });
@@ -40,6 +40,29 @@ describe("buildDumpApplyScript (goldens)", () => {
     expect(my).toContain(" mysql -u'root' --protocol=TCP");
   });
 
+  it("MongoDB restores the archive through a config file: the password is in the environment, never on an argv", () => {
+    const s = buildDumpApplyScript({ transferId: ID, rawBytes: 3000, db: spec("MONGO", { credentials: { username: "root", password: "p'w d", database: "appdb" } }) });
+    expect(s).toContain("vx_stream | TUGRA_DB_PW='p'\\''w d' docker exec -i -e TUGRA_DB_PW tugra_db_ckdb000000000000000000001 sh -c ");
+    expect(s).toContain(" tugra-mongo 'root'");
+    expect(s).toContain('--archive --drop --nsExclude "admin.*"'); // a foreign dump never replaces the target's own root user
+    expect(s).not.toContain("--password");
+    expect(s).not.toContain("curl");
+  });
+
+  it("ClickHouse restores the backup through a config file, stage-then-swap, the source database read from the archive", () => {
+    const s = buildDumpApplyScript({ transferId: ID, rawBytes: 3000, db: spec("CLICKHOUSE", { credentials: { username: "chu", password: "pw", database: "appdb" } }) });
+    expect(s).toContain("vx_stream | TUGRA_DB_PW='pw' docker exec -i -e TUGRA_DB_PW tugra_db_ckdb000000000000000000001 sh -c ");
+    expect(s).toContain(" tugra-clickhouse 'chu' 'appdb'");
+    expect(s).toContain("RESTORE DATABASE");
+    expect(s).not.toContain("--password");
+    expect(s).not.toContain("dump-stream.invalid");
+  });
+
+  it("refuses a database name the restore cannot read back from an archive, and a password a config file cannot carry", () => {
+    expect(() => buildDumpApplyScript({ transferId: ID, rawBytes: 1, db: spec("CLICKHOUSE", { credentials: { username: "chu", password: "pw", database: "my.db" } }) })).toThrow();
+    expect(() => buildDumpApplyScript({ transferId: ID, rawBytes: 1, db: spec("MONGO", { credentials: { username: "root", password: "a\nb", database: "x" } }) })).toThrow(/config file/);
+  });
+
   it("refuses an engine with no dump lane, a bad transfer id and a bad size", () => {
     expect(() => buildDumpApplyScript({ transferId: ID, rawBytes: 1, db: spec("REDIS") })).toThrow(/does not restore REDIS/);
     expect(() => buildDumpApplyScript({ transferId: "a b", rawBytes: 1, db: spec("POSTGRES") })).toThrow();
@@ -63,8 +86,9 @@ cmd="$1"; shift
 case "$cmd" in
   exec)
     flat="$*"
-    if [[ "$flat" == *pg_restore* || "$flat" == *" mariadb "* || "$flat" == *" mysql "* ]]; then
+    if [[ "$flat" == *pg_restore* || "$flat" == *" mariadb "* || "$flat" == *" mysql "* || "$flat" == *mongorestore* || "$flat" == *"RESTORE DATABASE"* ]]; then
       echo "$flat" > "$CAPTURE.args"
+      echo "pw=\${TUGRA_DB_PW-}" > "$CAPTURE.env"
       cat > "$CAPTURE"
       [ -n "$FAIL_RESTORE" ] && exit 1
       exit 0
@@ -156,5 +180,29 @@ describe("the dump apply script executed against a stubbed docker", () => {
     expect(r.code).toBe(0);
     expect(readFileSync(h.capture).equals(d)).toBe(true);
     expect(readFileSync(`${h.capture}.args`, "utf8")).toContain("mariadb -uroot");
+  });
+
+  it("MongoDB: the staged parts reach the restore body's stdin, the readiness probe runs first, the password only in the environment", () => {
+    const h = host();
+    const d = dump(2600);
+    h.stageParts(d);
+    const r = h.run(buildDumpApplyScript({ transferId: ID, rawBytes: d.length, db: spec("MONGO", { credentials: { username: "root", password: "s3'cret", database: "appdb" } }) }));
+    expect(r.code).toBe(0);
+    expect(parseMigrationApplyOk(r.out)).toBe(0);
+    expect(readFileSync(h.capture).equals(d)).toBe(true);
+    expect(readFileSync(`${h.capture}.env`, "utf8").trim()).toBe("pw=s3'cret");
+    const argv = readFileSync(`${h.capture}.args`, "utf8");
+    expect(argv).toContain("mongorestore --config");
+    expect(argv).not.toContain("s3'cret");
+  });
+
+  it("ClickHouse: the staged parts reach the restore body's stdin", () => {
+    const h = host();
+    const d = dump(1800);
+    h.stageParts(d);
+    const r = h.run(buildDumpApplyScript({ transferId: ID, rawBytes: d.length, db: spec("CLICKHOUSE", { credentials: { username: "chu", password: "pw", database: "appdb" } }) }));
+    expect(r.code).toBe(0);
+    expect(readFileSync(h.capture).equals(d)).toBe(true);
+    expect(readFileSync(`${h.capture}.args`, "utf8")).not.toContain("--password");
   });
 });

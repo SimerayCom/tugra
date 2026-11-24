@@ -148,7 +148,7 @@ func TestBuildVerifyPlanRefusesUnsafeValues(t *testing.T) {
 			t.Errorf("threshold %d must be refused", below)
 		}
 	}
-	if _, err := buildVerifyPlan("MONGO", good, verifyModeExact, 10, "docker", look); err == nil {
+	if _, err := buildVerifyPlan("LIBSQL", good, verifyModeExact, 10, "docker", look); err == nil {
 		t.Error("an engine without a verify statement must be refused")
 	}
 	// redis family needs neither user nor db: a bad user is irrelevant

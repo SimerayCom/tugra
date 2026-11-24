@@ -56,6 +56,15 @@ describe("decideDbLane: only the DUMP size decides the cap", () => {
     expect(input(database(DB, { measure: BIG_MEASURE })).lane).toBe("stream");
     expect(input(database(DB, { measure: BIG_MEASURE }), { largeDbMode: "refuse" })).toMatchObject({ lane: "blocked", reason: "refused" });
   });
+  it("MongoDB and ClickHouse are lane engines too: small stays on the standard route, a big one streams, nothing is left to a manual step", () => {
+    for (const engine of ["MONGO", "CLICKHOUSE"]) {
+      expect(input(database(DB, { engine, measure: counted(10 * MiB) })).lane).toBe("logical");
+      expect(input(database(DB, { engine, measure: counted(300 * MiB) }))).toMatchObject({ lane: "stream", reason: "over-cap" });
+      expect(input(database(DB, { engine, measure: BIG_MEASURE })).lane).toBe("stream");
+      expect(input(database(DB, { engine, measure: null }))).toMatchObject({ lane: "pending", reason: "unmeasured" });
+      expect(input(database(DB, { engine, measure: counted(300 * MiB) }), { largeDbMode: "refuse" })).toMatchObject({ lane: "blocked", reason: "refused" });
+    }
+  });
   it("a database nobody measured is pending (nothing is decided on a guess); a failed measurement is pending with its own reason", () => {
     expect(input(database(DB, { measure: null }))).toMatchObject({ lane: "pending", reason: "unmeasured" });
     expect(input(database(DB, { measure: failedMeasure }))).toMatchObject({ lane: "pending", reason: "measure-failed" });

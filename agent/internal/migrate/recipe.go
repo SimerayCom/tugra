@@ -69,6 +69,8 @@ type engineSpec struct {
 	bind     Bind                       // the single expected env bind
 	usesUser bool                       // command references $TUGRA_SRC_USER
 	usesDB   bool                       // command references $TUGRA_SRC_DB
+	cfgPW    bool                       // the password goes through a config file in the container: it must survive that (no control characters)
+	plainDB  bool                       // the database name is read back from an archive entry name: letters, digits and underscore only
 	argv     func(c Creds) []string     // the Go-native argv template (docker ... with values substituted)
 }
 
@@ -114,6 +116,30 @@ var engineSpecs = map[string]engineSpec{
 		usesDB:   true,
 		argv: func(c Creds) []string {
 			return []string{"docker", "exec", "-e", "MYSQL_PWD", c.Ctr, "mariadb-dump", "--single-transaction", "--quick", "-u" + c.User, "--protocol=TCP", "-h127.0.0.1", c.DB}
+		},
+	},
+	// MONGO and CLICKHOUSE: the client takes the password on its own command line, so the recipe runs a constant in-container script
+	// that reads it from the environment into a 0600 config file (safebodies.go). User (and database) are positional parameters.
+	"MONGO": {
+		golden:   `docker exec -e TUGRA_DB_PW "$TUGRA_SRC_CTR" sh -c '` + mongoDumpBody + `' tugra-mongo "$TUGRA_SRC_USER"`,
+		format:   "mongo_archive",
+		bind:     Bind{Name: dbPwEnv, From: "pw"},
+		usesUser: true,
+		cfgPW:    true,
+		argv: func(c Creds) []string {
+			return []string{"docker", "exec", "-e", dbPwEnv, c.Ctr, "sh", "-c", mongoDumpBody, "tugra-mongo", c.User}
+		},
+	},
+	"CLICKHOUSE": {
+		golden:   `docker exec -e TUGRA_DB_PW "$TUGRA_SRC_CTR" sh -c '` + chDumpBody + `' tugra-clickhouse "$TUGRA_SRC_USER" "$TUGRA_SRC_DB"`,
+		format:   "clickhouse_zip",
+		bind:     Bind{Name: dbPwEnv, From: "pw"},
+		usesUser: true,
+		usesDB:   true,
+		cfgPW:    true,
+		plainDB:  true,
+		argv: func(c Creds) []string {
+			return []string{"docker", "exec", "-e", dbPwEnv, c.Ctr, "sh", "-c", chDumpBody, "tugra-clickhouse", c.User, c.DB}
 		},
 	},
 	"REDIS": {
@@ -220,6 +246,25 @@ func cleanArgWord(v string) bool {
 	return true
 }
 
+// plainDBRe is a database name that sits unescaped inside a ClickHouse backup's entry names (`metadata/<db>.sql`).
+var plainDBRe = regexp.MustCompile(`^[A-Za-z0-9_]{1,63}$`)
+
+func validPlainDB(v string) bool { return plainDBRe.MatchString(v) }
+
+// validConfigPassword: a password that goes through a config file must be non-empty, printable and short enough to be sane. A
+// newline, NUL or other control character cannot be carried faithfully through the file, so the item is skipped, never mangled.
+func validConfigPassword(v string) bool {
+	if v == "" || len(v) > 256 {
+		return false
+	}
+	for i := 0; i < len(v); i++ {
+		if v[i] < 0x20 || v[i] == 0x7f {
+			return false
+		}
+	}
+	return true
+}
+
 func validContainer(v string) bool { return cleanArgWord(v) && ctrRe.MatchString(v) }
 func validUser(v string) bool      { return cleanArgWord(v) && userRe.MatchString(v) }
 func validDB(v string) bool        { return cleanArgWord(v) && dbRe.MatchString(v) }
@@ -270,6 +315,12 @@ func BuildPlan(p *Parsed, c Creds, dockerPath string, lookup func(string) (strin
 	}
 	if spec.usesDB && !validDB(c.DB) {
 		return Plan{}, &errInvalidCred{field: "db"}
+	}
+	if spec.plainDB && !validPlainDB(c.DB) {
+		return Plan{}, &errInvalidCred{field: "db"}
+	}
+	if spec.cfgPW && !validConfigPassword(c.PW) {
+		return Plan{}, &errInvalidCred{field: "password"}
 	}
 
 	env := map[string]string{}

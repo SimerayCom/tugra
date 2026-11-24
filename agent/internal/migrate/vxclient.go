@@ -511,3 +511,26 @@ func (h *Hub) VxSpeedtestCommit(ctx context.Context, itemRef string, idx int, ru
 func (h *Hub) VxSpeedtestEnd(ctx context.Context, itemRef, runID string) error {
 	return h.doBody(ctx, http.MethodPost, vxPrefix+url.PathEscape(itemRef)+"/speedtest-end", vxRunReq{RunID: runID}, nil, 2, 0)
 }
+
+// ---- the streamed dump lane for a database over the artifact cap ----------------------------------------------------
+
+type vxDbStreamReq struct {
+	ItemRef string `json:"itemRef"`
+}
+
+// VxDbStreamResp is the hub's answer to a request to move one database by the streamed dump lane.
+type VxDbStreamResp struct {
+	ItemRef       string `json:"itemRef"`
+	Stream        bool   `json:"stream"`
+	VolumeItemRef string `json:"volumeItemRef"`
+}
+
+// VxRequestStream asks the hub to move one database by the streamed dump lane (its dump went over the artifact cap). The hub refuses
+// (409) when the owner of a guided run chose not to, or when the database was already restored or copied as files.
+func (h *Hub) VxRequestStream(ctx context.Context, itemRef string) (*VxDbStreamResp, error) {
+	var r VxDbStreamResp
+	if err := h.doBody(ctx, http.MethodPost, vxPrefix+"db-stream", vxDbStreamReq{ItemRef: itemRef}, &r, 3, 0); err != nil {
+		return nil, err
+	}
+	return &r, nil
+}

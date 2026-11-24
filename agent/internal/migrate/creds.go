@@ -56,10 +56,54 @@ func resolveCreds(engine string, in inspectInfo) (resolved, *skip) {
 		return resolveRedisFamily(env, in, []string{"KEYDB_PASSWORD"})
 	case "DRAGONFLY":
 		return resolveRedisFamily(env, in, []string{"DFLY_requirepass", "DRAGONFLY_PASSWORD"})
+	case "MONGO":
+		return resolveMongo(env)
+	case "CLICKHOUSE":
+		return resolveClickHouse(env)
 	default:
-		// CLICKHOUSE / MONGO / LIBSQL are reported `unsupported` by the hub and never reach here.
+		// LIBSQL is reported `unsupported` by the hub and never reaches here.
 		return resolved{}, &skip{skipEngineUnsup}
 	}
+}
+
+// resolveMongo reads the root user the official image creates from MONGO_INITDB_ROOT_USERNAME / _PASSWORD. The dump is the whole
+// instance (one archive), authenticated against `admin`, so no database name is needed. An unauthenticated instance (no root user
+// configured) is skipped, never dumped as if it were fine; a *_FILE secret is never read.
+func resolveMongo(env map[string]string) (resolved, *skip) {
+	for _, k := range []string{"MONGO_INITDB_ROOT_PASSWORD_FILE", "MONGO_INITDB_ROOT_USERNAME_FILE"} {
+		if _, ok := env[k]; ok && env[strings.TrimSuffix(k, "_FILE")] == "" {
+			return resolved{}, &skip{skipSecretFile}
+		}
+	}
+	user, pw := env["MONGO_INITDB_ROOT_USERNAME"], env["MONGO_INITDB_ROOT_PASSWORD"]
+	if user == "" {
+		return resolved{}, &skip{skipCredsNotFound}
+	}
+	if pw == "" {
+		return resolved{}, &skip{skipPWNotFound}
+	}
+	return resolved{user: user, pw: pw}, nil
+}
+
+// resolveClickHouse reads CLICKHOUSE_USER / CLICKHOUSE_PASSWORD (the official image) or the CLICKHOUSE_ADMIN_* pair, and
+// CLICKHOUSE_DB (default: `default`). The user and the password come from the SAME tier, never mixed.
+func resolveClickHouse(env map[string]string) (resolved, *skip) {
+	for _, k := range []string{"CLICKHOUSE_PASSWORD_FILE", "CLICKHOUSE_USER_FILE", "CLICKHOUSE_ADMIN_PASSWORD_FILE"} {
+		if _, ok := env[k]; ok && env[strings.TrimSuffix(k, "_FILE")] == "" {
+			return resolved{}, &skip{skipSecretFile}
+		}
+	}
+	db := env["CLICKHOUSE_DB"]
+	if db == "" {
+		db = "default"
+	}
+	for _, tier := range [][2]string{{"CLICKHOUSE_USER", "CLICKHOUSE_PASSWORD"}, {"CLICKHOUSE_ADMIN_USER", "CLICKHOUSE_ADMIN_PASSWORD"}} {
+		user, pw := env[tier[0]], env[tier[1]]
+		if user != "" && pw != "" {
+			return resolved{user: user, db: db, pw: pw}, nil
+		}
+	}
+	return resolved{}, &skip{skipCredsNotFound}
 }
 
 func resolvePostgres(env map[string]string) (resolved, *skip) {

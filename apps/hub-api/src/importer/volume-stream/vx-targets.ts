@@ -45,6 +45,8 @@ export interface VxVolumeTarget {
   sourceImage?: string;
   /** Set when the owner explicitly excluded this volume (reported `volume-not-migrated`, never silently skipped). */
   excluded?: VxExclusion;
+  /** `db-dump` only: the migrator itself asked for the lane (its dump went over the artifact cap), so a re-run of its databases arm resumes it. */
+  streamedByMigrator?: boolean;
 }
 
 /** One data volume of an imported compose service, as the importer recorded it in the service task's result. */
@@ -143,6 +145,15 @@ export function dbStreamModeRefs(meta: unknown): Set<string> {
   return out;
 }
 
+/** The databases of `vxStream` a plain migrator run put there itself (`via: "migrator"`), as opposed to a guided run's DATA_SEED. */
+export function dbStreamMigratorRefs(meta: unknown): Set<string> {
+  const out = new Set<string>();
+  const v = (meta && typeof meta === "object" ? (meta as { vxStream?: unknown }).vxStream : undefined) as Record<string, unknown> | undefined;
+  if (!v || typeof v !== "object" || Array.isArray(v)) return out;
+  for (const [k, e] of Object.entries(v)) if (DB_ITEMREF_RE.test(k) && e && typeof e === "object" && (e as { via?: unknown }).via === "migrator") out.add(k);
+  return out;
+}
+
 /**
  * Every volume the migrator can stream for an op: each DECLARED volume of a DONE app task (runCopyApp recorded the
  * mounts), each copy volume of a DONE compose SERVICE task (runCopyService recorded the mounts), plus a Postgres database whose plan item chose `dataMode:"volume"`. Deterministic order (by itemRef).
@@ -154,6 +165,8 @@ export function buildVolumeTargets(opts: {
   dbVolumeRefs: ReadonlySet<string>;
   /** Databases moved by the streamed dump lane: they get a `db-dump` target and NEVER a `db-data` one (the dump lane wins over a physical plan item). */
   dbStreamRefs?: ReadonlySet<string>;
+  /** The subset of {@link dbStreamRefs} the migrator asked for itself. */
+  dbStreamMigratorRefs?: ReadonlySet<string>;
   excluded?: Readonly<Record<string, VxExclusion>>;
   /** `app itemRef -> custom container name prefix` of the plan (`containerPrefixesOf`); only an `app` task's volumes carry it. */
   appContainerPrefixes?: ReadonlyMap<string, string>;
@@ -186,7 +199,7 @@ export function buildVolumeTargets(opts: {
       if (!db || !isStreamDumpEngine(db.engine)) continue;
       const ref = volumeItemRef(t.itemRef, DUMP_VOLUME_NAME);
       if (!ref) continue;
-      out.push({ itemRef: ref, destType: "db-dump", name: DUMP_VOLUME_NAME, mountPath: "", databaseItemRef: t.itemRef, engine: db.engine, engineVersion: db.version, sourceImage: db.image });
+      out.push({ itemRef: ref, destType: "db-dump", name: DUMP_VOLUME_NAME, mountPath: "", databaseItemRef: t.itemRef, engine: db.engine, engineVersion: db.version, sourceImage: db.image, ...(opts.dbStreamMigratorRefs?.has(t.itemRef) ? { streamedByMigrator: true } : {}) });
     } else if (t.resourceType === "database" && t.kind === "database" && opts.dbVolumeRefs.has(t.itemRef)) {
       const db = opts.dbs.get(t.resourceId);
       if (!db || db.engine !== "POSTGRES") continue;

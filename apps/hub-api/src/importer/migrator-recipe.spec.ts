@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { buildMigratorRecipe, buildAllMigratorRecipes, MIGRATOR_ENGINES, MIGRATOR_UNSUPPORTED, RECIPE_VARS } from "./migrator-recipe";
 import { ENGINES, type DbEngine } from "../databases/database-script";
 
@@ -81,23 +83,49 @@ describe("migrator-recipe", () => {
     expect(r.env).toEqual([{ name: "REDISCLI_AUTH", from: "pw" }]);
   });
 
-  it("ClickHouse + Mongo are deferred (S4b, argv exposure); LibSQL has no logical dump — all throw, all flagged", () => {
-    for (const e of ["CLICKHOUSE", "MONGO", "LIBSQL"] as const) {
-      expect(MIGRATOR_ENGINES).not.toContain(e);
-      expect(() => buildMigratorRecipe(e)).toThrow(/not available/);
-      expect(MIGRATOR_UNSUPPORTED[e]).toBeTruthy(); // explicit machine-readable reason so the skip is never silent
-    }
-    expect(MIGRATOR_UNSUPPORTED.CLICKHOUSE).toBe("requires-S4b");
-    expect(MIGRATOR_UNSUPPORTED.MONGO).toBe("requires-S4b");
+  it("LibSQL has no logical dump: it throws and stays flagged with a machine-readable reason", () => {
+    expect(MIGRATOR_ENGINES).not.toContain("LIBSQL");
+    expect(() => buildMigratorRecipe("LIBSQL")).toThrow(/not available/);
     expect(MIGRATOR_UNSUPPORTED.LIBSQL).toBe("no-logical-dump");
+    expect(Object.keys(MIGRATOR_UNSUPPORTED)).toEqual(["LIBSQL"]);
   });
 
-  it("buildAllMigratorRecipes serves exactly the 6 argv-safe streamable engines", () => {
+  describe("MongoDB and ClickHouse: bespoke recipes (their clients take the password on their own argv)", () => {
+    const fixture = JSON.parse(readFileSync(join(__dirname, "../../test/fixtures/safe-db-scripts.json"), "utf8")) as Record<string, string>;
+
+    it("MongoDB: the in-container script writes a 0600 config file; the password is only the bound -e TUGRA_DB_PW", () => {
+      const r = buildMigratorRecipe("MONGO");
+      // the golden is built from the fixture the Go migrator is pinned to as well (agent/internal/migrate/testdata/safe-db-scripts.json)
+      expect(r.command).toBe(`docker exec -e TUGRA_DB_PW "$TUGRA_SRC_CTR" sh -c '${fixture.mongoDump}' tugra-mongo "$TUGRA_SRC_USER"`);
+      expect(r.format).toBe("mongo_archive");
+      expect(r.pgFormat).toBeUndefined();
+      expect(r.env).toEqual([{ name: "TUGRA_DB_PW", from: "pw" }]);
+      expect(r.command).not.toContain("--password");
+      expect(r.command).toContain("mongodump --config");
+    });
+
+    it("ClickHouse: BACKUP DATABASE through a client config file; user and database are validated positional words", () => {
+      const r = buildMigratorRecipe("CLICKHOUSE");
+      expect(r.command).toBe(`docker exec -e TUGRA_DB_PW "$TUGRA_SRC_CTR" sh -c '${fixture.chDump}' tugra-clickhouse "$TUGRA_SRC_USER" "$TUGRA_SRC_DB"`);
+      expect(r.format).toBe("clickhouse_zip");
+      expect(r.env).toEqual([{ name: "TUGRA_DB_PW", from: "pw" }]);
+      expect(r.command).toContain("--config-file");
+      expect(r.command).not.toContain("--password");
+      expect(r.command).toContain("BACKUP DATABASE");
+    });
+
+    it("is a copy: changing what one call returns never changes the next", () => {
+      const a = buildMigratorRecipe("MONGO");
+      a.env.push({ name: "X", from: "pw" });
+      expect(buildMigratorRecipe("MONGO").env).toHaveLength(1);
+    });
+  });
+
+  it("buildAllMigratorRecipes serves exactly the 8 argv-safe streamable engines", () => {
     const all = buildAllMigratorRecipes();
     expect(Object.keys(all).sort()).toEqual([...MIGRATOR_ENGINES].sort());
-    expect(Object.keys(all)).toHaveLength(6);
-    expect(all.CLICKHOUSE).toBeUndefined();
-    expect(all.MONGO).toBeUndefined();
+    expect(Object.keys(all)).toHaveLength(8);
+    expect(all.LIBSQL).toBeUndefined();
   });
 
   it("every DbEngine is classified in EXACTLY one of streamable / unsupported (adding one forces a choice)", () => {

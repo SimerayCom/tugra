@@ -12,6 +12,7 @@ import { VxService } from "./vx.service";
 import {
   VxBeginBodySchema,
   VxDbSizesBodySchema,
+  VxDbStreamBodySchema,
   VxFinishBodySchema,
   VxInventoryBodySchema,
   VxMigratorDiskCheckBodySchema,
@@ -20,6 +21,7 @@ import {
   VxSpeedtestBodySchema,
   type VxBeginBody,
   type VxDbSizesBody,
+  type VxDbStreamBody,
   type VxFinishBody,
   type VxInventoryBody,
   type VxMigratorDiskCheckBody,
@@ -54,6 +56,13 @@ export class MigrationVolumeController {
   @HttpCode(200)
   dbSizes(@MigrationOp() op: MigrationTokenContext, @Body(new ZodValidationPipe(VxDbSizesBodySchema)) body: VxDbSizesBody) {
     return this.vx.dbSizes(op, body);
+  }
+
+  /** A plain (non-guided) run: one database's dump is over the artifact cap, so move it by the streamed dump lane instead of stopping. */
+  @Post("db-stream")
+  @HttpCode(200)
+  dbStream(@MigrationOp() op: MigrationTokenContext, @Body(new ZodValidationPipe(VxDbStreamBodySchema)) body: VxDbStreamBody) {
+    return this.vx.requestStream(op, body);
   }
 
   /** Dry-run size check of the target host against the inventory (or an explicit size). No data moves. */

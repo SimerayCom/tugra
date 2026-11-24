@@ -165,7 +165,7 @@ func TestRunHandshake(t *testing.T) {
 	}
 	var out output
 	_ = json.Unmarshal(bytes.TrimSpace(stdout.Bytes()), &out)
-	if !out.Handshake || out.RecipesV != 1 || len(out.Engines) != 6 {
+	if !out.Handshake || out.RecipesV != 1 || len(out.Engines) != 8 {
 		t.Fatalf("handshake output wrong: %+v", out)
 	}
 }

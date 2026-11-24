@@ -210,6 +210,8 @@ func verifyBind(engine string) (Bind, bool) {
 		return Bind{Name: "MYSQL_PWD", From: "pw"}, true
 	case "REDIS", "KEYDB", "DRAGONFLY":
 		return Bind{Name: "REDISCLI_AUTH", From: "pw"}, true
+	case "MONGO", "CLICKHOUSE":
+		return Bind{Name: dbPwEnv, From: "pw"}, true
 	}
 	return Bind{}, false
 }
@@ -232,6 +234,25 @@ func buildVerifyPlan(engine string, c Creds, mode string, below int64, dockerPat
 	}
 	var argv []string
 	switch engine {
+	case "MONGO":
+		if !validUser(c.User) {
+			return Plan{}, &errInvalidCred{field: "user"}
+		}
+		if !validConfigPassword(c.PW) {
+			return Plan{}, &errInvalidCred{field: "password"}
+		}
+		argv = []string{dockerPath, "exec", "-e", dbPwEnv, c.Ctr, "sh", "-c", mongoShellBody, "tugra-verify", c.User, mode, strconv.FormatInt(below, 10), mongoStatsJS}
+	case "CLICKHOUSE":
+		if !validUser(c.User) {
+			return Plan{}, &errInvalidCred{field: "user"}
+		}
+		if !validPlainDB(c.DB) {
+			return Plan{}, &errInvalidCred{field: "db"}
+		}
+		if !validConfigPassword(c.PW) {
+			return Plan{}, &errInvalidCred{field: "password"}
+		}
+		argv = []string{dockerPath, "exec", "-e", dbPwEnv, c.Ctr, "sh", "-c", chStatsBody, "tugra-verify", c.User, c.DB, mode, strconv.FormatInt(below, 10)}
 	case "POSTGRES":
 		if !validUser(c.User) {
 			return Plan{}, &errInvalidCred{field: "user"}

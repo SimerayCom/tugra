@@ -3,16 +3,17 @@ import { planImport } from "./import-planner";
 import type { ForeignApp, ForeignFleet, ImportOptions } from "./foreign-fleet";
 
 describe("classifyDbDataPlane", () => {
-  it("one-click for the 6 migrator engines", () => {
-    for (const e of ["POSTGRES", "MYSQL", "MARIADB", "REDIS", "KEYDB", "DRAGONFLY"]) {
+  it("one-click for the 8 migrator engines", () => {
+    for (const e of ["POSTGRES", "MYSQL", "MARIADB", "REDIS", "KEYDB", "DRAGONFLY", "MONGO", "CLICKHOUSE"]) {
       expect(classifyDbDataPlane(e).dataPlane).toBe("one-click");
     }
   });
-  it("manual (config imports, data by hand) for Mongo/ClickHouse — no internal code leaked", () => {
+  it("Mongo and ClickHouse move by the migrator too, in a stream above the cap — never a manual path, no internal code leaked", () => {
     for (const e of ["MONGO", "CLICKHOUSE"]) {
       const c = classifyDbDataPlane(e);
-      expect(c.dataPlane).toBe("manual");
-      expect(c.reason).not.toMatch(/requires-|S4b|no-logical-dump/); // never leak internal slice codes
+      expect(c.dataPlane).toBe("one-click");
+      expect(c.reason).toMatch(/stream/);
+      expect(c.reason).not.toMatch(/manual|by hand|requires-|S4b|no-logical-dump/i);
     }
   });
   it("blocked for LibSQL (plan blocks it; no target DB) and for an unrecognized engine", () => {
@@ -63,7 +64,7 @@ describe("buildPreflight (streamed copy OFF: today's hub-staged text, byte-ident
     const pf = buildPreflight(f, opts);
     expect(pf.databases).toEqual([
       { name: "pg", engine: "POSTGRES", dataPlane: "one-click", reason: expect.any(String) },
-      { name: "ch", engine: "CLICKHOUSE", dataPlane: "manual", reason: expect.any(String) },
+      { name: "ch", engine: "CLICKHOUSE", dataPlane: "one-click", reason: expect.any(String) },
     ]);
     expect(pf.services).toEqual([{ name: "signoz", members: 2, note: expect.stringMatching(/not imported/i), verdict: "skipped" }]);
     expect(pf.appsWithVolumeData).toBe(1);

@@ -81,10 +81,16 @@ export function artifactCapBytes(): number {
 /** The catalog size up to which the migrator counts the dump itself; above it the hub treats the database as over the cap. Mirrors the Go default. */
 export const DUMP_MEASURE_BELOW_BYTES = 1 * GiB;
 
-/** Engines the streamed dump lane understands: pg_dump custom format -> pg_restore, mariadb-dump / mysqldump -> the client. */
-export const STREAM_DUMP_ENGINES = ["POSTGRES", "MARIADB", "MYSQL"] as const;
+/**
+ * Engines the streamed dump lane understands: pg_dump custom format -> pg_restore, mariadb-dump / mysqldump -> the client,
+ * mongodump --archive -> mongorestore --archive, ClickHouse BACKUP DATABASE -> RESTORE DATABASE.
+ */
+export const STREAM_DUMP_ENGINES = ["POSTGRES", "MARIADB", "MYSQL", "MONGO", "CLICKHOUSE"] as const;
 export type StreamDumpEngine = (typeof STREAM_DUMP_ENGINES)[number];
 export const isStreamDumpEngine = (e: string): e is StreamDumpEngine => (STREAM_DUMP_ENGINES as readonly string[]).includes(e);
+
+/** Engines whose restore needs the dump as a FILE on the target (ClickHouse `RESTORE` cannot read a pipe): the target needs room for it next to the restored database. */
+export const dumpLandsAsFile = (e: string): boolean => e === "CLICKHOUSE";
 
 /** The volume name of a streamed dump row: `volume:<serverRef>:<sourceRef>:dump`. */
 export const DUMP_VOLUME_NAME = "dump";

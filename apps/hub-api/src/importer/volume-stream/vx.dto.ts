@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { STREAM_DUMP_ENGINES } from "./vx-constants";
 import { VOLUME_ITEMREF_RE } from "./vx-constants";
 
 /**
@@ -102,7 +103,7 @@ export const DB_ITEMREF_RE = /^database:([A-Za-z0-9_-]{1,128}):([a-zA-Z0-9][a-zA
 export const VxDbSizeItemSchema = z
   .object({
     itemRef: z.string().min(1).max(256).regex(DB_ITEMREF_RE, "not a database itemRef"),
-    engine: z.enum(["POSTGRES", "MARIADB", "MYSQL"]),
+    engine: z.enum(STREAM_DUMP_ENGINES),
     state: z.enum(["measured", "failed", "skipped"]),
     reason: shortStr(80).optional(),
     dbBytes: nat,
@@ -115,3 +116,7 @@ export const VxDbSizeItemSchema = z
 export type VxDbSizeItem = z.infer<typeof VxDbSizeItemSchema>;
 export const VxDbSizesBodySchema = z.object({ runId: runIdSchema, items: z.array(VxDbSizeItemSchema).min(1).max(500) }).strict();
 export type VxDbSizesBody = z.infer<typeof VxDbSizesBodySchema>;
+
+/** The migrator asks the hub to move ONE database by the streamed dump lane: its dump went over the artifact route's cap and the run is not a guided one that decides lanes itself. */
+export const VxDbStreamBodySchema = z.object({ itemRef: z.string().min(1).max(256).regex(DB_ITEMREF_RE, "not a database itemRef") }).strict();
+export type VxDbStreamBody = z.infer<typeof VxDbStreamBodySchema>;

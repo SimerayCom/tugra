@@ -213,6 +213,15 @@ func formatSanity(engine string, head []byte) error {
 		if !hasPrefix(head, "REDIS") {
 			return fmt.Errorf("%w: RDB magic missing", errBadFormat)
 		}
+	case "MONGO":
+		// mongodump --archive starts with the archive magic number 0x8199e26d (little endian on the wire)
+		if len(head) < 4 || head[0] != 0x6d || head[1] != 0xe2 || head[2] != 0x99 || head[3] != 0x81 {
+			return fmt.Errorf("%w: MONGO archive magic missing", errBadFormat)
+		}
+	case "CLICKHOUSE":
+		if !hasPrefix(head, "PK\x03\x04") {
+			return fmt.Errorf("%w: ClickHouse backup (zip) signature missing", errBadFormat)
+		}
 	}
 	return nil
 }
@@ -239,6 +248,25 @@ var cleanupInContainer = func(container, dockerPath string, env []string) {
 		}
 		time.Sleep(3 * time.Second) // SAVE may still be finishing inside the container
 	}
+}
+
+// dumpLeftoversBody is what a KILLED in-container dump of MongoDB / ClickHouse can leave behind: the 0600 config file (it holds the
+// password, in the container's tmpfs) and a ClickHouse backup file (possibly large). The dump bodies remove both on every exit they
+// can see; a SIGKILLed `docker exec` is an exit they cannot.
+const dumpLeftoversBody = `rm -f /dev/shm/tugra-dbcfg.* /tmp/tugra-dbcfg.* /var/lib/clickhouse/backups/tugra_backup.zip`
+
+// usesDumpConfigFile reports the engines whose dump goes through a config file in the container.
+func usesDumpConfigFile(engine string) bool { return engine == "MONGO" || engine == "CLICKHOUSE" }
+
+// cleanupDumpLeftovers removes `dumpLeftoversBody` after a dump ended (or was killed). Best-effort, FRESH context, package var so
+// tests stub the daemon.
+var cleanupDumpLeftovers = func(engine, container, dockerPath string, env []string) {
+	if !usesDumpConfigFile(engine) || !validContainer(container) || dockerPath == "" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	_, _, _ = runDocker(ctx, []string{dockerPath, "exec", container, "sh", "-c", dumpLeftoversBody}, env)
 }
 
 // sweepStaleSpools removes leftover <prefix>* dirs older than 1h under dir (a SIGKILL/OOM residue),

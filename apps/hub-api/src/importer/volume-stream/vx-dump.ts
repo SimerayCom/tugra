@@ -38,6 +38,8 @@ export interface DumpDiskInput {
   targetStagingFreeBytes: number | null;
   targetDockerFreeBytes: number | null;
   targetSameDevice: boolean;
+  /** The engine restores from a FILE (ClickHouse): the decoded dump lands on the target's docker volume once, next to the restored database. */
+  landsAsFile?: boolean;
 }
 
 export interface DumpDiskVerdict {
@@ -57,13 +59,14 @@ export function dumpStagedBytes(rawDumpBytes: number, countedGzBytes?: number | 
 /**
  * Free-space verdict for a streamed dump on the TARGET. Two things land there: the staged compressed parts (the COUNTED gzip size
  * plus 5% when the migrator counted the dump; otherwise the raw size, because data that is already compressed or random
- * gzips to about 1.0x and an optimistic ratio would only fail hours into the transfer; the decoded dump is never on disk) and the restored database itself (the source's on-disk size
- * with 10% headroom plus 1 GiB for indexes, WAL and temporary files). On one filesystem both must fit together. An unreadable probe
+ * gzips to about 1.0x and an optimistic ratio would only fail hours into the transfer; the decoded dump is never on disk, except for an
+ * engine that restores from a file) and the restored database itself (the source's on-disk size
+ * with 10% headroom plus 1 GiB for indexes, WAL and temporary files, plus the dump file itself for an engine that restores from one). On one filesystem both must fit together. An unreadable probe
  * is `unknown`, never `ok` (fail closed).
  */
 export function dumpDiskVerdict(i: DumpDiskInput): DumpDiskVerdict {
   const staged = dumpStagedBytes(i.rawDumpBytes, i.countedGzBytes);
-  const dbNeed = Math.ceil(Math.max(i.dbBytes, i.rawDumpBytes) * 1.1 + GiB);
+  const dbNeed = Math.ceil(Math.max(i.dbBytes, i.rawDumpBytes) * 1.1 + GiB + (i.landsAsFile ? i.rawDumpBytes : 0));
   const details = { totalBytes: i.rawDumpBytes, stagedBytes: staged, databaseBytes: dbNeed, targetStagingFreeBytes: i.targetStagingFreeBytes, targetDockerFreeBytes: i.targetDockerFreeBytes, targetSameDevice: i.targetSameDevice, lane: "dump" };
   if (i.targetStagingFreeBytes === null || i.targetDockerFreeBytes === null) return { ok: false, unknown: true, details };
   const stageOk = i.targetSameDevice ? i.targetStagingFreeBytes >= staged + dbNeed : i.targetStagingFreeBytes >= staged;

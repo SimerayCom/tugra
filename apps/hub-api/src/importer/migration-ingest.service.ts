@@ -136,7 +136,7 @@ export class MigrationIngestService {
         const db = await this.prisma.database.findUnique({ where: { id: t.resourceId }, select: { engine: true } });
         if (!db) continue;
         const entry: Record<string, unknown> = { itemRef: t.itemRef, kind: "database", engine: db.engine };
-        // Mark an engine the migrator cannot stream (ClickHouse/Mongo = S4b, LibSQL = no logical dump) so the
+        // Mark an engine the migrator cannot stream (LibSQL = no logical dump) so the
         // source skips it EXPLICITLY rather than treating a missing recipe as an empty, silently-OK dump.
         if (!MIGRATOR_ENGINES.includes(db.engine)) {
           entry.dataPlane = "unsupported";
@@ -203,7 +203,7 @@ export class MigrationIngestService {
     // created on. A resource on any other server is never reachable through this op.
     if (db.serverId !== (task.serverId ?? meta.serverId) || db.teamId !== server.teamId) throw new ConflictException("destination does not belong to this import");
     // Server-ENFORCE the streamable-engine contract (not just advertise it in /targets): an engine the migrator
-    // defers (ClickHouse/Mongo → S4b, LibSQL → no logical dump) is refused here too, so a non-conforming client
+    // cannot dump (LibSQL → no logical dump) is refused here too, so a non-conforming client
     // can never stage/restore a dump the restore path was never validated for.
     if (!MIGRATOR_ENGINES.includes(db.engine)) {
       throw new BadRequestException(`the migrator cannot stream ${db.engine} data yet (${MIGRATOR_UNSUPPORTED[db.engine] ?? "unsupported"})`);

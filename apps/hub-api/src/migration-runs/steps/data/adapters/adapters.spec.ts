@@ -65,7 +65,7 @@ describe("PrismaDataPort.snapshot", () => {
         findMany: async () => [
           { id: "db1", name: "pg", engine: "POSTGRES", version: "16", image: "postgres:16" },
           { id: "db2", name: "pgvol", engine: "POSTGRES", version: "16", image: "postgres:16" },
-          { id: "db3", name: "mongo", engine: "MONGO", version: "7", image: "mongo:7" },
+          { id: "db3", name: "mongo", engine: "LIBSQL", version: "0", image: "ghcr.io/tursodatabase/libsql-server:latest" },
         ],
         findUnique: async () => ({ version: "16", image: "postgres:16", status: "NEW" }),
       },
@@ -361,7 +361,7 @@ describe("AgentSourceHost / TargetDbStats", () => {
     expect(await build({ id: "db1", serverId: "s", engine: "POSTGRES", credentials: "enc" }, jest.fn(async () => Promise.reject(new Error("offline")))).stats.measureTarget(makeRun(), db, "exact")).toMatchObject({ state: "failed", reason: "verify-exec" });
     expect(await build({ id: "db1", serverId: "s", engine: "POSTGRES", credentials: "enc" }, jest.fn(async () => ({ exitCode: 1, output: "" }))).stats.measureTarget(makeRun(), db, "exact")).toMatchObject({ state: "failed", reason: "verify-exec" });
     expect(await build({ id: "db1", serverId: "s", engine: "POSTGRES", credentials: "enc" }, jest.fn(async () => ({ exitCode: 0, output: "garbage" }))).stats.measureTarget(makeRun(), db, "exact")).toMatchObject({ state: "failed", reason: "verify-parse" });
-    expect(await build({ id: "db1", serverId: "s", engine: "MONGO", credentials: "enc" }).stats.measureTarget(makeRun(), { ...db, engine: "MONGO" }, "exact")).toMatchObject({ state: "skipped", reason: "no-verify" });
+    expect(await build({ id: "db1", serverId: "s", engine: "LIBSQL", credentials: "enc" }).stats.measureTarget(makeRun(), { ...db, engine: "LIBSQL" }, "exact")).toMatchObject({ state: "skipped", reason: "no-verify" });
     expect(await build(null).stats.measureTarget(makeRun(), { ...db, dbId: null }, "exact")).toMatchObject({ state: "failed", reason: "db-missing" });
     const badName = new TargetDbStats(readOnly({ database: { findUnique: async () => ({ id: "db1", serverId: "s", engine: "POSTGRES", credentials: "enc" }) } }), { decrypt: () => JSON.stringify({ username: "a;b", password: "p", database: "d" }) } as never, { run: jest.fn() } as never);
     expect(await badName.measureTarget(makeRun(), db, "exact")).toMatchObject({ state: "failed", reason: "invalid-name" });

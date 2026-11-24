@@ -3,6 +3,8 @@ import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { DbStats, StatsTable } from "../data-contract";
+import { shq } from "../source-control/source-scripts";
+import { MONGO_STATS_JS } from "../../../../importer/safe-db-scripts";
 import { buildDbStatsScript, compareDbStats, mysqlStatsBody, parseKeyspaceStats, parseTableStats, pgStatsSql, PARITY_CODES, statsFromOutput, statsKindOf } from "./db-stats";
 
 // These two literals are ALSO asserted byte for byte in agent/internal/migrate/verify_test.go (TestVerifyStatementsMatchTheHub):
@@ -44,10 +46,34 @@ describe("buildDbStatsScript", () => {
     expect(() => buildDbStatsScript("POSTGRES", "x; id", creds, "exact")).toThrow();
     expect(() => buildDbStatsScript("POSTGRES", "c", { ...creds, username: "a;b" }, "exact")).toThrow();
     expect(() => buildDbStatsScript("MYSQL", "c", { ...creds, database: "d b" }, "exact")).toThrow();
-    expect(() => buildDbStatsScript("MONGO", "c", creds, "exact")).toThrow();
-    expect(statsKindOf("MONGO")).toBeNull();
+    expect(() => buildDbStatsScript("LIBSQL", "c", creds, "exact")).toThrow();
+    expect(() => buildDbStatsScript("MONGO", "c; id", creds, "exact")).toThrow();
+    expect(() => buildDbStatsScript("MONGO", "c", { ...creds, username: "a;b" }, "exact")).toThrow();
+    expect(() => buildDbStatsScript("MONGO", "c", { ...creds, password: "line\nbreak" }, "exact")).toThrow();
+    expect(() => buildDbStatsScript("CLICKHOUSE", "c", { ...creds, database: "my.db" }, "exact")).toThrow();
+    expect(() => buildDbStatsScript("MONGO", "c", creds, "estimate", 0)).toThrow();
+    expect(statsKindOf("LIBSQL")).toBeNull();
+    expect(statsKindOf("MONGO")).toBe("tables");
+    expect(statsKindOf("CLICKHOUSE")).toBe("tables");
     expect(statsKindOf("POSTGRES")).toBe("tables");
     expect(statsKindOf("KEYDB")).toBe("keys");
+  });
+});
+
+describe("MongoDB and ClickHouse statements keep the password off every argv", () => {
+  const creds = { username: "root", password: "pw'with \"quote\" and \\", database: "appdb" };
+  it("Mongo: the password rides the caller's environment, the script and the user are parameters", () => {
+    const cmd = buildDbStatsScript("MONGO", "tugra-db-abc", creds, "estimate", 500);
+    expect(cmd.startsWith("TUGRA_DB_PW='pw'\\''with \"quote\" and \\' docker exec -e TUGRA_DB_PW tugra-db-abc sh -c ")).toBe(true);
+    expect(cmd.endsWith(` tugra-verify 'root' estimate 500 ${shq(MONGO_STATS_JS)}`)).toBe(true);
+    expect(cmd).not.toMatch(/--password|-p '/);
+    expect(cmd).not.toContain("-e TUGRA_DB_PW=");
+  });
+  it("ClickHouse: the database is a positional parameter, the mode and threshold follow", () => {
+    const cmd = buildDbStatsScript("CLICKHOUSE", "tugra-db-abc", creds, "exact");
+    expect(cmd).toContain(" docker exec -e TUGRA_DB_PW tugra-db-abc sh -c ");
+    expect(cmd.endsWith(" tugra-verify 'root' 'appdb' exact 1000000")).toBe(true);
+    expect(cmd).not.toContain("--password");
   });
 });
 
@@ -77,7 +103,9 @@ describe("parsers", () => {
     expect(statsFromOutput({ ...base, output: "a.b\t1\t0\n", exitCode: 0 })).toMatchObject({ state: "measured", tableCount: 1, kind: "tables" });
     expect(statsFromOutput({ ...base, output: "a.b\t1\t0\n", exitCode: 2 })).toMatchObject({ state: "failed", reason: "verify-exec", tables: [] });
     expect(statsFromOutput({ ...base, output: "garbage", exitCode: 0 })).toMatchObject({ state: "failed", reason: "verify-parse" });
-    expect(statsFromOutput({ ...base, engine: "MONGO", output: "", exitCode: 0 })).toMatchObject({ state: "skipped", reason: "no-verify" });
+    expect(statsFromOutput({ ...base, engine: "LIBSQL", output: "", exitCode: 0 })).toMatchObject({ state: "skipped", reason: "no-verify" });
+    expect(statsFromOutput({ ...base, engine: "MONGO", output: "shop.items\t50\t0\nblog.posts\t3\t0\n", exitCode: 0 })).toMatchObject({ state: "measured", kind: "tables", tableCount: 2 });
+    expect(statsFromOutput({ ...base, engine: "MONGO", output: "MongoServerError: Authentication failed.\n", exitCode: 0 })).toMatchObject({ state: "failed", reason: "verify-parse" });
     expect(statsFromOutput({ ...base, engine: "REDIS", output: "NOAUTH\n", exitCode: 0 })).toMatchObject({ state: "failed", reason: "verify-parse", kind: "keys" });
   });
 });

@@ -1,6 +1,6 @@
 import { dumpDiskVerdict, dumpRawEstimate, dumpStagedBytes, dumpRestoreTimeoutMs, dumpWasCounted } from "./vx-dump";
 import { diskShortfall } from "./vx-dump";
-import { artifactCapBytes, isStreamDumpEngine, vxDumpCapIsOperatorSet, vxDumpEnabled, vxMaxDumpBytes } from "./vx-constants";
+import { artifactCapBytes, dumpLandsAsFile, isStreamDumpEngine, vxDumpCapIsOperatorSet, vxDumpEnabled, vxMaxDumpBytes } from "./vx-constants";
 import { dbStreamModeRefs, buildVolumeTargets } from "./vx-targets";
 import { VxDbSizesBodySchema } from "./vx.dto";
 
@@ -29,6 +29,17 @@ describe("dumpDiskVerdict", () => {
     const db = Math.ceil(32 * GiB * 1.1 + GiB);
     expect(dumpDiskVerdict({ ...base, targetStagingFreeBytes: staged + db - 1 }).ok).toBe(false); // one filesystem: both add up
     expect(dumpDiskVerdict({ ...base, targetStagingFreeBytes: staged + db }).ok).toBe(true);
+  });
+  it("an engine that restores from a FILE (ClickHouse) also needs the decoded dump once on the target, next to the restored database", () => {
+    const base2 = { rawDumpBytes: 30 * GiB, dbBytes: 32 * GiB, targetStagingFreeBytes: 500 * GiB, targetDockerFreeBytes: 500 * GiB, targetSameDevice: true };
+    const plain = dumpDiskVerdict(base2);
+    const file = dumpDiskVerdict({ ...base2, landsAsFile: true });
+    expect(file.details.databaseBytes).toBe((plain.details.databaseBytes as number) + 30 * GiB);
+    // one filesystem: exactly one dump file more is needed
+    const need = (file.details.stagedBytes as number) + (file.details.databaseBytes as number);
+    expect(dumpDiskVerdict({ ...base2, landsAsFile: true, targetStagingFreeBytes: need - 1 }).ok).toBe(false);
+    expect(dumpDiskVerdict({ ...base2, landsAsFile: true, targetStagingFreeBytes: need }).ok).toBe(true);
+    expect(dumpDiskVerdict({ ...base2, targetStagingFreeBytes: need - 1 }).ok).toBe(true); // a pipe-fed engine does not
   });
   it("an incompressible dump cannot slip past the check: without a counted gzip size the staged parts are budgeted at the raw size", () => {
     const stagingOnly = { ...base, targetSameDevice: false, targetDockerFreeBytes: 500 * GiB };
@@ -107,8 +118,10 @@ describe("constants", () => {
     expect(vxDumpEnabled()).toBe(false);
   });
   it("only the engines with a pinned dump recipe are lane engines", () => {
-    for (const e of ["POSTGRES", "MARIADB", "MYSQL"]) expect(isStreamDumpEngine(e)).toBe(true);
-    for (const e of ["REDIS", "MONGO", "CLICKHOUSE", "KEYDB", "DRAGONFLY", "LIBSQL", "", "postgres"]) expect(isStreamDumpEngine(e)).toBe(false);
+    for (const e of ["POSTGRES", "MARIADB", "MYSQL", "MONGO", "CLICKHOUSE"]) expect(isStreamDumpEngine(e)).toBe(true);
+    for (const e of ["REDIS", "KEYDB", "DRAGONFLY", "LIBSQL", "", "postgres"]) expect(isStreamDumpEngine(e)).toBe(false);
+    expect(dumpLandsAsFile("CLICKHOUSE")).toBe(true); // RESTORE cannot read a pipe
+    expect(dumpLandsAsFile("MONGO")).toBe(false);
   });
 });
 

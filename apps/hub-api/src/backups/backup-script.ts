@@ -14,6 +14,7 @@ import {
   type DbEngine,
   type DbSpec,
 } from "../databases/database-script";
+import { clickhouseImportRestoreLines, mongoImportRestoreLines } from "../importer/safe-db-scripts";
 import {
   mcHostEnv,
   mcTarget,
@@ -378,6 +379,11 @@ function restorePipeline(db: DbSpec, sourceCmd: string, dest: DestinationSpec, g
       break;
     }
     case "MONGO": {
+      // Importing a foreign archive: the password goes through a 0600 config file in the container (never an argv, host or container).
+      if (opts.importMode) {
+        lines.push(...mongoImportRestoreLines(name, username, password, decoded));
+        break;
+      }
       // Block until mongod accepts authenticated connections first — a restore into a freshly provisioned
       // container (verify drill / clone) otherwise races the root-user creation and fails auth.
       const prelude = readinessPrelude(db.engine, name, db.credentials);
@@ -423,6 +429,12 @@ function restorePipeline(db: DbSpec, sourceCmd: string, dest: DestinationSpec, g
       break;
     }
     case "CLICKHOUSE": {
+      // Importing a foreign backup: argv-safe (config file), and the database the archive holds is read from the archive itself, so the
+      // destination may be named differently from the source.
+      if (opts.importMode) {
+        lines.push(...clickhouseImportRestoreLines(name, username, password, database, decoded));
+        break;
+      }
       // Restore to a TEMP database, then DROP the real one and RENAME temp→real — so a corrupt/rejected backup
       // never destroys the live DB before the restore is known good (stage-then-swap). A prior-run temp is
       // cleared up front; on failure the data survives in EITHER the real DB or the temp (never both dropped).

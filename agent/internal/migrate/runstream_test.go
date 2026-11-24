@@ -41,6 +41,11 @@ type streamHub struct {
 	recipes      string // overrides the /recipes answer (the streamed dump lane needs real recipes)
 	dbSizes      []dbSizeReq
 	invPosts     []invReq // every inventory body the migrator posted, in order
+
+	// POST vx/db-stream (a plain run asks for the streamed lane): the answer status (0 = 200) and the targets list served afterwards.
+	dbStreamStatus     int
+	targetsAfterStream string
+	dbStreams          []string
 }
 
 func (s *streamHub) serve(t *testing.T) *httptest.Server {
@@ -62,7 +67,27 @@ func (s *streamHub) serve(t *testing.T) *httptest.Server {
 			}
 			io.WriteString(w, `{"v":1,"recipes":{},"unsupported":{}}`)
 		case p == "targets":
-			io.WriteString(w, s.targets)
+			s.mu2.Lock()
+			t := s.targets
+			s.mu2.Unlock()
+			io.WriteString(w, t)
+		case p == "vx/db-stream":
+			b, _ := io.ReadAll(r.Body)
+			var req vxDbStreamReq
+			_ = json.Unmarshal(b, &req)
+			s.mu2.Lock()
+			s.dbStreams = append(s.dbStreams, req.ItemRef)
+			if s.dbStreamStatus != 0 {
+				s.mu2.Unlock()
+				w.WriteHeader(s.dbStreamStatus)
+				io.WriteString(w, `{"message":"the owner of this run chose not to stream databases over the size cap"}`)
+				return
+			}
+			if s.targetsAfterStream != "" {
+				s.targets = s.targetsAfterStream
+			}
+			s.mu2.Unlock()
+			fmt.Fprintf(w, `{"itemRef":%q,"stream":true,"volumeItemRef":"volume:srv1:pg1:dump","expiresAt":"2999-01-01T00:00:00Z"}`, req.ItemRef)
 		case p == "vx/db-sizes":
 			b, _ := io.ReadAll(r.Body)
 			var req dbSizeReq
@@ -79,6 +104,8 @@ func (s *streamHub) serve(t *testing.T) *httptest.Server {
 			s.invPosts = append(s.invPosts, ireq)
 			s.mu2.Unlock()
 			io.WriteString(w, `{"stored":1,"expiresAt":"2999-01-01T00:00:00Z"}`)
+		case strings.HasPrefix(p, "artifacts/") && strings.HasSuffix(p, "/status"): // the artifact route's status-first check
+			io.WriteString(w, `{"state":"none"}`)
 		case strings.HasSuffix(p, "/begin"):
 			b, _ := io.ReadAll(r.Body)
 			var req VxBeginReq

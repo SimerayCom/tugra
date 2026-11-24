@@ -324,10 +324,33 @@ describe("backup-script", () => {
       expect(myClone).not.toContain("-u'root'");
       // Mongo: import excludes admin.* so the source's root user never clobbers the target's; clone keeps them.
       const mongoImport = buildImportScript(spec("MONGO"), "https://x/d.archive.gz", { encrypted: false, key: "", gzip: true });
-      expect(mongoImport).toContain("--archive --drop --nsExclude 'admin.*'");
+      expect(mongoImport).toContain('--archive --drop --nsExclude "admin.*"');
+      // ...and the password is never on an argv (host or container): it goes through a 0600 config file, the env carries it in
+      expect(mongoImport).not.toContain("--password");
+      expect(mongoImport).toContain("docker exec -i -e TUGRA_DB_PW tugra_db_db1 sh -c ");
+      expect(mongoImport).toContain("TUGRA_DB_PW='pw' docker exec");
       const mongoClone = buildRestoreScript(spec("MONGO"), "t.archive.gz", LOCAL_DEST);
       expect(mongoClone).toContain("--archive --drop");
       expect(mongoClone).not.toContain("--nsExclude");
+      expect(mongoClone).toContain("--password"); // Tugra's own clone path is unchanged
+    });
+
+    it("a foreign ClickHouse backup restores argv-safe, into a destination that may be named differently from the source", () => {
+      const ch = buildImportScript(spec("CLICKHOUSE"), "https://x/d.zip.gz", { encrypted: false, key: "", gzip: true });
+      expect(ch).not.toContain("--password");
+      expect(ch).toContain("docker exec -i -e TUGRA_DB_PW tugra_db_db1 sh -c ");
+      expect(ch).toContain("--config-file"); // the client reads user + password from a 0600 file
+      expect(ch).toContain("metadata/[A-Za-z0-9_]*"); // the source database is read from the backup's own entry names
+      expect(ch).toContain("RESTORE DATABASE");
+      expect(ch).toContain("RENAME DATABASE"); // stage-then-swap, as before
+      // Tugra's own restore keeps its command
+      const own = buildRestoreScript(spec("CLICKHOUSE"), "t.zip.gz", LOCAL_DEST);
+      expect(own).toContain('--password "$CLICKHOUSE_PASSWORD"');
+    });
+
+    it("an import refuses a password a config file cannot carry", () => {
+      const bad = { ...spec("MONGO"), credentials: { ...spec("MONGO").credentials, password: "a\nb" } };
+      expect(() => buildImportScript(bad, "https://x/d.archive.gz", { encrypted: false, key: "", gzip: true })).toThrow(/config file/);
     });
   });
 
