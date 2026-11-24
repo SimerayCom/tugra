@@ -15,7 +15,6 @@ import { AuditService } from "../audit/audit.service";
 import { MailService } from "../mail/mail.service";
 import { teamInviteEmail } from "../mail/templates";
 import { TeamAccessService } from "../common/team-access.service";
-import { TeamDefaultsService } from "./team-defaults.service";
 import { webBaseUrl } from "../common/web-url";
 import { filterByQuery } from "../common/query-filter";
 import { validatePngIcon } from "../common/png-icon";
@@ -74,7 +73,6 @@ export class TeamsService {
     private readonly prisma: PrismaService,
     private readonly access: TeamAccessService,
     private readonly audit: AuditService,
-    private readonly teamDefaults: TeamDefaultsService,
     private readonly mail: MailService,
     private readonly config: ConfigService,
   ) {}
@@ -111,15 +109,10 @@ export class TeamsService {
   }
 
   async create(userId: string, name: string): Promise<TeamView> {
-    // Atomic: team + OWNER membership + default project/env commit or roll back as
-    // one unit, so a failure never leaves a persisted team without its defaults
-    // (mirrors the auth register / OAuth bootstrap paths).
-    const team = await this.prisma.$transaction(async (tx) => {
-      const created = await tx.team.create({
-        data: { name, memberships: { create: { userId, role: Role.OWNER } } },
-      });
-      await this.teamDefaults.ensureDefaults(created.id, tx);
-      return created;
+    // A new team starts empty: no project is made up front. The first project is chosen (or created) when the
+    // first resource is added, and the quick path names it after the team (never "Default").
+    const team = await this.prisma.team.create({
+      data: { name, memberships: { create: { userId, role: Role.OWNER } } },
     });
     await this.audit.log({ actor: userId, action: "team.create", target: team.id });
     return { id: team.id, name: team.name, role: Role.OWNER, memberCount: 1, iconUpdatedAt: null, color: null };

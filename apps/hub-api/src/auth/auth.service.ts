@@ -24,7 +24,6 @@ import {
   verifyEmail as verifyEmailTemplate,
   emailChangeNoticeEmail,
 } from "../mail/templates";
-import { TeamDefaultsService } from "../teams/team-defaults.service";
 import { InstanceSettingsService } from "../instance/instance-settings.service";
 import { TotpService } from "./totp.service";
 import { generateRecoveryCodes, recoveryHashInput } from "./recovery-codes";
@@ -110,7 +109,6 @@ export class AuthService {
     private readonly totp: TotpService,
     private readonly audit: AuditService,
     private readonly redis: RedisService,
-    private readonly teamDefaults: TeamDefaultsService,
     private readonly mail: MailService,
     private readonly instanceSettings: InstanceSettingsService,
   ) {}
@@ -251,7 +249,6 @@ export class AuthService {
       await tx.membership.create({
         data: { userId: created.id, teamId: team.id, role: Role.OWNER },
       });
-      await this.teamDefaults.ensureDefaults(team.id, tx);
       if (firstUser) await this.provisionLocalServer(tx, team.id, observedUrl); // turnkey single-box: auto-add "This machine"
       return created;
     });
@@ -291,7 +288,6 @@ export class AuthService {
         await tx.membership.create({
           data: { userId: created.id, teamId: team.id, role: Role.OWNER },
         });
-        await this.teamDefaults.ensureDefaults(team.id, tx);
         if (firstUser) await this.provisionLocalServer(tx, team.id); // turnkey single-box: auto-add "This machine"
         return created;
       });
@@ -340,7 +336,6 @@ export class AuthService {
         await tx.membership.create({
           data: { userId: created.id, teamId: team.id, role: Role.OWNER },
         });
-        await this.teamDefaults.ensureDefaults(team.id, tx);
         if (firstUser) await this.provisionLocalServer(tx, team.id); // turnkey single-box: auto-add "This machine"
         return created;
       });

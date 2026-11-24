@@ -2,7 +2,6 @@ import { Module } from "@nestjs/common";
 import { JwtModule } from "@nestjs/jwt";
 import { PassportModule } from "@nestjs/passport";
 import { CryptoModule } from "../crypto/crypto.module";
-import { TeamDefaultsModule } from "../teams/team-defaults.module";
 import { AuthController } from "./auth.controller";
 import { AuthService } from "./auth.service";
 import { GithubOAuthController } from "./github-oauth.controller";
@@ -14,7 +13,7 @@ import { TotpService } from "./totp.service";
 import { TwoFactorPolicyService } from "./two-factor-policy.service";
 
 @Module({
-  imports: [PassportModule, JwtModule.register({}), CryptoModule, TeamDefaultsModule],
+  imports: [PassportModule, JwtModule.register({}), CryptoModule],
   controllers: [AuthController, GithubOAuthController, OidcController],
   providers: [AuthService, GithubOAuthService, OidcService, TotpService, TwoFactorPolicyService, JwtStrategy],
   exports: [AuthService, TwoFactorPolicyService],
