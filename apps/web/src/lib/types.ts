@@ -1199,6 +1199,8 @@ export interface TeamDigest {
   /** Hour of day (hub time zone) it goes out, on Mondays. */
   hour: number;
   timezone: string;
+}
+
 /** One browser/device registered for Web Push by the signed-in user (GET /push/devices). */
 export interface PushDevice {
   id: string;

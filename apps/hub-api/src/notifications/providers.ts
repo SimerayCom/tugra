@@ -662,6 +662,9 @@ class SmsProvider extends NotificationProvider {
       { "content-type": "application/x-www-form-urlencoded", authorization: `Basic ${auth}` },
       { allowPrivate: allowPrivateTargets() },
     );
+  }
+}
+
 /** The database-backed half of the "push" channel (push.service.ts). Providers are DI-less singletons, so the service
  *  registers itself here when the hub boots. */
 export interface PushDelegate {

@@ -857,7 +857,8 @@ export function withServicePins(apply: RunApplyInput, hints: readonly RunHint[])
     const itemRef = h.key.slice(0, at);
     const member = h.key.slice(at + 1);
     if (h.key !== servicePinKey(itemRef, member) || choices[itemRef]?.skip) continue;
-    choices[itemRef] = { ...(choices[itemRef] ?? {}), pins: { ...(choices[itemRef]?.pins ?? {}), [member]: h.value } };
+    // A recorded pin must take effect: the importer ignores pins when the choice disables pinning, so turn it on.
+    choices[itemRef] = { ...(choices[itemRef] ?? {}), pinImages: true, pins: { ...(choices[itemRef]?.pins ?? {}), [member]: h.value } };
   }
   if (Object.keys(choices).length > MAX_SERVICE_CHOICES) throw bad("too-many-service-choices");
   return RunApplyInputSchema.parse({ ...apply, serviceChoices: choices });

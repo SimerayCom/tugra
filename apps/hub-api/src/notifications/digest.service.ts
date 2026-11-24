@@ -95,7 +95,8 @@ export class DigestService {
     });
     let sent = 0;
     for (const row of rows) {
-      if (!row.channelId || !row.channel || !isDigestDue(now, row.lastSentAt, tz)) continue;
+      // A disabled channel gets nothing (the digest waits until the channel is turned back on).
+      if (!row.channelId || !row.channel || row.channel.enabled === false || !isDigestDue(now, row.lastSentAt, tz)) continue;
       let claimed = false;
       try {
         // Claim first (compare-and-set on lastSentAt): only one hub / one sweep wins a given week.

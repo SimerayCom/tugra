@@ -123,6 +123,14 @@ describe("DigestService.runDue", () => {
     expect((prisma.teamDigest.updateMany as jest.Mock).mock.calls[0][0]).toMatchObject({ where: { teamId: "t1", lastSentAt: new Date("2026-11-16T08:05:00Z") }, data: { lastSentAt: MONDAY } });
   });
 
+  it("skips a team whose digest channel is disabled", async () => {
+    process.env.HUB_TIMEZONE = "UTC";
+    const q = queue();
+    const prisma = prismaMock({ teamDigest: { findMany: jest.fn().mockResolvedValue([row({ channel: { locale: "en", enabled: false } })]), updateMany: jest.fn() } });
+    expect(await new DigestService(prisma, access(), audit, q).runDue(MONDAY)).toBe(0);
+    expect(q.enqueue).not.toHaveBeenCalled();
+  });
+
   it("does nothing when this week's was already sent, or it is not Monday morning yet", async () => {
     process.env.HUB_TIMEZONE = "UTC";
     const q = queue();

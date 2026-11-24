@@ -191,5 +191,6 @@
   "urlLabel": "Channel URL",
   "urlHint": "Paste a Shoutrrr or Apprise style URL. It is checked here and never shown back in full.",
   "urlCheck": "Check",
-  "urlRecognized": "Looks like {type}"
+  "urlRecognized": "Looks like {type}",
+  "type_push": "Push (your devices)"
 }
