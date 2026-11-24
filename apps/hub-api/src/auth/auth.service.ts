@@ -164,11 +164,11 @@ export class AuthService {
       const observed = observedPublicIpFromUrl(observedUrl);
       if (observed) {
         ip = observed;
-        ipSource = "observed"; // authoritative-if-non-loopback in reconcileReportedIp, so reporting won't clobber it
+        ipSource = "observed"; // outranked only by the host's own interface / cloud metadata (reconcileReportedIp), never by a LAN fallback
       }
     }
     // Route by family so a v6 address lands in publicIpv6, never the IPv4 column.
-    const ipData = ip ? (isIpv6(ip) ? { publicIpv6: ip, ipSource } : { publicIp: ip, ipSource }) : {};
+    const ipData = ip ? (isIpv6(ip) ? { publicIpv6: ip, ipv6Source: ipSource } : { publicIp: ip, ipSource }) : {};
     await tx.server.create({
       data: {
         name: "This machine",

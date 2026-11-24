@@ -5,6 +5,7 @@ import {
   isPublicIp,
   bestReportedIp,
   reconcileReportedIp,
+  reconcileObservedIp,
   isCloudflareEdge,
   isSsrfSafeIp,
   isAlwaysBlockedIp,
@@ -285,6 +286,7 @@ describe("reconcileReportedIp", () => {
   it("routes an IPv6-only reported candidate to publicIpv6, not the IPv4 column", () => {
     expect(reconcileReportedIp({ publicIp: null, ipSource: "observed" }, ["2001:db8::1"])).toEqual({
       publicIpv6: "2001:db8::1",
+      ipv6Source: "reported",
     });
   });
   it("never overrides a manual pin", () => {
@@ -585,6 +587,128 @@ describe("HUB_TRUSTED_PROXY_CLOUDFLARE — CF-Connecting-IP only from a Cloudfla
     it("does nothing when Cloudflare mode is off", () => {
       process.env.HUB_TRUSTED_PROXY_CLOUDFLARE = "false";
       expect(run({ "x-forwarded-for": EDGE, "cf-connecting-ip": CLIENT }, "172.18.0.5")).toBe(EDGE);
+    });
+  });
+});
+
+describe("reconcileReportedIp — IPv4 and IPv6 are reconciled separately", () => {
+  const none = { publicIp: null, ipSource: "observed", publicIpv6: null, ipv6Source: "observed" };
+
+  it("fills BOTH families from one report (a host with a public IPv4 and a global IPv6)", () => {
+    expect(reconcileReportedIp(none, ["203.0.113.7", "2001:db8:c014:8ecc::1", "10.0.0.5"])).toEqual({
+      publicIp: "203.0.113.7",
+      ipSource: "reported",
+      publicIpv6: "2001:db8:c014:8ecc::1",
+      ipv6Source: "reported",
+    });
+  });
+  it("still stores the IPv6 when a good IPv4 is already recorded", () => {
+    expect(
+      reconcileReportedIp(
+        { publicIp: "203.0.113.7", ipSource: "reported", publicIpv6: null, ipv6Source: "observed" },
+        ["203.0.113.7", "2001:db8::1"],
+      ),
+    ).toEqual({ publicIpv6: "2001:db8::1", ipv6Source: "reported" });
+  });
+  it("does not store a ULA or link-local IPv6 as the public IPv6", () => {
+    expect(reconcileReportedIp(none, ["fd12:3456::1", "fe80::1"])).toBeNull();
+  });
+  it("a manual IPv4 pin does not freeze the IPv6 family, and vice versa", () => {
+    expect(
+      reconcileReportedIp({ ...none, publicIp: "198.51.100.1", ipSource: "manual" }, ["203.0.113.7", "2001:db8::1"]),
+    ).toEqual({ publicIpv6: "2001:db8::1", ipv6Source: "reported" });
+    expect(
+      reconcileReportedIp({ ...none, publicIpv6: "2001:db8::9", ipv6Source: "manual" }, ["203.0.113.7", "2001:db8::1"]),
+    ).toEqual({ publicIp: "203.0.113.7", ipSource: "reported" });
+  });
+  it("keeps the stored address while the host still reports it (floating IP, several addresses)", () => {
+    expect(
+      reconcileReportedIp(
+        { ...none, publicIp: "203.0.113.8", ipSource: "reported" },
+        ["203.0.113.7", "203.0.113.8"],
+      ),
+    ).toBeNull();
+  });
+});
+
+describe("reconcileReportedIp — order of trust: interface, cloud metadata, observed", () => {
+  const state = (publicIp: string | null, ipSource: string) => ({ publicIp, ipSource });
+
+  it("takes the cloud metadata address when the interfaces only carry a private one (NAT'd clouds)", () => {
+    expect(reconcileReportedIp(state(null, "observed"), ["10.0.0.5"], false, ["198.51.100.9"])).toEqual({
+      publicIp: "198.51.100.9",
+      ipSource: "metadata",
+    });
+  });
+  it("prefers a public interface address over the metadata one", () => {
+    expect(reconcileReportedIp(state(null, "observed"), ["203.0.113.7"], false, ["198.51.100.9"])).toEqual({
+      publicIp: "203.0.113.7",
+      ipSource: "reported",
+    });
+  });
+  it("metadata outranks what the hub merely observed (a proxy / VPN hop)", () => {
+    expect(reconcileReportedIp(state("192.0.2.200", "observed"), ["10.0.0.5"], false, ["198.51.100.9"])).toEqual({
+      publicIp: "198.51.100.9",
+      ipSource: "metadata",
+    });
+  });
+  it("a public interface address outranks the observed one", () => {
+    expect(reconcileReportedIp(state("192.0.2.200", "observed"), ["203.0.113.7"])).toEqual({
+      publicIp: "203.0.113.7",
+      ipSource: "reported",
+    });
+  });
+  it("ignores metadata answers that are private, loopback, garbage or a Cloudflare edge", () => {
+    expect(reconcileReportedIp(state(null, "observed"), [], false, ["10.1.1.1", "127.0.0.1", "nope", "104.21.5.9"])).toBeNull();
+  });
+  it("never overrides a manual pin with metadata", () => {
+    expect(reconcileReportedIp(state("198.51.100.1", "manual"), [], false, ["198.51.100.9"])).toBeNull();
+  });
+  it("is stable when metadata repeats the stored answer", () => {
+    expect(reconcileReportedIp(state("198.51.100.9", "metadata"), ["10.0.0.5"], false, ["198.51.100.9"])).toBeNull();
+  });
+  it("takes a metadata IPv6 too", () => {
+    expect(reconcileReportedIp({ publicIp: "198.51.100.9", ipSource: "metadata" }, [], false, ["198.51.100.9", "2001:db8::7"])).toEqual({
+      publicIpv6: "2001:db8::7",
+      ipv6Source: "metadata",
+    });
+  });
+});
+
+describe("reconcileObservedIp", () => {
+  const none = { publicIp: null, ipSource: "observed", publicIpv6: null, ipv6Source: "observed" };
+
+  it("records a public observed address per family", () => {
+    expect(reconcileObservedIp(none, "203.0.113.7")).toEqual({ publicIp: "203.0.113.7", ipSource: "observed" });
+    expect(reconcileObservedIp(none, "2001:db8::1")).toEqual({ publicIpv6: "2001:db8::1", ipv6Source: "observed" });
+    expect(reconcileObservedIp(none, "::ffff:203.0.113.7")).toEqual({ publicIp: "203.0.113.7", ipSource: "observed" });
+  });
+  it("tracks a dynamic observed IP", () => {
+    expect(reconcileObservedIp({ ...none, publicIp: "203.0.113.7" }, "203.0.113.8")).toEqual({
+      publicIp: "203.0.113.8",
+      ipSource: "observed",
+    });
+    expect(reconcileObservedIp({ ...none, publicIp: "203.0.113.7" }, "203.0.113.7")).toBeNull();
+  });
+  it("never replaces an interface or metadata address, and never a manual pin", () => {
+    expect(reconcileObservedIp({ ...none, publicIp: "203.0.113.7", ipSource: "reported" }, "192.0.2.9")).toBeNull();
+    expect(reconcileObservedIp({ ...none, publicIp: "198.51.100.9", ipSource: "metadata" }, "192.0.2.9")).toBeNull();
+    expect(reconcileObservedIp({ ...none, publicIp: "198.51.100.1", ipSource: "manual" }, "192.0.2.9")).toBeNull();
+  });
+  it("never records loopback, a Cloudflare edge, or garbage", () => {
+    expect(reconcileObservedIp(none, "127.0.0.1")).toBeNull();
+    expect(reconcileObservedIp(none, "172.64.200.190")).toBeNull();
+    expect(reconcileObservedIp(none, "not-an-ip")).toBeNull();
+    expect(reconcileObservedIp(none, null)).toBeNull();
+  });
+  it("skips the local server's docker-bridge source address but keeps a remote server's 172.x", () => {
+    expect(reconcileObservedIp(none, "172.18.0.7", true)).toBeNull();
+    expect(reconcileObservedIp(none, "172.31.5.9", false)).toEqual({ publicIp: "172.31.5.9", ipSource: "observed" });
+  });
+  it("replaces a private interface fallback with the observed address", () => {
+    expect(reconcileObservedIp({ ...none, publicIp: "192.168.1.5", ipSource: "reported" }, "203.0.113.7")).toEqual({
+      publicIp: "203.0.113.7",
+      ipSource: "observed",
     });
   });
 });

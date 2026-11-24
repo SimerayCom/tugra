@@ -124,45 +124,153 @@ export function bestReportedIp(reportedIps: string[]): string | null {
   );
 }
 
+/** Where a stored server address came from. `reported` = one of the host's own network interfaces. */
+export type IpSource = "manual" | "reported" | "metadata" | "observed";
+
+/** What the hub currently stores for a server's addresses. `ipv6Source` falls back to `ipSource` for rows written
+ *  before the families were tracked separately. */
+export interface HostIpState {
+  publicIp: string | null;
+  ipSource: string;
+  publicIpv6?: string | null;
+  ipv6Source?: string;
+}
+
+/** The columns to write for a reconcile. A family only appears when it changes. */
+export interface HostIpUpdate {
+  publicIp?: string;
+  ipSource?: string;
+  publicIpv6?: string;
+  ipv6Source?: string;
+}
+
+interface IpCandidate {
+  ip: string;
+  source: Exclude<IpSource, "manual">;
+}
+
 /**
- * Reconcile a server's stored public IP against the interface IPs its agent
- * reported. A good observed egress address (non-loopback) is authoritative and
- * kept; only when the observed IP is missing or loopback (e.g. the hub shares the
- * host, or dev) do we adopt the best reported interface IP. A manual override is
- * never touched. Returns the fields to update, or null for no change.
+ * How trustworthy a stored/candidate address is (higher wins):
+ *   5 public address on a host network interface      (the machine says so itself)
+ *   4 public address from the cloud metadata service  (link-local, asked on the instance; covers NAT'd clouds)
+ *   3 public address the hub observed on the connection
+ *   2 non-public address the hub observed (a LAN/VPC peer, kept so home and same-VPC installs work)
+ *   1 non-public interface address (last-resort LAN fallback)
+ *   0 nothing usable (empty, loopback, a Cloudflare edge, or the local server's own docker bridge)
+ * Manual pins are handled before ranking and are never overridden.
+ */
+function ipRank(source: string, ip: string | null | undefined, isLocal: boolean): number {
+  if (!ip || isLoopbackIp(ip) || isCloudflareEdge(ip)) return 0;
+  if (isLocal && !isIpv6(ip) && isDockerBridgeV4(ip)) return 0;
+  const pub = isPublicIp(ip);
+  if (source === "reported") return pub ? 5 : 1;
+  if (source === "metadata") return pub ? 4 : 1;
+  return pub ? 3 : 2; // "observed" and any legacy value
+}
+
+/** The best candidate for one family, or null when the stored value should stay. A candidate replaces the stored
+ *  address when it outranks it, or when it is the same kind of source reporting a changed address (a dynamic IP, a
+ *  re-numbered interface) — but never while the stored address is still among that source's current answers, so a
+ *  host with several addresses does not flip between them. */
+function pickFamily(
+  cur: { ip: string | null; source: string },
+  cands: IpCandidate[],
+  isLocal: boolean,
+): IpCandidate | null {
+  const curRank = ipRank(cur.source, cur.ip, isLocal);
+  let best: IpCandidate | null = null;
+  let bestRank = 0;
+  for (const c of cands) {
+    const r = ipRank(c.source, c.ip, isLocal);
+    if (r > bestRank) {
+      best = c;
+      bestRank = r;
+    }
+  }
+  if (!best) return null;
+  if (best.ip === cur.ip) return bestRank > curRank ? best : null; // same address, better provenance
+  if (bestRank > curRank) return best;
+  const sameKind = cur.source === best.source || (best.source === "observed" && !["reported", "metadata"].includes(cur.source));
+  if (sameKind && curRank > 0 && !cands.some((c) => c.source === best!.source && c.ip === cur.ip)) return best;
+  return null;
+}
+
+function apply(update: HostIpUpdate, pick: IpCandidate | null): void {
+  if (!pick) return;
+  if (isIpv6(pick.ip)) {
+    update.publicIpv6 = pick.ip;
+    update.ipv6Source = pick.source;
+  } else {
+    update.publicIp = pick.ip;
+    update.ipSource = pick.source;
+  }
+}
+
+/**
+ * Reconcile a server's stored public addresses against what its agent reported, one family at a time (IPv4 and
+ * IPv6 are independent: a host with a global IPv6 and an IPv4 gets both). Order of trust, best first: a public
+ * address on the host's own interfaces, the cloud metadata service's answer (`metadataIps`), the address the hub
+ * observed; a non-public LAN address is only a last resort. A manual pin (per family) is never touched.
+ * Returns the columns to update, or null for no change.
  */
 export function reconcileReportedIp(
-  current: { publicIp: string | null; ipSource: string },
+  current: HostIpState,
   reportedIps: string[],
   isLocal = false,
-): { publicIp?: string; publicIpv6?: string; ipSource?: string } | null {
-  if (current.ipSource === "manual") return null;
-  // A real observed egress IP is authoritative — keep it. A previously-reported IP, an empty or a loopback
-  // falls through so reporting / a manual pin can (re)fill it and track interface-IP changes. For the hub's
-  // OWN single-box agent (isLocal) a stored docker-bridge address (172.16-31.x) is the agent's in-container
-  // source IP — never reachable — so it is ALSO repairable; for a remote server a 172.x may be a reachable
-  // same-VPC/LAN address, so it stays authoritative there.
-  const bridgeRepairable = isLocal && !!current.publicIp && isDockerBridgeV4(current.publicIp);
-  // A Cloudflare edge address recorded before the verified CF-Connecting-IP mode was on is never the server's own:
-  // it is repairable from the reported interfaces.
-  const cfRepairable = !!current.publicIp && isCloudflareEdge(current.publicIp);
-  if (
-    current.ipSource === "observed" &&
-    current.publicIp &&
-    !isLoopbackIp(current.publicIp) &&
-    !bridgeRepairable &&
-    !cfRepairable
-  )
-    return null;
-  const pick = bestReportedIp(reportedIps.filter((ip) => !isCloudflareEdge(ip)));
-  if (!pick || pick === current.publicIp) return null;
-  // Never (re)store the hub's own docker-bridge address as a reachable IP for the local server — a
-  // containerized agent whose only interface is the bridge would otherwise land back on 172.x via
-  // bestReportedIp's last-resort fallback, undoing the skip and dead-linking every app URL.
-  if (isLocal && isDockerBridgeV4(pick)) return null;
-  // Route by family, mirroring ipFields — an IPv6 candidate never lands in the
-  // IPv4 publicIp column.
-  return isIpv6(pick) ? { publicIpv6: pick } : { publicIp: pick, ipSource: "reported" };
+  metadataIps: string[] = [],
+): HostIpUpdate | null {
+  const v6Source = current.ipv6Source ?? current.ipSource;
+  const usable = (list: string[]) =>
+    // Normalize first so an IPv4-mapped address is treated (and stored) as its IPv4. A Cloudflare edge address is never
+    // a server's own, and the local server's docker-bridge address is never reachable.
+    list
+      .map(normalizeIp)
+      .filter((ip) => ip && isIP(ip) !== 0 && !isLoopbackIp(ip) && !isCloudflareEdge(ip))
+      .filter((ip) => !(isLocal && !isIpv6(ip) && isDockerBridgeV4(ip)));
+  const iface = usable(reportedIps);
+  const meta = usable(metadataIps).filter((ip) => isPublicIp(ip));
+
+  const update: HostIpUpdate = {};
+  if (current.ipSource !== "manual") {
+    const v4 = iface.filter((ip) => !isIpv6(ip));
+    const best4 = bestReportedIp(v4);
+    // Every public interface address is a candidate (best first) so a stored one that is still present is kept.
+    const ifaceCands: IpCandidate[] = best4
+      ? [best4, ...v4.filter((ip) => ip !== best4 && isPublicIp(ip))].map((ip) => ({ ip, source: "reported" as const }))
+      : [];
+    const metaCands = meta.filter((ip) => !isIpv6(ip)).map((ip) => ({ ip, source: "metadata" as const }));
+    apply(update, pickFamily({ ip: current.publicIp, source: current.ipSource }, [...ifaceCands, ...metaCands], isLocal));
+  }
+  if (v6Source !== "manual") {
+    // Only a globally-routable IPv6 is a "public IPv6"; a ULA stays visible in the all-addresses list instead.
+    const ifaceCands = iface.filter((ip) => isIpv6(ip) && isPublicIp(ip)).map((ip) => ({ ip, source: "reported" as const }));
+    const metaCands = meta.filter((ip) => isIpv6(ip)).map((ip) => ({ ip, source: "metadata" as const }));
+    apply(update, pickFamily({ ip: current.publicIpv6 ?? null, source: v6Source }, [...ifaceCands, ...metaCands], isLocal));
+  }
+  return Object.keys(update).length ? update : null;
+}
+
+/**
+ * The same rules for the address the hub itself observed on the agent's connection (auth/enroll). It ranks below
+ * the host's own interface and the cloud metadata, so a reconnect through a NAT/VPN never clobbers a better answer,
+ * and below nothing else. Loopback, a Cloudflare edge and (local server) the docker bridge are never recorded.
+ */
+export function reconcileObservedIp(
+  current: HostIpState,
+  observed: string | null | undefined,
+  isLocal = false,
+): HostIpUpdate | null {
+  if (!observed) return null;
+  const ip = normalizeIp(observed);
+  if (isIP(ip) === 0) return null;
+  const v6 = isIpv6(ip);
+  const cur = v6
+    ? { ip: current.publicIpv6 ?? null, source: current.ipv6Source ?? current.ipSource }
+    : { ip: current.publicIp, source: current.ipSource };
+  if (cur.source === "manual") return null;
+  const update: HostIpUpdate = {};
+  apply(update, pickFamily(cur, [{ ip, source: "observed" }], isLocal));
+  return Object.keys(update).length ? update : null;
 }
 
 let cidrCacheRaw: string | undefined;

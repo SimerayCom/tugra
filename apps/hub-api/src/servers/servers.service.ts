@@ -38,7 +38,8 @@ import {
 } from "./agent-auth";
 import { normalizeTags } from "../common/tags";
 import { hubBaseUrl, agentWsUrl } from "../common/hub-url";
-import { isCloudflareEdge, isDockerBridgeV4, isIpv6, isLoopbackIp, isPublicIp, reconcileReportedIp } from "../common/observed-ip";
+import { isIP } from "node:net";
+import { isIpv6, isPublicIp, reconcileObservedIp, reconcileReportedIp, type HostIpState } from "../common/observed-ip";
 import { filterByQuery } from "../common/query-filter";
 import { dnsCredsIssue, trimDnsCreds } from "../common/dns-creds";
 import { dnsProviderEnvCreds } from "../deploy/panel-router";
@@ -79,7 +80,10 @@ export const ServerViewSchema = z.object({
   hostname: z.string().nullable(),
   publicIp: z.string().nullable(),
   publicIpv6: z.string().nullable(),
-  ipSource: z.string(),
+  ipSource: z.string(), // where publicIp came from: manual | reported (network interface) | metadata (cloud) | observed
+  ipv6Source: z.string(), // same, for publicIpv6 (the two families are reconciled separately)
+  reportedIps: z.array(z.string()), // every address the host reports (interfaces + cloud metadata), IPv4 and IPv6: the "all IPs" list
+  nameAuto: z.boolean(), // the name was left blank at Add server and is replaced by the host's real hostname once the agent connects
   wildcardDomain: z.string().nullable(),
   magicSuffix: z.string().nullable(),
   certMode: z.string(),
@@ -130,7 +134,13 @@ export interface HostInfoInput {
   reportedIps?: string[];
   /** The HOST's hostname (agent >= beta.25 reads it from the Docker daemon; the agent's own is its container id). */
   hostname?: string;
+  /** Public addresses the cloud provider's link-local metadata service reports (agent probes 169.254.169.254, never the internet). */
+  metadataIps?: string[];
+  cloudProvider?: string;
 }
+
+/** Placeholder name of a server added without one; replaced by the host's real hostname when its agent connects. */
+export const UNNAMED_SERVER = "New server";
 
 /** RFC 1123 hostname (labels of letters/digits/hyphens, dot-separated, <= 253 chars). */
 const HOSTNAME_RE = /^(?=.{1,253}$)[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$/;
@@ -166,13 +176,13 @@ export class ServersService {
 
   async createServer(
     userId: string,
-    name: string,
+    name: string | undefined,
     teamId: string,
     publicUrl?: string,
     provisioning?: { provider: string; cloudCredentialId: string },
   ): Promise<{ server: ServerView; enrollToken: string; installCommand: string }> {
     await this.access.requirePermission(userId, teamId, "servers:manage");
-    return this.insertServer(userId, name, teamId, publicUrl, provisioning);
+    return this.insertServer(userId, name?.trim() || null, teamId, publicUrl, provisioning);
   }
 
   /** Insert ONE PENDING server (its own enroll token + install command) and audit it. Assumes the caller
@@ -180,7 +190,7 @@ export class ServersService {
    *  share one create path and the bulk endpoint can check the permission just once. */
   private async insertServer(
     userId: string,
-    name: string,
+    name: string | null, // null = left blank: a placeholder until the agent reports the host's real hostname
     teamId: string,
     publicUrl?: string,
     provisioning?: { provider: string; cloudCredentialId: string },
@@ -188,7 +198,8 @@ export class ServersService {
     const enrollToken = generateEnrollToken();
     const created = await this.prisma.server.create({
       data: {
-        name,
+        name: name ?? UNNAMED_SERVER,
+        nameAuto: name === null,
         teamId,
         enrollToken,
         enrollTokenExpiresAt: new Date(Date.now() + ENROLL_TTL_MS),
@@ -460,7 +471,7 @@ export class ServersService {
     const server = await this.prisma.server.findUnique({ where: { id } });
     if (!server) throw new NotFoundException("server not found");
     await this.access.requirePermission(userId, server.teamId, "servers:manage");
-    await this.prisma.server.update({ where: { id }, data: { name: name.trim() } });
+    await this.prisma.server.update({ where: { id }, data: { name: name.trim(), nameAuto: false } });
     await this.audit.log({ actor: userId, action: "server.rename", target: id });
   }
 
@@ -614,15 +625,10 @@ export class ServersService {
       if (v6 && !isPublicIp(v6)) throw new BadRequestException("public IPv6 must be a globally routable address");
       data.publicIpv6 = v6;
     }
-    // ipSource is a single manual/observed flag guarding BOTH families (ipFields /
-    // reconcileReportedIp bail out only when it is "manual"). Any non-null pin in
-    // this call flips it to "manual" — including a v6-only pin — so observations
-    // never clobber a curated address; clearing all touched IP fields resumes
-    // observation. (Clearing only v4 while a v6 pin exists is a narrow API-only
-    // edge that resumes observation for both — the web UI only pins v4.)
-    if (v4 !== undefined || v6 !== undefined) {
-      data.ipSource = v4 || v6 ? "manual" : "observed";
-    }
+    // Each family has its own source flag: pinning an address flips THAT family to "manual" so observations and
+    // reports never clobber it; clearing it resumes automatic detection for that family only.
+    if (v4 !== undefined) data.ipSource = v4 ? "manual" : "observed";
+    if (v6 !== undefined) data.ipv6Source = v6 ? "manual" : "observed";
 
     // Wildcard-cert policy + DNS-01 provider. dnsCreds are encrypted at rest and
     // never round-tripped (the plaintext never reaches the DB or a response).
@@ -681,29 +687,16 @@ export class ServersService {
   // ---- agent transport (called by the WS server) --------------------------
 
   /**
-   * Update fields for a freshly observed source IP. No-op when there's no IP or
-   * the operator has manually pinned the server's address (so an observation
-   * never clobbers a manual override).
+   * Update fields for a freshly observed source IP (see reconcileObservedIp: ranks below the host's own interface and
+   * the cloud metadata, never overrides a manual pin, never records loopback / a Cloudflare edge / the local
+   * server's docker bridge).
    */
   private ipFields(
     observed: string | null | undefined,
-    currentIpSource: string,
+    current: HostIpState,
     isLocal = false,
   ): Prisma.ServerUpdateInput {
-    if (!observed || currentIpSource === "manual") return {};
-    if (isLoopbackIp(observed)) return {}; // a loopback egress is not a reachable address
-    // Behind Cloudflare's proxy (without the verified CF-Connecting-IP mode) the "observed" address is Cloudflare's
-    // edge, never the server: recording it would point every magic URL and DNS hint at Cloudflare. The agent's
-    // reported host interfaces fill the IP instead (reconcileReportedIp).
-    if (isCloudflareEdge(observed)) return {};
-    // For the hub's OWN single-box agent (isLocal), a docker-bridge source IP (172.16-31.x) is the agent's
-    // in-container address — never reachable from other devices — so recording it dead-links every app URL;
-    // skip it so a real interface IP or provisionLocalServer's manual pin wins. A REMOTE server's 172.x may be
-    // a reachable same-VPC/LAN address, so it is still recorded there. Real public and LAN IPs are always kept.
-    if (isLocal && isDockerBridgeV4(observed)) return {};
-    return isIpv6(observed)
-      ? { publicIpv6: observed }
-      : { publicIp: observed, ipSource: "observed" };
+    return reconcileObservedIp(current, observed, isLocal) ?? {};
   }
 
   async enroll(input: {
@@ -735,7 +728,7 @@ export class ServersService {
         hostname: input.hostname,
         status: ServerStatus.ONLINE,
         lastSeenAt: new Date(),
-        ...this.ipFields(input.observedIp, server.ipSource, server.isLocal),
+        ...this.ipFields(input.observedIp, server, server.isLocal),
       },
     });
     await this.audit.log({
@@ -766,7 +759,7 @@ export class ServersService {
     // IP is tracked on every auth). Also refresh agentVersion when the agent reports one (only on enroll
     // before this): a self-updated agent reconnects via auth, so this is how the new version becomes
     // visible. Store verbatim; never blank an existing value from an older agent that omits it.
-    const extra = this.ipFields(observedIp, server.ipSource, server.isLocal);
+    const extra = this.ipFields(observedIp, server, server.isLocal);
     if (agentVersion) extra.agentVersion = agentVersion;
     await this.markOnline(serverId, extra);
     return "ok";
@@ -835,15 +828,25 @@ export class ServersService {
 
   /** Store/refresh the host hardware+OS inventory (sent on every (re)connect). */
   async saveHostInfo(serverId: string, info: HostInfoInput): Promise<void> {
-    const reportedIps = info.reportedIps ?? [];
-    // Reconcile the reported interface IPs against the observed egress: adopt one
-    // when the observed IP is missing/loopback (never overriding a manual pin).
-    // Best-effort like the update below: a read blip must never throw and tear
+    // The agent's payload is not schema-validated on the socket: keep only well-formed address literals, bounded.
+    const clean = (list: unknown): string[] =>
+      Array.isArray(list) ? list.filter((x): x is string => typeof x === "string" && isIP(x) !== 0).slice(0, 64) : [];
+    const ifaceIps = clean(info.reportedIps);
+    const metadataIps = clean(info.metadataIps);
+    // Reconcile the reported interface IPs and the cloud-metadata answer against what is stored, per family:
+    // never overriding a manual pin. Best-effort like the update below: a read blip must never throw and tear
     // down the agent connection (host_info arrives on every reconnect).
     const server = await this.prisma.server
-      .findUnique({ where: { id: serverId }, select: { publicIp: true, ipSource: true, isLocal: true } })
+      .findUnique({
+        where: { id: serverId },
+        select: { publicIp: true, publicIpv6: true, ipSource: true, ipv6Source: true, isLocal: true, nameAuto: true },
+      })
       .catch(() => null);
-    const reconcile = server ? reconcileReportedIp(server, reportedIps, server.isLocal) : null;
+    const reconcile = server ? reconcileReportedIp(server, ifaceIps, server.isLocal, metadataIps) : null;
+    // "All IPs": every address the host reports, interfaces first, the cloud's answer included (deduped).
+    const allIps = [...new Set([...ifaceIps, ...metadataIps])];
+    // A server added without a name takes the host's real hostname the first time the agent reports one.
+    const realHostname = info.hostname && HOSTNAME_RE.test(info.hostname) ? info.hostname : null;
     await this.prisma.server
       .update({
         where: { id: serverId },
@@ -855,8 +858,9 @@ export class ServersService {
           cpuCores: info.cpuCores || null,
           memTotalBytes: info.memTotalBytes ? BigInt(Math.round(info.memTotalBytes)) : null,
           bootTime: info.bootTime ? new Date(info.bootTime * 1000) : null,
-          reportedIps,
-          ...(info.hostname && HOSTNAME_RE.test(info.hostname) ? { hostname: info.hostname } : {}),
+          reportedIps: allIps,
+          ...(realHostname ? { hostname: realHostname } : {}),
+          ...(realHostname && server?.nameAuto ? { name: realHostname, nameAuto: false } : {}),
           ...(reconcile ?? {}),
         },
       })
@@ -877,6 +881,9 @@ export class ServersService {
       publicIp?: string | null;
       publicIpv6?: string | null;
       ipSource?: string;
+      ipv6Source?: string;
+      reportedIps?: string[];
+      nameAuto?: boolean;
       wildcardDomain?: string | null;
       magicSuffix?: string | null;
       certMode?: string;
@@ -926,6 +933,9 @@ export class ServersService {
       publicIp: s.publicIp ?? null,
       publicIpv6: s.publicIpv6 ?? null,
       ipSource: s.ipSource ?? "observed",
+      ipv6Source: s.ipv6Source ?? s.ipSource ?? "observed",
+      reportedIps: s.reportedIps ?? [],
+      nameAuto: s.nameAuto ?? false,
       wildcardDomain: s.wildcardDomain ?? null,
       magicSuffix: s.magicSuffix ?? null,
       certMode: s.certMode ?? "http",

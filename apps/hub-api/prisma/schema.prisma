@@ -314,7 +314,9 @@ model Server {
   hostname               String?
   publicIp               String? // observed reachable IPv4 (or manual override)
   publicIpv6             String? // observed reachable IPv6
-  ipSource               String                  @default("observed") // observed | reported | manual
+  ipSource               String                  @default("observed") // where publicIp came from: manual | reported (network interface) | metadata (cloud) | observed (hub saw it)
+  ipv6Source             String                  @default("observed") // same, for publicIpv6 (families are reconciled separately)
+  nameAuto               Boolean                 @default(false) // name was left blank at "Add server": adopt the agent's real hostname when it connects
   reportedIps            String[]                @default([]) // agent-reported candidate interface IPs (reconcile)
   wildcardDomain         String? // per-server magic-domain root (e.g. apps.example.com); blank → sslip.io
   magicSuffix            String? // override the global magic suffix ("sslip.io" | "nip.io")

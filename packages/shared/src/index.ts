@@ -695,6 +695,8 @@ export interface HostInfo {
   bootTime: number; // unix seconds the host booted (uptime derived from this)
   reportedIps?: string[]; // non-virtual, non-loopback interface IPs (reconciled with the observed IP)
   hostname?: string; // the HOST's hostname (from the Docker daemon); absent on older agents
+  metadataIps?: string[]; // public IPs the cloud provider's link-local metadata service reports (no outbound probe)
+  cloudProvider?: string; // which provider's metadata answered ("hetzner" | "aws" | "gcp" | "digitalocean" | "vultr")
 }
 
 /** Agent -> Hub: host hardware/OS inventory. */

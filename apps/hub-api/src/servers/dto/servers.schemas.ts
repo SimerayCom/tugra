@@ -4,7 +4,8 @@ import { DOMAIN_RE } from "../../applications/dto";
 import { dnsCredsIssue } from "../../common/dns-creds";
 
 export const CreateServerSchema = z.object({
-  name: z.string().min(1),
+  // Optional: left blank, the host's real hostname is adopted when its agent connects.
+  name: z.string().trim().max(100).optional(),
   teamId: z.string().min(1),
 });
 export type CreateServerInput = z.infer<typeof CreateServerSchema>;

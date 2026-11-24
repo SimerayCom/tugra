@@ -191,6 +191,28 @@ describe("ServersService.createServer (team role enforced)", () => {
   });
 });
 
+describe("ServersService.createServer without a name", () => {
+  const ownerPrisma = (create: jest.Mock) =>
+    ({
+      membership: { findUnique: jest.fn().mockResolvedValue({ role: Role.OWNER }) },
+      server: { create },
+    }) as unknown as PrismaService;
+
+  it("stores a placeholder and flags it so the agent's hostname replaces it", async () => {
+    const create = jest.fn().mockResolvedValue(row("s1", "teamA"));
+    await svcWith(ownerPrisma(create)).createServer("u1", undefined, "teamA");
+    expect(create.mock.calls[0][0].data).toEqual(expect.objectContaining({ name: "New server", nameAuto: true }));
+    await svcWith(ownerPrisma(create)).createServer("u1", "   ", "teamA");
+    expect(create.mock.calls[1][0].data).toEqual(expect.objectContaining({ name: "New server", nameAuto: true }));
+  });
+
+  it("keeps a typed name as is (trimmed) and does not flag it", async () => {
+    const create = jest.fn().mockResolvedValue(row("s1", "teamA"));
+    await svcWith(ownerPrisma(create)).createServer("u1", "  web  ", "teamA");
+    expect(create.mock.calls[0][0].data).toEqual(expect.objectContaining({ name: "web", nameAuto: false }));
+  });
+});
+
 describe("ServersService.createServersBulk (fleet fan-out)", () => {
   it("creates one PENDING server per name, each with its own enroll token", async () => {
     const membershipFind = jest.fn().mockResolvedValue({ role: Role.OWNER });
@@ -556,6 +578,57 @@ describe("ServersService.saveHostInfo + uptime view", () => {
     expect(data.ipSource).toBeUndefined();
   });
 
+  it("stores the cloud metadata address (source metadata) and lists every address, interfaces first", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = {
+      server: { findUnique: jest.fn().mockResolvedValue({ publicIp: null, ipSource: "observed", isLocal: false }), update },
+    } as unknown as PrismaService;
+    await svcWith(prisma).saveHostInfo(
+      "s1",
+      hostInfo({ reportedIps: ["10.0.0.5", "2001:db8::1"], metadataIps: ["198.51.100.9"], cloudProvider: "aws" }),
+    );
+    const data = update.mock.calls[0][0].data;
+    expect(data.publicIp).toBe("198.51.100.9");
+    expect(data.ipSource).toBe("metadata");
+    expect(data.publicIpv6).toBe("2001:db8::1");
+    expect(data.ipv6Source).toBe("reported");
+    expect(data.reportedIps).toEqual(["10.0.0.5", "2001:db8::1", "198.51.100.9"]);
+  });
+
+  it("drops malformed address strings from an agent payload", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = { server: { findUnique: jest.fn().mockResolvedValue(null), update } } as unknown as PrismaService;
+    await svcWith(prisma).saveHostInfo(
+      "s1",
+      hostInfo({ reportedIps: ["203.0.113.7", "<script>", 5 as unknown as string], metadataIps: ["x; rm -rf /"] }),
+    );
+    expect(update.mock.calls[0][0].data.reportedIps).toEqual(["203.0.113.7"]);
+  });
+
+  it("adopts the host's real hostname as the name when the server was added without one", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = {
+      server: { findUnique: jest.fn().mockResolvedValue({ nameAuto: true, publicIp: null, ipSource: "observed", isLocal: false }), update },
+    } as unknown as PrismaService;
+    await svcWith(prisma).saveHostInfo("s1", hostInfo({ hostname: "app-1" }));
+    const data = update.mock.calls[0][0].data;
+    expect(data.name).toBe("app-1");
+    expect(data.nameAuto).toBe(false);
+    expect(data.hostname).toBe("app-1");
+  });
+
+  it("keeps a name the owner typed, and waits for a real hostname before replacing the placeholder", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const typed = { server: { findUnique: jest.fn().mockResolvedValue({ nameAuto: false, publicIp: null, ipSource: "observed" }), update } };
+    await svcWith(typed as unknown as PrismaService).saveHostInfo("s1", hostInfo({ hostname: "app-1" }));
+    expect(update.mock.calls[0][0].data.name).toBeUndefined();
+    const auto = { server: { findUnique: jest.fn().mockResolvedValue({ nameAuto: true, publicIp: null, ipSource: "observed" }), update } };
+    await svcWith(auto as unknown as PrismaService).saveHostInfo("s1", hostInfo()); // older agent: no hostname
+    expect(update.mock.calls[1][0].data.name).toBeUndefined();
+    await svcWith(auto as unknown as PrismaService).saveHostInfo("s1", hostInfo({ hostname: "bad host;rm" }));
+    expect(update.mock.calls[2][0].data.name).toBeUndefined();
+  });
+
   it("derives uptimeSeconds from bootTime in the view", async () => {
     const bootTime = new Date(Date.now() - 3600 * 1000); // 1h ago
     const prisma = {
@@ -830,7 +903,7 @@ describe("ServersService.setNetwork", () => {
     await expect(svcWith(prisma).setNetwork("u1", "s1", { publicIp: "10.0.0.5" })).rejects.toThrow(/globally routable/);
   });
 
-  it("pins a manual IPv6 (ipSource=manual) so an observed v6 can't clobber it", async () => {
+  it("pins a manual IPv6 (ipv6Source=manual) so an observed v6 can't clobber it", async () => {
     const update = jest.fn().mockResolvedValue({});
     const prisma = {
       server: { findUnique: jest.fn().mockResolvedValue(row("s1", "teamA")), update },
@@ -839,7 +912,7 @@ describe("ServersService.setNetwork", () => {
     await svcWith(prisma).setNetwork("u1", "s1", { publicIpv6: "2606:4700:4700::1111" });
     expect(update).toHaveBeenCalledWith({
       where: { id: "s1" },
-      data: { publicIpv6: "2606:4700:4700::1111", ipSource: "manual" },
+      data: { publicIpv6: "2606:4700:4700::1111", ipv6Source: "manual" },
     });
   });
 
