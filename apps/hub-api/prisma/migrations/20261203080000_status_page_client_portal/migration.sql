@@ -48,6 +48,7 @@ CREATE TABLE "StatusSubscriber" (
     "email" TEXT NOT NULL,
     "confirmedAt" TIMESTAMP(3),
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "mailedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT "StatusSubscriber_pkey" PRIMARY KEY ("id")
 );
 CREATE UNIQUE INDEX "StatusSubscriber_pageId_email_key" ON "StatusSubscriber"("pageId", "email");

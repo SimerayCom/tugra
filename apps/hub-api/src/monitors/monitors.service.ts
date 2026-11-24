@@ -224,7 +224,7 @@ export class MonitorsService implements OnApplicationBootstrap {
     const projectByApp = await this.projectIdsForApps(rows.map((m) => m.appId));
     const views = rows
       .filter((m) => canAccessResource(access.get(m.teamId), m.appId ?? m.id, m.appId ? projectByApp.get(m.appId) ?? null : null))
-      .map((m) => this.view(m, access.get(m.teamId)!.role, perms.get(m.teamId)?.has('monitors') ?? false));
+      .map((m) => this.view(m, access.get(m.teamId)!.role, perms.get(m.teamId)?.has('monitors') ?? false, [], !!access.get(m.teamId)!.teamRole?.portal));
     return filterByQuery(views, q, (m) => [m.name, m.type]);
   }
 
@@ -252,7 +252,8 @@ export class MonitorsService implements OnApplicationBootstrap {
       where: { monitorId: id },
       select: { channelId: true },
     });
-    return this.view(m, role, canWrite, channels.map((c) => c.channelId));
+    const portal = await this.access.isPortalMember(userId, m.teamId);
+    return this.view(m, role, canWrite, channels.map((c) => c.channelId), portal);
   }
 
   /** Edit an existing monitor; re-schedules when the cadence/enabled changes. */
@@ -439,7 +440,9 @@ export class MonitorsService implements OnApplicationBootstrap {
   }
 
   async heartbeats(userId: string, id: string, limit: number) {
-    await this.require(userId, id);
+    const mon = await this.require(userId, id);
+    // A customer-portal (Client) account sees states and timings, never the checker's error text (it can carry hosts / IPs).
+    const portal = await this.access.isPortalMember(userId, mon.teamId);
     const rows = await this.prisma.heartbeat.findMany({
       where: { monitorId: id },
       orderBy: { ts: "desc" },
@@ -449,7 +452,7 @@ export class MonitorsService implements OnApplicationBootstrap {
       ts: h.ts.getTime(),
       status: h.status,
       ms: h.ms,
-      msg: h.msg,
+      msg: portal ? null : h.msg,
       cause: h.cause ?? null,
       important: h.important,
     }));
@@ -485,12 +488,13 @@ export class MonitorsService implements OnApplicationBootstrap {
     return m;
   }
 
-  private view(m: Monitor, role: Role, canWrite: boolean, channelIds: string[] = []): MonitorView {
+  private view(m: Monitor, role: Role, canWrite: boolean, channelIds: string[] = [], portal = false): MonitorView {
     return {
       id: m.id,
       name: m.name,
       type: m.type,
-      target: m.target,
+      // A customer-portal (Client) account never sees the raw target (internal URL / host / IP) or DNS server.
+      target: portal ? "" : m.target,
       serverId: m.serverId,
       metric: m.metric,
       thresholdPct: m.thresholdPct,
@@ -510,7 +514,7 @@ export class MonitorsService implements OnApplicationBootstrap {
       maxRedirects: m.maxRedirects ?? 10,
       upsideDown: m.upsideDown ?? false,
       dnsRecordType: m.dnsRecordType ?? null,
-      dnsServer: m.dnsServer ?? null,
+      dnsServer: portal ? null : m.dnsServer ?? null,
       dnsExpect: m.dnsExpect ?? null,
       auto: m.auto,
       appId: m.appId,

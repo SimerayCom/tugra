@@ -2888,6 +2888,8 @@ model StatusSubscriber {
   email       String
   confirmedAt DateTime?
   createdAt   DateTime   @default(now())
+  /** When the confirmation email last went out (resends are throttled). */
+  mailedAt    DateTime   @default(now())
 
   @@unique([pageId, email])
 }

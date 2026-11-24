@@ -338,6 +338,18 @@ describe("TeamsService - customer portal (Client role)", () => {
     expect(upsert.mock.calls[0][0].create).toMatchObject({ role: Role.VIEWER, teamRoleId: "r1" });
   });
 
+  it("accepting a plain invitation does not wipe an existing member's custom role", async () => {
+    const upsert = jest.fn().mockReturnValue("m");
+    const prisma = {
+      teamInvitation: { findUnique: jest.fn().mockResolvedValue({ id: "i1", email: "c@example.com", teamId: "t1", role: Role.VIEWER, teamRoleId: null, expiresAt: new Date(Date.now() + 1e6) }), delete: jest.fn() },
+      user: { findUnique: jest.fn().mockResolvedValue({ email: "c@example.com" }) },
+      membership: { upsert },
+      $transaction: jest.fn().mockResolvedValue([]),
+    } as unknown as PrismaService;
+    await make(prisma, {} as TeamAccessService).acceptInvitation("u2", "tok");
+    expect(upsert.mock.calls[0][0].update).toEqual({ role: Role.VIEWER });
+  });
+
   it("a client role keeps its name and can only carry the deploy permission", async () => {
     const portalRole = { id: "r1", teamId: "t1", name: "Client", portal: true, permissions: [] };
     const update = jest.fn().mockImplementation(({ data }) => Promise.resolve({ ...portalRole, ...data }));

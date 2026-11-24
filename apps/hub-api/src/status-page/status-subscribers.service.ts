@@ -8,6 +8,10 @@ import { statusConfirmEmail, statusUpdateEmail } from "../mail/templates";
 import { webBaseUrl } from "../common/web-url";
 
 const MAX_SUBSCRIBERS_PER_PAGE = 5000;
+/** A pending address gets at most one confirmation email per this window (public endpoint: no mail-bombing). */
+const RESEND_AFTER_MS = 10 * 60 * 1000;
+/** Unconfirmed rows older than this are purged so a flood of pending addresses can't fill the page. */
+const PENDING_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 type TokenKind = "confirm" | "unsub";
 
@@ -61,12 +65,16 @@ export class StatusSubscribersService {
     const page = await this.prisma.statusPage.findFirst({ where: { slug, enabled: true }, select: { id: true, title: true, slug: true } });
     if (!page) throw new NotFoundException("status page not found");
     if (!this.mail.isConfigured()) throw new ConflictException("email updates are not available");
+    await this.prisma.statusSubscriber.deleteMany({ where: { pageId: page.id, confirmedAt: null, createdAt: { lt: new Date(Date.now() - PENDING_TTL_MS) } } });
     const existing = await this.prisma.statusSubscriber.findUnique({ where: { pageId_email: { pageId: page.id, email } } });
     if (existing?.confirmedAt) return;
+    if (existing && Date.now() - existing.mailedAt.getTime() < RESEND_AFTER_MS) return;
     if (!existing && (await this.prisma.statusSubscriber.count({ where: { pageId: page.id } })) >= MAX_SUBSCRIBERS_PER_PAGE) {
       throw new ConflictException("this page has reached its subscriber limit");
     }
-    const row = existing ?? (await this.prisma.statusSubscriber.create({ data: { pageId: page.id, email } }));
+    const row = existing
+      ? await this.prisma.statusSubscriber.update({ where: { id: existing.id }, data: { mailedAt: new Date() } })
+      : await this.prisma.statusSubscriber.create({ data: { pageId: page.id, email } });
     const confirmUrl = this.actionUrl(page.slug, "confirm", this.token("confirm", row.id));
     await this.mail.send(email, statusConfirmEmail({ title: page.title, confirmUrl }));
   }

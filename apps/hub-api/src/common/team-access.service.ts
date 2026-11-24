@@ -30,6 +30,8 @@ export interface MembershipAccess {
   restrictedAccess: boolean;
   accessedProjects: string[];
   accessedResources: string[];
+  /** Set when the membership's custom role is a customer-portal (Client) preset. */
+  teamRole?: { portal: boolean } | null;
 }
 
 /** True when project scoping actually constrains this member. OWNER/ADMIN bypass it; a CUSTOM-role
@@ -133,6 +135,16 @@ export class TeamAccessService {
   }
 
   // ---- per-resource scoping -------------------------------------------------
+
+  /** True when the member reaches this team through a customer-portal (Client) role. Not hidden by the portal
+   *  surface: callers use it to redact internals from a Client's reads. */
+  async isPortalMember(userId: string, teamId: string): Promise<boolean> {
+    const m = await this.prisma.membership.findUnique({
+      where: { userId_teamId: { userId, teamId } },
+      select: { teamRole: { select: { portal: true } } },
+    });
+    return !!m?.teamRole?.portal;
+  }
 
   /** The member's role + scoping for one team (null if not a member). */
   async membershipAccess(userId: string, teamId: string): Promise<MembershipAccess | null> {

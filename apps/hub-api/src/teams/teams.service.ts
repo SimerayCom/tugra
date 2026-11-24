@@ -499,7 +499,8 @@ export class TeamsService {
       this.prisma.membership.upsert({
         where: { userId_teamId: { userId, teamId: inv.teamId } },
         create: { userId, teamId: inv.teamId, role: inv.role, teamRoleId: inv.teamRoleId },
-        update: { role: inv.role, teamRoleId: inv.teamRoleId },
+        // A plain invite leaves an existing member's custom role alone; only a Client invite sets one.
+        update: { role: inv.role, ...(inv.teamRoleId ? { teamRoleId: inv.teamRoleId } : {}) },
       }),
       this.prisma.teamInvitation.delete({ where: { id: inv.id } }),
     ]);

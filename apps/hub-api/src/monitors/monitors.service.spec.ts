@@ -384,3 +384,39 @@ describe("MonitorsService.create — request options", () => {
     expect(schedule).not.toHaveBeenCalled();
   });
 });
+
+describe("MonitorsService portal redaction", () => {
+  const row = { ...monitor, id: "m1", appId: null, target: "http://10.0.0.5:8080/health", dnsServer: "10.0.0.2" };
+  it("hides the raw target and checker messages from a Client account", async () => {
+    const prisma = {
+      monitor: { findUnique: jest.fn().mockResolvedValue(row) },
+      monitorChannel: { findMany: jest.fn().mockResolvedValue([]) },
+      heartbeat: { findMany: jest.fn().mockResolvedValue([{ ts: new Date(), status: "DOWN", ms: 0, msg: "connect ECONNREFUSED 10.0.0.5:8080", cause: null, important: true }]) },
+    } as unknown as PrismaService;
+    const access = {
+      teamRole: jest.fn().mockResolvedValue(Role.VIEWER),
+      requireResourceAccess: jest.fn().mockResolvedValue(undefined),
+      permissionsByTeam: jest.fn().mockResolvedValue(new Map()),
+      isPortalMember: jest.fn().mockResolvedValue(true),
+    } as unknown as TeamAccessService;
+    const svc = make(prisma, access, {});
+    const view = await svc.get("u1", "m1");
+    expect(view.target).toBe("");
+    expect(view.dnsServer).toBeNull();
+    const beats = await svc.heartbeats("u1", "m1", 10);
+    expect(beats[0].msg).toBeNull();
+  });
+  it("keeps them for a regular member", async () => {
+    const prisma = {
+      monitor: { findUnique: jest.fn().mockResolvedValue(row) },
+      monitorChannel: { findMany: jest.fn().mockResolvedValue([]) },
+    } as unknown as PrismaService;
+    const access = {
+      teamRole: jest.fn().mockResolvedValue(Role.OWNER),
+      requireResourceAccess: jest.fn().mockResolvedValue(undefined),
+      permissionsByTeam: jest.fn().mockResolvedValue(new Map()),
+      isPortalMember: jest.fn().mockResolvedValue(false),
+    } as unknown as TeamAccessService;
+    expect((await make(prisma, access, {}).get("u1", "m1")).target).toBe(row.target);
+  });
+});

@@ -222,7 +222,8 @@ export class StatusPageService {
       ? await this.prisma.heartbeat.findMany({
           where: { monitorId: { in: monitorIds }, important: true, ts: { gte: new Date(now.getTime() - INCIDENT_WINDOW_DAYS * DAY_MS) } },
           select: { monitorId: true, status: true, important: true, ts: true },
-          orderBy: { ts: "asc" },
+          // Newest first: on a flappy monitor the cap must drop the OLD beats (deriveIncidents re-sorts).
+          orderBy: { ts: "desc" },
           take: 5000,
         })
       : [];

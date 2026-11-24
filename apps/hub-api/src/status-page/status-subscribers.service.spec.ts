@@ -40,7 +40,7 @@ describe("StatusSubscribersService.subscribe", () => {
   it("emails a confirm link and stores an unconfirmed row", async () => {
     const prisma = {
       statusPage: { findFirst: jest.fn().mockResolvedValue(pageRow) },
-      statusSubscriber: { findUnique: jest.fn().mockResolvedValue(null), count: jest.fn().mockResolvedValue(0), create: jest.fn().mockResolvedValue({ id: "sub1" }) },
+      statusSubscriber: { deleteMany: jest.fn().mockResolvedValue({ count: 0 }), findUnique: jest.fn().mockResolvedValue(null), count: jest.fn().mockResolvedValue(0), create: jest.fn().mockResolvedValue({ id: "sub1" }) },
     };
     const { svc, send } = make(prisma);
     await svc.subscribe("acme", "a@example.com");
@@ -52,11 +52,36 @@ describe("StatusSubscribersService.subscribe", () => {
   it("says nothing new for an already confirmed address (no enumeration)", async () => {
     const prisma = {
       statusPage: { findFirst: jest.fn().mockResolvedValue(pageRow) },
-      statusSubscriber: { findUnique: jest.fn().mockResolvedValue({ id: "sub1", confirmedAt: new Date() }) },
+      statusSubscriber: { deleteMany: jest.fn(), findUnique: jest.fn().mockResolvedValue({ id: "sub1", confirmedAt: new Date() }) },
     };
     const { svc, send } = make(prisma);
     await expect(svc.subscribe("acme", "a@example.com")).resolves.toBeUndefined();
     expect(send).not.toHaveBeenCalled();
+  });
+  it("does not resend the confirm email to a pending address within ten minutes", async () => {
+    const prisma = {
+      statusPage: { findFirst: jest.fn().mockResolvedValue(pageRow) },
+      statusSubscriber: { deleteMany: jest.fn(), findUnique: jest.fn().mockResolvedValue({ id: "sub1", confirmedAt: null, mailedAt: new Date(Date.now() - 60_000) }), update: jest.fn() },
+    };
+    const { svc, send } = make(prisma);
+    await svc.subscribe("acme", "a@example.com");
+    expect(send).not.toHaveBeenCalled();
+    expect(prisma.statusSubscriber.update).not.toHaveBeenCalled();
+  });
+  it("resends after the window and purges stale pending rows", async () => {
+    const prisma = {
+      statusPage: { findFirst: jest.fn().mockResolvedValue(pageRow) },
+      statusSubscriber: {
+        deleteMany: jest.fn().mockResolvedValue({ count: 1 }),
+        findUnique: jest.fn().mockResolvedValue({ id: "sub1", confirmedAt: null, mailedAt: new Date(Date.now() - 3_600_000) }),
+        update: jest.fn().mockResolvedValue({ id: "sub1" }),
+      },
+    };
+    const { svc, send } = make(prisma);
+    await svc.subscribe("acme", "a@example.com");
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(prisma.statusSubscriber.update).toHaveBeenCalledWith({ where: { id: "sub1" }, data: { mailedAt: expect.any(Date) } });
+    expect(prisma.statusSubscriber.deleteMany).toHaveBeenCalledWith({ where: { pageId: "p1", confirmedAt: null, createdAt: { lt: expect.any(Date) } } });
   });
   it("is unavailable without mail, and 404s an unpublished page", async () => {
     const prisma = { statusPage: { findFirst: jest.fn().mockResolvedValue(pageRow) } };
