@@ -47,7 +47,7 @@ export function ProjectsCard({ projects, teams, apps, databases, teamId }: { pro
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 300px), 1fr))", gap: 12 }}>
               {shown.map(({ project: p, team, appCount, dbCount }) => {
                 const env = p.environments[0]?.id ?? "";
-                const color = teamColor(p.teamId);
+                const color = teamColor(p.teamId, p.color ?? team?.color);
                 const icon = projectIconUrl(p.id, p.iconUpdatedAt);
                 const tIcon = team ? teamIconUrl(team.id, team.iconUpdatedAt) : null;
                 return (

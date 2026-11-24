@@ -37,12 +37,7 @@ export function realHostname(s: Pick<ServerView, "name" | "hostname">): string |
   return h;
 }
 
-/** A stable accent colour per team (teams have no colour setting): hash of the id onto the hue wheel. */
-export function teamColor(teamId: string): string {
-  let h = 0;
-  for (let i = 0; i < teamId.length; i++) h = (h * 31 + teamId.charCodeAt(i)) >>> 0;
-  return `hsl(${h % 360} 55% 50%)`;
-}
+export { teamColor } from "./team-color";
 
 export interface ProjectCardModel {
   project: Project;

@@ -5,9 +5,9 @@ import { teamIconUrl } from "../lib/api";
 import { teamColor } from "../lib/team-color";
 
 /** Team name with its colour and icon (the uploaded team icon, or a neutral glyph). Colour is decoration: the name is always shown. */
-export function TeamChip({ team, fallbackName }: { team: { id: string; name: string; iconUpdatedAt?: string | null } | undefined; fallbackName: string }) {
+export function TeamChip({ team, fallbackName }: { team: { id: string; name: string; iconUpdatedAt?: string | null; color?: string | null } | undefined; fallbackName: string }) {
   const id = team?.id ?? fallbackName;
-  const color = teamColor(id);
+  const color = teamColor(id, team?.color);
   const icon = team ? teamIconUrl(team.id, team.iconUpdatedAt) : null;
   return (
     <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11, padding: "2px 8px 2px 4px", borderRadius: 6, background: `${color}22`, color, fontWeight: 600, maxWidth: 180 }}>
