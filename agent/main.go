@@ -26,6 +26,7 @@ import (
 	"github.com/SimerayCom/tugra/agent/internal/keys"
 	"github.com/SimerayCom/tugra/agent/internal/migrate"
 	"github.com/SimerayCom/tugra/agent/internal/protocol"
+	"github.com/SimerayCom/tugra/agent/internal/scan"
 )
 
 // Version is overridden at build time via -ldflags "-X main.Version=...".
@@ -44,6 +45,12 @@ func main() {
 	// `hostmeta` is the same helper container asking the cloud metadata service for the instance's public IPs.
 	if len(os.Args) > 1 && os.Args[1] == "hostmeta" {
 		os.Exit(hostinfo.PrintCloudIPs(os.Stdout))
+	}
+
+	// `scan` is the read-only server scan: the hub runs it in a sandboxed helper container with the host filesystem
+	// mounted read-only (internal/scan). It opens no hub connection and prints one JSON document.
+	if len(os.Args) > 1 && os.Args[1] == "scan" {
+		os.Exit(scan.RunCLI(os.Args[2:], os.Stdout, os.Stderr))
 	}
 
 	if len(os.Args) > 1 && os.Args[1] == "fsd" {
