@@ -1692,6 +1692,12 @@ export const api = {
   deleteProjectIcon(id: string) {
     return apiFetch<{ ok: true }>(`/projects/${id}/icon`, { method: "DELETE" });
   },
+  setTeamColor(id: string, color: string | null) {
+    return apiFetch<{ ok: true }>(`/teams/${id}/color`, { method: "PUT", body: JSON.stringify({ color }) });
+  },
+  setProjectColor(id: string, color: string | null) {
+    return apiFetch<{ ok: true }>(`/projects/${id}/color`, { method: "PUT", body: JSON.stringify({ color }) });
+  },
   setTeamIcon(id: string, data: string) {
     return apiFetch<{ ok: true }>(`/teams/${id}/icon`, { method: "PUT", body: JSON.stringify({ data }) });
   },

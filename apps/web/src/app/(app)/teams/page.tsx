@@ -8,6 +8,8 @@ import { api, teamIconUrl } from "../../../lib/api";
 import { useT } from "../../../i18n/provider";
 import { Btn, Card, EmptyState, Spinner } from "../../../components/ui";
 import { ErrorState } from "../../../components/error-state";
+import { EntityTile } from "../../../components/entity-identity";
+import { MailNotConfiguredNote } from "../../../components/mail-not-configured-note";
 
 const field: React.CSSProperties = {
   padding: "8px 10px",
@@ -44,6 +46,8 @@ export default function TeamsPage() {
       <h1 style={{ fontSize: 22, fontWeight: 700, margin: "0 0 4px" }}>{t("teams.title")}</h1>
       <p style={{ color: "var(--c-tx3)", fontSize: 14, margin: "0 0 22px" }}>{t("teams.subtitle")}</p>
 
+      <div style={{ marginBottom: 16 }}><MailNotConfiguredNote dismissible consequence={t("teams.inviteNoMail")} /></div>
+
       {invites.length > 0 && (
         <Card style={{ padding: 16, marginBottom: 20 }}>
           <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 10 }}>{t("teams.yourInvitations")}</div>
@@ -78,13 +82,7 @@ export default function TeamsPage() {
         <div style={{ border: "1px solid var(--c-bd)", borderRadius: "var(--r2)", overflow: "hidden" }}>
           {teams.map((tm) => (
             <Link key={tm.id} href={`/teams/${tm.id}`} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", borderTop: "1px solid var(--c-bd)", textDecoration: "none", color: "var(--c-tx)" }}>
-              <span style={{ width: 32, height: 32, borderRadius: 8, background: "var(--c-tile)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, overflow: "hidden" }}>
-                {teamIconUrl(tm.id, tm.iconUpdatedAt) ? (
-                  <img src={teamIconUrl(tm.id, tm.iconUpdatedAt)!} alt="" width={32} height={32} style={{ objectFit: "cover" }} />
-                ) : (
-                  <Users size={16} color="var(--c-a)" />
-                )}
-              </span>
+              <EntityTile color={tm.color} size={32} iconUrl={teamIconUrl(tm.id, tm.iconUpdatedAt)} fallback={<Users size={16} color="currentColor" aria-hidden />} />
               <div style={{ flex: 1 }}>
                 <div style={{ fontWeight: 600, fontSize: 14 }}>{tm.name}</div>
                 <div className="mono" style={{ fontSize: 11, color: "var(--c-tx3)" }}>{t("teams.members", { n: tm.memberCount ?? 0 })}</div>

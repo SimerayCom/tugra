@@ -4,6 +4,7 @@ import Link from "next/link";
 import { ChevronRight } from "lucide-react";
 import type { CSSProperties, ReactNode } from "react";
 import { StatusPill } from "./ui";
+import { EntityDot } from "./entity-identity";
 
 /** Detail-page header: breadcrumb + title + status + actions, with an optional meta row. */
 export function PageHeader({
@@ -12,6 +13,7 @@ export function PageHeader({
   icon,
   status,
   badge,
+  accent,
   actions,
   children,
 }: {
@@ -20,6 +22,8 @@ export function PageHeader({
   icon?: ReactNode;
   status?: { label: string; color: string };
   badge?: ReactNode;
+  /** Team / project identity colour: marks the current crumb and the title with a dot. */
+  accent?: string | null;
   actions?: ReactNode;
   children?: ReactNode;
 }) {
@@ -36,7 +40,10 @@ export function PageHeader({
                     {b.label}
                   </Link>
                 ) : (
-                  <span aria-current={last ? "page" : undefined} style={{ fontSize: 12, color: last ? "var(--c-tx2)" : "var(--c-tx3)" }}>{b.label}</span>
+                  <span aria-current={last ? "page" : undefined} style={{ fontSize: 12, color: last ? "var(--c-tx2)" : "var(--c-tx3)", display: "inline-flex", alignItems: "center", gap: 5 }}>
+                    {last && <EntityDot color={accent} size={7} />}
+                    {b.label}
+                  </span>
                 )}
                 {!last && <ChevronRight size={13} color="var(--c-tx3)" />}
               </span>
@@ -50,7 +57,10 @@ export function PageHeader({
             {icon}
           </span>
         )}
-        <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0 }}>{title}</h1>
+        <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0, display: "inline-flex", alignItems: "center", gap: 8 }}>
+          <EntityDot color={accent} size={11} />
+          {title}
+        </h1>
         {status && <StatusPill label={status.label} color={status.color} />}
         {badge}
         <div style={{ flex: 1, minWidth: 12 }} />

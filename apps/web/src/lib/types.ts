@@ -20,6 +20,7 @@ export interface Team {
   role: Role;
   memberCount?: number;
   iconUpdatedAt?: string | null;
+  color?: string | null;
 }
 
 export interface TeamMember {
@@ -1704,6 +1705,7 @@ export interface Project {
   role: Role;
   canWrite: boolean;
   iconUpdatedAt: string | null;
+  color?: string | null;
   createdAt: string;
 }
 

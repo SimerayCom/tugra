@@ -962,3 +962,19 @@ html[data-ui-style="3d"] .tg-btn:not(:disabled):active {
     transform: none;
   }
 }
+
+/* Team / project identity colours. lib/color.ts derives a light-theme and a dark-theme tone set from the
+   chosen hex and passes both as custom props on the element; these rules pick the set for the active theme,
+   so every badge, tile and dot stays readable (>= 4.5:1) without re-rendering on a theme switch. */
+.ent {
+  --ent-solid: var(--ent-solid-d);
+  --ent-on: var(--ent-on-d);
+  --ent-tint: var(--ent-tint-d);
+  --ent-text: var(--ent-text-d);
+}
+[data-theme="light"] .ent {
+  --ent-solid: var(--ent-solid-l);
+  --ent-on: var(--ent-on-l);
+  --ent-tint: var(--ent-tint-l);
+  --ent-text: var(--ent-text-l);
+}

@@ -12,6 +12,7 @@ import { ListCard, ListRow } from "../../../components/list";
 import { PageTitle } from "../../../components/page-header";
 import { SkeletonTable } from "../../../components/skeleton";
 import { ErrorState } from "../../../components/error-state";
+import { EntityTile } from "../../../components/entity-identity";
 import { TeamBadge, useTeamScope } from "../../../components/team-scope";
 import { SortBar } from "../../../components/sort-bar";
 import { sortProjects, toggleSort, defaultProjectSortDir, type ProjectSortKey, type SortState } from "../../../lib/list-sort";
@@ -114,13 +115,7 @@ export default function ProjectsPage() {
             return (
               // Whole row navigates on click; the name link below is the keyboard path, so no extra tab stop.
               <ListRow key={p.id} index={i} onClick={() => push(`/projects/${p.id}`)} tabbable={false}>
-                <span style={{ width: 36, height: 36, borderRadius: 8, background: "var(--c-tile)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, overflow: "hidden" }}>
-                  {projectIconUrl(p.id, p.iconUpdatedAt) ? (
-                    <img src={projectIconUrl(p.id, p.iconUpdatedAt)!} alt="" width={36} height={36} style={{ objectFit: "cover" }} />
-                  ) : (
-                    <FolderTree size={18} color="var(--c-a)" />
-                  )}
-                </span>
+                <EntityTile color={p.color} size={36} iconUrl={projectIconUrl(p.id, p.iconUpdatedAt)} fallback={<FolderTree size={18} color="currentColor" aria-hidden />} />
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <Link href={`/projects/${p.id}`} style={{ fontWeight: 600, fontSize: 14, color: "var(--c-tx)", textDecoration: "none" }}>{p.name}</Link>
                   <div style={{ display: "flex", gap: 6, marginTop: 4, flexWrap: "wrap" }}>

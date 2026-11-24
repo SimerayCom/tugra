@@ -5,7 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import { useT } from "../i18n/provider";
 import { Select } from "./form";
-import { Badge } from "./ui";
+import { EntityBadge } from "./entity-identity";
 
 const KEY = "tugra.teamScope";
 
@@ -60,10 +60,10 @@ export function TeamScopeSelect() {
   );
 }
 
-/** Small badge naming the team an item belongs to (resolved from the ['teams'] query). */
-export function TeamBadge({ teamId, teams }: { teamId: string; teams?: { id: string; name: string }[] }) {
+/** Small badge naming the team an item belongs to (resolved from the ['teams'] query), tinted with the team's colour. */
+export function TeamBadge({ teamId, teams }: { teamId: string; teams?: { id: string; name: string; color?: string | null }[] }) {
   const { data = [] } = useQuery({ queryKey: ["teams"], queryFn: () => api.listTeams(), enabled: !teams });
-  const name = (teams ?? data).find((tm) => tm.id === teamId)?.name;
-  if (!name) return null;
-  return <Badge tone="lapis">{name}</Badge>;
+  const team = (teams ?? data).find((tm) => tm.id === teamId);
+  if (!team) return null;
+  return <EntityBadge color={team.color}>{team.name}</EntityBadge>;
 }

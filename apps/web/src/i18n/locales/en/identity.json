@@ -1,0 +1,28 @@
+{
+  "color": "Color",
+  "colorHint": "Marks this in badges and lists across the panel.",
+  "colorDefault": "Default",
+  "colorUse": "Use {name}",
+  "colorSaved": "Color updated",
+  "colorFailed": "Couldn't update the color.",
+  "suggestion": "Use the color from your icon?",
+  "suggestionUse": "Use {hex}",
+  "suggestionSkip": "Not now",
+  "more": "More",
+  "customHex": "Custom color (hex)",
+  "hexInvalid": "Enter a color like #3e63dd.",
+  "contrastNote": "Text on this color is adjusted per theme so it stays readable.",
+  "preview": "Preview",
+  "presets": {
+    "red": "Red",
+    "orange": "Orange",
+    "amber": "Amber",
+    "green": "Green",
+    "teal": "Teal",
+    "blue": "Blue",
+    "indigo": "Indigo",
+    "purple": "Purple",
+    "pink": "Pink",
+    "gray": "Gray"
+  }
+}

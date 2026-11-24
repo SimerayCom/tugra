@@ -68,5 +68,8 @@
   "deleteTeam": "Delete team",
   "deleteConfirm": "Delete this team? It must have no servers, apps or databases.",
   "notFound": "Team not found",
-  "notFoundDesc": "This team doesn't exist or you're no longer a member."
+  "notFoundDesc": "This team doesn't exist or you're no longer a member.",
+  "renamed": "Team renamed",
+  "dangerZone": "Danger zone",
+  "dangerZoneDesc": "Permanently removes this team. You'll be asked to type its name."
 }

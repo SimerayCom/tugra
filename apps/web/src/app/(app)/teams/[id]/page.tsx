@@ -1,11 +1,10 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Users, CloudUpload, Trash2 } from "lucide-react";
+import { Users } from "lucide-react";
 import { api, teamIconUrl } from "../../../../lib/api";
-import { cropToPngBase64 } from "../../../../lib/icon";
 import type { Role, TeamMember, Project, TeamRole } from "../../../../lib/types";
 import { TEAM_PERMISSIONS } from "../../../../lib/types";
 import { useT } from "../../../../i18n/provider";
@@ -14,6 +13,7 @@ import { Badge, Btn, Card, EmptyState, Spinner } from "../../../../components/ui
 import { PageHeader } from "../../../../components/page-header";
 import { IconBtn } from "../../../../components/icon-btn";
 import { useConfirm } from "../../../../components/confirm";
+import { IdentityCard } from "../../../../components/identity-card";
 import { MailNotConfiguredNote } from "../../../../components/mail-not-configured-note";
 
 const field: React.CSSProperties = {
@@ -80,7 +80,14 @@ export default function TeamDetailPage() {
   const [newName, setNewName] = useState("");
   const rename = useMutation({
     mutationFn: () => api.renameTeam(id, newName),
-    onSuccess: () => { setNewName(""); qc.invalidateQueries({ queryKey: ["teams"] }); },
+    onSuccess: () => {
+      setNewName("");
+      // The detail page reads ["team", id] and every picker/badge reads ["teams"]: refresh both so the new
+      // name shows up at once (title, breadcrumb, team switcher) instead of after a hard reload.
+      qc.invalidateQueries({ queryKey: ["team", id] });
+      qc.invalidateQueries({ queryKey: ["teams"] });
+      toast(t("teams.renamed"), "success");
+    },
   });
 
   if (teamLoading) return <div style={{ padding: "var(--page-pad)" }}><Spinner /></div>;
@@ -100,12 +107,28 @@ export default function TeamDetailPage() {
       <PageHeader
         breadcrumb={[{ label: t("nav.teams"), href: "/teams" }, { label: team.name }]}
         title={team.name}
+        accent={team.color}
         badge={<Badge tone={isOwner ? "gold" : "muted"}>{team.role}</Badge>}
-        actions={isOwner ? <Btn variant="danger" onClick={async () => { if (await confirm({ title: t("teams.deleteTeam"), body: t("teams.deleteConfirm"), danger: true, confirmText: team.name })) del.mutate(); }}>{t("teams.deleteTeam")}</Btn> : undefined}
       />
-      {del.isError && <div style={{ color: "var(--c-r)", fontSize: 12, marginBottom: 12 }}>{(del.error as Error).message}</div>}
 
-      <TeamIconCard id={id} name={team.name} iconUpdatedAt={team.iconUpdatedAt ?? null} canManage={canManage} onChanged={() => { qc.invalidateQueries({ queryKey: ["team", id] }); qc.invalidateQueries({ queryKey: ["teams"] }); }} />
+      {canManage && <div style={{ marginBottom: 16 }}><MailNotConfiguredNote dismissible consequence={t("teams.inviteNoMail")} /></div>}
+
+      <IdentityCard
+        name={team.name}
+        iconUrl={teamIconUrl(id, team.iconUpdatedAt ?? null)}
+        color={team.color ?? null}
+        canEdit={canManage}
+        fallbackIcon={Users}
+        labels={{
+          hint: t("teams.iconHint"), upload: t("teams.iconUpload"), replace: t("teams.iconReplace"), remove: t("teams.iconRemove"),
+          uploaded: t("teams.iconUploaded"), removed: t("teams.iconRemoved"), tooLarge: t("teams.iconTooLarge"),
+          readFailed: t("teams.iconReadFailed"), failed: t("teams.iconFailed"),
+        }}
+        onSaveIcon={(data) => api.setTeamIcon(id, data)}
+        onRemoveIcon={() => api.deleteTeamIcon(id)}
+        onSaveColor={(c) => api.setTeamColor(id, c)}
+        onChanged={() => { qc.invalidateQueries({ queryKey: ["team", id] }); qc.invalidateQueries({ queryKey: ["teams"] }); }}
+      />
 
       {canManage && (
         <Card style={{ padding: 16, marginBottom: 16 }}>
@@ -168,7 +191,6 @@ export default function TeamDetailPage() {
       {canManage && (
         <Card style={{ padding: 16, marginBottom: 16 }}>
           <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 10 }}>{t("teams.invite")}</div>
-          {mailOff && <div style={{ marginBottom: 10 }}><MailNotConfiguredNote consequence={t("teams.inviteNoMail")} /></div>}
           <form onSubmit={(e) => { e.preventDefault(); invite.mutate(); }} style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <input style={{ ...field, flex: 1, minWidth: 180 }} type="email" placeholder={t("teams.inviteEmail")} aria-label={t("teams.inviteEmail")} value={email} onChange={(e) => setEmail(e.target.value)} required />
             <select style={field} value={inviteRole} onChange={(e) => setInviteRole(e.target.value as Role)}>
@@ -202,6 +224,22 @@ export default function TeamDetailPage() {
       )}
 
       {canManage && <RolesCard teamId={id} roles={teamRoles} onChanged={refetch} />}
+
+      {isOwner && (
+        <Card style={{ padding: 16, marginTop: 24, border: "1px solid color-mix(in srgb, var(--c-r) 40%, var(--c-bd))" }}>
+          <section aria-labelledby="team-danger-zone">
+            <h2 id="team-danger-zone" style={{ fontSize: 14, fontWeight: 700, margin: "0 0 4px", color: "var(--c-r)" }}>{t("teams.dangerZone")}</h2>
+            <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+              <div style={{ flex: 1, minWidth: 220 }}>
+                <div style={{ fontWeight: 600, fontSize: 13 }}>{t("teams.deleteTeam")}</div>
+                <div style={{ fontSize: 12, color: "var(--c-tx3)" }}>{t("teams.dangerZoneDesc")}</div>
+              </div>
+              <Btn variant="danger" disabled={del.isPending} onClick={async () => { if (await confirm({ title: t("teams.deleteTeam"), body: t("teams.deleteConfirm"), danger: true, confirmText: team.name })) del.mutate(); }}>{t("teams.deleteTeam")}</Btn>
+            </div>
+            {del.isError && <div role="alert" style={{ color: "var(--c-r)", fontSize: 12, marginTop: 8 }}>{(del.error as Error).message}</div>}
+          </section>
+        </Card>
+      )}
     </div>
   );
 }
@@ -317,68 +355,5 @@ function MemberAccessEditor({
       <Btn variant="ghost" onClick={() => save.mutate()} disabled={save.isPending}>{t("teams.saveAccess")}</Btn>
       {save.isSuccess && <span style={{ fontSize: 11, color: "var(--c-g)", marginLeft: 8 }}>{t("teams.accessSaved")}</span>}
     </div>
-  );
-}
-
-/** A team's custom icon: a square PNG (OWNER/ADMIN upload), shown with a users fallback. Mirrors the app/
- *  project icon cards — the browser center-crops to a small PNG before upload, shrinking to fit the 64KB cap. */
-function TeamIconCard({ id, name, iconUpdatedAt, canManage, onChanged }: { id: string; name: string; iconUpdatedAt: string | null; canManage: boolean; onChanged: () => void }) {
-  const t = useT();
-  const toast = useToast();
-  const fileRef = useRef<HTMLInputElement>(null);
-  const [processing, setProcessing] = useState(false);
-  const url = teamIconUrl(id, iconUpdatedAt);
-
-  const save = useMutation({
-    mutationFn: (data: string) => api.setTeamIcon(id, data),
-    onSuccess: () => { onChanged(); toast(t("teams.iconUploaded"), "success"); },
-    onError: (e) => toast(e instanceof Error && e.message ? e.message : t("teams.iconFailed"), "error"),
-  });
-  const remove = useMutation({
-    mutationFn: () => api.deleteTeamIcon(id),
-    onSuccess: () => { onChanged(); toast(t("teams.iconRemoved"), "success"); },
-    onError: (e) => toast(e instanceof Error && e.message ? e.message : t("teams.iconFailed"), "error"),
-  });
-
-  const onPick = async (file: File) => {
-    setProcessing(true);
-    try {
-      let data = "";
-      for (const side of [128, 96, 64]) {
-        data = await cropToPngBase64(file, side);
-        if (data.length * 0.75 <= 64 * 1024) break;
-      }
-      if (data.length * 0.75 > 64 * 1024) { toast(t("teams.iconTooLarge"), "error"); return; }
-      save.mutate(data);
-    } catch {
-      toast(t("teams.iconReadFailed"), "error");
-    } finally {
-      setProcessing(false);
-    }
-  };
-
-  const busy = processing || save.isPending || remove.isPending;
-  return (
-    <Card style={{ padding: 16, marginBottom: 16 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
-        <span style={{ width: 48, height: 48, borderRadius: 12, background: "var(--c-el)", border: "1px solid var(--c-bd)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, overflow: "hidden" }}>
-          {url ? <img src={url} alt="" width={48} height={48} style={{ objectFit: "cover" }} /> : <Users size={22} color="var(--c-tx3)" />}
-        </span>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontWeight: 600, fontSize: 14 }}>{name}</div>
-          <div style={{ fontSize: 12, color: "var(--c-tx3)" }}>{t("teams.iconHint")}</div>
-        </div>
-        {canManage && (
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <Btn variant="ghost" icon={CloudUpload} onClick={() => fileRef.current?.click()} disabled={busy}>
-              {busy ? "…" : url ? t("teams.iconReplace") : t("teams.iconUpload")}
-            </Btn>
-            {url && <Btn variant="ghost" icon={Trash2} onClick={() => remove.mutate()} disabled={busy}>{t("teams.iconRemove")}</Btn>}
-          </div>
-        )}
-      </div>
-      <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp" style={{ display: "none" }}
-        onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) void onPick(f); }} />
-    </Card>
   );
 }
