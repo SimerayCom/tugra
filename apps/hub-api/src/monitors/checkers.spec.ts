@@ -63,6 +63,11 @@ describe("httpCheck", () => {
           res.setHeader("location", "/ok");
           return res.end();
         }
+        if (url === "/xhost") {
+          res.statusCode = 307;
+          res.setHeader("location", `http://127.0.0.1:${(server.address() as AddressInfo).port}/ok`);
+          return res.end();
+        }
         if (url === "/loop") {
           res.statusCode = 302;
           res.setHeader("location", "/loop");
@@ -127,6 +132,18 @@ describe("httpCheck", () => {
     expect(req.headers["x-probe"]).toBe("1");
     expect(req.headers.authorization).toBe("Basic " + Buffer.from("u:p").toString("base64"));
     expect(req.body).toBe("ping");
+  });
+
+  it("does not forward custom headers, credentials or the body to another host on a redirect", async () => {
+    const port = base.split(":").pop();
+    const m = { ...monitor(`http://localhost:${port}/xhost`), method: "POST" };
+    const r = await httpCheck(m, { headers: { "X-Api-Key": "k", Accept: "*/*" }, basicAuth: { user: "u", pass: "p" }, body: "secret" });
+    expect(r.up).toBe(true);
+    const last = seen[seen.length - 1];
+    expect(last.headers["x-api-key"]).toBeUndefined();
+    expect(last.headers.authorization).toBeUndefined();
+    expect(last.body).toBe("");
+    expect(last.headers.accept).toBe("*/*");
   });
 
   it("KEYWORD: up when the body contains it, down when it does not", async () => {

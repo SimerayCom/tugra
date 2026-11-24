@@ -112,6 +112,8 @@ function reasonOf(e: unknown): string {
   return "request failed";
 }
 
+const SAFE_CROSS_HOST_HEADERS = new Set(["user-agent", "accept", "accept-language"]);
+
 export const httpCheck: Checker = async (m, opts) => {
   const start = Date.now();
   const ctrl = new AbortController();
@@ -139,9 +141,11 @@ export const httpCheck: Checker = async (m, opts) => {
         return { up: false, ms: Date.now() - start, msg: "too many redirects" };
       }
       const next = new URL(res.location, url);
-      if (next.host !== url.host) {
-        delete headers.authorization; // never forward credentials to another host
-        delete headers.cookie;
+      const crossHost = next.host !== url.host;
+      if (crossHost) {
+        // Never forward user-supplied headers (API keys, tokens, credentials) or the request body to another host.
+        for (const k of Object.keys(headers)) if (!SAFE_CROSS_HOST_HEADERS.has(k)) delete headers[k];
+        body = undefined;
       }
       if (res.status === 303 || ((res.status === 301 || res.status === 302) && method !== "GET" && method !== "HEAD")) {
         method = "GET";
