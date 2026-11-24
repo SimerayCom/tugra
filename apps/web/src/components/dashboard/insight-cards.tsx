@@ -8,7 +8,7 @@ import { api } from "../../lib/api";
 import { fmtBytes, formatUptime, relativeTime } from "../../lib/fleet";
 import { formatDuration } from "../../lib/backups";
 import { LIST_LIMIT, limitRows } from "../../lib/dashboard-lists";
-import { CERT_WARN_DAYS, certsExpiringSoon, migrationDigest, outdatedAgents, uptimeSummary } from "../../lib/dashboard-health";
+import { CERT_WARN_DAYS, certsExpiringSoon, checkUpdatesBatched, migrationDigest, osUpdateDigest, outdatedAgents, uptimeSummary } from "../../lib/dashboard-health";
 import type { DashboardBackupRow, DashboardDeployRow, DomainView, Monitor, ServerView } from "../../lib/types";
 import { useT } from "../../i18n/provider";
 import { Btn, StatusPill } from "../ui";
@@ -68,7 +68,7 @@ export function DiskForecastCard({ teamId }: { teamId: string | null }) {
                     </div>
                   </div>
                   <span style={{ fontSize: 12, fontWeight: 600, color: r.daysToFull !== null ? (r.daysToFull <= 14 ? "var(--c-r)" : "var(--c-am)") : "var(--c-tx3)", whiteSpace: "nowrap" }}>
-                    {r.daysToFull === null ? "—" : r.daysToFull === 0 ? t("dashboard.diskFullToday", { name: "" }).trim() : `~${Math.max(1, Math.round(r.daysToFull))}d`}
+                    {r.daysToFull === null ? "—" : r.daysToFull === 0 ? t("dashboard.diskFullShort") : t("dashboard.diskDaysShort", { n: Math.max(1, Math.round(r.daysToFull)) })}
                   </span>
                 </ListRow>
               ))}
@@ -82,12 +82,22 @@ export function DiskForecastCard({ teamId }: { teamId: string | null }) {
 
 // ── Certificates ─────────────────────────────────────────────────────────────────────────────────
 
-export function CertsCard({ domains }: { domains: DomainView[] }) {
+/** Query state of the list a card is built from, so "all clear" is never claimed while loading or after a failure. */
+export interface FeedState { isLoading: boolean; isError: boolean; refetch: () => unknown }
+
+function FeedGate({ feed, children }: { feed?: FeedState; children: ReactNode }) {
+  if (feed?.isLoading) return <Skeleton height={64} />;
+  if (feed?.isError) return <ErrorState onRetry={() => void feed.refetch()} />;
+  return <>{children}</>;
+}
+
+export function CertsCard({ domains, feed }: { domains: DomainView[]; feed?: FeedState }) {
   const t = useT();
   const rows = certsExpiringSoon(domains);
   const { shown, total } = limitRows(rows);
   return (
     <DashCard id="certs" title={t("dashboard.card.certs")} right={<SeeAll href="/domains" total={total} shown={shown.length} />}>
+      <FeedGate feed={feed}>
       {rows.length === 0 ? (
         <CardNote><ShieldCheck size={14} aria-hidden style={{ verticalAlign: "-2px", marginRight: 6, color: "var(--c-g)" }} />{t("dashboard.certsEmpty", { n: CERT_WARN_DAYS })}</CardNote>
       ) : (
@@ -109,6 +119,7 @@ export function CertsCard({ domains }: { domains: DomainView[] }) {
           })}
         </ListCard>
       )}
+      </FeedGate>
     </DashCard>
   );
 }
@@ -124,7 +135,7 @@ export function BackupsCard({ teamId }: { teamId: string | null }) {
   const rows = b?.recent ?? [];
   const label = (s: DashboardBackupRow["status"]) => (s === "FAILED" ? t("dashboard.backupFailed") : s === "SUCCESS" ? t("dashboard.backupOk") : t("dashboard.backupRunning"));
   return (
-    <DashCard id="backups" title={t("dashboard.card.backups")} right={b ? <SeeAll href="/databases" total={b.ok + b.failed + b.running} shown={rows.length} /> : null}>
+    <DashCard id="backups" title={t("dashboard.card.backups")} right={rows.length > 0 ? <CardLink href="/databases">{t("dashboard.viewAll")}</CardLink> : null}>
       <CardBody q={q}>
         {!b || rows.length === 0 ? (
           <CardNote>{t("dashboard.backupsEmpty", { days: b?.windowDays ?? 7 })}</CardNote>
@@ -159,12 +170,18 @@ export function UpdatesCard({ servers }: { servers: ServerView[] }) {
   const { data: version } = useQuery({ queryKey: ["instanceVersion"], queryFn: () => api.getInstanceVersion(), staleTime: 5 * 60_000 });
   const behind = outdatedAgents(servers, version?.current);
   const { shown, total } = limitRows(behind);
-  const os = useMutation({ mutationFn: (ids: string[]) => api.bulkCheckUpdates(ids) });
   const onlineIds = servers.filter((s) => s.status === "ONLINE").map((s) => s.id);
-  const withUpdates = os.data?.results.filter((r) => r.online && r.updates && !r.updates.checkFailed && r.updates.count > 0).length ?? 0;
-  const failed = os.isError || (os.data?.results.some((r) => r.online && (r.error || r.updates?.checkFailed)) ?? false);
+  const os = useMutation({ mutationFn: (ids: string[]) => checkUpdatesBatched(ids, (batch) => api.bulkCheckUpdates(batch)) });
+  const digest = os.data ? osUpdateDigest(onlineIds.length, os.data) : null;
+  const withUpdates = digest?.withUpdates ?? 0;
+  const partial = !!digest && digest.checked < digest.total && !digest.failed;
+  const failed = os.isError || !!digest?.failed;
   const osText = os.isPending ? t("dashboard.updatesOsChecking")
-    : os.data ? (withUpdates > 0 ? (withUpdates === 1 ? t("dashboard.updatesOsSomeOne") : t("dashboard.updatesOsSome", { n: withUpdates })) : failed ? t("dashboard.updatesOsFailed") : t("dashboard.updatesOsNone"))
+    : digest ? (withUpdates > 0 ? (withUpdates === 1 ? t("dashboard.updatesOsSomeOne") : t("dashboard.updatesOsSome", { n: withUpdates }))
+      : failed ? t("dashboard.updatesOsFailed")
+      : digest.checked === 0 && digest.total > 0 ? t("dashboard.updatesOsNoAccess")
+      : partial ? t("dashboard.updatesOsPartial", { done: digest.checked, total: digest.total })
+      : t("dashboard.updatesOsNone"))
     : os.isError ? t("dashboard.updatesOsFailed")
     : t("dashboard.updatesOsUnchecked");
   return (
@@ -185,7 +202,7 @@ export function UpdatesCard({ servers }: { servers: ServerView[] }) {
       <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", border: "1px solid var(--c-bd)", borderRadius: "var(--r2)", padding: "10px 16px" }}>
         <div style={grow}>
           <div style={{ fontSize: 12, fontWeight: 600 }}>{t("dashboard.updatesOs")}</div>
-          <div role="status" style={{ ...sub, color: withUpdates > 0 || failed ? "var(--c-am)" : "var(--c-tx3)" }}>{osText}</div>
+          <div role="status" style={{ ...sub, color: withUpdates > 0 || failed || partial ? "var(--c-am)" : "var(--c-tx3)" }}>{osText}</div>
         </div>
         <Btn variant="ghost" disabled={onlineIds.length === 0} loading={os.isPending} onClick={() => os.mutate(onlineIds)}>{t("dashboard.updatesOsCheck")}</Btn>
       </div>
@@ -195,7 +212,7 @@ export function UpdatesCard({ servers }: { servers: ServerView[] }) {
 
 // ── Uptime ───────────────────────────────────────────────────────────────────────────────────────
 
-export function UptimeCard({ servers, monitors }: { servers: ServerView[]; monitors: Monitor[] }) {
+export function UptimeCard({ servers, monitors, feed }: { servers: ServerView[]; monitors: Monitor[]; feed?: FeedState }) {
   const t = useT();
   const u = uptimeSummary(servers, monitors);
   const stat = (value: ReactNode, label: string, tone?: string) => (
@@ -206,6 +223,7 @@ export function UptimeCard({ servers, monitors }: { servers: ServerView[]; monit
   );
   return (
     <DashCard id="uptime" title={t("dashboard.card.uptime")} right={<CardLink href="/monitors">{t("dashboard.viewAll")}</CardLink>}>
+      <FeedGate feed={feed}>
       <div style={{ display: "flex", gap: 16, flexWrap: "wrap", border: "1px solid var(--c-bd)", borderRadius: "var(--r2)", padding: "14px 16px" }}>
         {u.monitorsTotal > 0
           ? stat(`${u.monitorsUp}/${u.monitorsTotal}`, t("dashboard.uptimeMonitors", { up: u.monitorsUp, total: u.monitorsTotal }), u.monitorsDown > 0 ? "var(--c-r)" : "var(--c-g)")
@@ -213,6 +231,7 @@ export function UptimeCard({ servers, monitors }: { servers: ServerView[]; monit
         {stat(`${u.serversOnline}/${u.serversTotal}`, t("dashboard.uptimeServers", { online: u.serversOnline, total: u.serversTotal }), u.serversTotal > u.serversOnline ? "var(--c-am)" : "var(--c-g)")}
         {u.longestUptimeSec !== null && stat(formatUptime(u.longestUptimeSec), t("dashboard.uptimeLongest", { value: formatUptime(u.longestUptimeSec) }))}
       </div>
+      </FeedGate>
     </DashCard>
   );
 }

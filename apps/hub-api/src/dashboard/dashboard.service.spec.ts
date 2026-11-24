@@ -47,6 +47,15 @@ describe("DashboardService.insights", () => {
     expect(servers.listForUser).toHaveBeenLastCalledWith("u1", { teamId: "t2" });
   });
 
+  it("serves the disk forecast from a short cache per caller and team scope", async () => {
+    const { svc, servers } = make();
+    await svc.insights("u1");
+    await svc.insights("u1");
+    expect(servers.listForUser).toHaveBeenCalledTimes(1);
+    await svc.insights("u2");
+    expect(servers.listForUser).toHaveBeenCalledTimes(2);
+  });
+
   it("hides apps and databases a project-restricted member was not granted from backups and deploys", async () => {
     const { svc, prisma } = make({
       memberships: { t1: { role: "VIEWER", teamRoleId: null, restrictedAccess: true, accessedProjects: ["p-ok"], accessedResources: [] } },

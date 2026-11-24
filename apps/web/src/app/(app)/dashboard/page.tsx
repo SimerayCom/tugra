@@ -68,8 +68,10 @@ export default function DashboardPage() {
   const { data: allApps = [], isSuccess: appsLoaded } = useQuery({ queryKey: ["apps"], queryFn: () => api.listApps() });
   const { data: allDatabases = [], isSuccess: dbsLoaded } = useQuery({ queryKey: ["databases"], queryFn: () => api.listDatabases() });
   const { data: teams = [] } = useQuery({ queryKey: ["teams"], queryFn: () => api.listTeams() });
-  const { data: allMonitors = [] } = useQuery({ queryKey: ["monitors"], queryFn: () => api.listMonitors() });
-  const { data: allDomains = [] } = useQuery({ queryKey: ["domains"], queryFn: () => api.listDomains() });
+  const monitorsQ = useQuery({ queryKey: ["monitors"], queryFn: () => api.listMonitors() });
+  const allMonitors = monitorsQ.data ?? [];
+  const domainsQ = useQuery({ queryKey: ["domains"], queryFn: () => api.listDomains() });
+  const allDomains = domainsQ.data ?? [];
   const { user } = useAuth();
   const [layout, setLayout, resetLayout] = useDashboardLayout(user?.id);
   const [customizing, setCustomizing] = useState(false);
@@ -339,10 +341,10 @@ export default function DashboardPage() {
 
     hottest: !serversDown && servers.length > 0 ? <HottestContainersCard teamId={teamId} /> : null,
     diskForecast: <DiskForecastCard teamId={teamId} />,
-    certs: <CertsCard domains={domains} />,
+    certs: <CertsCard domains={domains} feed={{ isLoading: domainsQ.isLoading, isError: domainsQ.isError && !domainsQ.data, refetch: domainsQ.refetch }} />,
     backups: <BackupsCard teamId={teamId} />,
     updates: <UpdatesCard servers={servers} />,
-    uptime: <UptimeCard servers={servers} monitors={monitors} />,
+    uptime: <UptimeCard servers={servers} monitors={monitors} feed={{ isLoading: monitorsQ.isLoading, isError: monitorsQ.isError && !monitorsQ.data, refetch: monitorsQ.refetch }} />,
     deploys: <DeploysCard teamId={teamId} />,
     migrations: <MigrationsCard teamId={teamId} />,
 

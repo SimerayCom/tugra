@@ -13,6 +13,9 @@ const BACKUP_RECENT = 6;
 const DEPLOY_RECENT = 8;
 const FORECAST_DAYS = 7;
 const FORECAST_MAX_SERVERS = 200;
+/** The forecast follows an hourly trend, so a few minutes of staleness is invisible and spares the 7-day rollup scan. */
+const FORECAST_TTL_MS = 5 * 60_000;
+const FORECAST_CACHE_MAX = 500;
 const DEPLOY_STATUSES = ["QUEUED", "RUNNING", "SUCCESS", "FAILED", "CANCELLED"] as const;
 
 /** Read-only digests for the Command Center cards. Every query is limited to the teams the caller belongs to
@@ -20,6 +23,9 @@ const DEPLOY_STATUSES = ["QUEUED", "RUNNING", "SUCCESS", "FAILED", "CANCELLED"] 
  *  were granted — the same rules as the app / database / server lists. */
 @Injectable()
 export class DashboardService {
+  /** Per caller + team scope (the visible server set differs per caller). In-memory, per hub process. */
+  private readonly forecastCache = new Map<string, { at: number; rows: DashboardInsights["diskForecast"] }>();
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly access: TeamAccessService,
@@ -54,6 +60,16 @@ export class DashboardService {
   }
 
   private async diskForecast(userId: string, teamId?: string): Promise<DashboardInsights["diskForecast"]> {
+    const key = `${userId}:${teamId ?? ""}`;
+    const hit = this.forecastCache.get(key);
+    if (hit && Date.now() - hit.at < FORECAST_TTL_MS) return hit.rows;
+    const rows = await this.computeDiskForecast(userId, teamId);
+    if (this.forecastCache.size >= FORECAST_CACHE_MAX) this.forecastCache.delete(this.forecastCache.keys().next().value as string);
+    this.forecastCache.set(key, { at: Date.now(), rows });
+    return rows;
+  }
+
+  private async computeDiskForecast(userId: string, teamId?: string): Promise<DashboardInsights["diskForecast"]> {
     const servers = (await this.servers.listForUser(userId, { teamId })).slice(0, FORECAST_MAX_SERVERS);
     if (servers.length === 0) return [];
     const ids = servers.map((s) => s.id);

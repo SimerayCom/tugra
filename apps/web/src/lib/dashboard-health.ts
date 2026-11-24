@@ -1,4 +1,4 @@
-import type { DomainView, Monitor, ServerView, MigrationRunSummary } from "./types";
+import type { DomainView, FleetPatchCheckResult, Monitor, ServerView, MigrationRunSummary } from "./types";
 
 export const CERT_WARN_DAYS = 30;
 
@@ -71,5 +71,40 @@ export function migrationDigest(runs: MigrationRunSummary[]): { live: MigrationR
     live: byNewest.filter((r) => LIVE_MIGRATION.has(r.status) && !r.dryRun),
     failed: byNewest.filter((r) => r.status === "FAILED" && !r.dryRun),
     lastDone: byNewest.find((r) => r.status === "COMPLETED" && !r.dryRun) ?? null,
+  };
+}
+
+/** The hub accepts at most this many server ids per fleet OS-update check. */
+export const OS_CHECK_BATCH = 100;
+
+/** Run the fleet OS-update check over any number of servers, one request per `OS_CHECK_BATCH`, and merge the replies. */
+export async function checkUpdatesBatched(ids: string[], call: (batch: string[]) => Promise<FleetPatchCheckResult>): Promise<FleetPatchCheckResult> {
+  const merged: FleetPatchCheckResult = { results: [], skipped: [] };
+  for (let i = 0; i < ids.length; i += OS_CHECK_BATCH) {
+    const r = await call(ids.slice(i, i + OS_CHECK_BATCH));
+    merged.results.push(...r.results);
+    merged.skipped.push(...r.skipped);
+  }
+  return merged;
+}
+
+export interface OsUpdateDigest {
+  /** Servers that were actually checked (online, no error). */
+  checked: number;
+  /** Servers asked about. */
+  total: number;
+  withUpdates: number;
+  failed: boolean;
+}
+
+/** What a fleet check result means. Servers the caller may not manage come back as `skipped`; they were never
+ *  checked, so "checked < total" must not read as "all clear". */
+export function osUpdateDigest(total: number, r: FleetPatchCheckResult): OsUpdateDigest {
+  const checkedRows = r.results.filter((x) => x.online && x.updates && !x.updates.checkFailed && !x.error);
+  return {
+    checked: checkedRows.length,
+    total,
+    withUpdates: checkedRows.filter((x) => (x.updates?.count ?? 0) > 0).length,
+    failed: r.results.some((x) => x.online && (x.error || x.updates?.checkFailed)),
   };
 }

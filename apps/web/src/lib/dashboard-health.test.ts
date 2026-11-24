@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { certsExpiringSoon, compareVersions, migrationDigest, outdatedAgents, uptimeSummary } from "./dashboard-health";
+import { OS_CHECK_BATCH, certsExpiringSoon, checkUpdatesBatched, compareVersions, migrationDigest, osUpdateDigest, outdatedAgents, uptimeSummary } from "./dashboard-health";
 
 const dom = (domain: string, state: string, days: number | null, https = true) => ({ appId: `a-${domain}`, domain, https, ssl: { state, daysRemaining: days, validTo: null, issuer: null } }) as never;
 
@@ -52,5 +52,34 @@ describe("migrationDigest", () => {
     expect(out.failed.map((x) => x.id)).toEqual(["d"]);
     expect(out.lastDone?.id).toBe("c");
     expect(migrationDigest([]).lastDone).toBeNull();
+  });
+});
+
+describe("checkUpdatesBatched", () => {
+  it("splits into batches the hub accepts and merges results and skipped ids", async () => {
+    const ids = Array.from({ length: OS_CHECK_BATCH * 2 + 5 }, (_, i) => `s${i}`);
+    const sizes: number[] = [];
+    const out = await checkUpdatesBatched(ids, async (batch) => {
+      sizes.push(batch.length);
+      return { results: [{ serverId: batch[0], online: true }], skipped: [batch[1]] };
+    });
+    expect(sizes).toEqual([OS_CHECK_BATCH, OS_CHECK_BATCH, 5]);
+    expect(out.results).toHaveLength(3);
+    expect(out.skipped).toHaveLength(3);
+  });
+});
+
+describe("osUpdateDigest", () => {
+  const upd = (count: number, checkFailed = false) => ({ supported: true, manager: "apt", checkFailed, rebootRequired: false, packages: [], count });
+  it("does not count skipped servers as checked", () => {
+    const d = osUpdateDigest(3, { results: [{ serverId: "a", online: true, updates: upd(0) }], skipped: ["b", "c"] } as never);
+    expect(d).toEqual({ checked: 1, total: 3, withUpdates: 0, failed: false });
+  });
+  it("counts servers with updates and flags failed checks", () => {
+    const d = osUpdateDigest(3, { results: [{ serverId: "a", online: true, updates: upd(4) }, { serverId: "b", online: true, updates: upd(0, true) }, { serverId: "c", online: true, error: "x" }], skipped: [] } as never);
+    expect(d).toEqual({ checked: 1, total: 3, withUpdates: 1, failed: true });
+  });
+  it("reports nothing checked when every server was skipped", () => {
+    expect(osUpdateDigest(2, { results: [], skipped: ["a", "b"] }).checked).toBe(0);
   });
 });
