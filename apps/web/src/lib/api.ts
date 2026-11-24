@@ -2449,7 +2449,7 @@ export const api = {
     return apiFetch<{ services: ImportServicePreview[] }>("/import/services/preview", { method: "POST", body: JSON.stringify(input) });
   },
   // Settings the source can carry (notification channels, variables, storages, tasks, cleanup, tags, members): read-only, secret-free preview + apply.
-  importSettingsPreview(input: { sessionId: string; sourceKind?: ImportRemoteKind; opId?: string }) {
+  importSettingsPreview(input: { sessionId: string; sourceKind?: ImportRemoteKind; opId?: string; teamId?: string }) {
     return apiFetch<SettingsPreview>("/import/settings/preview", { method: "POST", body: JSON.stringify(input) });
   },
   importSettingsApply(input: SettingsApplyBody) {

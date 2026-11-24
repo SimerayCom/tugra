@@ -10,10 +10,12 @@ import { CopyBtn } from "../copy-row";
 import type { ImportRemoteKind } from "../../lib/types";
 import {
   BLOCKED_KEY,
+  INLINE_NOTE_CODES,
   NOTE_KEY,
   RESULT_CODE_KEY,
   allEntries,
   buildApplyBody,
+  duplicateServerEntries,
   initialSelection,
   missingInput,
   needsInviteConfirmation,
@@ -107,12 +109,12 @@ const entryTitle = (t: T, e: SettingsEntry): string => (e.section === "notificat
  * secret-free preview and sends back ids, plus the few things the source cannot give (S3 keys) and the operator's confirmation
  * for invitations. After the import, each carried channel gets a "Send test message" button.
  */
-export function ImportSettingsPanel({ sessionId, kind, opId, servers, defaultServerId }: { sessionId: string; kind: ImportRemoteKind; opId?: string; servers: Array<{ id: string; name: string }>; defaultServerId?: string }) {
+export function ImportSettingsPanel({ sessionId, kind, opId, teamId, servers }: { sessionId: string; kind: ImportRemoteKind; opId?: string; teamId?: string; servers: Array<{ id: string; name: string }> }) {
   const t = useT();
   const toast = useToast();
   const q = useQuery({
-    queryKey: ["import-settings", sessionId, opId ?? null],
-    queryFn: () => api.importSettingsPreview({ sessionId, sourceKind: kind, ...(opId ? { opId } : {}) }),
+    queryKey: ["import-settings", sessionId, opId ?? null, teamId ?? null],
+    queryFn: () => api.importSettingsPreview({ sessionId, sourceKind: kind, ...(opId ? { opId } : {}), ...(teamId ? { teamId } : {}) }),
     enabled: !!sessionId && kind === "coolify",
     refetchOnWindowFocus: false, // every read goes to the source's rate-limited API: only on the operator's "Refresh"
     staleTime: Infinity,
@@ -139,12 +141,14 @@ export function ImportSettingsPanel({ sessionId, kind, opId, servers, defaultSer
   const entries = useMemo(() => (preview ? allEntries(preview) : []), [preview]);
   const inputs: SettingsInputs = useMemo(() => {
     const servers_: Record<string, string> = {};
-    for (const e of entries) if (e.needs?.includes("server")) servers_[e.id] = serverPick[e.id] ?? defaultServerId ?? "";
+    // No default target: the operator picks which Tugra server each source server's cleanup is for.
+    for (const e of entries) if (e.needs?.includes("server")) servers_[e.id] = serverPick[e.id] ?? "";
     return { selected, s3, servers: servers_, roles, confirmInvites };
-  }, [entries, selected, s3, serverPick, roles, confirmInvites, defaultServerId]);
+  }, [entries, selected, s3, serverPick, roles, confirmInvites]);
+  const dupServers = useMemo(() => (preview ? duplicateServerEntries(preview, inputs) : new Set<string>()), [preview, inputs]);
 
   const apply = useMutation({
-    mutationFn: () => api.importSettingsApply(buildApplyBody(preview!, inputs, { sessionId, sourceKind: kind, ...(opId ? { opId } : {}) })),
+    mutationFn: () => api.importSettingsApply(buildApplyBody(preview!, inputs, { sessionId, sourceKind: kind, ...(opId ? { opId } : {}), ...(teamId ? { teamId } : {}) })),
     onSuccess: (data) => {
       const names = Object.fromEntries(entries.map((e) => [e.id, entryTitle(t, e)]));
       setResult({ data, names });
@@ -187,7 +191,7 @@ export function ImportSettingsPanel({ sessionId, kind, opId, servers, defaultSer
       style={{ padding: 20, marginBottom: 0 }}
     >
       {preview.sections.map((s) => (
-        <Section key={s.section} s={s} t={t} inputs={inputs} servers={servers} onToggle={toggle} onS3={(id, v) => setS3((p) => ({ ...p, [id]: v }))} onServer={(id, v) => setServerPick((p) => ({ ...p, [id]: v }))} onRole={(id, v) => setRoles((p) => ({ ...p, [id]: v }))} />
+        <Section key={s.section} s={s} t={t} inputs={inputs} dupServers={dupServers} servers={servers} onToggle={toggle} onS3={(id, v) => setS3((p) => ({ ...p, [id]: v }))} onServer={(id, v) => setServerPick((p) => ({ ...p, [id]: v }))} onRole={(id, v) => setRoles((p) => ({ ...p, [id]: v }))} />
       ))}
 
       {invites && (
@@ -209,10 +213,11 @@ export function ImportSettingsPanel({ sessionId, kind, opId, servers, defaultSer
   );
 }
 
-function Section({ s, t, inputs, servers, onToggle, onS3, onServer, onRole }: {
+function Section({ s, t, inputs, dupServers, servers, onToggle, onS3, onServer, onRole }: {
   s: SettingsSectionPreview;
   t: T;
   inputs: SettingsInputs;
+  dupServers: ReadonlySet<string>;
   servers: Array<{ id: string; name: string }>;
   onToggle: (id: string, on: boolean) => void;
   onS3: (id: string, v: { accessKey: string; secretKey: string }) => void;
@@ -233,7 +238,7 @@ function Section({ s, t, inputs, servers, onToggle, onS3, onServer, onRole }: {
           ) : (
             <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "flex", flexDirection: "column", gap: 4 }}>
               {s.entries.map((e) => (
-                <EntryRow key={e.id} e={e} t={t} inputs={inputs} servers={servers} onToggle={onToggle} onS3={onS3} onServer={onServer} onRole={onRole} />
+                <EntryRow key={e.id} e={e} t={t} inputs={inputs} duplicate={dupServers.has(e.id)} servers={servers} onToggle={onToggle} onS3={onS3} onServer={onServer} onRole={onRole} />
               ))}
             </ul>
           )}
@@ -243,10 +248,11 @@ function Section({ s, t, inputs, servers, onToggle, onS3, onServer, onRole }: {
   );
 }
 
-function EntryRow({ e, t, inputs, servers, onToggle, onS3, onServer, onRole }: {
+function EntryRow({ e, t, inputs, duplicate, servers, onToggle, onS3, onServer, onRole }: {
   e: SettingsEntry;
   t: T;
   inputs: SettingsInputs;
+  duplicate: boolean;
   servers: Array<{ id: string; name: string }>;
   onToggle: (id: string, on: boolean) => void;
   onS3: (id: string, v: { accessKey: string; secretKey: string }) => void;
@@ -257,7 +263,9 @@ function EntryRow({ e, t, inputs, servers, onToggle, onS3, onServer, onRole }: {
   const boxId = `imp-set-box-${e.id}`;
   const missing = checked ? missingInput(e, inputs) : null;
   const creds = inputs.s3[e.id] ?? { accessKey: "", secretKey: "" };
-  const groups = e.section === "notifications" ? ((e.detail.groups as Array<{ threadId?: string; coolifyEvents: string[]; tugraEvents: string[] }>) ?? []) : [];
+  const groups = e.section === "notifications" ? ((e.detail.groups as Array<{ threadId?: string; events?: Array<{ from: string; to: string[] }> }>) ?? []) : [];
+  const inlineNotes = e.selectable ? e.notes.filter((n) => INLINE_NOTE_CODES.has(n.code)) : [];
+  const moreNotes = e.notes.filter((n) => !inlineNotes.includes(n));
   return (
     <li style={{ borderBottom: "1px solid var(--c-bd)", paddingBottom: 6 }}>
       <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
@@ -268,6 +276,11 @@ function EntryRow({ e, t, inputs, servers, onToggle, onS3, onServer, onRole }: {
         </label>
       </div>
 
+      {inlineNotes.length > 0 && (
+        <ul style={{ margin: "2px 0 4px", paddingLeft: 48, fontSize: 12, color: "var(--c-am)" }}>
+          {inlineNotes.map((n, i) => <li key={i}>{noteText(t, n)}</li>)}
+        </ul>
+      )}
       {checked && e.selectable && e.needs?.includes("s3Credentials") && (
         <div style={{ paddingLeft: 30, maxWidth: 420 }}>
           <label style={fieldLabel} htmlFor={`${boxId}-ak`}>{t("import.settings.field.accessKey")}</label>
@@ -294,24 +307,29 @@ function EntryRow({ e, t, inputs, servers, onToggle, onS3, onServer, onRole }: {
           </select>
         </div>
       )}
+      {duplicate && <p role="alert" style={{ margin: "6px 0 0 30px", fontSize: 12, color: "var(--c-am)" }}>{t("import.settings.serverDuplicate")}</p>}
       {missing && <p role="status" style={{ margin: "6px 0 0 30px", fontSize: 12, color: "var(--c-am)" }}>{t("import.settings.needsInput")}</p>}
 
-      {(e.notes.length > 0 || groups.length > 0) && (
+      {(moreNotes.length > 0 || groups.length > 0) && (
         <details style={{ paddingLeft: 30, marginTop: 4 }}>
           <summary style={{ cursor: "pointer", fontSize: 12, color: "var(--c-tx3)", minHeight: 32, display: "flex", alignItems: "center" }}>{t("import.settings.more")}</summary>
           {groups.length > 0 && (
             <ul style={{ margin: "4px 0", paddingLeft: 18, fontSize: 12, color: "var(--c-tx3)" }}>
               {groups.map((g, i) => (
                 <li key={i}>
-                  {g.threadId ? `${t("import.settings.summary.topic", { id: g.threadId })}: ` : ""}
-                  <span className="mono">{g.coolifyEvents.join(", ")}</span>
+                  {g.threadId ? `${t("import.settings.summary.topic", { id: g.threadId })}` : ""}
+                  <ul style={{ margin: "2px 0", paddingLeft: 16, listStyle: "none" }}>
+                    {(g.events ?? []).map((ev) => (
+                      <li key={ev.from} className="mono" style={{ overflowWrap: "anywhere" }}>{t("import.settings.summary.eventMap", { from: ev.from, to: ev.to.join(", ") })}</li>
+                    ))}
+                  </ul>
                 </li>
               ))}
             </ul>
           )}
-          {e.notes.length > 0 && (
+          {moreNotes.length > 0 && (
             <ul style={{ margin: "4px 0", paddingLeft: 18, fontSize: 12 }}>
-              {e.notes.map((n, i) => <li key={i} style={{ color: n.level === "warn" ? "var(--c-am)" : "var(--c-tx3)" }}>{noteText(t, n)}</li>)}
+              {moreNotes.map((n, i) => <li key={i} style={{ color: n.level === "warn" ? "var(--c-am)" : "var(--c-tx3)" }}>{noteText(t, n)}</li>)}
             </ul>
           )}
         </details>
@@ -342,6 +360,7 @@ function ResultList({ result, t }: { result: { data: SettingsApplyResult; names:
   return (
     <div style={{ marginTop: 16, borderTop: "1px solid var(--c-bd)", paddingTop: 12 }}>
       <h4 style={{ margin: "0 0 6px", fontSize: 14, fontWeight: 600 }}>{t("import.settings.result.title")}</h4>
+      {result.data.results.some((r) => (r.channels ?? []).some((c) => !c.skipped && c.id)) && <p role="status" style={{ margin: "0 0 8px", fontSize: 12, color: "var(--c-am)" }}>{t("import.settings.result.doubleSend")}</p>}
       <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "flex", flexDirection: "column", gap: 8 }}>
         {result.data.results.map((r) => (
           <li key={r.id} style={{ fontSize: 13 }}>

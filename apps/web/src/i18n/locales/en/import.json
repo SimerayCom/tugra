@@ -801,6 +801,7 @@
     "importing": "Importing...",
     "importDone": "{created} imported, {skipped} skipped, {failed} failed.",
     "needsInput": "Fill in the missing fields to include it.",
+    "serverDuplicate": "Choose a different server for each one.",
     "section": {
       "notifications": {
         "title": "Notification channels",
@@ -847,6 +848,7 @@
     "summary": {
       "events": "{n} events carried",
       "topic": "Topic {id}",
+      "eventMap": "{from} becomes {to}",
       "noEvents": "No events selected in Coolify",
       "scopeTeam": "Team variable",
       "scopeProject": "Project: {project}",
@@ -880,7 +882,7 @@
       "events_not_carried": "Not carried, Tugra has no event for: {events}.",
       "topics_split": "{n} Telegram topics become {n} channels.",
       "source_disabled": "It is off in Coolify, so it is imported off.",
-      "double_send": "After the test, turn it off in Coolify so messages are not sent twice.",
+      "double_send": "Turn it off in Coolify after the test, or messages arrive twice.",
       "team_wide": "Applies to every app in this team.",
       "credentials_not_exposed": "Coolify never shares the keys. Enter them here.",
       "schedules_not_carried": "Backup schedules are not carried.",
@@ -889,6 +891,7 @@
       "name_truncated": "The name is shortened to 80 characters.",
       "cleanup_always": "Tugra cleans on every run, not only above the disk limit.",
       "volumes_pruned": "This also removes unused volumes.",
+      "double_run": "Coolify keeps running it until you switch over.",
       "networks_not_carried": "Cleaning unused networks is not carried.",
       "tag_normalized": "Saved as {as}.",
       "role_unknown": "Coolify did not report a role. Pick one.",
@@ -909,6 +912,7 @@
     "confirmInvites": "Send invitation emails to the people selected.",
     "result": {
       "title": "Result",
+      "doubleSend": "Turn these channels off in Coolify after the test, or messages arrive twice.",
       "created": "Imported",
       "skipped": "Skipped",
       "failed": "Failed",
@@ -922,6 +926,7 @@
         "credentials_required": "Enter the access key and secret key.",
         "server_required": "Choose a target server.",
         "server_not_found": "That server is not in this team.",
+        "server_duplicate": "Another entry already uses that server.",
         "confirmation_required": "Confirm the invitations first."
       }
     },

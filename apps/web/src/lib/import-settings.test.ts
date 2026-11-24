@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import importNs from "../i18n/locales/en/import.json";
-import { BLOCKED_KEY, NOTE_KEY, RESULT_CODE_KEY, buildApplyBody, initialSelection, missingInput, needsInviteConfirmation, readySelection, type SettingsEntry, type SettingsInputs, type SettingsPreview } from "./import-settings";
+import { BLOCKED_KEY, duplicateServerEntries, NOTE_KEY, RESULT_CODE_KEY, buildApplyBody, initialSelection, missingInput, needsInviteConfirmation, readySelection, type SettingsEntry, type SettingsInputs, type SettingsPreview } from "./import-settings";
 
 const lookup = (dotted: string): unknown => dotted.replace(/^import\./, "").split(".").reduce<unknown>((n, k) => (n && typeof n === "object" ? (n as Record<string, unknown>)[k] : undefined), importNs);
 
@@ -16,6 +16,16 @@ describe("import settings helpers", () => {
       entry({ id: "c", section: "notifications" }),
     ]);
     expect([...initialSelection(p)]).toEqual(["a"]);
+  });
+
+  it("two ticked server entries on the same Tugra server: the second is held back; the team id rides along", () => {
+    const a = entry({ id: "server:a", section: "serverSettings", needs: ["server"] });
+    const b = entry({ id: "server:b", section: "serverSettings", needs: ["server"] });
+    const p = preview([a, b]);
+    const inp = inputs({ selected: new Set(["server:a", "server:b"]), servers: { "server:a": "t1", "server:b": "t1" } });
+    expect([...duplicateServerEntries(p, inp)]).toEqual(["server:b"]);
+    expect(readySelection(p, inp).map((e) => e.id)).toEqual(["server:a"]);
+    expect(buildApplyBody(p, inp, { sessionId: "s", sourceKind: "coolify", teamId: "team-2" })).toMatchObject({ teamId: "team-2", select: ["server:a"], serverMap: { a: "t1" } });
   });
 
   it("a storage needs both keys, a server cleanup needs a server", () => {

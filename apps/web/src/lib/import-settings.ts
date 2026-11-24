@@ -56,6 +56,7 @@ export interface SettingsApplyBody {
   sessionId: string;
   sourceKind?: "coolify" | "dokploy";
   opId?: string;
+  teamId?: string;
   select: string[];
   serverMap?: Record<string, string>;
   s3Credentials?: Record<string, { accessKey: string; secretKey: string }>;
@@ -92,19 +93,38 @@ export function missingInput(e: SettingsEntry, inp: SettingsInputs): "s3Credenti
   return null;
 }
 
+/**
+ * Ticked server entries that point at a Tugra server an earlier ticked entry already points at. A server holds ONE cleanup
+ * config, so a second source server on it would overwrite the first: it must pick another server.
+ */
+export function duplicateServerEntries(p: SettingsPreview, inp: SettingsInputs): Set<string> {
+  const seen = new Set<string>();
+  const dup = new Set<string>();
+  for (const e of allEntries(p)) {
+    if (!e.selectable || !e.needs?.includes("server") || !inp.selected.has(e.id)) continue;
+    const target = inp.servers[e.id];
+    if (!target) continue;
+    if (seen.has(target)) dup.add(e.id);
+    else seen.add(target);
+  }
+  return dup;
+}
+
 /** The ticked entries that can be sent as they stand. */
 export function readySelection(p: SettingsPreview, inp: SettingsInputs): SettingsEntry[] {
-  return allEntries(p).filter((e) => e.selectable && inp.selected.has(e.id) && missingInput(e, inp) === null);
+  const dup = duplicateServerEntries(p, inp);
+  return allEntries(p).filter((e) => e.selectable && inp.selected.has(e.id) && missingInput(e, inp) === null && !dup.has(e.id));
 }
 
 /** Invitations send email: the confirmation is required whenever a member is ticked. */
 export const needsInviteConfirmation = (p: SettingsPreview, inp: SettingsInputs): boolean => allEntries(p).some((e) => e.section === "members" && e.selectable && inp.selected.has(e.id));
 
 /** The request body. Only what the ticked entries need is sent (no stray keys, no keys of an unticked storage). */
-export function buildApplyBody(p: SettingsPreview, inp: SettingsInputs, ctx: { sessionId: string; sourceKind: "coolify" | "dokploy"; opId?: string }): SettingsApplyBody {
+export function buildApplyBody(p: SettingsPreview, inp: SettingsInputs, ctx: { sessionId: string; sourceKind: "coolify" | "dokploy"; opId?: string; teamId?: string }): SettingsApplyBody {
   const ready = readySelection(p, inp);
   const body: SettingsApplyBody = { sessionId: ctx.sessionId, sourceKind: ctx.sourceKind, select: ready.map((e) => e.id) };
   if (ctx.opId) body.opId = ctx.opId;
+  if (ctx.teamId) body.teamId = ctx.teamId;
   const servers = ready.filter((e) => e.needs?.includes("server"));
   if (servers.length) body.serverMap = Object.fromEntries(servers.map((e) => [serverRefOf(e), inp.servers[e.id]]));
   const s3 = ready.filter((e) => e.needs?.includes("s3Credentials"));
@@ -150,12 +170,16 @@ export const NOTE_KEY: Record<string, string> = {
   name_truncated: "import.settings.note.name_truncated",
   cleanup_always: "import.settings.note.cleanup_always",
   volumes_pruned: "import.settings.note.volumes_pruned",
+  double_run: "import.settings.note.double_run",
   networks_not_carried: "import.settings.note.networks_not_carried",
   tag_normalized: "import.settings.note.tag_normalized",
   role_unknown: "import.settings.note.role_unknown",
   owner_not_carried: "import.settings.note.owner_not_carried",
   invite_pending: "import.settings.note.invite_pending",
 };
+
+/** Notes that matter BEFORE the operator ticks the entry (they stay visible, not behind "More"). */
+export const INLINE_NOTE_CODES: ReadonlySet<string> = new Set(["volumes_pruned", "double_send", "double_run"]);
 
 export const RESULT_CODE_KEY: Record<string, string> = {
   ...BLOCKED_KEY,
@@ -168,5 +192,6 @@ export const RESULT_CODE_KEY: Record<string, string> = {
   credentials_required: "import.settings.result.code.credentials_required",
   server_required: "import.settings.result.code.server_required",
   server_not_found: "import.settings.result.code.server_not_found",
+  server_duplicate: "import.settings.result.code.server_duplicate",
   confirmation_required: "import.settings.result.code.confirmation_required",
 };

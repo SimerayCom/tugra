@@ -25,7 +25,7 @@ const base: SettingsPreview = {
       section: "notifications",
       available: true,
       entries: [
-        { id: "notification:telegram", section: "notifications", name: "telegram", selectable: true, defaultSelected: true, notes: [{ level: "warn", code: "events_not_carried", params: { events: "server_patch" } }, { level: "info", code: "double_send" }], detail: { kind: "telegram", enabled: true, groups: [{ threadId: "5", coolifyEvents: ["deployment_success"], tugraEvents: ["deploy_success"] }], targetNames: [] } },
+        { id: "notification:telegram", section: "notifications", name: "telegram", selectable: true, defaultSelected: true, notes: [{ level: "warn", code: "events_not_carried", params: { events: "server_patch" } }, { level: "info", code: "double_send" }], detail: { kind: "telegram", enabled: true, groups: [{ threadId: "5", coolifyEvents: ["deployment_success"], tugraEvents: ["deploy_success"], events: [{ from: "deployment_success", to: ["deploy_success"] }] }], targetNames: [] } },
         { id: "notification:discord", section: "notifications", name: "discord", selectable: false, defaultSelected: false, blocked: "needs_sensitive", notes: [], detail: { kind: "discord", enabled: true, groups: [] } },
       ],
     },
@@ -69,12 +69,50 @@ describe("ImportSettingsPanel", () => {
     expect(api.importSettingsPreview).toHaveBeenCalledWith({ sessionId: "s1", sourceKind: "coolify", opId: "op-9" });
   });
 
-  it("shows notes behind More", async () => {
+  it("shows the other notes behind More", async () => {
     wrap(<ImportSettingsPanel sessionId="s1" kind="coolify" servers={[]} />);
     await screen.findByText("Notification channels");
     expect(screen.getAllByText("More").length).toBeGreaterThan(0);
     expect(screen.getByText("Not carried, Tugra has no event for: server_patch.")).toBeTruthy();
-    expect(screen.getByText("After the test, turn it off in Coolify so messages are not sent twice.")).toBeTruthy();
+  });
+
+  it("shows each Coolify event with the Tugra event it becomes, and the double-send reminder next to the channel", async () => {
+    wrap(<ImportSettingsPanel sessionId="s1" kind="coolify" servers={[]} />);
+    await screen.findByText("Notification channels");
+    expect(screen.getByText("deployment_success becomes deploy_success")).toBeTruthy();
+    // inline (not only behind More): the reminder is a sibling of the row, outside the <details>
+    const reminder = screen.getByText("Turn it off in Coolify after the test, or messages arrive twice.");
+    expect(reminder.closest("details")).toBeNull();
+  });
+
+  it("sends the team the import lands in", async () => {
+    wrap(<ImportSettingsPanel sessionId="s1" kind="coolify" teamId="team-2" servers={[]} />);
+    await screen.findByText("Notification channels");
+    expect(api.importSettingsPreview).toHaveBeenCalledWith({ sessionId: "s1", sourceKind: "coolify", teamId: "team-2" });
+  });
+
+  it("server cleanup is never pre-selected nor pre-mapped; the volume warning is inline; one Tugra server cannot take two cleanups", async () => {
+    const srv = (ref: string) => ({ id: `server:${ref}`, section: "serverSettings" as const, name: ref, selectable: true, defaultSelected: false, needs: ["server" as const], notes: [{ level: "warn" as const, code: "volumes_pruned" }], detail: { server: ref, schedule: "0 4 * * *", volumes: true } });
+    vi.spyOn(api, "importSettingsPreview").mockResolvedValue({ supported: true, sections: [{ section: "serverSettings", available: true, entries: [srv("a"), srv("b")] }] });
+    const apply = vi.spyOn(api, "importSettingsApply").mockResolvedValue({ counts: { created: 1, skipped: 0, failed: 0 }, results: [] });
+    wrap(<ImportSettingsPanel sessionId="s1" kind="coolify" servers={[{ id: "t1", name: "Server one" }, { id: "t2", name: "Server two" }]} />);
+    await screen.findByText("Server cleanup");
+    const boxes = screen.getAllByRole("checkbox") as HTMLInputElement[];
+    expect(boxes.every((b) => !b.checked)).toBe(true);
+    expect(screen.getAllByText("This also removes unused volumes.").every((n) => n.closest("details") === null)).toBe(true);
+    fireEvent.click(boxes[0]);
+    fireEvent.click(boxes[1]);
+    const selects = screen.getAllByLabelText("Target server") as HTMLSelectElement[];
+    expect(selects.every((x) => x.value === "")).toBe(true); // no default target
+    fireEvent.change(selects[0], { target: { value: "t1" } });
+    fireEvent.change(selects[1], { target: { value: "t1" } });
+    expect(screen.getByText("Choose a different server for each one.")).toBeTruthy();
+    expect(screen.getByText("1 selected")).toBeTruthy();
+    fireEvent.change(selects[1], { target: { value: "t2" } });
+    expect(screen.getByText("2 selected")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Import selected" }));
+    await waitFor(() => expect(apply).toHaveBeenCalled());
+    expect(apply.mock.calls[0][0]).toMatchObject({ serverMap: { a: "t1", b: "t2" } });
   });
 
   it("a storage needs the keys (Coolify never gives them); they are sent once and cleared, and the recovery key is shown once", async () => {
