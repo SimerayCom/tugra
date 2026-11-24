@@ -2244,12 +2244,14 @@ export const api = {
           ignoreStoredMapping?: boolean;
           saveMapping?: boolean;
           dbDataModes?: Record<string, "volume">;
+          /** Multi-host placement: source server ref to Tugra server id (same team as `targetServerId`, which stays the default). */
+          serverMap?: Record<string, string>;
         },
   ) {
     return apiFetch<{ opId: string; mappingApplied?: boolean }>("/import/apply", { method: "POST", body: JSON.stringify(input) });
   },
   // Authoritative mapping preview: effective names/placement, every conflict, and the mappingHash apply must carry.
-  importResolve(input: { sessionId: string; sourceKind: ImportRemoteKind; planHash: string; targetServerId: string; environmentId?: string; reconcile?: boolean; acks?: ImportAck[]; dbDataModes?: Record<string, "volume">; mapping: ImportMappingDoc }) {
+  importResolve(input: { sessionId: string; sourceKind: ImportRemoteKind; planHash: string; targetServerId: string; environmentId?: string; reconcile?: boolean; acks?: ImportAck[]; dbDataModes?: Record<string, "volume">; serverMap?: Record<string, string>; mapping: ImportMappingDoc }) {
     return apiFetch<ImportResolved>("/import/mapping/resolve", { method: "POST", body: JSON.stringify(input) });
   },
   importMappingGet(sessionId: string) {

@@ -1228,6 +1228,12 @@ export interface ImportApplyExtras {
   serviceChoices?: Record<string, ImportServiceChoice>;
   dbDataModes?: Record<string, "volume">;
 }
+/** One source project of the plan: its name and the itemRefs that live in it. */
+export interface ImportSourceProject {
+  ref: string;
+  name: string;
+  itemRefs: string[];
+}
 export interface ImportPreflight {
   databases: Array<{ name: string; engine: string; dataPlane: DbDataPlane; reason: string; backup?: { schedules?: number; s3?: boolean; interval?: string; targets?: string[] } }>;
   services: Array<{ name: string; members: number; note: string; objectStore?: true; verdict?: ImportServiceVerdict; hold?: boolean; volumes?: Array<{ key: string; dataPlane: string; origin?: "host-bind" }> }>;
@@ -1242,6 +1248,8 @@ export interface ImportPreflight {
   git?: { hosts: Array<{ host: string; apps: number }> };
   /** The source servers by name (Coolify, Dokploy), so a host is shown by its name and not by its uuid. */
   hosts?: Array<{ ref: string; name?: string; controlPlane?: true; unreachableCount?: number; os?: string }>;
+  /** The source projects with the plan items (apps, databases, services) in each, so the first import step can select whole projects. */
+  projects?: ImportSourceProject[];
   /** Apps already failing at the source (exited, unhealthy, crash-looping): they migrate as they are. */
   sourceHealth?: Array<{ itemRef: string; name: string; health: "unhealthy" | "unknown" | "exited"; status?: string; restartCount: number | null }>;
 }
