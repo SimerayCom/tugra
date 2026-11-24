@@ -58,7 +58,7 @@ export function FleetTable({
     <>
       <div className="fleet-table-card">
         <Card style={{ padding: 0 }}>
-          <div role="region" aria-label={t("fleet.title")} tabIndex={0} style={{ overflowX: "auto" }}>
+          <div role="region" aria-label={t("fleet.title")} tabIndex={0} className="tg-tablewrap">
             <table className="fleet-table" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
               <caption className="sr-only">{t("fleet.title")}</caption>
               <thead>

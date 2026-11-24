@@ -305,7 +305,7 @@ export function ServerTable({
                       <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 4 }}>
                         {canAct && (
                           <>
-                            <ActionLink href={`/servers/${s.id}?tab=shell`} icon={Terminal} label={t("servers.quickTerminal")} disabled={!canTerminal} disabledLabel={t("servers.quickTerminalOff")} />
+                            <ActionLink href={`/servers/${s.id}?tab=shell`} icon={Terminal} label={t("servers.quickTerminal")} disabled={!canTerminal} disabledLabel={canAct && s.status !== "ONLINE" ? t("servers.quickTerminalOffline") : t("servers.quickTerminalOff")} />
                             {onUpdateAgent && (
                               <ActionButton icon={RefreshCw} label={t("servers.quickUpdateAgent")} disabled={!canUpdate || updating} tone={verState === "outdated" ? "warn" : "plain"} busy={updating} onClick={() => onUpdateAgent(s)} />
                             )}

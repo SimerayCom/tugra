@@ -139,7 +139,7 @@
   "range7d": "7d",
   "range30d": "30d",
   "diskHistory": "Disk usage",
-  "colTrend": "CPU / RAM",
+  "colTrend": "CPU / RAM (now)",
   "trendCpu": "CPU, last 30 minutes",
   "trendMem": "RAM, last 30 minutes",
   "cpu": "CPU",
@@ -385,7 +385,7 @@
   "filterTeam": "Filter by team",
   "allTeams": "All teams",
   "groupByTeam": "Group by team",
-  "groupCount": "{n}",
+  "groupCount": "Servers: {n}",
   "rowActions": "Actions",
   "perPage": "Per page",
   "agentOutdated": "Agent {from} is older than {to}",
@@ -393,6 +393,7 @@
   "agentUpdateAvailable": "update available",
   "quickTerminal": "Open terminal",
   "quickTerminalOff": "Terminal is off for this server",
+  "quickTerminalOffline": "Server is offline",
   "quickUpdateAgent": "Update agent",
   "quickRestart": "Restart (opens Maintenance)",
   "capOn": "{name} on",
@@ -424,6 +425,7 @@
     "err_readonly": "Read-only, skipped",
     "err_files_write_requires_files": "Needs Files first",
     "err_forbidden": "You cannot manage this server",
-    "err_not_found": "Server not found"
+    "err_not_found": "Server not found",
+    "err_failed": "Something went wrong"
   }
 }

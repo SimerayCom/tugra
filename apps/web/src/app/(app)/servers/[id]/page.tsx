@@ -555,7 +555,7 @@ function ServerAuditCard({ id }: { id: string }) {
             aria-label={t("audit.search")}
             style={{ ...fieldStyle, width: "100%", marginBottom: 12 }}
           />
-          <div style={{ overflowX: "auto" }}>
+          <div className="tg-tablewrap">
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
               <thead>
                 <tr style={{ textAlign: "left", color: "var(--c-tx3)" }}>

@@ -65,7 +65,7 @@ export function HottestContainersCard({ teamId }: { teamId?: string | null }) {
           </div>
         </Card>
       ) : (
-        <Card style={{ padding: 0, overflowX: "auto" }}>
+        <Card style={{ padding: 0, overflowX: "auto", overflowY: "hidden" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
             <caption style={{ position: "absolute", width: 1, height: 1, overflow: "hidden", clip: "rect(0 0 0 0)", whiteSpace: "nowrap" }}>{title}</caption>
             <thead>

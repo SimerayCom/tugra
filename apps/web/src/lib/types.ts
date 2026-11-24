@@ -763,7 +763,7 @@ export interface FleetPatchApplyResult {
 /** One server's outcome of a bulk capability grant/revoke (POST /servers/capabilities/bulk). */
 export type BulkCapabilityResult =
   | { id: string; ok: true; capabilities: string[]; granted: string[]; revoked: string[] }
-  | { id: string; ok: false; error: "not_found" | "forbidden" | "files_write_requires_files" };
+  | { id: string; ok: false; error: "not_found" | "forbidden" | "files_write_requires_files" | "failed" };
 
 export interface AgentUpdateItem {
   serverId: string;

@@ -301,7 +301,7 @@ describe("ServerTable list overhaul", () => {
     fireEvent.change(screen.getByRole("combobox", { name: "Filter by team" }), { target: { value: "__all__" } });
     fireEvent.click(screen.getByRole("button", { name: "Group by team" }));
     const groups = screen.getAllByTestId("team-group-row");
-    expect(groups.map((g) => g.textContent)).toEqual(["Alpha2", "Beta1"]);
+    expect(groups.map((g) => g.textContent)).toEqual(["AlphaServers: 2", "BetaServers: 1"]);
     expect(order()).toEqual(["alpha", "bravo", "charlie"]);
   });
 

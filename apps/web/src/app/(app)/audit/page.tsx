@@ -126,7 +126,7 @@ export default function AuditPage() {
             <EmptyState icon={ScrollText} title={t("audit.noMatchTitle")}>{t("audit.noMatch")}</EmptyState>
           ) : (
           <Card>
-          <div style={{ overflowX: "auto" }}>
+          <div className="tg-tablewrap">
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
             <thead>
               <tr style={{ textAlign: "left", color: "var(--c-tx3)" }}>

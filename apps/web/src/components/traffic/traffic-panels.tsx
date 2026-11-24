@@ -222,7 +222,7 @@ export function PathsTable({ data }: { data: TrafficPaths | undefined }) {
       {rows.length === 0 && !(other && other.requests > 0) ? (
         <div style={{ fontSize: 13, color: "var(--c-tx3)" }}>{t("traffic.noPaths")}</div>
       ) : (
-        <div style={{ overflowX: "auto" }}>
+        <div className="tg-tablewrap">
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
             <thead>
               <tr style={{ color: "var(--c-tx3)", fontSize: 11, textAlign: "left" }}>

@@ -44,7 +44,7 @@ export function DiscoverAdoptCard({ id }: { id: string }) {
       {rows && rows.length === 0 && <EmptyState>{t("servers.noForeignContainers")}</EmptyState>}
 
       {rows && rows.length > 0 && (
-        <div style={{ overflowX: "auto" }}>
+        <div className="tg-tablewrap">
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
             <thead>
               <tr style={{ textAlign: "left", color: "var(--c-tx3)", borderBottom: "1px solid var(--c-bd)" }}>

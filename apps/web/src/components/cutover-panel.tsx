@@ -218,7 +218,7 @@ export function CutoverPanel({ opId }: { opId: string }) {
             <p role="note" style={{ fontSize: 12, color: "var(--c-am)", margin: "0 0 12px", lineHeight: 1.5 }}>{t("cutover.deployNeeded", { count: deployNeeded.length })}</p>
           )}
 
-          <div style={{ overflowX: "auto" }}>
+          <div className="tg-tablewrap">
             <table className="tg-cutover-table" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
               <thead>
                 <tr style={{ textAlign: "left", color: "var(--c-tx3)" }}>

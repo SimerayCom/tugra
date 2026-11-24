@@ -87,7 +87,7 @@ export function ServerContainersCard({ id, canWrite = false }: { id: string; can
           </Btn>
         </div>
       )}
-      <Card style={{ padding: 0, overflowX: "auto" }}>
+      <Card style={{ padding: 0, overflowX: "auto", overflowY: "hidden" }}>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
           <thead>
             <tr style={{ textAlign: "left", color: "var(--c-tx3)", borderBottom: "1px solid var(--c-bd)" }}>
