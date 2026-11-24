@@ -608,8 +608,8 @@ export class ImportExecutorService {
   /**
    * Services are not mapping items (their placement is the service choice's own), so under a mapping they follow their
    * Coolify project/environment, with the mapping's project and environment renames applied. A service whose choice names an
-   * environment, or that the operator skips, is left alone. Best effort, like {@link buildImportTree}: a failure keeps that
-   * service on the selected environment and records a FIXED warning.
+   * environment, or that the operator skips, is left alone. A failure throws, like the apps and databases of
+   * {@link buildMappedTree}.
    */
   private async placeMappedServices(userId: string, teamId: string, fleet: ForeignFleet, renames: Record<string, { name?: string; environments?: Record<string, string> }>, serviceChoices: Record<string, ServiceChoice>, serviceRunnable: (svc: ForeignService) => boolean, tree: ImportTree): Promise<void> {
     const projectByRef = new Map((fleet.projects ?? []).map((p) => [p.ref, p]));
@@ -623,14 +623,12 @@ export class ImportExecutorService {
       if (!project || !env) continue;
       const projectName = nfc(renames[project.ref]?.name) || project.name;
       const envName = nfc(renames[project.ref]?.environments?.[env.ref]) || env.name;
-      try {
-        const r = await this.projects.findOrCreateForImport(userId, teamId, { name: projectName, description: project.description, tags: project.tags, environments: [{ name: envName, isDefault: env.isDefault }] });
-        const id = r.environments[envName.slice(0, 80)];
-        if (id) tree.envBySourceService!.set(itemRef, id);
-        if (r.created || r.createdEnvironments.length) tree.summary.push({ project: projectName, projectCreated: r.created, environments: Object.keys(r.environments), environmentsCreated: r.createdEnvironments });
-      } catch {
-        tree.warnings.push(`project "${projectName}" could not be used for service "${svc.name.slice(0, 80)}" (needs the projects permission) - it goes to the selected environment`);
-      }
+      // Like an app or database under a mapping, a failure throws (before the op row exists): the resolve already checked the
+      // `projects` permission, so a silent degrade onto the selected environment would be a misplaced import.
+      const r = await this.projects.findOrCreateForImport(userId, teamId, { name: projectName, description: project.description, tags: project.tags, environments: [{ name: envName, isDefault: env.isDefault }] });
+      const id = r.environments[envName.slice(0, 80)];
+      if (id) tree.envBySourceService!.set(itemRef, id);
+      if (r.created || r.createdEnvironments.length) tree.summary.push({ project: projectName, projectCreated: r.created, environments: Object.keys(r.environments), environmentsCreated: r.createdEnvironments });
     }
   }
 

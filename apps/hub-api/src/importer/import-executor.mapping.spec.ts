@@ -4,6 +4,7 @@ import { ImportMappingService } from "./import-mapping.service";
 import { ImportMappingDocSchema, type ImportMappingDoc } from "./import-mapping";
 import { planImport } from "./import-planner";
 import type { ForeignFleet } from "./foreign-fleet";
+import { fixtureByName } from "./testing/service-fixtures";
 
 const flush = async () => {
   for (let i = 0; i < 14; i++) await new Promise((r) => setImmediate(r));
@@ -278,6 +279,21 @@ describe("apply — with a mapping", () => {
     const envId = (await h.projects.findOrCreateForImport.mock.results[0].value).environments.live;
     expect(h.apps.create).toHaveBeenCalledWith("user-1", expect.objectContaining({ name: "web", environmentId: envId }));
     expect(h.apps.create).toHaveBeenCalledWith("user-1", expect.objectContaining({ name: "worker", environmentId: undefined }));
+  });
+  it("a Coolify service follows its source project and environment under a mapping, with the mapping's renames", async () => {
+    const f = fleet();
+    const fx = fixtureByName("alpha-meilisearch").svc;
+    f.services = [{ ...fx, serverRef: "srv-a", projectRef: "p-acme", environmentRef: "p-acme#39" }];
+    f.projects = [{ ref: "p-acme", name: "Acme", tags: [], environments: [{ ref: "p-acme#39", name: "production", isDefault: true }] }];
+    const h = harness({ fleet: f });
+    Object.assign(h.prisma.application, { findFirst: jest.fn().mockResolvedValue(null) });
+    Object.assign(h.apps, { setServiceDomains: jest.fn().mockResolvedValue(undefined), setConfigMountsForImport: jest.fn().mockResolvedValue(undefined), setComposeNetworks: jest.fn().mockResolvedValue(undefined) });
+    (h.source as Record<string, unknown>).fetchServiceBundle = jest.fn().mockResolvedValue({ values: { SERVICE_PASSWORD_MEILISEARCH: "synth-pw" }, unresolved: [] });
+    await applyMapped(h, doc({ items: { [APP]: { name: "web-2" } }, projects: { "p-acme": { name: "Shop", environments: { "p-acme#39": "live" } } } }));
+    await flush();
+    expect(h.projects.findOrCreateForImport).toHaveBeenCalledWith("user-1", "team-1", expect.objectContaining({ name: "Shop", environments: [{ name: "live", isDefault: true }] }));
+    const envId = (await h.projects.findOrCreateForImport.mock.results[0].value).environments.live;
+    expect(h.apps.create).toHaveBeenCalledWith("user-1", expect.objectContaining({ source: "COMPOSE", environmentId: envId }));
   });
   it("an ACKED blocker item is mapped like any other: its project/environment group is created and apply places it there; a hash resolved without the ack is refused", async () => {
     const f = fleet();

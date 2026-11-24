@@ -155,12 +155,9 @@ describe("ImportExecutorService — Coolify services as stopped compose apps (ru
     expect((await place({ [ref]: { environmentId: "env-x" } as ServiceChoice })).envBySourceService.size).toBe(0);
     expect((await place({}, false)).envBySourceService.size).toBe(0);
     expect(findOrCreateProject).not.toHaveBeenCalled();
-    // a project the caller may not create degrades to a fixed warning
-    findOrCreateProject.mockRejectedValueOnce(new Error("forbidden: secret detail"));
-    const failed = await place({});
-    expect(failed.envBySourceService.size).toBe(0);
-    expect(failed.warnings).toHaveLength(1);
-    expect(failed.warnings[0]).not.toContain("secret detail");
+    // a project the caller may not create is a hard failure (a misplaced import is worse), like an app or a database under a mapping
+    findOrCreateProject.mockRejectedValueOnce(new Error("forbidden"));
+    await expect(place({})).rejects.toThrow("forbidden");
   });
 
   it("never deploys and never calls a deploy path", async () => {
