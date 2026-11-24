@@ -256,7 +256,7 @@ export class ImportExecutorService {
       // with no tree (Coolify) skips this and keeps the single input.environmentId.
       // Under a mapping the tree is built from the RESOLVED groups instead (only the projects/environments a
       // runnable item uses; a failure is a hard error, never a silent degrade — perm.projects was checked).
-      const tree = res ? await this.buildMappedTree(userId, server.teamId, fleet, res, input.mapping?.projects ?? {}) : await this.buildImportTree(userId, server.teamId, fleet);
+      const tree = res ? await this.buildMappedTree(userId, server.teamId, fleet, res, input.mapping?.projects ?? {}, serviceChoices, (sv) => typeof sv.composeFile === "string" && typeof source.fetchServiceBundle === "function" && plan.items.find((i) => i.itemRef === ns("service", sv.serverRef, sv.sourceRef))?.proposed.verdict !== "skipped") : await this.buildImportTree(userId, server.teamId, fleet);
       const opWarnings = [
         ...providerWarnings,
         ...tree.warnings,
@@ -345,7 +345,7 @@ export class ImportExecutorService {
         });
         // The resource's own source environment when the tree resolved it; else the single selected environment.
         // Under a mapping the resolved (project, environment) of THIS item wins.
-        const environmentId = (item.kind === "service" ? choice?.environmentId : undefined) ?? tree.envByItemRef?.get(item.itemRef) ?? resolveTreeEnvironment(tree.envByRef, app ?? db) ?? input.environmentId;
+        const environmentId = (item.kind === "service" ? choice?.environmentId : undefined) ?? tree.envByItemRef?.get(item.itemRef) ?? resolveTreeEnvironment(tree.envByRef, app ?? db ?? service) ?? tree.envBySourceService?.get(item.itemRef) ?? input.environmentId;
         // Ack codes that actually cover a risk THIS item carries (an ack for a code the plan never raised for it grants nothing).
         const ackedCodes = new Set(item.risks.filter((r) => isAcked(input.acks, item.itemRef, r.code)).map((r) => r.code));
         if (reconciles && eff) runners.set(task.id, () => this.runReconcile(task.id, userId, eff, tree.envByItemRef?.get(item.itemRef)));
@@ -580,8 +580,8 @@ export class ImportExecutorService {
    * environment id per itemRef. A failure THROWS (before the op row exists): the resolve already checked the
    * `projects` permission, so a silent degrade onto another environment would be a misplaced import.
    */
-  private async buildMappedTree(userId: string, teamId: string, fleet: ForeignFleet, res: ResolvedMapping, projectRenames: Record<string, { name?: string }>): Promise<ImportTree> {
-    const tree: ImportTree = { envByRef: new Map(), summary: [], warnings: [], envByItemRef: new Map() };
+  private async buildMappedTree(userId: string, teamId: string, fleet: ForeignFleet, res: ResolvedMapping, projectRenames: Record<string, { name?: string; environments?: Record<string, string> }>, serviceChoices: Record<string, ServiceChoice>, serviceRunnable: (svc: ForeignService) => boolean): Promise<ImportTree> {
+    const tree: ImportTree = { envByRef: new Map(), summary: [], warnings: [], envByItemRef: new Map(), envBySourceService: new Map() };
     // Source descriptions/tags are carried only for a project the tree itself placed items into (by effective name).
     const treeNames = new Set(res.effective.filter((e) => e.origin.placement === "tree" && e.project).map((e) => e.project as string));
     const meta = new Map<string, { description?: string; tags: string[] }>();
@@ -601,7 +601,37 @@ export class ImportExecutorService {
       }
       tree.summary.push({ project: g.name, projectCreated: r.created, environments: Object.keys(r.environments), environmentsCreated: r.createdEnvironments });
     }
+    await this.placeMappedServices(userId, teamId, fleet, projectRenames, serviceChoices, serviceRunnable, tree);
     return tree;
+  }
+
+  /**
+   * Services are not mapping items (their placement is the service choice's own), so under a mapping they follow their
+   * Coolify project/environment, with the mapping's project and environment renames applied. A service whose choice names an
+   * environment, or that the operator skips, is left alone. Best effort, like {@link buildImportTree}: a failure keeps that
+   * service on the selected environment and records a FIXED warning.
+   */
+  private async placeMappedServices(userId: string, teamId: string, fleet: ForeignFleet, renames: Record<string, { name?: string; environments?: Record<string, string> }>, serviceChoices: Record<string, ServiceChoice>, serviceRunnable: (svc: ForeignService) => boolean, tree: ImportTree): Promise<void> {
+    const projectByRef = new Map((fleet.projects ?? []).map((p) => [p.ref, p]));
+    const nfc = (v: string | undefined) => v?.normalize("NFC").trim();
+    for (const svc of fleet.services ?? []) {
+      const itemRef = ns("service", svc.serverRef, svc.sourceRef);
+      const choice = serviceChoices[itemRef];
+      if (choice?.skip || choice?.environmentId || !serviceRunnable(svc)) continue;
+      const project = svc.projectRef ? projectByRef.get(svc.projectRef) : undefined;
+      const env = project?.environments.find((e) => e.ref === svc.environmentRef);
+      if (!project || !env) continue;
+      const projectName = nfc(renames[project.ref]?.name) || project.name;
+      const envName = nfc(renames[project.ref]?.environments?.[env.ref]) || env.name;
+      try {
+        const r = await this.projects.findOrCreateForImport(userId, teamId, { name: projectName, description: project.description, tags: project.tags, environments: [{ name: envName, isDefault: env.isDefault }] });
+        const id = r.environments[envName.slice(0, 80)];
+        if (id) tree.envBySourceService!.set(itemRef, id);
+        if (r.created || r.createdEnvironments.length) tree.summary.push({ project: projectName, projectCreated: r.created, environments: Object.keys(r.environments), environmentsCreated: r.createdEnvironments });
+      } catch {
+        tree.warnings.push(`project "${projectName}" could not be used for service "${svc.name.slice(0, 80)}" (needs the projects permission) - it goes to the selected environment`);
+      }
+    }
   }
 
   /** Upsert each discovered GitHub App into a Tugra GitSource on `teamId`, returning providerRef → gitSourceId.
@@ -2122,6 +2152,8 @@ interface ImportTree {
   warnings: string[];
   /** Under an editable mapping: itemRef → the Tugra environmentId its resolved (project, environment) maps to. */
   envByItemRef?: Map<string, string>;
+  /** Under an editable mapping: service itemRef → the Tugra environmentId its (renamed) source project/environment maps to. */
+  envBySourceService?: Map<string, string>;
 }
 
 /** The secret-free snapshot of the applied mapping stored on op.meta: names and placement only, so later profile

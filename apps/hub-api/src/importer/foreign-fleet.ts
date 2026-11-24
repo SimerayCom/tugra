@@ -245,6 +245,9 @@ export interface ForeignService {
   memberApps: string[]; // app sourceRefs
   memberDbs: string[]; // db sourceRefs
   serverRef?: string;
+  /** The source project/environment this stack lives in (see {@link ForeignApp.projectRef}); unset when the source has no tree. */
+  projectRef?: string;
+  environmentRef?: string;
   /** The stack's members (compose services) with their per-member domains. Sorted by name (planHash determinism). */
   members?: ForeignServiceMember[];
   /** The source server's display name (display only). */

@@ -204,14 +204,15 @@ export class CoolifySource implements ImportSource {
     }
 
     // Read the project tree before the fleet is built so an unreadable /projects lands in the plan's warnings.
-    const tree = await this.readProjectTree([...listedApps, ...databases], tryGet);
+    // Services carry `environment_id` too (on the list row and on the detail read, either may be the one that has it).
+    const tree = await this.readProjectTree([...listedApps, ...databases, ...serviceList, ...services], tryGet);
     const fleet = buildCoolifyFleet({ servers, resourcesByServer, apps, databases, services, envsByResource, envReportByResource, volumesByResource, backupsByResource, s3Storages, warnings });
     return tree ? placeInTree(fleet, tree) : fleet;
   }
 
   /**
-   * Mirror Coolify's project → environment tree, like the Dokploy import does: the review then places every app and
-   * database in a Tugra project/environment named after its Coolify one (IsBulKibris / production) instead of the
+   * Mirror Coolify's project → environment tree, like the Dokploy import does: the review then places every app,
+   * database and service in a Tugra project/environment named after its Coolify one (IsBulKibris / production) instead of the
    * team default. Coolify rows carry `environment_id`; `/projects/{uuid}` lists each project's environments by id.
    * Best effort: an unreadable project tree only leaves resources in the team default (and says so).
    */
@@ -484,11 +485,11 @@ interface ProjectTree {
   locByUuid: Map<string, { projectRef: string; environmentRef: string }>;
 }
 
-/** Attach the tree to a built fleet: each app and database gets its source project/environment refs. */
+/** Attach the tree to a built fleet: each app, database and service gets its source project/environment refs. */
 function placeInTree(fleet: ForeignFleet, tree: ProjectTree): ForeignFleet {
   const place = <T extends { sourceRef: string; projectRef?: string; environmentRef?: string }>(x: T): T => {
     const loc = tree.locByUuid.get(x.sourceRef);
     return loc && !x.projectRef ? { ...x, ...loc } : x;
   };
-  return { ...fleet, apps: fleet.apps.map(place), databases: fleet.databases.map(place), projects: tree.projects };
+  return { ...fleet, apps: fleet.apps.map(place), databases: fleet.databases.map(place), services: fleet.services.map(place), projects: tree.projects };
 }

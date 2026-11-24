@@ -53,6 +53,24 @@ describe("CoolifySource", () => {
       expect(fleet.apps.find((a) => a.sourceRef === "app-2")?.projectRef).toBeUndefined();
     });
 
+    it("places a service in its Coolify project / environment too (list row or detail read carries the environment)", async () => {
+      const fleet = await new CoolifySource(new FakeClient({
+        "/servers": [{ uuid: "srv-a", name: "box", ip: "1.2.3.4" }],
+        "/servers/srv-a/resources": [],
+        "/applications": [],
+        "/databases": [],
+        "/services": [{ uuid: "svc-1", name: "search", service_type: "meilisearch", environment_id: 39 }, { uuid: "svc-2", name: "loose-stack", environment_id: 999 }],
+        "/services/svc-1": { uuid: "svc-1", name: "search", service_type: "meilisearch", applications: [{ uuid: "m-1" }], databases: [] },
+        "/services/svc-2": { uuid: "svc-2", name: "loose-stack", environment_id: 38, applications: [{ uuid: "m-2" }], databases: [] },
+        "/projects": [{ uuid: "p-acme", name: "Acme" }],
+        "/projects/p-acme": { uuid: "p-acme", name: "Acme", environments: [{ id: 39, name: "production" }, { id: 38, name: "staging" }] },
+      })).discover();
+      // svc-1 has its environment on the list row only; the detail read dropped it
+      expect(fleet.services.find((x) => x.sourceRef === "svc-1")).toMatchObject({ projectRef: "p-acme", environmentRef: "p-acme#39" });
+      // svc-2: the detail read wins over an unknown list value (a row that names a readable environment is placed)
+      expect(fleet.services.find((x) => x.sourceRef === "svc-2")).toMatchObject({ projectRef: "p-acme", environmentRef: "p-acme#38" });
+    });
+
     it("an unreadable project list leaves the fleet unplaced and says so", async () => {
       const fleet = await new CoolifySource(new FakeClient({
         "/servers": [], "/applications": [], "/databases": [], "/services": [], "/projects": new Error("403 nope"),

@@ -157,6 +157,8 @@ export interface CoolifyDatabase {
 export interface CoolifyService {
   uuid: string;
   name?: string | null;
+  /** The Coolify environment the service lives in (resolved against the project tree). */
+  environment_id?: number | string | null;
   service_type?: string | null; // one-click template key
   /** The raw compose: on a 4.1.2 inventory every list row carries it; from 4.7 it is `read:sensitive`-gated and absent otherwise.
    *  The rendered `docker_compose` is NEVER used (rendered `<uuid>_*` volume names, `coolify.*` labels). */

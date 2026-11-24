@@ -54,7 +54,7 @@ export function planImport(fleet: ForeignFleet, options: ImportOptions): ImportP
 
   // Services (Coolify stacks) become stopped compose apps. Only the sources that implement `fetchServiceBundle` can carry
   // them, but the plan classifies every discovered service honestly. A fleet without services adds nothing here.
-  const serviceItems = (fleet.services ?? []).map((svc) => planService(svc));
+  const serviceItems = (fleet.services ?? []).map((svc) => planService(svc, treeRisk(fleet.projects, svc, "service.project")));
 
   const items = [...dbItems, ...volItems.values(), ...appItems, ...serviceItems];
   const totals = {
@@ -370,7 +370,7 @@ export function analyzeService(svc: ForeignService): ServiceAnalysis {
   return { itemRef, result: r, risks, verdict: r.verdict, compat: tplMatch ? "template" : "passthrough" };
 }
 
-function planService(svc: ForeignService): ImportPlanItem {
+function planService(svc: ForeignService, tree?: ImportRisk): ImportPlanItem {
   const a = analyzeService(svc);
   const r = a.result;
   const keptSet = new Set(r?.membersKept ?? []);
@@ -391,7 +391,7 @@ function planService(svc: ForeignService): ImportPlanItem {
       imageFloating: r?.floating ?? [],
       hold: r?.hold ?? false,
     },
-    risks: a.risks,
+    risks: tree ? [tree, ...a.risks] : a.risks,
     dependsOn: [],
   };
 }

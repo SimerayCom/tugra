@@ -24,7 +24,7 @@ function bundleOf(name: string, extra: Partial<ServiceBundle> = {}): ServiceBund
   return { values, unresolved: [], files: name === "signoz-hub" ? SIGNOZ_FILES : undefined, ...extra };
 }
 
-function harness(over: { fleet: ForeignFleet; bundle?: (ref: string) => ServiceBundle | undefined | Error; nameClash?: boolean; setServiceDomains?: jest.Mock; setConfigMounts?: jest.Mock; setNetworks?: jest.Mock; priorImported?: Array<{ itemRef: string; resourceId: string; resourceType: string }>; liveAppIds?: string[]; servers?: Record<string, { id: string; teamId: string }> }) {
+function harness(over: { fleet: ForeignFleet; bundle?: (ref: string) => ServiceBundle | undefined | Error; nameClash?: boolean; setServiceDomains?: jest.Mock; setConfigMounts?: jest.Mock; setNetworks?: jest.Mock; priorImported?: Array<{ itemRef: string; resourceId: string; resourceType: string }>; liveAppIds?: string[]; findOrCreateProject?: jest.Mock; servers?: Record<string, { id: string; teamId: string }> }) {
   let seq = 0;
   const created: Array<{ id: string; data: Record<string, unknown> }> = [];
   const servers = over.servers ?? { "srv-tugra": { id: "srv-tugra", teamId: "team-1" } };
@@ -75,7 +75,7 @@ function harness(over: { fleet: ForeignFleet; bundle?: (ref: string) => ServiceB
     setConfigMountsForImport: over.setConfigMounts ?? jest.fn().mockResolvedValue(undefined),
     setComposeNetworks: over.setNetworks ?? jest.fn().mockResolvedValue(undefined),
   };
-  const svc = new ImportExecutorService(prisma as never, {} as never, access as never, audit as never, { openSession: jest.fn().mockResolvedValue({ source }) } as never, apps as never, {} as never, { issue: jest.fn(), reissue: jest.fn(), revoke: jest.fn(), validate: jest.fn() } as never, {} as never, { upsertForImport: jest.fn() } as never, { findOrCreateForImport: jest.fn() } as never, { resolve: jest.fn().mockResolvedValue(new Map()) } as never);
+  const svc = new ImportExecutorService(prisma as never, {} as never, access as never, audit as never, { openSession: jest.fn().mockResolvedValue({ source }) } as never, apps as never, {} as never, { issue: jest.fn(), reissue: jest.fn(), revoke: jest.fn(), validate: jest.fn() } as never, {} as never, { upsertForImport: jest.fn() } as never, { findOrCreateForImport: over.findOrCreateProject ?? jest.fn() } as never, { resolve: jest.fn().mockResolvedValue(new Map()) } as never);
   return { svc, prisma, audit, apps, source, created, access };
 }
 
@@ -102,6 +102,65 @@ describe("ImportExecutorService — Coolify services as stopped compose apps (ru
     expect(done.result).toMatchObject({ kind: "service", members: ["meilisearch"], privateNetwork: { network: "svc-alpha-meilisearch", alias: "meilisearch" }, volumes: [{ key: "meilisearch-data", dockerName: "tugra_app-alpha-meilisearch_meilisearch-data", state: "pending-data" }] });
     expect((done.result.checklist as Array<{ kind: string }>).map((c) => c.kind)).toContain("deploy-after-data");
     expect(h.audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "import.service.copy" }));
+  });
+
+  it("a service lands in its Coolify project / environment, like an app or a database", async () => {
+    const f = fleetOf(["alpha-meilisearch"]);
+    f.services[0].projectRef = "p-acme";
+    f.services[0].environmentRef = "p-acme#39";
+    f.projects = [{ ref: "p-acme", name: "Acme", tags: [], environments: [{ ref: "p-acme#39", name: "production", isDefault: true }] }];
+    const findOrCreateProject = jest.fn().mockResolvedValue({ projectId: "pj-1", created: true, environments: { production: "env-acme-prod" }, createdEnvironments: ["production"] });
+    const h = harness({ fleet: f, findOrCreateProject });
+    await h.svc.apply("u1", { ...input(f), environmentId: "env-selected" });
+    await flush();
+    expect(findOrCreateProject).toHaveBeenCalledWith("u1", "team-1", expect.objectContaining({ name: "Acme", environments: [{ name: "production", isDefault: true }] }));
+    expect(h.apps.create.mock.calls[0][1]).toMatchObject({ name: "alpha-meilisearch", environmentId: "env-acme-prod" });
+  });
+
+  it("a service with no source placement keeps the selected environment", async () => {
+    const f = fleetOf(["alpha-meilisearch"]);
+    const h = harness({ fleet: f });
+    await h.svc.apply("u1", { ...input(f), environmentId: "env-selected" });
+    await flush();
+    expect(h.apps.create.mock.calls[0][1]).toMatchObject({ environmentId: "env-selected" });
+  });
+
+  it("the plan names the project and environment a service will land in", () => {
+    const f = fleetOf(["alpha-meilisearch"]);
+    f.services[0].projectRef = "p-acme";
+    f.services[0].environmentRef = "p-acme#39";
+    f.projects = [{ ref: "p-acme", name: "Acme", tags: [], environments: [{ ref: "p-acme#39", name: "production", isDefault: true }] }];
+    const item = planImport(f, { sourceKind: "coolify" }).items.find((i) => i.kind === "service")!;
+    expect(item.risks[0]).toMatchObject({ level: "info", code: "service.project" });
+    expect(item.risks[0].message).toContain('"Acme"');
+  });
+
+  it("under a mapping a service follows its renamed source project / environment; a skipped or explicitly placed one is left alone", async () => {
+    const f = fleetOf(["alpha-meilisearch"]);
+    f.services[0].projectRef = "p-acme";
+    f.services[0].environmentRef = "p-acme#39";
+    f.projects = [{ ref: "p-acme", name: "Acme", tags: [], environments: [{ ref: "p-acme#39", name: "production", isDefault: true }] }];
+    const findOrCreateProject = jest.fn().mockResolvedValue({ projectId: "pj-1", created: false, environments: { live: "env-live" }, createdEnvironments: [] });
+    const h = harness({ fleet: f, findOrCreateProject });
+    const ref = itemRefOf("alpha-meilisearch");
+    const place = (choices: Record<string, ServiceChoice>, runnable = true) => {
+      const tree = { envByRef: new Map(), summary: [], warnings: [], envBySourceService: new Map<string, string>() };
+      return (h.svc as any).placeMappedServices("u1", "team-1", f, { "p-acme": { name: "Shop", environments: { "p-acme#39": "live" } } }, choices, () => runnable, tree).then(() => tree);
+    };
+    const tree = await place({});
+    expect(findOrCreateProject).toHaveBeenCalledWith("u1", "team-1", expect.objectContaining({ name: "Shop", environments: [{ name: "live", isDefault: true }] }));
+    expect(tree.envBySourceService.get(ref)).toBe("env-live");
+    findOrCreateProject.mockClear();
+    expect((await place({ [ref]: { skip: true } as ServiceChoice })).envBySourceService.size).toBe(0);
+    expect((await place({ [ref]: { environmentId: "env-x" } as ServiceChoice })).envBySourceService.size).toBe(0);
+    expect((await place({}, false)).envBySourceService.size).toBe(0);
+    expect(findOrCreateProject).not.toHaveBeenCalled();
+    // a project the caller may not create degrades to a fixed warning
+    findOrCreateProject.mockRejectedValueOnce(new Error("forbidden: secret detail"));
+    const failed = await place({});
+    expect(failed.envBySourceService.size).toBe(0);
+    expect(failed.warnings).toHaveLength(1);
+    expect(failed.warnings[0]).not.toContain("secret detail");
   });
 
   it("never deploys and never calls a deploy path", async () => {
