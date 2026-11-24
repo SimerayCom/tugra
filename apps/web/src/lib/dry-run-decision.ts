@@ -7,7 +7,7 @@ import type { MigrationRunDryRunItem, MigrationRunMode, MigrationRunParams, Migr
  */
 
 /** A fix the operator can take for a warning. New kinds are added here and rendered in `dry-run-decision.tsx`. */
-export type WarningFix = { kind: "link"; href: string; labelKey: string } | { kind: "safety"; labelKey: string };
+export type WarningFix = { kind: "link"; href: string; labelKey: string } | { kind: "safety"; labelKey: string } | { kind: "pin"; labelKey: string };
 
 /** What the screen knows about one warning code. Everything is optional: an unknown warning still shows, with its own sentence and "Accept and continue". */
 export interface WarningSpec {
@@ -41,7 +41,12 @@ export const WARNING_REGISTRY: Record<string, WarningSpec> = {
   "import.risk-warning:service.image.floating": {
     titleKey: "migrationRun.decision.warn.imageFloating",
     hintKey: "migrationRun.decision.warn.imageFloatingHint",
-    fix: { kind: "safety", labelKey: "migrationRun.decision.fix.pinInReview" },
+    fix: { kind: "pin", labelKey: "migrationRun.decision.fix.pinInReview" },
+  },
+  // the gate's own check of the same images (image apps and stack members): apps are pinned by digest in Details, members here
+  "preflight.images-unpinned": {
+    hintKey: "migrationRun.decision.warn.imageFloatingHint",
+    fix: { kind: "pin", labelKey: "migrationRun.decision.fix.pinInReview" },
   },
   "import.risk-warning:app.image.transfer": {
     titleKey: "migrationRun.decision.warn.imageTransfer",
@@ -133,9 +138,11 @@ export interface DryRunDecision {
   verdict: DecisionVerdict;
   blockers: DecisionIssue[];
   warnings: DecisionIssue[];
-  /** The warnings the operator has not accepted (and can accept: a key the hub cannot store is only shown). */
+  /** The warnings the operator has not accepted or fixed (and can accept: a key the hub cannot store is only shown). */
   open: DecisionIssue[];
   accepted: DecisionIssue[];
+  /** The warnings a pin fixed (the hub says which): they need no acceptance. */
+  fixed: DecisionIssue[];
   summary: DecisionSummary;
 }
 
@@ -193,17 +200,19 @@ export function summaryOf(run: Pick<MigrationRunView, "steps">): DecisionSummary
   };
 }
 
-/** The decision of a finished dry run, given the warning keys the operator already accepted. */
-export function decisionOf(run: Pick<MigrationRunView, "steps">, accepted: Iterable<string> = []): DryRunDecision {
+/** The decision of a finished dry run, given the warning keys the operator already accepted and the ones the hub reports as fixed. */
+export function decisionOf(run: Pick<MigrationRunView, "steps">, accepted: Iterable<string> = [], fixedKeys: Iterable<string> = []): DryRunDecision {
   const ok = new Set(accepted);
+  const fix = new Set(fixedKeys);
   const issues = issuesOf(run);
   // block and unknown would stop the real run (the hub's contract for a dry-run item)
   const blockers = issues.filter((i) => i.level === "block" || i.level === "unknown");
   const warnings = issues.filter((i) => i.level === "warn");
   // a warning whose key the hub cannot store has no decision to take (nothing to accept), so it never holds Start back
-  const open = warnings.filter((w) => !ok.has(w.key) && isAckableKey(w.key));
+  const open = warnings.filter((w) => !ok.has(w.key) && !fix.has(w.key) && isAckableKey(w.key));
   const done = warnings.filter((w) => ok.has(w.key));
-  return { verdict: blockers.length > 0 ? "blocked" : open.length > 0 ? "warnings" : "clean", blockers, warnings, open, accepted: done, summary: summaryOf(run) };
+  const fixed = warnings.filter((w) => fix.has(w.key) && !ok.has(w.key));
+  return { verdict: blockers.length > 0 ? "blocked" : open.length > 0 ? "warnings" : "clean", blockers, warnings, open, accepted: done, fixed, summary: summaryOf(run) };
 }
 
 /** The registry entry of a warning, or an empty one (a warning nobody wrote a sentence for). */
@@ -217,3 +226,68 @@ export const ROLLBACK_PATH_KEY: Record<MigrationRunMode, string> = {
   copy: "migrationRun.decision.rollback.copy",
   takeover: "migrationRun.decision.rollback.takeover",
 };
+
+/** One floating image behind a warning, as the dry run lists it. `member` is empty for an image app. */
+export interface PinEntry {
+  itemRef: string;
+  member: string;
+  /** The image as the source writes it. */
+  image: string;
+  /** The concrete version the source's own record shows for it ("" = none: only a floating ref is known). */
+  seen: string;
+}
+
+/** The floating images a warning carries (index-aligned arrays in its params); none when the hub sent none or they do not line up. */
+export function pinEntriesOf(params: MigrationRunParams | undefined): PinEntry[] {
+  const arr = (v: unknown): string[] | null => (Array.isArray(v) && v.every((x) => typeof x === "string") ? (v as string[]) : null);
+  const items = arr(params?.imageItems);
+  const members = arr(params?.imageMembers);
+  const images = arr(params?.images);
+  const seen = arr(params?.imageSeen);
+  if (!items || !members || !images || !seen || members.length !== items.length || images.length !== items.length || seen.length !== items.length) return [];
+  return items.map((itemRef, i) => ({ itemRef, member: members[i], image: images[i], seen: seen[i] }));
+}
+
+/** The entries of a warning a stack pin can fix (members of compose stacks whose image the dry run knows). */
+export const memberPinEntries = (params: MigrationRunParams | undefined): PinEntry[] => pinEntriesOf(params).filter((e) => e.member !== "" && e.image !== "");
+
+/** True when the warning also lists image apps (their pins are digests, set in Details). */
+export const hasAppImages = (params: MigrationRunParams | undefined): boolean => pinEntriesOf(params).some((e) => e.member === "");
+
+const DIGEST = /^sha256:[a-f0-9]{64}$/;
+const TAG = /^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$/;
+/** The repository of an image ref: tag and digest cut off, the registry host and port kept. */
+export function imageRepo(image: string): string {
+  const noDigest = image.split("@")[0];
+  const last = noDigest.split("/").pop() ?? noDigest;
+  const colon = last.indexOf(":");
+  return colon < 0 ? noDigest : noDigest.slice(0, noDigest.length - (last.length - colon));
+}
+
+/**
+ * The pin ref of what the operator typed for an image: a `sha256:` digest becomes `repo@sha256:...`, a version tag becomes `repo:tag`,
+ * and `latest` (or anything else) is not a pin. Null when it is not usable. A full ref of the same repository is taken as it is.
+ */
+export function pinRefOf(image: string, typed: string): string | null {
+  const v = typed.trim();
+  if (!v) return null;
+  const repo = imageRepo(image);
+  if (DIGEST.test(v)) return `${repo}@${v}`;
+  if (v.includes("/") || v.includes("@") || (v.includes(":") && !TAG.test(v))) {
+    const same = imageRepo(v) === repo && v.length <= 300 && /^[A-Za-z0-9][A-Za-z0-9._/-]{0,200}(:[A-Za-z0-9_][A-Za-z0-9._-]{0,127})?(@sha256:[a-f0-9]{64})?$/.test(v);
+    const last = v.split("@")[0].split("/").pop() ?? v;
+    const floating = !v.includes("@") && (!last.includes(":") || last.slice(last.indexOf(":") + 1) === "latest");
+    return same && !floating ? v : null;
+  }
+  return TAG.test(v) && v !== "latest" ? `${repo}:${v}` : null;
+}
+
+/** What goes in the version box before the operator types: the tag or digest of the version the source shows ("" when it shows none). */
+export function pinDraftOf(seen: string): string {
+  if (!seen) return "";
+  const at = seen.indexOf("@");
+  if (at >= 0) return seen.slice(at + 1);
+  const last = seen.split("/").pop() ?? seen;
+  const colon = last.indexOf(":");
+  return colon < 0 ? "" : last.slice(colon + 1);
+}

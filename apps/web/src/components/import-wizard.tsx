@@ -463,11 +463,7 @@ function PlanView({
         </Btn>
         </>
         )}
-        {scope?.narrowed ? (
-          <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "16px 0 0" }}>{t("import.scope.narrowedGuided")}</p>
-        ) : (
-          <GuidedRunLauncher plan={plan} kind={kind} sessionId={sessionId} servers={writableServers} extras={applyExtras} disabled={replanning || runnable === 0 || unackedCount > 0 || missingTargets > 0} />
-        )}
+        <GuidedRunLauncher plan={plan} kind={kind} sessionId={sessionId} servers={writableServers} extras={applyExtras} scope={scope} disabled={replanning || runnable === 0 || unackedCount > 0 || missingTargets > 0} />
       </SectionCard>
 
       <EnvBlockers plan={plan} acked={acked} onChange={setAcked} />

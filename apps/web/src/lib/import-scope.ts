@@ -1,4 +1,4 @@
-import type { ImportMappingDoc, ImportPlan, ImportPlanItem, ImportServiceChoice } from "./types";
+import type { ImportMappingDoc, ImportPlan, ImportPlanItem, ImportServiceChoice, MigrationRunScope } from "./types";
 import { UNKNOWN_SOURCE_HOST, sourceServersOf, type SourceServerRow } from "./migration-run";
 import { setItemField } from "./import-mapping";
 
@@ -29,12 +29,29 @@ export interface ImportScope {
   selection: ScopeSelection;
   /** The itemRefs that stay in (apps, databases, services and the volumes they carry). */
   inScope: ReadonlySet<string>;
-  /** True when something of the plan is left out (a guided run, which has no mapping, would still move all of it). */
+  /** True when something of the plan is left out (a guided run then carries the scope, see {@link scopePayload}). */
   narrowed: boolean;
   /** The default target server (the first involved source server's pick). */
   defaultServerId: string;
   /** Sent as `serverMap` only when the involved source servers land on more than one Tugra server; otherwise undefined. */
   serverMap: Record<string, string> | undefined;
+}
+
+/**
+ * What a guided run is told about a narrowed scope: the picked source servers or projects and the items pulled in on top. The hub
+ * resolves it against the live plan and leaves everything else out of the run, so what the run moves is exactly this selection.
+ * Undefined when the whole source moves. Refs are sorted so the same pick sends the same body.
+ */
+export function scopePayload(scope: ImportScope | null | undefined): MigrationRunScope | undefined {
+  if (!scope?.narrowed) return undefined;
+  const sel = scope.selection;
+  const sorted = (xs: ReadonlySet<string>): string[] => [...xs].sort();
+  const sourceServers = sel.mode === "servers" ? sorted(sel.hosts) : [];
+  const projects = sel.mode === "projects" ? sorted(sel.projects) : [];
+  // an "everything" selection is never narrowed; the extras only mean something on top of a server or project pick
+  const include = sel.mode === "everything" ? [] : sorted(sel.extra);
+  if (sourceServers.length + projects.length + include.length === 0) return undefined;
+  return { ...(sourceServers.length ? { sourceServers } : {}), ...(projects.length ? { projects } : {}), ...(include.length ? { include } : {}) };
 }
 
 /** The source server ref of a plan itemRef (`<kind>:<serverRef|_>:<ref>`); `_` when unknown. */

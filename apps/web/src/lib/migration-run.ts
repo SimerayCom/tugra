@@ -27,6 +27,7 @@ import type {
   MigrationRunView,
   MigrationRunOwnerInputKey,
   MigrationRunOptions as RunOptionsType,
+  MigrationRunScope,
   MigrationRunServerMap,
   MigrationRunSourceVersionVerdict,
   ImportApplyExtras,
@@ -760,6 +761,8 @@ export interface LaunchForm {
   serviceStart?: NonNullable<RunOptionsType["serviceStart"]>;
   stopSource?: boolean;
   policies?: LaunchPolicies;
+  /** The narrowed scope of the import's first step (undefined = the whole source). */
+  scope?: MigrationRunScope;
 }
 
 /** Practical email shape check (the hub validates strictly; this only keeps an obvious typo from being sent). */
@@ -841,6 +844,7 @@ export function buildLaunchInput(f: LaunchForm): MigrationRunCreateInput {
     },
     ...(f.placement && Object.keys(f.placement).length ? { serverMap: f.placement } : {}),
     ...(f.campaign?.trim() ? { campaign: f.campaign.trim() } : {}),
+    ...(f.scope ? { scope: f.scope } : {}),
   };
 }
 
@@ -1016,6 +1020,17 @@ export const ERROR_CODE_KEY: Record<string, string> = {
   "command-kind-unavailable": "migrationRun.errors.command-kind-unavailable",
   "hints-closed": "migrationRun.errors.hints-closed",
   "server-has-live-run": "migrationRun.errors.server-has-live-run",
+  "dry-run-warnings-open": "migrationRun.errors.dry-run-warnings-open",
+  "unknown-warning": "migrationRun.errors.unknown-warning",
+  "unknown-image": "migrationRun.errors.unknown-image",
+  "invalid-pin": "migrationRun.errors.invalid-pin",
+  "too-many-service-pins": "migrationRun.errors.too-many-service-pins",
+  "too-many-service-choices": "migrationRun.errors.too-many-service-choices",
+  "scope-unknown-server": "migrationRun.errors.scope-unknown",
+  "scope-unknown-project": "migrationRun.errors.scope-unknown",
+  "scope-unknown-item": "migrationRun.errors.scope-unknown",
+  "scope-empty": "migrationRun.errors.scope-empty",
+  "plan-changed": "migrationRun.errors.plan-changed",
 };
 
 /** An error from the hub as one readable line: a known machine code is localized, anything else is the hub's message. */

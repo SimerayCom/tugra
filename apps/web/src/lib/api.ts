@@ -2690,6 +2690,10 @@ export const api = {
   setMigrationRunWarningAcks(id: string, body: { acks: Array<{ key: string; accepted: boolean }> }) {
     return apiFetch<MigrationRunSafetyHints>(`/migration-runs/${encodeURIComponent(id)}/warning-acks`, { method: "PUT", body: JSON.stringify(body) });
   },
+  /** Pin (or, with `ref: null`, unpin) floating members of the compose stacks a finished dry run lists. */
+  setMigrationRunServicePins(id: string, body: { pins: Array<{ itemRef: string; member: string; ref: string | null }> }) {
+    return apiFetch<MigrationRunSafetyHints>(`/migration-runs/${encodeURIComponent(id)}/service-pins`, { method: "PUT", body: JSON.stringify(body) });
+  },
   getMigrationRunReport(id: string) {
     return apiFetch<MigrationRunReport>(`/migration-runs/${encodeURIComponent(id)}/report`);
   },

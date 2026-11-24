@@ -742,8 +742,7 @@ describe("ImportWizard — editable mapping", () => {
     await screen.findByText("Import preview");
     expect(screen.getByText("api-app")).toBeTruthy();
     expect(screen.queryByText("web-app")).toBeNull();
-    expect(screen.getByText("Guided runs move the whole source. Choose Everything to use one.")).toBeTruthy();
-    expect(screen.queryByRole("button", { name: /guided/i })).toBeNull();
+    expect(screen.getByRole("button", { name: "Run guided migration" })).toBeTruthy();
     // Change reopens the first step as it was left
     fireEvent.click(screen.getByRole("button", { name: "Change" }));
     await screen.findByText("What are you moving?");

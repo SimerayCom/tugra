@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { BLOCKER_REGISTRY, WARNING_REGISTRY, blockerSpec, canAccept, decisionOf, isAckableKey, summaryOf, warningKey, warningSpec, GENERIC_BLOCKER } from "./dry-run-decision";
+import { BLOCKER_REGISTRY, WARNING_REGISTRY, blockerSpec, canAccept, decisionOf, hasAppImages, isAckableKey, memberPinEntries, pinDraftOf, pinEntriesOf, pinRefOf, summaryOf, warningKey, warningSpec, GENERIC_BLOCKER } from "./dry-run-decision";
 import { mkStep } from "../components/migration-run/test-fixtures";
 import en from "../i18n/locales/en";
 import type { MigrationRunDryRunItem, MigrationRunStepKey } from "./types";
@@ -127,5 +127,58 @@ describe("registries", () => {
 
   it("every registered warning key is a key the hub accepts", () => {
     for (const k of Object.keys(WARNING_REGISTRY)) expect(isAckableKey(k), k).toBe(true);
+  });
+});
+
+describe("decisionOf: fixed warnings", () => {
+  const run = { steps: steps({ IMPORT: [{ code: "import.risk-warning", level: "warn", params: { risk: "service.image.floating" } }, { code: "x.warn", level: "warn" }] }) };
+  it("a warning the hub reports as fixed is not open and not accepted", () => {
+    const d = decisionOf(run, [], ["import.risk-warning:service.image.floating"]);
+    expect(d.open.map((w) => w.key)).toEqual(["x.warn"]);
+    expect(d.fixed.map((w) => w.key)).toEqual(["import.risk-warning:service.image.floating"]);
+    expect(d.accepted).toEqual([]);
+    expect(decisionOf(run, ["x.warn"], ["import.risk-warning:service.image.floating"]).verdict).toBe("clean");
+  });
+  it("without any fixed key nothing changes", () => {
+    expect(decisionOf(run, []).open).toHaveLength(2);
+    expect(decisionOf(run, []).fixed).toEqual([]);
+  });
+});
+
+describe("the floating images of a warning", () => {
+  const params = { imageCount: 3, imageItems: ["service:s:a", "service:s:a", "app:s:b"], imageMembers: ["meili", "web", ""], images: ["getmeili/meilisearch:latest", "ghcr.io/acme/web", "img/proxy:latest"], imageSeen: ["getmeili/meilisearch:v1.8.0", "", ""] };
+  it("reads the index-aligned params, splitting stack members from image apps", () => {
+    expect(pinEntriesOf(params)).toHaveLength(3);
+    expect(memberPinEntries(params).map((e) => e.member)).toEqual(["meili", "web"]);
+    expect(hasAppImages(params)).toBe(true);
+    expect(hasAppImages({ ...params, imageItems: ["a"], imageMembers: ["m"], images: ["x"], imageSeen: [""] })).toBe(false);
+  });
+  it("reads nothing from params that are missing or do not line up", () => {
+    expect(pinEntriesOf(undefined)).toEqual([]);
+    expect(pinEntriesOf({ ...params, imageSeen: [""] })).toEqual([]);
+    expect(pinEntriesOf({ ...params, images: "x" as never })).toEqual([]);
+  });
+});
+
+describe("pinRefOf / pinDraftOf", () => {
+  const IMG = "getmeili/meilisearch:latest";
+  it("a version tag or a digest becomes a ref of the same repository", () => {
+    expect(pinRefOf(IMG, "v1.8.0")).toBe("getmeili/meilisearch:v1.8.0");
+    expect(pinRefOf(IMG, ` 1.8 `)).toBe("getmeili/meilisearch:1.8");
+    expect(pinRefOf("ghcr.io:5000/acme/web", `sha256:${"a".repeat(64)}`)).toBe(`ghcr.io:5000/acme/web@sha256:${"a".repeat(64)}`);
+  });
+  it("latest, empty and malformed are not pins; a full ref must be the same repository and not floating", () => {
+    for (const bad of ["", "  ", "latest", "a b", "sha256:short", "-x"]) expect(pinRefOf(IMG, bad), bad).toBeNull();
+    expect(pinRefOf(IMG, "getmeili/meilisearch:v1")).toBe("getmeili/meilisearch:v1");
+    expect(pinRefOf(IMG, "evil/meilisearch:v1")).toBeNull();
+    expect(pinRefOf(IMG, "getmeili/meilisearch:latest")).toBeNull();
+    expect(pinRefOf(IMG, "getmeili/meilisearch")).toBeNull();
+    expect(pinRefOf("redis:latest", "redis:7")).toBe("redis:7");
+  });
+  it("the draft is the tag or digest of what the source shows", () => {
+    expect(pinDraftOf("getmeili/meilisearch:v1.8.0")).toBe("v1.8.0");
+    expect(pinDraftOf(`repo@sha256:${"b".repeat(64)}`)).toBe(`sha256:${"b".repeat(64)}`);
+    expect(pinDraftOf("registry:5000/repo")).toBe("");
+    expect(pinDraftOf("")).toBe("");
   });
 });

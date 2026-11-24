@@ -26,6 +26,7 @@ import {
 import { AdvancedFields, type AdvancedState } from "./launch-advanced";
 import { PlacementFields } from "./launch-placement";
 import { HelpLink } from "../help-link";
+import { scopePayload, type ImportScope } from "../../lib/import-scope";
 import type { ImportApplyExtras, ImportPlan, ImportRemoteKind, MigrationRunMode, MigrationRunServerMap, MigrationRunTopology } from "../../lib/types";
 
 interface Props {
@@ -34,6 +35,8 @@ interface Props {
   sessionId: string;
   servers: Array<{ id: string; name: string; teamId: string }>;
   extras: ImportApplyExtras;
+  /** The import's first step: when it narrowed the move, the run carries it, so it moves exactly what was chosen. */
+  scope?: ImportScope | null;
   disabled?: boolean;
 }
 
@@ -53,12 +56,14 @@ export function GuidedRunLauncher(props: Props) {
   );
 }
 
-function LaunchDialog({ plan, kind, sessionId, servers, extras, onClose }: Props & { onClose: () => void }) {
+function LaunchDialog({ plan, kind, sessionId, servers, extras, scope, onClose }: Props & { onClose: () => void }) {
   const t = useT();
   const toast = useToast();
   const router = useRouter();
   const qc = useQueryClient();
-  const [targetServerId, setTarget] = useState(servers[0]?.id ?? "");
+  // a narrowed move starts from what the first step chose: its default target, and its placement when it used several servers
+  const chosenTarget = scope?.narrowed && servers.some((s) => s.id === scope.defaultServerId) ? scope.defaultServerId : "";
+  const [targetServerId, setTarget] = useState(chosenTarget || servers[0]?.id || "");
   const [dryRun, setDryRun] = useState(true);
   const [mode, setMode] = useState<MigrationRunMode>("copy");
   const [topology, setTopology] = useState<MigrationRunTopology>("two-box");
@@ -67,7 +72,7 @@ function LaunchDialog({ plan, kind, sessionId, servers, extras, onClose }: Props
   const [allowBind, setAllowBind] = useState(false);
   const [probe, setProbe] = useState(false);
   const [observe, setObserve] = useState("30");
-  const [placement, setPlacement] = useState<MigrationRunServerMap | null>(null);
+  const [placement, setPlacement] = useState<MigrationRunServerMap | null>(chosenTarget && scope?.serverMap ? { ...scope.serverMap } : null);
   const [adv, setAdv] = useState<AdvancedState>({
     campaign: "",
     sourceRunner: "operator",
@@ -92,7 +97,7 @@ function LaunchDialog({ plan, kind, sessionId, servers, extras, onClose }: Props
 
   const form = {
     sessionId, sourceKind: kind, targetServerId, planHash: plan.planHash, extras, mode, topology, dryRun, acmeEmail, allowBind, allowLiveShapeProbe: probe, sourceController: controller, observeMinutes: observe,
-    placement, campaign: adv.campaign, sourceRunner: adv.sourceRunner, hostLoop: adv.hostLoop, deployWaves: adv.deployWaves, deployConcurrency: adv.deployConcurrency, largeDbMode: adv.largeDbMode, serviceStart: adv.serviceStart, stopSource: adv.stopSource, policies: adv.policies,
+    placement, scope: scopePayload(scope), campaign: adv.campaign, sourceRunner: adv.sourceRunner, hostLoop: adv.hostLoop, deployWaves: adv.deployWaves, deployConcurrency: adv.deployConcurrency, largeDbMode: adv.largeDbMode, serviceStart: adv.serviceStart, stopSource: adv.stopSource, policies: adv.policies,
   };
   const issues = launchIssues(form);
   const create = useMutation({
@@ -118,6 +123,11 @@ function LaunchDialog({ plan, kind, sessionId, servers, extras, onClose }: Props
           <HelpLink guide={topology === "swap-proxy" ? "move-from-coolify-same-server" : "move-from-coolify"} />
         </div>
         <p style={{ margin: 0, fontSize: 12, color: "var(--c-tx3)", lineHeight: 1.5 }}>{t("migrationRun.launch.dialogDesc")}</p>
+        {scope?.narrowed && (
+          <p role="note" style={{ margin: 0, fontSize: 12, color: "var(--c-tx2)", lineHeight: 1.5 }}>
+            {t("migrationRun.launch.scoped", { count: plan.items.filter((i) => i.kind === "app" || i.kind === "database" || i.kind === "service").length })}
+          </p>
+        )}
 
         <Field label={t("migrationRun.launch.target")} hint={t("migrationRun.launch.targetHint")} error={issues.includes("target") ? t("migrationRun.launch.targetMissing") : undefined}>
           <Select value={targetServerId} onChange={changeTarget} options={servers.map((s) => ({ value: s.id, label: s.name }))} style={{ minHeight: 44 }} />

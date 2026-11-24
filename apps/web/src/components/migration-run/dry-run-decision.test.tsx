@@ -36,7 +36,7 @@ const wrap = (run: MigrationRunView, onOpenSafety?: () => void) =>
       </I18nProvider>
     </QueryClientProvider>,
   );
-const hints = (warningAcks: string[] = []) => ({ imagePins: [], workerMarks: [], warningAcks });
+const hints = (warningAcks: string[] = [], over: Record<string, unknown> = {}) => ({ imagePins: [], workerMarks: [], warningAcks, servicePins: [], warningsFixed: [], ...over });
 
 describe("DryRunDecision", () => {
   it("green: says there are no problems and starts the real migration (through the same confirm as promotion)", async () => {
@@ -121,7 +121,7 @@ describe("DryRunDecision", () => {
     await screen.findByText("2 warnings");
     fireEvent.click(screen.getByRole("button", { name: "Accept all" }));
     await waitFor(() => expect(save).toHaveBeenCalledWith("run12345abcdef", { acks: keys.map((key) => ({ key, accepted: true })) }));
-    await screen.findByText("No open problems. You accepted 2 warnings. You can start the real migration.");
+    await screen.findByText("No open problems. 2 warnings accepted or fixed. You can start the real migration.");
     expect((screen.getByRole("button", { name: "Start migration" }) as HTMLButtonElement).disabled).toBe(false);
   });
 
@@ -129,7 +129,7 @@ describe("DryRunDecision", () => {
     vi.spyOn(api, "getMigrationRunSafetyHints").mockResolvedValue(hints(["import.risk-warning:app.git.private"]));
     const save = vi.spyOn(api, "setMigrationRunWarningAcks").mockResolvedValue(hints());
     wrap(dryRun({ IMPORT: [risk("app.git.private", ["web"])] }));
-    await screen.findByText("No open problems. You accepted 1 warnings. You can start the real migration.");
+    await screen.findByText("No open problems. 1 warnings accepted or fixed. You can start the real migration.");
     fireEvent.click(screen.getByRole("button", { name: /Undo accepting/ }));
     await waitFor(() => expect(save).toHaveBeenCalledWith("run12345abcdef", { acks: [{ key: "import.risk-warning:app.git.private", accepted: false }] }));
     await screen.findByText("1 warning");
@@ -164,5 +164,79 @@ describe("DryRunDecision", () => {
     vi.spyOn(api, "getMigrationRunSafetyHints").mockRejectedValue(new Error("x"));
     wrap(dryRun({ IMPORT: [risk("app.git.private", ["web"])] }));
     await screen.findByText("1 warning");
+  });
+});
+
+describe("DryRunDecision: pin to the source version", () => {
+  const SVC = "service:src:abc";
+  const floating = (seen: string[]): MigrationRunDryRunItem => ({
+    code: "import.risk-warning",
+    level: "warn",
+    params: { risk: "service.image.floating", count: 2, items: ["search"], imageCount: 2, imageItems: [SVC, SVC], imageMembers: ["meili", "web"], images: ["getmeili/meilisearch:latest", "ghcr.io/acme/web"], imageSeen: seen },
+  });
+  const KEY = "import.risk-warning:service.image.floating";
+
+  it("one click pins every member when the source shows a version for each, and the screen turns green", async () => {
+    vi.spyOn(api, "getMigrationRunSafetyHints").mockResolvedValue(hints());
+    const pin = vi.spyOn(api, "setMigrationRunServicePins").mockResolvedValue(hints([], { warningsFixed: [KEY], servicePins: [] }));
+    wrap(dryRun({ IMPORT: [floating(["getmeili/meilisearch:v1.8.0", "ghcr.io/acme/web:2.1.0"])] }));
+    await screen.findByText("1 warning");
+    fireEvent.click(screen.getByRole("button", { name: "Pin to the source version" }));
+    await waitFor(() =>
+      expect(pin).toHaveBeenCalledWith("run12345abcdef", {
+        pins: [
+          { itemRef: SVC, member: "meili", ref: "getmeili/meilisearch:v1.8.0" },
+          { itemRef: SVC, member: "web", ref: "ghcr.io/acme/web:2.1.0" },
+        ],
+      }),
+    );
+    await screen.findByText("No open problems. 1 warnings accepted or fixed. You can start the real migration.");
+    expect(screen.getByText(/Pinned\./)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Accept and continue/ })).toBeNull();
+    expect((screen.getByRole("button", { name: "Start migration" }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("without a version from the source it asks for one per member, prefilled where known, and pins a tag or a digest", async () => {
+    vi.spyOn(api, "getMigrationRunSafetyHints").mockResolvedValue(hints());
+    const pin = vi.spyOn(api, "setMigrationRunServicePins").mockResolvedValue(hints());
+    wrap(dryRun({ IMPORT: [floating(["getmeili/meilisearch:v1.8.0", ""])] }));
+    await screen.findByText("1 warning");
+    expect(screen.queryByRole("button", { name: "Pin to the source version" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Pin versions" }));
+    const meili = screen.getByLabelText("Version for meili") as HTMLInputElement;
+    const web = screen.getByLabelText("Version for web") as HTMLInputElement;
+    expect(meili.value).toBe("v1.8.0");
+    expect(screen.getByText("Source image: ghcr.io/acme/web")).toBeTruthy();
+    const submit = screen.getByRole("button", { name: "Pin" }) as HTMLButtonElement;
+    expect(submit.disabled).toBe(true); // web has no version yet
+    fireEvent.change(web, { target: { value: "latest" } });
+    expect(screen.getByText("Use a version tag other than latest, or a sha256 digest.")).toBeTruthy();
+    expect(submit.disabled).toBe(true);
+    fireEvent.change(web, { target: { value: `sha256:${"a".repeat(64)}` } });
+    expect(submit.disabled).toBe(false);
+    fireEvent.click(submit);
+    await waitFor(() =>
+      expect(pin).toHaveBeenCalledWith("run12345abcdef", {
+        pins: [
+          { itemRef: SVC, member: "meili", ref: "getmeili/meilisearch:v1.8.0" },
+          { itemRef: SVC, member: "web", ref: `ghcr.io/acme/web@sha256:${"a".repeat(64)}` },
+        ],
+      }),
+    );
+  });
+
+  it("a warning the hub reports as fixed needs no acceptance; image apps still go to Details", async () => {
+    vi.spyOn(api, "getMigrationRunSafetyHints").mockResolvedValue(hints([], { warningsFixed: [KEY] }));
+    wrap(dryRun({ IMPORT: [floating(["", ""])] }));
+    await screen.findByText("No open problems. 1 warnings accepted or fixed. You can start the real migration.");
+    expect(screen.queryByRole("button", { name: "Pin versions" })).toBeNull();
+    cleanup();
+    vi.spyOn(api, "getMigrationRunSafetyHints").mockResolvedValue(hints());
+    const open = vi.fn();
+    wrap(dryRun({ PREFLIGHT: [{ code: "preflight.images-unpinned", level: "warn", params: { count: 1, items: ["proxy"], imageCount: 1, imageItems: ["app:s:p"], imageMembers: [""], images: ["img/proxy:latest"], imageSeen: [""] } }] }), open);
+    await screen.findByText("1 warning");
+    expect(screen.queryByRole("button", { name: "Pin versions" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Pin it in Details" }));
+    expect(open).toHaveBeenCalled();
   });
 });

@@ -7,6 +7,7 @@ import { api } from "../../lib/api";
 import { GuidedRunLauncher } from "./guided-run-launcher";
 import { mkRun } from "./test-fixtures";
 import type { ImportPlan } from "../../lib/types";
+import type { ImportScope } from "../../lib/import-scope";
 
 const push = vi.fn();
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push }) }));
@@ -219,5 +220,39 @@ describe("GuidedRunLauncher", () => {
       expect(body.inputs).not.toHaveProperty("workerPolicy"); // unanswered: the hub's safe default applies
       expect(body.campaign).toBe("wave-1");
     });
+  });
+
+  it("a narrowed move carries its scope and placement, starts from the first step's target, and sends no mapping", async () => {
+    const create = vi.spyOn(api, "createMigrationRun").mockResolvedValue(mkRun({ id: "scoped1" }));
+    const scope: ImportScope = {
+      selection: { mode: "servers", hosts: new Set(["s2", "s1"]), projects: new Set(), extra: new Set(["database:s3:db"]), placement: { s1: "srv1", s2: "srv2" } },
+      inScope: new Set(["app:s1:web", "app:s2:api", "database:s3:db"]),
+      narrowed: true,
+      defaultServerId: "srv2",
+      serverMap: { s1: "srv1", s2: "srv2" },
+    };
+    const item = (itemRef: string, kind: "app" | "database") => ({ itemRef, kind, name: itemRef, proposed: {}, risks: [], dependsOn: [] });
+    const scoped = { ...plan, items: [item("app:s1:web", "app"), item("app:s2:api", "app"), item("database:s3:db", "database")] } as ImportPlan;
+    mount({ plan: scoped, scope });
+    fireEvent.click(screen.getByRole("button", { name: "Run guided migration" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText("Moves only the 3 items you chose.")).toBeTruthy();
+    expect((within(dialog).getByLabelText("Target server") as HTMLSelectElement).value).toBe("srv2");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Create dry run" }));
+    await waitFor(() => expect(create).toHaveBeenCalledTimes(1));
+    const body = create.mock.calls[0][0];
+    expect(body).toMatchObject({ targetServerId: "srv2", serverMap: { s1: "srv1", s2: "srv2" }, scope: { sourceServers: ["s1", "s2"], include: ["database:s3:db"] } });
+    expect(body).not.toHaveProperty("mapping");
+  });
+
+  it("a move of the whole source sends no scope and says nothing about one", async () => {
+    const create = vi.spyOn(api, "createMigrationRun").mockResolvedValue(mkRun({ id: "whole1" }));
+    mount();
+    fireEvent.click(screen.getByRole("button", { name: "Run guided migration" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).queryByText(/Moves only/)).toBeNull();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Create dry run" }));
+    await waitFor(() => expect(create).toHaveBeenCalledTimes(1));
+    expect(create.mock.calls[0][0]).not.toHaveProperty("scope");
   });
 });

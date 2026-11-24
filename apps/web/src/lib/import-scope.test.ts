@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { applyScopeToDoc, buildScope, emptySelection, hostOfItemRef, initialSelection, inScopeRefs, involvedHosts, missingDependencies, projectChoicesFor, scopedPlan, scopeIssue, scopeServiceSkips, sourceProjectRows, type ScopeSelection } from "./import-scope";
+import { applyScopeToDoc, buildScope, scopePayload, emptySelection, hostOfItemRef, initialSelection, inScopeRefs, involvedHosts, missingDependencies, projectChoicesFor, scopedPlan, scopeIssue, scopeServiceSkips, sourceProjectRows, type ScopeSelection } from "./import-scope";
 import { emptyDoc } from "./import-mapping";
 import type { ImportPlan, ImportPlanItem } from "./types";
 
@@ -168,5 +168,26 @@ describe("projectChoicesFor", () => {
   });
   it("works with nothing known", () => {
     expect(projectChoicesFor([], undefined, [])).toEqual([]);
+  });
+});
+
+describe("scopePayload", () => {
+  it("is undefined when the whole source moves", () => {
+    expect(scopePayload(buildScope(plan(), initialSelection(plan(), "t1"), "t1"))).toBeUndefined();
+    expect(scopePayload(null)).toBeUndefined();
+  });
+  it("a server pick sends the picked source servers; picking every server is the whole source", () => {
+    expect(scopePayload(buildScope(plan(), sel({ mode: "servers", hosts: new Set(["s1"]) }), "t1"))).toEqual({ sourceServers: ["s1"] });
+    expect(scopePayload(buildScope(plan(), sel({ mode: "servers", hosts: new Set(["s2", "s1"]) }), "t1"))).toBeUndefined();
+  });
+  it("a project pick sends the projects, and what was pulled in on top rides as include", () => {
+    const p = scopePayload(buildScope(plan(), sel({ mode: "projects", projects: new Set(["p-beta"]), extra: new Set([DB]) }), "t1"));
+    expect(p).toEqual({ projects: ["p-beta"], include: [DB] });
+  });
+  it("sends nothing it did not pick", () => {
+    const p = scopePayload(buildScope(plan(), sel({ mode: "servers", hosts: new Set(["s2"]) }), "t1"));
+    expect(p).toEqual({ sourceServers: ["s2"] });
+    expect(p).not.toHaveProperty("projects");
+    expect(p).not.toHaveProperty("include");
   });
 });

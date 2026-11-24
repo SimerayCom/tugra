@@ -382,6 +382,14 @@ describe("launch form", () => {
     expect(body.inputs?.acmeEmail).toBe("ops@example.org");
     expect(body).not.toHaveProperty("acks");
     expect(body).not.toHaveProperty("dbDataModes");
+    expect(body).not.toHaveProperty("scope");
+  });
+  it("carries the narrowed scope next to the placement, and nothing of a mapping (the hub builds it)", () => {
+    const body = buildLaunchInput({ ...base, scope: { sourceServers: ["s1"], include: ["database:s2:db"] }, placement: { s1: "srv1", s2: "srv2" } });
+    expect(body.scope).toEqual({ sourceServers: ["s1"], include: ["database:s2:db"] });
+    expect(body.serverMap).toEqual({ s1: "srv1", s2: "srv2" });
+    expect(body).not.toHaveProperty("mapping");
+    expect(body).not.toHaveProperty("mappingHash");
   });
 });
 
@@ -390,6 +398,9 @@ describe("errors", () => {
     expect(errorText(t, new Error("409 approval-stale"))).toBe("What you approved no longer matches the current state. Review it again.");
     expect(errorText(t, new Error("run-past-ponr"))).toContain("point of no return");
     expect(errorText(t, new Error("human-confirmation-required"))).toContain("person");
+    expect(errorText(t, new Error("409 dry-run-warnings-open"))).toBe("Some warnings are still open. Fix or accept each one, then start.");
+    expect(errorText(t, new Error("scope-unknown-project"))).toContain("no longer in the source");
+    expect(errorText(t, new Error("scope-empty"))).toContain("Nothing is left");
     expect(errorText(t, new Error("Something specific"))).toBe("Something specific");
     expect(errorText(t, null)).toBe("Something went wrong. Try again.");
   });

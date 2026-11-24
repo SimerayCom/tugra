@@ -7,7 +7,8 @@ import { api } from "../../lib/api";
 import { useT } from "../../i18n/provider";
 import { Btn, LinkBtn, SectionCard } from "../ui";
 import { formatBytes, formatDuration } from "../../lib/import";
-import { ROLLBACK_PATH_KEY, blockerSpec, canAccept, decisionOf, isAckableKey, warningSpec, type DecisionIssue, type WarningFix } from "../../lib/dry-run-decision";
+import { ROLLBACK_PATH_KEY, blockerSpec, canAccept, decisionOf, hasAppImages, isAckableKey, memberPinEntries, warningSpec, type DecisionIssue, type WarningFix } from "../../lib/dry-run-decision";
+import { PinFix } from "./dry-run-pins";
 import { codeText, paramVars } from "../../lib/migration-run";
 import type { MigrationRunSafetyHints, MigrationRunView } from "../../lib/types";
 import { useStartRun } from "./run-actions";
@@ -22,8 +23,22 @@ function subjectsText(subjects: string[]): string {
   return subjects.length > SHOWN_SUBJECTS ? `${head} +${subjects.length - SHOWN_SUBJECTS}` : head;
 }
 
-function FixLink({ fix, onOpenSafety }: { fix: WarningFix; onOpenSafety?: () => void }) {
+function FixLink({ fix, issue, runId, onOpenSafety }: { fix: WarningFix; issue?: DecisionIssue; runId: string; onOpenSafety?: () => void }) {
   const t = useT();
+  if (fix.kind === "pin") {
+    // stack members are pinned right here; image apps are pinned by digest in Details
+    const members = memberPinEntries(issue?.params).length > 0;
+    return (
+      <>
+        {members && <PinFix runId={runId} params={issue?.params} />}
+        {(hasAppImages(issue?.params) || !members) && onOpenSafety && (
+          <Btn variant="ghost" onClick={onOpenSafety}>
+            {t("migrationRun.decision.fix.pinInReview")}
+          </Btn>
+        )}
+      </>
+    );
+  }
   if (fix.kind === "safety") {
     // the pin field lives in the run's Details; without a way to open them the fix is not offered
     return onOpenSafety ? (
@@ -40,7 +55,7 @@ function FixLink({ fix, onOpenSafety }: { fix: WarningFix; onOpenSafety?: () => 
 }
 
 /** One warning: a sentence, what accepting means behind "More", and the actions the registry knows (a fix, accept and continue). */
-function WarningRow({ issue, accepted, busy, onToggle, onOpenSafety }: { issue: DecisionIssue; accepted: boolean; busy: boolean; onToggle: (accept: boolean) => void; onOpenSafety?: () => void }) {
+function WarningRow({ issue, runId, accepted, fixed, busy, onToggle, onOpenSafety }: { issue: DecisionIssue; runId: string; accepted: boolean; fixed: boolean; busy: boolean; onToggle: (accept: boolean) => void; onOpenSafety?: () => void }) {
   const t = useT();
   const spec = warningSpec(issue.key);
   const items = issue.params?.items;
@@ -49,20 +64,21 @@ function WarningRow({ issue, accepted, busy, onToggle, onOpenSafety }: { issue: 
   return (
     <li style={{ display: "flex", flexDirection: "column", gap: 8, padding: "12px 0", borderTop: "1px solid var(--c-bd)", listStyle: "none" }}>
       <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
-        {accepted ? <CheckCircle2 size={16} aria-hidden color="var(--c-g)" style={{ flexShrink: 0, marginTop: 2 }} /> : <AlertTriangle size={16} aria-hidden color="var(--c-am)" style={{ flexShrink: 0, marginTop: 2 }} />}
+        {accepted || fixed ? <CheckCircle2 size={16} aria-hidden color="var(--c-g)" style={{ flexShrink: 0, marginTop: 2 }} /> : <AlertTriangle size={16} aria-hidden color="var(--c-am)" style={{ flexShrink: 0, marginTop: 2 }} />}
         <div style={{ minWidth: 0, fontSize: 14, lineHeight: 1.5, wordBreak: "break-word" }}>
           {title}
           {accepted && <span style={{ color: "var(--c-tx3)" }}> {t("migrationRun.decision.acceptedTag")}</span>}
+          {fixed && <span style={{ color: "var(--c-tx3)" }}> {t("migrationRun.decision.pin.fixedTag")}</span>}
         </div>
       </div>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", paddingLeft: 26 }}>
-        {!accepted && spec.fix && <FixLink fix={spec.fix} onOpenSafety={onOpenSafety} />}
-        {canAccept(issue.key) && (
+        {!accepted && !fixed && spec.fix && <FixLink fix={spec.fix} issue={issue} runId={runId} onOpenSafety={onOpenSafety} />}
+        {canAccept(issue.key) && !fixed && (
           <Btn variant="ghost" disabled={busy} onClick={() => onToggle(!accepted)} aria-label={t(accepted ? "migrationRun.decision.undoAria" : "migrationRun.decision.acceptAria", { what: title })}>
             {accepted ? t("migrationRun.decision.undo") : t("migrationRun.decision.accept")}
           </Btn>
         )}
-        {!accepted && !canAccept(issue.key) && <span style={{ fontSize: 12, color: "var(--c-tx2)" }}>{t(isAckableKey(issue.key) ? "migrationRun.decision.mustFix" : "migrationRun.decision.noDecision")}</span>}
+        {!accepted && !fixed && !canAccept(issue.key) && <span style={{ fontSize: 12, color: "var(--c-tx2)" }}>{t(isAckableKey(issue.key) ? "migrationRun.decision.mustFix" : "migrationRun.decision.noDecision")}</span>}
       </div>
       <details style={{ paddingLeft: 26 }}>
         <summary style={{ cursor: "pointer", fontSize: 12, color: "var(--c-tx3)", minHeight: 44, display: "flex", alignItems: "center" }}>{t("migrationRun.decision.more")}</summary>
@@ -76,7 +92,7 @@ function WarningRow({ issue, accepted, busy, onToggle, onOpenSafety }: { issue: 
   );
 }
 
-function BlockerRow({ issue }: { issue: DecisionIssue }) {
+function BlockerRow({ issue, runId }: { issue: DecisionIssue; runId: string }) {
   const t = useT();
   const spec = blockerSpec(issue.code);
   return (
@@ -93,7 +109,7 @@ function BlockerRow({ issue }: { issue: DecisionIssue }) {
       </div>
       {spec.fix && (
         <div style={{ paddingLeft: 26 }}>
-          <FixLink fix={spec.fix} />
+          <FixLink fix={spec.fix} runId={runId} />
         </div>
       )}
     </li>
@@ -121,7 +137,8 @@ export function DryRunDecision({ run, onOpenSafety }: { run: MigrationRunView; o
   const { onError, toast } = useRunPlumbing(run.id);
   const hints = useQuery<MigrationRunSafetyHints>({ queryKey: runHintsKey(run.id), queryFn: () => api.getMigrationRunSafetyHints(run.id), staleTime: 15_000 });
   const accepted = hints.data?.warningAcks;
-  const d = useMemo(() => decisionOf(run, accepted ?? []), [run, accepted]);
+  const fixedKeys = hints.data?.warningsFixed;
+  const d = useMemo(() => decisionOf(run, accepted ?? [], fixedKeys ?? []), [run, accepted, fixedKeys]);
   const { onStart, pending: starting } = useStartRun(run);
   const save = useMutation({
     mutationFn: (acks: Array<{ key: string; accepted: boolean }>) => api.setMigrationRunWarningAcks(run.id, { acks }),
@@ -146,8 +163,8 @@ export function DryRunDecision({ run, onOpenSafety }: { run: MigrationRunView; o
       ? t(d.blockers.length === 1 ? "migrationRun.decision.blockedOne" : "migrationRun.decision.blockedMany", { count: d.blockers.length })
       : d.verdict === "warnings"
         ? t(d.open.length === 1 ? "migrationRun.decision.warningsOne" : "migrationRun.decision.warningsMany", { count: d.open.length })
-        : d.accepted.length > 0
-          ? t("migrationRun.decision.cleanAccepted", { count: d.accepted.length })
+        : d.accepted.length + d.fixed.length > 0
+          ? t("migrationRun.decision.cleanAccepted", { count: d.accepted.length + d.fixed.length })
           : t("migrationRun.decision.clean");
   const canStart = d.verdict === "clean" && run.allowed.start;
 
@@ -169,7 +186,7 @@ export function DryRunDecision({ run, onOpenSafety }: { run: MigrationRunView; o
         {d.blockers.length > 0 && (
           <section aria-label={t("migrationRun.decision.blockersTitle")}>
             <div style={heading}>{t("migrationRun.decision.blockersTitle")}</div>
-            <ul style={{ margin: "6px 0 0", padding: 0 }}>{d.blockers.map((b) => <BlockerRow key={`${b.level}:${b.key}`} issue={b} />)}</ul>
+            <ul style={{ margin: "6px 0 0", padding: 0 }}>{d.blockers.map((b) => <BlockerRow key={`${b.level}:${b.key}`} issue={b} runId={run.id} />)}</ul>
           </section>
         )}
 
@@ -186,7 +203,7 @@ export function DryRunDecision({ run, onOpenSafety }: { run: MigrationRunView; o
             <ul style={{ margin: "6px 0 0", padding: 0 }}>
               {d.warnings.map((w) => {
                 const isAccepted = d.accepted.includes(w);
-                return <WarningRow key={w.key} issue={w} accepted={isAccepted} busy={save.isPending} onToggle={(accept) => save.mutate([{ key: w.key, accepted: accept }])} onOpenSafety={onOpenSafety} />;
+                return <WarningRow key={w.key} issue={w} runId={run.id} accepted={isAccepted} fixed={d.fixed.includes(w)} busy={save.isPending} onToggle={(accept) => save.mutate([{ key: w.key, accepted: accept }])} onOpenSafety={onOpenSafety} />;
               })}
             </ul>
           </section>

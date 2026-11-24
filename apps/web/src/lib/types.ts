@@ -2914,6 +2914,13 @@ export type MigrationRunServiceStart = "dependencies" | "none" | "all";
 export type MigrationRunSourceVersionVerdict = "supported" | "newer" | "too-old" | "unknown" | "unchecked";
 /** Source server (Coolify server uuid) to Tugra target server id. */
 export type MigrationRunServerMap = Record<string, string>;
+/** What a guided run moves when it is not the whole source (the hub turns it into exclusions): source servers, source projects, items pulled in, items left out. */
+export interface MigrationRunScope {
+  sourceServers?: string[];
+  projects?: string[];
+  include?: string[];
+  exclude?: string[];
+}
 export type MigrationRunConfirmKind = "none" | "run-id" | "target-server" | "target-servers" | "target-server+source-host" | "target-servers+source-host" | "source-host";
 export type MigrationRunProgressUnit = "item" | "byte" | "volume" | "host" | "app" | "database" | "bucket" | "second";
 
@@ -3190,6 +3197,8 @@ export interface MigrationRunCreateInput extends ImportApplyExtras {
   serverMap?: MigrationRunServerMap;
   /** Groups the runs of one campaign. */
   campaign?: string;
+  /** Narrow the run to some source servers / projects / items. Absent = the whole source. */
+  scope?: MigrationRunScope;
 }
 export type MigrationRunInputsRequest = NonNullable<MigrationRunCreateInput["inputs"]>;
 export interface MigrationRunApproveInput {
@@ -3255,4 +3264,8 @@ export interface MigrationRunSafetyHints {
   workerMarks: Array<{ itemRef: string; role: "job-runner" | "web" }>;
   /** The dry-run warnings (see `warningKey`) the operator accepted on the result screen. */
   warningAcks: string[];
+  /** Pins of compose-stack members recorded on a finished dry run (absent on a hub that predates them). */
+  servicePins?: Array<{ itemRef: string; member: string; ref: string; evidence: string }>;
+  /** Warning keys of a finished dry run that a pin fixed: they need no acceptance (absent on a hub that predates them). */
+  warningsFixed?: string[];
 }

@@ -467,6 +467,7 @@
     "desc": "Let the hub drive the whole move, with approvals along the way. The manual apply above stays available.",
     "button": "Run guided migration",
     "dialogDesc": "Start with a dry run: it shows what would happen and changes nothing.",
+    "scoped": "Moves only the {count} items you chose.",
     "target": "Target server",
     "targetHint": "Where the imported resources go. One live run per server.",
     "targetMissing": "Choose a target server.",
@@ -592,7 +593,16 @@
     "attest-note-required": "Name the plan item this container is in the note.",
     "command-kind-unavailable": "This script is not available for this run: it needs the host-loop runner and a known list of source hosts.",
     "hints-closed": "This run can no longer take these facts: it is finished or past the point of no return.",
-    "server-has-live-run": "One of the target servers already has a live guided migration. Finish or abort it first."
+    "server-has-live-run": "One of the target servers already has a live guided migration. Finish or abort it first.",
+    "dry-run-warnings-open": "Some warnings are still open. Fix or accept each one, then start.",
+    "unknown-warning": "That warning is not part of this dry run. Reload the page.",
+    "unknown-image": "That image is not listed in this dry run. Reload the page.",
+    "invalid-pin": "Pin a version of the same image, and not latest.",
+    "too-many-service-pins": "Too many pinned images for one dry run.",
+    "too-many-service-choices": "This move has more per-service settings than one run takes. Narrow what you move.",
+    "scope-unknown": "Something you picked is no longer in the source. Review the plan again.",
+    "scope-empty": "Nothing is left to move. Pick at least one item.",
+    "plan-changed": "The source changed since you reviewed it. Review the plan again."
   },
   "codes": {
     "unknown": "{code}{params}",
@@ -1285,7 +1295,7 @@
   "decision": {
     "title": "Dry run result",
     "clean": "No problems found. You can start the real migration.",
-    "cleanAccepted": "No open problems. You accepted {count} warnings. You can start the real migration.",
+    "cleanAccepted": "No open problems. {count} warnings accepted or fixed. You can start the real migration.",
     "warningsOne": "1 warning",
     "warningsMany": "{count} warnings",
     "warningsHint": "Fix each one, or accept it and continue.",
@@ -1326,7 +1336,17 @@
     "fix": {
       "connectGit": "Connect GitHub",
       "pinInReview": "Pin it in Details",
+      "pinSource": "Pin to the source version",
+      "pinVersions": "Pin versions",
       "reviewAgain": "Open the import review"
+    },
+    "pin": {
+      "versionLabel": "Version for {member}",
+      "versionHint": "Source image: {image}",
+      "versionPlaceholder": "1.8.0 or sha256:...",
+      "invalid": "Use a version tag other than latest, or a sha256 digest.",
+      "apply": "Pin",
+      "fixedTag": "Pinned."
     },
     "warn": {
       "gitPrivate": "Private GitHub repositories need a connected GitHub.",
