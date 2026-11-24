@@ -41,10 +41,22 @@ type Collector struct {
 	prevTime time.Time
 	hasPrev  bool
 	inFlight bool
+
+	// io supplies EXACT net/block counters (Engine API); nil = use docker's 3-significant-digit CLI numbers.
+	io ioSource
+	// exact / labels are the per-Sample lookups ingest consults (keyed by container id / name).
+	exact  map[string]exactIO
+	labels map[string]*protocol.ContainerMeta
 }
 
 // NewCollector returns a Collector whose first Sample reports zero net/block rates.
-func NewCollector() *Collector { return &Collector{prev: map[string]cumulative{}} }
+func NewCollector() *Collector {
+	c := &Collector{prev: map[string]cumulative{}}
+	if e := newEngineClient(); e != nil {
+		c.io = e
+	}
+	return c
+}
 
 // Sample runs `docker stats --no-stream` once and returns each container's usage, filling
 // net/block with the byte/s rate since the previous call (a container's first appearance, and the
@@ -63,7 +75,30 @@ func (c *Collector) Sample(ctx context.Context) ([]protocol.ContainerStat, error
 	if err != nil {
 		return nil, err
 	}
-	return c.ingest(out, time.Now()), nil
+	// Exact counters + allow-listed labels (both best effort; a failure only degrades precision / naming).
+	c.exact, c.labels = nil, collectLabels(cctx)
+	if c.io != nil {
+		c.exact = fetchExact(cctx, c.io, statIDs(out))
+	}
+	stats := c.ingest(out, time.Now())
+	c.exact, c.labels = nil, nil
+	return stats, nil
+}
+
+// statIDs lists the container ids of one `docker stats` payload (capped like the emitted batch).
+func statIDs(out []byte) []string {
+	ids := make([]string, 0)
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		var d statsLine
+		if json.Unmarshal([]byte(strings.TrimSpace(line)), &d) != nil || d.ID == "" {
+			continue
+		}
+		if len(ids) >= maxContainers {
+			break
+		}
+		ids = append(ids, d.ID)
+	}
+	return ids
 }
 
 // ingest parses one `docker stats` payload, derives net/block rates against the previous sample,
@@ -91,6 +126,11 @@ func (c *Collector) ingest(out []byte, now time.Time) []protocol.ContainerStat {
 		curRx, curTx := parseUsage(d.NetIO)
 		curRead, curWrite := parseUsage(d.BlockIO)
 		cur := cumulative{netRx: curRx, netTx: curTx, blkRead: curRead, blkWrite: curWrite}
+		if x, ok := c.exact[d.ID]; ok {
+			// Exact byte counters beat the CLI's rounded strings. A container never flips between the two
+			// sources mid-run unless the socket flaps; a flap shows up as a counter "reset" → rate 0 once.
+			cur = cumulative{netRx: x.netRx, netTx: x.netTx, blkRead: x.blkRead, blkWrite: x.blkWrite}
+		}
 		// Advance the rate baseline for EVERY parsed container, even past the cap — otherwise a
 		// container pushed beyond the first maxContainers loses its cumulative baseline and its
 		// next/block rate silently reads 0 when it re-enters the emitted set (docker's line order
@@ -108,6 +148,9 @@ func (c *Collector) ingest(out []byte, now time.Time) []protocol.ContainerStat {
 			MemUsed:  memUsed,
 			MemTotal: memTotal,
 			MemPct:   parsePct(d.MemPerc),
+		}
+		if m, ok := c.labels[d.Name]; ok {
+			s.Meta = m
 		}
 		if p, ok := c.prev[d.Name]; ok && elapsed > 0 {
 			s.NetRx = rate(p.netRx, cur.netRx, elapsed)

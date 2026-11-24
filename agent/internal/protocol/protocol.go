@@ -159,6 +159,19 @@ type ContainerStat struct {
 	NetTx    float64 `json:"netTx"`    // B/s
 	BlkRead  float64 `json:"blkRead"`  // B/s
 	BlkWrite float64 `json:"blkWrite"` // B/s
+	// Meta carries the few container labels the hub uses to show a real app/project name instead of an
+	// opaque id (Coolify-managed and compose containers). Omitted when the container has none.
+	Meta *ContainerMeta `json:"meta,omitempty"`
+}
+
+// ContainerMeta is the allow-listed subset of a container's labels. Every value is length-capped by the
+// agent; nothing else from the label set (env, commands, secrets in labels) ever leaves the host.
+type ContainerMeta struct {
+	Name     string `json:"name,omitempty"`     // coolify.name
+	Resource string `json:"resource,omitempty"` // coolify.resourceName
+	Project  string `json:"project,omitempty"`  // coolify.projectName
+	Env      string `json:"env,omitempty"`      // coolify.environmentName
+	Service  string `json:"service,omitempty"`  // com.docker.compose.service
 }
 
 type ContainerMetrics struct {
