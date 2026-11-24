@@ -204,7 +204,7 @@ describe("BeszelImportService.apply", () => {
     const t = setup();
     t.prisma.notificationChannel.findMany.mockResolvedValue([{ id: "ch-old", type: "telegram", configEnc: "x" }]);
     t.crypto.decrypt.mockImplementation((s: string) => (s === "x" ? JSON.stringify({ chatId: "@ops", botToken: "1:AAA" }) : JSON.stringify({ identity: "a", password: "b" })));
-    t.prisma.monitor.findMany.mockResolvedValue([{ serverId: "srv1", metric: "CPU" }]);
+    t.prisma.monitor.findMany.mockResolvedValue([{ serverId: "srv1", metric: "CPU", auto: false, thresholdPct: 80, thresholdValue: null, retries: 4 }]);
     const p = await t.svc.preview("u1", { sessionId: "sess1" });
     const r = await t.svc.apply("u1", applyBody(p.hash));
     expect(t.notifications.create).not.toHaveBeenCalled();

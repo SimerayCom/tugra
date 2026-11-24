@@ -344,7 +344,7 @@ export class BeszelImportService {
       if (new Set(picks).size !== picks.length) throw new BadRequestException("one server cannot be matched to two Beszel systems");
     }
     const [monitors, channelMap] = await Promise.all([
-      this.prisma.monitor.findMany({ where: { teamId, type: "METRIC" }, select: { serverId: true, metric: true } }),
+      this.prisma.monitor.findMany({ where: { teamId, type: "METRIC" }, select: { serverId: true, metric: true, auto: true, thresholdPct: true, thresholdValue: true, retries: true } }),
       this.existingChannels(teamId),
     ]);
     const built = buildPlan({ ...snapshot, servers, overrides, existingMonitors: monitors, existingChannelKeys: new Set(channelMap.keys()) });

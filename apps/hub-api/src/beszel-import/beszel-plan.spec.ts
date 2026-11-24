@@ -48,9 +48,34 @@ describe("buildPlan", () => {
 
   it("reuses an equal monitor and an equal channel instead of duplicating", () => {
     const key = channelKey("telegram", { botToken: "1:AAA", chatId: "@ops" });
-    const { view } = buildPlan(base({ existingMonitors: [{ serverId: "srv1", metric: "CPU" }], existingChannelKeys: new Set([key]) }));
+    const { view } = buildPlan(base({ existingMonitors: [{ serverId: "srv1", metric: "CPU", thresholdPct: 80, retries: 4 }], existingChannelKeys: new Set([key]) }));
     expect(view.alerts.find((a) => a.id === "a1")?.outcome).toBe("exists");
     expect(view.channels[0]).toMatchObject({ outcome: "exists", type: "telegram" });
+  });
+
+  it("still creates a Beszel Disk alert when only Tugra's built-in Disk monitor exists", () => {
+    const input = base({ alerts: [{ id: "d1", system: "sysA", name: "Disk", value: 80, min: 10 }], existingMonitors: [{ serverId: "srv1", metric: "DISK", auto: true, thresholdPct: 90, retries: 1 }] });
+    expect(buildPlan(input).view.alerts[0]).toMatchObject({ outcome: "create", metric: "DISK", limit: 80 });
+    // an operator monitor with a different limit is a different rule
+    const other = base({ alerts: input.alerts, existingMonitors: [{ serverId: "srv1", metric: "DISK", auto: false, thresholdPct: 95, retries: 9 }] });
+    expect(buildPlan(other).view.alerts[0].outcome).toBe("create");
+  });
+
+  it("plans two Beszel rules that land on the same monitor once", () => {
+    const input = base({ alerts: [{ id: "c1", system: "sysA", name: "CPU", value: 80, min: 5 }, { id: "c2", system: "sysA", name: "CPU", value: 80, min: 5 }] });
+    const { view, internals } = buildPlan(input);
+    expect(view.alerts.map((a) => a.outcome)).toEqual(["create", "exists"]);
+    expect(internals.monitors.size).toBe(1);
+  });
+
+  it("never lets a manual pick and an automatic match share one server", () => {
+    const input = base({ alerts: [{ id: "al1", system: "sysA", name: "CPU", value: 80, min: 5 }, { id: "al2", system: "sysB", name: "CPU", value: 80, min: 5 }] });
+    const { view, internals } = buildPlan({ ...input, overrides: { sysB: "srv1" } });
+    const by = Object.fromEntries(view.systems.map((s) => [s.id, s]));
+    expect(by.sysB.match).toMatchObject({ serverId: "srv1", by: "manual" });
+    expect(by.sysA).toMatchObject({ match: null, unmatchedReason: "duplicate" });
+    expect(view.alerts.map((a) => [a.id, a.outcome])).toEqual([["al1", "noServer"], ["al2", "create"]]);
+    expect(internals.monitors.size).toBe(1);
   });
 
   it("lists unsupported and duplicate webhooks and never puts a token in the preview", () => {

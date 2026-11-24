@@ -17,7 +17,7 @@ export interface PlanInput {
   /** Operator's manual pick for a system the automatic match left open: systemId → serverId (or null = leave out). */
   overrides?: Record<string, string | null>;
   /** Metric monitors the team already has, so a re-run never duplicates one. */
-  existingMonitors: Array<{ serverId: string | null; metric: string | null }>;
+  existingMonitors: Array<{ serverId: string | null; metric: string | null; auto?: boolean; thresholdPct?: number | null; thresholdValue?: number | null; retries?: number }>;
   /** `channelKey()` of every channel the team already has. */
   existingChannelKeys: Set<string>;
 }
@@ -86,6 +86,9 @@ export function buildPlan(input: PlanInput): { view: PlanView; internals: PlanIn
   const overrides = input.overrides ?? {};
   const serverById = new Map(input.servers.map((s) => [s.id, s]));
   const auto = matchSystems(input.systems, input.servers);
+  // Automatic matches are decided without the systems the operator picked by hand, and never take a server a pick holds.
+  const picked = new Set(Object.values(overrides).filter((v): v is string => !!v));
+  const free = matchSystems(input.systems.filter((s) => !Object.prototype.hasOwnProperty.call(overrides, s.id)), input.servers);
 
   const systems: SystemView[] = input.systems.map((sys) => {
     const m = auto.get(sys.id)!;
@@ -97,12 +100,22 @@ export function buildPlan(input: PlanInput): { view: PlanView; internals: PlanIn
       if (srv) return { ...base, match: { serverId: srv.id, serverName: srv.name, by: "manual" as const } };
       return { ...base, match: null, unmatchedReason: autoReason }; // left out on purpose, or a pick outside the team
     }
-    return "reason" in m ? { ...base, match: null, unmatchedReason: m.reason } : { ...base, match: { serverId: m.serverId, serverName: m.serverName, by: m.by } };
+    const f = free.get(sys.id) ?? m;
+    if ("reason" in f) return { ...base, match: null, unmatchedReason: f.reason };
+    if (picked.has(f.serverId)) return { ...base, match: null, unmatchedReason: "duplicate" as const }; // the server is held by a manual pick
+    return { ...base, match: { serverId: f.serverId, serverName: f.serverName, by: f.by } };
   });
   const sysById = new Map(systems.map((s) => [s.id, s]));
 
   // alerts
-  const have = new Set(input.existingMonitors.filter((m) => m.serverId && m.metric).map((m) => `${m.serverId}:${m.metric}`));
+  // A monitor only counts as already there when it is the operator's own (not Tugra's built-in one) and has the same limit
+  // and wait; a different limit is a different rule, so the Beszel one is still created.
+  const monitorKey = (serverId: string, metric: string, limit: number, retries: number) => `${serverId}:${metric}:${limit}:${retries}`;
+  const have = new Set(
+    input.existingMonitors
+      .filter((m) => m.serverId && m.metric && !m.auto)
+      .map((m) => monitorKey(m.serverId!, m.metric!, m.thresholdPct ?? m.thresholdValue ?? 0, m.retries ?? 1)),
+  );
   const monitors: PlanInternals["monitors"] = new Map();
   let hasStatusAlert = false;
   const alerts: AlertView[] = [];
@@ -127,10 +140,12 @@ export function buildPlan(input: PlanInput): { view: PlanView; internals: PlanIn
       alerts.push({ ...view, outcome: "noServer" });
       continue;
     }
-    if (have.has(`${sys.match.serverId}:${mapped.metric}`)) {
+    const mk = monitorKey(sys.match.serverId, mapped.metric, limit, mapped.retries);
+    if (have.has(mk)) {
       alerts.push({ ...view, outcome: "exists" });
       continue;
     }
+    have.add(mk); // two Beszel rules that land on the same monitor create it once
     alerts.push({ ...view, outcome: "create" });
     monitors.set(a.id, {
       serverId: sys.match.serverId,
