@@ -6,6 +6,7 @@ import { api } from "../../lib/api";
 import { useT } from "../../i18n/provider";
 import { Btn, Card } from "../ui";
 import { Field, Select, TextInput } from "../form";
+import { TeamPicker } from "../team-picker";
 import { PemDrop } from "./pem-drop";
 
 type TeamLite = { id: string; name: string; role: string };
@@ -19,7 +20,7 @@ export function ManualSources({ teams }: { teams: TeamLite[] }) {
   const invalidate = () => qc.invalidateQueries({ queryKey: ["gitSources"] });
   const teamField = (id: string) => (
     <Field label={t("sources.team")} htmlFor={id}>
-      <Select id={id} value={teamId} onChange={setTeamId} options={writable.map((tm) => ({ value: tm.id, label: tm.name }))} placeholder={t("sources.audiencePlaceholder")} required />
+      <TeamPicker id={id} value={teamId} onChange={setTeamId} teams={writable} required />
     </Field>
   );
 

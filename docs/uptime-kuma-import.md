@@ -16,8 +16,8 @@ Notes on the server source:
 
 - It needs the **servers:ops** permission on a server of the team you import into, plus the `deploy`
   capability on that server (the one the agent already uses to run Docker).
-- The image defaults to `keinos/sqlite3:latest` and is pulled by the host's Docker the first time. To pin
-  or mirror it, set `KUMA_IMPORT_SQLITE_IMAGE` on the hub (a plain image reference, tag or digest).
+- The image is a small SQLite CLI image pinned by digest (sqlite 3.54.1), pulled by the host's Docker the first
+  time. To use a mirror or another version, set `KUMA_IMPORT_SQLITE_IMAGE` on the hub (tag or digest).
 - Kuma 2.x with **MariaDB** has no `kuma.db`; the import reports "No SQLite database found". Kuma 2.x
   removed the JSON backup, so for that case export the monitors you need from Kuma first or recreate them.
 - The preview and the import each re-read the source. Nothing containing a secret is cached between steps.

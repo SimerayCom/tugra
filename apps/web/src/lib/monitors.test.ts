@@ -1,9 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { monitorColor, uptimeText, CHANNEL_FIELDS, heartbeatSummary, cloudflareReasonKey, defaultChannelSelection, defaultMonitorSelection } from "./monitors";
+import { monitorColor, uptimeText, CHANNEL_FIELDS, heartbeatSummary, cloudflareReasonKey, defaultChannelSelection, defaultMonitorSelection, limitFields, monitorLimit, metricUnit } from "./monitors";
 import type { Heartbeat, KumaPlan } from "./types";
-
-import { monitorColor, uptimeText, CHANNEL_FIELDS, heartbeatSummary, limitFields, monitorLimit, metricUnit } from "./monitors";
-import type { Heartbeat } from "./types";
 
 const beat = (status: Heartbeat["status"]): Heartbeat => ({ ts: 0, status, ms: 100, msg: null, important: false });
 
@@ -71,6 +68,8 @@ describe("kuma default selections", () => {
   it("ticks only the new alerts a selected monitor uses", () => {
     expect([...defaultChannelSelection(plan, defaultMonitorSelection(plan))]).toEqual(["10"]);
     expect([...defaultChannelSelection(plan, new Set())]).toEqual([]);
+  });
+});
 
 describe("metric limits", () => {
   it("sends a percent for DISK/CPU/MEM and a value for the other kinds", () => {

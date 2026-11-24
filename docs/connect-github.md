@@ -1,8 +1,19 @@
 # Connect GitHub
 
-Deploy private repositories, and move apps that live in private repositories, by giving Tugra a **GitHub App** that can read them. You create the App once on github.com and paste three values into Tugra. The App is yours: Tugra never sees your GitHub password, and you can revoke it at any time.
+Deploy private repositories, and move apps that live in private repositories, by giving Tugra a **GitHub App** that can read them. Tugra creates the App for you in one click, or you can create it by hand and paste three values. The App is yours: Tugra never sees your GitHub password, and you can revoke it at any time.
 
 Public repositories need none of this: paste the repository URL when you create the app.
+
+## The quick way (one click)
+
+1. Open **Git Sources** and press **Connect GitHub**.
+2. Choose who can use it (one team, or every team), then press **Continue to GitHub**.
+3. On GitHub, pick your account or an organisation and press **Create GitHub App**. Tugra fills in the name, permissions and webhook for you.
+4. GitHub then asks where to install the App: pick the repositories and press **Install**. You land back in Tugra with the source ready.
+
+To add another account or organisation later, press **Connect GitHub** again. If your panel is not reachable from the internet, Tugra tells you before you leave: deploys still work from the panel, only deploy-on-push needs the public address.
+
+The rest of this page is the manual way, for when you want to create the App yourself (it stays under **Advanced** on the Git Sources page).
 
 ## Before you start
 

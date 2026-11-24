@@ -12,7 +12,7 @@ import { dumpFromRows, KumaParseError, type KumaDump } from "./kuma-model";
  * output (image pull progress and the like) is ignored.
  */
 
-export const DEFAULT_SQLITE_IMAGE = "keinos/sqlite3:latest";
+export const DEFAULT_SQLITE_IMAGE = "keinos/sqlite3@sha256:9064091a943982e2a90f095219d0d6adec03472f9042529563e3e66c9632af66"; // sqlite 3.54.1, pinned by digest
 
 /** Image reference: repo[:tag][@sha256:digest], shell-safe (the value is interpolated into a script). */
 const IMAGE_RE = /^[a-z0-9][a-z0-9._/-]{0,127}(:[A-Za-z0-9._-]{1,128})?(@sha256:[a-f0-9]{64})?$/;
