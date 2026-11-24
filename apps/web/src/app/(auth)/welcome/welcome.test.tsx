@@ -120,25 +120,158 @@ describe("WelcomePage wizard", () => {
     expect(screen.queryByRole("progressbar")).toBeNull(); // choose-mode is an uncounted interstitial
   });
 
+  const team = { id: "t1", name: "My Team", role: "OWNER" };
+  const emptySettings = { apiEnabled: true, apiAllowedIps: [], publicUrl: null, acmeEmail: null };
+
   it("instance-basics: Save is disabled until the current settings load (no clobber-before-prefill)", async () => {
     h.auth = { user: owner, loading: false, initialized: true, reload: vi.fn() };
     h.search = "step=instance-basics";
     let resolveSettings!: (v: unknown) => void;
     vi.spyOn(api, "getInstanceSettings").mockReturnValue(new Promise((r) => (resolveSettings = r)) as never);
+    vi.spyOn(api, "listTeams").mockResolvedValue([team] as never);
     wrap();
     const save = screen.getByRole("button", { name: "Save & continue" });
     expect(save).toBeDisabled(); // query still pending → cannot submit empty and wipe values
-    resolveSettings({ apiEnabled: true, apiAllowedIps: [], publicUrl: "https://old", acmeEmail: null });
+    resolveSettings({ ...emptySettings, publicUrl: "https://old" });
     await waitFor(() => expect(save).not.toBeDisabled());
   });
 
-  it("instance-basics Skip jumps to done", () => {
+  it("instance-basics: pre-fills the Public URL and Let's Encrypt email from the install when nothing is saved yet", async () => {
     h.auth = { user: owner, loading: false, initialized: true, reload: vi.fn() };
-    vi.spyOn(api, "getInstanceSettings").mockResolvedValue({ apiEnabled: true, apiAllowedIps: [], publicUrl: null, acmeEmail: null });
+    h.search = "step=instance-basics";
+    vi.spyOn(api, "getInstanceSettings").mockResolvedValue({ ...emptySettings, suggested: { publicUrl: "https://hub.acme.test", acmeEmail: "ops@acme.test" } });
+    vi.spyOn(api, "listTeams").mockResolvedValue([team] as never);
+    wrap();
+    await waitFor(() => expect((screen.getByLabelText("Public URL") as HTMLInputElement).value).toBe("https://hub.acme.test"));
+    expect((screen.getByLabelText("Let's Encrypt email") as HTMLInputElement).value).toBe("ops@acme.test");
+  });
+
+  it("instance-basics: a value the owner already saved wins over the install's suggestion", async () => {
+    h.auth = { user: owner, loading: false, initialized: true, reload: vi.fn() };
+    h.search = "step=instance-basics";
+    vi.spyOn(api, "getInstanceSettings").mockResolvedValue({ ...emptySettings, publicUrl: "https://saved.acme.test", suggested: { publicUrl: "https://hub.acme.test", acmeEmail: null } });
+    vi.spyOn(api, "listTeams").mockResolvedValue([team] as never);
+    wrap();
+    await waitFor(() => expect((screen.getByLabelText("Public URL") as HTMLInputElement).value).toBe("https://saved.acme.test"));
+  });
+
+  it("instance-basics: asks for the team name (empty for the default 'My Team'), renames the team and saves the basics", async () => {
+    h.auth = { user: owner, loading: false, initialized: true, reload: vi.fn() };
+    h.search = "step=instance-basics";
+    vi.spyOn(api, "getInstanceSettings").mockResolvedValue({ ...emptySettings, suggested: { publicUrl: "https://hub.acme.test", acmeEmail: "ops@acme.test" } });
+    vi.spyOn(api, "listTeams").mockResolvedValue([team] as never);
+    const rename = vi.spyOn(api, "renameTeam").mockResolvedValue(undefined as never);
+    const upd = vi.spyOn(api, "updateInstanceSettings").mockResolvedValue({} as never);
+    wrap();
+    const name = (await screen.findByLabelText("Team or company name")) as HTMLInputElement;
+    expect(name.value).toBe(""); // never "<Name>'s Team" / the placeholder
+    await waitFor(() => expect((screen.getByLabelText("Public URL") as HTMLInputElement).value).toBe("https://hub.acme.test"));
+    fireEvent.change(name, { target: { value: "Acme Inc." } });
+    fireEvent.click(screen.getByRole("button", { name: "Save & continue" }));
+    await waitFor(() => expect(rename).toHaveBeenCalledWith("t1", "Acme Inc."));
+    await waitFor(() => expect(upd).toHaveBeenCalledWith({ publicUrl: "https://hub.acme.test", acmeEmail: "ops@acme.test" }));
+    await waitFor(() => expect(nav.replace).toHaveBeenCalledWith("/welcome?step=email"));
+  });
+
+  it("'Skip this step' moves to the NEXT step (not the end), and 'Finish setup later' leaves the wizard", async () => {
+    h.auth = { user: owner, loading: false, initialized: true, reload: vi.fn() };
+    vi.spyOn(api, "getInstanceSettings").mockResolvedValue(emptySettings);
+    vi.spyOn(api, "listTeams").mockResolvedValue([team] as never);
     h.search = "step=instance-basics";
     wrap();
-    fireEvent.click(screen.getByRole("button", { name: "Skip" }));
+    expect(screen.queryByRole("button", { name: "Skip" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Skip setup" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Skip this step" }));
+    expect(nav.replace).toHaveBeenCalledWith("/welcome?step=email");
+    fireEvent.click(screen.getByRole("button", { name: "Finish setup later" }));
+    expect(nav.replace).toHaveBeenCalledWith("/dashboard");
+  });
+
+  it("Back returns to the previous step (so the Fleet/Home pick can be changed) and is absent where it can't go back", () => {
+    h.auth = { user: owner, loading: false, initialized: true, reload: vi.fn() };
+    vi.spyOn(api, "getInstanceSettings").mockResolvedValue(emptySettings);
+    vi.spyOn(api, "listTeams").mockResolvedValue([team] as never);
+    h.search = "step=instance-basics";
+    wrap();
+    fireEvent.click(screen.getByRole("button", { name: /Back/ }));
+    expect(nav.replace).toHaveBeenCalledWith("/welcome?step=choose-mode");
+    cleanup();
+    h.search = "step=choose-mode"; // right after the account exists: nothing to go back to
+    wrap();
+    expect(screen.queryByRole("button", { name: /Back/ })).toBeNull();
+  });
+
+  it("email: saves Resend (key + From) and moves on; Skip leaves email off", async () => {
+    h.auth = { user: owner, loading: false, initialized: true, reload: vi.fn() };
+    h.search = "step=email";
+    vi.spyOn(api, "getMailSettings").mockResolvedValue({ provider: "none", host: null, port: null, secure: false, user: null, from: null, hasPassword: false, hasResendKey: false, effective: "none" });
+    const upd = vi.spyOn(api, "updateMailSettings").mockResolvedValue({} as never);
+    wrap();
+    const save = screen.getByRole("button", { name: "Save & continue" });
+    expect(save).toBeDisabled(); // needs a key and a From
+    fireEvent.change(screen.getByLabelText("Resend API key"), { target: { value: "re_123" } });
+    fireEvent.change(screen.getByLabelText("From address"), { target: { value: "Acme <no-reply@acme.test>" } });
+    fireEvent.click(save);
+    await waitFor(() => expect(upd).toHaveBeenCalledWith({ provider: "resend", from: "Acme <no-reply@acme.test>", resendKey: "re_123" }));
+    await waitFor(() => expect(nav.replace).toHaveBeenCalledWith("/welcome?step=security"));
+    fireEvent.click(screen.getByRole("button", { name: "Skip this step" }));
+    expect(nav.replace).toHaveBeenLastCalledWith("/welcome?step=security");
+    expect(upd).toHaveBeenCalledTimes(1);
+  });
+
+  it("security: offers 2FA setup (skippable); once on, offers the 'require for owners and admins' policy", async () => {
+    h.auth = { user: { ...owner, twoFaEnabled: false } as PublicUser, loading: false, initialized: true, reload: vi.fn() };
+    h.search = "step=security";
+    vi.spyOn(api, "getInstanceSettings").mockResolvedValue({ ...emptySettings, require2fa: false });
+    const setup = vi.spyOn(api, "setup2fa").mockResolvedValue({ otpauthUrl: "otpauth://x", qrDataUrl: "data:image/png;base64,AAAA" });
+    wrap();
+    fireEvent.click(screen.getByRole("button", { name: "Skip this step" }));
+    expect(nav.replace).toHaveBeenCalledWith("/welcome?step=add-first-server");
+    fireEvent.click(screen.getByRole("button", { name: "Set up 2FA" }));
+    await waitFor(() => expect(setup).toHaveBeenCalledTimes(1));
+    expect(await screen.findByLabelText("2FA or recovery code")).toBeTruthy();
+
+    cleanup();
+    h.auth = { user: { ...owner, twoFaEnabled: true } as PublicUser, loading: false, initialized: true, reload: vi.fn() };
+    const upd = vi.spyOn(api, "updateInstanceSettings").mockResolvedValue({} as never);
+    wrap();
+    const box = (await screen.findByLabelText("Require 2FA for owners and admins")) as HTMLInputElement;
+    await waitFor(() => expect(box.disabled).toBe(false));
+    fireEvent.click(box);
+    await waitFor(() => expect(upd).toHaveBeenCalledWith({ require2fa: true }));
+  });
+
+  it("summary: lists every section with an Edit link; editing returns to the summary; Finish goes to done", async () => {
+    h.auth = { user: { ...owner, uiMode: "fleet", twoFaEnabled: true } as PublicUser, loading: false, initialized: true, reload: vi.fn() };
+    h.search = "step=summary";
+    vi.spyOn(api, "getInstanceSettings").mockResolvedValue({ ...emptySettings, publicUrl: "https://hub.acme.test", acmeEmail: "ops@acme.test", require2fa: true });
+    vi.spyOn(api, "listTeams").mockResolvedValue([{ id: "t1", name: "Acme Inc.", role: "OWNER" }] as never);
+    vi.spyOn(api, "getMailSettings").mockResolvedValue({ provider: "resend", host: null, port: null, secure: false, user: null, from: "a@acme.test", hasPassword: false, hasResendKey: true, effective: "db" });
+    vi.spyOn(api, "listServers").mockResolvedValue([{ id: "s1", name: "This machine", isLocal: true, status: "ONLINE" }] as never);
+    wrap();
+    expect(await screen.findByText("Acme Inc.")).toBeTruthy();
+    expect(screen.getByText("https://hub.acme.test")).toBeTruthy();
+    expect(screen.getByText("ops@acme.test")).toBeTruthy();
+    expect(screen.getByText("Resend")).toBeTruthy();
+    expect(screen.getByText("On, required for owners and admins")).toBeTruthy();
+    expect(screen.getByText("This machine (connected)")).toBeTruthy();
+    expect(screen.getByRole("progressbar").getAttribute("aria-valuenow")).toBe("7");
+    fireEvent.click(screen.getByRole("button", { name: "Edit Team" }));
+    expect(nav.replace).toHaveBeenCalledWith("/welcome?step=instance-basics&from=summary");
+    fireEvent.click(screen.getByRole("button", { name: "Finish setup" }));
     expect(nav.replace).toHaveBeenCalledWith("/welcome?step=done");
+  });
+
+  it("editing from the summary: Save, Skip and Back all return to the summary", async () => {
+    h.auth = { user: owner, loading: false, initialized: true, reload: vi.fn() };
+    h.search = "step=instance-basics&from=summary";
+    vi.spyOn(api, "getInstanceSettings").mockResolvedValue(emptySettings);
+    vi.spyOn(api, "listTeams").mockResolvedValue([team] as never);
+    wrap();
+    fireEvent.click(screen.getByRole("button", { name: "← Back to summary" }));
+    expect(nav.replace).toHaveBeenLastCalledWith("/welcome?step=summary");
+    fireEvent.click(screen.getByRole("button", { name: "Skip this step" }));
+    expect(nav.replace).toHaveBeenLastCalledWith("/welcome?step=summary");
   });
 
   it("add-first-server: does NOT create on mount; creates only on click, then pins ?server=", async () => {

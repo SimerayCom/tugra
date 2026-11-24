@@ -2,7 +2,8 @@
  * Pure state machine for the /welcome first-run wizard. All step logic lives here (not in page.tsx,
  * per the Next App Router named-export rule) so it can be unit-tested in isolation.
  *
- * The wizard walks: welcome → create-admin → instance-basics → add-first-server → first-workload → done.
+ * The wizard walks: welcome → create-admin → choose-mode → instance-basics → email → security → add-first-server →
+ * first-workload → summary → done.
  * `resolveStep` CLAMPS a requested `?step=` against the auth state so a visitor can never skip the
  * bootstrap (owner registration) nor land on it after it's done. The redirect DECISIONS for the three
  * "not in the wizard" states (loading, a returning logged-out user, a non-owner) live in the component,
@@ -12,14 +13,26 @@
  * `loggedIn === true` implies `initialized === true` always. The clamp therefore keys only on `loggedIn`.
  */
 
-export const STEPS = ["welcome", "create-admin", "choose-mode", "instance-basics", "add-first-server", "first-workload", "done"] as const;
+export const STEPS = [
+  "welcome",
+  "create-admin",
+  "choose-mode",
+  "instance-basics",
+  "email",
+  "security",
+  "add-first-server",
+  "first-workload",
+  "summary",
+  "done",
+] as const;
 export type Step = (typeof STEPS)[number];
 
 /** Steps that require being logged in as the owner (everything after bootstrap). */
-const POST_BOOTSTRAP: readonly Step[] = ["choose-mode", "instance-basics", "add-first-server", "first-workload", "done"];
+const POST_BOOTSTRAP: readonly Step[] = ["choose-mode", "instance-basics", "email", "security", "add-first-server", "first-workload", "summary", "done"];
 
-/** Non-bootstrap steps the owner may skip straight to the end. welcome/create-admin are NOT skippable. */
-const SKIPPABLE: readonly Step[] = ["instance-basics", "add-first-server", "first-workload"];
+/** Steps with a "Skip this step" (→ the next step) and a "Finish setup later" way out. welcome, create-admin,
+ *  choose-mode (a pick, not a task), the summary and done are NOT skippable. */
+const SKIPPABLE: readonly Step[] = ["instance-basics", "email", "security", "add-first-server", "first-workload"];
 
 function isStep(v: string | null): v is Step {
   return v !== null && (STEPS as readonly string[]).includes(v);
@@ -50,17 +63,28 @@ export function nextStep(step: Step): Step {
   return i < 0 || i >= STEPS.length - 1 ? "done" : STEPS[i + 1];
 }
 
-/** Whether this step offers a "skip" that jumps to the end. */
+/**
+ * The step "Back" returns to, or null when there is nowhere to go back to: welcome is the start, choose-mode
+ * follows the account creation (which can't be undone), and done is terminal. create-admin goes back to the
+ * intro (only reachable while logged out; once logged in the wizard clamps forward past it).
+ */
+export function prevStep(step: Step): Step | null {
+  if (step === "welcome" || step === "choose-mode" || step === "done") return null;
+  const i = STEPS.indexOf(step);
+  return i <= 0 ? null : STEPS[i - 1];
+}
+
+/** Whether this step offers "Skip this step" (→ the next step) and "Finish setup later". */
 export function isSkippable(step: Step): boolean {
   return SKIPPABLE.includes(step);
 }
 
 /**
- * 1-based position for a compact "Step N of M" indicator. `welcome` (a pre-flight intro) and `done`
- * (the terminal screen) are not counted as progress steps; the four real steps are create-admin(1) …
- * first-workload(4). Returns 0 for welcome/done.
+ * 1-based position for a compact "Step N of M" indicator. `welcome` (a pre-flight intro), `choose-mode` and
+ * `done` (the terminal screen) are not counted as progress steps; the seven real steps are create-admin(1) …
+ * summary(7). Returns 0 for the uncounted ones.
  */
-const NUMBERED: readonly Step[] = ["create-admin", "instance-basics", "add-first-server", "first-workload"];
+const NUMBERED: readonly Step[] = ["create-admin", "instance-basics", "email", "security", "add-first-server", "first-workload", "summary"];
 export const TOTAL_STEPS = NUMBERED.length;
 
 export function stepNumber(step: Step): number {
