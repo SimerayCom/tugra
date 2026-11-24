@@ -77,5 +77,9 @@
   "deployingToast": "{name} created — deploying now",
   "serverLabel": "Server",
   "changeServerShort": "change",
-  "serverNotOnline": "Only online servers can be selected."
+  "serverNotOnline": "Only online servers can be selected.",
+  "chooseTeamFirst": "Choose a team first.",
+  "firstProject": "This team has no project yet. Create one to continue, or bring what you already run.",
+  "firstQuick": "Create “{name}”",
+  "firstImport": "Import"
 }

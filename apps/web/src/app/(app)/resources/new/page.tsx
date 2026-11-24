@@ -3,7 +3,7 @@
 import { Suspense, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Box, Database, ExternalLink, Server } from "lucide-react";
 import { SiDocker, SiGit } from "@icons-pack/react-simple-icons";
 import { api } from "../../../../lib/api";
@@ -12,8 +12,11 @@ import { engineLabel, engineVersions } from "../../../../lib/databases";
 import { TemplateLogo, ENGINE_LOGO } from "../../../../lib/template-icons";
 import { TemplateGrid } from "../../../../components/template-grid";
 import { wizardStep } from "../../../../lib/wizard-step";
-import { parseKind, visibleGroups, backTarget, defaultEnvId, resolveProjectId, type ResourceKind } from "../../../../lib/resource-new";
+import { parseKind, visibleGroups, backTarget, defaultEnvId, resolveProjectId, resolveDestTeam, type ResourceKind } from "../../../../lib/resource-new";
 import { scopeByTeam } from "../../../../lib/team-scope";
+import { useTeamScope } from "../../../../components/team-scope";
+import { ProjectPicker } from "../../../../components/project-picker";
+import { TeamPicker } from "../../../../components/team-picker";
 import { soleOnlineServerId, createdHref, readDeployPref, writeDeployPref } from "../../../../lib/resource-create";
 import { useToast } from "../../../../components/toast";
 import { useT } from "../../../../i18n/provider";
@@ -38,8 +41,11 @@ function Wizard() {
   const router = useRouter();
   const sp = useSearchParams();
   const toast = useToast();
+  const qc = useQueryClient();
+  const { teamId: scope } = useTeamScope();
 
   const { data: projects = [], isLoading } = useQuery({ queryKey: ["projects"], queryFn: () => api.listProjects() });
+  const { data: teams = [], isSuccess: teamsLoaded } = useQuery({ queryKey: ["teams"], queryFn: () => api.listTeams() });
   const { data: servers = [], isSuccess: serversLoaded } = useQuery({ queryKey: ["servers"], queryFn: () => api.listServers() });
   const { data: templates = [] } = useQuery({ queryKey: ["templates"], queryFn: () => api.listTemplates() });
   const { data: gitSources = [] } = useQuery({ queryKey: ["gitSources"], queryFn: () => api.listGitSources() });
@@ -55,9 +61,20 @@ function Wizard() {
 
   const [projectId, setProjectId] = useState(sp.get("project") ?? "");
   const [envId, setEnvId] = useState(sp.get("env") ?? "");
-  // Target project and deployment server always share a team: scope the project
-  // options to the pinned server's team (and the server grid to the project's team).
-  const projectPool = scopeByTeam(projects, pinnedServer?.teamId ?? null);
+  const [pickedTeam, setPickedTeam] = useState("");
+  // The team everything here belongs to (see resolveDestTeam). The project list only ever shows that one team's
+  // projects, so same-named projects of different teams can never be mixed up; with several teams and no hint the
+  // wizard asks for the team first.
+  const destTeam = resolveDestTeam({
+    pinnedTeam: pinnedServer?.teamId,
+    pickedTeam,
+    projectTeam: projects.find((p) => p.id === projectId)?.teamId,
+    urlProjectTeam: projects.find((p) => p.id === sp.get("project"))?.teamId,
+    scope,
+    teams,
+  });
+  const askTeam = teamsLoaded && teams.length > 1 && !pinnedServer?.teamId && !(sp.get("project") && !pickedTeam) && !scope;
+  const projectPool = destTeam ? scopeByTeam(projects, destTeam) : [];
   // URL context (?project= / ?server=) auto-defaults the target; an unscoped +New
   // with several candidate projects must be chosen explicitly (no silent commit).
   const scoped = !!sp.get("project") || !!sp.get("server");
@@ -65,12 +82,40 @@ function Wizard() {
     const next = resolveProjectId(projectPool, projectId, scoped);
     if (next !== projectId) setProjectId(next);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pinnedServer?.teamId, projects, projectId, scoped]);
+  }, [destTeam, projects, projectId, scoped]);
   const project = projectPool.find((p) => p.id === projectId);
   useEffect(() => {
     if (project && !project.environments.some((e) => e.id === envId)) setEnvId(defaultEnvId(project));
   }, [project, envId]);
-  const serverPool = scopeByTeam(servers, project?.teamId ?? null);
+  const serverPool = scopeByTeam(servers, project?.teamId ?? (destTeam || null));
+
+  const [quickBusy, setQuickBusy] = useState(false);
+  const quickProject = async () => {
+    const name = teams.find((tm) => tm.id === destTeam)?.name;
+    if (!name) return;
+    setQuickBusy(true);
+    try {
+      await createProject(name.slice(0, 80));
+    } catch (e) {
+      toast((e as Error).message, "error");
+    } finally {
+      setQuickBusy(false);
+    }
+  };
+
+  // Choosing a project by name (the picker's value) selects that project of the destination team.
+  const chooseProject = (name: string) => {
+    const hit = projectPool.find((p) => p.name.toLowerCase() === name.toLowerCase());
+    if (hit) setProjectId(hit.id);
+  };
+  // "+ New project" creates it right away in the destination team, then selects it.
+  const createProject = async (name: string) => {
+    if (!destTeam) throw new Error(t("resources.chooseTeamFirst"));
+    const created = await api.createProject(destTeam, name);
+    await qc.refetchQueries({ queryKey: ["projects"] });
+    setProjectId(created.id);
+    setEnvId(defaultEnvId(created));
+  };
 
   // Exactly one ONLINE server → pick it and skip the Server step. "change" turns
   // auto-pick off so the explicit picker shows (and stays) for that session.
@@ -259,27 +304,40 @@ function Wizard() {
       <h1 style={{ fontSize: 22, fontWeight: 700, margin: "0 0 4px" }}>{t("resources.newTitle")}</h1>
       <p style={{ color: "var(--c-tx3)", fontSize: 14, margin: "0 0 22px" }}>{t("resources.subtitle")}</p>
 
-      {projects.length === 0 ? (
-        <Card style={{ padding: 16, fontSize: 13, color: "var(--c-tx3)" }}>
-          {t("resources.needProject")} <Link href="/projects" style={{ color: "var(--c-a)" }}>{t("resources.createProject")}</Link>
-        </Card>
-      ) : (
-        <>
-          {/* Creating-in context (compact; read-only when scoped via URL) */}
+      <>
+          {/* Creating-in context: the team (only when it is not already decided), then the project and environment. */}
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 18, fontSize: 13 }}>
             <span style={{ color: "var(--c-tx3)" }}>{t("resources.creatingIn")}:</span>
-            {projectParam && !editDest ? (
+            {projectParam && !editDest && project ? (
               <>
-                <span style={{ fontWeight: 600 }}>{project?.name}</span>
+                <span style={{ fontWeight: 600 }}>{project.name}</span>
                 <span style={{ color: "var(--c-tx3)" }}>/</span>
-                <span style={{ fontWeight: 600 }}>{project?.environments.find((e) => e.id === envId)?.name}</span>
+                <span style={{ fontWeight: 600 }}>{project.environments.find((e) => e.id === envId)?.name}</span>
                 <button type="button" onClick={() => setEditDest(true)} style={backLinkBtn}>{t("resources.change")}</button>
               </>
             ) : (
-              <span style={{ display: "inline-flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-                <Select value={projectId} onChange={setProjectId} ariaLabel={t("resources.chooseProject")} placeholder={t("resources.chooseProject")} options={projectPool.map((p) => ({ value: p.id, label: p.name }))} style={{ width: "auto", minWidth: 150 }} />
-                <span style={{ color: "var(--c-tx3)" }}>/</span>
-                <Select value={envId} onChange={setEnvId} options={(project?.environments ?? []).map((e) => ({ value: e.id, label: e.name }))} style={{ width: "auto", minWidth: 130 }} />
+              <span style={{ display: "inline-flex", gap: 8, flexWrap: "wrap", alignItems: "center", minWidth: 0 }}>
+                {askTeam && (
+                  <span style={{ minWidth: 150 }}>
+                    <TeamPicker value={pickedTeam || destTeam} teams={teams} onChange={setPickedTeam} ariaLabel={t("common.team")} />
+                  </span>
+                )}
+                <span style={{ minWidth: 170 }}>
+                  <ProjectPicker
+                    value={project?.name ?? ""}
+                    projects={projectPool.map((p) => ({ name: p.name }))}
+                    onChange={chooseProject}
+                    onCreate={createProject}
+                    disabled={!destTeam}
+                    ariaLabel={t("resources.chooseProject")}
+                  />
+                </span>
+                {project && (
+                  <>
+                    <span style={{ color: "var(--c-tx3)" }}>/</span>
+                    <Select value={envId} onChange={setEnvId} ariaLabel={t("resources.environment")} options={project.environments.map((e) => ({ value: e.id, label: e.name }))} style={{ width: "auto", minWidth: 130 }} />
+                  </>
+                )}
               </span>
             )}
           </div>
@@ -314,7 +372,20 @@ function Wizard() {
           })()}
 
           {!projectId ? (
-            <Card style={{ padding: 16, fontSize: 13, color: "var(--c-tx3)" }}>{t("resources.pickProjectFirst")}</Card>
+            <Card style={{ padding: 16, fontSize: 13, color: "var(--c-tx3)" }}>
+              {destTeam && projectPool.length === 0 ? (
+                // First run for this team: it has no project yet. Name one after the team (never "Default"), or import.
+                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                  <span>{t("resources.firstProject")}</span>
+                  <span style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    <Btn onClick={() => void quickProject()} loading={quickBusy} style={{ minHeight: 44 }}>{t("resources.firstQuick", { name: teams.find((tm) => tm.id === destTeam)?.name ?? "" })}</Btn>
+                    <Link href="/import" style={{ display: "inline-flex", alignItems: "center", minHeight: 44, padding: "0 14px", color: "var(--c-a)", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", textDecoration: "none", fontWeight: 600 }}>{t("resources.firstImport")}</Link>
+                  </span>
+                </div>
+              ) : (
+                t("resources.pickProjectFirst")
+              )}
+            </Card>
           ) : sel === null ? (
             <>
               {kindFilter && (
@@ -579,7 +650,6 @@ function Wizard() {
             </Card>
           )}
         </>
-      )}
     </div>
   );
 }

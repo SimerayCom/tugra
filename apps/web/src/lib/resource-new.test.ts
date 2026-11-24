@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseKind, visibleGroups, backTarget, defaultProjectId, defaultEnvId, resolveProjectId } from "./resource-new";
+import { parseKind, visibleGroups, backTarget, defaultProjectId, defaultEnvId, resolveProjectId, resolveDestTeam } from "./resource-new";
 
 describe("parseKind", () => {
   it("accepts the three known kinds", () => {
@@ -111,5 +111,23 @@ describe("resolveProjectId", () => {
   it("returns '' for an empty pool", () => {
     expect(resolveProjectId([], "", true)).toBe("");
     expect(resolveProjectId([], "x", false)).toBe("");
+  });
+});
+
+describe("resolveDestTeam", () => {
+  const teams = [{ id: "a" }, { id: "b" }];
+  it("prefers the pinned server's team, then an explicit pick, then the project's team, then the URL project, then the scope", () => {
+    expect(resolveDestTeam({ pinnedTeam: "b", pickedTeam: "a", scope: "a", teams })).toBe("b");
+    expect(resolveDestTeam({ pickedTeam: "b", projectTeam: "a", scope: "a", teams })).toBe("b");
+    expect(resolveDestTeam({ projectTeam: "b", urlProjectTeam: "a", scope: "a", teams })).toBe("b");
+    expect(resolveDestTeam({ urlProjectTeam: "b", scope: "a", teams })).toBe("b");
+    expect(resolveDestTeam({ scope: "b", teams })).toBe("b");
+  });
+  it("uses the only team there is, and stays open with several and no hint", () => {
+    expect(resolveDestTeam({ scope: null, teams: [{ id: "a" }] })).toBe("a");
+    expect(resolveDestTeam({ scope: null, teams })).toBe("");
+  });
+  it("ignores a stale team id", () => {
+    expect(resolveDestTeam({ pinnedTeam: "gone", scope: "gone", teams })).toBe("");
   });
 });

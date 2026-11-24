@@ -67,3 +67,24 @@ export function resolveProjectId(
   if (scoped) return defaultProjectId(pool);
   return "";
 }
+
+/**
+ * The team a new resource (and any project made for it) belongs to. A pinned server wins (a resource always lives in
+ * its server's team), then an explicit team choice, then the team of the project already chosen or named in the URL,
+ * then the global team scope, then the only team there is. "" when it is still open (several teams, nothing decided):
+ * the wizard then asks for the team first, so the project list never mixes teams.
+ */
+export function resolveDestTeam(opts: {
+  pinnedTeam?: string | null;
+  pickedTeam?: string;
+  projectTeam?: string | null;
+  urlProjectTeam?: string | null;
+  scope: string | null;
+  teams: { id: string }[];
+}): string {
+  const valid = (id: string | null | undefined): id is string => !!id && opts.teams.some((tm) => tm.id === id);
+  for (const id of [opts.pinnedTeam, opts.pickedTeam, opts.projectTeam, opts.urlProjectTeam, opts.scope]) {
+    if (valid(id)) return id;
+  }
+  return opts.teams.length === 1 ? opts.teams[0].id : "";
+}
