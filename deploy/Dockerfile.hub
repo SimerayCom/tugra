@@ -1,10 +1,31 @@
 # Hub API (NestJS + Prisma). Build context = repo root (pnpm workspace).
-# node:22 LTS (not slim) so native deps (argon2, libsodium) + prisma engines build cleanly.
+# Multi-stage: the build stage is the full node:22 image (compilers for native deps); the shipped image is
+# node:22-slim with only the production dependency closure (`pnpm deploy --prod`), the compiled dist and the
+# Prisma CLI + engines + migrations (run at every boot) — no sources, dev dependencies or build caches.
 # (Node 20 reached end-of-life; 22 is the active LTS that still gets security patches.)
-FROM node:22
+FROM node:22 AS build
 
 RUN corepack enable && corepack prepare pnpm@9.12.0 --activate
 WORKDIR /app
+
+# Full monorepo (node_modules excluded via .dockerignore → fresh linux install).
+COPY . .
+RUN pnpm install --frozen-lockfile
+RUN pnpm --filter @tugra/shared build \
+ && pnpm --filter @tugra/hub-api build
+# Production-only closure of the hub (+ the built @tugra/shared it links), flattened into /out. The
+# Prisma client is generated again there against the pruned tree (engines come from the same lockfile pins);
+# the client runtime variants for databases the hub never talks to (it is PostgreSQL only) are dropped.
+RUN pnpm --filter @tugra/hub-api deploy --prod --ignore-scripts /out \
+ && cp -r apps/hub-api/dist apps/hub-api/prisma /out/ \
+ && cd /out && node_modules/.bin/prisma generate \
+ && rm -rf src test /root/.cache /root/.npm \
+ && find node_modules/.pnpm -path '*/@prisma/client/runtime/*' \
+      \( -name '*mysql*' -o -name '*sqlite*' -o -name '*sqlserver*' -o -name '*cockroachdb*' \) -delete
+
+# node:22-slim: glibc (argon2 + Prisma engines ship glibc prebuilds). openssl = Prisma engine runtime,
+# curl = the compose healthcheck, ca-certificates = outbound TLS (registries, webhooks, SMTP, ACME).
+FROM node:22-slim
 
 # OCI metadata so the GHCR package links to the repo (and shows its README + logo) with license/vendor.
 LABEL org.opencontainers.image.source="https://github.com/SimerayCom/tugra" \
@@ -14,11 +35,12 @@ LABEL org.opencontainers.image.source="https://github.com/SimerayCom/tugra" \
       org.opencontainers.image.licenses="AGPL-3.0" \
       org.opencontainers.image.vendor="Simeray Ltd"
 
-# Full monorepo (node_modules excluded via .dockerignore → fresh linux install).
-COPY . .
-RUN pnpm install --frozen-lockfile
-RUN pnpm --filter @tugra/shared build \
- && pnpm --filter @tugra/hub-api build
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends openssl curl ca-certificates \
+ && rm -rf /var/lib/apt/lists/* /var/cache/apt/* /var/log/apt /var/log/dpkg.log /var/log/alternatives.log
+WORKDIR /app/apps/hub-api
+COPY --from=build /out/ ./
+ENV PATH="/app/apps/hub-api/node_modules/.bin:${PATH}"
 
 # Build metadata baked into the running process (GET /version + /health read these). Unset → the app
 # falls back to "0.0.0-dev"/"dev"/"community"; the release pipeline passes real values as build args.
@@ -35,7 +57,6 @@ ENV TUGRA_VERSION=$TUGRA_VERSION \
 ENV CHECKPOINT_DISABLE=1 \
     PRISMA_HIDE_UPDATE_MESSAGE=1
 
-WORKDIR /app/apps/hub-api
 EXPOSE 3000
 # Apply migrations, then boot. DATABASE_URL/REDIS_URL come from compose env.
-CMD ["sh", "-c", "pnpm exec prisma migrate deploy && node dist/main.js"]
+CMD ["sh", "-c", "prisma migrate deploy && node dist/main.js"]

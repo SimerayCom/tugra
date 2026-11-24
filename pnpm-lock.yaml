@@ -119,6 +119,9 @@ importers:
       passport-jwt:
         specifier: ^4.0.1
         version: 4.0.1
+      prisma:
+        specifier: ^6.0.0
+        version: 6.19.3(typescript@5.9.3)
       qrcode:
         specifier: ^1.5.4
         version: 1.5.4
@@ -174,9 +177,6 @@ importers:
       jest:
         specifier: ^29.7.0
         version: 29.7.0(@types/node@20.19.43)
-      prisma:
-        specifier: ^6.0.0
-        version: 6.19.3(typescript@5.9.3)
       supertest:
         specifier: ^7.2.2
         version: 7.2.2
