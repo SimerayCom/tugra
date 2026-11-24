@@ -4,10 +4,10 @@
  * Everything here is unit-tested directly; the handlers only wire it to the ports.
  */
 import { createHash } from "node:crypto";
-import type { GateCheck, WindowEstimate } from "../../core/dto";
+import type { GateCheck, StepProgress, WindowEstimate } from "../../core/dto";
 import { deployConcurrencyOf, largeDbModeOf, resolveOwnerInput, type RunSnapshot } from "../../core/run-contract";
 import { DATA_CODES, LIVE_VOLUME_STATES, type DataSnapshot, type DbDataItem, type ObjectView, type VolumeDataItem } from "./data-contract";
-import { DUMP_MEASURE_BELOW_BYTES, VX_409, artifactCapBytes, isStreamDumpEngine } from "../../../importer/volume-stream/vx-constants";
+import { DUMP_MEASURE_BELOW_BYTES, VX_409, artifactCapBytes, isStreamDumpEngine, vxDumpCapIsOperatorSet, vxMaxDumpBytes } from "../../../importer/volume-stream/vx-constants";
 import { HOST_LOOP_CODES } from "./inventory/host-codes";
 import { dataItemsOfHost } from "./inventory/host-hosts";
 import { loopVerdict } from "./inventory/host-protocol";
@@ -124,7 +124,7 @@ export type DbLane = "logical" | "physical" | "stream" | "pending" | "blocked";
 
 export interface LaneDecision {
   lane: DbLane;
-  /** Fixed vocabulary, never text: `small-dump`, `over-cap`, `uncounted-over-cap`, `physical-planned`, `physical-gate`, `sticky`, `unmeasured`, `measure-failed`, `refused`, `engine-no-lane`, `stream-unavailable`. */
+  /** Fixed vocabulary, never text: `small-dump`, `over-cap`, `uncounted-over-cap`, `physical-planned`, `physical-gate`, `sticky`, `unmeasured`, `measure-failed`, `refused`, `engine-no-lane`, `stream-unavailable`, `over-dump-cap`. */
   reason: string;
   /** The raw dump bytes the decision rests on (counted, else the catalog size); null when nothing was measured. */
   dumpBytes: number | null;
@@ -148,6 +148,8 @@ export interface LaneInput {
   capBytes: number;
   /** The streamed dump lane is available on this hub. */
   dumpEnabled: boolean;
+  /** The operator's own ceiling on a streamed dump (`MIGRATION_VX_MAX_DUMP_BYTES`); null/absent = no ceiling. */
+  streamCapBytes?: number | null;
 }
 
 /** An uncounted catalog size at or under this fraction of the cap is certainly under it (a dump is smaller than the database). */
@@ -172,6 +174,7 @@ export function decideDbLane(i: LaneInput): LaneDecision {
     if (!i.dumpEnabled) return { ...base, lane: "blocked", reason: "stream-unavailable", gate: failing.id };
     if (!canStream) return { ...base, lane: "blocked", reason: "refused", gate: failing.id };
     if (!m || m.state !== "measured") return { ...base, lane: "pending", reason: m ? "measure-failed" : "unmeasured", gate: failing.id };
+    if (overStreamCap(i, dumpBytes)) return { ...base, lane: "blocked", reason: "over-dump-cap", gate: failing.id };
     return { ...base, lane: "stream", reason: "physical-gate", gate: failing.id };
   }
 
@@ -182,18 +185,26 @@ export function decideDbLane(i: LaneInput): LaneDecision {
   const why = counted ? "over-cap" : "uncounted-over-cap";
   if (!i.dumpEnabled) return { ...base, lane: "blocked", reason: "stream-unavailable" };
   if (!canStream) return { ...base, lane: "blocked", reason: "refused" };
+  if (overStreamCap(i, dumpBytes)) return { ...base, lane: "blocked", reason: "over-dump-cap" };
   return { ...base, lane: "stream", reason: why };
 }
 
+/** The operator set a dump ceiling and this database's measured dump is above it. An unmeasured size is never judged here. */
+const overStreamCap = (i: Pick<LaneInput, "streamCapBytes">, dumpBytes: number | null): boolean =>
+  i.streamCapBytes != null && dumpBytes !== null && dumpBytes > i.streamCapBytes;
+
+/** The operator's dump ceiling, or null when the hub has none (the default: no size limit). */
+export const operatorDumpCap = (): number | null => (vxDumpCapIsOperatorSet() ? vxMaxDumpBytes() : null);
+
 /** The decision for every database of the snapshot that has a choice (dump-capable engines, or any database already on the stream lane). */
-export function decideLanes(run: Pick<RunSnapshot, "options">, snap: DataSnapshot, capBytes: number = artifactCapBytes()): Map<string, LaneDecision> {
+export function decideLanes(run: Pick<RunSnapshot, "options">, snap: DataSnapshot, capBytes: number = artifactCapBytes(), streamCapBytes: number | null = operatorDumpCap()): Map<string, LaneDecision> {
   const out = new Map<string, LaneDecision>();
   const mode = largeDbModeOf(run.options);
   for (const d of snap.databases) {
     if (d.plane === "unsupported") continue;
     if (!isStreamDumpEngine(d.engine) && d.plane !== "stream") continue;
     const physical = d.plane === "volume" ? (snap.volumes.find((v) => v.destType === "db-data" && v.ownerItemRef === d.itemRef) ?? null) : null;
-    out.set(d.itemRef, decideDbLane({ db: d, physical, largeDbMode: mode, capBytes, dumpEnabled: snap.dumpEnabled !== false && snap.vxEnabled }));
+    out.set(d.itemRef, decideDbLane({ db: d, physical, largeDbMode: mode, capBytes, dumpEnabled: snap.dumpEnabled !== false && snap.vxEnabled, streamCapBytes }));
   }
   return out;
 }
@@ -214,9 +225,9 @@ export function dbsNeedingMeasure(run: Pick<RunSnapshot, "options">, snap: DataS
 }
 
 /** The lane checks of the DATA_SEED gate. `pass` carries the lane (information); `unknown`/`fail` carry what is missing or refused. */
-export function dbLaneChecks(run: Pick<RunSnapshot, "options">, snap: DataSnapshot, capBytes: number = artifactCapBytes()): GateCheck[] {
+export function dbLaneChecks(run: Pick<RunSnapshot, "options">, snap: DataSnapshot, capBytes: number = artifactCapBytes(), streamCapBytes: number | null = operatorDumpCap()): GateCheck[] {
   const checks: GateCheck[] = [];
-  const decisions = decideLanes(run, snap, capBytes);
+  const decisions = decideLanes(run, snap, capBytes, streamCapBytes);
   for (const d of snap.databases) {
     const dec = decisions.get(d.itemRef);
     if (!dec) continue;
@@ -227,15 +238,48 @@ export function dbLaneChecks(run: Pick<RunSnapshot, "options">, snap: DataSnapsh
       checks.push({ id, status: dec.reason === "measure-failed" ? "fail" : "unknown", code: DATA_CODES.seedDbUnmeasured, params: { engine: d.engine, reason: dec.reason }, ...common });
     } else if (dec.lane === "blocked") {
       const code =
-        dec.reason === "stream-unavailable" ? DATA_CODES.seedDbStreamUnavailable : dec.gate ? DATA_CODES.seedDbPhysicalRefused : DATA_CODES.seedDbOverCapRefused;
-      checks.push({ id, status: "fail", code, params: { ...sizes, ...(dec.gate ? { gate: dec.gate } : {}) }, ...common });
+        dec.reason === "stream-unavailable"
+          ? DATA_CODES.seedDbStreamUnavailable
+          : dec.reason === "over-dump-cap"
+            ? DATA_CODES.seedDbOverDumpCap
+            : dec.gate
+              ? DATA_CODES.seedDbPhysicalRefused
+              : DATA_CODES.seedDbOverCapRefused;
+      const extra: Record<string, number> = dec.reason === "over-dump-cap" && streamCapBytes != null ? { maxBytes: streamCapBytes } : {};
+      checks.push({ id, status: "fail", code, params: { ...sizes, ...extra, ...(dec.gate ? { gate: dec.gate } : {}) }, ...common });
     } else if (dec.reason === "engine-no-lane") {
       continue; // an engine with no dump lane keeps the standard route (the importer's own limits apply)
     } else {
-      checks.push({ id, status: "pass", code: DATA_CODES.seedDbLane, params: { ...sizes, lane: dec.lane, reason: dec.reason }, ...common });
+      const code = dec.lane === "stream" ? DATA_CODES.seedDbLaneStream : dec.lane === "physical" ? DATA_CODES.seedDbLanePhysical : DATA_CODES.seedDbLane;
+      checks.push({ id, status: "pass", code, params: { ...sizes, lane: dec.lane, reason: dec.reason }, ...common });
     }
   }
   return checks;
+}
+
+// ───────────────────────────── byte progress ─────────────────────────────
+
+/**
+ * Byte progress of the data that is moving right now (every in-scope volume row and streamed dump row): how much of the raw total
+ * is copied, and the time left at the rows' own measured rate. Null when nothing is being copied or when a total is not known
+ * yet (a percentage over a guess would be a lie). A finished row counts as fully done, so the bar never moves backwards when a
+ * row completes.
+ */
+export function byteProgress(snap: Pick<DataSnapshot, "volumes">): StepProgress | null {
+  const rows = snap.volumes.filter((v) => !v.excluded && v.state !== "NONE");
+  if (!rows.some((v) => v.state === "COPYING" || v.state === "COPIED" || v.state === "APPLYING")) return null;
+  let total = 0;
+  let done = 0;
+  let bps = 0;
+  for (const v of rows) {
+    const t = v.rawBytesTotal ?? (v.inventory?.found ? v.inventory.rawBytes : null);
+    if (t === null || t < 0) return null;
+    total += t;
+    done += v.state === "DONE" ? t : Math.min(Math.max(0, v.rawBytesDone), t);
+    if (v.state === "COPYING" && v.bps && v.bps > 0) bps += v.bps;
+  }
+  if (total <= 0) return null;
+  return { done, total, unit: "byte", etaSec: bps > 0 ? Math.ceil(Math.max(0, total - done) / bps) : null };
 }
 
 // ───────────────────────────── DATA_SEED checks ─────────────────────────────
@@ -267,7 +311,15 @@ export function seedChecks(run: RunSnapshot, snap: DataSnapshot, objects: readon
     checks.push({ id: checkKey("volume-inspected", v.itemRef), status: "pass", code: DATA_CODES.seedVolumeNotInspected, subject: v.itemRef, params: { rawBytes: v.inventory.rawBytes, entries: v.inventory.entries }, evidence: "migrator-reported" });
     if (!v.disk) checks.push({ id: checkKey("volume-disk", v.itemRef), status: "unknown", code: DATA_CODES.seedDiskUnknown, subject: v.itemRef, evidence: "hub-verified" });
     else if (v.disk.unknown) checks.push({ id: checkKey("volume-disk", v.itemRef), status: "unknown", code: DATA_CODES.seedDiskUnknown, subject: v.itemRef, evidence: "hub-verified" });
-    else if (!v.disk.ok) checks.push({ id: checkKey("volume-disk", v.itemRef), status: "fail", code: DATA_CODES.seedDiskInsufficient, subject: v.itemRef, evidence: "hub-verified" });
+    else if (!v.disk.ok)
+      checks.push({
+        id: checkKey("volume-disk", v.itemRef),
+        status: "fail",
+        code: DATA_CODES.seedDiskInsufficient,
+        subject: v.itemRef,
+        ...(v.disk.needBytes !== undefined && v.disk.freeBytes !== undefined ? { params: { needBytes: v.disk.needBytes, freeBytes: v.disk.freeBytes } } : {}),
+        evidence: "hub-verified",
+      });
     else checks.push({ id: checkKey("volume-disk", v.itemRef), status: "pass", code: DATA_CODES.seedDiskUnknown, subject: v.itemRef, evidence: "hub-verified" });
     for (const g of v.gates ?? []) {
       if (!SEED_PG_GATES.has(g.id)) continue;

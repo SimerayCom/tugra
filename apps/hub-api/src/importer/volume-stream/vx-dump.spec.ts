@@ -1,4 +1,5 @@
 import { dumpDiskVerdict, dumpRawEstimate, dumpStagedBytes, dumpRestoreTimeoutMs, dumpWasCounted } from "./vx-dump";
+import { diskShortfall } from "./vx-dump";
 import { artifactCapBytes, isStreamDumpEngine, vxDumpCapIsOperatorSet, vxDumpEnabled, vxMaxDumpBytes } from "./vx-constants";
 import { dbStreamModeRefs, buildVolumeTargets } from "./vx-targets";
 import { VxDbSizesBodySchema } from "./vx.dto";
@@ -149,5 +150,25 @@ describe("VxDbSizesBodySchema", () => {
     expect(VxDbSizesBodySchema.safeParse({ ...ok, items: [{ ...ok.items[0], note: "x" }] }).success).toBe(false);
     expect(VxDbSizesBodySchema.safeParse({ ...ok, items: [{ ...ok.items[0], reason: "bad\nline" }] }).success).toBe(false);
     expect(VxDbSizesBodySchema.safeParse({ ...ok, items: Array.from({ length: 501 }, () => ok.items[0]) }).success).toBe(false);
+  });
+});
+
+describe("diskShortfall: the tightest place and what it has", () => {
+  const MiB = 1024 ** 2;
+  it("a dump on one disk needs the staged parts plus the restored database, and is judged against the staging free space", () => {
+    expect(diskShortfall({ lane: "dump", stagedBytes: 10 * GiB, databaseBytes: 30 * GiB, targetStagingFreeBytes: 20 * GiB, targetDockerFreeBytes: 20 * GiB, targetSameDevice: true })).toEqual({ needBytes: 40 * GiB, freeBytes: 20 * GiB });
+  });
+  it("a dump on two disks names the disk that is short: staging first, then the docker root", () => {
+    const base = { lane: "dump", stagedBytes: 10 * GiB, databaseBytes: 30 * GiB, targetSameDevice: false };
+    expect(diskShortfall({ ...base, targetStagingFreeBytes: 5 * GiB, targetDockerFreeBytes: 100 * GiB })).toEqual({ needBytes: 10 * GiB, freeBytes: 5 * GiB });
+    expect(diskShortfall({ ...base, targetStagingFreeBytes: 50 * GiB, targetDockerFreeBytes: 20 * GiB })).toEqual({ needBytes: 30 * GiB, freeBytes: 20 * GiB });
+  });
+  it("a volume copy uses the same rule as the app move check", () => {
+    expect(diskShortfall({ totalBytes: 10 * GiB, targetStagingFreeBytes: 1 * GiB, targetDockerFreeBytes: 100 * GiB, targetSameDevice: false })).toEqual({ needBytes: Math.ceil(1.02 * 10 * GiB + 512 * MiB), freeBytes: 1 * GiB });
+    expect(diskShortfall({ totalBytes: 10 * GiB, targetStagingFreeBytes: 5 * GiB, targetDockerFreeBytes: 100 * GiB, targetSameDevice: true })).toEqual({ needBytes: Math.ceil(2.05 * 10 * GiB + GiB), freeBytes: 5 * GiB });
+  });
+  it("is null when the disk could not be read", () => {
+    expect(diskShortfall(null)).toBeNull();
+    expect(diskShortfall({ lane: "dump", stagedBytes: 1, databaseBytes: 1, targetStagingFreeBytes: null, targetDockerFreeBytes: 5, targetSameDevice: false })).toBeNull();
   });
 });

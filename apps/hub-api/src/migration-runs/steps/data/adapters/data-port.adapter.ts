@@ -11,7 +11,7 @@ import { VxService } from "../../../../importer/volume-stream/vx.service";
 import { dbGates } from "../../../../importer/volume-stream/vx-dest-gate";
 import { vxDumpEnabled, vxEnabled } from "../../../../importer/volume-stream/vx-constants";
 import { buildVolumeTargets, dbStreamModeRefs, dbVolumeModeRefs, isObjectStoreResult, serviceVolumesOf, volumeItemRef, type VxVolumeTarget } from "../../../../importer/volume-stream/vx-targets";
-import { dumpRawEstimate, type DbSizeRecord } from "../../../../importer/volume-stream/vx-dump";
+import { diskShortfall, dumpRawEstimate, type DbSizeRecord } from "../../../../importer/volume-stream/vx-dump";
 import type { VxInventoryItem } from "../../../../importer/volume-stream/vx.dto";
 import type { RunSnapshot } from "../../../core/run-contract";
 import type { CarrySpec } from "../inventory/cross-check";
@@ -25,7 +25,7 @@ interface OpMeta {
   plan?: { items?: unknown };
   vxInventory?: Record<string, VxInventoryItem & { runId?: string; at?: string }>;
   vxExcluded?: Record<string, { reason: string; at: string; by: string }>;
-  vxDisk?: Record<string, { ok: boolean; unknown: boolean }>;
+  vxDisk?: Record<string, { ok: boolean; unknown: boolean; details?: Record<string, number | boolean | string | null> }>;
   vxStream?: Record<string, unknown>;
   vxDbSizes?: Record<string, DbSizeRecord>;
 }
@@ -51,6 +51,12 @@ function serviceVolumeItems(tasks: ReadonlyArray<{ itemRef: string | null; kind:
 
 const metaOf = (m: unknown): OpMeta => (m && typeof m === "object" ? (m as OpMeta) : {});
 const num = (v: bigint | number | null | undefined): number => (v == null ? 0 : Number(v));
+
+/** The disk verdict as the data step sees it: the booleans, plus the tightest need/free pair when the check failed. */
+function diskOf(v: { ok: boolean; unknown: boolean; details?: Record<string, number | boolean | string | null> }): { ok: boolean; unknown: boolean; needBytes?: number; freeBytes?: number } {
+  const s = !v.ok && !v.unknown ? diskShortfall(v.details) : null;
+  return { ok: v.ok, unknown: v.unknown, ...(s ?? {}) };
+}
 
 /**
  * The importer's data plane as the run sees it. {@link snapshot} is READ-ONLY (plain Prisma reads: it never calls the importer's
@@ -163,7 +169,7 @@ export class PrismaDataPort implements DataPort {
         entries: t?.entries ?? null,
         error: t?.error ?? null,
         inventory: inv ? { found: inv.found, rawBytes: inv.rawBytes, entries: inv.entries, running: inv.running, mountType: inv.mountType, ...(inv.pgMajor ? { pgMajor: inv.pgMajor } : {}), ...(inv.pgLayout ? { pgLayout: inv.pgLayout } : {}), ...(inv.speedMBps ? { speedMBps: inv.speedMBps } : {}) } : null,
-        disk: meta.vxDisk?.[target.itemRef] ? { ok: meta.vxDisk[target.itemRef].ok, unknown: meta.vxDisk[target.itemRef].unknown } : null,
+        disk: meta.vxDisk?.[target.itemRef] ? diskOf(meta.vxDisk[target.itemRef]) : null,
         gates,
       });
     }

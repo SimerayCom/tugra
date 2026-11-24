@@ -15,7 +15,7 @@ import {
   type StepHandlerRegistry,
 } from "../../core/run-contract";
 import { DATA_CODES, DATA_PORT, OBJECT_PORT, type DataPort, type DataSnapshot, type ObjectPort, type ObjectView } from "./data-contract";
-import { checkKey, dbsNeedingMeasure, decideLanes, estimateEquals, estimateWindow, hasLiveTransfer, migratorFlags, objectIsActive, seedChecks, windowExtrasOf } from "./data-logic";
+import { byteProgress, checkKey, dbsNeedingMeasure, decideLanes, estimateEquals, estimateWindow, hasLiveTransfer, migratorFlags, objectIsActive, seedChecks, windowExtrasOf } from "./data-logic";
 import { compOf, gateFrom, loadObjects, loadSnapshot, takeObjectStart, type StepComp } from "./handler-util";
 import { MigratorRunner } from "./launcher/migrator-runner.service";
 import { OBJECT_PLAN_ID, objectPlanChecks } from "./object-plan-check";
@@ -120,7 +120,7 @@ export class DataSeedHandler implements StepHandler<SeedObs>, OnModuleInit {
     const hosts = await loadHostView(this.reports, ctx.run.id);
     const inspected = snap.volumes.filter((v) => !v.excluded && v.inventory).length;
     const total = snap.volumes.filter((v) => !v.excluded).length;
-    return { snap, objects: views, missingObjects: missing, launcher, hosts, progress: { done: inspected, total, unit: "volume" } };
+    return { snap, objects: views, missingObjects: missing, launcher, hosts, progress: byteProgress(snap) ?? { done: inspected, total, unit: "volume" } };
   }
 
   private checks(ctx: StepContext, obs: SeedObs): GateCheck[] {

@@ -94,6 +94,37 @@ describe("decideDbLane: the physical copy (PG18 nested layout, an Alpine image u
   });
 });
 
+describe("an operator ceiling on streamed dumps", () => {
+  it("only applies when one is set: a database above it is blocked with its own reason, below it streams", () => {
+    const big = database(DB, { measure: counted(300 * MiB) });
+    expect(input(big, { streamCapBytes: null })).toMatchObject({ lane: "stream" });
+    expect(input(big, { streamCapBytes: 10 * 1024 * MiB })).toMatchObject({ lane: "stream" });
+    expect(input(big, { streamCapBytes: 100 * MiB })).toMatchObject({ lane: "blocked", reason: "over-dump-cap" });
+  });
+  it("a database that is not measured yet is never judged against it", () => {
+    expect(input(database(DB, { measure: null }), { streamCapBytes: 1 })).toMatchObject({ lane: "pending" });
+  });
+  it("the physical fallback is judged the same way", () => {
+    const pg = database(DB, { plane: "volume", measure: BIG_MEASURE });
+    const phys = volume("volume:srv1:db-big:data", { destType: "db-data", ownerItemRef: DB, engine: "POSTGRES", gates: [{ id: "layout", status: "fail" }] });
+    expect(input(pg, { physical: phys, streamCapBytes: 1 * MiB })).toMatchObject({ lane: "blocked", reason: "over-dump-cap", gate: "layout" });
+  });
+  it("the gate names the limit in a check of its own", () => {
+    const snap = makeSnap({ databases: [database(DB, { measure: counted(300 * MiB) })] });
+    const checks = dbLaneChecks(makeRun(), snap, CAP, 100 * MiB);
+    expect(checks[0]).toMatchObject({ status: "fail", code: DATA_CODES.seedDbOverDumpCap, params: { maxBytes: 100 * MiB, engine: "POSTGRES" } });
+  });
+});
+
+describe("the lane check says which route a database takes", () => {
+  it("one dump, a checked stream, or a file copy: a code per route, with the measured size", () => {
+    const snap = makeSnap({ databases: [database("database:s:small", { measure: SMALL_MEASURE }), database("database:s:big", { measure: counted(300 * MiB) })] });
+    const by = Object.fromEntries(dbLaneChecks(makeRun(), snap, CAP, null).map((c) => [c.subject, c]));
+    expect(by["database:s:small"]).toMatchObject({ status: "pass", code: DATA_CODES.seedDbLane, params: { lane: "logical", dumpBytes: SMALL_MEASURE.dumpRawBytes } });
+    expect(by["database:s:big"]).toMatchObject({ status: "pass", code: DATA_CODES.seedDbLaneStream, params: { lane: "stream", dumpBytes: counted(300 * MiB).dumpRawBytes } });
+  });
+});
+
 describe("decideLanes / dbsNeedingMeasure / dbLaneChecks", () => {
   const snapWith = (...dbs: ReturnType<typeof database>[]) => makeSnap({ databases: dbs });
   const run = (mode?: "refuse" | "stream-logical") => makeRun({ options: mode ? { largeDbMode: mode } : {} });

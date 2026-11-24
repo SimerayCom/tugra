@@ -14,7 +14,7 @@ import {
   type StepHandlerRegistry,
 } from "../../core/run-contract";
 import { CAPABILITY_PORT, CHECK_STORE, DATA_CODES, DATA_PORT, OBJECT_PORT, SOURCE_STATS_CHECK, type CapabilityPort, type CheckStore, type DataPort, type DataSnapshot, type ObjectPort, type ObjectView } from "./data-contract";
-import { FINAL_HOST_LOOP_CODES, dbRestoredAfterFreeze, finalChecks, finalHostChecks, finalHostTally, hasLiveTransfer, isMigratorDb, migratorFlags, migratorWorkRemains, objectIsActive } from "./data-logic";
+import { FINAL_HOST_LOOP_CODES, byteProgress, dbRestoredAfterFreeze, finalChecks, finalHostChecks, finalHostTally, hasLiveTransfer, isMigratorDb, migratorFlags, migratorWorkRemains, objectIsActive } from "./data-logic";
 import { compOf, gateFrom, loadObjects, loadSnapshot, releaseIfOurs, takeObjectStart, type StepComp } from "./handler-util";
 import { HOST_LOOP_CODES } from "./inventory/host-codes";
 import { sourceHostsOf } from "./inventory/host-hosts";
@@ -128,7 +128,7 @@ export class DataFinalHandler implements StepHandler<FinalObs>, OnModuleInit {
       reportedStats,
       hosts,
       loopHosts,
-      progress: { done, total, unit: "item" },
+      progress: byteProgress(snap) ?? { done, total, unit: "item" },
     };
   }
 

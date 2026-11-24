@@ -63,7 +63,8 @@ export interface VolumeDataItem {
   entries: number | null;
   error: string | null;
   inventory: InventoryLite | null;
-  disk: { ok: boolean; unknown: boolean } | null;
+  /** The target's free-space verdict; `needBytes`/`freeBytes` name the tightest place when it failed (absent when the probe could not read the disk). */
+  disk: { ok: boolean; unknown: boolean; needBytes?: number; freeBytes?: number } | null;
   /** db-data only: the physical-copy gates (id + status), evaluated hub-side. */
   gates: Array<{ id: string; status: "pass" | "fail" | "unknown" }> | null;
 }
@@ -409,6 +410,9 @@ export const DATA_CODES = {
   seedObjectStartRejected: "data-seed.object-start-rejected",
   seedEstimate: "data-seed.estimate",
   seedDbLane: "data-seed.db-lane",
+  seedDbLaneStream: "data-seed.db-lane-stream",
+  seedDbLanePhysical: "data-seed.db-lane-physical",
+  seedDbOverDumpCap: "data-seed.db-over-dump-cap",
   seedDbUnmeasured: "data-seed.db-unmeasured",
   seedDbOverCapRefused: "data-seed.db-over-cap-refused",
   seedDbPhysicalRefused: "data-seed.db-physical-refused",

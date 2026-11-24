@@ -76,3 +76,29 @@ export function dumpRestoreTimeoutMs(rawBytes: number): number {
   const ms = 15 * 60_000 + Math.ceil(Math.max(0, rawBytes) / GiB) * 6 * 60_000;
   return Math.min(Math.max(ms, 1), 24 * 3600_000);
 }
+
+const MiB = 1024 ** 2;
+
+/**
+ * The one number pair a person needs from a failed free-space check: how much the target needs where it is tightest, and how much it
+ * has there. Reads the `details` of either verdict (a volume's or a streamed dump's); null when the probe could not read the disk.
+ */
+export function diskShortfall(d: Record<string, number | boolean | string | null> | null | undefined): { needBytes: number; freeBytes: number } | null {
+  if (!d) return null;
+  const staging = typeof d.targetStagingFreeBytes === "number" ? d.targetStagingFreeBytes : null;
+  const docker = typeof d.targetDockerFreeBytes === "number" ? d.targetDockerFreeBytes : null;
+  if (staging === null || docker === null) return null;
+  const same = d.targetSameDevice === true;
+  if (d.lane === "dump") {
+    const staged = typeof d.stagedBytes === "number" ? d.stagedBytes : null;
+    const db = typeof d.databaseBytes === "number" ? d.databaseBytes : null;
+    if (staged === null || db === null) return null;
+    if (same) return { needBytes: staged + db, freeBytes: staging };
+    return staging < staged ? { needBytes: staged, freeBytes: staging } : { needBytes: db, freeBytes: docker };
+  }
+  const total = typeof d.totalBytes === "number" ? d.totalBytes : null;
+  if (total === null) return null;
+  if (same) return { needBytes: Math.ceil(2.05 * total + GiB), freeBytes: staging };
+  const stageNeed = Math.ceil(1.02 * total + 512 * MiB);
+  return staging < stageNeed ? { needBytes: stageNeed, freeBytes: staging } : { needBytes: Math.ceil(1.05 * total + 512 * MiB), freeBytes: docker };
+}
