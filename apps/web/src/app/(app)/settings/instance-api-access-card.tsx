@@ -61,10 +61,16 @@ export function InstanceApiAccessCard() {
       <div style={{ fontWeight: 600, marginBottom: 2 }}>{t("settings.apiAccess")}</div>
       <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 14px" }}>{t("settings.apiAccessDesc")}</p>
 
-      <label style={{ display: "flex", gap: 8, alignItems: "flex-start", cursor: "pointer", fontSize: 13, marginBottom: 14 }}>
-        <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} style={{ marginTop: 2, accentColor: "var(--c-a)" }} />
+      <label style={{ display: "flex", gap: 10, alignItems: "flex-start", cursor: "pointer", fontSize: 13, marginBottom: 14, minHeight: 44 }}>
+        <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} style={{ marginTop: 2, width: 18, height: 18, accentColor: "var(--c-a)" }} />
         <span>
           <span style={{ fontWeight: 600 }}>{t("settings.apiEnabled")}</span>
+          <span
+            data-testid="api-state"
+            style={{ marginLeft: 8, fontSize: 11, fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase", color: enabled ? "var(--c-g)" : "var(--c-am)" }}
+          >
+            {enabled ? t("settings.apiStateOn") : t("settings.apiStateOff")}
+          </span>
           <span style={{ display: "block", fontSize: 11, color: "var(--c-tx3)" }}>{t("settings.apiEnabledHint")}</span>
         </span>
       </label>
@@ -72,9 +78,10 @@ export function InstanceApiAccessCard() {
       <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>{t("settings.apiAllowedIps")}</div>
       <div style={{ fontSize: 11, color: "var(--c-tx3)", marginBottom: 6 }}>{t("settings.apiAllowedIpsHint")}</div>
       <textarea
+        className="ph-example"
         aria-label={t("settings.apiAllowedIps")}
         style={{ ...field, minHeight: 84 }}
-        placeholder={"203.0.113.7\n10.0.0.0/8\n2001:db8::/32"}
+        placeholder={t("settings.apiAllowedIpsPlaceholder")}
         value={ipsText}
         onChange={(e) => setIpsText(e.target.value)}
       />

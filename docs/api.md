@@ -238,6 +238,10 @@ returns `405` with `Allow: POST`.
 - **Auth:** the same PAT/session + scope model as the REST API above — a PAT works out of the box, and the
   `apiEnabled` kill-switch and IP allowlist apply here too. The caller's identity always comes from the
   resolved token, never anything the client asserts, so a client can't widen its own team scope.
+- **Connect Claude Code:** in the panel, Settings, API Tokens, "Token for MCP" creates a read-only token and shows the
+  ready command: `claude mcp add --transport http tugra https://<your-hub>/api/v1/mcp --header "Authorization: Bearer <token>"`.
+  Each token keeps a bounded history of its last 50 calls (time, IP, user agent, tool) at `GET /api/v1/api-tokens/:id/usage`
+  (session only); the token itself is never stored.
 - **Methods:** `initialize`, `ping`, `notifications/initialized`, `notifications/cancelled`, `tools/list`,
   `tools/call`, `prompts/list`, `prompts/get`. Requests may be batched (a JSON array, capped at 20 messages; each message is charged against
   the burst limit); notifications (no `id`) return no body (`202`).

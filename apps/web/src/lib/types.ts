@@ -2174,6 +2174,20 @@ export interface ApiToken {
   expiresAt: string | null;
   lastUsedAt: string | null;
   createdAt: string;
+  /** The user who minted it (tokens are personal). Null only if the owner row is unavailable. */
+  createdBy?: { id: string; name: string | null; email: string } | null;
+}
+
+/** One entry of a token's bounded recent-use history (never contains the token). */
+export interface ApiTokenUse {
+  id: string;
+  at: string;
+  ip: string | null;
+  userAgent: string | null;
+  /** `mcp:<tool>` or `<METHOD> <route>`. */
+  action: string | null;
+  /** Identical back-to-back calls are coalesced into one entry. */
+  count: number;
 }
 
 export interface SavedView {

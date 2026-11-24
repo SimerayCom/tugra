@@ -25,6 +25,8 @@ const wrap = () =>
     </QueryClientProvider>,
   );
 
+const openForm = () => fireEvent.click(screen.getByRole("button", { name: "Create token" }));
+
 describe("ApiTokensCard scope selector", () => {
   beforeEach(() => {
     qc = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
@@ -42,6 +44,7 @@ describe("ApiTokensCard scope selector", () => {
 
   it("hides owner-only scopes (admin, read:secrets) for a non-owner", () => {
     wrap();
+    openForm();
     expect(screen.getByText("Read")).toBeTruthy();
     expect(screen.getByText("Write")).toBeTruthy();
     expect(screen.getByText("Deploy")).toBeTruthy();
@@ -54,6 +57,7 @@ describe("ApiTokensCard scope selector", () => {
   it("shows all five scopes for the instance owner", () => {
     h.user = { isInstanceOwner: true };
     wrap();
+    openForm();
     expect(screen.getByText("Admin")).toBeTruthy();
     expect(screen.getByText("Read secrets")).toBeTruthy();
     expect(screen.getAllByRole("checkbox")).toHaveLength(5);
@@ -61,6 +65,7 @@ describe("ApiTokensCard scope selector", () => {
 
   it("keeps the read scope locked (checked + disabled)", () => {
     wrap();
+    openForm();
     const read = screen.getAllByRole("checkbox")[0] as HTMLInputElement;
     expect(read.checked).toBe(true);
     expect(read.disabled).toBe(true);
@@ -68,18 +73,21 @@ describe("ApiTokensCard scope selector", () => {
 
   it("submits the ticked scopes (read baseline + deploy) to createApiToken", async () => {
     wrap();
+    openForm();
     const boxes = screen.getAllByRole("checkbox"); // [read, write, deploy]
     fireEvent.click(boxes[2]); // tick deploy
-    fireEvent.change(screen.getByPlaceholderText(/Token name/), { target: { value: "ci-deploy" } });
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "ci-deploy" } });
+    fireEvent.change(screen.getByLabelText("Expires"), { target: { value: "never" } });
     fireEvent.click(screen.getByRole("button", { name: "Create" }));
     await waitFor(() => expect(api.createApiToken).toHaveBeenCalledWith("ci-deploy", ["read", "deploy"]));
   });
 
-  it("defaults to a read-only token when nothing extra is ticked", async () => {
+  it("defaults to a read-only token expiring in 90 days when nothing else is chosen", async () => {
     wrap();
-    fireEvent.change(screen.getByPlaceholderText(/Token name/), { target: { value: "readonly" } });
+    openForm();
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "readonly" } });
     fireEvent.click(screen.getByRole("button", { name: "Create" }));
-    await waitFor(() => expect(api.createApiToken).toHaveBeenCalledWith("readonly", ["read"]));
+    await waitFor(() => expect(api.createApiToken).toHaveBeenCalledWith("readonly", ["read"], 90));
   });
 });
 
@@ -135,16 +143,27 @@ describe("ApiTokensCard expiry, rename and rotate", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Rotate token ci" }));
     await waitFor(() => expect(rotate).toHaveBeenCalledWith("a"));
     expect(await screen.findByText("tugra_pat_rotated")).toBeTruthy();
+    expect(screen.getByText("This is the only time it's shown.")).toBeTruthy();
   });
 
-  it("sends the optional expiry only when filled in", async () => {
+  it("offers 30 / 90 / 365 days or never, and omits the expiry for never", async () => {
     vi.spyOn(api, "listApiTokens").mockResolvedValue([]);
     const create = vi.spyOn(api, "createApiToken").mockResolvedValue({ token: "t", view: tok("n", "x", null) });
     wrap();
-    fireEvent.change(screen.getByPlaceholderText(/Token name/), { target: { value: "ci" } });
-    fireEvent.change(screen.getByLabelText("Expires in (days, optional)"), { target: { value: "30" } });
+    openForm();
+    const sel = screen.getByLabelText("Expires") as HTMLSelectElement;
+    expect([...sel.options].map((o) => o.value).sort()).toEqual(["30", "365", "90", "never"]);
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "ci" } });
+    fireEvent.change(sel, { target: { value: "30" } });
     fireEvent.click(screen.getByRole("button", { name: "Create" }));
     await waitFor(() => expect(create).toHaveBeenCalledWith("ci", ["read"], 30));
+    fireEvent.click(await screen.findByRole("button", { name: "Done" })); // saved? not copied -> confirm mocked true
+    openForm();
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "forever" } });
+    fireEvent.change(screen.getByLabelText("Expires"), { target: { value: "never" } });
+    expect(screen.getByRole("note").textContent).toMatch(/never expires/);
+    fireEvent.click(screen.getByRole("button", { name: "Create" }));
+    await waitFor(() => expect(create).toHaveBeenLastCalledWith("forever", ["read"]));
   });
 });
 

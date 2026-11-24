@@ -390,11 +390,11 @@ export function DomainOptionsCard({
       <div style={{ marginTop: 10 }}>
         <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("apps.ipAllowlist")}</div>
         <textarea
-          className="mono"
+          className="mono ph-example"
           value={ips}
           spellCheck={false}
           onChange={(e) => setIps(e.target.value)}
-          placeholder={"203.0.113.4\n10.0.0.0/8\n2001:db8::/32"}
+          placeholder={t("apps.ipAllowlistPlaceholder")}
           aria-label={t("apps.ipAllowlist")}
           style={{ width: "100%", minHeight: 72, maxHeight: 180, resize: "vertical", fontSize: 12, lineHeight: 1.5, color: "var(--c-tx)", background: "var(--c-el)", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: 10, boxSizing: "border-box" }}
         />

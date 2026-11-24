@@ -978,3 +978,101 @@ html[data-ui-style="3d"] .tg-btn:not(:disabled):active {
   --ent-tint: var(--ent-tint-l);
   --ent-text: var(--ent-text-l);
 }
+
+/* API tokens table: a real table on wide screens, stacked label/value rows on phones (labels come from data-label). */
+.tok-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.tok-table th {
+  text-align: left;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--c-tx3);
+  padding: 6px 12px 6px 0;
+  white-space: nowrap;
+}
+.tok-table td {
+  padding: 10px 12px 10px 0;
+  vertical-align: top;
+  border-top: 1px solid var(--c-bd);
+}
+.tok-table .tok-usage-row td {
+  border-top: none;
+  padding-top: 0;
+}
+.tok-act {
+  min-height: 32px;
+  padding: 0 8px;
+  border-radius: var(--r1);
+}
+.tok-act:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.tok-act:focus-visible {
+  outline: 2px solid var(--c-a);
+  outline-offset: 1px;
+}
+@media (pointer: coarse) {
+  .tok-act {
+    min-height: 44px;
+    min-width: 44px;
+  }
+}
+@media (max-width: 640px) {
+  .tok-table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+  }
+  .tok-table,
+  .tok-table tbody,
+  .tok-table tr,
+  .tok-table td {
+    display: block;
+    width: 100%;
+  }
+  .tok-table tr {
+    padding: 8px 0;
+    border-top: 1px solid var(--c-bd);
+  }
+  .tok-table td {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
+    border-top: none;
+    padding: 4px 0;
+  }
+  .tok-table td::before {
+    content: attr(data-label);
+    flex: 0 0 84px;
+    font-size: 11px;
+    color: var(--c-tx3);
+  }
+  .tok-table .tok-usage-row {
+    border-top: none;
+    padding-top: 0;
+  }
+  .tok-table .tok-usage-row td {
+    display: block;
+  }
+  .tok-table .tok-usage-row td::before {
+    content: none;
+  }
+  .tok-act {
+    min-height: 44px;
+    min-width: 44px;
+  }
+}
+
+/* Example values in inputs must read as examples, never as real entries: faded + italic. */
+.ph-example::placeholder {
+  color: var(--c-tx3);
+  opacity: 0.7;
+  font-style: italic;
+}

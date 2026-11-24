@@ -60,4 +60,22 @@ describe("InstanceApiAccessCard", () => {
       expect(api.updateInstanceSettings).toHaveBeenCalledWith({ apiEnabled: false, apiAllowedIps: ["1.2.3.4", "5.6.7.8/24"] }),
     );
   });
+
+  it("shows an explicit On/Off label next to the switch", async () => {
+    h.user = { isInstanceOwner: true };
+    vi.spyOn(api, "getInstanceSettings").mockResolvedValue({ apiEnabled: false, apiAllowedIps: [], publicUrl: null, acmeEmail: null });
+    wrap();
+    await waitFor(() => expect(screen.getByTestId("api-state").textContent).toBe("Off"));
+    fireEvent.click(screen.getByRole("checkbox"));
+    expect(screen.getByTestId("api-state").textContent).toBe("On");
+  });
+
+  it("uses clearly-marked example placeholders for the allowed IPs", async () => {
+    h.user = { isInstanceOwner: true };
+    vi.spyOn(api, "getInstanceSettings").mockResolvedValue({ apiEnabled: true, apiAllowedIps: [], publicUrl: null, acmeEmail: null });
+    wrap();
+    const ta = (await screen.findByLabelText("Allowed IP addresses")) as HTMLTextAreaElement;
+    expect(ta.placeholder.split("\n").every((l) => l.startsWith("e.g. "))).toBe(true);
+    expect(ta.placeholder).toContain("e.g. 203.0.113.7");
+  });
 });

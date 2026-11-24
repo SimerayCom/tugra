@@ -1382,5 +1382,6 @@
   },
   "sortName": "Name",
   "sortStatus": "Status",
-  "sortProject": "Project"
+  "sortProject": "Project",
+  "ipAllowlistPlaceholder": "e.g. 203.0.113.7\ne.g. 198.51.100.0/24\ne.g. 2001:db8::/32"
 }

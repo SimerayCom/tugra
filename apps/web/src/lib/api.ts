@@ -12,6 +12,7 @@ import type {
   MoveAcks,
   MovePreflightResult,
   ApiToken,
+  ApiTokenUse,
   AppLabelsView,
   ApiTokenScope,
   PlacementConstraint,
@@ -2287,6 +2288,9 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ name, scopes, expiresInDays }),
     });
+  },
+  listApiTokenUsage(id: string) {
+    return apiFetch<ApiTokenUse[]>(`/api-tokens/${encodeURIComponent(id)}/usage`);
   },
   renameApiToken(id: string, name: string) {
     return apiFetch<ApiToken>(`/api-tokens/${id}`, { method: "PATCH", body: JSON.stringify({ name }) });
