@@ -45,6 +45,7 @@ import { DnsModule } from "./dns/dns.module";
 import { SecretProvidersModule } from "./secret-providers/secret-providers.module";
 import { ApiTokensModule } from "./api-tokens/api-tokens.module";
 import { SavedViewsModule } from "./saved-views/saved-views.module";
+import { DashboardModule } from "./dashboard/dashboard.module";
 import { SharedVariablesModule } from "./shared-variables/shared-variables.module";
 import { GitSourcesModule } from "./git-sources/git-sources.module";
 import { RegistriesModule } from "./registries/registries.module";
@@ -118,6 +119,7 @@ import { ApiExceptionFilter } from "./common/api-exception.filter";
     SecretProvidersModule,
     ApiTokensModule,
     SavedViewsModule,
+    DashboardModule,
     SharedVariablesModule,
     GitSourcesModule,
     RegistriesModule,
