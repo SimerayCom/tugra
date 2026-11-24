@@ -160,8 +160,6 @@ export interface CoolifyService {
   /** The Coolify environment the service lives in (resolved against the project tree). */
   environment_id?: number | string | null;
   service_type?: string | null; // one-click template key
-  /** The Coolify environment the stack lives in; resolved to a project through `/projects/{uuid}`. */
-  environment_id?: number | string | null;
   /** The raw compose: on a 4.1.2 inventory every list row carries it; from 4.7 it is `read:sensitive`-gated and absent otherwise.
    *  The rendered `docker_compose` is NEVER used (rendered `<uuid>_*` volume names, `coolify.*` labels). */
   docker_compose_raw?: string | null;

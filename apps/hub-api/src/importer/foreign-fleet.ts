@@ -258,9 +258,6 @@ export interface ForeignService {
   members?: ForeignServiceMember[];
   /** The source server's display name (display only). */
   serverName?: string;
-  /** The source project / environment the stack lives in (Coolify). Used to select a whole project at the first import step. */
-  projectRef?: string;
-  environmentRef?: string;
 }
 
 /** One compose service of a {@link ForeignService}. `name` IS the compose service key. */
