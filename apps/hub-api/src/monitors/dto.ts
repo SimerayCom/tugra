@@ -1,5 +1,8 @@
 import net from "node:net";
 import { z } from "zod";
+import { isPctMetric } from "./checkers";
+
+export const METRIC_KINDS = ["DISK", "CPU", "MEM", "LOAD1", "LOAD5", "LOAD15", "TEMP", "NET"] as const;
 
 export const HTTP_METHODS = ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"] as const;
 export const DNS_RECORD_TYPES = ["A", "AAAA", "CNAME", "MX", "NS", "TXT", "SRV", "CAA", "PTR"] as const;
@@ -50,8 +53,10 @@ export const CreateMonitorSchema = z
     type: z.enum(["HTTP", "TCP", "METRIC", "KEYWORD", "PING", "DNS"]),
     target: z.string().min(1).optional(),
     serverId: z.string().min(1).optional(),
-    metric: z.enum(["DISK", "CPU", "MEM"]).optional(),
+    metric: z.enum(METRIC_KINDS).optional(),
     thresholdPct: z.number().int().min(1).max(100).optional(),
+    /** Limit for the absolute-unit kinds: load average, temperature in °C, bandwidth in MB/s. */
+    thresholdValue: z.number().positive().max(100_000).optional(),
     teamId: z.string().min(1),
     intervalSec: z.number().int().min(10).optional(),
     retries: z.number().int().min(0).optional(),
@@ -64,11 +69,11 @@ export const CreateMonitorSchema = z
   .refine(
     (d) =>
       d.type === "METRIC"
-        ? !!d.serverId && !!d.metric && d.thresholdPct != null
+        ? !!d.serverId && !!d.metric && (isPctMetric(d.metric) ? d.thresholdPct != null : d.thresholdValue != null)
         : !!d.target,
     {
       message:
-        "HTTP/TCP/KEYWORD/PING/DNS need target; METRIC needs serverId, metric and thresholdPct",
+        "HTTP/TCP/KEYWORD/PING/DNS need target; METRIC needs serverId, metric and a threshold (thresholdPct for DISK/CPU/MEM, thresholdValue otherwise)",
       path: ["type"],
     },
   )

@@ -269,7 +269,11 @@ export const checkers: Record<string, Checker> = {
   DNS: dnsCheck,
 };
 
-export type MetricKind = "DISK" | "CPU" | "MEM";
+/** Percent kinds compare against `thresholdPct`; the absolute kinds (load average, °C, MB/s) against `thresholdValue`. */
+export type MetricKind = "DISK" | "CPU" | "MEM" | "LOAD1" | "LOAD5" | "LOAD15" | "TEMP" | "NET";
+export const PCT_METRIC_KINDS: readonly MetricKind[] = ["DISK", "CPU", "MEM"];
+export const ABS_METRIC_KINDS: readonly MetricKind[] = ["LOAD1", "LOAD5", "LOAD15", "TEMP", "NET"];
+export const isPctMetric = (k: string | null | undefined): boolean => PCT_METRIC_KINDS.includes(k as MetricKind);
 
 export interface MetricSampleLite {
   cpu: number;
@@ -277,6 +281,13 @@ export interface MetricSampleLite {
   memTotal: number;
   diskUsed: number;
   diskTotal: number;
+  /** Optional readings: null/absent when the agent or host does not report them (no fake 0). */
+  load1?: number | null;
+  load5?: number | null;
+  load15?: number | null;
+  temp?: number | null;
+  /** Network rx + tx in bytes per second. */
+  netBps?: number | null;
 }
 
 /**
@@ -311,6 +322,14 @@ export function metricCheckResult(
     if (age > freshness.maxAgeMs) return { up: false, ms: 0, msg: `stale metrics (${Math.round(age / 1000)}s old)` };
     if (tsMs > freshness.now + 60_000) return { up: false, ms: 0, msg: "metric timestamp in the future (clock skew)" };
   }
+  if (!isPctMetric(kind)) {
+    const reading = absoluteReading(kind, sample);
+    // A sensor the host never reports (temperature on a cloud VM, load on an old agent) cannot alarm.
+    if (reading == null || !Number.isFinite(reading)) return { up: true, ms: 0, msg: `${kind} not reported` };
+    const shown = Math.round(reading * 100) / 100;
+    const unit = kind === "TEMP" ? "°C" : kind === "NET" ? " MB/s" : "";
+    return { up: reading < thresholdPct, ms: 0, msg: `${kind} ${shown}${unit} (limit ${thresholdPct}${unit})` };
+  }
   let pct: number;
   if (kind === "CPU") pct = sample.cpu;
   else if (kind === "MEM") pct = sample.memTotal > 0 ? (sample.memUsed / sample.memTotal) * 100 : 0;
@@ -321,4 +340,22 @@ export function metricCheckResult(
     ms: 0,
     msg: `${kind} ${rounded}% (limit ${thresholdPct}%)`,
   };
+}
+
+/** The value an absolute-unit metric kind is compared on (load average, °C, MB/s), or null when not reported. */
+export function absoluteReading(kind: MetricKind, sample: MetricSampleLite): number | null {
+  switch (kind) {
+    case "LOAD1":
+      return sample.load1 ?? null;
+    case "LOAD5":
+      return sample.load5 ?? null;
+    case "LOAD15":
+      return sample.load15 ?? null;
+    case "TEMP":
+      return sample.temp ?? null;
+    case "NET":
+      return sample.netBps == null ? null : sample.netBps / (1024 * 1024);
+    default:
+      return null;
+  }
 }

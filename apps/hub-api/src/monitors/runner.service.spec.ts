@@ -46,6 +46,14 @@ describe("MonitorRunnerService — METRIC", () => {
     expect(fire).toHaveBeenCalled();
   });
 
+  it("alarms on a load average against thresholdValue, and on temperature, when the sample carries them", async () => {
+    const sample = { cpu: 10, memUsed: 1, memTotal: 10, diskUsed: 40, diskTotal: 100, netRx: 0, netTx: 0, load1: 1, load5: 5.5, load15: 2, temp: 50, ts: new Date() };
+    const load = make(metricMonitor({ metric: "LOAD5", thresholdPct: null, thresholdValue: 4.5 }), sample);
+    expect((await load.svc.runCheck("m1"))?.status).toBe("DOWN");
+    const temp = make(metricMonitor({ metric: "TEMP", thresholdPct: null, thresholdValue: 60 }), sample);
+    expect((await temp.svc.runCheck("m1"))?.status).toBe("UP");
+  });
+
   it("stays UP when usage is below the threshold", async () => {
     const { svc, fire } = make(metricMonitor(), {
       cpu: 10, memUsed: 1, memTotal: 10, diskUsed: 40, diskTotal: 100, ts: new Date(),

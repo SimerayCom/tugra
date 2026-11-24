@@ -2,7 +2,7 @@ import { Injectable } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { NotificationsService } from "../notifications/notifications.service";
 import { CryptoService } from "../crypto/crypto.service";
-import { applyUpsideDown, checkers, metricCheckResult, type HttpOptions, type MetricKind } from "./checkers";
+import { applyUpsideDown, checkers, isPctMetric, metricCheckResult, type HttpOptions, type MetricKind } from "./checkers";
 import { nextState } from "./transition";
 
 export interface CheckOutcome {
@@ -59,6 +59,11 @@ export class MonitorRunnerService {
             memTotal: Number(row.memTotal),
             diskUsed: Number(row.diskUsed),
             diskTotal: Number(row.diskTotal),
+            load1: row.load1,
+            load5: row.load5,
+            load15: row.load15,
+            temp: row.temp,
+            netBps: Number(row.netRx) + Number(row.netTx),
           }
         : null;
       // "no metrics yet" (UP) is a grace ONLY for a genuinely NEW monitor (a fresh monitor defaults to PENDING
@@ -67,7 +72,10 @@ export class MonitorRunnerService {
       // windows a DOWN-only check missed — disabled→re-enabled, a deleted server, the retention purge, and a
       // long PENDING ladder — without breaking a just-created monitor's grace.
       const established = m.createdAt ? now - new Date(m.createdAt).getTime() > maxAgeMs : false;
-      r = metricCheckResult((m.metric as MetricKind) ?? "DISK", sample, m.thresholdPct ?? 90, {
+      const kind = (m.metric as MetricKind) ?? "DISK";
+      // Percent kinds read thresholdPct; load / temperature / bandwidth read thresholdValue.
+      const limit = isPctMetric(kind) ? (m.thresholdPct ?? 90) : (m.thresholdValue ?? m.thresholdPct ?? 90);
+      r = metricCheckResult(kind, sample, limit, {
         ts: row?.ts,
         now,
         maxAgeMs,

@@ -274,3 +274,35 @@ describe("metricCheckResult — freshness gate (F03)", () => {
     expect(metricCheckResult("DISK", sample, 80).up).toBe(true); // no freshness arg → threshold only
   });
 });
+
+describe("metricCheckResult — absolute kinds (load, temperature, bandwidth)", () => {
+  const base = { cpu: 10, memUsed: 1, memTotal: 10, diskUsed: 1, diskTotal: 10 };
+
+  it("compares load averages to thresholdValue", () => {
+    const s = { ...base, load1: 1.2, load5: 4.6, load15: 2 };
+    expect(metricCheckResult("LOAD5", s, 4).up).toBe(false);
+    expect(metricCheckResult("LOAD5", s, 4).msg).toBe("LOAD5 4.6 (limit 4)");
+    expect(metricCheckResult("LOAD1", s, 4).up).toBe(true);
+    expect(metricCheckResult("LOAD15", s, 2).up).toBe(false); // 2 >= 2
+  });
+
+  it("compares temperature in degrees and bandwidth in MB/s", () => {
+    expect(metricCheckResult("TEMP", { ...base, temp: 81 }, 80)).toMatchObject({ up: false, msg: "TEMP 81°C (limit 80°C)" });
+    const mb = 1024 * 1024;
+    expect(metricCheckResult("NET", { ...base, netBps: 30 * mb }, 25).up).toBe(false);
+    expect(metricCheckResult("NET", { ...base, netBps: 10 * mb }, 25).up).toBe(true);
+  });
+
+  it("never alarms on a reading the host does not report", () => {
+    const r = metricCheckResult("TEMP", base, 60);
+    expect(r.up).toBe(true);
+    expect(r.msg).toContain("not reported");
+    expect(metricCheckResult("LOAD1", { ...base, load1: null }, 1).up).toBe(true);
+  });
+
+  it("a stale sample still fails the check", () => {
+    const now = Date.now();
+    const r = metricCheckResult("LOAD1", { ...base, load1: 0 }, 5, { ts: now - 10 * 60_000, now, maxAgeMs: 90_000 });
+    expect(r.up).toBe(false);
+  });
+});
