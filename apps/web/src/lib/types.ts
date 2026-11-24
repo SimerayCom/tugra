@@ -1153,7 +1153,43 @@ export interface Channel {
   categories: string[];
   minSeverity: string;
   topics: Record<string, number> | null;
+  /** Delivery rules: quiet hours, per-minute rate limit and repeat window. {} = hub defaults. */
+  policy?: ChannelPolicy;
   canWrite: boolean;
+}
+
+/** A channel's delivery rules (all optional; absent = the service default). */
+export interface ChannelPolicy {
+  quietHours?: { from: string; to: string; tz: string; allowCritical: boolean };
+  rateLimitPerMin?: number;
+  /** Seconds in which a repeat of the same alert folds into one summary; 0 = off. */
+  dedupeWindowSec?: number;
+}
+
+/** The body of a policy save: null clears a field back to its default. */
+export interface ChannelPolicyInput {
+  quietHours?: { from: string; to: string; tz: string; allowCritical: boolean } | null;
+  rateLimitPerMin?: number | null;
+  dedupeWindowSec?: number | null;
+}
+
+/** POST /channels/parse-url: what a pasted Shoutrrr/Apprise URL would create. Credentials are masked. */
+export interface ParsedChannelUrl {
+  type: string;
+  suggestedName: string;
+  config: Record<string, string>;
+}
+
+/** GET /teams/:id/digest: the weekly team digest setting. */
+export interface TeamDigest {
+  teamId: string;
+  enabled: boolean;
+  channelId: string | null;
+  channelName: string | null;
+  lastSentAt: string | null;
+  /** Hour of day (hub time zone) it goes out, on Mondays. */
+  hour: number;
+  timezone: string;
 }
 
 /** GET /channels/events — the subscribable event ids plus the routing vocabulary (category + severity ids). */

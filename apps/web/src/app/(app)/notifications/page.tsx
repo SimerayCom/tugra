@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bell, Pencil, SlidersHorizontal, Trash2, X } from "lucide-react";
+import { Bell, Moon, Pencil, SlidersHorizontal, Trash2, X } from "lucide-react";
 import { api } from "../../../lib/api";
 import { useTeamScope } from "../../../components/team-scope";
 import { scopeByTeam, defaultTeamId } from "../../../lib/team-scope";
@@ -16,9 +16,16 @@ import { Field, Select, TextInput } from "../../../components/form";
 import { TeamPicker } from "../../../components/team-picker";
 import { DeliveryHistory } from "./delivery-history";
 import { ChannelRoutingPanel, RoutingEditor, type RoutingVocab } from "./routing-editor";
+import { ChannelPolicyPanel } from "./policy-panel";
+import { DigestCard } from "./digest-card";
+import { UrlSetup } from "./url-setup";
+import { policyBadges } from "../../../lib/notification-policy";
 import { parseTopics, toggleIn, type RoutingDraft } from "../../../lib/notification-routing";
 
-const TYPES = ["smtp", "webhook", "discord", "slack", "telegram", "ntfy", "gotify", "pushover", "teams", "mattermost", "lark", "resend"];
+const TYPES = [
+  "smtp", "webhook", "discord", "slack", "telegram", "ntfy", "gotify", "pushover", "teams", "mattermost", "lark", "resend",
+  "matrix", "googlechat", "rocketchat", "pagerduty", "opsgenie", "zulip", "bark", "signal", "sms",
+];
 
 // config fields per channel type (key → i18n label key f_<key>). Webhook `headers` are handled by a
 // dedicated key/value editor, not this flat list.
@@ -35,8 +42,20 @@ const FIELDS: Record<string, string[]> = {
   mattermost: ["webhookUrl"],
   lark: ["webhookUrl"],
   resend: ["apiKey", "from", "to"],
+  matrix: ["homeserver", "roomId", "accessToken", "user", "password"],
+  googlechat: ["webhookUrl"],
+  rocketchat: ["webhookUrl"],
+  pagerduty: ["routingKey", "region"],
+  opsgenie: ["apiKey", "region"],
+  zulip: ["server", "email", "apiKey", "stream", "topic"],
+  bark: ["server", "deviceKey", "group"],
+  signal: ["server", "number", "recipients", "accessToken"],
+  sms: ["accountSid", "authToken", "from", "to"],
 };
-const SECRET_FIELDS = new Set(["pass", "token", "botToken", "userKey", "apiKey", "signingSecret", "accessToken"]);
+const SECRET_FIELDS = new Set(["pass", "password", "token", "botToken", "userKey", "apiKey", "signingSecret", "accessToken", "routingKey", "authToken", "deviceKey"]);
+const NEW_TYPES = new Set(["matrix", "googlechat", "rocketchat", "pagerduty", "opsgenie", "zulip", "bark", "signal", "sms"]);
+// Fields with a fixed set of choices (rendered as a select; empty = the service default).
+const SELECT_FIELDS: Record<string, string[]> = { region: ["us", "eu"] };
 // Rendered with <input type="number"> (UX only — the value is still submitted as a string; the backend's
 // numCfg treats "" as undefined, so empty numeric fields are simply dropped, never coerced to 0).
 const NUMBER_FIELDS = new Set(["port", "priority", "retry", "expire", "messageThreadId"]);
@@ -45,7 +64,13 @@ const FIELD_HINTS: Record<string, string> = {
   signingSecret: "hint_signingSecret",
   retry: "hint_retryExpire",
   expire: "hint_retryExpire",
+  roomId: "hint_roomId",
+  user: "hint_matrixUser",
+  recipients: "hint_recipients",
+  number: "hint_number",
 };
+// A few fields mean something different per service; these win over the plain field key.
+const FIELD_LABEL: Record<string, string> = { "sms.from": "f_smsFrom", "sms.to": "f_smsTo" };
 // The subscribable event ids come from the backend (GET /channels/events) so the UI never drifts from
 // the enum. EVENT_LABEL maps each id → an i18n key (unknown ids fall back to the raw id).
 const EVENT_LABEL: Record<string, string> = {
@@ -121,11 +146,16 @@ export default function NotificationsPage() {
   const [picked, setPicked] = useState<RoutingDraft | null>(null);
   const draft: RoutingDraft = picked ?? { categories: vocab.categories, minSeverity: "info", topics: {} };
   const [routingId, setRoutingId] = useState<string | null>(null);
+  const [policyId, setPolicyId] = useState<string | null>(null);
+  // "Set up" fills the per-service form; "From a URL" takes one Shoutrrr / Apprise style URL instead.
+  const [mode, setMode] = useState<"form" | "url">("form");
 
   // Assemble the opaque config bag submitted on create: smtp keeps its `secure` toggle; webhook folds the
   // key/value editor rows into a `headers` object (empty keys dropped, omitted entirely when empty).
   const buildConfig = (): Record<string, unknown> => {
     const base: Record<string, unknown> = { ...config };
+    // The newer services validate strictly, so a cleared field is left out rather than sent as "".
+    if (NEW_TYPES.has(type)) for (const k of Object.keys(base)) if (base[k] === "") delete base[k];
     if (type === "smtp") base.secure = secure;
     if (type === "webhook") {
       const h: Record<string, string> = {};
@@ -184,6 +214,28 @@ export default function NotificationsPage() {
     return parts.length ? parts.join(" — ") : "—";
   };
 
+  const routingNode = (
+    <RoutingEditor
+        idPrefix="create-route"
+        vocab={vocab}
+        draft={draft}
+        onChange={setPicked}
+        telegram={type === "telegram" && mode === "form"}
+        extra={
+          <div style={{ marginTop: 10 }}>
+            <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 2 }}>{t("notifications.individualEvents")}</div>
+            <div style={{ display: "flex", columnGap: 14, flexWrap: "wrap" }}>
+              {EVENTS.map((e) => (
+                <label key={e} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "var(--c-tx2)", minHeight: 44 }}>
+                  <input type="checkbox" checked={events.includes(e)} onChange={() => toggleEvent(e)} /> {t(`notifications.${EVENT_LABEL[e] ?? e}`)}
+                </label>
+              ))}
+            </div>
+          </div>
+        }
+      />
+  );
+
   return (
     <div style={{ padding: "var(--page-pad)", maxWidth: 880 }}>
       <h1 style={{ fontSize: 22, fontWeight: 700, margin: "0 0 4px", display: "flex", alignItems: "center", gap: 8 }}>
@@ -228,6 +280,7 @@ export default function NotificationsPage() {
                 </div>
                 <div style={{ fontSize: 11, color: "var(--c-tx3)", marginTop: 3 }}>
                   {summarize(c)}
+                  {policyBadges(c.policy).map((b) => ` · ${t(`notifications.badge_${b}`)}`).join("")}
                 </div>
               </div>
               {c.canWrite && (
@@ -238,10 +291,12 @@ export default function NotificationsPage() {
                   {vocab.categories.length > 0 && (
                     <IconBtn label={t("notifications.routing")} pressed={routingId === c.id} onClick={() => setRoutingId(routingId === c.id ? null : c.id)}><SlidersHorizontal size={15} /></IconBtn>
                   )}
+                  <IconBtn label={t("notifications.rules")} pressed={policyId === c.id} onClick={() => setPolicyId(policyId === c.id ? null : c.id)}><Moon size={15} /></IconBtn>
                   <IconBtn label={t("notifications.editName")} onClick={() => { setRName(c.name); setRenamingId(renamingId === c.id ? null : c.id); }}><Pencil size={15} /></IconBtn>
                   <IconBtn label={t("notifications.delete")} danger onClick={async () => { if (await confirm({ body: t("common.deleteConfirm"), danger: true })) del.mutate(c.id); }}><Trash2 size={15} /></IconBtn>
                 </>
               )}
+              {policyId === c.id && <ChannelPolicyPanel key={`p-${c.id}`} channel={c} onClose={() => setPolicyId(null)} />}
               {routingId === c.id && <ChannelRoutingPanel key={c.id} channel={c} vocab={vocab} onClose={() => setRoutingId(null)} />}
               <DeliveryHistory channelId={c.id} />
             </Card>
@@ -250,9 +305,28 @@ export default function NotificationsPage() {
       )}
       {test.isError && <div style={{ fontSize: 12, color: "var(--c-r)", marginBottom: 12 }}>{t("notifications.testFailed")}: {(test.error as Error).message}</div>}
 
+      {target && <DigestCard teamId={target} channels={channels} canWrite={canCreate} />}
+
       {canCreate && (
       <Card style={{ padding: 16 }}>
         <div style={{ fontSize: 11, fontWeight: 700, color: "var(--c-tx3)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 12 }}>{t("notifications.create")}</div>
+        <div role="group" aria-label={t("notifications.createMode")} style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14 }}>
+          <Btn variant={mode === "form" ? "primary" : "ghost"} aria-pressed={mode === "form"} onClick={() => setMode("form")}>{t("notifications.modeForm")}</Btn>
+          <Btn variant={mode === "url" ? "primary" : "ghost"} aria-pressed={mode === "url"} onClick={() => setMode("url")}>{t("notifications.modeUrl")}</Btn>
+        </div>
+        {mode === "url" ? (
+          <>
+            {teams.length > 1 && (
+              <div style={{ maxWidth: 320, marginBottom: 12 }}>
+                <Field label={t("common.team")}>
+                  <TeamPicker value={target} onChange={setCreateTeam} teams={teams} />
+                </Field>
+              </div>
+            )}
+            <UrlSetup teamId={target} routing={draft} eventTypes={events} disabled={!target} onCreated={() => { setCreateTeam(""); setPicked(null); setEvents([]); }} />
+            <div style={{ marginTop: 14 }}>{routingNode}</div>
+          </>
+        ) : (
         <form onSubmit={(e) => { e.preventDefault(); if (name && target) create.mutate(); }}>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
             {teams.length > 1 && (
@@ -264,15 +338,24 @@ export default function NotificationsPage() {
               <TextInput id="ch-name" value={name} onChange={(e) => setName(e.target.value)} required />
             </Field>
             <Field label={t("notifications.channelType")}>
-              <Select value={type} onChange={(v) => { setType(v); setConfig({}); setHeaders([]); setSecure(false); }} options={TYPES.map((tp) => ({ value: tp, label: tp.toUpperCase() }))} />
+              <Select value={type} onChange={(v) => { setType(v); setConfig({}); setHeaders([]); setSecure(false); }} options={TYPES.map((tp) => ({ value: tp, label: t(`notifications.type_${tp}`) }))} />
             </Field>
             {(FIELDS[type] ?? []).map((k) => (
-              <Field key={k} label={t(`notifications.f_${k}`)} hint={FIELD_HINTS[k] ? t(`notifications.${FIELD_HINTS[k]}`) : undefined}>
-                <TextInput
-                  type={SECRET_FIELDS.has(k) ? "password" : NUMBER_FIELDS.has(k) ? "number" : "text"}
-                  value={config[k] ?? ""}
-                  onChange={(e) => setField(k, e.target.value)}
-                />
+              <Field key={k} label={t(`notifications.${FIELD_LABEL[`${type}.${k}`] ?? `f_${k}`}`)} hint={FIELD_HINTS[k] ? t(`notifications.${FIELD_HINTS[k]}`) : undefined}>
+                {SELECT_FIELDS[k] ? (
+                  <Select
+                    value={config[k] ?? ""}
+                    onChange={(v) => setField(k, v)}
+                    options={SELECT_FIELDS[k].map((o) => ({ value: o, label: o.toUpperCase() }))}
+                    placeholder={t("notifications.regionDefault")}
+                  />
+                ) : (
+                  <TextInput
+                    type={SECRET_FIELDS.has(k) ? "password" : NUMBER_FIELDS.has(k) ? "number" : "text"}
+                    value={config[k] ?? ""}
+                    onChange={(e) => setField(k, e.target.value)}
+                  />
+                )}
               </Field>
             ))}
           </div>
@@ -301,33 +384,14 @@ export default function NotificationsPage() {
             </div>
           )}
 
-          <div style={{ marginTop: 14 }}>
-            <RoutingEditor
-              idPrefix="create-route"
-              vocab={vocab}
-              draft={draft}
-              onChange={setPicked}
-              telegram={type === "telegram"}
-              extra={
-                <div style={{ marginTop: 10 }}>
-                  <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 2 }}>{t("notifications.individualEvents")}</div>
-                  <div style={{ display: "flex", columnGap: 14, flexWrap: "wrap" }}>
-                    {EVENTS.map((e) => (
-                      <label key={e} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "var(--c-tx2)", minHeight: 44 }}>
-                        <input type="checkbox" checked={events.includes(e)} onChange={() => toggleEvent(e)} /> {t(`notifications.${EVENT_LABEL[e] ?? e}`)}
-                      </label>
-                    ))}
-                  </div>
-                </div>
-              }
-            />
-          </div>
+          <div style={{ marginTop: 14 }}>{routingNode}</div>
 
           <div style={{ marginTop: 14 }}>
             <Btn type="submit" disabled={create.isPending || !name || !target}>{create.isPending ? "…" : t("notifications.add")}</Btn>
           </div>
           {create.isError && <div role="alert" style={{ color: "var(--c-r)", fontSize: 12, marginTop: 8 }}>{(create.error as Error).message}</div>}
         </form>
+        )}
       </Card>
       )}
     </div>

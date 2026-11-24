@@ -123,7 +123,7 @@ describe("NotificationsPage — rich provider config fields", () => {
     fireEvent.click(secureBox());
     expect(secureBox().checked).toBe(true);
     fireEvent.change(screen.getByDisplayValue("SMTP"), { target: { value: "discord" } });
-    fireEvent.change(screen.getByDisplayValue("DISCORD"), { target: { value: "smtp" } });
+    fireEvent.change(screen.getByDisplayValue("Discord"), { target: { value: "smtp" } });
     expect(secureBox().checked).toBe(false); // stale TLS flag must not survive a type round-trip
   });
 

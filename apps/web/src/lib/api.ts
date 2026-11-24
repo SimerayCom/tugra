@@ -64,7 +64,10 @@ import type {
   HubDeadmanView,
   AuditPage,
   Channel,
+  ChannelPolicyInput,
   ChannelVocabulary,
+  ParsedChannelUrl,
+  TeamDigest,
   Delivery,
   Database,
   DatabaseLinkView,
@@ -1474,11 +1477,29 @@ export const api = {
     categories?: string[];
     minSeverity?: string;
     topics?: Record<string, number>;
+    policy?: ChannelPolicyInput;
   }) {
     return apiFetch<Channel>("/channels", {
       method: "POST",
       body: JSON.stringify(input),
     });
+  },
+  /** Dry run of "add from a URL" (Shoutrrr / Apprise style): the channel type and its non-secret settings. */
+  parseChannelUrl(input: { teamId: string; url: string }) {
+    return apiFetch<ParsedChannelUrl>("/channels/parse-url", { method: "POST", body: JSON.stringify(input) });
+  },
+  createChannelFromUrl(input: { teamId: string; url: string; name?: string; categories?: string[]; minSeverity?: string; eventTypes?: string[] }) {
+    return apiFetch<Channel>("/channels/from-url", { method: "POST", body: JSON.stringify(input) });
+  },
+  getTeamDigest(teamId: string) {
+    return apiFetch<TeamDigest>(`/teams/${teamId}/digest`);
+  },
+  updateTeamDigest(teamId: string, input: { enabled: boolean; channelId?: string | null }) {
+    return apiFetch<TeamDigest>(`/teams/${teamId}/digest`, { method: "PUT", body: JSON.stringify(input) });
+  },
+  /** Send this week's digest to the chosen channel right now. */
+  sendTeamDigest(teamId: string) {
+    return apiFetch<{ ok: true }>(`/teams/${teamId}/digest/send`, { method: "POST", body: "{}" });
   },
   updateChannel(
     id: string,
@@ -1491,6 +1512,8 @@ export const api = {
       /** null clears the Telegram topic map */
       topics?: Record<string, number> | null;
       config?: Record<string, unknown>;
+      /** null clears every delivery rule back to the defaults */
+      policy?: ChannelPolicyInput | null;
     },
   ) {
     return apiFetch<Channel>(`/channels/${id}`, { method: "PUT", body: JSON.stringify(input) });
