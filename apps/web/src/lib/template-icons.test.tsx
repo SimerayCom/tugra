@@ -20,4 +20,10 @@ describe("TemplateLogo", () => {
     fireEvent.error(screen.getByRole("img"));
     expect(screen.queryByRole("img")).toBeNull();
   });
+
+  it("draws the initials tile without requesting an image when asked to (software with no vendored logo)", () => {
+    const { container } = render(<TemplateLogo slug="coolify" name="Coolify" monogram />);
+    expect(container.querySelector("img")).toBeNull();
+    expect(screen.getByLabelText("Coolify").textContent).toBe("C");
+  });
 });

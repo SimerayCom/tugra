@@ -31,13 +31,16 @@ export function TemplateLogo({
   slug,
   name,
   size = 22,
+  monogram = false,
 }: {
   logo?: string;
   slug: string;
   name?: string;
   size?: number;
+  /** Skip the image and draw the initials tile straight away (software with no vendored logo: no 404 round trip). */
+  monogram?: boolean;
 }) {
-  const [failed, setFailed] = useState(false);
+  const [failed, setFailed] = useState(monogram);
   if (failed) {
     const label = (name ?? slug).replace(/[^a-zA-Z0-9]+/g, " ").trim();
     const initials =

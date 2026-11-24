@@ -105,7 +105,10 @@ export function GpuCard({ serverId, canOps, online }: { serverId: string; canOps
   const disabledReason = !canOps ? t("servers.gpus.refreshNeedsWrite") : !online ? t("servers.gpus.refreshOffline") : undefined;
   const inv = report?.inventory ?? null;
   const real = (inv?.gpus ?? []).filter((g) => g.kind === "gpu");
-  const virtual = (inv?.gpus ?? []).filter((g) => g.kind === "virtual");
+  // "Virtual displays" are the hypervisor / BMC VGA adapters the PCI scan finds on nearly every VPS (QEMU, virtio, ASPEED).
+  // They are the console framebuffer, not a GPU output: on a server with no real GPU the line is noise, so it only
+  // appears (collapsed) next to real GPUs.
+  const virtual = real.length > 0 ? (inv?.gpus ?? []).filter((g) => g.kind === "virtual") : [];
   const rd = report?.readiness;
 
   const right = (

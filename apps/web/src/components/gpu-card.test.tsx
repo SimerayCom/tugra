@@ -194,8 +194,16 @@ describe("GpuCard", () => {
     expect(container.querySelector("script")).toBeNull();
   });
 
-  it("collapses virtual displays under a disclosure", async () => {
+  it("hides virtual displays when the server has no real GPU (a VPS console adapter is not a GPU output)", async () => {
     vi.spyOn(api, "getServerGpus").mockResolvedValue(rep("none", [pci({ vendor: "other", kind: "virtual", name: "Virtual display [1a03:2000]" })]));
+    const { container } = show({ canOps: false });
+    expect(await screen.findByText("No GPU detected")).toBeTruthy();
+    expect(screen.queryByText(/Virtual displays/)).toBeNull();
+    expect(container.querySelector("details")).toBeNull();
+  });
+
+  it("collapses virtual displays under a disclosure next to a real GPU", async () => {
+    vi.spyOn(api, "getServerGpus").mockResolvedValue(rep("ready", [smi, pci({ vendor: "other", kind: "virtual", name: "Virtual display [1a03:2000]" })]));
     const { container } = show({ canOps: false });
     expect(await screen.findByText("Virtual displays (1)")).toBeTruthy();
     const details = container.querySelector("details")!;

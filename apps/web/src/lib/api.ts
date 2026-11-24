@@ -163,6 +163,7 @@ import type {
   Template,
   DiskUsage,
   GpuReport,
+  ScanView,
   TemplateManifest,
   TokenPair,
   TunnelView,
@@ -1043,6 +1044,12 @@ export const api = {
   },
   getServerGpus(id: string) {
     return apiFetch<GpuReport>(`/servers/${id}/gpus`);
+  },
+  getServerScan(id: string) {
+    return apiFetch<ScanView>(`/servers/${id}/scan`);
+  },
+  runServerScan(id: string) {
+    return apiFetch<ScanView>(`/servers/${id}/scan`, { method: "POST" });
   },
   refreshServerGpus(id: string) {
     return apiFetch<GpuReport>(`/servers/${id}/gpus/refresh`, { method: "POST" });

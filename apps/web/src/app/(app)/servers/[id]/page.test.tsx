@@ -317,6 +317,33 @@ describe("server detail feedback", () => {
   });
 });
 
+describe("server overview: scan and Seal", () => {
+  it("explains Seal with a one-line tooltip wired to its button", async () => {
+    stubs.fns.getServer = async () => server({ seal: "abc" });
+    mount();
+    const btn = await screen.findByRole("button", { name: "About Seal" });
+    const tip = screen.getByRole("tooltip");
+    expect(btn.getAttribute("aria-describedby")).toBe(tip.id);
+    expect(tip.textContent).toMatch(/identity key/);
+  });
+
+  it("shows the scan card on the overview and sends a suggested adoption to the Maintenance tab's adopt card", async () => {
+    stubs.fns.getServerScan = async () => ({
+      report: {
+        v: 1, scannedAt: new Date().toISOString(), host: { status: "ok", reason: null },
+        docker: { available: true, total: 1, running: 1, tugra: 0, truncated: false },
+        software: [{ id: "redis", label: "Redis", kind: "database", logo: "redis", count: 1, containers: ["cache"] }],
+        containers: [{ name: "cache", image: "redis:7", state: "running", project: null, service: null, software: "redis", managedBy: null, ports: [], adoptable: true }],
+        composeProjects: [], pm2: [], sites: [], services: [], ports: [],
+      },
+    });
+    mount();
+    expect(await screen.findByText("What runs on this server")).toBeInTheDocument();
+    expect(await screen.findByText("1 container can be adopted as a Tugra app.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Scan again" })).toBeInTheDocument();
+  });
+});
+
 describe("server patching: Ubuntu phased updates", () => {
   const info = (o: Record<string, unknown> = {}) => ({
     supported: true, manager: "apt", checkFailed: false, rebootRequired: false, count: 0, dpkgInterrupted: null, applyRunning: false,

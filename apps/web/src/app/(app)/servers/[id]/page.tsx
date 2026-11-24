@@ -23,6 +23,8 @@ import { ServerRebootCard } from "../../../../components/server-reboot-card";
 import { ServerOobCard } from "../../../../components/server-oob-card";
 import { LiveGauges } from "../../../../components/live-gauges";
 import { GpuCard } from "../../../../components/gpu-card";
+import { ServerScanCard } from "../../../../components/server-scan-card";
+import { InfoTip } from "../../../../components/info-tip";
 import { DiscoverAdoptCard } from "../../../../components/discover-adopt-card";
 import { Modal } from "../../../../components/modal";
 import { fieldStyle, useSaveFeedback } from "../../../../components/form";
@@ -187,7 +189,7 @@ export default function ServerDetailPage() {
             <Info label={t("servers.status")} value={server.status} />
             <Info label={t("servers.ipAddress")} value={<MainIp server={server} />} />
             <Info label={t("servers.team")} value={teamOf(server.teamId)?.name ?? server.teamId.slice(0, 8)} />
-            <Info label={t("servers.sealLabel")} value={server.seal ? t("servers.sealed") : "—"} />
+            <Info label={<>{t("servers.sealLabel")}<InfoTip label={t("servers.sealAbout")} text={t("servers.sealHint")} /></>} value={server.seal ? t("servers.sealed") : "—"} />
             <Info label={t("servers.lastSeen")} value={server.lastSeenAt ? new Date(server.lastSeenAt).toLocaleTimeString() : "—"} />
             {server.clusterId && (
               <Info
@@ -212,6 +214,17 @@ export default function ServerDetailPage() {
               <Info label={t("servers.uptime")} value={formatUptime(server.uptimeSeconds)} />
             </Card>
           )}
+          <ServerScanCard
+            serverId={id}
+            canOps={server.canOps}
+            online={server.status === "ONLINE"}
+            canWrite={server.canWrite}
+            onReviewAdopt={() => {
+              setTab("maintenance");
+              // The adopt card mounts with the tab: scroll to it once it is there.
+              setTimeout(() => document.getElementById("server-discover")?.scrollIntoView?.({ behavior: "smooth", block: "start" }), 50);
+            }}
+          />
           <GpuCard serverId={id} canOps={server.canOps} online={server.status === "ONLINE"} />
         </>
       )}
@@ -315,7 +328,7 @@ export default function ServerDetailPage() {
           {server.canWrite && <ServerDetailsCard id={id} server={server} />}
           {server.canWrite && <ServerTeamCard id={id} server={server} />}
           {server.canWrite && <CleanupCard id={id} server={server} />}
-          {server.canWrite && <DiscoverAdoptCard id={id} />}
+          {server.canWrite && <div id="server-discover"><DiscoverAdoptCard id={id} /></div>}
           {server.canWrite && <DeleteServerCard id={id} server={server} />}
         </>
       )}
@@ -1476,7 +1489,7 @@ const cleanupField: React.CSSProperties = {
   fontFamily: "inherit",
 };
 
-function Info({ label, value }: { label: string; value: ReactNode }) {
+function Info({ label, value }: { label: ReactNode; value: ReactNode }) {
   return (
     <div>
       <div style={{ fontSize: 11, color: "var(--c-tx3)", marginBottom: 3 }}>{label}</div>

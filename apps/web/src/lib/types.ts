@@ -2540,6 +2540,78 @@ export interface GpuReport {
   busy?: boolean;
 }
 
+/** Server scan ("What runs on this server", GET /servers/:id/scan). `report: null` = never scanned. Read-only inventory: no env values. */
+export type ScanSoftwareKind = "platform" | "panel" | "web" | "runtime" | "database" | "app" | "tool";
+export interface ScanSoftware {
+  id: string;
+  label: string;
+  kind: ScanSoftwareKind;
+  logo: string | null;
+  count: number;
+  containers: string[];
+}
+export interface ScanContainer {
+  name: string;
+  image: string;
+  state: string;
+  project: string | null;
+  service: string | null;
+  software: string | null;
+  managedBy: "coolify" | "dokploy" | null;
+  ports: number[];
+  adoptable: boolean;
+}
+export interface ScanPm2Proc {
+  name: string;
+  script: string;
+  cwd: string;
+  mode?: "fork" | "cluster";
+  instances?: number;
+  status: "online" | "stopped";
+  port?: number;
+  envCount: number;
+}
+export interface ScanPm2User {
+  user: string;
+  daemon: boolean;
+  procs: ScanPm2Proc[];
+}
+export interface ScanSite {
+  server: "nginx" | "apache";
+  names: string[];
+  root: string;
+  kind: "php" | "proxy" | "static" | "other";
+  port?: number;
+  php?: string;
+  ssl: boolean;
+  panel?: "cloudpanel";
+  siteUser?: string;
+}
+export interface ScanService {
+  unit: string;
+  kind: "web" | "php" | "database" | "runtime" | "panel" | "tool" | "app";
+  enabled: boolean;
+  running?: boolean;
+  exec?: string;
+  workDir?: string;
+}
+export interface ScanReport {
+  v: 1;
+  scannedAt: string;
+  host: { status: "ok" | "unavailable"; reason: "agent_outdated" | "no_image" | "failed" | null };
+  docker: { available: boolean; total: number; running: number; tugra: number; truncated: boolean };
+  software: ScanSoftware[];
+  containers: ScanContainer[];
+  composeProjects: { name: string; services: number; running: number }[];
+  pm2: ScanPm2User[];
+  sites: ScanSite[];
+  services: ScanService[];
+  ports: { port: number; scope: "public" | "local"; owner: string | null }[];
+}
+export interface ScanView {
+  report: ScanReport | null;
+}
+
 // ── Traffic Analytics (proxy access-log based, read-level, team-scoped) ─────────────────────────────
 export interface TrafficTotals {
   requests: number;

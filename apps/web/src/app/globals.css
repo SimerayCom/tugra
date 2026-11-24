@@ -1137,3 +1137,66 @@ html[data-ui-style="3d"] .tg-btn:not(:disabled):active {
   opacity: 0.7;
   font-style: italic;
 }
+
+/* A one-line explanation next to a label: a small "i" button that shows its text on hover AND keyboard focus (and on
+   tap, which focuses it). Esc dismisses it (see components/info-tip.tsx). */
+.tg-tip {
+  position: relative;
+  display: inline-flex;
+  vertical-align: middle;
+  margin-left: 4px;
+}
+.tg-tip-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--c-bd);
+  background: transparent;
+  color: var(--c-tx3);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: help;
+}
+.tg-tip-btn:focus-visible {
+  outline: 2px solid var(--c-a);
+  outline-offset: 2px;
+}
+.tg-tip-bubble {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 6px);
+  left: -4px;
+  width: max-content;
+  max-width: min(260px, 70vw);
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--c-bd);
+  background: var(--c-el);
+  color: var(--c-tx);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.4;
+  text-transform: none;
+  letter-spacing: 0;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+.tg-tip-btn:focus + .tg-tip-bubble,
+.tg-tip:hover .tg-tip-bubble {
+  opacity: 1;
+  visibility: visible;
+}
+@media (pointer: coarse) {
+  .tg-tip-btn {
+    width: 24px;
+    height: 24px;
+    font-size: 12px;
+  }
+}
