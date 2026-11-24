@@ -19,6 +19,17 @@ describe("resolveContainerLabel", () => {
   it("leaves a foreign container name as-is", () => {
     expect(resolveContainerLabel("some-other-container", apps, dbs)).toEqual({ label: "some-other-container", kind: "other" });
   });
+  it("names a foreign (Coolify) container from its labels and carries project/environment", () => {
+    const labels = { name: "kgr3jx23x9ck5w2h8n7p4q1z-123", resource: "Blog", project: "Acme Site", environment: "production", service: "" };
+    expect(resolveContainerLabel("kgr3jx23x9ck5w2h8n7p4q1z-123", apps, dbs, labels)).toEqual({
+      label: "Blog", kind: "other", project: "Acme Site", environment: "production",
+    });
+  });
+  it("keeps the raw name when the labels are all opaque, and never overrides a Tugra-managed container", () => {
+    const opaque = { name: "kgr3jx23x9ck5w2h8n7p4q1z", resource: "", project: "Acme", environment: "", service: "" };
+    expect(resolveContainerLabel("kgr3jx23x9ck5w2h8n7p4q1z-9", apps, dbs, opaque)).toEqual({ label: "kgr3jx23x9ck5w2h8n7p4q1z-9", kind: "other" });
+    expect(resolveContainerLabel("tugra_app2", apps, dbs, { ...opaque, resource: "Impostor" })).toMatchObject({ label: "API", kind: "app" });
+  });
   it("falls back to the stripped id with no resourceId when the db is unknown", () => {
     expect(resolveContainerLabel("tugra_db_gone", apps, dbs)).toEqual({ label: "gone", kind: "db" });
   });
@@ -86,9 +97,11 @@ describe("ContainerMetricsService", () => {
       application: { findMany: jest.fn().mockResolvedValue([]) },
       database: { findMany: jest.fn().mockResolvedValue([]) },
       containerState: { findMany: stateFindMany ?? jest.fn().mockResolvedValue([]) },
+      containerLabel: { findMany: jest.fn().mockResolvedValue([]), upsert: jest.fn().mockResolvedValue({}), deleteMany: jest.fn().mockResolvedValue({ count: 0 }) },
     } as any;
     return {
       svc: new ContainerMetricsService(prisma),
+      prisma,
       createMany,
       findMany: prisma.containerMetric.findMany,
       rollupFindMany: prisma.containerMetricRollup.findMany,
@@ -290,6 +303,38 @@ describe("ContainerMetricsService", () => {
     expect(row.blkWrite).toBe(BigInt(4001)); // rounded
   });
 
+  it("stores allow-listed labels once, rewrites only on change, and survives a label failure", async () => {
+    const { svc, prisma, createMany } = make();
+    const msg = (project: string) => ({
+      type: "container_metrics" as const,
+      ts: 1_700_000_000_000,
+      samples: [{ id: "c1", name: "web", cpu: 1, memUsed: 1, memTotal: 2, memPct: 50, netRx: 0, netTx: 0, blkRead: 0, blkWrite: 0, meta: { resource: "Blog", project } }],
+    });
+    await svc.ingest("s1", msg("Acme"));
+    await svc.ingest("s1", msg("Acme")); // unchanged → no second write
+    expect(prisma.containerLabel.upsert).toHaveBeenCalledTimes(1);
+    expect(prisma.containerLabel.upsert.mock.calls[0][0]).toMatchObject({
+      where: { serverId_containerName: { serverId: "s1", containerName: "web" } },
+      create: { serverId: "s1", containerName: "web", resource: "Blog", project: "Acme" },
+    });
+    await svc.ingest("s1", msg("Other")); // changed → rewritten
+    expect(prisma.containerLabel.upsert).toHaveBeenCalledTimes(2);
+    // a failing label write must not fail the already-stored metrics batch
+    prisma.containerLabel.upsert.mockRejectedValueOnce(new Error("db down"));
+    await expect(svc.ingest("s1", msg("Third"))).resolves.toBeUndefined();
+    expect(createMany).toHaveBeenCalledTimes(4);
+  });
+
+  it("ignores samples without usable meta and prunes stale label rows at most hourly", async () => {
+    const { svc, prisma } = make();
+    const plain = { type: "container_metrics" as const, ts: 1, samples: [{ id: "c", name: "web", cpu: 0, memUsed: 0, memTotal: 0, memPct: 0, netRx: 0, netTx: 0, blkRead: 0, blkWrite: 0 }] };
+    await svc.ingest("s1", plain);
+    await svc.ingest("s1", plain);
+    expect(prisma.containerLabel.upsert).not.toHaveBeenCalled();
+    expect(prisma.containerLabel.deleteMany).toHaveBeenCalledTimes(1);
+    expect(prisma.containerLabel.deleteMany.mock.calls[0][0].where.updatedAt.lt).toBeInstanceOf(Date);
+  });
+
   it("no-ops on an empty batch (no createMany call)", async () => {
     const { svc, createMany } = make();
     await svc.ingest("s1", { type: "container_metrics", ts: 1, samples: [] });
@@ -361,6 +406,7 @@ describe("ContainerMetricsService.hottest", () => {
       containerMetric: { findMany },
       application: { findMany: jest.fn().mockResolvedValue([{ id: "app1", name: "WordPress" }]) },
       database: { findMany: jest.fn().mockResolvedValue([]) },
+      containerLabel: { findMany: jest.fn().mockResolvedValue([]) },
     } as any;
     return { svc: new ContainerMetricsService(prisma), findMany, prisma };
   }
@@ -397,6 +443,16 @@ describe("ContainerMetricsService.hottest", () => {
     ]);
     expect(out[1]).toMatchObject({ label: "WordPress", kind: "app", resourceId: "app1", memUsed: 123456789012, netRx: 1, blkWrite: 4 });
     expect(JSON.stringify(out)).toContain("123456789012"); // no BigInt left → serializes
+  });
+
+  it("names a foreign container from its stored labels, scoped to the visible servers", async () => {
+    const { svc, prisma } = make([r({ containerName: "kgr3jx23x9ck5w2h8n7p4q1z-123", cpu: 80 })]);
+    prisma.containerLabel.findMany.mockResolvedValue([
+      { serverId: "s1", containerName: "kgr3jx23x9ck5w2h8n7p4q1z-123", name: "kgr3jx23x9ck5w2h8n7p4q1z-123", resource: "Blog", project: "Acme Site", environment: "production", service: "" },
+    ]);
+    const out = await svc.hottest(servers);
+    expect(prisma.containerLabel.findMany.mock.calls[0][0].where.serverId).toEqual({ in: ["s1", "s2"] });
+    expect(out[0]).toMatchObject({ label: "Blog", kind: "other", project: "Acme Site", environment: "production" });
   });
 
   it("applies the limit (clamped) after ranking", async () => {

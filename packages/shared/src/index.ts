@@ -546,6 +546,17 @@ export interface ContainerStat {
   netTx: number; // B/s
   blkRead: number; // B/s
   blkWrite: number; // B/s
+  /** Allow-listed container labels (older agents omit it); lets the hub name a Coolify/compose container. */
+  meta?: ContainerMeta;
+}
+
+/** The five short, length-capped container labels the agent reports (nothing else from the label set). */
+export interface ContainerMeta {
+  name?: string; // coolify.name
+  resource?: string; // coolify.resourceName
+  project?: string; // coolify.projectName
+  env?: string; // coolify.environmentName
+  service?: string; // com.docker.compose.service
 }
 
 /** Agent -> Hub: per-container metrics for every container on the host. */

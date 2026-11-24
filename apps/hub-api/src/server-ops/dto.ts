@@ -77,6 +77,8 @@ export const FleetHottestContainerSchema = z.object({
   kind: z.enum(["app", "db", "system", "other"]),
   resourceId: z.string().optional(),
   service: z.string().optional(),
+  project: z.string().optional(),
+  environment: z.string().optional(),
   cpu: z.number(),
   memUsed: z.number(),
   memTotal: z.number(),

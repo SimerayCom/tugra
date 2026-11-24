@@ -25,6 +25,7 @@ function make(visible: { id: string; name: string }[]) {
     containerMetric: { findMany },
     application: { findMany: jest.fn().mockResolvedValue([]) },
     database: { findMany: jest.fn().mockResolvedValue([]) },
+    containerLabel: { findMany: jest.fn().mockResolvedValue([]) },
   } as any;
   const servers = { listForUser: jest.fn().mockResolvedValue(visible) } as any;
   const ctrl = new FleetController({} as any, {} as any, servers, {} as any, new ContainerMetricsService(prisma));

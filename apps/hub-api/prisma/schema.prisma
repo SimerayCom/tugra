@@ -378,6 +378,7 @@ model Server {
   metrics                Metric[]
   containerMetrics       ContainerMetric[]
   containerStates        ContainerState[]
+  containerLabels        ContainerLabel[]
   containerEvents        ContainerEvent[]
   metricRollups          MetricRollup[]
   containerMetricRollups ContainerMetricRollup[]
@@ -546,6 +547,25 @@ model ContainerMetric {
 
   @@index([serverId, containerName, ts])
   @@index([ts])
+}
+
+// Allow-listed labels the agent read off a container (Coolify name/resource/project/environment, compose
+// service) so the dashboard can show a real app and project name instead of an opaque id. One row per
+// (server, containerName); rewritten only when the labels change (or once a day to prove it is current) and
+// pruned when it stops being refreshed. Never holds anything but those five short strings.
+model ContainerLabel {
+  server        Server   @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  serverId      String
+  containerName String
+  name          String   @default("") // coolify.name
+  resource      String   @default("") // coolify.resourceName
+  project       String   @default("") // coolify.projectName
+  environment   String   @default("") // coolify.environmentName
+  service       String   @default("") // com.docker.compose.service
+  updatedAt     DateTime @default(now())
+
+  @@id([serverId, containerName])
+  @@index([updatedAt])
 }
 
 // Last-known lifecycle state of each container on a server, for crash/OOM TRANSITION detection by the

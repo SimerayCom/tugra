@@ -2,6 +2,7 @@ import { Injectable } from "@nestjs/common";
 import type { ContainerMetricsMsg } from "@tugra/shared";
 import { downsampleLTTB } from "../common/lttb";
 import { PrismaService } from "../prisma/prisma.service";
+import { nameFromLabels, sameLabels, sanitizeContainerMeta, type ContainerLabelRow } from "./container-labels";
 
 /** One point of a container's history (hub → web read shape; BigInt fields widened to Number). */
 export interface ContainerMetricSample {
@@ -33,6 +34,9 @@ export interface ContainerInventoryRow extends ContainerMetricSample {
   kind: "app" | "db" | "system" | "other";
   resourceId?: string;
   service?: string;
+  /** Project / environment the container belongs to when its labels say so (Coolify). */
+  project?: string;
+  environment?: string;
   // Last-known crash/health state from the container-health poll (ContainerState), joined in so the UI
   // can badge a crash-looping or unhealthy container. Absent when the poll hasn't recorded this one yet.
   restartCount?: number;
@@ -49,7 +53,8 @@ export function resolveContainerLabel(
   name: string,
   apps: Map<string, string>,
   dbs: Map<string, string>,
-): { label: string; kind: ContainerInventoryRow["kind"]; resourceId?: string; service?: string } {
+  labels?: ContainerLabelRow,
+): { label: string; kind: ContainerInventoryRow["kind"]; resourceId?: string; service?: string; project?: string; environment?: string } {
   let m = /^tugra_db_([a-z0-9]+)$/i.exec(name);
   if (m) {
     // Link only a database that exists in the queried set (an orphan / out-of-scope container has no page).
@@ -66,6 +71,9 @@ export function resolveContainerLabel(
   if (/^tugra[-_]/i.test(name)) {
     return { label: name.replace(/^tugra[-_]/i, "").replace(/-\d+$/, "") || name, kind: "system" };
   }
+  // A foreign container (Coolify-managed, compose): name it from its labels when they are readable.
+  const named = labels ? nameFromLabels(labels) : null;
+  if (named) return { ...named, kind: "other" };
   return { label: name, kind: "other" };
 }
 
@@ -82,6 +90,8 @@ export interface HottestContainerRow {
   kind: ContainerInventoryRow["kind"];
   resourceId?: string;
   service?: string;
+  project?: string;
+  environment?: string;
   cpu: number; // %
   memUsed: number; // bytes
   memTotal: number; // bytes
@@ -137,9 +147,19 @@ export function sampleEvenly<T>(rows: T[], max = MAX_POINTS): T[] {
   return out;
 }
 
+/** Re-write an unchanged label row at most this often (keeps `updatedAt` honest so stale rows can be pruned). */
+const LABEL_REFRESH_MS = 12 * 3600_000;
+/** Label rows not refreshed for this long belong to containers that no longer exist. */
+const LABEL_STALE_MS = 7 * 86_400_000;
+const LABEL_PRUNE_EVERY_MS = 3600_000;
+
 @Injectable()
 export class ContainerMetricsService {
   constructor(private readonly prisma: PrismaService) {}
+
+  // What this hub process last wrote per `${serverId}\0${containerName}`, so an unchanged label set costs no DB write.
+  private readonly labelCache = new Map<string, { row: ContainerLabelRow; at: number }>();
+  private lastLabelPrune = 0;
 
   // Agent-initiated telemetry push: one batch = every container on a server at msg.ts. No redis
   // fan-out (unlike host metrics) — container stats are a 15s poll, the charts read from the
@@ -163,6 +183,36 @@ export class ContainerMetricsService {
         blkWrite: big(s.blkWrite),
       })),
     });
+    // Labels are decoration: a failure here must never fail (and close the socket of) the metrics batch.
+    await this.recordLabels(serverId, msg).catch(() => undefined);
+  }
+
+  /** Persist the labels an agent reported, writing only what changed (or went stale), and prune dead rows. */
+  private async recordLabels(serverId: string, msg: ContainerMetricsMsg): Promise<void> {
+    const now = Date.now();
+    for (const s of msg.samples) {
+      const row = sanitizeContainerMeta(s.meta);
+      if (!row || typeof s.name !== "string" || !s.name) continue;
+      const key = `${serverId}\u0000${s.name}`;
+      const prev = this.labelCache.get(key);
+      if (prev && sameLabels(prev.row, row) && now - prev.at < LABEL_REFRESH_MS) continue;
+      await this.prisma.containerLabel.upsert({
+        where: { serverId_containerName: { serverId, containerName: s.name } },
+        create: { serverId, containerName: s.name, ...row, updatedAt: new Date(now) },
+        update: { ...row, updatedAt: new Date(now) },
+      });
+      if (this.labelCache.size > 5000) this.labelCache.clear(); // bound it; a cleared cache only costs re-checks
+      this.labelCache.set(key, { row, at: now });
+    }
+    if (now - this.lastLabelPrune > LABEL_PRUNE_EVERY_MS) {
+      this.lastLabelPrune = now;
+      await this.prisma.containerLabel.deleteMany({ where: { updatedAt: { lt: new Date(now - LABEL_STALE_MS) } } });
+    }
+  }
+
+  private async labelsFor(serverIds: string[]): Promise<Map<string, ContainerLabelRow>> {
+    const rows = await this.prisma.containerLabel.findMany({ where: { serverId: { in: serverIds } } });
+    return new Map(rows.map((r) => [`${r.serverId}\u0000${r.containerName}`, { name: r.name, resource: r.resource, project: r.project, environment: r.environment, service: r.service }]));
   }
 
   /**
@@ -245,7 +295,7 @@ export class ContainerMetricsService {
    * off. Rows are ordered by name; BigInt byte fields widen to Number.
    */
   async forServer(serverId: string): Promise<ServerContainers> {
-    const [rows, apps, dbs, states] = await Promise.all([
+    const [rows, apps, dbs, states, labels] = await Promise.all([
       this.prisma.containerMetric.findMany({
         where: { serverId, ts: { gte: new Date(Date.now() - LIVE_WINDOW_MS) } },
         orderBy: { ts: "asc" },
@@ -257,6 +307,7 @@ export class ContainerMetricsService {
         where: { serverId },
         select: { containerName: true, exitCode: true, oomKilled: true, restartCount: true, health: true, finishedAt: true },
       }),
+      this.labelsFor([serverId]),
     ]);
     const appsById = new Map(apps.map((a) => [a.id, a.name]));
     const dbsById = new Map(dbs.map((d) => [d.id, d.name]));
@@ -264,7 +315,7 @@ export class ContainerMetricsService {
     // ts asc → the last row seen per name is its most recent sample.
     const latest = new Map<string, ContainerInventoryRow>();
     for (const r of rows) {
-      const friendly = resolveContainerLabel(r.containerName, appsById, dbsById);
+      const friendly = resolveContainerLabel(r.containerName, appsById, dbsById, labels.get(`${serverId}\u0000${r.containerName}`));
       const st = stateByName.get(r.containerName);
       latest.set(r.containerName, {
         name: r.containerName,
@@ -302,13 +353,14 @@ export class ContainerMetricsService {
   async hottest(servers: { id: string; name: string }[], limit?: number): Promise<HottestContainerRow[]> {
     if (servers.length === 0) return [];
     const serverIds = servers.map((s) => s.id);
-    const [rows, apps, dbs] = await Promise.all([
+    const [rows, apps, dbs, labels] = await Promise.all([
       this.prisma.containerMetric.findMany({
         where: { serverId: { in: serverIds }, ts: { gte: new Date(Date.now() - LIVE_WINDOW_MS) } },
         orderBy: { ts: "desc" },
       }),
       this.prisma.application.findMany({ where: { serverId: { in: serverIds } }, select: { id: true, name: true } }),
       this.prisma.database.findMany({ where: { serverId: { in: serverIds } }, select: { id: true, name: true } }),
+      this.labelsFor(serverIds),
     ]);
     // ts desc → the first row seen per (server, container) is its newest sample.
     const latest = new Map<string, (typeof rows)[number]>();
@@ -326,7 +378,7 @@ export class ContainerMetricsService {
         serverId: r.serverId,
         serverName: nameById.get(r.serverId) ?? r.serverId,
         containerName: r.containerName,
-        ...resolveContainerLabel(r.containerName, appsById, dbsById),
+        ...resolveContainerLabel(r.containerName, appsById, dbsById, labels.get(`${r.serverId}\u0000${r.containerName}`)),
         cpu: r.cpu,
         memUsed: Number(r.memUsed),
         memTotal: Number(r.memTotal),
