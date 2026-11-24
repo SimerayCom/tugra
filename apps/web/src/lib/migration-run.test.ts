@@ -168,6 +168,11 @@ describe("codes and params", () => {
     expect(codeText(t, "data-seed.db-lane-stream", { engine: "POSTGRES", dumpBytes: 3 * 1024 ** 3 })).toBe(`This POSTGRES database (${formatBytes(3 * 1024 ** 3)}) moves as a checked stream. Any size works.`);
     expect(codeText(t, "data-seed.disk-insufficient", { needBytes: 10 * 1024 ** 3, freeBytes: 2 * 1024 ** 3 })).toContain(`${formatBytes(2 * 1024 ** 3)} free`);
   });
+  it("shows the lane of a database in words", () => {
+    expect(codeText(t, "data-seed.dry.db-lane", { lane: "stream", dumpBytes: 2 * 1024 ** 3 })).toBe(`This database (${formatBytes(2 * 1024 ** 3)}): checked stream, any size.`);
+    expect(codeText(t, "data-seed.dry.db-lane", { lane: "logical", dumpBytes: 1024 ** 2 })).toContain("one dump");
+    expect(codeText(t, "data-seed.dry.db-lane", { lane: "pending", dumpBytes: null })).toBe("This database (-): waiting for its size.");
+  });
   it("interpolates params into a known code", () => {
     expect(t("migrationRun.progressOf", { done: 3, total: 9, unit: "volumes" })).toBe("3 / 9 volumes");
   });

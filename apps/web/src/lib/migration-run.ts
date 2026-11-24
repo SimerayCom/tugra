@@ -301,10 +301,20 @@ export function paramVars(params: MigrationRunParams | null | undefined): Record
   return out;
 }
 
+/** How a database's data moves, in words: the `lane` param of a lane code is shown as one of these. */
+const LANE_WORD_KEY: Record<string, string> = {
+  logical: "migrationRun.lane.logical",
+  stream: "migrationRun.lane.stream",
+  physical: "migrationRun.lane.physical",
+  pending: "migrationRun.lane.pending",
+  blocked: "migrationRun.lane.blocked",
+};
+
 /** Localize a hub code. An unknown code is shown humanized plus its params rather than hidden or guessed at. */
 export function codeText(t: T, code: string, params?: MigrationRunParams | null): string {
   const key = codeKey(code);
   const vars = paramVars(params);
+  if (typeof vars.lane === "string" && vars.lane in LANE_WORD_KEY) vars.lane = t(LANE_WORD_KEY[vars.lane]);
   const text = t(key, vars);
   if (text !== key) return text;
   const extra = Object.entries(vars).map(([k, v]) => `${k}=${v}`).join(", ");

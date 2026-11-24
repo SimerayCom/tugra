@@ -403,6 +403,13 @@
       "error": "Error"
     }
   },
+  "lane": {
+    "logical": "one dump",
+    "stream": "checked stream, any size",
+    "physical": "file copy",
+    "pending": "waiting for its size",
+    "blocked": "stopped"
+  },
   "report": {
     "title": "Report",
     "download": "Download Markdown",
@@ -755,7 +762,7 @@
     "data-seed_estimate_hub-bytes": "Every copied byte crosses the hub twice (in from the source, out to the target): {bytes} bytes through the hub's network.",
     "data-seed_estimate_deploy": "Deploying inside the window (estimate): {builds} image builds ({buildSeconds} seconds) and {starts} app starts ({startSeconds} seconds).",
     "data-seed_estimate_health-acme": "Health checks and certificates for {hosts} hosts (estimate): about {healthSeconds} seconds of health gates and {acmeSeconds} seconds for the certificates.",
-    "data-seed_dry_db-lane": "This database ({dumpBytes}) moves by the {lane} route.",
+    "data-seed_dry_db-lane": "This database ({dumpBytes}): {lane}.",
     "data-seed_db-lane": "This {engine} database ({dumpBytes}) moves as one dump.",
     "data-seed_db-lane-stream": "This {engine} database ({dumpBytes}) moves as a checked stream. Any size works.",
     "data-seed_db-lane-physical": "This {engine} database ({dumpBytes}) is copied as files.",
