@@ -22,6 +22,7 @@ import { PatchBulkModal } from "./patch-bulk-modal";
 import { AgentUpdateBulkModal } from "./agent-update-bulk-modal";
 import { CapabilitiesBulkModal } from "./capabilities-bulk-modal";
 import { TeamMoveBulkModal } from "./team-move-bulk-modal";
+import { serverDisplayName } from "../lib/server-name";
 
 /** Rows per page by default, and the choices offered. Selection persists across pages; the header select-all acts on the visible page only. */
 export const SERVER_PAGE_SIZE = 100;
@@ -268,14 +269,14 @@ export function ServerTable({
                     style={{ borderTop: "1px solid var(--c-bd)", opacity: s.canWrite ? 1 : 0.6 }}
                   >
                     <td style={cell}>
-                      <input type="checkbox" disabled={!s.canWrite} checked={selected.has(s.id)} onChange={() => toggle(s.id)} aria-label={t("servers.selectRow", { name: s.name })} title={s.canWrite ? "" : t("servers.readonly")} />
+                      <input type="checkbox" disabled={!s.canWrite} checked={selected.has(s.id)} onChange={() => toggle(s.id)} aria-label={t("servers.selectRow", { name: serverDisplayName(s, t) })} title={s.canWrite ? "" : t("servers.readonly")} />
                     </td>
                     <td style={cell}>
                       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                         <StatusDot status={s.status} stale={live === "stale"} />
                         <div style={{ minWidth: 0 }}>
                           <div style={{ fontWeight: 600, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                            <Link href={`/servers/${s.id}`} style={{ color: "var(--c-tx)", textDecoration: "none" }}>{s.name}</Link>
+                            <Link href={`/servers/${s.id}`} style={{ color: "var(--c-tx)", textDecoration: "none" }}>{serverDisplayName(s, t)}</Link>
                             <TagChips tags={s.tags} />
                           </div>
                           <div className="mono" style={{ fontSize: 11, color: "var(--c-tx3)" }}>

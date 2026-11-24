@@ -934,7 +934,8 @@ export class ServersService {
       publicIpv6: s.publicIpv6 ?? null,
       ipSource: s.ipSource ?? "observed",
       ipv6Source: s.ipv6Source ?? s.ipSource ?? "observed",
-      reportedIps: s.reportedIps ?? [],
+      // Private LAN / VPC / tailnet addresses are for people who can manage the server, not every read-only member.
+      reportedIps: canWrite ? (s.reportedIps ?? []) : [],
       nameAuto: s.nameAuto ?? false,
       wildcardDomain: s.wildcardDomain ?? null,
       magicSuffix: s.magicSuffix ?? null,

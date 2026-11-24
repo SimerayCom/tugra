@@ -62,6 +62,26 @@ describe("ServersService.listForUser (cross-team, role-aware)", () => {
     expect(list.find((s) => s.id === "s2")!.canWrite).toBe(false); // VIEWER
   });
 
+  it("shows every reported address (incl. private ones) to a manager only, not to a read-only member", async () => {
+    const prisma = {
+      membership: {
+        findMany: jest.fn().mockResolvedValue([
+          { teamId: "teamA", role: Role.OWNER },
+          { teamId: "teamB", role: Role.VIEWER },
+        ]),
+      },
+      server: {
+        findMany: jest.fn().mockResolvedValue([
+          { ...row("s1", "teamA"), reportedIps: ["10.0.0.5", "203.0.113.7"] },
+          { ...row("s2", "teamB"), reportedIps: ["10.0.0.6", "203.0.113.8"] },
+        ]),
+      },
+    } as unknown as PrismaService;
+    const list = await svcWith(prisma).listForUser("u1");
+    expect(list.find((s) => s.id === "s1")!.reportedIps).toEqual(["10.0.0.5", "203.0.113.7"]);
+    expect(list.find((s) => s.id === "s2")!.reportedIps).toEqual([]);
+  });
+
   it("returns empty when the user is in no teams", async () => {
     const prisma = {
       membership: { findMany: jest.fn().mockResolvedValue([]) },

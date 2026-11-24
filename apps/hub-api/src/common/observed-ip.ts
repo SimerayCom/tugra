@@ -154,9 +154,9 @@ interface IpCandidate {
  *   5 public address on a host network interface      (the machine says so itself)
  *   4 public address from the cloud metadata service  (link-local, asked on the instance; covers NAT'd clouds)
  *   3 public address the hub observed on the connection
- *   2 non-public address the hub observed (a LAN/VPC peer, kept so home and same-VPC installs work)
- *   1 non-public interface address (last-resort LAN fallback)
- *   0 nothing usable (empty, loopback, a Cloudflare edge, or the local server's own docker bridge)
+ *   1 non-public interface address (last-resort LAN fallback, reported by the host itself)
+ *   0 nothing usable (empty, loopback, a Cloudflare edge, the local server's own docker bridge, or a non-public
+ *     address merely observed by the hub: a private peer is never recorded as the server's address)
  * Manual pins are handled before ranking and are never overridden.
  */
 function ipRank(source: string, ip: string | null | undefined, isLocal: boolean): number {
@@ -165,7 +165,7 @@ function ipRank(source: string, ip: string | null | undefined, isLocal: boolean)
   const pub = isPublicIp(ip);
   if (source === "reported") return pub ? 5 : 1;
   if (source === "metadata") return pub ? 4 : 1;
-  return pub ? 3 : 2; // "observed" and any legacy value
+  return pub ? 3 : 0; // "observed" and any legacy value: a private/CGNAT peer the hub saw is never stored
 }
 
 /** The best candidate for one family, or null when the stored value should stay. A candidate replaces the stored

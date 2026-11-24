@@ -47,6 +47,7 @@ import { useMetricsStream } from "../../../../hooks/useMetricsStream";
 import { useServerReconnect } from "../../../../hooks/useServerReconnect";
 import { MainIp, ServerAddresses } from "../../../../components/server-addresses";
 import { ipSourceKey } from "../../../../lib/server-addresses";
+import { serverDisplayName } from "../../../../lib/server-name";
 import { useStickToBottom } from "../../../../hooks/useStickToBottom";
 
 const serverColor = (s: ServerStatus) =>
@@ -139,8 +140,8 @@ export default function ServerDetailPage() {
   return (
     <div style={{ padding: "var(--page-pad)" }}>
       <PageHeader
-        breadcrumb={[{ label: t("nav.servers"), href: "/servers" }, { label: server.name }]}
-        title={server.name}
+        breadcrumb={[{ label: t("nav.servers"), href: "/servers" }, { label: serverDisplayName(server, t) }]}
+        title={serverDisplayName(server, t)}
         status={{ label: server.status, color: serverColor(server.status) }}
         badge={!server.canWrite ? <Badge tone="muted">{t("servers.readOnly")}</Badge> : undefined}
         actions={server.canWrite ? (

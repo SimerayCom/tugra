@@ -267,9 +267,11 @@ describe("reconcileReportedIp", () => {
     expect(reconcileReportedIp({ publicIp: "172.18.0.7", ipSource: "observed" }, ["172.17.0.1"], true)).toBeNull();
     expect(reconcileReportedIp({ publicIp: null, ipSource: "observed" }, ["172.18.0.9"], true)).toBeNull();
   });
-  it("keeps a remote server's observed 172.x (same-VPC/LAN is reachable there — not docker-bridge filtered)", () => {
-    // isLocal defaults false: a remote agent connecting over a 172.16/12 VPC keeps its reachable address.
-    expect(reconcileReportedIp({ publicIp: "172.31.5.9", ipSource: "observed" }, ["10.0.0.5"])).toBeNull();
+  it("replaces a stored private observed address with the host's own interface address (a private peer is never trusted)", () => {
+    expect(reconcileReportedIp({ publicIp: "172.31.5.9", ipSource: "observed" }, ["10.0.0.5"])).toEqual({
+      publicIp: "10.0.0.5",
+      ipSource: "reported",
+    });
   });
   it("adopts a reported IP when the observed one is loopback", () => {
     expect(reconcileReportedIp({ publicIp: "127.0.0.1", ipSource: "observed" }, ["192.168.1.5"])).toEqual({
@@ -701,9 +703,11 @@ describe("reconcileObservedIp", () => {
     expect(reconcileObservedIp(none, "not-an-ip")).toBeNull();
     expect(reconcileObservedIp(none, null)).toBeNull();
   });
-  it("skips the local server's docker-bridge source address but keeps a remote server's 172.x", () => {
+  it("never records a private or docker-bridge source address the hub merely observed (shown as unknown instead)", () => {
     expect(reconcileObservedIp(none, "172.18.0.7", true)).toBeNull();
-    expect(reconcileObservedIp(none, "172.31.5.9", false)).toEqual({ publicIp: "172.31.5.9", ipSource: "observed" });
+    expect(reconcileObservedIp(none, "172.31.5.9", false)).toBeNull();
+    expect(reconcileObservedIp(none, "192.168.1.20", false)).toBeNull();
+    expect(reconcileObservedIp(none, "100.64.0.9", false)).toBeNull(); // CGNAT / tailnet
   });
   it("replaces a private interface fallback with the observed address", () => {
     expect(reconcileObservedIp({ ...none, publicIp: "192.168.1.5", ipSource: "reported" }, "203.0.113.7")).toEqual({

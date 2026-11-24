@@ -1306,7 +1306,7 @@ printf '  Back up the hub: keep %s offsite and schedule a pg_dump of the hub dat
 printf '  Open the Web UI and create the owner account (enter the setup code if one is shown below). This machine connects itself as your first server; add more from Settings -> Servers.\n'
 # Trust-wedge hints: say plainly what is ON/OFF and how to change it.
 if ! env_has LOCAL_SERVER_PUBLIC_IP; then
-  printf '  \033[2mPublic IP not set (no outbound probe by default). Deployed app URLs on a bare IP may not resolve until you set it: re-run with --public-ip <ip>, or set LOCAL_SERVER_PUBLIC_IP in %s.\033[0m\n' "$ENV_FILE"
+  printf '  \033[2mPublic IP: found automatically once this machine connects (its network interface, then the cloud provider metadata; no outbound probe). Behind NAT or a floating IP, pin it with --public-ip <ip> or LOCAL_SERVER_PUBLIC_IP in %s.\033[0m\n' "$ENV_FILE"
 fi
 if [ "$(env_get TUGRA_UPDATE_CHECKS)" = "0" ]; then
   printf '  \033[2mUpdate checks are OFF (--no-update-checks). Watch GitHub releases for security advisories; re-enable with --enable-update-checks.\033[0m\n'

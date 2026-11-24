@@ -458,6 +458,7 @@
   "nameOptional": "Server name (optional)",
   "nameHint": "Leave it blank and the server's own hostname is used. You can rename it later.",
   "namePlaceholder": "e.g. web-1",
+  "unnamed": "Unnamed server",
   "ipUnknown": "Unknown",
   "ipUnknownHint": "Not detected. Enter it under Network.",
   "ipSourceInterface": "from the server's network interface",
