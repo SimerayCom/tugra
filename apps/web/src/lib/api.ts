@@ -1,6 +1,7 @@
 import type { SettingsApplyBody, SettingsApplyResult, SettingsPreview } from "./import-settings";
 import type { BulkTransferResponse, TransferPlan } from "./server-transfer";
 import type { BeszelApplyInput, BeszelApplyResult, BeszelConnectResult, BeszelPreview, BeszelSavedConnection } from "./beszel-import";
+import type { CoolifyChecklist, CoolifyDetect, CoolifyInventoryView } from "./coolify-takeover";
 import { HUB_UNREACHABLE_CODE, hubUnreachableMessage, isHubDownStatus, isNetworkFailure, reportHubDown } from "./hub-connection";
 import { observeServerDate } from "./clock-skew";
 import type {
@@ -1419,6 +1420,29 @@ export const api = {
   },
   kumaApply(input: { teamId: string; source: KumaSource; monitorRefs?: string[]; createChannelRefs?: string[] }) {
     return apiFetch<KumaApplyResult>("/monitors/import/kuma/apply", { method: "POST", body: JSON.stringify(input) });
+  },
+  // "Read this Coolify": a read-only inventory read through the agent on the Coolify host (owner/admin; explicit opt-in per server).
+  coolifyDetect(serverId: string) {
+    return apiFetch<CoolifyDetect>(`/coolify-takeover/servers/${serverId}/detect`, { method: "POST" });
+  },
+  coolifyEnable(serverId: string) {
+    return apiFetch<CoolifyInventoryView>(`/coolify-takeover/servers/${serverId}/enable`, { method: "POST", body: JSON.stringify({ confirm: true }) });
+  },
+  coolifyRead(serverId: string) {
+    return apiFetch<CoolifyInventoryView>(`/coolify-takeover/servers/${serverId}/read`, { method: "POST" });
+  },
+  coolifyInventory(serverId: string) {
+    return apiFetch<CoolifyInventoryView>(`/coolify-takeover/servers/${serverId}`);
+  },
+  coolifyDisable(serverId: string) {
+    return apiFetch<{ ok: true }>(`/coolify-takeover/servers/${serverId}`, { method: "DELETE" });
+  },
+  /** The install commands embed enroll tokens: never cache. */
+  coolifyServers(serverId: string) {
+    return apiFetch<CoolifyChecklist>(`/coolify-takeover/servers/${serverId}/servers`);
+  },
+  coolifyGenerateServers(serverId: string, assignments: Array<{ coolifyServerId: string; teamId: string }>) {
+    return apiFetch<CoolifyChecklist>(`/coolify-takeover/servers/${serverId}/servers`, { method: "POST", body: JSON.stringify({ assignments }) });
   },
   getHeartbeats(id: string, limit = 60) {
     return apiFetch<Heartbeat[]>(`/monitors/${id}/heartbeats?limit=${limit}`);

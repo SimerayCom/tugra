@@ -85,8 +85,12 @@ export function ImportWizard() {
   // The wizard's state is in-memory, so keep the running op in the URL (?op=<id>): a reload or a shared link
   // reopens the timeline and the cutover step instead of starting a new import.
   useEffect(() => {
-    const fromUrl = new URLSearchParams(window.location.search).get("op");
+    const params = new URLSearchParams(window.location.search);
+    const fromUrl = params.get("op");
     if (fromUrl) setOpId(fromUrl);
+    // "Move" on the Read-this-Coolify inventory arrives with the Coolify address; the token step still asks for the token.
+    const address = params.get("url");
+    if (address && /^https?:\/\/\S+$/i.test(address)) setBaseUrl((cur) => cur || address);
   }, []);
   useEffect(() => {
     const url = new URL(window.location.href);

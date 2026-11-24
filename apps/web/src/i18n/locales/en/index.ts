@@ -6,6 +6,7 @@ import beszelImport from "./beszelImport.json";
 import bulk from "./bulk.json";
 import charts from "./charts.json";
 import common from "./common.json";
+import coolifyTakeover from "./coolifyTakeover.json";
 import cutover from "./cutover.json";
 import dashboard from "./dashboard.json";
 import databases from "./databases.json";
@@ -46,6 +47,6 @@ import terminal from "./terminal.json";
 import traffic from "./traffic.json";
 
 // Split into namespace files (this JSON gets large); merged here.
-const en = { apps, audit, auth, backups, beszelImport, bulk, charts, cloudCredentials, secretProviders, clusters, common, cutover, dashboard, databases, destinations, domains, errors, feedback, fleet, home, identity, import: importNs, logdrains, migrationRun, monitors, nav, notifications, objectMigration, oob, onboarding, patching, pickers, projects, reboot, registries, resources, rollouts, servers, settings, sources, shared, tags, teams, templates, terminal, traffic };
+const en = { apps, audit, auth, backups, beszelImport, bulk, charts, cloudCredentials, secretProviders, clusters, common, coolifyTakeover, cutover, dashboard, databases, destinations, domains, errors, feedback, fleet, home, identity, import: importNs, logdrains, migrationRun, monitors, nav, notifications, objectMigration, oob, onboarding, patching, pickers, projects, reboot, registries, resources, rollouts, servers, settings, sources, shared, tags, teams, templates, terminal, traffic };
 
 export default en;

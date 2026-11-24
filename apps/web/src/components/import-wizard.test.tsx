@@ -91,6 +91,16 @@ describe("ImportWizard", () => {
     expect(screen.getByText(/Importing/)).toBeTruthy(); // timeline header
   });
 
+  it("prefills the Coolify address from ?url= (the Move link of the Read-this-Coolify inventory), and ignores anything that is not http(s)", async () => {
+    window.history.replaceState(null, "", "/import?url=https%3A%2F%2Fcoolify.example.com");
+    const first = wrap(<ImportWizard />);
+    expect(((await screen.findByLabelText("Coolify URL")) as HTMLInputElement).value).toBe("https://coolify.example.com");
+    first.unmount();
+    window.history.replaceState(null, "", "/import?url=javascript%3Aalert(1)");
+    wrap(<ImportWizard />);
+    expect(((await screen.findByLabelText("Coolify URL")) as HTMLInputElement).value).toBe("");
+  });
+
   const fillCoolify = async () => {
     await screen.findByLabelText("Coolify URL");
     await waitFor(() => expect(qc.getQueryData(["teams"])).toBeTruthy());

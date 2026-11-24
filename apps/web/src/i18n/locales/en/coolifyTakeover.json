@@ -1,0 +1,143 @@
+{
+  "title": "Read this Coolify",
+  "subtitle": "See everything in a Coolify through its server's Tugra agent. No Coolify API needed.",
+  "back": "Back to import",
+  "linkHint": "Coolify on one of your servers? Read it through its agent. Read-only, no secrets.",
+  "pick": {
+    "label": "Server",
+    "placeholder": "Choose the server that runs Coolify",
+    "hint": "It needs a connected Tugra agent.",
+    "none": "Add a server first. Its agent reads the Coolify on it."
+  },
+  "optIn": {
+    "title": "Let Tugra read this Coolify",
+    "desc": "Only after you allow it. Tugra reads the Coolify database on this server and keeps a copy to look at.",
+    "readOnly": "Read-only. Nothing in Coolify changes.",
+    "noSecrets": "No secrets. Passwords, keys and tokens are only marked as present.",
+    "audit": "Every step is written to the audit log.",
+    "stop": "Stop any time. The copy is deleted.",
+    "check": "Check for Coolify",
+    "checking": "Checking…",
+    "found": "Coolify found ({version}).",
+    "foundNoVersion": "Coolify found.",
+    "notFound": "No Coolify on this server. Pick the server that runs it.",
+    "noDocker": "Docker is not available on this server.",
+    "dbStopped": "Coolify is installed but its database is not running.",
+    "allow": "Allow and read"
+  },
+  "read": {
+    "now": "Read now",
+    "again": "Read again",
+    "reading": "Reading…",
+    "empty": "Nothing read yet.",
+    "readAt": "Read {when}"
+  },
+  "stop": {
+    "button": "Stop and delete",
+    "title": "Stop reading this Coolify?",
+    "body": "The copy Tugra keeps is deleted. Coolify itself is not touched.",
+    "confirm": "Stop and delete"
+  },
+  "head": {
+    "version": "Coolify {version}",
+    "readOnly": "Read-only copy"
+  },
+  "counts": {
+    "applications": "Apps",
+    "databases": "Databases",
+    "services": "Services",
+    "servers": "Servers",
+    "projects": "Projects"
+  },
+  "team": {
+    "personal": "Personal",
+    "members": "{n} members",
+    "noTeam": "Not in a team",
+    "noProject": "No project",
+    "notifications": "Notifications",
+    "notifyOn": "on",
+    "notifyConfigured": "set up",
+    "channel": {
+      "email": "Email",
+      "discord": "Discord",
+      "telegram": "Telegram",
+      "slack": "Slack",
+      "pushover": "Pushover",
+      "webhook": "Webhook"
+    }
+  },
+  "section": {
+    "servers": "Servers",
+    "resources": "Apps, databases and services",
+    "variables": "Shared variables",
+    "tasks": "Scheduled tasks",
+    "backups": "Backups",
+    "storages": "Storage",
+    "sources": "Git sources"
+  },
+  "item": {
+    "application": "App",
+    "database": "Database",
+    "service": "Service",
+    "move": "Move",
+    "moveLabel": "Move {name}",
+    "moveHint": "Moving uses the Coolify import. It needs the Coolify address and an API token.",
+    "on": "on {server}",
+    "env": "{n} variables"
+  },
+  "server": {
+    "local": "This server",
+    "build": "Build server",
+    "swarm": "Swarm",
+    "unreachable": "Unreachable",
+    "counts": "{apps} apps · {databases} databases · {services} services"
+  },
+  "variable": {
+    "team": "Team",
+    "project": "Project",
+    "environment": "Environment"
+  },
+  "task": {
+    "off": "Off"
+  },
+  "backup": {
+    "s3": "to {name}",
+    "local": "local"
+  },
+  "storage": {
+    "keys": "Keys set"
+  },
+  "unavailable": "Not in this Coolify version: {names}",
+  "checklist": {
+    "title": "Add all Coolify servers",
+    "desc": "Pick a team for each server and get its install command. Nothing runs by itself: paste each command on its server.",
+    "team": "Team",
+    "select": "Add {name}",
+    "generate": "Get install commands ({n})",
+    "generating": "Creating…",
+    "copyAll": "Copy all commands",
+    "copyOne": "Copy command for {name}",
+    "refresh": "New command",
+    "refreshLabel": "New command for {name}",
+    "empty": "Only the Coolify server itself is here. It already has its agent.",
+    "runOn": "Run on",
+    "state": {
+      "this_server": "Agent here",
+      "already_added": "Already in Tugra",
+      "waiting": "Waiting for its agent",
+      "expired": "Command expired",
+      "not_generated": "Not added"
+    },
+    "expiresAt": "Valid until {when}"
+  },
+  "error": {
+    "forbidden": "Only a team owner or admin can do this.",
+    "no_coolify": "No Coolify on this server.",
+    "no_docker": "Docker is not available on this server.",
+    "db_stopped": "Coolify's database is not running.",
+    "not_read_only": "Tugra could not confirm a read-only session, so it read nothing.",
+    "unreadable": "The read did not finish. Try again.",
+    "offline": "This server's agent is offline.",
+    "generic": "Something went wrong. Try again."
+  }
+}
