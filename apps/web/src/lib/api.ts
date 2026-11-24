@@ -2483,6 +2483,10 @@ export const api = {
   setMigrationRunWorkerMarks(id: string, body: { marks: Array<{ itemRef: string; role: "job-runner" | "web" | null }> }) {
     return apiFetch<MigrationRunSafetyHints>(`/migration-runs/${encodeURIComponent(id)}/worker-marks`, { method: "PUT", body: JSON.stringify(body) });
   },
+  /** Accept (or take back) warnings of a finished dry run; the promoted run reads them from it. */
+  setMigrationRunWarningAcks(id: string, body: { acks: Array<{ key: string; accepted: boolean }> }) {
+    return apiFetch<MigrationRunSafetyHints>(`/migration-runs/${encodeURIComponent(id)}/warning-acks`, { method: "PUT", body: JSON.stringify(body) });
+  },
   getMigrationRunReport(id: string) {
     return apiFetch<MigrationRunReport>(`/migration-runs/${encodeURIComponent(id)}/report`);
   },

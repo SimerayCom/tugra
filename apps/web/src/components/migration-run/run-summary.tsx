@@ -4,26 +4,20 @@ import { ShieldAlert, ShieldCheck } from "lucide-react";
 import { useT } from "../../i18n/provider";
 import { Badge, Card, SectionCard } from "../ui";
 import { formatDuration } from "../../lib/import";
-import { MODE_HINT_KEY, TOPOLOGY_HINT_KEY, UNKNOWN_SOURCE_HOST, VERSION_VERDICT_HINT_KEY, VERSION_VERDICT_KEY, dryRunVerdict, sourceHostLabel, sourceHostNames, stepsSummary, versionVerdictColor } from "../../lib/migration-run";
+import { MODE_HINT_KEY, TOPOLOGY_HINT_KEY, UNKNOWN_SOURCE_HOST, VERSION_VERDICT_HINT_KEY, VERSION_VERDICT_KEY, sourceHostLabel, sourceHostNames, stepsSummary, versionVerdictColor } from "../../lib/migration-run";
 import { relativeTime } from "../../lib/fleet";
 import type { MigrationRunView } from "../../lib/types";
 import { MeterBar } from "../meter-bar";
 
-/** The banner under the title: where the run stands relative to the point of no return, what mode it is in, and what
- *  a dry-run found. A dry-run is stated plainly as having changed nothing. */
+/** The banner under the title: where the run stands relative to the point of no return and what mode it is in. A dry-run is
+ *  stated plainly as having changed nothing; what it found is the decision screen's job. */
 export function RunBanners({ run }: { run: MigrationRunView }) {
   const t = useT();
-  const v = dryRunVerdict(run);
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 14 }}>
       {run.dryRun && (
         <div role="status" style={{ border: "1px solid var(--c-lapis)", borderRadius: "var(--r1)", padding: "10px 12px", fontSize: 13, lineHeight: 1.5, background: "color-mix(in srgb, var(--c-lapis) 8%, transparent)" }}>
           <strong>{t("migrationRun.banner.dryRun")}</strong> {t("migrationRun.banner.dryRunBody")}
-          {run.status === "DRY_RUN_DONE" && (
-            <div style={{ marginTop: 4, color: v.blocks > 0 || v.unknown > 0 ? "var(--c-r)" : "var(--c-g)" }}>
-              {v.blocks > 0 || v.unknown > 0 ? t("migrationRun.banner.dryRunBlocked", { blocks: v.blocks, unknown: v.unknown }) : t("migrationRun.banner.dryRunClean", { warns: v.warns })}
-            </div>
-          )}
         </div>
       )}
       {run.ponrAt ? (

@@ -8,9 +8,7 @@ import { Btn, SectionCard, Spinner } from "../ui";
 import { Field, Select, TextInput } from "../form";
 import { hintsClosed, validAppItemRef, validDigest, validImageRef, validPinScope } from "../../lib/migration-run";
 import type { MigrationRunSafetyHints, MigrationRunView } from "../../lib/types";
-import { useRunPlumbing } from "./use-run-actions";
-
-const hintsKey = (id: string) => ["migration-run-safety-hints", id] as const;
+import { runHintsKey as hintsKey, useRunPlumbing } from "./use-run-actions";
 
 function useHints(runId: string, enabled: boolean) {
   return useQuery<MigrationRunSafetyHints>({ queryKey: hintsKey(runId), queryFn: () => api.getMigrationRunSafetyHints(runId), enabled, staleTime: 15_000 });

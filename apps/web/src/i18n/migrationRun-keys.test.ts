@@ -23,7 +23,7 @@ const lookup = (tree: unknown, dotted: string): unknown => dotted.split(".").red
 const leaves = (o: Record<string, unknown>, prefix = ""): Array<[string, unknown]> =>
   Object.entries(o).flatMap(([k, v]) => (v && typeof v === "object" ? leaves(v as Record<string, unknown>, `${prefix}${k}.`) : [[`${prefix}${k}`, v] as [string, unknown]]));
 
-const files = [...walk(path.join(SRC, "components/migration-run")), path.join(SRC, "lib/migration-run.ts"), ...walk(path.join(SRC, "app/(app)/import/runs")), path.join(SRC, "components/import-wizard.tsx")];
+const files = [...walk(path.join(SRC, "components/migration-run")), path.join(SRC, "lib/migration-run.ts"), path.join(SRC, "lib/dry-run-decision.ts"), ...walk(path.join(SRC, "app/(app)/import/runs")), path.join(SRC, "components/import-wizard.tsx")];
 const sources = files.map((f) => ({ f, src: readFileSync(f, "utf8") }));
 
 describe("guided migration i18n coverage", () => {

@@ -199,8 +199,6 @@
   "banner": {
     "dryRun": "This is a dry run.",
     "dryRunBody": "It projects what each step would do and writes nothing outside the run's own records.",
-    "dryRunBlocked": "{blocks} item(s) would stop a real run and {unknown} could not be checked.",
-    "dryRunClean": "Nothing would stop a real run ({warns} warning(s)).",
     "ponrBefore": "Before the point of no return you can abort: the source becomes authoritative again and nothing is deleted.",
     "ponrPast": "Point of no return reached {when}.",
     "ponrPastBody": "Abort is no longer possible. You can finish the run, or reverse it; a reverse can lose data written to Tugra after the cutover."
@@ -1283,5 +1281,79 @@
     },
     "open": "Campaign report",
     "runFailed": "The run failed"
+  },
+  "decision": {
+    "title": "Dry run result",
+    "clean": "No problems found. You can start the real migration.",
+    "cleanAccepted": "No open problems. You accepted {count} warnings. You can start the real migration.",
+    "warningsOne": "1 warning",
+    "warningsMany": "{count} warnings",
+    "warningsHint": "Fix each one, or accept it and continue.",
+    "blockedOne": "1 problem stops the real migration",
+    "blockedMany": "{count} problems stop the real migration",
+    "blockedHint": "Fix them, then run the dry run again.",
+    "start": "Start migration",
+    "blockersTitle": "Problems",
+    "warningsTitle": "Warnings",
+    "howToFix": "How to fix:",
+    "accept": "Accept and continue",
+    "acceptAll": "Accept all",
+    "acceptAria": "Accept and continue: {what}",
+    "undo": "Undo",
+    "undoAria": "Undo accepting: {what}",
+    "acceptedTag": "Accepted.",
+    "saved": "Saved.",
+    "more": "More",
+    "details": "Details",
+    "detailsHide": "Hide details",
+    "moves": "What moves",
+    "countApps": "{count} apps",
+    "countDatabases": "{count} databases",
+    "countServices": "{count} services",
+    "data": "Data to copy",
+    "duration": "Estimated duration",
+    "downtime": "Expected downtime",
+    "rollbackTitle": "If something goes wrong",
+    "notMeasured": "Not measured yet",
+    "notEstimated": "Not estimated yet",
+    "about": "About {time}",
+    "rollback": {
+      "copy": "Your source keeps running untouched. Abort any time before the cutover and it stays exactly as it is.",
+      "takeover": "Abort any time before the point of no return and your source takes over again. After it, you can reverse, but data written to Tugra since can be lost."
+    },
+    "fix": {
+      "connectGit": "Connect GitHub",
+      "pinInReview": "Pin the version in the review",
+      "reviewAgain": "Open the import review"
+    },
+    "warn": {
+      "gitPrivate": "Private GitHub repositories need a connected GitHub.",
+      "gitPrivateHint": "The repositories are linked at import when exactly one connected source can see them. With none or several they stay unlinked and are listed for you to link.",
+      "imageFloating": "{count} items use a floating image tag: {items}.",
+      "imageFloatingHint": "Without a pinned version the registry's latest is pulled, which can differ from what your source runs. A data directory can be tied to one version.",
+      "imageTransfer": "An image exists only on the source: {items}.",
+      "imageTransferHint": "It has to be shipped to the target by hand or through a registry before it can start.",
+      "filesNeeded": "Config files are carried only if the source token can read them: {items}.",
+      "filesNeededHint": "Without them these services are not imported.",
+      "dataManualLarge": "A volume is too large for the hub to carry: {items}.",
+      "dataManualLargeHint": "Copy it with the big-volume pipeline or by hand after the import.",
+      "sizeUnknown": "The size of some volumes is not known: {items}.",
+      "sizeUnknownHint": "A volume over the staging limit has to be copied by hand.",
+      "privileged": "{count} apps run privileged or use the Docker socket: {items}.",
+      "privilegedHint": "Importing them needs an explicit acknowledgement. Accepting here records that you know.",
+      "composePath": "The compose file path is unknown for {items}.",
+      "composePathHint": "Tugra looks for docker-compose.yml at the repository root. Set the path in the app's Git settings if it lives elsewhere.",
+      "dbCreds": "No credentials were found for {items}.",
+      "dbCredsHint": "Connection strings of the apps that use these databases must be rewritten by hand.",
+      "dbVersion": "The version of {items} is not known.",
+      "dbVersionHint": "Pin the target to the major version your source runs."
+    },
+    "block": {
+      "session": "Re-enter the source token in the session form on this page, then run the dry run again.",
+      "planChanged": "The source changed after you reviewed it. Review the plan again and run a new dry run.",
+      "serverUnmapped": "Map every source server to a target server, or leave its items out, then run a new dry run.",
+      "acmeEmail": "Add the certificate email under Owner inputs in Details.",
+      "generic": "Fix it on the source or the target, then run the dry run again. Details shows where it was raised."
+    }
   }
 }

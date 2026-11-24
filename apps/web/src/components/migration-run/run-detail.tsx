@@ -1,6 +1,8 @@
 "use client";
 
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { ChevronDown, ChevronRight } from "lucide-react";
 import { api } from "../../lib/api";
 import { useT } from "../../i18n/provider";
 import { ErrorState } from "../error-state";
@@ -10,6 +12,7 @@ import { isTerminalRun, runRefetchInterval, runStatusColor } from "../../lib/mig
 import { RUN_STATUS_KEY } from "../../lib/migration-run";
 import type { MigrationRunView } from "../../lib/types";
 import { ModeBadges } from "./badges";
+import { DryRunDecision } from "./dry-run-decision";
 import { EventLog } from "./event-log";
 import { HeldWorkersCard } from "./held-workers-card";
 import { NextActionCard } from "./next-action-card";
@@ -34,12 +37,15 @@ export function RunDetail({ id }: { id: string }) {
     refetchInterval: (q) => runRefetchInterval(q.state.data as MigrationRunView | undefined),
   });
   const { events, error } = useRunEvents(id, run?.eventSeq);
+  const [showDetails, setShowDetails] = useState(false);
 
   if (isLoading) return <SkeletonCard />;
   if (isError && !run) return <ErrorState onRetry={() => refetch()} />;
   if (!run) return null;
 
   const settled = isTerminalRun(run.status);
+  // a finished dry run answers with a decision screen; the technical steps and events sit behind "Details"
+  const decided = run.dryRun && run.status === "DRY_RUN_DONE";
   const extraTargets = Math.max(0, run.targetServers.length - 1);
   const title = `${run.sourceHost ?? run.sourceKind} → ${run.targetServerName ?? run.targetServerId}${extraTargets > 0 ? ` +${extraTargets}` : ""}`;
   return (
@@ -58,18 +64,56 @@ export function RunDetail({ id }: { id: string }) {
       </PageHeader>
       <RunBanners run={run} />
       <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-        <NextActionCard run={run} />
-        <StepTimeline run={run} />
-        <RunFacts run={run} />
-        <PlacementCard run={run} />
-        <HeldWorkersCard run={run} />
-        <OwnerInputsCard key={JSON.stringify(run.inputs)} run={run} />
-        <SafetyCard run={run} />
-        <RunDrawers run={run} />
-        <RecoveryCard run={run} />
-        <EventLog events={events} error={error} />
-        <ReportCard runId={run.id} enabled={settled || run.status === "FAILED"} />
+        {decided ? (
+          <>
+            <DryRunDecision run={run} />
+            {run.allowed.sourceSession && <NextActionCard run={run} />}
+            <DetailsToggle open={showDetails} onToggle={() => setShowDetails((v) => !v)} />
+            {showDetails && <RunBody run={run} events={events} error={error} settled={settled} />}
+          </>
+        ) : (
+          <>
+            <NextActionCard run={run} />
+            <RunBody run={run} events={events} error={error} settled={settled} />
+          </>
+        )}
       </div>
     </>
+  );
+}
+
+/** The technical view of a run: steps, facts, placement, inputs, safety, recovery, events and the report. */
+function RunBody({ run, events, error, settled }: { run: MigrationRunView; events: ReturnType<typeof useRunEvents>["events"]; error: ReturnType<typeof useRunEvents>["error"]; settled: boolean }) {
+  return (
+    <div id="mr-run-details" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <StepTimeline run={run} />
+      <RunFacts run={run} />
+      <PlacementCard run={run} />
+      <HeldWorkersCard run={run} />
+      <OwnerInputsCard key={JSON.stringify(run.inputs)} run={run} />
+      <SafetyCard run={run} />
+      <RunDrawers run={run} />
+      <RecoveryCard run={run} />
+      <EventLog events={events} error={error} />
+      <ReportCard runId={run.id} enabled={settled || run.status === "FAILED"} />
+    </div>
+  );
+}
+
+/** "Details": opens the technical view of a finished dry run. */
+function DetailsToggle({ open, onToggle }: { open: boolean; onToggle: () => void }) {
+  const t = useT();
+  const Chevron = open ? ChevronDown : ChevronRight;
+  return (
+    <button
+      type="button"
+      aria-expanded={open}
+      aria-controls="mr-run-details"
+      onClick={onToggle}
+      style={{ display: "inline-flex", alignItems: "center", gap: 6, alignSelf: "flex-start", minHeight: 44, padding: "0 4px", background: "transparent", border: "none", color: "var(--c-tx2)", font: "inherit", fontSize: 13, fontWeight: 600, cursor: "pointer" }}
+    >
+      <Chevron size={15} aria-hidden />
+      {t(open ? "migrationRun.decision.detailsHide" : "migrationRun.decision.details")}
+    </button>
   );
 }

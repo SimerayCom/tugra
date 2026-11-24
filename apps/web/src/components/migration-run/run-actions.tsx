@@ -15,8 +15,9 @@ import { useFreshSession, useRunPlumbing } from "./use-run-actions";
 
 type Dialog = "abort" | "cleanup" | "reverse" | "decommission" | null;
 
-/** Start / promote, pause and resume: the run's everyday controls, shown in the page header. */
-export function RunHeaderActions({ run }: { run: MigrationRunView }) {
+/** Start a run, or promote a finished dry run into a NEW real run (the page then moves to it). Shared by the header button and
+ *  the dry-run decision screen, so the two can never promote differently. */
+export function useStartRun(run: MigrationRunView) {
   const { adopt, onError, t } = useRunPlumbing(run.id);
   const router = useRouter();
   const confirm = useConfirm();
@@ -33,8 +34,6 @@ export function RunHeaderActions({ run }: { run: MigrationRunView }) {
     },
     onError,
   });
-  const pause = useMutation({ mutationFn: () => api.pauseMigrationRun(run.id), onSuccess: adopt, onError });
-  const resume = useMutation({ mutationFn: () => api.resumeMigrationRun(run.id), onSuccess: adopt, onError });
   const onStart = async () => {
     const ok = await confirm({
       title: promoting ? t("migrationRun.actions.promoteTitle") : t("migrationRun.actions.startTitle"),
@@ -43,12 +42,23 @@ export function RunHeaderActions({ run }: { run: MigrationRunView }) {
     });
     if (ok) start.mutate();
   };
+  return { onStart, pending: start.isPending, promoting };
+}
+
+/** Start / promote, pause and resume: the run's everyday controls, shown in the page header. A finished dry run is started
+ *  from its decision screen instead, which says what the real run would do first. */
+export function RunHeaderActions({ run }: { run: MigrationRunView }) {
+  const { adopt, onError, t } = useRunPlumbing(run.id);
+  const confirm = useConfirm();
+  const { onStart, pending: starting, promoting } = useStartRun(run);
+  const pause = useMutation({ mutationFn: () => api.pauseMigrationRun(run.id), onSuccess: adopt, onError });
+  const resume = useMutation({ mutationFn: () => api.resumeMigrationRun(run.id), onSuccess: adopt, onError });
   const onPause = async () => {
     if (await confirm({ title: t("migrationRun.actions.pauseTitle"), body: t("migrationRun.actions.pauseBody"), confirmLabel: t("migrationRun.actions.pause") })) pause.mutate();
   };
   return (
     <>
-      {run.allowed.start && <Btn onClick={onStart} loading={start.isPending}>{promoting ? t("migrationRun.actions.promote") : t("migrationRun.actions.start")}</Btn>}
+      {run.allowed.start && !promoting && <Btn onClick={onStart} loading={starting}>{t("migrationRun.actions.start")}</Btn>}
       {run.allowed.pause && <Btn variant="ghost" onClick={onPause} loading={pause.isPending}>{t("migrationRun.actions.pause")}</Btn>}
       {run.allowed.resume && <Btn onClick={() => resume.mutate()} loading={resume.isPending}>{t("migrationRun.actions.resume")}</Btn>}
     </>

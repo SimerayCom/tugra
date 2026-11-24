@@ -34,6 +34,7 @@ beforeEach(() => {
   push.mockReset();
   vi.spyOn(api, "getMigrationRunEvents").mockResolvedValue({ events: [], lastSeq: 0, hasMore: false });
   vi.spyOn(api, "getMigrationRunReport").mockRejectedValue(new Error("no report"));
+  vi.spyOn(api, "getMigrationRunSafetyHints").mockResolvedValue({ imagePins: [], workerMarks: [], warningAcks: [] });
 });
 afterEach(() => vi.restoreAllMocks());
 
@@ -118,7 +119,7 @@ describe("RunDetail", () => {
     fireEvent.change(await screen.findByLabelText("Source API token"), { target: { value: "tok" } });
     fireEvent.click(screen.getByRole("button", { name: "Refresh the session" }));
     await screen.findByText(/A fresh source session is ready/);
-    fireEvent.click(screen.getByRole("button", { name: "Promote to real run" }));
+    fireEvent.click(screen.getByRole("button", { name: "Start migration" }));
     fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Promote to real run" }));
     await waitFor(() => expect(start).toHaveBeenCalledWith("run12345abcdef", { sessionId: "s-fresh" }));
   });
@@ -220,24 +221,37 @@ describe("RunDetail", () => {
     await waitFor(() => expect(set).toHaveBeenCalledWith("run12345abcdef", { acmeEmail: "ops@example.org", allowBind: false, allowLiveShapeProbe: false, sourceController: "manual" }));
   });
 
-  it("dry run: states it changed nothing and offers promotion, which navigates to the NEW run", async () => {
+  it("dry run: states it changed nothing, answers with the decision screen and promotes into the NEW run", async () => {
     vi.spyOn(api, "getMigrationRun").mockResolvedValue(
       mkRun({ dryRun: true, status: "DRY_RUN_DONE", currentStep: null, allowed: { ...mkRun().allowed, start: true, pause: false, abort: false }, nextAction: { kind: "none", stepKey: null, code: "run.dry-run-done", since: "2026-11-16T10:00:00.000Z" } },
-        stepsWith({ PREFLIGHT: mkStep("PREFLIGHT", "PASSED", { progress: { done: 0, total: 0, unit: "item", dryRun: [{ code: "preflight.disk-low", level: "block", subject: "vol-a" }] } }) })),
+        stepsWith({ PREFLIGHT: mkStep("PREFLIGHT", "PASSED", { progress: { done: 0, total: 1, unit: "item", dryRun: [{ code: "import.projection", level: "info", params: { apps: 3, databases: 1, services: 0 } }] } }) })),
     );
-    vi.spyOn(api, "getMigrationRunReport").mockResolvedValue({
-      runId: "run12345abcdef", generatedAt: "2026-11-16T10:00:00Z", status: "DRY_RUN_DONE", mode: "copy", topology: "two-box", dryRun: true, source: { kind: "coolify", host: "h" }, target: { serverId: "srv1", serverName: "tugra-1" },
-      ponrAt: null, window: { estimatedSec: null, measuredSec: null }, steps: [], items: [], evidenceSummary: { "hub-verified": 0, "migrator-reported": 0, "operator-attested": 0 }, manual: [],
-    });
     const start = vi.spyOn(api, "startMigrationRun").mockResolvedValue(mkRun({ id: "newrun1" }));
     wrap();
     await screen.findByText("This is a dry run.");
     expect(screen.getByText(/writes nothing outside the run's own records/)).toBeTruthy();
-    expect(screen.getByText(/1 item\(s\) would stop a real run/)).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Promote to real run" }));
+    await screen.findByText("No problems found. You can start the real migration.");
+    // the technical steps and events are not the primary view: they sit behind Details
+    expect(screen.queryByRole("list", { name: "Steps" })).toBeNull();
+    expect(screen.queryByText("Events")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Promote to real run" })).toBeNull(); // the header does not carry a second start
+    fireEvent.click(screen.getByRole("button", { name: "Start migration" }));
     fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Promote to real run" }));
     await waitFor(() => expect(start).toHaveBeenCalledWith("run12345abcdef"));
     await waitFor(() => expect(push).toHaveBeenCalledWith("/import/runs/newrun1"));
+  });
+
+  it("dry run with a blocker: red, how to fix it, no start; Details opens the steps", async () => {
+    vi.spyOn(api, "getMigrationRun").mockResolvedValue(
+      mkRun({ dryRun: true, status: "DRY_RUN_DONE", currentStep: null, allowed: { ...mkRun().allowed, start: true, pause: false, abort: false }, nextAction: { kind: "none", stepKey: null, code: "run.dry-run-done", since: "2026-11-16T10:00:00.000Z" } },
+        stepsWith({ PREFLIGHT: mkStep("PREFLIGHT", "PASSED", { progress: { done: 0, total: 0, unit: "item", dryRun: [{ code: "preflight.disk-low", level: "block", subject: "vol-a" }] } }) })),
+    );
+    wrap();
+    await screen.findByText("1 problem stops the real migration");
+    expect((screen.getByRole("button", { name: "Start migration" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText(/How to fix:/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Details" }));
+    expect(await screen.findByRole("list", { name: "Steps" })).toBeTruthy();
   });
 
   it("abort needs the run id typed, and is refused (with the reason) after the point of no return", async () => {
@@ -559,7 +573,7 @@ describe("RunDetail", () => {
   });
 
   describe("held workers and image pins", () => {
-    const hints = { imagePins: [{ image: "repo/app:latest", scope: "", digest: `sha256:${"a".repeat(64)}`, evidence: "operator-attested" }], workerMarks: [{ itemRef: "app:host-a:queue", role: "job-runner" as const }] };
+    const hints = { imagePins: [{ image: "repo/app:latest", scope: "", digest: `sha256:${"a".repeat(64)}`, evidence: "operator-attested" }], workerMarks: [{ itemRef: "app:host-a:queue", role: "job-runner" as const }], warningAcks: [] as string[] };
     const open = async () => {
       fireEvent.click(await screen.findByText("Show and edit"));
       await screen.findByText("Job runners and web apps");

@@ -3049,4 +3049,6 @@ export interface MigrationRunDataIntegrity {
 export interface MigrationRunSafetyHints {
   imagePins: Array<{ image: string; scope: string; digest: string; evidence: string }>;
   workerMarks: Array<{ itemRef: string; role: "job-runner" | "web" }>;
+  /** The dry-run warnings (see `warningKey`) the operator accepted on the result screen. */
+  warningAcks: string[];
 }

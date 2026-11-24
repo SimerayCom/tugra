@@ -8,6 +8,8 @@ import { errorText } from "../../lib/migration-run";
 import type { MigrationRunView } from "../../lib/types";
 
 export const runQueryKey = (id: string) => ["migration-run", id] as const;
+/** The safety hints of a run (image pins, worker marks, accepted dry-run warnings): one cache entry for every card that reads them. */
+export const runHintsKey = (id: string) => ["migration-run-safety-hints", id] as const;
 
 /** A source session the operator just re-created for a run: kept in memory only (never the token), so a dry-run
  *  promotion can hand the fresh session to the new run. */
