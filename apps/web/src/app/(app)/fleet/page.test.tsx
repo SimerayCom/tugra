@@ -235,7 +235,7 @@ describe("FleetPage — Heatmap view", () => {
     await waitFor(() => expect(heatRows()).toHaveLength(3));
     const alpha = heatRow("a");
     expect(within(alpha).getByRole("link").getAttribute("href")).toBe("/servers/a");
-    expect(within(alpha).getByRole("img", { name: "ONLINE" })).toBeTruthy();
+    expect(within(alpha).getByRole("img", { name: "Online" })).toBeTruthy();
     expect(within(alpha).getAllByTestId("fleet-heat-cell")).toHaveLength(4); // 4 per-minute points
     expect(screen.getByRole("img", { name: /Heatmap colour scale/ })).toBeTruthy(); // legend
   });

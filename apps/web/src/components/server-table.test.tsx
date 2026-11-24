@@ -9,6 +9,9 @@ vi.mock("next/link", () => ({
   default: ({ href, children, ...rest }: { href: string; children: React.ReactNode }) => <a href={href} {...rest}>{children}</a>,
 }));
 
+// 25-100 rows of icons and bars are slow to render and query in jsdom; leave headroom on a busy CI box.
+vi.setConfig({ testTimeout: 30_000 });
+
 afterEach(cleanup);
 
 const mk = (over: Partial<ServerView> & { id: string; name: string }): ServerView =>
@@ -28,19 +31,17 @@ const mk = (over: Partial<ServerView> & { id: string; name: string }): ServerVie
 
 const teams = [{ id: "t1", name: "Alpha" }, { id: "t2", name: "Beta" }];
 
-const renderTable = (servers: ServerView[], props: { status?: ServerStatus | null; onStatusChange?: (s: ServerStatus | null) => void } = {}) =>
+const renderTable = (servers: ServerView[], props: { status?: ServerStatus | null; onStatusChange?: (s: ServerStatus | null) => void; initialPageSize?: number } = {}) =>
   render(
     <I18nProvider>
       <ServerTable servers={servers} teams={teams} {...props} />
     </I18nProvider>,
   );
 
-/** Server names in on-screen row order (name link is the first link of each body row). */
+/** Server names in on-screen row order (name link is the first link of each data row). Plain DOM queries: role queries
+ *  re-compute accessibility for every element and made 55-row pages crawl in jsdom. */
 const order = () =>
-  screen
-    .getAllByRole("row")
-    .slice(1)
-    .map((r) => within(r).getAllByRole("link")[0].textContent);
+  [...document.querySelectorAll("tbody tr.row-link")].map((r) => r.querySelector("a")?.textContent ?? "");
 
 const fleet = [
   mk({ id: "1", name: "charlie", status: "OFFLINE", teamId: "t2", lastSeenAt: "2026-01-01T00:00:00Z" }),
@@ -156,11 +157,13 @@ describe("ServerTable select-all + accessible names", () => {
 });
 
 describe("ServerTable pagination", () => {
-  const big = Array.from({ length: SERVER_PAGE_SIZE * 2 + 5 }, (_, i) => mk({ id: `s${i}`, name: `srv-${String(i).padStart(3, "0")}` }));
+  // The default page is bigger (100); these tests page a small set through an explicit size to keep jsdom quick.
+  const PAGE = 25;
+  const big = Array.from({ length: PAGE * 2 + 5 }, (_, i) => mk({ id: `s${i}`, name: `srv-${String(i).padStart(3, "0")}` }));
 
   it("pages the set, hides the pager for a single page, and the pager buttons are real buttons", () => {
-    renderTable(big);
-    expect(order()).toHaveLength(SERVER_PAGE_SIZE);
+    renderTable(big, { initialPageSize: PAGE });
+    expect(order()).toHaveLength(PAGE);
     expect(order()[0]).toBe("srv-000");
     const nav = screen.getByRole("navigation", { name: "Server list pages" });
     expect(within(nav).getByText("Page 1 of 3")).toHaveAttribute("aria-current", "page");
@@ -171,9 +174,9 @@ describe("ServerTable pagination", () => {
     next.focus();
     expect(document.activeElement).toBe(next);
     fireEvent.click(next);
-    expect(order()[0]).toBe(`srv-${String(SERVER_PAGE_SIZE).padStart(3, "0")}`);
+    expect(order()[0]).toBe(`srv-${String(PAGE).padStart(3, "0")}`);
     expect(within(nav).getByText("Page 2 of 3")).toBeInTheDocument();
-    expect(within(nav).getByRole("status")).toHaveTextContent("26–50 of 55");
+    expect(within(nav).getByRole("status")).toHaveTextContent(`${PAGE + 1}–${PAGE * 2} of ${big.length}`);
 
     fireEvent.click(next);
     expect(order()).toHaveLength(5);
@@ -193,7 +196,7 @@ describe("ServerTable pagination", () => {
     expect(screen.queryByRole("navigation", { name: "Server list pages" })).toBeNull();
     unmount();
 
-    renderTable(big);
+    renderTable(big, { initialPageSize: PAGE });
     fireEvent.click(screen.getByRole("button", { name: "Next page" }));
     fireEvent.change(screen.getByRole("searchbox"), { target: { value: "srv-05" } });
     expect(order()).toEqual(["srv-050", "srv-051", "srv-052", "srv-053", "srv-054"]);
@@ -201,18 +204,18 @@ describe("ServerTable pagination", () => {
   });
 
   it("selection persists across pages; select-all is scoped to the visible page", () => {
-    renderTable(big);
-    fireEvent.click(screen.getByRole("checkbox", { name: "Select all servers on this page" }));
-    expect(screen.getByText(`${SERVER_PAGE_SIZE} selected`)).toBeInTheDocument();
+    renderTable(big, { initialPageSize: PAGE });
+    fireEvent.click(screen.getByLabelText("Select all servers on this page"));
+    expect(screen.getByText(`${PAGE} selected`)).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Next page" }));
-    const all = screen.getByRole("checkbox", { name: "Select all servers on this page" }) as HTMLInputElement;
+    fireEvent.click(screen.getByLabelText("Next page"));
+    const all = screen.getByLabelText("Select all servers on this page") as HTMLInputElement;
     expect(all.checked).toBe(false); // page 2 untouched
     fireEvent.click(all);
-    expect(screen.getByText(`${SERVER_PAGE_SIZE * 2} selected`)).toBeInTheDocument();
+    expect(screen.getByText(`${PAGE * 2} selected`)).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Previous page" }));
-    expect((screen.getByRole("checkbox", { name: "Select all servers on this page" }) as HTMLInputElement).checked).toBe(true);
+    fireEvent.click(screen.getByLabelText("Previous page"));
+    expect((screen.getByLabelText("Select all servers on this page") as HTMLInputElement).checked).toBe(true);
   });
 });
 
@@ -247,5 +250,96 @@ describe("ServerTable a11y details", () => {
     fireEvent.change(box, { target: { value: "nothing-matches" } });
     fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
     expect(document.activeElement).toBe(box);
+  });
+});
+
+describe("ServerTable list overhaul", () => {
+  const trendRow = (id: string, cpu: number, mem: number | null) => ({ serverId: id, points: [{ ts: 1, cpu: 5, mem: 5 }, { ts: 2, cpu, mem }] });
+  const rowOf = (name: string) => screen.getByRole("link", { name }).closest("tr") as HTMLElement;
+
+  it("shows real CPU/RAM bars from the newest trend sample, and a dash without data", () => {
+    const servers = [mk({ id: "1", name: "alpha" }), mk({ id: "2", name: "bravo" })];
+    render(
+      <I18nProvider>
+        <ServerTable servers={servers} teams={teams} trends={new Map([["1", trendRow("1", 42, 63)]])} />
+      </I18nProvider>,
+    );
+    const bars = within(rowOf("alpha")).getAllByRole("progressbar");
+    expect(bars.map((b) => b.getAttribute("aria-valuenow"))).toEqual(["42", "63"]);
+    expect(within(rowOf("alpha")).getByText("42%")).toBeInTheDocument();
+    expect(within(rowOf("bravo")).queryByRole("progressbar")).toBeNull();
+    expect(within(rowOf("bravo")).getByLabelText("No recent data")).toBeInTheDocument();
+  });
+
+  it("access column shows granted capabilities on and the rest off, in text as well as icon", () => {
+    renderTable([mk({ id: "1", name: "alpha", capabilities: ["deploy", "terminal", "files"] })]);
+    const row = rowOf("alpha");
+    const on = (cap: string) => row.querySelector(`[data-cap="${cap}"]`)?.getAttribute("data-on");
+    expect([on("terminal"), on("files"), on("files_write"), on("swarm")]).toEqual(["true", "true", "false", "false"]);
+    expect(within(row).getAllByText("Terminal on")[0]).toBeInTheDocument();
+    expect(within(row).getAllByText("Swarm off")[0]).toBeInTheDocument();
+  });
+
+  it("liveness dot: online with a quiet agent reads as not responding, and the team shows with its name", () => {
+    const old = new Date(Date.now() - 10 * 60_000).toISOString();
+    renderTable([mk({ id: "1", name: "alpha", lastSeenAt: old }), mk({ id: "2", name: "bravo", status: "PENDING" }), mk({ id: "3", name: "delta", status: "OFFLINE" })]);
+    expect(within(rowOf("alpha")).getByRole("img", { name: "Not responding" })).toBeInTheDocument();
+    expect(within(rowOf("bravo")).getByRole("img", { name: "Waiting to connect" })).toBeInTheDocument();
+    expect(within(rowOf("delta")).getByRole("img", { name: "Offline" })).toBeInTheDocument();
+    expect(within(rowOf("alpha")).getByText("Alpha")).toBeInTheDocument();
+  });
+
+  it("last seen is never negative: a timestamp ahead of the browser clock reads just now", () => {
+    renderTable([mk({ id: "1", name: "alpha", lastSeenAt: new Date(Date.now() + 30_000).toISOString() })]);
+    expect(within(rowOf("alpha")).getByText("just now")).toBeInTheDocument();
+  });
+
+  it("filters by team and groups rows under a team header", () => {
+    renderTable(fleet);
+    fireEvent.change(screen.getByRole("combobox", { name: "Filter by team" }), { target: { value: "t2" } });
+    expect(order()).toEqual(["charlie"]);
+    fireEvent.change(screen.getByRole("combobox", { name: "Filter by team" }), { target: { value: "__all__" } });
+    fireEvent.click(screen.getByRole("button", { name: "Group by team" }));
+    const groups = screen.getAllByTestId("team-group-row");
+    expect(groups.map((g) => g.textContent)).toEqual(["Alpha2", "Beta1"]);
+    expect(order()).toEqual(["alpha", "bravo", "charlie"]);
+  });
+
+  it("page size is selectable", () => {
+    const big = Array.from({ length: 30 }, (_, i) => mk({ id: `p${i}`, name: `srv-${String(i).padStart(3, "0")}` }));
+    renderTable(big);
+    expect(order()).toHaveLength(30);
+    expect(SERVER_PAGE_SIZE).toBe(100);
+    fireEvent.change(screen.getByRole("combobox", { name: "Per page" }), { target: { value: "25" } });
+    expect(order()).toHaveLength(25);
+  });
+
+  it("quick actions respect permissions and capabilities", () => {
+    const onUpdateAgent = vi.fn();
+    const servers = [
+      mk({ id: "1", name: "alpha", capabilities: ["deploy", "terminal"], agentVersion: "0.1.0-beta.26" }),
+      mk({ id: "2", name: "bravo", capabilities: ["deploy"] }), // terminal not granted
+      mk({ id: "3", name: "charlie", canWrite: false, capabilities: ["deploy", "terminal"] }), // read-only
+    ];
+    render(
+      <I18nProvider>
+        <ServerTable servers={servers} teams={teams} agentTarget="0.1.0-beta.27" onUpdateAgent={onUpdateAgent} />
+      </I18nProvider>,
+    );
+    const alpha = rowOf("alpha");
+    expect(within(alpha).getByRole("link", { name: "Open terminal" })).toHaveAttribute("href", "/servers/1?tab=shell");
+    expect(within(alpha).getByRole("link", { name: "Restart (opens Maintenance)" })).toHaveAttribute("href", "/servers/1?tab=maintenance");
+    expect(alpha.querySelector('[data-agent-state="outdated"]')).not.toBeNull();
+    fireEvent.click(within(alpha).getByRole("button", { name: "Update agent" }));
+    expect(onUpdateAgent).toHaveBeenCalledWith(servers[0]);
+
+    const bravo = rowOf("bravo");
+    expect(within(bravo).queryByRole("link", { name: "Open terminal" })).toBeNull();
+    expect(within(bravo).getByRole("img", { name: "Terminal is off for this server" })).toBeInTheDocument();
+
+    const charlie = rowOf("charlie");
+    expect(within(charlie).queryByRole("button", { name: "Update agent" })).toBeNull();
+    expect(within(charlie).queryByRole("link", { name: "Open terminal" })).toBeNull();
+    expect(within(charlie).queryByRole("link", { name: /Restart/ })).toBeNull();
   });
 });

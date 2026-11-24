@@ -185,30 +185,16 @@ export function ActivitySpinner({ size = 12 }: { size?: number }) {
   );
 }
 
-const STATUS_COLOR: Record<ServerStatus, string> = {
-  ONLINE: "var(--c-g)",
-  PENDING: "var(--c-am)",
-  OFFLINE: "var(--c-r)",
-};
-
-export function StatusDot({ status }: { status: ServerStatus }) {
-  return (
-    <span
-      role="img"
-      aria-label={status}
-      title={status}
-      style={{
-        display: "inline-block",
-        width: 8,
-        height: 8,
-        borderRadius: "50%",
-        background: STATUS_COLOR[status],
-        // color-mix, not `${color}22`: the colors are CSS vars, so the old `var(--c-r)22` was invalid
-        // and the whole box-shadow (the soft halo) was dropped by the browser.
-        boxShadow: `0 0 0 3px color-mix(in srgb, ${STATUS_COLOR[status]} 14%, transparent)`,
-      }}
-    />
-  );
+/**
+ * Liveness dot. online = green with a soft pulse, stale = amber (the server is marked online but its newest signal
+ * is old), pending = amber ring (enrolled but never connected), offline = red. The pulse is CSS-only and switched
+ * off by `prefers-reduced-motion` (see .tg-dot in globals.css). The state is also announced as text, never colour alone.
+ */
+export function StatusDot({ status, stale = false }: { status: ServerStatus; stale?: boolean }) {
+  const t = useT();
+  const state = status === "ONLINE" && stale ? "stale" : (status.toLowerCase() as "online" | "pending" | "offline");
+  const label = t(`common.liveness.${state}`);
+  return <span role="img" aria-label={label} title={label} className={`tg-dot tg-dot-${state}`} data-liveness={state} />;
 }
 
 /** Coloured status dot + label (RUNNING / OFFLINE / SUCCESS …). */

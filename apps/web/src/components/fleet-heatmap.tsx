@@ -43,7 +43,7 @@ const HeatRowView = memo(
         })}
       >
         <div role="rowheader" style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
-          <StatusDot status={s.status} />
+          <StatusDot status={s.status} stale={hr.row.stale} />
           <Link
             href={`/servers/${enc(s.id)}`}
             className="fleet-heat-name"

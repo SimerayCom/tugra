@@ -176,3 +176,11 @@ export function trendSeries(row: FleetTrendRow | undefined): ServerTrendSeries {
     mem: pts.map((p) => p.mem).filter((v): v is number => typeof v === "number" && Number.isFinite(v)),
   };
 }
+
+/** Newest sample of a server's 30-minute trend (by timestamp), or null when it has none. `mem` may be null on older agents. */
+export function latestTrendPoint(row: FleetTrendRow | undefined): { cpu: number; mem: number | null } | null {
+  const pts = Array.isArray(row?.points) ? row!.points.filter((p) => typeof p.cpu === "number" && Number.isFinite(p.cpu)) : [];
+  if (pts.length === 0) return null;
+  const p = pts.reduce((a, b) => (b.ts >= a.ts ? b : a));
+  return { cpu: p.cpu, mem: typeof p.mem === "number" && Number.isFinite(p.mem) ? p.mem : null };
+}

@@ -106,7 +106,7 @@ const FleetRowView = memo(
       <tr className="fleet-row" style={{ borderBottom: "1px solid var(--c-bd)", position: "relative" }}>
         <Td>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <StatusDot status={s.status} />
+            <StatusDot status={s.status} stale={row.stale} />
             <div style={{ minWidth: 0 }}>
               <Link href={`/servers/${enc(s.id)}`} className="fleet-namelink" style={{ color: "var(--c-tx)", textDecoration: "none", fontWeight: 500 }}>
                 {s.name}
@@ -167,7 +167,7 @@ const FleetCardView = memo(
     return (
       <li className="fleet-card" style={{ listStyle: "none", position: "relative", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: 12 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-          <StatusDot status={s.status} />
+          <StatusDot status={s.status} stale={row.stale} />
           <Link href={`/servers/${enc(s.id)}`} className="fleet-namelink" style={{ color: "var(--c-tx)", textDecoration: "none", fontWeight: 600, fontSize: 14, minWidth: 0 }}>
             {s.name}
             {row.stale && <span className="sr-only"> — {staleLabel}</span>}

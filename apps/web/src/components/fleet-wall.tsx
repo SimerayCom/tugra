@@ -89,7 +89,7 @@ const WallCard = memo(
     return (
       <li ref={ref} className="fleet-wall-card" data-testid="fleet-wall-card" data-server-id={s.id} style={{ position: "relative", listStyle: "none" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0, marginBottom: 8 }}>
-          <StatusDot status={s.status} />
+          <StatusDot status={s.status} stale={row.stale} />
           <Link
             href={`/servers/${enc(s.id)}`}
             className="fleet-namelink"

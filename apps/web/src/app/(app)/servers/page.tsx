@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { Suspense, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../../lib/api";
 import { useT } from "../../../i18n/provider";
 import { useFleetTrend } from "../../../hooks/useFleetTrend";
@@ -17,6 +17,8 @@ import { statusFromParam } from "../../../lib/fleet";
 import { useTeamScope } from "../../../components/team-scope";
 import type { ServerStatus } from "../../../lib/types";
 import { SkeletonTable } from "../../../components/skeleton";
+import { useToast } from "../../../components/toast";
+import type { ServerView } from "../../../lib/types";
 
 export default function ServersPage() {
   // useSearchParams needs a Suspense boundary for the static prerender.
@@ -40,6 +42,23 @@ function ServersPageInner() {
     refetchInterval: 5000,
   });
   const trends = useFleetTrend();
+  const qc = useQueryClient();
+  const toast = useToast();
+  // The version agents should be on: the newest published release, else the hub's own (agents track the hub).
+  const { data: version } = useQuery({ queryKey: ["instanceVersion"], queryFn: () => api.getInstanceVersion(), staleTime: 5 * 60_000, retry: false });
+  const agentTarget = version ? (version.latest ?? version.current) : null;
+  const [updating, setUpdating] = useState<ReadonlySet<string>>(new Set());
+  const updateAgent = useMutation({
+    mutationFn: (s: ServerView) => api.updateAgent(s.id),
+    onMutate: (s) => setUpdating((prev) => new Set(prev).add(s.id)),
+    onSuccess: (res, s) => {
+      const sent = res.status === "ok" && res.sent > 0;
+      toast(t(sent ? "servers.agentUpdateQueued" : "servers.agentUpdateSkipped", { name: s.name }), sent ? "success" : "info");
+      qc.invalidateQueries({ queryKey: ["servers"] });
+    },
+    onError: (e) => toast((e as Error).message, "error"),
+    onSettled: (_r, _e, s) => setUpdating((prev) => { const next = new Set(prev); next.delete(s.id); return next; }),
+  });
   const { data: teams = [] } = useQuery({ queryKey: ["teams"], queryFn: () => api.listTeams() });
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [status, setStatus] = useState<ServerStatus | null>(() => statusFromParam(sp.get("status")));
@@ -61,7 +80,16 @@ function ServersPageInner() {
         <>
           <SavedViewsBar status={status} tags={selectedTags} onApply={(v) => { setStatus(v.status); setSelectedTags(v.tags); }} />
           <TagFilter all={allTags} selected={selectedTags} onChange={setSelectedTags} />
-          <ServerTable servers={visible} teams={teams} status={status} onStatusChange={setStatus} trends={trends} />
+          <ServerTable
+            servers={visible}
+            teams={teams}
+            status={status}
+            onStatusChange={setStatus}
+            trends={trends}
+            agentTarget={agentTarget}
+            onUpdateAgent={(s) => updateAgent.mutate(s)}
+            updatingAgentIds={updating}
+          />
         </>
       )}
     </div>
