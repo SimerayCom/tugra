@@ -116,13 +116,22 @@ live replication — so the cutover discipline at the end of this page still app
 - **The hub never receives your database passwords.** They are read locally on the Coolify host (from
   `docker inspect`) and used only inside the source container; only the dump bytes (and their hub-computed
   sha256 + size) reach the hub.
-- **No size limit.** A dump of up to 256 MiB (gzip, `MIGRATION_MAX_ARTIFACT_BYTES`) travels as one file. A bigger
+- **No size limit for PostgreSQL, MySQL and MariaDB.** A dump of up to 256 MiB (gzip, `MIGRATION_MAX_ARTIFACT_BYTES`) travels as one file. A bigger
   PostgreSQL, MySQL or MariaDB database (or a PostgreSQL one that cannot be copied as files) moves as a **checked
   stream** in a guided migration run: the dump is cut into parts, every part carries a sha256 that the hub and the target
   both verify, the target restores it as it arrives, and nothing is capped by default. The run chooses the route per
   database from its measured size and says which one it took; a dry run shows it before anything moves. Set
   `MIGRATION_VX_MAX_DUMP_BYTES` on the hub only if you want a ceiling of your own. The target server's free disk is
   checked first and the answer names what is free and what is needed.
+  Redis, KeyDB and Dragonfly snapshots still travel as one file and keep the `MIGRATION_MAX_ARTIFACT_BYTES` limit (raise
+  it on the hub if you need a bigger one); MongoDB and ClickHouse have no dump route yet. A streamed route for those is an
+  open item, so "any size" is not claimed for them.
+- **Where disk is needed.** The source host needs none for a streamed dump: the dump is read as fast as it is uploaded,
+  and the agent logs how much room its optional read-ahead spool has (a small spool is slower, never wrong). The hub
+  relays each part straight from the source to the target and stores nothing on its own disk, so there is no relay disk
+  check. The target's free disk is checked before anything moves (it is a gate).
+- **What "checksum" means.** A one-dump copy reports the sha256 of the dump bytes. A checked stream reports a sha256 over
+  its ordered part list (each part's own sha256 was verified at the relay and again on the target), and the report says so.
 
 ### Prerequisites
 

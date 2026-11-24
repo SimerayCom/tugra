@@ -31,6 +31,7 @@ describe("ReportBody: data checks", () => {
     expect(within(section).getByText("Size: 3.0 GiB")).toBeTruthy();
     expect(within(section).getByText("Parts: 24")).toBeTruthy();
     expect(within(section).getByText(SHA)).toBeTruthy();
+    expect(within(section).getByText(/^Part list checksum/)).toBeTruthy();
   });
 
   it("names the tables whose rows are missing and does not show a part count for a single dump", () => {

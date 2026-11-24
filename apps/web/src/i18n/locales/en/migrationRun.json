@@ -435,6 +435,7 @@
       "size": "Size: {size}",
       "parts": "Parts: {parts}",
       "checksum": "Checksum (sha256)",
+      "checksumParts": "Part list checksum (sha256 over every part's own checksum)",
       "noChecksum": "No checksum was recorded.",
       "sourceRows": "Source: {rows} rows",
       "targetRows": "Target: {rows} rows"
@@ -535,7 +536,7 @@
       },
       "serviceStartHint": "Search engines and document converters start before the apps that call them, so the apps can answer their health check. An object store starts when a dark app depends on it; its buckets always move through an object migration, never through a volume copy.",
       "largeDbMode": "Very large databases",
-      "largeDbModeHint": "Any size moves, in checked parts. Big ones copy while the source is stopped.",
+      "largeDbModeHint": "PostgreSQL, MySQL and MariaDB of any size move, in checked parts. Big ones copy while the source is stopped.",
       "largeDbChoice": {
         "stream-logical": "Move them (default)",
         "refuse": "Stop and ask me"

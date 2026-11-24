@@ -269,7 +269,7 @@ export function reportToMarkdown(rep: RunReport): string {
     for (const i of rep.items) L.push(`| ${i.kind} | ${mdCell(i.name)} | ${i.outcome} | ${i.code ?? ""} | ${i.evidence ?? ""} |`);
   }
   if (rep.dataIntegrity.length) {
-    L.push("", "## Data checks", "", "| Database | Route | Size (bytes) | Parts | Checksum (sha256) | Tables | Rows (source / target) | Rows check |", "| --- | --- | --- | --- | --- | --- | --- | --- |");
+    L.push("", "## Data checks", "", "| Database | Route | Size (bytes) | Parts | Checksum (sha256; a checked stream is the digest of its part list) | Tables | Rows (source / target) | Rows check |", "| --- | --- | --- | --- | --- | --- | --- | --- |");
     for (const d of rep.dataIntegrity) {
       const rows = d.rows.sourceRows === null || d.rows.targetRows === null ? "" : `${d.rows.sourceRows} / ${d.rows.targetRows}`;
       L.push(`| ${mdCell(d.name)} | ${d.lane} | ${d.bytes ?? ""} | ${d.parts ?? ""} | ${d.sha256 ?? ""} | ${d.rows.relations ?? ""} | ${rows} | ${d.rows.status}${d.rows.names.length ? ` (${mdCell(d.rows.names.join(", "))})` : ""} |`);

@@ -2,7 +2,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { api, migrationRunReportMdUrl } from "../../lib/api";
-import { useT } from "../../i18n/provider";
+import { useI18n, useT } from "../../i18n/provider";
 import { Badge, SectionCard, Spinner } from "../ui";
 import { formatBytes, formatDuration } from "../../lib/import";
 import { EVIDENCE_KINDS, STEP_TITLE_KEY, codeText } from "../../lib/migration-run";
@@ -130,11 +130,11 @@ export function ReportBody({ report }: { report: MigrationRunReport }) {
   );
 }
 
-const num = (n: number | null): string => (n === null ? "-" : n.toLocaleString("en-US"));
-
 /** One row per migrated database: the route it took and a one-sentence row check; size, parts and the checksum sit behind More. */
 function DataChecks({ items }: { items: MigrationRunDataIntegrity[] }) {
   const t = useT();
+  const { lang } = useI18n();
+  const num = (n: number | null): string => (n === null ? "-" : n.toLocaleString(lang));
   return (
     <section aria-label={t("migrationRun.report.data.title")}>
       <div style={{ fontSize: 12, fontWeight: 700, color: "var(--c-tx3)", marginBottom: 8 }}>{t("migrationRun.report.data.title")}</div>
@@ -154,7 +154,7 @@ function DataChecks({ items }: { items: MigrationRunDataIntegrity[] }) {
                   <span>{d.bytes === null ? "-" : t("migrationRun.report.data.size", { size: formatBytes(d.bytes) })}</span>
                   {d.parts !== null && <span>{t("migrationRun.report.data.parts", { parts: num(d.parts) })}</span>}
                   <span>{t("migrationRun.report.data.sourceRows", { rows: num(d.rows.sourceRows) })} · {t("migrationRun.report.data.targetRows", { rows: num(d.rows.targetRows) })}</span>
-                  <span>{t("migrationRun.report.data.checksum")}</span>
+                  <span>{t(d.lane === "stream" ? "migrationRun.report.data.checksumParts" : "migrationRun.report.data.checksum")}</span>
                   {d.sha256 ? <span className="mono" style={{ wordBreak: "break-all", color: "var(--c-tx2)" }}>{d.sha256}</span> : <span>{t("migrationRun.report.data.noChecksum")}</span>}
                 </div>
               </details>
