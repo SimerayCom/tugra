@@ -721,7 +721,7 @@ export class DatabasesService {
     await this.agentWs
       .sendCommand(
         db.serverId,
-        buildDbRemoveScript({ id: db.id, volumes: this.dbVolumes(db) }, { ...opts, walSpool: db.pitrEnabled, walRestore: opts.walRestore ?? db.engine === "POSTGRES", ssl: db.ssl, legacyAnon: pgDataLayout(db) === "legacy-anon", configFile: !!db.configFileEnc }),
+        buildDbRemoveScript({ id: db.id, volumes: this.dbVolumes(db) }, { ...opts, walSpool: db.pitrEnabled, walRestore: opts.walRestore ?? db.engine === "POSTGRES", ssl: db.ssl, legacyAnon: pgDataLayout(db) === "legacy-anon", configFile: supportsConfigFile(db.engine as DbEngine) }),
         "database",
       )
       .catch(() => undefined);
