@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ForbiddenException,
   Injectable,
   Logger,
@@ -17,6 +18,7 @@ import { MonitorSchedulerService } from "./scheduler.service";
 import { uptimePercent } from "./transition";
 import { planTargets } from "../bulk/bulk.service";
 import { filterByQuery } from "../common/query-filter";
+import { isPctMetric } from "./checkers";
 import type { CreateMonitorInput, UpdateMonitorInput } from "./dto";
 
 /** Default alarm threshold for the auto disk monitor created on server enroll (usage ≥ this % → DOWN). */
@@ -259,6 +261,12 @@ export class MonitorsService implements OnApplicationBootstrap {
     if (!m) throw new NotFoundException("monitor not found");
     await this.access.requirePermission(userId, m.teamId, 'monitors');
     await this.assertTeamOwnsTargets(m.teamId, undefined, dto.channelIds);
+    // The limit is the one that fits the monitor's own metric; anything else is a mistake worth saying out loud.
+    if (dto.thresholdPct !== undefined || dto.thresholdValue !== undefined) {
+      if (m.type !== "METRIC") throw new BadRequestException("only metric monitors have a limit");
+      if (dto.thresholdPct !== undefined && !isPctMetric(m.metric)) throw new BadRequestException("this metric uses thresholdValue");
+      if (dto.thresholdValue !== undefined && isPctMetric(m.metric)) throw new BadRequestException("this metric uses thresholdPct");
+    }
 
     const updated = await this.prisma.monitor.update({
       where: { id },
@@ -268,6 +276,8 @@ export class MonitorsService implements OnApplicationBootstrap {
         retries: dto.retries ?? undefined,
         timeoutMs: dto.timeoutMs ?? undefined,
         resendEvery: dto.resendEvery ?? undefined,
+        thresholdPct: dto.thresholdPct ?? undefined,
+        thresholdValue: dto.thresholdValue ?? undefined,
         enabled: dto.enabled ?? undefined,
         ...this.optionColumns(dto, m.httpOptionsEnc),
       },

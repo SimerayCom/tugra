@@ -86,6 +86,9 @@ export const UpdateMonitorSchema = z.object({
   retries: z.number().int().min(0).optional(),
   timeoutMs: z.number().int().min(1000).optional(),
   resendEvery: z.number().int().min(0).optional(),
+  /** New limit of a metric monitor: thresholdPct for DISK/CPU/MEM, thresholdValue for the rest. */
+  thresholdPct: z.number().int().min(1).max(100).optional(),
+  thresholdValue: z.number().positive().max(100_000).optional(),
   enabled: z.boolean().optional(),
   channelIds: z.array(z.string()).optional(),
   ...optionsShape,

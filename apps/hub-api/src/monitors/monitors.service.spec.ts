@@ -1,5 +1,5 @@
-import { ForbiddenException } from "@nestjs/common";
-import { Role } from "@prisma/client";
+import { BadRequestException, ForbiddenException } from "@nestjs/common";
+import { MonitorType, Role } from "@prisma/client";
 import { MonitorsService } from "./monitors.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { TeamAccessService } from "../common/team-access.service";
@@ -95,6 +95,18 @@ describe("MonitorsService.update", () => {
     const prisma = { monitor: { findUnique: jest.fn().mockResolvedValue(monitor) } } as unknown as PrismaService;
     const access = { requirePermission: jest.fn().mockRejectedValue(new ForbiddenException("nope")) } as unknown as TeamAccessService;
     await expect(make(prisma, access, {}).update("u1", "m1", { intervalSec: 60 })).rejects.toThrow(/nope/);
+  });
+
+  it("changes the limit that fits the metric and refuses the other one", async () => {
+    const metricMon = { ...monitor, type: MonitorType.METRIC, metric: "LOAD5", thresholdPct: null, thresholdValue: 4 };
+    const update = jest.fn().mockResolvedValue({ ...metricMon, thresholdValue: 6 });
+    const prisma = { monitor: { findUnique: jest.fn().mockResolvedValue(metricMon), update } } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined), teamRole: jest.fn().mockResolvedValue(Role.OWNER) } as unknown as TeamAccessService;
+    const svc = make(prisma, access, { schedule: jest.fn(), unschedule: jest.fn() });
+    await svc.update("u1", "m1", { thresholdValue: 6 });
+    expect(update.mock.calls[0][0].data).toMatchObject({ thresholdValue: 6 });
+    await expect(svc.update("u1", "m1", { thresholdPct: 50 })).rejects.toBeInstanceOf(BadRequestException);
+    expect(update).toHaveBeenCalledTimes(1);
   });
 
   it("re-schedules when the interval changes", async () => {

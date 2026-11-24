@@ -1349,8 +1349,9 @@ export const api = {
     keyword?: string;
     dnsRecordType?: string;
     serverId?: string;
-    metric?: "DISK" | "CPU" | "MEM";
+    metric?: "DISK" | "CPU" | "MEM" | "LOAD1" | "LOAD5" | "LOAD15" | "TEMP" | "NET";
     thresholdPct?: number;
+    thresholdValue?: number;
     teamId: string;
     channelIds?: string[];
     intervalSec?: number;
@@ -1370,6 +1371,8 @@ export const api = {
       retries?: number;
       timeoutMs?: number;
       resendEvery?: number;
+      thresholdPct?: number;
+      thresholdValue?: number;
       enabled?: boolean;
       channelIds?: string[];
     },

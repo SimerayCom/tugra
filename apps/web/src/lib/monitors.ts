@@ -58,3 +58,40 @@ export function defaultChannelSelection(plan: KumaPlan, selected: ReadonlySet<st
   for (const m of plan.monitors) if (selected.has(m.ref)) for (const r of m.channelRefs) needed.add(r);
   return new Set(plan.channels.filter((c) => c.action === "create" && needed.has(c.ref)).map((c) => c.ref));
 }
+
+/** Metric kinds a monitor can watch, in the order the form lists them. */
+export const METRIC_KINDS = ["DISK", "CPU", "MEM", "LOAD1", "LOAD5", "LOAD15", "TEMP", "NET"] as const;
+export type MetricKind = (typeof METRIC_KINDS)[number];
+export const isPctMetric = (k: string | null | undefined): boolean => k === "DISK" || k === "CPU" || k === "MEM";
+export function metricUnit(k: string | null | undefined): "%" | "°C" | "MB/s" | "" {
+  if (isPctMetric(k)) return "%";
+  if (k === "TEMP") return "°C";
+  if (k === "NET") return "MB/s";
+  return "";
+}
+/** The body fields for a metric limit: whole percent for DISK/CPU/MEM, any positive number for the rest. */
+export function limitFields(k: string, raw: string): { thresholdPct: number } | { thresholdValue: number } {
+  const n = Number(raw);
+  if (isPctMetric(k)) return { thresholdPct: Math.min(100, Math.max(1, Math.round(n) || 80)) };
+  return { thresholdValue: n > 0 ? n : 1 };
+}
+/** The limit of a metric monitor as a number and its unit, or null for HTTP/TCP monitors. */
+export function monitorLimit(m: { metric: string | null; thresholdPct: number | null; thresholdValue?: number | null }): { metric: string; value: number; unit: string } | null {
+  if (!m.metric) return null;
+  const value = isPctMetric(m.metric) ? m.thresholdPct : (m.thresholdValue ?? null);
+  return value == null ? null : { metric: m.metric, value, unit: metricUnit(m.metric) };
+}
+
+/** i18n key of each metric kind's name (literal keys so the key-usage check can see them). */
+export const METRIC_NAME_KEY = {
+  DISK: "monitors.metrics.DISK",
+  CPU: "monitors.metrics.CPU",
+  MEM: "monitors.metrics.MEM",
+  LOAD1: "monitors.metrics.LOAD1",
+  LOAD5: "monitors.metrics.LOAD5",
+  LOAD15: "monitors.metrics.LOAD15",
+  TEMP: "monitors.metrics.TEMP",
+  NET: "monitors.metrics.NET",
+} as const satisfies Record<MetricKind, string>;
+/** " MB/s" / "%" / "" — the unit as it follows a number. */
+export const unitSuffix = (unit: string): string => (unit === "" ? "" : unit === "%" ? "%" : ` ${unit}`);

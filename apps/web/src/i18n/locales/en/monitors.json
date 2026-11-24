@@ -1,6 +1,6 @@
 {
   "title": "Uptime",
-  "subtitle": "Uptime checks for sites, ports, DNS and servers. Get alerted on downtime.",
+  "subtitle": "http/tcp service monitoring — get alerted on downtime.",
   "name": "Name",
   "typeLabel": "Type",
   "targetHttp": "URL",
@@ -26,7 +26,7 @@
   "manageChannels": "Manage channels →",
   "autoBadge": "auto",
   "emptyTitle": "No monitors yet",
-  "empty": "Add a website, port, DNS or server check to watch uptime.",
+  "empty": "Add an HTTP, TCP, or metric check to watch uptime.",
   "status": "Status",
   "uptime24h": "24h uptime",
   "checkNow": "Check now",
@@ -140,5 +140,18 @@
       "not_found": "No Uptime Kuma found on this server.",
       "generic": "The import didn't work. Try again."
     }
-  }
+  },
+  "metrics": {
+    "DISK": "Disk",
+    "CPU": "CPU",
+    "MEM": "Memory",
+    "LOAD1": "Load 1m",
+    "LOAD5": "Load 5m",
+    "LOAD15": "Load 15m",
+    "TEMP": "Temperature",
+    "NET": "Bandwidth"
+  },
+  "limitLabel": "Limit",
+  "limitLabelUnit": "Limit ({unit})",
+  "limitLine": "{metric} ≥ {value}{unit}"
 }

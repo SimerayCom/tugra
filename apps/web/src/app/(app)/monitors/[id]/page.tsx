@@ -7,7 +7,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../../../lib/api";
 import { ErrorState } from "../../../../components/error-state";
 import { scopeByTeam } from "../../../../lib/team-scope";
-import { monitorColor, uptimeText, heartbeatSummary, cloudflareReasonKey } from "../../../../lib/monitors";
+import { monitorColor, uptimeText, heartbeatSummary, cloudflareReasonKey, limitFields, monitorLimit } from "../../../../lib/monitors";
 import type { Monitor } from "../../../../lib/types";
 import { useT } from "../../../../i18n/provider";
 import { Btn, Card, Spinner } from "../../../../components/ui";
@@ -128,6 +128,8 @@ function MonitorSettings({ monitor }: { monitor: Monitor }) {
   const [intervalSec, setIntervalSec] = useState(String(monitor.intervalSec));
   const [retries, setRetries] = useState(String(monitor.retries));
   const [timeoutMs, setTimeoutMs] = useState(String(monitor.timeoutMs));
+  const lim = monitorLimit(monitor);
+  const [limit, setLimit] = useState(lim ? String(lim.value) : "");
   const [enabled, setEnabled] = useState(monitor.enabled);
   const [channelIds, setChannelIds] = useState<string[]>(monitor.channelIds);
 
@@ -137,6 +139,7 @@ function MonitorSettings({ monitor }: { monitor: Monitor }) {
         intervalSec: Math.max(10, Number(intervalSec) || 30),
         retries: Math.max(0, Number(retries) || 0),
         timeoutMs: Math.max(1000, Number(timeoutMs) || 10000),
+        ...(lim && limit.trim() ? limitFields(lim.metric, limit) : {}),
         enabled,
         channelIds,
       }),
@@ -159,6 +162,11 @@ function MonitorSettings({ monitor }: { monitor: Monitor }) {
         <Field label={t("monitors.timeoutMs")}>
           <TextInput type="number" min={1000} value={timeoutMs} onChange={(e) => setTimeoutMs(e.target.value)} />
         </Field>
+        {lim && (
+          <Field label={lim.unit ? t("monitors.limitLabelUnit", { unit: lim.unit }) : t("monitors.limitLabel")}>
+            <TextInput type="number" min={1} step="any" max={lim.unit === "%" ? 100 : undefined} value={limit} onChange={(e) => setLimit(e.target.value)} />
+          </Field>
+        )}
       </div>
       <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, margin: "12px 0" }}>
         <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />

@@ -8,7 +8,7 @@ import { Activity } from "lucide-react";
 import { api } from "../../../lib/api";
 import { scopeByTeam } from "../../../lib/team-scope";
 import { writableIds } from "../../../lib/fleet";
-import { MANUAL_MONITOR_TYPES, monitorColor } from "../../../lib/monitors";
+import { MANUAL_MONITOR_TYPES, METRIC_KINDS, METRIC_NAME_KEY, isPctMetric, limitFields, metricUnit, monitorColor, monitorLimit, unitSuffix, type MetricKind } from "../../../lib/monitors";
 import type { MonitorType } from "../../../lib/types";
 import { useT } from "../../../i18n/provider";
 import { Btn, Card, EmptyState } from "../../../components/ui";
@@ -31,6 +31,7 @@ function typeLabel(t: ReturnType<typeof useT>, v: (typeof MANUAL_MONITOR_TYPES)[
     default: return t("monitors.metric");
   }
 }
+const defaultLimit = (k: string): string => ({ DISK: "80", CPU: "80", MEM: "80", LOAD1: "4", LOAD5: "4", LOAD15: "4", TEMP: "80", NET: "50" })[k] ?? "80";
 
 const formGrid: React.CSSProperties = {
   display: "grid",
@@ -70,8 +71,8 @@ export default function MonitorsPage() {
   const [dnsRecordType, setDnsRecordType] = useState("A");
   const [target, setTarget] = useState("");
   const [serverId, setServerId] = useState("");
-  const [metric, setMetric] = useState<"DISK" | "CPU" | "MEM">("DISK");
-  const [thresholdPct, setThresholdPct] = useState("80");
+  const [metric, setMetric] = useState<MetricKind>("DISK");
+  const [limit, setLimit] = useState("80");
   const [teamId, setTeamId] = useState("");
   const [channelIds, setChannelIds] = useState<string[]>([]);
   const teamChannels = scopeByTeam(channels, teamId);
@@ -87,7 +88,14 @@ export default function MonitorsPage() {
     retries: Math.max(0, Number(retries) || 0),
     timeoutMs: Math.max(1000, Number(timeoutMs) || 10000),
   };
+  const isPct = isPctMetric(metric);
   const noServer = type === "METRIC" && servers.length === 0;
+
+  const limitText = (m: Parameters<typeof monitorLimit>[0]): string => {
+    const lim = monitorLimit(m);
+    const key = lim ? METRIC_NAME_KEY[lim.metric as MetricKind] : undefined;
+    return lim && key ? ` · ${t("monitors.limitLine", { metric: t(key), value: lim.value, unit: unitSuffix(lim.unit) })}` : "";
+  };
 
   const create = useMutation({
     mutationFn: () =>
@@ -98,7 +106,7 @@ export default function MonitorsPage() {
               type,
               serverId,
               metric,
-              thresholdPct: Number(thresholdPct) || 80,
+              ...limitFields(metric, limit),
               teamId,
               channelIds,
               ...tuning,
@@ -160,15 +168,11 @@ export default function MonitorsPage() {
                     options={servers.map((s) => ({ value: s.id, label: s.name }))} />
                 </Field>
                 <Field label={t("monitors.metric")}>
-                  <Select value={metric} onChange={(v) => setMetric(v as "DISK" | "CPU" | "MEM")}
-                    options={[
-                      { value: "DISK", label: t("monitors.disk") },
-                      { value: "CPU", label: "CPU" },
-                      { value: "MEM", label: t("monitors.mem") },
-                    ]} />
+                  <Select value={metric} onChange={(v) => { setMetric(v as MetricKind); setLimit(defaultLimit(v)); }}
+                    options={METRIC_KINDS.map((k) => ({ value: k, label: t(METRIC_NAME_KEY[k]) }))} />
                 </Field>
-                <Field label={t("monitors.threshold")}>
-                  <TextInput type="number" value={thresholdPct} onChange={(e) => setThresholdPct(e.target.value)} />
+                <Field label={metricUnit(metric) ? t("monitors.limitLabelUnit", { unit: metricUnit(metric) }) : t("monitors.limitLabel")}>
+                  <TextInput type="number" min={1} step={isPct ? 1 : "any"} max={isPct ? 100 : undefined} value={limit} onChange={(e) => setLimit(e.target.value)} />
                 </Field>
               </>
             ) : (
@@ -260,7 +264,10 @@ export default function MonitorsPage() {
                     {m.name}
                     {m.auto && <span style={{ fontSize: 11, fontWeight: 700, color: "var(--c-tx3)", border: "1px solid var(--c-bd)", borderRadius: 4, padding: "0 5px" }}>{t("monitors.autoBadge")}</span>}
                   </div>
-                  <div className="mono" style={{ fontSize: 11, color: "var(--c-tx3)" }}>{m.type} · {m.target}</div>
+                  <div className="mono" style={{ fontSize: 11, color: "var(--c-tx3)" }}>
+                    {m.type} · {m.target}
+                    {limitText(m)}
+                  </div>
                 </div>
                 <span style={{ fontSize: 12, color: monitorColor(m.status), fontWeight: 600 }}>{statusLabel(t, m.status)}</span>
               </Link>
