@@ -6,6 +6,7 @@ import { api } from "../../lib/api";
 import { useT } from "../../i18n/provider";
 import { Btn, Card } from "../ui";
 import { Checkbox, Field, Select, TextInput } from "../form";
+import type { GithubManifestStart } from "../../lib/types";
 import { isGithubLogin, postManifestToGithub } from "../../lib/github-manifest";
 import { ProviderIcon } from "./provider-icon";
 
@@ -32,6 +33,8 @@ export function ConnectGithub({ teams, isOwner }: { teams: { id: string; name: s
   const ready = !!audience && orgOk && (!org || !!orgName.trim());
   const teamId = audience === ALL ? writable[0]?.id ?? "" : audience;
 
+  // A hub GitHub cannot reach would silently never get push events: say so before the App is created there.
+  const [held, setHeld] = useState<GithubManifestStart | null>(null);
   const start = useMutation({
     mutationFn: () =>
       api.startGithubManifest({
@@ -42,7 +45,8 @@ export function ConnectGithub({ teams, isOwner }: { teams: { id: string; name: s
         sharedAllTeams: audience === ALL || undefined,
       }),
     onSuccess: (r) => {
-      postManifestToGithub(r.postUrl, r.manifest);
+      if (r.webhookActive) postManifestToGithub(r.postUrl, r.manifest);
+      else setHeld(r);
     },
   });
 
@@ -84,7 +88,7 @@ export function ConnectGithub({ teams, isOwner }: { teams: { id: string; name: s
           <summary style={{ cursor: "pointer", fontSize: 13, color: "var(--c-tx2)", minHeight: 32, display: "flex", alignItems: "center" }}>{t("sources.more")}</summary>
           <div style={{ display: "flex", flexDirection: "column", gap: 12, marginTop: 10 }}>
             <Field label={t("sources.appName")} htmlFor="gh-appname" hint={t("sources.appNameHint")}>
-              <TextInput id="gh-appname" value={appName} onChange={(e) => setAppName(e.target.value)} maxLength={34} autoComplete="off" placeholder="Tugra" />
+              <TextInput id="gh-appname" value={appName} onChange={(e) => setAppName(e.target.value)} maxLength={34} autoComplete="off" placeholder={t("sources.appNamePlaceholder")} />
             </Field>
             <div>
               <Checkbox checked={anyAccount} onChange={setAnyAccount} label={t("sources.anyAccount")} />
@@ -104,6 +108,12 @@ export function ConnectGithub({ teams, isOwner }: { teams: { id: string; name: s
         <div>
           <Btn type="submit" loading={start.isPending} disabled={!ready}>{start.isPending ? t("sources.connecting") : t("sources.connectGithub")}</Btn>
         </div>
+        {held && (
+          <div role="alert" style={{ display: "flex", flexDirection: "column", gap: 8, alignItems: "flex-start", fontSize: 12, color: "var(--c-am)" }}>
+            <span>{t("sources.webhookOffBefore")}</span>
+            <Btn variant="ghost" onClick={() => { postManifestToGithub(held.postUrl, held.manifest); setHeld(null); }}>{t("sources.continueAnyway")}</Btn>
+          </div>
+        )}
         {start.isError && <div role="alert" style={{ color: "var(--c-r)", fontSize: 12 }}>{(start.error as Error).message}</div>}
       </form>
     </Card>

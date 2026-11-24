@@ -66,7 +66,7 @@ describe("Git sources: one-click layout", () => {
   it("lists connected sources as cards with the team they belong to", async () => {
     vi.spyOn(api, "listTeams").mockResolvedValue([{ id: "t1", name: "Acme", role: "OWNER" }] as never);
     vi.spyOn(api, "listGitSources").mockResolvedValue([src()]);
-    vi.spyOn(api, "listSourceRepos").mockResolvedValue([{ fullName: "acme/web", cloneUrl: "u", private: true, defaultBranch: "main" }]);
+    vi.spyOn(api, "getSourceRepoCount").mockResolvedValue({ count: 1 });
     wrap();
     expect(await screen.findByText("tugra-mrcandev")).toBeTruthy();
     expect(await screen.findByText("1 repository")).toBeTruthy();

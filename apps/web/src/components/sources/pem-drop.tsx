@@ -34,7 +34,7 @@ export function PemDrop({ value, onChange, id }: { value: string; onChange: (pem
     return (
       <div style={{ display: "flex", alignItems: "center", gap: 8, ...fieldStyle }}>
         <FileKey size={16} aria-hidden color="var(--c-g)" />
-        <span style={{ flex: 1, minWidth: 0, overflowWrap: "anywhere", fontSize: 13 }}>{t("sources.pemLoaded", { name: name || "key" })}</span>
+        <span style={{ flex: 1, minWidth: 0, overflowWrap: "anywhere", fontSize: 13 }}>{name ? t("sources.pemLoaded", { name }) : t("sources.pemLoadedPasted")}</span>
         <button type="button" aria-label={t("sources.pemRemove")} onClick={clear} className="tg-iconbtn" style={{ background: "transparent", border: "none", color: "var(--c-tx3)", cursor: "pointer", display: "inline-flex" }}>
           <X size={16} aria-hidden />
         </button>

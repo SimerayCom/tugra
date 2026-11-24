@@ -1472,6 +1472,12 @@ export const api = {
   listSourceRepos(id: string) {
     return apiFetch<SourceRepo[]>(`/git-sources/${id}/repos`);
   },
+  getSourceRepoCount(id: string) {
+    return apiFetch<{ count: number }>(`/git-sources/${id}/repos/count`);
+  },
+  removeGitSourceInstallation(id: string, installationId: string) {
+    return apiFetch<GitSource>(`/git-sources/${id}/installations/${encodeURIComponent(installationId)}`, { method: "DELETE" });
+  },
   listSourceBranches(id: string, repo: string) {
     return apiFetch<SourceBranch[]>(`/git-sources/${id}/branches?repo=${encodeURIComponent(repo)}`);
   },

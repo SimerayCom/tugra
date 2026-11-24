@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, ChevronDown, ChevronUp, Copy, Lock, Plus, Trash2, Globe } from "lucide-react";
+import { Check, ChevronDown, ChevronUp, Copy, Lock, Plus, Trash2, Globe, X } from "lucide-react";
 import { api } from "../../lib/api";
 import type { GitSource } from "../../lib/types";
 import { useT } from "../../i18n/provider";
@@ -25,8 +25,10 @@ export function GitSourceCard({ source, teamName, isOwner, onDelete }: { source:
   const isGithub = kind === "github";
   const installed = !isGithub || installs.length > 0 || !!installationId;
 
-  const repos = useQuery({ queryKey: ["gitSourceRepos", id], queryFn: () => api.listSourceRepos(id), enabled: installed, staleTime: 60_000, retry: false });
   const [open, setOpen] = useState(false);
+  // The card only needs a number: ask for the full list when it is expanded, never on page load.
+  const countQ = useQuery({ queryKey: ["gitSourceRepoCount", id], queryFn: () => api.getSourceRepoCount(id), enabled: installed, staleTime: 60_000, retry: false });
+  const repos = useQuery({ queryKey: ["gitSourceRepos", id], queryFn: () => api.listSourceRepos(id), enabled: installed && open, staleTime: 60_000, retry: false });
   const [q, setQ] = useState("");
   const [copied, setCopied] = useState(false);
 
@@ -35,13 +37,24 @@ export function GitSourceCard({ source, teamName, isOwner, onDelete }: { source:
     onSuccess: (s) => { qc.invalidateQueries({ queryKey: ["gitSources"] }); toast(t(s.sharedAllTeams ? "sources.sharedOn" : "sources.sharedOff"), "success"); },
     onError: (e) => toast((e as Error).message, "error"),
   });
+  const removeInstall = useMutation({
+    mutationFn: (installationId: string) => api.removeGitSourceInstallation(id, installationId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["gitSources"] });
+      qc.invalidateQueries({ queryKey: ["gitSourceRepoCount", id] });
+      qc.invalidateQueries({ queryKey: ["gitSourceRepos", id] });
+      toast(t("sources.accountRemoved"), "success");
+    },
+    onError: (e) => toast((e as Error).message, "error"),
+  });
   const install = useMutation({
     mutationFn: () => api.startGithubInstall(id),
     onSuccess: (r) => { if (isGithubInstallUrl(r.installUrl)) window.location.assign(r.installUrl); },
     onError: (e) => toast((e as Error).message, "error"),
   });
 
-  const count = repos.data?.length;
+  const count = countQ.data?.count;
+  const capped = count !== undefined && repos.data !== undefined && repos.data.length < count;
   const shown = filterRepos(repos.data ?? [], q);
   const detail = isGithub ? null : apiUrl;
   const copyWebhook = async () => {
@@ -64,8 +77,8 @@ export function GitSourceCard({ source, teamName, isOwner, onDelete }: { source:
         {installed ? <Badge tone="ok">{t("sources.connected")}</Badge> : <Badge tone="warn">{t("sources.needsInstall")}</Badge>}
         <Badge tone="muted">{sharedAllTeams ? t("sources.allTeams") : teamName}</Badge>
         {installed && (
-          <span aria-live="polite" style={{ fontSize: 12, color: repos.isError ? "var(--c-r)" : "var(--c-tx3)" }}>
-            {repos.isLoading ? t("sources.repoCountLoading") : repos.isError ? t("sources.repoCountError") : count === 1 ? t("sources.repoCountOne") : t("sources.repoCountMany", { count: count ?? 0 })}
+          <span aria-live="polite" style={{ fontSize: 12, color: countQ.isError ? "var(--c-r)" : "var(--c-tx3)" }}>
+            {countQ.isLoading ? t("sources.repoCountLoading") : countQ.isError ? t("sources.repoCountError") : count === 1 ? t("sources.repoCountOne") : t("sources.repoCountMany", { count: count ?? 0 })}
           </span>
         )}
       </div>
@@ -76,6 +89,9 @@ export function GitSourceCard({ source, teamName, isOwner, onDelete }: { source:
             <li key={i.installationId} style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "3px 10px 3px 4px", borderRadius: 999, background: "var(--c-el)", border: "1px solid var(--c-bd)", fontSize: 12 }}>
               <AccountAvatar login={i.accountLogin} url={i.avatarUrl} />
               <span>{i.accountLogin ?? i.installationId}</span>
+              {canWrite && (
+                <IconBtn label={t("sources.removeAccount", { name: i.accountLogin ?? i.installationId })} onClick={() => removeInstall.mutate(i.installationId)} disabled={removeInstall.isPending}><X size={13} /></IconBtn>
+              )}
             </li>
           ))}
         </ul>
@@ -105,6 +121,9 @@ export function GitSourceCard({ source, teamName, isOwner, onDelete }: { source:
 
       {open && (
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {repos.isLoading && <div role="status" style={{ fontSize: 12, color: "var(--c-tx3)" }}>{t("sources.repoCountLoading")}</div>}
+          {repos.isError && <div role="alert" style={{ fontSize: 12, color: "var(--c-r)" }}>{t("sources.repoCountError")}</div>}
+          {capped && <div style={{ fontSize: 12, color: "var(--c-tx3)" }}>{t("sources.repoListCapped", { shown: repos.data?.length ?? 0, count: count ?? 0 })}</div>}
           <TextInput type="search" value={q} onChange={(e) => setQ(e.target.value)} aria-label={t("sources.searchRepos")} placeholder={t("sources.searchRepos")} autoComplete="off" />
           {repos.data && repos.data.length === 0 ? (
             <div style={{ fontSize: 12, color: "var(--c-tx3)" }}>{t("sources.noRepos")}</div>

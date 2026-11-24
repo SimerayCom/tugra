@@ -80,8 +80,9 @@ describe("ConnectGithub", () => {
 });
 
 describe("GitSourceCard", () => {
-  it("shows provider, accounts, status, repo count and a searchable repo list", async () => {
-    vi.spyOn(api, "listSourceRepos").mockResolvedValue([
+  it("shows provider, accounts, status, repo count and a searchable repo list; the list loads only when expanded", async () => {
+    vi.spyOn(api, "getSourceRepoCount").mockResolvedValue({ count: 3 });
+    const list = vi.spyOn(api, "listSourceRepos").mockResolvedValue([
       { fullName: "alice/web", cloneUrl: "u", private: true, defaultBranch: "main" },
       { fullName: "acme-inc/api", cloneUrl: "u", private: false, defaultBranch: "main" },
       { fullName: "acme-inc/docs", cloneUrl: "u", private: false, defaultBranch: "main" },
@@ -93,7 +94,10 @@ describe("GitSourceCard", () => {
     expect(screen.getByText("alice")).toBeTruthy();
     expect(screen.getByText("acme-inc")).toBeTruthy();
     expect(await screen.findByText("3 repositories")).toBeTruthy();
+    expect(list).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Show repositories" }));
+    await waitFor(() => expect(list).toHaveBeenCalledWith("g1"));
+    await screen.findByText("alice/web");
     fireEvent.change(screen.getByLabelText("Search repositories"), { target: { value: "DOCS" } });
     expect(screen.getByText("acme-inc/docs")).toBeTruthy();
     expect(screen.queryByText("alice/web")).toBeNull();
@@ -102,7 +106,7 @@ describe("GitSourceCard", () => {
   });
 
   it("an App without an installation says so and offers Install; adding an account starts another install", async () => {
-    vi.spyOn(api, "listSourceRepos").mockResolvedValue([]);
+    vi.spyOn(api, "getSourceRepoCount").mockResolvedValue({ count: 0 });
     const inst = vi.spyOn(api, "startGithubInstall").mockResolvedValue({ installUrl: "https://evil.example.com/x" });
     wrap(<GitSourceCard source={src({ installationId: null, installations: [] })} teamName="Acme" isOwner={false} onDelete={() => {}} />);
     expect(screen.getByText("Needs install")).toBeTruthy();
@@ -112,7 +116,7 @@ describe("GitSourceCard", () => {
   });
 
   it("a shared source is labelled for every team and a viewer sees no actions", () => {
-    vi.spyOn(api, "listSourceRepos").mockResolvedValue([]);
+    vi.spyOn(api, "getSourceRepoCount").mockResolvedValue({ count: 0 });
     wrap(<GitSourceCard source={src({ sharedAllTeams: true, canWrite: false })} teamName="Other" isOwner={false} onDelete={() => {}} />);
     expect(screen.getByText("All teams")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Add account" })).toBeNull();
@@ -120,9 +124,40 @@ describe("GitSourceCard", () => {
   });
 
   it("warns when the webhook URL is not reachable from the internet", () => {
-    vi.spyOn(api, "listSourceRepos").mockResolvedValue([]);
+    vi.spyOn(api, "getSourceRepoCount").mockResolvedValue({ count: 0 });
     wrap(<GitSourceCard source={src({ webhookUrl: "http://localhost:3000/webhooks/github/g1" })} teamName="Acme" isOwner={false} onDelete={() => {}} />);
     expect(screen.getByText(/push-to-deploy is off/)).toBeTruthy();
+  });
+});
+
+describe("GitSourceCard: accounts and the hub reachability warning", () => {
+  it("a writer can remove an account (a stale installation) and a viewer cannot", async () => {
+    vi.spyOn(api, "getSourceRepoCount").mockResolvedValue({ count: 1 });
+    const rm = vi.spyOn(api, "removeGitSourceInstallation").mockResolvedValue(src());
+    wrap(<GitSourceCard source={src()} teamName="Acme" isOwner={false} onDelete={() => {}} />);
+    fireEvent.click(screen.getByRole("button", { name: "Remove acme-inc" }));
+    await waitFor(() => expect(rm).toHaveBeenCalledWith("g1", "20"));
+    cleanup();
+    wrap(<GitSourceCard source={src({ canWrite: false })} teamName="Acme" isOwner={false} onDelete={() => {}} />);
+    expect(screen.queryByRole("button", { name: /^Remove / })).toBeNull();
+  });
+
+  it("says when the repository list is shorter than the count", async () => {
+    vi.spyOn(api, "getSourceRepoCount").mockResolvedValue({ count: 5 });
+    vi.spyOn(api, "listSourceRepos").mockResolvedValue([{ fullName: "alice/web", cloneUrl: "u", private: true, defaultBranch: "main" }]);
+    wrap(<GitSourceCard source={src()} teamName="Acme" isOwner={false} onDelete={() => {}} />);
+    fireEvent.click(screen.getByRole("button", { name: "Show repositories" }));
+    expect(await screen.findByText("Showing 1 of 5 repositories.")).toBeTruthy();
+  });
+
+  it("Connect GitHub warns before creating the App when the hub is not reachable, and continues on request", async () => {
+    vi.spyOn(api, "startGithubManifest").mockResolvedValue({ postUrl: "https://github.com/settings/apps/new?state=s", manifest: { name: "x" }, webhookActive: false });
+    wrap(<ConnectGithub teams={[team("t1", "Acme")]} isOwner={false} />);
+    fireEvent.click(screen.getByRole("button", { name: "Connect GitHub" }));
+    expect(await screen.findByText(/cannot send push events/)).toBeTruthy();
+    expect(post).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Continue to GitHub" }));
+    expect(post).toHaveBeenCalledWith("https://github.com/settings/apps/new?state=s", { name: "x" });
   });
 });
 
@@ -143,6 +178,11 @@ describe("PemDrop", () => {
     fireEvent.drop(screen.getByText("Drop the .pem file here, or choose it").parentElement!, { dataTransfer: { files: [new File(["hello"], "notes.txt")] } });
     expect(await screen.findByRole("alert")).toBeTruthy();
     expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("a pasted key shows a plain label, not a made-up file name", () => {
+    wrap(<PemDrop id="k" value={PEM} onChange={() => {}} />);
+    expect(screen.getByText("Key loaded")).toBeTruthy();
   });
 
   it("never prints the key once loaded and can remove it", () => {
