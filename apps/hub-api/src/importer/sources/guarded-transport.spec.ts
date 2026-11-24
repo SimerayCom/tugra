@@ -47,6 +47,28 @@ beforeEach(() => {
   seen.length = 0;
 });
 
+describe("real POST transport", () => {
+  it("sends a JSON body with its length and parses the JSON answer", async () => {
+    let received = "";
+    const orig = handler;
+    server.once("request", (req) => {
+      req.on("data", (c) => (received += c));
+    });
+    handler = (method) => ({ status: method === "POST" ? 200 : 405, body: { token: "t" } });
+    const client = new GuardedHttpGet(base, { apiPrefix: "/api", label: "X", headers: () => ({}) });
+    await expect(client.postJson("/login", { identity: "a", password: "b" })).resolves.toEqual({ token: "t" });
+    expect(seen[0]).toEqual({ method: "POST", url: "/api/login" });
+    expect(JSON.parse(received)).toEqual({ identity: "a", password: "b" });
+    handler = orig;
+  });
+
+  it("still refuses a redirect on a POST", async () => {
+    handler = () => ({ status: 302, headers: { Location: "http://127.0.0.1:1/" } });
+    const client = new GuardedHttpGet(base, { apiPrefix: "/api", label: "X", headers: () => ({}) });
+    await expect(client.postJson("/login", {})).rejects.toThrow(/redirect/);
+  });
+});
+
 describe("real GET transport", () => {
   it("reads the Retry-After header off a 429 (not the 10 s default) and retries", async () => {
     let n = 0;

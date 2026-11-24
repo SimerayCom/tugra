@@ -42,7 +42,12 @@ export interface RawGetResponse {
   retryAfter?: string | null;
   body: Buffer;
 }
-export type RawTransport = (url: URL, headers: Record<string, string>) => Promise<RawGetResponse>;
+/** `method`/`body` are only set by {@link GuardedHttpGet.postJson} (a source whose login is a POST, e.g. Beszel). */
+export interface RawRequestInit {
+  method?: "GET" | "POST";
+  body?: string;
+}
+export type RawTransport = (url: URL, headers: Record<string, string>, init?: RawRequestInit) => Promise<RawGetResponse>;
 
 /**
  * SSRF-safe authenticated GET client for one external-source instance. Every request validates the URL scheme
@@ -61,14 +66,20 @@ export class GuardedHttpGet {
   }
 
   get<T>(path: string): Promise<T> {
-    const label = this.cfg.label;
-    return this.fetchBody(path, "application/json", (body) => {
-      try {
-        return JSON.parse(body) as T;
-      } catch {
-        throw new Error(`${label} returned a non-JSON response — is the URL a ${label} API root?`);
-      }
-    });
+    return this.fetchBody(path, "application/json", (body) => this.parseJson<T>(body));
+  }
+
+  /** The same guarded transport for a JSON POST (login endpoints). Redirects are refused exactly like a GET. */
+  postJson<T>(path: string, payload: unknown): Promise<T> {
+    return this.fetchBody(path, "application/json", (body) => this.parseJson<T>(body), { method: "POST", body: JSON.stringify(payload) });
+  }
+
+  private parseJson<T>(body: string): T {
+    try {
+      return JSON.parse(body) as T;
+    } catch {
+      throw new Error(`${this.cfg.label} returned a non-JSON response — is the URL a ${this.cfg.label} API root?`);
+    }
   }
 
   /** The same guarded GET for an endpoint that answers PLAIN TEXT (Coolify's `GET /version`), capped small: a token, never a document. */
@@ -98,11 +109,13 @@ export class GuardedHttpGet {
     return { message, egressIp };
   }
 
-  private async fetchBody<T>(path: string, accept: string, parse: (body: string) => T): Promise<T> {
+  private async fetchBody<T>(path: string, accept: string, parse: (body: string) => T, init?: RawRequestInit): Promise<T> {
     const label = this.cfg.label;
     const url = new URL(`${this.cfg.apiPrefix}${path}`, this.base);
     if (url.origin !== this.base.origin) throw new Error(`path escaped the ${label} base origin`); // defence-in-depth
-    const send = () => this.transport(url, { Accept: accept, ...this.cfg.headers() });
+    const headers: Record<string, string> = { Accept: accept, ...this.cfg.headers() };
+    if (init?.body !== undefined) headers["Content-Type"] = "application/json";
+    const send = () => this.transport(url, headers, init);
     let res: RawGetResponse;
     try {
       res = this.cfg.limits ? await this.cfg.limits.run(send) : await send();
@@ -125,7 +138,7 @@ export class GuardedHttpGet {
 
 /** The real transport: one SSRF-pinned GET that resolves with ANY non-redirect status (the caller interprets it). */
 function guardedRequest(label: string): RawTransport {
-  return (url, headers) => {
+  return (url, headers, init) => {
     const doRequest = url.protocol === "https:" ? httpsRequest : httpRequest;
     return new Promise<RawGetResponse>((resolve, reject) => {
       let settled = false;
@@ -138,8 +151,8 @@ function guardedRequest(label: string): RawTransport {
       const req = doRequest(
         url,
         {
-          method: "GET",
-          headers,
+          method: init?.method ?? "GET",
+          headers: init?.body !== undefined ? { ...headers, "Content-Length": String(Buffer.byteLength(init.body)) } : headers,
           lookup: guardedLookup,
           timeout: TIMEOUT_MS,
         },
@@ -173,7 +186,7 @@ function guardedRequest(label: string): RawTransport {
       }, DEADLINE_MS);
       req.on("timeout", () => req.destroy(new Error(`${label} request timed out`)));
       req.on("error", (e) => done(() => reject(e)));
-      req.end();
+      req.end(init?.body);
     });
   };
 }
