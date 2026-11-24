@@ -212,7 +212,7 @@ export function evidenceSummary(steps: readonly StepRow[]): RunReport["evidenceS
   return out;
 }
 
-export function buildReport(r: RunRow, steps: readonly StepRow[], items: readonly ReportItem[], serverName: string | null, now: Date, names: ReadonlyMap<string, string> = new Map()): RunReport {
+export function buildReport(r: RunRow, steps: readonly StepRow[], items: readonly ReportItem[], serverName: string | null, now: Date, names: ReadonlyMap<string, string> = new Map(), dataIntegrity: RunReport["dataIntegrity"] = []): RunReport {
   const allNames = new Map(names);
   if (serverName !== null && !allNames.has(r.targetServerId)) allNames.set(r.targetServerId, serverName);
   const est = r.windowEstimate ? WindowEstimateSchema.parse(r.windowEstimate) : null;
@@ -239,6 +239,7 @@ export function buildReport(r: RunRow, steps: readonly StepRow[], items: readonl
         code: code(s.lastError),
       })),
     items: items.slice(0, 5000).map((i) => ({ ...i })),
+    dataIntegrity: dataIntegrity.slice(0, 2000).map((d) => ({ ...d, rows: { ...d.rows, names: [...d.rows.names] } })),
     evidenceSummary: evidenceSummary(steps),
     manual: manualOf(r).map((m) => ({ code: m.code, ...(m.params ? { params: m.params } : {}) })),
   };
@@ -266,6 +267,13 @@ export function reportToMarkdown(rep: RunReport): string {
   else {
     L.push("| Kind | Name | Outcome | Code | Evidence |", "| --- | --- | --- | --- | --- |");
     for (const i of rep.items) L.push(`| ${i.kind} | ${mdCell(i.name)} | ${i.outcome} | ${i.code ?? ""} | ${i.evidence ?? ""} |`);
+  }
+  if (rep.dataIntegrity.length) {
+    L.push("", "## Data checks", "", "| Database | Route | Size (bytes) | Parts | Checksum (sha256) | Tables | Rows (source / target) | Rows check |", "| --- | --- | --- | --- | --- | --- | --- | --- |");
+    for (const d of rep.dataIntegrity) {
+      const rows = d.rows.sourceRows === null || d.rows.targetRows === null ? "" : `${d.rows.sourceRows} / ${d.rows.targetRows}`;
+      L.push(`| ${mdCell(d.name)} | ${d.lane} | ${d.bytes ?? ""} | ${d.parts ?? ""} | ${d.sha256 ?? ""} | ${d.rows.relations ?? ""} | ${rows} | ${d.rows.status}${d.rows.names.length ? ` (${mdCell(d.rows.names.join(", "))})` : ""} |`);
+    }
   }
   L.push("", "## Evidence", "");
   for (const [k, v] of Object.entries(rep.evidenceSummary)) L.push(`- ${k}: ${v}`);

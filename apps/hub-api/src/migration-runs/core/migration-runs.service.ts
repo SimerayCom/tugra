@@ -764,12 +764,13 @@ export class MigrationRunsService implements MigrationRunsFacade {
       const stored = RunReportSchema.safeParse(run.report);
       if (stored.success && stored.data.status === run.status) return stored.data;
     }
-    const [steps, names, items] = await Promise.all([
+    const [steps, names, items, integrity] = await Promise.all([
       this.store.steps(run.id),
       this.env.servers(this.targetIds(run)),
       run.opId ? this.imp.opItems(run.actorId, run.opId).catch(() => []) : Promise.resolve([]),
+      run.opId && this.imp.opDataIntegrity ? this.imp.opDataIntegrity(run.actorId, run.id, run.opId).catch(() => []) : Promise.resolve([]),
     ]);
-    return buildReport(run, steps, items, names.get(run.targetServerId) ?? null, this.engine.clock.now(), names);
+    return buildReport(run, steps, items, names.get(run.targetServerId) ?? null, this.engine.clock.now(), names, integrity);
   }
 
   /** Persist the final report once a run settles (engine hook; best effort). */

@@ -791,6 +791,35 @@ export const RunReportSchema = z.object({
       }),
     )
     .max(5000),
+  /**
+   * Per database: how its data travelled, its size, ONE checksum of the whole artifact and the row-count check against the source
+   * (`[]` in reports stored before this section existed). The checksum is a hex sha256; the row check compares every table.
+   */
+  dataIntegrity: z
+    .array(
+      z.object({
+        itemRef: z.string().max(300),
+        name: z.string().max(300),
+        engine: z.string().max(40),
+        /** `dump`: one gzip dump; `stream`: a checked stream of parts; `files`: a copy of the data directory. */
+        lane: z.enum(["dump", "stream", "files"]),
+        bytes: z.number().int().min(0).nullable(),
+        parts: z.number().int().min(0).nullable(),
+        sha256: z.string().regex(/^[0-9a-f]{64}$/).nullable(),
+        rows: z.object({
+          /** `match`: every table equal; `close`: equal within an estimate's tolerance (or more rows on the target); `mismatch`: rows are missing; `unverified`: not measured on both sides. */
+          status: z.enum(["match", "close", "mismatch", "unverified"]),
+          mode: z.enum(["exact", "estimate"]).nullable(),
+          relations: z.number().int().min(0).nullable(),
+          differing: z.number().int().min(0).nullable(),
+          sourceRows: z.number().int().min(0).nullable(),
+          targetRows: z.number().int().min(0).nullable(),
+          names: z.array(z.string().max(200)).max(10),
+        }),
+      }),
+    )
+    .max(2000)
+    .default([]),
   /** How many results of each evidence kind the run relied on. */
   evidenceSummary: z.object({
     "hub-verified": z.number().int(),

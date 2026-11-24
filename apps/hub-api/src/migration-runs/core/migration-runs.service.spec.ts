@@ -221,6 +221,30 @@ describe("report", () => {
     expect(md).toContain("| PREFLIGHT | PASSED |");
   });
 
+  it("carries the data checks of every database (route, size, one checksum, the row check) in the report and the markdown", async () => {
+    const w = new RunWorld();
+    const sha = "b".repeat(64);
+    w.port.dataIntegrity = [
+      { itemRef: "database:s:a", name: "db-a", engine: "POSTGRES", lane: "stream", bytes: 4096, parts: 3, sha256: sha, rows: { status: "match", mode: "exact", relations: 7, differing: 0, sourceRows: 100, targetRows: 100, names: [] } },
+      { itemRef: "database:s:b", name: "db-b", engine: "MARIADB", lane: "dump", bytes: null, parts: null, sha256: null, rows: { status: "mismatch", mode: "exact", relations: 2, differing: 1, sourceRows: 9, targetRows: 8, names: ["orders"] } },
+    ];
+    const id = await w.run();
+    const rep = await w.service.report(ACTOR, id);
+    expect(rep.dataIntegrity).toHaveLength(2);
+    expect(RunReportSchema.parse(JSON.parse(JSON.stringify(rep))).dataIntegrity[0].sha256).toBe(sha);
+    const md = await w.service.reportMarkdown(ACTOR, id);
+    expect(md).toContain("## Data checks");
+    expect(md).toContain(`| db-a | stream | 4096 | 3 | ${sha} | 7 | 100 / 100 | match |`);
+    expect(md).toContain("| db-b | dump |  |  |  | 2 | 9 / 8 | mismatch (orders) |");
+  });
+
+  it("a report with no databases has no data section", async () => {
+    const w = new RunWorld();
+    const id = await w.run();
+    expect((await w.service.report(ACTOR, id)).dataIntegrity).toEqual([]);
+    expect(await w.service.reportMarkdown(ACTOR, id)).not.toContain("## Data checks");
+  });
+
   it("an unfinished run gets an on-demand report", async () => {
     const w = new RunWorld({ stubs: { DATA_FINAL: { blocked: () => true } } });
     const id = await w.run();

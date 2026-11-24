@@ -623,6 +623,11 @@ export class ScriptedImportPort implements ImportStepsPort {
   async opItems(): Promise<RunReport["items"]> {
     return [];
   }
+  /** What the report's data section shows; a spec sets it to prove the report carries it (and the markdown prints it). */
+  dataIntegrity: RunReport["dataIntegrity"] = [];
+  async opDataIntegrity(): Promise<RunReport["dataIntegrity"]> {
+    return this.dataIntegrity;
+  }
   async mintCommand(_u: string, opId: string, _b: string, o: { reissue: boolean; certs: boolean }) {
     this.calls.push(`mint:${opId}:${o.reissue ? "reissue" : "mint"}`);
     return { expiresAt: new Date(this.clock.t + 3_600_000), command: "curl -fsSL https://hub.example.com/m.sh | sh -s -- TOKEN" };

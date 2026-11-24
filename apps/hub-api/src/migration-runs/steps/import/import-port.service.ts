@@ -23,7 +23,8 @@ import { mapLimit } from "../../../importer/sources/map-limit";
 import type { ImportApplyInput, ImportMappingResolveInput, RemoteSourceKind, ServiceChoice } from "../../../importer/dto";
 import type { SourceHealthRow } from "../../../importer/import-source";
 import { vxEnabled } from "../../../importer/volume-stream/vx-constants";
-import { isObjectStoreResult, serviceVolumeStreamable, serviceVolumesOf, volumeItemRef } from "../../../importer/volume-stream/vx-targets";
+import { dbStreamModeRefs, dbVolumeModeRefs, isObjectStoreResult, serviceVolumeStreamable, serviceVolumesOf, volumeItemRef } from "../../../importer/volume-stream/vx-targets";
+import { buildDataIntegrity } from "../data/data-integrity";
 import { pinnedImageRef } from "./baseline/image-pins";
 import type { ResolvedMapping } from "../../../importer/import-mapping";
 import type { ServicePreview } from "../../../importer/service-preview";
@@ -304,6 +305,31 @@ export class ImportPortService implements ImportStepsPort {
           evidence: "hub-verified" as const,
         };
       });
+  }
+
+  async opDataIntegrity(userId: string, runId: string, opId: string): Promise<RunReport["dataIntegrity"]> {
+    const op = await this.prisma.bulkOperation.findUnique({ where: { id: opId }, include: { tasks: true } });
+    if (!op || op.kind !== "import" || op.actorId !== userId) return []; // another user's op, or none: nothing is leaked
+    const meta = metaOf(op.meta);
+    const plan = meta.plan as { items?: unknown } | undefined;
+    const dbIds = op.tasks.filter((t) => t.resourceType === "database" && t.resourceId).map((t) => t.resourceId as string);
+    const [dbs, transfers, parity] = await Promise.all([
+      dbIds.length ? this.prisma.database.findMany({ where: { id: { in: dbIds } }, select: { id: true, engine: true, name: true } }) : Promise.resolve([]),
+      this.prisma.migrationVolumeTransfer.findMany({
+        where: { opId, destType: { in: ["db-dump", "db-data"] } },
+        select: { resourceId: true, destType: true, state: true, partsDone: true, rawBytesDone: true, rawBytesFinal: true, parts: { select: { idx: true, rawOffset: true, rawLen: true, rawSha256: true }, orderBy: { idx: "asc" } } },
+      }),
+      this.prisma.migrationRunCheck.findMany({ where: { runId, stepKey: "VERIFY", checkId: "db-logical-parity" }, select: { subject: true, status: true, evidence: true } }),
+    ]);
+    return buildDataIntegrity({
+      tasks: op.tasks.map((t) => ({ itemRef: t.itemRef, kind: t.kind, status: t.status, resourceType: t.resourceType, resourceId: t.resourceId, result: t.result })),
+      transfers,
+      streamRefs: dbStreamModeRefs(meta),
+      volumeRefs: dbVolumeModeRefs(plan?.items),
+      parity: parity.map((p) => ({ subject: p.subject, status: p.status, evidence: p.evidence && typeof p.evidence === "object" && !Array.isArray(p.evidence) ? (p.evidence as Record<string, unknown>) : null })),
+      engineOf: new Map(dbs.map((d) => [d.id, d.engine as string])),
+      nameOf: new Map(dbs.map((d) => [d.id, d.name])),
+    });
   }
 
   async mintCommand(userId: string, opId: string, hubBase: string, opts: { reissue: boolean; certs: boolean }) {

@@ -73,6 +73,11 @@ export interface RunImportPort {
   sourceVersion?(userId: string, input: { sessionId: string; sourceKind: RemoteSourceKind }): Promise<string | null>;
   /** The coverage ledger of an import op for the final report (secret-free; empty when the op is unknown). */
   opItems(userId: string, opId: string): Promise<RunReport["items"]>;
+  /**
+   * OPTIONAL: how each migrated database's data travelled, its checksum and its row-count check, for the final report
+   * (secret-free; empty when the op is unknown or the adapter does not know).
+   */
+  opDataIntegrity?(userId: string, runId: string, opId: string): Promise<RunReport["dataIntegrity"]>;
   /** Mint (or reissue) the migrator token of the op and return the source-host command(s). Shown once. */
   mintCommand(
     userId: string,
