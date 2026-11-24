@@ -126,6 +126,7 @@
       "already_added": "Already in Tugra",
       "waiting": "Waiting for its agent",
       "expired": "Command expired",
+      "no_access": "Managed by another team admin",
       "not_generated": "Not added"
     },
     "expiresAt": "Valid until {when}"

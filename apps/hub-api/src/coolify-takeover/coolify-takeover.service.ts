@@ -46,6 +46,10 @@ export interface ChecklistView {
   teams: Array<{ id: string; name: string }>;
 }
 
+function errorClass(e: unknown): string {
+  return e instanceof Error ? e.constructor.name : "unknown";
+}
+
 function isInventory(v: unknown): v is CoolifyInventoryData {
   return !!v && typeof v === "object" && (v as { v?: unknown }).v === 1 && Array.isArray((v as { servers?: unknown }).servers);
 }
@@ -70,6 +74,7 @@ function parseLinks(v: unknown): Record<string, ServerLink> {
 export class CoolifyTakeoverService {
   /** Single-flight per server: the read is a few seconds of work on the host. */
   private readonly inflight = new Map<string, Promise<InventoryView>>();
+  private readonly generating = new Map<string, Promise<unknown>>();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -98,10 +103,20 @@ export class CoolifyTakeoverService {
 
   // ---- agent calls ------------------------------------------------------------------------------------------------------
 
-  /** Is there a running Coolify database on this server? Reads nothing from it. */
+  /**
+   * Is there a running Coolify database on this server? Reads nothing from it (only `docker inspect` of two containers), so
+   * it is deliberately allowed BEFORE the opt-in: it is the "Check for Coolify" step that precedes the opt-in. Owner/admin only
+   * and audited whether or not the agent answers.
+   */
   async detect(userId: string, serverId: string): Promise<{ found: boolean; image: string | null; reason?: "no_docker" | "db_stopped" }> {
     const server = await this.requireServer(userId, serverId);
-    const r = await this.agentWs.sendCommand(server.id, buildDetectScript(), "database", DETECT_TIMEOUT_MS);
+    let r: { output: string };
+    try {
+      r = await this.agentWs.sendCommand(server.id, buildDetectScript(), "database", DETECT_TIMEOUT_MS);
+    } catch (e) {
+      await this.audit.log({ actor: userId, action: "coolify.takeover.detect", target: server.id, meta: { failure: errorClass(e) } });
+      throw e;
+    }
     await this.audit.log({ actor: userId, action: "coolify.takeover.detect", target: server.id });
     if (r.output.includes(CFY.noDocker)) return { found: false, image: null, reason: "no_docker" };
     if (r.output.includes(CFY.stopped)) return { found: false, image: null, reason: "db_stopped" };
@@ -152,14 +167,15 @@ export class CoolifyTakeoverService {
     // Chunks are collected live: the final result text is capped by the agent, a big environment-variable table is not.
     let streamed = "";
     let over = false;
-    const r = await this.agentWs.sendCommand(serverId, buildReadScript(), "database", READ_TIMEOUT_MS, (chunk) => {
-      if (streamed.length + chunk.length > MAX_OUTPUT_BYTES) over = true;
-      else streamed += chunk;
-    });
     try {
+      const r = await this.agentWs.sendCommand(serverId, buildReadScript(), "database", READ_TIMEOUT_MS, (chunk) => {
+        if (streamed.length + chunk.length > MAX_OUTPUT_BYTES) over = true;
+        else streamed += chunk;
+      });
       if (over) throw new CoolifyReadError("unreadable");
       const { data, counts } = buildInventory(parseRead(streamed.length >= r.output.length ? streamed : r.output));
-      const saved = await this.prisma.coolifyInventory.update({
+      // updateMany: the opt-in may have been withdrawn while the read ran; nothing must be stored then.
+      const done = await this.prisma.coolifyInventory.updateMany({
         where: { id: inventoryId },
         data: {
           snapshot: data as unknown as Prisma.InputJsonValue,
@@ -168,8 +184,9 @@ export class CoolifyTakeoverService {
           readAt: new Date(),
           readById: userId,
         },
-        include: { server: { select: { name: true } } },
       });
+      if (done.count === 0) throw new ConflictException({ code: "not_enabled", message: "The opt-in was withdrawn during the read" });
+      const saved = await this.prisma.coolifyInventory.findUniqueOrThrow({ where: { id: inventoryId }, include: { server: { select: { name: true } } } });
       await this.audit.log({
         actor: userId,
         action: "coolify.takeover.read",
@@ -178,8 +195,9 @@ export class CoolifyTakeoverService {
       });
       return this.view(saved, serverName);
     } catch (e) {
+      // Every attempt is audited, including the ones that never got an answer (offline agent, capability, timeout).
+      await this.audit.log({ actor: userId, action: "coolify.takeover.read_failed", target: serverId, meta: { failure: e instanceof CoolifyReadError ? e.failure : errorClass(e) } });
       if (e instanceof CoolifyReadError) {
-        await this.audit.log({ actor: userId, action: "coolify.takeover.read_failed", target: serverId, meta: { failure: e.failure } });
         throw new BadRequestException({ code: e.failure, message: `Could not read Coolify (${e.failure})` });
       }
       throw e;
@@ -199,6 +217,18 @@ export class CoolifyTakeoverService {
    * Re-running is safe: servers that already have a link are left alone.
    */
   async generate(userId: string, serverId: string, input: GenerateInput, publicUrl?: string): Promise<ChecklistView> {
+    // Serialized per server (this hub process): a double click or a second admin waits, then sees the links the first call wrote.
+    const prev = this.generating.get(serverId) ?? Promise.resolve();
+    const run = prev.catch(() => undefined).then(() => this.doGenerate(userId, serverId, input, publicUrl));
+    this.generating.set(serverId, run);
+    try {
+      return await run;
+    } finally {
+      if (this.generating.get(serverId) === run) this.generating.delete(serverId);
+    }
+  }
+
+  private async doGenerate(userId: string, serverId: string, input: GenerateInput, publicUrl?: string): Promise<ChecklistView> {
     const row = await this.requireOptIn(userId, serverId);
     if (!isInventory(row.snapshot)) throw new ConflictException({ code: "not_read", message: "Read this Coolify first" });
     const data = row.snapshot;
@@ -282,14 +312,16 @@ export class CoolifyTakeoverService {
       if (linked && linked.status === ServerStatus.PENDING) {
         let installCommand: string | null = null;
         let expiresAt: string | null = null;
+        let noAccess = false;
         try {
           const inst = await this.servers.getInstall(userId, linked.id, publicUrl);
           installCommand = inst.installCommand;
           expiresAt = inst.expiresAt ? inst.expiresAt.toISOString() : null;
         } catch (e) {
           if (!(e instanceof ForbiddenException)) throw e; // a server in a team the caller cannot manage shows no command
+          noAccess = true;
         }
-        rows.push({ ...base, state: installCommand ? "waiting" : "expired", teamId: linked.teamId, tugraServerId: linked.id, installCommand, expiresAt });
+        rows.push({ ...base, state: noAccess ? "no_access" : installCommand ? "waiting" : "expired", teamId: linked.teamId, tugraServerId: linked.id, installCommand, expiresAt });
         continue;
       }
       const match = linked ?? known.find((k) => sameHost(cs.ip, k));

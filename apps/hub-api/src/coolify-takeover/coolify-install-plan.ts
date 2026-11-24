@@ -14,6 +14,8 @@ export type ChecklistState =
   | "waiting"
   /** The pending server's command expired; reissue it. */
   | "expired"
+  /** Waiting for its agent, but the caller cannot manage that server's team, so no command is shown. */
+  | "no_access"
   /** Not generated yet: the user picks a team and generates. */
   | "not_generated";
 

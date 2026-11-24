@@ -16,9 +16,10 @@ const STATE = {
   already_added: "coolifyTakeover.checklist.state.already_added",
   waiting: "coolifyTakeover.checklist.state.waiting",
   expired: "coolifyTakeover.checklist.state.expired",
+  no_access: "coolifyTakeover.checklist.state.no_access",
   not_generated: "coolifyTakeover.checklist.state.not_generated",
 } as const;
-const TONE = { this_server: "lapis", already_added: "ok", waiting: "warn", expired: "danger", not_generated: "muted" } as const;
+const TONE = { this_server: "lapis", already_added: "ok", waiting: "warn", expired: "danger", no_access: "muted", not_generated: "muted" } as const;
 
 function Row({
   r,

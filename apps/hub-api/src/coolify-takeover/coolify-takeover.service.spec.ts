@@ -54,6 +54,12 @@ function make(o: Opts = {}) {
         row = { ...row!, ...data };
         return row;
       }),
+      updateMany: jest.fn(async ({ data }: { data: Record<string, unknown> }) => {
+        if (!row) return { count: 0 };
+        row = { ...row, ...data };
+        return { count: 1 };
+      }),
+      findUniqueOrThrow: jest.fn(async () => row),
     },
   };
   const audit = { log: jest.fn() };
@@ -244,5 +250,53 @@ describe("checklist and generate (nothing runs)", () => {
     const text = JSON.stringify(await svc.get("u", "s1"));
     for (const k of ["private_key", "password", "webhook_url"]) expect(text).not.toContain(k);
     expect(SECTION_ROWS).toBeDefined();
+  });
+});
+
+describe("hardening", () => {
+  it("audits a read that never got an answer (agent offline / timeout)", async () => {
+    const { svc, sendCommand, audit } = make();
+    sendCommand.mockRejectedValueOnce(new Error("offline"));
+    await expect(svc.read("u", "s1")).rejects.toThrow("offline");
+    expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "coolify.takeover.read_failed", meta: { failure: "Error" } }));
+  });
+
+  it("audits a failed detect too", async () => {
+    const { svc, sendCommand, audit } = make();
+    sendCommand.mockRejectedValueOnce(new Error("offline"));
+    await expect(svc.detect("u", "s1")).rejects.toThrow("offline");
+    expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "coolify.takeover.detect", meta: { failure: "Error" } }));
+  });
+
+  it("answers 409, not 500, and stores nothing when the opt-in is withdrawn during the read", async () => {
+    const { svc, sendCommand, getRow } = make();
+    sendCommand.mockImplementationOnce(async () => {
+      await svc.disable("u", "s1");
+      return { exitCode: 0, output: fixtureOutput() };
+    });
+    await expect(svc.read("u", "s1")).rejects.toBeInstanceOf(ConflictException);
+    expect(getRow()).toBeNull();
+  });
+
+  it("serializes concurrent generate calls: one Tugra server per Coolify server", async () => {
+    const { svc, servers } = make({ snapshot: SNAPSHOT });
+    const remote = SNAPSHOT.servers.find((s) => !s.isLocal)!;
+    const input = { assignments: [{ coolifyServerId: remote.id, teamId: "t1" }] };
+    const [a, b] = await Promise.all([svc.generate("u", "s1", input), svc.generate("u", "s1", input)]);
+    const created = servers.createServersBulk.mock.calls.reduce((n, c) => n + (c[1] as string[]).length, 0);
+    expect(created).toBe(1);
+    expect(a.rows.find((r) => r.coolifyServerId === remote.id)?.tugraServerId).toBe(b.rows.find((r) => r.coolifyServerId === remote.id)?.tugraServerId);
+  });
+
+  it("shows no_access (not expired) when the caller cannot manage the linked server's team", async () => {
+    const remote = SNAPSHOT.servers.find((s) => !s.isLocal)!;
+    const { svc, servers } = make({
+      snapshot: SNAPSHOT,
+      links: { [remote.id]: { teamId: "t1", serverId: "p1" } },
+      known: [{ id: "p1", teamId: "t1", status: ServerStatus.PENDING }],
+    });
+    servers.getInstall.mockRejectedValueOnce(new ForbiddenException("no"));
+    const view = await svc.checklist("u", "s1");
+    expect(view.rows.find((r) => r.coolifyServerId === remote.id)?.state).toBe("no_access");
   });
 });

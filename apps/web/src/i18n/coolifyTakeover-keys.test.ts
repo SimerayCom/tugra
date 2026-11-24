@@ -25,7 +25,7 @@ describe("coolifyTakeover i18n coverage", () => {
 
   it("covers every value behind the dynamic keys", () => {
     const names = (prefix: string, list: string[]) => list.filter((n) => typeof lookup(coolify, `${prefix}.${n}`) !== "string");
-    expect(names("checklist.state", ["this_server", "already_added", "waiting", "expired", "not_generated"])).toEqual([]);
+    expect(names("checklist.state", ["this_server", "already_added", "waiting", "expired", "no_access", "not_generated"])).toEqual([]);
     expect(names("team.channel", ["email", "discord", "telegram", "slack", "pushover", "webhook"])).toEqual([]);
     expect(names("variable", ["team", "project", "environment"])).toEqual([]);
     expect(names("item", ["application", "database", "service"])).toEqual([]);

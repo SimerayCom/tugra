@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useT } from "../i18n/provider";
 import { relativeTime } from "../lib/fleet";
-import { coolifyVersion, groupByTeam, importHref, statusTone, type CoolifyInventoryView, type InvServer, type InventoryItem, type TeamGroup } from "../lib/coolify-takeover";
+import { coolifyVersion, groupByTeam, coolifyAddress, rememberImportAddress, statusTone, type CoolifyInventoryView, type InvServer, type InventoryItem, type TeamGroup } from "../lib/coolify-takeover";
 import { Badge, Card } from "./ui";
 
 const KIND = { application: "coolifyTakeover.item.application", database: "coolifyTakeover.item.database", service: "coolifyTakeover.item.service" } as const;
@@ -38,7 +38,7 @@ function Server({ s }: { s: InvServer }) {
   );
 }
 
-function Item({ item, href }: { item: InventoryItem; href: string }) {
+function Item({ item, address }: { item: InventoryItem; address: string | null }) {
   const t = useT();
   return (
     <li style={row}>
@@ -50,7 +50,7 @@ function Item({ item, href }: { item: InventoryItem; href: string }) {
         {item.server ? ` · ${t("coolifyTakeover.item.on", { server: item.server })}` : ""}
         {item.environment ? ` · ${item.environment}` : ""}
       </span>
-      <Link href={href} className="tg-link" aria-label={t("coolifyTakeover.item.moveLabel", { name: item.name })} style={{ fontSize: 13, minHeight: 44, display: "inline-flex", alignItems: "center", padding: "0 8px" }}>
+      <Link href="/import" onClick={() => rememberImportAddress(address)} className="tg-link" aria-label={t("coolifyTakeover.item.moveLabel", { name: item.name })} style={{ fontSize: 13, minHeight: 44, display: "inline-flex", alignItems: "center", padding: "0 8px" }}>
         {t("coolifyTakeover.item.move")}
       </Link>
     </li>
@@ -69,7 +69,7 @@ function Section({ title, count, children }: { title: string; count: number; chi
   );
 }
 
-function Team({ g, open, href }: { g: TeamGroup; open: boolean; href: string }) {
+function Team({ g, open, address }: { g: TeamGroup; open: boolean; address: string | null }) {
   const t = useT();
   const items = g.projects.reduce((n, p) => n + p.items.length, 0);
   const name = g.team?.name ?? t("coolifyTakeover.team.noTeam");
@@ -104,7 +104,7 @@ function Team({ g, open, href }: { g: TeamGroup; open: boolean; href: string }) 
           {g.projects.map((p) => (
             <Section key={p.id || "none"} title={p.name ?? t("coolifyTakeover.team.noProject")} count={p.items.length}>
               {p.items.map((i) => (
-                <Item key={i.key} item={i} href={href} />
+                <Item key={i.key} item={i} address={address} />
               ))}
             </Section>
           ))}
@@ -186,7 +186,7 @@ export function CoolifyInventoryBody({ inv }: { inv: CoolifyInventoryView }) {
         {data.unavailable.length > 0 && <p style={{ margin: "6px 0 0", fontSize: 12, color: "var(--c-tx3)" }}>{t("coolifyTakeover.unavailable", { names: data.unavailable.join(", ") })}</p>}
       </Card>
       {groups.map((g, i) => (
-        <Team key={g.id || "none"} g={g} open={i === 0} href={importHref(data.instance.fqdn)} />
+        <Team key={g.id || "none"} g={g} open={i === 0} address={coolifyAddress(data.instance.fqdn)} />
       ))}
       {inv.readAt && <p style={{ margin: 0, fontSize: 12, color: "var(--c-tx3)" }}>{t("coolifyTakeover.read.readAt", { when: relativeTime(inv.readAt) })}</p>}
     </div>

@@ -12,6 +12,7 @@ import { CopyBtn } from "./copy-row";
 import { ImportReviewStep } from "./import-review-step";
 import { ImportScopeStep } from "./import-scope-step";
 import { scopedPlan, scopeServiceSkips, type ImportScope, type ScopeSelection } from "../lib/import-scope";
+import { IMPORT_PREFILL_KEY } from "../lib/coolify-takeover";
 import { CutoverPanel } from "./cutover-panel";
 import { planSummary, itemsByKind, riskTone, opProgress, coverageApps, coverageCounts, hasDeferredCoverage, reasonText, ackableItems, buildAcks, runnableAfterAcks, serviceChoicesPayload, volumeCopyCandidates, selectedDbModes, vxCommandsWithFlags } from "../lib/import";
 import { ImportVolumeTransfers } from "./import-volume-transfers";
@@ -88,9 +89,15 @@ export function ImportWizard() {
     const params = new URLSearchParams(window.location.search);
     const fromUrl = params.get("op");
     if (fromUrl) setOpId(fromUrl);
-    // "Move" on the Read-this-Coolify inventory arrives with the Coolify address; the token step still asks for the token.
-    const address = params.get("url");
-    if (address && /^https?:\/\/\S+$/i.test(address)) setBaseUrl((cur) => cur || address);
+    // "Move" on the Read-this-Coolify inventory hands the Coolify address over through same-tab storage (never the URL, so a
+    // crafted link cannot prefill an attacker's host); the token step still asks for the token.
+    try {
+      const address = window.sessionStorage.getItem(IMPORT_PREFILL_KEY);
+      window.sessionStorage.removeItem(IMPORT_PREFILL_KEY);
+      if (address && /^https?:\/\/\S+$/i.test(address)) setBaseUrl((cur) => cur || address);
+    } catch {
+      /* storage unavailable */
+    }
   }, []);
   useEffect(() => {
     const url = new URL(window.location.href);

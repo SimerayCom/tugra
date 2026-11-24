@@ -156,7 +156,7 @@ export interface CoolifyInventoryView {
 
 export type CoolifyDetect = { found: boolean; image: string | null; reason?: "no_docker" | "db_stopped" };
 
-export type ChecklistState = "this_server" | "already_added" | "waiting" | "expired" | "not_generated";
+export type ChecklistState = "this_server" | "already_added" | "waiting" | "expired" | "no_access" | "not_generated";
 export interface ChecklistRow {
   coolifyServerId: string;
   name: string;
@@ -184,10 +184,22 @@ export function coolifyVersion(image: string | null | undefined): string | null 
   return tag || null;
 }
 
-/** Where the existing, API-based import starts. The Coolify address is carried over so the first field is already filled. */
-export function importHref(fqdn: string | null | undefined): string {
+/** Same-tab handoff key: the inventory page leaves the Coolify address here, the import wizard reads it once. Never a URL parameter. */
+export const IMPORT_PREFILL_KEY = "tugra.import.prefillUrl";
+
+/** The Coolify address of this instance when it is a plain http(s) address, else null. */
+export function coolifyAddress(fqdn: string | null | undefined): string | null {
   const first = (fqdn ?? "").split(",")[0].trim();
-  return /^https?:\/\/[^\s]+$/i.test(first) ? `/import?url=${encodeURIComponent(first)}` : "/import";
+  return /^https?:\/\/[^\s]+$/i.test(first) ? first : null;
+}
+
+/** Remember the address for the import wizard (same origin, same tab). Best effort. */
+export function rememberImportAddress(address: string | null): void {
+  try {
+    if (address) window.sessionStorage.setItem(IMPORT_PREFILL_KEY, address);
+  } catch {
+    /* storage unavailable: the first field simply starts empty */
+  }
 }
 
 export type ItemKind = "application" | "database" | "service";

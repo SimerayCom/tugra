@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { allCommands, coolifyVersion, groupByTeam, importHref, statusTone, type ChecklistRow, type CoolifyInventoryData } from "./coolify-takeover";
+import { allCommands, coolifyVersion, groupByTeam, coolifyAddress, statusTone, type ChecklistRow, type CoolifyInventoryData } from "./coolify-takeover";
 
 const DATA: CoolifyInventoryData = {
   v: 1,
@@ -54,11 +54,11 @@ describe("helpers", () => {
     expect(coolifyVersion(null)).toBeNull();
   });
 
-  it("carries the Coolify address into the import, only when it is a plain http(s) address", () => {
-    expect(importHref("https://coolify.example.com")).toBe("/import?url=https%3A%2F%2Fcoolify.example.com");
-    expect(importHref("https://a.example.com, https://b.example.com")).toBe("/import?url=https%3A%2F%2Fa.example.com");
-    expect(importHref("javascript:alert(1)")).toBe("/import");
-    expect(importHref(null)).toBe("/import");
+  it("carries the Coolify address only when it is a plain http(s) address", () => {
+    expect(coolifyAddress("https://coolify.example.com")).toBe("https://coolify.example.com");
+    expect(coolifyAddress("https://a.example.com, https://b.example.com")).toBe("https://a.example.com");
+    expect(coolifyAddress("javascript:alert(1)")).toBeNull();
+    expect(coolifyAddress(null)).toBeNull();
   });
 
   it("maps Coolify status strings to a tone", () => {

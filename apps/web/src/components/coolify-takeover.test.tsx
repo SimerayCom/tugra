@@ -109,7 +109,9 @@ describe("CoolifyTakeover", () => {
     await screen.findByText("Acme Coolify");
     expect(screen.getByText("Read-only copy")).toBeTruthy();
     const move = screen.getByRole("link", { name: "Move web" }) as HTMLAnchorElement;
-    expect(move.getAttribute("href")).toBe("/import?url=https%3A%2F%2Fcoolify.example.com");
+    expect(move.getAttribute("href")).toBe("/import");
+    fireEvent.click(move);
+    expect(window.sessionStorage.getItem("tugra.import.prefillUrl")).toBe("https://coolify.example.com");
   });
 
   it("lists the Coolify servers as a checklist: team per server, then copyable commands; nothing is run", async () => {
