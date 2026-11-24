@@ -58,7 +58,7 @@
   "finishLater": "Finish setup later",
   "backToSummary": "Back to summary",
   "more": "More",
-  "basicsMore": "The public URL is where servers and browsers reach this hub, for example https://hub.example.com. The Let's Encrypt email receives certificate expiry notices. Both were filled in from your install when we could; check them before you continue.",
+  "basicsMore": "The public URL is where servers and browsers reach this hub, for example https://hub.example.com. The Let's Encrypt email gets certificate expiry notices. Both are filled in from your install when possible.",
   "teamName": "Team or company name",
   "teamNameHint": "Your teammates will see this.",
   "teamNamePlaceholder": "Acme Inc.",

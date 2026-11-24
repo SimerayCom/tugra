@@ -12,6 +12,7 @@ import { ListCard, ListRow } from "../../../components/list";
 import { PageTitle } from "../../../components/page-header";
 import { SkeletonTable } from "../../../components/skeleton";
 import { statusLabel } from "../../../lib/status";
+import { HelpLink } from "../../../components/help-link";
 import { ErrorState } from "../../../components/error-state";
 
 function sslColor(state: DomainView["ssl"]["state"], https = true): string {
@@ -31,7 +32,7 @@ export default function DomainsPage() {
 
   return (
     <div style={{ padding: "var(--page-pad)" }}>
-      <PageTitle title={t("domains.title")} subtitle={t("domains.subtitle")} />
+      <PageTitle title={t("domains.title")} subtitle={t("domains.subtitle")} actions={<HelpLink guide="domains-and-cloudflare" />} />
 
       {isError && domains.length === 0 ? (
         <ErrorState onRetry={() => refetch()} />

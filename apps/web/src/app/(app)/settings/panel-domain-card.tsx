@@ -8,6 +8,7 @@ import { useT } from "../../../i18n/provider";
 import { useToast } from "../../../components/toast";
 import { Btn, Card } from "../../../components/ui";
 import { Field, TextInput } from "../../../components/form";
+import { HelpLink, MoreInfo } from "../../../components/help-link";
 import type { AgentMoveStatus, PanelDomainStatus } from "../../../lib/types";
 
 // A bare hostname (no scheme, port, path, wildcard or IP literal) — the same shape the hub validates.
@@ -112,7 +113,10 @@ export function PanelDomainCard() {
 
   return (
     <Card style={{ padding: 18 }}>
-      <div style={{ fontWeight: 600 }}>{t("settings.panelDomain")}</div>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+        <div style={{ fontWeight: 600 }}>{t("settings.panelDomain")}</div>
+        <HelpLink guide="domains-and-cloudflare" />
+      </div>
       <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "6px 0 12px", lineHeight: 1.5 }}>{t("settings.panelDomain_desc")}</p>
       {modeText && <div style={{ fontSize: 13, color: "var(--c-tx)", marginBottom: 4 }}>{modeText}</div>}
 
@@ -189,6 +193,7 @@ export function PanelDomainCard() {
           >
             <TextInput id="panel-domain" value={domain} onChange={(e) => setDomain(e.target.value)} placeholder={t("settings.panelDomain_placeholder")} autoComplete="off" spellCheck={false} />
           </Field>
+          <MoreInfo style={{ margin: "-6px 0 0" }}>{t("settings.panelDomain_cloudflare")}</MoreInfo>
           <Field label={t("settings.panelDomain_emailLabel")} htmlFor="panel-domain-email" hint={t("settings.panelDomain_emailHint")}>
             <TextInput id="panel-domain-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="off" />
           </Field>

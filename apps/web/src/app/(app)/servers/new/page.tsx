@@ -11,6 +11,8 @@ import { BackLink, Btn } from "../../../../components/ui";
 import { Field, Select, TextInput, fieldStyle } from "../../../../components/form";
 import { CopyBtn } from "../../../../components/copy-row";
 import { InstallTransportNote } from "../../../../components/install-transport-note";
+import { HelpLink } from "../../../../components/help-link";
+import { ServerAccessHelp } from "../../../../components/server-access-help";
 import type { ServerView } from "../../../../lib/types";
 import { HETZNER_LOCATIONS, HETZNER_SERVER_TYPES } from "../../../../lib/hetzner-catalog";
 
@@ -22,7 +24,10 @@ export default function NewServerPage() {
   return (
     <div style={{ padding: "var(--page-pad)", maxWidth: wide ? 640 : 480 }}>
       <BackLink href="/servers" label={t("common.backTo", { target: t("nav.servers") })} />
-      <h1 style={{ fontSize: 22, fontWeight: 700, margin: "0 0 16px" }}>{t("servers.newTitle")}</h1>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, margin: "0 0 16px" }}>
+        <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0 }}>{t("servers.newTitle")}</h1>
+        <HelpLink guide="add-a-server" />
+      </div>
 
       <div role="tablist" style={{ display: "flex", gap: 6, marginBottom: 18, flexWrap: "wrap" }}>
         <TabBtn active={mode === "manual"} onClick={() => setMode("manual")}>{t("servers.manualTab")}</TabBtn>
@@ -83,6 +88,7 @@ function ManualForm() {
       </Field>
       {err && <div style={{ color: "var(--c-r)", fontSize: 13 }}>{err}</div>}
       <div><Btn type="submit" disabled={busy}>{busy ? "…" : t("servers.create")}</Btn></div>
+      <ServerAccessHelp />
     </form>
   );
 }

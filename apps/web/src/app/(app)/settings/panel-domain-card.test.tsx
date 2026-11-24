@@ -99,6 +99,17 @@ describe("PanelDomainCard", () => {
     expect(screen.queryByLabelText("Domain")).toBeNull();
   });
 
+  it("has a '?' to the Domains and Cloudflare guide, a one-line description and the Cloudflare note behind More", async () => {
+    owner();
+    vi.spyOn(api, "getPanelDomain").mockResolvedValue(IP_MODE);
+    wrap();
+    expect((await screen.findByRole("link", { name: "Guide: Domains and Cloudflare" })).getAttribute("href")).toBe("https://tugra.io/docs/domains-and-cloudflare");
+    expect(settings.panelDomain_desc.split(".").filter(Boolean).length).toBeLessThanOrEqual(2);
+    const more = screen.getByText("More").closest("details") as HTMLDetailsElement;
+    expect(more.open).toBe(false);
+    expect(more.textContent).toMatch(/Behind Cloudflare/);
+  });
+
   it("a failed certificate shows the ROLLBACK message, the Cloudflare hint (Full / Always Use HTTPS) and the proxy log; Try again is offered", async () => {
     owner();
     vi.spyOn(api, "getPanelDomain").mockResolvedValue({
@@ -108,7 +119,7 @@ describe("PanelDomainCard", () => {
     wrap();
     expect(await screen.findByText(/The change did not go through/)).toBeTruthy();
     expect(screen.getByText(/Your previous address still works and nothing else was touched/)).toBeTruthy();
-    expect(screen.getByText(/SSL\/TLS mode is Full/)).toBeTruthy();
+    expect(screen.getByText(/SSL\/TLS mode must be Full/)).toBeTruthy();
     expect(screen.getByText(/Always Use HTTPS/)).toBeTruthy();
     expect(screen.getByText(/Unable to obtain ACME certificate/)).toBeTruthy();
     expect(screen.getByRole("button", { name: "Try again" })).toBeTruthy();

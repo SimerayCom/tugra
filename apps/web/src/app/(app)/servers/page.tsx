@@ -20,6 +20,7 @@ import type { ServerStatus } from "../../../lib/types";
 import { SkeletonTable } from "../../../components/skeleton";
 import { useToast } from "../../../components/toast";
 import type { ServerView } from "../../../lib/types";
+import { HelpLink } from "../../../components/help-link";
 
 export default function ServersPage() {
   // useSearchParams needs a Suspense boundary for the static prerender.
@@ -71,9 +72,12 @@ function ServersPageInner() {
     <div style={{ padding: "var(--page-pad)" }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 18 }}>
         <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0 }}>{t("servers.title")}</h1>
-        <Link href="/servers/new">
-          <Btn>{t("servers.add")}</Btn>
-        </Link>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <Link href="/servers/new">
+            <Btn>{t("servers.add")}</Btn>
+          </Link>
+          <HelpLink guide="add-a-server" />
+        </div>
       </div>
       <AgentFleetNotice />
       {isLoading && <SkeletonTable rows={6} />}

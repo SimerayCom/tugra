@@ -33,7 +33,7 @@ describe("HubBackupCard", () => {
   it("shows the always-encrypted row and the reworded .env warning", async () => {
     show();
     expect(await screen.findByText(/Always encrypted with a key derived from your \.env/)).toBeTruthy();
-    expect(screen.getByText(/Destination encryption keys are inside this backup, protected by your \.env key\./)).toBeTruthy();
+    expect(screen.getByText(/Destination encryption keys inside it are protected by your \.env key\./)).toBeTruthy();
   });
 
   it("saves cron + retention days + max size", async () => {

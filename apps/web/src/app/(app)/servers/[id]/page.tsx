@@ -50,6 +50,8 @@ import { ipSourceKey } from "../../../../lib/server-addresses";
 import { serverDisplayName } from "../../../../lib/server-name";
 import { useStickToBottom } from "../../../../hooks/useStickToBottom";
 import { ScopedTeamBadge, useTeamContext } from "../../../../components/team-scope";
+import { HelpLink } from "../../../../components/help-link";
+import { ServerAccessHelp } from "../../../../components/server-access-help";
 
 const serverColor = (s: ServerStatus) =>
   s === "ONLINE" ? "var(--c-g)" : s === "PENDING" ? "var(--c-am)" : "var(--c-r)";
@@ -413,7 +415,7 @@ function ServerInstallCard({ id }: { id: string }) {
   const phase = installPhase(cmd, waitedMs);
 
   return (
-    <SectionCard title={t("servers.installTitle")} desc={t("servers.installDesc")}>
+    <SectionCard title={t("servers.installTitle")} desc={t("servers.installDesc")} right={<HelpLink guide="add-a-server" />}>
 
       {phase === "expired" ? (
         <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
@@ -427,6 +429,7 @@ function ServerInstallCard({ id }: { id: string }) {
           <pre className="mono" style={{ background: "var(--c-el)", padding: 12, borderRadius: "var(--r1)", fontSize: 12, overflowX: "auto", margin: 0 }}>{cmd}</pre>
           <div style={{ marginTop: 10 }}><CopyBtn text={cmd ?? ""} label={t("servers.copy")} /></div>
           <InstallTransportNote command={cmd} />
+          <ServerAccessHelp />
 
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 16 }}>
             <Spinner /><span style={{ color: "var(--c-tx3)", fontSize: 13 }}>{t("servers.waiting")}</span>

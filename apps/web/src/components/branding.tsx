@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import type { Branding } from "../lib/types";
+import { SITE_URL } from "../lib/help-links";
 
 const DEFAULTS: Branding = { name: null, logoUrl: null, faviconUrl: null, accentColor: null, hidePoweredBy: false };
 
@@ -90,7 +91,7 @@ export function PoweredBy({ style }: { style?: React.CSSProperties }) {
   return (
     <div style={{ textAlign: "center", fontSize: 11, color: "var(--c-tx3)", marginTop: 18, ...style }}>
       Powered by{" "}
-      <a href="https://github.com/SimerayCom/tugra" target="_blank" rel="noreferrer" style={{ color: "var(--c-tx3)" }}>
+      <a href={SITE_URL} target="_blank" rel="noreferrer" style={{ color: "var(--c-tx3)" }}>
         Tugra
       </a>
     </div>

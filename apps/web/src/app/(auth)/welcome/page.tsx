@@ -15,6 +15,7 @@ import type { MailProvider } from "../../../lib/types";
 import { CenteredSpinner } from "../../../components/shell";
 import { installPhase } from "../../../lib/server-install";
 import { InstallTransportNote } from "../../../components/install-transport-note";
+import { HelpLink } from "../../../components/help-link";
 import { resolveStep, isSkippable, nextStep, prevStep, stepNumber, TOTAL_STEPS, type Step } from "../../../lib/onboarding-wizard";
 
 type Tr = ReturnType<typeof useT>;
@@ -104,9 +105,12 @@ function Wizard() {
         </div>
       )}
 
-      <h1 ref={headingRef} tabIndex={-1} style={{ fontSize: 18, fontWeight: 700, margin: "0 0 6px", outline: "none" }}>
-        {t(`onboarding.${headingKey(step)}`)}
-      </h1>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, margin: "0 0 6px" }}>
+        <h1 ref={headingRef} tabIndex={-1} style={{ fontSize: 18, fontWeight: 700, margin: 0, outline: "none" }}>
+          {t(`onboarding.${headingKey(step)}`)}
+        </h1>
+        <HelpLink guide={step === "add-first-server" ? "add-a-server" : "first-setup"} />
+      </div>
 
       {step === "welcome" && <WelcomeStep t={t} onStart={() => go("create-admin")} />}
       {step === "create-admin" && <CreateAdminStep t={t} onDone={() => go("choose-mode")} />}

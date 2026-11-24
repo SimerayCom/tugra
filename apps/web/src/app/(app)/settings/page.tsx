@@ -34,6 +34,7 @@ import { Tabs } from "../../../components/tabs-nav";
 import { useUiModeSwitch } from "../../../hooks/useUiModeSwitch";
 import { ConfigLayout } from "../../../components/config-layout";
 import { useTabState } from "../../../hooks/useTabState";
+import { HelpLink } from "../../../components/help-link";
 
 /** A settings tab panel: an optional hint + a responsive card grid. The tab strip supplies the heading, so
  *  the panel carries no title of its own. The grid is 1 column on phones and flows to 2+ columns on wider
@@ -117,7 +118,10 @@ export default function SettingsPage() {
 
   return (
     <div style={{ padding: "var(--page-pad)", maxWidth: 1040, margin: "0 auto" }}>
-      <h1 style={{ fontSize: 24, fontWeight: 700, margin: "0 0 20px" }}>{t("settings.title")}</h1>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, margin: "0 0 20px" }}>
+        <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0 }}>{t("settings.title")}</h1>
+        <HelpLink guide="first-setup" />
+      </div>
 
       <Tabs tabs={tabs} active={tab} onChange={setTab} />
 

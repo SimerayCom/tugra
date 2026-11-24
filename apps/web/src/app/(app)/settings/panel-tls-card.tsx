@@ -6,6 +6,7 @@ import { useAuth } from "../../../lib/auth";
 import { useT } from "../../../i18n/provider";
 import { useToast } from "../../../components/toast";
 import { Btn, Card } from "../../../components/ui";
+import { HelpLink } from "../../../components/help-link";
 
 /**
  * Owner-only control-panel HTTPS (DİLİM 1). The panel domain is bound to the install-time origin
@@ -53,7 +54,10 @@ export function PanelTlsCard() {
 
   return (
     <Card style={{ padding: 18 }}>
-      <div style={{ fontWeight: 600 }}>{t("settings.panelTls")}</div>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+        <div style={{ fontWeight: 600 }}>{t("settings.panelTls")}</div>
+        <HelpLink guide="domains-and-cloudflare" />
+      </div>
       <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "6px 0 14px", lineHeight: 1.5 }}>{t("settings.panelTlsDesc")}</p>
 
       {data && !data.enabled && (

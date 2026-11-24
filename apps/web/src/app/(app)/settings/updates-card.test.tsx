@@ -108,7 +108,7 @@ describe("UpdatesCard", () => {
       expect(screen.queryByTestId("updater-notice")).toBeNull();
     });
 
-    it("a helper that lags the hub says so, and that the hub brings it forward by itself", async () => {
+    it("a helper that lags the hub says so, and that the hub updates it by itself", async () => {
       h.user = { isInstanceOwner: true };
       withUpdater({ version: "0.1.0-beta.12", behind: true, state: "behind", checkedAt: new Date().toISOString() });
       wrap();
@@ -117,7 +117,7 @@ describe("UpdatesCard", () => {
       expect(row.textContent).toContain("Behind");
       const note = screen.getByTestId("updater-notice");
       expect(note.textContent).toContain("runs 0.1.0-beta.12");
-      expect(note.textContent).toContain("brings it forward by itself");
+      expect(note.textContent).toContain("updates it by itself");
     });
 
     it("while the refresh is scheduled it says Refreshing; when it did not converge it points at the installer", async () => {
@@ -131,7 +131,7 @@ describe("UpdatesCard", () => {
       withUpdater({ version: "0.1.0-beta.12", behind: true, state: "failed", checkedAt: null });
       wrap();
       await screen.findByTestId("updater-status");
-      expect(screen.getByTestId("updater-notice").textContent).toContain("run scripts/install.sh on the server once");
+      expect(screen.getByTestId("updater-notice").textContent).toContain("Run scripts/install.sh on the server once");
     });
   });
 

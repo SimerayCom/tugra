@@ -92,7 +92,7 @@ describe("sidebar help links", () => {
     const whatsNew = screen.getByRole("link", { name: "What's new" }) as HTMLAnchorElement;
     expect(whatsNew.getAttribute("href")).toBe("https://github.com/SimerayCom/tugra/releases/tag/v0.1.0-beta.15");
     const docs = screen.getByRole("link", { name: "Documentation" }) as HTMLAnchorElement;
-    expect(docs.getAttribute("href")).toBe("https://github.com/SimerayCom/tugra/tree/main/docs");
+    expect(docs.getAttribute("href")).toBe("https://tugra.io/docs");
     const sponsor = screen.getByRole("link", { name: "Sponsor" }) as HTMLAnchorElement;
     expect(sponsor.getAttribute("href")).toBe("https://github.com/sponsors/mrcandev");
     for (const a of [whatsNew, docs, sponsor]) {
