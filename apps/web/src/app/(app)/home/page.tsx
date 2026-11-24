@@ -7,6 +7,7 @@ import { useQuery } from "@tanstack/react-query";
 import { ArrowLeft, ArrowRight, Boxes, ExternalLink, MoreVertical, SlidersHorizontal, Star } from "lucide-react";
 import { api, appIconUrl } from "../../../lib/api";
 import { useAuth } from "../../../lib/auth";
+import { uiMode } from "../../../lib/ui-mode";
 import { launcherTiles, type LauncherTile } from "../../../lib/launcher";
 import { loadPins, savePins, togglePin, filterTiles, sortByPins } from "../../../lib/launcher-prefs";
 import { appColor } from "../../../lib/apps";
@@ -109,7 +110,7 @@ export default function HomePage() {
       : groupMode === "folders"
         ? groupTilesByFolder(visible, layout.folders).map((g) => ({
             key: g.key,
-            title: g.folder ? g.folder.name : layout.folders.length > 0 ? t("home.folderRest") : null,
+            title: g.folder ? g.folder.name.trim() || t("home.folderNameDefault", { n: layout.folders.findIndex((f) => f.id === g.folder!.id) + 1 }) : layout.folders.length > 0 ? t("home.folderRest") : null,
             empty: g.folder && editing ? t("home.folderEmpty") : undefined,
             tiles: g.tiles,
           }))
@@ -122,7 +123,11 @@ export default function HomePage() {
     const n = list[list.findIndex((x) => x.id === id) + delta];
     if (n) reorder(id, n.id);
   };
-  const showHint = suggestFleet(scale) && !layout.fleetHintDismissed;
+  // Only a Home-mode user is told to move to Fleet; a Fleet user who lands here by URL is already there.
+  const showHint = uiMode(user?.uiMode) === "home" && suggestFleet(scale) && !layout.fleetHintDismissed;
+  const goFleet = async () => {
+    if (await switcher.switchTo("fleet")) router.push("/dashboard");
+  };
 
   const renderTile = (tile: LauncherTile, list: LauncherTile[]) => {
     const node = (
@@ -183,7 +188,7 @@ export default function HomePage() {
           </div>
           <div style={{ display: "flex", gap: 8 }}>
             <Btn variant="ghost" onClick={() => patchLayout({ fleetHintDismissed: true })}>{t("home.fleetHintDismiss")}</Btn>
-            <Btn onClick={() => void switcher.switchTo("fleet")} disabled={switcher.pending}>{t("home.fleetHintCta")}</Btn>
+            <Btn onClick={() => void goFleet()} disabled={switcher.pending}>{t("home.fleetHintCta")}</Btn>
           </div>
         </Card>
       )}

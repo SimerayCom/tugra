@@ -8,9 +8,10 @@ import { ToastProvider } from "../../../components/toast";
 import { api } from "../../../lib/api";
 
 const nav = vi.hoisted(() => ({ replace: vi.fn(), push: vi.fn() }));
+const auth = vi.hoisted(() => ({ mode: "home" as "home" | "fleet" }));
 vi.mock("next/navigation", () => ({ useRouter: () => nav, usePathname: () => "/home", useSearchParams: () => new URLSearchParams() }));
 vi.mock("next/link", () => ({ default: ({ href, children, ...rest }: { href: string; children: React.ReactNode }) => <a href={href} {...rest}>{children}</a> }));
-vi.mock("../../../lib/auth", () => ({ useAuth: () => ({ user: { uiMode: "home" }, reload: vi.fn(async () => {}) }) }));
+vi.mock("../../../lib/auth", () => ({ useAuth: () => ({ user: { uiMode: auth.mode }, reload: vi.fn(async () => {}) }) }));
 // Gauges and the tunnel card do their own fetching; stub them so the page logic is what's under test.
 vi.mock("../../../components/live-gauges", () => ({ LiveGauges: ({ id }: { id: string }) => <div data-testid="gauges">{id}</div> }));
 vi.mock("../../../components/remote-access-card", () => ({ RemoteAccessCard: ({ serverId }: { serverId: string }) => <div data-testid="remote">{serverId}</div> }));
@@ -18,6 +19,8 @@ vi.mock("../../../components/remote-access-card", () => ({ RemoteAccessCard: ({ 
 import HomePage from "./page";
 
 afterEach(() => {
+  auth.mode = "home";
+  nav.push.mockClear();
   cleanup();
   localStorage.clear();
   vi.restoreAllMocks();
@@ -125,6 +128,15 @@ describe("Home page scenarios", () => {
     await settled(0);
     fireEvent.click(screen.getByText("Switch to Fleet"));
     await waitFor(() => expect(update).toHaveBeenCalledWith({ uiMode: "fleet" }));
+    // ...and takes the user to the Fleet command center instead of leaving them on the launcher.
+    await waitFor(() => expect(nav.push).toHaveBeenCalledWith("/dashboard"));
+  });
+
+  it("a Fleet-mode user who reaches Home by URL is not told to switch to Fleet", async () => {
+    auth.mode = "fleet";
+    setup({ servers: 5, teams: 1, apps: 0 });
+    await settled(0);
+    expect(screen.queryByText("Fleet mode suits you better")).toBeNull();
   });
 
   it("widgets reflect the picked server, backups and servers", async () => {
@@ -187,5 +199,12 @@ describe("Home customization", () => {
     setup({ servers: 1, teams: 1, apps: 3 });
     await settled(3);
     await waitFor(() => expect(screen.getAllByText(/^app-\d+$/).map((n) => n.textContent)).toEqual(["app-2", "app-0", "app-1"]));
+  });
+
+  it("a folder with a blank name still gets a heading", async () => {
+    localStorage.setItem("tugra.home.layout", JSON.stringify({ folders: [{ id: "f1", name: "  ", tileIds: ["a0"] }] }));
+    setup({ servers: 1, teams: 1, apps: 2 });
+    await settled(2);
+    expect(await screen.findByRole("heading", { level: 2, name: "Folder 1" })).toBeTruthy();
   });
 });

@@ -61,6 +61,22 @@ describe("useUiModeSwitch", () => {
     await waitFor(() => expect(update).toHaveBeenLastCalledWith({ uiMode: "fleet" }));
   });
 
+  it("asks with a generic explanation while the counts cannot be read", async () => {
+    vi.spyOn(api, "listServers").mockRejectedValue(new Error("boom"));
+    vi.spyOn(api, "listTeams").mockResolvedValue([] as never);
+    vi.spyOn(api, "listApps").mockResolvedValue([]);
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <I18nProvider><ConfirmProvider><ToastProvider><Harness to="home" /></ToastProvider></ConfirmProvider></I18nProvider>
+      </QueryClientProvider>,
+    );
+    await loaded();
+    fireEvent.click(screen.getByText("switch"));
+    expect(await screen.findByText("Switch to Home mode?")).toBeTruthy();
+    expect(update).not.toHaveBeenCalled();
+  });
+
   it("cancelling the confirmation leaves the mode untouched", async () => {
     mount("home", [srv(1), srv(2)], [{ id: "t0", name: "Acme" }]);
     await loaded();

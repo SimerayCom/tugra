@@ -18,9 +18,14 @@ export function useUiModeSwitch() {
   const { user, reload } = useAuth();
   const risky = useRiskySetting();
   const current = uiMode(user?.uiMode);
-  const { data: servers = [] } = useQuery({ queryKey: ["servers"], queryFn: () => api.listServers() });
-  const { data: teams = [] } = useQuery({ queryKey: ["teams"], queryFn: () => api.listTeams() });
-  const { data: apps = [] } = useQuery({ queryKey: ["apps"], queryFn: () => api.listApps() });
+  const serversQ = useQuery({ queryKey: ["servers"], queryFn: () => api.listServers() });
+  const teamsQ = useQuery({ queryKey: ["teams"], queryFn: () => api.listTeams() });
+  const appsQ = useQuery({ queryKey: ["apps"], queryFn: () => api.listApps() });
+  const servers = serversQ.data ?? [];
+  const teams = teamsQ.data ?? [];
+  const apps = appsQ.data ?? [];
+  // Until the counts are in (or if they could not be read) we cannot tell a small install from a big one.
+  const countsKnown = serversQ.isSuccess && teamsQ.isSuccess && appsQ.isSuccess;
   const [pending, setPending] = useState(false);
 
   const set = async (mode: UiMode) => {
@@ -32,11 +37,13 @@ export function useUiModeSwitch() {
     if (to === current || pending) return false;
     const scale = homeScale(servers, teams, apps);
     const impact = modeSwitchImpact(to, scale);
+    // Unknown counts: ask anyway, with a generic explanation, rather than silently hiding a big fleet.
+    const unknown = to === "home" && !countsKnown;
     setPending(true);
     try {
       return await risky({
-        risky: impact.risky,
-        confirm: { title: t("settings.uiModeConfirmTitle"), body: modeSwitchBody(t, scale), confirmLabel: t("settings.uiModeConfirmAction") },
+        risky: impact.risky || unknown,
+        confirm: { title: t("settings.uiModeConfirmTitle"), body: unknown ? t("settings.uiModeConfirmBodyUnknown") : modeSwitchBody(t, scale), confirmLabel: t("settings.uiModeConfirmAction") },
         apply: () => set(to),
         undo: () => set(current),
         doneMessage: t("settings.uiModeSaved"),

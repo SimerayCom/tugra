@@ -494,6 +494,7 @@
   "uiModeConfirmTitle": "Switch to Home mode?",
   "uiModeConfirmBodyServers": "You have {servers}. Home mode shows only this machine and hides the Servers page.",
   "uiModeConfirmBodyTeams": "You have {servers} and {teams}. Home mode shows only this machine and hides the Servers page and team views.",
+  "uiModeConfirmBodyUnknown": "Home mode shows only this machine and hides the Servers page and team views.",
   "uiModeConfirmAction": "Switch to Home",
   "uiModeUndone": "Back to {mode} mode"
 }
