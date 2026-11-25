@@ -23,7 +23,7 @@ FROM docker:27-cli AS dockercli
 # platform once for every target arch. Pin DBIP_COUNTRY_URL to a monthly file for a reproducible build; bump
 # it to refresh. Best-effort: if the download, gunzip or size sanity check fails the build still succeeds with a
 # warning and an empty /out (the agent then simply reports no country). DB-IP Lite is CC-BY-4.0, see NOTICE.
-FROM --platform=$BUILDPLATFORM alpine:3.20 AS geoip
+FROM --platform=$BUILDPLATFORM alpine:3.24 AS geoip
 ARG DBIP_COUNTRY_URL=https://download.db-ip.com/free/dbip-country-lite-2026-11.mmdb.gz
 # GEOIP_REQUIRED=1 (set by the release pipeline) turns a failed bake into a hard build error, so a signed
 # release image is never shipped silently without geo. Default 0 keeps local/dev builds best-effort.
