@@ -29,11 +29,12 @@ const subHead: CSSProperties = { margin: "16px 0 4px", fontSize: 11, fontWeight:
 const nameStyle: CSSProperties = { fontWeight: 600, minWidth: 0, overflowWrap: "anywhere" };
 const dim: CSSProperties = { color: "var(--c-tx3)", minWidth: 0, overflowWrap: "anywhere" };
 
-/** A software logo: the vendored template logo when the scan matched one, an initials tile otherwise. Decorative (the label is next to it). */
+/** A software logo: the vendored logo (by the stored logo name, else the software id), an initials tile otherwise. Decorative (the label is next to it). */
 function SoftwareIcon({ s, size = 20 }: { s: Pick<ScanSoftware, "id" | "label" | "logo">; size?: number }) {
   return (
     <span aria-hidden style={{ display: "inline-flex", flexShrink: 0 }}>
-      <TemplateLogo logo={s.logo ?? undefined} slug={s.logo ?? s.id} name={s.label} size={size} monogram={!s.logo} />
+      {/* A report stored before a logo was vendored has logo=null: still try the software id's own file, then fall back. */}
+      <TemplateLogo logo={s.logo ?? s.id} slug={s.logo ?? s.id} name={s.label} size={size} />
     </span>
   );
 }
