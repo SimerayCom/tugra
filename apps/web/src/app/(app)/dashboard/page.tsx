@@ -9,6 +9,8 @@ import { statusCounts } from "../../../lib/fleet";
 import { aggregateFleetTrend, busiestServers, DISK_PRESSURE_PCT, finiteOnly, fleetAttention, fleetSnapshot, trendDelta } from "../../../lib/dashboard";
 import { buildFleetRows, metricTone } from "../../../lib/fleet-view";
 import { useFleetTrend } from "../../../hooks/useFleetTrend";
+import { useHubHealth } from "../../../hooks/useHubHealth";
+import { HubHealthAttention } from "../../../components/dashboard/hub-health-attention";
 import { scopeByTeam } from "../../../lib/team-scope";
 import { LIST_LIMIT, limitRows } from "../../../lib/dashboard-lists";
 import { useDashboardLayout, visibleCards, type DashboardCardId } from "../../../lib/dashboard-layout";
@@ -73,6 +75,9 @@ export default function DashboardPage() {
   const domainsQ = useQuery({ queryKey: ["domains"], queryFn: () => api.listDomains() });
   const allDomains = domainsQ.data ?? [];
   const { user } = useAuth();
+  // Owner only: a compact line in Needs attention when the hub itself is unhealthy (heap near its cap, loop lag, restarts...).
+  const hubHealth = useHubHealth(!!user?.isInstanceOwner).data;
+  const hubWarnings = hubHealth && !hubHealth.healthy ? hubHealth.warnings : [];
   const [layout, setLayout, resetLayout] = useDashboardLayout(user?.id);
   const [customizing, setCustomizing] = useState(false);
   const [allAttention, setAllAttention] = useState(false);
@@ -239,8 +244,9 @@ export default function DashboardPage() {
           </button>
         ) : null}
       >
+        <HubHealthAttention warnings={hubWarnings} spaced={attention.length > 0} />
         {attention.length === 0 ? (
-          serversDown ? null : (
+          serversDown || hubWarnings.length > 0 ? null : (
             <Card style={{ padding: 14, fontSize: 13, color: "var(--c-tx2)", display: "flex", alignItems: "center", gap: 8 }}>
               <span style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--c-g)" }} /> {t("dashboard.allGood")}
             </Card>

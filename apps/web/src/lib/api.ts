@@ -24,6 +24,7 @@ import type {
   InstanceUpdateApply,
   InstanceUpdateStatus,
   InstanceVersionSummary,
+  HubHealth,
   TelemetryStatus,
   ClientAccess,
   PublicStatus,
@@ -706,6 +707,10 @@ export const api = {
   // Running version + "newer release published" for any signed-in member (session-guarded on the hub).
   getInstanceVersion() {
     return apiFetch<InstanceVersionSummary>("/instance/version");
+  },
+  // Owner-only: the hub's own heap / event loop / restarts / Postgres / Redis / queue figures.
+  getHubHealth() {
+    return apiFetch<HubHealth>("/instance/hub-health");
   },
   // Owner-only self-update status + preferences (session-guarded on the hub).
   getInstanceUpdate() {

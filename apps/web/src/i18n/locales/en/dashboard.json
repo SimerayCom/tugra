@@ -216,5 +216,7 @@
   },
   "showFewer": "Show fewer",
   "createFirstProject": "Create project",
-  "importProjects": "Import"
+  "importProjects": "Import",
+  "attentionHub": "Hub health",
+  "attentionHubWarn": "{n} to check"
 }

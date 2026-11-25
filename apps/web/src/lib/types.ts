@@ -3635,3 +3635,25 @@ export interface StatusPageInput {
   enabled: boolean;
   monitors: { monitorId: string; label: string | null }[];
 }
+
+/** GET /instance/hub-health (owner only): the hub's own vital signs. */
+export interface HubHealthWarning {
+  code: "heap_high" | "loop_lag" | "pg_connections" | "redis_memory" | "restarts" | "queue_backlog";
+  value: number;
+  limit: number;
+  detail?: string;
+}
+export interface HubHealth {
+  sampledAt: string;
+  healthy: boolean;
+  warnings: HubHealthWarning[];
+  startedAt: string;
+  uptimeSec: number;
+  restarts: { last24h: number; lastBootAt: string | null };
+  process: { rssMb: number; heapUsedMb: number; heapLimitMb: number; heapPct: number; externalMb: number; gcMs: number };
+  eventLoop: { p50Ms: number; p99Ms: number; maxMs: number };
+  history: { t: number; rssMb: number; heapUsedMb: number; loopP99Ms: number }[];
+  postgres: { connectionsUsed: number; connectionsMax: number; dbSizeBytes: number; tables: { name: string; bytes: number }[] } | null;
+  redis: { usedMemoryBytes: number; maxMemoryBytes: number; connectedClients: number } | null;
+  queues: { name: string; waiting: number; active: number; delayed: number; failed: number; lastDurationMs: number | null }[];
+}

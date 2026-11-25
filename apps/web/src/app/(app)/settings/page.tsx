@@ -20,6 +20,7 @@ import { PanelTlsCard } from "./panel-tls-card";
 import { PanelDomainCard } from "./panel-domain-card";
 import { HubBackupCard } from "./hub-backup-card";
 import { UpdatesCard } from "./updates-card";
+import { HubHealthCard } from "./hub-health-card";
 import { AppearanceCard } from "./appearance-card";
 import { InstallAppCard, PushDevicesCard } from "./pwa-card";
 import { useT } from "../../../i18n/provider";
@@ -167,6 +168,7 @@ export default function SettingsPage() {
                   <PanelDomainCard />
                   <PanelTlsCard />
                   <TelemetryCard />
+                  <Wide><HubHealthCard /></Wide>
                 </SettingsGrid>
               ),
             },
