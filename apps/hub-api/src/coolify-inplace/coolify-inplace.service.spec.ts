@@ -677,6 +677,44 @@ describe("databases in the takeover", () => {
     expect(t.box.tugraRunning.has("appweb")).toBe(true);
     expect(dbItem(v).verify).toEqual({ level: "counts", state: "ok" });
   });
+  it("a database that was written to between the test and the swap still passes: the yardstick is read again at the swap, not at the test", async () => {
+    const t = withDb();
+    t.box.mentions.add("appweb");
+    const p = await plan(t);
+    await t.svc.test(ACTOR, p.id);
+    t.box.dbs[0].rows = 57; // the apps kept writing while the owner took time to approve
+    const v = await t.svc.swap(ACTOR, p.id, { confirm: "olgu-box" });
+    expect(v.status).toBe("SWAPPED");
+    expect(dbItem(v).verify).toEqual({ level: "counts", state: "ok" });
+    const stored = (t.rows.get(p.id)!.items as Array<{ itemRef: string; dbBefore?: { rows: number } }>).find((i) => i.itemRef === pg.itemRef)!;
+    expect(stored.dbBefore?.rows).toBe(57);
+  });
+  it("the apps that talk to the database go quiet, then the yardstick is read, then the database stops", async () => {
+    const t = withDb();
+    t.box.mentions.add("appweb");
+    const p = await plan(t);
+    await t.svc.test(ACTOR, p.id);
+    t.box.events.length = 0;
+    await t.svc.swap(ACTOR, p.id, { confirm: "olgu-box" });
+    const at = (e: string) => t.box.events.indexOf(e);
+    expect(at("coolify-ctr:stop:webuuid-20261125T101010")).toBeGreaterThan(-1);
+    expect(at("coolify-ctr:stop:webuuid-20261125T101010")).toBeLessThan(at("dbfp"));
+    expect(at("dbfp")).toBeLessThan(at("coolify-ctr:stop:pguuid"));
+  });
+  it("a baseline that cannot be read at the swap ends FAILED, and the quiet apps and the database run on Coolify again", async () => {
+    const t = withDb();
+    t.box.mentions.add("appweb");
+    const p = await plan(t);
+    await t.svc.test(ACTOR, p.id);
+    t.box.dbReadFails.add("db1");
+    const v = await t.svc.swap(ACTOR, p.id, { confirm: "olgu-box" });
+    expect(v.status).toBe("FAILED");
+    expect(v.failureCode).toBe("database_verify_failed");
+    expect(t.box.ctrs.get(pg.ctrId)!.running).toBe(true);
+    expect(t.box.ctrs.get(web.ctrId)!.running).toBe(true);
+    expect(t.box.tugraDbRunning.size).toBe(0);
+    expect(t.box.events).not.toContain("coolify-ctr:stop:pguuid");
+  });
   it("the takeover is verified only when the database was checked too, besides every domain's certificate", async () => {
     const t = withDb();
     const p = await plan(t);

@@ -554,18 +554,43 @@ export class CoolifyInPlaceService implements InPlaceRunPort {
     const active = items.filter((i) => i.state === "prepared");
     const ex = active.filter((i) => i.exclusive && i.container);
 
-    // 1. apps that share data with Coolify's copy: its restart policy first, then stop it, then start Tugra's on the same data
+    // 1. apps that share data with Coolify's copy: its restart policy first, then stop it, then start Tugra's on the same data. The apps that
+    // write to a switched database go quiet FIRST, and the yardstick of each database is read again once they are quiet and before the
+    // database itself stops: what the test read days ago is stale (the apps kept writing, the owner took time to approve).
     if (ex.length > 0) {
-      const ids = ex.map((i) => (i.container as NonNullable<TakeoverItem["container"]>).id);
+      const dbs = ex.filter((i) => i.kind === "database");
+      const quiet = active.filter((i) => i.afterSwitch && !i.exclusive && i.container);
+      const first = [...ex.filter((i) => i.kind !== "database"), ...quiet];
       // written BEFORE the first policy change: a partial failure below must still give every recorded policy back
       rb.exclusiveStopped = true;
       await this.saveRollback(row.id, rb);
-      const pol = parsePolicy((await this.world.exec(server.id, buildRestartPolicyScript(ex.map((i) => ({ ...recorded(i), policy: "no" as const }))), HOST_T)).output, ids);
-      if (ids.some((x) => pol.get(x) !== "ok")) return this.abandon(userId, row, items, "exclusive_policy_failed");
-      const stop = parseStopOutput((await this.world.exec(server.id, buildSourceStopScript(ex.map((i) => recordedFull(i))), 150_000)).output, ids);
-      if (ids.some((x) => stop.get(x) !== "stopped" && stop.get(x) !== "gone")) return this.abandon(userId, row, items, "exclusive_stop_failed");
+      const halt = async (set: TakeoverItem[], policyCode: TakeoverFailureCode, stopCode: TakeoverFailureCode): Promise<TakeoverFailureCode | null> => {
+        if (set.length === 0) return null;
+        const ids = set.map((i) => (i.container as NonNullable<TakeoverItem["container"]>).id);
+        const pol = parsePolicy((await this.world.exec(server.id, buildRestartPolicyScript(set.map((i) => ({ ...recorded(i), policy: "no" as const }))), HOST_T)).output, ids);
+        if (ids.some((x) => pol.get(x) !== "ok")) return policyCode;
+        const stop = parseStopOutput((await this.world.exec(server.id, buildSourceStopScript(set.map((i) => recordedFull(i))), 150_000)).output, ids);
+        if (ids.some((x) => stop.get(x) !== "stopped" && stop.get(x) !== "gone")) return stopCode;
+        return null;
+      };
+      const quietFail = await halt(first, "exclusive_policy_failed", "exclusive_stop_failed");
+      if (quietFail) return this.abandon(userId, row, items, quietFail);
+      if (dbs.length > 0) {
+        const fresh = await this.fingerprint(server.id, dbs.map((i) => ({ engine: i.engine as DbTarget["engine"], ref: { kind: "recorded" as const, ctr: recorded(i) } })));
+        for (const i of dbs) {
+          const fp = fresh?.get((i.container as NonNullable<TakeoverItem["container"]>).id);
+          if (!fp || fp.state !== "ok") {
+            i.verify = { level: i.verify?.level ?? checkLevelOf(i.engine as DbTarget["engine"]), state: "failed" };
+            await this.saveItems(row.id, items);
+            return this.abandon(userId, row, items, "database_verify_failed");
+          }
+          i.dbBefore = fp;
+        }
+        await this.saveItems(row.id, items);
+      }
+      const dbFail = await halt(dbs, "exclusive_policy_failed", "exclusive_stop_failed");
+      if (dbFail) return this.abandon(userId, row, items, dbFail);
       // databases first (what the apps need), each checked against what Coolify's container showed; then the apps that share data
-      const dbs = ex.filter((i) => i.kind === "database");
       for (const i of dbs) {
         const r = await this.world.runDatabase(userId, i.appId);
         if (!r.ok) return this.abandon(userId, row, items, "database_start_failed");
@@ -806,9 +831,9 @@ export class CoolifyInPlaceService implements InPlaceRunPort {
     const serverId = row.serverId;
     try {
       // 1. switched apps: Tugra's copy stops (frees the data), Coolify's container gets its policy back and starts
-      const ex = items.filter((i) => i.exclusive && i.container && i.state !== "skipped");
+      const ex = items.filter((i) => (i.exclusive || i.afterSwitch) && i.container && i.state !== "skipped");
       if (rb.exclusiveStopped && ex.length > 0) {
-        for (const i of ex) await (i.kind === "database" ? this.world.stopDatabase(userId, i.appId) : this.world.stopApp(userId, i.appId));
+        for (const i of ex.filter((x) => x.exclusive)) await (i.kind === "database" ? this.world.stopDatabase(userId, i.appId) : this.world.stopApp(userId, i.appId));
         const ids = ex.map((i) => (i.container as NonNullable<TakeoverItem["container"]>).id);
         const pol = parsePolicy((await this.world.exec(serverId, buildRestartPolicyScript(ex.map((i) => ({ ...recorded(i), policy: (i.container as NonNullable<TakeoverItem["container"]>).restart }))), HOST_T)).output, ids);
         if (ids.some((x) => pol.get(x) !== "ok")) return { ok: false, step: "coolify_policy" };
