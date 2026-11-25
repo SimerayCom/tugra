@@ -114,11 +114,16 @@ func (r *Runner) Run(ctx context.Context, reqID string, req Request) protocol.Co
 		return fa(err, "unreachable")
 	}
 	hostKey := fp
+	// ssh itself is pinned to the verified key: the helper trusts exactly this one line and nothing else.
+	knownHost, err := KnownHostLine(scan, fp, t.UUID)
+	if err != nil {
+		return fa(err, "unreachable")
+	}
 
 	switch req.Op {
 	case "probe":
 		script, _ := ScriptFor("probe")
-		out, err := r.ssh(ctx, keyDir, t, RemoteCommand(false), Prefix([2]string{"TUGRA_HUB", r.hubForTarget()})+script)
+		out, err := r.ssh(ctx, keyDir, t, knownHost, RemoteCommand(false), Prefix([2]string{"TUGRA_HUB", r.hubForTarget()})+script)
 		if err != nil {
 			return fa(err, "unreachable")
 		}
@@ -146,7 +151,7 @@ func (r *Runner) Run(ctx context.Context, reqID string, req Request) protocol.Co
 			[2]string{"TUGRA_TOKEN", req.Payload},
 			[2]string{"TUGRA_SKIP_DOCKER_INSTALL", "1"},
 		)
-		out, err := r.ssh(ctx, keyDir, t, RemoteCommand(req.UseSudo, "--image", r.Env.Image), prefix+req.Script)
+		out, err := r.ssh(ctx, keyDir, t, knownHost, RemoteCommand(req.UseSudo, "--image", r.Env.Image), prefix+req.Script)
 		if err != nil {
 			return fa(err, "unreachable")
 		}
@@ -167,7 +172,7 @@ func (r *Runner) Run(ctx context.Context, reqID string, req Request) protocol.Co
 		}
 		script, _ := ScriptFor("uninstall")
 		prefix := Prefix([2]string{"TUGRA_HUB", r.Env.HubURL}, [2]string{"TUGRA_CID", req.Payload})
-		out, err := r.ssh(ctx, keyDir, t, RemoteCommand(req.UseSudo), prefix+script)
+		out, err := r.ssh(ctx, keyDir, t, knownHost, RemoteCommand(req.UseSudo), prefix+script)
 		if err != nil {
 			return fa(err, "unreachable")
 		}
@@ -263,9 +268,9 @@ func (r *Runner) scan(ctx context.Context, t Target) (string, error) {
 	return string(out.Stdout), nil
 }
 
-func (r *Runner) ssh(ctx context.Context, keyDir string, t Target, remote []string, stdin string) (Output, error) {
+func (r *Runner) ssh(ctx context.Context, keyDir string, t Target, knownHost string, remote []string, stdin string) (Output, error) {
 	name := r.name()
-	argv, err := SSHArgs(r.Env.Image, name, keyDir, t, remote)
+	argv, err := SSHArgs(r.Env.Image, name, keyDir, t, knownHost, remote)
 	if err != nil {
 		return Output{}, err
 	}

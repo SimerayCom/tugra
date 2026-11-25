@@ -15,9 +15,12 @@ const (
 	// CoolifyContainer and CoolifyDB are the fixed container names Coolify runs under; nothing the hub sends can name another.
 	CoolifyContainer = "coolify"
 	CoolifyDB        = "coolify-db"
-	// KnownHostsVolume holds the SSH known_hosts of this feature. It is its own volume: the agent's own data volume (its identity key) is
-	// never mounted into a helper.
-	KnownHostsVolume = "tugra-coolify-ssh-known"
+	// knownHostEnv carries the one verified host key line into the ssh helper; the constant wrapper below writes it to a private tmpfs file.
+	// The key is public; nothing secret travels in it. No volume is shared between runs, so no earlier run can leave a trust record behind.
+	knownHostEnv   = "TUGRA_KNOWN_HOST"
+	knownHostsFile = "/state/known_hosts"
+	// sshWrapper writes the verified line, then replaces itself with ssh; every other value is an argv element after the "sh" name.
+	sshWrapper = `umask 077; printf '%s\n' "$` + knownHostEnv + `" > ` + knownHostsFile + ` && exec ssh "$@"`
 
 	psqlSh = `exec psql -X -q -A -t -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"`
 	pgOpts = "-c default_transaction_read_only=on -c statement_timeout=20000 -c idle_in_transaction_session_timeout=20000"
@@ -93,21 +96,25 @@ func KeyCheckArgs(image, name, keyDir string, t Target) ([]string, error) {
 	return a, nil
 }
 
-// SSHArgs: the ssh helper. remote is the command run on the target (see RemoteCommand); the script arrives on stdin (-i).
-func SSHArgs(image, name, keyDir string, t Target, remote []string) ([]string, error) {
+// SSHArgs: the ssh helper. remote is the command run on the target (see RemoteCommand); the script arrives on stdin (-i). knownHost is the
+// one verified host key line (see KnownHostLine); ssh runs with StrictHostKeyChecking=yes against a known_hosts holding only that line, so
+// the key checked before the install is the key ssh itself insists on.
+func SSHArgs(image, name, keyDir string, t Target, knownHost string, remote []string) ([]string, error) {
 	if err := checkHelper(image, name, t); err != nil {
 		return nil, err
+	}
+	if !knownHostLineRe.MatchString(knownHost) || !strings.HasPrefix(knownHost, t.UUID+" ") {
+		return nil, fail("bad_target", "no verified host key to pin")
 	}
 	if !keyDirRe.MatchString(keyDir) || strings.Contains(keyDir, "..") || strings.Contains(keyDir, ",") {
 		return nil, fail("no_key_file", "key directory path not allowed")
 	}
 	a := helperBase(name, true)
 	a = append(a,
-		"--tmpfs", "/state:rw,mode=0700,size=1m", "-e", "HOME=/state",
+		"--tmpfs", "/state:rw,mode=0700,size=1m", "-e", "HOME=/state", "-e", knownHostEnv+"="+knownHost,
 		"--cap-add", "DAC_READ_SEARCH",
 		"--mount", "type=bind,src="+keyDir+",dst=/keys,readonly",
-		"--mount", "type=volume,src="+KnownHostsVolume+",dst=/known,volume-nocopy",
-		"--entrypoint", "ssh", image,
+		"--entrypoint", "sh", image, "-c", sshWrapper, "sh",
 		"-F", "/dev/null",
 		"-i", "/keys/ssh_key@"+t.KeyUUID,
 		"-o", "IdentitiesOnly=yes",
@@ -117,8 +124,8 @@ func SSHArgs(image, name, keyDir string, t Target, remote []string) ([]string, e
 		"-o", "ConnectTimeout=15",
 		"-o", "ServerAliveInterval=15",
 		"-o", "ServerAliveCountMax=4",
-		"-o", "StrictHostKeyChecking=accept-new",
-		"-o", "UserKnownHostsFile=/known/coolify-ssh-known-hosts",
+		"-o", "StrictHostKeyChecking=yes",
+		"-o", "UserKnownHostsFile="+knownHostsFile,
 		"-o", "GlobalKnownHostsFile=/dev/null",
 		"-o", "HostKeyAlias="+t.UUID,
 		"-o", "ClearAllForwardings=yes",

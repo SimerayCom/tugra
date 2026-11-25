@@ -18,6 +18,8 @@ const (
 	tCID   = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 )
 
+var tKnown = tUUID + " ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+
 var tTarget = Target{UUID: tUUID, Host: "203.0.113.7", Port: 22, User: "root", KeyUUID: "key1abcdef12"}
 
 func has(a []string, v string) bool {
@@ -112,21 +114,20 @@ func TestValidateHost(t *testing.T) {
 // ---- argv (golden) -------------------------------------------------------------------------------------------------------------
 
 func TestSSHArgsGolden(t *testing.T) {
-	a, err := SSHArgs(tImage, tName, "/data/coolify/ssh/keys", tTarget, RemoteCommand(false))
+	a, err := SSHArgs(tImage, tName, "/data/coolify/ssh/keys", tTarget, tKnown, RemoteCommand(false))
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := []string{
 		"docker", "run", "--rm", "-i", "--name", tName, "--network", "container:coolify", "--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
 		"--pids-limit", "64", "--memory", "128m", "--pull=never",
-		"--tmpfs", "/state:rw,mode=0700,size=1m", "-e", "HOME=/state", "--cap-add", "DAC_READ_SEARCH",
+		"--tmpfs", "/state:rw,mode=0700,size=1m", "-e", "HOME=/state", "-e", "TUGRA_KNOWN_HOST=" + tKnown, "--cap-add", "DAC_READ_SEARCH",
 		"--mount", "type=bind,src=/data/coolify/ssh/keys,dst=/keys,readonly",
-		"--mount", "type=volume,src=tugra-coolify-ssh-known,dst=/known,volume-nocopy",
-		"--entrypoint", "ssh", tImage,
+		"--entrypoint", "sh", tImage, "-c", sshWrapper, "sh",
 		"-F", "/dev/null", "-i", "/keys/ssh_key@key1abcdef12",
 		"-o", "IdentitiesOnly=yes", "-o", "BatchMode=yes", "-o", "PasswordAuthentication=no", "-o", "KbdInteractiveAuthentication=no",
 		"-o", "ConnectTimeout=15", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=4",
-		"-o", "StrictHostKeyChecking=accept-new", "-o", "UserKnownHostsFile=/known/coolify-ssh-known-hosts", "-o", "GlobalKnownHostsFile=/dev/null",
+		"-o", "StrictHostKeyChecking=yes", "-o", "UserKnownHostsFile=/state/known_hosts", "-o", "GlobalKnownHostsFile=/dev/null",
 		"-o", "HostKeyAlias=" + tUUID,
 		"-o", "ClearAllForwardings=yes", "-o", "ForwardAgent=no", "-o", "ForwardX11=no", "-o", "ControlMaster=no", "-o", "ControlPath=none", "-o", "LogLevel=ERROR",
 		"-T", "-p", "22", "--", "root@203.0.113.7", "sh", "-s", "--",
@@ -137,9 +138,9 @@ func TestSSHArgsGolden(t *testing.T) {
 }
 
 func TestSSHArgsNeverWeakenHostKeyCheckingOrMountWritableKeys(t *testing.T) {
-	a, _ := SSHArgs(tImage, tName, "/data/coolify/ssh/keys", tTarget, RemoteCommand(true, "--image", tImage))
+	a, _ := SSHArgs(tImage, tName, "/data/coolify/ssh/keys", tTarget, tKnown, RemoteCommand(true, "--image", tImage))
 	j := joined(a)
-	for _, banned := range []string{"StrictHostKeyChecking=no", "UserKnownHostsFile=/dev/null", "--privileged", "--net host", "--network host", "docker.sock", "-v ", "ForwardAgent=yes", "-A "} {
+	for _, banned := range []string{"StrictHostKeyChecking=no", "accept-new", "tugra-coolify-ssh-known", "type=volume", "UserKnownHostsFile=/dev/null", "--privileged", "--net host", "--network host", "docker.sock", "-v ", "ForwardAgent=yes", "-A "} {
 		if strings.Contains(j, banned) {
 			t.Fatalf("argv has %q", banned)
 		}
@@ -169,21 +170,21 @@ func TestArgvRefusesUnsafeValues(t *testing.T) {
 		{UUID: tUUID, Host: "127.0.0.1", Port: 22, User: "root", KeyUUID: "key1abcdef12"},
 	}
 	for i, b := range bad {
-		if _, err := SSHArgs(tImage, tName, "/data/coolify/ssh/keys", b, RemoteCommand(false)); err == nil {
+		if _, err := SSHArgs(tImage, tName, "/data/coolify/ssh/keys", b, tKnown, RemoteCommand(false)); err == nil {
 			t.Errorf("ssh accepted %d", i)
 		}
 		if _, err := ScanArgs(tImage, tName, b); err == nil {
 			t.Errorf("scan accepted %d", i)
 		}
 	}
-	if _, err := SSHArgs("-oevil", tName, "/data/coolify/ssh/keys", tTarget, nil); err == nil {
+	if _, err := SSHArgs("-oevil", tName, "/data/coolify/ssh/keys", tTarget, tKnown, nil); err == nil {
 		t.Error("image with a dash accepted")
 	}
-	if _, err := SSHArgs(tImage, "bad name", "/data/coolify/ssh/keys", tTarget, nil); err == nil {
+	if _, err := SSHArgs(tImage, "bad name", "/data/coolify/ssh/keys", tTarget, tKnown, nil); err == nil {
 		t.Error("bad helper name accepted")
 	}
 	for _, d := range []string{"/data/coolify/ssh/../../etc", "relative/keys", "/data/coolify/ssh/keys,dst=/x", ""} {
-		if _, err := SSHArgs(tImage, tName, d, tTarget, nil); err == nil {
+		if _, err := SSHArgs(tImage, tName, d, tTarget, tKnown, nil); err == nil {
 			t.Errorf("key dir %q accepted", d)
 		}
 	}
@@ -525,7 +526,7 @@ func (f *fakeDocker) exec(_ context.Context, argv []string, stdin []byte, _ stri
 			return Output{ExitCode: 1}, nil
 		}
 		return Output{Stdout: []byte(f.scan)}, nil
-	case has(argv, "ssh"):
+	case has(argv, "--entrypoint") && has(argv, "sh"):
 		return f.sshOut, nil
 	}
 	return Output{ExitCode: 127}, nil
@@ -537,7 +538,7 @@ func (f *fakeDocker) runner() *Runner {
 
 func (f *fakeDocker) sshCall() *call {
 	for i := range f.calls {
-		if has(f.calls[i].argv, "ssh") && has(f.calls[i].argv, "--entrypoint") {
+		if has(f.calls[i].argv, "sh") && has(f.calls[i].argv, "--entrypoint") {
 			return &f.calls[i]
 		}
 	}
@@ -715,5 +716,84 @@ func TestScrub(t *testing.T) {
 	got := scrub("failed with "+tToken+" inside", tToken)
 	if strings.Contains(got, tToken) {
 		t.Fatal(got)
+	}
+}
+
+// ---- finding: the ssh connection itself is pinned to the verified key ---------------------------------------------------------
+
+func TestKnownHostLinePinsTheVerifiedKeyOnly(t *testing.T) {
+	l1, fp1 := scanLine("203.0.113.7")
+	l2, fp2 := scanLine("203.0.113.7")
+	scan := "# 203.0.113.7:22 SSH-2.0-OpenSSH_9.6\n" + l1 + "\n" + l2 + "\n"
+	got, err := KnownHostLine(scan, fp2, tUUID)
+	if err != nil || !strings.HasPrefix(got, tUUID+" ssh-ed25519 ") || strings.Contains(got, strings.Fields(l1)[2]) {
+		t.Fatalf("only the verified key may be trusted: %q %v", got, err)
+	}
+	if fs := KeyFingerprintsFromLines(got); len(fs) != 1 || fs[0] != fp2 {
+		t.Fatalf("fingerprint of the line: %v", fs)
+	}
+	if got, _ := KnownHostLine(scan, fp1, tUUID); !strings.Contains(got, strings.Fields(l1)[2]) {
+		t.Fatal("first key")
+	}
+	_, otherFp := scanLine("x")
+	if _, err := KnownHostLine(scan, otherFp, tUUID); CodeOf(err, "") != "hostkey_changed" {
+		t.Fatalf("a fingerprint not in the scan must be refused: %v", err)
+	}
+	if _, err := KnownHostLine("", fp1, tUUID); err == nil {
+		t.Fatal("empty scan")
+	}
+	// a host field that tries to smuggle a second line or option is never copied: the alias comes from the validated target
+	evil := "x\nevil " + strings.Join(strings.Fields(l1)[1:], " ")
+	if got, err := KnownHostLine(evil, fp1, tUUID); err != nil || strings.Contains(got, "evil") || strings.Contains(got, "\n") {
+		t.Fatalf("%q %v", got, err)
+	}
+}
+
+func TestSSHArgsRefuseWithoutAVerifiedKey(t *testing.T) {
+	for name, kh := range map[string]string{
+		"empty":       "",
+		"other alias": "zzzzzz111111 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+		"newline":     tKnown + "\n" + tKnown,
+		"bad type":    tUUID + " ssh-dss AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+		"option":      tUUID + " ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAA -oProxyCommand=x",
+	} {
+		if _, err := SSHArgs(tImage, tName, "/data/coolify/ssh/keys", tTarget, kh, RemoteCommand(false)); err == nil {
+			t.Errorf("%s accepted", name)
+		}
+	}
+}
+
+func TestCheckHostKeyBindsPinAndExpectationToTheSameKey(t *testing.T) {
+	l1, fp1 := scanLine("203.0.113.7")
+	l2, fp2 := scanLine("203.0.113.7")
+	scan := l1 + "\n" + l2
+	// Coolify pinned key 1, the hub expects key 2: both are on the wire but they are not one key
+	if _, _, err := CheckHostKey(scan, fp1, fp2); CodeOf(err, "") != "hostkey_mismatch" {
+		t.Fatalf("pin and expectation must be the same key: %v", err)
+	}
+	if got, _, err := CheckHostKey(scan, fp1, fp1); err != nil || got != fp1 {
+		t.Fatalf("%q %v", got, err)
+	}
+}
+
+func TestRunPinsTheSSHConnectionToTheScannedVerifiedKey(t *testing.T) {
+	line, fp := scanLine("203.0.113.7")
+	f := newFake(line)
+	f.sshOut = Output{Stdout: []byte("TUGRA_INSTALL_CID " + tCID + "\nTUGRA_INSTALL_OK\n")}
+	res := f.runner().Run(context.Background(), "r", Request{Op: "install", UUID: tUUID, Script: installBody, Payload: tToken, ExpectedFp: fp})
+	if !res.OK {
+		t.Fatalf("%+v", res)
+	}
+	j := joined(f.sshCall().argv)
+	want := tUUID + " " + strings.Join(strings.Fields(line)[1:], " ")
+	if !strings.Contains(j, "TUGRA_KNOWN_HOST="+want) || !strings.Contains(j, "StrictHostKeyChecking=yes") || strings.Contains(j, "accept-new") {
+		t.Fatalf("ssh must be pinned to the verified key: %s", j)
+	}
+	f2 := newFake(line)
+	if r := f2.runner().Run(context.Background(), "r", Request{Op: "probe", UUID: tUUID}); !r.OK {
+		t.Fatalf("%+v", r)
+	}
+	if !strings.Contains(joined(f2.sshCall().argv), "TUGRA_KNOWN_HOST="+want) {
+		t.Fatal("probe not pinned")
 	}
 }

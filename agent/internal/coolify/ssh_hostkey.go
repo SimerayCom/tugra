@@ -3,6 +3,7 @@ package coolify
 import (
 	"crypto/sha256"
 	"encoding/base64"
+	"regexp"
 	"strings"
 )
 
@@ -120,10 +121,44 @@ func CheckHostKey(scanText, pinnedRaw, expectedFp string) (fp string, pinned boo
 		if !contains(scanned, expectedFp) {
 			return "", pinned, fail("hostkey_changed", "host key differs from the one seen at the probe")
 		}
+		// The key the hub expects must also be one Coolify pinned, when Coolify pinned anything: the two checks bind the same key.
+		if len(pins) > 0 && !contains(pins, expectedFp) {
+			return "", true, fail("hostkey_mismatch", "host key differs from the one Coolify pinned")
+		}
 		matched = expectedFp
 	}
 	if matched == "" {
 		matched = PreferredFingerprint(scanText)
 	}
 	return matched, pinned, nil
+}
+
+var knownHostLineRe = regexp.MustCompile(`^[a-z0-9]{6,64} (ssh-ed25519|ecdsa-sha2-nistp256|ecdsa-sha2-nistp384|ecdsa-sha2-nistp521|ssh-rsa) [A-Za-z0-9+/]{16,1000}={0,2}$`)
+
+// KnownHostLine builds the one known_hosts line the ssh helper trusts: the scanned key whose fingerprint is fp (the key CheckHostKey
+// verified), under the HostKeyAlias. The ssh connection is then pinned to exactly that key (StrictHostKeyChecking=yes), so a server that
+// shows another key on the second connection is refused by ssh itself, before anything is sent.
+func KnownHostLine(scanText, fp, alias string) (string, error) {
+	for _, line := range strings.Split(scanText, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		f := strings.Fields(line)
+		for i := 0; i+1 < len(f); i++ {
+			if !isKeyType(f[i]) {
+				continue
+			}
+			blob, err := base64.StdEncoding.DecodeString(f[i+1])
+			if err != nil || len(blob) == 0 || Fingerprint(blob) != fp {
+				break
+			}
+			out := alias + " " + f[i] + " " + f[i+1]
+			if !knownHostLineRe.MatchString(out) {
+				return "", fail("unreachable", "host key type is not accepted")
+			}
+			return out, nil
+		}
+	}
+	return "", fail("hostkey_changed", "verified host key not found in the scan")
 }
