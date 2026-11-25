@@ -74,6 +74,7 @@ import { CryptoModule } from "./crypto/crypto.module";
 import { LicenseModule } from "./license/license.module";
 import { ClustersModule } from "./clusters/clusters.module";
 import { CoalesceModule } from "./common/coalesce.module";
+import { HubHealthModule } from "./hub-health/hub-health.module";
 import { McpModule } from "./mcp/mcp.module";
 import { ApiRateLimitInterceptor } from "./api-tokens/api-rate-limit.interceptor";
 import { AuditContextInterceptor } from "./audit/audit-context.interceptor";
@@ -157,6 +158,7 @@ import { ApiExceptionFilter } from "./common/api-exception.filter";
     CryptoModule, // for InstanceSettingsController to encrypt the OIDC client secret
     LicenseModule, // verifies the signed license at boot + backs the /instance/license endpoints
     ClustersModule, // team-scoped server groups (fleet organization + health rollup)
+    HubHealthModule, // owner-only hub self-health (heap, event loop, restarts, Postgres, Redis, queues)
     CoalesceModule, // short single-flight cache for the polled panel reads (+ write invalidation)
     McpModule, // read-only MCP server — AI-agent management over the same team-scoped services
   ],
