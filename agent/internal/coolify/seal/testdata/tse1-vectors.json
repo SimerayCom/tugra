@@ -1,0 +1,68 @@
+{
+  "recipientPrivHex": "a546e36bf0527c9d3b16154b82465edd62144c0ac1fc5a18506a2244ba449ac4",
+  "recipientPubB64": "HJ/Yj0VgbZMqgMcYJK4VHRXXPnfeOOjgAIUuYU+ucBk=",
+  "runId": "run-0001",
+  "serverId": "srv-0001",
+  "vectors": [
+    {
+      "name": "short",
+      "ref": "env:abc123",
+      "field": "value",
+      "class": "env",
+      "plainB64": "cG9zdGdyZXM6Ly9hcHA6aHVudGVyMkBkYjo1NDMyL2FwcA==",
+      "ephPrivHex": "0101010101010101010101010101010101010101010101010101010101010101",
+      "nonceHex": "101010101010101010101010",
+      "env": "tse1.pOCSkrZRwni5dyxWn1-puxPZBrRqtoyd-dwrRAn4ogkQEBAQEBAQEBAQEBCtcit_gjyfqTEh-aNL36fYFY84ftPW7UWAjfFlzhWfmNKnGY-J8wjspiMJSGvkt-2F9dw0wea9PEgRN0BwDN_H5_O8mpkiLtwikyTP0G-XRg"
+    },
+    {
+      "name": "empty",
+      "ref": "env:empty01",
+      "field": "value",
+      "class": "env",
+      "plainB64": "",
+      "ephPrivHex": "0202020202020202020202020202020202020202020202020202020202020202",
+      "nonceHex": "111111111111111111111111",
+      "env": "tse1.zo060cy2M-x7cMF4FKXHbs0CloUFDTRHRboFhw5YfVkRERERERERERERERHADCtCoCFwm8Y4ZcaWmERch940s-DO4lhMl9jRrh5ePX55UkApZkya5uCS-fqgUB-1B4kNcXDWWpvkNJMA6Z2pOlWMpwdoLNqql3Kfknlw6g"
+    },
+    {
+      "name": "utf8",
+      "ref": "database:db0001",
+      "field": "postgres_password",
+      "class": "db_credentials",
+      "plainB64": "cGHDn3fDtnJkLeKCrC3wn5SR",
+      "ephPrivHex": "0303030303030303030303030303030303030303030303030303030303030303",
+      "nonceHex": "121212121212121212121212",
+      "env": "tse1.Xf7dO2vUf2-ijuFdlp1bsOpTd01Ii9r53xxuASSz7yISEhISEhISEhISEhJFq_Glc91IMbvQWwtHe0ZfprM675ma1bgspLIttII7jpCu-s1OTuMpJ8ckLzIkDrTQ-Uuuxjb0cMwWqztJxsSik-KXEr1vHUM4dqejlqedtg"
+    },
+    {
+      "name": "exact-block",
+      "ref": "s3:s3x001",
+      "field": "secret",
+      "class": "s3",
+      "plainB64": "YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh",
+      "ephPrivHex": "0404040404040404040404040404040404040404040404040404040404040404",
+      "nonceHex": "131313131313131313131313",
+      "env": "tse1.rAGyIJ6GNU-4UyN7XeD0-rE8f8v0M6YcAZNpYX_s8QsTExMTExMTExMTExM0xEsX9d58E0CHZ4-ZYUZIoCv5BZfVUiuOdy-xvPnt494NYoYvn1Y_skfZ77MuCvAJhLvGypgZwySFF7q4gDJUcV3IqgtyjTsiQNeQYI1Wyw"
+    },
+    {
+      "name": "just-over-block",
+      "ref": "s3:s3x001",
+      "field": "key",
+      "class": "s3",
+      "plainB64": "YmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYg==",
+      "ephPrivHex": "0505050505050505050505050505050505050505050505050505050505050505",
+      "nonceHex": "141414141414141414141414",
+      "env": "tse1.UKYUCbHd0DJemxa3AOcZ6XcsBwALG9d4bpB8ZT0gSV0UFBQUFBQUFBQUFBSEaEjgIjSkCJuoMFncBYnnVwh3ql_DCp9EAZMMofYkSbkDmnjGD07_WD6uzfrwVUajPtMhJL4zB6ZVAHI8YxCkrS4uEHkSrhlG-Sou2tcoOp9FbdumyU3EWG2F9ExLYSvWOmi11cOEdijU7lpsroj6sDnQc7lSvH0MEr3xyVI0Tz2RV1AKzWo8jCAZEvWImkY"
+    },
+    {
+      "name": "multiline",
+      "ref": "service:svc001",
+      "field": "docker_compose_raw",
+      "class": "service_compose",
+      "plainB64": "c2VydmljZXM6CiAgYToKICAgIGltYWdlOiB4Cg==",
+      "ephPrivHex": "0606060606060606060606060606060606060606060606060606060606060606",
+      "nonceHex": "151515151515151515151515",
+      "env": "tse1.9bLW5g-Ud-MQwpgtqqbJE2wQihd3xZR-RI-jfWgXRVcVFRUVFRUVFRUVFRVqy2EhE1M-yB6T7R7Shf7sXEO85j5Juukf-gZCSrOakSqb0gdeZLKlAUFynZamBejYmdEG02W5vlYcY__yUl-r2Mx2V0G6BCxk9F_IpIZ_KQ"
+    }
+  ]
+}
