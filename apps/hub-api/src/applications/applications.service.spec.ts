@@ -8894,6 +8894,24 @@ describe("ApplicationsService — app move guards", () => {
       expect(update).not.toHaveBeenCalled();
     });
 
+    it("Tugra-side env, domains, mounts and networks are refused for an adopted stack (they would be silently ignored)", async () => {
+      const update = jest.fn();
+      const prisma = { application: { findUnique: jest.fn().mockResolvedValue(adoptedApp), update } } as unknown as PrismaService;
+      const svc = make(prisma, okAccess(), {} as AgentWsServer);
+      const calls: [string, Promise<unknown>][] = [
+        ["setEnv", svc.setEnv("u1", "app1", { A: "1" })],
+        ["setDomain", svc.setDomain("u1", "app1", "shop.example.com")],
+        ["setExtraDomains", svc.setExtraDomains("u1", "app1", ["x.example.com"])],
+        ["setServiceDomains", svc.setServiceDomains("u1", "app1", [{ service: "web", hostname: "w.example.com", port: 80 }])],
+        ["setComposeNetworks", svc.setComposeNetworks("u1", "app1", [])],
+        ["setConfigMountContent", svc.setConfigMountContent("u1", "app1", "/etc/x.conf", "x")],
+        ["setHostMounts", svc.setHostMounts("u1", "app1", [])],
+        ["setNetworkAliases", svc.setNetworkAliases("u1", "app1", ["a"])],
+      ];
+      for (const [name, p] of calls) await expect(p).rejects.toThrow(/adopted in place/);
+      expect(update).not.toHaveBeenCalled();
+    });
+
     it("createAdoptedCompose inserts a COMPOSE row carrying the registration and runs no deploy or docker command", async () => {
       const created = { ...adoptedApp, id: "appNew", teamId: "t1", status: "RUNNING" };
       const create = jest.fn().mockResolvedValue(created);

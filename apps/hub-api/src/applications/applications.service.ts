@@ -3774,6 +3774,7 @@ export class ApplicationsService {
    */
   async setEnv(userId: string, id: string, env: Record<string, string>, flags?: Record<string, FlagInput>): Promise<void> {
     const app = await this.requireMutate(userId, id);
+    if (Object.keys(env).length) this.assertNotAdopted(app, "environment variables");
     const keys = Object.keys(env);
     let oldMeta: EnvMeta | null = null;
     try {
@@ -4126,6 +4127,12 @@ export class ApplicationsService {
     });
   }
 
+  /** A stack adopted in place runs exactly the user's own files: Tugra-side settings that would be written into an override
+   *  (env, domains, mounts, networks) do not apply to it, so they are refused loudly instead of being silently ignored. */
+  private assertNotAdopted(app: { composeAdopt?: unknown }, what: string): void {
+    if (adoptedCompose(app)) throw new BadRequestException(`${what} are not applied to a stack adopted in place; change them in the stack's own files on the server`);
+  }
+
   /**
    * Replace a COMPOSE app's docker-compose.yml. Validated up front (clear 400 now, not a failed
    * deploy later): valid YAML plus no privileged / host-escaping / host-bind compose — the same
@@ -4457,6 +4464,7 @@ export class ApplicationsService {
    *  DTO-validated DNS labels, deduped there. Replace-set; empty clears. Applies on the next deploy. */
   async setNetworkAliases(userId: string, id: string, aliases: string[]): Promise<void> {
     const app = await this.requireMutate(userId, id);
+    this.assertNotAdopted(app, "network aliases");
     // Swarm/cluster apps deploy via service-script.ts, which does not emit --network-alias, so accepting
     // them would be a silent no-op — refuse (mirrors setDbNetwork / extra domains).
     if (app.clusterId) throw new BadRequestException("network aliases aren't supported for clustered (swarm) apps yet");
@@ -4579,6 +4587,7 @@ export class ApplicationsService {
    */
   async setConfigMountContent(userId: string, id: string, target: string, content: string): Promise<void> {
     const app = await this.requireMutate(userId, id);
+    this.assertNotAdopted(app, "config mounts");
     if (app.source !== "COMPOSE") throw new BadRequestException("not a compose app");
     validateConfigMountTarget(target); // reuse the install-time shape/injection guard
     const mounts = this.appConfigMounts(app);
@@ -4776,7 +4785,7 @@ export class ApplicationsService {
    *  denylist (clear 400, not a broken deploy later) — the exact bar the free-form dockerOptions `-v` path
    *  already enforces. Applies on the next deploy. */
   async setHostMounts(userId: string, id: string, mounts: HostMount[]): Promise<void> {
-    await this.requireMutate(userId, id);
+    this.assertNotAdopted(await this.requireMutate(userId, id), "host mounts");
     const clean = validateHostMounts(mounts);
     await this.prisma.application.update({ where: { id }, data: { hostMounts: clean as unknown as Prisma.InputJsonValue } });
     await this.audit.log({ actor: userId, action: "app.host_mounts.update", target: id, meta: { count: clean.length } });
@@ -5136,6 +5145,7 @@ export class ApplicationsService {
   /** Assign, change or clear an app's domain after creation (applied on next deploy). */
   async setDomain(userId: string, id: string, domain: string | null): Promise<void> {
     const app = await this.requireMutate(userId, id);
+    if (domain !== null) this.assertNotAdopted(app, "domains");
     await this.assertDomainNotReserved(domain); // don't let an app steal the control-panel hostname
     // A user-set domain is "custom" and served over HTTPS (Let's Encrypt); clearing
     // it resets the kind. This keeps custom domains on HTTPS under the certType-aware
@@ -5161,6 +5171,7 @@ export class ApplicationsService {
    */
   async setExtraDomains(userId: string, id: string, domains: string[]): Promise<void> {
     const app = await this.requireMutate(userId, id);
+    this.assertNotAdopted(app, "domains");
     if (!app.domain) throw new BadRequestException("set a primary domain before adding extra domains");
     // Swarm stale-label removal on `docker service update` isn't wired yet → extras are classic/compose only.
     if (app.clusterId) throw new BadRequestException("extra domains aren't supported for clustered (swarm) apps yet");
@@ -5227,6 +5238,7 @@ export class ApplicationsService {
    */
   async setServiceDomains(userId: string, id: string, rows: { service: string; hostname: string; port: number }[]): Promise<void> {
     const app = await this.requireMutate(userId, id);
+    this.assertNotAdopted(app, "domains");
     if (app.source !== "COMPOSE") throw new BadRequestException("service domains apply only to compose apps");
     if (app.clusterId) throw new BadRequestException("service domains aren't supported for clustered apps");
     if (app.tunnelExposed) throw new BadRequestException("service domains aren't supported for a tunnel-exposed app");
@@ -5278,6 +5290,7 @@ export class ApplicationsService {
    */
   async setComposeNetworks(userId: string, id: string, rows: ComposeNetworkRow[]): Promise<void> {
     const app = await this.requireMutate(userId, id);
+    this.assertNotAdopted(app, "compose networks");
     if (app.source !== "COMPOSE" || !app.composeFile || app.gitUrl) throw new BadRequestException("compose networks apply only to a compose app with a stored compose file");
     if (app.clusterId) throw new BadRequestException("compose networks aren't supported for clustered apps");
     const services = new Set(composeServiceNames(app.composeFile));
@@ -5336,6 +5349,7 @@ export class ApplicationsService {
     opts: { domainRedirect?: "www" | "root" | null; securityHeaders?: boolean; gzip?: boolean; forwardAuth?: string | null; ipAllowlist?: string[]; pathPrefix?: string | null; stripPrefix?: boolean; dnsChallenge?: boolean; rateLimit?: { average: number; burst: number; period: "1s" | "1m" | "1h" } | null },
   ): Promise<void> {
     const app = await this.requireMutate(userId, id);
+    this.assertNotAdopted(app, "domain options");
     const data: Prisma.ApplicationUncheckedUpdateInput = {};
     if (opts.dnsChallenge === true) await this.assertCanEnableDnsChallenge(app);
     if (opts.dnsChallenge !== undefined) data.dnsChallenge = opts.dnsChallenge;
@@ -5441,6 +5455,7 @@ export class ApplicationsService {
    */
   async setCustomCert(userId: string, id: string, certPem: string, keyPem: string): Promise<{ domains: string[]; notAfter: string }> {
     const app = await this.requireMutate(userId, id);
+    this.assertNotAdopted(app, "custom certificates");
     if (!app.domain || app.domainKind !== "custom") {
       throw new BadRequestException("a custom certificate applies to a custom domain — set one on this app first");
     }
