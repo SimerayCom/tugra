@@ -18,7 +18,9 @@ RUN pnpm --filter @tugra/shared build \
 # Production-only closure of the hub (+ the built @tugra/shared it links), flattened into /out. The
 # Prisma client is generated again there against the pruned tree (engines come from the same lockfile pins);
 # the client runtime variants for databases the hub never talks to (it is PostgreSQL only) are dropped.
-RUN pnpm --filter @tugra/hub-api deploy --prod --ignore-scripts /out \
+# pnpm 10: `deploy` needs --legacy for a non-injected workspace, and linking the .bin entries (prisma, run at
+# every boot) needs the lifecycle phase, so no --ignore-scripts — only the allow-listed packages run scripts.
+RUN pnpm --filter @tugra/hub-api deploy --legacy --prod /out \
  && cp -r apps/hub-api/dist apps/hub-api/prisma /out/ \
  && cd /out && node_modules/.bin/prisma generate \
  && rm -rf src test /root/.cache /root/.npm \
