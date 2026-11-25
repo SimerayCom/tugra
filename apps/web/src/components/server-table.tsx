@@ -23,6 +23,8 @@ import { AgentUpdateBulkModal } from "./agent-update-bulk-modal";
 import { CapabilitiesBulkModal } from "./capabilities-bulk-modal";
 import { TeamMoveBulkModal } from "./team-move-bulk-modal";
 import { serverDisplayName } from "../lib/server-name";
+import { scannable, useBulkScan } from "./scan-bulk";
+import { useToast } from "./toast";
 
 /** Rows per page by default, and the choices offered. Selection persists across pages; the header select-all acts on the visible page only. */
 export const SERVER_PAGE_SIZE = 100;
@@ -110,6 +112,13 @@ export function ServerTable({
   }, [pageSelected, allPageSelected]);
   const writable = writableIds(servers, selected);
   const skipped = selected.size - writable.length;
+  const toast = useToast();
+  const bulkScan = useBulkScan();
+  const scanTargets = scannable(servers, selected);
+  const startBulkScan = async () => {
+    const res = await bulkScan.run(scanTargets);
+    toast(res.failed ? t("servers.scanBulk.partial", { ok: res.ok, failed: res.failed }) : t("servers.scanBulk.done", { n: res.ok }), res.failed ? "info" : "success");
+  };
 
   const statusChip = (s: ServerStatus | null, label: string, color: string) => {
     const active = status === s;
@@ -398,6 +407,15 @@ export function ServerTable({
             {skipped > 0 && <span style={{ color: "var(--c-tx3)", fontWeight: 400 }}> {t("servers.skipped", { n: skipped })}</span>}
           </span>
           <div style={{ flex: 1 }} />
+          <Btn
+            variant="ghost"
+            onClick={() => void startBulkScan()}
+            disabled={scanTargets.length === 0 || bulkScan.progress !== null}
+            loading={bulkScan.progress !== null}
+            data-tip={scanTargets.length === 0 ? t("servers.scanBulk.none") : t("servers.scanBulk.hint", { n: scanTargets.length })}
+          >
+            {bulkScan.progress ? t("servers.scanBulk.running", { done: bulkScan.progress.done, total: bulkScan.progress.total }) : t("servers.scanBulk.open")}
+          </Btn>
           <Btn variant="ghost" onClick={() => setShowTeamMove(true)} disabled={writable.length === 0}>
             {t("servers.teamMoveBulk.open")}
           </Btn>

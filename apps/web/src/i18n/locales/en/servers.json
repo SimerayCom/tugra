@@ -360,7 +360,11 @@
     "exposedByAccount": "Identified by the account it runs as",
     "exposedByPort": "Identified by its port number",
     "exposedFirewall": "Or block the port for outside addresses with ufw or your provider's firewall.",
-    "exposedSeverity": { "critical": "Critical", "high": "High", "medium": "Medium" },
+    "exposedSeverity": {
+      "critical": "Critical",
+      "high": "High",
+      "medium": "Medium"
+    },
     "exposedFix": {
       "publish_local": "Publish it on 127.0.0.1 only (use \"127.0.0.1:{port}:{port}\" instead of \"{port}:{port}\" in the container's ports).",
       "bind_local": "Bind the service to 127.0.0.1 in its own configuration.",
@@ -757,5 +761,13 @@
     "probeInvalid": "Start with / and use only letters, numbers and . _ ~ - / (no spaces or ?).",
     "nodeConfirm": "Use Node {n}",
     "envNote": "The environment comes from PM2's saved process list (pm2 save). A variable changed with pm2 restart --update-env and never saved isn't included. Save PM2 first if you did that."
+  },
+  "scanBulk": {
+    "open": "Scan",
+    "running": "Scanning {done}/{total}…",
+    "hint": "See what runs on {n} selected servers (read-only).",
+    "none": "Select online servers you can operate to scan them.",
+    "done": "Scanned {n} servers.",
+    "partial": "Scanned {ok} servers, {failed} failed. Open a server to see why."
   }
 }
