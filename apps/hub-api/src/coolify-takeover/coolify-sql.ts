@@ -94,7 +94,7 @@ const DB_TABLES: Array<[string, string]> = [
 const NOTIFY = (name: string, table: string): SectionSpec => ({ name, table, plain: ["id", "team_id"], toggles: true, present: ["smtp_host", "smtp_username", "telegram_chat_id", "smtp_from_address"], limit: 1000 });
 
 export const SECTIONS: SectionSpec[] = [
-  { name: "instance", table: "instance_settings", plain: ["id", "fqdn", "instance_name", "public_ipv4", "public_ipv6", "is_auto_update_enabled", "auto_update_frequency"], limit: 1 },
+  { name: "instance", table: "instance_settings", plain: ["id", "fqdn", "instance_name", "public_ipv4", "public_ipv6", "is_auto_update_enabled", "auto_update_frequency"], scrubUrl: ["fqdn"], limit: 1 },
   { name: "teams", table: "teams", plain: ["id", "name", "description", "personal_team"], toggles: true, present: ["smtp_host", "smtp_username", "telegram_chat_id"], limit: 1000 },
   { name: "team_members", table: "team_user", plain: ["team_id", "role"], limit: 5000 },
   NOTIFY("notify_email", "email_notification_settings"),

@@ -60,6 +60,12 @@ describe("agent read SQL: what is read", () => {
     expect(AGENT_SECTIONS.find((s) => s.name === "applications")!.scrubUrl).toEqual(expect.arrayContaining(["git_repository", "fqdn"]));
   });
 
+  it("every plain column that can hold a URL with credentials (fqdn, endpoint, repository) is scrubbed, including the instance row", () => {
+    const unscrubbed: string[] = [];
+    for (const s of AGENT_SECTIONS) for (const c of s.plain) if (/^(fqdn|endpoint|git_repository)$/.test(c) && !(s.scrubUrl ?? []).includes(c)) unscrubbed.push(`${s.name}.${c}`);
+    expect(unscrubbed).toEqual([]);
+  });
+
   it("reads everything the plan needs (build and run config, settings, volumes, database users, tags, git apps, S3, teams)", () => {
     const names = AGENT_SECTIONS.map((s) => s.name);
     for (const n of ["teams", "team_members", "servers", "server_settings", "projects", "environments", "docker_standalone", "applications", "app_settings", "db_postgresql", "db_redis", "services", "service_apps", "service_dbs", "env_vars", "shared_vars", "volumes", "file_volumes", "scheduled_tasks", "backups", "s3", "git_github", "git_gitlab", "git_gitea", "tags", "taggables"]) {
