@@ -52,6 +52,27 @@ const show = (props: Partial<React.ComponentProps<typeof ServerScanCard>> = {}) 
   );
 
 describe("ServerScanCard", () => {
+  it("refreshes a report taken with an outdated agent once on open, and not again within the hour", async () => {
+    sessionStorage.clear();
+    vi.spyOn(api, "getServerScan").mockResolvedValue({ report: report({ host: { status: "unavailable", reason: "agent_outdated" } }) });
+    const run = vi.spyOn(api, "runServerScan").mockResolvedValue({ report: report() });
+    show();
+    await waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+    cleanup();
+    show();
+    await new Promise((r) => setTimeout(r, 50));
+    expect(run).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not auto-scan a fresh report or without server-ops", async () => {
+    sessionStorage.clear();
+    vi.spyOn(api, "getServerScan").mockResolvedValue({ report: report() });
+    const run = vi.spyOn(api, "runServerScan").mockResolvedValue({ report: report() });
+    show();
+    await screen.findByText("PM2");
+    expect(run).not.toHaveBeenCalled();
+  });
+
   it("offers the scan when the server was never scanned, and runs it on click", async () => {
     vi.spyOn(api, "getServerScan").mockResolvedValue({ report: null });
     const run = vi.spyOn(api, "runServerScan").mockResolvedValue({ report: report() });

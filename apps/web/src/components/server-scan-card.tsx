@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type CSSProperties } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError } from "../lib/api";
 import { relativeTime } from "../lib/fleet";
@@ -131,6 +131,27 @@ export function ServerScanCard({
     },
   });
   const report = q.data?.report ?? null;
+
+  // A stored report can be stale: taken before the agent was updated ("update the agent to scan the host") or a day old.
+  // Refresh it once on open instead of showing an old answer as current. At most once an hour per server per tab, so an
+  // agent that really is outdated does not trigger a scan on every visit.
+  const autoTried = useRef(false);
+  useEffect(() => {
+    if (autoTried.current || !report || !canOps || !online || run.isPending) return;
+    const stale = report.host.reason === "agent_outdated" || Date.now() - new Date(report.scannedAt).getTime() > 24 * 3600_000;
+    if (!stale) return;
+    autoTried.current = true;
+    const key = `tg_autoscan_${serverId}`;
+    try {
+      const last = Number(sessionStorage.getItem(key) ?? 0);
+      if (Date.now() - last < 3600_000) return;
+      sessionStorage.setItem(key, String(Date.now()));
+    } catch {
+      // storage blocked: still refresh once for this mount
+    }
+    run.mutate();
+  }, [report, canOps, online, run, serverId]);
+
   const disabledReason = !canOps ? t("servers.serverScan.needsOps") : !online ? t("servers.serverScan.offline") : undefined;
 
   const right = (
