@@ -113,10 +113,35 @@ export type TakeoverCertState = (typeof TAKEOVER_CERT_STATES)[number];
 /** Per app: reuse the image Coolify built (default) or rebuild with Tugra and verify. */
 export type TakeoverBuildMode = "reuse-image" | "rebuild-verify";
 
+/** Why an app is left out of a takeover or needs the owner. Stable codes; the screen has a line for each. */
+export const TAKEOVER_ISSUES = [
+  "container_absent",
+  "container_changed",
+  "volume_unmapped",
+  "bind_unmapped",
+  "no_domain",
+  "image_missing",
+  "adopt_failed",
+  "volume_alias_failed",
+  "volume_alias_foreign",
+  "prepare_failed",
+  "rebuild_failed",
+] as const;
+export type TakeoverIssueCode = (typeof TAKEOVER_ISSUES)[number];
+
+/** Why a takeover step failed (the takeover itself, not one app). */
+export const TAKEOVER_FAILURE_CODES = ["probe_unavailable", "exclusive_policy_failed", "exclusive_stop_failed", "exclusive_start_failed", "swap_stop_failed", "swap_start_failed", "give_back_failed"] as const;
+export type TakeoverFailureCode = (typeof TAKEOVER_FAILURE_CODES)[number];
+
 export interface TakeoverItemView {
   itemRef: string;
   name: string;
   buildMode: TakeoverBuildMode;
+  /** Left out of the takeover; `issues` says why. Absent = takes part. */
+  skipped?: boolean;
+  /** The app shares writable data with Coolify's copy, so it is switched rather than tested alongside. */
+  exclusive?: boolean;
+  issues?: TakeoverIssueCode[];
   domains: Array<{ host: string; tempCheck: "pending" | "ok" | "failed"; finalCheck: "pending" | "ok" | "failed"; cert: TakeoverCertState }>;
 }
 
@@ -128,6 +153,8 @@ export interface TakeoverView {
   tempPort: number | null;
   items: TakeoverItemView[];
   giveBackAvailable: boolean;
+  /** Set when the last step failed. */
+  failureCode?: TakeoverFailureCode | null;
   createdAt: string;
   finishedAt: string | null;
 }
