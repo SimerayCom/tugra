@@ -53,6 +53,12 @@ func main() {
 		os.Exit(scan.RunCLI(os.Args[2:], os.Stdout, os.Stderr))
 	}
 
+	// `pm2` is the facts source for "Move to Tugra" (PM2 processes): same sandboxed read-only helper as `scan`, plus
+	// the interpreter, arguments and (for one named process only) the environment a faithful re-creation needs.
+	if len(os.Args) > 1 && os.Args[1] == "pm2" {
+		os.Exit(scan.RunPM2CLI(os.Args[2:], os.Stdout, os.Stderr))
+	}
+
 	if len(os.Args) > 1 && os.Args[1] == "fsd" {
 		os.Exit(fsd.RunCLI(os.Args[2:]))
 	}
