@@ -7,22 +7,47 @@ const one = (c: CoolifyHostInput, s: TugraHostInput[], opts = {}) => matchHosts(
 
 describe("matchHosts: the evidence ladder", () => {
   describe("E1 identity confirms alone", () => {
-    it("an equal machine id is certain, even with no address in common", () => {
-      const v = one(cool("c1", "198.51.100.9", { facts: { machineIdHash: "aa" } }), [tugra("a", { publicIp: "203.0.113.1", facts: { machineIdHash: "AA" } }), tugra("b", { facts: { machineIdHash: "bb" } })]);
+    it("an equal machine id AND an equal engine id are certain, even with no address in common", () => {
+      const v = one(cool("c1", "198.51.100.9", { facts: { machineIdHash: "aa", dockerEngineId: "e1" } }), [tugra("a", { publicIp: "203.0.113.1", facts: { machineIdHash: "AA", dockerEngineId: "E1" } }), tugra("b", { facts: { machineIdHash: "bb" } })]);
       expect(v).toMatchObject({ status: "certain", tugraServerId: "a" });
-      expect(v.candidates).toEqual([expect.objectContaining({ serverId: "a", evidence: [{ kind: "machine_id", equal: true }] })]);
+      expect(v.candidates).toEqual([expect.objectContaining({ serverId: "a", evidence: [{ kind: "machine_id", equal: true }, { kind: "docker_engine_id", equal: true }] })]);
     });
 
-    it("each identity fact confirms: host key, machine id, docker engine id", () => {
-      for (const [k, f] of [["ssh_host_key", { sshHostKeyFp: "fp1" }], ["machine_id", { machineIdHash: "m1" }], ["docker_engine_id", { dockerEngineId: "e1" }]] as const) {
-        const v = one(cool("c1", null, { facts: f }), [tugra("a", { facts: f })]);
-        expect(v.status).toBe("certain");
-        expect(v.candidates[0].evidence).toContainEqual({ kind: k, equal: true });
+    it("the host key confirms alone", () => {
+      const f = { sshHostKeyFp: "fp1" };
+      const v = one(cool("c1", null, { facts: f }), [tugra("a", { facts: f })]);
+      expect(v.status).toBe("certain");
+      expect(v.candidates[0].evidence).toContainEqual({ kind: "ssh_host_key", equal: true });
+    });
+
+    it("a LONE machine id or engine id (a cloned VM keeps both) is probable, never certain", () => {
+      for (const f of [{ machineIdHash: "m1" }, { dockerEngineId: "e1" }]) {
+        const v = one(cool("c1", "198.51.100.9", { facts: f }), [tugra("clone", { publicIp: "203.0.113.1", facts: f })]);
+        expect(v).toMatchObject({ status: "probable", tugraServerId: "clone" });
+        expect(verdictHasIdentity(v)).toBe(true);
       }
     });
 
+    it("a lone machine id plus a unique address is certain; plus an address of ANOTHER server is not", () => {
+      const f = { machineIdHash: "m1" };
+      expect(one(cool("c1", "203.0.113.1", { facts: f }), [tugra("a", { publicIp: "203.0.113.1", facts: f })])).toMatchObject({ status: "certain", tugraServerId: "a" });
+      const v = one(cool("c1", "203.0.113.1", { facts: f }), [tugra("twin", { publicIp: "203.0.113.50", facts: f }), tugra("addr", { publicIp: "203.0.113.1" })]);
+      expect(v.status).toBe("ambiguous");
+      expect(v.tugraServerId).toBeNull();
+    });
+
+    it("two clone twins with the same lone machine id are ambiguous, never picked", () => {
+      const f = { machineIdHash: "m1" };
+      expect(one(cool("c1", null, { facts: f }), [tugra("a", { facts: f }), tugra("b", { facts: f })])).toMatchObject({ status: "ambiguous", tugraServerId: null });
+    });
+
+    it("a lone machine id with a differing engine id is a conflict: no match", () => {
+      const v = one(cool("c1", null, { facts: { machineIdHash: "m1", dockerEngineId: "e1" } }), [tugra("a", { facts: { machineIdHash: "m1", dockerEngineId: "e2" } })]);
+      expect(v).toMatchObject({ status: "none", tugraServerId: null });
+    });
+
     it("E1 beats an address that points at another server", () => {
-      const facts = { machineIdHash: "m" };
+      const facts = { machineIdHash: "m", dockerEngineId: "e" };
       const v = one(cool("c1", "203.0.113.1", { facts }), [tugra("addr", { publicIp: "203.0.113.1" }), tugra("same", { publicIp: "203.0.113.99", facts })]);
       expect(v).toMatchObject({ status: "certain", tugraServerId: "same" });
     });
@@ -82,8 +107,8 @@ describe("matchHosts: the evidence ladder", () => {
 
     it("...unless identity separates them", () => {
       const verdicts = matchHosts(
-        [cool("c1", "203.0.113.5", { facts: { machineIdHash: "m1" } }), cool("c2", "203.0.113.5", { facts: { machineIdHash: "m2" } })],
-        [tugra("a", { publicIp: "203.0.113.5", facts: { machineIdHash: "m1" } }), tugra("b", { publicIp: "203.0.113.5", facts: { machineIdHash: "m2" } })],
+        [cool("c1", "203.0.113.5", { facts: { machineIdHash: "m1", dockerEngineId: "e1" } }), cool("c2", "203.0.113.5", { facts: { machineIdHash: "m2", dockerEngineId: "e2" } })],
+        [tugra("a", { publicIp: "203.0.113.5", facts: { machineIdHash: "m1", dockerEngineId: "e1" } }), tugra("b", { publicIp: "203.0.113.5", facts: { machineIdHash: "m2", dockerEngineId: "e2" } })],
       );
       expect(verdicts.map((v) => [v.status, v.tugraServerId])).toEqual([["certain", "a"], ["certain", "b"]]);
     });
@@ -148,12 +173,22 @@ describe("matchHosts: the evidence ladder", () => {
   });
 
   describe("the Coolify host itself", () => {
-    it("is the machine the reading agent runs on: certain with an identity fact on record, probable without", () => {
-      const withFacts = one(cool("c0", "host.docker.internal", { isLocal: true }), [tugra("agent", { facts: { machineIdHash: "m" } })], { localServerId: "agent" });
-      expect(withFacts).toMatchObject({ status: "certain", tugraServerId: "agent" });
-      expect(verdictHasIdentity(withFacts)).toBe(true);
+    it("is the machine the reading agent runs on: certain from the agent session, with no self-comparison as evidence", () => {
+      // no probe facts for the Coolify host: the verdict still rests on the session, and carries no invented evidence
+      const noProbe = one(cool("c0", "host.docker.internal", { isLocal: true }), [tugra("agent", { facts: { machineIdHash: "m" } })], { localServerId: "agent" });
+      expect(noProbe).toMatchObject({ status: "certain", tugraServerId: "agent" });
+      expect(noProbe.candidates[0].evidence).toEqual([]);
       const without = one(cool("c0", "host.docker.internal", { isLocal: true }), [tugra("agent")], { localServerId: "agent" });
-      expect(without).toMatchObject({ status: "probable", tugraServerId: "agent" });
+      expect(without).toMatchObject({ status: "certain", tugraServerId: "agent" });
+      // a real probe that agrees is recorded as evidence
+      const probed = one(cool("c0", null, { isLocal: true, facts: { machineIdHash: "m" } }), [tugra("agent", { facts: { machineIdHash: "m" } })], { localServerId: "agent" });
+      expect(probed.candidates[0].evidence).toEqual([{ kind: "machine_id", equal: true }]);
+    });
+
+    it("never takes the session of one server for another: only the agent server is the local match", () => {
+      const v = one(cool("c0", null, { isLocal: true }), [tugra("agent"), tugra("other")], { localServerId: "agent" });
+      expect(v.tugraServerId).toBe("agent");
+      expect(v.candidates.map((c) => c.serverId)).toEqual(["agent"]);
     });
 
     it("is none without a reading agent, or when that server cannot be managed", () => {
@@ -221,7 +256,13 @@ describe("matchHosts: the evidence ladder", () => {
         expect(matchHosts([...hosts].reverse(), [...servers].reverse(), opts)).toEqual(out);
         for (const v of out) {
           const host = hosts.find((h) => h.uuid === v.coolifyServerUuid)!;
-          if (v.status === "certain" && !host.isLocal) expect(verdictHasIdentity(v)).toBe(true);
+          if (v.status === "certain" && !host.isLocal) {
+            expect(verdictHasIdentity(v)).toBe(true);
+            // a clone twin never makes a certain verdict alone: a lone machine id / engine id needs another E1 fact or a unique address
+            const kinds = v.candidates.find((x) => x.serverId === v.tugraServerId)!.evidence.filter((e) => e.equal);
+            const ids = kinds.filter((e) => HOST_EVIDENCE_STRENGTH[e.kind] === "identity").map((e) => e.kind);
+            expect(ids.includes("ssh_host_key") || ids.length >= 2 || kinds.some((e) => e.kind === "ip")).toBe(true);
+          }
           if (v.status === "certain" || v.status === "probable") {
             expect(servers.map((s) => s.serverId)).toContain(v.tugraServerId);
             expect(servers.find((s) => s.serverId === v.tugraServerId)!.canManage).toBe(true);
@@ -231,7 +272,7 @@ describe("matchHosts: the evidence ladder", () => {
           } else {
             expect(v.tugraServerId).toBeNull();
           }
-          if (v.status === "probable" && !host.isLocal) expect(v.candidates.find((x) => x.serverId === v.tugraServerId)!.evidence.some((e) => HOST_EVIDENCE_STRENGTH[e.kind] === "address")).toBe(true);
+          if (v.status === "probable" && !host.isLocal) expect(v.candidates.find((x) => x.serverId === v.tugraServerId)!.evidence.some((e) => HOST_EVIDENCE_STRENGTH[e.kind] !== "weak")).toBe(true);
           if (v.status === "none" && !host.isLocal) expect(v.tugraServerId).toBeNull();
           expect(v.candidates.every((c) => servers.find((s) => s.serverId === c.serverId)!.canManage)).toBe(true);
         }

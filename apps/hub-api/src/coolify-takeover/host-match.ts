@@ -6,7 +6,9 @@ import { comparableAddress, isPrivateAddress } from "../importer/server-match";
  * Which Tugra server is the same machine as a Coolify server (Coolify hub takeover, lane D). PURE: no I/O, deterministic for any
  * ordering of its inputs. The evidence ladder:
  *
- *  - E1 identity (confirms ALONE): the same sshd host-key fingerprint, the same hashed machine id, the same Docker engine id.
+ *  - E1 identity: the same sshd host-key fingerprint confirms ALONE. A machine id or Docker engine id is copied by VM clones and
+ *    snapshot restores, so one of them alone is NOT enough: it confirms only together with the other one (both present and equal),
+ *    with the host key, or with a unique address (E2). A lone machine id or engine id match is `probable`.
  *    Two values that both exist and differ are a CONFLICT: the address is then a stale reuse, not the machine.
  *  - E2 address (probable): the same address. A public address names one machine; a private one (RFC 1918, ULA, link-local) only
  *    counts when exactly one Tugra server AND one Coolify server carry it (the range is shared across providers); a CGNAT /
@@ -14,7 +16,8 @@ import { comparableAddress, isPrivateAddress } from "../importer/server-match";
  *    Coolify servers share (one NAT address, different SSH ports) is never probable.
  *  - E3 weak (never decides): an equal host name.
  *
- * `certain` needs an E1 match, always. `probable` is exactly one address candidate with no conflict. Everything else with a
+ * `certain` needs an E1 match, always, and one that is not a lone machine id or engine id. `probable` is exactly one candidate with
+ * no conflict that has a unique address or a lone machine id / engine id match. Everything else with a
  * candidate is `ambiguous` (the owner picks); no candidate is `none`. The Coolify row of the host the agent runs on is "this
  * server" and is never matched to another one by address or name. No source address is copied into a verdict: only kinds.
  */
@@ -129,22 +132,22 @@ export function matchHosts(coolify: readonly CoolifyHostInput[], tugra: readonly
     if (h.isLocal) {
       const local = opts.localServerId ? byId.get(opts.localServerId) : undefined;
       if (!local || !local.canManage) return none();
-      // The agent runs on this machine by construction: its own facts are the Coolify host's facts unless the caller knows better.
-      const all = identityEvidence(h.facts ?? local.facts, local.facts);
+      // The agent session that read this Coolify runs on this machine by construction: that session is what makes the verdict certain.
+      // Evidence is only a REAL comparison (facts probed on the Coolify host against the agent server's), never the agent's own facts
+      // against themselves; a conflict between the two says the session is not on this host after all.
+      const all = identityEvidence(h.facts, local.facts);
       if (all.some((e) => !e.equal)) return none();
       const evidence = sortEvidence(all);
-      // With no identity fact on record the agent still runs there, but the verdict cannot be called certain.
-      return { coolifyServerUuid: h.uuid, status: evidence.length > 0 ? "certain" : "probable", tugraServerId: local.serverId, candidates: [{ serverId: local.serverId, name: local.name, teamId: local.teamId, evidence }] };
+      return { coolifyServerUuid: h.uuid, status: "certain", tugraServerId: local.serverId, candidates: [{ serverId: local.serverId, name: local.name, teamId: local.teamId, evidence }] };
     }
 
     const addrs = coolifyAddresses(h);
     const hostName = addrs.find((a) => classify(a) === "name") ?? null;
-    const candidates: Array<{ s: TugraHostInput; evidence: HostEvidence[]; conflict: boolean; identity: boolean; strongAddress: boolean }> = [];
+    const candidates: Array<{ s: TugraHostInput; evidence: HostEvidence[]; conflict: boolean; identity: boolean; loneIdentity: boolean; strongAddress: boolean }> = [];
     for (const s of servers) {
       if (!s.canManage) continue; // never proposed, never linked
       const evidence: HostEvidence[] = identityEvidence(h.facts, s.facts);
       const conflict = evidence.some((e) => !e.equal);
-      const identity = !conflict && evidence.some((e) => e.equal);
       const nameEqual = !!hostName && !!s.hostname && norm(s.hostname).replace(/\.$/, "") === hostName;
       const mine = new Set(tugraAddresses(s));
       let addressSeen = false;
@@ -158,10 +161,15 @@ export function matchHosts(coolify: readonly CoolifyHostInput[], tugra: readonly
         const unique = (reports.get(a)?.size ?? 0) === 1 && (coolifyAt.get(a) ?? 0) === 1;
         if (unique && (cls === "public" || cls === "private" || (cls === "cgnat" && nameEqual))) strongAddress = true;
       }
+      // E1 that confirms: the host key alone; a machine id or engine id only with another E1 fact or a unique address (clones copy them).
+      const equalIdentity = evidence.filter((e) => e.equal).map((e) => e.kind);
+      const hostKey = equalIdentity.includes("ssh_host_key");
+      const identity = !conflict && (hostKey || equalIdentity.length >= 2 || (equalIdentity.length === 1 && strongAddress));
+      const loneIdentity = !conflict && !identity && equalIdentity.length === 1;
       if (addressSeen) evidence.push({ kind: "ip", equal: true });
       if (nameEqual) evidence.push({ kind: "hostname", equal: true });
       if (!evidence.some((e) => e.equal)) continue; // no shared fact: not a candidate (a bare conflict says nothing useful)
-      candidates.push({ s, evidence: sortEvidence(evidence), conflict, identity, strongAddress });
+      candidates.push({ s, evidence: sortEvidence(evidence), conflict, identity, loneIdentity, strongAddress });
     }
 
     const view = (c: (typeof candidates)[number]): HostMatchCandidate => ({ serverId: c.s.serverId, name: c.s.name, teamId: c.s.teamId, evidence: c.evidence });
@@ -173,7 +181,7 @@ export function matchHosts(coolify: readonly CoolifyHostInput[], tugra: readonly
 
     // An identity CONFLICT vetoes the address: the same address on a different machine is a stale reuse.
     const open = candidates.filter((c) => !c.conflict);
-    const probable = open.filter((c) => c.strongAddress);
+    const probable = open.filter((c) => c.strongAddress || c.loneIdentity);
     if (probable.length === 1) return { coolifyServerUuid: h.uuid, status: "probable", tugraServerId: probable[0].s.serverId, candidates: shown };
     if (open.length > 0) return { coolifyServerUuid: h.uuid, status: "ambiguous", tugraServerId: null, candidates: shown };
     return { coolifyServerUuid: h.uuid, status: "none", tugraServerId: null, candidates: shown };

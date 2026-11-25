@@ -29,17 +29,24 @@ describe("HostMatchService.verdicts", () => {
   });
 
   it("attaches the identity facts the agents reported", async () => {
-    const facts = { dockerEngineId: "eng-1" };
+    const facts = { dockerEngineId: "eng-1", machineIdHash: "m".repeat(64) };
     const { svc, servers } = make([row("a")], [["t1", ["servers:manage"]]], { a: facts });
     const [v] = await svc.verdicts("u1", [{ uuid: "c1", address: null, facts }]);
     expect(servers.hostIdentityOf).toHaveBeenCalledWith("a");
     expect(v).toMatchObject({ status: "certain", tugraServerId: "a" });
   });
 
+  it("a lone engine id (a cloned VM) is only probable", async () => {
+    const facts = { dockerEngineId: "eng-1" };
+    const { svc } = make([row("a")], [["t1", ["servers:manage"]]], { a: facts });
+    const [v] = await svc.verdicts("u1", [{ uuid: "c1", address: null, facts }]);
+    expect(v).toMatchObject({ status: "probable", tugraServerId: "a" });
+  });
+
   it("the Coolify host row is the reading agent's own server", async () => {
     const { svc } = make([row("agent")], [["t1", ["servers:manage"]]]);
     const [v] = await svc.verdicts("u1", [{ uuid: "c0", address: "host.docker.internal", isLocal: true }], { localServerId: "agent" });
-    expect(v).toMatchObject({ status: "probable", tugraServerId: "agent" });
+    expect(v).toMatchObject({ status: "certain", tugraServerId: "agent" });
   });
 
   it("has no query to make for no hosts, and none for a caller in no team", async () => {
