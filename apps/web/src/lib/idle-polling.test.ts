@@ -7,7 +7,8 @@ describe("idleInterval", () => {
     expect(idleInterval(5000, false)).toBe(5000);
   });
   it("slows idle polls 4x, capped at 2 minutes", () => {
-    expect(idleInterval(5000, true)).toBe(20_000);
+    expect(idleInterval(5000, true)).toBe(5000); // operation polls (installs, backups, live fleet) stay fast
+    expect(idleInterval(10_000, true)).toBe(40_000);
     expect(idleInterval(30_000, true)).toBe(120_000);
     expect(idleInterval(60_000, true)).toBe(120_000);
   });
@@ -24,10 +25,10 @@ describe("withIdleSlowdown", () => {
   });
   it("wraps numbers and functions and keeps a function's false", () => {
     let idle = false;
-    const n = withIdleSlowdown(5000, () => idle) as () => number;
-    expect(n()).toBe(5000);
+    const n = withIdleSlowdown(10_000, () => idle) as () => number;
+    expect(n()).toBe(10_000);
     idle = true;
-    expect(n()).toBe(20_000);
+    expect(n()).toBe(40_000);
     const f = withIdleSlowdown((() => false) as never, () => idle) as (q: never) => unknown;
     expect(f(undefined as never)).toBe(false);
     const g = withIdleSlowdown((() => 10_000) as never, () => idle) as (q: never) => unknown;
@@ -38,7 +39,7 @@ describe("withIdleSlowdown", () => {
 describe("PollingQueryClient", () => {
   it("wraps refetchInterval exactly once and tracks idle state", () => {
     const qc = new PollingQueryClient();
-    const o = qc.defaultQueryOptions({ queryKey: ["a"], queryFn: async () => 1, refetchInterval: 5000 });
+    const o = qc.defaultQueryOptions({ queryKey: ["a"], queryFn: async () => 1, refetchInterval: 10_000 });
     expect(typeof o.refetchInterval).toBe("function");
     expect(qc.defaultQueryOptions(o)).toBe(o);
     const now = Date.now();
@@ -46,10 +47,10 @@ describe("PollingQueryClient", () => {
     expect(qc.isIdle()).toBe(false);
     qc.checkIdle(now + IDLE_AFTER_MS + 10);
     expect(qc.isIdle()).toBe(true);
-    expect((o.refetchInterval as () => number)()).toBe(20_000);
+    expect((o.refetchInterval as () => number)()).toBe(40_000);
     qc.markActive();
     expect(qc.isIdle()).toBe(false);
-    expect((o.refetchInterval as () => number)()).toBe(5000);
+    expect((o.refetchInterval as () => number)()).toBe(10_000);
   });
 
   it("refetches a polling query immediately when activity returns, and not a static one", async () => {

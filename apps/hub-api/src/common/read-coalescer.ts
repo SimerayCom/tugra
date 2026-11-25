@@ -34,6 +34,8 @@ export class ReadCoalescer {
       this.hits++;
       return hit.value as T;
     }
+    // An expired payload must not sit in the heap until the size cap evicts it.
+    if (hit) this.done.delete(key);
     const running = this.inflight.get(key);
     if (running) {
       this.hits++;
@@ -71,4 +73,9 @@ export function setKey(parts: readonly string[]): string {
   const h = createHash("sha1");
   for (const p of [...parts].sort()) h.update(p).update("\0");
   return `${parts.length}:${h.digest("base64url")}`;
+}
+
+/** A coalescing key from parts: each part is URI-encoded, so a ":" inside a filter value can never merge two keys. */
+export function ckey(...parts: Array<string | number | null | undefined>): string {
+  return parts.map((p) => encodeURIComponent(p == null ? "" : String(p))).join(":");
 }

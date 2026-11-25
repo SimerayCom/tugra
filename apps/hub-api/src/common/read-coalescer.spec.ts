@@ -1,4 +1,4 @@
-import { ReadCoalescer, setKey } from "./read-coalescer";
+import { ReadCoalescer, ckey, setKey } from "./read-coalescer";
 import { CoalesceInvalidateInterceptor } from "./coalesce.module";
 import { of, throwError, lastValueFrom } from "rxjs";
 
@@ -81,5 +81,12 @@ describe("CoalesceInvalidateInterceptor", () => {
     expect(spy).toHaveBeenCalledTimes(2);
     await expect(lastValueFrom(i.intercept(ctx("DELETE"), { handle: () => throwError(() => new Error("x")) }))).rejects.toThrow("x");
     expect(spy).toHaveBeenCalledTimes(4);
+  });
+});
+
+describe("ckey", () => {
+  it("never merges two different filters through a ':' inside a value", () => {
+    expect(ckey("servers", "list", "u1", "a:b", "")).not.toBe(ckey("servers", "list", "u1", "a", "b"));
+    expect(ckey("x", null, undefined, 3)).toBe("x:::3");
   });
 });

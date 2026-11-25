@@ -617,5 +617,8 @@
   "hubWarn_pg_connections": "Postgres connections are at {value}% of the maximum.",
   "hubWarn_redis_memory": "Redis is at {value}% of its memory limit.",
   "hubWarn_restarts": "The hub restarted {value} times in the last 24 hours.",
-  "hubWarn_queue_backlog": "Queue {detail} has {value} jobs waiting."
+  "hubWarn_queue_backlog": "Queue {detail} has {value} jobs waiting.",
+  "hubHealthMb": "{n} MB",
+  "hubHealthHeapVal": "{used} / {limit} MB",
+  "hubHealthQueueDurSep": " · last run {ms} ms"
 }

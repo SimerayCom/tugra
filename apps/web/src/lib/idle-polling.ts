@@ -7,7 +7,8 @@ export const IDLE_FACTOR = 4;
 /** Never poll slower than this while idle (a 60 s poll x 4 would otherwise drift to 4 minutes). */
 export const IDLE_MAX_MS = 120_000;
 /** Polls faster than this are a user WAITING on an operation (deploy, migration, reboot): never slowed. */
-export const KEEP_FAST_BELOW_MS = 4_000;
+// Polls of 5 s or less track something running (an install, a backup, a deploy, the live fleet): never slow them.
+export const KEEP_FAST_BELOW_MS = 6_000;
 const CHECK_EVERY_MS = 5_000;
 
 /** The slowed interval for a base interval while idle (pure, so it is unit-tested). */

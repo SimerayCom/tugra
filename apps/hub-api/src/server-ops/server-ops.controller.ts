@@ -1,4 +1,4 @@
-import { ReadCoalescer } from "../common/read-coalescer";
+import { ReadCoalescer, ckey } from "../common/read-coalescer";
 import {
   Body,
   Controller,
@@ -105,7 +105,7 @@ export class ServerOpsController {
   @Header("Cache-Control", "private, no-cache") // revalidated every poll via the ETag (304 when unchanged); never shared
   @Get("containers/all")
   listContainers(@CurrentUser() user: AuthUser, @Param("id") id: string) {
-    return this.coalescer.run(`ops:containers:${user.userId}:${id}`, () => this.containerOps.list(user.userId, id));
+    return this.coalescer.run(ckey("ops", "containers", user.userId, id), () => this.containerOps.list(user.userId, id));
   }
 
   /** Lifecycle action on a container (start / restart / stop / remove). Writer-only; strong guards service-side. */

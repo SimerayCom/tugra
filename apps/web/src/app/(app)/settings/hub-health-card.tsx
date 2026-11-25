@@ -66,9 +66,9 @@ function HubHealthBody({ h, heapWarn, loopWarn }: { h: HubHealth; heapWarn: bool
       <Row label={t("settings.hubHealthRestarts")}>
         <span title={t("settings.hubHealthRestartsHint")}>{h.restarts.last24h}</span>
       </Row>
-      <Row label={t("settings.hubHealthRss")}>{Math.round(h.process.rssMb)} MB</Row>
+      <Row label={t("settings.hubHealthRss")}>{t("settings.hubHealthMb", { n: Math.round(h.process.rssMb) })}</Row>
       <Row label={t("settings.hubHealthHeap")} tone={heapWarn ? "warn" : undefined}>
-        {Math.round(h.process.heapUsedMb)} / {Math.round(h.process.heapLimitMb)} MB
+        {t("settings.hubHealthHeapVal", { used: Math.round(h.process.heapUsedMb), limit: Math.round(h.process.heapLimitMb) })}
         <span style={{ display: "block", fontSize: 11, color: "var(--c-tx3)", fontWeight: 400 }}>{t("settings.hubHealthHeapPct", { pct: Math.round(h.process.heapPct) })}</span>
       </Row>
       <Row label={t("settings.hubHealthLoop")} tone={loopWarn ? "warn" : undefined}>{t("settings.hubHealthLoopVal", { p50: h.eventLoop.p50Ms, p99: h.eventLoop.p99Ms })}</Row>
@@ -111,7 +111,7 @@ function HubHealthBody({ h, heapWarn, loopWarn }: { h: HubHealth; heapWarn: bool
             <Row key={q.name} label={q.name}>
               <span style={{ fontWeight: 500, fontSize: 12 }}>
                 {t("settings.hubHealthQueueRow", { waiting: q.waiting, active: q.active, delayed: q.delayed, failed: q.failed })}
-                {q.lastDurationMs !== null && <> · {t("settings.hubHealthQueueDur", { ms: q.lastDurationMs })}</>}
+                {q.lastDurationMs !== null && <>{t("settings.hubHealthQueueDurSep", { ms: q.lastDurationMs })}</>}
               </span>
             </Row>
           ))
