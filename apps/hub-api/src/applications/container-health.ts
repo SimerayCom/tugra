@@ -26,8 +26,9 @@ export const appIdOfContainer = (name: string): string | null => NAME_RE.exec(na
 
 /** True when `name` is a live container of `appId`: exact, `-` prefixed, or (clustered only) `.` prefixed.
  *  The required delimiter keeps a sibling id that merely starts with this one's from matching. */
-export function liveContainerOf(appId: string, clustered: boolean, name: string): boolean {
-  const prefix = `tugra_${appId}`;
+export function liveContainerOf(appId: string, clustered: boolean, name: string, project?: string): boolean {
+  // An adopted compose stack keeps its own project name (`<project>-<service>-<n>`), not `tugra_<id>`.
+  const prefix = project ?? `tugra_${appId}`;
   if (name === prefix) return true;
   if (name.startsWith(`${prefix}-`)) return true;
   return clustered && name.startsWith(`${prefix}.`);

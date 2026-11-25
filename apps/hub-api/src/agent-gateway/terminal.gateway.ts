@@ -24,6 +24,7 @@ import { parseCookies, TG_ACCESS } from "../common/cookies";
 import { webBaseUrl } from "../common/web-url";
 import type { AccessTokenPayload } from "../auth/strategies/jwt.strategy";
 import { containerName } from "../deploy/deploy-script";
+import { adoptedCompose, composeProject } from "../deploy/compose-script";
 import { dbContainerName } from "../databases/database-script";
 import { AgentWsServer, type TerminalDelegate } from "./agent-ws.server";
 import { SwarmDeployService } from "../clusters/swarm-deploy.service";
@@ -132,9 +133,16 @@ export class TerminalGateway
           // Compose stacks have multiple containers — the caller picks one.
           // Validate it belongs to THIS app's project (can't exec into others).
           const container = url.searchParams.get("container") ?? "";
-          const prefix = `tugra_${app.id}`;
+          const prefix = composeProject(app); // an adopted stack keeps its own project name
           if (container !== prefix && !container.startsWith(`${prefix}-`)) {
             return ws.close(1008, "invalid container");
+          }
+          // An adopted project's name is the user's own (`shop` also prefixes `shop-admin`'s containers): only
+          // `<project>-<one of the adopted services>-<n>` is this app's.
+          const adopted = adoptedCompose(app);
+          if (adopted) {
+            const svc = container.slice(prefix.length + 1).replace(/-\d+$/, "");
+            if (!adopted.services.some((s) => s.name === svc)) return ws.close(1008, "invalid container");
           }
           target = container;
         } else {

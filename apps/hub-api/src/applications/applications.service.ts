@@ -1888,6 +1888,8 @@ export class ApplicationsService {
   /** The stop / start / remove-container-keep-volumes scripts for the app on whichever host it currently lives, built by the
    *  same builders stop()/start()/remove() use, and the timeout the lifecycle actions use. */
   async moveLifecycle(app: Application): Promise<{ stop: string; start: string; removeContainer: string; timeoutMs: number }> {
+    // Defence in depth: the preflight refuses these, but a `down` here would remove the user's real containers.
+    if (adoptedCompose(app)) throw new BadRequestException("a stack adopted in place cannot be moved");
     const compose = app.source === "COMPOSE";
     const spec = compose ? await this.composeOpSpec(app) : null;
     return {
@@ -6205,10 +6207,12 @@ export class ApplicationsService {
         a.clusterId ? new Set(clusterServers.filter((s) => s.clusterId === a.clusterId).map((s) => s.id)) : new Set([a.serverId]);
       const allServers = new Set<string>();
       for (const a of apps) for (const id of serversOf(a)) allServers.add(id);
+      // Adopted compose stacks run under their own project name, so their containers are not `tugra_*`.
+      const adoptedProjects = [...new Set(apps.filter((a) => adoptedCompose(a)).map((a) => composeProject(a)))];
       const rows = await this.prisma.containerState.findMany({
         where: {
           serverId: { in: [...allServers] },
-          containerName: { startsWith: "tugra_" },
+          OR: [{ containerName: { startsWith: "tugra_" } }, ...adoptedProjects.map((p) => ({ containerName: { startsWith: `${p}-` } }))],
           updatedAt: { gte: new Date(Date.now() - CONTAINER_STATE_MAX_AGE_MS) },
         },
         select: { serverId: true, containerName: true, status: true, health: true, updatedAt: true },
@@ -6221,7 +6225,9 @@ export class ApplicationsService {
       const now = Date.now();
       for (const a of apps) {
         const servers = serversOf(a);
-        const mine = (byApp.get(a.id) ?? []).filter((r) => servers.has(r.serverId) && liveContainerOf(a.id, !!a.clusterId, r.containerName));
+        const adopted = adoptedCompose(a) ? composeProject(a) : undefined;
+        const pool = adopted ? rows : (byApp.get(a.id) ?? []);
+        const mine = pool.filter((r) => servers.has(r.serverId) && liveContainerOf(a.id, !!a.clusterId, r.containerName, adopted));
         out.set(a.id, reduceHealth(mine, resolveHealthCheckType(a), now));
       }
     } catch {

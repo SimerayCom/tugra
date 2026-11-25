@@ -31,6 +31,7 @@ import {
   type MoveServerFacts,
   type PreflightFacts,
 } from "./move-preflight";
+import { adoptedCompose } from "../deploy/compose-script";
 import { asArray } from "./move-types";
 import type { MoveAckInput, MoveAppPreflightResult } from "./dto";
 
@@ -211,6 +212,7 @@ export class MovePreflightService {
       status: app.status,
       clusterId: app.clusterId,
       isPreview: app.isPreview,
+      adoptedCompose: adoptedCompose(app) !== null,
       dbNetwork: !!app.dbNetwork,
       hostPort: app.hostPort,
       extraPorts: parseExtraPorts(app.extraPorts),

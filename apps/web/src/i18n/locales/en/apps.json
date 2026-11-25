@@ -1296,6 +1296,7 @@
   "movePhase_FAILED": "Needs attention",
   "moveBlocker_same_server": "Pick a different server than the one the app already runs on.",
   "moveBlocker_cross_team": "The target server belongs to another team.",
+  "moveBlocker_adopted_compose": "A compose stack adopted in place runs from files on this server, so it can't be moved. Remove it from Tugra and set it up again on the other server.",
   "moveBlocker_app_is_preview": "A preview app can't be moved; it follows its parent app.",
   "moveBlocker_agent_offline_source": "The app's current server is offline. Bring it back online first.",
   "moveBlocker_agent_offline_target": "The target server is offline. Pick another one or bring it back online.",

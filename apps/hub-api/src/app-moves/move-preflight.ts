@@ -43,6 +43,8 @@ export interface MoveAppFacts {
   status: "NEW" | "RUNNING" | "STOPPED" | "FAILED";
   clusterId: string | null;
   isPreview: boolean;
+  /** A compose project adopted in place: its files and containers belong to the source host, so it cannot move. */
+  adoptedCompose: boolean;
   dbNetwork: boolean;
   hostPort: number | null;
   extraPorts: { hostPort: number }[];
@@ -292,6 +294,7 @@ export function assemblePreflight(f: PreflightFacts): MoveAppPreflightResult {
   if (source.id === target.id) hard("same_server", "The target is the server the app already runs on.");
   if (source.teamId !== target.teamId) hard("cross_team", "The target server belongs to another team.");
   if (app.isPreview) hard("app_is_preview", "A preview app cannot be moved; it follows its parent.");
+  if (app.adoptedCompose) hard("adopted_compose", "A compose project adopted in place runs from files on this server and cannot be moved.");
   if (app.clusterId) hard("cluster_app", "Swarm/cluster apps cannot be moved with this tool.");
   if (target.swarmRole) hard("target_in_cluster", "The target server is a node of a cluster's swarm.");
   if (db.previewPrs.length) hard("previews_exist", "Delete the app's preview deployments first.", { prs: db.previewPrs });

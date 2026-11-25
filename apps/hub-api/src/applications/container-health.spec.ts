@@ -50,4 +50,11 @@ describe("container name matching", () => {
     expect(liveContainerOf("abc", true, "tugra_abc.1.xyz")).toBe(true);
     expect(liveContainerOf("abc", true, "tugra_abc__rollout")).toBe(false);
   });
+
+  it("an adopted stack is matched by its own project name, never by tugra_<id>", () => {
+    expect(liveContainerOf("abc", false, "shop-web-1", "shop")).toBe(true);
+    expect(liveContainerOf("abc", false, "shop", "shop")).toBe(true);
+    expect(liveContainerOf("abc", false, "shopper-web-1", "shop")).toBe(false);
+    expect(liveContainerOf("abc", false, "tugra_abc-web-1", "shop")).toBe(false);
+  });
 });

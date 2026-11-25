@@ -7070,6 +7070,19 @@ describe("ApplicationsService container health (status honesty)", () => {
     expect(by).toEqual({ a1: "healthy", a2: "unhealthy", a3: "unknown", a4: "unknown" });
   });
 
+  it("list() reads an adopted stack's health from its own project containers (not tugra_*)", async () => {
+    const composeAdopt = { v: 1, project: "shop", workingDir: "/srv/shop", files: [{ path: "/srv/shop/docker-compose.yml", sha256: "a".repeat(64), bytes: 1 }], services: [], adoptedAt: "x" };
+    const findMany = jest.fn().mockResolvedValue([
+      { serverId: "s1", containerName: "shop-web-1", status: "running", health: "healthy", updatedAt: fresh() },
+      { serverId: "s1", containerName: "shopper-web-1", status: "running", health: "unhealthy", updatedAt: fresh() },
+    ]);
+    const apps = [{ ...happ, source: "COMPOSE", composeAdopt }];
+    const prisma = { application: { findMany: jest.fn().mockResolvedValue(apps) }, containerState: { findMany } } as unknown as PrismaService;
+    const out = await make(prisma, access(), {} as AgentWsServer).list("u1");
+    expect(out[0].containerHealth).toMatchObject({ state: "healthy", containers: 1 });
+    expect(JSON.stringify(findMany.mock.calls[0][0].where.OR)).toContain("shop-");
+  });
+
   it("a rejected health lookup still returns the views, with unknown health", async () => {
     const prisma = {
       application: { findMany: jest.fn().mockResolvedValue([happ]), findUnique: jest.fn().mockResolvedValue(happ) },
@@ -8933,6 +8946,12 @@ describe("ApplicationsService — app move guards", () => {
       expect(life.start).toMatch(/compose.* start/);
       expect(life.removeContainer).toMatch(/compose.* down/);
       expect(life.removeContainer).not.toMatch(/ down[^\n]*(-v|--volumes)/);
+    });
+
+    it("moveLifecycle refuses a stack adopted in place (a `down` would remove the user's real containers)", async () => {
+      const { svc } = mk(null);
+      const adopted = { ...movingApp, source: "COMPOSE", composeFile: null, env: {}, envEnc: null, composeAdopt: { v: 1, project: "shop", workingDir: "/srv/shop", files: [{ path: "/srv/shop/docker-compose.yml", sha256: "a".repeat(64), bytes: 1 }], services: [], adoptedAt: "x" } };
+      await expect(svc.moveLifecycle(adopted as never)).rejects.toBeInstanceOf(BadRequestException);
     });
 
     it("submitMoveDeploy enqueues with the move's key, the `move` trigger and the detached shape; unknown app is 404", async () => {

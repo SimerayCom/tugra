@@ -199,6 +199,25 @@ describe("TerminalGateway", () => {
     );
   });
 
+  it("an adopted stack's terminal matches its own project name and services, not a sibling project", async () => {
+    const composeAdopt = { v: 1, project: "shop", workingDir: "/srv/shop", files: [{ path: "/srv/shop/docker-compose.yml", sha256: "a".repeat(64), bytes: 1 }], services: [{ name: "web", image: "nginx", ports: [], volumes: [] }], adoptedAt: "x" };
+    const mk = () =>
+      make({
+        verifyAsync: jest.fn().mockResolvedValue({ sub: "u1", type: "access" }),
+        application: { id: "app1", teamId: "t1", serverId: "s1", source: "COMPOSE", composeAdopt },
+      });
+    const ok = mk();
+    await connect(ok.gw, fakeWs(), req("/terminal?app=app1&container=shop-web-1"));
+    expect(ok.agentWs.sendToAgent).toHaveBeenCalledWith("s1", expect.objectContaining({ type: "term_start", target: "shop-web-1" }));
+    for (const bad of ["tugra_app1-web-1", "shop-admin-web-1", "shop-db-1"]) {
+      const m = mk();
+      const ws = fakeWs();
+      await connect(m.gw, ws, req(`/terminal?app=app1&container=${bad}`));
+      expect(ws.close).toHaveBeenCalledWith(1008, expect.stringContaining("container"));
+      expect(m.agentWs.sendToAgent).not.toHaveBeenCalled();
+    }
+  });
+
   it("rejects a compose terminal without a container (1008)", async () => {
     const { gw, agentWs } = make({
       verifyAsync: jest.fn().mockResolvedValue({ sub: "u1", type: "access" }),

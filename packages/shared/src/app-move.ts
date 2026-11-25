@@ -57,6 +57,7 @@ export const APP_MOVE_BLOCKER_CODES = [
   "no_curl",
   "no_tool",
   "cluster_app",
+  "adopted_compose",
   "target_in_cluster",
   "previews_exist",
   "db_links_exist",
