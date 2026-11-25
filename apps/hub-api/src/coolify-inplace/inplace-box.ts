@@ -63,6 +63,8 @@ export class Box implements InPlaceWorld {
   failProxyStop = false;
   failAdopted = new Set<string>();
   failStopCtr = new Set<string>();
+  /** containers whose restart policy cannot be changed to "no" (the change reports failed) */
+  failPolicyNo = new Set<string>();
   deployStates = new Map<string, DeployState>();
   proxyBinds: string[] = [];
   busy = false;
@@ -179,6 +181,7 @@ export class Box implements InPlaceWorld {
       for (const m of s.matchAll(/^set_policy '([0-9a-f]{64})' '[^']+' '[^']+' '([a-z-]+)'/gm)) {
         const c = this.ctrs.get(m[1]);
         if (!c) out.push(`TUGRA_IP_POLICY|${m[1]}|gone`);
+        else if (m[2] === "no" && this.failPolicyNo.has(m[1])) out.push(`TUGRA_IP_POLICY|${m[1]}|failed`);
         else {
           c.restart = m[2];
           this.events.push(`policy:${m[2]}`);

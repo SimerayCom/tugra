@@ -405,10 +405,11 @@ export class CoolifyInPlaceService {
       // 1. apps that share data with Coolify's copy: its restart policy first, then stop it, then start Tugra's on the same data
       if (ex.length > 0) {
         const ids = ex.map((i) => (i.container as NonNullable<TakeoverItem["container"]>).id);
-        const pol = parsePolicy((await this.world.exec(server.id, buildRestartPolicyScript(ex.map((i) => ({ ...recorded(i), policy: "no" as const }))), HOST_T)).output, ids);
-        if (ids.some((x) => pol.get(x) !== "ok")) return this.abandon(userId, row, items, "exclusive_policy_failed");
+        // written BEFORE the first policy change: a partial failure below must still give every recorded policy back
         rb.exclusiveStopped = true;
         await this.saveRollback(row.id, rb);
+        const pol = parsePolicy((await this.world.exec(server.id, buildRestartPolicyScript(ex.map((i) => ({ ...recorded(i), policy: "no" as const }))), HOST_T)).output, ids);
+        if (ids.some((x) => pol.get(x) !== "ok")) return this.abandon(userId, row, items, "exclusive_policy_failed");
         const stop = parseStopOutput((await this.world.exec(server.id, buildSourceStopScript(ex.map((i) => recordedFull(i))), 150_000)).output, ids);
         if (ids.some((x) => stop.get(x) !== "stopped" && stop.get(x) !== "gone")) return this.abandon(userId, row, items, "exclusive_stop_failed");
         for (const i of ex) {

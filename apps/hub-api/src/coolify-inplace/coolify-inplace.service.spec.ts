@@ -325,6 +325,23 @@ describe("swap", () => {
     expect(t.box.coolifyProxy.running).toBe(true);
     expect(t.box.tugraProxy.published).toBe(false);
   });
+  it("a restart-policy change that fails for some containers still gives every recorded policy back", async () => {
+    const data2: BoxApp = { ...data, appId: "appdb2", itemRef: "app:s1:db2uuid", name: "api2", host: "api2.example.com", ctrId: H("d"), ctrName: "db2uuid-20261125T101010", image: "db2uuid:ddd444", mounts: [{ type: "volume", source: "db2uuid-data", dest: "/data", rw: true }] };
+    const t = build({ apps: [web, data, data2] });
+    const p = await plan(t);
+    await t.svc.test(ACTOR, p.id);
+    t.box.failPolicyNo.add(H("d"));
+    const v = await t.svc.swap(ACTOR, p.id, { confirm: "olgu-box" });
+    expect(v.status).toBe("FAILED");
+    expect(v.failureCode).toBe("exclusive_policy_failed");
+    // the first container did get policy "no" before the failure: it has its recorded policy back, and both still run
+    for (const id of [H("b"), H("d")]) {
+      expect(t.box.ctrs.get(id)!.restart).toBe("unless-stopped");
+      expect(t.box.ctrs.get(id)!.running).toBe(true);
+    }
+    expect(t.box.coolifyProxy.running).toBe(true);
+    expect(t.box.tugraProxy.published).toBe(false);
+  });
   it("audits the swap with counts only", async () => {
     const t = build();
     await swapOk(t);
