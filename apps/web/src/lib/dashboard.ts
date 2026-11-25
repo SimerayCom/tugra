@@ -2,13 +2,15 @@ import type { ServerView, Monitor, DomainView, FleetTrendRow } from "./types";
 import type { FleetRow } from "./fleet-view";
 
 export interface AttentionItem {
-  kind: "server" | "monitor" | "domain";
+  kind: "server" | "monitor" | "domain" | "exposed";
   id: string;
   name: string;
   status: string;
+  /** exposed: how many public data-store / admin-UI / Docker-API ports the last scan found. */
+  count?: number;
 }
 
-/** Fleet items that need attention now: offline servers, down monitors, bad SSL certs. */
+/** Fleet items that need attention now: offline servers, down monitors, bad SSL certs, servers whose last scan found services open to the internet. */
 export function fleetAttention(
   servers: ServerView[],
   monitors: Monitor[],
@@ -26,7 +28,11 @@ export function fleetAttention(
     .filter((d) => d.https !== false && (d.ssl.state === "error" || d.ssl.state === "expiring"))
     // link to the owning app (id = appId)
     .map((d) => ({ kind: "domain" as const, id: d.appId, name: d.domain, status: d.ssl.state }));
-  return [...offline, ...down, ...certs];
+  // A server whose stored scan found exposed services; a never-scanned one (null) says nothing.
+  const exposed = servers
+    .filter((s) => (s.exposedServices ?? 0) > 0)
+    .map((s) => ({ kind: "exposed" as const, id: s.id, name: s.name, status: "exposed", count: s.exposedServices ?? 0 }));
+  return [...offline, ...down, ...certs, ...exposed];
 }
 
 // ── Fleet cockpit helpers (web-only: derived from /fleet/metrics/latest + /fleet/metrics/trend) ────────────

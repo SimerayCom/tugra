@@ -91,6 +91,25 @@ describe("ServersService.listForUser (cross-team, role-aware)", () => {
   });
 });
 
+describe("ServersService exposedServices (from the stored scan)", () => {
+  const listed = async (scanReport: unknown) => {
+    const prisma = {
+      membership: { findMany: jest.fn().mockResolvedValue([{ teamId: "teamA", role: Role.OWNER }]) },
+      server: { findMany: jest.fn().mockResolvedValue([{ ...row("s1", "teamA"), scanReport }]) },
+    } as unknown as PrismaService;
+    return (await svcWith(prisma).listForUser("u1"))[0].exposedServices;
+  };
+  it("counts the exposed findings of a stored scan with a readable host", async () => {
+    expect(await listed({ host: { status: "ok" }, exposed: [{}, {}, {}] })).toBe(3);
+    expect(await listed({ host: { status: "ok" }, exposed: [] })).toBe(0);
+  });
+  it("is null when never scanned, scanned before the check existed, or the host could not be read", async () => {
+    expect(await listed(null)).toBeNull();
+    expect(await listed({ host: { status: "ok" } })).toBeNull();
+    expect(await listed({ host: { status: "unavailable" }, exposed: [] })).toBeNull();
+  });
+});
+
 describe("ServersService.getForUser (cluster membership exposed)", () => {
   it("resolves clusterId + clusterName from the server's cluster relation", async () => {
     const prisma = {

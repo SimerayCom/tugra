@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { CONTAINER_REF_RE, NO_DOCKER_MARKER, classifyTugraOwned, isProjectAnchor } from "../migrator/discover-script";
+import { ExposedServiceSchema, computeExposed, type ExposureOwner } from "./server-scan-exposed";
 import {
   MARKER_SOFTWARE,
   WELL_KNOWN_PORTS,
@@ -227,6 +228,8 @@ export const ScanReportSchema = z.object({
   sites: z.array(HostSiteSchema).max(150),
   services: z.array(HostServiceSchema).max(60),
   ports: z.array(z.object({ port, scope: z.enum(["public", "local"]), owner: z.string().max(128).nullable() })).max(150),
+  /** Public ports owned by a database / cache / queue / admin UI / Docker API. Computed at scan time; absent in reports stored before it existed. */
+  exposed: z.array(ExposedServiceSchema).max(60).default([]),
 });
 export type ScanReport = z.infer<typeof ScanReportSchema>;
 
@@ -460,6 +463,11 @@ export function buildScanReport({ docker, host, now }: BuildReportInput): ScanRe
   const published = new Map<number, string>();
   for (const r of allRows) for (const p of r.ports) if (!published.has(p)) published.set(p, r.name);
   const ports = (hostData?.ports ?? []).map((p) => ({ port: p.port, scope: p.scope, owner: published.get(p.port) ?? WELL_KNOWN_PORTS[p.port] ?? null }));
+  // Exposure verdict: the image of the publishing container (Tugra's own included: an app database published on every
+  // interface is just as reachable) decides what a public port is.
+  const publishedBy = new Map<number, ExposureOwner>();
+  for (const r of allRows) for (const p of r.ports) if (!publishedBy.has(p)) publishedBy.set(p, { name: r.name, image: r.image });
+  const exposed = computeExposed(hostData?.ports ?? [], publishedBy);
 
   return {
     v: 1,
@@ -479,5 +487,6 @@ export function buildScanReport({ docker, host, now }: BuildReportInput): ScanRe
     sites: hostData?.sites ?? [],
     services: hostData?.services ?? [],
     ports,
+    exposed,
   };
 }

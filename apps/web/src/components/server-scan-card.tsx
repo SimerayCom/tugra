@@ -4,9 +4,10 @@ import { useState, type CSSProperties } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError } from "../lib/api";
 import { relativeTime } from "../lib/fleet";
-import type { ScanContainer, ScanReport, ScanSite, ScanSoftware } from "../lib/types";
+import type { ExposedService, ScanContainer, ScanReport, ScanSite, ScanSoftware } from "../lib/types";
 import { useT } from "../i18n/provider";
 import { TemplateLogo } from "../lib/template-icons";
+import { TriangleAlert } from "lucide-react";
 import { Badge, Btn, SectionCard } from "./ui";
 
 export const scanQueryKey = (serverId: string) => ["server-scan", serverId] as const;
@@ -48,6 +49,45 @@ function siteKindLabel(t: ReturnType<typeof useT>, s: ScanSite): string {
   if (s.kind === "proxy") return s.port ? t("servers.serverScan.siteProxyPort", { port: s.port }) : t("servers.serverScan.siteProxy");
   if (s.kind === "static") return t("servers.serverScan.siteStatic");
   return t("servers.serverScan.siteOther");
+}
+
+const SEVERITY_TONE = { critical: "danger", high: "warn", medium: "muted" } as const;
+
+/**
+ * The warning card at the top of a scan: public ports owned by a database, cache, queue, admin UI or the Docker API.
+ * It only explains; nothing is closed from here. The fix text always names the firewall route, plus the bind route that
+ * fits the owner (publish the container port on 127.0.0.1, or bind the host service to 127.0.0.1).
+ */
+export function ExposedServicesCard({ exposed }: { exposed: ExposedService[] }) {
+  const t = useT();
+  if (exposed.length === 0) return null;
+  return (
+    <div
+      role="alert"
+      data-testid="exposed-services"
+      style={{ margin: "0 0 14px", padding: "12px 14px", borderRadius: "var(--r2)", border: "1px solid var(--c-r)", background: "color-mix(in srgb, var(--c-r) 8%, transparent)" }}
+    >
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 8, fontWeight: 700, fontSize: 14, color: "var(--c-r)" }}>
+        <TriangleAlert size={16} aria-hidden style={{ flexShrink: 0, marginTop: 2 }} />
+        <span>{exposed.length === 1 ? t("servers.serverScan.exposedTitleOne") : t("servers.serverScan.exposedTitle", { n: exposed.length })}</span>
+      </div>
+      <p style={{ margin: "6px 0 0", fontSize: 12.5, color: "var(--c-tx2)" }}>{t("servers.serverScan.exposedIntro")}</p>
+      <ul style={{ listStyle: "none", margin: "8px 0 0", padding: 0 }}>
+        {exposed.map((e) => (
+          <li key={e.port} style={{ ...rowStyle, alignItems: "flex-start" }}>
+            <span className="mono" style={nameStyle}>{e.port}</span>
+            <span style={nameStyle}>{e.service}</span>
+            <Badge tone={SEVERITY_TONE[e.severity]}>{t(`servers.serverScan.exposedSeverity.${e.severity}`)}</Badge>
+            {e.container && <span className="mono" style={{ ...dim, fontSize: 12 }}>{e.container}</span>}
+            {e.basis === "port" && <span style={{ ...dim, fontSize: 12 }}>{t("servers.serverScan.exposedByPort")}</span>}
+            <span style={{ flexBasis: "100%", fontSize: 12.5, color: "var(--c-tx2)" }}>
+              {t(`servers.serverScan.exposedFix.${e.fix}`, { port: e.port })} {e.fix !== "docker_api" && t("servers.serverScan.exposedFirewall")}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
 }
 
 /** Does a container belong to the software chip the user picked? (its own software, or the platform managing it) */
@@ -159,6 +199,7 @@ function ScanResult({
 
   return (
     <div>
+      <ExposedServicesCard exposed={report.exposed ?? []} />
       {hostNote && <p role="note" style={{ ...noteStyle("var(--c-am)"), marginTop: 0 }}>{hostNote}</p>}
       {!report.docker.available && <p style={noteStyle()}>{t("servers.serverScan.noDocker")}</p>}
       {report.docker.truncated && <p style={noteStyle()}>{t("servers.serverScan.truncated", { n: report.containers.length })}</p>}

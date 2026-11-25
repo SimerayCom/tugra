@@ -180,4 +180,36 @@ describe("ServerScanCard", () => {
     expect(scanErrorKey(new ApiError(503, "x"))).toBe("errUnavailable");
     expect(scanErrorKey(new Error("x"))).toBe("errGeneric");
   });
+
+  it("puts a warning card with severity and fix hints at the top when public data stores were found", async () => {
+    vi.spyOn(api, "getServerScan").mockResolvedValue({
+      report: report({
+        exposed: [
+          { port: 6482, service: "Redis", kind: "cache", severity: "critical", container: "cache-a", basis: "container", fix: "publish_local" },
+          { port: 3306, service: "MySQL / MariaDB", kind: "database", severity: "high", container: null, basis: "port", fix: "bind_local" },
+          { port: 2375, service: "Docker API (no TLS)", kind: "docker", severity: "critical", container: null, basis: "port", fix: "docker_api" },
+        ],
+      }),
+    });
+    show();
+    const card = await screen.findByTestId("exposed-services");
+    expect(within(card).getByText("3 services are open to the internet")).toBeTruthy();
+    expect(within(card).getByText("Redis")).toBeTruthy();
+    expect(within(card).getAllByText("Critical").length).toBe(2);
+    expect(within(card).getByText(/"127\.0\.0\.1:6482:6482"/)).toBeTruthy();
+    expect(within(card).getByText(/Bind the service to 127\.0\.0\.1/)).toBeTruthy();
+    expect(within(card).getByText(/Remove the tcp:\/\/ listener/)).toBeTruthy();
+    expect(within(card).getAllByText("Identified by its port number").length).toBe(2);
+    // the card comes before everything else in the result
+    expect(card.compareDocumentPosition(screen.getByLabelText("Software on this server") as Node) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // no automatic action: the card has no buttons
+    expect(within(card).queryAllByRole("button").length).toBe(0);
+  });
+
+  it("shows no warning when nothing is exposed or the report predates the check", async () => {
+    vi.spyOn(api, "getServerScan").mockResolvedValue({ report: report({ exposed: [] }) });
+    show();
+    await screen.findByRole("button", { name: "Scan again" });
+    expect(screen.queryByTestId("exposed-services")).toBeNull();
+  });
 });

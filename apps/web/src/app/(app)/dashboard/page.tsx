@@ -248,10 +248,10 @@ export default function DashboardPage() {
         ) : (
           <ListCard>
             {attentionShown.map((it, i) => {
-              const href = it.kind === "server" ? `/servers/${it.id}` : it.kind === "monitor" ? `/monitors/${it.id}` : `/apps/${it.id}`;
+              const href = it.kind === "server" || it.kind === "exposed" ? `/servers/${it.id}` : it.kind === "monitor" ? `/monitors/${it.id}` : `/apps/${it.id}`;
               const amber = it.kind === "domain" && it.status === "expiring";
               const color = amber ? "var(--c-am)" : "var(--c-r)";
-              const label = it.kind === "server" ? t("dashboard.attentionServer") : it.kind === "monitor" ? t("dashboard.attentionMonitor") : amber ? t("dashboard.attentionSslExpiring") : t("dashboard.attentionSslError");
+              const label = it.kind === "exposed" ? t("dashboard.attentionExposed") : it.kind === "server" ? t("dashboard.attentionServer") : it.kind === "monitor" ? t("dashboard.attentionMonitor") : amber ? t("dashboard.attentionSslExpiring") : t("dashboard.attentionSslError");
               return (
                 <ListRow key={`${it.kind}-${it.id}`} index={i} href={href} style={{ gap: 10, padding: "11px 16px" }}>
                   <AlertTriangle size={15} color={color} style={{ flexShrink: 0 }} aria-hidden />
@@ -259,7 +259,7 @@ export default function DashboardPage() {
                     <div style={{ fontWeight: 600, fontSize: 14 }}>{it.name}</div>
                     <div style={{ fontSize: 11, color: "var(--c-tx3)" }}>{label}</div>
                   </div>
-                  <span style={{ fontSize: 12, color, fontWeight: 600 }}>{it.kind === "domain" ? (amber ? t("domains.expiring") : t("domains.noCert")) : statusLabel(t, it.status)}</span>
+                  <span style={{ fontSize: 12, color, fontWeight: 600 }}>{it.kind === "exposed" ? t("dashboard.attentionExposedCount", { n: it.count ?? 0 }) : it.kind === "domain" ? (amber ? t("domains.expiring") : t("domains.noCert")) : statusLabel(t, it.status)}</span>
                 </ListRow>
               );
             })}

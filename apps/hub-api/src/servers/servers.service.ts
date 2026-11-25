@@ -119,6 +119,7 @@ export const ServerViewSchema = z.object({
   provider: z.string().nullable(), // cloud provider that created this VM (null = manually enrolled)
   providerServerId: z.string().nullable(), // provider-side id (present once created; enables destroy-VM)
   providerManualLink: z.boolean(), // true = an operator linked an existing VM (out-of-band only; never destroyed by Tugra)
+  exposedServices: z.number().int().min(0).nullable(), // public data-store / admin-UI / Docker API ports in the last server scan (null = never scanned or scanned before the check existed)
   canWrite: z.boolean(),
   canOps: z.boolean(), // servers:ops — may run host operations (e.g. re-run GPU detection); gates those UI actions
 });
@@ -926,6 +927,7 @@ export class ServersService {
       provider?: string | null;
       providerServerId?: string | null;
       providerManualLink?: boolean;
+      scanReport?: unknown;
     },
     canWrite: boolean,
     canOps: boolean,
@@ -981,8 +983,17 @@ export class ServersService {
       provider: s.provider ?? null,
       providerServerId: s.providerServerId ?? null,
       providerManualLink: s.providerManualLink ?? false,
+      exposedServices: exposedCountOf(s.scanReport),
       canWrite,
       canOps,
     };
   }
+}
+
+/** The exposed-service count of a stored scan report without re-validating the whole report (the list calls this per server). */
+function exposedCountOf(report: unknown): number | null {
+  if (!report || typeof report !== "object") return null;
+  const r = report as { host?: { status?: unknown }; exposed?: unknown };
+  if (r.host?.status !== "ok" || !Array.isArray(r.exposed)) return null;
+  return r.exposed.length;
 }

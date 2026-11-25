@@ -514,6 +514,8 @@ export interface ServerView {
   provider: string | null; // cloud provider that created this VM (null = manually enrolled)
   providerServerId: string | null; // provider-side id (present once created; enables destroy-VM)
   providerManualLink: boolean; // true = an operator linked an existing VM (out-of-band only; Tugra never destroys it)
+  /** Public data-store / admin-UI / Docker-API ports in the last server scan (null/absent = never scanned or not checkable). */
+  exposedServices?: number | null;
   canWrite: boolean;
   canOps: boolean; // servers:ops — gates host operations such as GPU re-detection
 }
@@ -2652,6 +2654,16 @@ export interface ScanService {
   exec?: string;
   workDir?: string;
 }
+export type ExposedKind = "database" | "cache" | "queue" | "search" | "storage" | "admin" | "docker";
+export interface ExposedService {
+  port: number;
+  service: string;
+  kind: ExposedKind;
+  severity: "critical" | "high" | "medium";
+  container: string | null;
+  basis: "container" | "port";
+  fix: "publish_local" | "bind_local" | "docker_api";
+}
 export interface ScanReport {
   v: 1;
   scannedAt: string;
@@ -2664,6 +2676,8 @@ export interface ScanReport {
   sites: ScanSite[];
   services: ScanService[];
   ports: { port: number; scope: "public" | "local"; owner: string | null }[];
+  /** Public ports owned by a database / cache / queue / admin UI / Docker API. Absent on a report stored before the check existed. */
+  exposed?: ExposedService[];
 }
 export interface ScanView {
   report: ScanReport | null;

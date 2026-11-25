@@ -355,6 +355,17 @@
     "ports": "Listening ports",
     "portPublic": "Open to the network",
     "portLocal": "This server only",
+    "exposedTitle": "{n} services are open to the internet",
+    "exposedTitleOne": "1 service is open to the internet",
+    "exposedIntro": "These ports accept connections from any address. Databases, caches and admin panels should only be reachable from this server or a private network. Tugra changes nothing here.",
+    "exposedByPort": "Identified by its port number",
+    "exposedFirewall": "Or block the port for outside addresses with ufw or your provider's firewall.",
+    "exposedSeverity": { "critical": "Critical", "high": "High", "medium": "Medium" },
+    "exposedFix": {
+      "publish_local": "Publish it on 127.0.0.1 only (use \"127.0.0.1:{port}:{port}\" instead of \"{port}:{port}\" in the container's ports).",
+      "bind_local": "Bind the service to 127.0.0.1 in its own configuration.",
+      "docker_api": "Remove the tcp:// listener from the Docker daemon settings, or require TLS client certificates and firewall the port."
+    },
     "status": {
       "online": "Online",
       "stopped": "Stopped",

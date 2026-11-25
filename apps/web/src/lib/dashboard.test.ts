@@ -40,6 +40,12 @@ describe("fleetAttention", () => {
     expect(out.map((i) => i.name)).toEqual(["blog.acme.dev", "api.acme.dev"]);
   });
 
+  it("lists a server whose last scan found services open to the internet, and ignores clean or never-scanned ones", () => {
+    const withScan = (id: string, exposedServices: number | null): ServerView => ({ ...srv(id, "ONLINE"), exposedServices });
+    const out = fleetAttention([withScan("a", 3), withScan("b", 0), withScan("c", null), srv("d", "ONLINE")], []);
+    expect(out).toEqual([{ kind: "exposed", id: "a", name: "srv-a", status: "exposed", count: 3 }]);
+  });
+
   it("returns [] when everything is healthy", () => {
     expect(fleetAttention([srv("a", "ONLINE")], [mon("x", "UP")], [dom("ok.io", "a", "ok")])).toEqual([]);
     expect(fleetAttention([], [])).toEqual([]);
