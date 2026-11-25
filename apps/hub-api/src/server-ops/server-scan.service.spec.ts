@@ -1,7 +1,7 @@
 import { ForbiddenException, NotFoundException, ServiceUnavailableException } from "@nestjs/common";
 import { ServerScanService } from "./server-scan.service";
 import { buildDockerScanScript, buildHostScanScript } from "./server-scan";
-import { AgentOfflineException } from "../agent-gateway/agent-offline.exception";
+import { AgentCommandTimeoutException, AgentOfflineException } from "../agent-gateway/agent-offline.exception";
 import { REQUIRE_SCOPES } from "../api-tokens/require-scopes.decorator";
 import { ServerOpsController } from "./server-ops.controller";
 import type { AgentWsServer } from "../agent-gateway/agent-ws.server";
@@ -127,6 +127,22 @@ describe("ServerScanService.run", () => {
     const { svc, update } = setup({ send });
     await expect(svc.run("u1", "s1")).rejects.toBeInstanceOf(ServiceUnavailableException);
     expect(update).not.toHaveBeenCalled();
+  });
+
+  it("the 503 says why: agent timeout vs. unusable output", async () => {
+    const timeout = jest.fn().mockRejectedValue(new AgentCommandTimeoutException());
+    await expect(setup({ send: timeout }).svc.run("u1", "s1")).rejects.toThrow(/did not answer in time/);
+    const empty = jest.fn().mockResolvedValue({ exitCode: 1, output: "" });
+    await expect(setup({ send: empty }).svc.run("u1", "s1")).rejects.toThrow(/no usable output/);
+  });
+
+  it("a failure while storing the report is a 503 with a reason, never a raw 500", async () => {
+    const { svc, update } = setup();
+    update.mockRejectedValue(new Error("connection terminated"));
+    const err = await svc.run("u1", "s1").catch((e) => e);
+    expect(err).toBeInstanceOf(ServiceUnavailableException);
+    expect(String(err.message)).toMatch(/could not be assembled or saved/);
+    expect(String(err.message)).not.toMatch(/connection terminated/); // the cause is logged, not leaked
   });
 
   it("a docker-less host with a working host probe is a valid report", async () => {

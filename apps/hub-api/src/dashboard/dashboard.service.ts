@@ -25,6 +25,8 @@ const DEPLOY_STATUSES = ["QUEUED", "RUNNING", "SUCCESS", "FAILED", "CANCELLED"] 
 export class DashboardService {
   /** Per caller + team scope (the visible server set differs per caller). In-memory, per hub process. */
   private readonly forecastCache = new Map<string, { at: number; rows: DashboardInsights["diskForecast"] }>();
+  /** Single-flight: concurrent cold requests for the same scope (several tabs, a refetch burst) share one computation. */
+  private readonly forecastInflight = new Map<string, Promise<DashboardInsights["diskForecast"]>>();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -63,10 +65,19 @@ export class DashboardService {
     const key = `${userId}:${teamId ?? ""}`;
     const hit = this.forecastCache.get(key);
     if (hit && Date.now() - hit.at < FORECAST_TTL_MS) return hit.rows;
-    const rows = await this.computeDiskForecast(userId, teamId);
-    if (this.forecastCache.size >= FORECAST_CACHE_MAX) this.forecastCache.delete(this.forecastCache.keys().next().value as string);
-    this.forecastCache.set(key, { at: Date.now(), rows });
-    return rows;
+    const running = this.forecastInflight.get(key);
+    if (running) return running;
+    const p = this.computeDiskForecast(userId, teamId).then((rows) => {
+      if (this.forecastCache.size >= FORECAST_CACHE_MAX) this.forecastCache.delete(this.forecastCache.keys().next().value as string);
+      this.forecastCache.set(key, { at: Date.now(), rows });
+      return rows;
+    });
+    this.forecastInflight.set(key, p);
+    try {
+      return await p;
+    } finally {
+      this.forecastInflight.delete(key);
+    }
   }
 
   private async computeDiskForecast(userId: string, teamId?: string): Promise<DashboardInsights["diskForecast"]> {

@@ -1,6 +1,8 @@
 import { Injectable } from "@nestjs/common";
+import { Prisma } from "@prisma/client";
 import type { ContainerMetricsMsg } from "@tugra/shared";
 import { downsampleLTTB } from "../common/lttb";
+import { strided } from "../common/series-sampling";
 import { PrismaService } from "../prisma/prisma.service";
 import { nameFromLabels, sameLabels, sanitizeContainerMeta, type ContainerLabelRow } from "./container-labels";
 
@@ -153,6 +155,28 @@ const LABEL_REFRESH_MS = 12 * 3600_000;
 const LABEL_STALE_MS = 7 * 86_400_000;
 const LABEL_PRUNE_EVERY_MS = 3600_000;
 
+/** The columns of a raw `ContainerMetric` row the read paths below need (never `id` / `serverId` they already know). */
+interface LiveRow {
+  serverId: string;
+  containerName: string;
+  containerId: string;
+  ts: Date;
+  cpu: number;
+  memUsed: bigint;
+  memTotal: bigint;
+  memPct: number;
+  netRx: bigint;
+  netTx: bigint;
+  blkRead: bigint;
+  blkWrite: bigint;
+}
+
+/** The columns of a `ContainerMetricRollup` row the long-range chart reads. */
+interface ContainerRollupRow {
+  containerName: string; bucket: Date; avgCpu: number; maxCpu: number; avgMemUsed: bigint; avgMemTotal: bigint; avgMemPct: number;
+  avgNetRx: bigint; avgNetTx: bigint; avgBlkRead: bigint; avgBlkWrite: bigint;
+}
+
 @Injectable()
 export class ContainerMetricsService {
   constructor(private readonly prisma: PrismaService) {}
@@ -210,8 +234,10 @@ export class ContainerMetricsService {
     }
   }
 
-  private async labelsFor(serverIds: string[]): Promise<Map<string, ContainerLabelRow>> {
-    const rows = await this.prisma.containerLabel.findMany({ where: { serverId: { in: serverIds } } });
+  private async labelsFor(serverIds: string[], containerNames?: string[]): Promise<Map<string, ContainerLabelRow>> {
+    const rows = await this.prisma.containerLabel.findMany({
+      where: { serverId: { in: serverIds }, ...(containerNames ? { containerName: { in: containerNames } } : {}) },
+    });
     return new Map(rows.map((r) => [`${r.serverId}\u0000${r.containerName}`, { name: r.name, resource: r.resource, project: r.project, environment: r.environment, service: r.service }]));
   }
 
@@ -230,12 +256,9 @@ export class ContainerMetricsService {
     // `tugra_<id>.<slot>.<taskid>` and scattered across the cluster's member nodes, so we match the `.`
     // task-suffix too and query ALL member serverIds. The delimiter (`.`/`-`) keeps the prefix airtight
     // against a sibling app whose id merely starts with this one's (a bare startsWith would over-match).
-    const serverWhere = Array.isArray(serverId) ? { in: serverId } : serverId;
-    const nameMatch = [
-      { containerName: namePrefix },
-      { containerName: { startsWith: `${namePrefix}-` } },
-      ...(swarm ? [{ containerName: { startsWith: `${namePrefix}.` } }] : []),
-    ];
+    const serverIds = Array.isArray(serverId) ? serverId : [serverId];
+    // starts_with, not LIKE: an app id may contain `_`, which LIKE treats as a wildcard.
+    const nameMatch = Prisma.sql`("containerName" = ${namePrefix} OR starts_with("containerName", ${`${namePrefix}-`})${swarm ? Prisma.sql` OR starts_with("containerName", ${`${namePrefix}.`})` : Prisma.empty})`;
     const byName = new Map<string, ContainerMetricSample[]>();
     const push = (name: string, s: ContainerMetricSample) => {
       let arr = byName.get(name);
@@ -243,11 +266,17 @@ export class ContainerMetricsService {
       arr.push(s);
     };
 
+    // Each container is its own series, strided in SQL to ≤ ~3000 stored rows before LTTB (see series-sampling): a 24 h raw
+    // series is 5 760 rows and a 7-day rollup series 10 080, per container, per request.
     if (useRollup) {
-      const rows = await this.prisma.containerMetricRollup.findMany({
-        where: { serverId: serverWhere, bucket: { gte: new Date(sinceMs) }, OR: nameMatch },
-        orderBy: { bucket: "asc" },
-      });
+      const rows = await this.prisma.$queryRaw<ContainerRollupRow[]>(
+        strided(
+          Prisma.sql`SELECT * FROM "ContainerMetricRollup" WHERE "serverId" = ANY(${serverIds}::text[]) AND "bucket" >= ${new Date(sinceMs)} AND ${nameMatch}`,
+          ["containerName", "bucket", "avgCpu", "maxCpu", "avgMemUsed", "avgMemTotal", "avgMemPct", "avgNetRx", "avgNetTx", "avgBlkRead", "avgBlkWrite"],
+          "bucket",
+          "containerName",
+        ),
+      );
       for (const r of rows) {
         push(r.containerName, {
           ts: r.bucket.getTime(),
@@ -263,10 +292,14 @@ export class ContainerMetricsService {
         });
       }
     } else {
-      const rows = await this.prisma.containerMetric.findMany({
-        where: { serverId: serverWhere, ts: { gte: new Date(sinceMs) }, OR: nameMatch },
-        orderBy: { ts: "asc" },
-      });
+      const rows = await this.prisma.$queryRaw<LiveRow[]>(
+        strided(
+          Prisma.sql`SELECT * FROM "ContainerMetric" WHERE "serverId" = ANY(${serverIds}::text[]) AND "ts" >= ${new Date(sinceMs)} AND ${nameMatch}`,
+          ["containerName", "ts", "cpu", "memUsed", "memTotal", "memPct", "netRx", "netTx", "blkRead", "blkWrite"],
+          "ts",
+          "containerName",
+        ),
+      );
       for (const r of rows) {
         push(r.containerName, {
           ts: r.ts.getTime(),
@@ -296,10 +329,7 @@ export class ContainerMetricsService {
    */
   async forServer(serverId: string): Promise<ServerContainers> {
     const [rows, apps, dbs, states, labels] = await Promise.all([
-      this.prisma.containerMetric.findMany({
-        where: { serverId, ts: { gte: new Date(Date.now() - LIVE_WINDOW_MS) } },
-        orderBy: { ts: "asc" },
-      }),
+      this.latestPerContainer([serverId]),
       this.prisma.application.findMany({ where: { serverId }, select: { id: true, name: true } }),
       this.prisma.database.findMany({ where: { serverId }, select: { id: true, name: true } }),
       // Last-known crash/health state so a crash-looping or unhealthy container can be badged. DB-only.
@@ -312,7 +342,7 @@ export class ContainerMetricsService {
     const appsById = new Map(apps.map((a) => [a.id, a.name]));
     const dbsById = new Map(dbs.map((d) => [d.id, d.name]));
     const stateByName = new Map(states.map((s) => [s.containerName, s]));
-    // ts asc → the last row seen per name is its most recent sample.
+    // One (already newest) row per container name — see latestPerContainer.
     const latest = new Map<string, ContainerInventoryRow>();
     for (const r of rows) {
       const friendly = resolveContainerLabel(r.containerName, appsById, dbsById, labels.get(`${serverId}\u0000${r.containerName}`));
@@ -353,41 +383,53 @@ export class ContainerMetricsService {
   async hottest(servers: { id: string; name: string }[], limit?: number): Promise<HottestContainerRow[]> {
     if (servers.length === 0) return [];
     const serverIds = servers.map((s) => s.id);
-    const [rows, apps, dbs, labels] = await Promise.all([
-      this.prisma.containerMetric.findMany({
-        where: { serverId: { in: serverIds }, ts: { gte: new Date(Date.now() - LIVE_WINDOW_MS) } },
-        orderBy: { ts: "desc" },
-      }),
-      this.prisma.application.findMany({ where: { serverId: { in: serverIds } }, select: { id: true, name: true } }),
-      this.prisma.database.findMany({ where: { serverId: { in: serverIds } }, select: { id: true, name: true } }),
-      this.labelsFor(serverIds),
+    // Ranked in SQL: only the top `limit` rows ever reach JS (was: every live sample of every container, sorted here).
+    const rows = await this.latestPerContainer(serverIds, clampHottestLimit(limit));
+    if (rows.length === 0) return [];
+    const topServerIds = [...new Set(rows.map((r) => r.serverId))];
+    const [apps, dbs, labels] = await Promise.all([
+      this.prisma.application.findMany({ where: { serverId: { in: topServerIds } }, select: { id: true, name: true } }),
+      this.prisma.database.findMany({ where: { serverId: { in: topServerIds } }, select: { id: true, name: true } }),
+      this.labelsFor(topServerIds, [...new Set(rows.map((r) => r.containerName))]),
     ]);
-    // ts desc → the first row seen per (server, container) is its newest sample.
-    const latest = new Map<string, (typeof rows)[number]>();
-    for (const r of rows) {
-      const key = `${r.serverId}\u0000${r.containerName}`;
-      if (!latest.has(key)) latest.set(key, r);
-    }
     const nameById = new Map(servers.map((s) => [s.id, s.name]));
     const appsById = new Map(apps.map((a) => [a.id, a.name]));
     const dbsById = new Map(dbs.map((d) => [d.id, d.name]));
-    return [...latest.values()]
-      .sort((a, b) => b.cpu - a.cpu || a.containerName.localeCompare(b.containerName))
-      .slice(0, clampHottestLimit(limit))
-      .map((r) => ({
-        serverId: r.serverId,
-        serverName: nameById.get(r.serverId) ?? r.serverId,
-        containerName: r.containerName,
-        ...resolveContainerLabel(r.containerName, appsById, dbsById, labels.get(`${r.serverId}\u0000${r.containerName}`)),
-        cpu: r.cpu,
-        memUsed: Number(r.memUsed),
-        memTotal: Number(r.memTotal),
-        memPct: r.memPct,
-        netRx: Number(r.netRx),
-        netTx: Number(r.netTx),
-        blkRead: Number(r.blkRead),
-        blkWrite: Number(r.blkWrite),
-      }));
+    return rows.map((r) => ({
+      serverId: r.serverId,
+      serverName: nameById.get(r.serverId) ?? r.serverId,
+      containerName: r.containerName,
+      ...resolveContainerLabel(r.containerName, appsById, dbsById, labels.get(`${r.serverId}\u0000${r.containerName}`)),
+      cpu: r.cpu,
+      memUsed: Number(r.memUsed),
+      memTotal: Number(r.memTotal),
+      memPct: r.memPct,
+      netRx: Number(r.netRx),
+      netTx: Number(r.netTx),
+      blkRead: Number(r.blkRead),
+      blkWrite: Number(r.blkWrite),
+    }));
+  }
+
+  /**
+   * The newest sample of every container that reported within LIVE_WINDOW_MS on `serverIds`, computed in the
+   * database (DISTINCT ON) — one row per (server, container), not every sample of the window. With `limit`, the rows are
+   * additionally ranked CPU desc (name asc on a tie) and cut to `limit` in SQL, so a fleet-wide ranking never
+   * materialises the whole fleet's live set in the hub.
+   */
+  private async latestPerContainer(serverIds: string[], limit?: number): Promise<LiveRow[]> {
+    if (serverIds.length === 0) return [];
+    const since = new Date(Date.now() - LIVE_WINDOW_MS);
+    return this.prisma.$queryRaw<LiveRow[]>(Prisma.sql`
+      SELECT * FROM (
+        SELECT DISTINCT ON ("serverId", "containerName")
+               "serverId", "containerName", "containerId", "ts", "cpu", "memUsed", "memTotal", "memPct", "netRx", "netTx", "blkRead", "blkWrite"
+        FROM "ContainerMetric"
+        WHERE "serverId" = ANY(${serverIds}::text[]) AND "ts" >= ${since}
+        ORDER BY "serverId", "containerName", "ts" DESC
+      ) latest
+      ORDER BY "cpu" DESC, "containerName" ASC
+      ${limit ? Prisma.sql`LIMIT ${limit}` : Prisma.empty}`);
   }
 }
 

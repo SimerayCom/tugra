@@ -1,10 +1,10 @@
-import { ForbiddenException, Injectable, NotFoundException, ServiceUnavailableException } from "@nestjs/common";
+import { ForbiddenException, HttpException, Injectable, Logger, NotFoundException, ServiceUnavailableException } from "@nestjs/common";
 import type { Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { TeamAccessService } from "../common/team-access.service";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
-import { AgentOfflineException } from "../agent-gateway/agent-offline.exception";
+import { AgentCommandTimeoutException, AgentOfflineException } from "../agent-gateway/agent-offline.exception";
 import {
   buildDockerScanScript,
   buildHostScanScript,
@@ -30,6 +30,7 @@ const HOST_TIMEOUT_MS = 60_000;
  */
 @Injectable()
 export class ServerScanService {
+  private readonly logger = new Logger(ServerScanService.name);
   /** In-process single-flight per server. */
   private readonly inflight = new Map<string, Promise<ScanView>>();
 
@@ -79,22 +80,30 @@ export class ServerScanService {
     const host: HostScanResult =
       hostRes.status === "fulfilled" && hostRes.value.exitCode === 0 ? parseHostScan(hostRes.value.output) : { status: "unavailable", reason: "failed" };
     // Neither probe produced anything usable: say so instead of storing an empty report that reads as "nothing runs here".
-    if (docker === null && host.status !== "ok") throw new ServiceUnavailableException("server scan failed");
+    if (docker === null && host.status !== "ok") throw new ServiceUnavailableException(`server scan failed: ${failureReason(dockerRes, hostRes)}`);
 
-    const scannedAt = new Date();
-    const report = buildScanReport({ docker, host, now: scannedAt });
-    await this.prisma.server.update({
-      where: { id: serverId },
-      data: { scanReport: report as unknown as Prisma.InputJsonValue, scannedAt },
-    });
-    // Counts only: names, images and domains stay out of the audit trail.
-    await this.audit.log({
-      actor: userId,
-      action: "server.scan",
-      target: serverId,
-      meta: { containers: report.containers.length, software: report.software.length, host: report.host.status },
-    });
-    return { report };
+    // From here on only the hub's own work is left (assembling + storing the report). Whatever goes wrong in it is a
+    // transient/server-side condition the operator can retry, not a bare 500: surface a 503 with a reason, log the cause.
+    try {
+      const scannedAt = new Date();
+      const report = buildScanReport({ docker, host, now: scannedAt });
+      await this.prisma.server.update({
+        where: { id: serverId },
+        data: { scanReport: report as unknown as Prisma.InputJsonValue, scannedAt },
+      });
+      // Counts only: names, images and domains stay out of the audit trail.
+      await this.audit.log({
+        actor: userId,
+        action: "server.scan",
+        target: serverId,
+        meta: { containers: report.containers.length, software: report.software.length, host: report.host.status },
+      });
+      return { report };
+    } catch (e) {
+      if (e instanceof HttpException) throw e;
+      this.logger.error(`server scan ${serverId}: could not store the report: ${e instanceof Error ? e.message : String(e)}`);
+      throw new ServiceUnavailableException("server scan failed: the report could not be assembled or saved");
+    }
   }
 
   private view(stored: unknown, scannedAt: Date | null): ScanView {
@@ -106,4 +115,13 @@ export class ServerScanService {
     if (!server) throw new NotFoundException("server not found");
     return server;
   }
+}
+
+/** A short, non-sensitive reason for a scan where neither probe produced anything usable. */
+function failureReason(...results: PromiseSettledResult<{ exitCode: number; output: string }>[]): string {
+  for (const r of results) {
+    if (r.status === "rejected" && r.reason instanceof AgentCommandTimeoutException) return "the agent did not answer in time";
+  }
+  if (results.some((r) => r.status === "rejected")) return "the agent connection dropped or refused the probe";
+  return "the probes returned no usable output";
 }

@@ -5,6 +5,7 @@ import { ThrottlerGuard, ThrottlerModule } from "@nestjs/throttler";
 import { JwtModule } from "@nestjs/jwt";
 import { validateEnv } from "./config/env";
 import { CsrfGuard } from "./common/csrf.guard";
+import { SseBackpressureInterceptor } from "./common/sse-backpressure.interceptor";
 import { EmailVerifiedGuard } from "./common/email-verified.guard";
 import { TwoFactorRequiredGuard } from "./common/two-factor-required.guard";
 import { HealthController } from "./health/health.controller";
@@ -172,6 +173,8 @@ import { ApiExceptionFilter } from "./common/api-exception.filter";
     // Opt-in ?limit/?cursor pagination for @Paginated() list handlers; innermost, so it slices only the
     // handler's (already-authorized, already-redacted) array output.
     { provide: APP_INTERCEPTOR, useClass: PaginationInterceptor },
+    // Closes an SSE stream whose client stopped reading instead of buffering its backlog in hub memory.
+    { provide: APP_INTERCEPTOR, useClass: SseBackpressureInterceptor },
     // Normalize every thrown error to the single { statusCode, error, message } ApiError shape.
     { provide: APP_FILTER, useClass: ApiExceptionFilter },
   ],

@@ -379,6 +379,9 @@ export class ServersService {
         ...(filter?.status ? { status: filter.status } : {}),
       },
       orderBy: { createdAt: "desc" },
+      // The view never reads these two potentially large JSON documents (stored scan report, GPU inventory); loading
+      // them for every server on every 5 s list poll was pure waste (parsed + discarded per request).
+      omit: { scanReport: true, gpuInventory: true },
     });
 
     const views = servers
@@ -392,6 +395,7 @@ export class ServersService {
     const server = await this.prisma.server.findUnique({
       where: { id },
       include: { cluster: { select: { name: true } } },
+      omit: { scanReport: true, gpuInventory: true }, // not part of the view (see listForUser)
     });
     if (!server) throw new NotFoundException("server not found");
     const perms = await this.access.membershipPermissions(userId, server.teamId);

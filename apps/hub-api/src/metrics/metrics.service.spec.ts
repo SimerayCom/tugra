@@ -7,7 +7,8 @@ describe("MetricsService", () => {
     const findMany = jest.fn().mockResolvedValue(rows);
     const rollupFindMany = jest.fn().mockResolvedValue(rollupRows);
     const publish = jest.fn().mockResolvedValue(0);
-    const queryRaw = jest.fn().mockResolvedValue([]);
+    // Chart history reads go through ONE strided raw query (series-sampling.ts); route by the table it names.
+    const queryRaw = jest.fn(async (q: { sql: string; values: unknown[] }) => (/"MetricRollup"/.test(q.sql) ? rollupRows : /FROM "Metric" WHERE/.test(q.sql) ? rows : []));
     const prisma = { metric: { create, findMany }, metricRollup: { findMany: rollupFindMany }, $queryRaw: queryRaw } as any;
     const redis = { client: { publish } } as any;
     return { svc: new MetricsService(prisma, redis), create, findMany, rollupFindMany, publish, queryRaw };
@@ -104,35 +105,40 @@ describe("MetricsService", () => {
   });
 
   it("history: within-retention range (≤24h) reads RAW rows (asc by ts), rollups untouched", async () => {
-    const { svc, findMany, rollupFindMany } = make([
+    const { svc, findMany, rollupFindMany, queryRaw } = make([
       { ts: new Date(1000), cpu: 3, memUsed: 1n, memTotal: 2n, diskUsed: 0n, diskTotal: 0n, netRx: 5n, netTx: 0n, diskRead: 1n, diskWrite: 2n },
     ]);
     const out = await svc.history("s1", "1h");
-    expect(findMany).toHaveBeenCalledTimes(1);
+    expect(queryRaw).toHaveBeenCalledTimes(1);
+    expect(findMany).not.toHaveBeenCalled(); // never an unbounded findMany over the series
     expect(rollupFindMany).not.toHaveBeenCalled();
-    const where = findMany.mock.calls[0][0].where;
-    expect(where.serverId).toBe("s1");
-    expect(where.ts.gte).toBeInstanceOf(Date);
-    expect(findMany.mock.calls[0][0].orderBy).toEqual({ ts: "asc" });
+    const q = queryRaw.mock.calls[0][0] as unknown as { sql: string; values: unknown[] };
+    expect(q.sql).toMatch(/FROM "Metric" WHERE "serverId" = \? AND "ts" >= \?/);
+    expect(q.sql).toMatch(/row_number\(\) OVER \( ORDER BY "ts"\)/); // strided in SQL
+    expect(q.sql).toMatch(/ORDER BY "ts" ASC$/);
+    expect(q.values[0]).toBe("s1");
+    expect(q.values[1]).toBeInstanceOf(Date);
     expect(out).toHaveLength(1);
     expect(out[0].ts).toBe(1000);
     expect(out[0].netRx).toBe(5); // BigInt → Number
   });
 
   it("history: beyond-retention range (7d) reads ROLLUPS — maps avg*→field, bucket→ts, raw untouched", async () => {
-    const { svc, findMany, rollupFindMany } = make(
+    const { svc, findMany, rollupFindMany, queryRaw } = make(
       [],
       [
         { bucket: new Date(60_000), avgCpu: 2.5, avgMemUsed: 100n, avgMemTotal: 200n, avgDiskUsed: 10n, avgDiskTotal: 50n, avgNetRx: 7n, avgNetTx: 0n, avgDiskRead: 1n, avgDiskWrite: 2n },
       ],
     );
     const out = await svc.history("s1", "7d");
-    expect(rollupFindMany).toHaveBeenCalledTimes(1);
+    expect(queryRaw).toHaveBeenCalledTimes(1);
     expect(findMany).not.toHaveBeenCalled();
-    const where = rollupFindMany.mock.calls[0][0].where;
-    expect(where.serverId).toBe("s1");
-    expect(where.bucket.gte).toBeInstanceOf(Date);
-    expect(rollupFindMany.mock.calls[0][0].orderBy).toEqual({ bucket: "asc" });
+    expect(rollupFindMany).not.toHaveBeenCalled();
+    const q = queryRaw.mock.calls[0][0] as unknown as { sql: string; values: unknown[] };
+    expect(q.sql).toMatch(/FROM "MetricRollup" WHERE "serverId" = \? AND "bucket" >= \?/);
+    expect(q.sql).toMatch(/ORDER BY "bucket" ASC$/);
+    expect(q.values[0]).toBe("s1");
+    expect(q.values[1]).toBeInstanceOf(Date);
     expect(out).toHaveLength(1);
     expect(out[0].ts).toBe(60_000); // bucket → ts
     expect(out[0].cpu).toBe(2.5); // avgCpu → cpu
@@ -141,16 +147,16 @@ describe("MetricsService", () => {
   });
 
   it("history: 30d reads ROLLUPS and returns the per-bucket peak (maxCpu → cpuMax) with the average (cpu)", async () => {
-    const { svc, findMany, rollupFindMany } = make(
+    const { svc, findMany, queryRaw } = make(
       [],
       [
         { bucket: new Date(60_000), avgCpu: 2.5, maxCpu: 91, avgMemUsed: 100n, avgMemTotal: 200n, avgDiskUsed: 10n, avgDiskTotal: 50n, avgNetRx: 7n, avgNetTx: 0n, avgDiskRead: 1n, avgDiskWrite: 2n },
       ],
     );
     const out = await svc.history("s1", "30d");
-    expect(rollupFindMany).toHaveBeenCalledTimes(1);
+    expect(queryRaw).toHaveBeenCalledTimes(1);
     expect(findMany).not.toHaveBeenCalled();
-    const since = rollupFindMany.mock.calls[0][0].where.bucket.gte as Date;
+    const since = (queryRaw.mock.calls[0][0] as unknown as { values: unknown[] }).values[1] as Date;
     expect(Date.now() - since.getTime()).toBeGreaterThanOrEqual(30 * 86_400_000 - 100);
     expect(out[0]).toMatchObject({ cpu: 2.5, cpuMax: 91, diskUsed: 10, diskTotal: 50 }); // disk% is derivable from the stored pair
   });
@@ -199,8 +205,9 @@ describe("MetricsService", () => {
     });
   });
 
-  it("latestForServers: DISTINCT ON newest per server, BigInt→Number, scoped to the given ids", async () => {
-    const { svc, findMany } = make([
+  it("latestForServers: ONE newest row per server via a lateral index probe, BigInt→Number, scoped to the given ids", async () => {
+    const { svc, findMany, queryRaw } = make();
+    queryRaw.mockResolvedValue([
       { serverId: "a", ts: new Date(3000), cpu: 10, memUsed: 1n, memTotal: 2n, diskUsed: 4n, diskTotal: 8n, netRx: 0n, netTx: 0n, diskRead: 5n, diskWrite: 6n },
       { serverId: "b", ts: new Date(2000), cpu: 20, memUsed: 1n, memTotal: 2n, diskUsed: 0n, diskTotal: 0n, netRx: 0n, netTx: 0n, diskRead: 0n, diskWrite: 0n },
     ]);
@@ -209,16 +216,18 @@ describe("MetricsService", () => {
       { serverId: "a", sample: expect.objectContaining({ ts: 3000, cpu: 10, diskUsed: 4, diskRead: 5 }) },
       { serverId: "b", sample: expect.objectContaining({ ts: 2000, cpu: 20 }) },
     ]);
-    const arg = findMany.mock.calls[0][0];
-    expect(arg.where.serverId.in).toEqual(["a", "b"]); // only the caller's authorized ids
-    expect(arg.distinct).toEqual(["serverId"]);
-    expect(arg.orderBy).toEqual([{ serverId: "asc" }, { ts: "desc" }]); // DISTINCT ON newest
+    const q = queryRaw.mock.calls[0][0];
+    expect(q.values).toEqual([["a", "b"]]); // only the caller's authorized ids
+    expect(q.sql).toMatch(/CROSS JOIN LATERAL[\s\S]*ORDER BY "ts" DESC LIMIT 1/);
+    // Prisma's `distinct` is applied in memory (it loads every row of every server) — must never come back.
+    expect(findMany).not.toHaveBeenCalled();
   });
 
   it("latestForServers: no ids → empty result without hitting the DB", async () => {
-    const { svc, findMany } = make();
+    const { svc, findMany, queryRaw } = make();
     expect(await svc.latestForServers([])).toEqual([]);
     expect(findMany).not.toHaveBeenCalled();
+    expect(queryRaw).not.toHaveBeenCalled();
   });
 
   it("ingest persists sanitized sensor columns + publishes the sanitized wire (never the raw strings)", async () => {

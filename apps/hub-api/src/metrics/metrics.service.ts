@@ -2,11 +2,21 @@ import { Injectable } from "@nestjs/common";
 import type { MetricsSample, GpuStat } from "@tugra/shared";
 import { Prisma } from "@prisma/client";
 import { downsampleLTTB } from "../common/lttb";
+import { strided } from "../common/series-sampling";
 import { PrismaService } from "../prisma/prisma.service";
 import { RedisService } from "../redis/redis.service";
 import { rangeToMs } from "./container-metrics.service";
 
 const MAX_POINTS = 1000; // LTTB density cap for the host range charts
+
+const METRIC_COLS = [
+  "ts", "cpu", "memUsed", "memTotal", "diskUsed", "diskTotal", "netRx", "netTx", "diskRead", "diskWrite",
+  "load1", "load5", "load15", "swapUsed", "swapTotal", "temp", "gpuUtil", "gpuMemUsed", "gpuMemTotal", "gpuTemp", "batteryPct", "batteryState", "detail",
+] as const;
+const ROLLUP_COLS = [
+  "bucket", "avgCpu", "maxCpu", "avgMemUsed", "avgMemTotal", "avgDiskUsed", "avgDiskTotal", "avgNetRx", "avgNetTx", "avgDiskRead", "avgDiskWrite",
+  "avgLoad1", "avgLoad5", "avgLoad15", "avgSwapUsed", "avgSwapTotal",
+] as const;
 
 /** One host history point: the wire MetricsSample plus, on rollup-backed (7d/30d) reads, the bucket's
  *  PEAK cpu % (`cpu` is then the bucket average) so the long-range chart can draw a peak band. */
@@ -129,6 +139,22 @@ export function sanitizeSensors(sample: MetricsSample): {
   return { temp, gpuUtil, gpuMemUsed: bigOrNull(gpuMemUsed), gpuMemTotal: bigOrNull(gpuMemTotal), gpuTemp, batteryPct, batteryState, detail, wire };
 }
 
+/** The columns of a persisted host `Metric` row that the wire sample is built from. */
+interface MetricRow {
+  ts: Date; cpu: number; memUsed: bigint; memTotal: bigint; diskUsed: bigint; diskTotal: bigint;
+  netRx: bigint; netTx: bigint; diskRead: bigint; diskWrite: bigint;
+  load1?: number | null; load5?: number | null; load15?: number | null; swapUsed?: bigint | null; swapTotal?: bigint | null;
+  temp?: number | null; gpuUtil?: number | null; gpuMemUsed?: bigint | null; gpuMemTotal?: bigint | null;
+  gpuTemp?: number | null; batteryPct?: number | null; batteryState?: string | null; detail?: unknown;
+}
+
+/** The columns of a persisted `MetricRollup` row the long-range chart reads. */
+interface RollupRow {
+  bucket: Date; avgCpu: number; maxCpu: number; avgMemUsed: bigint; avgMemTotal: bigint; avgDiskUsed: bigint; avgDiskTotal: bigint;
+  avgNetRx: bigint; avgNetTx: bigint; avgDiskRead: bigint; avgDiskWrite: bigint;
+  avgLoad1: number | null; avgLoad5: number | null; avgLoad15: number | null; avgSwapUsed: bigint | null; avgSwapTotal: bigint | null;
+}
+
 @Injectable()
 export class MetricsService {
   constructor(
@@ -201,13 +227,7 @@ export class MetricsService {
   }
 
   /** Map a persisted Metric row to the wire MetricsSample (BigInt bytes → Number). */
-  private toSample(r: {
-    ts: Date; cpu: number; memUsed: bigint; memTotal: bigint; diskUsed: bigint; diskTotal: bigint;
-    netRx: bigint; netTx: bigint; diskRead: bigint; diskWrite: bigint;
-    load1?: number | null; load5?: number | null; load15?: number | null; swapUsed?: bigint | null; swapTotal?: bigint | null;
-    temp?: number | null; gpuUtil?: number | null; gpuMemUsed?: bigint | null; gpuMemTotal?: bigint | null;
-    gpuTemp?: number | null; batteryPct?: number | null; batteryState?: string | null; detail?: unknown;
-  }): MetricsSample {
+  private toSample(r: MetricRow): MetricsSample {
     const s: MetricsSample = {
       ts: r.ts.getTime(),
       cpu: r.cpu,
@@ -239,17 +259,24 @@ export class MetricsService {
 
   /**
    * Newest sample for each of `serverIds` — the one call behind the fleet overview's live table.
-   * A single DISTINCT ON (serverId) over the [serverId, ts] index, not N round-trips. Servers with
+   * One lateral index probe per server over [serverId, ts], in a single round-trip. Servers with
    * no sample yet are simply absent (the UI shows them as "—"). The caller MUST pass only ids the
    * requester may see (ServersService.listForUser); this method performs no authorization itself.
    */
   async latestForServers(serverIds: string[]): Promise<{ serverId: string; sample: MetricsSample }[]> {
     if (serverIds.length === 0) return [];
-    const rows = await this.prisma.metric.findMany({
-      where: { serverId: { in: serverIds } },
-      orderBy: [{ serverId: "asc" }, { ts: "desc" }],
-      distinct: ["serverId"],
-    });
+    // One index probe per server ([serverId, ts] backwards, LIMIT 1) instead of `findMany({ distinct })`: Prisma
+    // de-duplicates `distinct` IN MEMORY, so that form pulled EVERY raw row of every server (48 h at 5 s ≈ 35 k
+    // rows × servers, ~1 M rows on a 27-server fleet — gigabytes of query-engine memory per call, and the fleet,
+    // dashboard and server-list pages poll it every 5-10 s). This reads exactly one row per server.
+    const rows = await this.prisma.$queryRaw<(MetricRow & { serverId: string })[]>(Prisma.sql`
+      SELECT s.id AS "serverId", m."ts", m."cpu", m."memUsed", m."memTotal", m."diskUsed", m."diskTotal", m."netRx", m."netTx",
+             m."diskRead", m."diskWrite", m."load1", m."load5", m."load15", m."swapUsed", m."swapTotal", m."temp", m."gpuUtil",
+             m."gpuMemUsed", m."gpuMemTotal", m."gpuTemp", m."batteryPct", m."batteryState", m."detail"
+      FROM unnest(${serverIds}::text[]) AS s(id)
+      CROSS JOIN LATERAL (
+        SELECT * FROM "Metric" WHERE "serverId" = s.id ORDER BY "ts" DESC LIMIT 1
+      ) m`);
     return rows.map((r) => ({ serverId: r.serverId, sample: this.toSample(r) }));
   }
 
@@ -263,10 +290,10 @@ export class MetricsService {
     const { sinceMs, useRollup } = rangeToMs(range);
     let samples: HostMetricPoint[];
     if (useRollup) {
-      const rows = await this.prisma.metricRollup.findMany({
-        where: { serverId, bucket: { gte: new Date(sinceMs) } },
-        orderBy: { bucket: "asc" },
-      });
+      // Strided in SQL (see series-sampling): a 7d series is 10 080 rows, the chart draws 1000 points.
+      const rows = await this.prisma.$queryRaw<RollupRow[]>(
+        strided(Prisma.sql`SELECT * FROM "MetricRollup" WHERE "serverId" = ${serverId} AND "bucket" >= ${new Date(sinceMs)}`, ROLLUP_COLS, "bucket"),
+      );
       samples = rows.map((r) => ({
         ts: r.bucket.getTime(),
         cpu: r.avgCpu,
@@ -286,10 +313,10 @@ export class MetricsService {
         ...(Number.isFinite(r.maxCpu) && { cpuMax: r.maxCpu }),
       }));
     } else {
-      const rows = await this.prisma.metric.findMany({
-        where: { serverId, ts: { gte: new Date(sinceMs) } },
-        orderBy: { ts: "asc" },
-      });
+      // A 24 h raw series is 17 280 rows × ~25 columns: strided in SQL, every returned row is a real stored sample.
+      const rows = await this.prisma.$queryRaw<MetricRow[]>(
+        strided(Prisma.sql`SELECT * FROM "Metric" WHERE "serverId" = ${serverId} AND "ts" >= ${new Date(sinceMs)}`, METRIC_COLS, "ts"),
+      );
       samples = rows.map((r) => this.toSample(r)); // carries the optional sensor fields too (≤24h raw)
     }
     return downsampleLTTB(samples, MAX_POINTS, (s) => s.cpu);
