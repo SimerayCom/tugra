@@ -242,6 +242,62 @@ describe("PatchService apply (host-side unit)", () => {
     (audit.log as jest.Mock).mockReset();
   });
 
+  /** The package-manager script (innermost layer) the hub sent for an apply. */
+  const innerOf = (sent: string) =>
+    Buffer.from(/printf %s '([A-Za-z0-9+/=]+)' \| base64 -d > "\$D\/\$ID\.sh"/.exec(driver(sent))![1], "base64").toString("utf8");
+
+  it("upgradeAll(except-engine) runs the hold/exclude script, audits the scope, and the driver does not engine-block it", async () => {
+    let sent = "";
+    const agentWs = {
+      sendCommand: jest.fn().mockImplementation(async (_s: string, script: string) => {
+        sent = script;
+        return { exitCode: 0, output: `${HEAD}${BEGIN}ok\n\nTUGRA_PATCH_RC=0\n` };
+      }),
+    } as unknown as AgentWsServer;
+    const r = await make(prisma, access, agentWs, makeLogs()).upgradeAll("u1", "s1", "except-engine");
+    expect(r.exitCode).toBe(0);
+    expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "server.patch.apply", target: "s1", meta: { scope: "except-engine" } }));
+    const inner = innerOf(sent);
+    expect(inner).toContain("apt-mark hold");
+    expect(inner).toContain("trap tugra_release_holds EXIT");
+    expect(inner).toContain("--exclude='docker-ce'");
+    expect(driver(sent)).not.toContain('PEND=$(tugra_pending_names)');
+    (audit.log as jest.Mock).mockReset();
+  });
+
+  it("upgradeAll defaults to the full update (engine included) and audits scope all", async () => {
+    let sent = "";
+    const agentWs = {
+      sendCommand: jest.fn().mockImplementation(async (_s: string, script: string) => {
+        sent = script;
+        return { exitCode: 0, output: `${HEAD}${BEGIN}ok\n\nTUGRA_PATCH_RC=0\n` };
+      }),
+    } as unknown as AgentWsServer;
+    await make(prisma, access, agentWs, makeLogs()).upgradeAll("u1", "s1");
+    expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "server.patch.apply", meta: { scope: "all" } }));
+    expect(innerOf(sent)).not.toContain("apt-mark hold");
+    expect(driver(sent)).toContain("PEND=$(tugra_pending_names)");
+    (audit.log as jest.Mock).mockReset();
+  });
+
+  it("the fleet apply carries the scope into every server's script and the audit entry", async () => {
+    const sentScripts: string[] = [];
+    const p = { server: { findMany: jest.fn().mockResolvedValue([{ id: "s1", teamId: "t1" }]) } } as unknown as PrismaService;
+    const a = { permissionsByTeam: jest.fn().mockResolvedValue(new Map([["t1", new Set(["servers:ops"])]])) } as unknown as TeamAccessService;
+    const agentWs = {
+      isOnline: jest.fn().mockReturnValue(true),
+      sendCommand: jest.fn().mockImplementation(async (_s: string, script: string) => {
+        sentScripts.push(script);
+        return { exitCode: 0, output: `${HEAD}${BEGIN}ok\n\nTUGRA_PATCH_RC=0\n` };
+      }),
+    } as unknown as AgentWsServer;
+    const { results } = await make(p, a, agentWs).upgradeAllBulk("u1", ["s1"], "except-engine");
+    expect(results[0]).toMatchObject({ serverId: "s1", exitCode: 0 });
+    expect(innerOf(sentScripts[0])).toContain("--exclude='containerd.io'");
+    expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "server.patch.apply.bulk", meta: { count: 1, scope: "except-engine" } }));
+    (audit.log as jest.Mock).mockReset();
+  });
+
   it("upgradePhased audits first, then runs the forced single-package install as the host-side unit", async () => {
     const order: string[] = [];
     (audit.log as jest.Mock).mockImplementation(async () => void order.push("audit"));

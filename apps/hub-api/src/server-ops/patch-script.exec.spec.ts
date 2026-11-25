@@ -9,7 +9,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildCheckScript, buildInstallPhasedScript, buildPatchRunScript, buildUpgradeAllScript, buildUpgradeOneScript, parsePatchRun, parseUpgradable } from "./patch-script";
+import { buildCheckScript, buildInstallPhasedScript, buildPatchRunScript, buildUpgradeAllScript, buildUpgradeExceptEngineScript, buildUpgradeOneScript, parsePatchRun, parseUpgradable } from "./patch-script";
 
 // The shell under test (the host's /bin/sh is dash on Debian/Ubuntu); PATCH_TEST_SH=/bin/dash exercises that one.
 const SH = process.env.PATCH_TEST_SH ?? "/bin/sh";
@@ -23,7 +23,7 @@ let tools: string;
 
 // Only these host tools are visible to the scripts under test (symlinked from wherever this OS keeps them), so a
 // real apt-get / dpkg / systemctl / timeout on the machine running the tests can never leak in.
-const TOOLS = ["awk", "sed", "grep", "sort", "tr", "wc", "tail", "head", "find", "mkdir", "chmod", "cat", "base64", "sleep", "touch", "rm", "mv", "basename", "ls", "printf", "sh"];
+const TOOLS = ["awk", "sed", "grep", "sort", "tr", "wc", "tail", "head", "find", "mkdir", "chmod", "cat", "base64", "sleep", "touch", "rm", "mv", "basename", "dirname", "ls", "printf", "sh"];
 
 let resolvedTools: [string, string][] | null = null;
 function hostTools(): [string, string][] {
@@ -368,5 +368,174 @@ describe("APPLY driver without systemd: refuses the container engine", () => {
     put("dnf", 'echo "docker-ce.x86_64   3:27.0   docker-ce-stable"; echo "curl.x86_64  7.76  baseos"');
     const r = runSh(buildPatchRunScript("echo no", noSystemd()));
     expect(parsePatchRun(r.stdout).engineBlocked).toEqual(["docker-ce.x86_64"]);
+  });
+});
+
+describe("update all except the container engine, under sh with fake apt / dnf / apk", () => {
+  let hold: string;
+  let nrDir: string;
+  const script = () => buildUpgradeExceptEngineScript({ holdFile: hold, needrestartDir: nrDir });
+  const held = () => (existsSync(join(fake, "held")) ? readFileSync(join(fake, "held"), "utf8").trim().split("\n").filter(Boolean) : []);
+  const calls = () => (existsSync(join(fake, "calls")) ? readFileSync(join(fake, "calls"), "utf8").trim().split("\n") : []);
+
+  /** dpkg-query lists `pkgs` as installed ("ii") and `broken` with their given 2-letter state. */
+  function fakeApt(opts: { pkgs: string[]; broken?: string[]; aptRc?: number; preHeld?: string[] }) {
+    const lines = [...opts.pkgs.map((p) => `'ii  ${p}'`), ...(opts.broken ?? []).map((b) => `'${b}'`)].join(" ");
+    put("dpkg-query", `printf '%s\\n' ${lines}`);
+    put("dpkg", 'echo "dpkg $*" >> "$FAKE/calls"');
+    writeFileSync(join(fake, "held"), (opts.preHeld ?? []).map((p) => `${p}\n`).join(""));
+    put(
+      "apt-mark",
+      [
+        'case "$1" in',
+        '  showhold) cat "$FAKE/held" ;;',
+        '  hold) echo "$2" >> "$FAKE/held"; echo "apt-mark hold $2" >> "$FAKE/calls" ;;',
+        '  unhold) grep -vx -- "$2" "$FAKE/held" > "$FAKE/held.new"; mv "$FAKE/held.new" "$FAKE/held"; echo "apt-mark unhold $2" >> "$FAKE/calls" ;;',
+        "esac",
+      ].join("\n"),
+    );
+    put(
+      "apt-get",
+      [
+        'echo "apt-get $* | held=$(tr "\\n" , < "$FAKE/held") | nrmode=$NEEDRESTART_MODE suspend=$NEEDRESTART_SUSPEND fe=$DEBIAN_FRONTEND | override=$(cat "' + "$NRDIR" + '/zz-tugra-keep-engine.conf" 2>/dev/null | tr "\\n" " ")" >> "$FAKE/calls"',
+        `exit ${opts.aptRc ?? 0}`,
+      ].join("\n"),
+    );
+  }
+
+  beforeEach(() => {
+    hold = join(root, "etc-tugra", "patch-engine-holds");
+    nrDir = join(root, "needrestart");
+    mkdirSync(nrDir, { recursive: true });
+  });
+
+  const run = (sc = script()) => spawnSync(SH, ["-c", sc], { env: { ...envFor(), NRDIR: nrDir }, encoding: "utf8", timeout: 20_000 });
+
+  it("holds the installed engine packages while apt upgrades, then releases exactly those; needrestart cannot touch the engine", () => {
+    fakeApt({ pkgs: ["openssl", "docker-ce", "docker-ce-cli", "containerd.io", "docker-model-plugin", "moby-engine", "vim"] });
+    const r = run();
+    expect(r.status).toBe(0);
+    const c = calls();
+    const upgrade = c.find((l) => l.startsWith("apt-get "))!;
+    // during the upgrade every installed engine package was held, nothing else
+    expect(upgrade).toContain("held=docker-ce,docker-ce-cli,containerd.io,docker-model-plugin,moby-engine,");
+    expect(upgrade).toContain("upgrade -y");
+    expect(upgrade).toContain("nrmode=l suspend=1 fe=noninteractive");
+    expect(upgrade).toContain("qr(^docker)");
+    expect(upgrade).toContain("qr(^containerd)");
+    // afterwards: no holds left, no record, no needrestart override
+    expect(held()).toEqual([]);
+    expect(existsSync(hold)).toBe(false);
+    expect(existsSync(join(nrDir, "zz-tugra-keep-engine.conf"))).toBe(false);
+    expect(c.filter((l) => l.startsWith("apt-mark unhold")).sort()).toEqual(
+      ["docker-ce", "docker-ce-cli", "containerd.io", "docker-model-plugin", "moby-engine"].map((p) => `apt-mark unhold ${p}`).sort(),
+    );
+  });
+
+  it("restores the previous hold state: a package the admin already held stays held", () => {
+    fakeApt({ pkgs: ["docker-ce", "containerd.io"], preHeld: ["containerd.io", "vim"] });
+    expect(run().status).toBe(0);
+    expect(held().sort()).toEqual(["containerd.io", "vim"]);
+    expect(calls()).not.toContain("apt-mark hold containerd.io");
+    expect(calls()).not.toContain("apt-mark unhold containerd.io");
+  });
+
+  it("releases the holds even when apt fails, and passes the failure's exit code on", () => {
+    fakeApt({ pkgs: ["docker-ce"], aptRc: 100 });
+    const r = run();
+    expect(r.status).toBe(100);
+    expect(held()).toEqual([]);
+    expect(existsSync(hold)).toBe(false);
+  });
+
+  it("releases the holds when the run is terminated (TERM from the unit's timeout)", async () => {
+    fakeApt({ pkgs: ["docker-ce"] });
+    put("apt-get", 'echo "apt-get $*" >> "$FAKE/calls"; echo started > "$FAKE/started"; sleep 2');
+    const child = spawn(SH, ["-c", script()], { env: { ...envFor(), NRDIR: nrDir }, stdio: "ignore" });
+    const exited = new Promise<void>((resolve) => child.on("exit", () => resolve()));
+    for (let i = 0; i < 100 && !existsSync(join(fake, "started")); i++) await new Promise((r) => setTimeout(r, 50));
+    expect(held()).toEqual(["docker-ce"]); // mid-run: held
+    child.kill("SIGTERM");
+    await exited;
+    await new Promise((r) => setTimeout(r, 2500)); // the shell runs its trap once the sleeping child ends
+    expect(held()).toEqual([]);
+    expect(existsSync(hold)).toBe(false);
+  }, 30_000);
+
+  it("a hold left behind by a killed run is released by the NEXT apply (update all is not silently blocked)", () => {
+    fakeApt({ pkgs: ["docker-ce", "openssl"], preHeld: ["docker-ce", "vim"] });
+    mkdirSync(join(root, "etc-tugra"), { recursive: true });
+    writeFileSync(hold, "docker-ce\n"); // the record a SIGKILLed except-engine run left
+    writeFileSync(join(nrDir, "zz-tugra-keep-engine.conf"), "stale\n");
+    const r = runSh(buildUpgradeAllScript().replace("HF='/etc/tugra/patch-engine-holds'", `HF='${hold}'`).replace("NRF='/etc/needrestart/conf.d/", `NRF='${nrDir}/`));
+    expect(r.status).toBe(0);
+    expect(held()).toEqual(["vim"]); // ours released, the admin's own hold untouched
+    expect(existsSync(hold)).toBe(false);
+    expect(existsSync(join(nrDir, "zz-tugra-keep-engine.conf"))).toBe(false);
+    expect(calls().find((l) => l.startsWith("apt-get "))).toContain("upgrade -y");
+  });
+
+  it("never records or releases a name that is not an engine package", () => {
+    fakeApt({ pkgs: ["docker-ce"], preHeld: ["docker-ce", "vim"] });
+    mkdirSync(join(root, "etc-tugra"), { recursive: true });
+    writeFileSync(hold, "vim\n$(touch /tmp/pwned)\n; reboot\n");
+    expect(run().status).toBe(0);
+    expect(held().sort()).toEqual(["docker-ce", "vim"]); // 'vim' in the record is ignored (not an engine name)
+  });
+
+  it("refuses without touching dpkg or apt when the engine is half-configured (finishing it would restart Docker)", () => {
+    fakeApt({ pkgs: ["openssl"], broken: ["iF  docker-ce"] });
+    const r = run();
+    expect(r.status).toBe(1);
+    expect(r.stdout).toContain("TUGRA_ERROR: dpkg left a container-engine package half-configured");
+    expect(calls()).toEqual([]);
+    expect(held()).toEqual([]);
+  });
+
+  it("a half-configured NON-engine package is still finished first, with the engine held", () => {
+    fakeApt({ pkgs: ["docker-ce"], broken: ["iF  vim"] });
+    expect(run().status).toBe(0);
+    const c = calls();
+    expect(c.indexOf("apt-mark hold docker-ce")).toBeLessThan(c.indexOf("dpkg --configure -a"));
+    expect(c.indexOf("dpkg --configure -a")).toBeLessThan(c.findIndex((l) => l.startsWith("apt-get ")));
+  });
+
+  it("stops (and upgrades nothing) when a hold cannot be placed", () => {
+    fakeApt({ pkgs: ["docker-ce"] });
+    put("apt-mark", 'case "$1" in showhold) ;; hold) exit 1 ;; esac');
+    const r = run();
+    expect(r.status).toBe(1);
+    expect(r.stdout).toContain("could not hold docker-ce");
+    expect(calls().filter((l) => l.startsWith("apt-get "))).toEqual([]);
+  });
+
+  it("dnf: passes an --exclude for every engine package and nothing else is held", () => {
+    put("dnf", 'echo "dnf $*" >> "$FAKE/calls"');
+    expect(run().status).toBe(0);
+    const line = calls()[0];
+    expect(line).toMatch(/^dnf -y upgrade /);
+    for (const n of ["docker-ce", "containerd.io", "docker-model-plugin", "moby-*"]) expect(line).toContain(`--exclude=${n}`);
+  });
+
+  it("apk: upgrades only the listed non-engine packages by name", () => {
+    put("apk", 'if [ "$1" = version ]; then printf "%s\\n" "Installed:                                Available:" "docker-24.0.7-r0 < 25.0.0-r0" "zlib-1.2.13-r0 < 1.2.13-r1" "py3-foo-1.0-r2 < 1.1-r0" "containerd-1.7.0-r0 < 1.7.1-r0" "ca-certificates-20230506-r0 < 20240226-r0"; else echo "apk $*" >> "$FAKE/calls"; fi');
+    expect(run().status).toBe(0);
+    expect(calls()).toEqual(["apk upgrade zlib py3-foo ca-certificates"]);
+  });
+
+  it("apk: nothing left outside the engine is a clean no-op", () => {
+    put("apk", 'if [ "$1" = version ]; then printf "%s\\n" "Installed: Available:" "docker-24.0.7-r0 < 25.0.0-r0"; else echo "apk $*" >> "$FAKE/calls"; fi');
+    const r = run();
+    expect(r.status).toBe(0);
+    expect(r.stdout).toContain("Nothing to upgrade outside the container engine");
+    expect(calls()).toEqual([]);
+  });
+
+  it("the driver runs it as the host unit; inline mode does not refuse the engine for this scope", () => {
+    fakeApt({ pkgs: ["docker-ce"] });
+    const r = runSh(buildPatchRunScript(script(), { id: "a1b2c3d4e5f60718", deadlineSec: 60, lines: 0, guard: { kind: "except-engine" }, pollSec: "0.1", stateDir: state, systemdDir: sysd }));
+    const st = parsePatchRun(r.stdout);
+    expect(st.mode).toBe("unit");
+    expect(st.engineBlocked).toBeNull();
   });
 });

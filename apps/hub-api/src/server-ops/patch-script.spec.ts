@@ -2,6 +2,9 @@ import {
   buildCheckScript,
   isContainerEnginePackage,
   buildUpgradeAllScript,
+  buildUpgradeExceptEngineScript,
+  packageGroup,
+  isKernelPackage,
   buildUpgradeOneScript,
   buildInstallPhasedScript,
   parsePhasedNames,
@@ -486,5 +489,77 @@ describe("patch-script", () => {
       expect(() => buildInstallPhasedScript("evil; rm -rf /")).toThrow(/invalid/);
       expect(() => buildInstallPhasedScript("--force")).toThrow(/invalid/);
     });
+  });
+});
+
+describe("update all except the container engine (script generation)", () => {
+  const s = buildUpgradeExceptEngineScript();
+
+  it("apt: holds the engine for the run, releases on every exit path, keeps needrestart off docker/containerd", () => {
+    expect(s).toContain("trap tugra_release_holds EXIT");
+    expect(s).toContain("trap 'exit 143' HUP INT TERM");
+    expect(s).toContain("NEEDRESTART_MODE=l NEEDRESTART_SUSPEND=1");
+    expect(s).toContain("DEBIAN_FRONTEND=noninteractive"); // never prompts
+    expect(s).toContain("apt-mark hold");
+    expect(s).toContain("apt-mark unhold");
+    expect(s).toContain("qr(^docker)");
+    expect(s).toContain("qr(^containerd)");
+    // order: trap + holds first, the upgrade last; the plain upgrade line carries no engine-restarting extras
+    expect(s.indexOf("trap tugra_release_holds EXIT")).toBeLessThan(s.indexOf("apt-mark hold"));
+    expect(s.indexOf("apt-mark hold")).toBeLessThan(s.indexOf("upgrade -y;"));
+    // the record is written BEFORE the hold, so a crash in between can never leave an unrecorded hold
+    expect(s.indexOf('>> "$HF"')).toBeLessThan(s.indexOf('apt-mark hold "$p"'));
+  });
+
+  it("apt: refuses (never runs dpkg --configure) when the engine itself is half-configured", () => {
+    expect(s).toContain("TUGRA_ERROR: dpkg left a container-engine package half-configured");
+    expect(s.indexOf("TUGRA_ERROR: dpkg left")).toBeLessThan(s.indexOf("dpkg --configure -a"));
+  });
+
+  it("dnf / yum exclude every engine package, each quoted; apk upgrades only the listed non-engine ones", () => {
+    for (const n of ["docker-ce", "docker-ce-cli", "containerd.io", "docker-buildx-plugin", "docker-compose-plugin", "docker-model-plugin", "docker-ce-rootless-extras", "docker.io", "moby-*"]) {
+      expect(s).toContain(`--exclude='${n}'`);
+    }
+    expect(s).toMatch(/dnf -y upgrade --exclude=/);
+    expect(s).toMatch(/yum -y update --exclude=/);
+    expect(s).toContain("apk upgrade $NAMES");
+    expect(s).toContain('grep -Ev "$ENGINE_RE"');
+    expect(s).toContain("set -f"); // no globbing of the (charset-validated) names
+  });
+
+  it("every apt apply releases a stale hold first, so Update all is never blocked by a cut-off earlier run", () => {
+    for (const x of [buildUpgradeAllScript(), buildUpgradeOneScript("vim"), buildInstallPhasedScript("snapd")]) {
+      expect(x).toContain("tugra_release_holds");
+      expect(x.indexOf("\n  tugra_release_holds")).toBeLessThan(x.indexOf("apt-get -o Dpkg"));
+      expect(x).not.toContain("apt-mark hold");
+    }
+  });
+
+  it("rejects hold-record / needrestart paths that are not plain absolute paths", () => {
+    expect(() => buildUpgradeExceptEngineScript({ holdFile: "/tmp/a b" })).toThrow(/invalid engine hold option/);
+    expect(() => buildUpgradeExceptEngineScript({ needrestartDir: "/x;rm -rf /" })).toThrow(/invalid engine hold option/);
+  });
+
+  it("the inline (no systemd) driver does not refuse the engine for this scope, but still does for update-all", () => {
+    const base = { id: "0123456789abcdef", deadlineSec: 1800, lines: 0 };
+    expect(buildPatchRunScript(s, { ...base, guard: { kind: "all" } })).toContain("TUGRA_PATCH_ENGINE_BLOCKED=");
+    expect(buildPatchRunScript(s, { ...base, guard: { kind: "except-engine" } })).not.toContain("TUGRA_PATCH_ENGINE_BLOCKED=");
+  });
+});
+
+describe("package groups", () => {
+  it.each(["docker-ce", "docker-ce-cli", "containerd.io", "docker-model-plugin", "docker-buildx-plugin", "moby-engine", "docker.io", "runc"])("%s is the container engine", (n) => {
+    expect(packageGroup(n)).toBe("engine");
+  });
+  it.each(["linux-image-6.8.0-45-generic", "linux-image-generic", "linux-headers-6.8.0-45", "linux-modules-extra-6.8.0-45-generic", "linux-generic", "linux-aws", "kernel", "kernel-core.x86_64", "kernel-modules-core", "linux-lts", "linux-virt"])("%s is a kernel package", (n) => {
+    expect(packageGroup(n)).toBe("kernel");
+    expect(isKernelPackage(n)).toBe(true);
+  });
+  it.each(["openssl", "vim", "linux-firmware", "linux-libc-dev", "kernelshark", "kernel-tools-libs", "libc6"])("%s is neither", (n) => {
+    expect(packageGroup(n)).toBe("other");
+  });
+  it("parseUpgradable tags every package with its group", () => {
+    const out = ["TUGRA_HOST_ENTERED", "TUGRA_MGR=apt", "TUGRA_UPGRADABLE", "Listing...", "docker-ce/noble 2 amd64 [upgradable from: 1]", "linux-image-6.8.0-50-generic/noble 2 amd64 [upgradable from: 1]", "curl/noble 2 amd64 [upgradable from: 1]"].join("\n");
+    expect(parseUpgradable(out).packages.map((p) => [p.name, p.group])).toEqual([["docker-ce", "engine"], ["linux-image-6.8.0-50-generic", "kernel"], ["curl", "other"]]);
   });
 });

@@ -41,7 +41,7 @@ import {
   CreateLogDrainInput,
   CreateLogDrainSchema,
   PatchApplyInput,
-  PatchApplySchema,
+  PatchApplyBodySchema,
   RebootPreviewSchema,
   RebootRequestInput,
   RebootRequestSchema,
@@ -269,7 +269,7 @@ export class ServerOpsController {
     @CurrentUser() user: AuthUser,
     @Param("id") id: string,
     // The body is optional (older callers send none): scope defaults to "all".
-    @Body(new ZodValidationPipe(PatchApplySchema.optional().transform((v) => v ?? { scope: "all" as const }))) body: PatchApplyInput,
+    @Body(new ZodValidationPipe(PatchApplyBodySchema)) body: PatchApplyInput,
   ) {
     return this.patch.upgradeAll(user.userId, id, body.scope);
   }

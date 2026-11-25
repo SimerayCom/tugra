@@ -37,6 +37,8 @@ export type FleetPatchInput = z.infer<typeof FleetPatchSchema>;
 export const PatchScopeSchema = z.enum(["all", "except-engine"]);
 export const PatchApplySchema = z.object({ scope: PatchScopeSchema.default("all") });
 export type PatchApplyInput = z.infer<typeof PatchApplySchema>;
+// The single-server apply: the body is optional (older callers POST none).
+export const PatchApplyBodySchema = PatchApplySchema.optional().transform((v): PatchApplyInput => v ?? { scope: "all" });
 export const FleetPatchApplySchema = FleetPatchSchema.extend({ scope: PatchScopeSchema.default("all") });
 export type FleetPatchApplyInput = z.infer<typeof FleetPatchApplySchema>;
 
