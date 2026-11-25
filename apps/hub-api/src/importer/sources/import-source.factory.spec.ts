@@ -1,6 +1,7 @@
 import { ImportSourceFactory } from "./import-source.factory";
 import { CoolifySource } from "./coolify.source";
 import { DokploySource } from "./dokploy.source";
+import { AgentCoolifySource } from "./agent-coolify.source";
 
 describe("ImportSourceFactory", () => {
   const makeFactory = () => {
@@ -23,6 +24,22 @@ describe("ImportSourceFactory", () => {
     expect(src).toBeInstanceOf(DokploySource);
     expect(src.kind).toBe("dokploy");
     expect(dokployCreate).toHaveBeenCalledWith("https://d.example.com:3000", "KEY");
+  });
+
+  it("builds the agent source for an agent session: a CoolifySource over the agent read, no HTTP client, no token", () => {
+    const coolifyCreate = jest.fn();
+    const reader = { read: jest.fn() };
+    const factory = new ImportSourceFactory({ create: coolifyCreate } as never, { create: jest.fn() } as never, reader as never);
+    const src = factory.createAgent("srv-agent");
+    expect(src).toBeInstanceOf(AgentCoolifySource);
+    expect(src).toBeInstanceOf(CoolifySource);
+    expect(src.kind).toBe("coolify"); // sourceKind stays coolify: the transport is the session's business
+    expect(coolifyCreate).not.toHaveBeenCalled();
+    expect(reader.read).not.toHaveBeenCalled(); // nothing is read until the source is used
+  });
+
+  it("refuses to build an agent source when no agent reader is wired", () => {
+    expect(() => makeFactory().factory.createAgent("srv-agent")).toThrow(/not available/);
   });
 
   it("labels each kind for messages", () => {

@@ -29,6 +29,20 @@ export const ImportConnectSchema = z.object({
 });
 export type ImportConnectInput = z.infer<typeof ImportConnectSchema>;
 
+/**
+ * Connect Coolify THROUGH THE AGENT on the Coolify host (Coolify hub takeover): no token and no URL. The session reads Coolify's own
+ * database over that server's agent, which needs the server's own opt-in (the existing "Read this Coolify" consent) and an
+ * owner/admin of its team. `sourceKind` stays "coolify"; the session's transport is "agent".
+ */
+export const ImportConnectAgentSchema = z.object({
+  sourceKind: z.literal("coolify"),
+  teamId: z.string().min(1),
+  /** The Tugra server whose agent runs on the Coolify host. */
+  serverId: z.string().min(1),
+  scopeLabel: z.string().regex(/^[a-z0-9._-]{1,64}$/).optional(),
+});
+export type ImportConnectAgentInput = z.infer<typeof ImportConnectAgentSchema>;
+
 /** The one-line connection test shown as soon as the token is pasted: the same credentials as connect, nothing is stored. */
 export const ImportTestSchema = ImportConnectSchema.omit({ scopeLabel: true });
 export type ImportTestInput = z.infer<typeof ImportTestSchema>;

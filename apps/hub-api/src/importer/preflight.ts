@@ -291,7 +291,7 @@ export function sourceProjectsOf(fleet: Pick<ForeignFleet, "projects" | "apps" |
   const out: PreflightProject[] = [];
   for (const p of fleet.projects ?? []) {
     const itemRefs = byRef.get(p.ref);
-    if (itemRefs?.length) out.push({ ref: p.ref, name: p.name, itemRefs: [...itemRefs].sort() });
+    if (itemRefs?.length) out.push({ ref: p.ref, name: p.name, itemRefs: [...itemRefs].sort(), ...(p.team ? { team: p.team } : {}) });
   }
   return out.sort((a, b) => (a.name.toLowerCase() < b.name.toLowerCase() ? -1 : a.name.toLowerCase() > b.name.toLowerCase() ? 1 : a.ref < b.ref ? -1 : 1));
 }

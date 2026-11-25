@@ -28,6 +28,8 @@ export class CoolifySourceApi implements SourceApiPort {
     if (!run.sessionId) return { ok: false, reason: "session-expired" };
     const s = await this.prisma.importSession.findUnique({ where: { id: run.sessionId } });
     if (!s || s.actorId !== run.actorId || s.sourceKind !== "coolify" || s.status !== "active" || s.expiresAt.getTime() < Date.now()) return { ok: false, reason: "session-expired" };
+    // An agent session holds no API token: Coolify's own stop/start API is not available, the freeze falls back to the agent or manual controller.
+    if (s.transport === "agent") return { ok: false, reason: "unsupported" };
     try {
       return { ok: true, control: this.factory(s.baseUrl, this.crypto.decrypt(s.tokenEnc)) };
     } catch {

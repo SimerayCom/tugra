@@ -1,4 +1,4 @@
-import { ImportApplySchema, ImportConnectSchema, ImportMappingPutSchema, ImportMappingResolveSchema, ImportServicesPreviewSchema, ServiceChoiceSchema, ServiceChoicesSchema } from "./dto";
+import { ImportApplySchema, ImportConnectAgentSchema, ImportConnectSchema, ImportMappingPutSchema, ImportMappingResolveSchema, ImportServicesPreviewSchema, ServiceChoiceSchema, ServiceChoicesSchema } from "./dto";
 
 describe("ServiceChoiceSchema", () => {
   const ok = (v: unknown) => ServiceChoiceSchema.safeParse(v).success;
@@ -110,5 +110,27 @@ describe("resolve / put bodies", () => {
     expect(ImportMappingPutSchema.safeParse({ mapping: { version: 1, items: { "app:s:a": { name: "x".repeat(150) } } } }).success).toBe(true);
     expect(ImportMappingPutSchema.safeParse({ mapping: { version: 1, items: { "app:s:a": { bogus: 1 } } } }).success).toBe(false);
     expect(ImportMappingPutSchema.safeParse({ mapping, expectedVersion: 0 }).success).toBe(false);
+  });
+});
+
+describe("ImportConnectAgentSchema (Coolify read through the agent)", () => {
+  const ok = (v: unknown) => ImportConnectAgentSchema.safeParse(v).success;
+
+  it("takes a team and a server, nothing else that matters: no token and no URL exist on this path", () => {
+    expect(ok({ sourceKind: "coolify", teamId: "t1", serverId: "s1" })).toBe(true);
+    expect(ok({ sourceKind: "coolify", teamId: "t1", serverId: "s1", scopeLabel: "acme" })).toBe(true);
+    const parsed = ImportConnectAgentSchema.parse({ sourceKind: "coolify", teamId: "t1", serverId: "s1", token: "T", baseUrl: "https://x.example.com" });
+    expect(parsed).toEqual({ sourceKind: "coolify", teamId: "t1", serverId: "s1" }); // a smuggled token or URL is dropped, never carried
+  });
+
+  it("is Coolify only, and needs both ids", () => {
+    expect(ok({ sourceKind: "dokploy", teamId: "t1", serverId: "s1" })).toBe(false);
+    expect(ok({ sourceKind: "coolify", teamId: "t1" })).toBe(false);
+    expect(ok({ sourceKind: "coolify", serverId: "s1" })).toBe(false);
+    expect(ok({ sourceKind: "coolify", teamId: "", serverId: "s1" })).toBe(false);
+  });
+
+  it("keeps the scope label to the same charset as the token path", () => {
+    expect(ok({ sourceKind: "coolify", teamId: "t1", serverId: "s1", scopeLabel: "Bad Label!" })).toBe(false);
   });
 });

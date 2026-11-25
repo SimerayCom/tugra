@@ -9,6 +9,7 @@
  * Errors are the usual Nest HTTP exceptions whose message is a stable machine code (`plan-changed`, `run-past-ponr`, ...).
  */
 import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, NotFoundException, Optional, UnprocessableEntityException } from "@nestjs/common";
+import { isAgentSessionBaseUrl } from "@tugra/shared";
 import { scopeSatisfies, type Scope } from "../../api-tokens/scopes";
 import type { ServiceChoice } from "../../importer/dto";
 import {
@@ -801,6 +802,8 @@ export class MigrationRunsService implements MigrationRunsFacade {
     this.requireOpen(run);
     if (run.dryRun) throw conflict("run-is-dry-run");
     const old = run.sessionId ? await this.env.session(actor.userId, run.sessionId) : null;
+    // A session that reads through the agent has no token to renew: it is reconnected through the agent, not here.
+    if (old && isAgentSessionBaseUrl(old.baseUrl)) throw conflict("source-is-agent");
     // A purged (expired) session row cannot tell us its URL any more: the run only kept the host, so fall back to https.
     const baseUrl = old?.baseUrl ?? (run.sourceHost ? `https://${run.sourceHost}` : null);
     if (!baseUrl) throw conflict("source-unknown");

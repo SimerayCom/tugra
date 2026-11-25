@@ -117,6 +117,16 @@ describe("start and pause rules", () => {
   });
 });
 
+describe("a run whose source is read through the agent", () => {
+  it("has no token to renew: the source-session route refuses it and never reconnects", async () => {
+    const w = new RunWorld();
+    const id = await w.create();
+    w.env.sessions.get("s1")!.baseUrl = "agent://srv-agent";
+    await expect(w.service.sourceSession(ACTOR, id, { token: "t" })).rejects.toThrow(/source-is-agent/);
+    expect(w.env.connects).toHaveLength(0);
+  });
+});
+
 /** Put dry-run items on the first step of a (finished) dry-run, as its handlers would have projected them. */
 function seedDryRun(w: RunWorld, id: string, items: Array<Record<string, unknown>>): void {
   const row = w.store.stepRows.get(id)![0];

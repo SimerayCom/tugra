@@ -130,6 +130,8 @@ export interface CoolifyApp {
   /** The list row's runtime state (`running:healthy`, `exited:unhealthy`, ...) and the container restart counter (see coolify-health). */
   status?: string | null;
   restart_count?: number | string | null;
+  /** Agent read only: free-form text columns that HOLD text whose content was withheld (see {@link rowHas}). */
+  presence?: Record<string, boolean> | null;
 }
 export interface CoolifyDatabase {
   uuid: string;
@@ -158,6 +160,8 @@ export interface CoolifyDatabase {
   mysql_conf?: string | null;
   mariadb_conf?: string | null;
   mongo_conf?: string | null;
+  /** Agent read only: columns that hold text whose content was withheld (see {@link rowHas}). */
+  presence?: Record<string, boolean> | null;
 }
 export interface CoolifyService {
   uuid: string;
@@ -532,6 +536,8 @@ export function decodeCoolifyDockerfile(raw: unknown): string | undefined {
 }
 
 const nonEmpty = (v: unknown): boolean => typeof v === "string" && v.trim() !== "";
+/** Does the row hold text in this column? The text itself, or (agent read: the text is withheld from the plan channel) a `presence` mark. */
+const rowHas = (row: { presence?: Record<string, boolean> | null }, col: string): boolean => nonEmpty((row as Record<string, unknown>)[col]) || row.presence?.[col] === true;
 /** Coolify "0" / "" / null / 0 all mean "no limit". */
 const nonZero = (v: unknown): boolean => (typeof v === "number" ? v > 0 : typeof v === "string" && v.trim() !== "" && v.trim() !== "0");
 
@@ -573,8 +579,8 @@ function coolifyNotCarried(app: CoolifyApp, realGit: boolean, kind: ForeignApp["
   const out: NonNullable<ForeignApp["notCarried"]> = [];
   if (app.is_http_basic_auth_enabled === true) out.push({ field: "basicAuth", level: "warn", ...why("coolify_basic_auth") });
   if (nonEmpty(app.ports_mappings)) out.push({ field: "publishedPorts", level: "warn", ...why("coolify_published_ports") });
-  if (nonEmpty(app.custom_docker_run_options)) out.push({ field: "dockerOptions", level: "warn", ...why("coolify_docker_options") });
-  if (nonEmpty(app.pre_deployment_command) || nonEmpty(app.post_deployment_command)) out.push({ field: "deployHooks", level: "info", ...why("coolify_deploy_hooks") });
+  if (rowHas(app, "custom_docker_run_options")) out.push({ field: "dockerOptions", level: "warn", ...why("coolify_docker_options") });
+  if (rowHas(app, "pre_deployment_command") || rowHas(app, "post_deployment_command")) out.push({ field: "deployHooks", level: "info", ...why("coolify_deploy_hooks") });
   if (nonZero(app.limits_memory) || nonZero(app.limits_cpus)) out.push({ field: "limits", level: "info", ...why("coolify_limits") });
   if (app.health_check_enabled === true) out.push({ field: "healthcheck", level: "info", ...why("coolify_healthcheck") });
   if (nonEmpty(app.dockerfile_target_build)) out.push({ field: "dockerBuildTarget", level: "info", ...why("coolify_build_target") });
@@ -654,8 +660,8 @@ export function mapApplication(
   const realGit = hasRealGit(app);
   // Presence-only markers (never the text): label / Dockerfile text is re-read at apply time.
   const sourceExtras: NonNullable<ForeignApp["sourceExtras"]> = {};
-  if (nonEmpty(app.custom_labels)) sourceExtras.labels = true;
-  if (app.build_pack === "dockerfile" && (nonEmpty(app.dockerfile) || nonEmpty(app.dockerfile_raw))) sourceExtras.dockerfile = true;
+  if (rowHas(app, "custom_labels")) sourceExtras.labels = true;
+  if (app.build_pack === "dockerfile" && (rowHas(app, "dockerfile") || nonEmpty(app.dockerfile_raw))) sourceExtras.dockerfile = true;
   const notCarried = coolifyNotCarried(app, realGit, kind);
   const watchPaths = parseWatchPaths(app.watch_paths);
   const domainRedirect = app.redirect === "www" ? "www" : app.redirect === "non-www" ? "root" : undefined;
@@ -739,7 +745,8 @@ export function mapDatabase(
   if (valkey) notCarried.push({ field: "engineFamily", level: "info", ...why("coolify_valkey") });
   // A custom engine config file (redis/keydb/postgres/mysql/mariadb/mongo `*_conf`) is carried (presence here; the text is read at apply
   // time, see fetchDbConfigFile): no warning.
-  const hasConfigFile = coolifyConfText(db, engine) !== undefined;
+  const confField = (CONF_FIELD as Partial<Record<string, string>>)[engine];
+  const hasConfigFile = coolifyConfText(db, engine) !== undefined || (!!confField && db.presence?.[confField] === true);
   // A scheduled backup (and its S3 target) is not carried: Tugra needs the destination credentials, which the importer never reads.
   const backupSchedule = mapBackupSchedule(ctx.backups, ctx.s3);
   if (backupSchedule) {

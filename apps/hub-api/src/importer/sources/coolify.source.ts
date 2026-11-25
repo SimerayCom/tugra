@@ -269,7 +269,7 @@ export class CoolifySource implements ImportSource {
     const list = await tryGet<Array<{ uuid?: string; name?: string; description?: string | null }>>("/projects", [], "projects");
     if (!Array.isArray(list) || list.length === 0) return undefined;
     const details = await mapLimit(list.filter((p) => typeof p?.uuid === "string" && p.uuid), DISCOVER_CONCURRENCY, (p) =>
-      tryGet<{ uuid?: string; name?: string; description?: string | null; environments?: Array<{ id?: number | string; name?: string }> }>(
+      tryGet<{ uuid?: string; name?: string; description?: string | null; environments?: Array<{ id?: number | string; name?: string }>; team?: { id?: unknown; name?: unknown } }>(
         `/projects/${encodeURIComponent(p.uuid as string)}`,
         p,
         `project ${p.name ?? p.uuid}`,
@@ -285,7 +285,10 @@ export class CoolifySource implements ImportSource {
       // Exactly one default per project: "production" when present, else the first environment.
       const defaultIdx = Math.max(0, envRows.findIndex((e) => e.name === "production"));
       const environments = envRows.map((e, i) => ({ ref: `${d.uuid}#${String(e.id)}`, name: e.name as string, isDefault: i === defaultIdx }));
-      projects.push({ ref: d.uuid, name: d.name, description: d.description ?? undefined, tags: [], environments });
+      // `team` is on the detail only for the agent read (the REST API names no team on a project): carried for the plan's team grouping.
+      const teamId = d.team && (typeof d.team.id === "string" || typeof d.team.id === "number") ? String(d.team.id) : "";
+      const team = teamId && typeof d.team?.name === "string" && d.team.name ? { ref: teamId, name: d.team.name.slice(0, 120) } : undefined;
+      projects.push({ ref: d.uuid, name: d.name, description: d.description ?? undefined, tags: [], environments, ...(team ? { team } : {}) });
       for (const e of environments) locByEnvId.set(e.ref.slice(d.uuid.length + 1), { projectRef: d.uuid, environmentRef: e.ref });
     }
     if (projects.length === 0) return undefined;

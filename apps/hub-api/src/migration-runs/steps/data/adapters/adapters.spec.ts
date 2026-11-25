@@ -300,6 +300,13 @@ describe("CoolifySourceApi", () => {
     const already: CoolifyControlTransport = { request: async () => ({ status: 400, body: { message: "Database is already stopped." } }) };
     expect(await build(session(), already).api.stop(makeRun(), "database", "d1")).toEqual({ ok: true });
   });
+  it("an agent session has no token and no Coolify API: `unsupported`, so the freeze falls back to the agent or manual controller, and nothing is decrypted", async () => {
+    const { api, decrypt, factory } = build(session({ transport: "agent", baseUrl: "agent://srv1", tokenEnc: "" }));
+    expect(await api.available(makeRun())).toEqual({ ok: false, reason: "unsupported" });
+    expect(await api.stop(makeRun(), "application", "abc")).toEqual({ ok: false, reason: "unsupported" });
+    expect(decrypt).not.toHaveBeenCalled();
+    expect(factory).not.toHaveBeenCalled();
+  });
   it("an SSRF-refused base URL is a fixed `unreachable`", async () => {
     const api = new CoolifySourceApi(readOnly({ importSession: { findUnique: async () => session({ baseUrl: "http://169.254.169.254" }) } }), { decrypt: () => "t" } as never);
     expect(await api.available(makeRun())).toEqual({ ok: false, reason: "unreachable" });

@@ -1,3 +1,4 @@
+import type { AgentPlanAdditions } from "@tugra/shared";
 import type { ForeignEnv, ForeignFleet, ServiceBundle } from "./foreign-fleet";
 import type { Unmapped } from "./reason";
 import type { RawSettings, SettingsSection } from "./settings/settings-types";
@@ -110,6 +111,8 @@ export interface ImportSource {
   /** OPTIONAL cheap read-only summary for the connection test (team name, resource counts, `read:sensitive`). A source without it
    *  is only verified. A failure of the core reads MUST throw. */
   probe?(): Promise<SourceProbe>;
+  /** OPTIONAL (agent transport only): what the one agent read adds to the plan, on top of the API-path plan (counts, schema version, the Coolify team of each project). Additive and outside planHash. */
+  agentPlan?(): Promise<AgentPlanAdditions>;
   /** OPTIONAL one cheap read: the name of the team the credentials belong to (best effort; undefined when the source cannot tell). */
   currentTeam?(): Promise<string | undefined>;
   /** Re-fetch real secret values for one resource at apply time (never sent to the client). */

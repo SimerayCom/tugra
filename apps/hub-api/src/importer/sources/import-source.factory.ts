@@ -1,5 +1,8 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, Optional } from "@nestjs/common";
+import { AgentCoolifyReader } from "../agent-coolify.reader";
 import { CoolifySource } from "./coolify.source";
+import { AgentCoolifyClient } from "./agent-coolify.client";
+import { AgentCoolifySource } from "./agent-coolify.source";
 import { CoolifyClientFactory } from "./coolify-client.factory";
 import { DokploySource } from "./dokploy.source";
 import { DokployClientFactory } from "./dokploy-client.factory";
@@ -19,7 +22,18 @@ export class ImportSourceFactory {
   constructor(
     private readonly coolifyClients: CoolifyClientFactory,
     private readonly dokployClients: DokployClientFactory,
+    // Optional, like the other trailing collaborators: a spec that never reads through an agent builds the factory without it.
+    @Optional() private readonly agentReads?: AgentCoolifyReader,
   ) {}
+
+  /**
+   * The Coolify source for an AGENT session: the same adapter as the token path over a client that answers from one agent read of
+   * Coolify's own database on `agentServerId`. Only Coolify has one (`sourceKind` stays "coolify"; the session's `transport` says how).
+   */
+  createAgent(agentServerId: string): ImportSource {
+    if (!this.agentReads) throw new Error("agent reads are not available");
+    return new AgentCoolifySource(new AgentCoolifyClient(this.agentReads, agentServerId));
+  }
 
   /** Construct the adapter for `kind`, with its transport client already wired to `baseUrl` + `token`. */
   create(kind: RemoteSourceKind, baseUrl: string, token: string): ImportSource {

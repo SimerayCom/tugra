@@ -238,6 +238,8 @@ export interface ForeignProject {
   description?: string;
   tags: string[];
   environments: ForeignEnvironment[];
+  /** The Coolify team the project belongs to (agent read only: one pass sees every team). Not part of any plan item. */
+  team?: PlanTeam;
 }
 
 /** A multi-container stack (Coolify "service", a compose project): a group of member apps/dbs with their own

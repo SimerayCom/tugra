@@ -68,6 +68,8 @@ export function isSensitiveVisible(row: unknown, kind?: CoolifyResourceKind): bo
   if (!row || typeof row !== "object" || Array.isArray(row)) return false;
   const keys = kind ? COOLIFY_SENSITIVE_KEYS_BY_KIND[kind] : COOLIFY_SENSITIVE_KEYS;
   const r = row as Record<string, unknown>;
+  // The agent read holds back the text of a sensitive column that has text and says so in `presence`: the row is a sensitive-capable one.
+  if (r.presence && typeof r.presence === "object" && Object.keys(r.presence as object).some((k) => keys.includes(k))) return true;
   return keys.some((k) => Object.prototype.hasOwnProperty.call(r, k));
 }
 

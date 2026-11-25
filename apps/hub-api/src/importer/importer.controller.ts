@@ -16,6 +16,8 @@ import { VxDiskCheckBodySchema, VxExcludeBodySchema, type VxDiskCheckBody, type 
 import {
   ImportConnectSchema,
   type ImportConnectInput,
+  ImportConnectAgentSchema,
+  type ImportConnectAgentInput,
   ImportTestSchema,
   type ImportTestInput,
   ImportPlanRequestSchema,
@@ -73,6 +75,22 @@ export class ImporterController {
     @Body(new ZodValidationPipe(ImportConnectSchema)) body: ImportConnectInput,
   ) {
     return this.importer.connect(user.userId, body);
+  }
+
+  /**
+   * Connect Coolify through the agent on the Coolify host: no token. One full read-only read of Coolify's own database now, then an
+   * encrypted, expiring session whose token column is empty. Owner/admin of the server's team and the server's opt-in are checked in
+   * the service. `write` scope (it reads that host's database through its agent).
+   */
+  @Post("connect-agent")
+  @RequireScopes("write")
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @ApiZodBody(ImportConnectAgentSchema)
+  connectAgent(
+    @CurrentUser() user: AuthUser,
+    @Body(new ZodValidationPipe(ImportConnectAgentSchema)) body: ImportConnectAgentInput,
+  ) {
+    return this.importer.connectAgent(user.userId, body);
   }
 
   /**

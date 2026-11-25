@@ -1,4 +1,6 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException } from "@nestjs/common";
+import { Role } from "@prisma/client";
+import { agentSessionBaseUrl, type AgentPlanAdditions } from "@tugra/shared";
 import { PrismaService } from "../prisma/prisma.service";
 import { CryptoService } from "../crypto/crypto.service";
 import { AuditService } from "../audit/audit.service";
@@ -12,7 +14,7 @@ import { buildPreflight } from "./preflight";
 import { buildCoverage } from "./coverage";
 import type { ForeignFleet, ImportPlan, PreflightHost } from "./foreign-fleet";
 import type { ImportSource } from "./import-source";
-import { isRemoteSourceKind, type ImportConnectInput, type ImportTestInput, type ImportMappingPutInput, type ImportMappingResolveInput, type ImportPlanRequestInput, type ImportServicesPreviewInput, type RemoteSourceKind } from "./dto";
+import { isRemoteSourceKind, type ImportConnectAgentInput, type ImportConnectInput, type ImportTestInput, type ImportMappingPutInput, type ImportMappingResolveInput, type ImportPlanRequestInput, type ImportServicesPreviewInput, type RemoteSourceKind } from "./dto";
 import { mapLimit } from "./sources/map-limit";
 import { validateServiceChoices } from "./service-choices";
 import { buildServicePreview, type ServicePreview } from "./service-preview";
@@ -20,6 +22,8 @@ import { ImportMappingService, type MappingSession } from "./import-mapping.serv
 import type { ResolvedMapping } from "./import-mapping";
 import { baseUrlHost, matchTugraServer, type MatchCandidate, type TugraMatch } from "./server-match";
 import { classifyConnectFailure, suggestScopeLabel, type ConnectFailureCode } from "./connect-check";
+import { HostMatchService, preflightMatchOf } from "../coolify-takeover/host-match.service";
+import type { CoolifyHostInput } from "../coolify-takeover/host-match";
 
 /** The plan as returned to a client: the (planHash-covered) plan plus the additive, hash-excluded mapping block. */
 export type ImportPlanResponse = ImportPlan & { mapping?: { features: string[]; stored: unknown; storedVersion: number | null; scopeKey: string } };
@@ -52,6 +56,8 @@ export class ImporterService {
     private readonly sources: ImportSourceFactory,
     // Trailing + optional so the mapping-free construction (and every pre-existing spec) is unchanged.
     private readonly mappings?: ImportMappingService,
+    // Trailing + optional for the same reason: the agent transport's host matching (Coolify hub takeover, lane D).
+    private readonly hostMatch?: HostMatchService,
   ) {}
 
   /** Verify a remote source is reachable with the given token, then store an encrypted, expiring session. */
@@ -95,6 +101,59 @@ export class ImporterService {
     });
     await this.audit.log({ actor: userId, action: "import.connect", target: session.id, meta: { sourceKind: input.sourceKind, teamId: input.teamId, baseUrl: input.baseUrl } });
     return { sessionId: session.id, expiresAt };
+  }
+
+  /**
+   * Connect Coolify through the agent on the Coolify host (no token, no URL). Needs: an owner/admin of the server's team, a server of
+   * that team, and the server's own "Read this Coolify" opt-in (the consent for reading that host's Coolify database). The agent is
+   * asked for one full read right now, so a bad host (agent offline, no Coolify, a session that is not read-only) fails here and not at
+   * the first plan. The session stores no secret: its token column stays empty, and it holds only a short encrypted summary of the read.
+   */
+  async connectAgent(userId: string, input: ImportConnectAgentInput): Promise<{ sessionId: string; expiresAt: Date; read: NonNullable<AgentPlanAdditions["agentRead"]> }> {
+    await this.access.requirePermission(userId, input.teamId, "apps:config");
+    await this.access.requireRole(userId, input.teamId, [Role.OWNER, Role.ADMIN]);
+    const server = await this.prisma.server.findUnique({ where: { id: input.serverId }, select: { id: true, teamId: true } });
+    if (!server || server.teamId !== input.teamId) throw new NotFoundException("server not found");
+    await this.requireAgentConsent(input.serverId, input.teamId);
+    await this.prisma.importSession.deleteMany({ where: { expiresAt: { lt: new Date() } } });
+
+    const source = this.sources.createAgent(input.serverId);
+    let read: AgentPlanAdditions;
+    try {
+      const ok = await source.verify();
+      if (!ok.ok) {
+        throw new BadRequestException({ statusCode: 400, message: `could not read Coolify through the agent: ${ok.detail ?? "verification failed"}`, code: "agent_read_failed" });
+      }
+      read = (await source.agentPlan?.()) ?? {};
+    } finally {
+      await source.close();
+    }
+    if (!read.agentRead) throw new BadRequestException({ statusCode: 400, message: "the agent read returned nothing", code: "agent_read_failed" });
+
+    const expiresAt = new Date(Date.now() + SESSION_TTL_MS);
+    const session = await this.prisma.importSession.create({
+      data: {
+        teamId: input.teamId,
+        actorId: userId,
+        sourceKind: "coolify",
+        baseUrl: agentSessionBaseUrl(input.serverId),
+        tokenEnc: "", // no token on this path (the rotation skips an empty value)
+        transport: "agent",
+        agentServerId: input.serverId,
+        snapshotEnc: this.crypto.encrypt(JSON.stringify(read.agentRead)), // counts and versions only: no row, no value
+        ...(input.scopeLabel ? { scopeKey: input.scopeLabel } : {}),
+        status: "active",
+        expiresAt,
+      },
+    });
+    await this.audit.log({ actor: userId, action: "import.connect", target: session.id, meta: { sourceKind: "coolify", transport: "agent", teamId: input.teamId, serverId: input.serverId } });
+    return { sessionId: session.id, expiresAt, read: read.agentRead };
+  }
+
+  /** The server's own opt-in must still stand: withdrawing it ends the agent session's reads at once. */
+  private async requireAgentConsent(serverId: string, teamId: string): Promise<void> {
+    const optIn = await this.prisma.coolifyInventory.findFirst({ where: { serverId, teamId }, select: { id: true } });
+    if (!optIn) throw new ForbiddenException({ code: "not_enabled", message: "This server has not been opted in" });
   }
 
   /**
@@ -155,8 +214,9 @@ export class ImporterService {
       const mapping = this.mappings ? await this.mappings.planBlock(session) : undefined;
       const built = planImport(fleet, opts);
       const preflight = { ...buildPreflight(fleet, opts), ...(coverage ? { coverage } : {}) };
-      const placement = await this.placementFacts(userId, session.baseUrl, fleet, preflight.hosts, built.items, source);
-      return { ...built, preflight: { ...preflight, ...(placement.hosts ? { hosts: placement.hosts } : {}), ...(placement.panel ? { panel: placement.panel } : {}), ...(placement.sourceTeam ? { sourceTeam: placement.sourceTeam } : {}) }, ...(mapping ? { mapping } : {}) };
+      const agentAdd = await source.agentPlan?.();
+      const placement = await this.placementFacts(userId, session.baseUrl, fleet, preflight.hosts, built.items, source, session.agentServerId);
+      return { ...built, preflight: { ...preflight, ...(agentAdd ?? {}), ...(placement.hosts ? { hosts: placement.hosts } : {}), ...(placement.panel ? { panel: placement.panel } : {}), ...(placement.sourceTeam ? { sourceTeam: placement.sourceTeam } : {}) }, ...(mapping ? { mapping } : {}) };
     } finally {
       await source.close();
     }
@@ -175,6 +235,7 @@ export class ImporterService {
     existing: readonly PreflightHost[] | undefined,
     items: ImportPlan["items"],
     source: ImportSource,
+    agentServerId?: string | null,
   ): Promise<{ hosts?: PreflightHost[]; panel?: { tugra: TugraMatch }; sourceTeam?: string }> {
     try {
       const perms = await this.access.permissionsByTeam(userId);
@@ -185,10 +246,18 @@ export class ImporterService {
       const registered: MatchCandidate[] = rows;
       const panelHost = baseUrlHost(baseUrl);
       const addressOf = new Map(fleet.servers.map((s) => [s.ref, s.ip] as const));
+      // Agent transport: the evidence ladder (identity confirms, an address is only probable). The token path keeps the address match.
+      const ladder = agentServerId && this.hostMatch ? await this.ladderHosts(userId, fleet, agentServerId) : null;
       const hosts = (existing ?? []).map((h) => {
         const address = h.controlPlane ? panelHost : addressOf.get(h.ref);
         const m = registered.length ? matchTugraServer(address, registered) : null;
-        return m ? { ...h, tugra: m } : h;
+        const v = ladder?.get(h.ref);
+        if (!v) return m ? { ...h, tugra: m } : h;
+        const best = v.candidates.find((c) => c.serverId === v.tugraServerId);
+        const tugra = best && (v.status === "certain" || v.status === "probable")
+          ? { serverId: best.serverId, name: best.name, teamId: best.teamId, via: m && m.serverId === best.serverId ? m.via : ("reported-ip" as const), confidence: v.status }
+          : undefined;
+        return { ...h, ...(tugra ? { tugra } : {}), match: preflightMatchOf(v) };
       });
       // items that live on no named server (a Dokploy panel box) are matched through the panel's own address
       const unnamed = items.some((i) => i.itemRef.split(":")[1] === UNKNOWN_HOST_REF);
@@ -204,6 +273,13 @@ export class ImporterService {
       this.logger.warn(`placement match skipped: ${e instanceof Error ? e.message : "unknown"}`);
       return {};
     }
+  }
+
+  /** The ladder's verdict for every source server (by its Coolify uuid). The Coolify host itself is the machine the reading agent runs on. */
+  private async ladderHosts(userId: string, fleet: ForeignFleet, agentServerId: string) {
+    const inputs: CoolifyHostInput[] = fleet.servers.map((x) => ({ uuid: x.ref, address: x.ip ?? null, isLocal: x.controlPlane === true }));
+    const verdicts = await this.hostMatch!.verdicts(userId, inputs, { localServerId: agentServerId });
+    return new Map(verdicts.map((v) => [v.coolifyServerUuid, v] as const));
   }
 
   /** Authoritative mapping preview: re-discover + re-plan (no fleet caching — it may hold secrets), refuse a stale
@@ -312,7 +388,7 @@ export class ImporterService {
     userId: string,
     sessionId: string,
     expectedKind?: RemoteSourceKind,
-  ): Promise<{ source: ImportSource; session: MappingSession & { sourceKind: RemoteSourceKind } }> {
+  ): Promise<{ source: ImportSource; session: MappingSession & { sourceKind: RemoteSourceKind; agentServerId: string | null } }> {
     const session = await this.prisma.importSession.findUnique({ where: { id: sessionId } });
     const kind = session?.sourceKind;
     if (!session || !isRemoteSourceKind(kind) || (expectedKind && kind !== expectedKind)) {
@@ -323,10 +399,15 @@ export class ImporterService {
       throw new BadRequestException("import session expired or revoked — reconnect");
     }
     await this.access.requirePermission(userId, session.teamId, "apps:config");
+    const info = { id: session.id, teamId: session.teamId, sourceKind: kind, baseUrl: session.baseUrl, scopeKey: session.scopeKey ?? "", agentServerId: null as string | null };
+    if (session.transport === "agent") {
+      // Agent transport: no token. Still owner/admin of the team, and the server's opt-in must still stand (fail closed).
+      if (kind !== "coolify" || !session.agentServerId) throw new NotFoundException("import session not found");
+      await this.access.requireRole(userId, session.teamId, [Role.OWNER, Role.ADMIN]);
+      await this.requireAgentConsent(session.agentServerId, session.teamId);
+      return { source: this.sources.createAgent(session.agentServerId), session: { ...info, agentServerId: session.agentServerId } };
+    }
     const token = this.crypto.decrypt(session.tokenEnc);
-    return {
-      source: this.sources.create(kind, session.baseUrl, token),
-      session: { id: session.id, teamId: session.teamId, sourceKind: kind, baseUrl: session.baseUrl, scopeKey: session.scopeKey ?? "" },
-    };
+    return { source: this.sources.create(kind, session.baseUrl, token), session: info };
   }
 }
