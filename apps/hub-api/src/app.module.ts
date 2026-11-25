@@ -16,6 +16,7 @@ import { InstanceController } from "./instance/instance.controller";
 import { InstanceSettingsController } from "./instance/instance-settings.controller";
 import { PrismaModule } from "./prisma/prisma.module";
 import { RedisModule } from "./redis/redis.module";
+import { DatastoreTuningService } from "./common/datastore-tuning.service";
 import { SchedulerModule } from "./scheduler/scheduler.module";
 import { AuditModule } from "./audit/audit.module";
 import { InstanceSettingsModule } from "./instance/instance-settings.module";
@@ -166,6 +167,7 @@ import { ApiExceptionFilter } from "./common/api-exception.filter";
   ],
   controllers: [HealthController, VersionController, InstanceController, InstanceSettingsController, InstallController],
   providers: [
+    DatastoreTuningService, // the RAM profile's Postgres/Redis sizing, applied at boot (not via compose: in-app updates)
     { provide: APP_GUARD, useClass: ThrottlerGuard },
     { provide: APP_GUARD, useClass: CsrfGuard },
     { provide: APP_GUARD, useClass: EmailVerifiedGuard },

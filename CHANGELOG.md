@@ -7,6 +7,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.0-beta.31] - 2026-11-25
+
+- **In-app updates work again.** beta.30 sized Postgres and Redis through a `command:` on those services; the in-app
+  updater never recreates the database or Redis, so it refused the update ("changes services the in-app updater does not
+  recreate", nothing changed). The postgres and redis services are back to their beta.29 shape, and the hub now applies the
+  RAM profile's sizing itself when it starts: Postgres through `ALTER SYSTEM` + reload (`shared_buffers` and
+  `max_connections` at the next Postgres restart), Redis through `CONFIG SET maxmemory` with `noeviction`. An install
+  without a profile is left exactly as it is. Update from beta.29 directly to beta.31.
+
 ## [0.1.0-beta.30] - 2026-11-25
 
 - **A light hub: about a sixth of the disk, flat memory as the fleet grows.** Metric rollups run inside Postgres in

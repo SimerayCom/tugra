@@ -327,58 +327,57 @@ describeCompose("deploy/docker-compose.yml profile interpolation", () => {
 
   it("without any profile key (an older install, an in-app update) the stack gets today's behaviour or better", () => {
     const { services: s } = config("");
-    assertWellFormedPostgresCommand(s.postgres.command);
-    expect(flag(s.postgres.command, "shared_buffers")).toBe("128MB");
-    expect(flag(s.postgres.command, "max_connections")).toBe("100");
-    expect(flag(s.postgres.command, "max_parallel_workers_per_gather")).toBe("2");
-    expect(flag(s.postgres.command, "wal_compression")).toBe("on");
-    expect(s.redis.command).toEqual(["redis-server", "--maxmemory", "256mb", "--maxmemory-policy", "noeviction"]);
+    // Postgres and Redis keep their service definitions (the in-app updater never recreates them): no command, no ceiling.
+    expect(s.postgres.command ?? undefined).toBeUndefined();
+    expect(s.redis.command ?? undefined).toBeUndefined();
+    for (const k of ["TUGRA_PG_SHARED_BUFFERS", "TUGRA_PG_WORK_MEM", "TUGRA_PG_MAX_CONNECTIONS", "TUGRA_REDIS_MAXMEMORY"]) {
+      expect(s["hub-api"].environment[k] ?? "").toBe(""); // unset = the hub changes nothing
+    }
     expect(s["hub-api"].environment.NODE_OPTIONS).toBe("--max-old-space-size=768 --max-semi-space-size=16");
     expect(s["hub-api"].environment.MALLOC_ARENA_MAX).toBe("2");
     expect(s["hub-api"].environment.HUB_DB_CONNECTION_LIMIT).toBe("16");
     expect(s.web.environment.NODE_OPTIONS).toBe("--max-old-space-size=512");
-    for (const svc of ["hub-api", "web", "redis"]) expect(Number(s[svc].mem_limit ?? 0)).toBe(0);
+    for (const svc of ["hub-api", "web"]) expect(Number(s[svc].mem_limit ?? 0)).toBe(0);
     // Services that must never get a ceiling.
-    for (const svc of ["postgres", "agent", "tugra-updater"]) expect(s[svc].mem_limit).toBeUndefined();
+    for (const svc of ["postgres", "redis", "agent", "tugra-updater"]) expect(s[svc].mem_limit ?? undefined).toBeUndefined();
   });
 
-  it.each(["tiny", "small", "standard"])("the %s profile's keys reach every service", (name) => {
+  it.each(["tiny", "small", "standard"])("the %s profile's keys reach the hub (which sizes Postgres and Redis at boot) and the web", (name) => {
     const v = profileValues(name);
     const { services: s } = config(Object.entries(v).map(([k, x]) => `${k}=${x}`).join("\n"));
-    assertWellFormedPostgresCommand(s.postgres.command);
-    expect(flag(s.postgres.command, "shared_buffers")).toBe(v.TUGRA_PG_SHARED_BUFFERS);
-    expect(flag(s.postgres.command, "effective_cache_size")).toBe(v.TUGRA_PG_EFFECTIVE_CACHE_SIZE);
-    expect(flag(s.postgres.command, "work_mem")).toBe(v.TUGRA_PG_WORK_MEM);
-    expect(flag(s.postgres.command, "maintenance_work_mem")).toBe(v.TUGRA_PG_MAINTENANCE_WORK_MEM);
-    expect(flag(s.postgres.command, "max_connections")).toBe(v.TUGRA_PG_MAX_CONNECTIONS);
-    expect(flag(s.postgres.command, "max_parallel_workers_per_gather")).toBe(v.TUGRA_PG_PARALLEL_WORKERS);
-    expect(flag(s.postgres.command, "max_wal_size")).toBe(v.TUGRA_PG_MAX_WAL_SIZE);
-    expect(flag(s.postgres.command, "checkpoint_timeout")).toBe(v.TUGRA_PG_CHECKPOINT_TIMEOUT);
-    expect(s.redis.command).toEqual(["redis-server", "--maxmemory", v.TUGRA_REDIS_MAXMEMORY, "--maxmemory-policy", "noeviction"]);
+    expect(s.postgres.command ?? undefined).toBeUndefined();
+    expect(s.redis.command ?? undefined).toBeUndefined();
+    for (const k of ["TUGRA_PG_SHARED_BUFFERS", "TUGRA_PG_EFFECTIVE_CACHE_SIZE", "TUGRA_PG_WORK_MEM", "TUGRA_PG_MAINTENANCE_WORK_MEM", "TUGRA_PG_MAX_CONNECTIONS", "TUGRA_PG_PARALLEL_WORKERS", "TUGRA_PG_MAX_WAL_SIZE", "TUGRA_PG_CHECKPOINT_TIMEOUT", "TUGRA_REDIS_MAXMEMORY"]) {
+      expect(s["hub-api"].environment[k]).toBe(v[k]);
+    }
     expect(s["hub-api"].environment.NODE_OPTIONS).toBe(`--max-old-space-size=${v.HUB_MAX_HEAP_MB} --max-semi-space-size=${v.HUB_SEMI_SPACE_MB}`);
     expect(s["hub-api"].environment.HUB_DB_CONNECTION_LIMIT).toBe(v.HUB_DB_CONNECTION_LIMIT);
     expect(s["hub-api"].environment.HUB_DB_POOL_TIMEOUT).toBe(v.HUB_DB_POOL_TIMEOUT);
     expect(s.web.environment.NODE_OPTIONS).toBe(`--max-old-space-size=${v.WEB_MAX_HEAP_MB}`);
     if (v.HUB_MEM_LIMIT === "0") {
-      for (const svc of ["hub-api", "web", "redis"]) expect(Number(s[svc].mem_limit ?? 0)).toBe(0);
+      for (const svc of ["hub-api", "web"]) expect(Number(s[svc].mem_limit ?? 0)).toBe(0);
     } else {
       const bytes = (x: string) => Number(x.replace(/m$/, "")) * 1024 * 1024;
       expect(Number(s["hub-api"].mem_limit)).toBe(bytes(v.HUB_MEM_LIMIT));
       expect(Number(s.web.mem_limit)).toBe(bytes(v.WEB_MEM_LIMIT));
-      expect(Number(s.redis.mem_limit)).toBe(bytes(v.REDIS_MEM_LIMIT));
     }
+    expect(s.redis.mem_limit ?? undefined).toBeUndefined();
   });
 
-  it("Redis keeps the noeviction policy and no persistence override in every case (BullMQ + refresh tokens need it)", () => {
+  it("the postgres and redis services are exactly the shape the in-app updater accepts (no command, no ceiling)", () => {
     for (const name of ["tiny", "small", "standard"]) {
-      const cmd = config(Object.entries(profileValues(name)).map(([k, x]) => `${k}=${x}`).join("\n")).services.redis.command ?? [];
-      expect(cmd).toContain("noeviction");
-      expect(cmd.some((a) => /^--(save|appendonly)$/.test(a))).toBe(false);
+      const { services: s } = config(Object.entries(profileValues(name)).map(([k, x]) => `${k}=${x}`).join("\n"));
+      for (const svc of ["postgres", "redis"]) {
+        expect(s[svc].command ?? undefined).toBeUndefined();
+        expect(s[svc].mem_limit ?? undefined).toBeUndefined();
+      }
     }
   });
 
   it("every profile key is read by the compose file (a key nothing consumes would be a silent no-op)", () => {
     const text = readFileSync(COMPOSE, "utf8");
-    for (const k of KEYS) expect(text).toContain("${" + k + ":-");
+    // REDIS_MEM_LIMIT is kept in the profile tables for its consistency check but not applied: a ceiling on the redis
+    // service would be a compose change the in-app updater refuses; Redis is bounded by maxmemory (set by the hub).
+    for (const k of KEYS.filter((x) => x !== "REDIS_MEM_LIMIT")) expect(text).toContain("${" + k + ":-");
   });
 });

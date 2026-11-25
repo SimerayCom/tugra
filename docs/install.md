@@ -296,7 +296,9 @@ them (Postgres and Redis restart for a few seconds, the hub reconnects). What th
   raise `HUB_MEM_LIMIT` with it**, to the new cap plus about 400 MB (`768` -> `1152m`): the container ceiling is sized for the
   profile's own cap, and a heap that grows past it is killed by the kernel (exit 137) and restarted in a loop. The installer and
   `--doctor` warn when `HUB_MAX_HEAP_MB` plus the native overhead no longer fits `HUB_MEM_LIMIT` (the same goes for
-  `WEB_MAX_HEAP_MB` / `WEB_MEM_LIMIT` and `TUGRA_REDIS_MAXMEMORY` / `REDIS_MEM_LIMIT`); `HUB_MEM_LIMIT=0` removes the ceiling.
+  `WEB_MAX_HEAP_MB` / `WEB_MEM_LIMIT`); `HUB_MEM_LIMIT=0` removes the ceiling. The Postgres (`TUGRA_PG_*`) and Redis
+  (`TUGRA_REDIS_MAXMEMORY`) values are applied by the hub when it starts (`ALTER SYSTEM` + reload, Redis `CONFIG SET`), not on
+  those services, so in-app updates keep working; `shared_buffers` and `max_connections` take effect at the next Postgres restart.
   The cap bounds the JS heap only: the database driver's query engine and Node's buffers live outside it, which is why the
   container ceilings below add headroom on top of the cap.
 - **Postgres** gets `shared_buffers`, `effective_cache_size`, `work_mem`, `maintenance_work_mem`, `max_connections`,

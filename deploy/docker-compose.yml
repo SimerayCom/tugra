@@ -20,31 +20,6 @@ services:
     # registry-1.docker.io/v2/library/postgres/manifests/16-alpine.
     image: postgres:16-alpine@sha256:aa6cb33cf4c19c765cefcf48d96176258800870a9a1e930ad126200f9d825139
     restart: unless-stopped
-    # Sized by the RAM profile (scripts/lib/profile.sh, TUGRA_PROFILE in .env). Every value falls back to a default that is today's
-    # behaviour or better, so an install whose .env has no profile keys (an older install, an in-app update) runs unchanged.
-    # No mem_limit on purpose: killing Postgres mid-write costs a crash recovery; shared_buffers + max_connections x work_mem bound it.
-    command:
-      - postgres
-      - -c
-      - "shared_buffers=${TUGRA_PG_SHARED_BUFFERS:-128MB}"
-      - -c
-      - "effective_cache_size=${TUGRA_PG_EFFECTIVE_CACHE_SIZE:-1GB}"
-      - -c
-      - "work_mem=${TUGRA_PG_WORK_MEM:-4MB}"
-      - -c
-      - "maintenance_work_mem=${TUGRA_PG_MAINTENANCE_WORK_MEM:-64MB}"
-      - -c
-      - "max_connections=${TUGRA_PG_MAX_CONNECTIONS:-100}"
-      # Parallel query workers each take their own work_mem and a process; measured on the fleet harness they add ~100 MB to Postgres'
-      # peak and no speed on a 1-2 vCPU host (PostgreSQL's own default is 2, kept when the key is absent).
-      - -c
-      - "max_parallel_workers_per_gather=${TUGRA_PG_PARALLEL_WORKERS:-2}"
-      - -c
-      - "max_wal_size=${TUGRA_PG_MAX_WAL_SIZE:-1GB}"
-      - -c
-      - "checkpoint_timeout=${TUGRA_PG_CHECKPOINT_TIMEOUT:-5min}"
-      - -c
-      - "wal_compression=on"
     environment:
       POSTGRES_USER: tugra
       POSTGRES_PASSWORD: "${POSTGRES_PASSWORD}"
@@ -63,12 +38,6 @@ services:
     # verified): registry-1.docker.io/v2/library/redis/manifests/7-alpine.
     image: redis:7-alpine@sha256:7f7d30b7fdd09467bac58198a1f166dd69789d348d4fe859cccb20e0cf287fbe
     restart: unless-stopped
-    # BullMQ (queues + repeat jobs) and the refresh-token store need `noeviction`: a full Redis then errors on write (loud) instead of
-    # silently dropping a job. maxmemory is a ceiling far above what the hub keeps here. Persistence stays at the image defaults
-    # (RDB snapshots): switching it off would log every session out on a restart. mem_limit only on small hosts (REDIS_MEM_LIMIT,
-    # 0 = none): it sits above maxmemory + the copy-on-write headroom of a background save, so it never trips before the cap does.
-    command: ["redis-server", "--maxmemory", "${TUGRA_REDIS_MAXMEMORY:-256mb}", "--maxmemory-policy", "noeviction"]
-    mem_limit: "${REDIS_MEM_LIMIT:-0}"
     volumes:
       - tugra_redis:/data
     healthcheck:
@@ -118,6 +87,18 @@ services:
       # the URL wins; pg_dump and the migration step keep the untouched URL). Prisma's default is cpus x 2 + 1 (3 on a 1 vCPU host).
       HUB_DB_CONNECTION_LIMIT: "${HUB_DB_CONNECTION_LIMIT:-16}"
       HUB_DB_POOL_TIMEOUT: "${HUB_DB_POOL_TIMEOUT:-20}"
+      # Postgres and Redis sizing of the RAM profile. The hub applies these at boot (ALTER SYSTEM + reload, Redis CONFIG SET)
+      # instead of a `command:` on those services: the in-app updater never recreates the database or Redis, so a compose
+      # change there would block every in-app update. Unset (an install without a profile) = nothing is changed.
+      TUGRA_PG_SHARED_BUFFERS: "${TUGRA_PG_SHARED_BUFFERS:-}"
+      TUGRA_PG_EFFECTIVE_CACHE_SIZE: "${TUGRA_PG_EFFECTIVE_CACHE_SIZE:-}"
+      TUGRA_PG_WORK_MEM: "${TUGRA_PG_WORK_MEM:-}"
+      TUGRA_PG_MAINTENANCE_WORK_MEM: "${TUGRA_PG_MAINTENANCE_WORK_MEM:-}"
+      TUGRA_PG_MAX_CONNECTIONS: "${TUGRA_PG_MAX_CONNECTIONS:-}"
+      TUGRA_PG_PARALLEL_WORKERS: "${TUGRA_PG_PARALLEL_WORKERS:-}"
+      TUGRA_PG_MAX_WAL_SIZE: "${TUGRA_PG_MAX_WAL_SIZE:-}"
+      TUGRA_PG_CHECKPOINT_TIMEOUT: "${TUGRA_PG_CHECKPOINT_TIMEOUT:-}"
+      TUGRA_REDIS_MAXMEMORY: "${TUGRA_REDIS_MAXMEMORY:-}"
       # No phone-home: stop the Prisma CLI (run at boot for `migrate deploy`) pinging checkpoint.prisma.io.
       # Set here (not via .env) so it holds even on an already-pulled image and a user .env can't re-enable it.
       CHECKPOINT_DISABLE: "1"
