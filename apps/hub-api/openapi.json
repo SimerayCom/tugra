@@ -4154,6 +4154,11 @@
                       "providerManualLink": {
                         "type": "boolean"
                       },
+                      "exposedServices": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "nullable": true
+                      },
                       "canWrite": {
                         "type": "boolean"
                       },
@@ -4209,6 +4214,7 @@
                       "provider",
                       "providerServerId",
                       "providerManualLink",
+                      "exposedServices",
                       "canWrite",
                       "canOps"
                     ],
@@ -4567,6 +4573,11 @@
                     "providerManualLink": {
                       "type": "boolean"
                     },
+                    "exposedServices": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "nullable": true
+                    },
                     "canWrite": {
                       "type": "boolean"
                     },
@@ -4622,6 +4633,7 @@
                     "provider",
                     "providerServerId",
                     "providerManualLink",
+                    "exposedServices",
                     "canWrite",
                     "canOps"
                   ],
@@ -15950,6 +15962,57 @@
                         "type": "string",
                         "nullable": true
                       },
+                      "composeAdopt": {
+                        "type": "object",
+                        "properties": {
+                          "project": {
+                            "type": "string"
+                          },
+                          "workingDir": {
+                            "type": "string"
+                          },
+                          "files": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "services": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "name": {
+                                  "type": "string"
+                                },
+                                "image": {
+                                  "type": "string"
+                                },
+                                "ports": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "number"
+                                  }
+                                }
+                              },
+                              "required": [
+                                "name",
+                                "image",
+                                "ports"
+                              ],
+                              "additionalProperties": false
+                            }
+                          }
+                        },
+                        "required": [
+                          "project",
+                          "workingDir",
+                          "files",
+                          "services"
+                        ],
+                        "additionalProperties": false,
+                        "nullable": true
+                      },
                       "healthCmd": {
                         "type": "string",
                         "nullable": true
@@ -16842,6 +16905,7 @@
                       "outputDir",
                       "composeFile",
                       "composePath",
+                      "composeAdopt",
                       "healthCmd",
                       "healthCheckType",
                       "healthCheckPath",
@@ -17401,6 +17465,57 @@
                     },
                     "composePath": {
                       "type": "string",
+                      "nullable": true
+                    },
+                    "composeAdopt": {
+                      "type": "object",
+                      "properties": {
+                        "project": {
+                          "type": "string"
+                        },
+                        "workingDir": {
+                          "type": "string"
+                        },
+                        "files": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "services": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "name": {
+                                "type": "string"
+                              },
+                              "image": {
+                                "type": "string"
+                              },
+                              "ports": {
+                                "type": "array",
+                                "items": {
+                                  "type": "number"
+                                }
+                              }
+                            },
+                            "required": [
+                              "name",
+                              "image",
+                              "ports"
+                            ],
+                            "additionalProperties": false
+                          }
+                        }
+                      },
+                      "required": [
+                        "project",
+                        "workingDir",
+                        "files",
+                        "services"
+                      ],
+                      "additionalProperties": false,
                       "nullable": true
                     },
                     "healthCmd": {
@@ -18295,6 +18410,7 @@
                     "outputDir",
                     "composeFile",
                     "composePath",
+                    "composeAdopt",
                     "healthCmd",
                     "healthCheckType",
                     "healthCheckPath",
@@ -18902,6 +19018,57 @@
                       "type": "string",
                       "nullable": true
                     },
+                    "composeAdopt": {
+                      "type": "object",
+                      "properties": {
+                        "project": {
+                          "type": "string"
+                        },
+                        "workingDir": {
+                          "type": "string"
+                        },
+                        "files": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "services": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "name": {
+                                "type": "string"
+                              },
+                              "image": {
+                                "type": "string"
+                              },
+                              "ports": {
+                                "type": "array",
+                                "items": {
+                                  "type": "number"
+                                }
+                              }
+                            },
+                            "required": [
+                              "name",
+                              "image",
+                              "ports"
+                            ],
+                            "additionalProperties": false
+                          }
+                        }
+                      },
+                      "required": [
+                        "project",
+                        "workingDir",
+                        "files",
+                        "services"
+                      ],
+                      "additionalProperties": false,
+                      "nullable": true
+                    },
                     "healthCmd": {
                       "type": "string",
                       "nullable": true
@@ -19794,6 +19961,7 @@
                     "outputDir",
                     "composeFile",
                     "composePath",
+                    "composeAdopt",
                     "healthCmd",
                     "healthCheckType",
                     "healthCheckPath",
@@ -20406,6 +20574,57 @@
                       "type": "string",
                       "nullable": true
                     },
+                    "composeAdopt": {
+                      "type": "object",
+                      "properties": {
+                        "project": {
+                          "type": "string"
+                        },
+                        "workingDir": {
+                          "type": "string"
+                        },
+                        "files": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "services": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "name": {
+                                "type": "string"
+                              },
+                              "image": {
+                                "type": "string"
+                              },
+                              "ports": {
+                                "type": "array",
+                                "items": {
+                                  "type": "number"
+                                }
+                              }
+                            },
+                            "required": [
+                              "name",
+                              "image",
+                              "ports"
+                            ],
+                            "additionalProperties": false
+                          }
+                        }
+                      },
+                      "required": [
+                        "project",
+                        "workingDir",
+                        "files",
+                        "services"
+                      ],
+                      "additionalProperties": false,
+                      "nullable": true
+                    },
                     "healthCmd": {
                       "type": "string",
                       "nullable": true
@@ -21298,6 +21517,7 @@
                     "outputDir",
                     "composeFile",
                     "composePath",
+                    "composeAdopt",
                     "healthCmd",
                     "healthCheckType",
                     "healthCheckPath",
@@ -31551,6 +31771,57 @@
                           "type": "string",
                           "nullable": true
                         },
+                        "composeAdopt": {
+                          "type": "object",
+                          "properties": {
+                            "project": {
+                              "type": "string"
+                            },
+                            "workingDir": {
+                              "type": "string"
+                            },
+                            "files": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            },
+                            "services": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "name": {
+                                    "type": "string"
+                                  },
+                                  "image": {
+                                    "type": "string"
+                                  },
+                                  "ports": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "number"
+                                    }
+                                  }
+                                },
+                                "required": [
+                                  "name",
+                                  "image",
+                                  "ports"
+                                ],
+                                "additionalProperties": false
+                              }
+                            }
+                          },
+                          "required": [
+                            "project",
+                            "workingDir",
+                            "files",
+                            "services"
+                          ],
+                          "additionalProperties": false,
+                          "nullable": true
+                        },
                         "healthCmd": {
                           "type": "string",
                           "nullable": true
@@ -32443,6 +32714,7 @@
                         "outputDir",
                         "composeFile",
                         "composePath",
+                        "composeAdopt",
                         "healthCmd",
                         "healthCheckType",
                         "healthCheckPath",
@@ -32911,6 +33183,57 @@
                     },
                     "composePath": {
                       "type": "string",
+                      "nullable": true
+                    },
+                    "composeAdopt": {
+                      "type": "object",
+                      "properties": {
+                        "project": {
+                          "type": "string"
+                        },
+                        "workingDir": {
+                          "type": "string"
+                        },
+                        "files": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "services": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "name": {
+                                "type": "string"
+                              },
+                              "image": {
+                                "type": "string"
+                              },
+                              "ports": {
+                                "type": "array",
+                                "items": {
+                                  "type": "number"
+                                }
+                              }
+                            },
+                            "required": [
+                              "name",
+                              "image",
+                              "ports"
+                            ],
+                            "additionalProperties": false
+                          }
+                        }
+                      },
+                      "required": [
+                        "project",
+                        "workingDir",
+                        "files",
+                        "services"
+                      ],
+                      "additionalProperties": false,
                       "nullable": true
                     },
                     "healthCmd": {
@@ -33805,6 +34128,7 @@
                     "outputDir",
                     "composeFile",
                     "composePath",
+                    "composeAdopt",
                     "healthCmd",
                     "healthCheckType",
                     "healthCheckPath",
@@ -34343,6 +34667,57 @@
                       },
                       "composePath": {
                         "type": "string",
+                        "nullable": true
+                      },
+                      "composeAdopt": {
+                        "type": "object",
+                        "properties": {
+                          "project": {
+                            "type": "string"
+                          },
+                          "workingDir": {
+                            "type": "string"
+                          },
+                          "files": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "services": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "name": {
+                                  "type": "string"
+                                },
+                                "image": {
+                                  "type": "string"
+                                },
+                                "ports": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "number"
+                                  }
+                                }
+                              },
+                              "required": [
+                                "name",
+                                "image",
+                                "ports"
+                              ],
+                              "additionalProperties": false
+                            }
+                          }
+                        },
+                        "required": [
+                          "project",
+                          "workingDir",
+                          "files",
+                          "services"
+                        ],
+                        "additionalProperties": false,
                         "nullable": true
                       },
                       "healthCmd": {
@@ -35237,6 +35612,7 @@
                       "outputDir",
                       "composeFile",
                       "composePath",
+                      "composeAdopt",
                       "healthCmd",
                       "healthCheckType",
                       "healthCheckPath",
@@ -35860,6 +36236,57 @@
                     },
                     "composePath": {
                       "type": "string",
+                      "nullable": true
+                    },
+                    "composeAdopt": {
+                      "type": "object",
+                      "properties": {
+                        "project": {
+                          "type": "string"
+                        },
+                        "workingDir": {
+                          "type": "string"
+                        },
+                        "files": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "services": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "name": {
+                                "type": "string"
+                              },
+                              "image": {
+                                "type": "string"
+                              },
+                              "ports": {
+                                "type": "array",
+                                "items": {
+                                  "type": "number"
+                                }
+                              }
+                            },
+                            "required": [
+                              "name",
+                              "image",
+                              "ports"
+                            ],
+                            "additionalProperties": false
+                          }
+                        }
+                      },
+                      "required": [
+                        "project",
+                        "workingDir",
+                        "files",
+                        "services"
+                      ],
+                      "additionalProperties": false,
                       "nullable": true
                     },
                     "healthCmd": {
@@ -36754,6 +37181,7 @@
                     "outputDir",
                     "composeFile",
                     "composePath",
+                    "composeAdopt",
                     "healthCmd",
                     "healthCheckType",
                     "healthCheckPath",
@@ -40269,6 +40697,57 @@
                       "type": "string",
                       "nullable": true
                     },
+                    "composeAdopt": {
+                      "type": "object",
+                      "properties": {
+                        "project": {
+                          "type": "string"
+                        },
+                        "workingDir": {
+                          "type": "string"
+                        },
+                        "files": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "services": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "name": {
+                                "type": "string"
+                              },
+                              "image": {
+                                "type": "string"
+                              },
+                              "ports": {
+                                "type": "array",
+                                "items": {
+                                  "type": "number"
+                                }
+                              }
+                            },
+                            "required": [
+                              "name",
+                              "image",
+                              "ports"
+                            ],
+                            "additionalProperties": false
+                          }
+                        }
+                      },
+                      "required": [
+                        "project",
+                        "workingDir",
+                        "files",
+                        "services"
+                      ],
+                      "additionalProperties": false,
+                      "nullable": true
+                    },
                     "healthCmd": {
                       "type": "string",
                       "nullable": true
@@ -41161,6 +41640,7 @@
                     "outputDir",
                     "composeFile",
                     "composePath",
+                    "composeAdopt",
                     "healthCmd",
                     "healthCheckType",
                     "healthCheckPath",
@@ -62649,9 +63129,40 @@
             }
           }
         ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "scope": {
+                    "type": "string",
+                    "enum": [
+                      "all",
+                      "except-engine"
+                    ],
+                    "default": "all"
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": ""
+          },
+          "400": {
+            "description": "Invalid or malformed request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
           },
           "401": {
             "description": "Missing or invalid authentication.",
@@ -65566,6 +66077,76 @@
                             "additionalProperties": false
                           },
                           "maxItems": 150
+                        },
+                        "exposed": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "port": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 65535
+                              },
+                              "service": {
+                                "type": "string",
+                                "maxLength": 80
+                              },
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "database",
+                                  "cache",
+                                  "queue",
+                                  "search",
+                                  "storage",
+                                  "admin",
+                                  "docker"
+                                ]
+                              },
+                              "severity": {
+                                "type": "string",
+                                "enum": [
+                                  "critical",
+                                  "high",
+                                  "medium"
+                                ]
+                              },
+                              "container": {
+                                "type": "string",
+                                "maxLength": 128,
+                                "nullable": true
+                              },
+                              "basis": {
+                                "type": "string",
+                                "enum": [
+                                  "container",
+                                  "account",
+                                  "port"
+                                ]
+                              },
+                              "fix": {
+                                "type": "string",
+                                "enum": [
+                                  "publish_local",
+                                  "bind_local",
+                                  "docker_api"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "port",
+                              "service",
+                              "kind",
+                              "severity",
+                              "container",
+                              "basis",
+                              "fix"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "maxItems": 60,
+                          "default": []
                         }
                       },
                       "required": [
@@ -66187,6 +66768,76 @@
                             "additionalProperties": false
                           },
                           "maxItems": 150
+                        },
+                        "exposed": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "port": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 65535
+                              },
+                              "service": {
+                                "type": "string",
+                                "maxLength": 80
+                              },
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "database",
+                                  "cache",
+                                  "queue",
+                                  "search",
+                                  "storage",
+                                  "admin",
+                                  "docker"
+                                ]
+                              },
+                              "severity": {
+                                "type": "string",
+                                "enum": [
+                                  "critical",
+                                  "high",
+                                  "medium"
+                                ]
+                              },
+                              "container": {
+                                "type": "string",
+                                "maxLength": 128,
+                                "nullable": true
+                              },
+                              "basis": {
+                                "type": "string",
+                                "enum": [
+                                  "container",
+                                  "account",
+                                  "port"
+                                ]
+                              },
+                              "fix": {
+                                "type": "string",
+                                "enum": [
+                                  "publish_local",
+                                  "bind_local",
+                                  "docker_api"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "port",
+                              "service",
+                              "kind",
+                              "severity",
+                              "container",
+                              "basis",
+                              "fix"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "maxItems": 60,
+                          "default": []
                         }
                       },
                       "required": [
@@ -67169,6 +67820,14 @@
                     },
                     "minItems": 1,
                     "maxItems": 100
+                  },
+                  "scope": {
+                    "type": "string",
+                    "enum": [
+                      "all",
+                      "except-engine"
+                    ],
+                    "default": "all"
                   }
                 },
                 "required": [
@@ -67448,6 +68107,493 @@
         "security": [
           {
             "pat": []
+          }
+        ],
+        "tags": [
+          "servers"
+        ]
+      }
+    },
+    "/api/v1/servers/{id}/adopt-stack": {
+      "post": {
+        "operationId": "MigratorController_adoptStack",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "project": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 63,
+                    "pattern": "^[a-z0-9][a-z0-9_-]{0,62}$"
+                  },
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 100
+                  },
+                  "environmentId": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "project",
+                  "name"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          },
+          "400": {
+            "description": "Invalid or malformed request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "servers"
+        ]
+      }
+    },
+    "/api/v1/servers/{id}/pm2-move/plan": {
+      "post": {
+        "operationId": "Pm2MoveController_plan",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "items": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "user": {
+                          "type": "string",
+                          "pattern": "^[A-Za-z0-9_][A-Za-z0-9_.-]{0,63}$"
+                        },
+                        "name": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 120
+                        },
+                        "nodeMajor": {
+                          "type": "integer",
+                          "minimum": 10,
+                          "maximum": 30
+                        },
+                        "probePath": {
+                          "type": "string",
+                          "pattern": "^\\/[A-Za-z0-9._~/-]{0,200}$",
+                          "nullable": true
+                        }
+                      },
+                      "required": [
+                        "user",
+                        "name"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "maxItems": 100
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          },
+          "400": {
+            "description": "Invalid or malformed request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "tags": [
+          "servers"
+        ]
+      }
+    },
+    "/api/v1/servers/{id}/pm2-move": {
+      "post": {
+        "operationId": "Pm2MoveController_start",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "environmentId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "items": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "user": {
+                          "type": "string",
+                          "pattern": "^[A-Za-z0-9_][A-Za-z0-9_.-]{0,63}$"
+                        },
+                        "name": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 120
+                        },
+                        "nodeMajor": {
+                          "type": "integer",
+                          "minimum": 10,
+                          "maximum": 30
+                        },
+                        "probePath": {
+                          "type": "string",
+                          "pattern": "^\\/[A-Za-z0-9._~/-]{0,200}$",
+                          "nullable": true
+                        },
+                        "planHash": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{64}$"
+                        }
+                      },
+                      "required": [
+                        "user",
+                        "name",
+                        "planHash"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "minItems": 1,
+                    "maxItems": 50
+                  }
+                },
+                "required": [
+                  "items"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": ""
+          },
+          "400": {
+            "description": "Invalid or malformed request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "tags": [
+          "servers"
+        ]
+      }
+    },
+    "/api/v1/servers/{id}/pm2-move/{jobId}": {
+      "get": {
+        "operationId": "Pm2MoveController_job",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "jobId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
           }
         ],
         "tags": [
@@ -86835,6 +87981,15 @@
                                   "type": "string",
                                   "nullable": true
                                 },
+                                "providerHint": {
+                                  "type": "string",
+                                  "enum": [
+                                    "linked",
+                                    "agent",
+                                    "hostname"
+                                  ],
+                                  "nullable": true
+                                },
                                 "planSlug": {
                                   "type": "string",
                                   "nullable": true
@@ -86846,13 +88001,55 @@
                                 "estimateBasis": {
                                   "type": "string",
                                   "enum": [
-                                    "list",
-                                    "reference"
+                                    "list"
                                   ],
                                   "nullable": true
                                 },
                                 "snapshotVerified": {
                                   "type": "boolean",
+                                  "nullable": true
+                                },
+                                "snapshotVatIncluded": {
+                                  "type": "boolean",
+                                  "nullable": true
+                                },
+                                "snapshotDate": {
+                                  "type": "string",
+                                  "nullable": true
+                                },
+                                "unknownReason": {
+                                  "type": "string",
+                                  "enum": [
+                                    "no_size",
+                                    "no_provider",
+                                    "no_list",
+                                    "no_plan"
+                                  ],
+                                  "nullable": true
+                                },
+                                "similar": {
+                                  "type": "object",
+                                  "properties": {
+                                    "provider": {
+                                      "type": "string"
+                                    },
+                                    "monthlyCents": {
+                                      "type": "integer"
+                                    },
+                                    "currency": {
+                                      "type": "string"
+                                    },
+                                    "snapshotDate": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "provider",
+                                    "monthlyCents",
+                                    "currency",
+                                    "snapshotDate"
+                                  ],
+                                  "additionalProperties": false,
                                   "nullable": true
                                 },
                                 "syncedAt": {
@@ -86924,10 +88121,15 @@
                                 "currency",
                                 "source",
                                 "provider",
+                                "providerHint",
                                 "planSlug",
                                 "planLabel",
                                 "estimateBasis",
                                 "snapshotVerified",
+                                "snapshotVatIncluded",
+                                "snapshotDate",
+                                "unknownReason",
+                                "similar",
                                 "syncedAt",
                                 "canSync",
                                 "cores",
@@ -87298,7 +88500,7 @@
                             "enum": [
                               "provider",
                               "list",
-                              "reference"
+                              "none"
                             ]
                           },
                           "upgradeDisk": {

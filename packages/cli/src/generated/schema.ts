@@ -5796,6 +5796,70 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/servers/{id}/adopt-stack": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["MigratorController_adoptStack"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/servers/{id}/pm2-move/plan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["Pm2MoveController_plan"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/servers/{id}/pm2-move": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["Pm2MoveController_start"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/servers/{id}/pm2-move/{jobId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["Pm2MoveController_job"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/import/egress-ip": {
         parameters: {
             query?: never;
@@ -11326,6 +11390,7 @@ export interface operations {
                         provider: string | null;
                         providerServerId: string | null;
                         providerManualLink: boolean;
+                        exposedServices: number | null;
                         canWrite: boolean;
                         canOps: boolean;
                     }[];
@@ -11506,6 +11571,7 @@ export interface operations {
                         provider: string | null;
                         providerServerId: string | null;
                         providerManualLink: boolean;
+                        exposedServices: number | null;
                         canWrite: boolean;
                         canOps: boolean;
                     };
@@ -17916,6 +17982,16 @@ export interface operations {
                         outputDir: string | null;
                         composeFile: string | null;
                         composePath: string | null;
+                        composeAdopt: {
+                            project: string;
+                            workingDir: string;
+                            files: string[];
+                            services: {
+                                name: string;
+                                image: string;
+                                ports: number[];
+                            }[];
+                        } | null;
                         healthCmd: string | null;
                         healthCheckType: string | null;
                         healthCheckPath: string | null;
@@ -18279,6 +18355,16 @@ export interface operations {
                         outputDir: string | null;
                         composeFile: string | null;
                         composePath: string | null;
+                        composeAdopt: {
+                            project: string;
+                            workingDir: string;
+                            files: string[];
+                            services: {
+                                name: string;
+                                image: string;
+                                ports: number[];
+                            }[];
+                        } | null;
                         healthCmd: string | null;
                         healthCheckType: string | null;
                         healthCheckPath: string | null;
@@ -18745,6 +18831,16 @@ export interface operations {
                         outputDir: string | null;
                         composeFile: string | null;
                         composePath: string | null;
+                        composeAdopt: {
+                            project: string;
+                            workingDir: string;
+                            files: string[];
+                            services: {
+                                name: string;
+                                image: string;
+                                ports: number[];
+                            }[];
+                        } | null;
                         healthCmd: string | null;
                         healthCheckType: string | null;
                         healthCheckPath: string | null;
@@ -19166,6 +19262,16 @@ export interface operations {
                         outputDir: string | null;
                         composeFile: string | null;
                         composePath: string | null;
+                        composeAdopt: {
+                            project: string;
+                            workingDir: string;
+                            files: string[];
+                            services: {
+                                name: string;
+                                image: string;
+                                ports: number[];
+                            }[];
+                        } | null;
                         healthCmd: string | null;
                         healthCheckType: string | null;
                         healthCheckPath: string | null;
@@ -25875,6 +25981,16 @@ export interface operations {
                             outputDir: string | null;
                             composeFile: string | null;
                             composePath: string | null;
+                            composeAdopt: {
+                                project: string;
+                                workingDir: string;
+                                files: string[];
+                                services: {
+                                    name: string;
+                                    image: string;
+                                    ports: number[];
+                                }[];
+                            } | null;
                             healthCmd: string | null;
                             healthCheckType: string | null;
                             healthCheckPath: string | null;
@@ -26225,6 +26341,16 @@ export interface operations {
                         outputDir: string | null;
                         composeFile: string | null;
                         composePath: string | null;
+                        composeAdopt: {
+                            project: string;
+                            workingDir: string;
+                            files: string[];
+                            services: {
+                                name: string;
+                                image: string;
+                                ports: number[];
+                            }[];
+                        } | null;
                         healthCmd: string | null;
                         healthCheckType: string | null;
                         healthCheckPath: string | null;
@@ -26644,6 +26770,16 @@ export interface operations {
                         outputDir: string | null;
                         composeFile: string | null;
                         composePath: string | null;
+                        composeAdopt: {
+                            project: string;
+                            workingDir: string;
+                            files: string[];
+                            services: {
+                                name: string;
+                                image: string;
+                                ports: number[];
+                            }[];
+                        } | null;
                         healthCmd: string | null;
                         healthCheckType: string | null;
                         healthCheckPath: string | null;
@@ -27121,6 +27257,16 @@ export interface operations {
                         outputDir: string | null;
                         composeFile: string | null;
                         composePath: string | null;
+                        composeAdopt: {
+                            project: string;
+                            workingDir: string;
+                            files: string[];
+                            services: {
+                                name: string;
+                                image: string;
+                                ports: number[];
+                            }[];
+                        } | null;
                         healthCmd: string | null;
                         healthCheckType: string | null;
                         healthCheckPath: string | null;
@@ -29292,6 +29438,16 @@ export interface operations {
                         outputDir: string | null;
                         composeFile: string | null;
                         composePath: string | null;
+                        composeAdopt: {
+                            project: string;
+                            workingDir: string;
+                            files: string[];
+                            services: {
+                                name: string;
+                                image: string;
+                                ports: number[];
+                            }[];
+                        } | null;
                         healthCmd: string | null;
                         healthCheckType: string | null;
                         healthCheckPath: string | null;
@@ -42761,13 +42917,32 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": {
+                    /**
+                     * @default all
+                     * @enum {string}
+                     */
+                    scope?: "all" | "except-engine";
+                };
+            };
+        };
         responses: {
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Invalid or malformed request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
             };
             /** @description Missing or invalid authentication. */
             401: {
@@ -43952,6 +44127,20 @@ export interface operations {
                                 scope: "public" | "local";
                                 owner: string | null;
                             }[];
+                            /** @default [] */
+                            exposed: {
+                                port: number;
+                                service: string;
+                                /** @enum {string} */
+                                kind: "database" | "cache" | "queue" | "search" | "storage" | "admin" | "docker";
+                                /** @enum {string} */
+                                severity: "critical" | "high" | "medium";
+                                container: string | null;
+                                /** @enum {string} */
+                                basis: "container" | "account" | "port";
+                                /** @enum {string} */
+                                fix: "publish_local" | "bind_local" | "docker_api";
+                            }[];
                         } | null;
                     };
                 };
@@ -44111,6 +44300,20 @@ export interface operations {
                                 /** @enum {string} */
                                 scope: "public" | "local";
                                 owner: string | null;
+                            }[];
+                            /** @default [] */
+                            exposed: {
+                                port: number;
+                                service: string;
+                                /** @enum {string} */
+                                kind: "database" | "cache" | "queue" | "search" | "storage" | "admin" | "docker";
+                                /** @enum {string} */
+                                severity: "critical" | "high" | "medium";
+                                container: string | null;
+                                /** @enum {string} */
+                                basis: "container" | "account" | "port";
+                                /** @enum {string} */
+                                fix: "publish_local" | "bind_local" | "docker_api";
                             }[];
                         } | null;
                     };
@@ -44638,6 +44841,11 @@ export interface operations {
             content: {
                 "application/json": {
                     serverIds: string[];
+                    /**
+                     * @default all
+                     * @enum {string}
+                     */
+                    scope?: "all" | "except-engine";
                 };
             };
         };
@@ -44794,6 +45002,322 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["ApiError"];
                 };
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Authenticated but not permitted (scope or team permission). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate limit exceeded; see Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    MigratorController_adoptStack: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    project: string;
+                    name: string;
+                    environmentId?: string;
+                };
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Invalid or malformed request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Authenticated but not permitted (scope or team permission). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate limit exceeded; see Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    Pm2MoveController_plan: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    items?: {
+                        user: string;
+                        name: string;
+                        nodeMajor?: number;
+                        probePath?: string | null;
+                    }[];
+                };
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Invalid or malformed request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Authenticated but not permitted (scope or team permission). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate limit exceeded; see Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    Pm2MoveController_start: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    environmentId?: string;
+                    items: {
+                        user: string;
+                        name: string;
+                        nodeMajor?: number;
+                        probePath?: string | null;
+                        planHash: string;
+                    }[];
+                };
+            };
+        };
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Invalid or malformed request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Authenticated but not permitted (scope or team permission). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate limit exceeded; see Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    Pm2MoveController_job: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                jobId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Missing or invalid authentication. */
             401: {
@@ -56277,11 +56801,23 @@ export interface operations {
                                 /** @enum {string} */
                                 source: "provider" | "manual" | "estimate" | "unknown";
                                 provider: string | null;
+                                /** @enum {string|null} */
+                                providerHint: "linked" | "agent" | "hostname" | null;
                                 planSlug: string | null;
                                 planLabel: string | null;
                                 /** @enum {string|null} */
-                                estimateBasis: "list" | "reference" | null;
+                                estimateBasis: "list" | null;
                                 snapshotVerified: boolean | null;
+                                snapshotVatIncluded: boolean | null;
+                                snapshotDate: string | null;
+                                /** @enum {string|null} */
+                                unknownReason: "no_size" | "no_provider" | "no_list" | "no_plan" | null;
+                                similar: {
+                                    provider: string;
+                                    monthlyCents: number;
+                                    currency: string;
+                                    snapshotDate: string;
+                                } | null;
                                 syncedAt: string | null;
                                 canSync: boolean;
                                 cores: number | null;
@@ -56418,7 +56954,7 @@ export interface operations {
                             } | null;
                             savingsCents: number | null;
                             /** @enum {string} */
-                            priceBasis: "provider" | "list" | "reference";
+                            priceBasis: "provider" | "list" | "none";
                             upgradeDisk: boolean;
                             diskBlocked: boolean;
                             /** @enum {string} */
