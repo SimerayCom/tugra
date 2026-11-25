@@ -59,14 +59,7 @@ command set). Any failure restores the previous `.env` and drops the pending rou
 
 ## Known dependency advisories
 
-`pnpm audit --prod` currently lists two advisories that we have reviewed and are not reachable in Tugra:
-
-- **zod 3.25.76, GHSA-mrhx-c7xc-m3w5** (high; patched only in zod 4.6.6+). All hub schemas use the zod v3 API; the
-  vulnerable array validator lives in the bundled v4 core, which is never imported. Request bodies are size-capped
-  and the endpoints are authenticated. Revisit with the zod v4 migration.
-- **@nestjs/core 10.4.22, GHSA-36xv-jgw5-4q75** (moderate; patched only in 11.x). Every `@Sse` endpoint in hub-api
-  emits only `{ data: JSON.stringify(event) }`, so the event `type` / `id` fields the advisory depends on are never
-  set. Revisit with the NestJS 10 to 11 migration.
+`pnpm audit --prod` currently reports no known advisories (zod 4 and NestJS 11 closed the two that were tracked here).
 
 Dependabot's `scope: runtime` label is not authoritative for `pnpm-lock.yaml`: the hub image currently installs dev
 dependencies too (no `--prod`), which is a separate hardening follow-up. Do not enable `jest --coverage` without

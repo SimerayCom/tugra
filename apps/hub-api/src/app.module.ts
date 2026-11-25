@@ -1,11 +1,12 @@
 import "./common/zod-compat"; // zod validation messages keep their long-standing wording (see the file)
-import { Module } from "@nestjs/common";
+import { MiddlewareConsumer, Module, NestModule, RequestMethod } from "@nestjs/common";
 import { ConfigModule, ConfigService } from "@nestjs/config";
 import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR } from "@nestjs/core";
 import { ThrottlerGuard, ThrottlerModule } from "@nestjs/throttler";
 import { JwtModule } from "@nestjs/jwt";
 import { validateEnv } from "./config/env";
 import { CsrfGuard } from "./common/csrf.guard";
+import { defaultEmptyBody } from "./common/default-body.middleware";
 import { SseBackpressureInterceptor } from "./common/sse-backpressure.interceptor";
 import { EmailVerifiedGuard } from "./common/email-verified.guard";
 import { TwoFactorRequiredGuard } from "./common/two-factor-required.guard";
@@ -188,4 +189,9 @@ import { ApiExceptionFilter } from "./common/api-exception.filter";
     { provide: APP_FILTER, useClass: ApiExceptionFilter },
   ],
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer): void {
+    // Every route, prefixed or exempt from the prefix (webhooks, OAuth start): a body-less request still gets `{}`.
+    consumer.apply(defaultEmptyBody).forRoutes({ path: "{*splat}", method: RequestMethod.ALL });
+  }
+}
