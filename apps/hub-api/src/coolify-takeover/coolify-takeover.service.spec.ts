@@ -1,5 +1,6 @@
 import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from "@nestjs/common";
 import { Role, ServerStatus } from "@prisma/client";
+import { HostMatchService } from "./host-match.service";
 import { CoolifyTakeoverService, READ_MIN_INTERVAL_MS } from "./coolify-takeover.service";
 import { fixtureOutput, SECTION_ROWS } from "./coolify-fixture";
 import { buildInventory, parseRead } from "./coolify-inventory";
@@ -30,6 +31,8 @@ function make(o: Opts = {}) {
       if (!r || !allowed.includes(r)) throw new ForbiddenException("insufficient role for this team");
     }),
     roleByTeam: jest.fn(async () => new Map(Object.entries(roles))),
+    // owners and admins hold servers:manage; a viewer does not
+    permissionsByTeam: jest.fn(async () => new Map(Object.entries(roles).map(([t, r]) => [t, new Set(r === Role.VIEWER ? [] : ["servers:manage"])]))),
     teamIds: jest.fn(async () => Object.keys(roles)),
   };
   const made: Array<{ id: string; teamId: string; status: ServerStatus }> = [];
@@ -74,9 +77,10 @@ function make(o: Opts = {}) {
         return { server };
       }),
     })),
+    hostIdentityOf: jest.fn(() => undefined),
     getInstall: jest.fn(async (_u: string, id: string) => ({ status: ServerStatus.PENDING, installCommand: `curl https://hub.example.com/install/agent.sh | sh -s -- --token tok-${id}`, expiresAt: new Date("2026-11-24T12:00:00Z") })),
   };
-  const svc = new CoolifyTakeoverService(prisma as never, access as never, audit as never, agentWs as never, servers as never);
+  const svc = new CoolifyTakeoverService(prisma as never, access as never, audit as never, agentWs as never, servers as never, new HostMatchService(prisma as never, access as never, servers as never));
   return { svc, access, prisma, audit, sendCommand, servers, getRow: () => row };
 }
 
@@ -224,9 +228,35 @@ describe("checklist and generate (nothing runs)", () => {
     const { svc, servers, getRow, audit } = make({ snapshot: SNAPSHOT, known: [{ id: "existing", teamId: "t1", publicIp: "198.51.100.7" }] });
     const view = await svc.generate("u", "s1", { assignments: [{ coolifyServerId: "1", teamId: "t1" }] });
     expect(servers.createServersBulk).not.toHaveBeenCalled();
-    expect(getRow()!.serverLinks).toEqual({ "1": { teamId: "t1", serverId: "existing" } });
+    // stored with how it was linked and why (the evidence kinds only, no address)
+    expect(getRow()!.serverLinks).toEqual({ "1": { teamId: "t1", serverId: "existing", linkedBy: "auto", evidence: [{ kind: "ip", equal: true }] } });
+    expect(JSON.stringify(getRow()!.serverLinks)).not.toContain("198.51.100");
     expect(view.rows.find((r) => r.name === "edge")).toMatchObject({ state: "already_added", tugraServerId: "existing" });
     expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ meta: { created: 0, adopted: 1 } }));
+  });
+
+  it("a host name alone never links: it is a weak clue, so the owner picks (and nothing is created either)", async () => {
+    const named = { ...SNAPSHOT, servers: SNAPSHOT.servers.map((x) => (x.id === "1" ? { ...x, ip: "edge.example.com" } : x)) };
+    const { svc, servers, getRow } = make({ snapshot: named, known: [{ id: "named", teamId: "t1", hostname: "edge.example.com" }] });
+    const view = await svc.generate("u", "s1", { assignments: [{ coolifyServerId: "1", teamId: "t1" }] });
+    expect(getRow()!.serverLinks).toEqual({});
+    expect(servers.createServersBulk).not.toHaveBeenCalled();
+    expect(view.rows.find((r) => r.name === "edge")?.state).toBe("ambiguous");
+  });
+
+  it("a server the caller cannot manage (a viewer team) is never auto-linked", async () => {
+    const { svc, getRow } = make({ snapshot: SNAPSHOT, known: [{ id: "theirs", teamId: "t2", publicIp: "198.51.100.7" }], roles: { t1: Role.OWNER, t2: Role.VIEWER } });
+    await svc.generate("u", "s1", { assignments: [{ coolifyServerId: "1", teamId: "t1" }] });
+    expect(JSON.stringify(getRow()!.serverLinks)).not.toContain("theirs");
+  });
+
+  it("servers it creates are linked as the user's own, and a link stored before linkedBy existed reads as the user's", async () => {
+    const { svc, getRow } = make({ snapshot: SNAPSHOT });
+    await svc.generate("u", "s1", { assignments: [{ coolifyServerId: "1", teamId: "t1" }] });
+    expect(Object.values(getRow()!.serverLinks as Record<string, { linkedBy: string }>).every((l) => l.linkedBy === "user")).toBe(true);
+    const old = make({ snapshot: SNAPSHOT, links: { "1": { teamId: "t1", serverId: "p1" } } });
+    await old.svc.generate("u", "s1", { assignments: [{ coolifyServerId: "2", teamId: "t1" }] });
+    expect((old.getRow()!.serverLinks as Record<string, unknown>)["1"]).toEqual({ teamId: "t1", serverId: "p1", linkedBy: "user" });
   });
 
   it("does not tie a Coolify server to a Tugra server that only shares a private address with it", async () => {

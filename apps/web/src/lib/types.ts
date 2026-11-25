@@ -1490,6 +1490,24 @@ export interface ImportSourceProject {
   ref: string;
   name: string;
   itemRefs: string[];
+  /** The Coolify team the project belongs to (agent read only). */
+  team?: { ref: string; name: string };
+}
+/** What one agent read of a Coolify host says about itself: counts and versions only (mirrors @tugra/shared AgentReadMeta). */
+export interface ImportAgentRead {
+  transport: "agent";
+  agentServerId: string;
+  schemaVersion: string | null;
+  coolifyImage: string | null;
+  readAt: string;
+  counts: { teams: number; projects: number; servers: number; applications: number; databases: number; services: number };
+  secretCounts?: Record<string, number>;
+}
+/** How sure the hub is that a source server is a Tugra server (mirrors @tugra/shared HostMatchStatus and HostEvidence). */
+export interface ImportHostMatch {
+  status: "certain" | "probable" | "ambiguous" | "none";
+  linkedBy: "auto" | "user" | null;
+  evidence: Array<{ kind: "ssh_host_key" | "machine_id" | "docker_engine_id" | "ip" | "hostname" | "cloud_instance_id"; equal: boolean }>;
 }
 /** The registered Tugra server that is the same machine as a source server, found by the hub (a verdict, never the source's address). */
 export interface ImportTugraMatch {
@@ -1513,7 +1531,10 @@ export interface ImportPreflight {
   /** Git hosts the apps clone from (host + app count). */
   git?: { hosts: Array<{ host: string; apps: number }> };
   /** The source servers by name (Coolify, Dokploy), so a host is shown by its name and not by its uuid. */
-  hosts?: Array<{ ref: string; name?: string; controlPlane?: true; unreachableCount?: number; os?: string; tugra?: ImportTugraMatch }>;
+  hosts?: Array<{ ref: string; name?: string; controlPlane?: true; unreachableCount?: number; os?: string; tugra?: ImportTugraMatch; match?: ImportHostMatch }>;
+  /** Agent transport only: what the one agent read found, and the Coolify teams of the projects. */
+  agentRead?: ImportAgentRead;
+  teams?: Array<{ ref: string; name: string }>;
   /** The Tugra server the source's own panel box is (Dokploy: items that live on no named server). A verdict only, never an address. */
   panel?: { tugra: ImportTugraMatch };
   /** The source team's name (Coolify), to default the target team by name. */
@@ -1613,6 +1634,10 @@ export type ImportTestResult =
 export interface ImportSession {
   sessionId: string;
   expiresAt: string;
+}
+/** The answer of connecting Coolify through its host's agent: the session plus what the first read found. */
+export interface ImportAgentSession extends ImportSession {
+  read: ImportAgentRead;
 }
 export type ImportTaskStatus =
   | "PENDING" | "RUNNING" | "DONE" | "FAILED" | "SKIPPED" | "ROLLED_BACK" | "FAILED_VERIFY" | "AWAITING_CUTOVER" | "CANCELLED";

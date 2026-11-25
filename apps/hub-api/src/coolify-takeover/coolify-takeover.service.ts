@@ -14,7 +14,9 @@ import {
   type InventoryCounts,
   type InvServer,
 } from "./coolify-inventory";
-import { defaultTeamFor, findHostMatch, sshHint, uniqueNames, type ChecklistRow, type ServerLink } from "./coolify-install-plan";
+import { defaultTeamFor, sshHint, uniqueNames, type ChecklistRow, type ServerLink } from "./coolify-install-plan";
+import { HostMatchService, linkOf } from "./host-match.service";
+import type { CoolifyHostInput } from "./host-match";
 import type { GenerateInput } from "./dto";
 
 const DETECT_TIMEOUT_MS = 30_000;
@@ -58,8 +60,11 @@ function parseLinks(v: unknown): Record<string, ServerLink> {
   const out: Record<string, ServerLink> = {};
   if (!v || typeof v !== "object" || Array.isArray(v)) return out;
   for (const [k, l] of Object.entries(v as Record<string, unknown>)) {
-    const o = l as { teamId?: unknown; serverId?: unknown } | null;
-    if (o && typeof o.teamId === "string" && typeof o.serverId === "string") out[k] = { teamId: o.teamId, serverId: o.serverId };
+    const o = l as { teamId?: unknown; serverId?: unknown; linkedBy?: unknown; evidence?: unknown } | null;
+    if (o && typeof o.teamId === "string" && typeof o.serverId === "string") {
+      // `linkedBy` and `evidence` are additive: a link written before them reads as a link the user made.
+      out[k] = { teamId: o.teamId, serverId: o.serverId, linkedBy: o.linkedBy === "auto" ? "auto" : "user", ...(Array.isArray(o.evidence) ? { evidence: o.evidence as ServerLink["evidence"] } : {}) };
+    }
   }
   return out;
 }
@@ -82,6 +87,7 @@ export class CoolifyTakeoverService {
     private readonly audit: AuditService,
     private readonly agentWs: AgentWsServer,
     private readonly servers: ServersService,
+    private readonly hostMatch: HostMatchService,
   ) {}
 
   // ---- reads (stored data only) ----------------------------------------------------------------------------------------
@@ -243,24 +249,22 @@ export class CoolifyTakeoverService {
       wanted.set(cs.id, a.teamId);
     }
 
-    // Servers the user already has in Tugra (any of their teams): match by address instead of creating a duplicate.
-    const memberTeamIds = await this.access.teamIds(userId);
-    const known = await this.prisma.server.findMany({
-      where: { teamId: { in: memberTeamIds } },
-      select: { id: true, teamId: true, publicIp: true, publicIpv6: true, hostname: true, reportedIps: true },
-    });
+    // Servers the user already has in Tugra (any of their teams): match them by the evidence ladder instead of creating a duplicate.
+    // Only a certain or probable verdict is adopted, and it is stored with how it was linked and why.
+    const verdicts = new Map((await this.hostMatch.verdicts(userId, [...wanted.keys()].map((id) => this.hostInput(byId.get(id)!)), { localServerId: serverId })).map((v) => [v.coolifyServerUuid, v] as const));
     let adopted = 0;
     let ambiguous = 0;
     const toCreate = new Map<string, InvServer[]>();
     for (const [csId, teamId] of wanted) {
       const cs = byId.get(csId)!;
-      const { match, ambiguous: many } = findHostMatch(cs.ip, known);
-      if (match) {
-        links[csId] = { teamId: match.teamId, serverId: match.id };
+      const verdict = verdicts.get(csId);
+      const link = verdict ? linkOf(verdict) : null;
+      if (link) {
+        links[csId] = link;
         adopted++;
         continue;
       }
-      if (many) {
+      if (verdict?.status === "ambiguous") {
         // Several Tugra servers sit at this address: neither pick one nor add yet another. The row says so.
         ambiguous++;
         continue;
@@ -273,7 +277,7 @@ export class CoolifyTakeoverService {
       // servers:manage on the target team is checked by createServersBulk (nothing is written before it passes).
       const res = await this.servers.createServersBulk(userId, uniqueNames(list.map((s) => s.name)), teamId, publicUrl);
       res.servers.forEach((made, i) => {
-        links[list[i].id] = { teamId, serverId: made.server.id };
+        links[list[i].id] = { teamId, serverId: made.server.id, linkedBy: "user" };
         created++;
       });
       // Persist after every team so a later failure never orphans the servers that were created.
@@ -305,6 +309,9 @@ export class CoolifyTakeoverService {
       select: { id: true, teamId: true, status: true, publicIp: true, publicIpv6: true, hostname: true, reportedIps: true },
     });
     const byId = new Map(known.map((k) => [k.id, k]));
+    // The ladder's verdict for every Coolify server that has no stored link yet (a stored link always wins).
+    const unlinked = data.servers.filter((cs) => !cs.isLocal && !links[cs.id]);
+    const verdicts = new Map((await this.hostMatch.verdicts(userId, unlinked.map((cs) => this.hostInput(cs)), { localServerId: agentServerId })).map((v) => [v.coolifyServerUuid, v] as const));
 
     const rows: ChecklistRow[] = [];
     for (const cs of data.servers) {
@@ -330,12 +337,13 @@ export class CoolifyTakeoverService {
         rows.push({ ...base, state: noAccess ? "no_access" : installCommand ? "waiting" : "expired", teamId: linked.teamId, tugraServerId: linked.id, installCommand, expiresAt });
         continue;
       }
-      const found = linked ? { match: linked, ambiguous: false } : findHostMatch(cs.ip, known);
-      if (found.match) {
-        rows.push({ ...base, state: "already_added", teamId: found.match.teamId, tugraServerId: found.match.id });
+      const verdict = verdicts.get(cs.id);
+      const adopted = linked ?? (verdict ? byId.get(linkOf(verdict)?.serverId ?? "") : undefined);
+      if (adopted) {
+        rows.push({ ...base, state: "already_added", teamId: adopted.teamId, tugraServerId: adopted.id });
         continue;
       }
-      if (found.ambiguous) {
+      if (verdict?.status === "ambiguous") {
         rows.push({ ...base, state: "ambiguous", teamId: null, tugraServerId: null });
         continue;
       }
@@ -347,6 +355,11 @@ export class CoolifyTakeoverService {
       });
     }
     return { rows, teams: tugraTeams };
+  }
+
+  /** The matcher's view of an inventory server: only the address, never a credential. The Coolify host is "this server". */
+  private hostInput(cs: Pick<InvServer, "id" | "ip" | "isLocal">): CoolifyHostInput {
+    return { uuid: cs.id, address: cs.ip, isLocal: cs.isLocal };
   }
 
   // ---- guards -----------------------------------------------------------------------------------------------------------

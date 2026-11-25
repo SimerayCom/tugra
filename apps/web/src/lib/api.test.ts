@@ -278,3 +278,22 @@ describe("api.createServer: the name is optional", () => {
     expect(await sentBody(" web-1 ")).toEqual({ name: "web-1", teamId: "t1" });
   });
 });
+
+describe("api.importConnectAgent (Coolify through the agent on its host)", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("posts a team and a server to the agent route, with no token and no URL in the body", async () => {
+    const seen: { url: string; body: unknown }[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        seen.push({ url: String(url), body: JSON.parse(String(init?.body)) });
+        return jsonRes(200, { sessionId: "s1", expiresAt: "2026-11-26T11:00:00Z", read: { transport: "agent", agentServerId: "srv1", schemaVersion: null, coolifyImage: null, readAt: "2026-11-26T10:00:00Z", counts: { teams: 1, projects: 0, servers: 1, applications: 0, databases: 0, services: 0 } } });
+      }),
+    );
+    const out = await api.importConnectAgent({ teamId: "t1", serverId: "srv1" });
+    expect(seen[0].url).toBe("/api/v1/import/connect-agent");
+    expect(seen[0].body).toEqual({ sourceKind: "coolify", teamId: "t1", serverId: "srv1" });
+    expect(out.read.counts.servers).toBe(1);
+  });
+});

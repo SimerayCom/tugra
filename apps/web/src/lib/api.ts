@@ -164,6 +164,7 @@ import type {
   ImportStoredMapping,
   ImportRemoteKind,
   ImportSession,
+  ImportAgentSession,
   ImportEgressIp,
   ImportTestResult,
   ImportOperation,
@@ -2569,6 +2570,10 @@ export const api = {
   // Store an encrypted, short-lived connection to a source PaaS (the token is never returned/logged).
   importConnect(input: { sourceKind: ImportRemoteKind; teamId: string; baseUrl: string; token: string; scopeLabel?: string }) {
     return apiFetch<ImportSession>("/import/connect", { method: "POST", body: JSON.stringify(input) });
+  },
+  // Coolify through the agent on the Coolify host: no token, no URL. Reads that host's Coolify database once, read-only.
+  importConnectAgent(input: { teamId: string; serverId: string; scopeLabel?: string }) {
+    return apiFetch<ImportAgentSession>("/import/connect-agent", { method: "POST", body: JSON.stringify({ sourceKind: "coolify", ...input }) });
   },
   // Beszel import (dry-run preview, then an apply bound to the reviewed preview's hash). Credentials are stored encrypted for the import only.
   beszelConnect(input: { teamId: string; baseUrl: string; identity: string; password: string; keepCredentials?: boolean }) {
