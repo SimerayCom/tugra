@@ -24,6 +24,7 @@ export const CONTAINER_ENGINE_PACKAGES = [
   "docker-ce-rootless-extras",
   "docker-buildx-plugin",
   "docker-compose-plugin",
+  "docker-model-plugin",
   "containerd.io",
   "containerd",
   "runc",
@@ -39,6 +40,28 @@ const ENGINE_JS_RE = new RegExp(ENGINE_ERE);
 /** Is this a container-engine package (see {@link CONTAINER_ENGINE_PACKAGES})? */
 export function isContainerEnginePackage(name: string): boolean {
   return ENGINE_JS_RE.test(name);
+}
+
+export type PatchScope = "all" | "except-engine";
+
+/** Which part of the package list a package belongs to, for display and for "update without restarting Docker". */
+export type PackageGroup = "engine" | "kernel" | "other";
+
+// Kernel image / modules / headers across the managers: Debian-Ubuntu linux-image-* (+ meta packages and the
+// per-cloud flavours), RHEL-family kernel / kernel-core / kernel-modules* (+ uek / rt), Alpine linux-lts / -virt / -edge.
+const KERNEL_RE =
+  /^(linux-(image|headers|modules|modules-extra|kbuild|buildinfo|signed|generic|virtual|lowlatency|aws|azure|gcp|oracle|kvm|lts|virt|edge|rpi)(-.*)?|kernel(-(core|modules|modules-core|modules-extra|devel|headers|uek|uek-core|uek-modules|rt|rt-core|rt-modules|debug|debug-core|debug-modules))?)(\.[A-Za-z0-9_]+)?$/;
+
+/** Is this a kernel package (a new one needs a reboot to take effect)? */
+export function isKernelPackage(name: string): boolean {
+  return KERNEL_RE.test(name);
+}
+
+/** Display group of a package: container engine wins over kernel; everything else is "other". Pure. */
+export function packageGroup(name: string): PackageGroup {
+  if (isContainerEnginePackage(name)) return "engine";
+  if (isKernelPackage(name)) return "kernel";
+  return "other";
 }
 
 /** Where the host-side patch unit keeps its script, log and exit code (survives a Docker restart, unlike the helper). */
@@ -118,6 +141,9 @@ export function buildCheckScript(systemdDir = SYSTEMD_DIR): string {
 // apt hardening for an unattended host upgrade: keep the running config on conffile conflicts
 // (--force-confold) and don't let needrestart stop for input (NEEDRESTART_SUSPEND).
 const APT_UP = "DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 apt-get -o Dpkg::Options::=--force-confold";
+// The same, for the run that must leave the container engine running: needrestart in list-only mode (it may name
+// docker/containerd, never restart them) on top of being suspended.
+const APT_UP_KEEP = "DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l NEEDRESTART_SUSPEND=1 apt-get -o Dpkg::Options::=--force-confold";
 // Finish an interrupted dpkg before an apt upgrade. A prior run that was cut off mid-configure (the hub giving up,
 // the container the upgrade ran in being killed by the engine restart it caused, a reboot) leaves dpkg
 // "interrupted", after which EVERY apt operation exits 100 ("dpkg was interrupted, you must manually run
@@ -138,6 +164,7 @@ const APT_HEAL = [
 export function buildUpgradeAllScript(): string {
   return [
     "if command -v apt-get >/dev/null 2>&1; then",
+    ...engineHoldFns({}),
     APT_HEAL,
     `  ${APT_UP} upgrade -y;`,
     "elif command -v dnf >/dev/null 2>&1; then dnf -y upgrade;",
@@ -147,11 +174,110 @@ export function buildUpgradeAllScript(): string {
   ].join("\n");
 }
 
+/** Where an "update without the container engine" run records the apt holds IT placed (and only those), so a run
+ *  that was killed before its trap could fire (SIGKILL, host reboot) still gets them released by the next apply. */
+export const ENGINE_HOLD_FILE = "/etc/tugra/patch-engine-holds";
+/** needrestart's drop-in directory (Ubuntu): a temporary override that keeps it away from the engine services. */
+const NEEDRESTART_DIR = "/etc/needrestart/conf.d";
+const NEEDRESTART_OVERRIDE = "zz-tugra-keep-engine.conf";
+
+export interface EngineHoldOptions {
+  /** Overrides, for tests only. */
+  holdFile?: string;
+  needrestartDir?: string;
+}
+
+function holdPaths(o: EngineHoldOptions): { hold: string; nrDir: string } {
+  const hold = o.holdFile ?? ENGINE_HOLD_FILE;
+  const nrDir = o.needrestartDir ?? NEEDRESTART_DIR;
+  if (!DIR_RE.test(hold) || !DIR_RE.test(nrDir)) throw new Error("invalid engine hold option");
+  return { hold, nrDir };
+}
+
+/**
+ * apt shell fragment (lines are indented for the `if command -v apt-get` branch): defines tugra_release_holds, which
+ * unholds ONLY the packages a previous "except engine" run recorded in the hold file (never one the admin held) and
+ * removes the temporary needrestart override. Called at the start of EVERY apt apply, so an "Update all" after a
+ * run that was cut off is never silently blocked by a leftover hold.
+ */
+function engineHoldFns(o: EngineHoldOptions): string[] {
+  const { hold, nrDir } = holdPaths(o);
+  return [
+    `  HF='${hold}'`,
+    `  NRF='${nrDir}/${NEEDRESTART_OVERRIDE}'`,
+    `  ENGINE_RE='${ENGINE_ERE}'`,
+    "  tugra_release_holds() {",
+    "    FAILED=0",
+    '    if [ -f "$HF" ]; then',
+    "      HELD=$(apt-mark showhold 2>/dev/null)",
+    "      while read -r p; do",
+    '        [ -n "$p" ] || continue',
+    '        printf \'%s\\n\' "$p" | grep -Eq "$ENGINE_RE" || continue',
+    '        if printf \'%s\\n\' "$HELD" | grep -qx -- "$p"; then apt-mark unhold "$p" >/dev/null 2>&1 || FAILED=1; fi',
+    '      done < "$HF"',
+    '      if [ "$FAILED" = 0 ]; then rm -f "$HF"; else echo "TUGRA_WARN: could not release the temporary hold on some container-engine packages; the next update tries again."; fi',
+    "    fi",
+    '    rm -f "$NRF"',
+    "  }",
+    "  tugra_release_holds",
+  ];
+}
+
+/** Upgrade every package EXCEPT the container engine, so Docker (and every app on it) keeps running. */
+export function buildUpgradeExceptEngineScript(o: EngineHoldOptions = {}): string {
+  const { nrDir } = holdPaths(o);
+  const dnfExcludes = [...CONTAINER_ENGINE_PACKAGES, "moby-*"].map((n) => `--exclude='${n}'`).join(" ");
+  return [
+    "if command -v apt-get >/dev/null 2>&1; then",
+    ...engineHoldFns(o),
+    "  " + DPKG_BROKEN_FN,
+    // `dpkg --configure -a` re-runs a half-configured docker-ce's postinst, which restarts dockerd: this run must not.
+    "  BROKEN=$(tugra_dpkg_broken | awk '{print $2}')",
+    '  if printf \'%s\\n\' "$BROKEN" | grep -Eq "$ENGINE_RE"; then',
+    '    echo "TUGRA_ERROR: dpkg left a container-engine package half-configured. Finishing it restarts Docker, so this update will not do it - use Update all (restarts apps) to finish it."',
+    "    exit 1",
+    "  fi",
+    // Release the holds (and the needrestart override) however this shell ends: normal exit, error, TERM from the
+    // unit's timeout. SIGKILL cannot run a trap; the hold file lets the next apply release them.
+    "  trap tugra_release_holds EXIT",
+    "  trap 'exit 143' HUP INT TERM",
+    "  HELD=$(apt-mark showhold 2>/dev/null)",
+    "  ENG=$(dpkg-query -W -f='${db:Status-Abbrev} ${Package}\\n' 2>/dev/null | awk 'substr($1, 2, 1) == \"i\" { print $2 }' | grep -E \"$ENGINE_RE\")",
+    `  mkdir -p "$(dirname "$HF")" && chmod 700 "$(dirname "$HF")" || { echo "TUGRA_ERROR: cannot create the hold record directory"; exit 1; }`,
+    "  for p in $ENG; do",
+    // Already held by the admin: leave it alone now and afterwards.
+    '    if printf \'%s\\n\' "$HELD" | grep -qx -- "$p"; then continue; fi',
+    // Record first, then hold: a crash in between leaves a record of a hold that does not exist (a harmless unhold).
+    '    printf \'%s\\n\' "$p" >> "$HF"',
+    '    apt-mark hold "$p" >/dev/null 2>&1 || { echo "TUGRA_ERROR: could not hold $p - not upgrading anything"; exit 1; }',
+    '    echo "TUGRA_NOTE: holding $p for this update"',
+    "  done",
+    // Belt and braces against needrestart restarting docker/containerd: list-only mode, plus a drop-in that exempts them.
+    `  if [ -d '${nrDir}' ]; then printf '%s\\n' '$nrconf{override_rc}->{qr(^docker)} = 0;' '$nrconf{override_rc}->{qr(^containerd)} = 0;' > "$NRF"; fi`,
+    APT_HEAL,
+    `  ${APT_UP_KEEP} upgrade -y;`,
+    "elif command -v dnf >/dev/null 2>&1; then",
+    `  dnf -y upgrade ${dnfExcludes};`,
+    "elif command -v yum >/dev/null 2>&1; then",
+    `  yum -y update ${dnfExcludes};`,
+    "elif command -v apk >/dev/null 2>&1; then",
+    `  ENGINE_RE='${ENGINE_ERE}'`,
+    // apk has no hold/exclude flag: upgrade exactly the listed packages that are not the engine. Names are matched
+    // against a strict charset first, so the unquoted expansion below cannot split or glob into anything else.
+    "  NAMES=$(apk version -l '<' 2>/dev/null | sed -n 's/^\\(.*\\)-[0-9][^ -]*-r[0-9]* *<.*$/\\1/p' | grep -E '^[A-Za-z0-9][A-Za-z0-9._+-]*$' | grep -Ev \"$ENGINE_RE\")",
+    '  if [ -z "$NAMES" ]; then echo "Nothing to upgrade outside the container engine."; exit 0; fi',
+    "  set -f",
+    "  apk upgrade $NAMES;",
+    "else echo TUGRA_UNSUPPORTED; exit 1; fi",
+  ].join("\n");
+}
+
 /** Upgrade a single package. `pkg` is strictly validated (no shell metacharacters / flags). */
 export function buildUpgradeOneScript(pkg: string): string {
   if (!PKG_RE.test(pkg)) throw new Error("invalid package name");
   return [
     "if command -v apt-get >/dev/null 2>&1; then",
+    ...engineHoldFns({}),
     APT_HEAL,
     `  ${APT_UP} install --only-upgrade -y ${pkg};`,
     `elif command -v dnf >/dev/null 2>&1; then dnf -y upgrade ${pkg};`,
@@ -170,6 +296,7 @@ export function buildInstallPhasedScript(pkg: string): string {
   if (!PKG_RE.test(pkg)) throw new Error("invalid package name");
   return [
     "if command -v apt-get >/dev/null 2>&1; then",
+    ...engineHoldFns({}),
     APT_HEAL,
     `  ${APT_UP} -o APT::Get::Always-Include-Phased-Updates=true install --only-upgrade -y ${pkg};`,
     'else echo "TUGRA_PHASED_UNSUPPORTED: phased rollouts exist only on apt"; exit 1; fi',
@@ -260,7 +387,7 @@ const RUN_ID_RE = /^[a-f0-9]{8,32}$/;
 const DIR_RE = /^\/[A-Za-z0-9._/-]+$/;
 const POLL_RE = /^\d+(\.\d+)?$/;
 
-export type PatchGuard = { kind: "all" } | { kind: "one"; pkg: string };
+export type PatchGuard = { kind: "all" } | { kind: "except-engine" } | { kind: "one"; pkg: string };
 
 export interface PatchRunOptions {
   /** Run id (hex). The same id attaches to the same unit; a new id starts a new one. */
@@ -327,6 +454,17 @@ export function buildPatchRunScript(inner: string, o: PatchRunOptions): string {
     "",
   ].join("\n");
   const pending = o.guard.kind === "one" ? `PEND='${o.guard.pkg}'` : "PEND=$(tugra_pending_names)";
+  // "except-engine" never touches the engine itself (its script holds/excludes it, and refuses a half-configured
+  // engine), so the inline-mode engine refusal does not apply to it.
+  const inlineGuard =
+    o.guard.kind === "except-engine"
+      ? []
+      : [
+          `  ${pending}`,
+          "  BROKEN=$(tugra_dpkg_broken | awk '{print $2}')",
+          `  BLOCK=$(printf '%s\\n%s\\n' "$PEND" "$BROKEN" | grep -E "$ENGINE_RE" | sort -u | tr '\\n' ',' | sed 's/,$//')`,
+          '  if [ -n "$BLOCK" ]; then echo "TUGRA_PATCH_ENGINE_BLOCKED=$BLOCK"; exit 1; fi',
+        ];
 
   return [
     `D='${stateDir}'`,
@@ -365,10 +503,7 @@ export function buildPatchRunScript(inner: string, o: PatchRunOptions): string {
     // No systemd: the package manager would run as the helper's child, so an engine upgrade/configure would kill
     // it mid-way (the very bug this prevents). Refuse every container-engine package — also a half-configured one
     // that the pre-upgrade `dpkg --configure -a` would re-run — rather than risk it.
-    `  ${pending}`,
-    "  BROKEN=$(tugra_dpkg_broken | awk '{print $2}')",
-    `  BLOCK=$(printf '%s\\n%s\\n' "$PEND" "$BROKEN" | grep -E "$ENGINE_RE" | sort -u | tr '\\n' ',' | sed 's/,$//')`,
-    '  if [ -n "$BLOCK" ]; then echo "TUGRA_PATCH_ENGINE_BLOCKED=$BLOCK"; exit 1; fi',
+    ...inlineGuard,
     "  echo TUGRA_PATCH_BEGIN",
     `  timeout -k 30 ${deadline} /bin/sh -c "$(printf %s '${b64(inner)}' | base64 -d)" 2>&1`,
     "  rc=$?",
@@ -423,6 +558,8 @@ export function parsePatchRun(output: string): PatchRunStatus {
 
 export interface UpgradablePackage {
   name: string;
+  /** Display group: container engine / kernel (needs a reboot) / other. Set by {@link parseUpgradable}. */
+  group: PackageGroup;
   current: string; // "" when the manager's check doesn't report the installed version (dnf/yum)
   candidate: string;
 }
@@ -524,10 +661,10 @@ export function parseUpgradable(output: string): PatchInfo {
     if (!line || line.startsWith("TUGRA_") || line.startsWith("Listing")) continue;
     if (manager === "apt") {
       const m = APT_RE.exec(line);
-      if (m) packages.push({ name: m[1], candidate: m[2], current: m[3].trim() });
+      if (m) packages.push({ name: m[1], group: packageGroup(m[1]), candidate: m[2], current: m[3].trim() });
     } else if (manager === "apk") {
       const m = APK_RE.exec(line);
-      if (m) packages.push({ name: m[1], current: m[2], candidate: m[3] });
+      if (m) packages.push({ name: m[1], group: packageGroup(m[1]), current: m[2], candidate: m[3] });
     } else {
       // dnf / yum: check-update reports the available version + repo, not the installed one.
       const lower = line.toLowerCase();
@@ -540,7 +677,7 @@ export function parseUpgradable(output: string): PatchInfo {
       const m = RPM_RE.exec(line);
       // Skip installed packages (repo column @System / @anaconda / …) — never an available upgrade.
       if (m && !m[3].startsWith("@")) {
-        packages.push({ name: m[1], candidate: m[2], current: "" });
+        packages.push({ name: m[1], group: packageGroup(m[1]), candidate: m[2], current: "" });
       }
     }
   }

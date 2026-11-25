@@ -32,6 +32,14 @@ export const FleetPatchSchema = z.object({
 });
 export type FleetPatchInput = z.infer<typeof FleetPatchSchema>;
 
+// What an OS update run covers: everything (the container engine included: Docker restarts, so every app does) or
+// everything EXCEPT the container engine (apps keep running). Omitted = "all", so existing API callers are unchanged.
+export const PatchScopeSchema = z.enum(["all", "except-engine"]);
+export const PatchApplySchema = z.object({ scope: PatchScopeSchema.default("all") });
+export type PatchApplyInput = z.infer<typeof PatchApplySchema>;
+export const FleetPatchApplySchema = FleetPatchSchema.extend({ scope: PatchScopeSchema.default("all") });
+export type FleetPatchApplyInput = z.infer<typeof FleetPatchApplySchema>;
+
 // Fleet overview: one call returns the newest metrics sample per server (joined client-side with the
 // server list). Mirrors the MetricsSample wire shape from @tugra/shared.
 export const MetricsSampleSchema = z.object({

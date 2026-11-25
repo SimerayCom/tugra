@@ -13,6 +13,8 @@ import {
   parsePatchRun,
   type PatchGuard,
   buildUpgradeAllScript,
+  buildUpgradeExceptEngineScript,
+  type PatchScope,
   buildUpgradeOneScript,
   buildInstallPhasedScript,
   wrapHostExec,
@@ -70,6 +72,9 @@ function countLines(text: string): number {
 function fullerOutput(streamed: string, final: string): string {
   return streamed.length >= final.length ? streamed : final;
 }
+
+const applyScript = (scope: PatchScope): string => (scope === "except-engine" ? buildUpgradeExceptEngineScript() : buildUpgradeAllScript());
+const applyGuard = (scope: PatchScope): PatchGuard => (scope === "except-engine" ? { kind: "except-engine" } : { kind: "all" });
 
 /** A host-exec patch that could not enter the host → a clear message, never a silent mis-parse. */
 function hostFailMessage(host: HostExecStatus): string {
@@ -142,12 +147,16 @@ export class PatchService {
     return parseUpgradable(r.output);
   }
 
-  async upgradeAll(userId: string, serverId: string): Promise<{ output: string; exitCode: number }> {
+  /**
+   * `scope` "all" upgrades everything (the container engine too: Docker restarts and so does every app);
+   * "except-engine" keeps the engine packages out of the run so the apps keep running.
+   */
+  async upgradeAll(userId: string, serverId: string, scope: PatchScope = "all"): Promise<{ output: string; exitCode: number }> {
     await this.requireWrite(userId, serverId);
     // Audited BEFORE it runs: an engine upgrade can take the hub itself down with Docker (the hub is a container on
     // the managed host in a single-server install), and an entry written only on completion would never exist.
-    await this.audit.log({ actor: userId, action: "server.patch.apply", target: serverId });
-    return this.runApply(serverId, buildUpgradeAllScript(), { kind: "all" }, UPGRADE_ALL_UNIT_SEC, true);
+    await this.audit.log({ actor: userId, action: "server.patch.apply", target: serverId, meta: { scope } });
+    return this.runApply(serverId, applyScript(scope), applyGuard(scope), UPGRADE_ALL_UNIT_SEC, true);
   }
 
   async upgradeOne(userId: string, serverId: string, pkg: string): Promise<{ output: string; exitCode: number }> {
@@ -201,16 +210,16 @@ export class PatchService {
    * checkUpdatesBulk; heavier, so a smaller fan-out. Reboots are never triggered here (the agent's
    * upgrade script never reboots), matching the single-server path.
    */
-  async upgradeAllBulk(userId: string, serverIds: string[]): Promise<{ results: FleetPatchApply[]; skipped: string[] }> {
+  async upgradeAllBulk(userId: string, serverIds: string[], scope: PatchScope = "all"): Promise<{ results: FleetPatchApply[]; skipped: string[] }> {
     const { targets, skipped } = await this.planFleet(userId, serverIds);
     if (targets.length > 0) {
       // Before the run, like the single-server apply: an engine upgrade can take the hub down with Docker.
-      await this.audit.log({ actor: userId, action: "server.patch.apply.bulk", target: targets.join(","), meta: { count: targets.length } });
+      await this.audit.log({ actor: userId, action: "server.patch.apply.bulk", target: targets.join(","), meta: { count: targets.length, scope } });
     }
     const results = await mapPool(targets, FLEET_APPLY_CONCURRENCY, async (serverId): Promise<FleetPatchApply> => {
       if (!this.agentWs.isOnline(serverId)) return { serverId, online: false };
       try {
-        const r = await this.runApply(serverId, buildUpgradeAllScript(), { kind: "all" }, UPGRADE_ALL_UNIT_SEC, false);
+        const r = await this.runApply(serverId, applyScript(scope), applyGuard(scope), UPGRADE_ALL_UNIT_SEC, false);
         return { serverId, online: true, exitCode: r.exitCode };
       } catch (e) {
         return { serverId, online: true, error: e instanceof Error ? e.message : String(e) };

@@ -144,7 +144,7 @@ describe("CHECK under sh with fake apt/dpkg (read-only)", () => {
     const info = parseUpgradable(runSh(buildCheckScript(sysd)).stdout);
     expect(info.count).toBe(1);
     expect(info.packages.map((p) => p.name)).toEqual(["vim"]);
-    expect(info.phased).toEqual([{ name: "snapd", current: "2.76.3", candidate: "2.78" }]);
+    expect(info.phased).toEqual([{ name: "snapd", group: "other", current: "2.76.3", candidate: "2.78" }]);
     expect(readFileSync(join(fake, "calls"), "utf8")).not.toMatch(/Always-Include-Phased/);
   });
 

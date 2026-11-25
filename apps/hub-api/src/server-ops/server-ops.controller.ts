@@ -40,6 +40,8 @@ import {
   ContainerActionSchema,
   CreateLogDrainInput,
   CreateLogDrainSchema,
+  PatchApplyInput,
+  PatchApplySchema,
   RebootPreviewSchema,
   RebootRequestInput,
   RebootRequestSchema,
@@ -263,8 +265,13 @@ export class ServerOpsController {
   @Post("updates/apply")
   @RequireScopes("deploy")
   @HttpCode(200)
-  upgradeAll(@CurrentUser() user: AuthUser, @Param("id") id: string) {
-    return this.patch.upgradeAll(user.userId, id);
+  upgradeAll(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    // The body is optional (older callers send none): scope defaults to "all".
+    @Body(new ZodValidationPipe(PatchApplySchema.optional().transform((v) => v ?? { scope: "all" as const }))) body: PatchApplyInput,
+  ) {
+    return this.patch.upgradeAll(user.userId, id, body.scope);
   }
 
   @Post("updates/apply/:pkg")

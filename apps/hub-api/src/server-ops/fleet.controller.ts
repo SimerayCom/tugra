@@ -13,7 +13,7 @@ import { MetricsService } from "../metrics/metrics.service";
 import { ContainerMetricsService } from "../metrics/container-metrics.service";
 import { CleanupService } from "./cleanup.service";
 import { PatchService } from "./patch.service";
-import { CleanupConfigBulkInput, CleanupConfigBulkSchema, FleetLatestRowSchema, FleetTrendRowSchema, FleetHottestContainerSchema, FleetPatchInput, FleetPatchSchema } from "./dto";
+import { CleanupConfigBulkInput, CleanupConfigBulkSchema, FleetLatestRowSchema, FleetTrendRowSchema, FleetHottestContainerSchema, FleetPatchInput, FleetPatchSchema, FleetPatchApplyInput, FleetPatchApplySchema } from "./dto";
 
 /** Fleet-wide bulk operations (cross-team, role-gated per server). */
 @ApiTags("servers")
@@ -97,15 +97,15 @@ export class FleetController {
     return this.patch.checkUpdatesBulk(user.userId, body.serverIds);
   }
 
-  // Apply all OS package updates across many servers at once. Reboots are never automatic.
+  // Apply OS package updates across many servers at once (scope "except-engine" keeps Docker running). Reboots are never automatic.
   @Post("updates/apply")
   @RequireScopes("deploy")
   @HttpCode(200)
-  @ApiZodBody(FleetPatchSchema)
+  @ApiZodBody(FleetPatchApplySchema)
   bulkUpgradeAll(
     @CurrentUser() user: AuthUser,
-    @Body(new ZodValidationPipe(FleetPatchSchema)) body: FleetPatchInput,
+    @Body(new ZodValidationPipe(FleetPatchApplySchema)) body: FleetPatchApplyInput,
   ) {
-    return this.patch.upgradeAllBulk(user.userId, body.serverIds);
+    return this.patch.upgradeAllBulk(user.userId, body.serverIds, body.scope);
   }
 }

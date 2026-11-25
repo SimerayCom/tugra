@@ -117,7 +117,7 @@ describe("patch-script", () => {
       expect(r.supported).toBe(true);
       expect(r.manager).toBe("apt");
       expect(r.count).toBe(2);
-      expect(r.packages[0]).toEqual({ name: "docker-ce", candidate: "5:29.6.0-1~noble", current: "5:29.5.0-1~noble" });
+      expect(r.packages[0]).toEqual({ name: "docker-ce", group: "engine", candidate: "5:29.6.0-1~noble", current: "5:29.5.0-1~noble" });
       expect(r.packages[1].name).toBe("vim");
     });
 
@@ -133,7 +133,7 @@ describe("patch-script", () => {
       const r = parseUpgradable(out);
       expect(r.manager).toBe("dnf");
       expect(r.count).toBe(2); // the "Last metadata" noise line is not counted
-      expect(r.packages[0]).toEqual({ name: "curl.x86_64", candidate: "7.76.1-26.el9_3.2", current: "" });
+      expect(r.packages[0]).toEqual({ name: "curl.x86_64", group: "other", candidate: "7.76.1-26.el9_3.2", current: "" });
     });
 
     it("yum: same rpm format", () => {
@@ -153,7 +153,7 @@ describe("patch-script", () => {
       const r = parseUpgradable(out);
       expect(r.manager).toBe("apk");
       expect(r.count).toBe(2);
-      expect(r.packages[0]).toEqual({ name: "zlib", current: "1.2.13-r0", candidate: "1.2.13-r1" });
+      expect(r.packages[0]).toEqual({ name: "zlib", group: "other", current: "1.2.13-r0", candidate: "1.2.13-r1" });
       expect(r.packages[1].name).toBe("py3-foo"); // hyphenated name kept intact
     });
 
@@ -446,7 +446,7 @@ describe("patch-script", () => {
       const r = parseUpgradable(out);
       expect(r.count).toBe(1);
       expect(r.packages.map((p) => p.name)).toEqual(["vim"]);
-      expect(r.phased).toEqual([{ name: "snapd", candidate: "2.78+ubuntu24.04", current: "2.76.3+ubuntu24.04" }]);
+      expect(r.phased).toEqual([{ name: "snapd", group: "other", candidate: "2.78+ubuntu24.04", current: "2.76.3+ubuntu24.04" }]);
       expect(r.rebootRequired).toBe(true);
     });
 

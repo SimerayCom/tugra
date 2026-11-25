@@ -66,7 +66,7 @@ describe("PatchService", () => {
     const r = await make(prisma, access, agentWs).checkUpdates("u1", "s1");
     expect(r.count).toBe(0);
     expect(r.packages).toEqual([]);
-    expect(r.phased).toEqual([{ name: "snapd", current: "2.76.3", candidate: "2.78" }]);
+    expect(r.phased).toEqual([{ name: "snapd", group: "other", current: "2.76.3", candidate: "2.78" }]);
   });
 
   it("checkUpdates throws a typed AgentOfflineException (503) when the agent is offline — not a 500, and signs/audits nothing", async () => {
