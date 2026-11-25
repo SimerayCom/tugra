@@ -62,6 +62,7 @@ import {
   targetServerIdsOf,
   type MigrationRunsFacade,
   type RunActor,
+  type RunCreateInternal,
   type RunMode,
   type RunStatus,
   type StepHandlerRegistry,
@@ -158,8 +159,11 @@ export class MigrationRunsService implements MigrationRunsFacade {
 
   // ───────────────────────────── create / start ─────────────────────────────
 
-  async create(actor: RunActor, body: CreateMigrationRunInput): Promise<MigrationRunView> {
+  async create(actor: RunActor, body: CreateMigrationRunInput, internal: RunCreateInternal = {}): Promise<MigrationRunView> {
     this.scope(actor, "deploy", "read:secrets");
+    const inPlace = internal.inPlace === true;
+    // an in-place takeover is a swap of ONE machine's ingress: any other topology has nothing to take over in place
+    if (inPlace && body.topology !== "swap-proxy") throw bad("in-place-needs-swap-proxy");
     const server = await this.env.server(body.targetServerId);
     if (!server) throw new NotFoundException("server-not-found");
     const st = await this.env.standing(actor.userId, server.teamId);
@@ -176,7 +180,8 @@ export class MigrationRunsService implements MigrationRunsFacade {
     await this.assertPlanFresh(actor, session, base);
     const scoped = body.scope ? await this.scopedApply(actor, session, body, base, serverMap) : null;
     const applyInput = scoped?.applyInput ?? base;
-    if (!body.dryRun) await this.assertSourceAgents(actor, session, applyInput);
+    // an in-place run copies nothing, so no source-side runner is needed
+    if (!body.dryRun && !inPlace) await this.assertSourceAgents(actor, session, applyInput);
     const sourceVersion = await this.captureSourceVersion(actor, session);
 
     const run = await this.insert(actor, {
@@ -191,6 +196,7 @@ export class MigrationRunsService implements MigrationRunsFacade {
       planHash: body.planHash,
       mode: body.mode,
       topology: body.topology,
+      inPlace,
       dryRun: body.dryRun,
       promotedFromId: null,
       applyInput,
@@ -198,7 +204,7 @@ export class MigrationRunsService implements MigrationRunsFacade {
       inputs: stampInputs(body.inputs, actor.userId, this.engine.clock.now()),
     });
     const scopeParams = scoped ? { scoped: true, kept: scoped.kept, excluded: scoped.excluded } : {};
-    await this.event(run.id, actor, "run.created", "info", null, { dryRun: run.dryRun, mode: run.mode, topology: run.topology, targets: this.targetIds(run).length, ...scopeParams });
+    await this.event(run.id, actor, "run.created", "info", null, { dryRun: run.dryRun, mode: run.mode, topology: run.topology, targets: this.targetIds(run).length, ...(inPlace ? { inPlace: true } : {}), ...scopeParams });
     await this.sourceVersionEvent(run, actor);
     await this.audit(actor, "create", run.id, { dryRun: run.dryRun, mode: run.mode, topology: run.topology, serverId: server.id, serverIds: this.targetIds(run), planHash: body.planHash, ...(run.campaign ? { campaign: run.campaign } : {}), ...scopeParams });
     if (run.dryRun) this.engine.kick(run.id, "enter");
@@ -356,6 +362,7 @@ export class MigrationRunsService implements MigrationRunsFacade {
       planHash: string;
       mode: string;
       topology: string;
+      inPlace?: boolean;
       dryRun: boolean;
       promotedFromId: string | null;
       applyInput: unknown;
@@ -417,7 +424,7 @@ export class MigrationRunsService implements MigrationRunsFacade {
     const session = await this.requireSession(actor, sessionId, from.sourceKind);
     const apply = withServicePins(RunApplyInputSchema.parse(from.applyInput), hints);
     await this.assertPlanFresh(actor, session, apply);
-    await this.assertSourceAgents(actor, session, apply);
+    if (!from.inPlace) await this.assertSourceAgents(actor, session, apply);
     this.assertHandlers(from.mode as RunMode);
     const serverMap = serverMapOf(from.serverMap);
     await this.assertTargetsInTeam(from.teamId, serverMap);
@@ -433,6 +440,7 @@ export class MigrationRunsService implements MigrationRunsFacade {
       planHash: from.planHash,
       mode: from.mode,
       topology: from.topology,
+      inPlace: from.inPlace,
       dryRun: false,
       promotedFromId: from.id,
       applyInput: apply,

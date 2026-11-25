@@ -79,6 +79,16 @@ describe("MigrationCampaignsService.create", () => {
     expect(bodies[1]).toMatchObject({ topology: "swap-proxy", targetServerId: "srv-a", campaign: "wave-one", scope: { sourceServers: ["a"] } });
     expect(bodies.every((b) => b.sessionId === "s1" && b.planHash === HASH && b.sourceKind === "coolify")).toBe(true);
   });
+  it("only the in-place wave is created as an in-place takeover (no data copy, no build): the flag goes in the hub's own argument, never in the request body", async () => {
+    const t = build();
+    await t.svc.create(actor, input());
+    const calls = t.runs.create.mock.calls as unknown as Array<[unknown, Record<string, unknown>, { inPlace?: boolean } | undefined]>;
+    expect(calls[0][1].topology).toBe("two-box");
+    expect(calls[0][2]).toBeUndefined();
+    expect(calls[1][1].topology).toBe("swap-proxy");
+    expect(calls[1][2]).toEqual({ inPlace: true });
+    expect(calls.every((c) => !("inPlace" in c[1]))).toBe(true);
+  });
   it("checks owner on the team of the targets and audits the creation with counts only", async () => {
     const t = build();
     await t.svc.create(actor, input());

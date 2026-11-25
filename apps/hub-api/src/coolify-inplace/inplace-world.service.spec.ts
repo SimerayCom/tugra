@@ -52,6 +52,14 @@ describe("InPlaceWorldService", () => {
     prisma.migrationRun.count.mockResolvedValueOnce(1);
     expect(await w.serverBusy("s")).toBe(true);
   });
+  it("the guided run that carries the takeover is not 'another' holder of the server, in either table (rows with no run still count)", async () => {
+    const { w, prisma } = make();
+    await w.serverBusy("s", "run1");
+    expect(prisma.migrationRun.count).toHaveBeenLastCalledWith({ where: expect.objectContaining({ targetServerId: "s", id: { not: "run1" } }) });
+    expect(prisma.coolifyTakeover.count).toHaveBeenLastCalledWith({ where: expect.objectContaining({ serverId: "s", OR: [{ runId: null }, { runId: { not: "run1" } }] }) });
+    await w.serverBusy("s");
+    expect(prisma.migrationRun.count).toHaveBeenLastCalledWith({ where: expect.not.objectContaining({ id: expect.anything() }) });
+  });
   it("the adopted deployment is a successful row with the tag the rollback path runs, and only takeover rows can be dropped", async () => {
     const { w, prisma } = make();
     expect(await w.createAdoptDeployment("app1", "abc1234")).toBe("dep1");

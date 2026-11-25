@@ -77,7 +77,8 @@ export class MigrationCampaignsService {
     try {
       for (const run of plan) {
         const body = runBody(input, run, check.placements, label);
-        const view = await this.runs.create(actor, body);
+        // an in-place wave is taken over in place (no data copy, no build): only the campaign may set that, never the request body
+        const view = run.kind === "in-place" ? await this.runs.create(actor, body, { inPlace: true }) : await this.runs.create(actor, body);
         created.push(view.id);
       }
     } catch (e) {

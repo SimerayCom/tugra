@@ -1,4 +1,4 @@
-import { ConflictException, Inject, Injectable, Logger } from "@nestjs/common";
+import { ConflictException, Inject, Injectable, Logger, Optional } from "@nestjs/common";
 import { CutoverService } from "../../../cutover/cutover.service";
 import { NetProbe } from "../../../cutover/net-probe";
 import type { CutoverView } from "../../../cutover/cutover.dto";
@@ -67,6 +67,9 @@ import {
   type Entry,
 } from "./run-cutover-logic";
 import { setBounded } from "../../../common/bounded-map";
+import type { RunTakeoverState } from "../../../coolify-inplace/inplace-run";
+import { isInPlaceRun } from "../inplace/inplace-run-logic";
+import { InPlaceCutover } from "./inplace-cutover";
 
 /** After the flip/swap, how long CUTOVER keeps re-verifying hosts (DNS propagation, certificates) before it fails (retryable). */
 export const VERIFY_DEADLINE_MS = 30 * 60 * 1000;
@@ -124,6 +127,8 @@ export interface CutoverObs extends Observation {
   webhooks: GitWebhookApp[];
   /** swap only, once LIVE: how the two proxies look on the box right now. */
   swapHost: SwapHostState | null;
+  /** In-place run only: the takeover that carries the run (null before it was planned). Everything else of the classic swap is unused then. */
+  inPlace?: RunTakeoverState | null;
 }
 
 /**
@@ -151,8 +156,14 @@ export class CutoverHandler extends CutoverStepBase implements StepHandler<Cutov
     private readonly proxyOps: ProxyOpsService,
     readonly net: NetProbe,
     private readonly plans: CutoverPlanService,
+    @Optional() private readonly inplace?: InPlaceCutover,
   ) {
     super(registry);
+  }
+
+  /** The in-place engine when this run is an in-place takeover (the classic swap and flip paths are untouched otherwise). */
+  private inPlaceOf(run: Parameters<typeof isInPlaceRun>[0]): InPlaceCutover | null {
+    return isInPlaceRun(run) ? (this.inplace ?? null) : null;
   }
 
   applicable(): boolean {
@@ -164,6 +175,7 @@ export class CutoverHandler extends CutoverStepBase implements StepHandler<Cutov
   async dryRun(ctx: StepContext): Promise<DryRunItem[]> {
     const run = ctx.run;
     const items: DryRunItem[] = [{ code: "cutover.dry.mode", level: "info", params: { topology: run.topology } }];
+    if (isInPlaceRun(run)) items.push({ code: "cutover.dry.inplace", level: "info" });
     if (run.opId) {
       const apps = await this.world.opApps(run.opId);
       const data = apps.filter((a) => a.hasData).length;
@@ -211,6 +223,13 @@ export class CutoverHandler extends CutoverStepBase implements StepHandler<Cutov
     // (no provider write, no traffic: it only reads DNS and the target and moves the host's state when it really switched).
     if (run.topology === "two-box" && !ctx.signal.aborted) view = await this.verifyConfirmedManual(ctx, opId, view);
     const obs: CutoverObs = { ...base, entries: view.entries, servers: view.servers, flipRun: view.run, dataApps: new Set(apps.filter((a) => a.hasData).map((a) => a.appId)), facts, apps };
+    const inPlace = this.inPlaceOf(run);
+    if (inPlace) {
+      // an in-place takeover has no DNS flip, no holds and no probe of its own here: the takeover carries them and the swap record mirrors it
+      obs.inPlace = await inPlace.state(ctx);
+      obs.swap = await this.world.getSwap(run.id, run.targetServerId);
+      return obs;
+    }
     await this.observeHolds(ctx, obs);
     await this.observeManualRecords(ctx, obs);
     if (run.topology === "two-box" && view.entries.some((e) => e.state === "VERIFIED")) {
@@ -379,6 +398,8 @@ export class CutoverHandler extends CutoverStepBase implements StepHandler<Cutov
   }
 
   preGate(ctx: StepContext, obs: CutoverObs): GateResult {
+    const inPlace = this.inPlaceOf(ctx.run);
+    if (inPlace) return inPlace.preGate(ctx, obs);
     const run = ctx.run;
     const verify = ctx.stepState("VERIFY");
     const committed = this.committed(ctx, obs);
@@ -518,6 +539,8 @@ export class CutoverHandler extends CutoverStepBase implements StepHandler<Cutov
 
   async act(ctx: StepContext, obs: CutoverObs): Promise<ActResult> {
     if (!obs.opId) throw new StepFailure("cutover.import-op");
+    const inPlace = this.inPlaceOf(ctx.run);
+    if (inPlace) return inPlace.act(ctx, obs);
     const earliest = earliestVerified(obs.entries);
     if (earliest && !ctx.run.freezeEndedAt) await ctx.patchRun({ freezeEndedAt: earliest });
     return ctx.run.topology === "swap-proxy" ? this.actSwap(ctx, obs) : this.actTwoBox(ctx, obs);
@@ -826,6 +849,8 @@ export class CutoverHandler extends CutoverStepBase implements StepHandler<Cutov
 
   postGate(ctx: StepContext, obs: CutoverObs): GateResult {
     if (!obs.opId) return makeGate([chk("cutover.hosts-verified", "fail", "cutover.import-op")]);
+    const inPlace = this.inPlaceOf(ctx.run);
+    if (inPlace) return inPlace.postGate(obs);
     if (ctx.run.topology === "swap-proxy") return this.swapPostGate(obs);
     const checks: GateCheck[] = [];
     for (const e of obs.entries) {
@@ -870,6 +895,8 @@ export class CutoverHandler extends CutoverStepBase implements StepHandler<Cutov
    */
   async compensate(ctx: StepContext, how: CompensateHow): Promise<CompResult> {
     if (how === "cleanup") return { outcome: "nothing-to-do" };
+    const inPlace = this.inPlaceOf(ctx.run);
+    if (inPlace) return inPlace.compensate(ctx, how);
     return ctx.run.topology === "swap-proxy" ? this.reverseSwap(ctx, how) : this.revertFlip(ctx, how);
   }
 

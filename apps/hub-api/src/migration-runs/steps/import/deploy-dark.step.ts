@@ -40,6 +40,9 @@ import { RUN_HINTS, type RunHint, type RunHintStore } from "./baseline/run-hints
 import { workerMarks, workerSets } from "./baseline/workers";
 import { resolveOwnerInput } from "../../core/run-contract";
 import { planServiceStart, type SvcRow } from "./deploy-dark-services";
+import type { RunTakeoverState } from "../../../coolify-inplace/inplace-run";
+import { isInPlaceRun } from "../inplace/inplace-run-logic";
+import { InPlaceRunSteps } from "../inplace/inplace-run.steps";
 
 /**
  * A database row can be left PROVISIONING by a hub that died inside `provision` (nothing reaps it; a live provision ends
@@ -77,6 +80,8 @@ export interface DeployDarkObs extends Observation {
   markConflicts: string[];
   /** Marked item refs that name no app of the plan: ignored by every lookup, so the step refuses to start until they are fixed or removed. */
   markUnmatched: string[];
+  /** In-place run only: the takeover that carries the run (null before it was planned). Databases, apps and services above stay empty then. */
+  inPlace?: RunTakeoverState | null;
 }
 
 interface Comp {
@@ -111,7 +116,13 @@ export class DeployDarkStep implements StepHandler<DeployDarkObs>, OnModuleInit 
     @Inject(STEP_HANDLERS) private readonly registry: StepHandlerRegistry,
     @Inject(IMPORT_STEPS_PORT) private readonly port: ImportStepsPort,
     @Optional() @Inject(RUN_HINTS) private readonly hintStore?: RunHintStore,
+    @Optional() private readonly inplace?: InPlaceRunSteps,
   ) {}
+
+  /** The in-place engine when this run is an in-place takeover (nothing is built or started by the classic path then). */
+  private inPlaceOf(run: Parameters<typeof isInPlaceRun>[0]): InPlaceRunSteps | null {
+    return isInPlaceRun(run) ? (this.inplace ?? null) : null;
+  }
 
   private hints(run: { id: string; promotedFromId: string | null }): Promise<RunHint[]> {
     return this.hintStore ? this.hintStore.list(run.id, run.promotedFromId).catch(() => []) : Promise.resolve([]);
@@ -129,6 +140,11 @@ export class DeployDarkStep implements StepHandler<DeployDarkObs>, OnModuleInit 
     const run = ctx.run;
     const userId = ctx.actor.userId;
     if (!run.opId) return { agentOnline: true, dbs: [], apps: [], services: [], markConflicts: [], markUnmatched: [] };
+    const inPlace = this.inPlaceOf(run);
+    if (inPlace) {
+      const targets = await Promise.all(ctx.targetServerIds.map((serverId) => this.port.target(userId, { serverId, hosts: [] })));
+      return { agentOnline: targets.every((t) => t.agentOnline), dbs: [], apps: [], services: [], markConflicts: [], markUnmatched: [], inPlace: await inPlace.state(ctx) };
+    }
     const op = await this.port.opSnapshot(userId, run.opId);
     // every target server of the run must have its agent online (a multi-host run deploys on all of them)
     const targets = await Promise.all(ctx.targetServerIds.map((serverId) => this.port.target(userId, { serverId, hosts: [] })));
@@ -186,6 +202,8 @@ export class DeployDarkStep implements StepHandler<DeployDarkObs>, OnModuleInit 
 
   async dryRun(ctx: StepContext): Promise<DryRunItem[]> {
     const run = ctx.run;
+    const inPlace = this.inPlaceOf(run);
+    if (inPlace) return inPlace.dryRun();
     if (!run.sessionId) return [{ code: "deploy-dark.projection-unavailable", level: "info" }];
     try {
       const plan = await this.port.plan(ctx.actor.userId, { sessionId: run.sessionId, sourceKind: run.sourceKind, ...(run.applyInput.dbDataModes ? { dbDataModes: run.applyInput.dbDataModes } : {}) });
@@ -205,6 +223,8 @@ export class DeployDarkStep implements StepHandler<DeployDarkObs>, OnModuleInit 
   }
 
   preGate(_ctx: StepContext, obs: DeployDarkObs): GateResult {
+    const inPlace = this.inPlaceOf(_ctx.run);
+    if (inPlace) return inPlace.preGate(_ctx, obs.agentOnline);
     void _ctx;
     const checks: GateCheck[] = [{ id: "deploy-dark.agent", status: obs.agentOnline ? "pass" : "fail", code: obs.agentOnline ? "deploy-dark.agent-online" : "deploy-dark.agent-offline", evidence: "hub-verified" }];
     if (obs.markConflicts.length) checks.push({ id: "deploy-dark.job-runner-domain", status: "fail", code: "deploy-dark.job-runner-has-domain", params: { count: obs.markConflicts.length, items: obs.markConflicts.slice(0, 10) }, evidence: "hub-verified" });
@@ -214,6 +234,8 @@ export class DeployDarkStep implements StepHandler<DeployDarkObs>, OnModuleInit 
   }
 
   postGate(_ctx: StepContext, obs: DeployDarkObs): GateResult {
+    const inPlace = this.inPlaceOf(_ctx.run);
+    if (inPlace) return inPlace.postGate(obs.inPlace ?? null);
     void _ctx;
     const checks: GateCheck[] = [];
     const badDbs = obs.dbs.filter((d) => !dbOk(d));
@@ -246,6 +268,8 @@ export class DeployDarkStep implements StepHandler<DeployDarkObs>, OnModuleInit 
   async act(ctx: StepContext, obs: DeployDarkObs): Promise<ActResult> {
     const userId = ctx.actor.userId;
     const run = ctx.run;
+    const inPlace = this.inPlaceOf(run);
+    if (inPlace) return inPlace.act(ctx);
     // compensation ids first: a crash right after a side effect still tells abort what to stop
     // (workers are never deployed here, so an abort has nothing of theirs to stop)
     await ctx.recordCompensation({ dbIds: obs.dbs.map((d) => d.id), appIds: obs.apps.filter(required).map((a) => a.id), serviceIds: startedSvcs(obs).map((x) => x.id) });
@@ -372,6 +396,8 @@ export class DeployDarkStep implements StepHandler<DeployDarkObs>, OnModuleInit 
 
   async compensate(ctx: StepContext, how: CompensateHow): Promise<CompResult> {
     if (how !== "abort") return { outcome: "nothing-to-do" };
+    const inPlace = this.inPlaceOf(ctx.run);
+    if (inPlace) return inPlace.compensate(ctx, how);
     const comp = compOf(ctx);
     const userId = ctx.actor.userId;
     // `apps.deploy` only enqueues: an app whose deploy is still queued or running turns RUNNING after the abort, so those

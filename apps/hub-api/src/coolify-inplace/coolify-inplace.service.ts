@@ -51,6 +51,7 @@ import {
 } from "./inplace-scripts";
 import { INPLACE_WORLD, type InPlaceWorld } from "./inplace-world";
 import type { GiveBackInput, PlanInput, SwapInput } from "./dto";
+import type { InPlaceRunPort, RunTakeoverState } from "./inplace-run";
 
 const OWNER_ONLY: Role[] = [Role.OWNER];
 const HOST_T = 60_000;
@@ -132,7 +133,7 @@ const recordedFull = (i: TakeoverItem) => ({ ...recorded(i), ports: "", itemRef:
  * no environment value, key or certificate leaves the host. The Coolify containers, images and volumes are only stopped and started, never removed.
  */
 @Injectable()
-export class CoolifyInPlaceService {
+export class CoolifyInPlaceService implements InPlaceRunPort {
   private readonly active = new Set<string>();
 
   constructor(
@@ -144,13 +145,14 @@ export class CoolifyInPlaceService {
 
   // ───────────────────────────── plan ─────────────────────────────
 
-  async plan(userId: string, input: PlanInput): Promise<TakeoverView> {
+  async plan(userId: string, input: PlanInput, link: { runId?: string } = {}): Promise<TakeoverView> {
     const server = await this.world.server(input.serverId);
     if (!server) throw new NotFoundException("server-not-found");
     await this.requireOwner(userId, server.teamId);
     if (server.status !== "ONLINE") throw unprocessable("takeover_server_offline");
     if (!server.capabilities.includes("deploy")) throw unprocessable("takeover_capability");
-    if (await this.world.serverBusy(server.id)) throw new ConflictException("takeover_server_busy");
+    // the guided run that carries this takeover holds the server itself: it is not "another" holder
+    if (await this.world.serverBusy(server.id, link.runId)) throw new ConflictException("takeover_server_busy");
 
     const opApps = await this.world.opApps(input.opId, server.teamId, server.id);
     if (!opApps) throw new NotFoundException("op-not-found");
@@ -173,6 +175,7 @@ export class CoolifyInPlaceService {
         teamId: server.teamId,
         serverId: server.id,
         actorId: userId,
+        ...(link.runId ? { runId: link.runId } : {}),
         status: "PLANNED",
         plan: doc as unknown as Prisma.InputJsonValue,
         rollback: emptyRollback() as unknown as Prisma.InputJsonValue,
@@ -180,7 +183,7 @@ export class CoolifyInPlaceService {
         giveBackAvailable: true,
       },
     });
-    await this.audit.log({ actor: userId, action: "coolify.takeover.plan", target: row.id, meta: { serverId: server.id, apps: items.length, skipped: items.filter((i) => i.state === "skipped").length, rebuild: items.filter((i) => i.buildMode === "rebuild-verify").length } });
+    await this.audit.log({ actor: userId, action: "coolify.takeover.plan", target: row.id, meta: { serverId: server.id, ...(link.runId ? { runId: link.runId } : {}), apps: items.length, skipped: items.filter((i) => i.state === "skipped").length, rebuild: items.filter((i) => i.buildMode === "rebuild-verify").length } });
     return this.view(row as Row);
   }
 
@@ -395,70 +398,74 @@ export class CoolifyInPlaceService {
       const { row, server } = await this.acting(userId, id);
       if (row.status !== "TESTING") throw new ConflictException("takeover_not_tested");
       if (input.confirm !== server.name) throw new BadRequestException("bad-confirmation");
-      const items = this.itemsOf(row);
-      const gate = swapGate(items);
-      if (!gate.ok) throw new ConflictException({ statusCode: 409, message: `takeover_${gate.code}`, code: `takeover_${gate.code}`, ...(gate.itemRef ? { itemRef: gate.itemRef } : {}), ...(gate.host ? { host: gate.host } : {}) });
-      const plan = this.planOf(row);
-      const rb = this.rollbackOf(row);
-      await this.setStatus(row, "SWAPPING", null);
-      const active = items.filter((i) => i.state === "prepared");
-      const ex = active.filter((i) => i.exclusive && i.container);
-
-      // 1. apps that share data with Coolify's copy: its restart policy first, then stop it, then start Tugra's on the same data
-      if (ex.length > 0) {
-        const ids = ex.map((i) => (i.container as NonNullable<TakeoverItem["container"]>).id);
-        // written BEFORE the first policy change: a partial failure below must still give every recorded policy back
-        rb.exclusiveStopped = true;
-        await this.saveRollback(row.id, rb);
-        const pol = parsePolicy((await this.world.exec(server.id, buildRestartPolicyScript(ex.map((i) => ({ ...recorded(i), policy: "no" as const }))), HOST_T)).output, ids);
-        if (ids.some((x) => pol.get(x) !== "ok")) return this.abandon(userId, row, items, "exclusive_policy_failed");
-        const stop = parseStopOutput((await this.world.exec(server.id, buildSourceStopScript(ex.map((i) => recordedFull(i))), 150_000)).output, ids);
-        if (ids.some((x) => stop.get(x) !== "stopped" && stop.get(x) !== "gone")) return this.abandon(userId, row, items, "exclusive_stop_failed");
-        for (const i of ex) {
-          const r = await this.world.runAdopted(userId, i.appId, i.adoptDeploymentId as string);
-          if (!r.ok) return this.abandon(userId, row, items, "exclusive_start_failed");
-        }
-      }
-
-      // 2. Coolify's certificates as the fallback, before Tugra's proxy takes the ports
-      const hosts = domainsOf(active).map((d) => d.host);
-      const fb = await this.run(server.id, buildFallbackInstallScript({ hosts }), (o) => parseFallbackInstall(o, hosts));
-      const now = this.world.now().toISOString();
-      for (const i of active) {
-        for (const d of i.domains) {
-          const r = fb?.get(d.host);
-          if (r?.outcome === "installed") {
-            i.fallbackSerial[d.host] = r.serial;
-            i.fallbackAt[d.host] = now;
-            (i.fallbackSince ??= {})[d.host] ??= now;
-            d.cert = "fallback";
-          }
-        }
-      }
-      await this.saveItems(row.id, items);
-
-      // 3. the proxies: Coolify's stops (restart policy first), Tugra's publishes :80/:443
-      rb.swapStarted = true;
-      await this.saveRollback(row.id, rb);
-      const stopped = await stopSourceProxy(this.host, server.id, plan.proxy.containerId);
-      if (!stopped || stopped.updateFailed || stopped.sourceRunning === true) return this.abandon(userId, row, items, "swap_stop_failed");
-      await this.world.setProxyBind(server.id, "public");
-      try {
-        await this.world.startProxy(userId, server.id);
-      } catch {
-        // the state read below decides: a start that failed is judged by what the box looks like, not by the error
-      }
-      const st = await swapHostState(this.host, server.id, plan.proxy.containerId);
-      if (!st || st.target !== "running" || !targetPublishesWeb(st) || st.sourceRunning === true) return this.abandon(userId, row, items, "swap_start_failed");
-
-      for (const i of active) i.state = "switched";
-      await this.saveItems(row.id, items);
-      await this.setStatus(row, "SWAPPED", null);
-      await this.checkFinal(server.id, items);
-      await this.saveItems(row.id, items);
-      await this.audit.log({ actor: userId, action: "coolify.takeover.swap", target: row.id, meta: { apps: active.length, switched: ex.length, domains: hosts.length, fallbacks: items.flatMap((i) => i.domains).filter((d) => d.cert === "fallback").length } });
-      return this.fresh(row.id);
+      return this.doSwap(userId, row, server);
     });
+  }
+
+  private async doSwap(userId: string, row: Row, server: { id: string; name: string }): Promise<TakeoverView> {
+    const items = this.itemsOf(row);
+    const gate = swapGate(items);
+    if (!gate.ok) throw new ConflictException({ statusCode: 409, message: `takeover_${gate.code}`, code: `takeover_${gate.code}`, ...(gate.itemRef ? { itemRef: gate.itemRef } : {}), ...(gate.host ? { host: gate.host } : {}) });
+    const plan = this.planOf(row);
+    const rb = this.rollbackOf(row);
+    await this.setStatus(row, "SWAPPING", null);
+    const active = items.filter((i) => i.state === "prepared");
+    const ex = active.filter((i) => i.exclusive && i.container);
+
+    // 1. apps that share data with Coolify's copy: its restart policy first, then stop it, then start Tugra's on the same data
+    if (ex.length > 0) {
+      const ids = ex.map((i) => (i.container as NonNullable<TakeoverItem["container"]>).id);
+      // written BEFORE the first policy change: a partial failure below must still give every recorded policy back
+      rb.exclusiveStopped = true;
+      await this.saveRollback(row.id, rb);
+      const pol = parsePolicy((await this.world.exec(server.id, buildRestartPolicyScript(ex.map((i) => ({ ...recorded(i), policy: "no" as const }))), HOST_T)).output, ids);
+      if (ids.some((x) => pol.get(x) !== "ok")) return this.abandon(userId, row, items, "exclusive_policy_failed");
+      const stop = parseStopOutput((await this.world.exec(server.id, buildSourceStopScript(ex.map((i) => recordedFull(i))), 150_000)).output, ids);
+      if (ids.some((x) => stop.get(x) !== "stopped" && stop.get(x) !== "gone")) return this.abandon(userId, row, items, "exclusive_stop_failed");
+      for (const i of ex) {
+        const r = await this.world.runAdopted(userId, i.appId, i.adoptDeploymentId as string);
+        if (!r.ok) return this.abandon(userId, row, items, "exclusive_start_failed");
+      }
+    }
+
+    // 2. Coolify's certificates as the fallback, before Tugra's proxy takes the ports
+    const hosts = domainsOf(active).map((d) => d.host);
+    const fb = await this.run(server.id, buildFallbackInstallScript({ hosts }), (o) => parseFallbackInstall(o, hosts));
+    const now = this.world.now().toISOString();
+    for (const i of active) {
+      for (const d of i.domains) {
+        const r = fb?.get(d.host);
+        if (r?.outcome === "installed") {
+          i.fallbackSerial[d.host] = r.serial;
+          i.fallbackAt[d.host] = now;
+          (i.fallbackSince ??= {})[d.host] ??= now;
+          d.cert = "fallback";
+        }
+      }
+    }
+    await this.saveItems(row.id, items);
+
+    // 3. the proxies: Coolify's stops (restart policy first), Tugra's publishes :80/:443
+    rb.swapStarted = true;
+    await this.saveRollback(row.id, rb);
+    const stopped = await stopSourceProxy(this.host, server.id, plan.proxy.containerId);
+    if (!stopped || stopped.updateFailed || stopped.sourceRunning === true) return this.abandon(userId, row, items, "swap_stop_failed");
+    await this.world.setProxyBind(server.id, "public");
+    try {
+      await this.world.startProxy(userId, server.id);
+    } catch {
+      // the state read below decides: a start that failed is judged by what the box looks like, not by the error
+    }
+    const st = await swapHostState(this.host, server.id, plan.proxy.containerId);
+    if (!st || st.target !== "running" || !targetPublishesWeb(st) || st.sourceRunning === true) return this.abandon(userId, row, items, "swap_start_failed");
+
+    for (const i of active) i.state = "switched";
+    await this.saveItems(row.id, items);
+    await this.setStatus(row, "SWAPPED", null);
+    await this.checkFinal(server.id, items);
+    await this.saveItems(row.id, items);
+    await this.audit.log({ actor: userId, action: "coolify.takeover.swap", target: row.id, meta: { apps: active.length, switched: ex.length, domains: hosts.length, fallbacks: items.flatMap((i) => i.domains).filter((d) => d.cert === "fallback").length, ...(row.runId ? { runId: row.runId } : {}) } });
+    return this.fresh(row.id);
   }
 
   /** Reverse what the swap did so far (the same way a give-back does) and end FAILED with the reason. */
@@ -604,19 +611,23 @@ export class CoolifyInPlaceService {
       const { row, server } = await this.acting(userId, id);
       if (!canGiveBack(row.status as TakeoverStatus)) throw new ConflictException("takeover_not_giveable");
       if (input.confirm !== server.name) throw new BadRequestException("bad-confirmation");
-      const items = this.itemsOf(row);
-      await this.prisma.coolifyTakeover.update({ where: { id: row.id }, data: { status: "GIVING_BACK", failureCode: null } });
-      const r = await this.undo(userId, row.id, items);
-      await this.saveItems(row.id, items);
-      if (!r.ok) {
-        await this.prisma.coolifyTakeover.update({ where: { id: row.id }, data: { status: "FAILED", failureCode: "give_back_failed" } });
-        await this.audit.log({ actor: userId, action: "coolify.takeover.give-back", target: row.id, meta: { ok: false, step: r.step } });
-        return this.fresh(row.id);
-      }
-      await this.prisma.coolifyTakeover.update({ where: { id: row.id }, data: { status: "GIVEN_BACK", giveBackAvailable: false, finishedAt: this.world.now(), failureCode: null } });
-      await this.audit.log({ actor: userId, action: "coolify.takeover.give-back", target: row.id, meta: { ok: true, apps: items.filter((i) => i.state !== "skipped").length } });
-      return this.fresh(row.id);
+      return this.doGiveBack(userId, row);
     });
+  }
+
+  private async doGiveBack(userId: string, row: Row): Promise<TakeoverView> {
+    const items = this.itemsOf(row);
+    await this.prisma.coolifyTakeover.update({ where: { id: row.id }, data: { status: "GIVING_BACK", failureCode: null } });
+    const r = await this.undo(userId, row.id, items);
+    await this.saveItems(row.id, items);
+    if (!r.ok) {
+      await this.prisma.coolifyTakeover.update({ where: { id: row.id }, data: { status: "FAILED", failureCode: "give_back_failed" } });
+      await this.audit.log({ actor: userId, action: "coolify.takeover.give-back", target: row.id, meta: { ok: false, step: r.step } });
+      return this.fresh(row.id);
+    }
+    await this.prisma.coolifyTakeover.update({ where: { id: row.id }, data: { status: "GIVEN_BACK", giveBackAvailable: false, finishedAt: this.world.now(), failureCode: null } });
+    await this.audit.log({ actor: userId, action: "coolify.takeover.give-back", target: row.id, meta: { ok: true, apps: items.filter((i) => i.state !== "skipped").length, ...(row.runId ? { runId: row.runId } : {}) } });
+    return this.fresh(row.id);
   }
 
   /**
@@ -676,6 +687,83 @@ export class CoolifyInPlaceService {
     } catch {
       return { ok: false, step: "host" };
     }
+  }
+
+  // ───────────────────────────── the guided run's port ─────────────────────────────
+
+  async runState(userId: string, runId: string): Promise<RunTakeoverState | null> {
+    const row = await this.rowOfRun(runId);
+    if (!row) return null;
+    await this.requireOwner(userId, row.teamId);
+    return this.stateOf(row);
+  }
+
+  async runPrepare(userId: string, input: { runId: string; serverId: string; opId: string }): Promise<RunTakeoverState> {
+    let row = await this.rowOfRun(input.runId);
+    // a reversed takeover (given back, or one the swap itself put back) is never tested again: the run plans a new one
+    const spent = !row || row.status === "GIVEN_BACK" || (row.status === "FAILED" && this.itemsOf(row).some((i) => i.state === "given-back"));
+    if (spent) {
+      const v = await this.plan(userId, { serverId: input.serverId, opId: input.opId, rebuild: [] }, { runId: input.runId });
+      row = await this.rowOf(v.id);
+    }
+    const r = row as Row;
+    if (r.status === "PLANNED" || r.status === "TESTING" || r.status === "FAILED") await this.test(userId, r.id);
+    return this.stateOf(await this.rowOf(r.id));
+  }
+
+  async runSwap(userId: string, runId: string): Promise<RunTakeoverState> {
+    const row = await this.requireRunRow(runId);
+    return this.exclusive(row.id, async () => {
+      const { row: r, server } = await this.acting(userId, row.id);
+      if (r.status !== "TESTING") throw new ConflictException("takeover_not_tested");
+      await this.doSwap(userId, r, server);
+      return this.stateOf(await this.rowOf(row.id));
+    });
+  }
+
+  async runVerify(userId: string, runId: string): Promise<RunTakeoverState> {
+    const row = await this.requireRunRow(runId);
+    await this.exclusive(row.id, () => this.verifyPass(userId, row.id, false));
+    return this.stateOf(await this.rowOf(row.id));
+  }
+
+  async runGiveBack(userId: string, runId: string): Promise<RunTakeoverState | null> {
+    const row = await this.rowOfRun(runId);
+    if (!row) return null;
+    await this.exclusive(row.id, async () => {
+      const { row: r } = await this.acting(userId, row.id);
+      if (!canGiveBack(r.status as TakeoverStatus)) return;
+      await this.doGiveBack(userId, r);
+    });
+    return this.stateOf(await this.rowOf(row.id));
+  }
+
+  /** The newest takeover the run carries. */
+  private async rowOfRun(runId: string): Promise<Row | null> {
+    return ((await this.prisma.coolifyTakeover.findFirst({ where: { runId }, orderBy: { createdAt: "desc" } })) as Row | null) ?? null;
+  }
+
+  private async requireRunRow(runId: string): Promise<Row> {
+    const row = await this.rowOfRun(runId);
+    if (!row) throw new NotFoundException("takeover-not-found");
+    return row;
+  }
+
+  private stateOf(row: Row): RunTakeoverState {
+    const items = this.itemsOf(row);
+    const active = items.filter((i) => i.state !== "skipped");
+    return {
+      id: row.id,
+      status: row.status as TakeoverStatus,
+      failureCode: (row.failureCode as TakeoverFailureCode | null) ?? null,
+      items: items.map(toItemView),
+      gate: swapGate(items),
+      pending: active.filter((i) => i.state === "planned").length,
+      certWorkLeft: certWorkLeft(items),
+      verified: isVerified(items),
+      proxy: this.planOf(row).proxy,
+      bindBefore: this.rollbackOf(row).bindBefore,
+    };
   }
 
   // ───────────────────────────── reads ─────────────────────────────

@@ -1,4 +1,4 @@
-import { Inject, Injectable, OnModuleInit } from "@nestjs/common";
+import { Inject, Injectable, OnModuleInit, Optional } from "@nestjs/common";
 import type { ApprovalBinding, DryRunItem, GateCheck, GateResult } from "../../core/dto";
 import {
   PONR_APPROVAL_TTL_SEC,
@@ -40,6 +40,9 @@ import { loadObjects, loadSnapshot } from "./handler-util";
 import { PARITY_CODES } from "./verify/db-stats";
 import { judgeAgainstBaseline } from "./verify/baseline-judge";
 import { buildVerifySuite, classifySuite, ponrBindingHash, reportHash, toGateCheck, type SuiteCheck } from "./verify/verify-suite";
+import type { RunTakeoverState } from "../../../coolify-inplace/inplace-run";
+import { isInPlaceRun } from "../inplace/inplace-run-logic";
+import { InPlaceRunSteps } from "../inplace/inplace-run.steps";
 
 /** A target measurement / drift probe younger than this is reused (the run polls every few seconds). */
 export const MEASURE_TTL_MS = 10 * 60_000;
@@ -64,6 +67,8 @@ export interface VerifyObs extends Observation {
   storedApprovalAt: string | null;
   now: number;
   measuredPending: number;
+  /** In-place run only: the takeover the owner is reviewing (null before it was planned). The data fields above are empty then. */
+  inPlace?: RunTakeoverState | null;
 }
 
 const evidenceOf = (v: unknown): DbStats | undefined => (v && typeof v === "object" && Array.isArray((v as DbStats).tables) ? (v as DbStats) : undefined);
@@ -100,6 +105,7 @@ export class VerifyHandler implements StepHandler<VerifyObs>, OnModuleInit {
     @Inject(FLIP_PLAN_PORT) private readonly flipPlans: FlipPlanPort,
     @Inject(DRIFT_PORT) private readonly drift: DriftPort,
     @Inject(CHECK_STORE) private readonly checks: CheckStore,
+    @Optional() private readonly inplace?: InPlaceRunSteps,
   ) {}
 
   onModuleInit(): void {
@@ -117,8 +123,44 @@ export class VerifyHandler implements StepHandler<VerifyObs>, OnModuleInit {
 
   // ───────────────────────────── observe ─────────────────────────────
 
+  /**
+   * An in-place takeover has no copied data to compare: the review is the dark test of the takeover, and the approval is bound to that test.
+   * The same gate, approval and marker rules apply (the checks come from {@link InPlaceRunSteps.review}).
+   */
+  private async observeInPlace(ctx: StepContext, inPlace: InPlaceRunSteps): Promise<VerifyObs> {
+    const run = ctx.run;
+    const rows = await this.checks.list(run.id, "VERIFY");
+    let marker: VerifyObs["marker"] = null;
+    for (const r of rows) {
+      if (r.checkId !== VERIFY_APPROVAL_CHECK) continue;
+      const e = r.evidence as { boundHash?: unknown; approvalAt?: unknown } | null;
+      if (e && typeof e.boundHash === "string" && typeof e.approvalAt === "string") marker = { boundHash: e.boundHash, approvalAt: e.approvalAt };
+    }
+    const state = await inPlace.state(ctx);
+    const review = inPlace.review(state);
+    const report = reportHash(review.suite);
+    const flip: FlipPlanLite = { planHash: review.planHash, hosts: review.hosts, statefulHosts: [], unavailable: review.planHash ? null : "verify.inplace-no-takeover" };
+    const snap: DataSnapshot = { opId: run.opId ?? "", targetServerId: run.targetServerId, vxEnabled: false, tokenActive: false, tokenExpiresAt: null, hubBase: null, databases: [], volumes: [], apps: [], services: [] };
+    return {
+      snap,
+      runtime: { apps: [], databases: [], hosts: [], incomplete: [] },
+      objects: [],
+      suite: review.suite,
+      report,
+      flip,
+      bindingHash: review.planHash ? ponrBindingHash(report, flip) : null,
+      marker,
+      storedApprovalAt: ctx.step.approval?.at ?? null,
+      now: ctx.now().getTime(),
+      measuredPending: 0,
+      inPlace: state,
+      progress: { done: review.suite.filter((c) => c.status === "pass" || c.status === "warn").length, total: review.suite.length, unit: "item" },
+    };
+  }
+
   async observe(ctx: StepContext): Promise<VerifyObs> {
     const run = ctx.run;
+    if (isInPlaceRun(run) && this.inplace) return this.observeInPlace(ctx, this.inplace);
     const snap = await loadSnapshot(this.data, ctx);
     const { views, missing } = await loadObjects(this.objects, ctx);
     const runtime = await this.runtime.snapshot(run);

@@ -6,6 +6,7 @@ import { CryptoModule } from "../../../crypto/crypto.module";
 import { CutoverModule } from "../../../cutover/cutover.module";
 import { NetProbe } from "../../../cutover/net-probe";
 import { ImporterModule } from "../../../importer/importer.module";
+import { CoolifyInPlaceModule } from "../../../coolify-inplace/coolify-inplace.module";
 import { RunImportStepsModule } from "../import/run-import-steps.module";
 import { ProxyOpsService } from "../../../server-ops/proxy-ops.service";
 import { CutoverHandler } from "./cutover.handler";
@@ -14,6 +15,7 @@ import { CutoverWorld } from "./cutover-world.service";
 import { DecommissionHandler } from "./decommission.handler";
 import { DnsPrepareHandler } from "./dns-prepare.handler";
 import { FinalizeHandler } from "./finalize.handler";
+import { InPlaceCutover } from "./inplace-cutover";
 import { ObserveHandler } from "./observe.handler";
 import { TlsPreissueHandler } from "./tls-preissue.handler";
 
@@ -28,8 +30,8 @@ import { TlsPreissueHandler } from "./tls-preissue.handler";
  * app's env (which of them point at an object store), never a value. Prisma, TeamAccess, Audit, Config, InstanceSettings and ProxyConfig are global.
  */
 @Module({
-  imports: [CutoverModule, ImporterModule, ApplicationsModule, AgentGatewayModule, ClustersModule, CryptoModule, RunImportStepsModule],
-  providers: [CutoverWorld, NetProbe, ProxyOpsService, CutoverPlanService, DnsPrepareHandler, TlsPreissueHandler, CutoverHandler, ObserveHandler, FinalizeHandler, DecommissionHandler],
+  imports: [CutoverModule, ImporterModule, ApplicationsModule, AgentGatewayModule, ClustersModule, CryptoModule, RunImportStepsModule, CoolifyInPlaceModule],
+  providers: [CutoverWorld, NetProbe, ProxyOpsService, CutoverPlanService, InPlaceCutover, DnsPrepareHandler, TlsPreissueHandler, CutoverHandler, ObserveHandler, FinalizeHandler, DecommissionHandler],
   exports: [CutoverPlanService],
 })
 export class RunCutoverStepsModule {}

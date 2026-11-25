@@ -50,8 +50,8 @@ export interface InPlaceWorld {
   startProxy(userId: string, serverId: string): Promise<void>;
   /** `running`, `stopped` or `absent`. */
   proxyStatus(userId: string, serverId: string): Promise<"running" | "stopped" | "absent">;
-  /** Another takeover or a guided run that holds this server. */
-  serverBusy(serverId: string): Promise<boolean>;
+  /** Another takeover or a guided run that holds this server. The guided run `exceptRunId` (the one that carries the takeover) does not count. */
+  serverBusy(serverId: string, exceptRunId?: string): Promise<boolean>;
   /** A successful deployment row that stands for the image Coolify built, so the rollback path can run it. Returns its id. */
   createAdoptDeployment(appId: string, commitSha: string | null): Promise<string>;
   dropAdoptDeployment(deploymentId: string): Promise<void>;

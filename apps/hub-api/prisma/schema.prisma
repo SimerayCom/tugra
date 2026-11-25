@@ -2761,6 +2761,7 @@ model MigrationRun {
   planHash        String
   mode            String             @default("copy") // ImportMode: copy | takeover (arms DECOMMISSION)
   topology        String             @default("two-box") // CoexistenceStrategy: two-box | swap-proxy
+  inPlace         Boolean            @default(false) // swap-proxy only: the source server is taken over in place (no data copy, no build), see CoolifyInPlaceService
   dryRun          Boolean            @default(false)
   promotedFromId  String? // the dry-run this run was promoted from
   applyInput      Json // frozen, secret-free apply input (see RunApplyInputSchema)

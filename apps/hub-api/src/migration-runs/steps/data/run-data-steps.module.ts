@@ -1,4 +1,5 @@
 import { Module } from "@nestjs/common";
+import { RunInPlaceStepsModule } from "../inplace/run-inplace-steps.module";
 import { AgentGatewayModule } from "../../../agent-gateway/agent-gateway.module";
 import { CryptoModule } from "../../../crypto/crypto.module";
 import { CutoverModule } from "../../../cutover/cutover.module";
@@ -46,7 +47,7 @@ import { VerifyHandler } from "./verify.handler";
  * so they are provided here again rather than widening the importer module's exports.
  */
 @Module({
-  imports: [AgentGatewayModule, CryptoModule, ImporterModule, CutoverModule, ObjectMigrationsModule, ServersModule],
+  imports: [AgentGatewayModule, CryptoModule, ImporterModule, CutoverModule, ObjectMigrationsModule, ServersModule, RunInPlaceStepsModule],
   controllers: [VerifyIngestController, HostReportController],
   providers: [
     MigrationTokenService,

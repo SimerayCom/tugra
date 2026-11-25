@@ -39,6 +39,8 @@ export interface NewRun {
   sourceVersion?: string | null;
   /** Campaign label. */
   campaign?: string | null;
+  /** An in-place takeover run (swap-proxy only). */
+  inPlace?: boolean;
   /**
    * Every target server the run locks (the default AND each `serverMap` target), written in the SAME transaction as the run so
    * "one live run per target server" holds for all of them. Empty for a dry-run. Absent = just the `activeKey` server.

@@ -1,7 +1,7 @@
 import { Logger } from "@nestjs/common";
 import { ACTOR, RunWorld, SERVER, TEAM, defaultPlan } from "./testing/run-world";
 import { confirmMatches } from "./migration-runs.service";
-import { RunReportSchema, MigrationRunViewSchema, MigrationRunSummarySchema, RunEventsPageSchema } from "./dto";
+import { CreateMigrationRunSchema, RunReportSchema, MigrationRunViewSchema, MigrationRunSummarySchema, RunEventsPageSchema } from "./dto";
 import type { ApprovalBinding } from "./dto";
 
 // the specs drive a whole run through the engine on a fake clock; give a loaded CI machine room
@@ -27,6 +27,19 @@ describe("create", () => {
     const copy = await w.create({ targetServerId: SERVER, mode: "copy", dryRun: true });
     expect((await w.store.steps(copy)).map((s) => s.key)).not.toContain("DECOMMISSION");
     expect(w.sink.audits.find((a) => a.action === "migration.run.create")).toMatchObject({ target: id, meta: expect.objectContaining({ mode: "takeover" }) });
+  });
+
+  it("an in-place run is marked only by the hub's own services (a campaign), needs the same-machine swap, and a promoted dry-run keeps the mark", async () => {
+    const w = new RunWorld();
+    // the HTTP body cannot carry the flag: the strict schema refuses it
+    expect(CreateMigrationRunSchema.safeParse({ ...w.createBody(), inPlace: true }).success).toBe(false);
+    const plain = await w.service.create(ACTOR, w.createBody({ topology: "swap-proxy", mode: "takeover" }));
+    expect(w.store.row(plain.id).inPlace).toBe(false);
+    await w.service.abort(ACTOR, plain.id, { confirmName: plain.id });
+    const marked = await w.service.create(ACTOR, w.createBody({ topology: "swap-proxy", mode: "takeover", dryRun: true }), { inPlace: true });
+    expect(w.store.row(marked.id).inPlace).toBe(true);
+    // not a swap: nothing to take over in place
+    await expect(w.service.create(ACTOR, w.createBody({ topology: "two-box" }), { inPlace: true })).rejects.toThrow(/in-place-needs-swap-proxy/);
   });
 
   it("every view validates against the published response schemas", async () => {

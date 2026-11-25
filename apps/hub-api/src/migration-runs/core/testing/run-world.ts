@@ -172,6 +172,7 @@ export class InMemoryRunStore implements RunStore {
       planHash: run.planHash,
       mode: run.mode,
       topology: run.topology,
+      inPlace: run.inPlace === true,
       dryRun: run.dryRun,
       promotedFromId: run.promotedFromId,
       applyInput: clone(run.applyInput) as never,

@@ -1,4 +1,5 @@
 import { Inject, Injectable, OnModuleInit, Optional } from "@nestjs/common";
+import { isInPlaceRun } from "../inplace/inplace-run-logic";
 import type { ApprovalBinding, DryRunItem, GateCheck, GateResult } from "../../core/dto";
 import {
   RunLeaseLostError,
@@ -164,8 +165,9 @@ export class FreezeHandler implements StepHandler<FreezeObs>, OnModuleInit {
     this.registry.register(this);
   }
 
-  applicable(_run: RunSnapshot): boolean {
-    return true;
+  /** An in-place takeover has no source to freeze: nothing is copied, and the switch itself is short and reversible. */
+  applicable(run: RunSnapshot): boolean {
+    return !isInPlaceRun(run);
   }
 
   async dryRun(ctx: StepContext): Promise<DryRunItem[]> {

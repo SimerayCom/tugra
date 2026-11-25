@@ -1,4 +1,5 @@
 import { Inject, Injectable } from "@nestjs/common";
+import { isInPlaceRun } from "../inplace/inplace-run-logic";
 import type { ApprovalBinding, DryRunItem, GateCheck, GateResult } from "../../core/dto";
 import {
   STEP_HANDLERS,
@@ -81,8 +82,9 @@ export class DecommissionHandler extends CutoverStepBase implements StepHandler<
     super(registry);
   }
 
+  /** An in-place takeover leaves Coolify on the box (it is given back with one click until the cleanup lane removes it): nothing is stopped here. */
   applicable(run: RunSnapshot): boolean {
-    return run.mode === "takeover";
+    return run.mode === "takeover" && !isInPlaceRun(run);
   }
 
   private controllerOf(run: RunSnapshot): SourceController {

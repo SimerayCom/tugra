@@ -1,4 +1,5 @@
 import { Inject, Injectable, OnModuleInit, Optional } from "@nestjs/common";
+import { isInPlaceRun } from "../inplace/inplace-run-logic";
 import type { DryRunItem, GateCheck, GateResult } from "../../core/dto";
 import {
   RunLeaseLostError,
@@ -68,8 +69,9 @@ export class DataSeedHandler implements StepHandler<SeedObs>, OnModuleInit {
     this.registry.register(this);
   }
 
-  applicable(_run: RunSnapshot): boolean {
-    return true;
+  /** An in-place takeover copies nothing: the data stays where Coolify's containers keep it. */
+  applicable(run: RunSnapshot): boolean {
+    return !isInPlaceRun(run);
   }
 
   async dryRun(ctx: StepContext): Promise<DryRunItem[]> {

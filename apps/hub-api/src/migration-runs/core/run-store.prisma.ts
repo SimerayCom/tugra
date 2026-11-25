@@ -68,6 +68,7 @@ export class PrismaRunStore implements RunStore {
           sourceHost: run.sourceHost,
           ...(run.sourceVersion ? { sourceVersion: run.sourceVersion } : {}),
           ...(run.campaign ? { campaign: run.campaign } : {}),
+          ...(run.inPlace ? { inPlace: true } : {}),
           sessionId: run.sessionId,
           planHash: run.planHash,
           mode: run.mode,

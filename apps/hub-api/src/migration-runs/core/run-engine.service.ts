@@ -789,6 +789,7 @@ export class RunEngineService implements OnModuleDestroy {
       planHash: r.planHash,
       mode: r.mode as RunMode,
       topology: r.topology as RunTopology,
+      ...(r.inPlace ? { inPlace: true } : {}),
       dryRun: r.dryRun,
       promotedFromId: r.promotedFromId,
       applyInput: RunApplyInputSchema.parse(r.applyInput),

@@ -1,4 +1,5 @@
 import { Inject, Injectable, Optional } from "@nestjs/common";
+import { isInPlaceRun } from "../inplace/inplace-run-logic";
 import { APPLICATIONS_SERVICE } from "../../../applications/applications.tokens";
 import type { ApplicationsService } from "../../../applications/applications.service";
 import { CutoverService } from "../../../cutover/cutover.service";
@@ -79,8 +80,9 @@ export class TlsPreissueHandler extends CutoverStepBase implements StepHandler<T
     super(registry);
   }
 
-  applicable(): boolean {
-    return true;
+  /** An in-place takeover has its own certificate work (Coolify's as a short fallback, a new one per domain), done in CUTOVER. */
+  applicable(run: RunSnapshot): boolean {
+    return !isInPlaceRun(run);
   }
 
   async dryRun(ctx: StepContext): Promise<DryRunItem[]> {

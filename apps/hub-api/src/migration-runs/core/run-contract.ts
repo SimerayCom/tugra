@@ -593,6 +593,13 @@ export interface RunSnapshot {
   readonly planHash: string;
   readonly mode: RunMode;
   readonly topology: RunTopology;
+  /**
+   * `swap-proxy` only, set by a campaign's in-place wave (never by the create body): the source server is taken over IN PLACE by
+   * `CoolifyInPlaceService` (no data copy, no build, the images Coolify built are reused). The data steps and TLS_PREISSUE do not apply,
+   * DEPLOY_DARK prepares and tests Tugra's side on a dark proxy, VERIFY is the owner's approval of that test, CUTOVER takes the ports
+   * and waits for the new certificates. Absent/false = the classic same-host swap with a data copy.
+   */
+  readonly inPlace?: boolean;
   /** True: every handler runs `dryRun()` only and must write NOTHING outside the run's own rows. */
   readonly dryRun: boolean;
   readonly promotedFromId: string | null;
@@ -939,6 +946,14 @@ export interface StepHandlerRegistry {
 export const MIGRATION_RUNS_FACADE = Symbol("MIGRATION_RUNS_FACADE");
 
 /**
+ * What only the hub's own services (a campaign) may set on a new run; the HTTP body cannot carry it. `inPlace` marks a swap-proxy
+ * run as an in-place takeover ({@link RunSnapshot.inPlace}).
+ */
+export interface RunCreateInternal {
+  readonly inPlace?: boolean;
+}
+
+/**
  * The service port behind every REST route (design 8) and the MCP tools. One method per route, in the same order.
  * Every method re-checks authorization from `actor` (creator-only ownership, team permissions `apps:config` and
  * `databases` on the run's team, scope per route) and returns the fresh, secret-free {@link MigrationRunView} unless
@@ -948,7 +963,7 @@ export const MIGRATION_RUNS_FACADE = Symbol("MIGRATION_RUNS_FACADE");
  */
 export interface MigrationRunsFacade {
   /** `POST /migration-runs`: validate, freeze the apply input, create the run + its step rows (+ an immediate dry-run projection when `dryRun`). 201. */
-  create(actor: RunActor, body: CreateMigrationRunInput): Promise<MigrationRunView>;
+  create(actor: RunActor, body: CreateMigrationRunInput, internal?: RunCreateInternal): Promise<MigrationRunView>;
   /** `GET /migration-runs`: the actor's runs on teams they belong to, newest first. */
   list(actor: RunActor, query: ListMigrationRunsQuery): Promise<MigrationRunSummary[]>;
   /** `GET /migration-runs/:id` */

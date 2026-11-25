@@ -79,10 +79,10 @@ export class InPlaceWorldService implements InPlaceWorld {
     return (await this.proxyOps.status(userId, serverId)).status;
   }
 
-  async serverBusy(serverId: string): Promise<boolean> {
+  async serverBusy(serverId: string, exceptRunId?: string): Promise<boolean> {
     const [takeovers, runs] = await Promise.all([
-      this.prisma.coolifyTakeover.count({ where: { serverId, status: { in: LIVE_TAKEOVER } } }),
-      this.prisma.migrationRun.count({ where: { targetServerId: serverId, status: { in: [...LIVE_RUN] } } }),
+      this.prisma.coolifyTakeover.count({ where: { serverId, status: { in: LIVE_TAKEOVER }, ...(exceptRunId ? { OR: [{ runId: null }, { runId: { not: exceptRunId } }] } : {}) } }),
+      this.prisma.migrationRun.count({ where: { targetServerId: serverId, status: { in: [...LIVE_RUN] }, ...(exceptRunId ? { id: { not: exceptRunId } } : {}) } }),
     ]);
     return takeovers + runs > 0;
   }
