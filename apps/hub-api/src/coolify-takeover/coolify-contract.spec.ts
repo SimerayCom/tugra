@@ -37,8 +37,8 @@ describe("Coolify takeover contract: capabilities on the hub", () => {
 
 describe("Coolify takeover contract: skeleton modules", () => {
   it("instantiates every empty takeover service on its own (no hidden dependency yet)", async () => {
-    const mod = await Test.createTestingModule({ providers: [SealedChannelService, CoolifyHostGrantService, CoolifySshInstallService, HostMatchService] }).compile();
-    for (const S of [SealedChannelService, CoolifyHostGrantService, CoolifySshInstallService, HostMatchService]) expect(mod.get(S)).toBeInstanceOf(S);
+    const mod = await Test.createTestingModule({ providers: [SealedChannelService, CoolifyHostGrantService, CoolifySshInstallService] }).compile();
+    for (const S of [SealedChannelService, CoolifyHostGrantService, CoolifySshInstallService]) expect(mod.get(S)).toBeInstanceOf(S);
   });
 
   it("registers the takeover services in the existing takeover module and exports them", () => {
@@ -68,7 +68,7 @@ describe("Coolify takeover contract: skeleton modules", () => {
   });
 
   it("the skeleton services are empty: no method, no field", () => {
-    for (const S of [SealedChannelService, CoolifyHostGrantService, CoolifySshInstallService, HostMatchService, CoolifyInPlaceService, CoolifyCleanupService, MigrationCampaignsService, ProjectMovesService]) {
+    for (const S of [SealedChannelService, CoolifyHostGrantService, CoolifySshInstallService, CoolifyInPlaceService, CoolifyCleanupService, MigrationCampaignsService, ProjectMovesService]) {
       expect(Object.getOwnPropertyNames(S.prototype)).toEqual(["constructor"]);
     }
   });

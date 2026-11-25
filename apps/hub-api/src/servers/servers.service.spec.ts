@@ -590,6 +590,26 @@ describe("ServersService.saveHostInfo + uptime view", () => {
     expect(data.ipSource).toBe("reported");
   });
 
+  it("keeps the host identity facts the agent reports (hashed machine id, Docker engine id) in memory, only when they have the shape of one", async () => {
+    const prisma = { server: { findUnique: jest.fn().mockResolvedValue(null), update: jest.fn().mockResolvedValue({}) } } as unknown as PrismaService;
+    const svc = svcWith(prisma);
+    const hash = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    await svc.saveHostInfo("s1", hostInfo({ machineIdHash: hash, dockerEngineId: "7TRN:IPZB:QYBB:VPBQ" }));
+    expect(svc.hostIdentityOf("s1")).toEqual({ machineIdHash: hash, dockerEngineId: "7TRN:IPZB:QYBB:VPBQ" });
+    // never written to the database (no migration, nothing stale outlives the process)
+    expect(JSON.stringify((prisma.server.update as jest.Mock).mock.calls, (_k, v) => (typeof v === "bigint" ? Number(v) : v))).not.toContain(hash);
+    // a malformed value is dropped, a good one next to it stays
+    await svc.saveHostInfo("s1", hostInfo({ machineIdHash: "not-a-hash", dockerEngineId: "ok-engine-id-1" }));
+    expect(svc.hostIdentityOf("s1")).toEqual({ dockerEngineId: "ok-engine-id-1" });
+    await svc.saveHostInfo("s1", hostInfo({ machineIdHash: hash.toUpperCase(), dockerEngineId: "bad id; rm" }));
+    expect(svc.hostIdentityOf("s1")).toBeUndefined();
+    // an older agent reports none: the old fact does not linger
+    await svc.saveHostInfo("s1", hostInfo({ machineIdHash: hash }));
+    await svc.saveHostInfo("s1", hostInfo());
+    expect(svc.hostIdentityOf("s1")).toBeUndefined();
+    expect(svc.hostIdentityOf("never-connected")).toBeUndefined();
+  });
+
   it("keeps the cloud provider the host names as a price-estimate hint, only as a clean slug", async () => {
     const update = jest.fn().mockResolvedValue({});
     const prisma = { server: { findUnique: jest.fn().mockResolvedValue(null), update } } as unknown as PrismaService;

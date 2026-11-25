@@ -13,7 +13,7 @@ import { Subject, type Observable } from "rxjs";
 import { z } from "zod";
 import { Prisma, Role, ServerStatus } from "@prisma/client";
 import { DEFAULT_CLEANUP_DATA } from "../server-ops/cleanup-defaults";
-import { AGENT_CAPABILITIES, COOLIFY_RUN_CAPABILITIES } from "@tugra/shared";
+import { AGENT_CAPABILITIES, COOLIFY_RUN_CAPABILITIES, type HostIdentityFacts } from "@tugra/shared";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService, type AuditFilters } from "../audit/audit.service";
 import { NotificationsService } from "../notifications/notifications.service";
@@ -141,6 +141,9 @@ export interface HostInfoInput {
   /** Public addresses the cloud provider's link-local metadata service reports (agent probes 169.254.169.254, never the internet). */
   metadataIps?: string[];
   cloudProvider?: string;
+  /** Hashed machine id and Docker engine id (Coolify hub takeover, host matching). Held in memory only. */
+  machineIdHash?: string;
+  dockerEngineId?: string;
 }
 
 /** Placeholder name of a server added without one; replaced by the host's real hostname when its agent connects. */
@@ -183,6 +186,9 @@ export class ServersService implements OnModuleInit, OnModuleDestroy {
   private lastSeenClosed = false;
   // serverId -> when this process last saw/wrote status ONLINE for it (see HEAL_RECHECK_MS).
   private readonly confirmedOnline = new Map<string, number>();
+  /** Identity facts each connected agent last reported (hashed machine id, Docker engine id). In memory on purpose: an agent re-sends
+   *  them on every (re)connect, so there is nothing to migrate, and a stale fact can never outlive the process. */
+  private readonly hostIdentity = new Map<string, HostIdentityFacts>();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -942,8 +948,19 @@ export class ServersService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  /** The identity facts the agent of this server last reported, or undefined (older agent, not connected since the hub started). */
+  hostIdentityOf(serverId: string): HostIdentityFacts | undefined {
+    return this.hostIdentity.get(serverId);
+  }
+
   /** Store/refresh the host hardware+OS inventory (sent on every (re)connect). */
   async saveHostInfo(serverId: string, info: HostInfoInput): Promise<void> {
+    // The agent's payload is not schema-validated on the socket: keep a fact only when it has the shape of one.
+    const facts: HostIdentityFacts = {};
+    if (typeof info.machineIdHash === "string" && /^[0-9a-f]{64}$/.test(info.machineIdHash)) facts.machineIdHash = info.machineIdHash;
+    if (typeof info.dockerEngineId === "string" && /^[A-Za-z0-9:_-]{8,128}$/.test(info.dockerEngineId)) facts.dockerEngineId = info.dockerEngineId;
+    if (Object.keys(facts).length) this.hostIdentity.set(serverId, facts);
+    else this.hostIdentity.delete(serverId);
     // The agent's payload is not schema-validated on the socket: keep only well-formed address literals, bounded.
     const clean = (list: unknown): string[] =>
       Array.isArray(list) ? list.filter((x): x is string => typeof x === "string" && isIP(x) !== 0).slice(0, 64) : [];
