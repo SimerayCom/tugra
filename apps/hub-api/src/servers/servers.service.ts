@@ -587,6 +587,24 @@ export class ServersService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
+   * Turn ONE Coolify takeover capability on or off for a server, for the consent flow that owns it (CoolifyHostGrantService: owner-only,
+   * typed confirmation, time-limited, audited there). This is the only way such a capability is ever added: `setCapabilities` refuses to
+   * add one by hand and the bulk endpoint cannot touch them. No permission check lives here on purpose: the caller has already required
+   * the OWNER role, and the expiry sweep runs without a user. Returns whether the stored set changed.
+   */
+  async applyCoolifyRunCapability(serverId: string, capability: string, on: boolean): Promise<boolean> {
+    if (!(COOLIFY_RUN_CAPABILITIES as readonly string[]).includes(capability)) throw new BadRequestException("not a Coolify takeover capability");
+    const server = await this.prisma.server.findUnique({ where: { id: serverId }, select: { capabilities: true } });
+    if (!server) throw new NotFoundException("server not found");
+    const held = server.capabilities.includes(capability);
+    if (held === on) return false;
+    const next = on ? [...server.capabilities, capability] : server.capabilities.filter((c) => c !== capability);
+    await this.prisma.server.update({ where: { id: serverId }, data: { capabilities: next } });
+    this.capabilityPusher?.(serverId, next); // the agent's fail-closed allowlist follows at once
+    return true;
+  }
+
+  /**
    * Grant and/or revoke opt-in capabilities on many servers in one call. Per server it applies the same rules as
    * {@link setCapabilities} (team permission `servers:manage` on THAT server's team, files_write needs files,
    * live push to the agent) and writes one audit entry per server naming exactly what changed. A server the caller
