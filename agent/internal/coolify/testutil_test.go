@@ -188,7 +188,6 @@ func (h *fakeHost) helper(ctx context.Context, argv []string, stdin io.Reader, s
 	return nil
 }
 
-func contains(a []string, s string) bool { return indexOf(a, s) >= 0 }
 func indexOf(a []string, s string) int {
 	for i, x := range a {
 		if x == s {

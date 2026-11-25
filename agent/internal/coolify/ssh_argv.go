@@ -35,7 +35,7 @@ var allowedKeyBases = []string{"/data/coolify/ssh"}
 
 var (
 	helperNameRe = regexp.MustCompile(`^tugra-cssh-[a-f0-9]{8,32}$`)
-	imageRe      = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/:@-]{0,300}$`)
+	sshImageRe      = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/:@-]{0,300}$`)
 	keyDirRe     = regexp.MustCompile(`^/[A-Za-z0-9._/-]{1,200}$`)
 )
 
@@ -154,7 +154,7 @@ func RemoteCommand(sudo bool, extra ...string) []string {
 }
 
 // ValidImage reports whether ref is an image reference safe to put on a command line (never starts with a dash).
-func ValidImage(ref string) bool { return imageRe.MatchString(ref) }
+func ValidImage(ref string) bool { return sshImageRe.MatchString(ref) }
 
 func checkHelper(image, name string, t Target) error {
 	if !ValidImage(image) {
