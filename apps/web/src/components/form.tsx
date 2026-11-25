@@ -126,6 +126,8 @@ export function Checkbox({
 export interface Option {
   value: string;
   label: string;
+  /** Listed but not selectable (put the reason in the label). */
+  disabled?: boolean;
 }
 
 /**
@@ -177,7 +179,7 @@ export function Select({
     >
       <option value="" disabled>{placeholder ?? t("common.select")}</option>
       {options.map((o) => (
-        <option key={o.value} value={o.value}>{o.label}</option>
+        <option key={o.value} value={o.value} disabled={o.disabled}>{o.label}</option>
       ))}
     </select>
   );

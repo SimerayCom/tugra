@@ -170,4 +170,62 @@ describe("DiscoverAdoptCard", () => {
       expect(screen.getAllByText("Part of a compose stack").length).toBe(2);
     });
   });
+
+  describe("honest actions", () => {
+    const srv: { name: string; status: "ONLINE" | "OFFLINE" | "PENDING"; canWrite: boolean; capabilities: string[] } = { name: "Box 1", status: "ONLINE", canWrite: true, capabilities: ["deploy"] };
+
+    it("platform apps carry the platform into the import and say a token is needed; its own stack is not moved", async () => {
+      sessionStorage.clear();
+      vi.spyOn(api, "discoverContainers").mockResolvedValue({
+        containers: [
+          dc({ id: "a", name: "coolify-proxy", image: "traefik:v3", managedBy: "coolify", platformInfra: true, adoptable: false }),
+          dc({ id: "b", name: "abc-1", image: "node:22", managedBy: "coolify", platformInfra: false, adoptable: false }),
+        ],
+      });
+      wrap(<DiscoverAdoptCard id="s1" server={srv} />);
+      fireEvent.click(screen.getByText("Scan"));
+      await screen.findByText("abc-1");
+      const rows = screen.getAllByRole("row");
+      const infra = rows.find((r) => within(r).queryByText("coolify-proxy"))!;
+      const app = rows.find((r) => within(r).queryByText("abc-1"))!;
+      expect(within(infra).getByText("Part of Coolify itself. Not moved.")).toBeTruthy();
+      expect(within(infra).queryByRole("link")).toBeNull();
+      expect(within(app).getByText("Needs the Coolify import and an API token.")).toBeTruthy();
+      fireEvent.click(within(app).getByRole("link", { name: /Open the import/ }));
+      expect(JSON.parse(sessionStorage.getItem("tugra.import.focus") ?? "{}")).toEqual({ kind: "coolify", fromServerName: "Box 1" });
+    });
+
+    it("a Swarm service is refused with the Dokploy import as the way", async () => {
+      vi.spyOn(api, "discoverContainers").mockResolvedValue({ containers: [dc({ id: "w", name: "web.1.x", swarm: true, adoptable: false })] });
+      wrap(<DiscoverAdoptCard id="s1" server={srv} />);
+      fireEvent.click(screen.getByText("Scan"));
+      await screen.findByText("web.1.x");
+      expect(screen.getByText(/This container is a Swarm service \(often Dokploy\)/)).toBeTruthy();
+      expect(screen.queryByText("Adopt")).toBeNull();
+    });
+
+    it("Adopt and Scan are off with the reason when the server is offline or lacks the deploy capability", async () => {
+      vi.spyOn(api, "discoverContainers").mockResolvedValue({ containers: [dc()] });
+      wrap(<DiscoverAdoptCard id="s1" server={{ ...srv, status: "OFFLINE" }} />);
+      expect(screen.getByText("This server is offline. Bring its agent back online first.")).toBeTruthy();
+      expect(screen.getByRole("button", { name: "Scan" })).toHaveProperty("disabled", true);
+      cleanup();
+      wrap(<DiscoverAdoptCard id="s1" server={{ ...srv, capabilities: ["backup"] }} />);
+      expect(screen.getByText(/Needs the Deploy apps capability/)).toBeTruthy();
+      expect(screen.getByRole("link", { name: "Turn it on" }).getAttribute("href")).toBe("/servers/s1?tab=maintenance");
+    });
+
+    it("a stack the platform runs shows its reason in plain sight with the import link", async () => {
+      vi.spyOn(api, "listTeams").mockResolvedValue([{ id: "t1", role: "OWNER" }] as never);
+      vi.spyOn(api, "discoverContainers").mockResolvedValue({
+        containers: [dc({ id: "c1", name: "shop-web-1", composeProject: "shop", adoptable: false }), dc({ id: "c2", name: "shop-db-1", composeProject: "shop", adoptable: false })],
+        stacks: [{ project: "shop", services: [], workingDir: "/srv/shop", configFiles: [], volumes: [], firstContainer: "shop-web-1", adoptable: false, reason: "managed", managedBy: "coolify" } as never],
+      });
+      wrap(<DiscoverAdoptCard id="s1" teamId="t1" server={srv} />);
+      fireEvent.click(screen.getByText("Scan"));
+      const refusal = await screen.findByTestId("stack-refusal");
+      expect(refusal.textContent).toMatch(/Coolify or Dokploy runs this project/);
+      expect(within(refusal).getByRole("link", { name: "Open the import" })).toBeTruthy();
+    });
+  });
 });

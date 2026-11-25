@@ -1025,5 +1025,13 @@
       "other": "Could not reach {source}. Check the address."
     }
   },
-  "advanced": "Advanced"
+  "advanced": "Advanced",
+  "needsCoolify": "You need your Coolify address and an API token with read and read:sensitive.",
+  "needsDokploy": "You need your Dokploy address and an API key from an owner or admin.",
+  "needsMore": "More",
+  "tokenPageCoolify": "Open the token page in Coolify",
+  "tokenPageDokploy": "Open the key page in Dokploy",
+  "readFirst": "Coolify runs on a server you already added? You can read it first (preview only):",
+  "fromServer": "Moving what runs on {server}. Pick it on the next step.",
+  "localDockerLink": "Open your servers"
 }

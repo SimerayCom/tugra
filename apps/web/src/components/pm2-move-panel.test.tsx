@@ -84,6 +84,16 @@ describe("Pm2MovePanel", () => {
     expect(screen.getByRole("button", { name: "Move to Tugra" }).getAttribute("title")).toBe("You need server-ops permission to scan");
   });
 
+  it("says which capabilities are missing, with the switch one click away, before the click", () => {
+    show({ capabilities: ["deploy"] });
+    expect(screen.getByRole("button", { name: "Move to Tugra" })).toHaveProperty("disabled", true);
+    expect(screen.getByText(/Needs the OS patching capability on this server\./)).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Turn it on" }).getAttribute("href")).toBe("/servers/s1?tab=maintenance");
+    cleanup();
+    show({ capabilities: ["patch", "deploy"] });
+    expect(screen.getByRole("button", { name: "Move to Tugra" })).toHaveProperty("disabled", false);
+  });
+
   it("previews every process: ready, needs a Node version, and why one cannot move (never a fake action)", async () => {
     const spy = vi.spyOn(api, "planPm2Move").mockResolvedValue({ plans: PLANS, truncated: false });
     show();

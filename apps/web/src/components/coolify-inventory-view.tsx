@@ -1,9 +1,12 @@
 "use client";
 
 import Link from "next/link";
+import { useQuery } from "@tanstack/react-query";
+import { api } from "../lib/api";
 import { useT } from "../i18n/provider";
 import { relativeTime } from "../lib/fleet";
 import { coolifyVersion, groupByTeam, coolifyAddress, rememberImportAddress, statusTone, type CoolifyInventoryView, type InvServer, type InventoryItem, type TeamGroup } from "../lib/coolify-takeover";
+import { rememberImportFocus } from "../lib/import-focus";
 import { Badge, Card } from "./ui";
 
 const KIND = { application: "coolifyTakeover.item.application", database: "coolifyTakeover.item.database", service: "coolifyTakeover.item.service" } as const;
@@ -21,7 +24,20 @@ const row = { display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", 
 const mono = { fontSize: 12, color: "var(--c-tx3)", overflowWrap: "anywhere" } as const;
 const sectionTitle = { fontSize: 11, fontWeight: 700, color: "var(--c-tx3)", textTransform: "uppercase", letterSpacing: "0.05em", margin: "14px 0 2px" } as const;
 
-function Server({ s }: { s: InvServer }) {
+/** A Coolify server (by its internal id) that is already a Tugra server. */
+type Connected = ReadonlyMap<string, { tugraServerId: string; teamId: string | null }>;
+
+/** Hand the import what this row knows (the Coolify address, the server or project to start with, and the Tugra server it is already connected as). */
+function openImport(address: string | null, w: { serverUuid: string | null; projectUuid: string | null; connected?: { tugraServerId: string; teamId: string | null } }): void {
+  rememberImportFocus({
+    kind: "coolify",
+    address,
+    ...(w.serverUuid ? { sourceServerUuid: w.serverUuid } : w.projectUuid ? { sourceProjectUuid: w.projectUuid } : {}),
+    ...(w.connected ? { targetServerId: w.connected.tugraServerId, ...(w.connected.teamId ? { targetTeamId: w.connected.teamId } : {}) } : {}),
+  });
+}
+
+function Server({ s, address, connected, tugraName }: { s: InvServer; address: string | null; connected?: { tugraServerId: string; teamId: string | null }; tugraName?: string }) {
   const t = useT();
   return (
     <li style={row}>
@@ -33,12 +49,16 @@ function Server({ s }: { s: InvServer }) {
       <span className="mono" style={{ ...mono, flex: "1 1 160px" }}>
         {s.user}@{s.ip}:{s.port}
       </span>
+      {connected && <Badge tone="ok">{tugraName ? t("coolifyTakeover.server.connectedAs", { name: tugraName }) : t("coolifyTakeover.server.connected")}</Badge>}
       <span style={{ fontSize: 12, color: "var(--c-tx3)" }}>{t("coolifyTakeover.server.counts", { apps: s.apps, databases: s.databases, services: s.services })}</span>
+      <Link href="/import" onClick={() => openImport(address, { serverUuid: s.uuid, projectUuid: null, connected })} className="tg-link" aria-label={t("coolifyTakeover.item.openServerLabel", { name: s.name })} style={{ fontSize: 13, minHeight: 44, display: "inline-flex", alignItems: "center", padding: "0 8px" }}>
+        {t("coolifyTakeover.item.open")}
+      </Link>
     </li>
   );
 }
 
-function Item({ item, address }: { item: InventoryItem; address: string | null }) {
+function Item({ item, address, connected }: { item: InventoryItem; address: string | null; connected?: { tugraServerId: string; teamId: string | null } }) {
   const t = useT();
   return (
     <li style={row}>
@@ -50,7 +70,7 @@ function Item({ item, address }: { item: InventoryItem; address: string | null }
         {item.server ? ` · ${t("coolifyTakeover.item.on", { server: item.server })}` : ""}
         {item.environment ? ` · ${item.environment}` : ""}
       </span>
-      <Link href="/import" onClick={() => rememberImportAddress(address)} className="tg-link" aria-label={t("coolifyTakeover.item.moveLabel", { name: item.name })} style={{ fontSize: 13, minHeight: 44, display: "inline-flex", alignItems: "center", padding: "0 8px" }}>
+      <Link href="/import" onClick={() => { rememberImportAddress(address); openImport(address, { serverUuid: item.serverUuid, projectUuid: item.projectUuid, connected }); }} className="tg-link" aria-label={t("coolifyTakeover.item.moveLabel", { name: item.name })} style={{ fontSize: 13, minHeight: 44, display: "inline-flex", alignItems: "center", padding: "0 8px" }}>
         {t("coolifyTakeover.item.move")}
       </Link>
     </li>
@@ -69,7 +89,7 @@ function Section({ title, count, children }: { title: string; count: number; chi
   );
 }
 
-function Team({ g, open, address }: { g: TeamGroup; open: boolean; address: string | null }) {
+function Team({ g, open, address, connected, tugraNames }: { g: TeamGroup; open: boolean; address: string | null; connected: Connected; tugraNames: ReadonlyMap<string, string> }) {
   const t = useT();
   const items = g.projects.reduce((n, p) => n + p.items.length, 0);
   const name = g.team?.name ?? t("coolifyTakeover.team.noTeam");
@@ -86,6 +106,7 @@ function Team({ g, open, address }: { g: TeamGroup; open: boolean; address: stri
         </summary>
         <div style={{ paddingBottom: 12 }}>
           {g.team?.description && <p style={{ margin: "0 0 4px", fontSize: 12, color: "var(--c-tx3)" }}>{g.team.description}</p>}
+          {items + g.servers.length > 0 && <p style={{ margin: "0 0 4px", fontSize: 12, color: "var(--c-tx3)" }}>{t("coolifyTakeover.item.tokenNeeded")}</p>}
           {g.team && g.team.notifications.length > 0 && (
             <p style={{ margin: "4px 0", fontSize: 12, color: "var(--c-tx3)", display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
               <span>{t("coolifyTakeover.team.notifications")}</span>
@@ -98,13 +119,13 @@ function Team({ g, open, address }: { g: TeamGroup; open: boolean; address: stri
           )}
           <Section title={t("coolifyTakeover.section.servers")} count={g.servers.length}>
             {g.servers.map((s) => (
-              <Server key={s.id} s={s} />
+              <Server key={s.id} s={s} address={address} connected={connected.get(s.id)} tugraName={tugraNames.get(connected.get(s.id)?.tugraServerId ?? "")} />
             ))}
           </Section>
           {g.projects.map((p) => (
             <Section key={p.id || "none"} title={p.name ?? t("coolifyTakeover.team.noProject")} count={p.items.length}>
               {p.items.map((i) => (
-                <Item key={i.key} item={i} address={address} />
+                <Item key={i.key} item={i} address={address} connected={connected.get(i.serverDbId ?? "")} />
               ))}
             </Section>
           ))}
@@ -167,6 +188,13 @@ export function CoolifyInventoryBody({ inv }: { inv: CoolifyInventoryView }) {
   const data = inv.data;
   if (!data) return null;
   const groups = groupByTeam(data);
+  // Which of this Coolify's servers are already Tugra servers (matched by the hub on address): the import then starts on them.
+  const checklist = useQuery({ queryKey: ["coolify-servers", inv.serverId], queryFn: () => api.coolifyServers(inv.serverId), staleTime: 30_000, retry: false });
+  const { data: tugraServers } = useQuery({ queryKey: ["servers", "all"], queryFn: () => api.listServers(), staleTime: 30_000, retry: false });
+  const connected: Connected = new Map(
+    (checklist.data?.rows ?? []).filter((r) => (r.state === "already_added" || r.state === "this_server") && r.tugraServerId).map((r) => [r.coolifyServerId, { tugraServerId: r.tugraServerId as string, teamId: r.teamId }] as const),
+  );
+  const tugraNames = new Map((tugraServers ?? []).map((s) => [s.id, s.name] as const));
   const version = coolifyVersion(inv.coolifyImage);
   const c = inv.counts;
   return (
@@ -186,7 +214,7 @@ export function CoolifyInventoryBody({ inv }: { inv: CoolifyInventoryView }) {
         {data.unavailable.length > 0 && <p style={{ margin: "6px 0 0", fontSize: 12, color: "var(--c-tx3)" }}>{t("coolifyTakeover.unavailable", { names: data.unavailable.join(", ") })}</p>}
       </Card>
       {groups.map((g, i) => (
-        <Team key={g.id || "none"} g={g} open={i === 0} address={coolifyAddress(data.instance.fqdn)} />
+        <Team key={g.id || "none"} g={g} open={i === 0} address={coolifyAddress(data.instance.fqdn)} connected={connected} tugraNames={tugraNames} />
       ))}
       {inv.readAt && <p style={{ margin: 0, fontSize: 12, color: "var(--c-tx3)" }}>{t("coolifyTakeover.read.readAt", { when: relativeTime(inv.readAt) })}</p>}
     </div>

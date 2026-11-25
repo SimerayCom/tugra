@@ -107,14 +107,16 @@ export function LinkBtn({
   variant = "primary",
   children,
   style,
+  onClick,
 }: {
   href: string;
   variant?: Exclude<BtnVariant, "danger" | "dangerGhost">;
   children: ReactNode;
   style?: CSSProperties;
+  onClick?: () => void;
 }) {
   return (
-    <Link href={href} className="tg-btn" style={{ ...btnChrome(variant, false), textDecoration: "none", ...style }}>
+    <Link href={href} className="tg-btn" onClick={onClick} style={{ ...btnChrome(variant, false), textDecoration: "none", ...style }}>
       {children}
     </Link>
   );

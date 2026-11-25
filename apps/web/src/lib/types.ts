@@ -847,7 +847,11 @@ export interface DiscoveredContainer {
   composeProject: string | null;
   /** Coolify or Dokploy runs this container: it moves with that platform's import, not by adoption. */
   managedBy?: "coolify" | "dokploy" | null;
-  adoptable: boolean; // false for compose-managed and platform-managed containers
+  /** The platform's own stack (not an app it deployed): it stays where it is. */
+  platformInfra?: boolean;
+  /** A Docker Swarm service task: not adopted one by one. */
+  swarm?: boolean;
+  adoptable: boolean; // false for compose-managed, platform-managed and Swarm containers
 }
 
 export type StackRefusal = "tugra" | "managed" | "no_config" | "unsafe_path" | "bad_name" | "name_clash";
@@ -2656,6 +2660,10 @@ export interface ScanContainer {
   managedBy: "coolify" | "dokploy" | null;
   ports: number[];
   adoptable: boolean;
+  /** The platform's own container (Coolify's proxy, database ...): it stays where it is. Absent on reports stored before it existed. */
+  platformInfra?: boolean;
+  /** A Docker Swarm service task (Dokploy's apps). Absent on older reports. */
+  swarm?: boolean;
 }
 export interface ScanPm2Proc {
   name: string;

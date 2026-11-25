@@ -5,8 +5,11 @@ import { useState, useEffect, useRef } from "react";
 import { TriangleAlert } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
-import type { DiscoveredContainer, DiscoveredPort, DiscoveredStack } from "../lib/types";
+import type { DiscoveredContainer, DiscoveredPort, DiscoveredStack, ServerView } from "../lib/types";
 import { useT } from "../i18n/provider";
+import { blockText, serverBlock } from "../lib/cta-readiness";
+import { rememberImportFocus } from "../lib/import-focus";
+import { BlockedNote } from "./cta-parts";
 import { Card, Btn, Badge, EmptyState } from "./ui";
 import { Modal } from "./modal";
 import { useToast } from "./toast";
@@ -20,8 +23,12 @@ function fmtPort(p: DiscoveredPort): string {
  *  container to Tugra's convention — see the warning block for what a later redeploy will NOT carry. */
 const PLATFORM = { coolify: "Coolify", dokploy: "Dokploy" } as const;
 
-export function DiscoverAdoptCard({ id, autoScan = 0, teamId }: { id: string; autoScan?: number; teamId?: string }) {
+export function DiscoverAdoptCard({ id, autoScan = 0, teamId, server }: { id: string; autoScan?: number; teamId?: string; server?: Pick<ServerView, "name" | "status" | "canWrite" | "capabilities"> }) {
   const t = useT();
+  // Adopting reads and registers the host through the agent: it needs the server online, write access and the deploy capability.
+  const block = server ? serverBlock(server, ["deploy"]) : null;
+  const blockWhy = block ? blockText(t, block) : undefined;
+  const openImport = (platform: "coolify" | "dokploy") => rememberImportFocus({ kind: platform, ...(server?.name ? { fromServerName: server.name } : {}) });
   const [rows, setRows] = useState<DiscoveredContainer[] | null>(null);
   const [stacks, setStacks] = useState<DiscoveredStack[]>([]);
   const [target, setTarget] = useState<DiscoveredContainer | null>(null);
@@ -49,13 +56,14 @@ export function DiscoverAdoptCard({ id, autoScan = 0, teamId }: { id: string; au
     <Card style={{ padding: 16, marginTop: 20 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
         <div style={{ fontWeight: 600, flex: 1 }}>{t("servers.discoverTitle")}</div>
-        <Btn onClick={() => scan.mutate()} disabled={scan.isPending}>
+        <Btn onClick={() => scan.mutate()} disabled={scan.isPending || !!block} title={blockWhy}>
           {scan.isPending ? t("servers.scanning") : t("servers.scan")}
         </Btn>
       </div>
       <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>
         {t("servers.discoverDesc")} {t("servers.discoverOwnNote")}
       </p>
+      {block && <p style={{ margin: "0 0 12px" }}><BlockedNote block={block} serverId={id} /></p>}
 
       {scan.isError && <div style={{ color: "var(--c-r)", fontSize: 12, marginBottom: 8 }}>{(scan.error as Error).message}</div>}
 
@@ -81,6 +89,14 @@ export function DiscoverAdoptCard({ id, autoScan = 0, teamId }: { id: string; au
                   <td style={td}>
                     <span className="mono" style={{ wordBreak: "break-all" }}>{c.name}</span>
                     {c.state !== "running" && <span style={{ marginLeft: 6 }}><Badge tone="muted">{c.state}</Badge></span>}
+                    {firstOfStack && !stack.adoptable && !c.managedBy && (
+                      <div data-testid="stack-refusal" style={{ whiteSpace: "normal", fontSize: 11, color: "var(--c-am)", marginTop: 2 }}>
+                        {t(`servers.stackRefusal.${stack.reason ?? "no_config"}`)}
+                        {stack.reason === "managed" && stack.managedBy && (
+                          <> <Link href="/import" onClick={() => openImport(stack.managedBy as "coolify" | "dokploy")} style={{ color: "var(--c-lapis)" }}>{t("servers.cta.openImport")}</Link></>
+                        )}
+                      </div>
+                    )}
                     {firstOfStack && stack.adoptable && (
                       <div data-testid="stack-preview" style={{ whiteSpace: "normal", fontSize: 11, color: "var(--c-tx3)", marginTop: 2 }}>
                         {t("servers.stackPreview", { project: stack.project, n: stack.services.length, services: stack.services.map((s) => s.service).join(", ") })}
@@ -93,13 +109,25 @@ export function DiscoverAdoptCard({ id, autoScan = 0, teamId }: { id: string; au
                   </td>
                   <td style={{ ...td, textAlign: "right" }}>
                     {c.adoptable ? (
-                      <Btn variant="ghost" onClick={() => setTarget(c)}>{t("servers.adopt")}</Btn>
+                      <Btn variant="ghost" disabled={!!block} title={blockWhy} onClick={() => setTarget(c)}>{t("servers.adopt")}</Btn>
                     ) : firstOfStack && stack.adoptable && canAdoptStack ? (
-                      <Btn variant="ghost" onClick={() => setStackTarget(stack)}>{t("servers.adoptStack")}</Btn>
+                      <Btn variant="ghost" disabled={!!block} title={blockWhy} onClick={() => setStackTarget(stack)}>{t("servers.adoptStack")}</Btn>
+                    ) : c.managedBy && (c.platformInfra || /^(coolify|dokploy)([-_]|$)/.test(c.name)) ? (
+                      <span style={{ fontSize: 12, color: "var(--c-tx3)", whiteSpace: "normal" }}>{t("servers.cta.infraRow", { platform: PLATFORM[c.managedBy] })}</span>
                     ) : c.managedBy ? (
-                      <Link href="/import" data-tip={t("servers.adoptManagedHint", { platform: PLATFORM[c.managedBy] })} style={{ fontSize: 12, color: "var(--c-lapis)", textDecoration: "none", whiteSpace: "nowrap" }}>
-                        {t("servers.adoptManagedBy", { platform: PLATFORM[c.managedBy] })} →
-                      </Link>
+                      <span style={{ display: "grid", gap: 2, justifyItems: "end", whiteSpace: "normal" }}>
+                        <span style={{ fontSize: 11, color: "var(--c-tx3)" }}>{t("servers.cta.needsImport", { platform: PLATFORM[c.managedBy] })}</span>
+                        <Link href="/import" onClick={() => openImport(c.managedBy as "coolify" | "dokploy")} data-tip={t("servers.adoptManagedHint", { platform: PLATFORM[c.managedBy] })} style={{ fontSize: 12, color: "var(--c-lapis)", textDecoration: "none", whiteSpace: "nowrap" }}>
+                          {t("servers.cta.openImport")} →
+                        </Link>
+                      </span>
+                    ) : c.swarm ? (
+                      <span style={{ display: "grid", gap: 2, justifyItems: "end", whiteSpace: "normal" }}>
+                        <span style={{ fontSize: 11, color: "var(--c-tx3)" }}>{t("servers.cta.swarmRefused")}</span>
+                        <Link href="/import" onClick={() => openImport("dokploy")} style={{ fontSize: 12, color: "var(--c-lapis)", textDecoration: "none", whiteSpace: "nowrap" }}>
+                          {t("servers.cta.openImport")} →
+                        </Link>
+                      </span>
                     ) : (
                       <span data-tip={stackHint(t, stack, firstOfStack, canAdoptStack)} tabIndex={0}><Badge tone="muted">{t("servers.adoptComposeUnsupported")}</Badge></span>
                     )}

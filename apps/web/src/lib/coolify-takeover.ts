@@ -213,6 +213,10 @@ export interface InventoryItem {
   environment: string | null;
   /** The server it runs on (Coolify server name), when known. */
   server: string | null;
+  /** Where it lives in Coolify, as the import names them: the server's uuid, its internal id (what the checklist uses) and the project's uuid. */
+  serverUuid: string | null;
+  serverDbId: string | null;
+  projectUuid: string | null;
 }
 export interface ProjectGroup {
   id: string;
@@ -237,6 +241,13 @@ const KIND_ORDER: Record<ItemKind, number> = { application: 0, database: 1, serv
 /** The inventory, grouped the way Coolify shows it: team, then project, then what runs in it. */
 export function groupByTeam(data: CoolifyInventoryData): TeamGroup[] {
   const serverName = new Map(data.servers.map((s) => [s.id, s.name]));
+  const serverUuid = new Map(data.servers.map((s) => [s.id, s.uuid]));
+  const projectUuid = new Map(data.projects.map((p) => [p.id, p.uuid]));
+  const where = (serverId: string | null, projectId: string | null) => ({
+    serverUuid: serverUuid.get(serverId ?? "") ?? null,
+    serverDbId: serverId && serverUuid.has(serverId) ? serverId : null,
+    projectUuid: projectUuid.get(projectId ?? "") ?? null,
+  });
   const projectName = new Map(data.projects.map((p) => [p.id, p.name]));
   const groups = new Map<string, TeamGroup>();
   const blank = (id: string, team: InvTeam | null): TeamGroup => ({ id, team, servers: [], projects: [], sharedVariables: [], tasks: [], backups: [], storages: [], gitSources: [] });
@@ -263,14 +274,14 @@ export function groupByTeam(data: CoolifyInventoryData): TeamGroup[] {
   };
   for (const a of data.applications) {
     put(a.teamId, a.projectId, {
-      key: `a${a.id}`, kind: "application", name: a.name, detail: a.fqdn ?? a.gitRepository ?? a.image, status: a.status, environment: a.environment, server: serverName.get(a.serverId ?? "") ?? null,
+      key: `a${a.id}`, kind: "application", name: a.name, detail: a.fqdn ?? a.gitRepository ?? a.image, status: a.status, environment: a.environment, server: serverName.get(a.serverId ?? "") ?? null, ...where(a.serverId, a.projectId),
     });
   }
   for (const d of data.databases) {
-    put(d.teamId, d.projectId, { key: `d${d.type}${d.id}`, kind: "database", name: d.name, detail: d.image ?? d.type, status: d.status, environment: d.environment, server: serverName.get(d.serverId ?? "") ?? null });
+    put(d.teamId, d.projectId, { key: `d${d.type}${d.id}`, kind: "database", name: d.name, detail: d.image ?? d.type, status: d.status, environment: d.environment, server: serverName.get(d.serverId ?? "") ?? null, ...where(d.serverId, d.projectId) });
   }
   for (const s of data.services) {
-    put(s.teamId, s.projectId, { key: `s${s.id}`, kind: "service", name: s.name, detail: s.kind, status: null, environment: s.environment, server: serverName.get(s.serverId ?? "") ?? null });
+    put(s.teamId, s.projectId, { key: `s${s.id}`, kind: "service", name: s.name, detail: s.kind, status: null, environment: s.environment, server: serverName.get(s.serverId ?? "") ?? null, ...where(s.serverId, s.projectId) });
   }
   for (const v of data.sharedVariables) of(v.teamId).sharedVariables.push(v);
   for (const t of data.scheduledTasks) of(t.teamId).tasks.push(t);

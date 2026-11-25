@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { TriangleAlert } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -14,6 +15,7 @@ import { ImportScopeStep } from "./import-scope-step";
 import { scopedPlan, scopeServiceSkips, type ImportScope, type ScopeSelection } from "../lib/import-scope";
 import { clearImportResume, loadImportResume, saveImportResume } from "../lib/import-resume";
 import { IMPORT_PREFILL_KEY } from "../lib/coolify-takeover";
+import { focusSelection, lastImportUrl, rememberLastImportUrl, takeImportFocus, type ImportFocus } from "../lib/import-focus";
 import { CutoverPanel } from "./cutover-panel";
 import { planSummary, itemsByKind, riskTone, opProgress, coverageApps, coverageCounts, hasDeferredCoverage, reasonText, ackableItems, buildAcks, runnableAfterAcks, serviceChoicesPayload, volumeCopyCandidates, selectedDbModes, vxCommandsWithFlags } from "../lib/import";
 import { ImportVolumeTransfers } from "./import-volume-transfers";
@@ -46,6 +48,16 @@ const SRC = {
   coolify: { title: "import.sourceCoolify", hint: "import.sourceCoolifyHint", url: "import.baseUrl", ph: "import.baseUrlPlaceholder", tok: "import.token", tokHint: "import.tokenHint", fail: "import.connectFailed", name: "import.sourceNameCoolify", option: "import.sourceCoolifyOption" },
   dokploy: { title: "import.sourceDokploy", hint: "import.sourceDokployHint", url: "import.baseUrlDokploy", ph: "import.baseUrlPlaceholderDokploy", tok: "import.tokenDokploy", tokHint: "import.tokenHintDokploy", fail: "import.connectFailedDokploy", name: "import.sourceNameDokploy", option: "import.sourceDokployOption" },
 } as const;
+/** Where the source panel creates API tokens, from the address typed so far. Null until it is a plain http(s) address. */
+export function tokenPageUrl(kind: ImportRemoteKind, baseUrl: string): string | null {
+  try {
+    const u = new URL(baseUrl.trim());
+    if (u.protocol !== "https:" && u.protocol !== "http:") return null;
+    return `${u.origin}${kind === "coolify" ? "/security/api-tokens" : "/dashboard/settings/profile"}`;
+  } catch {
+    return null;
+  }
+}
 const SOURCE_KINDS: readonly ImportRemoteKind[] = ["coolify", "dokploy"];
 /** An operation's source kind (a string from the hub) narrowed to a wizard source; anything unknown reads as Coolify. */
 const asRemoteKind = (k: string | null | undefined): ImportRemoteKind => (k === "dokploy" ? "dokploy" : "coolify");
@@ -80,6 +92,9 @@ export function ImportWizard() {
   // The step's live selection (kept in sessionStorage so a refresh resumes at the first step), and why a resume did not work.
   const liveSelection = useRef<ScopeSelection | undefined>(undefined);
   const [resumeNote, setResumeNote] = useState<"expired" | null>(null);
+  // Where the user came from (a server's scan card, the Read-this-Coolify page): the source address, and a server or project to start with.
+  const [focus, setFocus] = useState<ImportFocus | null>(null);
+  const focusRef = useRef<ImportFocus | null>(null);
 
   // There is no team to pick up front: the connection belongs to the team of the first server you can write to (else your first
   // team), and the target team follows from the server the import lands on.
@@ -96,13 +111,24 @@ export function ImportWizard() {
     if (fromUrl) setOpId(fromUrl);
     // "Move" on the Read-this-Coolify inventory hands the Coolify address over through same-tab storage (never the URL, so a
     // crafted link cannot prefill an attacker's host); the token step still asks for the token.
+    let address: string | null = null;
     try {
-      const address = window.sessionStorage.getItem(IMPORT_PREFILL_KEY);
+      address = window.sessionStorage.getItem(IMPORT_PREFILL_KEY);
       window.sessionStorage.removeItem(IMPORT_PREFILL_KEY);
-      if (address && /^https?:\/\/\S+$/i.test(address)) setBaseUrl((cur) => cur || address);
     } catch {
       /* storage unavailable */
     }
+    const f = takeImportFocus();
+    // A second run of this effect (React strict mode) finds the storage already cleared: keep what the first one read.
+    if (f) {
+      focusRef.current = f;
+      setFocus(f);
+    }
+    const k: ImportRemoteKind = f?.kind ?? "coolify";
+    if (f?.kind) setKind(f.kind);
+    // The address handed over wins, then the one used for the last connection (an address only, never a token).
+    const start = f?.address ?? (address && /^https?:\/\/\S+$/i.test(address) ? address : null) ?? lastImportUrl(k);
+    if (start) setBaseUrl((cur) => cur || start);
   }, []);
   useEffect(() => {
     const url = new URL(window.location.href);
@@ -145,6 +171,10 @@ export function ImportWizard() {
     onSuccess: (p) => {
       setResumeNote(null);
       setPlan(p);
+      // Start the first step on what the user came for (one server or project), once.
+      const sel = focusSelection(p, focusRef.current);
+      if (sel) setLastSelection(sel);
+      focusRef.current = null;
     },
     onError: (e, v) => {
       if (v.resume) {
@@ -162,6 +192,7 @@ export function ImportWizard() {
   const connect = useMutation({
     mutationFn: () => api.importConnect({ sourceKind: kind, teamId: connectTeam, baseUrl: baseUrl.trim(), token: token.trim(), ...(scopeLabel.trim() ? { scopeLabel: scopeLabel.trim() } : {}) }),
     onSuccess: (s) => {
+      rememberLastImportUrl(kind, baseUrl.trim());
       setSessionId(s.sessionId);
       setScope(null);
       setLastSelection(undefined);
@@ -279,6 +310,20 @@ export function ImportWizard() {
   return (
     <SectionCard title={t(src.title)} desc={t(src.hint)} style={{ padding: 20, maxWidth: 560, marginBottom: 0 }}>
       {resumeNote === "expired" && <p role="status" style={{ fontSize: 12, color: "var(--c-am)", margin: "0 0 12px" }}>{t("import.resumeExpired")}</p>}
+      {focus?.fromServerName && <p role="note" style={{ fontSize: 12, color: "var(--c-tx2)", margin: "0 0 10px" }}>{t("import.fromServer", { server: focus.fromServerName })}</p>}
+      <p data-testid="import-needs" style={{ fontSize: 13, margin: "0 0 4px" }}>{t(kind === "coolify" ? "import.needsCoolify" : "import.needsDokploy")}</p>
+      <MoreInfo label={t("import.needsMore")} style={{ margin: "0 0 14px" }}>
+        {tokenPageUrl(kind, baseUrl) && (
+          <p style={{ margin: "0 0 6px" }}>
+            <a href={tokenPageUrl(kind, baseUrl) ?? undefined} target="_blank" rel="noopener noreferrer" style={{ color: "var(--c-lapis)" }}>{t(kind === "coolify" ? "import.tokenPageCoolify" : "import.tokenPageDokploy")}</a>
+          </p>
+        )}
+        {kind === "coolify" && (
+          <p style={{ margin: 0 }}>
+            {t("import.readFirst")} <Link href="/import/coolify-host" style={{ color: "var(--c-lapis)" }}>{t("coolifyTakeover.title")}</Link>
+          </p>
+        )}
+      </MoreInfo>
 
       <div id="imp-source-label" style={label}>{t("import.sourcePicker")}</div>
       <div role="radiogroup" aria-labelledby="imp-source-label" style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 16 }}>
@@ -351,7 +396,9 @@ export function ImportWizard() {
         {connect.isPending ? t("import.connecting") : planM.isPending ? t("import.planning") : t("import.connect")}
       </Btn>
 
-      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "16px 0 0" }}>{t("import.localDockerHint")}</p>
+      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "16px 0 0" }}>
+        {t("import.localDockerHint")} <Link href="/servers" style={{ color: "var(--c-lapis)" }}>{t("import.localDockerLink")}</Link>
+      </p>
     </SectionCard>
   );
 }

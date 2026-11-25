@@ -79,18 +79,23 @@
     "application": "App",
     "database": "Database",
     "service": "Service",
-    "move": "Move",
-    "moveLabel": "Move {name}",
-    "moveHint": "Moving uses the Coolify import. It needs the Coolify address and an API token.",
+    "move": "Open in import",
+    "moveLabel": "Open {name} in the import",
+    "moveHint": "Preview only. Nothing moves from here. To move, open the import. It needs the Coolify address and an API token (read and read:sensitive).",
     "on": "on {server}",
-    "env": "{n} variables"
+    "env": "{n} variables",
+    "open": "Open in import",
+    "openServerLabel": "Open {name} in the import",
+    "tokenNeeded": "Open in import needs the Coolify API token. Nothing moves from this page."
   },
   "server": {
     "local": "This server",
     "build": "Build server",
     "swarm": "Swarm",
     "unreachable": "Unreachable",
-    "counts": "{apps} apps · {databases} databases · {services} services"
+    "counts": "{apps} apps · {databases} databases · {services} services",
+    "connected": "Already connected to Tugra",
+    "connectedAs": "Connected as {name}"
   },
   "variable": {
     "team": "Team",

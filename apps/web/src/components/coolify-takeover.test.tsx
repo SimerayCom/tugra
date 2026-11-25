@@ -46,7 +46,12 @@ const CHECKLIST: CoolifyChecklist = { rows: [row({ coolifyServerId: "0", name: "
 
 afterEach(cleanup);
 beforeEach(() => {
-  vi.spyOn(api, "listServers").mockResolvedValue([{ id: "s1", name: "host-1", teamId: "t1" }] as never);
+  vi.spyOn(api, "listServers").mockResolvedValue([
+    { id: "s1", name: "host-1", teamId: "t1", status: "ONLINE", canWrite: true, capabilities: ["database"] },
+    { id: "s2", name: "edge-box", teamId: "t1", status: "ONLINE", canWrite: true, capabilities: ["database"] },
+    { id: "s3", name: "down-box", teamId: "t1", status: "OFFLINE", canWrite: true, capabilities: ["database"] },
+    { id: "s4", name: "plain-box", teamId: "t1", status: "ONLINE", canWrite: true, capabilities: ["deploy"] },
+  ] as never);
 });
 afterEach(() => vi.restoreAllMocks());
 
@@ -102,13 +107,36 @@ describe("CoolifyTakeover", () => {
     expect((screen.getByRole("button", { name: "Allow and read" }) as HTMLButtonElement).disabled).toBe(true);
   });
 
+  it("lists servers that cannot be read as disabled, with the reason in the label", async () => {
+    show();
+    const sel = (await screen.findByLabelText("Server")) as HTMLSelectElement;
+    await waitFor(() => expect(sel.options.length).toBeGreaterThan(2));
+    const opt = (name: string) => [...sel.options].find((o) => o.textContent?.startsWith(name))!;
+    expect(opt("host-1").disabled).toBe(false);
+    expect(opt("down-box").disabled).toBe(true);
+    expect(opt("down-box").textContent).toBe("down-box (offline)");
+    expect(opt("plain-box").disabled).toBe(true);
+    expect(opt("plain-box").textContent).toBe("plain-box (capability off)");
+  });
+
+  it("an item opens the import on its server, already placed on the Tugra server it is connected as", async () => {
+    vi.spyOn(api, "coolifyInventory").mockResolvedValue(INV);
+    vi.spyOn(api, "coolifyServers").mockResolvedValue({ ...CHECKLIST, rows: [CHECKLIST.rows[0], row({ state: "already_added", tugraServerId: "s2", teamId: "t1" })] });
+    await pickServer();
+    await screen.findByText("Acme Coolify");
+    await screen.findAllByText("Connected as edge-box");
+    fireEvent.click(screen.getByRole("link", { name: "Open web in the import" }));
+    expect(JSON.parse(window.sessionStorage.getItem("tugra.import.focus") ?? "{}")).toEqual({ kind: "coolify", address: "https://coolify.example.com", sourceServerUuid: "u1", targetServerId: "s2", targetTeamId: "t1" });
+    expect(screen.getAllByText(/Open in import needs the Coolify API token/).length).toBeGreaterThan(0);
+  });
+
   it("shows the inventory per team with a Move link per item into the existing import", async () => {
     vi.spyOn(api, "coolifyInventory").mockResolvedValue(INV);
     vi.spyOn(api, "coolifyServers").mockResolvedValue(CHECKLIST);
     await pickServer();
     await screen.findByText("Acme Coolify");
     expect(screen.getByText("Read-only copy")).toBeTruthy();
-    const move = screen.getByRole("link", { name: "Move web" }) as HTMLAnchorElement;
+    const move = screen.getByRole("link", { name: "Open web in the import" }) as HTMLAnchorElement;
     expect(move.getAttribute("href")).toBe("/import");
     fireEvent.click(move);
     expect(window.sessionStorage.getItem("tugra.import.prefillUrl")).toBe("https://coolify.example.com");

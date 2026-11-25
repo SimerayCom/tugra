@@ -9,6 +9,8 @@ import { useT } from "../i18n/provider";
 import type { Pm2MoveChoice, Pm2MoveJob, Pm2MoveJobItem, Pm2MovePlan } from "../lib/types";
 import { Badge, Btn } from "./ui";
 import { fieldStyle } from "./form";
+import { serverBlock } from "../lib/cta-readiness";
+import { BlockedNote } from "./cta-parts";
 
 const NODE_CHOICES = [12, 14, 16, 18, 20, 22, 24];
 /** The same rule the hub applies to a health-check path (empty = no check). */
@@ -49,7 +51,7 @@ function itemTone(s: Pm2MoveJobItem["status"]): "ok" | "warn" | "danger" | "mute
  * only hides what would be refused). Three steps in one place: a read-only preview per process, a confirmation that spells
  * out what will happen (and the rollback), then live progress of the one-after-the-other cutover.
  */
-export function Pm2MovePanel({ serverId, online, canOps }: { serverId: string; online: boolean; canOps: boolean }) {
+export function Pm2MovePanel({ serverId, online, canOps, capabilities }: { serverId: string; online: boolean; canOps: boolean; /** Granted capabilities (absent = not known, none reported missing). */ capabilities?: string[] }) {
   const t = useT();
   const { user } = useAuth();
   const qc = useQueryClient();
@@ -85,6 +87,8 @@ export function Pm2MovePanel({ serverId, online, canOps }: { serverId: string; o
   const movable = plans.filter((p) => p.status === "ready");
   const picked = plans.filter((p) => selected.has(p.key) && p.status === "ready");
   const running = !!jobId && job.data?.state !== "done";
+  // The move needs the patch and deploy capabilities: say so (with the switch one click away) before the click, not as an error after it.
+  const capBlock = capabilities ? serverBlock({ status: online ? "ONLINE" : "OFFLINE", canWrite: true, capabilities }, ["patch", "deploy"], { write: false }) : null;
   const disabledReason = !canOps ? t("servers.serverScan.needsOps") : !online ? t("servers.serverScan.offline") : undefined;
 
   const prepare = (next = choices) => {
@@ -121,7 +125,7 @@ export function Pm2MovePanel({ serverId, online, canOps }: { serverId: string; o
       <div style={{ marginTop: 8 }}>
         <Btn
           variant="primary"
-          disabled={!canOps || !online}
+          disabled={!canOps || !online || !!capBlock}
           title={disabledReason}
           onClick={() => {
             setOpen(true);
@@ -130,6 +134,9 @@ export function Pm2MovePanel({ serverId, online, canOps }: { serverId: string; o
         >
           {t("servers.pm2Move.open")}
         </Btn>
+        {!canOps && <p style={note("var(--c-am)")}>{t("servers.serverScan.needsOps")}</p>}
+        {canOps && !online && <p style={note("var(--c-am)")}>{t("servers.cta.blockOffline")}</p>}
+        {canOps && online && capBlock && <BlockedNote block={capBlock} serverId={serverId} style={{ display: "block", marginTop: 8 }} />}
       </div>
     );
   }

@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import Link from "next/link";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError } from "../lib/api";
 import { useT } from "../i18n/provider";
@@ -11,6 +12,8 @@ import { Field, Select } from "./form";
 import { useConfirm } from "./confirm";
 import { CoolifyInventoryBody } from "./coolify-inventory-view";
 import { CoolifyServersChecklist } from "./coolify-servers-checklist";
+import { BlockedNote } from "./cta-parts";
+import { blockTag, serverBlock } from "../lib/cta-readiness";
 
 /** A localized line for a failed call: the hub's stable code when we know it, else a generic one. */
 function errorText(t: ReturnType<typeof useT>, e: unknown): string {
@@ -30,6 +33,11 @@ export function CoolifyTakeover() {
   const qc = useQueryClient();
   const confirm = useConfirm();
   const [serverId, setServerId] = useState("");
+  // A server's scan card can send the user here with ?server=<id>: start on that server.
+  useEffect(() => {
+    const id = new URLSearchParams(window.location.search).get("server");
+    if (id) setServerId((cur) => cur || id);
+  }, []);
   const [detect, setDetect] = useState<CoolifyDetect | null>(null);
 
   const { data: servers = [] } = useQuery({ queryKey: ["servers", "all"], queryFn: () => api.listServers() });
@@ -84,6 +92,8 @@ export function CoolifyTakeover() {
     if (ok) stop.mutate();
   };
 
+  const picked = servers.find((s) => s.id === serverId);
+  const pickedBlock = picked ? serverBlock(picked, ["database"], { write: false }) : null;
   const failure = check.error ?? read.error ?? allow.error ?? stop.error;
   const detectNote = detect
     ? detect.found
@@ -105,9 +115,16 @@ export function CoolifyTakeover() {
             value={serverId}
             onChange={pick}
             placeholder={t("coolifyTakeover.pick.placeholder")}
-            options={servers.map((s) => ({ value: s.id, label: s.name }))}
+            options={servers.map((s) => {
+              const b = serverBlock(s, ["database"], { write: false });
+              return { value: s.id, label: b ? `${s.name} (${blockTag(t, b)})` : s.name, disabled: !!b };
+            })}
           />
         </Field>
+        {pickedBlock && <BlockedNote block={pickedBlock} serverId={serverId} style={{ display: "block", marginTop: 6 }} />}
+        <p style={{ margin: "8px 0 0", fontSize: 12 }}>
+          <Link href="/servers/new" style={{ color: "var(--c-lapis)" }}>{t("servers.cta.addServer")}</Link>
+        </p>
       </Card>
 
       {failure && (

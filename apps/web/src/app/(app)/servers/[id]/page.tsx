@@ -220,6 +220,8 @@ export default function ServerDetailPage() {
             canOps={server.canOps}
             online={server.status === "ONLINE"}
             canWrite={server.canWrite}
+            serverName={server.name}
+            capabilities={server.capabilities}
             onReviewAdopt={() => {
               setTab("maintenance");
               setAdoptScan((n) => n + 1);
@@ -336,7 +338,7 @@ export default function ServerDetailPage() {
           {server.canWrite && <ServerDetailsCard id={id} server={server} />}
           {server.canWrite && <ServerTeamCard id={id} server={server} />}
           {server.canWrite && <CleanupCard id={id} server={server} />}
-          {server.canWrite && <div id="server-discover" style={{ scrollMarginTop: 72 }}><DiscoverAdoptCard id={id} autoScan={adoptScan} teamId={server.teamId} /></div>}
+          {server.canWrite && <div id="server-discover" style={{ scrollMarginTop: 72 }}><DiscoverAdoptCard id={id} autoScan={adoptScan} teamId={server.teamId} server={server} /></div>}
           {server.canWrite && <DeleteServerCard id={id} server={server} />}
         </>
       )}

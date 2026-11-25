@@ -140,26 +140,83 @@ describe("ServerScanCard", () => {
     expect(screen.queryByText(/^Containers \(/)).toBeNull();
   });
 
-  it("only suggests: adoption goes through the existing flow; PM2 is owner-only; CloudPanel PHP sites honestly stay", async () => {
+  it("lists complete next steps: adopt, Coolify itself stays, PM2 owner-only, websites stay", async () => {
     vi.spyOn(api, "getServerScan").mockResolvedValue({ report: report() });
     const onReviewAdopt = vi.fn();
     show({ onReviewAdopt });
     expect(await screen.findByText("2 containers can be adopted as Tugra apps.")).toBeTruthy();
-    expect(screen.getByText("1 container is managed by Coolify. Move it with the Coolify import.")).toBeTruthy();
+    expect(screen.getByText(/1 compose stack can be adopted as one app/)).toBeTruthy();
+    // the only Coolify container is Coolify's own: nothing to move, and no "move with the import" promise
+    expect(screen.getByText(/This server runs Coolify itself\./)).toBeTruthy();
+    expect(screen.queryByTestId("platform-move-coolify")).toBeNull();
     expect(screen.getByText("Only the instance owner can move PM2 processes to Tugra.")).toBeTruthy();
-    expect(screen.getByText("PHP sites stay on CloudPanel for now.")).toBeTruthy();
-    expect(screen.queryByText(/migration support is coming/)).toBeNull();
+    expect(screen.getByText(/Websites on nginx, Apache or CloudPanel stay where they are/)).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Move to Tugra" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Review" }));
     expect(onReviewAdopt).toHaveBeenCalledTimes(1);
   });
 
-  it("a read-only member sees no adopt suggestion", async () => {
+  it("apps a platform deployed say what is needed and open the import with the platform", async () => {
+    const rep = report({
+      containers: [
+        { name: "coolify", image: "ghcr.io/coollabsio/coolify:4", state: "running", project: null, service: null, software: "coolify", managedBy: "coolify", ports: [], adoptable: false, platformInfra: true },
+        { name: "abc-1", image: "node:22", state: "running", project: "abc", service: "app", software: null, managedBy: "coolify", ports: [], adoptable: false, platformInfra: false },
+        { name: "def-2", image: "node:22", state: "running", project: "def", service: "app", software: null, managedBy: "coolify", ports: [], adoptable: false, platformInfra: false },
+      ],
+    });
+    vi.spyOn(api, "getServerScan").mockResolvedValue({ report: rep });
+    sessionStorage.clear();
+    show({ serverName: "Box 1" });
+    const block = await screen.findByTestId("platform-move-coolify");
+    expect(block.textContent).toContain("2 apps are deployed by Coolify.");
+    expect(block.textContent).toContain("To move them you need a Coolify API token.");
+    expect(screen.getByText(/Coolify itself \(1 container\) stays where it is/)).toBeTruthy();
+    // the real config is not on this server: token import, or reading the Coolify host that this very server runs
+    const token = within(block).getByRole("link", { name: "Use your Coolify API token" });
+    expect(token.getAttribute("href")).toBe("/import");
+    expect(within(block).getByRole("link", { name: "Read this Coolify" }).getAttribute("href")).toBe("/import/coolify-host?server=s1");
+    fireEvent.click(token);
+    expect(JSON.parse(sessionStorage.getItem("tugra.import.focus") ?? "{}")).toEqual({ kind: "coolify", fromServerName: "Box 1" });
+    // compose projects of platform apps are not offered as stacks to adopt
+    expect(screen.queryByText(/compose stack/)).toBeNull();
+  });
+
+  it("Dokploy apps use the Dokploy import and never offer Read this Coolify", async () => {
+    const rep = report({
+      containers: [{ name: "web", image: "nginx", state: "running", project: null, service: null, software: null, managedBy: "dokploy", ports: [], adoptable: false, platformInfra: false }],
+    });
+    vi.spyOn(api, "getServerScan").mockResolvedValue({ report: rep });
+    show();
+    const block = await screen.findByTestId("platform-move-dokploy");
+    expect(within(block).getByRole("link", { name: "Use your Dokploy API token" })).toBeTruthy();
+    expect(within(block).queryByRole("link", { name: /Coolify/ })).toBeNull();
+  });
+
+  it("Swarm services point at the Dokploy import and are not offered for adoption", async () => {
+    const rep = report({ containers: [{ name: "w.1.x", image: "nginx", state: "running", project: null, service: null, software: null, managedBy: null, ports: [], adoptable: false, swarm: true }] });
+    vi.spyOn(api, "getServerScan").mockResolvedValue({ report: rep });
+    show();
+    expect(await screen.findByText(/1 container is a Swarm service, often a Dokploy app/)).toBeTruthy();
+    expect(screen.queryByText(/can be adopted as Tugra apps/)).toBeNull();
+  });
+
+  it("Review is disabled with the reason when the server is offline, read-only or lacks the deploy capability", async () => {
+    vi.spyOn(api, "getServerScan").mockResolvedValue({ report: report() });
+    show({ online: false });
+    expect(await screen.findByText("This server is offline. Bring its agent back online first.")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Review" })).toHaveProperty("disabled", true);
+    cleanup();
+    show({ capabilities: ["backup"] });
+    expect(await screen.findByText(/Needs the Deploy apps capability on this server\./)).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Turn it on" }).getAttribute("href")).toBe("/servers/s1?tab=maintenance");
+    expect(screen.getByRole("button", { name: "Review" })).toHaveProperty("disabled", true);
+  });
+
+  it("a read-only member sees why Review is off instead of nothing", async () => {
     vi.spyOn(api, "getServerScan").mockResolvedValue({ report: report() });
     show({ canWrite: false });
-    await screen.findByText("PHP sites stay on CloudPanel for now.");
-    expect(screen.queryByRole("button", { name: "Review" })).toBeNull();
-    expect(screen.queryByText(/can be adopted as Tugra apps/)).toBeNull();
+    expect(await screen.findByText("You can view this server but not change it. Ask a team owner or admin.")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Review" })).toHaveProperty("disabled", true);
   });
 
   it.each([

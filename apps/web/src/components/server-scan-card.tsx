@@ -9,8 +9,11 @@ import { useT } from "../i18n/provider";
 import { TemplateLogo } from "../lib/template-icons";
 import { TriangleAlert } from "lucide-react";
 import { useAuth } from "../lib/auth";
+import { serverBlock, type CtaBlock } from "../lib/cta-readiness";
+import { scanSteps } from "../lib/scan-steps";
+import { BlockedNote, ImportLaunchBtn, PLATFORM_NAME, PlatformMoveBlock } from "./cta-parts";
 import { Pm2MovePanel } from "./pm2-move-panel";
-import { Badge, Btn, SectionCard } from "./ui";
+import { Badge, Btn, LinkBtn, SectionCard } from "./ui";
 
 export const scanQueryKey = (serverId: string) => ["server-scan", serverId] as const;
 
@@ -111,6 +114,8 @@ export function ServerScanCard({
   online,
   canWrite,
   onReviewAdopt,
+  serverName,
+  capabilities,
 }: {
   serverId: string;
   canOps: boolean;
@@ -118,6 +123,10 @@ export function ServerScanCard({
   canWrite: boolean;
   /** Take the user to the existing adopt flow. */
   onReviewAdopt: () => void;
+  /** Carried to the import so it opens knowing which server the user came from. */
+  serverName?: string;
+  /** The capabilities granted on this server. Absent = not known, so none is reported missing. */
+  capabilities?: string[];
 }) {
   const t = useT();
   const qc = useQueryClient();
@@ -180,6 +189,8 @@ export function ServerScanCard({
           setFilter={setFilter}
           canWrite={canWrite}
           onReviewAdopt={onReviewAdopt}
+          serverName={serverName}
+          capabilities={capabilities}
         />
       )}
     </SectionCard>
@@ -195,6 +206,8 @@ function ScanResult({
   setFilter,
   canWrite,
   onReviewAdopt,
+  serverName,
+  capabilities,
 }: {
   serverId: string;
   canOps: boolean;
@@ -204,6 +217,8 @@ function ScanResult({
   setFilter: (id: string | null) => void;
   canWrite: boolean;
   onReviewAdopt: () => void;
+  serverName?: string;
+  capabilities?: string[];
 }) {
   const t = useT();
   const { user } = useAuth();
@@ -215,14 +230,15 @@ function ScanResult({
   const showServices = !active && report.services.length > 0;
   const showPorts = !active && report.ports.length > 0;
 
-  const adoptable = report.containers.filter((c) => c.adoptable).length;
-  const managed = (["coolify", "dokploy"] as const)
-    .map((p) => ({ p, n: report.containers.filter((c) => c.managedBy === p).length }))
-    .filter((x) => x.n > 0);
+  const steps = scanSteps(report);
+  const adoptCount = steps.standalone + steps.stacks.length;
   const hasPm2 = report.pm2.some((u) => u.procs.length > 0);
-  // No fake action for CloudPanel PHP sites: they are listed below and the note says they stay where they are.
-  const hasPanelPhp = report.sites.some((s) => s.panel === "cloudpanel" && s.kind === "php");
-  const hasSteps = (canWrite && adoptable > 0) || managed.length > 0 || hasPm2 || hasPanelPhp;
+  const hasSites = report.sites.length > 0;
+  const platformsWithApps = (["coolify", "dokploy"] as const).filter((p) => steps.platformApps[p] > 0);
+  const platformsItself = (["coolify", "dokploy"] as const).filter((p) => steps.platformInfra[p] > 0);
+  // Review opens the adopt flow, which scans the host with the deploy capability: say why it is off before the click, not after.
+  const reviewBlock: CtaBlock | null = serverBlock({ status: online ? "ONLINE" : "OFFLINE", canWrite, capabilities: capabilities ?? ["deploy"] }, ["deploy"]);
+  const hasSteps = adoptCount > 0 || steps.swarm > 0 || platformsWithApps.length > 0 || platformsItself.length > 0 || hasPm2 || hasSites;
   const nothing = report.software.length === 0 && report.containers.length === 0 && report.sites.length === 0 && !hasPm2;
 
   const hostNote =
@@ -300,20 +316,45 @@ function ScanResult({
       {hasSteps && !active && (
         <>
           <h4 style={subHead}>{t("servers.serverScan.nextSteps")}</h4>
-          <ul style={{ margin: 0, padding: 0, listStyle: "none", display: "grid", gap: 6, fontSize: 13 }}>
-            {canWrite && adoptable > 0 && (
-              <li style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-                <span>{adoptable === 1 ? t("servers.serverScan.adoptHintOne") : t("servers.serverScan.adoptHint", { n: adoptable })}</span>
-                <Btn variant="ghost" onClick={onReviewAdopt}>{t("servers.serverScan.adoptReview")}</Btn>
+          <ul style={{ margin: 0, padding: 0, listStyle: "none", display: "grid", gap: 10, fontSize: 13 }}>
+            {adoptCount > 0 && (
+              <li style={{ display: "grid", gap: 6 }}>
+                {steps.standalone > 0 && <span>{steps.standalone === 1 ? t("servers.cta.standalone_one") : t("servers.cta.standalone_other", { n: steps.standalone })}</span>}
+                {steps.stacks.length > 0 && <span>{steps.stacks.length === 1 ? t("servers.cta.stacks_one") : t("servers.cta.stacks_other", { n: steps.stacks.length })}</span>}
+                <span style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                  <Btn variant="ghost" disabled={!!reviewBlock} onClick={onReviewAdopt}>{t("servers.serverScan.adoptReview")}</Btn>
+                  {reviewBlock && <BlockedNote block={reviewBlock} serverId={serverId} />}
+                </span>
               </li>
             )}
-            {managed.map(({ p, n }) => (
-              <li key={p} style={{ color: "var(--c-tx2)" }}>
-                {n === 1 ? t("servers.serverScan.managedHintOne", { platform: PLATFORM_LABEL[p] }) : t("servers.serverScan.managedHint", { n, platform: PLATFORM_LABEL[p] })}
+            {platformsWithApps.map((p) => (
+              <li key={p}>
+                <PlatformMoveBlock platform={p} n={steps.platformApps[p]} serverName={serverName} readHref={p === "coolify" && steps.platformInfra.coolify > 0 ? "/import/coolify-host?server=" + encodeURIComponent(serverId) : undefined} />
               </li>
             ))}
+            {platformsItself.map((p) => (
+              <li key={`own-${p}`} style={{ display: "grid", gap: 6, color: "var(--c-tx2)" }}>
+                <span>
+                  {platformsWithApps.includes(p) ? "" : `${t("servers.cta.runsPlatform", { platform: PLATFORM_NAME[p] })} `}
+                  {steps.platformInfra[p] === 1 ? t("servers.cta.infraStaysOne", { platform: PLATFORM_NAME[p] }) : t("servers.cta.infraStays", { platform: PLATFORM_NAME[p], n: steps.platformInfra[p] })}
+                </span>
+                {p === "coolify" && !platformsWithApps.includes(p) && (
+                  <span style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                    <span>{t("servers.cta.runsCoolifyRead")}</span>
+                    <LinkBtn href={"/import/coolify-host?server=" + encodeURIComponent(serverId)} variant="ghost">{t("servers.cta.readCoolify")}</LinkBtn>
+                    <ImportLaunchBtn platform="coolify" serverName={serverName} />
+                  </span>
+                )}
+              </li>
+            ))}
+            {steps.swarm > 0 && (
+              <li style={{ display: "grid", gap: 6, color: "var(--c-tx2)" }}>
+                <span>{steps.swarm === 1 ? t("servers.cta.swarm_one") : t("servers.cta.swarm_other", { n: steps.swarm })}</span>
+                <span><ImportLaunchBtn platform="dokploy" serverName={serverName} /></span>
+              </li>
+            )}
             {hasPm2 && <li style={{ color: "var(--c-tx2)" }}>{isOwner ? t("servers.serverScan.pm2MoveHint") : t("servers.serverScan.pm2MoveHintOwnerOnly")}</li>}
-            {hasPanelPhp && <li style={{ color: "var(--c-tx2)" }}>{t("servers.serverScan.phpStays")}</li>}
+            {hasSites && <li style={{ color: "var(--c-tx2)" }}>{t("servers.cta.sitesStay")}</li>}
           </ul>
         </>
       )}
@@ -328,6 +369,7 @@ function ScanResult({
                 <span className="mono" style={{ ...dim, fontSize: 12 }}>{c.image}</span>
                 <Badge tone={statusTone(c.state)}>{t(`servers.serverScan.status.${c.state}`)}</Badge>
                 {c.managedBy && <Badge tone="lapis">{t("servers.serverScan.managedBy", { platform: PLATFORM_LABEL[c.managedBy] })}</Badge>}
+                {c.managedBy && (c.platformInfra || /^(coolify|dokploy)([-_]|$)/.test(c.name)) && <span style={{ ...dim, fontSize: 12 }}>{t("servers.cta.infraRow", { platform: PLATFORM_LABEL[c.managedBy] })}</span>}
                 {c.project && <span style={{ ...dim, fontSize: 12 }}>{t("servers.serverScan.composeProject", { name: c.project })}</span>}
                 {c.adoptable && canWrite && <Badge tone="gold">{t("servers.serverScan.adoptable")}</Badge>}
               </div>
@@ -356,7 +398,7 @@ function ScanResult({
               ))}
             </div>
           ))}
-          <Pm2MovePanel serverId={serverId} online={online} canOps={canOps} />
+          <Pm2MovePanel serverId={serverId} online={online} canOps={canOps} capabilities={capabilities} />
         </>
       )}
 

@@ -51,6 +51,8 @@ const settledOp: ImportOperation = {
 describe("ImportWizard", () => {
   beforeEach(() => {
     window.history.replaceState(null, "", "/"); // the wizard mirrors the running op into ?op=
+    window.localStorage.clear(); // the last connected address is remembered between visits
+    window.sessionStorage.clear();
     qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     // The post-import cutover step reads these on mount once the timeline settles; default to "not set up yet".
     vi.spyOn(api, "getCutover").mockRejectedValue(new ApiError(404, "not found"));
@@ -226,11 +228,72 @@ describe("ImportWizard", () => {
     await waitFor(() => expect(api.importTest).toHaveBeenCalledWith({ sourceKind: "coolify", teamId: "t1", baseUrl: "https://coolify.example.com", token: "tok-12345678" }));
   });
 
+  it("says up front what is needed, links the token page of the typed address, and links the servers page", async () => {
+    wrap(<ImportWizard />);
+    await screen.findByLabelText("Coolify URL");
+    expect(screen.getByTestId("import-needs").textContent).toBe("You need your Coolify address and an API token with read and read:sensitive.");
+    expect(screen.queryByRole("link", { name: "Open the token page in Coolify" })).toBeNull();
+    fireEvent.change(screen.getByLabelText("Coolify URL"), { target: { value: "https://coolify.example.com/some/path" } });
+    expect(screen.getByRole("link", { name: "Open the token page in Coolify" }).getAttribute("href")).toBe("https://coolify.example.com/security/api-tokens");
+    expect(screen.getByRole("link", { name: "Read this Coolify" }).getAttribute("href")).toBe("/import/coolify-host");
+    expect(screen.getByRole("link", { name: "Open your servers" }).getAttribute("href")).toBe("/servers");
+  });
+
+  it("remembers the address of the last connection (never the token) and prefills it next time", async () => {
+    vi.spyOn(api, "importConnect").mockResolvedValue({ sessionId: "s1", expiresAt: "2026-01-01T00:00:00.000Z" });
+    vi.spyOn(api, "importPlan").mockResolvedValue(plan);
+    wrap(<ImportWizard />);
+    await screen.findByLabelText("Coolify URL");
+    await waitFor(() => expect(qc.getQueryData(["teams"])).toBeTruthy());
+    fireEvent.change(screen.getByLabelText("Coolify URL"), { target: { value: "https://coolify.example.com" } });
+    fireEvent.change(screen.getByLabelText("API token"), { target: { value: "tok-secret" } });
+    fireEvent.click(screen.getByRole("button", { name: "Connect & preview" }));
+    await screen.findByText("Import preview");
+    expect(window.localStorage.getItem("tugra.import.lastUrl.coolify")).toBe("https://coolify.example.com");
+    expect(JSON.stringify({ ...window.localStorage, ...window.sessionStorage })).not.toContain("tok-secret");
+    cleanup();
+    wrap(<ImportWizard />);
+    expect(((await screen.findByLabelText("Coolify URL")) as HTMLInputElement).value).toBe("https://coolify.example.com");
+  });
+
+  it("opens on the source, address and server it was sent from, with a note about where the user came from", async () => {
+    window.sessionStorage.setItem("tugra.import.focus", JSON.stringify({ kind: "dokploy", address: "https://dok.example.com", fromServerName: "Box 1" }));
+    wrap(<ImportWizard />);
+    expect(((await screen.findByLabelText("Dokploy URL")) as HTMLInputElement).value).toBe("https://dok.example.com");
+    expect(screen.getByText("Moving what runs on Box 1. Pick it on the next step.")).toBeTruthy();
+    expect(screen.getByTestId("import-needs").textContent).toMatch(/Dokploy address/);
+    expect(window.sessionStorage.getItem("tugra.import.focus")).toBeNull(); // read once
+  });
+
+  it("starts the first step on the one source server it was sent to, already placed on the Tugra server it is connected as", async () => {
+    const scoped: ImportPlan = {
+      ...plan,
+      items: [
+        { itemRef: "app:srvA:web", kind: "app", name: "web-app", proposed: {}, risks: [], dependsOn: [] },
+        { itemRef: "app:srvB:api", kind: "app", name: "api-app", proposed: {}, risks: [], dependsOn: [] },
+      ],
+      mapping: { features: ["mapping-v1"] },
+      preflight: { hosts: [{ ref: "srvA", name: "Box A" }, { ref: "srvB", name: "Box B" }] },
+    } as unknown as ImportPlan;
+    window.sessionStorage.setItem("tugra.import.focus", JSON.stringify({ kind: "coolify", sourceServerUuid: "srvB", targetServerId: "srv1", targetTeamId: "t1" }));
+    vi.spyOn(api, "importConnect").mockResolvedValue({ sessionId: "s1", expiresAt: "2026-01-01T00:00:00.000Z" });
+    vi.spyOn(api, "importPlan").mockResolvedValue(scoped);
+    wrap(<ImportWizard />);
+    await screen.findByLabelText("Coolify URL");
+    await waitFor(() => expect(qc.getQueryData(["teams"])).toBeTruthy());
+    fireEvent.change(screen.getByLabelText("Coolify URL"), { target: { value: "https://coolify.example.com" } });
+    fireEvent.change(screen.getByLabelText("API token"), { target: { value: "tok" } });
+    fireEvent.click(screen.getByRole("button", { name: "Connect & preview" }));
+    const boxB = (await screen.findByRole("checkbox", { name: /Box B/ })) as HTMLInputElement;
+    expect(boxB.checked).toBe(true);
+    expect((screen.getByRole("checkbox", { name: /Box A/ }) as HTMLInputElement).checked).toBe(false);
+  });
+
   it("keeps the token hint to one line and the rules behind More", async () => {
     wrap(<ImportWizard />);
     await screen.findByLabelText("Coolify URL");
     expect(screen.getByText("Coolify, Keys & Tokens, API token with read and read:sensitive.")).toBeTruthy();
-    const more = screen.getAllByText("More")[0].closest("details") as HTMLDetailsElement;
+    const more = screen.getAllByText("More").map((m) => m.closest("details") as HTMLDetailsElement).find((d) => /team admin or owner/.test(d.textContent ?? "")) as HTMLDetailsElement;
     expect(more.open).toBe(false);
     expect(more.textContent).toMatch(/team admin or owner/);
     expect(more.textContent).toMatch(/200 requests a minute/);
