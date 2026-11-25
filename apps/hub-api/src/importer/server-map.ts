@@ -7,6 +7,7 @@
  * resolve through the prototype chain.
  */
 import { z } from "zod";
+import { guardedRecord } from "../common/zod-record";
 
 /** At most this many source servers in a map (the contract's own limit; the real fleet has 24 hosts). */
 export const IMPORT_SERVER_MAP_MAX = 64;
@@ -17,8 +18,7 @@ const SourceServerRef = z
   .refine((k) => k !== "__proto__" && k !== "constructor" && k !== "prototype", "reserved key");
 
 /** Source server ref to Tugra server id. Names and ids only: no secret. */
-export const ImportServerMapSchema = z
-  .record(SourceServerRef, z.string().min(1).max(64))
+export const ImportServerMapSchema = guardedRecord(SourceServerRef, z.string().min(1).max(64))
   .refine((m) => Object.keys(m).length <= IMPORT_SERVER_MAP_MAX, `at most ${IMPORT_SERVER_MAP_MAX} source servers`);
 export type ImportServerMap = z.infer<typeof ImportServerMapSchema>;
 

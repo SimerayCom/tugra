@@ -6,7 +6,7 @@ import { isValidUserEnvKey, isSafeEnvValue } from "../common/env-key";
 // Reserved engine keys (POSTGRES_PASSWORD, …) are rejected in the service, where the engine is known.
 export const SetDatabaseEnvSchema = z.object({
   env: z
-    .record(z.string())
+    .record(z.string(), z.string())
     .refine((env) => Object.keys(env).every(isValidUserEnvKey), { message: "invalid environment variable name" })
     .refine((env) => Object.values(env).every(isSafeEnvValue), { message: "environment value must not contain a newline" }),
 });

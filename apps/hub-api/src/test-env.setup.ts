@@ -18,3 +18,5 @@ process.env.SECRETS_ENCRYPTION_KEY ??= "test-secrets-encryption-key-0123456789";
 // Signed update checks are ON by default (the official manifest URL + key are env defaults), so a test boot
 // would otherwise reach the real network from the panel-load refresh / manual check. Specs never fetch.
 process.env.TUGRA_UPDATE_CHECKS ??= "0";
+// Same zod message wording the real hub boots with (AppModule loads it), for specs that never import AppModule.
+import "./common/zod-compat";

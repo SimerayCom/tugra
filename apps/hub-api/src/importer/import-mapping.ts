@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
+import { guardedRecord } from "../common/zod-record";
 import type { ForeignFleet, ImportPlan } from "./foreign-fleet";
 import { mapBuildPack } from "./buildpack-map";
 import { isRunnable, type RiskAck } from "./import-executor.logic";
@@ -43,9 +44,9 @@ export const ImportMappingDocSchema = z
   .object({
     version: z.literal(1),
     scope: z.object({ sourceKind: z.enum(["coolify", "dokploy"]), scopeKey: z.string().max(64).optional() }).strict().optional(),
-    items: z.record(ITEM_KEY, ImportMappingItemSchema).default({}),
-    projects: z.record(REF, z.object({ name: NAME.optional(), environments: z.record(REF, NAME).optional() }).strict()).default({}),
-    gitSources: z.record(REF, z.object({ name: NAME }).strict()).default({}),
+    items: guardedRecord(ITEM_KEY, ImportMappingItemSchema).default({}),
+    projects: guardedRecord(REF, z.object({ name: NAME.optional(), environments: guardedRecord(REF, NAME).optional() }).strict()).default({}),
+    gitSources: guardedRecord(REF, z.object({ name: NAME }).strict()).default({}),
     acks: z.array(z.string().max(340)).max(5000).default([]),
   })
   .strict()

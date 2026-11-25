@@ -1,5 +1,6 @@
 import net from "node:net";
 import { z } from "zod";
+import { guardedRecord } from "../common/zod-record";
 import { isPctMetric } from "./checkers";
 
 export const METRIC_KINDS = ["DISK", "CPU", "MEM", "LOAD1", "LOAD5", "LOAD15", "TEMP", "NET"] as const;
@@ -12,8 +13,7 @@ export const DNS_RECORD_TYPES = ["A", "AAAA", "CNAME", "MX", "NS", "TXT", "SRV",
 const BLOCKED_HEADERS = new Set(["content-length", "transfer-encoding", "connection"]);
 const HeaderName = z.string().regex(/^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/, "invalid header name").max(128);
 const HeaderValue = z.string().regex(/^[^\r\n]*$/, "header value may not contain CR/LF").max(4096);
-export const MonitorHeadersSchema = z
-  .record(HeaderName, HeaderValue)
+export const MonitorHeadersSchema = guardedRecord(HeaderName, HeaderValue)
   .refine((h) => !Object.keys(h).some((k) => BLOCKED_HEADERS.has(k.toLowerCase())), "cannot set a framing header")
   .refine((h) => Object.keys(h).length <= 50, "too many headers");
 

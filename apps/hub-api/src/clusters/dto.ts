@@ -77,7 +77,7 @@ export const LABEL_VALUE_RE = /^[A-Za-z0-9]([A-Za-z0-9_.:/-]{0,62})?$/;
  *  zod versions; requires at least one of add/remove. */
 export const SetNodeLabelsSchema = z
   .object({
-    add: z.record(z.string()).default({}),
+    add: z.record(z.string(), z.string()).default({}),
     remove: z.array(z.string()).default([]),
   })
   .strict()

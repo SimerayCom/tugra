@@ -53,7 +53,7 @@ export const NetworkSettingsSchema = z
     certMode: z.enum(["http", "le-dns", "custom"]).optional(),
     dnsProvider: z.string().trim().max(64).nullable().optional(),
     dnsCreds: z
-      .record(z.string())
+      .record(z.string(), z.string())
       .superRefine((creds, ctx) => {
         const issue = dnsCredsIssue(creds);
         if (issue) ctx.addIssue({ code: z.ZodIssueCode.custom, message: issue });

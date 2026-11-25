@@ -97,7 +97,7 @@ const FactSchema = z.object({
   envCount: z.number().int().min(0).max(100000),
   envSkipped: z.number().int().min(0).max(100000).optional().default(0),
   envDigest: z.string().regex(/^[0-9a-f]{64}$/),
-  env: z.record(z.string().max(100_000)).optional(),
+  env: z.record(z.string(), z.string().max(100_000)).optional(),
   nvmrc: z.string().max(40).optional().default(""),
   enginesNode: z.string().max(60).optional().default(""),
   cwdExists: z.boolean().optional().default(false),

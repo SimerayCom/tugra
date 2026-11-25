@@ -61,7 +61,7 @@ export const MetricsSampleSchema = z.object({
   swapUsed: z.number().optional(),
   swapTotal: z.number().optional(),
   temp: z.number().optional(),
-  sensors: z.record(z.number()).optional(),
+  sensors: z.record(z.string(), z.number()).optional(),
   gpus: z
     .array(z.object({ name: z.string(), util: z.number(), memUsed: z.number(), memTotal: z.number(), temp: z.number().optional(), power: z.number().optional() }))
     .optional(),

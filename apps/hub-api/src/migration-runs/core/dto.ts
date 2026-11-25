@@ -9,6 +9,7 @@
  * Instants are ISO-8601 strings on the wire. Persisted JSON columns use exactly the JSON-shape schemas below.
  */
 import { z } from "zod";
+import { guardedRecord } from "../../common/zod-record";
 import { ImportAckSchema, ImportDbDataModesSchema, REMOTE_SOURCE_KINDS, ServiceChoicesSchema } from "../../importer/dto";
 import { ImportMappingDocSchema } from "../../importer/import-mapping";
 import {
@@ -62,7 +63,7 @@ export const RunCodeSchema = z.string().max(80).regex(RUN_CODE_RE, "invalid code
 /** One JSON-safe parameter value of a code (counts, names, ids, hosts: never a secret, never free text from a source). */
 const ParamValue = z.union([z.string().max(500), z.number(), z.boolean(), z.null(), z.array(z.union([z.string().max(300), z.number(), z.boolean(), z.null()])).max(200)]);
 /** Interpolation parameters of a {@link RunCodeSchema} code. */
-export const CodeParamsSchema = z.record(z.string().min(1).max(64), ParamValue).refine((r) => Object.keys(r).length <= 40, "too many params");
+export const CodeParamsSchema = guardedRecord(z.string().min(1).max(64), ParamValue).refine((r) => Object.keys(r).length <= 40, "too many params");
 export type CodeParams = z.infer<typeof CodeParamsSchema>;
 
 export const RunStatusSchema = z.enum(RUN_STATUSES);
@@ -211,8 +212,7 @@ const SourceServerRef = z
  * `targetServerId` stays the default for any source server not listed. Every target must belong to the run's team (checked
  * at create). Names and ids only: no secret.
  */
-export const ServerMapSchema = z
-  .record(SourceServerRef, Id)
+export const ServerMapSchema = guardedRecord(SourceServerRef, Id)
   .refine((m) => Object.keys(m).length <= SERVER_MAP_MAX, `at most ${SERVER_MAP_MAX} source servers`);
 export type ServerMap = z.infer<typeof ServerMapSchema>;
 
@@ -460,7 +460,7 @@ export const CreateMigrationRunSchema = z
     mode: RunModeSchema.default("copy"),
     topology: RunTopologySchema.default("two-box"),
     dryRun: z.boolean().default(false),
-    options: RunOptionsSchema.default({}),
+    options: RunOptionsSchema.prefault({}),
     inputs: OwnerInputsRequestSchema.default({}),
     /** Multi-host placement (see {@link ServerMapSchema}); `targetServerId` stays the default for unmapped sources. Absent = single target. */
     serverMap: ServerMapSchema.optional(),

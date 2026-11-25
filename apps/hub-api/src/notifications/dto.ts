@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { guardedRecord } from "../common/zod-record";
 import { EVENT_TYPES, NOTIFICATION_CATEGORIES, NOTIFICATION_SEVERITIES } from "@tugra/shared";
 import { isValidIana } from "../common/timezone";
 import { MAX_DEDUPE_WINDOW_SEC, MAX_RATE_PER_MIN } from "./policy";
@@ -24,8 +25,7 @@ export const WebhookConfigSchema = z
   .object({
     url: z.string().url(),
     signingSecret: z.string().min(16).optional(),
-    headers: z
-      .record(HeaderName, HeaderValue)
+    headers: guardedRecord(HeaderName, HeaderValue)
       .refine((h) => !Object.keys(h).some((k) => RESERVED_HEADERS.has(k.toLowerCase())), "cannot set a reserved header")
       .optional(),
   })
@@ -70,7 +70,7 @@ export const CreateChannelSchema = z.object({
   name: z.string().min(1),
   type: z.string().min(1),
   teamId: z.string().min(1),
-  config: z.record(z.unknown()),
+  config: z.record(z.string(), z.unknown()),
   eventTypes: z.array(z.enum(EVENT_TYPES)).optional(),
   categories: z.array(CategoryEnum).optional(),
   minSeverity: z.enum(NOTIFICATION_SEVERITIES).optional(),
@@ -87,7 +87,7 @@ export const UpdateChannelSchema = z.object({
   categories: z.array(CategoryEnum).optional(),
   minSeverity: z.enum(NOTIFICATION_SEVERITIES).optional(),
   topics: TopicsSchema.nullable().optional(), // null clears the map
-  config: z.record(z.unknown()).optional(),
+  config: z.record(z.string(), z.unknown()).optional(),
   policy: PolicySchema.nullable().optional(), // null clears the policy
   locale: z.string().min(1).optional(),
 });

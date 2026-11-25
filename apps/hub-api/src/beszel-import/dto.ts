@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { guardedRecord } from "../common/zod-record";
 
 /** Sign in to a Beszel hub. The credentials are kept encrypted for the import only (1 h), or 30 days when `keepCredentials`. */
 export const BeszelConnectSchema = z.object({
@@ -12,7 +13,7 @@ export type BeszelConnectInput = z.infer<typeof BeszelConnectSchema>;
 
 const PbId = z.string().regex(/^[A-Za-z0-9]{1,32}$/, "invalid id");
 /** Manual match for a Beszel system the automatic match left open: Beszel system id → Tugra server id (null = leave out). */
-const Overrides = z.record(PbId, z.string().min(1).nullable()).refine((r) => Object.keys(r).length <= 1000, "too many entries");
+const Overrides = guardedRecord(PbId, z.string().min(1).nullable()).refine((r) => Object.keys(r).length <= 1000, "too many entries");
 
 export const BeszelPreviewSchema = z.object({
   sessionId: z.string().min(1),

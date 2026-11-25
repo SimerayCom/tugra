@@ -18,7 +18,7 @@ export type MoveAckInput = z.infer<typeof MoveAckSchema>;
 export const MoveAppPreflightSchema = z
   .object({
     targetServerId: z.string().min(1).max(64),
-    acknowledge: MoveAckSchema.default({}),
+    acknowledge: MoveAckSchema.prefault({}),
     probeLink: z.boolean().default(false), // run one real 16 MiB relay transfer source->target
   })
   .strict();
@@ -27,7 +27,7 @@ export type MoveAppPreflightInput = z.infer<typeof MoveAppPreflightSchema>;
 export const StartAppMoveSchema = z
   .object({
     targetServerId: z.string().min(1).max(64),
-    acknowledge: MoveAckSchema.default({}),
+    acknowledge: MoveAckSchema.prefault({}),
     repointDns: z.boolean().default(false),
     archiveRetainDays: z.number().int().min(0).max(90).default(7),
     confirmName: z.string().min(1).max(128),
@@ -38,7 +38,7 @@ export type StartAppMoveInput = z.infer<typeof StartAppMoveSchema>;
 const BlockerSchema = z.object({
   code: z.string(),
   message: z.string(),
-  details: z.record(z.unknown()).optional(),
+  details: z.record(z.string(), z.unknown()).optional(),
   /** True when the blocker is an acknowledgement the operator can tick (cleared by `acknowledge.<ack>`). */
   ack: z.boolean().optional(),
 });
@@ -46,7 +46,7 @@ const BlockerSchema = z.object({
 export const MoveAppPreflightResultSchema = z.object({
   ok: z.boolean(), // no hard blocker and every required acknowledgement given
   blockers: z.array(BlockerSchema),
-  warnings: z.array(z.object({ code: z.string(), details: z.record(z.unknown()).optional() })),
+  warnings: z.array(z.object({ code: z.string(), details: z.record(z.string(), z.unknown()).optional() })),
   requiredAcks: z.array(z.enum(APP_MOVE_ACKS)),
   plan: z.object({
     cheap: z.boolean(), // NEW app / nothing to move: config flip only
@@ -92,7 +92,7 @@ export const AppMoveViewSchema = z.object({
   targetServerId: z.string(),
   volumes: z.array(AppMoveVolumeViewSchema),
   progress: z.object({ volumeIndex: z.number().int(), volumeCount: z.number().int(), bytesDone: z.number().int(), bytesTotal: z.number().int() }),
-  warnings: z.array(z.object({ code: z.string(), details: z.record(z.unknown()).optional() })),
+  warnings: z.array(z.object({ code: z.string(), details: z.record(z.string(), z.unknown()).optional() })),
   failureReason: z.string().nullable(),
   failurePhase: z.enum(APP_MOVE_PHASES).nullable(),
   deploymentId: z.string().nullable(),
@@ -106,8 +106,8 @@ export const AppMoveViewSchema = z.object({
   /** An apply rollback snapshot is deliberately kept on the target (the only intact copy of data an apply wiped). */
   snapshotKept: z.boolean(),
   // WRITER-ONLY (apps:config): null for read-only members.
-  plan: z.record(z.unknown()).nullable(),
-  acks: z.record(z.boolean()).nullable(),
+  plan: z.record(z.string(), z.unknown()).nullable(),
+  acks: z.record(z.string(), z.boolean()).nullable(),
   logTail: z.string().nullable(),
 });
 export type AppMoveView = z.infer<typeof AppMoveViewSchema>;

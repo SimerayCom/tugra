@@ -1,17 +1,11 @@
 import { applyDecorators, INestApplication } from "@nestjs/common";
 import { ApiBody, ApiResponse, DocumentBuilder, SwaggerModule } from "@nestjs/swagger";
 import type { OpenAPIObject } from "@nestjs/swagger";
-import * as zodToJsonSchemaModule from "zod-to-json-schema";
+import { z } from "zod";
 import type { ZodTypeAny } from "zod";
 import { ApiErrorSchema } from "../common/api-error";
 import { FsErrorBodySchema } from "../files/dto";
 import { MigrationRunViewSchema } from "../migration-runs/core/dto";
-
-// zod-to-json-schema's own recursive return type makes tsc blow up (TS2589) when it's instantiated. Cast
-// the module through `unknown` to a flattened signature so that deep type is never read.
-const zodToJsonSchema = (
-  zodToJsonSchemaModule as unknown as { zodToJsonSchema: (schema: ZodTypeAny, options?: unknown) => Record<string, unknown> }
-).zodToJsonSchema;
 
 // A plain JSON-schema bag. We deliberately DON'T type against @nestjs/swagger's recursive SchemaObject —
 // referencing it here makes tsc blow up (TS2589 "excessively deep") — and cast to `any` at the ApiBody/
@@ -107,9 +101,94 @@ export function setupOpenApi(app: INestApplication): OpenAPIObject {
  *  and the output is deterministic). `.refine()` cross-field rules can't be represented and are dropped —
  *  acceptable for documentation. */
 function toSchema(schema: ZodTypeAny): JsonSchema {
-  const json = zodToJsonSchema(schema, { target: "openApi3", $refStrategy: "none" });
+  const json = render(schema);
   delete json.$schema; // strip the JSON-Schema dialect marker; the doc is OpenAPI 3.1
   return json;
+}
+
+function render(schema: z.core.$ZodType): JsonSchema {
+  return z.toJSONSchema(schema, {
+    target: "openapi-3.0",
+    io: "input",
+    unrepresentable: "any",
+    reused: "inline",
+    cycles: "throw",
+    override: ({ zodSchema, jsonSchema }) => keepDocumentedShape(zodSchema, jsonSchema as JsonSchema),
+  }) as JsonSchema;
+}
+
+const MAX_SAFE = Number.MAX_SAFE_INTEGER;
+
+function startsWithTransform(schema: z.core.$ZodType): boolean {
+  const def = schema._zod.def as { type: string; in?: z.core.$ZodType; innerType?: z.core.$ZodType };
+  if (def.type === "pipe") return def.in?._zod.def.type === "transform";
+  return (def.type === "nullable" || def.type === "readonly") && def.innerType !== undefined && startsWithTransform(def.innerType);
+}
+
+/** Whether a body may leave this field out. Zod answers "yes" for anything that starts with a transform (a
+ *  `z.preprocess`), whatever follows it; look through that to the schema it feeds. */
+function optionalInput(schema: z.core.$ZodType): boolean {
+  const def = schema._zod.def as { type: string; in?: z.core.$ZodType; out?: z.core.$ZodType; innerType?: z.core.$ZodType };
+  if (def.type === "pipe" && def.in?._zod.def.type === "transform" && def.out) return optionalInput(def.out);
+  if ((def.type === "nullable" || def.type === "readonly") && def.innerType) return optionalInput(def.innerType);
+  return schema._zod.optin === "optional";
+}
+
+/** Keep the document describing the API the way it always has, where zod 4's own JSON Schema output words it
+ *  differently: dates are date-time strings, formats are formats (not their regexes), integers carry no safe-range
+ *  bounds, plain objects refuse extra keys while `.passthrough()` ones allow them, a discriminated union is `anyOf`,
+ *  a `.default()`/`.prefault()` value is always shown, and a `.transform().pipe(schema)` keeps the limits of `schema`. */
+function keepDocumentedShape(zodSchema: z.core.$ZodType, json: JsonSchema): void {
+  const def = zodSchema._zod.def as {
+    type: string;
+    catchall?: z.core.$ZodType;
+    shape?: Record<string, z.core.$ZodType>;
+    discriminator?: string;
+    defaultValue?: unknown;
+    out?: z.core.$ZodType;
+    checks?: Array<{ _zod: { def: { check: string } } }>;
+  };
+  switch (def.type) {
+    case "date":
+      Object.assign(json, { type: "string", format: "date-time" });
+      break;
+    case "object":
+      if (!def.catchall || def.catchall._zod.def.type === "never") json.additionalProperties = false;
+      else if (def.catchall._zod.def.type === "unknown" || def.catchall._zod.def.type === "any") json.additionalProperties = true;
+      if (def.shape) {
+        // a field behind a `z.preprocess(...)` (see common/zod-record) is still required: zod would call it optional
+        const required = new Set(Array.isArray(json.required) ? (json.required as string[]) : []);
+        for (const [key, prop] of Object.entries(def.shape)) if (startsWithTransform(prop) && !optionalInput(prop)) required.add(key);
+        const ordered = Object.keys(def.shape).filter((k) => required.has(k));
+        if (ordered.length > 0) json.required = ordered;
+      }
+      break;
+    case "union":
+      if (def.discriminator !== undefined && Array.isArray(json.oneOf)) {
+        json.anyOf = json.oneOf;
+        delete json.oneOf;
+      }
+      break;
+    case "default":
+    case "prefault":
+      if (!("default" in json) && def.defaultValue !== undefined) json.default = JSON.parse(JSON.stringify(def.defaultValue)) as unknown;
+      break;
+    case "pipe":
+      if (def.out && def.out._zod.def.type !== "transform") {
+        const limits = render(def.out);
+        for (const [k, v] of Object.entries(limits)) if (k !== "$schema" && !(k in json)) json[k] = v;
+      }
+      break;
+    default:
+      break;
+  }
+  if (def.type === "number" && json.type === "integer") {
+    // only the bounds `.int()` implies, not a limit somebody wrote down
+    const written = (kind: string) => (def.checks ?? []).some((c) => c._zod.def.check === kind);
+    if (json.minimum === -MAX_SAFE && !written("greater_than")) delete json.minimum;
+    if (json.maximum === MAX_SAFE && !written("less_than")) delete json.maximum;
+  }
+  if (typeof json.pattern === "string" && (json.format === "email" || json.format === "date-time")) delete json.pattern;
 }
 
 /** Document a request body from the same zod schema the ZodValidationPipe validates against — so the docs

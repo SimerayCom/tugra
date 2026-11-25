@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { guardedRecord } from "../common/zod-record";
 import { VOLUME_NAME_RE } from "./migration-volume";
 import { ImportMappingDocSchema } from "./import-mapping";
 import { ImportServerMapSchema } from "./server-map";
@@ -33,7 +34,7 @@ export const ImportTestSchema = ImportConnectSchema.omit({ scopeLabel: true });
 export type ImportTestInput = z.infer<typeof ImportTestSchema>;
 
 /** Per-database data mode (`volume` = physical copy of a PostgreSQL data directory). Bounded; keys are database itemRefs. */
-export const ImportDbDataModesSchema = z.record(z.string().min(1).max(256), z.literal("volume")).refine((r) => Object.keys(r).length <= 500, "too many entries");
+export const ImportDbDataModesSchema = guardedRecord(z.string().min(1).max(256), z.literal("volume")).refine((r) => Object.keys(r).length <= 500, "too many entries");
 
 /** Request body for the dry-run import plan: a local server to adopt, or a connected remote session. */
 export const ImportPlanRequestSchema = z.discriminatedUnion("sourceKind", [
@@ -75,9 +76,8 @@ export const ServiceChoiceSchema = z
     environmentId: z.string().min(1).optional(),
     targetServerId: z.string().min(1).optional(),
     serviceDomains: z.array(z.object({ service: SVC_NAME, hostname: HOSTNAME, port: z.number().int().min(1).max(65535) }).strict()).max(20).optional(),
-    hostnameMap: z.record(HOSTNAME, HOSTNAME).optional(),
-    volumes: z
-      .record(
+    hostnameMap: guardedRecord(HOSTNAME, HOSTNAME).optional(),
+    volumes: guardedRecord(
         z.string().regex(VOLUME_NAME_RE),
         z
           .object({
@@ -89,13 +89,13 @@ export const ServiceChoiceSchema = z
       .optional(),
     dropMembers: z.array(SVC_NAME).max(32).optional(), // can only widen the dropped set
     pinImages: z.boolean().optional(), // default true when a pin exists
-    pins: z.record(SVC_NAME, z.string().regex(IMAGE_REF_RE)).optional(), // service key -> image ref
+    pins: guardedRecord(SVC_NAME, z.string().regex(IMAGE_REF_RE)).optional(), // service key -> image ref
     privateNetwork: z.boolean().optional(), // default true for an internal-only single-service stack
     hold: z.boolean().optional(), // default true for cloudflared only
   })
   .strict();
 export type ServiceChoice = z.infer<typeof ServiceChoiceSchema>;
-export const ServiceChoicesSchema = z.record(z.string().min(1).max(256), ServiceChoiceSchema).refine((r) => Object.keys(r).length <= 64, "at most 64 service choices");
+export const ServiceChoicesSchema = guardedRecord(z.string().min(1).max(256), ServiceChoiceSchema).refine((r) => Object.keys(r).length <= 64, "at most 64 service choices");
 
 const mappingHash = z.string().regex(/^[a-f0-9]{32}$/, "invalid mappingHash");
 /** The editable-mapping fields of a remote apply. `mapping` and `mappingHash` travel together (refined below). */
@@ -159,7 +159,7 @@ export type ImportGitLinksInput = z.infer<typeof ImportGitLinksSchema>;
 
 /** Body of `POST /import/operations/:opId/git-links/relink`: optional per-app picks for ambiguous rows. */
 export const ImportGitRelinkSchema = z.object({
-  choices: z.record(z.string().min(1).max(300), z.string().min(1).max(100)).optional(),
+  choices: guardedRecord(z.string().min(1).max(300), z.string().min(1).max(100)).optional(),
 });
 export type ImportGitRelinkInput = z.infer<typeof ImportGitRelinkSchema>;
 

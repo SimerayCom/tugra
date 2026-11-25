@@ -1,3 +1,4 @@
+import "./common/zod-compat"; // zod validation messages keep their long-standing wording (see the file)
 import { Module } from "@nestjs/common";
 import { ConfigModule, ConfigService } from "@nestjs/config";
 import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR } from "@nestjs/core";

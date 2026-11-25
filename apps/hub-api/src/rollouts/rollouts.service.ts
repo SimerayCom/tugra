@@ -28,7 +28,7 @@ import {
 export const RolloutCreateSchema = z.object({
   name: z.string().trim().min(1).max(80).optional(),
   appIds: z.array(z.string().min(1)).min(1).max(ROLLOUT_MAX_TARGETS),
-  config: RolloutConfigSchema.default({}),
+  config: RolloutConfigSchema.prefault({}),
 });
 export type RolloutCreateInput = z.infer<typeof RolloutCreateSchema>;
 
@@ -66,7 +66,7 @@ export const RolloutViewSchema = z.object({
   kind: z.string(),
   status: z.enum(["RUNNING", "HALTED", "ROLLING_BACK", "COMPLETED", "ROLLED_BACK", "ROLLBACK_FAILED", "CANCELLED"]),
   haltReason: z.string().nullable(),
-  haltDetail: z.record(z.unknown()).nullable(),
+  haltDetail: z.record(z.string(), z.unknown()).nullable(),
   config: RolloutConfigSchema,
   currentWave: z.number(),
   waveCount: z.number(),

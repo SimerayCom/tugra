@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { guardedRecord } from "../common/zod-record";
 import { isIP as netIsIP } from "node:net";
 // Cross-module dto import: reuse the label charset from the clusters domain so app placement rules and node
 // labels validate identically (dto files don't usually import each other — kept intentional + documented).
@@ -14,7 +15,7 @@ import { PUSH_NAME_MAX, PUSH_NAME_RE, PUSH_TAG_TPL_MAX, PUSH_TAG_TPL_RE } from "
 // variable) WITHOUT imposing the strict POSIX name regex, which would reject legitimate dotted/dashed
 // keys that migrated apps already use (see common/env-key).
 export const EnvRecordStrictSchema = z
-  .record(z.string())
+  .record(z.string(), z.string())
   .refine((env) => Object.keys(env).every(isValidUserEnvKey), { message: "invalid environment variable name" })
   .refine((env) => Object.values(env).every(isSafeEnvValue), { message: "environment value must not contain a newline" });
 // Template envOverride has no flags, so it keeps the strict (no line break at all) schema under the old name.
@@ -22,7 +23,7 @@ export const EnvRecordSchema = EnvRecordStrictSchema;
 // Writers that can carry per-variable flags: line breaks are checked by the flag-aware validator (a value may
 // contain them only when its variable is marked multiline), so no newline refine here.
 export const EnvRecordLooseSchema = z
-  .record(z.string())
+  .record(z.string(), z.string())
   .refine((env) => Object.keys(env).every(isValidUserEnvKey), { message: "invalid environment variable name" });
 
 export const EnvFlagInputSchema = z
@@ -33,7 +34,7 @@ export const EnvFlagInputSchema = z
     multiline: z.boolean().optional(),
   })
   .strict();
-export const EnvFlagsInputSchema = z.record(EnvFlagInputSchema);
+export const EnvFlagsInputSchema = z.record(z.string(), EnvFlagInputSchema);
 
 /** Context-free (no app source) flag validation shared by the SetEnv and CreateApp bodies. */
 function envFlagsSuperRefine(b: { env?: Record<string, string>; flags?: Record<string, unknown> }, ctx: z.RefinementCtx): void {
@@ -147,7 +148,7 @@ export type SetEnvInput = z.infer<typeof SetEnvSchema>;
 
 // GET /apps/:id/env-flags: sparse by key, FULL booleans per entry; `applicable` says which flags mean something for this app type.
 export const EnvFlagsResponseSchema = z.object({
-  flags: z.record(z.object({ buildTime: z.boolean(), runtime: z.boolean(), literal: z.boolean(), multiline: z.boolean() })),
+  flags: z.record(z.string(), z.object({ buildTime: z.boolean(), runtime: z.boolean(), literal: z.boolean(), multiline: z.boolean() })),
   applicable: z.object({ buildTime: z.boolean(), literal: z.boolean() }),
   limits: z.object({ multilineValueBytes: z.number(), multilineKeys: z.number(), multilineTotalBytes: z.number(), buildTotalBytes: z.number() }),
 });
@@ -165,7 +166,7 @@ export const LinkDatabaseSchema = z
 export type LinkDatabaseInput = z.infer<typeof LinkDatabaseSchema>;
 
 export const SetBuildArgsSchema = z.object({
-  buildArgs: z.record(z.string()),
+  buildArgs: z.record(z.string(), z.string()),
 });
 export type SetBuildArgsInput = z.infer<typeof SetBuildArgsSchema>;
 
@@ -176,8 +177,7 @@ export const BUILD_SECRET_KEY = BUILD_KEY_RE;
 // 128KiB on Linux — so the aggregate is capped well under it rather than per value only.
 export const BUILD_SECRETS_MAX_TOTAL_BYTES = 48 * 1024;
 export const SetBuildSecretsSchema = z.object({
-  buildSecrets: z
-    .record(z.string().regex(BUILD_SECRET_KEY, "secret ids must be identifiers (letters, digits, _)"), z.string().max(BUILD_SECRETS_MAX_TOTAL_BYTES))
+  buildSecrets: guardedRecord(z.string().regex(BUILD_SECRET_KEY, "secret ids must be identifiers (letters, digits, _)"), z.string().max(BUILD_SECRETS_MAX_TOTAL_BYTES))
     .refine((r) => Object.keys(r).length <= 64, { message: "at most 64 build secrets" })
     .refine((r) => Object.values(r).reduce((n, v) => n + Buffer.byteLength(v, "utf8"), 0) <= BUILD_SECRETS_MAX_TOTAL_BYTES, {
       message: `build secrets total at most ${BUILD_SECRETS_MAX_TOTAL_BYTES / 1024}KB`,
@@ -263,8 +263,7 @@ export type SetContainerCommandInput = z.infer<typeof SetContainerCommandSchema>
 // service is authoritative (reserved namespaces, case-insensitive duplicates, dockerOptions collisions).
 export const SetCustomLabelsSchema = z
   .object({
-    labels: z
-      .record(
+    labels: guardedRecord(
         z.string().min(1).max(CUSTOM_LABEL_LIMITS.keyMax).regex(CUSTOM_LABEL_KEY_RE),
         z
           .string()
@@ -931,7 +930,7 @@ export const FromTemplateSchema = z.object({
   serverId: z.string().min(1),
   environmentId: z.string().min(1).optional(),
   deploy: z.boolean().optional(), // one-call install: create + best-effort deploy
-  fields: z.record(z.string()).optional(), // user-entered install values (override generated defaults)
+  fields: z.record(z.string(), z.string()).optional(), // user-entered install values (override generated defaults)
   composeOverride: z.string().min(1).optional(), // fork-free compose edit (validated for host-escape)
   envOverride: EnvRecordSchema.optional(), // extra/override env entries (encrypted, layered last)
 });
