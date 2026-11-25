@@ -30,10 +30,14 @@ const server = (o: Partial<ServerCostView> = {}): ServerCostView => ({
   currency: "EUR",
   source: "estimate",
   provider: "hetzner",
+  providerHint: "agent",
   planSlug: "cx23",
   planLabel: "CX23 · 2 vCPU · 4 GB · 40 GB",
   estimateBasis: "list",
   snapshotVerified: true,
+  snapshotDate: "2026-11-24",
+  unknownReason: null,
+  similar: null,
   syncedAt: null,
   canSync: false,
   cores: 2,
@@ -98,6 +102,82 @@ describe("CostsPage", () => {
     expect(screen.getByText("Estimate")).toBeTruthy();
     expect(screen.getByText(/Estimated from Hetzner list prices, 2026-11-24/)).toBeTruthy();
     expect(screen.getByText(/Prices exclude VAT/)).toBeTruthy();
+  });
+
+  it("a server of an unknown provider shows no plan and no price: 'Provider unknown' and 'Enter your price'", async () => {
+    const unknown = server({
+      name: "vmi-box",
+      monthlyCents: null,
+      currency: null,
+      source: "unknown",
+      provider: null,
+      providerHint: null,
+      planSlug: null,
+      planLabel: null,
+      estimateBasis: null,
+      snapshotVerified: null,
+      snapshotDate: null,
+      unknownReason: "no_provider",
+      similar: { provider: "hetzner", monthlyCents: 11799, currency: "EUR", snapshotDate: "2026-11-24" },
+      cores: 12,
+      memBytes: 48 * 1024 ** 3,
+      diskBytes: 774 * 1024 ** 3,
+    });
+    mock(team({ servers: [unknown], totals: [] }));
+    wrap(<CostsPage />);
+    await waitFor(() => expect(screen.getByText("vmi-box")).toBeTruthy());
+    expect(screen.getByText("Provider unknown")).toBeTruthy();
+    expect(screen.getByText("Enter your price")).toBeTruthy();
+    expect(screen.queryByText("Correct price")).toBeNull();
+    // Never another provider's plan as this server's plan, and no price figure for it.
+    expect(screen.queryByText(/CPX|CX\d|CCX/)).toBeNull();
+    expect(screen.queryByText(/\/mo$/)).toBeNull();
+    expect(screen.getByText(/We could not tell which provider hosts this server/)).toBeTruthy();
+    expect(screen.getByText(/Similar size at Hetzner: about €117\.99 a month/)).toBeTruthy();
+    expect(screen.getByText(/This is not your price/)).toBeTruthy();
+  });
+
+  it("entering a price for an unknown server saves it as a typed price", async () => {
+    const unknown = server({ monthlyCents: null, currency: null, source: "unknown", provider: null, providerHint: null, planSlug: null, planLabel: null, estimateBasis: null, snapshotVerified: null, snapshotDate: null, unknownReason: "no_provider" });
+    mock(team({ servers: [unknown], totals: [] }));
+    const set = vi.spyOn(api, "setServerCost").mockResolvedValue({ ok: true });
+    wrap(<CostsPage />);
+    await waitFor(() => expect(screen.getByText("Enter your price")).toBeTruthy());
+    fireEvent.click(screen.getByText("Enter your price"));
+    expect(screen.getByText(/Enter what your provider bills you each month for this server/)).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("Monthly price"), { target: { value: "27,50" } });
+    fireEvent.click(screen.getByText("Save price"));
+    await waitFor(() => expect(set).toHaveBeenCalledWith("s1", { monthly: 27.5, currency: "EUR" }));
+  });
+
+  it("a provider without a price list says so by name and still offers 'Enter your price'", async () => {
+    const aws = server({ monthlyCents: null, currency: null, source: "unknown", provider: "aws", providerHint: "agent", planSlug: null, planLabel: null, estimateBasis: null, snapshotVerified: null, snapshotDate: null, unknownReason: "no_list" });
+    mock(team({ servers: [aws], totals: [] }));
+    wrap(<CostsPage />);
+    await waitFor(() => expect(screen.getByText(/We have no public price list for AWS yet/)).toBeTruthy());
+    expect(screen.getByText("Enter your price")).toBeTruthy();
+    expect(screen.queryByText("Provider unknown")).toBeNull();
+  });
+
+  it("an estimate from a detected provider uses that provider's own date and says when the provider was guessed from the host name", async () => {
+    const contabo = server({ name: "vmi2419591", provider: "contabo", providerHint: "hostname", planSlug: "cloud-vps-12", planLabel: "Cloud VPS 12 · 12 vCPU · 48 GB · 400 GB", monthlyCents: 2500, snapshotDate: "2026-11-25" });
+    mock(team({ servers: [contabo], totals: [{ currency: "EUR", monthlyCents: 2500, estimatedCents: 2500, servers: 1 }], snapshotDate: "2026-11-25" }));
+    wrap(<CostsPage />);
+    await waitFor(() => expect(screen.getByText("vmi2419591")).toBeTruthy());
+    expect(screen.getAllByText("€25/mo").length).toBeGreaterThan(0);
+    expect(screen.getByText(/Cloud VPS 12 · 12 vCPU/)).toBeTruthy();
+    expect(screen.getByText(/Estimated from Contabo list prices, 2026-11-25\. The provider was guessed from the host name\./)).toBeTruthy();
+    expect(screen.getByText("Correct price")).toBeTruthy();
+    fireEvent.click(screen.getByText("Correct price"));
+    expect(screen.getByText(/This is an estimate\. Enter what you really pay/)).toBeTruthy();
+  });
+
+  it("a viewer sees an unknown price without the 'Enter your price' action", async () => {
+    const unknown = server({ monthlyCents: null, currency: null, source: "unknown", provider: null, providerHint: null, planSlug: null, planLabel: null, estimateBasis: null, snapshotVerified: null, snapshotDate: null, unknownReason: "no_provider" });
+    mock(team({ canManage: false, canOps: false, servers: [unknown], totals: [] }));
+    wrap(<CostsPage />);
+    await waitFor(() => expect(screen.getByText("Provider unknown")).toBeTruthy());
+    expect(screen.queryByText("Enter your price")).toBeNull();
   });
 
   it("shows an empty state for a team with no servers", async () => {
@@ -209,6 +289,14 @@ describe("CostsPage", () => {
     expect(screen.getByText("CPU is close to full at peak.")).toBeTruthy();
     expect(screen.getByText(/Adds about €13.50 a month/)).toBeTruthy();
     expect(screen.getByText("Disks cannot shrink, so this means moving to a new, smaller server.")).toBeTruthy();
+  });
+
+  it("advice for a provider without a price list says so and suggests no plan", async () => {
+    mock(team(), [advice({ kind: "near_limit", reasons: ["memory"], provider: "aws", priceBasis: "none", target: null, savingsCents: null, current: { slug: null, label: null, cores: 4, memoryGb: 8, diskGb: 100, monthlyCents: null, currency: null } })]);
+    wrap(<CostsPage />);
+    await waitFor(() => expect(screen.getByText("Near its limit")).toBeTruthy());
+    expect(screen.getByText("No price list for this provider, so no plan or price is suggested.")).toBeTruthy();
+    expect(screen.queryByText("Resize now")).toBeNull();
   });
 
   it("says how many days are collected while a server is still learning", async () => {

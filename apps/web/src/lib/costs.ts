@@ -2,6 +2,8 @@
 
 export type CostSource = "provider" | "manual" | "estimate" | "unknown";
 
+export type UnknownReason = "no_size" | "no_provider" | "no_list" | "no_plan";
+
 export interface CostAppShare {
   key: string;
   kind: "app" | "db" | "system" | "other";
@@ -18,10 +20,19 @@ export interface ServerCostView {
   currency: string | null;
   source: CostSource;
   provider: string | null;
+  /** Where `provider` came from: a link, the host's agent, or a guess from the host name (a hint the price can replace). */
+  providerHint: "linked" | "agent" | "hostname" | null;
   planSlug: string | null;
   planLabel: string | null;
-  estimateBasis: "list" | "reference" | null;
+  /** Estimates only: the plan is from the host's own provider list. */
+  estimateBasis: "list" | null;
   snapshotVerified: boolean | null;
+  /** Estimates only: the day that provider's list was read. */
+  snapshotDate: string | null;
+  /** Unknown prices only: why there is no estimate. */
+  unknownReason: UnknownReason | null;
+  /** Unknown prices only: a muted comparison from another provider's public list; never this server's plan. */
+  similar: { provider: string; monthlyCents: number; currency: string; snapshotDate: string } | null;
   syncedAt: string | null;
   canSync: boolean;
   cores: number | null;
@@ -104,7 +115,7 @@ export interface ServerAdvice {
   current: { slug: string | null; label: string | null; cores: number; memoryGb: number; diskGb: number; monthlyCents: number | null; currency: string | null } | null;
   target: AdvicePlan | null;
   savingsCents: number | null;
-  priceBasis: "provider" | "list" | "reference";
+  priceBasis: "provider" | "list" | "none";
   upgradeDisk: boolean;
   diskBlocked: boolean;
   rescale: "api" | "guide";
@@ -150,7 +161,9 @@ const PROVIDER_NAMES: Record<string, string> = {
   oracle: "Oracle Cloud",
   ovh: "OVHcloud",
   contabo: "Contabo",
-  linode: "Linode",
+  linode: "Akamai (Linode)",
+  netcup: "netcup",
+  ionos: "IONOS",
   scaleway: "Scaleway",
   upcloud: "UpCloud",
 };

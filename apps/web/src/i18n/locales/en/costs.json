@@ -29,9 +29,18 @@
   },
   "estimate": {
     "list": "Estimated from {provider} list prices, {date}.",
-    "reference": "Estimated from a reference price list, {date}. Correct it if your plan differs.",
     "stale": "This price list may be out of date.",
     "unknown": "Not enough information about this server to estimate a price."
+  },
+  "unknown": {
+    "provider": "Provider unknown",
+    "noProvider": "We could not tell which provider hosts this server, so there is no price estimate.",
+    "noList": "We have no public price list for {provider} yet, so there is no price estimate.",
+    "noPlan": "No {provider} plan is close to this server's size, so there is no price estimate.",
+    "similar": "Similar size at {provider}: about {amount} a month (list price, {date}). This is not your price."
+  },
+  "provider": {
+    "fromHostname": "The provider was guessed from the host name."
   },
   "price": {
     "correct": "Correct price",
@@ -41,7 +50,11 @@
     "reset": "Use automatic price",
     "invalid": "Enter an amount such as 12.50.",
     "saved": "Price saved",
-    "cleared": "Back to the automatic price"
+    "cleared": "Back to the automatic price",
+    "enter": "Enter your price",
+    "helpEnter": "Enter what your provider bills you each month for this server, without VAT.",
+    "helpEstimate": "This is an estimate. Enter what you really pay and it replaces the estimate everywhere.",
+    "helpCorrect": "Enter what your provider bills you each month, without VAT."
   },
   "apps": {
     "show": "Show what uses it",
@@ -93,7 +106,7 @@
     "priceBasis": {
       "provider": "Prices from your provider.",
       "list": "Prices from public list prices, {date}.",
-      "reference": "Prices from a reference list, {date}."
+      "none": "No price list for this provider, so no plan or price is suggested."
     },
     "usage": "At its busiest it uses {cpu} of CPU and {mem} of memory.",
     "reason": {

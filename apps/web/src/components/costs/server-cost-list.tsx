@@ -72,14 +72,25 @@ function ServerCostRow({ server: s, canManage, snapshotDate }: { server: ServerC
 
   const provider = providerName(s.provider);
   const size = sizeLine(s.cores, s.memBytes, s.diskBytes);
-  const note =
-    s.source === "estimate"
-      ? s.estimateBasis === "list"
-        ? t("costs.estimate.list", { provider: providerName(s.provider) ?? "", date: snapshotDate })
-        : t("costs.estimate.reference", { date: snapshotDate })
-      : s.source === "unknown"
-        ? t("costs.estimate.unknown")
-        : null;
+  const unknown = s.source === "unknown";
+  // A guess from the host name or the agent is a hint, not a fact: say so, and let the price replace it.
+  const hint = s.providerHint === "hostname" ? t("costs.provider.fromHostname") : null;
+  const similarProvider = providerName(s.similar?.provider) ?? "";
+  const note = (() => {
+    if (s.source === "estimate") return t("costs.estimate.list", { provider: provider ?? "", date: s.snapshotDate ?? snapshotDate });
+    if (!unknown) return null;
+    switch (s.unknownReason) {
+      case "no_provider":
+        return t("costs.unknown.noProvider");
+      case "no_list":
+        return t("costs.unknown.noList", { provider: provider ?? "" });
+      case "no_plan":
+        return t("costs.unknown.noPlan", { provider: provider ?? "" });
+      default:
+        return t("costs.estimate.unknown");
+    }
+  })();
+  const badge = unknown && s.unknownReason === "no_provider" ? t("costs.unknown.provider") : t(`costs.source.${s.source}`);
   const detailsId = `cost-apps-${s.serverId}`;
 
   return (
@@ -88,7 +99,7 @@ function ServerCostRow({ server: s, canManage, snapshotDate }: { server: ServerC
         <div style={{ flex: "1 1 180px", minWidth: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
             <span style={{ fontWeight: 600, fontSize: 14, overflowWrap: "anywhere" }}>{s.name}</span>
-            <Badge tone={SOURCE_TONE[s.source]}>{t(`costs.source.${s.source}`)}</Badge>
+            <Badge tone={SOURCE_TONE[s.source]}>{badge}</Badge>
           </div>
           <div style={{ fontSize: 12, color: "var(--c-tx3)", marginTop: 3, overflowWrap: "anywhere" }}>
             {[s.planLabel, !s.planLabel ? provider : null, !s.planLabel ? size : null].filter(Boolean).join(" · ") || size}
@@ -102,8 +113,8 @@ function ServerCostRow({ server: s, canManage, snapshotDate }: { server: ServerC
           )}
         </div>
         {canManage && (
-          <Btn variant="ghost" icon={Pencil} onClick={() => (editing ? setEditing(false) : openEdit())} aria-expanded={editing}>
-            {t("costs.price.correct")}
+          <Btn variant={unknown ? "primary" : "ghost"} icon={Pencil} onClick={() => (editing ? setEditing(false) : openEdit())} aria-expanded={editing}>
+            {unknown ? t("costs.price.enter") : t("costs.price.correct")}
           </Btn>
         )}
       </div>
@@ -111,6 +122,12 @@ function ServerCostRow({ server: s, canManage, snapshotDate }: { server: ServerC
         <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "8px 0 0" }}>
           {note}
           {s.source === "estimate" && s.snapshotVerified === false ? ` ${t("costs.estimate.stale")}` : ""}
+          {hint ? ` ${hint}` : ""}
+        </p>
+      )}
+      {unknown && s.similar && (
+        <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "4px 0 0" }}>
+          {t("costs.unknown.similar", { provider: similarProvider, amount: formatMoney(s.similar.monthlyCents, s.similar.currency), date: s.similar.snapshotDate })}
         </p>
       )}
 
@@ -122,6 +139,7 @@ function ServerCostRow({ server: s, canManage, snapshotDate }: { server: ServerC
           }}
           style={{ marginTop: 12, borderTop: "1px solid var(--c-bd)", paddingTop: 12 }}
         >
+          <p style={{ fontSize: 12, color: "var(--c-tx2)", margin: "0 0 10px" }}>{unknown ? t("costs.price.helpEnter") : s.source === "estimate" ? t("costs.price.helpEstimate") : t("costs.price.helpCorrect")}</p>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 12 }}>
             <Field label={t("costs.price.label")} htmlFor={`cost-amt-${s.serverId}`} error={invalid ? t("costs.price.invalid") : undefined}>
               <TextInput id={`cost-amt-${s.serverId}`} inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} autoComplete="off" />

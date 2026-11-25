@@ -20,7 +20,7 @@ describe("costs i18n", () => {
       ["costs.source", ["provider", "manual", "estimate", "unknown"]],
       ["costs.apps.kind", ["app", "db", "system", "other"]],
       ["costs.advice.reason", ["cpu", "memory", "disk"]],
-      ["costs.advice.priceBasis", ["provider", "list", "reference"]],
+      ["costs.advice.priceBasis", ["provider", "list", "none"]],
       ["costs.rescale.phase", ["SHUTTING_DOWN", "RESIZING", "POWERING_ON", "DONE", "FAILED"]],
       ["costs.guide.hetzner", ["s1", "s2", "s3", "s4"]],
       ["costs.guide.digitalocean", ["s1", "s2", "s3", "s4"]],
