@@ -12,6 +12,9 @@ const HANDLER_WAIT_MS = 120_000;
 /** One slot per job name is enough (a name never runs twice at once); this caps how many different ticks run in parallel. */
 const WORKER_CONCURRENCY = 24;
 
+/** The next multiple of `every` after now (what a legacy BullMQ `repeat.every` job used as its first fire time). */
+export const nextBoundary = (every: number, now = Date.now()): number => Math.floor(now / every) * every + every;
+
 export interface TickSpec {
   /** Unique, stable job name (it is the scheduler id and the log label). */
   name: string;
@@ -91,11 +94,21 @@ export class TickSchedulerService implements OnApplicationBootstrap {
     if ((spec.every == null) === (spec.pattern == null)) throw new Error(`tick ${spec.name}: set exactly one of every / pattern`);
     this.setEntry(spec.name, { run: spec.run, exclusive: true });
     if (!this.enabled) return;
-    await this.ensure().upsertJobScheduler(
-      tickSchedulerId(spec.name),
-      spec.every != null ? { every: spec.every } : { pattern: spec.pattern!, ...(spec.tz ? { tz: spec.tz } : {}) },
-      { name: spec.name, data: {} },
-    );
+    const queue = this.ensure();
+    const id = tickSchedulerId(spec.name);
+    let repeat: Parameters<Queue["upsertJobScheduler"]>[1];
+    if (spec.every != null) {
+      // BullMQ runs a brand-new `every` scheduler (and one whose interval just changed) at once, then every interval.
+      // The per-feature queues this replaces first fired at the next interval boundary, so a fresh install or an
+      // upgrade must not fire every tick in the same second (nor auto-apply an update on the upgrade boot): start at
+      // the next boundary. A scheduler that already has this interval is upserted as is, which keeps its pending job
+      // (an overdue tick still runs once on boot) and re-creates it if it was ever lost.
+      const current = await queue.getJobScheduler(id).catch(() => undefined);
+      repeat = current?.every === spec.every ? { every: spec.every } : { every: spec.every, startDate: new Date(nextBoundary(spec.every)) };
+    } else {
+      repeat = { pattern: spec.pattern!, ...(spec.tz ? { tz: spec.tz } : {}) };
+    }
+    await queue.upsertJobScheduler(id, repeat, { name: spec.name, data: {} });
   }
 
   /** Stop a tick (kill switch flipped, feature turned off): removes its scheduler and the pending job. Safe if absent. */

@@ -35,6 +35,10 @@ export class FakeQueue {
   async upsertJobScheduler(id: string, repeat: unknown, template: unknown): Promise<void> {
     this.schedulers.set(id, { repeat, template });
   }
+  async getJobScheduler(id: string): Promise<{ every?: number } | undefined> {
+    const r = this.schedulers.get(id)?.repeat as { every?: number } | undefined;
+    return r ? { every: r.every } : undefined;
+  }
   async removeJobScheduler(id: string): Promise<boolean> {
     return this.schedulers.delete(id);
   }

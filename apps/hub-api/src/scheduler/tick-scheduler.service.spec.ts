@@ -1,4 +1,4 @@
-import { TickSchedulerService, SCHEDULER_QUEUE, tickSchedulerId } from "./tick-scheduler.service";
+import { TickSchedulerService, SCHEDULER_QUEUE, tickSchedulerId, nextBoundary } from "./tick-scheduler.service";
 import { FakeHub } from "./testing/fake-hub";
 
 jest.mock("./legacy-queues", () => ({ retireLegacyQueues: jest.fn().mockResolvedValue({ retiredQueues: [], removedRepeatables: 0, movedJobs: 0 }) }));
@@ -28,7 +28,9 @@ describe("TickSchedulerService", () => {
     await svc.register({ name: "x", pattern: "0 3 * * *", tz: "Europe/Istanbul", run: jest.fn() });
     expect([...hub.queues.keys()]).toEqual([SCHEDULER_QUEUE]);
     expect([...hub.processors.keys()]).toEqual([SCHEDULER_QUEUE]);
-    expect(queue().schedulers.get(tickSchedulerId("metrics-rollup"))).toEqual({ repeat: { every: 120_000 }, template: { name: "metrics-rollup", data: {} } });
+    const rollup = queue().schedulers.get(tickSchedulerId("metrics-rollup"))!;
+    expect(rollup.repeat).toMatchObject({ every: 120_000 });
+    expect(rollup.template).toEqual({ name: "metrics-rollup", data: {} });
     expect(queue().schedulers.get(tickSchedulerId("hub-backup-drill"))!.repeat).toEqual({ pattern: "20 3 1 * *" });
     expect(queue().schedulers.get(tickSchedulerId("x"))!.repeat).toEqual({ pattern: "0 3 * * *", tz: "Europe/Istanbul" });
   });
@@ -38,7 +40,24 @@ describe("TickSchedulerService", () => {
     await svc.register({ name: "update-check", every: 86_400_000, run: jest.fn() });
     await svc.register({ name: "update-check", every: 3_600_000, run: jest.fn() });
     expect(queue().schedulers.size).toBe(1);
-    expect(queue().schedulers.get("tick:update-check")!.repeat).toEqual({ every: 3_600_000 });
+    expect(queue().schedulers.get("tick:update-check")!.repeat).toMatchObject({ every: 3_600_000 });
+  });
+
+  it("a new interval starts at the next interval boundary (not at once), like the old per-queue repeat did; an unchanged one is upserted untouched", async () => {
+    const { svc, queue } = make();
+    await svc.register({ name: "telemetry", every: 3_600_000, run: jest.fn() });
+    const first = queue().schedulers.get("tick:telemetry")!.repeat as { every: number; startDate: Date };
+    expect(first.startDate.getTime()).toBeGreaterThan(Date.now());
+    expect(first.startDate.getTime() % 3_600_000).toBe(0);
+    await svc.register({ name: "telemetry", every: 3_600_000, run: jest.fn() }); // a restart
+    expect(queue().schedulers.get("tick:telemetry")!.repeat).toEqual({ every: 3_600_000 }); // keeps the pending job as is
+    await svc.register({ name: "telemetry", every: 7_200_000, run: jest.fn() }); // interval changed
+    expect((queue().schedulers.get("tick:telemetry")!.repeat as { startDate?: Date }).startDate).toBeInstanceOf(Date);
+  });
+
+  it("nextBoundary is the next multiple of the interval", () => {
+    expect(nextBoundary(60_000, 1_000_000)).toBe(1_020_000);
+    expect(nextBoundary(60_000, 1_020_000)).toBe(1_080_000);
   });
 
   it("needs exactly one of every / pattern", async () => {

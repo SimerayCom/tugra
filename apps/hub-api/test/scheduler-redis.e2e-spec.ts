@@ -43,13 +43,18 @@ describe("scheduler on a real Redis (restart safety, legacy cleanup)", () => {
   beforeEach(async () => {
     await admin.flushdb();
   });
+  afterEach(async () => {
+    // a failed assertion must not leave a worker consuming the next test's jobs
+    await Promise.all(booted.splice(0).map((h) => h.onModuleDestroy().catch(() => undefined)));
+  });
 
   it("one hub keeps 1 shared socket + 1 blocking socket per worker, however many ticks it registers", async () => {
-    const before = String(await admin.client("LIST")).trim().split("\n").length;
+    const ours = async () => String(await admin.client("LIST")).split("\n").filter((l) => /name=(tugra:bullmq|bull:)/.test(l)).length;
+    const before = await ours();
     const h = await bootHub();
     for (let i = 0; i < 15; i++) await h.ticks.register({ name: `t${i}`, every: 60_000, run: async () => undefined });
     await sleep(300);
-    const after = String(await admin.client("LIST")).trim().split("\n").length;
+    const after = await ours();
     expect(after - before).toBe(2); // the shared client + the scheduler worker's blocking client
     const probe = new Redis(URL, { maxRetriesPerRequest: null });
     const q = new Queue(SCHEDULER_QUEUE, { connection: probe as never });
