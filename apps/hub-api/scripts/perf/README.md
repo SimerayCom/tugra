@@ -19,3 +19,7 @@ Not shipped: `apps/hub-api/scripts` is outside the TypeScript `include` and the 
 7. `node --max-old-space-size=96 scripts/perf/stream-cap.cjs dist/after 1` streams 1 GiB through the migration-artifact
    ingest path (`stageToPart`) under a 96 MB heap: it only passes if the path never buffers the body.
 8. Run the boot step with `--max-old-space-size=768` (the shipped default) to confirm a phase fits under the production cap.
+9. Metric rollups + retention: `node scripts/perf/rollup-run.cjs both dist/after` rolls the 1-minute and 5-minute tiers until caught up and then
+   prunes (the upgrade of a seeded hub; `1m` times only the raw -> 1-minute step), printing time and peak RSS / heap. Table rows and sizes:
+   `SELECT relname, pg_size_pretty(pg_total_relation_size(oid)) FROM pg_class WHERE relname ~ '^(Container)?Metric(Rollup(5m)?)?$'` (add
+   `VACUUM FULL` on those tables first to see the steady-state size rather than the not-yet-returned dead space).
