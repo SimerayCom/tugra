@@ -43,6 +43,10 @@ func providerFromDMI(fields map[string]string) string {
 		return "scaleway"
 	case has("upcloud"):
 		return "upcloud"
+	case has("netcup"):
+		return "netcup"
+	case has("ionos"):
+		return "ionos"
 	}
 	return ""
 }
