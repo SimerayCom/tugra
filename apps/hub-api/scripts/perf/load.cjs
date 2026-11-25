@@ -4,7 +4,7 @@
  * DEV-ONLY perf harness: drive the panel endpoints the way the web app polls them and record the hub's memory.
  *
  *   node scripts/perf/load.cjs --port 3100 --pid <hub pid> --label before --out result.json [--seconds 20] [--browsers 6]
- *                              [--phases home,server,scan,logs,slowlog,soak] [--snapshot-dir dir]
+ *                              [--phases home,server,apps,scan,logs,slowlog,soak] [--snapshot-dir dir]
  *
  * Each phase starts from a forced GC (hub needs --expose-gc) and reports: RSS before / peak / after (MB), heapUsed peak,
  * request count, errors and per-endpoint p50/p95/max latency + bytes. RSS is the kernel number (`ps`), i.e. what the OOM
@@ -86,12 +86,16 @@ function sse(name, p, ms, slow = false) {
       let bytes = 0;
       res.on("data", (c) => (bytes += c.length));
       if (slow) res.pause();
+      let finished = false;
       const done = () => {
+        if (finished) return;
+        finished = true;
         rec(name, Date.now() - t, bytes, { ok: res.statusCode < 400, code: res.statusCode });
         resolve();
       };
       res.on("close", done);
-      setTimeout(() => r.destroy(), ms);
+      // A paused reader may never see 'close' on destroy: do not let the phase hang on it.
+      setTimeout(() => { r.destroy(); setTimeout(done, 1000); }, ms);
     });
     r.on("error", () => resolve());
     r.end();
@@ -161,6 +165,24 @@ const pages = {
     }
     await stream;
   },
+  // An app page and a database page (needs `seed.cjs --apps`): the Metrics tab's per-container history at every range, plus the
+  // app/database/backup/deploy lists the dashboard sections read.
+  apps: async (end) => {
+    const s = rnd(SERVERS);
+    const app = `perfapp${s}x${rnd(3)}`;
+    const db = `perfdb${s}`;
+    const ranges = ["1h", "6h", "24h", "7d"];
+    while (Date.now() < end) {
+      await Promise.all([
+        ...ranges.map((r) => req(`GET /applications/:id/metrics/containers?range=${r}`, "GET", `/applications/${app}/metrics/containers?range=${r}`)),
+        ...ranges.map((r) => req(`GET /databases/:id/metrics/containers?range=${r}`, "GET", `/databases/${db}/metrics/containers?range=${r}`)),
+        req("GET /applications", "GET", "/applications"),
+        req("GET /databases", "GET", "/databases"),
+        req("GET /dashboard/insights", "GET", "/dashboard/insights"),
+      ]);
+      await sleep(5000);
+    }
+  },
   // A browser tab that stops reading the stream (background tab / stalled proxy): the hub must not buffer it without bound.
   slowlog: async (end) => {
     const s = rnd(SERVERS);
@@ -216,6 +238,7 @@ async function phase(name, fn, browsers) {
     if (p === "home") await run("home", pages.home, BROWSERS);
     if (p === "server") await run("server", pages.server, BROWSERS);
     if (p === "scan") await run("scan", pages.scan, 3);
+    if (p === "apps") await run("apps", pages.apps, BROWSERS);
     if (p === "logs") await run("logs", pages.logs, 3);
     if (p === "slowlog") await run("slowlog", pages.slowlog, 3);
     if (p === "soak") {

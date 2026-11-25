@@ -82,6 +82,45 @@ async function main() {
     console.log("touched: live windows filled up to now");
     return prisma.$disconnect();
   }
+  if (process.argv.includes("--apps")) {
+    // Applications + Databases WITH metric history under their real container names (tugra_<appId>, tugra_db_<dbId>), so the
+    // app-scoped endpoints (/applications/:id/metrics/containers, /databases/:id/metrics/containers) have data to chew on.
+    // Per server: 3 apps and 1 database; 48 h raw (15 s) + RANGE days of 1-minute rollups for each.
+    const APPS_PER = arg("apps-per-server", 3);
+    await prisma.$executeRawUnsafe(`DELETE FROM "ContainerMetric" WHERE "containerName" LIKE 'tugra\\_%'`);
+    await prisma.$executeRawUnsafe(`DELETE FROM "ContainerMetricRollup" WHERE "containerName" LIKE 'tugra\\_%'`);
+    await prisma.$executeRawUnsafe(`DELETE FROM "Database"`);
+    await prisma.$executeRawUnsafe(`DELETE FROM "Application"`);
+    const proj = await prisma.project.upsert({ where: { id: "perf-proj" }, create: { id: "perf-proj", teamId: "perf-team", name: "Perf project", isDefault: true }, update: {} });
+    const env = await prisma.environment.upsert({ where: { id: "perf-env" }, create: { id: "perf-env", projectId: proj.id, name: "production", isDefault: true }, update: {} });
+    // Credentials are stored encrypted with the hub's key: reuse the compiled CryptoService so the list views can decrypt them.
+    const { CryptoService } = require(require("node:path").resolve(process.cwd(), process.env.SEED_DIST || "dist/after", "crypto/crypto.service"));
+    const crypto = new CryptoService({ get: (k) => process.env[k] });
+    await crypto.onModuleInit();
+    const creds = crypto.encrypt(JSON.stringify({ username: "perf", password: "perf-password", database: "perf" }));
+    for (let s = 1; s <= SERVERS; s++) {
+      for (let a = 1; a <= APPS_PER; a++) {
+        await prisma.application.create({ data: { id: `perfapp${s}x${a}`, teamId: "perf-team", environmentId: env.id, serverId: `perf-srv-${s}`, name: `app ${s}-${a}`, source: "IMAGE", image: "nginx:1.27", env: {} } });
+      }
+      await prisma.database.create({ data: { id: `perfdb${s}`, teamId: "perf-team", environmentId: env.id, serverId: `perf-srv-${s}`, name: `db ${s}`, engine: "POSTGRES", version: "16", image: "postgres:16", port: 5432, credentials: creds } });
+    }
+    const names = `(SELECT 'perf-srv-' || s AS sid, 'tugra_perfapp' || s || 'x' || a AS cn FROM generate_series(1, ${SERVERS}) s, generate_series(1, ${APPS_PER}) a
+                    UNION ALL SELECT 'perf-srv-' || s, 'tugra_db_perfdb' || s FROM generate_series(1, ${SERVERS}) s) n`;
+    await prisma.$executeRawUnsafe(`
+      INSERT INTO "ContainerMetric" ("id","serverId","containerName","containerId","ts","cpu","memUsed","memTotal","memPct","netRx","netTx","blkRead","blkWrite")
+      SELECT 'ac' || md5(n.cn) || '_' || g, n.sid, n.cn, md5(n.cn), ${NOW} - (g * interval '15 seconds'), 100 * random() * random(), (50e6 + 400e6 * random())::bigint, 1073741824, 5 + 40 * random(),
+             (1e4 * random())::bigint, (1e4 * random())::bigint, (1e3 * random())::bigint, (1e3 * random())::bigint
+      FROM ${names}, generate_series(0, ${RAW_H} * 240 - 1) g`);
+    await prisma.$executeRawUnsafe(`
+      INSERT INTO "ContainerMetricRollup" ("id","serverId","containerName","bucket","avgCpu","maxCpu","avgMemUsed","avgMemTotal","avgMemPct","avgNetRx","avgNetTx","avgBlkRead","avgBlkWrite")
+      SELECT 'ar' || md5(n.cn) || '_' || g, n.sid, n.cn, date_trunc('minute', ${NOW}) - (g * interval '1 minute'), 100 * random() * random(), 100 * random(), (50e6 + 400e6 * random())::bigint, 1073741824, 5 + 40 * random(),
+             (1e4 * random())::bigint, (1e4 * random())::bigint, (1e3 * random())::bigint, (1e3 * random())::bigint
+      FROM ${names}, generate_series(1, ${ROLLUP_D} * 1440) g`);
+    await prisma.$executeRawUnsafe(`ANALYZE "ContainerMetric"`);
+    await prisma.$executeRawUnsafe(`ANALYZE "ContainerMetricRollup"`);
+    console.log(`seeded ${SERVERS * APPS_PER} apps + ${SERVERS} databases with metric history`);
+    return prisma.$disconnect();
+  }
   if (process.argv.includes("--scan-only")) {
     for (let i = 1; i <= SERVERS; i++) await prisma.server.update({ where: { id: `perf-srv-${i}` }, data: { scanReport: scanReport(i), scannedAt: new Date(Date.now() - 3600_000) } });
     console.log("scan reports seeded");

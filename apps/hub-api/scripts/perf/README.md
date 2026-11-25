@@ -13,3 +13,9 @@ Not shipped: `apps/hub-api/scripts` is outside the TypeScript `include` and the 
 5. `node scripts/perf/load.cjs --port 3100 --pid <hub pid> --label <label> --phases home,server,scan,logs,slowlog,soak --browsers 6 --seconds 25 --out result.json`
    drives the endpoints the way the web app polls them and prints RSS before / peak / after GC per phase plus per-endpoint latency.
    `--phases url:/servers/perf-srv-3/metrics?range=24h` hammers a single endpoint to find which call allocates.
+6. `node scripts/perf/seed.cjs --apps` (after the main seed) adds 81 applications and 27 databases whose containers
+   (`tugra_<appId>`, `tugra_db_<dbId>`) carry the same 48 h raw + 14 day rollup history, so `--phases apps` can drive the
+   app and database Metrics tabs at every range. Re-run `--touch` afterwards.
+7. `node --max-old-space-size=96 scripts/perf/stream-cap.cjs dist/after 1` streams 1 GiB through the migration-artifact
+   ingest path (`stageToPart`) under a 96 MB heap: it only passes if the path never buffers the body.
+8. Run the boot step with `--max-old-space-size=768` (the shipped default) to confirm a phase fits under the production cap.
