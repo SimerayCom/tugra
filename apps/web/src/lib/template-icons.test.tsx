@@ -15,8 +15,11 @@ describe("TemplateLogo", () => {
     expect(screen.getByRole("img").getAttribute("src")).toBe("/icons/grafana.svg");
   });
 
-  it("falls back to a generic glyph when the image fails to load", () => {
+  it("tries the svg, then a png, then falls back to the initials tile", () => {
     render(<TemplateLogo slug="does-not-exist" />);
+    expect(screen.getByRole("img").getAttribute("src")).toBe("/icons/does-not-exist.svg");
+    fireEvent.error(screen.getByRole("img"));
+    expect(screen.getByRole("img").getAttribute("src")).toBe("/icons/does-not-exist.png");
     fireEvent.error(screen.getByRole("img"));
     expect(screen.queryByRole("img")).toBeNull();
   });

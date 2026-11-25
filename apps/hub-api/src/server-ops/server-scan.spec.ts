@@ -173,7 +173,7 @@ describe("softwareForImage", () => {
   it("every logo the registry names exists in the vendored icon set", () => {
     const dir = join(__dirname, "../../../web/public/icons");
     if (!existsSync(dir)) return;
-    const have = new Set(readdirSync(dir).map((f) => f.replace(/\.svg$/, "")));
+    const have = new Set(readdirSync(dir).map((f) => f.replace(/\.(svg|png)$/, "")));
     const missing = Object.entries(SOFTWARE).filter(([, d]) => d.logo && !have.has(d.logo)).map(([id]) => id);
     expect(missing).toEqual([]);
   });

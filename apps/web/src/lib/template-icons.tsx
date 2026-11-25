@@ -21,7 +21,7 @@ export const ENGINE_LOGO: Record<string, string> = {
 
 /**
  * Brand icon for a one-click template, rendered from a vendored SVG in
- * /public/icons (sourced from dashboard-icons). When the file is missing it
+ * /public/icons (sourced from dashboard-icons; a .png when the brand ships no SVG). When neither file exists it
  * falls back to a coloured initials monogram (stable colour per slug) rather
  * than a generic glyph, so the catalog still reads as distinct, branded tiles.
  * A light chip keeps brand-coloured SVGs visible on the dark theme.
@@ -40,8 +40,9 @@ export function TemplateLogo({
   /** Skip the image and draw the initials tile straight away (software with no vendored logo: no 404 round trip). */
   monogram?: boolean;
 }) {
-  const [failed, setFailed] = useState(monogram);
-  if (failed) {
+  // svg first (most vendored logos), then a png for brands that only ship a raster logo, then the monogram.
+  const [ext, setExt] = useState<"svg" | "png" | null>(monogram ? null : "svg");
+  if (ext === null) {
     const label = (name ?? slug).replace(/[^a-zA-Z0-9]+/g, " ").trim();
     const initials =
       label.split(/\s+/).slice(0, 2).map((w) => w[0]).join("").toUpperCase() ||
@@ -74,11 +75,12 @@ export function TemplateLogo({
   }
   return (
     <img
-      src={`/icons/${logo ?? slug}.svg`}
+      key={ext}
+      src={`/icons/${logo ?? slug}.${ext}`}
       alt={name ?? slug}
       width={size}
       height={size}
-      onError={() => setFailed(true)}
+      onError={() => setExt(ext === "svg" ? "png" : null)}
       style={{ objectFit: "contain", display: "block" }}
     />
   );

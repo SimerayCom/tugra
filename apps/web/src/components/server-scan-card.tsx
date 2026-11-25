@@ -166,13 +166,26 @@ function ScanResult({
 
       {report.software.length > 0 && (
         <ul aria-label={t("servers.serverScan.software")} style={{ listStyle: "none", margin: "4px 0 0", padding: 0, display: "flex", flexWrap: "wrap", gap: 8 }}>
+          {report.docker.tugra > 0 && (
+            <li key="tugra">
+              <span
+                tabIndex={0}
+                data-tip={t("servers.serverScan.tugraOwnHint")}
+                style={{ display: "inline-flex", alignItems: "center", gap: 8, minHeight: 36, padding: "4px 12px 4px 8px", borderRadius: 999, border: "1px solid var(--c-bd)", background: "var(--c-el)", color: "var(--c-tx)", fontSize: 13, fontWeight: 600 }}
+              >
+                <SoftwareIcon s={{ id: "tugra", label: "Tugra", logo: "tugra" }} />
+                <span>Tugra</span>
+                {report.docker.tugra > 1 && <span style={{ color: "var(--c-tx3)", fontWeight: 500 }}>{t("servers.serverScan.countTimes", { n: report.docker.tugra })}</span>}
+              </span>
+            </li>
+          )}
           {report.software.map((s) => (
             <li key={s.id}>
               <button
                 type="button"
                 className="tg-btn"
                 aria-pressed={filter === s.id}
-                title={t(`servers.serverScan.kind.${s.kind}`)}
+                data-tip={t(`servers.serverScan.kind.${s.kind}`)}
                 onClick={() => setFilter(filter === s.id ? null : s.id)}
                 style={{
                   display: "inline-flex",

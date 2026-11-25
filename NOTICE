@@ -30,10 +30,14 @@ Apache-2.0 license of their respective upstream project.
 
 Brand icons
 -----------
-The service icons vendored in apps/web/public/icons/*.svg are sourced from the
+The service icons vendored in apps/web/public/icons (*.svg, *.png) are sourced from the
 dashboard-icons project.
   Source:  https://github.com/homarr-labs/dashboard-icons
   License: Apache License 2.0
+A few monochrome marks (pm2, drizzle-gateway, prefect, weblate) come from Simple Icons,
+tinted with the brand colour Simple Icons lists.
+  Source:  https://github.com/simple-icons/simple-icons
+  License: CC0 1.0
 Individual brand logos are trademarks of their respective owners and are used
 here only to identify the corresponding software.
 

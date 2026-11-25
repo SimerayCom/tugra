@@ -375,7 +375,8 @@
       "database": "Data",
       "app": "Apps",
       "tool": "Tools"
-    }
+    },
+    "tugraOwnHint": "Tugra's own containers (hub, agent, proxy). Managed by Tugra, nothing to move."
   },
   "gpus": {
     "title": "Detected GPUs",
