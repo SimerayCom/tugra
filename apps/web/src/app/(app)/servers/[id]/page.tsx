@@ -109,6 +109,7 @@ export default function ServerDetailPage() {
   // Celebrate the PENDING → ONLINE moment with a forward CTA (no dead-end).
   const prevStatus = useRef<ServerStatus | null>(null);
   const [enrolled, setEnrolled] = useState(false);
+  const [adoptScan, setAdoptScan] = useState(0);
   useEffect(() => {
     if (prevStatus.current === "PENDING" && server?.status === "ONLINE") setEnrolled(true);
     if (server) prevStatus.current = server.status;
@@ -221,8 +222,15 @@ export default function ServerDetailPage() {
             canWrite={server.canWrite}
             onReviewAdopt={() => {
               setTab("maintenance");
-              // The adopt card mounts with the tab: scroll to it once it is there.
-              setTimeout(() => document.getElementById("server-discover")?.scrollIntoView?.({ behavior: "smooth", block: "start" }), 50);
+              setAdoptScan((n) => n + 1);
+              // The adopt card mounts with the tab (after its data loads): keep looking for it for a moment, then scroll.
+              let tries = 0;
+              const find = () => {
+                const el = document.getElementById("server-discover");
+                if (el) el.scrollIntoView?.({ behavior: "smooth", block: "start" });
+                else if (tries++ < 40) setTimeout(find, 50);
+              };
+              setTimeout(find, 0);
             }}
           />
           <GpuCard serverId={id} canOps={server.canOps} online={server.status === "ONLINE"} />
@@ -328,7 +336,7 @@ export default function ServerDetailPage() {
           {server.canWrite && <ServerDetailsCard id={id} server={server} />}
           {server.canWrite && <ServerTeamCard id={id} server={server} />}
           {server.canWrite && <CleanupCard id={id} server={server} />}
-          {server.canWrite && <div id="server-discover"><DiscoverAdoptCard id={id} /></div>}
+          {server.canWrite && <div id="server-discover" style={{ scrollMarginTop: 72 }}><DiscoverAdoptCard id={id} autoScan={adoptScan} /></div>}
           {server.canWrite && <DeleteServerCard id={id} server={server} />}
         </>
       )}

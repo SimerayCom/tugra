@@ -1,4 +1,5 @@
 import {
+  foreignPlatform,
   assertValidContainerRef,
   buildDiscoverScript,
   buildInspectOneScript,
@@ -266,11 +267,24 @@ describe("discover-script", () => {
 
     it("toPublicContainer drops the classifier-internal fields", () => {
       const pub = toPublicContainer(parseDiscovered(FOREIGN.web)[0]) as unknown as Record<string, unknown>;
-      expect(Object.keys(pub).sort()).toEqual(["composeProject", "env", "id", "image", "isTugra", "mounts", "name", "ports", "restartPolicy", "state"]);
+      expect(Object.keys(pub).sort()).toEqual(["composeProject", "env", "id", "image", "isTugra", "managedBy", "mounts", "name", "ports", "restartPolicy", "state"]);
     });
 
     it("the discover script asks the host for its own hostname", () => {
       expect(buildDiscoverScript()).toContain("TUGRA_SELF=$(hostname");
     });
+  });
+});
+
+describe("foreignPlatform", () => {
+  it("flags Coolify's own stack and the apps it deployed, and Dokploy's", () => {
+    expect(foreignPlatform({ name: "coolify-sentinel", image: "docker.io/coollabsio/sentinel:1.1.5", labelKeys: [] })).toBe("coolify");
+    expect(foreignPlatform({ name: "o779klqj6ej5c9q2d5z1isl0", image: "ghcr.io/coollabsio/coolify-helper:1.0.14", labelKeys: [] })).toBe("coolify");
+    expect(foreignPlatform({ name: "meilisearch-n5w7", image: "getmeili/meilisearch:latest", labelKeys: ["coolify.managed", "coolify.name"] })).toBe("coolify");
+    expect(foreignPlatform({ name: "dokploy-traefik", image: "traefik:v3", labelKeys: [] })).toBe("dokploy");
+  });
+  it("leaves a plain container alone", () => {
+    expect(foreignPlatform({ name: "beszel-agent", image: "henrygd/beszel-agent", labelKeys: ["com.docker.compose.project"] })).toBeNull();
+    expect(foreignPlatform({ name: "my-coolify-notes", image: "nginx:1", labelKeys: [] })).toBeNull();
   });
 });

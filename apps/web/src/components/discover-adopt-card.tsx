@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import Link from "next/link";
+import { useState, useEffect, useRef } from "react";
 import { TriangleAlert } from "lucide-react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
@@ -17,7 +18,9 @@ function fmtPort(p: DiscoveredPort): string {
 /** Migrator: scan a server for foreign (non-Tugra) containers and adopt one as a Tugra app.
  *  Writer-only (gated at the call site). Adoption creates the app record and renames the running
  *  container to Tugra's convention — see the warning block for what a later redeploy will NOT carry. */
-export function DiscoverAdoptCard({ id }: { id: string }) {
+const PLATFORM = { coolify: "Coolify", dokploy: "Dokploy" } as const;
+
+export function DiscoverAdoptCard({ id, autoScan = 0 }: { id: string; autoScan?: number }) {
   const t = useT();
   const [rows, setRows] = useState<DiscoveredContainer[] | null>(null);
   const [target, setTarget] = useState<DiscoveredContainer | null>(null);
@@ -26,6 +29,12 @@ export function DiscoverAdoptCard({ id }: { id: string }) {
     mutationFn: () => api.discoverContainers(id),
     onSuccess: (r) => setRows(r.containers),
   });
+  // "Review" on the server scan bumps autoScan: start the scan right away instead of asking for a second click.
+  const scanRef = useRef(scan);
+  scanRef.current = scan;
+  useEffect(() => {
+    if (autoScan > 0) scanRef.current.mutate();
+  }, [autoScan]);
 
   return (
     <Card style={{ padding: 16, marginTop: 20 }}>
@@ -68,8 +77,12 @@ export function DiscoverAdoptCard({ id }: { id: string }) {
                   <td style={{ ...td, textAlign: "right" }}>
                     {c.adoptable ? (
                       <Btn variant="ghost" onClick={() => setTarget(c)}>{t("servers.adopt")}</Btn>
+                    ) : c.managedBy ? (
+                      <Link href="/import" data-tip={t("servers.adoptManagedHint", { platform: PLATFORM[c.managedBy] })} style={{ fontSize: 12, color: "var(--c-lapis)", textDecoration: "none", whiteSpace: "nowrap" }}>
+                        {t("servers.adoptManagedBy", { platform: PLATFORM[c.managedBy] })} →
+                      </Link>
                     ) : (
-                      <Badge tone="muted">{t("servers.adoptComposeUnsupported")}</Badge>
+                      <span data-tip={t("servers.adoptComposeHint")} tabIndex={0}><Badge tone="muted">{t("servers.adoptComposeUnsupported")}</Badge></span>
                     )}
                   </td>
                 </tr>

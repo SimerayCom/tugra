@@ -14,6 +14,7 @@ const localContainer: AdoptableContainer = {
   restartPolicy: "always",
   isTugra: false,
   composeProject: null,
+  managedBy: null,
   adoptable: true,
 };
 

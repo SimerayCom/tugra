@@ -836,7 +836,9 @@ export interface DiscoveredContainer {
   restartPolicy: string;
   isTugra: boolean;
   composeProject: string | null;
-  adoptable: boolean; // false for compose-managed containers (v1 can't adopt those)
+  /** Coolify or Dokploy runs this container: it moves with that platform's import, not by adoption. */
+  managedBy?: "coolify" | "dokploy" | null;
+  adoptable: boolean; // false for compose-managed and platform-managed containers
 }
 
 export interface MetricsSample {

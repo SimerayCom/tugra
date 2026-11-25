@@ -42,6 +42,22 @@ export interface DiscoveredContainer {
   restartPolicy: string;
   isTugra: boolean;
   composeProject: string | null;
+  /** Another platform runs this container (its own stack or one of its apps): move it with that platform's import. */
+  managedBy: ForeignPlatform | null;
+}
+
+export type ForeignPlatform = "coolify" | "dokploy";
+
+/**
+ * Which platform manages a container, from its labels, name and image. Coolify labels every app, database and service
+ * it deploys (`coolify.*`) and names its own stack `coolify-*` (proxy, sentinel, realtime, helper); Dokploy does the
+ * same with `dokploy*` names and images. Adopting such a container would fight the platform, so it is never offered.
+ */
+export function foreignPlatform(c: { name: string; image: string; labelKeys: readonly string[] }): ForeignPlatform | null {
+  const image = c.image.toLowerCase();
+  if (c.labelKeys.some((k) => k.startsWith("coolify.")) || /^coolify[-_]/.test(c.name) || /(^|\/)coollabsio\//.test(image)) return "coolify";
+  if (c.labelKeys.some((k) => k.startsWith("dokploy")) || /^dokploy[-_]/.test(c.name) || /(^|\/)dokploy\//.test(image)) return "dokploy";
+  return null;
 }
 
 /** Parser-internal view: the public fields plus the identity signals the Tugra-ownership classifier reads. */
@@ -313,6 +329,7 @@ export function parseDiscovered(output: string): ParsedContainer[] {
       restartPolicy: hostConfig.RestartPolicy?.Name ?? "",
       isTugra: tugraReason !== null,
       composeProject,
+      managedBy: foreignPlatform({ name, image, labelKeys }),
       composeService,
       composeWorkingDir,
       labelKeys,

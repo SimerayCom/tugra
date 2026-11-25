@@ -77,7 +77,8 @@ export class MigratorService {
         // The client only needs env KEYS (to choose what to import); adopt() re-reads the values
         // fresh server-side. Don't ship potentially-secret env values over the wire.
         env: c.env.map((e) => ({ key: e.key, value: "" })),
-        adoptable: c.composeProject === null, // compose-managed = not adoptable (v1)
+        // compose-managed = not adoptable (v1); a Coolify/Dokploy container moves with that platform's import instead
+        adoptable: c.composeProject === null && c.managedBy === null,
       }));
     return { containers };
   }
@@ -113,6 +114,7 @@ export class MigratorService {
       if (again?.tugraReason) throw new BadRequestException(tugraOwnedMessage(again.tugraReason));
       throw new BadRequestException("compose-managed containers can't be adopted yet");
     }
+    if (found.managedBy) throw new BadRequestException(`this container is managed by ${found.managedBy === "coolify" ? "Coolify" : "Dokploy"}; move it with the ${found.managedBy === "coolify" ? "Coolify" : "Dokploy"} import`);
     if (!found.image) throw new BadRequestException("could not determine the container's image");
 
     // An explicit port choice must actually exist on the freshly-inspected container — otherwise we'd

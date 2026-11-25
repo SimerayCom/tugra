@@ -10,6 +10,7 @@ const mk = (over: Partial<AdoptableContainer>): AdoptableContainer => ({
   env: [],
   mounts: [],
   restartPolicy: "always",
+  managedBy: null,
   isTugra: false,
   composeProject: null,
   adoptable: true,

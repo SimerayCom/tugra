@@ -245,7 +245,7 @@
   "noForeignContainers": "No unmanaged containers found on this server.",
   "adopt": "Adopt",
   "adopting": "Adopting…",
-  "adoptComposeUnsupported": "compose — not yet",
+  "adoptComposeUnsupported": "Part of a compose stack",
   "adoptModalTitle": "Adopt container",
   "adoptName": "App name",
   "adoptPort": "Port to expose later",
@@ -575,5 +575,8 @@
   "agentFleetFailed": "Could not start the update.",
   "accessColumn": "Access",
   "capOffHint": "{name} off · turn it on in Access (select servers) or the server's Settings",
-  "agentFleetTurnOnAuto": "Turn on automatic updates"
+  "agentFleetTurnOnAuto": "Turn on automatic updates",
+  "adoptComposeHint": "Containers started by docker compose can't be adopted one by one yet. Leave them running; they keep working.",
+  "adoptManagedBy": "Move with the {platform} import",
+  "adoptManagedHint": "{platform} runs this container. The {platform} import moves it together with its settings, domains and data."
 }
