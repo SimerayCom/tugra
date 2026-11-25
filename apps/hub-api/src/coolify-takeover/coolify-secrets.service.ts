@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, Injectable } from "@nestjs/common";
+import { BadRequestException, ForbiddenException, HttpException, Injectable } from "@nestjs/common";
 import {
   COOLIFY_SECRET_CLASSES,
   COOLIFY_SECRET_REF_RE,
@@ -10,12 +10,37 @@ import {
   type UnreadableValue,
 } from "@tugra/shared";
 import { AuditService } from "../audit/audit.service";
-import { AgentWsServer } from "../agent-gateway/agent-ws.server";
+import { AgentWsServer, CoolifySecretsRemoteException } from "../agent-gateway/agent-ws.server";
 import { CryptoService } from "../crypto/crypto.service";
 import { CoolifyHostGrantService } from "./coolify-host-grant.service";
 import { SealedChannelService } from "./sealed-channel.service";
 
 const REQUEST_TIMEOUT_MS = 5 * 60_000;
+
+/**
+ * The agent allows 6 sealed reads a minute and one at a time; a large fleet needs more frames than that (1,240 values is 7 frames).
+ * A refusal with `rate_limited` or `busy` is therefore a "come back shortly", not a failure: wait and ask again, with a bounded budget.
+ */
+const RETRY_DELAYS_MS = [5_000, 10_000, 20_000, 30_000, 30_000, 30_000, 30_000, 30_000];
+const RETRYABLE_CODES = new Set(["rate_limited", "busy"]);
+
+function isRetryable(e: unknown): boolean {
+  if (e instanceof CoolifySecretsRemoteException) return RETRYABLE_CODES.has(e.code);
+  if (e instanceof HttpException && e.getStatus() === 429) {
+    const body = e.getResponse() as { code?: unknown } | string;
+    return typeof body === "object" && body !== null && body.code === "busy";
+  }
+  return false;
+}
+
+function refusalCode(e: unknown): string {
+  if (e instanceof CoolifySecretsRemoteException) return e.code;
+  if (e instanceof HttpException) {
+    const body = e.getResponse() as { code?: unknown } | string;
+    if (typeof body === "object" && body !== null && typeof body.code === "string") return body.code;
+  }
+  return errorClass(e);
+}
 
 /** One value, already opened. The plaintext string lives only for the duration of the sink call. */
 export interface OpenedSecret {
@@ -42,6 +67,8 @@ export interface FetchSecretsInput {
   classes?: CoolifySecretClass[];
   /** Who asked (audit). Omit for the system. */
   userId?: string;
+  /** When a frame fails for good, stop and report what is left (`incomplete`) instead of throwing away the values already read. */
+  keepPartial?: boolean;
 }
 
 export interface FetchSecretsResult {
@@ -51,6 +78,8 @@ export interface FetchSecretsResult {
   unreadable: UnreadableValue[];
   /** At least one value only opened with APP_PREVIOUS_KEYS (the Coolify app key was rotated). Informational. */
   usedPreviousKey: boolean;
+  /** Set only with `keepPartial`: the read stopped early. `code` is a fixed code; `remainingRefs` are the refs not yet read. */
+  incomplete?: { code: string; remainingRefs: string[] };
 }
 
 function chunk<T>(a: T[], n: number): T[][] {
@@ -73,6 +102,9 @@ const WIRE_CODES = new Set<string>(COOLIFY_SECRET_WIRE_CODES);
  */
 @Injectable()
 export class CoolifySecretsService {
+  /** Pause between retries; a test replaces it. */
+  sleep: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms));
+
   constructor(
     private readonly grants: CoolifyHostGrantService,
     private readonly sealed: SealedChannelService,
@@ -84,7 +116,7 @@ export class CoolifySecretsService {
   /** Read and keep encrypted: values come back as `tk1.` ciphertext, ready to store. */
   async fetchEncrypted(input: FetchSecretsInput): Promise<{ values: StoredSecret[] } & FetchSecretsResult> {
     const values: StoredSecret[] = [];
-    const r = await this.fetch(input, (s) => {
+    const r = await this.fetch({ ...input, keepPartial: true }, (s) => {
       values.push({ ref: s.ref, field: s.field, cls: s.cls, enc: this.crypto.encrypt(s.value) });
     });
     return { values, ...r };
@@ -109,11 +141,31 @@ export class CoolifySecretsService {
     let read = 0;
     let usedPreviousKey = false;
     const codeCounts: Record<string, number> = {};
+    const chunks = chunk(refs, COOLIFY_SECRETS_MAX_REFS_PER_FRAME);
+    let incomplete: { code: string; remainingRefs: string[] } | undefined;
     try {
-      for (const refsChunk of chunk(refs, COOLIFY_SECRETS_MAX_REFS_PER_FRAME)) {
-        grant = await this.requireGrant(input.serverId); // revoked or lapsed between two chunks: stop here
+      for (let ci = 0; ci < chunks.length; ci++) {
+        const refsChunk = chunks[ci];
+        let records: CoolifySecretRecord[];
+        try {
+          let attempt = 0;
+          for (;;) {
+            grant = await this.requireGrant(input.serverId); // revoked or lapsed between two chunks (or retries): stop here
+            try {
+              records = await this.agentWs.sendCoolifySecrets(input.serverId, { runId: grant.runId, classes, refs: refsChunk, recipientKey: grant.recipientPublicKey }, REQUEST_TIMEOUT_MS);
+              break;
+            } catch (e) {
+              if (!isRetryable(e) || attempt >= RETRY_DELAYS_MS.length) throw e;
+              await this.sleep(RETRY_DELAYS_MS[attempt++]);
+            }
+          }
+        } catch (e) {
+          if (!input.keepPartial) throw e;
+          // Values from the frames already read are kept; the rest is reported, never silently dropped.
+          incomplete = { code: refusalCode(e), remainingRefs: chunks.slice(ci).flat() };
+          break;
+        }
         const asked = new Set(refsChunk);
-        const records = await this.agentWs.sendCoolifySecrets(input.serverId, { runId: grant.runId, classes, refs: refsChunk, recipientKey: grant.recipientPublicKey }, REQUEST_TIMEOUT_MS);
         for (const rec of records) {
           const done = await this.takeRecord(rec, asked, classes, grant.runId, key, input.serverId, sink);
           if (done.kind === "read") read++;
@@ -129,8 +181,8 @@ export class CoolifySecretsService {
       throw e;
     }
     // Counts and codes only: no ref, no field, no value, no envelope.
-    await this.audit.log({ actor: input.userId ?? "system", action: "coolify.secrets.read", target: input.serverId, meta: { refs: refs.length, read, unreadable: unreadable.length, codes: codeCounts, previousKey: usedPreviousKey } });
-    return { read, unreadable, usedPreviousKey };
+    await this.audit.log({ actor: input.userId ?? "system", action: "coolify.secrets.read", target: input.serverId, meta: { refs: refs.length, read, unreadable: unreadable.length, codes: codeCounts, previousKey: usedPreviousKey, ...(incomplete ? { incomplete: incomplete.code, remaining: incomplete.remainingRefs.length } : {}) } });
+    return { read, unreadable, usedPreviousKey, ...(incomplete ? { incomplete } : {}) };
   }
 
   private async requireGrant(serverId: string) {
