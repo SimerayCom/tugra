@@ -32,6 +32,7 @@ import { AuthUser } from "../auth/strategies/jwt.strategy";
 import { MetricsService } from "../metrics/metrics.service";
 import { MetricsLiveService } from "../metrics/metrics-live.service";
 import { ContainerMetricsService } from "../metrics/container-metrics.service";
+import { ReadCoalescer } from "../common/read-coalescer";
 import { ServersService, ServerViewSchema } from "./servers.service";
 import { ServerTeamTransferService } from "./server-team-transfer.service";
 import {
@@ -73,6 +74,7 @@ export class ServersController {
     private readonly metrics: MetricsService,
     private readonly metricsLive: MetricsLiveService,
     private readonly containerMetrics: ContainerMetricsService,
+    private readonly coalescer: ReadCoalescer,
   ) {}
 
   @Get()
@@ -84,7 +86,8 @@ export class ServersController {
     @Query("status") status?: ServerStatus,
     @Query("q") q?: string,
   ) {
-    return this.servers.listForUser(user.userId, { teamId, status, q });
+    // Shared ~1.5 s between concurrent pollers; keyed by the USER (the visible set differs per caller).
+    return this.coalescer.run(`servers:list:${user.userId}:${teamId ?? ""}:${status ?? ""}:${q ?? ""}`, () => this.servers.listForUser(user.userId, { teamId, status, q }));
   }
 
   @Get(":id")
@@ -121,8 +124,8 @@ export class ServersController {
   /** Live inventory of every container on this host (Tugra + others) with its latest stats. */
   @Get(":id/metrics/containers")
   async serverContainers(@CurrentUser() user: AuthUser, @Param("id") id: string) {
-    await this.servers.getForUser(user.userId, id); // authz: membership check (read-level)
-    return this.containerMetrics.forServer(id);
+    await this.servers.getForUser(user.userId, id); // authz: membership check (read-level), never cached
+    return this.coalescer.run(`servers:ctr:${id}`, () => this.containerMetrics.forServer(id));
   }
 
   /**

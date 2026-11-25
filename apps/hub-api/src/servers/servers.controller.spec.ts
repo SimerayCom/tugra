@@ -1,3 +1,4 @@
+import { ReadCoalescer } from "../common/read-coalescer";
 import { Subject } from "rxjs";
 import { ServersController } from "./servers.controller";
 import type { ServersService } from "./servers.service";
@@ -18,6 +19,7 @@ describe("ServersController.streamMetrics", () => {
       {} as MetricsService,
       live as unknown as MetricsLiveService,
       {} as ContainerMetricsService,
+      new ReadCoalescer(),
     );
     return { ctrl, samples, moved, servers };
   }

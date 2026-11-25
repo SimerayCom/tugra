@@ -11,6 +11,7 @@ import { AuthUser } from "../auth/strategies/jwt.strategy";
 import { ServersService } from "../servers/servers.service";
 import { MetricsService } from "../metrics/metrics.service";
 import { ContainerMetricsService } from "../metrics/container-metrics.service";
+import { ReadCoalescer, setKey } from "../common/read-coalescer";
 import { CleanupService } from "./cleanup.service";
 import { PatchService } from "./patch.service";
 import { CleanupConfigBulkInput, CleanupConfigBulkSchema, FleetLatestRowSchema, FleetTrendRowSchema, FleetHottestContainerSchema, FleetPatchInput, FleetPatchSchema, FleetPatchApplyInput, FleetPatchApplySchema } from "./dto";
@@ -27,7 +28,13 @@ export class FleetController {
     private readonly servers: ServersService,
     private readonly metrics: MetricsService,
     private readonly containerMetrics: ContainerMetricsService,
+    private readonly coalescer: ReadCoalescer,
   ) {}
+
+  /** The caller's permitted server set for this filter, shared for ~1.5 s between concurrent pollers of the same user. */
+  private visibleServers(user: AuthUser, filter: { teamId?: string; status?: ServerStatus; q?: string }) {
+    return this.coalescer.run(`fleet:servers:${user.userId}:${filter.teamId ?? ""}:${filter.status ?? ""}:${filter.q ?? ""}`, () => this.servers.listForUser(user.userId, filter));
+  }
 
   // Fleet overview: the newest metrics sample for every server the caller can see, in ONE call
   // (DISTINCT ON over [serverId, ts]) — the live-table source. listForUser scopes the id set to the
@@ -40,8 +47,10 @@ export class FleetController {
     @Query("status") status?: ServerStatus,
     @Query("q") q?: string,
   ) {
-    const servers = await this.servers.listForUser(user.userId, { teamId, status, q });
-    return this.metrics.latestForServers(servers.map((s) => s.id));
+    const ids = (await this.visibleServers(user, { teamId, status, q })).map((s) => s.id);
+    // Keyed by the permitted id SET (not the user): two members with the same visible servers share the result, a
+    // different set can never be served another team's rows.
+    return this.coalescer.run(`fleet:latest:${setKey(ids)}`, () => this.metrics.latestForServers(ids));
   }
 
   // Sparkline source: the last `minutes` (clamped 5-120, default 30) of per-minute CPU/mem % for every
@@ -55,8 +64,9 @@ export class FleetController {
     @Query("status") status?: ServerStatus,
     @Query("q") q?: string,
   ) {
-    const servers = await this.servers.listForUser(user.userId, { teamId, status, q });
-    return this.metrics.trendForServers(servers.map((s) => s.id), minutes ? Number(minutes) : undefined);
+    const ids = (await this.visibleServers(user, { teamId, status, q })).map((s) => s.id);
+    const mins = minutes ? Number(minutes) : undefined;
+    return this.coalescer.run(`fleet:trend:${mins ?? ""}:${setKey(ids)}`, () => this.metrics.trendForServers(ids, mins));
   }
 
   // Hottest containers across the fleet: the top `limit` (clamped 1-50, default 10) live containers by CPU
@@ -71,8 +81,11 @@ export class FleetController {
     @Query("status") status?: ServerStatus,
     @Query("q") q?: string,
   ) {
-    const servers = await this.servers.listForUser(user.userId, { teamId, status, q });
-    return this.containerMetrics.hottest(servers.map((s) => ({ id: s.id, name: s.name })), limit ? Number(limit) : undefined);
+    const servers = await this.visibleServers(user, { teamId, status, q });
+    const lim = limit ? Number(limit) : undefined;
+    return this.coalescer.run(`fleet:hottest:${lim ?? ""}:${setKey(servers.flatMap((s) => [s.id, s.name]))}`, () =>
+      this.containerMetrics.hottest(servers.map((s) => ({ id: s.id, name: s.name })), lim),
+    );
   }
 
   @Post("cleanup-config")

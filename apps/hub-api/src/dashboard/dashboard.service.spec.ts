@@ -1,3 +1,4 @@
+import { ReadCoalescer } from "../common/read-coalescer";
 import { DashboardService } from "./dashboard.service";
 
 const GB = 1_000_000_000;
@@ -20,7 +21,7 @@ function make(opts: { memberships?: Record<string, any>; apps?: any[]; dbs?: any
   } as any;
   const servers = { listForUser: jest.fn().mockResolvedValue(opts.servers ?? []) } as any;
   const metrics = { latestForServers: jest.fn().mockResolvedValue(opts.latest ?? []) } as any;
-  return { svc: new DashboardService(prisma, access, servers, metrics), prisma, access, servers, metrics };
+  return { svc: new DashboardService(prisma, access, servers, metrics, new ReadCoalescer()), prisma, access, servers, metrics };
 }
 
 describe("DashboardService.insights", () => {

@@ -5,6 +5,7 @@ import { TeamAccessService, canAccessResource } from "../common/team-access.serv
 import { loadProjectCtxMany } from "../common/resource-project";
 import { ServersService } from "../servers/servers.service";
 import { MetricsService } from "../metrics/metrics.service";
+import { ReadCoalescer } from "../common/read-coalescer";
 import { forecastDisk, rankBackups, type BackupDigestRow, type DiskPoint } from "./insights";
 import type { DashboardInsights } from "./dto";
 
@@ -33,9 +34,15 @@ export class DashboardService {
     private readonly access: TeamAccessService,
     private readonly servers: ServersService,
     private readonly metrics: MetricsService,
+    private readonly coalescer: ReadCoalescer,
   ) {}
 
-  async insights(userId: string, teamId?: string): Promise<DashboardInsights> {
+  /** Polled by every open dashboard: concurrent pollers of the same caller + team scope share one computation. */
+  insights(userId: string, teamId?: string): Promise<DashboardInsights> {
+    return this.coalescer.run(`dash:insights:${userId}:${teamId ?? ""}`, () => this.computeInsights(userId, teamId));
+  }
+
+  private async computeInsights(userId: string, teamId?: string): Promise<DashboardInsights> {
     const accessByTeam = await this.access.accessByTeam(userId);
     const teamIds = [...accessByTeam.keys()].filter((id) => !teamId || id === teamId);
     if (teamIds.length === 0) {

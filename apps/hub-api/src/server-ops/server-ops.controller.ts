@@ -1,3 +1,4 @@
+import { ReadCoalescer } from "../common/read-coalescer";
 import {
   Body,
   Controller,
@@ -71,6 +72,7 @@ export class ServerOpsController {
     private readonly proxy: ProxyOpsService,
     private readonly containerOps: ContainerOpsService,
     private readonly scans: ServerScanService,
+    private readonly coalescer: ReadCoalescer,
   ) {}
 
   /**
@@ -102,7 +104,7 @@ export class ServerOpsController {
   /** Host-wide container list INCLUDING stopped ones (so the tab can offer Start). Writer-level service-side. */
   @Get("containers/all")
   listContainers(@CurrentUser() user: AuthUser, @Param("id") id: string) {
-    return this.containerOps.list(user.userId, id);
+    return this.coalescer.run(`ops:containers:${user.userId}:${id}`, () => this.containerOps.list(user.userId, id));
   }
 
   /** Lifecycle action on a container (start / restart / stop / remove). Writer-only; strong guards service-side. */

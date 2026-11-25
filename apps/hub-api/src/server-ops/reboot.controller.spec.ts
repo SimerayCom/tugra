@@ -1,9 +1,10 @@
+import { ReadCoalescer } from "../common/read-coalescer";
 import { ServerOpsController } from "./server-ops.controller";
 import { REQUIRE_SCOPES } from "../api-tokens/require-scopes.decorator";
 import { methodDefaultScope } from "../api-tokens/scopes";
 
 const reboot = { status: jest.fn().mockResolvedValue({ active: null, last: null }), preview: jest.fn().mockResolvedValue({}), request: jest.fn().mockResolvedValue({ id: "rb1" }), cancel: jest.fn().mockResolvedValue({ id: "rb1" }) };
-const make = () => new ServerOpsController({} as never, {} as never, {} as never, reboot as never, {} as never, {} as never, {} as never, {} as never);
+const make = () => new ServerOpsController({} as never, {} as never, {} as never, reboot as never, {} as never, {} as never, {} as never, {} as never, new ReadCoalescer());
 const user = { userId: "u1" } as never;
 
 const scopesOf = (fn: unknown) => Reflect.getMetadata(REQUIRE_SCOPES, fn as object) as string[] | undefined;
