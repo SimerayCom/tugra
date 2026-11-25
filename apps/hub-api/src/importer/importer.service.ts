@@ -10,7 +10,7 @@ import { assertAllowedUrl } from "./sources/ssrf-guard";
 import { ns, planImport } from "./import-planner";
 import { buildPreflight } from "./preflight";
 import { buildCoverage } from "./coverage";
-import type { ImportPlan } from "./foreign-fleet";
+import type { ForeignFleet, ImportPlan, PreflightHost } from "./foreign-fleet";
 import type { ImportSource } from "./import-source";
 import { isRemoteSourceKind, type ImportConnectInput, type ImportTestInput, type ImportMappingPutInput, type ImportMappingResolveInput, type ImportPlanRequestInput, type ImportServicesPreviewInput, type RemoteSourceKind } from "./dto";
 import { mapLimit } from "./sources/map-limit";
@@ -18,6 +18,7 @@ import { validateServiceChoices } from "./service-choices";
 import { buildServicePreview, type ServicePreview } from "./service-preview";
 import { ImportMappingService, type MappingSession } from "./import-mapping.service";
 import type { ResolvedMapping } from "./import-mapping";
+import { baseUrlHost, matchTugraServer, type MatchCandidate, type TugraMatch } from "./server-match";
 import { classifyConnectFailure, suggestScopeLabel, type ConnectFailureCode } from "./connect-check";
 
 /** The plan as returned to a client: the (planHash-covered) plan plus the additive, hash-excluded mapping block. */
@@ -27,6 +28,9 @@ export type ImportPlanResponse = ImportPlan & { mapping?: { features: string[]; 
 export type ImportTestResult =
   | { ok: false; code: ConnectFailureCode; message: string }
   | { ok: true; team?: string; suggestedLabel?: string; apps: number | null; databases: number | null; services: number | null; sensitive: boolean | null };
+
+/** The source-server ref of an item that lives on no named server (a Dokploy panel box); see `ns` in the planner. */
+const UNKNOWN_HOST_REF = "_";
 
 const SESSION_TTL_MS = 60 * 60_000; // 1h — long enough to review → apply, short enough to limit a stored token
 
@@ -149,9 +153,56 @@ export class ImporterService {
       const coverage = buildCoverage(fleet, opts);
       // The mapping block is additive and OUTSIDE planHash (computed from the plan alone, above).
       const mapping = this.mappings ? await this.mappings.planBlock(session) : undefined;
-      return { ...planImport(fleet, opts), preflight: { ...buildPreflight(fleet, opts), ...(coverage ? { coverage } : {}) }, ...(mapping ? { mapping } : {}) };
+      const built = planImport(fleet, opts);
+      const preflight = { ...buildPreflight(fleet, opts), ...(coverage ? { coverage } : {}) };
+      const placement = await this.placementFacts(userId, session.baseUrl, fleet, preflight.hosts, built.items, source);
+      return { ...built, preflight: { ...preflight, ...(placement.hosts ? { hosts: placement.hosts } : {}), ...(placement.panel ? { panel: placement.panel } : {}), ...(placement.sourceTeam ? { sourceTeam: placement.sourceTeam } : {}) }, ...(mapping ? { mapping } : {}) };
     } finally {
       await source.close();
+    }
+  }
+
+  /**
+   * For each source server, the registered Tugra server that is the same machine (by address, then host name), among the servers
+   * the caller can write to. A verdict only: no source address leaves the hub. The Coolify control-plane box (its own address reads
+   * `host.docker.internal`) and a Dokploy box with no server of its own are matched through the session's base URL host. The source
+   * team's name rides along so the first step can default the target team. Best effort: a failure leaves the plan without matches.
+   */
+  private async placementFacts(
+    userId: string,
+    baseUrl: string,
+    fleet: ForeignFleet,
+    existing: readonly PreflightHost[] | undefined,
+    items: ImportPlan["items"],
+    source: ImportSource,
+  ): Promise<{ hosts?: PreflightHost[]; panel?: { tugra: TugraMatch }; sourceTeam?: string }> {
+    try {
+      const perms = await this.access.permissionsByTeam(userId);
+      const teamIds = [...perms.entries()].filter(([, p]) => p.has("apps:config")).map(([id]) => id);
+      const rows = teamIds.length
+        ? await this.prisma.server.findMany({ where: { teamId: { in: teamIds } }, select: { id: true, name: true, teamId: true, publicIp: true, publicIpv6: true, hostname: true, reportedIps: true } })
+        : [];
+      const registered: MatchCandidate[] = rows;
+      const panelHost = baseUrlHost(baseUrl);
+      const addressOf = new Map(fleet.servers.map((s) => [s.ref, s.ip] as const));
+      const hosts = (existing ?? []).map((h) => {
+        const address = h.controlPlane ? panelHost : addressOf.get(h.ref);
+        const m = registered.length ? matchTugraServer(address, registered) : null;
+        return m ? { ...h, tugra: m } : h;
+      });
+      // items that live on no named server (a Dokploy panel box) are matched through the panel's own address
+      const unnamed = items.some((i) => i.itemRef.split(":")[1] === UNKNOWN_HOST_REF);
+      const panelMatch = unnamed && registered.length ? matchTugraServer(panelHost, registered) : null;
+      let sourceTeam: string | undefined;
+      try {
+        sourceTeam = await source.currentTeam?.();
+      } catch {
+        sourceTeam = undefined;
+      }
+      return { ...(hosts.length ? { hosts } : {}), ...(panelMatch ? { panel: { tugra: panelMatch } } : {}), ...(sourceTeam ? { sourceTeam } : {}) };
+    } catch (e) {
+      this.logger.warn(`placement match skipped: ${e instanceof Error ? e.message : "unknown"}`);
+      return {};
     }
   }
 

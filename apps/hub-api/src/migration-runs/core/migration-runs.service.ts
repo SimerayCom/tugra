@@ -8,7 +8,7 @@
  *
  * Errors are the usual Nest HTTP exceptions whose message is a stable machine code (`plan-changed`, `run-past-ponr`, ...).
  */
-import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, NotFoundException, Optional } from "@nestjs/common";
+import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, NotFoundException, Optional, UnprocessableEntityException } from "@nestjs/common";
 import { scopeSatisfies, type Scope } from "../../api-tokens/scopes";
 import type { ServiceChoice } from "../../importer/dto";
 import {
@@ -80,6 +80,7 @@ import { buildReport, reportToMarkdown, runFacts, stepFacts, toSummary, toView }
 
 const conflict = (code: string): ConflictException => new ConflictException(code);
 const bad = (code: string): BadRequestException => new BadRequestException(code);
+const unprocessable = (code: string, extra: Record<string, unknown> = {}): UnprocessableEntityException => new UnprocessableEntityException({ statusCode: 422, message: code, code, ...extra });
 
 @Injectable()
 export class MigrationRunsService implements MigrationRunsFacade {
@@ -161,9 +162,11 @@ export class MigrationRunsService implements MigrationRunsFacade {
     const st = await this.env.standing(actor.userId, server.teamId);
     if (!st.member) throw new NotFoundException("server-not-found");
     if (!st.appsConfig || !st.databases) throw new ForbiddenException("insufficient-permission");
-    const session = await this.requireSession(actor, body.sessionId, body.sourceKind);
     const serverMap = serverMapOf(body.serverMap ?? {});
+    this.assertTopology(body.topology, body.sourceKind, [server.id, ...Object.values(serverMap)]);
+    const session = await this.requireSession(actor, body.sessionId, body.sourceKind);
     await this.assertTargetsInTeam(server.teamId, serverMap);
+    await this.assertTargetsReady([server.id, ...Object.values(serverMap)]);
 
     const base = RunApplyInputSchema.parse(pickApply(body));
     await this.assertPlanFresh(actor, session, base);
@@ -235,6 +238,31 @@ export class MigrationRunsService implements MigrationRunsFacade {
       const s = await this.env.server(id);
       if (!s || s.teamId !== teamId) throw new NotFoundException("server-not-found");
     }
+  }
+
+  /**
+   * Every target must be able to take apps now: its agent ONLINE and the `deploy` capability granted. A run onto a server that is
+   * offline, still waiting for its agent or without the grant could only fail later, so it is refused up front with a code the
+   * wizard can name (422 `target-offline`, `target-agent-pending`, `target-capability`). Databases and backups are PREFLIGHT's gates.
+   */
+  private async assertTargetsReady(ids: readonly string[]): Promise<void> {
+    for (const id of new Set(ids)) {
+      const s = await this.env.server(id);
+      if (!s) continue; // existence is the team check's job
+      if (s.status === "PENDING") throw unprocessable("target-agent-pending", { serverId: id });
+      if (s.status !== undefined && s.status !== "ONLINE") throw unprocessable("target-offline", { serverId: id });
+      if (s.capabilities !== undefined && !s.capabilities.includes("deploy")) throw unprocessable("target-capability", { serverId: id, capability: "deploy" });
+    }
+  }
+
+  /**
+   * The proxy swap puts the new stack in place of the source's own proxy on ONE machine: it cannot span several targets
+   * (`swap-multi-target`) and exists for Coolify's proxy only (`swap-unsupported-source`). Refused at create instead of at cutover.
+   */
+  private assertTopology(topology: string, sourceKind: string, ids: readonly string[]): void {
+    if (topology !== "swap-proxy") return;
+    if (sourceKind !== "coolify") throw unprocessable("swap-unsupported-source", { sourceKind });
+    if (new Set(ids).size > 1) throw unprocessable("swap-multi-target", { servers: new Set(ids).size });
   }
 
   /** The source's version, when the import port can read it (best effort: a failure leaves it unknown for PREFLIGHT to fill). */

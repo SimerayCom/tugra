@@ -110,6 +110,8 @@ export interface ImportSource {
   /** OPTIONAL cheap read-only summary for the connection test (team name, resource counts, `read:sensitive`). A source without it
    *  is only verified. A failure of the core reads MUST throw. */
   probe?(): Promise<SourceProbe>;
+  /** OPTIONAL one cheap read: the name of the team the credentials belong to (best effort; undefined when the source cannot tell). */
+  currentTeam?(): Promise<string | undefined>;
   /** Re-fetch real secret values for one resource at apply time (never sent to the client). */
   fetchSecrets(ref: string): Promise<FetchedSecrets>;
   /** OPTIONAL secret path: a database's real credentials, re-fetched server-side at apply time and keyed by the

@@ -24,8 +24,8 @@ export class RunEnvService implements RunEnvPort {
     return { member: !!perms, appsConfig: !!perms?.has("apps:config"), databases: !!perms?.has("databases") };
   }
 
-  server(serverId: string): Promise<{ id: string; name: string; teamId: string } | null> {
-    return this.prisma.server.findUnique({ where: { id: serverId }, select: { id: true, name: true, teamId: true } });
+  server(serverId: string): Promise<{ id: string; name: string; teamId: string; status?: string; capabilities?: string[] } | null> {
+    return this.prisma.server.findUnique({ where: { id: serverId }, select: { id: true, name: true, teamId: true, status: true, capabilities: true } });
   }
 
   async servers(ids: readonly string[]): Promise<Map<string, string>> {

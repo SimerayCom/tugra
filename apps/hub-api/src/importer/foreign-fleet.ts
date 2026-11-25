@@ -413,6 +413,10 @@ export interface ImportPreflight {
   cutover?: ImportCutoverHint;
   /** The source servers with the facts a run classifies them by (control-plane box, reachability, OS). Additive; NOT part of planHash. */
   hosts?: PreflightHost[];
+  /** The registered Tugra server that is the machine the source's own panel runs on (matched through the session's base URL host), for items that live on no named source server (Dokploy). Additive; NOT part of planHash. */
+  panel?: { tugra: NonNullable<PreflightHost["tugra"]> };
+  /** The source team's name (Coolify), so the first import step can default the target team by name. Name only. Additive; NOT part of planHash. */
+  sourceTeam?: string;
   /** The source projects with the plan items that live in each (apps, databases and services), so the first import step can
    *  select "these projects" without guessing. Absent for a source with no project tree. Additive; NOT part of planHash. */
   projects?: PreflightProject[];
@@ -427,6 +431,8 @@ export interface PreflightHost {
   controlPlane?: true;
   unreachableCount?: number;
   os?: string;
+  /** The registered Tugra server that is the same machine (matched by address, then host name), as a verdict only: no source address. Added by the plan route, outside planHash. */
+  tugra?: { serverId: string; name: string; teamId: string; via: "public-ip" | "reported-ip" | "hostname"; confidence: "certain" | "probable" };
 }
 
 /** One source project of the plan: its name and the itemRefs (apps, databases, services) that live in it. Names and refs only. */

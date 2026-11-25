@@ -368,7 +368,7 @@ export const H32 = "d".repeat(32);
 export class FakeEnv implements RunEnvPort {
   teams = [TEAM];
   perms: Record<string, { member: boolean; appsConfig: boolean; databases: boolean }> = {};
-  serversById = new Map<string, { id: string; name: string; teamId: string }>([[SERVER, { id: SERVER, name: "tugra-box", teamId: TEAM }]]);
+  serversById = new Map<string, { id: string; name: string; teamId: string; status?: string; capabilities?: string[] }>([[SERVER, { id: SERVER, name: "tugra-box", teamId: TEAM }]]);
   sessions = new Map<string, RunSessionInfo>();
   objectMigrations = new Map<string, { id: string; teamId: string; createdById: string }>();
   connects: Array<{ baseUrl: string; teamId: string }> = [];

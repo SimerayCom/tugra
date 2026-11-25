@@ -97,6 +97,16 @@ export class CoolifySource implements ImportSource {
     return { ...(team ? { team } : {}), apps: Array.isArray(apps) ? apps.length : 0, databases: Array.isArray(databases) ? databases.length : 0, services: Array.isArray(services) ? services.length : 0, sensitive };
   }
 
+  /** The team the token belongs to (one read, best effort). */
+  async currentTeam(): Promise<string | undefined> {
+    try {
+      const t = await this.client.get<{ name?: unknown }>("/teams/current");
+      return typeof t?.name === "string" && t.name.trim() ? t.name.trim().slice(0, 120) : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
   private async readVersion(): Promise<string | null> {
     try {
       return this.client.getText ? coolifyVersionToken(await this.client.getText("/version")) : null;

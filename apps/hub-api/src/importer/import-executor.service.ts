@@ -42,6 +42,7 @@ import type { ImportSource, FetchedDbCredentials, SourceAppExtras } from "./impo
 import { REMOTE_SOURCE_KINDS, type ImportApplyInput, type RemoteSourceKind, type ServiceChoice } from "./dto";
 import { ImportMappingService } from "./import-mapping.service";
 import { hasServerMap, placementFor, serverRefOfItemRef, unplacedRefs } from "./server-map";
+import { assertPlacementTargetReady } from "./placement-target";
 import type { EffectiveItem, ResolvedMapping } from "./import-mapping";
 import { slug as dbSlug } from "../databases/databases.service";
 import { VX_DATA_PREFIX, isVxDataTask, vxEnabled } from "./volume-stream/vx-constants";
@@ -184,6 +185,7 @@ export class ImportExecutorService {
       const server = await this.prisma.server.findUnique({ where: { id: input.targetServerId } });
       if (!server) throw new NotFoundException("target server not found");
       await this.access.requirePermission(userId, server.teamId, "apps:config");
+      assertPlacementTargetReady(server);
       await this.assertNoInflight(input.targetServerId);
       // Multi-host placement (grup-7): every mapped target is a server of the same team, authorised and idle like the default.
       const serverMap = hasServerMap(input.serverMap) ? input.serverMap : undefined;
@@ -386,6 +388,7 @@ export class ImportExecutorService {
       if (!srv) throw new NotFoundException("target server not found");
       if (srv.teamId !== teamId) throw new ForbiddenException("every server in the serverMap must be in the same team as the import target");
       await this.access.requirePermission(userId, srv.teamId, "apps:config");
+      assertPlacementTargetReady(srv);
       await this.assertNoInflight(t);
     }
     return targets;
@@ -399,6 +402,7 @@ export class ImportExecutorService {
       if (!srv) throw new NotFoundException("target server not found");
       if (srv.teamId !== teamId) throw new ForbiddenException("a service target must be in the same team as the import target");
       await this.access.requirePermission(userId, srv.teamId, "apps:config");
+      assertPlacementTargetReady(srv);
       await this.assertNoInflight(t);
     }
     return targets;

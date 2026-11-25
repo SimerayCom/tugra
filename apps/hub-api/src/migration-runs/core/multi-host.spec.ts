@@ -79,6 +79,27 @@ describe("create with a serverMap", () => {
     expect(w.store.serverLocks.size).toBe(0);
   });
 
+  it("a target that is offline, still waiting for its agent or without the deploy grant is refused up front with a code, and nothing is created", async () => {
+    const w = world();
+    w.env.serversById.set("srv-off", { id: "srv-off", name: "off", teamId: TEAM, status: "OFFLINE", capabilities: ["deploy"] });
+    w.env.serversById.set("srv-new", { id: "srv-new", name: "new", teamId: TEAM, status: "PENDING", capabilities: ["deploy"] });
+    w.env.serversById.set("srv-nocap", { id: "srv-nocap", name: "nocap", teamId: TEAM, status: "ONLINE", capabilities: ["backup"] });
+    w.env.serversById.set("srv-ok", { id: "srv-ok", name: "ok", teamId: TEAM, status: "ONLINE", capabilities: ["deploy"] });
+    await expect(w.create({ serverMap: { "src-a": "srv-off" } })).rejects.toThrow(/target-offline/);
+    await expect(w.create({ serverMap: { "src-a": "srv-new" } })).rejects.toThrow(/target-agent-pending/);
+    await expect(w.create({ serverMap: { "src-a": "srv-nocap" } })).rejects.toThrow(/target-capability/);
+    expect(w.store.runs.size).toBe(0);
+    await expect(w.create({ serverMap: { "src-a": "srv-ok" } })).resolves.toBeTruthy();
+  });
+
+  it("a proxy swap cannot span several servers or a source other than Coolify: refused at create, not at cutover", async () => {
+    const w = world();
+    await expect(w.create({ topology: "swap-proxy", serverMap: MAP })).rejects.toThrow(/swap-multi-target/);
+    await expect(w.create({ topology: "swap-proxy", sourceKind: "dokploy" })).rejects.toThrow(/swap-unsupported-source/);
+    expect(w.store.runs.size).toBe(0);
+    await expect(w.create({ topology: "swap-proxy", serverMap: { "src-a": SERVER, "src-b": SERVER } })).resolves.toBeTruthy();
+  });
+
   it("the report and its markdown list every target server", async () => {
     const w = world();
     const id = await w.run({ serverMap: MAP, campaign: "wave-1" });

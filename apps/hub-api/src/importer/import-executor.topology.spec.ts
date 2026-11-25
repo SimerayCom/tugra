@@ -28,11 +28,14 @@ function fleet(): ForeignFleet {
   };
 }
 
-const SERVERS: Record<string, { id: string; teamId: string }> = {
+const SERVERS: Record<string, { id: string; teamId: string; status?: string; capabilities?: string[] }> = {
   "srv-default": { id: "srv-default", teamId: "team-1" },
   "tgt-1": { id: "tgt-1", teamId: "team-1" },
   "tgt-2": { id: "tgt-2", teamId: "team-1" },
   "tgt-foreign": { id: "tgt-foreign", teamId: "team-9" },
+  "tgt-off": { id: "tgt-off", teamId: "team-1", status: "OFFLINE", capabilities: ["deploy"] },
+  "tgt-new": { id: "tgt-new", teamId: "team-1", status: "PENDING", capabilities: ["deploy"] },
+  "tgt-nocap": { id: "tgt-nocap", teamId: "team-1", status: "ONLINE", capabilities: ["backup"] },
 };
 
 function harness(over: { fleet?: ForeignFleet; inflightOn?: string[]; prior?: Array<{ itemRef: string; resourceId: string; resourceType: string; serverId: string }>; liveAppIds?: string[]; liveDbIds?: string[] } = {}) {
@@ -112,6 +115,32 @@ function harness(over: { fleet?: ForeignFleet; inflightOn?: string[]; prior?: Ar
 
 const input = (f: ForeignFleet, extra: Record<string, unknown> = {}) => ({ sourceKind: "coolify" as const, sessionId: "s1", targetServerId: "srv-default", planHash: planImport(f, { sourceKind: "coolify" }).planHash, ...extra });
 const taskFor = (h: ReturnType<typeof harness>, itemRef: string) => h.created.find((c) => c.data.itemRef === itemRef)!.data;
+
+describe("ImportExecutorService.applyRemote: a target must be able to take apps", () => {
+  it("refuses an offline, agent-less or capability-less server, as the default target or as a mapped one, before any row is written", async () => {
+    const cases: Array<[Record<string, unknown>, string]> = [
+      [{ targetServerId: "tgt-off" }, "import.target_offline"],
+      [{ targetServerId: "tgt-new" }, "import.target_pending"],
+      [{ targetServerId: "tgt-nocap" }, "import.target_capability"],
+      [{ serverMap: { "src-a": "tgt-1", "src-b": "tgt-off" } }, "import.target_offline"],
+      [{ serverMap: { "src-a": "tgt-1", "src-b": "tgt-nocap" } }, "import.target_capability"],
+    ];
+    for (const [extra, code] of cases) {
+      const h = harness();
+      const err = await h.svc.apply("u1", input(fleet(), extra)).catch((e) => e);
+      expect(err).toBeInstanceOf(UnprocessableEntityException);
+      expect(err.getResponse()).toMatchObject({ code });
+      expect(h.prisma.bulkOperation.create).not.toHaveBeenCalled();
+    }
+  });
+
+  it("a map onto a server of another team is refused (403) before any row is written", async () => {
+    const h = harness();
+    const err = await h.svc.apply("u1", input(fleet(), { serverMap: { "src-a": "tgt-1", "src-b": "tgt-foreign" } })).catch((e) => e);
+    expect(err).toBeInstanceOf(ForbiddenException);
+    expect(h.prisma.bulkOperation.create).not.toHaveBeenCalled();
+  });
+});
 
 describe("ImportExecutorService.applyRemote: multi-host placement (serverMap)", () => {
   it("places each app and database on the target its source server maps to; the op default stays the default", async () => {

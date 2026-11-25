@@ -129,6 +129,60 @@ describe("ImporterService.plan — coolify session", () => {
   });
 });
 
+describe("ImporterService.plan — which source servers are already in Tugra", () => {
+  const liveSession = { id: "sess-1", sourceKind: "coolify", actorId: "u1", teamId: "t1", baseUrl: "https://coolify.example.com", tokenEnc: "enc(TOK)", status: "active", expiresAt: new Date(Date.now() + 60_000) };
+  const reg = (id: string, over: Record<string, unknown> = {}) => ({ id, name: `tugra-${id}`, teamId: "t1", publicIp: null, publicIpv6: null, hostname: null, reportedIps: [], ...over });
+  const routes: Record<string, unknown> = {
+    "/servers": [
+      { uuid: "srv-a", name: "box-a", ip: "203.0.113.7" },
+      { uuid: "srv-b", name: "box-b", ip: "198.51.100.9" },
+      { uuid: "srv-c", name: "coolify-box", ip: "host.docker.internal", is_coolify_host: true },
+    ],
+    "/servers/srv-a/resources": [{ uuid: "app-1" }],
+    "/servers/srv-b/resources": [],
+    "/servers/srv-c/resources": [],
+    "/applications": [{ uuid: "app-1", name: "web", build_pack: "nixpacks", git_repository: "o/r", destination: { server: { uuid: "srv-a" } } }],
+    "/databases": [],
+    "/teams/current": { name: "Olgu Bey" },
+  };
+  const build = (registered: unknown[], perms: Map<string, Set<string>>) => {
+    const base = make({ session: liveSession, clientGet: jest.fn(async (p: string) => { if (p in routes) return routes[p]; throw new Error(`404 ${p}`); }) });
+    const prisma = { importSession: base.importSession, server: { findMany: jest.fn().mockResolvedValue(registered) } } as never;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined), permissionsByTeam: jest.fn().mockResolvedValue(perms) };
+    const svc = new ImporterService({} as never, prisma, base.crypto as never, access as never, base.audit as never, base.sources as never);
+    return { svc, prisma, access };
+  };
+  const perms = new Map([["t1", new Set(["apps:config"])], ["t2", new Set(["apps:read"])]]);
+
+  it("each source server gets a verdict (the Tugra server, how it matched, how sure) and no address; the control-plane box matches through the panel URL", async () => {
+    const { svc, prisma } = build([reg("a", { publicIp: "203.0.113.7" }), reg("c", { hostname: "coolify.example.com" })], perms);
+    const plan = await svc.plan("u1", { sourceKind: "coolify", sessionId: "sess-1" });
+    const hosts = plan.preflight?.hosts ?? [];
+    expect(hosts.find((h) => h.ref === "srv-a")?.tugra).toEqual({ serverId: "a", name: "tugra-a", teamId: "t1", via: "public-ip", confidence: "certain" });
+    expect(hosts.find((h) => h.ref === "srv-b")?.tugra).toBeUndefined();
+    expect(hosts.find((h) => h.ref === "srv-c")?.tugra).toMatchObject({ serverId: "c", via: "hostname", confidence: "probable" });
+    expect(plan.preflight?.sourceTeam).toBe("Olgu Bey");
+    expect(JSON.stringify(plan.preflight)).not.toContain("203.0.113.7");
+    // only the teams the caller can configure are searched
+    expect((prisma as { server: { findMany: jest.Mock } }).server.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { teamId: { in: ["t1"] } } }));
+  });
+
+  it("the match is outside planHash: the same source plans the same hash with or without registered servers", async () => {
+    const a = await build([reg("a", { publicIp: "203.0.113.7" })], perms).svc.plan("u1", { sourceKind: "coolify", sessionId: "sess-1" });
+    const b = await build([], new Map()).svc.plan("u1", { sourceKind: "coolify", sessionId: "sess-1" });
+    expect(a.planHash).toBe(b.planHash);
+    expect(b.preflight?.hosts?.every((h) => !h.tugra)).toBe(true);
+  });
+
+  it("a failing lookup leaves the plan without matches instead of failing it", async () => {
+    const b = build([], perms);
+    (b.prisma as unknown as { server: { findMany: jest.Mock } }).server.findMany.mockRejectedValue(new Error("db down"));
+    const plan = await b.svc.plan("u1", { sourceKind: "coolify", sessionId: "sess-1" });
+    expect(plan.items.length).toBeGreaterThan(0);
+    expect(plan.preflight?.hosts?.some((h) => h.tugra)).toBeFalsy();
+  });
+});
+
 describe("ImporterService.plan — coverage (G3-C)", () => {
   const session = (kind: string) => ({ id: "sess-1", sourceKind: kind, actorId: "u1", teamId: "t1", baseUrl: "https://c.example.com", tokenEnc: "enc(TOK)", status: "active", expiresAt: new Date(Date.now() + 60_000) });
   const app = { sourceRef: "web-1", name: "web", kind: "git" as const, buildPack: "nixpacks" as const, git: { url: "https://git/x" }, serverRef: "s1", notCarried: [{ field: "registry", level: "info" as const, reason: "r" }] };

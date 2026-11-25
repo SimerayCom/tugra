@@ -35,7 +35,8 @@ export interface RunEnvPort {
   teamIds(userId: string): Promise<string[]>;
   /** The user's standing on a team: membership plus the two permissions every step of a run needs. */
   standing(userId: string, teamId: string): Promise<{ member: boolean; appsConfig: boolean; databases: boolean }>;
-  server(serverId: string): Promise<{ id: string; name: string; teamId: string } | null>;
+  /** `status` and `capabilities` are what create checks a target by (an agent that is not ONLINE, or has no `deploy` grant, cannot take apps); a port that does not report them is not checked. */
+  server(serverId: string): Promise<{ id: string; name: string; teamId: string; status?: string; capabilities?: string[] } | null>;
   servers(ids: readonly string[]): Promise<Map<string, string>>;
   /** The actor's own import session (ownership checked), or null. */
   session(userId: string, sessionId: string): Promise<RunSessionInfo | null>;
