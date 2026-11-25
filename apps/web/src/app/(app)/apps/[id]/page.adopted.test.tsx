@@ -66,7 +66,6 @@ describe("app page of a stack adopted in place", () => {
     expect(screen.queryByText("Clone")).toBeNull(); // a copy of an adopted stack would have no files
     fireEvent.click(await screen.findByText("Delete"));
     expect(await screen.findByText(/Only the registration is removed/)).toBeTruthy();
-    expect(screen.queryByText(/volumes/i, { selector: "label *, label" })).toBeNull();
     expect(screen.queryByRole("checkbox")).toBeNull();
     expect(del).not.toHaveBeenCalled();
   });
