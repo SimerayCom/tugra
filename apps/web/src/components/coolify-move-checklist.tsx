@@ -100,6 +100,15 @@ function Prelude({ v }: { v: MoveOffStatusView }) {
               {hub.readAt ? (hub.knownServers !== null ? t("coolifyMove.line.read.done", { when: relativeTime(hub.readAt, t), servers: hub.knownServers }) : t("coolifyMove.line.read.doneNoCount", { when: relativeTime(hub.readAt, t) })) : t("coolifyMove.line.read.never")}
             </Badge>
           </li>
+          {hub.unlinkedServers !== null && hub.unlinkedServers > 0 && (
+            <li style={li} data-testid="unlinked-servers">
+              <span style={{ fontWeight: 600, flex: "1 1 150px" }}>{t("coolifyMove.line.unlinked.label")}</span>
+              <Badge tone="warn">{t("coolifyMove.line.unlinked.some", { count: hub.unlinkedServers })}</Badge>
+              <Link href={connectHref(hub.serverId)} className="tg-link" style={{ fontSize: 12.5, minHeight: 44, display: "inline-flex", alignItems: "center" }}>
+                {t("coolifyMove.line.unlinked.open")}
+              </Link>
+            </li>
+          )}
           <li style={li}>
             <span style={{ fontWeight: 600, flex: "1 1 150px" }}>{t("coolifyMove.line.agents.label")}</span>
             <Badge tone={hub.ssh ? (hub.ssh.failed > 0 ? "warn" : hub.ssh.finished ? "ok" : "lapis") : "muted"}>

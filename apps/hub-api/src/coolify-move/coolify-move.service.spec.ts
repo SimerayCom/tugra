@@ -9,7 +9,7 @@ const earlier = new Date("2026-11-20T12:00:00Z");
 
 interface Fx {
   servers?: Array<{ id: string; name: string; status: string }>;
-  inventories?: Array<{ serverId: string; readAt: Date | null; counts: unknown; serverLinks: unknown }>;
+  inventories?: Array<{ serverId: string; readAt: Date | null; counts: unknown; serverLinks: unknown; snapshot?: unknown }>;
   takeovers?: Array<{ serverId: string; status: string }>;
   cleanups?: Array<{ serverId: string; status: string }>;
   campaigns?: Array<{ id: string; label: string; status: string; plan: unknown; createdAt: Date }>;
@@ -18,6 +18,7 @@ interface Fx {
   sshGrant?: { runId: string } | null;
   sshTargets?: Array<{ state: string }>;
   role?: string | null;
+  verdicts?: unknown[];
 }
 
 function make(fx: Fx = {}) {
@@ -45,8 +46,9 @@ function make(fx: Fx = {}) {
   const campaigns = { list: jest.fn().mockResolvedValue([]), get: jest.fn() };
   const cleanup = { latest: jest.fn().mockResolvedValue(null) };
   const moves = { list: jest.fn().mockResolvedValue([]), get: jest.fn() };
-  const svc = new CoolifyMoveService(prisma as never, access as never, takeover as never, grants as never, ssh as never, inplace as never, campaigns as never, cleanup as never, moves as never);
-  return { svc, prisma, access, takeover, grants, ssh, inplace, campaigns, cleanup, moves };
+  const hostMatch = { verdicts: jest.fn().mockResolvedValue(fx.verdicts ?? []) };
+  const svc = new CoolifyMoveService(prisma as never, access as never, takeover as never, grants as never, ssh as never, inplace as never, campaigns as never, cleanup as never, moves as never, hostMatch as never);
+  return { svc, prisma, access, takeover, grants, ssh, inplace, campaigns, cleanup, moves, hostMatch };
 }
 
 describe("CoolifyMoveService.status", () => {
@@ -127,6 +129,56 @@ describe("CoolifyMoveService.status", () => {
     expect(v.projectMoves).toEqual({ total: 5, active: 1, completed: 2, failed: 2, latestPhase: "MOVING" });
   });
 
+  describe("servers the owner added by hand (no stored link)", () => {
+    const snap = { v: 1, servers: [{ id: "1", ip: "203.0.113.1", isLocal: true }, { id: "2", ip: "203.0.113.2", isLocal: false }, { id: "3", ip: "203.0.113.3", isLocal: false }, { id: "4", ip: "203.0.113.4", isLocal: false }] };
+    const verdict = (uuid: string, serverId: string, teamId: string, status = "probable") => ({ coolifyServerUuid: uuid, status, tugraServerId: serverId, candidates: [{ serverId, teamId, evidence: [{ kind: "address", equal: true }] }] });
+    const servers = [{ id: "hub", name: "h", status: "ONLINE" }, { id: "a", name: "a", status: "ONLINE" }, { id: "b", name: "b", status: "ONLINE" }, { id: "z", name: "z", status: "ONLINE" }];
+    const inv = (links: unknown = {}) => [{ serverId: "hub", readAt: earlier, counts: { servers: 4 }, serverLinks: links, snapshot: snap }];
+
+    it("matches Coolify's servers by address, so they count as Coolify's without the checklist link step", async () => {
+      const m = make({ servers, inventories: inv(), verdicts: [verdict("2", "a", "t1"), verdict("3", "b", "t1", "certain"), verdict("4", "z", "t1", "ambiguous")] });
+      const v = await m.svc.status("u1", "t1", NOW);
+      const stage = Object.fromEntries(v.servers.map((s) => [s.serverId, s.stage]));
+      expect(stage).toMatchObject({ a: "takeover", b: "takeover", z: "not_coolify" });
+      expect(v.steps.find((s) => s.step === "takeover")).toMatchObject({ done: 0, total: 2, complete: false });
+      // The ambiguous one stays open and is counted so the page can say so.
+      expect(v.hub?.unlinkedServers).toBe(1);
+      // The local Coolify row is never offered to the matcher.
+      const sent = m.hostMatch.verdicts.mock.calls[0];
+      expect(sent[0]).toBe("u1");
+      expect(sent[1].map((h: { uuid: string }) => h.uuid)).toEqual(["2", "3", "4"]);
+      expect(sent[2]).toEqual({ localServerId: "hub" });
+    });
+
+    it("does not adopt a match into another team, and counts it as not matched", async () => {
+      const m = make({ servers, inventories: inv(), verdicts: [verdict("2", "a", "OTHER"), verdict("3", "b", "t1"), verdict("4", "z", "OTHER")] });
+      const v = await m.svc.status("u1", "t1", NOW);
+      expect(v.servers.find((s) => s.serverId === "a")?.stage).toBe("not_coolify");
+      expect(v.hub?.unlinkedServers).toBe(2);
+    });
+
+    it("skips servers that already have a stored link and does not ask the matcher at all when none is open", async () => {
+      const m = make({ servers, inventories: inv({ "2": { teamId: "t1", serverId: "a" }, "3": { teamId: "t1", serverId: "b" }, "4": { teamId: "t1", serverId: "z" } }) });
+      const v = await m.svc.status("u1", "t1", NOW);
+      expect(m.hostMatch.verdicts).not.toHaveBeenCalled();
+      expect(v.hub?.unlinkedServers).toBe(0);
+      expect(v.steps.find((s) => s.step === "takeover")).toMatchObject({ total: 3 });
+    });
+
+    it("says nothing about unlinked servers before the first read, and writes nothing", async () => {
+      const m = make({ servers, inventories: [{ serverId: "hub", readAt: null, counts: null, serverLinks: {}, snapshot: null }] });
+      const v = await m.svc.status("u1", "t1", NOW);
+      expect(v.hub?.unlinkedServers).toBeNull();
+      expect(m.hostMatch.verdicts).not.toHaveBeenCalled();
+      expect(Object.keys(m.prisma.coolifyInventory)).toEqual(["findMany"]);
+    });
+
+    it("never puts an address in the answer", async () => {
+      const m = make({ servers, inventories: inv(), verdicts: [verdict("2", "a", "t1")] });
+      expect(JSON.stringify(await m.svc.status("u1", "t1", NOW))).not.toContain("203.0.113");
+    });
+  });
+
   it("selects no secret column and its output carries no field it was not built from", async () => {
     const m = make({
       servers: [{ id: "hub", name: "h", status: "ONLINE", enrollToken: CANARY, dnsCredsEnc: CANARY } as never],
@@ -141,7 +193,7 @@ describe("CoolifyMoveService.status", () => {
     expect(JSON.stringify(v)).not.toContain(CANARY);
     const selected = (fn: jest.Mock) => Object.keys(fn.mock.calls[0][0].select);
     expect(selected(m.prisma.server.findMany)).toEqual(["id", "name", "status"]);
-    expect(selected(m.prisma.coolifyInventory.findMany)).toEqual(["serverId", "readAt", "counts", "serverLinks"]);
+    expect(selected(m.prisma.coolifyInventory.findMany)).toEqual(["serverId", "readAt", "counts", "serverLinks", "snapshot"]);
     expect(selected(m.prisma.coolifyTakeover.findMany)).toEqual(["serverId", "status"]);
     expect(selected(m.prisma.coolifyCleanup.findMany)).toEqual(["serverId", "status"]);
     expect(selected(m.prisma.coolifySshTarget.findMany)).toEqual(["state"]);

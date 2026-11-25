@@ -10,7 +10,7 @@ import { CoolifyHostCard } from "./coolify-host-card";
 afterEach(cleanup);
 
 const row = (o: Partial<MoveOffServerRow>): MoveOffServerRow => ({ serverId: "s1", name: "box", agentOnline: true, coolify: true, isCoolifyHub: false, takeover: "none", cleanup: "none", stage: "takeover", ...o });
-const hub = (o: Partial<MoveOffHub> = {}): MoveOffHub => ({ serverId: "s1", name: "box", readAt: new Date(Date.now() - 5 * 60_000).toISOString(), knownServers: 27, secrets: "none", secretsExpiresAt: null, ssh: null, ...o });
+const hub = (o: Partial<MoveOffHub> = {}): MoveOffHub => ({ serverId: "s1", name: "box", readAt: new Date(Date.now() - 5 * 60_000).toISOString(), knownServers: 27, unlinkedServers: 0, secrets: "none", secretsExpiresAt: null, ssh: null, ...o });
 const view = (servers: MoveOffServerRow[], h: MoveOffHub | null = null): MoveOffStatusView => ({
   teamId: "t1",
   hub: h,

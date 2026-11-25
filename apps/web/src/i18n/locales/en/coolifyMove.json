@@ -25,6 +25,11 @@
       "never": "Connected, not read yet",
       "open": "Open"
     },
+    "unlinked": {
+      "label": "Servers not matched yet",
+      "some": "{count} of Coolify's servers are not matched to a server here yet. Match them so each one shows up below.",
+      "open": "Match servers"
+    },
     "agents": {
       "label": "Agents on Coolify's servers",
       "some": "{online} of {total} online, {failed} failed, {pending} in progress",

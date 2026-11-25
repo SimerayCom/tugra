@@ -9,6 +9,7 @@ import { CoolifyCleanupService } from "../coolify-cleanup/coolify-cleanup.servic
 import { CoolifyInPlaceService } from "../coolify-inplace/coolify-inplace.service";
 import { CoolifyHostGrantService } from "../coolify-takeover/coolify-host-grant.service";
 import { CoolifySshInstallService } from "../coolify-takeover/coolify-ssh-install.service";
+import { HostMatchService } from "../coolify-takeover/host-match.service";
 import { CoolifyTakeoverService } from "../coolify-takeover/coolify-takeover.service";
 import { MigrationCampaignsService } from "../migration-campaigns/migration-campaigns.service";
 import { ProjectMovesService } from "../project-moves/project-moves.service";
@@ -23,7 +24,7 @@ describe("CoolifyMoveModule", () => {
       controllers: [CoolifyMoveController],
       providers: [
         CoolifyMoveService,
-        ...[PrismaService, TeamAccessService, CoolifyTakeoverService, CoolifyHostGrantService, CoolifySshInstallService, CoolifyInPlaceService, MigrationCampaignsService, CoolifyCleanupService, ProjectMovesService].map((p) => ({ provide: p, useValue: {} })),
+        ...[PrismaService, TeamAccessService, CoolifyTakeoverService, CoolifyHostGrantService, CoolifySshInstallService, CoolifyInPlaceService, MigrationCampaignsService, CoolifyCleanupService, ProjectMovesService, HostMatchService].map((p) => ({ provide: p, useValue: {} })),
       ],
     })
       .overrideGuard(ApiAuthGuard)

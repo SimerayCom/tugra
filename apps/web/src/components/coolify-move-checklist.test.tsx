@@ -13,7 +13,7 @@ afterEach(cleanup);
 const row = (o: Partial<MoveOffServerRow>): MoveOffServerRow => ({ serverId: "s1", name: "box", agentOnline: true, coolify: true, isCoolifyHub: false, takeover: "none", cleanup: "none", stage: "takeover", ...o });
 const view = (o: Partial<MoveOffStatusView> = {}): MoveOffStatusView => ({
   teamId: "t1",
-  hub: { serverId: "hub", name: "coolify-hub", readAt: new Date(Date.now() - 60_000).toISOString(), knownServers: 4, secrets: "active", secretsExpiresAt: new Date(Date.now() + 3_600_000).toISOString(), ssh: { runId: "r", finished: true, online: 2, failed: 0, skipped: 0, pending: 0, total: 2 } },
+  hub: { serverId: "hub", name: "coolify-hub", readAt: new Date(Date.now() - 60_000).toISOString(), knownServers: 4, unlinkedServers: 0, secrets: "active", secretsExpiresAt: new Date(Date.now() + 3_600_000).toISOString(), ssh: { runId: "r", finished: true, online: 2, failed: 0, skipped: 0, pending: 0, total: 2 } },
   servers: [
     row({ serverId: "a", name: "alpha", stage: "done", takeover: "VERIFIED", cleanup: "CLEANED" }),
     row({ serverId: "b", name: "bravo", stage: "cleanup", takeover: "VERIFIED" }),
@@ -85,6 +85,21 @@ describe("CoolifyMoveChecklist", () => {
     expect(lines.textContent).toMatch(/Read 1 minute ago|Read .* 4 servers known/);
     expect(lines.textContent).toMatch(/2 of 2 online, 0 failed, 0 in progress/);
     expect(lines.textContent).toMatch(/Allowed until/);
+  });
+
+  it("says how many of Coolify's servers are not matched yet and links to the host page, and says nothing when all are matched", async () => {
+    const v = view();
+    vi.spyOn(api, "coolifyMoveStatus").mockResolvedValue({ ...v, hub: { ...v.hub!, unlinkedServers: 23 } });
+    wrap(<CoolifyMoveChecklist />);
+    const li = await screen.findByTestId("unlinked-servers");
+    expect(li.textContent).toMatch(/23 of Coolify's servers are not matched/);
+    expect(within(li).getByRole("link", { name: "Match servers" }).getAttribute("href")).toBe("/import/coolify-host?server=hub");
+    cleanup();
+    qc.clear();
+    vi.spyOn(api, "coolifyMoveStatus").mockResolvedValue(view());
+    wrap(<CoolifyMoveChecklist />);
+    await screen.findByTestId("prelude-lines");
+    expect(screen.queryByTestId("unlinked-servers")).toBeNull();
   });
 
   it("with no Coolify host connected it offers to connect one", async () => {

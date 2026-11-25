@@ -34,6 +34,8 @@ export interface MoveOffHub {
   readAt: string | null;
   /** Servers Coolify knows (from the last read). */
   knownServers: number | null;
+  /** Coolify servers (not the host) that no Tugra server is linked or matched to yet; null before the first read. */
+  unlinkedServers: number | null;
   /** State of the newest consent to read Coolify's secrets, and when an active one ends. */
   secrets: MoveOffGrantState;
   secretsExpiresAt: string | null;
