@@ -9,6 +9,7 @@ import { redisConnectionOptions } from "../common/redis-connection";
 import { Queue, Worker } from "bullmq";
 import { DEFAULT_JOB_OPTIONS } from "../common/queue-options";
 import { RetentionRunnerService } from "./retention-runner.service";
+import { legacyRetentionNotes } from "../metrics/metric-tiers";
 
 const QUEUE = "retention-prune";
 const HOURLY_MS = 3600 * 1000;
@@ -33,6 +34,8 @@ export class RetentionSchedulerService
   async onApplicationBootstrap(): Promise<void> {
     // Disabled in tests; the runner is exercised directly via unit specs.
     if (process.env.NODE_ENV === "test") return;
+
+    for (const note of legacyRetentionNotes()) this.logger.warn(`retention changed with the metric tiers: ${note}`);
 
     const connection = this.connection();
     this.queue = new Queue(QUEUE, { connection, defaultJobOptions: DEFAULT_JOB_OPTIONS });

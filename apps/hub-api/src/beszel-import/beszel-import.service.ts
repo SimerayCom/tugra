@@ -252,11 +252,15 @@ export class BeszelImportService {
         const matched = ctx.view.systems.filter((s) => s.match && inScope(s.id));
         await mapLimit(matched, 3, async (s) => {
           try {
-            const { rows } = await this.historyRows(source, s.id, s.match!.serverId);
+            const { rows, before } = await this.historyRows(source, s.id, s.match!.serverId);
             // Long-range tier: every imported minute, folded to 5-minute buckets. The last 48 h also go to the
             // 1-minute tier, which serves the 24 h chart; older minutes would be pruned from it at once.
+            // A 5-minute bucket that straddles `before` would be written from only its imported minutes and the
+            // rollup (ON CONFLICT DO NOTHING) could never complete it, so only buckets that END at or before
+            // `before` are written; the straddling one is folded later from Tugra's own minutes.
             const serverId = s.match!.serverId;
-            const five = toFiveMinute(rows);
+            const fiveEnd = Math.floor(before / 300_000) * 300_000;
+            const five = toFiveMinute(rows).filter((r) => r.bucket.getTime() < fiveEnd);
             for (let i = 0; i < five.length; i += 500) {
               await this.prisma.metricRollup5m.createMany({ data: five.slice(i, i + 500).map((r) => ({ ...r, serverId })), skipDuplicates: true });
             }
@@ -389,7 +393,7 @@ export class BeszelImportService {
     ]);
     const before = Math.min(now, rawFirst?.ts.getTime() ?? now, rollFirst?.bucket.getTime() ?? now, roll5mFirst?.bucket.getTime() ?? now);
     const records = await source.stats(systemId, STATS_TYPES);
-    return { rows: buildHistory(records, { now, before, floor: now - windowDays * 86_400_000 }), windowDays };
+    return { rows: buildHistory(records, { now, before, floor: now - windowDays * 86_400_000 }), windowDays, before };
   }
 
   private async historyPreview(source: BeszelSource, view: PlanView): Promise<HistoryPreview> {

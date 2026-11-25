@@ -31,10 +31,36 @@ function positive(v: unknown, fallback: number): number {
   return Number.isFinite(n) && n > 0 ? n : fallback;
 }
 
+const isSet = (v: unknown): boolean => v !== undefined && v !== null && v !== "";
+
+/**
+ * One-time boot notes for operators who set the retention variables of the pre-tier layout explicitly: what each one
+ * means now (so an upgrade never changes retention silently). Empty when none of them is set.
+ */
+export function legacyRetentionNotes(env: Record<string, unknown> = process.env): string[] {
+  const notes: string[] = [];
+  if (isSet(env.METRICS_RAW_RETENTION_HOURS) && !isSet(env.METRICS_CONTAINER_RAW_RETENTION_HOURS)) {
+    notes.push(
+      `METRICS_RAW_RETENTION_HOURS=${String(env.METRICS_RAW_RETENTION_HOURS)} now applies to host samples; container samples are a separate tier ` +
+        `(METRICS_CONTAINER_RAW_RETENTION_HOURS, default ${DEFAULT_CONTAINER_RAW_HOURS} h) and keep following this value until that variable is set.`,
+    );
+  }
+  if (isSet(env.METRICS_ROLLUP_RETENTION_DAYS)) {
+    notes.push(
+      `METRICS_ROLLUP_RETENTION_DAYS=${String(env.METRICS_ROLLUP_RETENTION_DAYS)} now sizes the 5-minute rollup tier only; ` +
+        `1-minute rollups are kept ${DEFAULT_ROLLUP_1M_HOURS} h (METRICS_ROLLUP_1M_RETENTION_HOURS) and folded into the 5-minute tier before they are pruned.`,
+    );
+  }
+  return notes;
+}
+
 /** The effective tiers from an env-shaped bag (process.env by default; tests / the retention runner pass their own). */
 export function metricTiers(env: Record<string, unknown> = process.env): MetricTiers {
   const hostRaw = positive(env.METRICS_RAW_RETENTION_HOURS, DEFAULT_HOST_RAW_HOURS);
-  const contRaw = positive(env.METRICS_CONTAINER_RAW_RETENTION_HOURS, DEFAULT_CONTAINER_RAW_HOURS);
+  // Before the tiers, METRICS_RAW_RETENTION_HOURS covered host AND container raw rows: an operator who set it explicitly
+  // and never heard of the container variable keeps that retention for containers too (no silent drop on upgrade).
+  const legacyBoth = isSet(env.METRICS_RAW_RETENTION_HOURS) ? positive(env.METRICS_RAW_RETENTION_HOURS, DEFAULT_CONTAINER_RAW_HOURS) : DEFAULT_CONTAINER_RAW_HOURS;
+  const contRaw = positive(env.METRICS_CONTAINER_RAW_RETENTION_HOURS, legacyBoth);
   const r1m = positive(env.METRICS_ROLLUP_1M_RETENTION_HOURS, DEFAULT_ROLLUP_1M_HOURS);
   const r5m = positive(env.METRICS_ROLLUP_RETENTION_DAYS, DEFAULT_ROLLUP_5M_DAYS);
   return { hostRawMs: hostRaw * HOUR_MS, containerRawMs: contRaw * HOUR_MS, rollup1mMs: r1m * HOUR_MS, rollup5mMs: r5m * DAY_MS };

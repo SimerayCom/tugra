@@ -66,8 +66,9 @@ describe("validateEnv — throttle + redis timeout (ops hardening)", () => {
 describe("validateEnv — retention", () => {
   it("defaults host raw 26h, container raw 6h, 1-minute rollup 48h, heartbeat 30d, 5-minute rollup 28d", () => {
     const env = validateEnv({ ...base, NODE_ENV: "development" });
-    expect(env.METRICS_RAW_RETENTION_HOURS).toBe(26);
-    expect(env.METRICS_CONTAINER_RAW_RETENTION_HOURS).toBe(6);
+    // unset on purpose: metricTiers() applies 26 h / 6 h, and tells an explicit value from a default
+    expect(env.METRICS_RAW_RETENTION_HOURS).toBeUndefined();
+    expect(env.METRICS_CONTAINER_RAW_RETENTION_HOURS).toBeUndefined();
     expect(env.METRICS_ROLLUP_1M_RETENTION_HOURS).toBe(48);
     expect(env.HEARTBEAT_RETENTION_DAYS).toBe(30);
     expect(env.METRICS_ROLLUP_RETENTION_DAYS).toBe(28);

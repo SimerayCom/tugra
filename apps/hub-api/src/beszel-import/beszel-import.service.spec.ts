@@ -252,6 +252,20 @@ describe("BeszelImportService.apply", () => {
     expect(r.history).toEqual({ systems: 1, points: 1 });
   });
 
+  it("never writes a 5-minute bucket that straddles the oldest bucket Tugra already holds", async () => {
+    const FIVE = 300_000;
+    const bucket0 = Math.floor((NOW - 10 * 86_400_000) / FIVE) * FIVE; // 5-minute aligned, 10 days back
+    const iso = (ms: number) => new Date(ms).toISOString().replace("T", " ");
+    // Tugra's own 1-minute data starts 2 minutes into the bucket after bucket0; Beszel has the minutes before it.
+    const before = bucket0 + FIVE + 2 * 60_000;
+    const t = setup({ stats: [{ created: iso(bucket0), type: "480m", stats: { cpu: 3 } }, { created: iso(bucket0 + FIVE), type: "480m", stats: { cpu: 9 } }] });
+    t.prisma.metricRollup.findFirst.mockResolvedValue({ bucket: new Date(before) });
+    const p = await t.svc.preview("u1", { sessionId: "sess1" });
+    await t.svc.apply("u1", applyBody(p.hash, { parts: { alerts: false, channels: false, history: true } }));
+    const buckets = t.prisma.metricRollup5m.createMany.mock.calls[0][0].data.map((r: any) => r.bucket.getTime());
+    expect(buckets).toEqual([bucket0]); // [bucket0+5m, +10m) holds Tugra's own minutes from `before` on: left to the rollup
+  });
+
   it("rejects an overlapping apply for the same session", async () => {
     const t = setup();
     const p = await t.svc.preview("u1", { sessionId: "sess1" });

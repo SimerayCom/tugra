@@ -197,8 +197,8 @@ export const envSchema = z
   // METRICS_CONTAINER_RAW_RETENTION_HOURS (default 6: all the live charts need). The 1-minute rollups are kept
   // METRICS_ROLLUP_1M_RETENTION_HOURS (48), the 5-minute rollups METRICS_ROLLUP_RETENTION_DAYS (28); longer chart
   // ranges are served from those. Non-important heartbeats are kept HEARTBEAT_RETENTION_DAYS.
-  METRICS_RAW_RETENTION_HOURS: z.coerce.number().int().positive().default(26),
-  METRICS_CONTAINER_RAW_RETENTION_HOURS: z.coerce.number().int().positive().default(6),
+  METRICS_RAW_RETENTION_HOURS: z.coerce.number().int().positive().optional(), // unset = 26; an explicit value also covers containers until the next variable is set
+  METRICS_CONTAINER_RAW_RETENTION_HOURS: z.coerce.number().int().positive().optional(), // unset = 6 (or METRICS_RAW_RETENTION_HOURS when that is set)
   METRICS_ROLLUP_1M_RETENTION_HOURS: z.coerce.number().int().positive().default(48),
   HEARTBEAT_RETENTION_DAYS: z.coerce.number().int().positive().default(30),
   METRICS_ROLLUP_RETENTION_DAYS: z.coerce.number().int().positive().default(28),
