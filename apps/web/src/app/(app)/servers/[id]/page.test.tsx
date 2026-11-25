@@ -678,6 +678,29 @@ describe("server patching: update without restarting Docker", () => {
     await waitFor(() => expect(upgradeAll).toHaveBeenCalledWith("s1", "all"));
   });
 
+  it("updating a single engine package is confirmed too; a non-engine row runs straight away", async () => {
+    nav.tab = "updates";
+    const upgradeOne = vi.fn(async () => ({ output: "", exitCode: 0 }));
+    stubs.fns.upgradeOne = upgradeOne;
+    checkOnce(info({ count: 4, packages: mixed }), info({ count: 3, packages: mixed.slice(1) }));
+    mount();
+    await clickCheck();
+    const engine = await screen.findByTestId("patch-group-engine");
+    fireEvent.click(within(engine).getAllByRole("button", { name: "Update" })[0]);
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveTextContent("Updating docker-ce restarts Docker");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(upgradeOne).not.toHaveBeenCalled();
+    fireEvent.click(within(engine).getAllByRole("button", { name: "Update" })[0]);
+    fireEvent.click(await screen.findByRole("button", { name: "Update all and restart apps" }));
+    await waitFor(() => expect(upgradeOne).toHaveBeenCalledWith("s1", "docker-ce"));
+    upgradeOne.mockClear();
+    fireEvent.click(within(await screen.findByTestId("patch-group-other")).getByRole("button", { name: "Update" }));
+    await waitFor(() => expect(upgradeOne).toHaveBeenCalledWith("s1", "openssl"));
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
   it("without the engine pending there is one plain Update all (no restart wording), still leaving the engine out", async () => {
     nav.tab = "updates";
     const upgradeAll = vi.fn(async () => ({ output: "done", exitCode: 0 }));

@@ -65,6 +65,8 @@
   "updateAllNoEngineHint": "The container engine is not part of this update, so your apps keep running.",
   "updateAllConfirmTitle": "Update everything, including the container engine?",
   "updateAllConfirm": "This installs {packages} too. Docker restarts, so every app and database on this server restarts and is briefly unavailable. To avoid that, use “Update (keep apps running)”.",
+  "updateEngineOneConfirmTitle": "Update the container engine?",
+  "updateEngineOneConfirm": "Updating {pkg} restarts Docker, so every app and database on this server restarts and is briefly unavailable. Use “Update (keep apps running)” to update everything else without that.",
   "updateAllConfirmButton": "Update all and restart apps",
   "keepBlockedInterrupted": "A previous update left the container engine half-configured. Finishing it restarts Docker, so only “Update all (restarts apps)” can do it.",
   "groupEngine": "Container engine",

@@ -178,6 +178,9 @@ export function buildUpgradeAllScript(): string {
  *  that was killed before its trap could fire (SIGKILL, host reboot) still gets them released by the next apply. */
 export const ENGINE_HOLD_FILE = "/etc/tugra/patch-engine-holds";
 /** needrestart's drop-in directory (Ubuntu): a temporary override that keeps it away from the engine services. */
+// The two override lines use needrestart's documented override_rc idiom (regex key => 0 = never restart). Their Perl
+// syntax was checked with `perl -e 'use strict; do FILE'` (keys compile to ^docker / ^containerd and match only those
+// units); a real needrestart on an Ubuntu host has NOT been run against them. The file is removed on every exit.
 const NEEDRESTART_DIR = "/etc/needrestart/conf.d";
 const NEEDRESTART_OVERRIDE = "zz-tugra-keep-engine.conf";
 

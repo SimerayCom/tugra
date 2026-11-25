@@ -6,7 +6,7 @@ import { api } from "../lib/api";
 import { bulkSummary } from "../lib/bulk";
 import { useT } from "../i18n/provider";
 import type { FleetPatchCheckRow, ServerView } from "../lib/types";
-import { useOptionalConfirm } from "./confirm";
+import { useConfirm } from "./confirm";
 import { Modal } from "./modal";
 import { Btn } from "./ui";
 
@@ -29,7 +29,7 @@ export function PatchBulkModal({
   const sum = bulkSummary(servers, new Set(selectedIds));
   const nameOf = (id: string) => servers.find((s) => s.id === id)?.name ?? id;
 
-  const confirm = useOptionalConfirm();
+  const confirm = useConfirm();
   // Default: leave the container engine out, so no app on any selected server restarts. Unticking it is confirmed.
   const [keepApps, setKeepApps] = useState(true);
 
@@ -39,7 +39,7 @@ export function PatchBulkModal({
     onSuccess: () => qc.invalidateQueries({ queryKey: ["servers"] }),
   });
   const runApply = async () => {
-    if (!keepApps && confirm) {
+    if (!keepApps) {
       const ok = await confirm({
         title: t("bulk.patchRestartConfirmTitle"),
         body: t("bulk.patchRestartConfirm", { n: sum.writable }),
@@ -97,6 +97,7 @@ export function PatchBulkModal({
             <span>
               <span style={{ fontWeight: 600 }}>{t("bulk.patchKeepApps")}</span>
               <span style={{ display: "block", color: keepApps ? "var(--c-tx3)" : "var(--c-am)" }}>{t(keepApps ? "bulk.patchKeepAppsHint" : "bulk.patchRestartWarn")}</span>
+              {keepApps && <span style={{ display: "block", color: "var(--c-tx3)" }}>{t("bulk.patchHalfConfiguredHint")}</span>}
             </span>
           </label>
 
@@ -125,11 +126,12 @@ export function PatchBulkModal({
           </div>
           <div style={{ marginBottom: 14, maxHeight: 240, overflowY: "auto" }}>
             {apply.data.results.map((r) => (
-              <div key={r.serverId} style={rowStyle}>
+              <div key={r.serverId} style={{ ...rowStyle, flexWrap: "wrap" }}>
                 <span style={{ fontWeight: 600 }}>{nameOf(r.serverId)}</span>
                 <span style={{ color: !r.online || r.error ? "var(--c-am)" : r.exitCode === 0 ? "var(--c-g)" : "var(--c-r)" }}>
                   {!r.online ? t("bulk.offline") : r.error ? t("bulk.checkError") : r.exitCode === 0 ? t("bulk.applied") : t("bulk.failed")}
                 </span>
+                {r.online && r.error && <span data-testid="patch-row-error" style={{ flexBasis: "100%", fontSize: 11, color: "var(--c-tx3)", overflowWrap: "anywhere" }}>{r.error.slice(0, 300)}</span>}
               </div>
             ))}
           </div>

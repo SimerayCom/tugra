@@ -56,6 +56,7 @@
   "rebootHint": "Reboots are never automatic. Run Check updates on a server to see whether one is pending.",
   "dpkgInterrupted": "dpkg interrupted",
   "patchKeepApps": "Keep apps running (skip the container engine)",
+  "patchHalfConfiguredHint": "A server whose dpkg left Docker or containerd half-configured is refused in this mode (finishing it restarts Docker); update that one on its own page.",
   "patchKeepAppsHint": "Installs everything except Docker and containerd, so no app restarts. Untick to update those too.",
   "patchRestartWarn": "The container engine is updated too: Docker restarts on every selected server, and every app and database on them restarts and is briefly unavailable.",
   "patchRestartConfirmTitle": "Update the container engine too?",

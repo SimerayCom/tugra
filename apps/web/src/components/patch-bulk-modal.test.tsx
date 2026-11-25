@@ -19,7 +19,9 @@ describe("PatchBulkModal", () => {
     render(
       <QueryClientProvider client={new QueryClient()}>
         <I18nProvider>
-          <PatchBulkModal servers={servers} selectedIds={["s1"]} onClose={() => {}} />
+          <ConfirmProvider>
+            <PatchBulkModal servers={servers} selectedIds={["s1"]} onClose={() => {}} />
+          </ConfirmProvider>
         </I18nProvider>
       </QueryClientProvider>,
     );
@@ -61,5 +63,28 @@ describe("PatchBulkModal", () => {
     fireEvent.click(screen.getByRole("button", { name: "Apply updates" }));
     fireEvent.click(await screen.findByRole("button", { name: "Update and restart apps" }));
     await waitFor(() => expect(spy).toHaveBeenCalledWith(["s1"], "all"));
+  });
+
+  it("never runs the restart-everything update without a confirm provider", () => {
+    // useConfirm throws without a provider, so the modal cannot be mounted unguarded: the unconfirmed path does not exist.
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    expect(() =>
+      render(
+        <QueryClientProvider client={new QueryClient()}>
+          <I18nProvider>
+            <PatchBulkModal servers={servers} selectedIds={["s1"]} onClose={() => {}} />
+          </I18nProvider>
+        </QueryClientProvider>,
+      ),
+    ).toThrow(/ConfirmProvider/);
+    err.mockRestore();
+  });
+
+  it("tells that a half-configured engine is refused in keep-apps mode, and shows a failed server's reason", async () => {
+    vi.spyOn(api, "bulkUpgradeAll").mockResolvedValue({ results: [{ serverId: "s1", online: true, error: "dpkg left docker-ce half-configured" }], skipped: [] });
+    mount();
+    expect(screen.getByText(/half-configured is refused in this mode/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Apply updates" }));
+    expect(await screen.findByTestId("patch-row-error")).toHaveTextContent("dpkg left docker-ce half-configured");
   });
 });

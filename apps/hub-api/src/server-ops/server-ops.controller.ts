@@ -42,6 +42,7 @@ import {
   CreateLogDrainSchema,
   PatchApplyInput,
   PatchApplyBodySchema,
+  PatchApplySchema,
   RebootPreviewSchema,
   RebootRequestInput,
   RebootRequestSchema,
@@ -265,6 +266,7 @@ export class ServerOpsController {
   @Post("updates/apply")
   @RequireScopes("deploy")
   @HttpCode(200)
+  @ApiZodBody(PatchApplySchema, { required: false })
   upgradeAll(
     @CurrentUser() user: AuthUser,
     @Param("id") id: string,

@@ -114,8 +114,8 @@ function toSchema(schema: ZodTypeAny): JsonSchema {
 
 /** Document a request body from the same zod schema the ZodValidationPipe validates against — so the docs
  *  can never drift from validation. */
-export function ApiZodBody(schema: ZodTypeAny) {
-  return applyDecorators(ApiBody({ schema: toSchema(schema) as any, required: true }));
+export function ApiZodBody(schema: ZodTypeAny, opts: { required?: boolean } = {}) {
+  return applyDecorators(ApiBody({ schema: toSchema(schema) as any, required: opts.required ?? true }));
 }
 
 /** Document a response as a reference to a component registered in {@link attachErrorResponses} (keeps big, shared

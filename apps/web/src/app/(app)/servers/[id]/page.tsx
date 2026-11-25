@@ -686,6 +686,15 @@ function PatchCard({ id, onOpenReboot }: { id: string; onOpenReboot: () => void 
         danger: true,
       });
       if (!ok) return;
+    } else if (pkg !== null && [...(info?.packages ?? []), ...(info?.phased ?? [])].some((p) => p.name === pkg && p.group === "engine")) {
+      // A single container-engine package restarts Docker just like "Update all": same safeguard.
+      const ok = await confirm({
+        title: t("patching.updateEngineOneConfirmTitle"),
+        body: t("patching.updateEngineOneConfirm", { pkg }),
+        confirmLabel: t("patching.updateAllConfirmButton"),
+        danger: true,
+      });
+      if (!ok) return;
     } else if (engineNames.length > 0) {
       // "Update all" with the engine pending restarts Docker and every app: confirm, naming what causes it.
       const ok = await confirm({
