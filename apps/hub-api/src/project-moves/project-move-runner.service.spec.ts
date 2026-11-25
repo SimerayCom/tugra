@@ -104,6 +104,7 @@ function make(o: Opts = {}) {
     }),
   };
   const appMoves = {
+    cancel: jest.fn(async (_u: string, appId: string, moveId: string) => void w.calls.push(`appmove.cancel:${appId}:${moveId}`)),
     start: jest.fn(async (_u: string, appId: string, i: { targetServerId: string; confirmName: string }) => {
       w.calls.push(`appmove.start:${appId}`);
       if (i.confirmName !== w.apps.get(appId)!.name) throw new Error("confirm");
@@ -254,6 +255,131 @@ describe("ProjectMoveRunnerService: failure before any app moved rolls back by i
     expect(w.move.phase).toBe("ROLLED_BACK");
     expect(w.move.failureReason).toBe("cancelled");
     expect(w.calls).toEqual([]);
+  });
+});
+
+describe("ProjectMoveRunnerService: unlinking is recorded before it starts, so a half-done unlink is always undone", () => {
+  /** The app has two links to the database; the second removal fails. */
+  function twoLinks(o: Opts = {}) {
+    const t = make(o);
+    t.w.links.push({ id: "l2", appId: "a1", databaseId: "d1", envVar: "READ_URL" });
+    return t;
+  }
+
+  it("the links, the network flag and the stage are stored BEFORE the first link is removed", async () => {
+    const t = twoLinks();
+    let seen: StoredPlan | null = null;
+    const real = t.links.remove.getMockImplementation()!;
+    t.links.remove.mockImplementation(async (u: string, appId: string, linkId: string) => {
+      seen ??= JSON.parse(JSON.stringify(planOf(t.w))) as StoredPlan;
+      return real(u, appId, linkId);
+    });
+    await t.svc.run("pm1");
+    expect(seen!.apps.a1).toMatchObject({ stage: "unlinking", hadDbNetwork: true, links: [{ envVar: "DATABASE_URL", databaseId: "d1" }, { envVar: "READ_URL", databaseId: "d1" }] });
+  });
+
+  it("the second removal throws: the first removed link and the network flag are put back, the move ends ROLLED_BACK", async () => {
+    const t = twoLinks();
+    const real = t.links.remove.getMockImplementation()!;
+    t.links.remove.mockImplementation(async (u: string, appId: string, linkId: string) => {
+      if (linkId === "l2") throw new Error("db hiccup");
+      return real(u, appId, linkId);
+    });
+    await t.svc.run("pm1");
+    expect(t.w.move.phase).toBe("ROLLED_BACK");
+    expect(t.w.links.map((l) => `${l.databaseId}:${l.envVar}`).sort()).toEqual(["d1:DATABASE_URL", "d1:READ_URL"]);
+    expect(t.w.apps.get("a1")).toMatchObject({ dbNetwork: true, serverId: "s1", status: "RUNNING" });
+    expect(t.w.dbs.has("d1copy")).toBe(false);
+    expect(t.w.calls.some((c) => c === "db.stop:d1" || c === "db.remove:d1")).toBe(false);
+  });
+
+  it("a hub restart half-way through the removals continues with what is left, never re-reading the links as 'the' list", async () => {
+    const t = twoLinks({
+      plan: {
+        dbs: { d1: { stage: "restored", configOnly: false, oldName: "main", targetDbId: "d1copy" } },
+        apps: { a1: { stage: "unlinking", links: [{ envVar: "DATABASE_URL", databaseId: "d1" }, { envVar: "READ_URL", databaseId: "d1" }], hadDbNetwork: true, wasRunning: true }, a2: { stage: "pending", links: [], hadDbNetwork: false, wasRunning: false } },
+        frozen: ["a1"],
+      },
+    });
+    t.w.links = t.w.links.filter((l) => l.id !== "l1"); // the first removal already happened before the crash
+    t.w.dbs.set("d1copy", { id: "d1copy", name: "main", status: "RUNNING", serverId: "s2" });
+    t.w.restores.push({ databaseId: "d1copy", status: "SUCCESS" });
+    t.w.move.phase = "MOVING";
+    await t.svc.run("pm1");
+    expect(t.w.calls.filter((c) => c.startsWith("link.remove"))).toEqual(["link.remove:a1:l2"]);
+    expect(t.w.move.phase).toBe("COMPLETED");
+    expect(t.w.links.map((l) => `${l.databaseId}:${l.envVar}`).sort()).toEqual(["d1copy:DATABASE_URL", "d1copy:READ_URL"]);
+  });
+
+  it("a crash during the removals then a failure: rollback covers an app in the unlinking stage", async () => {
+    const t = twoLinks({
+      plan: {
+        dbs: { d1: { stage: "restored", configOnly: false, oldName: "main", targetDbId: "d1copy" } },
+        apps: { a1: { stage: "unlinking", links: [{ envVar: "DATABASE_URL", databaseId: "d1" }, { envVar: "READ_URL", databaseId: "d1" }], hadDbNetwork: true, wasRunning: true }, a2: { stage: "pending", links: [], hadDbNetwork: false, wasRunning: false } },
+        frozen: ["a1"],
+      },
+    });
+    t.w.links = [];
+    t.w.dbs.set("d1copy", { id: "d1copy", name: "main", status: "RUNNING", serverId: "s2" });
+    t.w.move.phase = "ROLLING_BACK";
+    await t.svc.run("pm1");
+    expect(t.w.move.phase).toBe("ROLLED_BACK");
+    expect(t.w.links.map((l) => l.envVar).sort()).toEqual(["DATABASE_URL", "READ_URL"]);
+    expect(t.w.links.every((l) => l.databaseId === "d1")).toBe(true);
+  });
+});
+
+describe("ProjectMoveRunnerService: a child app move that is still running is never rolled back under", () => {
+  /** The first app's move stays active and the 12 hour deadline passes. */
+  function stuck() {
+    const t = make({ appMovePhase: { a1: "TRANSFERRING" } });
+    const real = Date.now.bind(Date);
+    let started = false;
+    const start = t.appMoves.start.getMockImplementation()!;
+    t.appMoves.start.mockImplementation(async (...a: Parameters<typeof start>) => {
+      started = true;
+      return start(...a);
+    });
+    let ticks = 0;
+    jest.spyOn(Date, "now").mockImplementation(() => real() + (started ? ++ticks * 13 * 3600_000 : 0)); // every look at the clock after the start is 13 hours later
+    return t;
+  }
+  afterEach(() => jest.restoreAllMocks());
+
+  it("a timeout while the app move is active ends FAILED(timeout): the database copy and the links stay, the child is asked to cancel", async () => {
+    const t = stuck();
+    await t.svc.run("pm1");
+    expect(t.w.move.phase).toBe("FAILED");
+    expect(t.w.move.failureReason).toBe("timeout");
+    expect(t.w.calls).toContain("appmove.cancel:a1:mv-a1");
+    expect(t.w.calls.some((c) => c.startsWith("db.remove") || c === "db.stop:d1" || c === "db.rename:d1")).toBe(false);
+    expect(t.w.dbs.has("d1copy")).toBe(true);
+    expect(t.w.calls.some((c) => c.startsWith("link.create"))).toBe(false); // nothing is relinked behind a running child either
+    expect(t.w.audits.find((a) => a.action === "project.move.fail")?.meta).toMatchObject({ code: "timeout", childActive: true });
+  });
+
+  it("a rollback that finds a child move still active refuses to remove anything and ends FAILED(rollback_incomplete)", async () => {
+    const t = make({
+      plan: {
+        dbs: { d1: { stage: "restored", configOnly: false, oldName: "main", targetDbId: "d1copy" } },
+        apps: { a1: { stage: "moving", moveId: "mv-a1", links: [{ envVar: "DATABASE_URL", databaseId: "d1" }], hadDbNetwork: true, wasRunning: true }, a2: { stage: "pending", links: [], hadDbNetwork: false, wasRunning: false } },
+      },
+    });
+    t.w.appMoves.set("mv-a1", { id: "mv-a1", phase: "TRANSFERRING", plan: {} });
+    t.w.dbs.set("d1copy", { id: "d1copy", name: "main", status: "RUNNING", serverId: "s2" });
+    t.w.move.phase = "ROLLING_BACK";
+    await t.svc.run("pm1");
+    expect(t.w.move.phase).toBe("FAILED");
+    expect(t.w.move.failureReason).toBe("rollback_incomplete");
+    expect(t.w.dbs.has("d1copy")).toBe(true);
+    expect(t.w.calls.some((c) => c.startsWith("db.remove"))).toBe(false);
+  });
+
+  it("a child that already ended (ROLLED_BACK) does not stop the normal rollback", async () => {
+    const t = make({ appMovePhase: { a1: "ROLLED_BACK" } });
+    await t.svc.run("pm1");
+    expect(t.w.move.phase).toBe("ROLLED_BACK");
+    expect(t.w.calls.some((c) => c.startsWith("appmove.cancel"))).toBe(false);
   });
 });
 
