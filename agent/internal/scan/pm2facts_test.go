@@ -134,10 +134,37 @@ func TestFactsRootHomeAndBrokenDump(t *testing.T) {
 }
 
 func TestSplitArgs(t *testing.T) {
-	got := splitArgs(`a  "b c" 'd e' f"g h"i`, 10, 50)
+	got, over := splitArgs(`a  "b c" 'd e' f"g h"i`, 10, 50)
 	want := []string{"a", "b c", "d e", "fg hi"}
-	if strings.Join(got, "|") != strings.Join(want, "|") {
-		t.Fatalf("%q", got)
+	if over || strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("%q %v", got, over)
+	}
+	if _, over := splitArgs(`a b c`, 2, 50); !over {
+		t.Fatal("too many arguments must be reported, not silently cut")
+	}
+}
+
+func TestFactsExactNamesPathsAndArgs(t *testing.T) {
+	root, proc := factsRoot(t)
+	long := strings.Repeat("d", 1100)
+	write(t, root, "home/acme/.pm2/dump.pm2", `[
+ {"name":"a\tb","pm_exec_path":"/x/y.js","pm_cwd":"/x","exec_mode":"fork_mode"},
+ {"name":"longpath","pm_exec_path":"/x/`+long+`.js","pm_cwd":"/x/`+long+`","exec_mode":"fork_mode"},
+ {"name":"spaced","pm_exec_path":"/x/y.js","pm_cwd":"/x/a  b","exec_mode":"fork_mode","args":["x  y","`+strings.Repeat("z", 2100)+`"]}
+]`)
+	by := map[string]PM2Fact{}
+	for _, p := range CollectPM2Facts(PM2Options{Root: root, Proc: proc}).Users[0].Procs {
+		by[p.Name] = p
+	}
+	if by["a b"].NameExact {
+		t.Fatalf("a name with a control character is not exact: %+v", by["a b"])
+	}
+	if lp := by["longpath"]; lp.Cwd != "" || lp.Script != "" {
+		t.Fatalf("a too long path must become empty, never a cut prefix: %q", lp.Cwd)
+	}
+	sp := by["spaced"]
+	if sp.Cwd != "/x/a  b" || !sp.ArgsOverflow || len(sp.Args) != 1 || sp.Args[0] != "x  y" {
+		t.Fatalf("paths and args must stay byte for byte: %+v", sp)
 	}
 }
 

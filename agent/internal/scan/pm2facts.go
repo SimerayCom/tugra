@@ -50,12 +50,14 @@ type PM2FactsUser struct {
 // PM2Fact is everything the planner needs about one saved PM2 process.
 type PM2Fact struct {
 	Name            string            `json:"name"`
-	Status          string            `json:"status"` // online | stopped
+	NameExact       bool              `json:"nameExact"` // the saved name had no control characters and fit the cap (so it can be passed to pm2 verbatim)
+	Status          string            `json:"status"`    // online | stopped
 	Script          string            `json:"script,omitempty"`
 	Cwd             string            `json:"cwd,omitempty"`
 	Interpreter     string            `json:"interpreter,omitempty"` // exec_interpreter as saved: "node", "none", "python3", an absolute path
 	Mode            string            `json:"mode,omitempty"`        // fork | cluster
 	Instances       int               `json:"instances,omitempty"`   // entries with this name (cluster workers are saved one per entry)
+	ArgsOverflow    bool              `json:"argsOverflow"`          // an argument list was cut (too many / too long): the planner must not guess
 	Args            []string          `json:"args"`
 	NodeArgs        []string          `json:"nodeArgs"`
 	InterpreterArgs []string          `json:"interpreterArgs"`
@@ -158,46 +160,76 @@ func envDigest(env map[string]string) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-// stringList reads a saved argument vector, which PM2 stores either as an array or as one string.
-func stringList(raw json.RawMessage, maxItems, maxLen int) []string {
+// hasControl reports a control character (the ones a path, name or argument must never carry into a command line).
+func hasControl(s string) bool {
+	for _, r := range s {
+		if r < 0x20 || r == 0x7f {
+			return true
+		}
+	}
+	return false
+}
+
+// exactPath returns p unchanged when it is a usable path, else "" (never a cut or re-spaced path: a wrong directory
+// must not look like a right one).
+func exactPath(p string) string {
+	if len(p) > 1024 || hasControl(p) {
+		return ""
+	}
+	return p
+}
+
+// stringList reads a saved argument vector, which PM2 stores either as an array or as one string. Arguments are
+// kept byte for byte; the second result is true when the list had to be cut (too many or too long).
+func stringList(raw json.RawMessage, maxItems, maxLen int) ([]string, bool) {
 	out := []string{}
 	if len(raw) == 0 {
-		return out
+		return out, false
 	}
 	var arr []any
 	if json.Unmarshal(raw, &arr) == nil {
 		for _, a := range arr {
+			var s string
 			switch t := a.(type) {
 			case string:
-				out = append(out, clean(t, maxLen))
+				s = t
 			case float64:
-				out = append(out, strconv.FormatFloat(t, 'f', -1, 64))
+				s = strconv.FormatFloat(t, 'f', -1, 64)
+			default:
+				continue
 			}
-			if len(out) >= maxItems {
-				break
+			if len(out) >= maxItems || len(s) > maxLen {
+				return out, true
 			}
+			out = append(out, s)
 		}
-		return out
+		return out, false
 	}
 	var s string
 	if json.Unmarshal(raw, &s) == nil {
 		return splitArgs(s, maxItems, maxLen)
 	}
-	return out
+	return out, false
 }
 
 // splitArgs splits a saved argument string the way a shell would for plain words and quoted words (no expansion).
-func splitArgs(s string, maxItems, maxLen int) []string {
+func splitArgs(s string, maxItems, maxLen int) ([]string, bool) {
 	out := []string{}
 	var cur strings.Builder
 	var quote rune
 	have := false
+	over := false
 	flush := func() {
-		if have {
-			out = append(out, clean(cur.String(), maxLen))
-			cur.Reset()
-			have = false
+		if !have {
+			return
 		}
+		if len(out) >= maxItems || cur.Len() > maxLen {
+			over = true
+		} else {
+			out = append(out, cur.String())
+		}
+		cur.Reset()
+		have = false
 	}
 	for _, r := range s {
 		switch {
@@ -216,12 +248,9 @@ func splitArgs(s string, maxItems, maxLen int) []string {
 			cur.WriteRune(r)
 			have = true
 		}
-		if len(out) >= maxItems {
-			return out
-		}
 	}
 	flush()
-	return out
+	return out, over
 }
 
 func (f rootFS) owner(hostPath string) (uid, gid int, ok bool) {
@@ -381,13 +410,13 @@ func readFacts(fs rootFS, p string, live map[string]bool, o PM2Options) ([]PM2Fa
 		if o.Name != "" && name != o.Name {
 			continue
 		}
-		f := PM2Fact{Name: name, Status: "stopped", Instances: 1}
+		f := PM2Fact{Name: name, NameExact: name == r.Name, Status: "stopped", Instances: 1}
 		if live[name] {
 			f.Status = "online"
 		}
-		f.Script = clean(firstNonEmpty(r.ExecPath, r.Script), 400)
-		f.Cwd = clean(firstNonEmpty(r.Cwd, r.Cwd2), 400)
-		f.Interpreter = clean(r.Interpreter, 400)
+		f.Script = exactPath(firstNonEmpty(r.ExecPath, r.Script))
+		f.Cwd = exactPath(firstNonEmpty(r.Cwd, r.Cwd2))
+		f.Interpreter = exactPath(r.Interpreter)
 		switch {
 		case strings.HasPrefix(r.ExecMode, "cluster"):
 			f.Mode = "cluster"
@@ -398,9 +427,11 @@ func readFacts(fs rootFS, p string, live map[string]bool, o PM2Options) ([]PM2Fa
 		if n, err := strconv.Atoi(strings.Trim(string(r.Instances), `"`)); err == nil && n > f.Instances && n < 1024 {
 			f.Instances = n
 		}
-		f.Args = stringList(r.Args, 64, 400)
-		f.NodeArgs = stringList(r.NodeArgs, 32, 200)
-		f.InterpreterArgs = stringList(r.InterpreterArgs, 32, 200)
+		var o1, o2, o3 bool
+		f.Args, o1 = stringList(r.Args, 64, 2000)
+		f.NodeArgs, o2 = stringList(r.NodeArgs, 32, 2000)
+		f.InterpreterArgs, o3 = stringList(r.InterpreterArgs, 32, 2000)
+		f.ArgsOverflow = o1 || o2 || o3
 		f.UID = idOf(fs, r.UID, "/etc/passwd")
 		f.GID = idOf(fs, r.GID, "/etc/group")
 		env, skipped := filterEnv(r.Env)
