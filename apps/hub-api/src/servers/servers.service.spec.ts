@@ -869,6 +869,27 @@ describe("ServersService capabilities", () => {
     await expect(svcWith(prisma).applyCoolifyRunCapability("nope", "coolify_secrets", true)).rejects.toThrow(/not found/);
   });
 
+  it("setRunCapability is the only way in for a consent run: adds once, drops once, pushes live, and refuses any other name", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = {
+      server: { findUnique: jest.fn().mockResolvedValue({ id: "s1", capabilities: ["deploy"] }), update },
+    } as unknown as PrismaService;
+    const svc = svcWith(prisma);
+    const push = jest.fn();
+    svc.setCapabilityPusher(push);
+    expect(await svc.setRunCapability("s1", "coolify_ssh", true)).toBe(true);
+    expect(update).toHaveBeenLastCalledWith({ where: { id: "s1" }, data: { capabilities: ["deploy", "coolify_ssh"] } });
+    expect(push).toHaveBeenCalledWith("s1", ["deploy", "coolify_ssh"]);
+    // dropping what is not there changes nothing and pushes nothing
+    update.mockClear();
+    push.mockClear();
+    expect(await svc.setRunCapability("s1", "coolify_ssh", false)).toBe(false);
+    expect(update).not.toHaveBeenCalled();
+    expect(push).not.toHaveBeenCalled();
+    await expect(svc.setRunCapability("s1", "terminal" as never, true)).rejects.toThrow(/takeover capability/);
+    expect(update).not.toHaveBeenCalled();
+  });
+
   it("grantedCapabilities returns the stored set", async () => {
     const prisma = {
       server: { findUnique: jest.fn().mockResolvedValue({ capabilities: ["deploy"] }) },

@@ -3087,6 +3087,8 @@ model CoolifySshTarget {
   tugraServerId     String? // the Server row minted for this target (loose ref); null until a token is minted
   probe             Json? // CoolifyProbeFacts of the last probe
   hostKeyFp         String? // sshd host key fingerprint the probe saw (cross-checked at enroll)
+  containerId       String? // id of the agent container this run installed; the uninstall is pinned to it (a 64-hex id, never a secret)
+  cancelledAt       DateTime? // the owner cancelled: no further step starts for this target
   attempts          Int       @default(0)
   startedAt         DateTime?
   finishedAt        DateTime?

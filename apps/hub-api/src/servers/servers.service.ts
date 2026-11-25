@@ -604,6 +604,11 @@ export class ServersService implements OnModuleInit, OnModuleDestroy {
     return true;
   }
 
+  /** Same as applyCoolifyRunCapability, under the name the SSH install and cleanup flows use. */
+  setRunCapability(serverId: string, capability: (typeof COOLIFY_RUN_CAPABILITIES)[number], on: boolean): Promise<boolean> {
+    return this.applyCoolifyRunCapability(serverId, capability, on);
+  }
+
   /**
    * Grant and/or revoke opt-in capabilities on many servers in one call. Per server it applies the same rules as
    * {@link setCapabilities} (team permission `servers:manage` on THAT server's team, files_write needs files,

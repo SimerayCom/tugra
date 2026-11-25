@@ -36,10 +36,10 @@ describe("Coolify takeover contract: capabilities on the hub", () => {
 });
 
 describe("Coolify takeover contract: skeleton modules", () => {
-  it("instantiates every empty takeover service on its own (no hidden dependency yet)", async () => {
-    // Lanes B and D filled their services (they have their own specs); the rest are still empty here.
-    const mod = await Test.createTestingModule({ providers: [CoolifySshInstallService] }).compile();
-    for (const S of [CoolifySshInstallService]) expect(mod.get(S)).toBeInstanceOf(S);
+  it("instantiates every still-empty takeover service on its own (no hidden dependency yet)", async () => {
+    // Lanes B, C and D filled their services (they have their own specs); the rest are still empty here.
+    const mod = await Test.createTestingModule({ providers: [CoolifyInPlaceService, CoolifyCleanupService, MigrationCampaignsService, ProjectMovesService] }).compile();
+    for (const S of [CoolifyInPlaceService, CoolifyCleanupService, MigrationCampaignsService, ProjectMovesService]) expect(mod.get(S)).toBeInstanceOf(S);
   });
 
   it("registers the takeover services in the existing takeover module and exports them", () => {
@@ -69,7 +69,7 @@ describe("Coolify takeover contract: skeleton modules", () => {
   });
 
   it("the skeleton services are empty: no method, no field", () => {
-    for (const S of [CoolifySshInstallService, CoolifyInPlaceService, CoolifyCleanupService, MigrationCampaignsService, ProjectMovesService]) {
+    for (const S of [CoolifyInPlaceService, CoolifyCleanupService, MigrationCampaignsService, ProjectMovesService]) {
       expect(Object.getOwnPropertyNames(S.prototype)).toEqual(["constructor"]);
     }
   });
@@ -82,7 +82,9 @@ describe("Coolify takeover contract: Prisma state and migrations", () => {
   const schema = readFileSync(join(__dirname, "../../prisma/schema.prisma"), "utf8");
 
   it("adds seven migrations after the previous newest, strictly increasing, one per lane, with no duplicate timestamp", () => {
-    expect(mine.map((n) => n.slice(0, 14))).toEqual(["20261207010000", "20261207020000", "20261207030000", "20261207040000", "20261207050000", "20261207060000", "20261207070000"]);
+    // The contract's seven, then each lane's own later migrations in its band 202612080X0000 (X = 1 A, 2 B, 3 C, 4 D, 5 E, 6 F, 7 G, 8 H).
+    expect(mine.filter((n) => n < "20261208").map((n) => n.slice(0, 14))).toEqual(["20261207010000", "20261207020000", "20261207030000", "20261207040000", "20261207050000", "20261207060000", "20261207070000"]);
+    for (const n of mine.filter((n) => n >= "20261208")) expect(n).toMatch(/^202612080[1-8]0000_/);
     expect(new Set(names.map((n) => n.slice(0, 14))).size).toBe(names.length);
     const before = names.filter((n) => n < "20261207010000");
     expect(before[before.length - 1].slice(0, 14) < "20261207010000").toBe(true);
@@ -118,6 +120,12 @@ describe("Coolify takeover contract: Prisma state and migrations", () => {
     expect(grant.match(/onDelete: Cascade/g)).toHaveLength(2);
     const target = /model CoolifySshTarget \{[\s\S]*?\n\}/.exec(schema)![0];
     expect(target.match(/onDelete: Cascade/g)).toHaveLength(2);
+  });
+
+  it("lane C's later migration only adds two nullable columns to its own table", () => {
+    const sql = readFileSync(join(dir, "20261208030000_coolify_ssh_target_container/migration.sql"), "utf8");
+    expect(sql).toMatch(/ALTER TABLE "CoolifySshTarget" ADD COLUMN\s+"containerId" TEXT,\s*ADD COLUMN\s+"cancelledAt" TIMESTAMP\(3\);/);
+    expect(sql).not.toMatch(/NOT NULL/);
   });
 
   it("each migration creates only its own lane's tables", () => {

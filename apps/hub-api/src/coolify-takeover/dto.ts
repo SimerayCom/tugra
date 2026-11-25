@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { COOLIFY_SECRET_CLASSES, COOLIFY_SECRETS_GRANT_MAX_HOURS } from "@tugra/shared";
+import { COOLIFY_SSH_UUID_RE } from "@tugra/shared";
 
 export const ServerParamSchema = z.object({ serverId: z.string().min(1) });
 
@@ -27,3 +28,22 @@ export const SecretsGrantSchema = z.object({
   confirm: z.string().min(1).max(200),
 });
 export type SecretsGrantInput = z.infer<typeof SecretsGrantSchema>;
+
+/**
+ * Install the Tugra agent on Coolify's other servers over Coolify's own SSH keys (lane C). `confirm` is the typed number of servers: the
+ * owner's explicit consent for exactly that many. The uuids are Coolify's own ids and are checked against the stored inventory too.
+ */
+const SshUuidSchema = z.string().regex(COOLIFY_SSH_UUID_RE);
+export const SshStartSchema = z.object({
+  coolifyServerUuids: z.array(SshUuidSchema).min(1).max(100),
+  teamId: z.string().min(1),
+  confirm: z.string().min(1).max(4),
+  concurrency: z.number().int().min(1).max(8).optional(),
+});
+export type SshStartInput = z.infer<typeof SshStartSchema>;
+
+export const SshConfirmSchema = z.object({
+  confirm: z.string().min(1).max(4),
+  coolifyServerUuids: z.array(SshUuidSchema).min(1).max(100).optional(),
+});
+export type SshConfirmInput = z.infer<typeof SshConfirmSchema>;

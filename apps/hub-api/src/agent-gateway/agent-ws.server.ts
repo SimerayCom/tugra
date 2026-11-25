@@ -21,11 +21,14 @@ import type {
   CoolifySecretClass,
   CoolifySecretRecord,
   CoolifySecretsReqMsg,
+  CoolifySshFields,
+  CoolifySshReqMsg,
+  CoolifySshResultMsg,
   HubEndpointStateMsg,
   TermExitMsg,
   TermOutputMsg,
 } from "@tugra/shared";
-import { PROTOCOL_VERSION, checkAgentCompat, canonicalCommand, canonicalCommandCancel, canonicalCommandStatus, canonicalTermStart, canonicalLogStart, canonicalAgentUpdate, canonicalFs, canonicalLogDrains, canonicalFs2, fs2RequiredCapabilities, AGENT_FEATURE_FS2, canonicalHubEndpoints, canonicalHubProof, canonicalCoolifySecrets, AGENT_FEATURE_COOLIFY_SECRETS, COOLIFY_SECRETS_REFUSAL_CODES, COOLIFY_SECRETS_MAX_REFS_PER_FRAME, COOLIFY_FRAME_MAX_EXP_SEC } from "@tugra/shared";
+import { PROTOCOL_VERSION, checkAgentCompat, canonicalCommand, canonicalCommandCancel, canonicalCommandStatus, canonicalTermStart, canonicalLogStart, canonicalAgentUpdate, canonicalFs, canonicalLogDrains, canonicalFs2, fs2RequiredCapabilities, AGENT_FEATURE_FS2, canonicalHubEndpoints, canonicalHubProof, canonicalCoolifySecrets, AGENT_FEATURE_COOLIFY_SECRETS, COOLIFY_SECRETS_REFUSAL_CODES, COOLIFY_SECRETS_MAX_REFS_PER_FRAME, COOLIFY_FRAME_MAX_EXP_SEC, canonicalCoolifySsh, AGENT_FEATURE_COOLIFY_SSH } from "@tugra/shared";
 import { FsRemoteException } from "../files/fs-errors";
 import { HubSigningService } from "./hub-signing.service";
 import { AgentCommandTimeoutException, AgentDisconnectedException, AgentOfflineException } from "./agent-offline.exception";
@@ -148,6 +151,13 @@ interface CoolifySecretsPending {
   timer: NodeJS.Timeout;
 }
 
+interface CoolifySshPending {
+  serverId: string;
+  resolve: (r: CoolifySshResultMsg) => void;
+  reject: (e: Error) => void;
+  timer: NodeJS.Timeout;
+}
+
 /** The agent refused or failed a sealed-secrets request. `code` is one of a fixed set (never agent-supplied free text). */
 export class CoolifySecretsRemoteException extends Error {
   constructor(public readonly code: string) {
@@ -158,6 +168,9 @@ export class CoolifySecretsRemoteException extends Error {
 
 /** Most records one request may collect (a hostile agent cannot grow the hub's memory without bound). */
 const COOLIFY_SECRETS_MAX_RECORDS = 5000;
+
+/** Slack added to a coolify_ssh_req's `exp` beyond its own timeout (clock skew, queueing). */
+const COOLIFY_SSH_EXP_SLACK_SEC = 120;
 
 /** Max concurrent fs2 operations the hub keeps in flight per server (the agent caps itself at the same number). */
 export const FS2_MAX_IN_FLIGHT_PER_SERVER = 4;
@@ -179,6 +192,7 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
   private readonly pending = new Map<string, Pending>(); // reqId → resolver
   private readonly fsPending = new Map<string, FsPending>(); // reqId → file-op resolver
   private readonly fs2Pending = new Map<string, Fs2Pending>(); // reqId → fs2 (write-capable file op) resolver
+  private readonly cooSshPending = new Map<string, CoolifySshPending>(); // reqId → coolify_ssh_req (agent install over SSH) resolver
   private readonly fs2Reserved = new Map<string, number>(); // serverId → slots held ahead of a send (see reserveFs2)
   private readonly coolifySecretsPending = new Map<string, CoolifySecretsPending>(); // reqId → sealed-secrets collector
   private readonly statePending = new Map<string, StatePending>(); // reqId → command_status resolver
@@ -546,6 +560,16 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
           // are relayed to the waiting caller exactly as they came (envelopes or fixed codes).
           if (!st.authed || !st.serverId) return;
           this.onCoolifySecretsResult(st.serverId, msg);
+          return;
+        }
+        case "coolify_ssh_result": {
+          // Same rule as fs2_result: only from the authed socket that OWNS the pending request's server. Never logged: it carries facts only.
+          if (!st.authed || !st.serverId) return;
+          const p = this.cooSshPending.get(msg.reqId);
+          if (!p || p.serverId !== st.serverId) return;
+          clearTimeout(p.timer);
+          this.cooSshPending.delete(msg.reqId);
+          p.resolve(msg);
           return;
         }
         default:
@@ -937,6 +961,40 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
     }
   }
 
+  /**
+   * Send one signed coolify_ssh_req (probe, install or remove the Tugra agent on a Coolify-known server over Coolify's own SSH key, from
+   * the agent on the Coolify host) and await its result. Order: online -> coolify_ssh_v1 -> the `coolify_ssh` capability is granted ->
+   * sign (with an `exp`) -> send. The frame may carry an enroll token (install) or a container id (uninstall): it is never logged here,
+   * and the caller must not log it either. A drop rejects with AgentDisconnectedException, a deadline with AgentCommandTimeoutException.
+   */
+  async sendCoolifySsh(
+    serverId: string,
+    req: Pick<CoolifySshReqMsg, "op" | "coolifyServerUuid" | "scriptSha256" | "payloadSha256" | "useSudo" | "expectedHostKeyFp" | "script" | "payload">,
+    timeoutMs: number,
+  ): Promise<CoolifySshResultMsg> {
+    const socket = this.sockets.get(serverId);
+    if (!socket || socket.readyState !== WebSocket.OPEN) throw new AgentOfflineException();
+    if (!this.agentSupports(serverId, AGENT_FEATURE_COOLIFY_SSH)) {
+      throw new HttpException({ statusCode: 409, code: "agent_too_old", message: "this server's agent is too old to install agents over SSH — update the agent" }, 409);
+    }
+    if (!(await this.isCapabilityGranted(serverId, "coolify_ssh"))) {
+      throw new ForbiddenException({ statusCode: 403, message: 'capability "coolify_ssh" is not granted for this server', code: "capability_not_granted", capability: "coolify_ssh", serverId });
+    }
+    const live = this.sockets.get(serverId);
+    if (!live || live.readyState !== WebSocket.OPEN) throw new AgentOfflineException(); // the awaits above may have outlived it
+    const reqId = randomUUID();
+    const exp = Math.floor(Date.now() / 1000) + Math.ceil(timeoutMs / 1000) + COOLIFY_SSH_EXP_SLACK_SEC;
+    return new Promise<CoolifySshResultMsg>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.cooSshPending.delete(reqId);
+        reject(new AgentCommandTimeoutException("coolify ssh request timed out"));
+      }, timeoutMs);
+      timer.unref?.();
+      this.cooSshPending.set(reqId, { serverId, resolve, reject, timer });
+      this.send(live, this.signOutbound({ type: "coolify_ssh_req", ...req, reqId, exp, capability: "coolify_ssh" }));
+    });
+  }
+
   /** Sign command/term_start (capability included) so the agent can verify + scope. */
   private signOutbound(msg: Record<string, unknown>): Record<string, unknown> {
     if (msg.type === "command") {
@@ -996,6 +1054,8 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
       msg.sig = this.hubSign.sign(canonicalHubEndpoints(msg.serverId as string, msg.rev as number, msg.endpointsJson as string));
     } else if (msg.type === "fs2_req") {
       msg.sig = this.hubSign.sign(canonicalFs2(msg as unknown as Fs2Fields));
+    } else if (msg.type === "coolify_ssh_req") {
+      msg.sig = this.hubSign.sign(canonicalCoolifySsh(msg as unknown as CoolifySshFields));
     } else if (msg.type === "fs_req") {
       msg.sig = this.hubSign.sign(
         canonicalFs(
@@ -1196,6 +1256,12 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
       if (p.serverId !== serverId) continue;
       clearTimeout(p.timer);
       this.coolifySecretsPending.delete(reqId);
+      p.reject(new AgentDisconnectedException("agent disconnected"));
+    }
+    for (const [reqId, p] of this.cooSshPending) {
+      if (p.serverId !== serverId) continue;
+      clearTimeout(p.timer);
+      this.cooSshPending.delete(reqId);
       p.reject(new AgentDisconnectedException("agent disconnected"));
     }
     for (const [reqId, p] of this.statePending) {

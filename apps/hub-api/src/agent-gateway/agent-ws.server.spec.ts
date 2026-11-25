@@ -1,5 +1,5 @@
 import { ForbiddenException, HttpException, ServiceUnavailableException } from "@nestjs/common";
-import { canonicalCoolifySecrets, canonicalLogDrains, canonicalFs2, fs2RequiredCapabilities, canonicalHubEndpoints, canonicalHubProof } from "@tugra/shared";
+import { canonicalCoolifySecrets, canonicalLogDrains, canonicalFs2, fs2RequiredCapabilities, canonicalHubEndpoints, canonicalHubProof, canonicalCoolifySsh } from "@tugra/shared";
 import { FsRemoteException } from "../files/fs-errors";
 import { AgentWsServer, CoolifySecretsRemoteException } from "./agent-ws.server";
 import { AgentCommandTimeoutException, AgentDisconnectedException, AgentOfflineException } from "./agent-offline.exception";
@@ -1421,6 +1421,84 @@ describe("AgentWsServer coolify_secrets (sealed secret read)", () => {
       const assertion = expect(p).rejects.toBeInstanceOf(AgentCommandTimeoutException);
       await jest.advanceTimersByTimeAsync(1100);
       await assertion;
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+});
+
+describe("AgentWsServer coolify_ssh_req (install the agent over Coolify's SSH keys)", () => {
+  function sshHarness(caps: string[], features: string[] = ["cmd_journal_v1", "coolify_ssh_v1"]) {
+    const sign = jest.fn().mockReturnValue("SIG");
+    const servers = { markOffline: jest.fn(), healOnline: jest.fn(), grantedCapabilities: jest.fn().mockResolvedValue(caps) } as any;
+    const server = new AgentWsServer({} as any, servers, { ingest: jest.fn() } as any, { ingest: jest.fn() } as any, { sign, publicKeySpkiBase64: "K" } as any, {} as any);
+    const socket = { readyState: 1, send: jest.fn(), on: jest.fn(), close: jest.fn() } as any;
+    (server as any).state.set(socket, { nonce: "n", serverId: "s1", authed: true, features: new Set(features) });
+    (server as any).sockets.set("s1", socket);
+    const lastSent = () => JSON.parse(socket.send.mock.calls.at(-1)![0]);
+    const deliver = (msg: object, s = socket) => (server as any).onMessage(s, JSON.stringify(msg));
+    return { server, socket, sign, lastSent, deliver };
+  }
+  const req = { op: "probe", coolifyServerUuid: "abc123def456", scriptSha256: "a".repeat(64), payloadSha256: "b".repeat(64), useSudo: false, expectedHostKeyFp: "" } as const;
+
+  it("signs the frame over the nine canonical fields, with exp and the coolify_ssh capability", async () => {
+    const { server, sign, lastSent, deliver } = sshHarness(["coolify_ssh"]);
+    const before = Math.floor(Date.now() / 1000);
+    const p = server.sendCoolifySsh("s1", req, 60_000);
+    await flush();
+    const sent = lastSent();
+    expect(sent.type).toBe("coolify_ssh_req");
+    expect(sent.sig).toBe("SIG");
+    expect(sent.capability).toBe("coolify_ssh");
+    expect(sent.exp).toBeGreaterThanOrEqual(before + 60 + 120);
+    expect(sign).toHaveBeenLastCalledWith(canonicalCoolifySsh(sent));
+    await deliver({ type: "coolify_ssh_result", reqId: sent.reqId, ok: true, code: "ok_installed" });
+    await expect(p).resolves.toMatchObject({ ok: true, code: "ok_installed" });
+  });
+
+  it("refuses, before signing anything, when the agent is offline, too old, or lacks the capability", async () => {
+    const off = sshHarness(["coolify_ssh"]);
+    await expect(off.server.sendCoolifySsh("ghost", req, 5000)).rejects.toBeInstanceOf(AgentOfflineException);
+    const old = sshHarness(["coolify_ssh"], ["cmd_journal_v1"]);
+    const e1 = await old.server.sendCoolifySsh("s1", req, 5000).catch((e: unknown) => e);
+    expect((e1 as any).getResponse()).toMatchObject({ code: "agent_too_old" });
+    const no = sshHarness(["deploy", "files"]);
+    const e2 = await no.server.sendCoolifySsh("s1", req, 5000).catch((e: unknown) => e);
+    expect(e2).toBeInstanceOf(ForbiddenException);
+    expect((e2 as any).getResponse()).toMatchObject({ code: "capability_not_granted", capability: "coolify_ssh" });
+    for (const h of [old, no]) expect(h.socket.send).not.toHaveBeenCalled();
+    expect(old.sign).not.toHaveBeenCalled();
+  });
+
+  it("ignores a result from another socket or an unauthenticated one", async () => {
+    const h = sshHarness(["coolify_ssh"]);
+    const p = h.server.sendCoolifySsh("s1", req, 5000);
+    p.catch(() => undefined);
+    await flush();
+    const reqId = h.lastSent().reqId;
+    const other = { readyState: 1, send: jest.fn(), on: jest.fn() } as any;
+    (h.server as any).state.set(other, { nonce: "n", serverId: "s2", authed: true });
+    await h.deliver({ type: "coolify_ssh_result", reqId, ok: true, code: "ok_installed" }, other);
+    const unauthed = { readyState: 1, send: jest.fn(), on: jest.fn() } as any;
+    (h.server as any).state.set(unauthed, { nonce: "n", serverId: "s1", authed: false });
+    await h.deliver({ type: "coolify_ssh_result", reqId, ok: true, code: "ok_installed" }, unauthed);
+    expect((h.server as any).cooSshPending.has(reqId)).toBe(true);
+  });
+
+  it("rejects a pending request when the agent disconnects, and times out", async () => {
+    const h = sshHarness(["coolify_ssh"]);
+    const p = h.server.sendCoolifySsh("s1", req, 5000);
+    await flush();
+    (h.server as any).rejectPendingFor("s1");
+    await expect(p).rejects.toBeInstanceOf(AgentDisconnectedException);
+    jest.useFakeTimers();
+    try {
+      const h2 = sshHarness(["coolify_ssh"]);
+      const p2 = h2.server.sendCoolifySsh("s1", req, 1000);
+      p2.catch(() => undefined);
+      await jest.advanceTimersByTimeAsync(0);
+      await jest.advanceTimersByTimeAsync(1500);
+      await expect(p2).rejects.toBeInstanceOf(AgentCommandTimeoutException);
     } finally {
       jest.useRealTimers();
     }
