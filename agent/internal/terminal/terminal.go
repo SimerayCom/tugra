@@ -6,11 +6,13 @@
 package terminal
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
 	"regexp"
 	"sync"
+	"time"
 
 	"github.com/creack/pty"
 )
@@ -24,6 +26,22 @@ var targetRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$`)
 // back to POSIX sh. `exec` replaces the process so signals and the PTY attach to the real shell.
 const shellCmd = "command -v bash >/dev/null 2>&1 && exec bash || exec sh"
 
+// The agent runs in a container, so a plain shell here is the AGENT container's shell (its own filesystem, no host
+// PATH: no pm2, no /home/<site>). A host shell therefore enters the host's namespaces from a short-lived helper made
+// from the agent's own image (no pull): privileged, host PID/net/IPC/UTS, `nsenter -t 1` into PID 1's mount, UTS, IPC,
+// net and PID namespaces, then a root login shell so the host's profile (nvm, pm2, PATH) loads. This grants nothing
+// new: the agent already holds the Docker socket, which is root on the host; it makes "host shell" mean the host.
+const hostLogin = "cd /root 2>/dev/null || cd /; if command -v bash >/dev/null 2>&1; then exec bash -l; else exec sh -l; fi"
+
+// hostShellCommand builds the helper command for image img and container name. Separate for tests.
+func hostShellCommand(img, name string) *exec.Cmd {
+	return exec.Command("docker", "run", "--rm", "-i", "-t",
+		"--name", name, "--label", "tugra.role=host-shell", "--pull", "never",
+		"--privileged", "--pid", "host", "--network", "host", "--ipc", "host", "--uts", "host",
+		"--entrypoint", "nsenter", img,
+		"-t", "1", "-m", "-u", "-i", "-n", "-p", "--", "sh", "-c", hostLogin)
+}
+
 // Session is a single live PTY-backed shell.
 type Session struct {
 	ptmx      *os.File
@@ -31,6 +49,7 @@ type Session struct {
 	closeOnce sync.Once
 	reapOnce  sync.Once
 	exitCode  int
+	helper    string // host-shell helper container to remove on Close ("" = none)
 }
 
 // Start launches a shell on a PTY. target=="" runs a host shell; otherwise it
@@ -39,8 +58,15 @@ type Session struct {
 // they arrive; onExit fires exactly once when the shell ends.
 func Start(target string, cols, rows int, onData func([]byte), onExit func(exitCode int)) (*Session, error) {
 	var cmd *exec.Cmd
+	helper := ""
 	if target == "" {
-		cmd = exec.Command("sh", "-c", shellCmd)
+		if img := os.Getenv("TUGRA_AGENT_IMAGE"); img != "" {
+			helper = fmt.Sprintf("tugra-host-shell-%d", time.Now().UnixNano())
+			cmd = hostShellCommand(img, helper)
+		} else {
+			// Not running from the published image (dev binary on a host): this shell already is the host's.
+			cmd = exec.Command("sh", "-c", shellCmd)
+		}
 	} else {
 		if !targetRe.MatchString(target) {
 			return nil, fmt.Errorf("invalid container target %q", target)
@@ -55,7 +81,7 @@ func Start(target string, cols, rows int, onData func([]byte), onExit func(exitC
 		return nil, err
 	}
 
-	s := &Session{ptmx: ptmx, cmd: cmd}
+	s := &Session{ptmx: ptmx, cmd: cmd, helper: helper}
 	go func() {
 		buf := make([]byte, 32*1024)
 		for {
@@ -96,6 +122,14 @@ func (s *Session) Close() {
 			_ = s.cmd.Process.Kill()
 		}
 		_ = s.ptmx.Close()
+		// Killing the docker CLI does not stop the helper it started: remove it so no host shell outlives the session.
+		if s.helper != "" {
+			go func(name string) {
+				ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+				defer cancel()
+				_ = exec.CommandContext(ctx, "docker", "rm", "-f", name).Run()
+			}(s.helper)
+		}
 	})
 }
 
