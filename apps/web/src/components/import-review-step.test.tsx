@@ -229,6 +229,16 @@ describe("ImportReviewStep", () => {
     expect(applySpy.mock.calls[0][0]).toEqual({ sourceKind: "coolify", sessionId: "s1", targetServerId: "srv1", planHash: "a".repeat(32), ignoreStoredMapping: true });
   });
 
+  it("a narrowed move cannot ignore the saved profile: that would widen it to everything, so the box is off and says the scope is kept", async () => {
+    const stored: ImportMappingDoc = { version: 1, items: { [APP]: { name: "Storefront" } }, projects: {}, gitSources: {}, acks: [] };
+    vi.spyOn(api, "importMappingGet").mockResolvedValue({ doc: stored, version: 3, label: null, lastAppliedAt: "2026-11-01T10:00:00.000Z" });
+    const importScope: ImportScope = { selection: { mode: "servers", hosts: new Set(), projects: new Set(), extra: new Set(), placement: {} }, inScope: new Set([APP]), narrowed: true, defaultServerId: "srv1", serverMap: undefined, placed: {}, placementKind: {} };
+    mount(plan({ mapping: { features: ["mapping-v1"], stored, storedVersion: 3, scopeKey: "team-3" } as never }), { importScope });
+    const box = (await screen.findByRole("checkbox", { name: "Your scope is kept, so the saved profile cannot be ignored." })) as HTMLInputElement;
+    expect(box.disabled).toBe(true);
+    expect(box.checked).toBe(false);
+  });
+
   it("a server refusal with a mapping code shows a fixed translation, not the raw message", async () => {
     const { ApiError } = await import("../lib/api");
     vi.spyOn(api, "importApply").mockRejectedValue(new ApiError(409, "raw english", "import.mapping_required"));

@@ -210,8 +210,9 @@ export function ImportReviewStep({
             </span>
             <Btn variant="ghost" onClick={() => discard.mutate()} disabled={discard.isPending}>{t("import.review.profileDiscard")}</Btn>
             <label style={{ display: "flex", alignItems: "center", gap: 8, minHeight: 32, cursor: "pointer" }}>
-              <input type="checkbox" checked={ignoreSaved} onChange={(e) => setIgnoreSaved(e.target.checked)} />
-              {t("import.review.ignoreSaved")}
+              {/* the scope the user chose lives in the mapping: ignoring the saved one would widen a narrowed move to everything */}
+              <input type="checkbox" checked={ignoreSaved && !importScope?.narrowed} disabled={!!importScope?.narrowed} onChange={(e) => setIgnoreSaved(e.target.checked)} />
+              {importScope?.narrowed ? t("import.review.scopeKept") : t("import.review.ignoreSaved")}
             </label>
           </div>
         )}

@@ -419,6 +419,7 @@
     "profileLoadedNever": "Saved mapping loaded (v{version}, never applied)",
     "profileDiscard": "Discard",
     "ignoreSaved": "Ignore the saved mapping and import with source names",
+    "scopeKept": "Your scope is kept, so the saved profile cannot be ignored.",
     "reconcile": "Reconcile already-imported items",
     "reconcileHelp": "Applies the mapped name, environment and alias to items an earlier import already created (in place, never re-created). Off by default.",
     "reconcileNote": "{count} already-imported items differ from the mapping.",
