@@ -333,7 +333,7 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
           // Re-assert ONLINE on the live socket: if a prior socket closed during the enroll/auth await, its
           // close handler may have landed markOffline AFTER the status write — heal it immediately (conditional,
           // no notification) rather than waiting for the next heartbeat.
-          await this.servers.healOnline(serverId);
+          await this.servers.healOnline(serverId, { force: true });
           this.send(socket, {
             type: "enrolled",
             serverId,
@@ -375,7 +375,7 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
           this.adoptSocket(msg.serverId, socket);
           // Re-assert ONLINE on the live socket (see the enroll path): a prior socket closing during the auth
           // await could otherwise land markOffline after authenticate's markOnline, leaving a live agent OFFLINE.
-          await this.servers.healOnline(msg.serverId);
+          await this.servers.healOnline(msg.serverId, { force: true });
           this.send(socket, {
             type: "auth_ok",
             serverId: msg.serverId,
@@ -415,9 +415,11 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
           return;
         }
         case "heartbeat": {
-          // Only the current socket's heartbeat counts. Touch lastSeenAt, and self-heal a stale status: if a
-          // live agent socket exists but the row is not ONLINE (a reconnect race or a hub restart left it
-          // OFFLINE), flip it back — no server_online notification (reconciling truth, not a real edge).
+          // Only the current socket's heartbeat counts. Touch lastSeenAt (in memory; flushed in one batched
+          // statement every 30 s, display only: liveness is the socket's ping/pong), and self-heal a stale
+          // status: if a live agent socket exists but the row is not ONLINE (a reconnect race or a hub restart
+          // left it OFFLINE), flip it back — no server_online notification (reconciling truth, not a real edge).
+          // healOnline is free in steady state (confirmed ONLINE in memory); a markOffline clears that.
           if (st.authed && st.serverId && this.sockets.get(st.serverId) === socket) {
             await this.servers.touch(st.serverId);
             // Re-check AFTER the touch round-trip: if this socket closed meanwhile, its close handler already

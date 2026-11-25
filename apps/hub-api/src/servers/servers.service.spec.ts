@@ -1297,3 +1297,105 @@ describe("ServersService team-change hook", () => {
     expect(seen).toEqual(["s1"]);
   });
 });
+
+describe("ServersService liveness writes (batched lastSeenAt, heal skip)", () => {
+  const row = { id: "s1", name: "node-1", teamId: "teamA", hostname: "h1", publicIp: "1.2.3.4", lastSeenAt: new Date() };
+  function make() {
+    const executeRaw = jest.fn().mockResolvedValue(1);
+    const update = jest.fn().mockResolvedValue(row);
+    const updateMany = jest.fn().mockResolvedValue({ count: 0 });
+    const findUnique = jest.fn().mockResolvedValue({ status: ServerStatus.ONLINE });
+    const hooks: (() => Promise<void>)[] = [];
+    const prisma = { server: { update, updateMany, findUnique }, $executeRaw: executeRaw, registerBeforeDisconnect: (f: () => Promise<void>) => hooks.push(f) } as unknown as PrismaService;
+    return { svc: svcWith(prisma), executeRaw, update, updateMany, hooks };
+  }
+  /** The ids/timestamps bound into the tagged-template flush statement. */
+  const bound = (executeRaw: jest.Mock) => ({ ids: executeRaw.mock.calls[0][1] as string[], at: executeRaw.mock.calls[0][2] as string[] });
+
+  it("a heartbeat writes nothing; the flush writes ALL changed servers in ONE statement", async () => {
+    const { svc, executeRaw, update, updateMany } = make();
+    for (let i = 0; i < 50; i++) await svc.touch(`s${i}`);
+    await svc.touch("s0"); // a second heartbeat from the same server collapses into the same row
+    expect(executeRaw).not.toHaveBeenCalled();
+    expect(update).not.toHaveBeenCalled();
+    expect(updateMany).not.toHaveBeenCalled();
+    await svc.flushLastSeen();
+    expect(executeRaw).toHaveBeenCalledTimes(1);
+    expect(bound(executeRaw).ids).toHaveLength(50);
+    await svc.flushLastSeen(); // nothing changed since → no statement
+    expect(executeRaw).toHaveBeenCalledTimes(1);
+  });
+
+  it("the flush never moves lastSeenAt backwards (guarded in SQL)", async () => {
+    const { svc, executeRaw } = make();
+    await svc.touch("s1");
+    await svc.flushLastSeen();
+    const sql = (executeRaw.mock.calls[0][0] as string[]).join("?");
+    expect(sql).toMatch(/"lastSeenAt" IS NULL OR s\."lastSeenAt" < v\.ts/);
+  });
+
+  it("a failed flush is retried on the next interval", async () => {
+    const { svc, executeRaw } = make();
+    executeRaw.mockRejectedValueOnce(new Error("db down"));
+    await svc.touch("s1");
+    await svc.flushLastSeen();
+    await svc.flushLastSeen();
+    expect(executeRaw).toHaveBeenCalledTimes(2);
+  });
+
+  it("markOffline carries the newest in-memory heartbeat into the same update (exact 'last seen' in the offline alert)", async () => {
+    const { svc, update, executeRaw } = make();
+    await svc.touch("s1");
+    await svc.markOffline("s1");
+    const data = update.mock.calls[0][0].data;
+    expect(data.status).toBe(ServerStatus.OFFLINE);
+    expect(data.lastSeenAt).toBeInstanceOf(Date);
+    await svc.flushLastSeen(); // already written by markOffline: no second statement
+    expect(executeRaw).not.toHaveBeenCalled();
+  });
+
+  it("healOnline is free once ONLINE is confirmed, and runs again after a markOffline", async () => {
+    const { svc, updateMany } = make();
+    await svc.healOnline("s1"); // unknown → one conditional write, then remembered
+    expect(updateMany).toHaveBeenCalledTimes(1);
+    for (let i = 0; i < 20; i++) await svc.healOnline("s1");
+    expect(updateMany).toHaveBeenCalledTimes(1); // steady-state heartbeats cost no statement
+    await svc.markOffline("s1");
+    await svc.healOnline("s1"); // a late OFFLINE must still be repaired by the next heartbeat
+    expect(updateMany).toHaveBeenCalledTimes(2);
+    await svc.healOnline("s1", { force: true });
+    expect(updateMany).toHaveBeenCalledTimes(3); // the enroll/auth path always re-asserts
+  });
+
+  it("markOnline confirms ONLINE (no heal needed afterwards) and a markOffline in flight clears it when it lands", async () => {
+    const { svc, updateMany, update } = make();
+    await svc.markOnline("s1");
+    await svc.healOnline("s1");
+    expect(updateMany).not.toHaveBeenCalled();
+    let release!: () => void;
+    update.mockImplementationOnce(() => new Promise((r) => (release = () => r(row))));
+    const off = svc.markOffline("s1");
+    await svc.markOnline("s1"); // races the slow OFFLINE write and re-confirms...
+    release();
+    await off; // ...but the OFFLINE landed last, so the confirmation is dropped
+    await svc.healOnline("s1");
+    expect(updateMany).toHaveBeenCalledTimes(1);
+  });
+
+  it("flushes on shutdown through the Prisma pre-disconnect hook", async () => {
+    const { svc, executeRaw, hooks } = make();
+    svc.onModuleInit();
+    await svc.touch("s1");
+    await hooks[0]();
+    expect(executeRaw).toHaveBeenCalledTimes(1);
+    await svc.touch("s2"); // after shutdown: ignored, no timer left running
+    await svc.onModuleDestroy();
+  });
+
+  it("REST views overlay the in-memory heartbeat, so the panel is not stale by the flush interval", async () => {
+    const { svc } = make();
+    await svc.touch("s1");
+    const view = (svc as any).toView({ id: "s1", name: "n", status: "ONLINE", teamId: "t", hostname: null, lastSeenAt: new Date(1000), createdAt: new Date(), seal: null }, false, false);
+    expect(view.lastSeenAt.getTime()).toBeGreaterThan(Date.now() - 5000);
+  });
+});

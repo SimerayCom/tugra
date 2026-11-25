@@ -834,7 +834,7 @@ describe("AgentWsServer stale-socket supersede + reconnect (C1)", () => {
   it("a reconnect re-asserts ONLINE (healOnline) after adopting the new socket, closing the markOnline/close race window", async () => {
     const { server, servers } = makeServer();
     await auth(server, mockSocket());
-    expect(servers.healOnline).toHaveBeenCalledWith("s1"); // runs after adoptSocket on every auth
+    expect(servers.healOnline).toHaveBeenCalledWith("s1", { force: true }); // runs after adoptSocket on every auth, bypassing the steady-state skip
   });
 });
 

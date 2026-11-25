@@ -4,6 +4,8 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
+  OnModuleDestroy,
+  OnModuleInit,
   UnauthorizedException,
 } from "@nestjs/common";
 import { ModuleRef } from "@nestjs/core";
@@ -163,8 +165,25 @@ export function plainWsNeedsOptIn(hubUrl: string): boolean {
   }
 }
 
+/** How often changed `lastSeenAt` values are written (one statement for all servers). The panel's "Last seen"
+ *  therefore lags by up to this interval on raw DB reads; REST server views overlay the in-memory value. Liveness
+ *  never depended on it: online/offline is decided by the agent socket (ws ping/pong), and the web's "stale" dot
+ *  allows 90 s. */
+export const LAST_SEEN_FLUSH_MS = 30_000;
+/** A server confirmed ONLINE by this process is not re-checked by healOnline for this long. Only this process
+ *  writes the status (and markOffline clears the confirmation), so the re-check is defence in depth. */
+export const HEAL_RECHECK_MS = 5 * 60_000;
+
 @Injectable()
-export class ServersService {
+export class ServersService implements OnModuleInit, OnModuleDestroy {
+  // serverId -> newest heartbeat/auth time (ms) not yet written to Server.lastSeenAt.
+  private readonly lastSeen = new Map<string, number>();
+  private readonly lastSeenDirty = new Set<string>();
+  private lastSeenTimer?: ReturnType<typeof setInterval>;
+  private lastSeenClosed = false;
+  // serverId -> when this process last saw/wrote status ONLINE for it (see HEAL_RECHECK_MS).
+  private readonly confirmedOnline = new Map<string, number>();
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
@@ -782,6 +801,8 @@ export class ServersService {
       where: { id: serverId },
       data: { status: ServerStatus.ONLINE, lastSeenAt: new Date(), ...extra },
     });
+    this.noteSeen(serverId, s.lastSeenAt?.getTime() ?? Date.now(), false);
+    this.confirmedOnline.set(serverId, Date.now());
     if (prev?.status === ServerStatus.OFFLINE) {
       this.notifications
         .fireForEvent(s.teamId, "server_online", {
@@ -795,12 +816,21 @@ export class ServersService {
   }
 
   async markOffline(serverId: string): Promise<void> {
+    // Forget the ONLINE confirmation BEFORE and AFTER the write: a markOnline racing this write may set it
+    // again, and a late OFFLINE landing after that ONLINE must not be shielded from the next heartbeat's heal.
+    this.confirmedOnline.delete(serverId);
+    // The newest heartbeat time rides this same update so the "last seen" in the offline notification (and the
+    // panel) is exact even though heartbeats are only flushed every LAST_SEEN_FLUSH_MS.
+    const seen = this.lastSeen.get(serverId);
+    this.lastSeen.delete(serverId);
+    this.lastSeenDirty.delete(serverId);
     const s = await this.prisma.server
       .update({
         where: { id: serverId },
-        data: { status: ServerStatus.OFFLINE },
+        data: { status: ServerStatus.OFFLINE, ...(seen ? { lastSeenAt: new Date(seen) } : {}) },
       })
-      .catch(() => undefined);
+      .catch(() => undefined)
+      .finally(() => this.confirmedOnline.delete(serverId));
     if (s) {
       this.notifications
         .fireForEvent(s.teamId, "server_offline", {
@@ -814,10 +844,71 @@ export class ServersService {
     }
   }
 
+  /**
+   * Record a heartbeat. In memory only: the value is written by the periodic flush (LAST_SEEN_FLUSH_MS), one
+   * statement for every server that changed, instead of one UPDATE per heartbeat per server.
+   */
   async touch(serverId: string): Promise<void> {
-    await this.prisma.server
-      .update({ where: { id: serverId }, data: { lastSeenAt: new Date() } })
-      .catch(() => undefined);
+    this.noteSeen(serverId, Date.now(), true);
+  }
+
+  private noteSeen(serverId: string, at: number, dirty: boolean): void {
+    if (this.lastSeenClosed) return;
+    const prev = this.lastSeen.get(serverId);
+    if (prev !== undefined && prev >= at) return;
+    this.lastSeen.set(serverId, at);
+    if (dirty) this.lastSeenDirty.add(serverId);
+  }
+
+  /** `lastSeenAt` for a REST view: the in-memory heartbeat time when it is newer than the stored one. */
+  private seenOverlay(serverId: string, stored: Date | null): Date | null {
+    const mem = this.lastSeen.get(serverId);
+    return mem !== undefined && (!stored || mem > stored.getTime()) ? new Date(mem) : stored;
+  }
+
+  onModuleInit(): void {
+    this.lastSeenTimer = setInterval(() => void this.flushLastSeen(), LAST_SEEN_FLUSH_MS);
+    this.lastSeenTimer.unref?.();
+    // Nest destroys the Prisma module before this one: flush through its pre-disconnect hook instead.
+    this.prisma.registerBeforeDisconnect?.(async () => {
+      await this.shutdownLastSeen();
+    });
+  }
+
+  async onModuleDestroy(): Promise<void> {
+    await this.shutdownLastSeen();
+  }
+
+  private async shutdownLastSeen(): Promise<void> {
+    if (this.lastSeenTimer) clearInterval(this.lastSeenTimer);
+    this.lastSeenTimer = undefined;
+    if (this.lastSeenClosed) return;
+    await this.flushLastSeen();
+    this.lastSeenClosed = true;
+  }
+
+  /** Write every changed heartbeat time in ONE statement. Never moves a value backwards. Never throws. */
+  async flushLastSeen(): Promise<void> {
+    if (this.lastSeenDirty.size === 0) return;
+    const ids = [...this.lastSeenDirty];
+    this.lastSeenDirty.clear();
+    const at: string[] = [];
+    const sent: string[] = [];
+    for (const id of ids) {
+      const t = this.lastSeen.get(id);
+      if (t === undefined) continue; // went offline meanwhile: markOffline wrote its value
+      sent.push(id);
+      at.push(new Date(t).toISOString());
+    }
+    if (sent.length === 0) return;
+    try {
+      await this.prisma.$executeRaw`
+        UPDATE "Server" AS s SET "lastSeenAt" = v.ts
+        FROM (SELECT unnest(${sent}::text[]) AS id, unnest(${at}::timestamp[]) AS ts) AS v
+        WHERE s.id = v.id AND (s."lastSeenAt" IS NULL OR s."lastSeenAt" < v.ts)`;
+    } catch {
+      for (const id of sent) if (this.lastSeen.has(id)) this.lastSeenDirty.add(id); // retry next interval
+    }
   }
 
   /**
@@ -825,11 +916,24 @@ export class ServersService {
    * ONLINE (a reconnect-race or a hub-restart left it OFFLINE/PENDING-ish), flip it back. Conditional, so it
    * is a no-op write in steady state, and it does NOT fire a server_online notification — this is repairing
    * truth, not a real recovery edge (markOnline owns the notified OFFLINE→ONLINE transition).
+   *
+   * Steady state costs NO statement: once this process has confirmed ONLINE (markOnline / a successful heal) the
+   * check is skipped for HEAL_RECHECK_MS, and markOffline clears the confirmation, so every race the heal exists
+   * for (an OFFLINE landing after an ONLINE) still self-heals on the next heartbeat. `force` (the enroll/auth
+   * path, which exists to catch exactly that race) always runs the conditional write.
    */
-  async healOnline(serverId: string): Promise<void> {
-    await this.prisma.server
-      .updateMany({ where: { id: serverId, status: { not: ServerStatus.ONLINE } }, data: { status: ServerStatus.ONLINE } })
-      .catch(() => undefined);
+  async healOnline(serverId: string, opts: { force?: boolean } = {}): Promise<void> {
+    const at = this.confirmedOnline.get(serverId);
+    if (!opts.force && at !== undefined && Date.now() - at < HEAL_RECHECK_MS) return;
+    try {
+      await this.prisma.server.updateMany({
+        where: { id: serverId, status: { not: ServerStatus.ONLINE } },
+        data: { status: ServerStatus.ONLINE },
+      });
+      this.confirmedOnline.set(serverId, Date.now());
+    } catch {
+      /* best-effort; the next heartbeat retries */
+    }
   }
 
   /** Store/refresh the host hardware+OS inventory (sent on every (re)connect). */
@@ -973,7 +1077,7 @@ export class ServersService {
       description: s.description ?? null,
       timezone: s.timezone ?? null,
       lastCleanupAt: s.lastCleanupAt ?? null,
-      lastSeenAt: s.lastSeenAt,
+      lastSeenAt: this.seenOverlay(s.id, s.lastSeenAt),
       createdAt: s.createdAt,
       seal: s.seal,
       tags: s.tags ?? [],
