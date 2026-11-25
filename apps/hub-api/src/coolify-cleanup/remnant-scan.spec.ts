@@ -1,0 +1,203 @@
+import { spawnSync } from "node:child_process";
+import { buildScanScript, classifyScan, listHash, parseHumanSize, parseScan, ScanError, type ScanResult } from "./remnant-scan";
+
+const UUID = "abcd1234efgh5678ijkl9012";
+const scan = (over: Partial<ScanResult> = {}): ScanResult => ({ volumes: [], containers: [], networks: [], images: [], mounts: [], dirs: [], ...over });
+const find = (c: ReturnType<typeof classifyScan>, kind: string, name: string) => c.remnants.find((r) => r.kind === kind && r.name === name);
+
+describe("the scan script", () => {
+  const script = buildScanScript();
+  it("is read-only: no removal, stop, prune or write verb anywhere", () => {
+    for (const bad of [/\brm\b/, /\brmi\b/, /\bprune\b/, /\bstop\b/, /\bkill\b/, /docker volume (rm|create|prune|inspect)/, /\bmkdir\b/, /\bchmod\b/, />\s*\/(?!dev\/null)/]) expect(script).not.toMatch(bad);
+  });
+  it("is valid sh", () => {
+    expect(spawnSync("sh", ["-n"], { input: script }).status).toBe(0);
+  });
+  it("reads docker volume NAMES (for the checklist) and nothing else about them", () => {
+    expect(script.match(/docker volume \w+/g)).toEqual(["docker volume ls"]);
+    expect(script).toContain("TUGRA_CU_V|{{.Name}}");
+  });
+});
+
+describe("parseScan", () => {
+  const out = [
+    "Welcome banner",
+    "TUGRA_CU_BEGIN",
+    "TUGRA_CU_C|coolify-proxy|traefik:v3.1|exited|true",
+    "TUGRA_CU_C|coolify-sentinel|ghcr.io/coollabsio/sentinel:0.0.16|running|",
+    "TUGRA_CU_N|coolify|0",
+    "TUGRA_CU_N|bridge|?",
+    "TUGRA_CU_V|abc-data",
+    "TUGRA_CU_V|bad name with spaces",
+    "TUGRA_CU_I|ghcr.io/coollabsio/coolify-helper:1.0.8|abc123|35.5MB",
+    "TUGRA_CU_M|/coolify-proxy|/data/coolify/proxy;/var/run/docker.sock;",
+    "TUGRA_CU_D|/data/coolify/proxy|2048",
+    "TUGRA_CU_D|/data/coolify/applications/x|link",
+    "TUGRA_CU_D|/etc/passwd|1",
+    "TUGRA_CU_END",
+    "",
+  ].join("\n");
+  it("reads every record, drops banners and paths outside /data/coolify", () => {
+    const r = parseScan(out);
+    expect(r.containers).toHaveLength(2);
+    expect(r.containers[0]).toEqual({ name: "coolify-proxy", image: "traefik:v3.1", state: "exited", managed: true });
+    expect(r.networks).toEqual([{ name: "coolify", attached: 0 }, { name: "bridge", attached: null }]);
+    expect(r.volumes).toEqual(["abc-data"]);
+    expect(r.images[0]).toMatchObject({ ref: "ghcr.io/coollabsio/coolify-helper:1.0.8", sizeBytes: 35_500_000 });
+    expect(r.mounts[0]).toEqual({ container: "coolify-proxy", sources: ["/data/coolify/proxy", "/var/run/docker.sock"] });
+    expect(r.dirs).toEqual([{ path: "/data/coolify/proxy", sizeBytes: 2048 * 1024, link: false }, { path: "/data/coolify/applications/x", sizeBytes: null, link: true }]);
+  });
+  it("a cut listing is unreadable, never empty", () => {
+    expect(() => parseScan("TUGRA_CU_BEGIN\nTUGRA_CU_C|a|b|exited|")).toThrow(ScanError);
+    expect(() => parseScan("")).toThrow(ScanError);
+  });
+  it("no docker is its own error", () => {
+    expect(() => parseScan("TUGRA_CU_NO_DOCKER")).toThrow(expect.objectContaining({ code: "no_docker" }));
+  });
+  it("parses docker's human sizes", () => {
+    expect(parseHumanSize("1.2GB")).toBe(1_200_000_000);
+    expect(parseHumanSize("512kB")).toBe(512_000);
+    expect(parseHumanSize("lots")).toBeNull();
+  });
+});
+
+describe("classifyScan: containers", () => {
+  it("an exited coolify-proxy, a sentinel (even running), a helper and an exited managed container are removable", () => {
+    const c = classifyScan(
+      scan({
+        containers: [
+          { name: "coolify-proxy", image: "traefik:v3.1", state: "exited", managed: true },
+          { name: "coolify-sentinel", image: "ghcr.io/coollabsio/sentinel:0.0.16", state: "running", managed: false },
+          { name: "helper1", image: "ghcr.io/coollabsio/coolify-helper:1.0.8", state: "exited", managed: false },
+          { name: `${UUID}-123`, image: `${UUID}:abc`, state: "exited", managed: true },
+        ],
+      }),
+      { knownUuids: [] },
+    );
+    for (const n of ["coolify-proxy", "coolify-sentinel", "helper1", `${UUID}-123`]) expect(find(c, "container", n)?.keep).toBeUndefined();
+  });
+
+  it("a running proxy, a running helper and a running managed app are kept, never removed", () => {
+    const c = classifyScan(
+      scan({
+        containers: [
+          { name: "coolify-proxy", image: "traefik:v3.1", state: "running", managed: true },
+          { name: "h", image: "coollabsio/coolify-helper:1", state: "running", managed: false },
+          { name: "app1", image: "x:y", state: "running", managed: true },
+        ],
+      }),
+      { knownUuids: [] },
+    );
+    for (const n of ["coolify-proxy", "h", "app1"]) expect(find(c, "container", n)).toMatchObject({ keep: true, reason: "running" });
+  });
+
+  it("a user's own container (no Coolify name, image or label) is not even listed", () => {
+    const c = classifyScan(scan({ containers: [{ name: "postgres-main", image: "postgres:16", state: "exited", managed: false }] }), { knownUuids: [] });
+    expect(c.remnants).toEqual([]);
+  });
+
+  it("a Coolify control-plane container means the whole server is the Coolify host: nothing is removable", () => {
+    const c = classifyScan(
+      scan({ containers: [{ name: "coolify-db", image: "postgres:15", state: "running", managed: false }, { name: "coolify-proxy", image: "traefik", state: "exited", managed: true }], networks: [{ name: "coolify", attached: 0 }] }),
+      { knownUuids: [] },
+    );
+    expect(c.controlPlane).toBe(true);
+    expect(c.remnants.every((r) => r.keep)).toBe(true);
+    expect(c.remnants).toEqual([{ kind: "container", name: "coolify-db", sizeBytes: null, keep: true, reason: "control_plane" }]);
+  });
+});
+
+describe("classifyScan: networks and images", () => {
+  it("removes an empty Coolify network and an empty per-resource one the hub names; keeps one with containers; ignores the rest", () => {
+    const c = classifyScan(
+      scan({ networks: [{ name: "coolify", attached: 0 }, { name: UUID, attached: 0 }, { name: "coolify-overlay", attached: 2 }, { name: "bridge", attached: 0 }, { name: "mynet", attached: 0 }, { name: "zzzz9999yyyy8888xxxx7777", attached: 0 }] }),
+      { knownUuids: [UUID] },
+    );
+    expect(find(c, "network", "coolify")?.keep).toBeUndefined();
+    expect(find(c, "network", UUID)?.keep).toBeUndefined();
+    expect(find(c, "network", "coolify-overlay")).toMatchObject({ keep: true, reason: "in_use" });
+    expect(find(c, "network", "bridge")).toBeUndefined();
+    expect(find(c, "network", "mynet")).toBeUndefined();
+    expect(find(c, "network", "zzzz9999yyyy8888xxxx7777")).toBeUndefined(); // looks like a uuid but the hub does not know it
+  });
+
+  it("an unknown attachment count is kept, not removed", () => {
+    expect(find(classifyScan(scan({ networks: [{ name: "coolify", attached: null }] }), { knownUuids: [] }), "network", "coolify")).toMatchObject({ keep: true, reason: "in_use" });
+  });
+
+  it("only Coolify's own images are listed; one a kept container uses is kept; app-built images are never touched", () => {
+    const c = classifyScan(
+      scan({
+        containers: [{ name: "coolify-proxy", image: "ghcr.io/coollabsio/coolify-helper:1.0.8", state: "running", managed: true }],
+        images: [
+          { ref: "ghcr.io/coollabsio/coolify-helper:1.0.8", id: "a", sizeBytes: 5 },
+          { ref: "ghcr.io/coollabsio/sentinel:0.0.16", id: "b", sizeBytes: 7 },
+          { ref: `${UUID}:abcdef`, id: "c", sizeBytes: 9 },
+          { ref: "postgres:16", id: "d", sizeBytes: 9 },
+          { ref: "traefik:v3.1", id: "e", sizeBytes: 9 },
+        ],
+      }),
+      { knownUuids: [UUID] },
+    );
+    expect(find(c, "image", "ghcr.io/coollabsio/coolify-helper:1.0.8")).toMatchObject({ keep: true, reason: "in_use" });
+    expect(find(c, "image", "ghcr.io/coollabsio/sentinel:0.0.16")).toMatchObject({ sizeBytes: 7 });
+    expect(find(c, "image", "ghcr.io/coollabsio/sentinel:0.0.16")?.keep).toBeUndefined();
+    for (const n of [`${UUID}:abcdef`, "postgres:16", "traefik:v3.1"]) expect(find(c, "image", n)).toBeUndefined();
+  });
+});
+
+describe("classifyScan: directories under /data/coolify", () => {
+  const dir = (path: string, sizeBytes: number | null = 1024, link = false) => ({ path, sizeBytes, link });
+  it("Coolify's own machinery is removable; database dumps and backups are the owner's data and are kept", () => {
+    const c = classifyScan(
+      scan({ dirs: [dir("/data/coolify/proxy"), dir("/data/coolify/ssh"), dir("/data/coolify/databases/abc"), dir("/data/coolify/backups"), dir("/data/coolify/weird"), dir("/data/coolify/applications/app1")] }),
+      { knownUuids: [] },
+    );
+    expect(find(c, "directory", "/data/coolify/proxy")?.keep).toBeUndefined();
+    expect(find(c, "directory", "/data/coolify/ssh")?.keep).toBeUndefined();
+    expect(find(c, "directory", "/data/coolify/applications/app1")?.keep).toBeUndefined();
+    expect(find(c, "directory", "/data/coolify/databases/abc")).toMatchObject({ keep: true, reason: "user_data" });
+    expect(find(c, "directory", "/data/coolify/backups")).toMatchObject({ keep: true, reason: "user_data" });
+    expect(find(c, "directory", "/data/coolify/weird")).toMatchObject({ keep: true, reason: "unknown" });
+  });
+
+  it("a directory a surviving container mounts (itself, a child or a parent) is in use; a mount by a removable container does not count", () => {
+    const base = scan({
+      containers: [
+        { name: "coolify-proxy", image: "traefik", state: "exited", managed: true },
+        { name: "web", image: "x", state: "running", managed: true },
+      ],
+      dirs: [dir("/data/coolify/proxy"), dir("/data/coolify/applications/app1"), dir("/data/coolify/applications/app2")],
+      mounts: [
+        { container: "coolify-proxy", sources: ["/data/coolify/proxy"] },
+        { container: "web", sources: ["/data/coolify/applications/app1/files", "/data/coolify/applications"] },
+      ],
+    });
+    const c = classifyScan(base, { knownUuids: [] });
+    expect(find(c, "directory", "/data/coolify/proxy")?.keep).toBeUndefined(); // mounted only by the proxy that is going away
+    expect(find(c, "directory", "/data/coolify/applications/app1")).toMatchObject({ keep: true, reason: "in_use" });
+    expect(find(c, "directory", "/data/coolify/applications/app2")).toMatchObject({ keep: true, reason: "in_use" }); // the parent is mounted
+  });
+
+  it("a symlink is never removable", () => {
+    expect(find(classifyScan(scan({ dirs: [dir("/data/coolify/proxy", null, true)] }), { knownUuids: [] }), "directory", "/data/coolify/proxy")).toMatchObject({ keep: true, reason: "unknown" });
+  });
+
+  it("a docker volume is never a remnant, even one named like Coolify's: there is no volume remnant kind at all", () => {
+    const c = classifyScan(scan({ volumes: [`${UUID}-data`], dirs: [dir("/data/coolify/proxy")] }), { knownUuids: [UUID] });
+    expect(c.remnants.every((r) => ["container", "network", "image", "directory"].includes(r.kind))).toBe(true);
+  });
+});
+
+describe("listHash", () => {
+  const a = { kind: "container" as const, name: "coolify-proxy", sizeBytes: null };
+  const b = { kind: "image" as const, name: "ghcr.io/coollabsio/sentinel:1", sizeBytes: 5 };
+  it("depends on the removable names only, in any order", () => {
+    expect(listHash([a, b])).toBe(listHash([b, a]));
+    expect(listHash([a, b])).not.toBe(listHash([a]));
+    expect(listHash([a, { ...b, sizeBytes: 99 }])).toBe(listHash([a, b]));
+  });
+  it("ignores kept entries, so a changing kept list does not invalidate a confirmation, but a new removable one does", () => {
+    expect(listHash([a, { kind: "directory", name: "/data/coolify/backups", sizeBytes: 1, keep: true, reason: "user_data" }])).toBe(listHash([a]));
+  });
+});

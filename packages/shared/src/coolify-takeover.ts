@@ -189,15 +189,35 @@ export interface CompletenessRow {
   tugra: number;
   /** Refs present in Coolify and missing in Tugra (names/refs only). */
   missing: string[];
+  /** The Coolify side of this row could not be read (an older read, a section this Coolify lacks): the row can never count as complete. */
+  unreadable?: boolean;
+  /** Coolify items Tugra has no counterpart kind for (a notification channel it cannot send). Shown, never counted. */
+  notCarried?: string[];
 }
 
 /** What Coolify left on a server. Names and sizes; the owner confirms before anything is removed. */
 export const REMNANT_KINDS = ["container", "network", "image", "directory"] as const;
 export type RemnantKind = (typeof REMNANT_KINDS)[number];
+/** Why a remnant is listed but will NOT be removed: it may hold the owner's data, something still uses it, or it belongs to Coolify's control plane. */
+export const CLEANUP_KEEP_REASONS = ["user_data", "in_use", "running", "control_plane", "unknown"] as const;
+export type CleanupKeepReason = (typeof CLEANUP_KEEP_REASONS)[number];
+
 export interface CleanupRemnant {
   kind: RemnantKind;
   name: string;
   sizeBytes: number | null;
+  /** Listed for the owner's information only: never removed. */
+  keep?: boolean;
+  reason?: CleanupKeepReason;
+}
+
+/** Fixed per-remnant outcome codes of a removal. */
+export const CLEANUP_RESULT_CODES = ["ok", "absent", "in_use", "running", "mounted", "refused", "failed"] as const;
+export type CleanupResultCode = (typeof CLEANUP_RESULT_CODES)[number];
+export interface CleanupResult {
+  kind: RemnantKind;
+  name: string;
+  code: CleanupResultCode;
 }
 
 export interface CleanupView {
@@ -206,8 +226,15 @@ export interface CleanupView {
   status: CleanupStatus;
   completeness: CompletenessRow[];
   remnants: CleanupRemnant[];
+  /** Fingerprint of the removable remnants the owner saw; the confirmation must quote it, so a changed list needs a fresh look. */
+  listHash: string | null;
+  results: CleanupResult[];
+  /** True when every row is complete and the Coolify side was readable. */
+  complete: boolean;
+  failureCode: string | null;
   confirmedAt: string | null;
   cleanedAt: string | null;
+  createdAt: string;
 }
 
 // ── project move inside Tugra (lane H) ─────────────────────────────────────────────────────────────
@@ -224,11 +251,38 @@ export interface ProjectMoveItemView {
   name: string;
   childId: string | null;
   phase: string;
+  /** Where the item answers on the target right after its move, before DNS changes (the target's address or the app's generated host). */
+  tempAddress?: string | null;
+}
+
+/** One line of the verification report. `code` is a fixed code (the web maps it to text); `ok` false blocks "completed". */
+export const PROJECT_MOVE_CHECK_CODES = ["app_running", "db_running", "db_restored", "db_relinked", "source_stopped", "safety_copy_kept"] as const;
+export type ProjectMoveCheckCode = (typeof PROJECT_MOVE_CHECK_CODES)[number];
+export interface ProjectMoveCheck {
+  code: ProjectMoveCheckCode;
+  itemRef: string;
+  name: string;
+  ok: boolean;
+}
+
+/** A hostname the owner still has to point at the target (DNS was not repointed by the move). */
+export interface ProjectMoveDnsStep {
+  hostname: string;
+  targetIp: string | null;
+  repointed: boolean;
+}
+
+export interface ProjectMoveReport {
+  checks: ProjectMoveCheck[];
+  dns: ProjectMoveDnsStep[];
+  warnings: string[];
 }
 
 export interface ProjectMoveRequest {
   projectId: string;
   targetServerId: string;
+  /** Needed only when the project has items on several servers: the move takes the items that sit here. */
+  sourceServerId?: string;
   /** Days the source copy is kept as a safety copy (default 7). */
   retainDays?: number;
   repointDns?: boolean;
@@ -243,6 +297,9 @@ export interface ProjectMoveView {
   items: ProjectMoveItemView[];
   retainDays: number;
   archiveUntil: string | null;
+  /** Fixed failure code (the web maps it to text) when the move failed or was rolled back. */
+  failureCode: string | null;
+  report: ProjectMoveReport | null;
   createdAt: string;
   finishedAt: string | null;
 }

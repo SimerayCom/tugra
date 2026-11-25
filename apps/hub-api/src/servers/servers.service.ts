@@ -605,7 +605,7 @@ export class ServersService implements OnModuleInit, OnModuleDestroy {
   }
 
   /** Same as applyCoolifyRunCapability, under the name the SSH install and cleanup flows use. */
-  setRunCapability(serverId: string, capability: (typeof COOLIFY_RUN_CAPABILITIES)[number], on: boolean): Promise<boolean> {
+  setRunCapability(serverId: string, capability: string, on: boolean): Promise<boolean> {
     return this.applyCoolifyRunCapability(serverId, capability, on);
   }
 
