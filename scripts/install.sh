@@ -53,6 +53,9 @@
 #                       a Tugra release image is touched). Every release adds ~8 GB of images and nothing removed the
 #                       old ones. Without the flag the installer only says how much could be freed. The in-app
 #                       updater does this by itself after each update (turn off: TUGRA_PRUNE_IMAGES=0 in .env).
+#   --no-swap           Do not add a swapfile. By default a host with 4GB RAM or less and no swap gets a 2GB /swapfile
+#                       (fstab entry, vm.swappiness=10) so a load spike slows the hub instead of the kernel's OOM killer
+#                       taking it down. The opt-out is remembered (TUGRA_NO_SWAP=1 in .env); --enable-swap undoes it.
 #   --dry-run           Generate the .env and exit — do not touch Docker.
 #   --sync-checkout     Only bring this git checkout in line with the compose file/scripts the in-app updater wrote
 #                       (it leaves them "modified" and makes `git pull` refuse), then exit. The target is the release in
@@ -95,6 +98,8 @@ DETECT_PUBLIC_IP="${TUGRA_DETECT_PUBLIC_IP:-0}"
 MANUAL_PUBLIC_IP="${TUGRA_PUBLIC_IP:-}"
 ENABLE_TELEMETRY="${TUGRA_ENABLE_TELEMETRY:-0}" # explicit opt-in (skips the confirm prompt)
 NO_TELEMETRY="${TUGRA_NO_TELEMETRY:-0}"         # explicit opt-out of the default-on anonymous usage stats
+NO_SWAP="${TUGRA_NO_SWAP:-0}"                   # --no-swap: never add the safety-net swapfile on a small host (lib/swap.sh)
+ENABLE_SWAP=0                                   # --enable-swap: forget an earlier --no-swap
 RAW_PORTS="${TUGRA_RAW_PORTS:-0}"               # --raw-ports: classic quick start on 3000/3001, no proxy
 HOME_MODE="${TUGRA_HOME_MODE:-0}"               # --home: start the owner in the simple Home launcher (CasaOS-style)
 # Panel-TLS (DİLİM 1): opt-in auto-HTTPS for the control panel. AUTO_TLS "" = undecided, "1"/"0" explicit.
@@ -174,6 +179,8 @@ while [ $# -gt 0 ]; do
     --enable-update-checks) ENABLE_UPDATE_CHECKS=1; shift ;;
     --enable-telemetry)     ENABLE_TELEMETRY=1; shift ;;
     --no-telemetry)         NO_TELEMETRY=1; shift ;;
+    --no-swap)              NO_SWAP=1; shift ;;
+    --enable-swap)          ENABLE_SWAP=1; shift ;;
     --detect-public-ip)     DETECT_PUBLIC_IP=1; shift ;;
     --home)                 HOME_MODE=1; shift ;;
     --auto-tls)             AUTO_TLS=1; shift ;;
@@ -199,6 +206,9 @@ while [ $# -gt 0 ]; do
     *) err "unknown option: $1"; exit 1 ;;
   esac
 done
+if [ "$NO_SWAP" = "1" ] && [ "$ENABLE_SWAP" = "1" ]; then
+  err "--no-swap and --enable-swap are mutually exclusive"; exit 1
+fi
 if [ "$NO_UPDATE_CHECKS" = "1" ] && [ "$ENABLE_UPDATE_CHECKS" = "1" ]; then
   err "--no-update-checks and --enable-update-checks are mutually exclusive"; exit 1
 fi
@@ -495,6 +505,10 @@ warn_private_ip() {
 if [ -f "$SCRIPT_DIR/lib/netcheck.sh" ]; then
   # shellcheck source=lib/netcheck.sh
   . "$SCRIPT_DIR/lib/netcheck.sh"
+fi
+if [ -f "$SCRIPT_DIR/lib/swap.sh" ]; then
+  # shellcheck source=lib/swap.sh
+  . "$SCRIPT_DIR/lib/swap.sh"
 fi
 if [ -f "$SCRIPT_DIR/lib/hostfacts.sh" ]; then
   # shellcheck source=lib/hostfacts.sh
@@ -831,6 +845,15 @@ elif [ "$ENABLE_UPDATE_CHECKS" = "1" ]; then set_env TUGRA_UPDATE_CHECKS "1"; fi
 # --home: start the owner account in the simple Home launcher instead of the full Fleet control plane. The
 # owner can still pick/switch during onboarding (the welcome wizard) or later in Settings. only-if-unset.
 [ "$HOME_MODE" = "1" ] && ensure_env DEFAULT_UI_MODE home
+# Swap safety net for small hosts (lib/swap.sh): an explicit --no-swap / --enable-swap is remembered in .env; a flag-less
+# re-run keeps it. Only the real run touches the host (never --dry-run); a failure there is never fatal.
+if [ "$NO_SWAP" = "1" ]; then set_env TUGRA_NO_SWAP "1"
+elif [ "$ENABLE_SWAP" = "1" ]; then set_env TUGRA_NO_SWAP "0"; fi
+if [ "$DRY_RUN" -eq 0 ] && declare -F swap_ensure >/dev/null 2>&1; then
+  [ "$(env_get TUGRA_NO_SWAP | tr -d "\"' \r")" = "1" ] && NO_SWAP=1
+  [ "$ENABLE_SWAP" = "1" ] && NO_SWAP=0
+  swap_ensure || true
+fi
 
 PG_PWD="$(env_get POSTGRES_PASSWORD)"
 set_env NODE_ENV       "production"

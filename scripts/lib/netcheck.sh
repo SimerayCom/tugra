@@ -666,6 +666,8 @@ nc_doctor() {
     else ok "Free disk: ~${freeg}GB"; fi
   fi
 
+  if declare -F swap_doctor >/dev/null 2>&1; then swap_doctor; fi
+
   printf '\n'; log "Ports"
   local hp wp; hp="$(nc_env HUB_PORT)"; wp="$(nc_env WEB_PORT)"; hp="${hp:-${HUB_PORT:-3000}}"; wp="${wp:-${WEB_PORT:-3001}}"
   # 80/443 only matter (a red cross) when the panel is served through Tugra's proxy; the raw ports when Tugra is installed.
