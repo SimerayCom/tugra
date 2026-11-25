@@ -134,7 +134,7 @@ const (
 var CoolifyRunCapabilities = []string{CapCoolifySecrets, CapCoolifySSH, CapCoolifyTakeover, CapCoolifyCleanup}
 
 // Features is the list this agent advertises in enroll/auth.
-var Features = []string{FeatureCmdJournal, FeatureLogDrainsV2, FeatureDrainSyslog, FeatureDrainGelf, FeatureDrainFluentd, FeatureFs2, FeatureHubOriginEnv, FeatureHubEndpoints, FeatureCoolifySecrets}
+var Features = []string{FeatureCmdJournal, FeatureLogDrainsV2, FeatureDrainSyslog, FeatureDrainGelf, FeatureDrainFluentd, FeatureFs2, FeatureHubOriginEnv, FeatureHubEndpoints, FeatureCoolifySecrets, FeatureCoolifySSH}
 
 // HubEndpointState: Agent -> Hub. Sent right after every successful handshake and as the reply to a "hub_endpoints"
 // frame. It tells the hub which list revision the agent holds and which endpoint this very session is on, so the hub
@@ -429,6 +429,15 @@ type ServerMsg struct {
 	// Signed endpoint list (type "hub_endpoints"): Rev (above) is monotonic; EndpointsJSON is the pre-serialised JSON
 	// array of {url, pin?}, signed byte-for-byte via CanonicalHubEndpoints with the agent's OWN stored server id.
 	EndpointsJSON string `json:"endpointsJson,omitempty"`
+	// coolify_ssh_req additions (see CanonicalCoolifySSH in coolify_ssh.go). reqId, op, sha256-like fields, exp and capability are
+	// signed; Script and Payload are not signed themselves but are bound by ScriptSha256 / PayloadSha256.
+	CoolifyServerUUID string `json:"coolifyServerUuid,omitempty"`
+	ScriptSha256      string `json:"scriptSha256,omitempty"`
+	PayloadSha256     string `json:"payloadSha256,omitempty"`
+	UseSudo           bool   `json:"useSudo,omitempty"`
+	ExpectedHostKeyFp string `json:"expectedHostKeyFp,omitempty"`
+	Script            string `json:"script,omitempty"`
+	Payload           string `json:"payload,omitempty"`
 }
 
 // FsEntry: one listing entry (metadata only — never content; a symlink is reported, never dereferenced).

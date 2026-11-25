@@ -274,6 +274,8 @@ func runOnce(ctx context.Context, cfg config.Config, kp *keys.KeyPair, store *co
 		Logf:  func(f string, a ...any) { fmt.Fprintf(os.Stderr, f+"\n", a...) },
 		State: defaultCoolifyState,
 	})
+	// coolify_ssh_req (install the agent on a Coolify-known server): signed, expiring, capability-gated (see coolify_ssh.go).
+	cooSSH := newCoolifySSHGate(cfg, hubPub, cs, send)
 
 	// Send host inventory right after auth, and refresh it periodically so it
 	// stays current across server upgrades / kernel patches on long sessions.
@@ -582,6 +584,8 @@ func runOnce(ctx context.Context, cfg config.Config, kp *keys.KeyPair, store *co
 				fs2.handle(ctx, m)
 			case "coolify_secrets_req":
 				coolifySecrets.Handle(ctx, m)
+			case "coolify_ssh_req":
+				cooSSH.handle(ctx, m)
 			case "hub_endpoints":
 				handleHubEndpoints(cfg, store, hubPub, ident.proofOK, m, send, switchReq)
 			}

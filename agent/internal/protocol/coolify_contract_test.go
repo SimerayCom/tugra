@@ -25,10 +25,21 @@ func TestCoolifyTakeoverNamesMirrorShared(t *testing.T) {
 	}
 }
 
-// Advertising a feature the agent does not implement would make the hub send a frame nobody handles: only the flags whose lane has landed
-// (secrets, lane B) are advertised; each other lane removes its flag from this list in the same change that handles its frame.
+// Advertising a feature the agent does not implement would make the hub send a frame nobody handles: a flag is advertised only by the lane
+// that implemented its frame. Secrets (lane B) and SSH install (lane C) are implemented, so both must be advertised.
 func TestCoolifyTakeoverFeaturesNotAdvertisedYet(t *testing.T) {
-	banned := map[string]bool{FeatureCoolifySSH: true, FeatureCoolifyTakeover: true, FeatureCoolifyCleanup: true}
+	banned := map[string]bool{FeatureCoolifyTakeover: true, FeatureCoolifyCleanup: true}
+	for _, want := range []string{FeatureCoolifySecrets, FeatureCoolifySSH} {
+		found := false
+		for _, f := range Features {
+			if f == want {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("%s must be advertised: its frame is implemented", want)
+		}
+	}
 	for _, f := range Features {
 		if banned[f] {
 			t.Fatalf("feature %q is advertised before its lane implemented the frame", f)
