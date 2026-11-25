@@ -241,7 +241,7 @@ export class ImporterService {
       const perms = await this.access.permissionsByTeam(userId);
       const teamIds = [...perms.entries()].filter(([, p]) => p.has("apps:config")).map(([id]) => id);
       const rows = teamIds.length
-        ? await this.prisma.server.findMany({ where: { teamId: { in: teamIds } }, select: { id: true, name: true, teamId: true, publicIp: true, publicIpv6: true, hostname: true, reportedIps: true } })
+        ? await this.prisma.server.findMany({ where: { teamId: { in: teamIds } }, select: { id: true, name: true, teamId: true, status: true, publicIp: true, publicIpv6: true, hostname: true, reportedIps: true } })
         : [];
       const registered: MatchCandidate[] = rows;
       const panelHost = baseUrlHost(baseUrl);
@@ -251,13 +251,15 @@ export class ImporterService {
       const hosts = (existing ?? []).map((h) => {
         const address = h.controlPlane ? panelHost : addressOf.get(h.ref);
         const m = registered.length ? matchTugraServer(address, registered) : null;
+        // A move needs an agent on both ends: a source server is "covered" only when it matches a registered server whose agent is online.
+        const online = (id: string | undefined): boolean => (id ? rows.find((r) => r.id === id)?.status === "ONLINE" : false);
         const v = ladder?.get(h.ref);
-        if (!v) return m ? { ...h, tugra: m } : h;
+        if (!v) return m ? { ...h, tugra: m, agentOnline: online(m.serverId) } : { ...h, agentOnline: false };
         const best = v.candidates.find((c) => c.serverId === v.tugraServerId);
         const tugra = best && (v.status === "certain" || v.status === "probable")
           ? { serverId: best.serverId, name: best.name, teamId: best.teamId, via: m && m.serverId === best.serverId ? m.via : ("reported-ip" as const), confidence: v.status }
           : undefined;
-        return { ...h, ...(tugra ? { tugra } : {}), match: preflightMatchOf(v) };
+        return { ...h, ...(tugra ? { tugra } : {}), match: preflightMatchOf(v), agentOnline: online(tugra?.serverId) };
       });
       // items that live on no named server (a Dokploy panel box) are matched through the panel's own address
       const unnamed = items.some((i) => i.itemRef.split(":")[1] === UNKNOWN_HOST_REF);

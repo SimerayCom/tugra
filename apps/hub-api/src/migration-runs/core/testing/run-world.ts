@@ -534,6 +534,14 @@ export class ScriptedImportPort implements ImportStepsPort {
     const { mapping, serviceChoices } = applyScope(this.plan_, r.inScope, { ...(i.serviceChoices ? { serviceChoices: i.serviceChoices } : {}) });
     return { ok: true, mapping, mappingHash: "f".repeat(32), ...(serviceChoices ? { serviceChoices } : {}), kept: r.kept, excluded: r.excluded };
   }
+  /** What the source-agent check answers (default: every source server has an online agent). */
+  agentGaps: { gaps: Array<{ ref: string; name: string; state: "no_agent" | "offline" }>; unverified: boolean } = { gaps: [], unverified: false };
+  agentGapCalls: Array<Parameters<NonNullable<RunImportPort["sourceAgentGaps"]>>[1]> = [];
+  async sourceAgentGaps(_u: string, i: Parameters<NonNullable<RunImportPort["sourceAgentGaps"]>>[1]): ReturnType<NonNullable<RunImportPort["sourceAgentGaps"]>> {
+    this.reads.push("sourceAgentGaps");
+    this.agentGapCalls.push(i);
+    return this.agentGaps;
+  }
   async resolveMapping(_u: string, _i: ImportMappingResolveInput): Promise<ResolvedMapping> {
     this.reads.push("resolveMapping");
     if (!this.mappingResult) throw new Error("no mapping");

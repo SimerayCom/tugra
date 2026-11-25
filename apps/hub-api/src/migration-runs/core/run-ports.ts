@@ -95,6 +95,15 @@ export interface RunImportPort {
       scope: RunScope;
     },
   ): Promise<{ ok: true; mapping: ImportMappingDoc; mappingHash: string; serviceChoices?: Record<string, ServiceChoice>; kept: number; excluded: number } | { ok: false; code: ScopeFailure }>;
+  /**
+   * OPTIONAL: the source servers of the live plan that hold something this run moves and have no online Tugra agent (Coolify only; another
+   * source answers no gap). A move needs an agent at both ends, so the create step refuses a real run while any is listed, and refuses one it
+   * cannot verify. Names and states only. `mapping` is the run's frozen mapping: an item it leaves out takes no part. Read-only.
+   */
+  sourceAgentGaps?(
+    userId: string,
+    input: { sessionId: string; sourceKind: RemoteSourceKind; mapping?: ImportMappingDoc },
+  ): Promise<{ gaps: Array<{ ref: string; name: string; state: "no_agent" | "offline" }>; unverified: boolean }>;
   /** The coverage ledger of an import op for the final report (secret-free; empty when the op is unknown). */
   opItems(userId: string, opId: string): Promise<RunReport["items"]>;
   /**

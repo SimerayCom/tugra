@@ -167,6 +167,16 @@ describe("ImporterService.plan — which source servers are already in Tugra", (
     expect((prisma as { server: { findMany: jest.Mock } }).server.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { teamId: { in: ["t1"] } } }));
   });
 
+  it("says whether each source server's agent is online: matched and ONLINE yes, matched but offline or pending no, unmatched no", async () => {
+    const { svc } = build([reg("a", { publicIp: "203.0.113.7", status: "ONLINE" }), reg("c", { hostname: "coolify.example.com", status: "PENDING" })], perms);
+    const hosts = (await svc.plan("u1", { sourceKind: "coolify", sessionId: "sess-1" })).preflight?.hosts ?? [];
+    expect(hosts.find((h) => h.ref === "srv-a")?.agentOnline).toBe(true);
+    expect(hosts.find((h) => h.ref === "srv-c")?.agentOnline).toBe(false); // matched, but its agent never connected
+    expect(hosts.find((h) => h.ref === "srv-b")?.agentOnline).toBe(false); // no registered server at that address
+    const off = await build([reg("a", { publicIp: "203.0.113.7", status: "OFFLINE" })], perms).svc.plan("u1", { sourceKind: "coolify", sessionId: "sess-1" });
+    expect(off.preflight?.hosts?.find((h) => h.ref === "srv-a")?.agentOnline).toBe(false);
+  });
+
   it("the match is outside planHash: the same source plans the same hash with or without registered servers", async () => {
     const a = await build([reg("a", { publicIp: "203.0.113.7" })], perms).svc.plan("u1", { sourceKind: "coolify", sessionId: "sess-1" });
     const b = await build([], new Map()).svc.plan("u1", { sourceKind: "coolify", sessionId: "sess-1" });

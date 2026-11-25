@@ -12,6 +12,7 @@ import { BadRequestException, ConflictException, ForbiddenException, Inject, Inj
 import { isAgentSessionBaseUrl } from "@tugra/shared";
 import { scopeSatisfies, type Scope } from "../../api-tokens/scopes";
 import type { ServiceChoice } from "../../importer/dto";
+import type { ImportMappingDoc } from "../../importer/import-mapping";
 import {
   OwnerInputsSchema,
   RunApplyInputSchema,
@@ -173,6 +174,7 @@ export class MigrationRunsService implements MigrationRunsFacade {
     await this.assertPlanFresh(actor, session, base);
     const scoped = body.scope ? await this.scopedApply(actor, session, body, base, serverMap) : null;
     const applyInput = scoped?.applyInput ?? base;
+    if (!body.dryRun) await this.assertSourceAgents(actor, session, applyInput);
     const sourceVersion = await this.captureSourceVersion(actor, session);
 
     const run = await this.insert(actor, {
@@ -254,6 +256,18 @@ export class MigrationRunsService implements MigrationRunsFacade {
       if (s.status !== undefined && s.status !== "ONLINE") throw unprocessable("target-offline", { serverId: id });
       if (s.capabilities !== undefined && !s.capabilities.includes("deploy")) throw unprocessable("target-capability", { serverId: id, capability: "deploy" });
     }
+  }
+
+  /**
+   * A move needs an agent at both ends (the target side is `assertTargetsReady`). A real run is refused while a source server it would take
+   * something from has no online agent, with the servers named (422 `source-agent-missing`), and while the agents cannot be verified at all
+   * (422 `source-agents-unverified`). A dry run is not refused: it writes nothing, and it is where the owner sees what is missing.
+   */
+  private async assertSourceAgents(actor: RunActor, session: RunSessionInfo, apply: { mapping?: ImportMappingDoc }): Promise<void> {
+    if (!this.imp.sourceAgentGaps) return;
+    const r = await this.imp.sourceAgentGaps(actor.userId, { sessionId: session.id, sourceKind: session.sourceKind, ...(apply.mapping ? { mapping: apply.mapping } : {}) });
+    if (r.unverified) throw unprocessable("source-agents-unverified");
+    if (r.gaps.length > 0) throw unprocessable("source-agent-missing", { hosts: r.gaps });
   }
 
   /**
@@ -359,6 +373,7 @@ export class MigrationRunsService implements MigrationRunsFacade {
     const session = await this.requireSession(actor, sessionId, from.sourceKind);
     const apply = withServicePins(RunApplyInputSchema.parse(from.applyInput), hints);
     await this.assertPlanFresh(actor, session, apply);
+    await this.assertSourceAgents(actor, session, apply);
     this.assertHandlers(from.mode as RunMode);
     const serverMap = serverMapOf(from.serverMap);
     await this.assertTargetsInTeam(from.teamId, serverMap);

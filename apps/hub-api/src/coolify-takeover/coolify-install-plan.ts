@@ -24,6 +24,8 @@ export type ChecklistState =
 
 export interface ChecklistRow {
   coolifyServerId: string;
+  /** Coolify's own uuid of the server: what the SSH install names (the agent resolves the address and key from it). */
+  coolifyServerUuid: string;
   name: string;
   ip: string;
   port: number;

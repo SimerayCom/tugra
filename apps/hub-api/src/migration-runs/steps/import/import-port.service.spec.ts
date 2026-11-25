@@ -327,3 +327,36 @@ describe("ImportPortService", () => {
     });
   });
 });
+
+describe("ImportPortService.sourceAgentGaps", () => {
+  const plan = (hosts: unknown) => ({
+    items: [{ itemRef: "app:srv-a:1", kind: "app" }, { itemRef: "database:srv-b:2", kind: "database" }],
+    preflight: hosts ? { hosts } : undefined,
+  });
+
+  it("lists the source servers that have no online agent, through the plan route's placement facts", async () => {
+    const { svc, importer } = make();
+    importer.plan.mockResolvedValue(plan([{ ref: "srv-a", name: "Edge A", tugra: { serverId: "t1" }, agentOnline: true }, { ref: "srv-b", name: "Edge B", agentOnline: false }]));
+    expect(await svc.sourceAgentGaps("u1", { sessionId: "s1", sourceKind: "coolify" })).toEqual({ gaps: [{ ref: "srv-b", name: "Edge B", state: "no_agent" }], unverified: false });
+    expect(importer.plan).toHaveBeenCalledWith("u1", { sourceKind: "coolify", sessionId: "s1" });
+  });
+
+  it("is unverified when the plan route could not describe the servers", async () => {
+    const { svc, importer } = make();
+    importer.plan.mockResolvedValue(plan(undefined));
+    expect(await svc.sourceAgentGaps("u1", { sessionId: "s1", sourceKind: "coolify" })).toMatchObject({ unverified: true });
+  });
+
+  it("gates Coolify only: another source answers no gap and reads nothing", async () => {
+    const { svc, importer } = make();
+    expect(await svc.sourceAgentGaps("u1", { sessionId: "s1", sourceKind: "dokploy" })).toEqual({ gaps: [], unverified: false });
+    expect(importer.plan).not.toHaveBeenCalled();
+  });
+
+  it("leaves out the items the run's mapping excludes", async () => {
+    const { svc, importer } = make();
+    importer.plan.mockResolvedValue(plan([{ ref: "srv-a", name: "A", tugra: { serverId: "t1" }, agentOnline: true }, { ref: "srv-b", name: "B", agentOnline: false }]));
+    const mapping = { version: 1, items: { "database:srv-b:2": { include: false } }, projects: {}, gitSources: {}, acks: [] };
+    expect(await svc.sourceAgentGaps("u1", { sessionId: "s1", sourceKind: "coolify", mapping: mapping as never })).toEqual({ gaps: [], unverified: false });
+  });
+});

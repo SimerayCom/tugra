@@ -19,6 +19,7 @@ import { validateServiceChoices } from "../../../importer/service-choices";
 import { buildServicePreview } from "../../../importer/service-preview";
 import { buildPreflight } from "../../../importer/preflight";
 import { buildCoverage } from "../../../importer/coverage";
+import { sourceAgentGaps } from "../../../coolify-takeover/agent-coverage";
 import { mapLimit } from "../../../importer/sources/map-limit";
 import type { ImportApplyInput, ImportMappingResolveInput, RemoteSourceKind, ServiceChoice } from "../../../importer/dto";
 import type { SourceHealthRow } from "../../../importer/import-source";
@@ -26,7 +27,7 @@ import { vxEnabled } from "../../../importer/volume-stream/vx-constants";
 import { dbStreamModeRefs, dbVolumeModeRefs, isObjectStoreResult, serviceVolumeStreamable, serviceVolumesOf, volumeItemRef } from "../../../importer/volume-stream/vx-targets";
 import { buildDataIntegrity } from "../data/data-integrity";
 import { pinnedImageRef } from "./baseline/image-pins";
-import type { ResolvedMapping } from "../../../importer/import-mapping";
+import type { ImportMappingDoc, ResolvedMapping } from "../../../importer/import-mapping";
 import type { ServicePreview } from "../../../importer/service-preview";
 import type { RunReport } from "../../core/dto";
 import { stable } from "../../core/run-logic";
@@ -141,6 +142,17 @@ export class ImportPortService implements ImportStepsPort {
       mapping,
     });
     return { ok: true, mapping, mappingHash: res.mappingHash, ...(serviceChoices ? { serviceChoices } : {}), kept: scope.kept, excluded: scope.excluded };
+  }
+
+  /**
+   * The source servers a real run would move from that have no online agent. Uses the plan route's placement facts (a registered server
+   * the source server matches, and whether its agent is online). Coolify only: no other source is gated. Writes nothing the plan route
+   * does not already write (its session's last-used stamp).
+   */
+  async sourceAgentGaps(userId: string, i: { sessionId: string; sourceKind: RemoteSourceKind; mapping?: ImportMappingDoc }): ReturnType<NonNullable<RunImportPort["sourceAgentGaps"]>> {
+    if (i.sourceKind !== "coolify") return { gaps: [], unverified: false };
+    const plan = await this.importer.plan(userId, { sourceKind: i.sourceKind, sessionId: i.sessionId });
+    return sourceAgentGaps(plan.preflight ? { items: plan.items, preflight: plan.preflight } : { items: plan.items }, i.mapping);
   }
 
   resolveMapping(userId: string, input: ImportMappingResolveInput): Promise<ResolvedMapping> {

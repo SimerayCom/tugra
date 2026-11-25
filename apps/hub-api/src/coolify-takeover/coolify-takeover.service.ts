@@ -315,7 +315,7 @@ export class CoolifyTakeoverService {
 
     const rows: ChecklistRow[] = [];
     for (const cs of data.servers) {
-      const base = { coolifyServerId: cs.id, name: cs.name, ip: cs.ip, port: cs.port, user: cs.user, ssh: sshHint(cs), installCommand: null, expiresAt: null };
+      const base = { coolifyServerId: cs.id, coolifyServerUuid: cs.uuid, name: cs.name, ip: cs.ip, port: cs.port, user: cs.user, ssh: sshHint(cs), installCommand: null, expiresAt: null };
       if (cs.isLocal) {
         rows.push({ ...base, state: "this_server", teamId: inventoryTeamId, tugraServerId: agentServerId });
         continue;
