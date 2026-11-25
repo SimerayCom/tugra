@@ -24,6 +24,8 @@ import { useConfirm } from "../../../../components/confirm";
 import { TeamPicker } from "../../../../components/team-picker";
 import { ScopedTeamBadge, useTeamContext } from "../../../../components/team-scope";
 import { moveTargets } from "../../../../lib/project-move";
+import { soleServerName } from "../../../../lib/project-server-move";
+import { ProjectMovePanel } from "../../../../components/project-move-panel";
 import { useScrollToHash } from "../../../../hooks/useScrollToHash";
 
 const field: React.CSSProperties = {
@@ -161,6 +163,12 @@ export default function ProjectDetailPage() {
           <EnvironmentBlock key={env.id} env={env} projectId={id} canWrite={project.canWrite} onChange={invalidate} />
         ))}
       </div>
+
+      {project.role === "OWNER" && (
+        <div style={{ marginTop: 16 }}>
+          <ProjectMovePanel projectId={id} projectName={project.name} teamId={project.teamId} excludeServerNames={soleServerName(project.environments.flatMap((e) => e.resources ?? []))} />
+        </div>
+      )}
 
       {project.canWrite && !addingEnv && (
         <div style={{ marginTop: 12 }}>

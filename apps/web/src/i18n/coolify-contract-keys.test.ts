@@ -2,6 +2,8 @@ import { describe, it, expect } from "vitest";
 import {
   AGENT_CAPABILITIES,
   CAMPAIGN_STATUSES,
+  CLEANUP_KEEP_REASONS,
+  CLEANUP_RESULT_CODES,
   CLEANUP_STATUSES,
   COMPLETENESS_KINDS,
   COOLIFY_RUN_CAPABILITIES,
@@ -13,7 +15,11 @@ import {
   PLACEMENT_FAILURE_CODES,
   PLACEMENT_KINDS,
   PLACEMENT_LOCK_REASONS,
+  PROJECT_MOVE_BLOCKERS,
+  PROJECT_MOVE_CHECK_CODES,
+  PROJECT_MOVE_FAILURE_CODES,
   PROJECT_MOVE_PHASES,
+  PROJECT_MOVE_WARNINGS,
   REMNANT_KINDS,
   TAKEOVER_CERT_STATES,
   TAKEOVER_FAILURE_CODES,
@@ -60,6 +66,20 @@ describe("Coolify takeover i18n contract", () => {
     expect(present("coolifyCleanup.kind", COMPLETENESS_KINDS)).toEqual([]);
     expect(present("coolifyCleanup.remnant", REMNANT_KINDS)).toEqual([]);
     expect(present("projectMove.phase", PROJECT_MOVE_PHASES)).toEqual([]);
+  });
+
+  it("has a line for every cleanup and project-move code the hub can answer with", () => {
+    expect(present("coolifyCleanup.keep", CLEANUP_KEEP_REASONS)).toEqual([]);
+    expect(present("coolifyCleanup.result", CLEANUP_RESULT_CODES)).toEqual([]);
+    // the failure codes the cleanup service stores, and the conflict codes it answers with
+    expect(present("coolifyCleanup.failure", ["control_plane", "no_coolify_link", "agent_offline", "agent_error", "scan_unreadable", "no_docker", "partial"])).toEqual([]);
+    expect(present("coolifyCleanup.error", ["incomplete", "list_changed", "not_ready", "cleanup_active", "control_plane", "no_coolify_link", "confirm_name_mismatch"])).toEqual([]);
+    expect(present("projectMove.blocker", PROJECT_MOVE_BLOCKERS)).toEqual([]);
+    expect(present("projectMove.warning", PROJECT_MOVE_WARNINGS)).toEqual([]);
+    expect(present("projectMove.failure", PROJECT_MOVE_FAILURE_CODES)).toEqual([]);
+    expect(present("projectMove.check", PROJECT_MOVE_CHECK_CODES)).toEqual([]);
+    expect(present("projectMove.itemPhase", ["pending", "preparing", "copying", "moving", "moved"])).toEqual([]);
+    expect(present("projectMove.error", ["preflight_failed", "project_move_active", "move_not_cancellable", "move_not_completed", "nothing_to_purge", "confirm_name_mismatch"])).toEqual([]);
   });
 
   it("labels the new capabilities (long and short) and the secret tiers", () => {

@@ -29,5 +29,61 @@
   "confirm": {
     "title": "Remove these",
     "button": "Remove"
-  }
+  },
+  "check": "Check this server",
+  "recheck": "Check again",
+  "checking": "Checking...",
+  "intro": "Nothing is removed by checking. Docker volumes are never listed for removal.",
+  "listNone": "Coolify left nothing to remove here.",
+  "listTitle": "What Coolify left",
+  "keptTitle": "Kept (not removed)",
+  "removeTitle": "Will be removed",
+  "checklistTitle": "Coolify against Tugra",
+  "counts": "{tugra} of {coolify}",
+  "missing": "Missing in Tugra: {list}",
+  "unreadable": "This Coolify read does not say, so it cannot count as complete.",
+  "notCarried": "Tugra cannot send these: {list}",
+  "complete": "Everything Coolify had is in Tugra.",
+  "incompleteNote": "Fix what is missing first. Cleaning stays closed until the list is complete.",
+  "size": "{size}",
+  "keep": {
+    "user_data": "May hold your data",
+    "in_use": "Still in use",
+    "running": "Still running",
+    "control_plane": "Coolify itself",
+    "unknown": "Not recognised"
+  },
+  "result": {
+    "ok": "Removed",
+    "absent": "Already gone",
+    "in_use": "Still in use",
+    "running": "Still running",
+    "mounted": "A container still uses it",
+    "refused": "Not Coolify's, left alone",
+    "failed": "Could not remove"
+  },
+  "failure": {
+    "control_plane": "This server runs Coolify itself. It is retired separately.",
+    "no_coolify_link": "Read the Coolify first: no stored read knows this server.",
+    "agent_offline": "The agent is offline.",
+    "agent_error": "The agent could not run it.",
+    "scan_unreadable": "The list from the server was cut short, so nothing was trusted.",
+    "no_docker": "Docker is not available on this server.",
+    "partial": "Some of it could not be removed. Look at the list.",
+    "conflict": "Something changed."
+  },
+  "error": {
+    "forbidden": "Only a team owner can do this.",
+    "offline": "The agent on this server is offline.",
+    "incomplete": "Something is still missing in Tugra. Nothing was removed.",
+    "list_changed": "The list changed. Look at it again.",
+    "not_ready": "This check is not ready to confirm.",
+    "cleanup_active": "A cleanup is already running on this server.",
+    "control_plane": "This server runs Coolify itself. It is retired separately.",
+    "no_coolify_link": "Read the Coolify first.",
+    "confirm_name_mismatch": "That is not the server's name.",
+    "generic": "That did not work. Try again."
+  },
+  "confirmBody": "This removes the {n} items listed as \"Will be removed\" from {server}. Your Docker volumes are not touched. \"Give back to Coolify\" stops working afterwards.",
+  "confirmLabel": "Remove from {server}"
 }

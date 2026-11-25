@@ -19,5 +19,93 @@
   },
   "retain": {
     "label": "Keep the old copy for (days)"
-  }
+  },
+  "open": "Move to another server",
+  "target": "Move to",
+  "pickTarget": "Choose a server",
+  "preview": "Check what will move",
+  "previewing": "Checking...",
+  "start": "Start the move",
+  "starting": "Starting...",
+  "cancel": "Cancel the move",
+  "purge": "Remove the old copy now",
+  "repointDns": "Point the DNS records at the new server too",
+  "willMove": "What moves",
+  "from": "From {server}",
+  "noBlockers": "Nothing stops this move.",
+  "blockersTitle": "This cannot start yet",
+  "warningsTitle": "Good to know",
+  "itemPhase": {
+    "pending": "Waiting",
+    "preparing": "Preparing",
+    "copying": "Copying data",
+    "moving": "Moving",
+    "moved": "Moved"
+  },
+  "tempAddress": "Answers at {address} until DNS changes",
+  "blocker": {
+    "same_server": "The project is already on that server.",
+    "empty_project": "There is nothing on that server to move.",
+    "items_on_several_servers": "The project is on several servers. Choose the one to move from.",
+    "agent_offline_source": "The agent on the current server is offline.",
+    "agent_offline_target": "The agent on the target server is offline.",
+    "server_not_ready": "A server is not online yet.",
+    "db_engine_unsupported": "A database engine cannot be copied by backup.",
+    "db_needs_s3_destination": "A database needs a backup destination (S3) that both servers can reach.",
+    "db_extra_volumes": "A database has extra volumes that a backup does not carry.",
+    "db_linked_outside": "An app outside this project uses one of its databases.",
+    "db_not_ready": "A database is not running.",
+    "app_preflight_failed": "An app cannot move yet: {codes}",
+    "app_move_active": "An app already has a move running.",
+    "project_move_active": "This project already has a move running."
+  },
+  "warning": {
+    "app_redeploy_after_relink": "{ref} is redeployed after it is linked to its new database.",
+    "pitr_not_carried": "{ref}: point-in-time recovery is not carried to the new database.",
+    "db_config_only": "{ref} was never deployed: only its settings move.",
+    "items_left_behind": "Some items of this project are on other servers and stay where they are."
+  },
+  "failure": {
+    "db_copy_failed": "A database copy did not come up.",
+    "db_backup_failed": "A database backup failed.",
+    "db_restore_failed": "A database restore failed.",
+    "app_move_failed": "An app could not be moved.",
+    "app_move_rolled_back": "An app move was rolled back.",
+    "verify_failed": "The move finished but the check found a problem. See the report.",
+    "partial_move": "Some items moved and some did not. Nothing was undone for you.",
+    "rollback_incomplete": "The move could not be fully undone. Look at each item.",
+    "agent_offline": "An agent went offline.",
+    "timeout": "A step took too long.",
+    "cancelled": "The move was cancelled.",
+    "unexpected": "Something unexpected stopped the move."
+  },
+  "check": {
+    "app_running": "The app is running on the new server",
+    "db_running": "The database is running on the new server",
+    "db_restored": "The data was restored",
+    "db_relinked": "The apps are linked to the new database",
+    "source_stopped": "The old database is stopped",
+    "safety_copy_kept": "The old copy is kept as a safety copy"
+  },
+  "report": {
+    "title": "Report",
+    "dnsTitle": "DNS",
+    "dnsPending": "Point {host} at {ip}",
+    "dnsDone": "{host} was pointed at {ip}",
+    "dnsNoIp": "Point {host} at the new server"
+  },
+  "safety": "The old copy is kept until {date}.",
+  "error": {
+    "forbidden": "Only a team owner can move a project.",
+    "preflight_failed": "The move cannot start. See what stops it.",
+    "project_move_active": "This project already has a move running.",
+    "move_not_cancellable": "This move can no longer be cancelled.",
+    "move_not_completed": "Only a finished move has an old copy.",
+    "nothing_to_purge": "The old copy was already removed.",
+    "confirm_name_mismatch": "That is not the project's name.",
+    "generic": "That did not work. Try again."
+  },
+  "confirmBody": "This stops {n} running items for a short time, copies the data and moves the project to {server}. The old copy stays for {days} days.",
+  "purgeBody": "This removes the old databases and the old app volumes that were kept as a safety copy.",
+  "purged": "Removed {removed}, kept {kept}"
 }

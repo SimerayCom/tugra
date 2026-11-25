@@ -1,3 +1,4 @@
+import type { CleanupView, ProjectMoveView } from "@tugra/shared";
 import type { SettingsApplyBody, SettingsApplyResult, SettingsPreview } from "./import-settings";
 import type { BulkTransferResponse, TransferPlan } from "./server-transfer";
 import type { BeszelApplyInput, BeszelApplyResult, BeszelConnectResult, BeszelPreview, BeszelSavedConnection } from "./beszel-import";
@@ -315,6 +316,22 @@ export type EnvFlagsResponse = {
   applicable: { buildTime: boolean; literal: boolean };
   limits: { multilineValueBytes: number; multilineKeys: number; multilineTotalBytes: number; buildTotalBytes: number };
 };
+
+/** The body of a project-move preview/start (the acknowledgements are the same ones one app's move takes). */
+export interface ProjectMoveBody {
+  projectId: string;
+  targetServerId: string;
+  sourceServerId?: string;
+  acknowledge: Record<string, boolean>;
+}
+export interface ProjectMovePreviewView {
+  projectName: string;
+  sourceServerId: string | null;
+  targetServerId: string;
+  items: Array<{ kind: "application" | "database" | "service"; refId: string; name: string; configOnly: boolean }>;
+  blockers: Array<{ code: string; ref?: string; codes?: string[] }>;
+  warnings: Array<{ code: string; ref?: string }>;
+}
 
 export class ApiError extends Error {
   constructor(
@@ -1560,6 +1577,38 @@ export const api = {
   },
   coolifySshCancel(serverId: string, runId: string) {
     return apiFetch<CoolifySshRunView>(`/coolify-takeover/servers/${serverId}/ssh/runs/${runId}/cancel`, { method: "POST" });
+  },
+  // Coolify leftover cleanup (owner only): check removes nothing; confirm needs the server name and the list fingerprint the owner saw.
+  coolifyCleanupLatest(serverId: string) {
+    return apiFetch<CleanupView | null>(`/coolify-cleanup/servers/${serverId}`);
+  },
+  coolifyCleanupCheck(serverId: string) {
+    return apiFetch<CleanupView>(`/coolify-cleanup/servers/${serverId}/check`, { method: "POST" });
+  },
+  coolifyCleanupGet(id: string) {
+    return apiFetch<CleanupView>(`/coolify-cleanup/${id}`);
+  },
+  coolifyCleanupConfirm(id: string, body: { confirm: string; listHash: string }) {
+    return apiFetch<CleanupView>(`/coolify-cleanup/${id}/confirm`, { method: "POST", body: JSON.stringify(body) });
+  },
+  // Move a project and everything under it to another server (owner only). Preview changes nothing.
+  projectMovePreview(body: ProjectMoveBody) {
+    return apiFetch<ProjectMovePreviewView>(`/project-moves/preview`, { method: "POST", body: JSON.stringify(body) });
+  },
+  projectMoveStart(body: ProjectMoveBody & { repointDns: boolean; retainDays: number; confirmName: string }) {
+    return apiFetch<{ moveId: string; phase: string }>(`/project-moves`, { method: "POST", body: JSON.stringify(body) });
+  },
+  projectMoveList(projectId: string) {
+    return apiFetch<ProjectMoveView[]>(`/project-moves/project/${projectId}`);
+  },
+  projectMoveGet(id: string) {
+    return apiFetch<ProjectMoveView>(`/project-moves/${id}`);
+  },
+  projectMoveCancel(id: string) {
+    return apiFetch<{ ok: true }>(`/project-moves/${id}/cancel`, { method: "POST" });
+  },
+  projectMovePurge(id: string) {
+    return apiFetch<{ removed: number; kept: number }>(`/project-moves/${id}/purge-safety-copy`, { method: "POST" });
   },
   getHeartbeats(id: string, limit = 60) {
     return apiFetch<Heartbeat[]>(`/monitors/${id}/heartbeats?limit=${limit}`);
