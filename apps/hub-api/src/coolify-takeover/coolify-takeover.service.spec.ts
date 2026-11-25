@@ -14,7 +14,7 @@ interface Opts {
   snapshot?: unknown;
   readAt?: Date | null;
   links?: Record<string, { teamId: string; serverId: string }>;
-  known?: Array<{ id: string; teamId: string; status?: ServerStatus; publicIp?: string | null; hostname?: string | null }>;
+  known?: Array<{ id: string; teamId: string; status?: ServerStatus; publicIp?: string | null; hostname?: string | null; reportedIps?: string[] }>;
 }
 
 function make(o: Opts = {}) {
@@ -227,6 +227,24 @@ describe("checklist and generate (nothing runs)", () => {
     expect(getRow()!.serverLinks).toEqual({ "1": { teamId: "t1", serverId: "existing" } });
     expect(view.rows.find((r) => r.name === "edge")).toMatchObject({ state: "already_added", tugraServerId: "existing" });
     expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ meta: { created: 0, adopted: 1 } }));
+  });
+
+  it("does not tie a Coolify server to a Tugra server that only shares a private address with it", async () => {
+    const { svc, servers } = make({ snapshot: SNAPSHOT, known: [{ id: "other", teamId: "t1", publicIp: "203.0.113.50", reportedIps: ["10.0.0.9"] }] });
+    const view = await svc.checklist("u", "s1");
+    expect(view.rows.find((r) => r.name === "edge")?.state).toBe("not_generated");
+    expect(servers.createServersBulk).not.toHaveBeenCalled();
+  });
+
+  it("matches nothing and creates nothing when two Tugra servers sit at the address, and says so", async () => {
+    const known = [{ id: "a", teamId: "t1", publicIp: "198.51.100.7" }, { id: "b", teamId: "t2", publicIp: "198.51.100.7" }];
+    const { svc, servers, getRow, audit } = make({ snapshot: SNAPSHOT, known, roles: { t1: Role.OWNER, t2: Role.ADMIN } });
+    expect((await svc.checklist("u", "s1")).rows.find((r) => r.name === "edge")).toMatchObject({ state: "ambiguous", tugraServerId: null });
+    const view = await svc.generate("u", "s1", { assignments: [{ coolifyServerId: "1", teamId: "t1" }] });
+    expect(servers.createServersBulk).not.toHaveBeenCalled();
+    expect(getRow()!.serverLinks).toEqual({});
+    expect(view.rows.find((r) => r.name === "edge")?.state).toBe("ambiguous");
+    expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ meta: { created: 0, adopted: 0, ambiguous: 1 } }));
   });
 
   it("rejects a server that is not in the inventory, and a target team without servers:manage", async () => {

@@ -14,7 +14,7 @@ import {
   type InventoryCounts,
   type InvServer,
 } from "./coolify-inventory";
-import { defaultTeamFor, sameHost, sshHint, uniqueNames, type ChecklistRow, type ServerLink } from "./coolify-install-plan";
+import { defaultTeamFor, findHostMatch, sshHint, uniqueNames, type ChecklistRow, type ServerLink } from "./coolify-install-plan";
 import type { GenerateInput } from "./dto";
 
 const DETECT_TIMEOUT_MS = 30_000;
@@ -250,13 +250,19 @@ export class CoolifyTakeoverService {
       select: { id: true, teamId: true, publicIp: true, publicIpv6: true, hostname: true, reportedIps: true },
     });
     let adopted = 0;
+    let ambiguous = 0;
     const toCreate = new Map<string, InvServer[]>();
     for (const [csId, teamId] of wanted) {
       const cs = byId.get(csId)!;
-      const match = known.find((k) => sameHost(cs.ip, k));
+      const { match, ambiguous: many } = findHostMatch(cs.ip, known);
       if (match) {
         links[csId] = { teamId: match.teamId, serverId: match.id };
         adopted++;
+        continue;
+      }
+      if (many) {
+        // Several Tugra servers sit at this address: neither pick one nor add yet another. The row says so.
+        ambiguous++;
         continue;
       }
       toCreate.set(teamId, [...(toCreate.get(teamId) ?? []), cs]);
@@ -274,7 +280,7 @@ export class CoolifyTakeoverService {
       await this.prisma.coolifyInventory.update({ where: { id: row.id }, data: { serverLinks: links as unknown as Prisma.InputJsonValue } });
     }
     await this.prisma.coolifyInventory.update({ where: { id: row.id }, data: { serverLinks: links as unknown as Prisma.InputJsonValue } });
-    await this.audit.log({ actor: userId, action: "coolify.takeover.servers_generate", target: serverId, meta: { created, adopted } });
+    await this.audit.log({ actor: userId, action: "coolify.takeover.servers_generate", target: serverId, meta: { created, adopted, ...(ambiguous ? { ambiguous } : {}) } });
     return this.buildChecklist(userId, row.teamId, row.serverId, row.snapshot, links, publicUrl);
   }
 
@@ -324,9 +330,13 @@ export class CoolifyTakeoverService {
         rows.push({ ...base, state: noAccess ? "no_access" : installCommand ? "waiting" : "expired", teamId: linked.teamId, tugraServerId: linked.id, installCommand, expiresAt });
         continue;
       }
-      const match = linked ?? known.find((k) => sameHost(cs.ip, k));
-      if (match) {
-        rows.push({ ...base, state: "already_added", teamId: match.teamId, tugraServerId: match.id });
+      const found = linked ? { match: linked, ambiguous: false } : findHostMatch(cs.ip, known);
+      if (found.match) {
+        rows.push({ ...base, state: "already_added", teamId: found.match.teamId, tugraServerId: found.match.id });
+        continue;
+      }
+      if (found.ambiguous) {
+        rows.push({ ...base, state: "ambiguous", teamId: null, tugraServerId: null });
         continue;
       }
       rows.push({
