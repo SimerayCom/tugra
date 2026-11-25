@@ -1031,6 +1031,8 @@ export const ERROR_CODE_KEY: Record<string, string> = {
   "scope-unknown-item": "migrationRun.errors.scope-unknown",
   "scope-empty": "migrationRun.errors.scope-empty",
   "plan-changed": "migrationRun.errors.plan-changed",
+  "source-agent-missing": "migrationRun.errors.source-agent-missing",
+  "source-agents-unverified": "migrationRun.errors.source-agents-unverified",
 };
 
 /** An error from the hub as one readable line: a known machine code is localized, anything else is the hub's message. */

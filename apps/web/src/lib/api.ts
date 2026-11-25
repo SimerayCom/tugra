@@ -2,6 +2,7 @@ import type { SettingsApplyBody, SettingsApplyResult, SettingsPreview } from "./
 import type { BulkTransferResponse, TransferPlan } from "./server-transfer";
 import type { BeszelApplyInput, BeszelApplyResult, BeszelConnectResult, BeszelPreview, BeszelSavedConnection } from "./beszel-import";
 import type { CoolifyChecklist, CoolifyDetect, CoolifyInventoryView } from "./coolify-takeover";
+import type { CoolifySshRunView } from "./coolify-ssh";
 import { HUB_UNREACHABLE_CODE, hubUnreachableMessage, isHubDownStatus, isNetworkFailure, reportHubDown } from "./hub-connection";
 import { observeServerDate } from "./clock-skew";
 import type { AdviceReport, CostsReport, CostSyncResult, RescaleView } from "./costs";
@@ -1538,6 +1539,25 @@ export const api = {
   },
   coolifyGenerateServers(serverId: string, assignments: Array<{ coolifyServerId: string; teamId: string }>) {
     return apiFetch<CoolifyChecklist>(`/coolify-takeover/servers/${serverId}/servers`, { method: "POST", body: JSON.stringify({ assignments }) });
+  },
+  // Install the Tugra agent on Coolify's other servers over Coolify's own SSH keys (team owner only; `confirm` is the typed number of servers).
+  coolifySshLatest(serverId: string) {
+    return apiFetch<CoolifySshRunView | null>(`/coolify-takeover/servers/${serverId}/ssh/runs/latest`);
+  },
+  coolifySshRun(serverId: string, runId: string) {
+    return apiFetch<CoolifySshRunView>(`/coolify-takeover/servers/${serverId}/ssh/runs/${runId}`);
+  },
+  coolifySshStart(serverId: string, body: { coolifyServerUuids: string[]; teamId: string; confirm: string }) {
+    return apiFetch<CoolifySshRunView>(`/coolify-takeover/servers/${serverId}/ssh/runs`, { method: "POST", body: JSON.stringify(body) });
+  },
+  coolifySshInstall(serverId: string, runId: string, body: { confirm: string; coolifyServerUuids?: string[] }) {
+    return apiFetch<CoolifySshRunView>(`/coolify-takeover/servers/${serverId}/ssh/runs/${runId}/install`, { method: "POST", body: JSON.stringify(body) });
+  },
+  coolifySshUninstall(serverId: string, runId: string, body: { confirm: string; coolifyServerUuids?: string[] }) {
+    return apiFetch<CoolifySshRunView>(`/coolify-takeover/servers/${serverId}/ssh/runs/${runId}/uninstall`, { method: "POST", body: JSON.stringify(body) });
+  },
+  coolifySshCancel(serverId: string, runId: string) {
+    return apiFetch<CoolifySshRunView>(`/coolify-takeover/servers/${serverId}/ssh/runs/${runId}/cancel`, { method: "POST" });
   },
   getHeartbeats(id: string, limit = 60) {
     return apiFetch<Heartbeat[]>(`/monitors/${id}/heartbeats?limit=${limit}`);

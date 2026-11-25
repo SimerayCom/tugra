@@ -1,6 +1,7 @@
 import "reflect-metadata";
 import { REQUIRE_SCOPES } from "../api-tokens/require-scopes.decorator";
 import { CoolifySshController } from "./coolify-ssh.controller";
+import { CoolifyTakeoverModule } from "./coolify-takeover.module";
 import { SshConfirmSchema, SshStartSchema } from "./dto";
 
 const scopesOf = (name: keyof CoolifySshController) => Reflect.getMetadata(REQUIRE_SCOPES, CoolifySshController.prototype[name]) as string[] | undefined;
@@ -15,6 +16,10 @@ describe("CoolifySshController", () => {
 
   it("is mounted under the Coolify host, so the host is always named", () => {
     expect(Reflect.getMetadata("path", CoolifySshController)).toBe("coolify-takeover/servers/:serverId/ssh");
+  });
+
+  it("is registered in the takeover module, and the service it needs is exported for the lanes after it", () => {
+    expect(Reflect.getMetadata("controllers", CoolifyTakeoverModule)).toContain(CoolifySshController);
   });
 
   it("hands the caller's id and the path ids to the service", async () => {

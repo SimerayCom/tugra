@@ -10,6 +10,7 @@ import { Badge, Btn, SectionCard } from "./ui";
 import { Checkbox, Select } from "./form";
 import { CopyBtn } from "./copy-row";
 import { useToast } from "./toast";
+import { CoolifySshInstall } from "./coolify-ssh-install";
 
 const STATE = {
   this_server: "coolifyTakeover.checklist.state.this_server",
@@ -95,6 +96,9 @@ export function CoolifyServersChecklist({ serverId }: { serverId: string }) {
   const toast = useToast();
   const key = ["coolify-servers", serverId];
   const { data } = useQuery({ queryKey: key, queryFn: () => api.coolifyServers(serverId), gcTime: 0, staleTime: 0 });
+  const inv = useQuery({ queryKey: ["coolify-inventory", serverId], queryFn: () => api.coolifyInventory(serverId), gcTime: 0, staleTime: 30_000 });
+  const teamsQ = useQuery({ queryKey: ["teams"], queryFn: () => api.listTeams() });
+  const ownerOfInventory = !!inv.data && teamsQ.data?.find((x) => x.id === inv.data?.teamId)?.role === "OWNER";
   const [off, setOff] = useState<Set<string>>(new Set());
   const [teamFor, setTeamFor] = useState<Record<string, string>>({});
 
@@ -116,6 +120,8 @@ export function CoolifyServersChecklist({ serverId }: { serverId: string }) {
   const teamOf = (r: ChecklistRow) => teamFor[r.coolifyServerId] ?? r.teamId ?? data.teams[0]?.id ?? "";
 
   return (
+    <>
+    <CoolifySshInstall serverId={serverId} rows={data.rows} teams={data.teams} ownerOfInventory={ownerOfInventory} />
     <SectionCard title={t("coolifyTakeover.checklist.title")} desc={t("coolifyTakeover.checklist.desc")}>
       {others.length === 0 ? (
         <p style={{ margin: 0, fontSize: 13, color: "var(--c-tx3)" }}>{t("coolifyTakeover.checklist.empty")}</p>
@@ -152,5 +158,6 @@ export function CoolifyServersChecklist({ serverId }: { serverId: string }) {
         {commands && <CopyBtn text={commands} label={t("coolifyTakeover.checklist.copyAll")} />}
       </div>
     </SectionCard>
+    </>
   );
 }

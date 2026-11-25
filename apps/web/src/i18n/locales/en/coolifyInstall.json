@@ -3,13 +3,21 @@
   "subtitle": "One click installs the agent on the servers Coolify manages, using Coolify's own SSH keys. The keys never leave the Coolify server.",
   "card": {
     "title": "Install on {count} servers",
+    "titleOne": "Install on 1 server",
     "details": "What happens",
-    "typeCount": "Type {count} to install",
     "install": "Install",
-    "rollback": "Undo"
+    "rollback": "Undo",
+    "check": "Check {count} servers",
+    "checking": "Checking {count} servers…",
+    "none": "Every server here already has an agent, or none can be installed this way.",
+    "team": "Add the new servers to",
+    "ownerOnly": "Only a team owner can install agents this way. Ask an owner, or use the install command of a server in the list.",
+    "pick": "Servers to check"
   },
   "probe": {
-    "title": "Checking first. Nothing is changed yet."
+    "title": "Checking first. Nothing is changed yet.",
+    "done": "Check finished: {ready} ready, {skipped} left alone, {failed} cannot be installed.",
+    "ready": "Ready to install"
   },
   "code": {
     "ok_installed": "Agent installed.",
@@ -47,5 +55,54 @@
     "ONLINE": "Online",
     "UNINSTALLING": "Removing",
     "REMOVED": "Removed"
+  },
+  "what": {
+    "keys": "Tugra uses the SSH keys Coolify already has. The keys stay on the Coolify server. They are never copied, shown or sent to Tugra.",
+    "probe": "First a read-only check of each server. Nothing is changed.",
+    "install": "Then one container, the Tugra agent, is started on each server that is ready. Nothing else on it is touched.",
+    "existing": "A server that already runs an agent is left alone.",
+    "undo": "You can remove the agents again with one click.",
+    "consent": "This permission ends after 2 hours, or as soon as the run is finished.",
+    "audit": "Every step is written to the audit log."
+  },
+  "run": {
+    "heading": "Servers",
+    "working": "Working…",
+    "installReady": "Install on {count} ready",
+    "installTitle": "Install the agent",
+    "installBody": "The agent will be installed on {count} server(s). Each one asks for the same permission you gave.",
+    "cancel": "Cancel",
+    "cancelled": "The run was cancelled.",
+    "removeAll": "Remove {count} agents",
+    "removeTitle": "Remove the agents this run installed",
+    "removeBody": "The agent container installed by this run is stopped and removed from {count} server(s). Nothing else is touched.",
+    "finished": "Done: {online} online.",
+    "expires": "Permission ends {when}.",
+    "manualHint": "Use the install command for this server in the list above.",
+    "hostKeyPinned": "Coolify's own record of the server's key was checked."
+  },
+  "error": {
+    "confirm_mismatch": "The number does not match. Type it exactly.",
+    "run_in_progress": "Some of these servers are already being installed.",
+    "agent_offline": "The agent on the Coolify server is offline.",
+    "agent_too_old": "Update the agent on the Coolify server first.",
+    "grant_expired": "The permission for this run ended. Start a new check.",
+    "nothing_ready": "No server is ready to install.",
+    "nothing_to_remove": "There is no agent from this run left to remove.",
+    "not_read": "Read this Coolify first.",
+    "unknown_server": "One of those servers is not in this Coolify.",
+    "forbidden": "Only a team owner can do this.",
+    "generic": "Something went wrong. Try again."
+  },
+  "gap": {
+    "title": "Some source servers have no agent yet",
+    "body": "A move needs a Tugra agent on both servers. Add the agent first, then start the move.",
+    "no_agent": "No agent",
+    "offline": "Agent offline",
+    "sshHint": "Install them in one click from the Coolify page, using Coolify's own SSH keys.",
+    "commandHint": "Or run the install command on each server, or use your provider's console or cloud-init.",
+    "link": "Open the Coolify page",
+    "unverified": "Tugra could not check which servers have an agent. Try again.",
+    "dryRunNote": "A dry run still works. A real run starts once every source server has an agent."
   }
 }

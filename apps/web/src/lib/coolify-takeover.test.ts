@@ -70,7 +70,7 @@ describe("helpers", () => {
 
   it("joins the pending commands with a comment saying where to run each", () => {
     const row = (name: string, state: ChecklistRow["state"], cmd: string | null): ChecklistRow => ({
-      coolifyServerId: name, name, ip: "203.0.113.1", port: 22, user: "root", state, teamId: "t", tugraServerId: "s", installCommand: cmd, expiresAt: null, ssh: `ssh root@${name}`,
+      coolifyServerId: name, coolifyServerUuid: `${name}uuid00001`, name, ip: "203.0.113.1", port: 22, user: "root", state, teamId: "t", tugraServerId: "s", installCommand: cmd, expiresAt: null, ssh: `ssh root@${name}`,
     });
     const text = allCommands([row("a", "waiting", "curl a | sh"), row("b", "already_added", null), row("c", "waiting", "curl c | sh")]);
     expect(text).toBe("# a (ssh root@a)\ncurl a | sh\n\n# c (ssh root@c)\ncurl c | sh");

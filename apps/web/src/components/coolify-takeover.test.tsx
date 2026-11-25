@@ -40,7 +40,7 @@ const INV: CoolifyInventoryView = {
 };
 
 const row = (over: Partial<ChecklistRow>): ChecklistRow => ({
-  coolifyServerId: "1", name: "edge", ip: "198.51.100.7", port: 22, user: "root", state: "not_generated", teamId: "t1", tugraServerId: null, installCommand: null, expiresAt: null, ssh: "ssh root@198.51.100.7", ...over,
+  coolifyServerId: "1", coolifyServerUuid: "edgeuuid0001", name: "edge", ip: "198.51.100.7", port: 22, user: "root", state: "not_generated", teamId: "t1", tugraServerId: null, installCommand: null, expiresAt: null, ssh: "ssh root@198.51.100.7", ...over,
 });
 const CHECKLIST: CoolifyChecklist = { rows: [row({ coolifyServerId: "0", name: "localhost", state: "this_server", tugraServerId: "s1" }), row({})], teams: [{ id: "t1", name: "Acme" }] };
 

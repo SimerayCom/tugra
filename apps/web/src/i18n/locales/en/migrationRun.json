@@ -713,7 +713,9 @@
     "too-many-service-choices": "This move has more per-service settings than one run takes. Narrow what you move.",
     "scope-unknown": "Something you picked is no longer in the source. Review the plan again.",
     "scope-empty": "Nothing is left to move. Pick at least one item.",
-    "plan-changed": "The source changed since you reviewed it. Review the plan again."
+    "plan-changed": "The source changed since you reviewed it. Review the plan again.",
+    "source-agent-missing": "A source server has no Tugra agent yet. Add the agent, then start the move.",
+    "source-agents-unverified": "Tugra could not check which source servers have an agent. Try again."
   },
   "codes": {
     "unknown": "{code}{params}",

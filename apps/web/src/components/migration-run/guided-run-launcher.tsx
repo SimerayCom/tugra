@@ -27,8 +27,10 @@ import {
 } from "../../lib/migration-run";
 import { AdvancedFields, type AdvancedState } from "./launch-advanced";
 import { PlacementFields } from "./launch-placement";
+import { AgentGapNotice } from "./agent-gap-notice";
+import { sourceAgentGapsOf } from "../../lib/coolify-ssh";
 import { HelpLink } from "../help-link";
-import { scopePayload, type ImportScope, overallPlacement } from "../../lib/import-scope";
+import { scopePayload, type ImportScope, overallPlacement, involvedHosts } from "../../lib/import-scope";
 import type { ImportApplyExtras, ImportPlan, ImportRemoteKind, MigrationRunMode, MigrationRunServerMap, MigrationRunTopology } from "../../lib/types";
 
 /** A server the run may land on: what the launcher needs to say, before the click, that one cannot take it. */
@@ -131,6 +133,12 @@ function LaunchDialog({ plan, kind, sessionId, servers, extras, scope, onChangeS
   }, [plan.items, scope]);
   const targetNames = [...new Set([targetServerId, ...Object.values(placement ?? {})].map((id) => servers.find((s) => s.id === id)?.name).filter(Boolean))] as string[];
   const sourceRows = useMemo(() => sourceServersOf(plan.items ?? [], plan.preflight?.hosts), [plan.items, plan.preflight?.hosts]);
+  // A move needs an agent on both ends: the source servers it takes something from that have none (Coolify; the hub refuses a real run too).
+  const agentGaps = useMemo(() => {
+    if (kind !== "coolify") return [];
+    const used = new Set(sourceRows.filter((r) => r.apps + r.databases + r.services > 0 && (!scope || involvedHosts(plan, scope.inScope).some((h) => h.ref === r.ref))).map((r) => r.ref));
+    return sourceAgentGapsOf(plan.preflight?.hosts, used);
+  }, [kind, plan, scope, sourceRows]);
   const changeTarget = (id: string) => {
     // a host that was on the old default follows the new default; hosts the operator moved elsewhere stay where they are
     if (placement) setPlacement(Object.fromEntries(Object.entries(placement).map(([ref, sid]) => [ref, sid === targetServerId ? id : sid])));
@@ -190,6 +198,8 @@ function LaunchDialog({ plan, kind, sessionId, servers, extras, scope, onChangeS
           </p>
         ))}
 
+        <AgentGapNotice gaps={agentGaps} dryRun={dryRun} />
+
         <PlacementFields rows={sourceRows} servers={placeableOptions} defaultId={targetServerId} value={placement} onChange={setPlacement} invalid={issues.includes("placement")} />
 
         <div>
@@ -234,7 +244,7 @@ function LaunchDialog({ plan, kind, sessionId, servers, extras, scope, onChangeS
 
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>
           <Btn variant="ghost" onClick={onClose} disabled={create.isPending}>{t("common.cancel")}</Btn>
-          <Btn type="submit" disabled={issues.length > 0 || servers.length === 0 || blockedUsed.length > 0} loading={create.isPending}>
+          <Btn type="submit" disabled={issues.length > 0 || servers.length === 0 || blockedUsed.length > 0 || (!dryRun && agentGaps.length > 0)} loading={create.isPending}>
             {dryRun ? t("migrationRun.launch.createDry") : t("migrationRun.launch.create")}
           </Btn>
         </div>

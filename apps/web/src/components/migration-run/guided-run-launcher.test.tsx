@@ -345,3 +345,50 @@ describe("GuidedRunLauncher", () => {
     });
   });
 });
+
+describe("GuidedRunLauncher: a move needs an agent on every source server", () => {
+  const item = (ref: string, kind: "app" | "database" = "app") => ({ itemRef: `${kind}:${ref}:1`, kind, name: ref, proposed: {}, risks: [], dependsOn: [] });
+  const gapPlan = {
+    ...plan,
+    items: [item("srv-a"), item("srv-b", "database")],
+    preflight: {
+      hosts: [
+        { ref: "srv-a", name: "Edge A", tugra: { serverId: "t1", name: "edge-a", teamId: "t1", via: "public-ip", confidence: "certain" }, agentOnline: true },
+        { ref: "srv-b", name: "Edge B", agentOnline: false },
+      ],
+    },
+  } as unknown as ImportPlan;
+  const open = async () => {
+    fireEvent.click(screen.getByRole("button", { name: "Run guided migration" }));
+    return await screen.findByRole("dialog");
+  };
+
+  it("names the source servers that have no agent and how to add one, but still allows a dry run", async () => {
+    mount({ plan: gapPlan });
+    const dialog = await open();
+    const note = within(dialog).getByTestId("agent-gap");
+    expect(note.textContent).toContain("Edge B");
+    expect(note.textContent).toContain("No agent");
+    expect(note.textContent).not.toContain("Edge A");
+    expect(within(note).getByRole("link", { name: "Open the Coolify page" }).getAttribute("href")).toBe("/import/coolify-host");
+    expect((within(dialog).getByRole("button", { name: "Create dry run" }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("refuses a real run until every source server has an agent", async () => {
+    mount({ plan: gapPlan });
+    const dialog = await open();
+    fireEvent.click(within(dialog).getByRole("checkbox", { name: "Dry run first" }));
+    expect((within(dialog).getByRole("button", { name: "Create run" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("says nothing when every source server has an agent, and for a source other than Coolify", async () => {
+    const covered = { ...gapPlan, preflight: { hosts: gapPlan.preflight!.hosts!.map((h) => ({ ...h, agentOnline: true })) } } as unknown as ImportPlan;
+    mount({ plan: covered });
+    const dialog = await open();
+    expect(within(dialog).queryByTestId("agent-gap")).toBeNull();
+    cleanup();
+    mount({ plan: gapPlan, kind: "dokploy" });
+    const d2 = await open();
+    expect(within(d2).queryByTestId("agent-gap")).toBeNull();
+  });
+});

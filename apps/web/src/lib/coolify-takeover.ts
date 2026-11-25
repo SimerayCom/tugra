@@ -159,6 +159,8 @@ export type CoolifyDetect = { found: boolean; image: string | null; reason?: "no
 export type ChecklistState = "this_server" | "already_added" | "waiting" | "expired" | "no_access" | "not_generated" | "ambiguous";
 export interface ChecklistRow {
   coolifyServerId: string;
+  /** Coolify's own uuid of the server: what the SSH install names. */
+  coolifyServerUuid: string;
   name: string;
   ip: string;
   port: number;
