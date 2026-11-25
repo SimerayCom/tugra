@@ -239,7 +239,25 @@ describe("MoveAppModal", () => {
   it("no other server in the team: says so instead of an empty select", async () => {
     vi.spyOn(api, "listServers").mockResolvedValue([SERVERS[0]]);
     show();
-    expect(await screen.findByText("There is no other server in this team to move the app to.")).toBeTruthy();
+    expect(await screen.findByText(/There is no other server in this team to move the app to\./)).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Add a server" }).getAttribute("href")).toBe("/servers/new");
     expect(screen.queryByLabelText("Target server")).toBeNull();
+  });
+
+  it("lists targets that cannot receive the app as disabled, with the reason in the label", async () => {
+    vi.spyOn(api, "listServers").mockResolvedValue([
+      { ...SERVERS[0], canWrite: true, capabilities: ["deploy", "backup"] },
+      { ...SERVERS[1], canWrite: true, capabilities: ["deploy", "backup"] },
+      { id: "s5", name: "epsilon", status: "ONLINE", teamId: "t1", canWrite: false, capabilities: ["deploy", "backup"] },
+      { id: "s6", name: "zeta", status: "ONLINE", teamId: "t1", canWrite: true, capabilities: ["deploy"] },
+    ] as unknown as ServerView[]);
+    show();
+    const sel = (await screen.findByLabelText("Target server")) as HTMLSelectElement;
+    const opt = (n: string) => [...sel.options].find((o) => o.textContent?.startsWith(n))!;
+    expect(opt("beta").disabled).toBe(false);
+    expect(opt("epsilon").textContent).toBe("epsilon (read-only)");
+    expect(opt("epsilon").disabled).toBe(true);
+    expect(opt("zeta").textContent).toBe("zeta (capability off)");
+    expect(opt("zeta").disabled).toBe(true);
   });
 });

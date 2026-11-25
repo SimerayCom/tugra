@@ -57,6 +57,30 @@ describe("targetChoices", () => {
   });
 });
 
+describe("targetChoices readiness", () => {
+  const labels = { offline: "offline", readOnly: "read-only", capability: "capability off" };
+  const ok = { status: "ONLINE", teamId: "t1", canWrite: true, capabilities: ["deploy", "backup"] } as const;
+  const servers = [
+    { id: "cur", name: "current", ...ok },
+    { id: "a", name: "alpha", ...ok },
+    { id: "b", name: "beta", ...ok, canWrite: false },
+    { id: "c", name: "gamma", ...ok, capabilities: ["deploy"] },
+    { id: "d", name: "delta", ...ok, capabilities: [] },
+  ] as never;
+  it("disables targets that cannot receive, with the reason in the label", () => {
+    const c = targetChoices(servers, "cur", "t1", labels);
+    expect(c.map((x) => [x.value, x.disabled, x.label])).toEqual([
+      ["a", false, "alpha"],
+      ["b", true, "beta (read-only)"],
+      ["c", true, "gamma (capability off)"],
+      ["d", true, "delta (capability off)"],
+    ]);
+  });
+  it("skips the checks it has no labels for", () => {
+    expect(targetChoices(servers, "cur", "t1", { offline: "offline" }).every((x) => !x.disabled)).toBe(true);
+  });
+});
+
 describe("misc helpers", () => {
   it("fmtSeconds / pollInterval / volumeProgress", () => {
     expect(fmtSeconds(45)).toBe("45s");

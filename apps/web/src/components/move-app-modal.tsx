@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { ApiError, api } from "../lib/api";
@@ -59,7 +60,7 @@ export function MoveAppModal({
   const [typed, setTyped] = useState("");
 
   const { data: servers = [] } = useQuery({ queryKey: ["servers", teamId], queryFn: () => api.listServers({ teamId }) });
-  const choices = targetChoices(servers, currentServerId, teamId, { offline: t("apps.moveServerOffline") });
+  const choices = targetChoices(servers, currentServerId, teamId, { offline: t("apps.moveServerOffline"), readOnly: t("servers.cta.tagNoWrite"), capability: t("servers.cta.tagCapability") });
 
   const check = useMutation({
     mutationFn: (probeLink: boolean) => api.previewAppMove(appId, { targetServerId: targetId, probeLink }),
@@ -120,7 +121,9 @@ export function MoveAppModal({
         <>
           <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px", lineHeight: 1.5 }}>{t("apps.moveDesc")}</p>
           {choices.length === 0 ? (
-            <p role="status" style={{ fontSize: 13, color: "var(--c-am)" }}>{t("apps.moveNoTargets")}</p>
+            <p role="status" style={{ fontSize: 13, color: "var(--c-am)" }}>
+              {t("apps.moveNoTargets")} <Link href="/servers/new" style={{ color: "var(--c-lapis)" }}>{t("servers.cta.addServer")}</Link>
+            </p>
           ) : (
             <label style={{ display: "block", marginBottom: 12 }}>
               <span style={{ display: "block", fontSize: 12, color: "var(--c-tx2)", marginBottom: 6 }}>{t("apps.movePickTarget")}</span>

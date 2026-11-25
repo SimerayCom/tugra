@@ -1,3 +1,4 @@
+import { serverBlock } from "./cta-readiness";
 import type { AppMove, AppMovePhase, MoveAckKey, MoveAcks, MovePreflightResult, ServerView } from "./types";
 
 /** Phases in which the move is over (the banner stops polling, the lock is released). */
@@ -47,6 +48,9 @@ export function ackPayload(r: MovePreflightResult | undefined, acks: MoveAcks): 
   return out;
 }
 
+/** Capabilities the target (and the source) must have granted for an app move. */
+const MOVE_CAPS = ["deploy", "backup"] as const;
+
 export interface TargetChoice {
   value: string;
   label: string;
@@ -54,13 +58,27 @@ export interface TargetChoice {
   offline: boolean;
 }
 
-/** Same-team servers, the current one excluded; an offline one is listed but disabled (with the reason in its label). */
-export function targetChoices(servers: Pick<ServerView, "id" | "name" | "status" | "teamId">[], currentServerId: string, teamId: string, labels: { offline: string }): TargetChoice[] {
+/**
+ * Same-team servers, the current one excluded. One that cannot receive the app is listed but disabled, with the reason in its label:
+ * offline or not connected, read-only for you, or without the deploy and backup capabilities the move needs on both ends. The read-only
+ * and capability checks run only when the caller gives their labels (and the server data carries the fields).
+ */
+export function targetChoices(
+  servers: Array<Pick<ServerView, "id" | "name" | "status" | "teamId"> & Partial<Pick<ServerView, "canWrite" | "capabilities">>>,
+  currentServerId: string,
+  teamId: string,
+  labels: { offline: string; readOnly?: string; capability?: string },
+): TargetChoice[] {
   return servers
     .filter((s) => s.teamId === teamId && s.id !== currentServerId)
     .map((s) => {
-      const offline = s.status !== "ONLINE";
-      return { value: s.id, label: offline ? `${s.name} (${labels.offline})` : s.name, disabled: offline, offline };
+      const b = serverBlock(
+        { status: s.status, canWrite: labels.readOnly && s.canWrite !== undefined ? s.canWrite : true, capabilities: labels.capability && s.capabilities !== undefined ? s.capabilities : MOVE_CAPS as unknown as string[] },
+        MOVE_CAPS,
+      );
+      const tag = !b ? null : b.code === "pending" || b.code === "offline" ? labels.offline : b.code === "no_write" ? labels.readOnly : labels.capability;
+      const offline = b?.code === "pending" || b?.code === "offline";
+      return { value: s.id, label: tag ? `${s.name} (${tag})` : s.name, disabled: !!b, offline };
     });
 }
 

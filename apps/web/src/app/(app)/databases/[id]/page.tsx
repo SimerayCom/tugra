@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { Trash2, LayoutDashboard, ScrollText, Activity, DatabaseBackup, Settings2, Rocket, RotateCw, Play, Square, Terminal, Pencil, Copy, X, Database as DatabaseIcon, CloudUpload } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
@@ -36,6 +37,8 @@ import { useConfirm } from "../../../../components/confirm";
 import { useToast } from "../../../../components/toast";
 import { Modal } from "../../../../components/modal";
 import { Select } from "../../../../components/form";
+import { BlockedNote } from "../../../../components/cta-parts";
+import { blockTag, serverBlock } from "../../../../lib/cta-readiness";
 import { compatibleRestoreTargets } from "../../../../lib/restore";
 
 export default function DatabaseDetailPage() {
@@ -1044,7 +1047,16 @@ function DbServerCard({ id, teamId, serverId, status, provisioning }: { id: stri
     mutationFn: () => api.moveDatabaseToServer(id, target),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["database", id] }),
   });
-  const options = servers.map((s) => ({ value: s.id, label: s.id === serverId ? `${s.name} ${t("databases.moveServerCurrent")}` : s.name }));
+  // A target that cannot receive the database later is listed but off, with the reason in its label.
+  const options = servers.map((s) => {
+    if (s.id === serverId) return { value: s.id, label: `${s.name} ${t("databases.moveServerCurrent")}` };
+    const b = serverBlock(s, ["database"]);
+    return { value: s.id, label: b ? `${s.name} (${blockTag(t, b)})` : s.name, disabled: !!b };
+  });
+  const targetBlock = (() => {
+    const s = target !== serverId ? servers.find((x) => x.id === target) : undefined;
+    return s ? serverBlock(s, ["database"]) : null;
+  })();
   return (
     <SectionCard title={t("databases.moveServerTitle")} desc={t("databases.moveServerDesc")} style={{ marginBottom: 0 }}>
       {!movable && <p style={{ fontSize: 12, color: "var(--c-am)", margin: "0 0 12px" }}>{t("databases.moveServerLocked")}</p>}
@@ -1052,6 +1064,8 @@ function DbServerCard({ id, teamId, serverId, status, provisioning }: { id: stri
         <Select value={target} onChange={setTarget} options={options} ariaLabel={t("databases.moveServerTitle")} disabled={!movable || move.isPending} />
         <Btn onClick={() => move.mutate()} disabled={!movable || move.isPending || target === serverId}>{t("databases.moveServerAction")}</Btn>
       </div>
+      {servers.length <= 1 && <p style={{ fontSize: 12, color: "var(--c-am)", margin: "8px 0 0" }}>{t("servers.cta.noOtherServer")} <Link href="/servers/new" style={{ color: "var(--c-lapis)" }}>{t("servers.cta.addServer")}</Link></p>}
+      {targetBlock && <BlockedNote block={targetBlock} serverId={target} style={{ display: "block", marginTop: 8 }} />}
       {move.isError && <div role="alert" style={{ fontSize: 12, color: "var(--c-r)", marginTop: 8 }}>{move.error instanceof Error && move.error.message ? move.error.message : t("databases.actionFailed")}</div>}
       {move.isSuccess && <div role="status" style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("databases.moveServerDone")}</div>}
     </SectionCard>
