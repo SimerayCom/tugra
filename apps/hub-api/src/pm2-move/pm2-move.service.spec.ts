@@ -200,10 +200,12 @@ describe("Pm2MoveService.start / move", () => {
   });
 
   it("agent gone for the recovery too: unknown, the record is KEPT (a container may be live)", async () => {
-    const { svc, apps } = setup({ move: () => new Error("timeout"), recover: () => new Error("agent offline") });
+    const { svc, apps, depUpdate } = setup({ move: () => new Error("timeout"), recover: () => new Error("agent offline") });
     const j = await done(svc, await svc.start("u1", "s1", req()));
     expect(j.items[0]).toMatchObject({ status: "unknown", reason: "agent_unreachable", appId: "app1" });
     expect(apps.discardUndeployed).not.toHaveBeenCalled();
+    // The deployment row is closed (a RUNNING row would block every later deploy of the app).
+    expect(depUpdate).toHaveBeenCalledWith({ where: { id: "dep1" }, data: expect.objectContaining({ status: "FAILED" }) });
   });
 
   it("agent offline before anything was sent: failed, record dropped, no recovery attempt", async () => {

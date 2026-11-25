@@ -245,6 +245,7 @@ export class Pm2MoveService {
           deployStrategy: "RECREATE",
         },
       });
+      const startedMs = Date.now();
       const dep = await this.prisma.deployment.create({
         data: { appId: created.id, status: "RUNNING", kind: "DEPLOY", trigger: "pm2-move", requestedBy: userId, startedAt: new Date() },
       });
@@ -263,7 +264,7 @@ export class Pm2MoveService {
         tag,
       };
       const outcome = await this.runScripts(job.serverId, buildPm2MoveScript({ ...input, runScript }), () => buildPm2RecoverScript(input), item);
-      await this.settle(item, outcome, dep.id, tag);
+      await this.settle(item, outcome, dep.id, tag, Date.now() - startedMs);
     } catch (e) {
       // Nothing reached the host (a build/validation error or an offline agent): the record has no container behind it.
       if (item.status === "running") await this.apps.discardUndeployed(created.id);
@@ -297,7 +298,7 @@ export class Pm2MoveService {
     for (const m of chunk.matchAll(/^TUGRA_PM2MOVE: step=([a-z]{1,20})\s*$/gm)) item.step = m[1];
   }
 
-  private async settle(item: JobItem, o: MoveOutcome, depId: string, tag: string): Promise<void> {
+  private async settle(item: JobItem, o: MoveOutcome, depId: string, tag: string, durationMs: number): Promise<void> {
     item.step = o.steps.length ? o.steps[o.steps.length - 1] : item.step;
     item.reason = o.reason;
     item.logTail = o.logTail;
@@ -315,14 +316,19 @@ export class Pm2MoveService {
             status: "SUCCESS",
             exitCode: 0,
             imageTag: tag,
-            durationMs: 0,
+            durationMs,
             logs: `Moved in place from PM2 (${o.steps.join(" > ")}).${item.pm2Left ? " The stopped PM2 entry could not be removed." : ""}`,
           },
         });
         return;
       case "unknown":
-        // Neither success nor a confirmed rollback: keep the record (a container may be live) and say so.
+        // Neither success nor a confirmed rollback: keep the record (a container may be live) and say so. The deployment
+        // row must not stay RUNNING (it would block every later deploy of this app).
         item.status = "unknown";
+        await this.prisma.deployment.update({
+          where: { id: depId },
+          data: { status: "FAILED", durationMs, imageTag: tag, logs: "The outcome of the in-place move is unknown (the agent could not be reached). Check the server." },
+        });
         return;
       default:
         item.status = o.result === "rolled_back" ? "rolled_back" : o.result === "aborted" ? "aborted" : "rollback_failed";

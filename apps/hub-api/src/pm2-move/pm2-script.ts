@@ -88,7 +88,9 @@ export function hostPm2Inner(op: HostOp, i: Pick<Pm2ScriptInput, "user" | "home"
     'pm2() { t=$1; shift; if [ "$U" = root ]; then timeout "$t" env HOME="$H" PM2_HOME="$H/.pm2" PATH="$BD:/usr/local/bin:/usr/bin:/bin" "$BIN" "$@"; else timeout "$t" runuser -u "$U" -- env HOME="$H" PM2_HOME="$H/.pm2" PATH="$BD:/usr/local/bin:/usr/bin:/bin" "$BIN" "$@"; fi; }',
     // Exactly one live pid (a cluster or a duplicate would print several); empty / 0 / text means "not running".
     'pidof_() { p=$(pm2 30 pid "$N" 2>/dev/null | tr -d "[:space:]"); case "$p" in ""|0|*[!0-9]*) echo 0;; *) echo "$p";; esac; }',
-    'report() { echo "TUGRA_PM2_PID=$(pidof_)"; if pm2 30 describe "$N" >/dev/null 2>&1; then echo "TUGRA_PM2_EXISTS=1"; else echo "TUGRA_PM2_EXISTS=0"; fi; }',
+    // "Exists" is read from the process list itself (`pm2 describe` can exit 0 for an unknown name). The name was validated to a
+    // plain charset, so a fixed-string match on the JSON `"name":"<N>"` cannot be fooled by regex characters.
+    'report() { echo "TUGRA_PM2_PID=$(pidof_)"; if pm2 30 jlist 2>/dev/null | grep -F -q "\\"name\\":\\"$N\\""; then echo "TUGRA_PM2_EXISTS=1"; else echo "TUGRA_PM2_EXISTS=0"; fi; }',
   ];
   switch (op) {
     case "pid":

@@ -292,7 +292,7 @@ echo "pm2:$*" >> "$H_LOG"
 s=$(cat "$H_STATE" 2>/dev/null)
 case "$1" in
   pid) [ "$s" = online ] && echo 777 || echo 0;;
-  describe) [ "$s" = gone ] && exit 1; exit 0;;
+  jlist) if [ "$s" = gone ]; then echo '[]'; else echo '[{"name":"other","pid":1},{"name":"my app","pid":777,"pm2_env":{"name":"my app"}}]'; fi;;
   stop) echo stopped > "$H_STATE";;
   restart) echo online > "$H_STATE";;
   delete) echo gone > "$H_STATE";;
@@ -371,6 +371,10 @@ exit 0
     expect(sh("pid").out).toContain("TUGRA_PM2_ERR=nobin");
     rmSync(join(h, ".pm2"), { recursive: true });
     expect(sh("pid").out).toContain("TUGRA_PM2_ERR=nohome");
+  });
+  it("existence is read from the process list: a similar name does not count", () => {
+    const r = sh("pid", { name: "my" });
+    expect(r.out).toContain("TUGRA_PM2_EXISTS=0"); // "my app" and "other" exist, "my" does not
   });
   it("a process that is gone is not reported as running", () => {
     writeFileSync(join(h, "state"), "gone");
