@@ -330,6 +330,30 @@ describe("RolloutEngineService — settle, waves, halt", () => {
     expect(m.status("a").status).toBe("DEPLOYING");
   });
 
+  it("tick() reports how many rollouts were live, so the scheduler knows whether to keep its fast loop", async () => {
+    const m = make({ targets: [{ id: "a", resourceId: "app1" }] });
+    const findMany = (m.svc as unknown as { prisma: { rollout: { findMany: jest.Mock } } }).prisma.rollout.findMany;
+    findMany.mockResolvedValueOnce([]);
+    expect(await m.svc.tick()).toBe(0);
+    findMany.mockResolvedValueOnce([{ id: "ghost" }, { id: "r1" }]);
+    expect(await m.svc.tick()).toBe(2);
+  });
+
+  it("advance() (create / resume / rollback) wakes listeners; the tick's own passes do not", async () => {
+    const m = make({ targets: [{ id: "a", resourceId: "app1" }] });
+    const woke = jest.fn();
+    const off = m.svc.onWake(woke);
+    await m.svc.advance("r1");
+    expect(woke).toHaveBeenCalledTimes(1);
+    const findMany = (m.svc as unknown as { prisma: { rollout: { findMany: jest.Mock } } }).prisma.rollout.findMany;
+    findMany.mockResolvedValueOnce([{ id: "r1" }]);
+    await m.svc.tick();
+    expect(woke).toHaveBeenCalledTimes(1);
+    off();
+    await m.svc.advance("r1");
+    expect(woke).toHaveBeenCalledTimes(1);
+  });
+
   it("a settle never overwrites a terminal target (late duplicate verdicts are no-ops)", async () => {
     const m = make({ targets: [{ id: "a", resourceId: "app1", status: "SUCCEEDED", outcome: "passed", deploymentId: "d1", attempt: 1 }], deployments: [depRow("d1", "app1", { status: "FAILED" })] });
     await m.svc.advance("r1");

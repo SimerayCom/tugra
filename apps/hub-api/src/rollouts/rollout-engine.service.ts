@@ -43,7 +43,27 @@ export class RolloutEngineService {
     return Date.now();
   }
 
-  async tick(): Promise<void> {
+  /** Listeners told when a rollout may have become live (created / resumed / rolled back), so the scheduler can start
+   *  its fast loop at once instead of waiting for the idle poll. */
+  private readonly wakeListeners = new Set<() => void>();
+
+  onWake(listener: () => void): () => void {
+    this.wakeListeners.add(listener);
+    return () => this.wakeListeners.delete(listener);
+  }
+
+  private wake(): void {
+    for (const l of this.wakeListeners) {
+      try {
+        l();
+      } catch {
+        /* a listener must never break the caller */
+      }
+    }
+  }
+
+  /** One pass over every live rollout. Returns how many were live, so the scheduler knows whether to keep ticking. */
+  async tick(): Promise<number> {
     // Self-heal the live-rollout slots: a crash between a terminal status flip and the targets' release (or any
     // older row) must never lock an app out of rollouts forever.
     await this.prisma.rolloutTarget
@@ -57,15 +77,22 @@ export class RolloutEngineService {
     });
     for (const r of live) {
       try {
-        await this.advance(r.id);
+        await this.advancePass(r.id);
       } catch (e) {
         this.logger.warn(`rollout ${r.id}: tick failed: ${e instanceof Error ? e.message : e}`);
       }
     }
+    return live.length;
+  }
+
+  /** Kick one rollout now (create / resume / rollback call this) and wake the scheduler's fast loop. */
+  async advance(id: string): Promise<void> {
+    this.wake();
+    await this.advancePass(id);
   }
 
   /** One decide→apply pass for a rollout. Re-entrancy-guarded per rollout (create/halt/resume kick it too). */
-  async advance(id: string): Promise<void> {
+  private async advancePass(id: string): Promise<void> {
     if (this.advancing.has(id)) return;
     this.advancing.add(id);
     try {
