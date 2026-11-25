@@ -1,9 +1,10 @@
 import { FleetController } from "./fleet.controller";
 import { ContainerMetricsService } from "../metrics/container-metrics.service";
 
-// A tiny in-memory ContainerMetric table that honours the `serverId: {in}` + `ts: {gte}` filters, so the
-// test proves what the controller+service ACTUALLY read — a server outside the caller's visible set is
-// never selected, regardless of what rows exist for it.
+// A tiny in-memory ContainerMetric table behind the service's one raw query (newest sample per container, ranked by cpu,
+// LIMIT — its SQL values are [serverIds, since, limit]), so the test proves what the controller+service ACTUALLY read —
+// a server outside the caller's visible set is never selected, regardless of what rows exist for it. The SQL itself is
+// pinned against a real database in test/fleet-metrics.e2e-spec.ts.
 const NOW = 1_700_000_000_000;
 const row = (serverId: string, containerName: string, cpu: number, ageMs = 1_000) => ({
   serverId, containerName, containerId: "c", ts: new Date(NOW - ageMs), cpu,
@@ -16,13 +17,14 @@ const TABLE = [
 ];
 
 function make(visible: { id: string; name: string }[]) {
-  const findMany = jest.fn().mockImplementation(({ where }: any) =>
-    Promise.resolve(
-      TABLE.filter((r) => where.serverId.in.includes(r.serverId) && r.ts >= where.ts.gte).sort((a, b) => b.ts.getTime() - a.ts.getTime()),
-    ),
-  );
+  const findMany = jest.fn().mockImplementation(({ values: [ids, since, limit] }: { values: [string[], Date, number] }) => {
+    const live = TABLE.filter((r) => ids.includes(r.serverId) && r.ts >= since).sort((a, b) => b.ts.getTime() - a.ts.getTime());
+    const newest = new Map<string, (typeof TABLE)[number]>();
+    for (const r of live) if (!newest.has(`${r.serverId}\0${r.containerName}`)) newest.set(`${r.serverId}\0${r.containerName}`, r);
+    return Promise.resolve([...newest.values()].sort((a, b) => b.cpu - a.cpu).slice(0, limit));
+  });
   const prisma = {
-    containerMetric: { findMany },
+    $queryRaw: findMany,
     application: { findMany: jest.fn().mockResolvedValue([]) },
     database: { findMany: jest.fn().mockResolvedValue([]) },
     containerLabel: { findMany: jest.fn().mockResolvedValue([]) },
@@ -40,7 +42,7 @@ describe("FleetController.hottestContainers", () => {
     const { ctrl, servers, findMany } = make([{ id: "mine", name: "my-server" }]);
     const out = await ctrl.hottestContainers({ userId: "u1" } as any);
     expect(servers.listForUser).toHaveBeenCalledWith("u1", { teamId: undefined, status: undefined, q: undefined });
-    expect(findMany.mock.calls[0][0].where.serverId).toEqual({ in: ["mine"] });
+    expect(findMany.mock.calls[0][0].values[0]).toEqual(["mine"]);
     expect(out.map((r) => r.containerName)).toEqual(["web"]);
     expect(out.some((r) => r.serverId === "other-team")).toBe(false);
   });

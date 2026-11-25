@@ -229,6 +229,7 @@ the `Secure` flag on HTTPS installs.
 | `--home` | Start the owner in the simple Home launcher instead of the full Fleet control plane. |
 | `--no-telemetry` / `--enable-telemetry` | Opt out of / explicitly accept the anonymous usage stats (also `TUGRA_TELEMETRY=0\|1`). |
 | `--no-update-checks` / `--enable-update-checks` | Opt out of (or re-enable) the signed self-update checks, which are on by default (also `TUGRA_UPDATE_CHECKS=0`). |
+| `--no-swap` / `--enable-swap` | On a host with 4 GB RAM or less and no swap the installer adds a 2 GB `/swapfile` (`fallocate`, mode `0600`, `/etc/fstab` entry, `vm.swappiness=10`) so a load spike slows the hub down instead of the kernel's OOM killer taking it out. It never touches a host that already has swap and never fails the install. `--no-swap` skips it and is remembered (`TUGRA_NO_SWAP=1` in `.env`); `--enable-swap` undoes that. `--doctor` reports the swap state. |
 | `--public-ip <ip>` / `--detect-public-ip` | Pin this host's public IP (or opt in to a best-effort probe) so deployed-app URLs resolve from outside. |
 | `--doctor` | Check this host and the Tugra stack without changing anything (ports 80/443, firewall, cloud provider, IPv6/DNS, containers, proxy routes, certificate, agent) and print the fix for each problem. Exit `0` = fine, `1` = problems. See [Troubleshooting](#troubleshooting). |
 | `--restore-from <bundle>` | Restore a hub bundle made by `scripts/hub-migrate.sh pack` onto this host (see [Disaster recovery](disaster-recovery.md)). |
@@ -262,6 +263,14 @@ Runtime configuration lives in the generated `.env`. See [`.env.example`](../.en
 key and what it does. The stability secrets (`JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET`,
 `SECRETS_ENCRYPTION_KEY`, `HUB_SIGNING_KEY`, `POSTGRES_PASSWORD`) are generated once and preserved
 across re-runs — regenerating them would invalidate sessions, encrypted data and the signing identity.
+
+**Hub memory on small hosts.** The hub's JavaScript heap is capped (`--max-old-space-size`) at `HUB_MAX_HEAP_MB` MB
+(default `768`) through `NODE_OPTIONS` in `deploy/docker-compose.yml`, so a burst of panel traffic turns into a
+garbage-collection-heavy moment instead of growing until the host's OOM killer picks the hub. Set `HUB_MAX_HEAP_MB=1536`
+(or any value) in `.env` and run `docker compose up -d hub-api` if a very large fleet needs more headroom; leave it at
+the default on a 4 GB host. The cap bounds the JS heap only: the database driver's query engine and Node's buffers live
+outside it, which is why the hub also keeps its own reads small (one row per server for the newest sample, chart series
+thinned in SQL) and why the installer adds the swapfile above on small hosts.
 
 **arm64 control plane:** the published hub/web/updater images are amd64-only. On an arm64 host
 (e.g. a Pi control plane) run `./scripts/install.sh --build` to build natively; the agent image is
