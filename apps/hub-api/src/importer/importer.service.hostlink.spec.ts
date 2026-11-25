@@ -1,5 +1,5 @@
 import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from "@nestjs/common";
-import type { HostMatchVerdict } from "@tugra/shared";
+import type { HostEvidence, HostMatchVerdict } from "@tugra/shared";
 import { ImporterService } from "./importer.service";
 import { AgentCoolifyClient } from "./sources/agent-coolify.client";
 import { AgentCoolifySource } from "./sources/agent-coolify.source";
@@ -23,7 +23,7 @@ const session = (over: Record<string, unknown> = {}) => ({
 
 const verdict = (over: Partial<HostMatchVerdict> = {}): HostMatchVerdict => ({ coolifyServerUuid: "srv-edge", status: "probable", tugraServerId: "tugra-1", candidates: [{ serverId: "tugra-1", name: "edge-1", teamId: "t1", evidence: [{ kind: "ip", equal: true }] }], ...over });
 
-function make(o: { session?: Record<string, unknown> | null; verdicts?: HostMatchVerdict[]; manage?: boolean; teams?: string[]; roleError?: Error } = {}) {
+function make(o: { session?: Record<string, unknown> | null; verdicts?: HostMatchVerdict[]; identity?: Record<string, HostEvidence[]>; manage?: boolean; teams?: string[]; roleError?: Error } = {}) {
   const row = o.session === null ? null : session(o.session);
   const importSession = {
     findUnique: jest.fn().mockResolvedValue(row),
@@ -56,7 +56,11 @@ function make(o: { session?: Record<string, unknown> | null; verdicts?: HostMatc
     create: jest.fn(),
     label: jest.fn(() => "Coolify"),
   };
-  const hostMatch = { verdicts: jest.fn().mockResolvedValue(o.verdicts ?? [verdict()]) };
+  // The direct identity comparison between the Coolify server and a Tugra server (by Tugra server id); nothing reported = no evidence.
+  const hostMatch = {
+    verdicts: jest.fn().mockResolvedValue(o.verdicts ?? [verdict()]),
+    identityBetween: jest.fn(async (_agent: string, _uuid: string, tugraId: string) => o.identity?.[tugraId] ?? []),
+  };
   const svc = new ImporterService({} as never, prisma as never, { encrypt: (s: string) => s, decrypt: (s: string) => s } as never, access as never, audit as never, sources as never, undefined, hostMatch as never);
   return { svc, prisma, importSession, access, audit, sources, hostMatch, reads };
 }
@@ -89,20 +93,33 @@ describe("ImporterService.setHostLink", () => {
 
   it("refuses 'same machine' against the machine's own identity: a different host key, machine id or engine id is a 409 and stores nothing", async () => {
     for (const kind of ["ssh_host_key", "machine_id", "docker_engine_id"] as const) {
-      const m = make({ verdicts: [verdict({ status: "ambiguous", tugraServerId: null, candidates: [{ serverId: "tugra-1", name: "edge-1", teamId: "t1", evidence: [{ kind: "ip", equal: true }, { kind, equal: false }] }] })] });
-      await expect(m.svc.setHostLink("u1", "sess-a", link())).rejects.toBeInstanceOf(ConflictException);
+      const m = make({ identity: { "tugra-1": [{ kind, equal: false }] } });
+      await expect(m.svc.setHostLink("u1", "sess-a", link())).rejects.toMatchObject({ response: { code: "identity_conflict" } });
       expect(m.importSession.update).not.toHaveBeenCalled();
+      expect(m.audit.log).not.toHaveBeenCalled();
     }
   });
 
+  it("refuses on a differing identity even when the ladder lists no candidate at all (no other fact is shared)", async () => {
+    const m = make({ verdicts: [verdict({ status: "none", tugraServerId: null, candidates: [] })], identity: { "tugra-1": [{ kind: "machine_id", equal: false }] } });
+    await expect(m.svc.setHostLink("u1", "sess-a", link())).rejects.toBeInstanceOf(ConflictException);
+    expect(m.importSession.update).not.toHaveBeenCalled();
+    expect(m.hostMatch.identityBetween).toHaveBeenCalledWith("srv-agent", "srv-edge", "tugra-1");
+  });
+
+  it("a single differing kind refuses even when the other kinds agree", async () => {
+    const m = make({ identity: { "tugra-1": [{ kind: "machine_id", equal: true }, { kind: "ssh_host_key", equal: false }] } });
+    await expect(m.svc.setHostLink("u1", "sess-a", link())).rejects.toBeInstanceOf(ConflictException);
+  });
+
   it("an address or host name that differs is not an identity conflict: the owner may still say it is the machine", async () => {
-    const m = make({ verdicts: [verdict({ status: "ambiguous", tugraServerId: null, candidates: [{ serverId: "tugra-1", name: "edge-1", teamId: "t1", evidence: [{ kind: "hostname", equal: true }, { kind: "ip", equal: false }] }] })] });
+    const m = make({ identity: { "tugra-1": [{ kind: "ip", equal: false }, { kind: "hostname", equal: false }] } });
     await expect(m.svc.setHostLink("u1", "sess-a", link())).resolves.toBeDefined();
   });
 
-  it("an identity that agrees is not a conflict (the owner confirms what the evidence already shows)", async () => {
-    const m = make({ verdicts: [verdict({ candidates: [{ serverId: "tugra-1", name: "edge-1", teamId: "t1", evidence: [{ kind: "machine_id", equal: true }] }] })] });
-    await expect(m.svc.setHostLink("u1", "sess-a", link())).resolves.toBeDefined();
+  it("an identity that agrees, or that nobody reported, is not a conflict (the owner may confirm what they know)", async () => {
+    await expect(make({ identity: { "tugra-1": [{ kind: "machine_id", equal: true }] } }).svc.setHostLink("u1", "sess-a", link())).resolves.toBeDefined();
+    await expect(make().svc.setHostLink("u1", "sess-a", link())).resolves.toBeDefined();
   });
 
   it("the Coolify host itself is always 'this server': no answer can be given for it", async () => {
@@ -160,6 +177,21 @@ describe("ImporterService.plan: the owner's answer reaches the hosts", () => {
     expect(edge.tugra).toEqual({ serverId: "tugra-1", name: "edge-1", teamId: "t1", via: "owner", confidence: "probable" });
     expect(edge.match).toEqual({ status: "probable", linkedBy: "user", evidence: [{ kind: "ip", equal: true }] });
     expect(edge.agentOnline).toBe(true);
+  });
+
+  it("an answer whose identity now differs from the machine's own is dropped at plan time, with the conflict shown, whatever the ladder listed", async () => {
+    const { plan } = await planOf({ session: { hostLinks: { "srv-edge": { serverId: "tugra-1" } } }, identity: { "tugra-1": [{ kind: "docker_engine_id", equal: false }] } });
+    const edge = plan.preflight!.hosts!.find((h) => h.ref === "srv-edge")!;
+    expect(edge.tugra).toBeUndefined();
+    expect(edge.agentOnline).toBe(false);
+    expect(edge.match).toEqual({ status: "none", linkedBy: "user", evidence: [{ kind: "docker_engine_id", equal: false }, { kind: "ip", equal: true }] });
+  });
+
+  it("an answer whose identity agrees shows that identity as evidence beside the address", async () => {
+    const { plan } = await planOf({ session: { hostLinks: { "srv-edge": { serverId: "tugra-1" } } }, identity: { "tugra-1": [{ kind: "machine_id", equal: true }] } });
+    const edge = plan.preflight!.hosts!.find((h) => h.ref === "srv-edge")!;
+    expect(edge.tugra).toMatchObject({ serverId: "tugra-1", via: "owner" });
+    expect(edge.match).toEqual({ status: "probable", linkedBy: "user", evidence: [{ kind: "machine_id", equal: true }, { kind: "ip", equal: true }] });
   });
 
   it("a Tugra server whose agent is offline is matched, but not online", async () => {

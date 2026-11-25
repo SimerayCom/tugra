@@ -147,6 +147,29 @@ describe("HostMatchService: the SSH probe's identity facts reach the ladder", ()
     const facts = await svc.probeFacts("agent", ["c1"]);
     expect(facts.get("c1")).toEqual({ machineIdHash: HEX });
   });
+
+  describe("identityBetween: compared directly, with no ladder candidate needed", () => {
+    it("a machine id, engine id or host key that differs is a conflict even when the two servers share nothing else", async () => {
+      const FP = "SHA256:" + "A".repeat(43);
+      const { svc } = makeWithProbes([{ coolifyServerUuid: "c1", probe: { machineIdHash: HEX, dockerEngineId: "ENGINE-1111", sshHostKeyFp: FP }, hostKeyFp: null }], [row("a")], {
+        a: { machineIdHash: "e".repeat(64), dockerEngineId: "ENGINE-1111", sshHostKeyFp: "SHA256:" + "B".repeat(43) },
+      });
+      const ev = await svc.identityBetween("agent", "c1", "a");
+      expect(ev).toEqual(expect.arrayContaining([{ kind: "machine_id", equal: false }, { kind: "docker_engine_id", equal: true }, { kind: "ssh_host_key", equal: false }]));
+    });
+
+    it("says nothing when either side has not reported (unknown is never different)", async () => {
+      const { svc } = makeWithProbes([], [row("a")], { a: { machineIdHash: HEX } });
+      expect(await svc.identityBetween("agent", "c1", "a")).toEqual([]);
+      const none = makeWithProbes([{ coolifyServerUuid: "c1", probe: { machineIdHash: HEX }, hostKeyFp: null }], [row("a")], {});
+      expect(await none.svc.identityBetween("agent", "c1", "a")).toEqual([]);
+    });
+
+    it("an agreeing machine id is equal evidence", async () => {
+      const { svc } = makeWithProbes([{ coolifyServerUuid: "c1", probe: { machineIdHash: HEX }, hostKeyFp: null }], [row("a")], { a: { machineIdHash: HEX } });
+      expect(await svc.identityBetween("agent", "c1", "a")).toEqual([{ kind: "machine_id", equal: true }]);
+    });
+  });
 });
 
 describe("probeIdentity: only a fact with the shape of one is kept", () => {

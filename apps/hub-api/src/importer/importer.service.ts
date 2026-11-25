@@ -270,6 +270,14 @@ export class ImporterService {
       const addressOf = new Map(fleet.servers.map((s) => [s.ref, s.ip] as const));
       // Agent transport: the evidence ladder (identity confirms, an address is only probable). The token path keeps the address match.
       const ladder = agentServerId && this.hostMatch ? await this.ladderHosts(userId, fleet, agentServerId) : null;
+      // An owner answer "same machine" is re-checked against the machines' own identity now (a probe or a report may have changed since it was given).
+      const ownerIdentity = new Map<string, HostEvidence[]>();
+      if (agentServerId && this.hostMatch) {
+        for (const h of existing ?? []) {
+          const l = h.controlPlane ? undefined : hostLinks[h.ref];
+          if (l?.serverId) ownerIdentity.set(h.ref, await this.hostMatch.identityBetween(agentServerId, h.ref, l.serverId));
+        }
+      }
       const hosts = (existing ?? []).map((h) => {
         const address = h.controlPlane ? panelHost : addressOf.get(h.ref);
         const m = registered.length ? matchTugraServer(address, registered) : null;
@@ -277,7 +285,7 @@ export class ImporterService {
         const online = (id: string | undefined): boolean => (id ? rows.find((r) => r.id === id)?.status === "ONLINE" : false);
         const v = ladder?.get(h.ref);
         const link = agentServerId && !h.controlPlane ? hostLinks[h.ref] : undefined;
-        if (link) return ownerAnswer(h, link, rows, v, online);
+        if (link) return ownerAnswer(h, link, rows, v, online, ownerIdentity.get(h.ref) ?? []);
         if (!v) return m ? { ...h, tugra: m, agentOnline: online(m.serverId) } : { ...h, agentOnline: false };
         const best = v.candidates.find((c) => c.serverId === v.tugraServerId);
         const tugra = best && (v.status === "certain" || v.status === "probable")
@@ -338,10 +346,10 @@ export class ImporterService {
         const perms = await this.access.permissionsByTeam(userId);
         if (!server || !perms.has(server.teamId)) throw new NotFoundException("server not found");
         if (!perms.get(server.teamId)?.has("servers:manage")) throw new ForbiddenException("you cannot manage that server");
-        const inputs: CoolifyHostInput[] = listed.map((x) => ({ uuid: x.ref, address: x.address, isLocal: x.controlPlane }));
-        const verdict = (await this.hostMatch?.verdicts(userId, inputs, { localServerId: row.agentServerId }))?.find((v) => v.coolifyServerUuid === input.coolifyServerUuid);
-        const conflict = verdict?.candidates.find((c) => c.serverId === input.serverId)?.evidence.some((e) => IDENTITY_KINDS.has(e.kind) && !e.equal);
-        if (conflict) throw new ConflictException({ statusCode: 409, code: "identity_conflict", message: "the machine identity of the two servers differs" });
+        // The machine's own identity is compared directly (the ladder lists only servers that share an equal fact, so a server whose
+        // machine id or host key differs and shares nothing else is never a candidate and would slip through a candidate-only check).
+        const identity = (await this.hostMatch?.identityBetween(row.agentServerId, input.coolifyServerUuid, input.serverId)) ?? [];
+        if (identity.some((e) => IDENTITY_KINDS.has(e.kind) && !e.equal)) throw new ConflictException({ statusCode: 409, code: "identity_conflict", message: "the machine identity of the two servers differs" });
         if (Object.keys(links).length >= MAX_HOST_LINKS && !(input.coolifyServerUuid in links)) throw new BadRequestException("too many answers");
         links[input.coolifyServerUuid] = { serverId: input.serverId };
       }
@@ -494,11 +502,15 @@ function ownerAnswer(
   rows: ReadonlyArray<{ id: string; name: string; teamId: string }>,
   verdict: { candidates: Array<{ serverId: string; evidence: HostEvidence[] }> } | undefined,
   online: (id: string | undefined) => boolean,
+  identity: readonly HostEvidence[],
 ): PreflightHost {
   const { tugra: _drop, ...rest } = h;
   if (link.serverId === null) return { ...rest, match: { status: "none", linkedBy: "user", evidence: [] }, agentOnline: false };
   const target = rows.find((r) => r.id === link.serverId);
   if (!target) return { ...rest, match: { status: "none", linkedBy: "user", evidence: [] }, agentOnline: false };
-  const evidence = verdict?.candidates.find((c) => c.serverId === target.id)?.evidence ?? [];
+  // The machine's own identity wins over the answer: a kind that differs now drops it (the conflict stays visible as evidence), whatever the ladder listed.
+  const listed = (verdict?.candidates.find((c) => c.serverId === target.id)?.evidence ?? []).filter((e) => !IDENTITY_KINDS.has(e.kind));
+  const evidence = [...identity, ...listed];
+  if (identity.some((e) => IDENTITY_KINDS.has(e.kind) && !e.equal)) return { ...rest, match: { status: "none", linkedBy: "user", evidence }, agentOnline: false };
   return { ...rest, tugra: { serverId: target.id, name: target.name, teamId: target.teamId, via: "owner", confidence: "probable" }, match: { status: "probable", linkedBy: "user", evidence }, agentOnline: online(target.id) };
 }

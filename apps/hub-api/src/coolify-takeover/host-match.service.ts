@@ -1,10 +1,10 @@
 import { Injectable } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
-import type { CoolifyServerLink, HostIdentityFacts, HostMatchVerdict } from "@tugra/shared";
+import type { CoolifyServerLink, HostEvidence, HostIdentityFacts, HostMatchVerdict } from "@tugra/shared";
 import { PrismaService } from "../prisma/prisma.service";
 import { TeamAccessService } from "../common/team-access.service";
 import { ServersService } from "../servers/servers.service";
-import { matchHosts, type CoolifyHostInput, type MatchOptions, type TugraHostInput } from "./host-match";
+import { identityEvidence, matchHosts, type CoolifyHostInput, type MatchOptions, type TugraHostInput } from "./host-match";
 
 /** The preflight's per-host verdict: what the screen shows. Verdict kinds only, no address. */
 export interface PreflightMatch {
@@ -47,6 +47,17 @@ export class HostMatchService {
       if (f) out.set(r.coolifyServerUuid, f);
     }
     return out;
+  }
+
+  /**
+   * The identity evidence between one Coolify server and one Tugra server, compared directly: what the SSH probe saw of the Coolify
+   * server against what the Tugra server's agent reports. It does not depend on the ladder listing the server as a candidate (the ladder
+   * drops a server that shares no equal fact, which is exactly where a different machine id or host key would hide). A kind only one side
+   * reports says nothing; a kind both report is `equal` or a conflict. Facts only, never an address.
+   */
+  async identityBetween(agentServerId: string, coolifyServerUuid: string, tugraServerId: string): Promise<HostEvidence[]> {
+    const probed = (await this.probeFacts(agentServerId, [coolifyServerUuid])).get(coolifyServerUuid);
+    return identityEvidence(probed, this.servers.hostIdentityOf(tugraServerId));
   }
 
   /**
