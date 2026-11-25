@@ -16,6 +16,7 @@ import { scopedPlan, scopeServiceSkips, type ImportScope, type ScopeSelection } 
 import { clearImportResume, loadImportResume, saveImportResume } from "../lib/import-resume";
 import { IMPORT_PREFILL_KEY } from "../lib/coolify-takeover";
 import { focusSelection, lastImportUrl, rememberLastImportUrl, takeImportFocus, type ImportFocus } from "../lib/import-focus";
+import { rememberObjectMigrationContext } from "../lib/object-migration-context";
 import { CutoverPanel } from "./cutover-panel";
 import { planSummary, itemsByKind, riskTone, opProgress, coverageApps, coverageCounts, hasDeferredCoverage, reasonText, ackableItems, buildAcks, runnableAfterAcks, serviceChoicesPayload, volumeCopyCandidates, selectedDbModes, vxCommandsWithFlags } from "../lib/import";
 import { ImportVolumeTransfers } from "./import-volume-transfers";
@@ -545,7 +546,7 @@ function PlanView({
                       {sv.objectStore && (
                         <>
                           {" "}
-                          <a href="/migrations/objects/new" target="_blank" rel="noopener noreferrer" title={t("objectMigration.migrateObjectsHint")}>{t("objectMigration.migrateObjects")}</a>
+                          <a href="/migrations/objects/new" target="_blank" rel="noopener noreferrer" title={t("objectMigration.migrateObjectsHint")} onClick={() => rememberObjectMigrationContext({ ...(target ? { targetServerId: target } : {}), serviceName: sv.name })}>{t("objectMigration.migrateObjects")}</a>
                         </>
                       )}
                     </li>

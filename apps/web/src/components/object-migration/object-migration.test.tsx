@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
-import { render, screen, cleanup, fireEvent, within } from "@testing-library/react";
+import { render, screen, cleanup, fireEvent, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import React from "react";
 import { I18nProvider } from "../../i18n/provider";
@@ -148,14 +148,42 @@ describe("ConfigCarry", () => {
 
 describe("SourceDestinationForm", () => {
   beforeEach(() => {
-    vi.spyOn(api, "listServers").mockResolvedValue([{ id: "srv1", name: "Server A", teamId: "t1", status: "ONLINE", clusterId: null, tags: [] }] as never);
+    window.localStorage.clear();
+    vi.spyOn(api, "listServers").mockResolvedValue([
+      { id: "srv1", name: "Server A", teamId: "t1", status: "ONLINE", clusterId: null, tags: [], canWrite: true, capabilities: ["backup"] },
+      { id: "srv2", name: "Server B", teamId: "t1", status: "ONLINE", clusterId: null, tags: [], canWrite: true, capabilities: ["deploy"] },
+      { id: "srv3", name: "Server C", teamId: "t2", status: "ONLINE", clusterId: null, tags: [], canWrite: true, capabilities: ["backup"] },
+    ] as never);
   });
   afterEach(() => vi.restoreAllMocks());
+
+  it("never picks a server or a destination for the user, and lists what is needed", async () => {
+    wrap(<SourceDestinationForm busy={false} onSubmit={vi.fn()} />);
+    const sel = (await screen.findByLabelText("Target server")) as HTMLSelectElement;
+    await waitFor(() => expect(sel.options.length).toBeGreaterThan(1));
+    expect(sel.value).toBe("");
+    expect((screen.getAllByLabelText("Endpoint")[1] as HTMLInputElement).value).toBe("");
+    expect(screen.getByTestId("om-needs").textContent).toMatch(/backup capability/);
+    const b = [...sel.options].find((o) => o.textContent?.startsWith("Server B"))!;
+    expect(b.textContent).toBe("Server B (capability off)");
+    expect(b.disabled).toBe(true);
+  });
+
+  it("opens on the server the import chose, limited to that team, with a way back", async () => {
+    window.localStorage.setItem("tugra.objmig.context", JSON.stringify({ targetServerId: "srv1", serviceName: "minio-prod", backHref: "/import/runs/r1", at: Date.now() }));
+    wrap(<SourceDestinationForm busy={false} onSubmit={vi.fn()} />);
+    const sel = (await screen.findByLabelText("Target server")) as HTMLSelectElement;
+    await waitFor(() => expect(sel.value).toBe("srv1"));
+    expect([...sel.options].some((o) => o.textContent?.startsWith("Server C"))).toBe(false); // another team
+    expect((screen.getByLabelText("Name") as HTMLInputElement).value).toBe("minio-prod");
+    expect(screen.getByRole("link", { name: "Back" }).getAttribute("href")).toBe("/import/runs/r1");
+  });
 
   it("submits only when every field is present and both endpoints look like http(s) origins; secrets are password fields", async () => {
     const onSubmit = vi.fn();
     wrap(<SourceDestinationForm busy={false} onSubmit={onSubmit} />);
     await screen.findByRole("option", { name: "Server A" });
+    fireEvent.change(screen.getByLabelText("Target server"), { target: { value: "srv1" } });
     const submit = screen.getByRole("button", { name: "Create and check" }) as HTMLButtonElement;
     expect(submit.disabled).toBe(true);
     const form = submit.closest("form")!;
@@ -170,7 +198,7 @@ describe("SourceDestinationForm", () => {
     const [srcSk, dstSk] = screen.getAllByLabelText("Secret key");
     fireEvent.change(srcSk, { target: { value: "SK1" } });
     fireEvent.change(dstSk, { target: { value: "SK2" } });
-    expect(submit.disabled).toBe(false); // the destination defaults to the same-host MinIO
+    expect(submit.disabled).toBe(true); // no destination yet: nothing says a MinIO runs on the target
     fireEvent.change(dstEp, { target: { value: "https://user:pw@evil.example.com/path" } });
     expect(submit.disabled).toBe(true); // userinfo / path refused client-side too
     fireEvent.change(dstEp, { target: { value: "http://host.docker.internal:9100" } });

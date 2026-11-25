@@ -166,5 +166,13 @@
   "readOnly": "You can view this migration but not change it.",
   "back": "Object migrations",
   "loading": "Loading...",
-  "notFound": "Migration not found."
+  "notFound": "Migration not found.",
+  "pickServer": "Choose the server that runs the copy",
+  "needs": {
+    "agent": "The target server's agent is online and has the backup capability.",
+    "destination": "A MinIO or another S3 store on the target side. Create it first if there is none.",
+    "keys": "An access key and secret for the source and for the destination. Create them in each store."
+  },
+  "fromImport": "For {service}, from your import. The import stays open in its tab.",
+  "backToImport": "Back"
 }

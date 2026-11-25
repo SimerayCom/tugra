@@ -9,6 +9,7 @@ import { Field, TextInput } from "../form";
 import { CopyBtn } from "../copy-row";
 import { attestationVoid, codeText, paramText } from "../../lib/migration-run";
 import type { MigrationRunStepView } from "../../lib/types";
+import { rememberObjectMigrationContext } from "../../lib/object-migration-context";
 import { CommandBlock } from "./command-block";
 import { useRunPlumbing } from "./use-run-actions";
 
@@ -83,7 +84,7 @@ function AttachRow({ runId, step }: { runId: string; step: MigrationRunStepView 
         </Field>
         <Btn variant="ghost" onClick={() => attach.mutate()} disabled={!id.trim()} loading={attach.isPending}>{t("migrationRun.attach.button")}</Btn>
       </div>
-      <a href="/migrations/objects/new" className="tg-link" style={{ fontSize: 12 }}>{t("migrationRun.attach.create")}</a>
+      <a href="/migrations/objects/new" className="tg-link" style={{ fontSize: 12 }} onClick={() => rememberObjectMigrationContext({ backHref: `/import/runs/${encodeURIComponent(runId)}` })}>{t("migrationRun.attach.create")}</a>
     </div>
   );
 }
