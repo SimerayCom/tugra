@@ -1,7 +1,8 @@
 "use client";
 
-import { MutationCache, QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { useState, type ReactNode } from "react";
+import { MutationCache, QueryClientProvider } from "@tanstack/react-query";
+import { useEffect, useState, type ReactNode } from "react";
+import { PollingQueryClient } from "./idle-polling";
 import { AuthProvider } from "./auth";
 import { emitToast } from "./toast-bus";
 import { I18nProvider } from "../i18n/provider";
@@ -13,7 +14,7 @@ import { BrandingProvider } from "../components/branding";
 export function Providers({ children }: { children: ReactNode }) {
   const [client] = useState(
     () =>
-      new QueryClient({
+      new PollingQueryClient({
         defaultOptions: { queries: { refetchOnWindowFocus: false, retry: 1 } },
         // No mutation error is silent: surface it as a toast (inline errors remain). A mutation can also
         // OPT IN to a success toast by setting meta.successMessage — so a save gives feedback without each
@@ -27,6 +28,8 @@ export function Providers({ children }: { children: ReactNode }) {
         }),
       }),
   );
+  // One shared idle/active tracker for every polled query: 4x slower after 60 s without interaction, instant refetch on return.
+  useEffect(() => client.start(), [client]);
   return (
     <QueryClientProvider client={client}>
       <BrandingProvider>
