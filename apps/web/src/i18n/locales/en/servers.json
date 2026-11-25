@@ -587,7 +587,27 @@
   "accessColumn": "Access",
   "capOffHint": "{name} off · turn it on in Access (select servers) or the server's Settings",
   "agentFleetTurnOnAuto": "Turn on automatic updates",
-  "adoptComposeHint": "Containers started by docker compose can't be adopted one by one yet. Leave them running; they keep working.",
+  "adoptComposeHint": "Containers started by docker compose are adopted as a whole stack, from the first container of the project. Leave them running; they keep working.",
+  "adoptStack": "Adopt stack",
+  "stackPreview": "Stack {project}: {n} services ({services})",
+  "stackAdoptOnFirst": "Adopt the whole {project} stack from its first container.",
+  "stackNeedsAdmin": "Only team owners and admins can adopt a compose stack.",
+  "stackModalTitle": "Adopt the {project} stack",
+  "stackModalDesc": "Tugra takes over this docker compose project where it is. Nothing is renamed, stopped or recreated.",
+  "stackServices": "Services ({n})",
+  "stackFiles": "Compose files on the server",
+  "stackVolumes": "{n} named volumes stay exactly where they are.",
+  "stackNoRecreate": "Future deploys run docker compose with the same project name and these same files, so unchanged services keep running. If the compose version differs from the one that started them, compose may still recreate a service once.",
+  "stackFilesStay": "The files stay on the server and are never copied or rewritten: edit them there. Domains and environment variables set in Tugra don't apply to an adopted stack. Deleting the app only unregisters it.",
+  "stackAdoptSuccess": "Adopted the {name} stack",
+  "stackRefusal": {
+    "tugra": "This project is part of Tugra and can't be adopted.",
+    "managed": "Coolify or Dokploy runs this project. Move it with that platform's import instead.",
+    "no_config": "This project doesn't record its working directory and compose files, so Tugra couldn't run it later.",
+    "unsafe_path": "This project lives in a place Tugra can't mount safely (a system directory, or spaces or special characters in the path).",
+    "bad_name": "This project's name can't be used.",
+    "name_clash": "Another container's name starts with this project's name, so the two can't be told apart. Rename the project first."
+  },
   "adoptManagedBy": "Move with the {platform} import",
   "adoptManagedHint": "{platform} runs this container. The {platform} import moves it together with its settings, domains and data."
 }

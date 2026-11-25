@@ -336,7 +336,7 @@ export default function ServerDetailPage() {
           {server.canWrite && <ServerDetailsCard id={id} server={server} />}
           {server.canWrite && <ServerTeamCard id={id} server={server} />}
           {server.canWrite && <CleanupCard id={id} server={server} />}
-          {server.canWrite && <div id="server-discover" style={{ scrollMarginTop: 72 }}><DiscoverAdoptCard id={id} autoScan={adoptScan} /></div>}
+          {server.canWrite && <div id="server-discover" style={{ scrollMarginTop: 72 }}><DiscoverAdoptCard id={id} autoScan={adoptScan} teamId={server.teamId} /></div>}
           {server.canWrite && <DeleteServerCard id={id} server={server} />}
         </>
       )}

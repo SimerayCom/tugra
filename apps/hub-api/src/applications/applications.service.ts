@@ -119,10 +119,12 @@ import {
   buildContainersScript,
   buildLogsScript,
   composeProject,
+  adoptedCompose,
   composeVolumes,
   composeServiceNames,
   parseContainers,
 } from "../deploy/compose-script";
+import { parseComposeAdopt, type ComposeAdopt } from "../deploy/compose-adopt";
 import {
   generateWebhookSecret,
   generateWebhookToken,
@@ -232,6 +234,14 @@ export const AppViewSchema = z.object({
   outputDir: z.string().nullable(),
   composeFile: z.string().nullable(),
   composePath: z.string().nullable(), // COMPOSE-from-git: repo-relative path to the compose file (null = pasted compose)
+  composeAdopt: z
+    .object({
+      project: z.string(),
+      workingDir: z.string(),
+      files: z.array(z.string()),
+      services: z.array(z.object({ name: z.string(), image: z.string(), ports: z.array(z.number()) })),
+    })
+    .nullable(), // COMPOSE adopted in place from a project already running on the server (writer-only: host paths); null = Tugra's own compose
   healthCmd: z.string().nullable(),
   healthCheckType: z.string().nullable(),
   healthCheckPath: z.string().nullable(),
@@ -416,6 +426,12 @@ export const GitSshKeyResultSchema = z.object({
 
 /** Capture the user's non-secret install choices (timezone, username, ...) for the record, but never
  *  persist a secret field's value — installConfig is bookkeeping, not a secret store (SPEC §8). */
+/** The writer-facing summary of an adopted compose project (host paths, service names and images; never file content). */
+function adoptedView(app: { composeAdopt?: unknown }) {
+  const a = parseComposeAdopt(app.composeAdopt);
+  return a ? { project: a.project, workingDir: a.workingDir, files: a.files.map((f) => f.path), services: a.services.map((x) => ({ name: x.name, image: x.image, ports: x.ports })) } : null;
+}
+
 function redactInstallConfig(
   fields: Record<string, string> | undefined,
   defs: FormField[] | undefined,
@@ -798,6 +814,50 @@ export class ApplicationsService {
     });
     // Skip the first deploy for an auto-keyed ssh repo — the user must add the public key to the repo first.
     return this.finishCreate(app, userId, server.teamId, dto.deploy && !sshAuto, server.publicIp ?? server.publicIpv6);
+  }
+
+  /**
+   * Register a compose project that already runs on the server as a Tugra compose app, WITHOUT deploying or touching a
+   * container: the row carries the project name, working dir and host config files (see deploy/compose-adopt.ts), so
+   * later deploys run `docker compose -p <project>` on those same files. Called by the migrator, which has already
+   * validated the registration against a fresh inspect of the host and enforced owner/admin.
+   */
+  async createAdoptedCompose(
+    userId: string,
+    input: { serverId: string; name: string; environmentId?: string; adopt: ComposeAdopt; running: boolean },
+  ): Promise<AppView> {
+    const server = await this.prisma.server.findUnique({ where: { id: input.serverId } });
+    if (!server) throw new NotFoundException("server not found");
+    await this.access.requirePermission(userId, server.teamId, "apps:config");
+    if (input.environmentId) await this.assertEnvInTeam(input.environmentId, server.teamId);
+    const environmentId = input.environmentId ?? (await this.teamDefaults.resolveDefaultEnvironmentId(server.teamId));
+    const app = await this.prisma.application.create({
+      data: {
+        name: input.name,
+        environmentId,
+        source: "COMPOSE",
+        postCutoverSoakSec: defaultSoakFor("COMPOSE"),
+        gitBranch: "main",
+        buildType: "NIXPACKS",
+        composeAdopt: input.adopt as unknown as Prisma.InputJsonValue,
+        serverId: input.serverId,
+        teamId: server.teamId,
+        env: {} as Prisma.InputJsonValue,
+        envEnc: this.crypto.encrypt(JSON.stringify({})),
+        envMetaEnc: this.encryptMeta(normalizeFlags({}, [])),
+        containerPort: 80,
+        domain: null,
+        https: true,
+        exposeMode: "none",
+        domainKind: "none",
+        certType: "http",
+        status: input.running ? AppStatus.RUNNING : AppStatus.STOPPED,
+        tags: normalizeTags(["adopted"]),
+        webhookToken: generateWebhookToken(),
+        webhookSecret: this.crypto.encrypt(generateWebhookSecret()),
+      },
+    });
+    return this.finishCreate(app, userId, server.teamId, false, server.publicIp ?? server.publicIpv6);
   }
 
   /** Shared post-insert tail for both create() and createFromTemplate(): grant-on-create access,
@@ -3175,6 +3235,9 @@ export class ApplicationsService {
     } else {
       // keepVolumes: leave the app's named volumes / compose volumes on the host (the user opted to keep
       // their data). Default removes them — deleting an app frees its disk, as before.
+      // A project adopted in place is the user's own: deleting the app only UNREGISTERS it. Its containers, volumes and
+      // files are left exactly as they are (no compose down, no volume removal).
+      const unregisterOnly = app.source === "COMPOSE" && !!adoptedCompose(app);
       let cmd =
         app.source === "COMPOSE"
           ? buildComposeDownScript(await this.composeOpSpec(app), { volumes: !opts.keepVolumes })
@@ -3185,8 +3248,10 @@ export class ApplicationsService {
       if (opts.removeImages && app.source !== "COMPOSE") {
         cmd += "\n" + buildAppImagesRemoveScript(app);
       }
-      const res = await this.agentWs.sendCommand(app.serverId, cmd, "deploy").catch(() => undefined);
-      removeScriptOk = res?.exitCode === 0;
+      if (!unregisterOnly) {
+        const res = await this.agentWs.sendCommand(app.serverId, cmd, "deploy").catch(() => undefined);
+        removeScriptOk = res?.exitCode === 0;
+      }
     }
     // Build cache is host-global (no per-app purge): prune dangling records on the host that actually builds this
     // app — its build server for a non-compose app, else the run server. Dispatched AFTER the row is deleted
@@ -4070,6 +4135,7 @@ export class ApplicationsService {
   async setComposeFile(userId: string, id: string, composeFile: string): Promise<void> {
     const app = await this.requireMutate(userId, id);
     if (app.source !== "COMPOSE") throw new BadRequestException("not a compose app");
+    if (adoptedCompose(app)) throw new BadRequestException("this stack was adopted from files on the server; edit them there (Tugra runs them as they are)");
     assertSafeCompose(composeFile);
     // A saved deploy hook targets one service: refuse a file that drops it (the hook would fail every deploy).
     if ((app.preDeployCommand || app.postDeployCommand) && app.composeHookService && !composeServiceNames(composeFile).includes(app.composeHookService)) {
@@ -5888,6 +5954,7 @@ export class ApplicationsService {
       outputDir: app.outputDir,
       composeFile: app.composeFile,
       composePath: app.composePath,
+      ...(app.source === "COMPOSE" && app.composeAdopt ? { composeAdopt: app.composeAdopt } : {}),
       healthCmd: app.healthCmd,
       healthCheckType: app.healthCheckType,
       healthCheckPath: app.healthCheckPath,
@@ -6095,7 +6162,7 @@ export class ApplicationsService {
 
   /** The airtight container-name match for one app (shared by the runtime view and the health loader so the
    *  prefix rules cannot drift). `withRollout` adds the rolling deploy's not-yet-live `__rollout` container. */
-  private containerNameFilter(app: Pick<Application, "id" | "clusterId">, opts: { withRollout: boolean }) {
+  private containerNameFilter(app: Pick<Application, "id" | "clusterId"> & { composeAdopt?: unknown }, opts: { withRollout: boolean }) {
     const prefix = composeProject(app);
     return [
       { containerName: prefix },
@@ -6257,6 +6324,7 @@ export class ApplicationsService {
       outputDir: app.outputDir,
       composeFile: canWrite ? app.composeFile : null,
       composePath: app.composePath,
+      composeAdopt: canWrite ? adoptedView(app) : null,
       hasConfigMounts: this.appConfigMounts(app).length > 0,
       healthCmd: app.healthCmd,
       healthCheckType: app.healthCheckType,

@@ -278,6 +278,9 @@ export interface AppSpec {
    *  `docker-compose.yml`). When set (with gitUrl), the stack is cloned + rendered + run from the repo
    *  rather than from a stored composeFile. Mutually exclusive with composeFile. */
   composePath?: string | null;
+  /** For a COMPOSE app adopted in place: the registered project (name, working dir, host config files). Takes over the
+   *  deploy / lifecycle scripts, which then run compose on those files; see compose-adopt.ts. Absent = Tugra's own compose. */
+  composeAdopt?: unknown;
   /** For a COMPOSE app: additional per-service domains — route a named compose service (on a given
    *  container port) to its own hostname. Each row becomes its own HTTPS Traefik router in the override. */
   serviceDomains?: { service: string; hostname: string; port: number }[] | null;

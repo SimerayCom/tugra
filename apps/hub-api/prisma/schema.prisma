@@ -1483,6 +1483,9 @@ model Application {
   // this repo-relative path instead of being pasted/stored in composeFile. The two are mutually exclusive;
   // composePath != null is the discriminator for a git-sourced compose stack.
   composePath                  String?
+  // COMPOSE adopted in place from a project already running on the server: {v,project,workingDir,files[],...}. Deploys and
+  // lifecycle commands then run `docker compose -p <project>` on those host files (never copied, never rewritten). Null = Tugra's own compose.
+  composeAdopt                 Json?
   healthCmd                    String?
   healthCheckType              String? // null = auto | "NONE" | "HTTP" | "CMD" — deploy-gate health policy
   healthCheckPath              String? // HTTP check path (default "/")

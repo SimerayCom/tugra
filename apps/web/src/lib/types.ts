@@ -843,6 +843,21 @@ export interface DiscoveredContainer {
   adoptable: boolean; // false for compose-managed and platform-managed containers
 }
 
+export type StackRefusal = "tugra" | "managed" | "no_config" | "unsafe_path" | "bad_name" | "name_clash";
+/** A docker compose project found on a host, with whether Tugra can adopt it whole, in place. */
+export interface DiscoveredStack {
+  project: string;
+  workingDir: string | null;
+  configFiles: string[];
+  services: { service: string; image: string; ports: number[]; state: string; containers: number }[];
+  volumes: { service: string; name: string; target: string }[];
+  /** The first member row in the adopt table: "Adopt stack" sits on it. */
+  firstContainer: string;
+  adoptable: boolean;
+  reason: StackRefusal | null;
+  managedBy: "coolify" | "dokploy" | null;
+}
+
 export interface MetricsSample {
   ts: number;
   cpu: number;
@@ -2061,6 +2076,8 @@ export interface Application {
   outputDir: string | null;
   composeFile: string | null;
   composePath: string | null;
+  /** A compose project adopted in place from the server (host paths; writer-only). null = Tugra's own compose. */
+  composeAdopt?: { project: string; workingDir: string; files: string[]; services: { name: string; image: string; ports: number[] }[] } | null;
   healthCmd: string | null;
   healthCheckType: string | null;
   healthCheckPath: string | null;

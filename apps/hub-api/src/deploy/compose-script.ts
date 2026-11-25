@@ -25,6 +25,7 @@ import {
 import { assertScriptFits, mlPrefix, mlPrelude, planEnv } from "./env-render";
 import { composeHookPlan, composeHookPostSteps, composeHookPreSteps } from "./compose-hooks";
 import { composeRestartServices, DEFAULT_COMPOSE_RESTART } from "./compose-restart";
+import { ADOPT_IMAGE_PRELUDE, adoptedComposeCmd, adoptedComposeScript, parseComposeAdopt, type ComposeAdopt } from "./compose-adopt";
 
 /** A named volume declared in a compose app's docker-compose.yml. `dockerName` is the real docker
  *  volume: `<project>_<key>` for a normal declaration, the explicit `name:` when set, or the key
@@ -281,9 +282,15 @@ export function composeRestartServicesOf(app: AppSpec): string[] {
   return isGitCompose(app) ? [] : composeRestartServices(app.composeFile);
 }
 
-/** Compose project name — namespaces all services of this app. */
-export function composeProject(app: { id: string }): string {
-  return `tugra_${app.id}`;
+/** Compose project name — namespaces all services of this app. An app adopted in place keeps the project name it already
+ *  ran under (its containers carry that label); everything else is `tugra_<id>`. */
+export function composeProject(app: { id: string; composeAdopt?: unknown }): string {
+  return parseComposeAdopt(app.composeAdopt)?.project ?? `tugra_${app.id}`;
+}
+
+/** The adopted-in-place registration of a COMPOSE app (null for Tugra's own compose). Read from the spec or the DB row. */
+export function adoptedCompose(app: { composeAdopt?: unknown }): ComposeAdopt | null {
+  return parseComposeAdopt(app.composeAdopt);
 }
 
 // --- COMPOSE-from-git paths (shared with compose-git.ts) ---
@@ -328,7 +335,19 @@ function mountFp(s: string): string {
   return createHash("sha256").update(s, "utf8").digest("hex").slice(0, 12);
 }
 
+/**
+ * Deploy of a project adopted in place: the same files, project name and directory the user ran it with, so compose
+ * recognises the existing containers and only touches what changed (unchanged services are NOT recreated). Nothing is
+ * written into the user's project; Tugra's env / stored YAML / domain overrides do not apply (the project's own `.env`
+ * and files are the source of truth). No `--remove-orphans`: services the files no longer declare are the user's to remove.
+ */
+function buildAdoptedComposeUpScript(a: ComposeAdopt, noCache: boolean): string {
+  return ["set -e", ...ADOPT_IMAGE_PRELUDE, adoptedComposeCmd(a, `--progress plain up -d${noCache ? " --pull always" : ""}`), adoptedComposeCmd(a, "ps")].join("\n");
+}
+
 export function buildComposeUpScript(app: AppSpec, noCache = false): string {
+  const adopted = adoptedCompose(app);
+  if (adopted) return buildAdoptedComposeUpScript(adopted, noCache);
   const dir = composeDir(app);
   const file = composeFilePath(app);
   const proj = composeProject(app);
@@ -430,6 +449,8 @@ function composeOpEnv(app: AppSpec): { pre: string[]; prefix: string } {
 
 /** `<prelude>\n<prefix>docker compose -p P -f F <sub>`; just the command when there is nothing to carry. */
 function composeOpScript(app: AppSpec, sub: string, after = ""): string {
+  const adopted = adoptedCompose(app);
+  if (adopted) return adoptedComposeScript(adopted, `${sub}${after}`);
   const { pre, prefix } = composeOpEnv(app);
   const cmd = `${prefix}docker compose -p ${composeProject(app)} -f ${composeOpFile(app)} ${sub}${after}`;
   if (pre.length === 0) return cmd;
@@ -490,6 +511,9 @@ export function buildComposeDownScript(
   app: AppSpec,
   opts: { volumes?: boolean } = {},
 ): string {
+  const adopted = adoptedCompose(app);
+  // An adopted project is the user's own: removing it never deletes its volumes and never removes its directory.
+  if (adopted) return adoptedComposeScript(adopted, "down");
   const vol = opts.volumes ? " -v" : "";
   const { pre, prefix } = composeOpEnv(app);
   return [

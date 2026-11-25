@@ -8859,6 +8859,44 @@ describe("ApplicationsService — app move guards", () => {
       expect((t.prisma.application.delete as jest.Mock)).toHaveBeenCalled();
     });
 
+    const adoptReg = { v: 1, project: "shop", workingDir: "/srv/shop", files: [{ path: "/srv/shop/docker-compose.yml", sha256: "a".repeat(64), bytes: 1 }], services: [{ name: "web", image: "node:22", ports: [8080], volumes: [] }], adoptedAt: "x" };
+    const adoptedApp = { ...movingApp, serverId: "s1", source: "COMPOSE", composeFile: null, composeAdopt: adoptReg, clusterId: null, networks: [], dockerOptions: null, buildServerId: null };
+
+    it("deleting an adopted compose app only unregisters it: no docker command runs, so its containers, volumes and files stay", async () => {
+      const sent: string[] = [];
+      const prisma = {
+        application: { findUnique: jest.fn().mockResolvedValue(adoptedApp), delete: jest.fn().mockResolvedValue({}), findMany: jest.fn().mockResolvedValue([]) },
+        appMove: { findFirst: jest.fn().mockResolvedValue(null), findMany: jest.fn().mockResolvedValue([]), update: jest.fn() },
+      } as unknown as PrismaService;
+      const agentWs = { sendCommand: jest.fn().mockImplementation((_h: string, cmd: string) => { sent.push(cmd); return Promise.resolve({ exitCode: 0, output: "" }); }), isOnline: jest.fn().mockReturnValue(true) } as unknown as AgentWsServer;
+      await make(prisma, okAccess(), agentWs, makeDeployLogs(), makeMonitors()).remove("u1", "app1", { keepVolumes: false });
+      expect(sent.filter((c) => /docker (compose|rm|volume)|rm -rf/.test(c))).toEqual([]);
+      expect((prisma.application.delete as jest.Mock)).toHaveBeenCalled();
+    });
+
+    it("setComposeFile refuses an adopted stack (its files live on the host and run as they are)", async () => {
+      const update = jest.fn();
+      const prisma = { application: { findUnique: jest.fn().mockResolvedValue(adoptedApp), update } } as unknown as PrismaService;
+      await expect(make(prisma, okAccess(), {} as AgentWsServer).setComposeFile("u1", "app1", "services:\n  web:\n    image: nginx\n")).rejects.toThrow(/adopted from files on the server/);
+      expect(update).not.toHaveBeenCalled();
+    });
+
+    it("createAdoptedCompose inserts a COMPOSE row carrying the registration and runs no deploy or docker command", async () => {
+      const created = { ...adoptedApp, id: "appNew", teamId: "t1", status: "RUNNING" };
+      const create = jest.fn().mockResolvedValue(created);
+      const prisma = {
+        server: { findUnique: jest.fn().mockResolvedValue({ id: "s1", teamId: "t1", publicIp: "1.2.3.4", publicIpv6: null }) },
+        application: { create, findUnique: jest.fn().mockResolvedValue(created) },
+      } as unknown as PrismaService;
+      const agentWs = { sendCommand: jest.fn() } as unknown as AgentWsServer;
+      const view = await make(prisma, okAccess(), agentWs, makeDeployLogs(), makeMonitors()).createAdoptedCompose("u1", { serverId: "s1", name: "Shop", adopt: adoptReg as never, running: true });
+      const data = create.mock.calls[0][0].data;
+      expect(data).toMatchObject({ source: "COMPOSE", composeAdopt: adoptReg, exposeMode: "none", status: "RUNNING", environmentId: "env-default" });
+      expect(data.composeFile).toBeUndefined();
+      expect(agentWs.sendCommand).not.toHaveBeenCalled();
+      expect(view.composeAdopt).toMatchObject({ project: "shop", workingDir: "/srv/shop", files: ["/srv/shop/docker-compose.yml"] });
+    });
+
     it("an unreachable old server never blocks the delete (the move's sweeper keeps the archive; AppMove has no FK to the app)", async () => {
       const t = mkRemove([archive]);
       (t.prisma as unknown as { appMove: { findMany: jest.Mock } }).appMove.findMany.mockResolvedValue([{ ...archive }]);

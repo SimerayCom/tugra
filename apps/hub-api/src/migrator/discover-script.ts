@@ -64,6 +64,8 @@ export function foreignPlatform(c: { name: string; image: string; labelKeys: rea
 export interface ParsedContainer extends DiscoveredContainer {
   composeService: string | null;
   composeWorkingDir: string | null;
+  /** `com.docker.compose.project.config_files` as docker recorded it (comma-separated absolute paths), or null. */
+  composeConfigFiles: string | null;
   labelKeys: string[];
   tugraReason: TugraOwnedReason | null;
   /** True when this container proves its compose project is Tugra's own install (see {@link isProjectAnchor}). */
@@ -72,8 +74,8 @@ export interface ParsedContainer extends DiscoveredContainer {
 
 /** Strip the internal classifier fields before a container goes over the wire. */
 export function toPublicContainer(c: ParsedContainer): DiscoveredContainer {
-  const { composeService: _s, composeWorkingDir: _w, labelKeys: _l, tugraReason: _r, projectAnchor: _a, ...pub } = c;
-  void _s; void _w; void _l; void _r; void _a;
+  const { composeService: _s, composeWorkingDir: _w, composeConfigFiles: _f, labelKeys: _l, tugraReason: _r, projectAnchor: _a, ...pub } = c;
+  void _s; void _w; void _f; void _l; void _r; void _a;
   return pub;
 }
 
@@ -314,6 +316,7 @@ export function parseDiscovered(output: string): ParsedContainer[] {
     const composeProject = labels["com.docker.compose.project"] ?? null;
     const composeService = labels["com.docker.compose.service"] ?? null;
     const composeWorkingDir = labels["com.docker.compose.project.working_dir"] ?? null;
+    const composeConfigFiles = labels["com.docker.compose.project.config_files"] ?? null;
     const labelKeys = Object.keys(labels);
     const image = typeof config.Image === "string" ? config.Image : "";
     const tugraReason = classifyTugraOwned({ name, image, composeProject, composeService, composeWorkingDir, labelKeys });
@@ -332,6 +335,7 @@ export function parseDiscovered(output: string): ParsedContainer[] {
       managedBy: foreignPlatform({ name, image, labelKeys }),
       composeService,
       composeWorkingDir,
+      composeConfigFiles,
       labelKeys,
       tugraReason,
       projectAnchor,

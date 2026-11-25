@@ -3,9 +3,9 @@
 import Link from "next/link";
 import { useState, useEffect, useRef } from "react";
 import { TriangleAlert } from "lucide-react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
-import type { DiscoveredContainer, DiscoveredPort } from "../lib/types";
+import type { DiscoveredContainer, DiscoveredPort, DiscoveredStack } from "../lib/types";
 import { useT } from "../i18n/provider";
 import { Card, Btn, Badge, EmptyState } from "./ui";
 import { Modal } from "./modal";
@@ -20,14 +20,23 @@ function fmtPort(p: DiscoveredPort): string {
  *  container to Tugra's convention — see the warning block for what a later redeploy will NOT carry. */
 const PLATFORM = { coolify: "Coolify", dokploy: "Dokploy" } as const;
 
-export function DiscoverAdoptCard({ id, autoScan = 0 }: { id: string; autoScan?: number }) {
+export function DiscoverAdoptCard({ id, autoScan = 0, teamId }: { id: string; autoScan?: number; teamId?: string }) {
   const t = useT();
   const [rows, setRows] = useState<DiscoveredContainer[] | null>(null);
+  const [stacks, setStacks] = useState<DiscoveredStack[]>([]);
   const [target, setTarget] = useState<DiscoveredContainer | null>(null);
+  const [stackTarget, setStackTarget] = useState<DiscoveredStack | null>(null);
+  // Adopting a whole stack runs host files with the docker socket: owner/admin only (the hub enforces it too).
+  const { data: teams } = useQuery({ queryKey: ["teams"], queryFn: () => api.listTeams(), enabled: !!teamId, staleTime: 60_000 });
+  const role = teams?.find((tm) => tm.id === teamId)?.role;
+  const canAdoptStack = role === "OWNER" || role === "ADMIN";
 
   const scan = useMutation({
     mutationFn: () => api.discoverContainers(id),
-    onSuccess: (r) => setRows(r.containers),
+    onSuccess: (r) => {
+      setRows(r.containers);
+      setStacks(r.stacks ?? []);
+    },
   });
   // "Review" on the server scan bumps autoScan: start the scan right away instead of asking for a second click.
   const scanRef = useRef(scan);
@@ -64,11 +73,19 @@ export function DiscoverAdoptCard({ id, autoScan = 0 }: { id: string; autoScan?:
               </tr>
             </thead>
             <tbody>
-              {rows.map((c) => (
+              {rows.map((c) => {
+                const stack = c.composeProject ? stacks.find((s) => s.project === c.composeProject) : undefined;
+                const firstOfStack = !!stack && stack.firstContainer === c.name;
+                return (
                 <tr key={c.id || c.name} style={{ borderBottom: "1px solid var(--c-bd)" }}>
                   <td style={td}>
                     <span className="mono" style={{ wordBreak: "break-all" }}>{c.name}</span>
                     {c.state !== "running" && <span style={{ marginLeft: 6 }}><Badge tone="muted">{c.state}</Badge></span>}
+                    {firstOfStack && stack.adoptable && (
+                      <div data-testid="stack-preview" style={{ whiteSpace: "normal", fontSize: 11, color: "var(--c-tx3)", marginTop: 2 }}>
+                        {t("servers.stackPreview", { project: stack.project, n: stack.services.length, services: stack.services.map((s) => s.service).join(", ") })}
+                      </div>
+                    )}
                   </td>
                   <td style={{ ...td, color: "var(--c-tx3)" }} className="mono">{c.image}</td>
                   <td style={{ ...td, color: "var(--c-tx3)" }} className="mono">
@@ -77,23 +94,90 @@ export function DiscoverAdoptCard({ id, autoScan = 0 }: { id: string; autoScan?:
                   <td style={{ ...td, textAlign: "right" }}>
                     {c.adoptable ? (
                       <Btn variant="ghost" onClick={() => setTarget(c)}>{t("servers.adopt")}</Btn>
+                    ) : firstOfStack && stack.adoptable && canAdoptStack ? (
+                      <Btn variant="ghost" onClick={() => setStackTarget(stack)}>{t("servers.adoptStack")}</Btn>
                     ) : c.managedBy ? (
                       <Link href="/import" data-tip={t("servers.adoptManagedHint", { platform: PLATFORM[c.managedBy] })} style={{ fontSize: 12, color: "var(--c-lapis)", textDecoration: "none", whiteSpace: "nowrap" }}>
                         {t("servers.adoptManagedBy", { platform: PLATFORM[c.managedBy] })} →
                       </Link>
                     ) : (
-                      <span data-tip={t("servers.adoptComposeHint")} tabIndex={0}><Badge tone="muted">{t("servers.adoptComposeUnsupported")}</Badge></span>
+                      <span data-tip={stackHint(t, stack, firstOfStack, canAdoptStack)} tabIndex={0}><Badge tone="muted">{t("servers.adoptComposeUnsupported")}</Badge></span>
                     )}
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>
       )}
 
       {target && <AdoptModal id={id} container={target} onClose={() => setTarget(null)} onDone={() => { setTarget(null); scan.mutate(); }} />}
+      {stackTarget && <AdoptStackModal id={id} stack={stackTarget} onClose={() => setStackTarget(null)} onDone={() => { setStackTarget(null); scan.mutate(); }} />}
     </Card>
+  );
+}
+
+/** Why a compose member has no Adopt button: the stack's own refusal, or "use the first row" / "owners and admins". */
+function stackHint(t: ReturnType<typeof useT>, stack: DiscoveredStack | undefined, first: boolean, canAdoptStack: boolean): string {
+  if (!stack) return t("servers.adoptComposeHint");
+  if (!stack.adoptable) return t(`servers.stackRefusal.${stack.reason ?? "no_config"}`);
+  if (first && !canAdoptStack) return t("servers.stackNeedsAdmin");
+  return t("servers.stackAdoptOnFirst", { project: stack.project });
+}
+
+function AdoptStackModal({ id, stack, onClose, onDone }: { id: string; stack: DiscoveredStack; onClose: () => void; onDone: () => void }) {
+  const t = useT();
+  const qc = useQueryClient();
+  const toast = useToast();
+  const [name, setName] = useState(stack.project);
+  const adopt = useMutation({
+    mutationFn: () => api.adoptStack(id, { project: stack.project, name: name.trim() }),
+    onSuccess: () => {
+      toast(t("servers.stackAdoptSuccess", { name: name.trim() }), "success");
+      qc.invalidateQueries({ queryKey: ["apps"] });
+      onDone();
+    },
+    onError: (e) => toast((e as Error).message || t("servers.adoptFailed"), "error"),
+  });
+  return (
+    <Modal onClose={onClose} width={560} labelledBy="adopt-stack-title">
+      <h3 id="adopt-stack-title" style={{ margin: "0 0 4px", fontSize: 15 }}>{t("servers.stackModalTitle", { project: stack.project })}</h3>
+      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("servers.stackModalDesc")}</p>
+
+      <label style={label} htmlFor="adopt-stack-name">{t("servers.adoptName")}</label>
+      <input id="adopt-stack-name" style={field} value={name} onChange={(e) => setName(e.target.value)} />
+
+      <div style={label}>{t("servers.stackServices", { n: stack.services.length })}</div>
+      <ul data-testid="stack-services" style={{ listStyle: "none", margin: "0 0 12px", padding: 0, border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", maxHeight: 180, overflowY: "auto" }}>
+        {stack.services.map((s) => (
+          <li key={s.service} style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "2px 10px", padding: "6px 10px", borderBottom: "1px solid var(--c-bd)", fontSize: 12 }}>
+            <span className="mono" style={{ fontWeight: 600 }}>{s.service}</span>
+            <span className="mono" style={{ color: "var(--c-tx3)", wordBreak: "break-all" }}>{s.image}</span>
+            {s.ports.length > 0 && <span className="mono" style={{ color: "var(--c-tx3)" }}>{s.ports.join(", ")}</span>}
+            {s.state !== "running" && <Badge tone="muted">{s.state}</Badge>}
+          </li>
+        ))}
+      </ul>
+
+      <div style={label}>{t("servers.stackFiles")}</div>
+      <div className="mono" style={{ fontSize: 11, color: "var(--c-tx3)", marginBottom: 12, wordBreak: "break-all" }}>
+        {stack.configFiles.map((f) => <div key={f}>{f}</div>)}
+      </div>
+      {stack.volumes.length > 0 && <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("servers.stackVolumes", { n: stack.volumes.length })}</p>}
+
+      <div style={{ fontSize: 12, color: "var(--c-am)", background: "color-mix(in srgb, var(--c-am) 10%, transparent)", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: 10, marginBottom: 14 }}>
+        <div style={{ display: "flex", alignItems: "flex-start", gap: 6, marginBottom: 4 }}><TriangleAlert size={13} aria-hidden style={{ flexShrink: 0, marginTop: 1 }} /> {t("servers.stackNoRecreate")}</div>
+        <div>{t("servers.stackFilesStay")}</div>
+      </div>
+
+      <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+        <Btn variant="ghost" onClick={onClose} disabled={adopt.isPending}>{t("servers.cancel")}</Btn>
+        <Btn onClick={() => adopt.mutate()} disabled={adopt.isPending || !name.trim()}>
+          {adopt.isPending ? t("servers.adopting") : t("servers.adoptStack")}
+        </Btn>
+      </div>
+    </Modal>
   );
 }
 

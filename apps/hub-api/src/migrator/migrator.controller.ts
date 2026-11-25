@@ -8,7 +8,7 @@ import { ScopesGuard } from "../api-tokens/scopes.guard";
 import { RequireScopes } from "../api-tokens/require-scopes.decorator";
 import { AuthUser } from "../auth/strategies/jwt.strategy";
 import { MigratorService } from "./migrator.service";
-import { AdoptSchema, type AdoptInput } from "./dto";
+import { AdoptSchema, AdoptStackSchema, type AdoptInput, type AdoptStackInput } from "./dto";
 
 @ApiTags("servers")
 @ApiSecurity("pat")
@@ -33,5 +33,16 @@ export class MigratorController {
     @Body(new ZodValidationPipe(AdoptSchema)) body: AdoptInput,
   ) {
     return this.migrator.adopt(user.userId, id, body);
+  }
+
+  /** Adopt a whole docker compose project in place (owner/admin only; POST → default "write" scope). */
+  @Post("adopt-stack")
+  @ApiZodBody(AdoptStackSchema)
+  adoptStack(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(AdoptStackSchema)) body: AdoptStackInput,
+  ) {
+    return this.migrator.adoptStack(user.userId, id, body);
   }
 }

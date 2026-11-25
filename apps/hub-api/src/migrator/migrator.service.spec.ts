@@ -359,3 +359,112 @@ describe("MigratorService.adopt — env values with line breaks", () => {
     expect("envFlags" in (apps.create as jest.Mock).mock.calls[0][1]).toBe(false);
   });
 });
+
+describe("MigratorService.adoptStack (a whole compose project, in place)", () => {
+  const labels = (project: string, service: string, dir = "/srv/shop", files = "/srv/shop/docker-compose.yml") => ({
+    "com.docker.compose.project": project,
+    "com.docker.compose.service": service,
+    "com.docker.compose.project.working_dir": dir,
+    "com.docker.compose.project.config_files": files,
+  });
+  const hostOut = (...extra: string[]) =>
+    [
+      inspectLine({ name: "shop-web-1", image: "node:22", labels: labels("shop", "web") }),
+      inspectLine({ name: "shop-db-1", image: "postgres:16", labels: labels("shop", "db") }),
+      ...extra,
+    ].join("\n");
+  const yml = "services:\n  web:\n    image: node:22\n  db:\n    image: postgres:16\n  worker:\n    image: node:22\n";
+  const readOut = ["TUGRA_ADOPT_FILE 1 ok 99 " + "e".repeat(64), "TUGRA_ADOPT_CONTENT_BEGIN", Buffer.from(yml).toString("base64"), "TUGRA_ADOPT_CONTENT_END"].join("\n");
+
+  function build(opts: { discover?: string; read?: { output: string; exitCode: number }; role?: "ok" | "denied"; existing?: unknown[] } = {}) {
+    const agentWs = {
+      sendCommand: jest
+        .fn()
+        .mockResolvedValueOnce({ output: opts.discover ?? hostOut(), exitCode: 0 })
+        .mockResolvedValueOnce(opts.read ?? { output: readOut, exitCode: 0 }),
+    } as unknown as AgentWsServer;
+    const access = {
+      requireRole: opts.role === "denied" ? jest.fn().mockRejectedValue(new ForbiddenException("insufficient role for this team")) : jest.fn().mockResolvedValue(undefined),
+      requirePermission: jest.fn().mockResolvedValue(undefined),
+    } as unknown as TeamAccessService;
+    const prisma = { server: { findUnique: jest.fn().mockResolvedValue(server) }, application: { findMany: jest.fn().mockResolvedValue(opts.existing ?? []) } } as unknown as PrismaService;
+    const apps = { createAdoptedCompose: jest.fn().mockResolvedValue({ id: "app9", name: "Shop" }) } as unknown as ApplicationsService;
+    return { ...make({ agentWs, access, prisma, apps }), agentWs, access, apps, prisma };
+  }
+  const dto = { project: "shop", name: "Shop" };
+
+  it("registers the project without touching a container: only discover + a read-only file read run on the host", async () => {
+    const { svc, agentWs, apps, audit, access } = build();
+    const res = await svc.adoptStack("u1", "s1", dto);
+    expect(res).toMatchObject({ id: "app9" });
+    const calls = (agentWs.sendCommand as jest.Mock).mock.calls;
+    expect(calls).toHaveLength(2);
+    expect(calls[1][1]).toContain("--network none");
+    for (const c of calls) expect(String(c[1])).not.toMatch(/docker (rename|rm|stop|kill|restart|compose)\b|compose up/);
+    expect((access.requireRole as jest.Mock).mock.calls[0][2]).toEqual(["OWNER", "ADMIN"]);
+    const arg = (apps.createAdoptedCompose as jest.Mock).mock.calls[0][1];
+    expect(arg).toMatchObject({ serverId: "s1", name: "Shop", running: true });
+    expect(arg.adopt).toMatchObject({ v: 1, project: "shop", workingDir: "/srv/shop", files: [{ path: "/srv/shop/docker-compose.yml", sha256: "e".repeat(64), bytes: 99 }] });
+    // running members + a service the file declares but nothing runs
+    expect(arg.adopt.services.map((s: { name: string }) => s.name).sort()).toEqual(["db", "web", "worker"]);
+    expect(audit.log).toHaveBeenCalledWith({ actor: "u1", action: "app.adopt_stack", target: "app9", meta: { serverId: "s1", project: "shop", services: 3, files: 1 } });
+  });
+
+  it("is owner/admin only", async () => {
+    const { svc, agentWs, apps } = build({ role: "denied" });
+    await expect(svc.adoptStack("u1", "s1", dto)).rejects.toThrow(ForbiddenException);
+    expect(agentWs.sendCommand).not.toHaveBeenCalled();
+    expect(apps.createAdoptedCompose).not.toHaveBeenCalled();
+  });
+
+  it("404s an unknown project", async () => {
+    const { svc } = build();
+    await expect(svc.adoptStack("u1", "s1", { project: "nope", name: "x" })).rejects.toThrow(/not found/);
+  });
+
+  it("refuses Tugra's own and Coolify / Dokploy projects, with the platform to use instead", async () => {
+    const coolify = build({ discover: inspectLine({ name: "c-web-1", image: "node:22", labels: { ...labels("c1", "web", "/data/coolify/applications/x", "/data/coolify/applications/x/docker-compose.yml"), "coolify.managed": "true" } }) });
+    await expect(coolify.svc.adoptStack("u1", "s1", { project: "c1", name: "x" })).rejects.toThrow(/managed by Coolify/);
+    const dokploy = build({ discover: inspectLine({ name: "d-web-1", image: "node:22", labels: labels("d1", "web", "/etc/dokploy/compose/x/code", "/etc/dokploy/compose/x/code/docker-compose.yml") }) });
+    await expect(dokploy.svc.adoptStack("u1", "s1", { project: "d1", name: "x" })).rejects.toThrow(/managed by Dokploy/);
+    const own = build({ discover: [...Object.values(STACK)].join("\n") });
+    await expect(own.svc.adoptStack("u1", "s1", { project: "tugra", name: "x" })).rejects.toThrow(/not found/); // Tugra's own stack is not even visible
+    const mixed = build({ discover: hostOut(inspectLine({ name: "tugra-extra-1", image: "busybox", labels: labels("shop", "extra") })) });
+    await expect(mixed.svc.adoptStack("u1", "s1", dto)).rejects.toThrow(/part of Tugra/);
+    for (const x of [coolify, dokploy, mixed]) expect(x.apps.createAdoptedCompose).not.toHaveBeenCalled();
+  });
+
+  it("refuses a second registration of the same project on the server", async () => {
+    const adopt = { v: 1, project: "shop", workingDir: "/srv/shop", files: [{ path: "/srv/shop/docker-compose.yml", sha256: "a".repeat(64), bytes: 1 }], services: [], adoptedAt: "x" };
+    const { svc, apps } = build({ existing: [{ id: "old", composeAdopt: adopt }] });
+    await expect(svc.adoptStack("u1", "s1", dto)).rejects.toThrow(/already adopted/);
+    expect(apps.createAdoptedCompose).not.toHaveBeenCalled();
+  });
+
+  it("fails when a config file is missing on the host, and when the agent cannot run the reader", async () => {
+    const missing = build({ read: { output: "TUGRA_ADOPT_FILE 1 missing 0 -", exitCode: 0 } });
+    await expect(missing.svc.adoptStack("u1", "s1", dto)).rejects.toThrow(/could not read the compose file/);
+    const noImage = build({ read: { output: "TUGRA_COMPOSE_UNAVAILABLE reason=no-image", exitCode: 1 } });
+    await expect(noImage.svc.adoptStack("u1", "s1", dto)).rejects.toThrow(/own image/);
+    expect(missing.apps.createAdoptedCompose).not.toHaveBeenCalled();
+  });
+
+  it("never stores or audits file content, env or paths", async () => {
+    const { svc, apps, audit } = build();
+    await svc.adoptStack("u1", "s1", dto);
+    expect(JSON.stringify((apps.createAdoptedCompose as jest.Mock).mock.calls)).not.toContain("services:\n");
+    expect(JSON.stringify((audit.log as jest.Mock).mock.calls)).not.toContain("/srv/shop");
+  });
+
+  it("discover lists the stack with its refusal state; a single member still can't be adopted alone and the error says why", async () => {
+    const { svc } = build();
+    const { stacks, containers } = await svc.discover("u1", "s1");
+    expect(stacks).toHaveLength(1);
+    expect(stacks[0]).toMatchObject({ project: "shop", adoptable: true, firstContainer: "shop-web-1" });
+    expect(containers.every((c) => c.adoptable === false)).toBe(true);
+    expect(JSON.stringify(containers)).not.toContain("config_files");
+    const one = build();
+    (one.agentWs.sendCommand as jest.Mock).mockReset().mockResolvedValue({ output: hostOut(), exitCode: 0 });
+    await expect(one.svc.adopt("u1", "s1", { container: "shop-web-1", name: "w" })).rejects.toThrow(/adopt the whole stack/);
+  });
+});

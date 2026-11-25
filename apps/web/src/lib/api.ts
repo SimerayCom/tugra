@@ -103,6 +103,7 @@ import type {
   HostContainers,
   AppRuntimeState,
   DiscoveredContainer,
+  DiscoveredStack,
   CloudCredential,
   OobActionResult,
   OobCandidate,
@@ -1069,7 +1070,11 @@ export const api = {
     });
   },
   discoverContainers(id: string) {
-    return apiFetch<{ containers: DiscoveredContainer[] }>(`/servers/${id}/discover`);
+    return apiFetch<{ containers: DiscoveredContainer[]; stacks?: DiscoveredStack[] }>(`/servers/${id}/discover`);
+  },
+  /** Adopt a whole docker compose project in place (owner/admin): nothing is recreated. */
+  adoptStack(id: string, input: { project: string; name: string; environmentId?: string }) {
+    return apiFetch<Application>(`/servers/${id}/adopt-stack`, { method: "POST", body: JSON.stringify(input) });
   },
   adoptContainer(
     id: string,

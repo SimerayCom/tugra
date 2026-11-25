@@ -3,7 +3,9 @@ import {
   NotFoundException,
   BadRequestException,
   ServiceUnavailableException,
+  ConflictException,
 } from "@nestjs/common";
+import { Prisma, Role } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { TeamAccessService } from "../common/team-access.service";
@@ -23,12 +25,16 @@ import {
   type DiscoveredMount,
 } from "./discover-script";
 import { assertSafeDockerOptions } from "../deploy/docker-options-safety";
-import type { AdoptInput } from "./dto";
+import type { AdoptInput, AdoptStackInput } from "./dto";
+import { analyzeStacks, stackRefusalMessage, type DiscoveredStack } from "./stack-adopt";
+import { composeServiceNames } from "../deploy/compose-script";
+import { ComposeAdoptSchema, buildAdoptReadScript, parseAdoptRead, parseComposeAdopt, type ComposeAdopt } from "../deploy/compose-adopt";
 import { autoFlagMultiline } from "../importer/env-auto-flags";
 
 const DISCOVER_TIMEOUT_MS = 30_000;
 const INSPECT_TIMEOUT_MS = 15_000;
 const RENAME_TIMEOUT_MS = 15_000;
+const ADOPT_READ_TIMEOUT_MS = 40_000;
 
 /** Refusal text for adopting one of Tugra's own containers (a 400 — the caller asked for something never valid). */
 export function tugraOwnedMessage(reason: TugraOwnedReason): string {
@@ -63,13 +69,16 @@ export class MigratorService {
   ) {}
 
   /** Read-only scan: foreign containers on the host, each flagged whether it can be adopted. */
-  async discover(userId: string, serverId: string): Promise<{ containers: AdoptableContainer[] }> {
+  async discover(userId: string, serverId: string): Promise<{ containers: AdoptableContainer[]; stacks: DiscoveredStack[] }> {
     await this.requireWrite(userId, serverId);
     const r = await this.agentWs.sendCommand(serverId, buildDiscoverScript(), "deploy", DISCOVER_TIMEOUT_MS);
     if (r.output.includes(NO_DOCKER_MARKER)) {
       throw new ServiceUnavailableException("Docker is not available on this server");
     }
-    const containers = parseDiscovered(r.output)
+    const parsed = parseDiscovered(r.output);
+    // Compose projects, judged over the WHOLE host (a refusal can come from a member Tugra hides, or a name clash).
+    const stacks = analyzeStacks(parsed);
+    const containers = parsed
       .filter((c) => !c.isTugra) // never offer Tugra's own stack / proxy / tunnel / helpers / managed containers
       .map(toPublicContainer)
       .map((c) => ({
@@ -80,7 +89,92 @@ export class MigratorService {
         // compose-managed = not adoptable (v1); a Coolify/Dokploy container moves with that platform's import instead
         adoptable: c.composeProject === null && c.managedBy === null,
       }));
-    return { containers };
+    return { containers, stacks };
+  }
+
+  /**
+   * Adopt a whole docker compose project IN PLACE: nothing is recreated, renamed or touched. The project (its name,
+   * working dir and config files, as docker labelled them) is registered as a Tugra compose app, so later deploys run
+   * `docker compose -p <same project> -f <same files>`. Owner/admin only (the app then runs host files with the docker
+   * socket); refuses Tugra's own and Coolify/Dokploy projects. Everything is re-read from the host here, never trusted
+   * from the client or a cached discover.
+   */
+  async adoptStack(userId: string, serverId: string, dto: AdoptStackInput): Promise<AppView> {
+    const server = await this.prisma.server.findUnique({ where: { id: serverId } });
+    if (!server) throw new NotFoundException("server not found");
+    await this.access.requireRole(userId, server.teamId, [Role.OWNER, Role.ADMIN]);
+    await this.access.requirePermission(userId, server.teamId, "apps:config");
+
+    const scan = await this.agentWs.sendCommand(serverId, buildDiscoverScript(), "deploy", DISCOVER_TIMEOUT_MS);
+    if (scan.output.includes(NO_DOCKER_MARKER)) throw new ServiceUnavailableException("Docker is not available on this server");
+    const stack = analyzeStacks(parseDiscovered(scan.output)).find((s) => s.project === dto.project);
+    if (!stack) throw new NotFoundException("compose project not found on this server");
+    if (!stack.adoptable) throw new BadRequestException(stackRefusalMessage(stack.reason ?? "no_config", stack.managedBy));
+
+    // One registration per project per server: a second one would run the same stack under two apps.
+    const existing = await this.prisma.application.findMany({
+      where: { serverId, source: "COMPOSE", NOT: { composeAdopt: { equals: Prisma.DbNull } } },
+      select: { id: true, composeAdopt: true },
+    });
+    if (existing.some((a) => parseComposeAdopt(a.composeAdopt)?.project === stack.project)) {
+      throw new ConflictException("this compose project is already adopted on this server");
+    }
+
+    // Read the files as they are on the host (fingerprint + declared services; the content is parsed and dropped).
+    const workingDir = stack.workingDir as string;
+    const paths = stack.configFiles;
+    let read: { exitCode: number; output: string };
+    try {
+      read = await this.agentWs.sendCommand(serverId, buildAdoptReadScript({ workingDir, files: paths.map((path) => ({ path, sha256: "", bytes: 0 })) }), "deploy", ADOPT_READ_TIMEOUT_MS);
+    } catch {
+      throw new ServiceUnavailableException("could not adopt the stack (agent unavailable)");
+    }
+    if (read.output.includes("TUGRA_COMPOSE_UNAVAILABLE")) {
+      throw new ServiceUnavailableException("this agent doesn't know its own image, so the stack's files can't be read; re-run the agent install command");
+    }
+    const files = parseAdoptRead(read.output, paths.length);
+    const unreadable = paths.filter((_, i) => !files[i].ok);
+    if (read.exitCode !== 0 || unreadable.length > 0) {
+      throw new BadRequestException(`could not read the compose file${unreadable.length > 1 ? "s" : ""} on the server (${unreadable.length > 0 ? unreadable.length : paths.length} missing or unreadable); the project can't be run by Tugra`);
+    }
+
+    // Services: what runs now, plus services the files declare but nothing runs yet (stopped / scaled to zero).
+    const services: ComposeAdopt["services"] = stack.services.map((s) => ({
+      name: s.service,
+      image: s.image,
+      ports: s.ports,
+      volumes: stack.volumes.filter((v) => v.service === s.service).map((v) => ({ name: v.name, target: v.target })).slice(0, 30),
+    }));
+    for (const f of files) {
+      for (const name of composeServiceNames(f.content)) {
+        if (services.length < 100 && !services.some((s) => s.name === name)) services.push({ name, image: "", ports: [], volumes: [] });
+      }
+    }
+    const parsed = ComposeAdoptSchema.safeParse({
+      v: 1,
+      project: stack.project,
+      workingDir,
+      files: paths.map((path, i) => ({ path, sha256: files[i].sha256, bytes: files[i].bytes })),
+      services,
+      adoptedAt: new Date().toISOString(),
+    } satisfies ComposeAdopt);
+    if (!parsed.success) throw new BadRequestException("this compose project can't be registered (unsupported names or paths)");
+
+    const app = await this.apps.createAdoptedCompose(userId, {
+      serverId,
+      name: dto.name,
+      environmentId: dto.environmentId,
+      adopt: parsed.data,
+      running: stack.services.some((s) => s.state === "running"),
+    });
+    // Counts and the project name only: never file paths contents, env or images.
+    await this.audit.log({
+      actor: userId,
+      action: "app.adopt_stack",
+      target: app.id,
+      meta: { serverId, project: stack.project, services: services.length, files: paths.length },
+    });
+    return app;
   }
 
   /** Adopt one foreign container as a Tugra app: create record → rename → set status. */
@@ -112,7 +206,7 @@ export class MigratorService {
         again = undefined;
       }
       if (again?.tugraReason) throw new BadRequestException(tugraOwnedMessage(again.tugraReason));
-      throw new BadRequestException("compose-managed containers can't be adopted yet");
+      throw new BadRequestException("compose-managed containers can't be adopted one by one; adopt the whole stack instead");
     }
     if (found.managedBy) throw new BadRequestException(`this container is managed by ${found.managedBy === "coolify" ? "Coolify" : "Dokploy"}; move it with the ${found.managedBy === "coolify" ? "Coolify" : "Dokploy"} import`);
     if (!found.image) throw new BadRequestException("could not determine the container's image");
