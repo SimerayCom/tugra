@@ -136,7 +136,7 @@ EOF
 # A memory size ("640m", "1g", "96mb", "512k", plain bytes, "0") in whole MB; empty when it is not one.
 profile_mb() {
   local v num unit; v="$(printf '%s' "$1" | tr -d "\"' \r" | tr 'A-Z' 'a-z')"
-  printf '%s' "$v" | grep -Eq '^[0-9]+(b|k|kb|m|mb|g|gb)?$' || return 0
+  printf '%s\n' "$v" | grep -E '^[0-9]+(b|k|kb|m|mb|g|gb)?$' >/dev/null || return 0
   num="$(printf '%s' "$v" | tr -dc '0-9')"; unit="$(printf '%s' "$v" | tr -d '0-9')"
   case "$unit" in
     ''|b) echo $(( num / 1048576 )) ;;

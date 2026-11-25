@@ -38,11 +38,12 @@ describe("withIdleSlowdown", () => {
 
 describe("PollingQueryClient", () => {
   it("wraps refetchInterval exactly once and tracks idle state", () => {
+    // Read the clock BEFORE the client stamps its own start, so a slow runner can't make "IDLE - 1 ms" already idle.
+    const now = Date.now();
     const qc = new PollingQueryClient();
     const o = qc.defaultQueryOptions({ queryKey: ["a"], queryFn: async () => 1, refetchInterval: 10_000 });
     expect(typeof o.refetchInterval).toBe("function");
     expect(qc.defaultQueryOptions(o)).toBe(o);
-    const now = Date.now();
     qc.checkIdle(now + IDLE_AFTER_MS - 1);
     expect(qc.isIdle()).toBe(false);
     qc.checkIdle(now + IDLE_AFTER_MS + 10);

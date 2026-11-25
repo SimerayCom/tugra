@@ -91787,6 +91787,329 @@
         ]
       }
     },
+    "/api/v1/instance/hub-health": {
+      "get": {
+        "operationId": "HubHealthController_get",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "sampledAt": {
+                      "type": "string"
+                    },
+                    "healthy": {
+                      "type": "boolean"
+                    },
+                    "warnings": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "code": {
+                            "type": "string",
+                            "enum": [
+                              "heap_high",
+                              "loop_lag",
+                              "pg_connections",
+                              "redis_memory",
+                              "restarts",
+                              "queue_backlog"
+                            ]
+                          },
+                          "value": {
+                            "type": "number"
+                          },
+                          "limit": {
+                            "type": "number"
+                          },
+                          "detail": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "code",
+                          "value",
+                          "limit"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "startedAt": {
+                      "type": "string"
+                    },
+                    "uptimeSec": {
+                      "type": "number"
+                    },
+                    "restarts": {
+                      "type": "object",
+                      "properties": {
+                        "last24h": {
+                          "type": "number"
+                        },
+                        "lastBootAt": {
+                          "type": "string",
+                          "nullable": true
+                        }
+                      },
+                      "required": [
+                        "last24h",
+                        "lastBootAt"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "process": {
+                      "type": "object",
+                      "properties": {
+                        "rssMb": {
+                          "type": "number"
+                        },
+                        "heapUsedMb": {
+                          "type": "number"
+                        },
+                        "heapLimitMb": {
+                          "type": "number"
+                        },
+                        "heapPct": {
+                          "type": "number"
+                        },
+                        "externalMb": {
+                          "type": "number"
+                        },
+                        "gcMs": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "rssMb",
+                        "heapUsedMb",
+                        "heapLimitMb",
+                        "heapPct",
+                        "externalMb",
+                        "gcMs"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "eventLoop": {
+                      "type": "object",
+                      "properties": {
+                        "p50Ms": {
+                          "type": "number"
+                        },
+                        "p99Ms": {
+                          "type": "number"
+                        },
+                        "maxMs": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "p50Ms",
+                        "p99Ms",
+                        "maxMs"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "history": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "t": {
+                            "type": "number"
+                          },
+                          "rssMb": {
+                            "type": "number"
+                          },
+                          "heapUsedMb": {
+                            "type": "number"
+                          },
+                          "loopP99Ms": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "t",
+                          "rssMb",
+                          "heapUsedMb",
+                          "loopP99Ms"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "postgres": {
+                      "type": "object",
+                      "properties": {
+                        "connectionsUsed": {
+                          "type": "number"
+                        },
+                        "connectionsMax": {
+                          "type": "number"
+                        },
+                        "dbSizeBytes": {
+                          "type": "number"
+                        },
+                        "tables": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "name": {
+                                "type": "string"
+                              },
+                              "bytes": {
+                                "type": "number"
+                              }
+                            },
+                            "required": [
+                              "name",
+                              "bytes"
+                            ],
+                            "additionalProperties": false
+                          }
+                        }
+                      },
+                      "required": [
+                        "connectionsUsed",
+                        "connectionsMax",
+                        "dbSizeBytes",
+                        "tables"
+                      ],
+                      "additionalProperties": false,
+                      "nullable": true
+                    },
+                    "redis": {
+                      "type": "object",
+                      "properties": {
+                        "usedMemoryBytes": {
+                          "type": "number"
+                        },
+                        "maxMemoryBytes": {
+                          "type": "number"
+                        },
+                        "connectedClients": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "usedMemoryBytes",
+                        "maxMemoryBytes",
+                        "connectedClients"
+                      ],
+                      "additionalProperties": false,
+                      "nullable": true
+                    },
+                    "queues": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "name": {
+                            "type": "string"
+                          },
+                          "waiting": {
+                            "type": "number"
+                          },
+                          "active": {
+                            "type": "number"
+                          },
+                          "delayed": {
+                            "type": "number"
+                          },
+                          "failed": {
+                            "type": "number"
+                          },
+                          "lastDurationMs": {
+                            "type": "number",
+                            "nullable": true
+                          }
+                        },
+                        "required": [
+                          "name",
+                          "waiting",
+                          "active",
+                          "delayed",
+                          "failed",
+                          "lastDurationMs"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "sampledAt",
+                    "healthy",
+                    "warnings",
+                    "startedAt",
+                    "uptimeSec",
+                    "restarts",
+                    "process",
+                    "eventLoop",
+                    "history",
+                    "postgres",
+                    "redis",
+                    "queues"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "tags": [
+          "instance"
+        ]
+      }
+    },
     "/api/v1/mcp": {
       "post": {
         "operationId": "McpController_handle",

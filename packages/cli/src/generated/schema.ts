@@ -8052,6 +8052,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/instance/hub-health": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["HubHealthController_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/mcp": {
         parameters: {
             query?: never;
@@ -58998,6 +59014,118 @@ export interface operations {
             };
             /** @description Resource not found. */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate limit exceeded; see Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    HubHealthController_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        sampledAt: string;
+                        healthy: boolean;
+                        warnings: {
+                            /** @enum {string} */
+                            code: "heap_high" | "loop_lag" | "pg_connections" | "redis_memory" | "restarts" | "queue_backlog";
+                            value: number;
+                            limit: number;
+                            detail?: string;
+                        }[];
+                        startedAt: string;
+                        uptimeSec: number;
+                        restarts: {
+                            last24h: number;
+                            lastBootAt: string | null;
+                        };
+                        process: {
+                            rssMb: number;
+                            heapUsedMb: number;
+                            heapLimitMb: number;
+                            heapPct: number;
+                            externalMb: number;
+                            gcMs: number;
+                        };
+                        eventLoop: {
+                            p50Ms: number;
+                            p99Ms: number;
+                            maxMs: number;
+                        };
+                        history: {
+                            t: number;
+                            rssMb: number;
+                            heapUsedMb: number;
+                            loopP99Ms: number;
+                        }[];
+                        postgres: {
+                            connectionsUsed: number;
+                            connectionsMax: number;
+                            dbSizeBytes: number;
+                            tables: {
+                                name: string;
+                                bytes: number;
+                            }[];
+                        } | null;
+                        redis: {
+                            usedMemoryBytes: number;
+                            maxMemoryBytes: number;
+                            connectedClients: number;
+                        } | null;
+                        queues: {
+                            name: string;
+                            waiting: number;
+                            active: number;
+                            delayed: number;
+                            failed: number;
+                            lastDurationMs: number | null;
+                        }[];
+                    };
+                };
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Authenticated but not permitted (scope or team permission). */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
