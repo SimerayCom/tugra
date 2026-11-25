@@ -50,6 +50,13 @@ const SECRET_FIELD_NAMES = new Set([
   "webhookToken",
   // operator custom container labels: values can be tokens (e.g. a monitoring/auth key), writer-only in the app view.
   "customLabels",
+  // Coolify hub takeover (sealed secrets): the wrapped per-run private key, the stored import-session key and snapshot, and any sealed envelope.
+  "recipientKeyEnc",
+  "recipientKey",
+  "sessionKeyEnc",
+  "snapshotEnc",
+  "sealed",
+  "envelope",
 ]);
 
 const MAX_STRING_LEN = 2000;

@@ -18,11 +18,14 @@ import type {
   Fs2ResultMsg,
   Fs2Scope,
   FsEntry,
+  CoolifySecretClass,
+  CoolifySecretRecord,
+  CoolifySecretsReqMsg,
   HubEndpointStateMsg,
   TermExitMsg,
   TermOutputMsg,
 } from "@tugra/shared";
-import { PROTOCOL_VERSION, checkAgentCompat, canonicalCommand, canonicalCommandCancel, canonicalCommandStatus, canonicalTermStart, canonicalLogStart, canonicalAgentUpdate, canonicalFs, canonicalLogDrains, canonicalFs2, fs2RequiredCapabilities, AGENT_FEATURE_FS2, canonicalHubEndpoints, canonicalHubProof } from "@tugra/shared";
+import { PROTOCOL_VERSION, checkAgentCompat, canonicalCommand, canonicalCommandCancel, canonicalCommandStatus, canonicalTermStart, canonicalLogStart, canonicalAgentUpdate, canonicalFs, canonicalLogDrains, canonicalFs2, fs2RequiredCapabilities, AGENT_FEATURE_FS2, canonicalHubEndpoints, canonicalHubProof, canonicalCoolifySecrets, AGENT_FEATURE_COOLIFY_SECRETS, COOLIFY_SECRETS_REFUSAL_CODES, COOLIFY_SECRETS_MAX_REFS_PER_FRAME, COOLIFY_FRAME_MAX_EXP_SEC } from "@tugra/shared";
 import { FsRemoteException } from "../files/fs-errors";
 import { HubSigningService } from "./hub-signing.service";
 import { AgentCommandTimeoutException, AgentDisconnectedException, AgentOfflineException } from "./agent-offline.exception";
@@ -136,6 +139,26 @@ interface Fs2Pending {
   timer: NodeJS.Timeout;
 }
 
+/** One sealed-secrets request in flight: records are collected until the agent's final frame. Values are sealed envelopes, never plaintext. */
+interface CoolifySecretsPending {
+  serverId: string;
+  records: CoolifySecretRecord[];
+  resolve: (r: CoolifySecretRecord[]) => void;
+  reject: (e: Error) => void;
+  timer: NodeJS.Timeout;
+}
+
+/** The agent refused or failed a sealed-secrets request. `code` is one of a fixed set (never agent-supplied free text). */
+export class CoolifySecretsRemoteException extends Error {
+  constructor(public readonly code: string) {
+    super(code);
+    this.name = "CoolifySecretsRemoteException";
+  }
+}
+
+/** Most records one request may collect (a hostile agent cannot grow the hub's memory without bound). */
+const COOLIFY_SECRETS_MAX_RECORDS = 5000;
+
 /** Max concurrent fs2 operations the hub keeps in flight per server (the agent caps itself at the same number). */
 export const FS2_MAX_IN_FLIGHT_PER_SERVER = 4;
 /** Slack added to an fs2 request's `exp` beyond its own timeout, covering clock skew and queueing. */
@@ -157,6 +180,7 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
   private readonly fsPending = new Map<string, FsPending>(); // reqId → file-op resolver
   private readonly fs2Pending = new Map<string, Fs2Pending>(); // reqId → fs2 (write-capable file op) resolver
   private readonly fs2Reserved = new Map<string, number>(); // serverId → slots held ahead of a send (see reserveFs2)
+  private readonly coolifySecretsPending = new Map<string, CoolifySecretsPending>(); // reqId → sealed-secrets collector
   private readonly statePending = new Map<string, StatePending>(); // reqId → command_status resolver
   private readonly chunkListeners = new Map<string, (chunk: string) => void>(); // reqId → live log sink
   private readonly logListeners = new Map<string, LogListener>(); // streamId → live container-log sink
@@ -517,6 +541,13 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
           else p.reject(new FsRemoteException(msg.code, msg.error));
           return;
         }
+        case "coolify_secrets_result": {
+          // Only from the authed socket of the server the request went to, like fs2_result. Nothing here is logged or parsed: the records
+          // are relayed to the waiting caller exactly as they came (envelopes or fixed codes).
+          if (!st.authed || !st.serverId) return;
+          this.onCoolifySecretsResult(st.serverId, msg);
+          return;
+        }
         default:
           return;
       }
@@ -834,6 +865,78 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
     });
   }
 
+  /**
+   * Ask the agent on `serverId` for sealed Coolify values (typed, signed `coolify_secrets_req`; it never rides the command path, so nothing
+   * is journaled or streamed to a log). Order: online -> the agent speaks coolify_secrets_v1 -> the capability is granted -> one request
+   * per server at a time -> sign (server id inside the signature) -> send. Resolves with the records (sealed envelopes or fixed codes);
+   * rejects with CoolifySecretsRemoteException(code) when the agent refuses or fails, AgentDisconnectedException on a drop and
+   * AgentCommandTimeoutException on the deadline.
+   */
+  async sendCoolifySecrets(
+    serverId: string,
+    req: { runId: string; classes: CoolifySecretClass[]; refs: string[]; recipientKey: string },
+    timeoutMs: number,
+  ): Promise<CoolifySecretRecord[]> {
+    const socket = this.sockets.get(serverId);
+    if (!socket || socket.readyState !== WebSocket.OPEN) throw new AgentOfflineException();
+    if (!this.agentSupports(serverId, AGENT_FEATURE_COOLIFY_SECRETS)) {
+      throw new HttpException({ statusCode: 409, code: "agent_too_old", message: "this server's agent is too old for the sealed secret read - update the agent" }, 409);
+    }
+    if (!(await this.isCapabilityGranted(serverId, "coolify_secrets"))) {
+      throw new ForbiddenException({ statusCode: 403, message: 'capability "coolify_secrets" is not granted for this server', code: "capability_not_granted", capability: "coolify_secrets", serverId });
+    }
+    if (req.refs.length === 0 || req.refs.length > COOLIFY_SECRETS_MAX_REFS_PER_FRAME || req.classes.length === 0) {
+      throw new HttpException({ statusCode: 400, code: "bad_request", message: "invalid sealed-secrets request" }, 400);
+    }
+    for (const p of this.coolifySecretsPending.values()) {
+      if (p.serverId === serverId) throw new HttpException({ statusCode: 429, code: "busy", message: "a sealed read is already running on this server" }, 429);
+    }
+    const live = this.sockets.get(serverId);
+    if (!live || live.readyState !== WebSocket.OPEN) throw new AgentOfflineException(); // the await above may have outlived it
+    const reqId = randomUUID();
+    const exp = Math.floor(Date.now() / 1000) + Math.min(Math.ceil(timeoutMs / 1000) + 60, COOLIFY_FRAME_MAX_EXP_SEC);
+    const msg: CoolifySecretsReqMsg = {
+      type: "coolify_secrets_req", reqId, runId: req.runId, classes: req.classes, refs: req.refs, recipientKey: req.recipientKey, exp, capability: "coolify_secrets",
+    };
+    msg.sig = this.hubSign.sign(canonicalCoolifySecrets({ serverId, reqId, runId: msg.runId, classes: msg.classes, refs: msg.refs, recipientKey: msg.recipientKey, exp, capability: msg.capability }));
+    return new Promise<CoolifySecretRecord[]>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.coolifySecretsPending.delete(reqId);
+        reject(new AgentCommandTimeoutException("sealed secret read timed out"));
+      }, timeoutMs);
+      timer.unref?.();
+      this.coolifySecretsPending.set(reqId, { serverId, records: [], resolve, reject, timer });
+      this.send(live, msg as unknown as Record<string, unknown>);
+    });
+  }
+
+  private onCoolifySecretsResult(serverId: string, msg: { reqId: string; ok: boolean; code?: string; records?: CoolifySecretRecord[]; final?: boolean }): void {
+    const p = typeof msg.reqId === "string" ? this.coolifySecretsPending.get(msg.reqId) : undefined;
+    if (!p || p.serverId !== serverId) return;
+    const finish = (): void => {
+      clearTimeout(p.timer);
+      this.coolifySecretsPending.delete(msg.reqId);
+    };
+    if (!msg.ok) {
+      finish();
+      const code = (COOLIFY_SECRETS_REFUSAL_CODES as readonly string[]).includes(msg.code ?? "") ? (msg.code as string) : "failed";
+      p.reject(new CoolifySecretsRemoteException(code));
+      return;
+    }
+    if (Array.isArray(msg.records)) {
+      if (p.records.length + msg.records.length > COOLIFY_SECRETS_MAX_RECORDS) {
+        finish();
+        p.reject(new CoolifySecretsRemoteException("failed"));
+        return;
+      }
+      p.records.push(...msg.records);
+    }
+    if (msg.final) {
+      finish();
+      p.resolve(p.records);
+    }
+  }
+
   /** Sign command/term_start (capability included) so the agent can verify + scope. */
   private signOutbound(msg: Record<string, unknown>): Record<string, unknown> {
     if (msg.type === "command") {
@@ -1087,6 +1190,12 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
       if (p.serverId !== serverId) continue;
       clearTimeout(p.timer);
       this.fs2Pending.delete(reqId);
+      p.reject(new AgentDisconnectedException("agent disconnected"));
+    }
+    for (const [reqId, p] of this.coolifySecretsPending) {
+      if (p.serverId !== serverId) continue;
+      clearTimeout(p.timer);
+      this.coolifySecretsPending.delete(reqId);
       p.reject(new AgentDisconnectedException("agent disconnected"));
     }
     for (const [reqId, p] of this.statePending) {

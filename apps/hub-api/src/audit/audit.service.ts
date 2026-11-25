@@ -41,7 +41,7 @@ const META_MAX_BYTES = 16_384;
 // Audit `meta` is free-form JSON written by many call sites; it must never carry a credential, but as
 // defense-in-depth (the audit API is reachable by read-scoped PATs) these keys are stripped on read so a
 // stray/legacy secret (e.g. a reset-link URL) can't be harvested. Keep it conservative + specific.
-const SENSITIVE_META_KEYS = new Set(["token", "secret", "password", "apiToken", "resetUrl", "verifyUrl", "privateKey"]);
+const SENSITIVE_META_KEYS = new Set(["token", "secret", "password", "apiToken", "resetUrl", "verifyUrl", "privateKey", "recipientKey", "recipientKeyEnc", "sealed", "envelope"]);
 /** Cap one audit row's meta at write so a single entry (e.g. a padded MCP `args`) can't bloat the audit
  *  table or an export. Over the budget, keep only the auth stamps (via/tokenId) + a _truncated marker. */
 function capMeta(meta: Record<string, unknown> | undefined): Record<string, unknown> | undefined {

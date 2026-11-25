@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { COOLIFY_SECRET_CLASSES, COOLIFY_SECRETS_GRANT_MAX_HOURS } from "@tugra/shared";
 
 export const ServerParamSchema = z.object({ serverId: z.string().min(1) });
 
@@ -17,3 +18,12 @@ export const GenerateSchema = z.object({
     .max(200),
 });
 export type GenerateInput = z.infer<typeof GenerateSchema>;
+
+/** Consent to the sealed secret read (lane B). `confirm` is the Coolify host's name, typed by the owner. `classes` omitted = every tier-1 class. */
+export const SecretsGrantSchema = z.object({
+  serverId: z.string().min(1).max(60),
+  classes: z.array(z.enum(COOLIFY_SECRET_CLASSES)).min(1).max(COOLIFY_SECRET_CLASSES.length).optional(),
+  hours: z.number().int().min(1).max(COOLIFY_SECRETS_GRANT_MAX_HOURS).optional(),
+  confirm: z.string().min(1).max(200),
+});
+export type SecretsGrantInput = z.infer<typeof SecretsGrantSchema>;

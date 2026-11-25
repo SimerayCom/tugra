@@ -1,7 +1,7 @@
 import { ForbiddenException, HttpException, ServiceUnavailableException } from "@nestjs/common";
-import { canonicalLogDrains, canonicalFs2, fs2RequiredCapabilities, canonicalHubEndpoints, canonicalHubProof } from "@tugra/shared";
+import { canonicalCoolifySecrets, canonicalLogDrains, canonicalFs2, fs2RequiredCapabilities, canonicalHubEndpoints, canonicalHubProof } from "@tugra/shared";
 import { FsRemoteException } from "../files/fs-errors";
-import { AgentWsServer } from "./agent-ws.server";
+import { AgentWsServer, CoolifySecretsRemoteException } from "./agent-ws.server";
 import { AgentCommandTimeoutException, AgentDisconnectedException, AgentOfflineException } from "./agent-offline.exception";
 
 /**
@@ -1286,5 +1286,143 @@ describe("AgentWsServer fs2 (write-capable file ops)", () => {
     expect(h.sign).toHaveBeenLastCalledWith("fs\n" + h.lastSent().reqId + "\nlist\ntugra_appv_x_data\nsub\nfiles");
     await h.deliver({ type: "fs_result", reqId: h.lastSent().reqId, ok: true, entries: [] });
     await p;
+  });
+});
+
+describe("AgentWsServer coolify_secrets (sealed secret read)", () => {
+  function h(caps: string[] = ["coolify_secrets"], features: string[] = ["cmd_journal_v1", "coolify_secrets_v1"]) {
+    const sign = jest.fn().mockReturnValue("SIG");
+    const servers = { markOffline: jest.fn(), healOnline: jest.fn(), grantedCapabilities: jest.fn().mockResolvedValue(caps) } as any;
+    const server = new AgentWsServer({} as any, servers, { ingest: jest.fn() } as any, { ingest: jest.fn() } as any, { sign, publicKeySpkiBase64: "K" } as any, {} as any);
+    const socket = { readyState: 1, send: jest.fn(), on: jest.fn(), close: jest.fn() } as any;
+    const other = { readyState: 1, send: jest.fn(), on: jest.fn(), close: jest.fn() } as any;
+    (server as any).state.set(socket, { nonce: "n", serverId: "s1", authed: true, features: new Set(features) });
+    (server as any).state.set(other, { nonce: "n", serverId: "s2", authed: true, features: new Set(features) });
+    (server as any).sockets.set("s1", socket);
+    (server as any).sockets.set("s2", other);
+    const lastSent = () => JSON.parse(socket.send.mock.calls.at(-1)![0]);
+    const deliver = (msg: object, s = socket) => (server as any).onMessage(s, JSON.stringify(msg));
+    return { server, socket, other, sign, lastSent, deliver };
+  }
+  const req = { runId: "run-1", classes: ["env"] as any, refs: ["env:abc"], recipientKey: "AAAA" };
+
+  it("signs canonicalCoolifySecrets with the TARGET server id inside the signature, a short exp and the fixed capability", async () => {
+    const { server, sign, lastSent, deliver } = h();
+    const before = Math.floor(Date.now() / 1000);
+    const p = server.sendCoolifySecrets("s1", req, 60_000);
+    await flush();
+    const sent = lastSent();
+    expect(sent).toMatchObject({ type: "coolify_secrets_req", runId: "run-1", classes: ["env"], refs: ["env:abc"], recipientKey: "AAAA", capability: "coolify_secrets", sig: "SIG" });
+    expect(sent.exp).toBeGreaterThanOrEqual(before + 60);
+    expect(sent.exp).toBeLessThanOrEqual(before + 15 * 60);
+    expect(sent).not.toHaveProperty("serverId"); // signed, not sent: the agent uses its own stored id
+    expect(sign).toHaveBeenLastCalledWith(canonicalCoolifySecrets({ serverId: "s1", reqId: sent.reqId, runId: "run-1", classes: ["env"], refs: ["env:abc"], recipientKey: "AAAA", exp: sent.exp, capability: "coolify_secrets" }));
+    await deliver({ type: "coolify_secrets_result", reqId: sent.reqId, ok: true, records: [], final: true });
+    await expect(p).resolves.toEqual([]);
+  });
+
+  it("refuses before signing: offline, too-old agent, capability not granted, bad shape", async () => {
+    const a = h();
+    await expect(a.server.sendCoolifySecrets("ghost", req, 5000)).rejects.toBeInstanceOf(AgentOfflineException);
+    const old = h(["coolify_secrets"], ["cmd_journal_v1"]);
+    const e1 = await old.server.sendCoolifySecrets("s1", req, 5000).catch((e: unknown) => e);
+    expect((e1 as any).getResponse()).toMatchObject({ code: "agent_too_old" });
+    const nocap = h([]);
+    const e2 = await nocap.server.sendCoolifySecrets("s1", req, 5000).catch((e: unknown) => e);
+    expect(e2).toBeInstanceOf(ForbiddenException);
+    expect((e2 as any).getResponse()).toMatchObject({ code: "capability_not_granted", capability: "coolify_secrets" });
+    const bad = h();
+    await expect(bad.server.sendCoolifySecrets("s1", { ...req, refs: [] }, 5000)).rejects.toBeInstanceOf(HttpException);
+    await expect(bad.server.sendCoolifySecrets("s1", { ...req, refs: Array.from({ length: 201 }, (_, i) => `env:r${i}`) }, 5000)).rejects.toBeInstanceOf(HttpException);
+    for (const x of [a, old, nocap, bad]) expect(x.socket.send).not.toHaveBeenCalled();
+    expect(a.sign).not.toHaveBeenCalled();
+    expect(nocap.sign).not.toHaveBeenCalled();
+  });
+
+  it("allows one request per server at a time (429 busy) and frees the slot on the final frame", async () => {
+    const { server, socket, lastSent, deliver } = h();
+    const p1 = server.sendCoolifySecrets("s1", req, 60_000);
+    await flush();
+    const e = await server.sendCoolifySecrets("s1", req, 60_000).catch((x: unknown) => x);
+    expect((e as any).getStatus()).toBe(429);
+    expect(socket.send).toHaveBeenCalledTimes(1);
+    await deliver({ type: "coolify_secrets_result", reqId: lastSent().reqId, ok: true, final: true });
+    await p1;
+    const p2 = server.sendCoolifySecrets("s1", req, 60_000);
+    await flush();
+    await deliver({ type: "coolify_secrets_result", reqId: lastSent().reqId, ok: true, final: true });
+    await expect(p2).resolves.toEqual([]);
+  });
+
+  it("collects records across frames and resolves on the final one", async () => {
+    const { server, lastSent, deliver } = h();
+    const p = server.sendCoolifySecrets("s1", req, 60_000);
+    await flush();
+    const reqId = lastSent().reqId;
+    await deliver({ type: "coolify_secrets_result", reqId, ok: true, records: [{ ref: "env:a", field: "value", class: "env", env: "tse1.AAA" }] });
+    await deliver({ type: "coolify_secrets_result", reqId, ok: true, records: [{ ref: "env:b", field: "value", code: "bad_mac" }], final: true });
+    await expect(p).resolves.toEqual([
+      { ref: "env:a", field: "value", class: "env", env: "tse1.AAA" },
+      { ref: "env:b", field: "value", code: "bad_mac" },
+    ]);
+  });
+
+  it("maps a refusal to a fixed code and never repeats agent-supplied text", async () => {
+    const { server, lastSent, deliver } = h();
+    const p = server.sendCoolifySecrets("s1", req, 60_000);
+    await flush();
+    await deliver({ type: "coolify_secrets_result", reqId: lastSent().reqId, ok: false, code: "revoked", final: true });
+    await expect(p).rejects.toMatchObject({ code: "revoked" });
+    const q = server.sendCoolifySecrets("s1", req, 60_000);
+    await flush();
+    await deliver({ type: "coolify_secrets_result", reqId: lastSent().reqId, ok: false, code: "the password is hunter2", final: true });
+    const err = await q.catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(CoolifySecretsRemoteException);
+    expect((err as CoolifySecretsRemoteException).code).toBe("failed");
+    expect(String(err)).not.toContain("hunter2");
+  });
+
+  it("ignores a result from another server's socket or for an unknown request", async () => {
+    const { server, other, lastSent, deliver } = h();
+    const p = server.sendCoolifySecrets("s1", req, 60_000);
+    await flush();
+    const reqId = lastSent().reqId;
+    await deliver({ type: "coolify_secrets_result", reqId, ok: true, records: [{ ref: "env:evil", field: "value", code: "bad_mac" }], final: true }, other);
+    await deliver({ type: "coolify_secrets_result", reqId: "nope", ok: true, final: true });
+    let settled = false;
+    void p.then(() => (settled = true), () => (settled = true));
+    await flush();
+    expect(settled).toBe(false);
+    await deliver({ type: "coolify_secrets_result", reqId, ok: true, final: true });
+    await expect(p).resolves.toEqual([]);
+  });
+
+  it("rejects when the agent disconnects, and bounds what a hostile agent can make the hub hold", async () => {
+    const a = h();
+    const p = a.server.sendCoolifySecrets("s1", req, 60_000);
+    await flush();
+    (a.server as any).rejectPendingFor("s1");
+    await expect(p).rejects.toBeInstanceOf(AgentDisconnectedException);
+
+    const b = h();
+    const q = b.server.sendCoolifySecrets("s1", req, 60_000);
+    await flush();
+    const reqId = b.lastSent().reqId;
+    const rec = { ref: "env:a", field: "value", code: "bad_mac" };
+    await b.deliver({ type: "coolify_secrets_result", reqId, ok: true, records: Array.from({ length: 5001 }, () => rec) });
+    await expect(q).rejects.toMatchObject({ code: "failed" });
+  });
+
+  it("times out", async () => {
+    jest.useFakeTimers();
+    try {
+      const { server } = h();
+      const p = server.sendCoolifySecrets("s1", req, 1000);
+      const assertion = expect(p).rejects.toBeInstanceOf(AgentCommandTimeoutException);
+      await jest.advanceTimersByTimeAsync(1100);
+      await assertion;
+    } finally {
+      jest.useRealTimers();
+    }
   });
 });
