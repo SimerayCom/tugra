@@ -37,10 +37,16 @@ describe("resolveContainerLabel", () => {
 
 describe("rangeToMs", () => {
   it("maps known ranges to a lookback window", () => {
-    const base = Date.now();
-    expect(base - rangeToMs("1h").sinceMs).toBeGreaterThanOrEqual(3600_000 - 50);
-    expect(base - rangeToMs("6h").sinceMs).toBeGreaterThanOrEqual(6 * 3600_000 - 50);
-    expect(rangeToMs("24h").range).toBe("24h");
+    // Freeze the clock: a slow CI runner must not turn the elapsed milliseconds into a failure.
+    const base = 1_800_000_000_000;
+    const now = jest.spyOn(Date, "now").mockReturnValue(base);
+    try {
+      expect(base - rangeToMs("1h").sinceMs).toBe(3600_000);
+      expect(base - rangeToMs("6h").sinceMs).toBe(6 * 3600_000);
+      expect(rangeToMs("24h").range).toBe("24h");
+    } finally {
+      now.mockRestore();
+    }
   });
   it("falls back to 1h for an unknown/missing range (no injection of arbitrary windows)", () => {
     expect(rangeToMs(undefined).range).toBe("1h");
