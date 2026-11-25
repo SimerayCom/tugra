@@ -1,5 +1,5 @@
 import { TAKEOVER_STATUSES, TAKEOVER_CERT_STATES, type TakeoverStatus } from "@tugra/shared";
-import { adoptTagFor, canCertTransition, canGiveBack, canTakeoverTransition, cleanCommit, domainsOf, isVerified, judgeProbe, mapMounts, portsMayBeTugras, swapGate, toItemView, type TakeoverItem } from "./inplace-plan";
+import { adoptTagFor, canCertTransition, canGiveBack, canTakeoverTransition, cleanCommit, certWorkLeft, domainsOf, FALLBACK_MAX_MS, isVerified, overdueFallbacks, judgeProbe, mapMounts, portsMayBeTugras, swapGate, toItemView, type TakeoverItem } from "./inplace-plan";
 import type { ProbeResult } from "./inplace-scripts";
 
 const H = (c: string) => c.repeat(64);
@@ -169,5 +169,25 @@ describe("verified, domains and views", () => {
     expect(cleanCommit("abc1234")).toBe("abc1234");
     expect(cleanCommit("HEAD; rm -rf /")).toBeNull();
     expect(cleanCommit(null)).toBeNull();
+  });
+});
+
+describe("overdueFallbacks and certWorkLeft", () => {
+  const at = new Date("2026-11-26T12:00:00Z");
+  const ago = (ms: number) => new Date(at.getTime() - ms).toISOString();
+  const sw = (o: Partial<TakeoverItem>) => item({ itemRef: "a", state: "switched", ...o });
+  it("flags a domain that served the fallback past the limit, measured from the FIRST time it was served", () => {
+    expect(overdueFallbacks([sw({ fallbackAt: { "a.example.com": ago(60_000) }, fallbackSince: { "a.example.com": ago(FALLBACK_MAX_MS + 1000) } })], at)).toEqual(["a.example.com"]);
+    expect(overdueFallbacks([sw({ fallbackAt: { "a.example.com": ago(FALLBACK_MAX_MS - 1000) } })], at)).toEqual([]);
+  });
+  it("ignores an issued domain, a domain that never had a fallback and an app that is not switched", () => {
+    expect(overdueFallbacks([sw({ domains: [{ host: "a.example.com", tempCheck: "ok", finalCheck: "ok", cert: "issued" }], fallbackAt: { "a.example.com": ago(FALLBACK_MAX_MS * 3) } })], at)).toEqual([]);
+    expect(overdueFallbacks([sw({})], at)).toEqual([]);
+    expect(overdueFallbacks([sw({ state: "prepared", fallbackAt: { "a.example.com": ago(FALLBACK_MAX_MS * 3) } })], at)).toEqual([]);
+  });
+  it("work is left while a domain has attempts left, and not once they are used", () => {
+    expect(certWorkLeft([sw({})])).toBe(true);
+    expect(certWorkLeft([sw({ certAttempts: { "a.example.com": 3 } })])).toBe(false);
+    expect(certWorkLeft([sw({ domains: [{ host: "a.example.com", tempCheck: "ok", finalCheck: "ok", cert: "issued" }] })])).toBe(false);
   });
 });

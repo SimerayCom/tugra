@@ -145,7 +145,7 @@ export const TAKEOVER_ISSUES = [
 export type TakeoverIssueCode = (typeof TAKEOVER_ISSUES)[number];
 
 /** Why a takeover step failed (the takeover itself, not one app). */
-export const TAKEOVER_FAILURE_CODES = ["probe_unavailable", "exclusive_policy_failed", "exclusive_stop_failed", "exclusive_start_failed", "swap_stop_failed", "swap_start_failed", "give_back_failed"] as const;
+export const TAKEOVER_FAILURE_CODES = ["probe_unavailable", "exclusive_policy_failed", "exclusive_stop_failed", "exclusive_start_failed", "swap_stop_failed", "swap_start_failed", "give_back_failed", "fallback_overdue", "cert_check_unavailable"] as const;
 export type TakeoverFailureCode = (typeof TAKEOVER_FAILURE_CODES)[number];
 
 export interface TakeoverItemView {

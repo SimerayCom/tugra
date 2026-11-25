@@ -395,6 +395,62 @@ describe("verify: new certificates", () => {
     expect(v.status).toBe("SWAPPED");
     expect((await t.svc.verify(ACTOR, p.id)).status).toBe("VERIFIED");
   });
+  it("the hub works on the certificates by itself after the swap, as the owner who planned it, and audits it as automatic", async () => {
+    const t = build();
+    const p = await swapOk(t);
+    expect(await t.svc.sweepFallbacks()).toBe(1);
+    const v = await t.svc.get(ACTOR, p.id);
+    expect(v.status).toBe("VERIFIED");
+    expect(t.box.fallback.size).toBe(0);
+    const call = t.audit.log.mock.calls.map((c) => c[0] as { actor: string; action: string; meta: Record<string, unknown> }).filter((c) => c.action === "coolify.takeover.verify");
+    expect(call).toHaveLength(1);
+    expect(call[0]).toMatchObject({ actor: ACTOR, meta: expect.objectContaining({ auto: true, issued: 2 }) });
+    // nothing left to do: the next tick leaves it alone
+    expect(await t.svc.sweepFallbacks()).toBe(0);
+  });
+  it("the timer only touches swapped takeovers and never one whose planner is no longer an owner", async () => {
+    const t = build();
+    await plan(t); // PLANNED: not swept
+    expect(await t.svc.sweepFallbacks()).toBe(0);
+    expect(t.box.events).toEqual([]);
+    const u = build();
+    await swapOk(u);
+    u.access.teamRole.mockResolvedValue(Role.ADMIN);
+    const before = u.box.scripts.length;
+    expect(await u.svc.sweepFallbacks()).toBe(0);
+    expect(u.box.scripts).toHaveLength(before);
+  });
+  it("Coolify's certificate served past the limit is a visible failure, kept while the box keeps a valid certificate", async () => {
+    const t = build({ apps: [web] });
+    t.box.leWorks = false;
+    const p = await swapOk(t);
+    await t.svc.sweepFallbacks();
+    expect((await t.svc.get(ACTOR, p.id)).failureCode ?? null).toBeNull(); // still inside the window
+    t.box.clock = new Date(t.box.clock.getTime() + 11 * 60_000);
+    await t.svc.sweepFallbacks();
+    const v = await t.svc.get(ACTOR, p.id);
+    expect(v.status).toBe("SWAPPED");
+    expect(v.failureCode).toBe("fallback_overdue");
+    expect(t.box.fallback.has("web.example.com")).toBe(true);
+    // attempts are used and the failure is shown: the timer stops, it does not loop forever
+    for (let i = 0; i < 4; i++) await t.svc.sweepFallbacks();
+    expect(t.box.events.filter((e) => e === "fallback:remove:web.example.com").length).toBeLessThanOrEqual(3);
+    expect(await t.svc.sweepFallbacks()).toBe(0);
+    expect(t.audit.log.mock.calls.some((c) => (c[0] as { meta?: { failure?: string } }).meta?.failure === "fallback_overdue")).toBe(true);
+  });
+  it("a box without openssl is a failed check that stays visible, not a silent stop", async () => {
+    const t = build({ apps: [web] });
+    t.box.noOpenssl = true;
+    const p = await swapOk(t);
+    const v = await t.svc.verify(ACTOR, p.id);
+    expect(v.status).toBe("SWAPPED");
+    expect(v.failureCode).toBe("cert_check_unavailable");
+    expect(v.items[0].domains[0].cert).toBe("failed");
+    expect(t.box.fallback.has("web.example.com")).toBe(true);
+    // sticky across later passes, and the timer leaves it alone
+    expect((await t.svc.verify(ACTOR, p.id)).failureCode).toBe("cert_check_unavailable");
+    expect(await t.svc.sweepFallbacks()).toBe(0);
+  });
   it("is refused before the swap", async () => {
     const t = build();
     const p = await plan(t);

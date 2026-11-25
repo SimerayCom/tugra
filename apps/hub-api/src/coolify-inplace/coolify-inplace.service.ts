@@ -18,7 +18,9 @@ import {
   canTakeoverTransition,
   cleanCommit,
   domainsOf,
+  certWorkLeft,
   isVerified,
+  overdueFallbacks,
   judgeProbe,
   mapMounts,
   swapGate,
@@ -428,6 +430,7 @@ export class CoolifyInPlaceService {
           if (r?.outcome === "installed") {
             i.fallbackSerial[d.host] = r.serial;
             i.fallbackAt[d.host] = now;
+            (i.fallbackSince ??= {})[d.host] ??= now;
             d.cert = "fallback";
           }
         }
@@ -490,32 +493,69 @@ export class CoolifyInPlaceService {
    * served much past the short window.
    */
   async verify(userId: string, id: string): Promise<TakeoverView> {
-    return this.exclusive(id, async () => {
-      const { row, server } = await this.acting(userId, id);
-      if (row.status !== "SWAPPED" && row.status !== "VERIFIED") throw new ConflictException("takeover_not_swapped");
+    return this.exclusive(id, () => this.verifyPass(userId, id, false));
+  }
+
+  /**
+   * The same pass on a timer, for every takeover still on Coolify's fallback certificates (the owner said "a few minutes at most", so the hub
+   * does not wait to be asked). Acts as the owner who planned the takeover and skips it if that person is no longer an owner of the team;
+   * every pass is audited with `auto`. A takeover another call is working on is left to that call. Returns how many were worked on.
+   */
+  async sweepFallbacks(): Promise<number> {
+    const rows = (await this.prisma.coolifyTakeover.findMany({ where: { status: "SWAPPED" } })) as Row[];
+    let done = 0;
+    for (const row of rows) {
+      if (row.status !== "SWAPPED" || this.active.has(row.id)) continue;
       const items = this.itemsOf(row);
-      await this.checkFinal(server.id, items);
-      const queue = items
-        .filter((i) => i.state === "switched")
-        .flatMap((i) => i.domains.filter((d) => d.cert !== "issued" && d.finalCheck === "ok" && (i.certAttempts[d.host] ?? 0) < CERT_MAX_ATTEMPTS).map((d) => ({ i, d })))
-        .sort((a, b) => ((a.i.fallbackAt[a.d.host] ?? "9") < (b.i.fallbackAt[b.d.host] ?? "9") ? -1 : 1))
-        .slice(0, CERT_BATCH);
-      for (const { i, d } of queue) await this.renew(server.id, i, d);
-      await this.saveItems(row.id, items);
-      await this.setStatus(row, isVerified(items) ? "VERIFIED" : "SWAPPED", null);
-      const all = items.flatMap((i) => i.domains);
-      await this.audit.log({
-        actor: userId,
-        action: "coolify.takeover.verify",
-        target: row.id,
-        meta: { domains: all.length, issued: all.filter((d) => d.cert === "issued").length, fallback: all.filter((d) => d.cert === "fallback").length, failed: all.filter((d) => d.cert === "failed").length, checkFailed: all.filter((d) => d.finalCheck === "failed").length },
-      });
-      return this.fresh(row.id);
+      // nothing left that a pass could change (attempts used and the failure already shown): leave it to the owner
+      if (!certWorkLeft(items) && row.failureCode) continue;
+      try {
+        await this.exclusive(row.id, () => this.verifyPass(row.actorId, row.id, true));
+        done += 1;
+      } catch {
+        // not an owner any more, agent offline or the takeover moved on: the next tick looks again
+      }
+    }
+    return done;
+  }
+
+  private async verifyPass(userId: string, id: string, auto: boolean): Promise<TakeoverView> {
+    const { row, server } = await this.acting(userId, id);
+    if (row.status !== "SWAPPED" && row.status !== "VERIFIED") throw new ConflictException("takeover_not_swapped");
+    const items = this.itemsOf(row);
+    await this.checkFinal(server.id, items);
+    const queue = items
+      .filter((i) => i.state === "switched")
+      .flatMap((i) => i.domains.filter((d) => d.cert !== "issued" && d.finalCheck === "ok" && (i.certAttempts[d.host] ?? 0) < CERT_MAX_ATTEMPTS).map((d) => ({ i, d })))
+      .sort((a, b) => ((a.i.fallbackAt[a.d.host] ?? "9") < (b.i.fallbackAt[b.d.host] ?? "9") ? -1 : 1))
+      .slice(0, CERT_BATCH);
+    let blind = row.failureCode === "cert_check_unavailable";
+    for (const { i, d } of queue) if ((await this.renew(server.id, i, d)) === "noopenssl") blind = true;
+    await this.saveItems(row.id, items);
+    const verified = isVerified(items);
+    // a check the box cannot make, or Coolify's certificate still served past the limit, is a failure the owner sees, never a quiet stop
+    const failure: TakeoverFailureCode | null = verified ? null : blind ? "cert_check_unavailable" : overdueFallbacks(items, this.world.now()).length > 0 ? "fallback_overdue" : null;
+    await this.setStatus(row, verified ? "VERIFIED" : "SWAPPED", failure);
+    const all = items.flatMap((i) => i.domains);
+    await this.audit.log({
+      actor: userId,
+      action: "coolify.takeover.verify",
+      target: row.id,
+      meta: {
+        domains: all.length,
+        issued: all.filter((d) => d.cert === "issued").length,
+        fallback: all.filter((d) => d.cert === "fallback").length,
+        failed: all.filter((d) => d.cert === "failed").length,
+        checkFailed: all.filter((d) => d.finalCheck === "failed").length,
+        ...(failure ? { failure } : {}),
+        ...(auto ? { auto: true } : {}),
+      },
     });
+    return this.fresh(row.id);
   }
 
   /** One domain: is a new certificate already served? If not, take the fallback away and wait for one; put the fallback back when none comes. */
-  private async renew(serverId: string, item: TakeoverItem, d: TakeoverItem["domains"][number]): Promise<void> {
+  private async renew(serverId: string, item: TakeoverItem, d: TakeoverItem["domains"][number]): Promise<"noopenssl" | void> {
     const fbSerial = item.fallbackSerial[d.host] ?? null;
     const check = () => this.run(serverId, buildNewCertCheckScript(d.host), (o) => parseNewCertCheck(o, d.host));
     const removeFallback = () => this.run(serverId, buildFallbackRemoveScript([d.host]), (o) => (o.includes("TUGRA_IP_FALLBACK_REMOVED") ? true : null));
@@ -526,9 +566,10 @@ export class CoolifyInPlaceService {
       return;
     }
     if (served?.state === "noopenssl") {
-      // the box cannot tell a new certificate from the old one: nothing to wait for, nothing to retry
+      // the box cannot tell a new certificate from the old one: nothing to wait for, nothing to retry. It is a failed check, shown as one
       item.certAttempts[d.host] = CERT_MAX_ATTEMPTS;
-      return;
+      d.cert = "failed" satisfies TakeoverCertState;
+      return "noopenssl";
     }
     // take the fallback away so the proxy asks for a new certificate, and wait for it
     await removeFallback();

@@ -4,6 +4,7 @@ import { ApplicationsModule } from "../applications/applications.module";
 import { ClustersModule } from "../clusters/clusters.module";
 import { ProxyOpsService } from "../server-ops/proxy-ops.service";
 import { CoolifyInPlaceController } from "./coolify-inplace.controller";
+import { CoolifyInPlaceSchedulerService } from "./coolify-inplace-scheduler.service";
 import { CoolifyInPlaceService } from "./coolify-inplace.service";
 import { INPLACE_WORLD } from "./inplace-world";
 import { InPlaceWorldService } from "./inplace-world.service";
@@ -13,7 +14,7 @@ import { InPlaceWorldService } from "./inplace-world.service";
 @Module({
   imports: [AgentGatewayModule, ApplicationsModule, ClustersModule],
   controllers: [CoolifyInPlaceController],
-  providers: [ProxyOpsService, InPlaceWorldService, { provide: INPLACE_WORLD, useExisting: InPlaceWorldService }, CoolifyInPlaceService],
+  providers: [ProxyOpsService, InPlaceWorldService, { provide: INPLACE_WORLD, useExisting: InPlaceWorldService }, CoolifyInPlaceService, CoolifyInPlaceSchedulerService],
   exports: [CoolifyInPlaceService],
 })
 export class CoolifyInPlaceModule {}

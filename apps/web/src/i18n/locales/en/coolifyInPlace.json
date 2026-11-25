@@ -42,7 +42,7 @@
     "PLANNED": "Read from the server. Nothing has been changed yet.",
     "TESTING": "Tugra's proxy is up with no public port. Every domain is checked against what Coolify answers.",
     "SWAPPING": "Handing the ports over. This takes a minute.",
-    "SWAPPED": "Tugra serves the sites now, with Coolify's certificate as a short fallback. Press check again until every domain has its new certificate.",
+    "SWAPPED": "Tugra serves the sites now, with Coolify's certificate as a short fallback. Tugra checks every minute and gets a new certificate for each domain; you can also press check again.",
     "VERIFIED": "Every domain works and has a new certificate. Coolify is still on the server until you remove it.",
     "GIVING_BACK": "Putting Coolify back. This takes a minute.",
     "GIVEN_BACK": "Coolify serves the sites again, as before.",
@@ -74,7 +74,9 @@
     "exclusive_start_failed": "Tugra's copy would not start on the shared data. Everything was put back.",
     "swap_stop_failed": "Coolify's proxy would not stop. Everything was put back.",
     "swap_start_failed": "Tugra's proxy could not take the ports. Everything was put back.",
-    "give_back_failed": "Giving back did not finish. Press it again."
+    "give_back_failed": "Giving back did not finish. Press it again.",
+    "fallback_overdue": "Coolify's certificate has been served for longer than a few minutes and no new certificate came. Check the domain's DNS and port 80, or give the server back.",
+    "cert_check_unavailable": "The server cannot check certificates (openssl is missing), so Coolify's certificate stays. Install openssl on the server, or give the server back."
   },
   "error": {
     "generic": "That did not work. Try again.",

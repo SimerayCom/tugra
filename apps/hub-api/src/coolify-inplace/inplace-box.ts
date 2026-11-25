@@ -60,6 +60,7 @@ export class Box implements InPlaceWorld {
   differs = new Set<string>();
   dynamic = new Set<string>();
   noCurl = false;
+  noOpenssl = false;
   failProxyStop = false;
   failAdopted = new Set<string>();
   failStopCtr = new Set<string>();
@@ -246,6 +247,7 @@ export class Box implements InPlaceWorld {
     }
     if (s.includes("TUGRA_IP_CERT")) {
       const h = /^H='([^']+)'/m.exec(s)?.[1] ?? "";
+      if (this.noOpenssl) return `TUGRA_IP_CERT|${h}|noopenssl|-|-`;
       if (this.pendingLe.has(h)) {
         this.pendingLe.delete(h);
         this.leIssued.add(h);

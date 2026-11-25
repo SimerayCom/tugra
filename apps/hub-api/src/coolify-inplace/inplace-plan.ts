@@ -38,6 +38,8 @@ export interface TakeoverItem extends TakeoverItemView {
   /** Serial of the fallback certificate per domain, once it was installed (hex), and when it started to be served. */
   fallbackSerial: Record<string, string | null>;
   fallbackAt: Record<string, string>;
+  /** When the domain FIRST started to be served with Coolify's certificate. Unlike `fallbackAt` it is not reset when a failed attempt puts the fallback back. */
+  fallbackSince?: Record<string, string>;
   /** Failed attempts to get a new certificate, per domain. */
   certAttempts: Record<string, number>;
 }
@@ -144,6 +146,25 @@ export const canCertTransition = (from: TakeoverCertState, to: TakeoverCertState
 
 /** How long Coolify's certificate may be the one served per domain before the hub works on replacing it (the owner said "a few minutes"). */
 export const FALLBACK_MAX_MS = 10 * 60_000;
+/** Domains of switched apps that still serve Coolify's certificate (or a failed attempt) past {@link FALLBACK_MAX_MS}. Hosts only. */
+export function overdueFallbacks(items: readonly TakeoverItem[], now: Date): string[] {
+  const out: string[] = [];
+  for (const i of items) {
+    if (i.state !== "switched") continue;
+    for (const d of i.domains) {
+      if (d.cert === "issued") continue;
+      const since = i.fallbackSince?.[d.host] ?? i.fallbackAt[d.host];
+      if (since && now.getTime() - new Date(since).getTime() > FALLBACK_MAX_MS) out.push(d.host);
+    }
+  }
+  return out;
+}
+
+/** Whether a verify pass still has anything to do on its own: a domain without a new certificate that has attempts left, or an unflagged overdue one. */
+export function certWorkLeft(items: readonly TakeoverItem[]): boolean {
+  return items.some((i) => i.state === "switched" && i.domains.some((d) => d.cert !== "issued" && (i.certAttempts[d.host] ?? 0) < CERT_MAX_ATTEMPTS));
+}
+
 /** Attempts at a new certificate per domain before it is left to the owner. */
 export const CERT_MAX_ATTEMPTS = 3;
 /** Domains whose certificate is handled per verify call, so one request never holds the server for the whole fleet. */
