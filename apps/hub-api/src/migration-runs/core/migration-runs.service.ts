@@ -70,6 +70,7 @@ import {
 } from "./run-contract";
 import { CLEANUP_REQUEST_KEY, RunEngineService, type CleanupRequest } from "./run-engine.service";
 import { ATTACH_STEPS, COMMAND_STEPS, OPEN_STATUSES, approvalExpiry, deriveStepAllowed, hashOf, isTerminal, isWaitingStep, serverMapOf, stripSince } from "./run-logic";
+import { checkSwapPlacement } from "./swap-placement";
 import { RUN_ENV, RUN_IMPORT, RUN_SINK, RUN_STORE, type RunEnvPort, type RunImportPort, type RunSessionInfo, type RunSinkPort } from "./run-ports";
 import { RUN_HINTS, type RunHint, type RunHintStore } from "../steps/import/baseline/run-hints";
 import { servicePinKey } from "../steps/import/baseline/image-pins";
@@ -169,6 +170,7 @@ export class MigrationRunsService implements MigrationRunsFacade {
     const session = await this.requireSession(actor, body.sessionId, body.sourceKind);
     await this.assertTargetsInTeam(server.teamId, serverMap);
     await this.assertTargetsReady([server.id, ...Object.values(serverMap)]);
+    if (body.topology === "swap-proxy") await this.assertSwapPlacement(actor, body, server.id, serverMap);
 
     const base = RunApplyInputSchema.parse(pickApply(body));
     await this.assertPlanFresh(actor, session, base);
@@ -278,6 +280,23 @@ export class MigrationRunsService implements MigrationRunsFacade {
     if (topology !== "swap-proxy") return;
     if (sourceKind !== "coolify") throw unprocessable("swap-unsupported-source", { sourceKind });
     if (new Set(ids).size > 1) throw unprocessable("swap-multi-target", { servers: new Set(ids).size });
+  }
+
+  /**
+   * A proxy swap needs the target to BE the machine the source server runs on, and that machine must not run the Coolify control plane
+   * (`swap-target-not-source-host`, `swap-control-plane`). Judged from the plan's match verdicts before anything is created; a port that
+   * cannot tell leaves it to CUTOVER's identity check. A source that cannot be read is a refusal, never a pass.
+   */
+  private async assertSwapPlacement(actor: RunActor, body: CreateMigrationRunInput, defaultTarget: string, serverMap: Record<string, string>): Promise<void> {
+    if (!this.imp.sourceHosts) return;
+    let hosts: Awaited<ReturnType<NonNullable<RunImportPort["sourceHosts"]>>>;
+    try {
+      hosts = await this.imp.sourceHosts(actor.userId, { sessionId: body.sessionId, sourceKind: body.sourceKind, ...(body.scope ? { scope: body.scope } : {}) });
+    } catch {
+      throw unprocessable("swap-placement-unreadable");
+    }
+    const v = checkSwapPlacement(hosts, defaultTarget, serverMap);
+    if (!v.ok) throw unprocessable(v.code, { sourceServer: v.ref });
   }
 
   /** The source's version, when the import port can read it (best effort: a failure leaves it unknown for PREFLIGHT to fill). */

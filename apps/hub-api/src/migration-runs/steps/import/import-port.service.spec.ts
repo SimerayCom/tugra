@@ -360,3 +360,38 @@ describe("ImportPortService.sourceAgentGaps", () => {
     expect(await svc.sourceAgentGaps("u1", { sessionId: "s1", sourceKind: "coolify", mapping: mapping as never })).toEqual({ gaps: [], unverified: false });
   });
 });
+
+describe("ImportPortService.sourceHosts", () => {
+  const hosts = [
+    { ref: "a", controlPlane: undefined, tugra: { serverId: "t1" } },
+    { ref: "b", controlPlane: undefined, tugra: undefined },
+    { ref: "cp", controlPlane: true, tugra: { serverId: "t9" } },
+  ];
+  const plan = {
+    planHash: "h",
+    items: [
+      { itemRef: "app:a:web", kind: "app", name: "web", dependsOn: [] },
+      { itemRef: "app:b:api", kind: "app", name: "api", dependsOn: [] },
+      { itemRef: "volume:a:v", kind: "volume", name: "v", dependsOn: [] },
+    ],
+    preflight: { hosts },
+  };
+  it("reports the servers that have an item, with the control plane flag and the matched Tugra server (hosts with nothing are left out)", async () => {
+    const { svc, importer } = make();
+    importer.plan.mockResolvedValueOnce(plan);
+    expect(await svc.sourceHosts("u1", { sessionId: "s1", sourceKind: "coolify" })).toEqual([
+      { ref: "a", controlPlane: false, tugraServerId: "t1" },
+      { ref: "b", controlPlane: false, tugraServerId: null },
+    ]);
+  });
+  it("narrows to the servers a scope keeps", async () => {
+    const { svc, importer } = make();
+    importer.plan.mockResolvedValueOnce(plan);
+    expect(await svc.sourceHosts("u1", { sessionId: "s1", sourceKind: "coolify", scope: { sourceServers: ["a"] } })).toEqual([{ ref: "a", controlPlane: false, tugraServerId: "t1" }]);
+  });
+  it("a source that is not Coolify has no swap and reports nothing", async () => {
+    const { svc, importer } = make();
+    expect(await svc.sourceHosts("u1", { sessionId: "s1", sourceKind: "dokploy" })).toEqual([]);
+    expect(importer.plan).not.toHaveBeenCalled();
+  });
+});

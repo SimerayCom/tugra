@@ -29,9 +29,9 @@ import { buildDataIntegrity } from "../data/data-integrity";
 import { pinnedImageRef } from "./baseline/image-pins";
 import type { ImportMappingDoc, ResolvedMapping } from "../../../importer/import-mapping";
 import type { ServicePreview } from "../../../importer/service-preview";
-import type { RunReport } from "../../core/dto";
+import type { RunReport, RunScope } from "../../core/dto";
 import { stable } from "../../core/run-logic";
-import { applyScope, resolveScope } from "../../core/run-scope";
+import { applyScope, hostOfItemRef, resolveScope } from "../../core/run-scope";
 import type { RunImportPort } from "../../core/run-ports";
 import { diskReadingOf } from "./baseline/host-class";
 import type {
@@ -110,6 +110,21 @@ export class ImportPortService implements ImportStepsPort {
     } finally {
       await source.close();
     }
+  }
+
+  /**
+   * The source servers a run would move and how each lines up with a Tugra server. The same plan the first step shows (its match verdicts
+   * and control-plane flag), narrowed to the servers that have an item in scope. A scope the plan cannot resolve is not judged here: the
+   * scope step answers it with its own code.
+   */
+  async sourceHosts(userId: string, i: { sessionId: string; sourceKind: RemoteSourceKind; scope?: RunScope }): Promise<Array<{ ref: string; controlPlane: boolean; tugraServerId: string | null }>> {
+    if (i.sourceKind !== "coolify") return [];
+    const plan = await this.importer.plan(userId, { sourceKind: "coolify", sessionId: i.sessionId });
+    const resolved = i.scope ? resolveScope(plan, i.scope) : null;
+    const inScope = resolved && !("fail" in resolved) ? resolved.inScope : null;
+    const used = new Set<string>();
+    for (const it of plan.items) if ((it.kind === "app" || it.kind === "database" || it.kind === "service") && (!inScope || inScope.has(it.itemRef))) used.add(hostOfItemRef(it.itemRef));
+    return (plan.preflight?.hosts ?? []).filter((h) => used.has(h.ref)).map((h) => ({ ref: h.ref, controlPlane: h.controlPlane === true, tugraServerId: h.tugra?.serverId ?? null }));
   }
 
   /** Health of every source resource right now, or null when the source offers no such read. Writes nothing. */

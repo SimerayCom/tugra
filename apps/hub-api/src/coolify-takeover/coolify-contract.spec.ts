@@ -36,8 +36,8 @@ describe("Coolify takeover contract: capabilities on the hub", () => {
 describe("Coolify takeover contract: skeleton modules", () => {
   it("instantiates every still-empty takeover service on its own (no hidden dependency yet)", async () => {
     // Lanes B, C and D filled their services (they have their own specs); the rest are still empty here.
-    const mod = await Test.createTestingModule({ providers: [CoolifyInPlaceService, CoolifyCleanupService, MigrationCampaignsService, ProjectMovesService] }).compile();
-    for (const S of [CoolifyInPlaceService, CoolifyCleanupService, MigrationCampaignsService, ProjectMovesService]) expect(mod.get(S)).toBeInstanceOf(S);
+    const mod = await Test.createTestingModule({ providers: [CoolifyInPlaceService, CoolifyCleanupService, ProjectMovesService] }).compile();
+    for (const S of [CoolifyInPlaceService, CoolifyCleanupService, ProjectMovesService]) expect(mod.get(S)).toBeInstanceOf(S);
   });
 
   it("registers the takeover services in the existing takeover module and exports them", () => {

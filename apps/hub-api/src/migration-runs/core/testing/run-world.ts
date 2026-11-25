@@ -520,6 +520,9 @@ export class ScriptedImportPort implements ImportStepsPort {
     return this.version_;
   }
 
+  /** Opt-in: a spec sets it to answer the create-time swap placement checks; unset = the port cannot tell (the checks are skipped). */
+  sourceHosts?: RunImportPort["sourceHosts"];
+
   async planHash(): Promise<string> {
     this.reads.push("planHash");
     return this.plan_.planHash;
