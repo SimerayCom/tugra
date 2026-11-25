@@ -15,7 +15,7 @@
  * the result unless the server confirmed the read-only mode.
  */
 
-const IDENT_RE = /^[a-z_][a-z0-9_]{0,62}$/;
+export const IDENT_RE = /^[a-z_][a-z0-9_]{0,62}$/;
 
 export interface SectionSpec {
   /** Marker name in the script output. */
@@ -38,15 +38,15 @@ export interface SectionSpec {
 /** Column names that look secret: reported as present-only unless allow-listed. */
 export const SECRET_NAME_SQL_RE = "password|passwd|secret|token|private_key|webhook_url|api_key|_key$|^value$";
 
-function ident(v: string): string {
+export function ident(v: string): string {
   if (!IDENT_RE.test(v)) throw new Error(`unsafe identifier: ${v}`);
   return v;
 }
-function lit(v: string): string {
+export function lit(v: string): string {
   if (!/^[A-Za-z0-9_.-]{0,64}$/.test(v)) throw new Error(`unsafe literal: ${v}`);
   return `'${v}'`;
 }
-const arr = (xs: string[]): string => `array[${xs.map((x) => lit(ident(x))).join(",")}]::text[]`;
+export const arr = (xs: string[]): string => `array[${xs.map((x) => lit(ident(x))).join(",")}]::text[]`;
 
 export function buildSectionSql(spec: SectionSpec): string {
   const plain = arr(spec.plain);
@@ -70,6 +70,9 @@ export function buildSectionSql(spec: SectionSpec): string {
     `    from jsonb_each(to_jsonb(t)) as e(k, v)`,
     `  ) as r`,
     `  from public.${ident(spec.table)} t`,
+    // Soft delete: Coolify keeps removed servers, applications, services and databases with `deleted_at` set. Reading the
+    // column through to_jsonb keeps one script valid for a table (or version) that has no such column.
+    `  where (to_jsonb(t)->>'deleted_at') is null`,
     `  order by to_jsonb(t)->>'id'`,
     `  limit ${limit}`,
     `) s;`,
