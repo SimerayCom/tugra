@@ -61,5 +61,6 @@
   "firstImport": "Import",
   "moveToTeam": "Move to team",
   "moveConfirm": "Move",
-  "movedToTeam": "Moved to {name}"
+  "movedToTeam": "Moved to {name}",
+  "iconAndColor": "Icon & color"
 }

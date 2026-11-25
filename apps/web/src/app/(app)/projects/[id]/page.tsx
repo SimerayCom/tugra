@@ -50,13 +50,16 @@ export default function ProjectDetailPage() {
   const [envName, setEnvName] = useState("");
   const addEnv = useMutation({
     mutationFn: () => api.addEnvironment(id, envName),
-    onSuccess: () => { setEnvName(""); invalidate(); },
+    onSuccess: () => { setEnvName(""); setAddingEnv(false); invalidate(); },
   });
   const del = useMutation({
     mutationFn: () => api.deleteProject(id),
     onSuccess: () => { router.replace("/projects"); toast(t("common.deletedNamed", { name: project?.name ?? "" }), "success"); },
   });
   const [renaming, setRenaming] = useState(false);
+  // Icon/colour editor and the new-environment field stay closed until asked for: the page leads with the environments.
+  const [styling, setStyling] = useState(false);
+  const [addingEnv, setAddingEnv] = useState(false);
   const [rname, setRname] = useState("");
   const rename = useMutation({
     mutationFn: () => api.renameProject(id, rname.trim()),
@@ -97,6 +100,7 @@ export default function ProjectDetailPage() {
           project.canWrite ? (
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
               <Btn variant="ghost" onClick={() => { setRname(project.name); setRenaming(true); setMoving(false); }}>{t("projects.rename")}</Btn>
+              <Btn variant="ghost" aria-expanded={styling} onClick={() => setStyling((v) => !v)}>{t("projects.iconAndColor")}</Btn>
               {targets.length > 0 && (
                 <Btn variant="ghost" onClick={() => { setMoving(true); setRenaming(false); setMoveTeam(targets[0].id); }}>{t("projects.moveToTeam")}</Btn>
               )}
@@ -108,6 +112,7 @@ export default function ProjectDetailPage() {
         }
       />
 
+      {styling && (
       <IdentityCard
         name={project.name}
         iconUrl={projectIconUrl(id, project.iconUpdatedAt)}
@@ -124,6 +129,7 @@ export default function ProjectDetailPage() {
         onSaveColor={(c) => api.setProjectColor(id, c)}
         onChanged={() => { invalidate(); qc.invalidateQueries({ queryKey: ["projects"] }); }}
       />
+      )}
 
       {renaming && (
         <Card style={{ padding: 12, marginBottom: 12 }}>
@@ -156,12 +162,19 @@ export default function ProjectDetailPage() {
         ))}
       </div>
 
-      {project.canWrite && (
+      {project.canWrite && !addingEnv && (
+        <div style={{ marginTop: 12 }}>
+          <Btn variant="ghost" onClick={() => setAddingEnv(true)}>{t("projects.addEnvironment")}</Btn>
+        </div>
+      )}
+      {project.canWrite && addingEnv && (
         <Card style={{ padding: 16, marginTop: 16 }}>
-          <form onSubmit={(e) => { e.preventDefault(); addEnv.mutate(); }} style={{ display: "flex", gap: 8 }}>
-            <input style={{ ...field, flex: 1 }} placeholder={t("projects.environmentName")} aria-label={t("projects.environmentName")} value={envName} onChange={(e) => setEnvName(e.target.value)} required />
-            <Btn onClick={() => addEnv.mutate()} disabled={addEnv.isPending || !envName}>{t("projects.addEnvironment")}</Btn>
+          <form onSubmit={(e) => { e.preventDefault(); if (envName.trim()) addEnv.mutate(); }} style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <input style={{ ...field, flex: "1 1 200px" }} placeholder={t("projects.environmentName")} aria-label={t("projects.environmentName")} value={envName} onChange={(e) => setEnvName(e.target.value)} autoFocus required />
+            <Btn type="submit" disabled={addEnv.isPending || !envName.trim()}>{t("projects.addEnvironment")}</Btn>
+            <Btn variant="ghost" onClick={() => { setAddingEnv(false); setEnvName(""); }}>{t("common.cancel")}</Btn>
           </form>
+          {addEnv.isError && <div role="alert" style={{ color: "var(--c-r)", fontSize: 12, marginTop: 8 }}>{(addEnv.error as Error).message}</div>}
         </Card>
       )}
     </div>
