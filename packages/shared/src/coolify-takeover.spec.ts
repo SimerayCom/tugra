@@ -171,8 +171,8 @@ describe("coolify takeover contract: placement, campaign, takeover, cleanup, pro
     expect(PROJECT_MOVE_PHASES).toContain("ROLLED_BACK");
   });
 
-  it("compares the nine things the checklist names", () => {
-    expect([...COMPLETENESS_KINDS]).toEqual(["application", "database", "service", "domain", "env_keys", "volume", "scheduled_task", "backup", "notification"]);
+  it("compares the ten things the checklist names (traffic: the domain answers from Tugra)", () => {
+    expect([...COMPLETENESS_KINDS]).toEqual(["application", "database", "service", "domain", "traffic", "env_keys", "volume", "scheduled_task", "backup", "notification"]);
     expect([...REMNANT_KINDS]).toEqual(["container", "network", "image", "directory"]);
   });
 });
