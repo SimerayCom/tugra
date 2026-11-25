@@ -1,4 +1,4 @@
-import { MetricsRollupRunnerService } from "./metrics-rollup-runner.service";
+import { MAX_FILLED_SLICES, MetricsRollupRunnerService, SLICE_MS, slices } from "./metrics-rollup-runner.service";
 
 // A minute-aligned timestamp to build in-bucket rows around.
 const BUCKET_MS = 1_700_000_040_000; // divisible by 60_000
@@ -12,8 +12,9 @@ function make(opts: {
   const metricCreateMany = jest.fn().mockResolvedValue({ count: 0 });
   const containerCreateMany = jest.fn().mockResolvedValue({ count: 0 });
   const prisma = {
-    metric: { findMany: jest.fn().mockResolvedValue(opts.metricRows ?? []) },
-    containerMetric: { findMany: jest.fn().mockResolvedValue(opts.containerRows ?? []) },
+    // The runner reads the window slice by slice: the rows come back for the first slice, later slices are empty.
+    metric: { findMany: jest.fn().mockResolvedValueOnce(opts.metricRows ?? []).mockResolvedValue([]) },
+    containerMetric: { findMany: jest.fn().mockResolvedValueOnce(opts.containerRows ?? []).mockResolvedValue([]) },
     metricRollup: {
       findFirst: jest.fn().mockResolvedValue(opts.maxHostBucket ? { bucket: opts.maxHostBucket } : null),
       createMany: metricCreateMany,
@@ -96,7 +97,7 @@ describe("MetricsRollupRunnerService", () => {
   });
 
   it("watermark: with existing rollups, the window starts at maxBucket + 1 minute", async () => {
-    const maxBucket = new Date(Date.now() - 5 * 60_000); // 5 min ago (well within raw retention)
+    const maxBucket = new Date(Math.floor((Date.now() - 5 * 60_000) / 60_000) * 60_000); // a real (minute-aligned) bucket 5 min ago
     const { svc, prisma } = make({ maxHostBucket: maxBucket, metricRows: [hostRow()] });
     await svc.roll();
     const where = prisma.metric.findMany.mock.calls[0][0].where;
@@ -108,7 +109,8 @@ describe("MetricsRollupRunnerService", () => {
     await svc.roll();
     const where = prisma.metric.findMany.mock.calls[0][0].where;
     const backfill = Date.now() - 6 * 3600_000;
-    expect(Math.abs(where.ts.gte.getTime() - backfill)).toBeLessThan(2000); // ≈ now-6h
+    expect(Math.abs(where.ts.gte.getTime() - backfill)).toBeLessThan(61_000); // ≈ now-6h, floored to the minute
+    expect(where.ts.gte.getTime() % 60_000).toBe(0);
     // end (upper bound) is minute-aligned and not in the future → the still-filling minute is excluded
     expect(where.ts.lt.getTime() % 60_000).toBe(0);
     expect(where.ts.lt.getTime()).toBeLessThanOrEqual(Date.now());
@@ -161,5 +163,36 @@ describe("MetricsRollupRunnerService", () => {
     expect(web.maxCpu).toBe(15);
     expect(web.avgMemPct).toBe(30); // (20+40)/2
     expect(containerCreateMany.mock.calls[0][0].skipDuplicates).toBe(true);
+  });
+
+  describe("slicing (no catch-up OOM)", () => {
+    it("splits a window into minute-aligned 15-minute slices, last one clipped", () => {
+      const start = new Date(BUCKET_MS);
+      const end = new Date(BUCKET_MS + 40 * 60_000);
+      const out = slices(start, end);
+      expect(out.map((s) => (s.end.getTime() - s.start.getTime()) / 60_000)).toEqual([15, 15, 10]);
+      expect(out[0].start.getTime()).toBe(start.getTime());
+      expect(out[2].end.getTime()).toBe(end.getTime());
+    });
+
+    it("a 48 h catch-up never reads more than one slice per query", async () => {
+      const maxBucket = new Date(Date.now() - 47 * 3600_000);
+      const { svc, prisma } = make({ maxHostBucket: maxBucket });
+      await svc.roll();
+      for (const [arg] of prisma.metric.findMany.mock.calls) {
+        expect(arg.where.ts.lt.getTime() - arg.where.ts.gte.getTime()).toBeLessThanOrEqual(SLICE_MS);
+      }
+      // empty gaps are skipped within the same run, so the whole window was walked
+      expect(prisma.metric.findMany.mock.calls.length).toBeGreaterThan(180);
+    });
+
+    it("stops after MAX_FILLED_SLICES slices that wrote buckets; the next run resumes from the watermark", async () => {
+      const maxBucket = new Date(Date.now() - 10 * 3600_000);
+      const { svc, prisma } = make({ maxHostBucket: maxBucket });
+      prisma.metric.findMany.mockReset();
+      prisma.metric.findMany.mockImplementation(async ({ where }: { where: { ts: { gte: Date } } }) => [hostRow({ ts: where.ts.gte })]);
+      await svc.roll();
+      expect(prisma.metric.findMany).toHaveBeenCalledTimes(MAX_FILLED_SLICES);
+    });
   });
 });
