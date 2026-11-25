@@ -902,6 +902,8 @@ export class ApplicationsService {
   async clone(userId: string, id: string, input: { name?: string; serverId?: string; environmentId?: string }): Promise<{ app: AppView; warnings: string[] }> {
     const src = await this.require(userId, id);
     if (src.isPreview) throw new BadRequestException("a preview app can't be cloned");
+    // A copy would be a compose app with no file (the adopted files live on the host and belong to the one project).
+    if (adoptedCompose(src)) throw new BadRequestException("a stack adopted in place can't be cloned");
     await this.access.requirePermission(userId, src.teamId, "apps:config");
     // Target environment: the source's own by default, or a chosen one that must be in the same team
     // (environment clone places the copy in a new environment).

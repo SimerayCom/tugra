@@ -6,7 +6,7 @@ import { I18nProvider } from "../../../../i18n/provider";
 import type { Application, AppLink } from "../../../../lib/types";
 import { ConfirmProvider } from "../../../../components/confirm";
 import { api, ApiError } from "../../../../lib/api";
-import { TaskRow, ComposeEditorCard, ComposePreviewPanel, GitComposeSourceCard, AppOverview, PreviewBadge, PreviewCard, WebhookEventHelp } from "./app-detail-misc-cards";
+import { TaskRow, AdoptedStackCard, ComposeEditorCard, ComposePreviewPanel, GitComposeSourceCard, AppOverview, PreviewBadge, PreviewCard, WebhookEventHelp } from "./app-detail-misc-cards";
 
 afterEach(cleanup);
 afterEach(() => vi.restoreAllMocks());
@@ -232,5 +232,19 @@ describe("TaskRow disabled badge", () => {
   it("shows no badge for an enabled task", () => {
     show(true);
     expect(screen.queryByText("Disabled")).toBeNull();
+  });
+});
+
+describe("AdoptedStackCard", () => {
+  it("shows where the stack runs from and says what does not apply to it", () => {
+    render(
+      <I18nProvider>
+        <AdoptedStackCard adopt={{ project: "shop", workingDir: "/srv/shop", files: ["/srv/shop/docker-compose.yml"], services: [{ name: "web", image: "nginx", ports: [80] }, { name: "db", image: "postgres", ports: [] }] }} />
+      </I18nProvider>,
+    );
+    expect(screen.getByText("shop")).toBeTruthy();
+    expect(screen.getByText("/srv/shop")).toBeTruthy();
+    expect(screen.getByText("web, db")).toBeTruthy();
+    expect(screen.getByText(/do not apply/)).toBeTruthy();
   });
 });

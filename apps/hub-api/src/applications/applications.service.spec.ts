@@ -8906,6 +8906,7 @@ describe("ApplicationsService — app move guards", () => {
         ["setComposeNetworks", svc.setComposeNetworks("u1", "app1", [])],
         ["setConfigMountContent", svc.setConfigMountContent("u1", "app1", "/etc/x.conf", "x")],
         ["setHostMounts", svc.setHostMounts("u1", "app1", [])],
+        ["clone", svc.clone("u1", "app1", {})],
         ["setNetworkAliases", svc.setNetworkAliases("u1", "app1", ["a"])],
       ];
       for (const [name, p] of calls) await expect(p).rejects.toThrow(/adopted in place/);

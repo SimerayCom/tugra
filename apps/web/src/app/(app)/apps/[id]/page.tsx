@@ -57,7 +57,7 @@ import { SourceCard, BuildSettingsCard, BuildArgsCard, BuildSecretsCard, DeployS
 import { ExtraDomainsCard, ServiceDomainsCard, DomainOptionsCard, CustomCertCard, RedirectsCard, BasicAuthCard, NetworkAliasesCard, NetworkingCard } from "./app-detail-domain-cards";
 import { VolumesCard, HostMountsCard, VolumeBackupsCard } from "./app-detail-storage-cards";
 import { ImageUpdateBadge, ImageUpdateCard } from "./image-update-card";
-import { ScheduledTasksCard, PreviewCard, AppDescriptionCard, ComposeEditorCard, GitComposeSourceCard, AppIconCard, AppOverview, ComposePreviewPanel, ContainerPickerModal, PreviewBadge, WebhookEventHelp } from "./app-detail-misc-cards";
+import { ScheduledTasksCard, PreviewCard, AppDescriptionCard, ComposeEditorCard, AdoptedStackCard, GitComposeSourceCard, AppIconCard, AppOverview, ComposePreviewPanel, ContainerPickerModal, PreviewBadge, WebhookEventHelp } from "./app-detail-misc-cards";
 import { DeploymentsTab, MetricsTab, LogsTab, FilesTab } from "./app-detail-tabs";
 
 export default function AppDetailPage() {
@@ -153,6 +153,12 @@ export default function AppDetailPage() {
     pruneBuildCache.current = false;
     // Offer "also remove images" only for Image/Git apps — a compose app's images are its
     // upstream/compose-built tags, which the hub intentionally never removes.
+    // A stack adopted in place is only unregistered: its containers, volumes and files stay, so none of the cleanup
+    // opt-ins apply and the dialog must not claim anything is removed.
+    if (appData.composeAdopt) {
+      if (await confirm({ title: t("apps.delete"), body: t("apps.deleteConfirmAdopted"), danger: true, confirmText: appData.name })) del.mutate();
+      return;
+    }
     const boxes = [{ label: t("apps.keepVolumes"), ref: keepVolumes }];
     if (appData.source !== "COMPOSE") boxes.push({ label: t("apps.removeImages"), ref: removeImages });
     // Custom networks: classic non-compose apps with a network of their own (the shared tugra-apps bridge is never
@@ -374,7 +380,7 @@ export default function AppDetailPage() {
     networkAliases: () => <NetworkAliasesCard id={id} aliases={appData.networkAliases} />,
     preview: () => <PreviewCard id={id} previewEnabled={appData.previewEnabled} domain={appData.domain} excludeKeys={appData.previewExcludeKeys} limit={appData.previewLimit} />,
     danger: () => (
-      <SectionCard title={t("apps.dangerDeleteTitle")} desc={t("apps.dangerDeleteDesc")} style={{ borderColor: "var(--c-r)" }}>
+      <SectionCard title={t("apps.dangerDeleteTitle")} desc={appData.composeAdopt ? t("apps.dangerDeleteDescAdopted") : t("apps.dangerDeleteDesc")} style={{ borderColor: "var(--c-r)" }}>
         <Btn icon={Trash2} variant="dangerGhost" loading={del.isPending} onClick={() => void confirmAndDelete()}>{t("apps.delete")}</Btn>
       </SectionCard>
     ),
@@ -440,7 +446,7 @@ export default function AppDetailPage() {
                       onSelect: () => onDeploy({ noCache: true }),
                     },
                     { key: "rename", label: t("apps.rename"), icon: Pencil, onSelect: () => setRenameOpen(true) },
-                    { key: "clone", label: t("apps.clone"), icon: Copy, onSelect: () => setCloneOpen(true) },
+                    ...(appData.composeAdopt ? [] : [{ key: "clone", label: t("apps.clone"), icon: Copy, onSelect: () => setCloneOpen(true) }]),
                     { key: "delete", label: t("apps.delete"), icon: Trash2, danger: true, disabled: moveLocked, title: lockTitle, onSelect: () => void confirmAndDelete() },
                   ]}
                 />
@@ -546,6 +552,7 @@ export default function AppDetailPage() {
           ) : (
             <>
               <AppOverview app={appData} deployments={deployments} />
+              {appData.composeAdopt && <AdoptedStackCard adopt={appData.composeAdopt} />}
               {appData.source === "COMPOSE" && appData.composePath && appData.canWrite && <ComposePreviewPanel id={id} />}
               {appData.imageUpdate && (
                 <ImageUpdateCard app={appData} canWrite={appData.canWrite} canDeploy={appData.canDeploy} onRedeploy={() => onDeploy({ noCache: true })} />

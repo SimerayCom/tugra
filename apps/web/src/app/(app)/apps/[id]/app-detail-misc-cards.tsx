@@ -281,6 +281,31 @@ export function GitComposeSourceCard({ app }: { app: Application }) {
   );
 }
 
+/** Summary of a compose project adopted in place: its project name, where its files live on the server, the services it
+ *  ran when adopted, and what does NOT apply to it (Tugra-side env/domains), so nothing reads as silently ignored. */
+export function AdoptedStackCard({ adopt }: { adopt: NonNullable<Application["composeAdopt"]> }) {
+  const t = useT();
+  const rows: { label: string; value: string }[] = [
+    { label: t("apps.adoptedProject"), value: adopt.project },
+    { label: t("apps.adoptedDir"), value: adopt.workingDir },
+    { label: t("apps.adoptedFiles"), value: adopt.files.join(", ") },
+    { label: t("apps.adoptedServices"), value: adopt.services.map((s) => s.name).join(", ") || "—" },
+  ];
+  return (
+    <SectionCard title={t("apps.adoptedTitle")}>
+      <div style={{ display: "grid", gap: 8 }}>
+        {rows.map((r) => (
+          <div key={r.label} style={{ display: "flex", flexWrap: "wrap", gap: "2px 12px", fontSize: 13 }}>
+            <span style={{ color: "var(--c-tx3)", minWidth: 120 }}>{r.label}</span>
+            <span className="mono" style={{ color: "var(--c-tx)", wordBreak: "break-all", minWidth: 0 }}>{r.value}</span>
+          </div>
+        ))}
+      </div>
+      <div style={{ fontSize: 11, color: "var(--c-tx3)", marginTop: 10 }}>{t("apps.adoptedHint")}</div>
+    </SectionCard>
+  );
+}
+
 /** Edit a COMPOSE app's docker-compose.yml in place (writer only). Validation (safe compose) runs on
  *  save; changes apply on the next deploy, so Save persists and "Save & deploy" chains the deploy. */
 export function ComposeEditorCard({ id, composeFile, canWrite, onDeploy }: { id: string; composeFile: string; canWrite: boolean; onDeploy: () => void }) {
