@@ -160,6 +160,13 @@ describe("scripts/lib/swap.sh", () => {
     expect(r.out).toMatch(/could not enable a swapfile here/);
   });
 
+  it("an fstab whose last line has no trailing newline is not corrupted by the new entry", () => {
+    const r = run({ fstab: "UUID=abc / ext4 defaults 0 1" }); // no \n at the end
+    expect(r.fstab).toBe("UUID=abc / ext4 defaults 0 1\n/swapfile none swap sw 0 0\n");
+    expect(run({ fstab: "" }).fstab).toBe("/swapfile none swap sw 0 0\n"); // an empty file gets no stray blank line
+    expect(run({ fstab: "UUID=abc / ext4 defaults 0 1\n" }).fstab).toBe("UUID=abc / ext4 defaults 0 1\n/swapfile none swap sw 0 0\n");
+  });
+
   describe("swap_doctor (read-only)", () => {
     it("reports active swap", () => {
       expect(run({ call: "swap_doctor", swaps: ["/swapfile\tfile\t2097148\t0\t-2"] }).out).toMatch(/OK: Swap: 2048MB active/);
@@ -174,5 +181,53 @@ describe("scripts/lib/swap.sh", () => {
     it("is fine on a big host without swap", () => {
       expect(run({ call: "swap_doctor", ramKb: 16_000_000 }).out).toMatch(/OK: Swap: none \(fine with ~15GB RAM\)/);
     });
+  });
+});
+
+/** The installer's own wiring (flags, the persisted opt-out, --doctor, the heap default), not just lib/swap.sh. */
+describe("scripts/install.sh swap and heap wiring", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tugra-swap-wiring-"));
+  afterAll(() => rmSync(dir, { recursive: true, force: true }));
+  const clean = { PATH: process.env.PATH } as NodeJS.ProcessEnv;
+  const URLS = ["--hub-url", "http://10.0.0.5:3000", "--web-url", "http://10.0.0.5:3001"];
+  const envOf = (name: string, args: string[], extra: NodeJS.ProcessEnv = {}) => {
+    const envFile = join(dir, `${name}.env`);
+    execFileSync(BASH, [INSTALL, "--dry-run", "--env-file", envFile, ...URLS, ...args], { stdio: "pipe", env: { ...clean, ...extra } });
+    return readFileSync(envFile, "utf8");
+  };
+  const fsRootWithRam = (name: string, kb: number) => {
+    const root = join(dir, name);
+    mkdirSync(join(root, "proc"), { recursive: true });
+    writeFileSync(join(root, "proc", "meminfo"), `MemTotal:       ${kb} kB\n`);
+    writeFileSync(join(root, "proc", "swaps"), "Filename\t\t\t\tType\t\tSize\t\tUsed\t\tPriority\n");
+    return root;
+  };
+
+  it("--no-swap is remembered in .env, --enable-swap undoes it, and no flag writes nothing", () => {
+    expect(envOf("nos", ["--no-swap"])).toMatch(/^TUGRA_NO_SWAP=1$/m);
+    expect(envOf("yes", ["--enable-swap"])).toMatch(/^TUGRA_NO_SWAP=0$/m);
+    expect(envOf("none", [])).not.toMatch(/TUGRA_NO_SWAP/);
+  });
+
+  it("--no-swap together with --enable-swap is refused", () => {
+    const r = spawnSync(BASH, [INSTALL, "--dry-run", "--env-file", join(dir, "both.env"), "--no-swap", "--enable-swap"], { encoding: "utf8", env: clean });
+    expect(r.status).toBe(1);
+    expect(r.stderr + r.stdout).toMatch(/mutually exclusive/);
+  });
+
+  it("--doctor prints the swap line for a small swapless host and changes nothing", () => {
+    const root = fsRootWithRam("doctor-small", 3_900_000);
+    const r = spawnSync(BASH, [INSTALL, "--doctor"], { encoding: "utf8", env: { ...clean, TUGRA_FS_ROOT: root }, timeout: 60_000 });
+    expect(r.stdout + r.stderr).toMatch(/Swap: none, with only ~4GB RAM/);
+    expect(existsSync(join(root, "swapfile"))).toBe(false);
+  });
+
+  it("sets the hub heap cap to 1024 MB on a host above 2.5 GiB, keeps the compose default below, never overwrites", () => {
+    expect(envOf("heap-big", [], { TUGRA_FS_ROOT: fsRootWithRam("big", 3_900_000) })).toMatch(/^HUB_MAX_HEAP_MB=1024$/m);
+    expect(envOf("heap-small", [], { TUGRA_FS_ROOT: fsRootWithRam("small", 2_000_000) })).not.toMatch(/HUB_MAX_HEAP_MB/);
+    const mine = join(dir, "mine.env");
+    writeFileSync(mine, "HUB_MAX_HEAP_MB=1536\n");
+    execFileSync(BASH, [INSTALL, "--dry-run", "--env-file", mine, ...URLS], { stdio: "pipe", env: { ...clean, TUGRA_FS_ROOT: fsRootWithRam("big2", 8_000_000) } });
+    expect(readFileSync(mine, "utf8")).toMatch(/^HUB_MAX_HEAP_MB=1536$/m);
   });
 });

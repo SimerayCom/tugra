@@ -855,6 +855,14 @@ if [ "$DRY_RUN" -eq 0 ] && declare -F swap_ensure >/dev/null 2>&1; then
   swap_ensure || true
 fi
 
+# Hub V8 heap cap (HUB_MAX_HEAP_MB, see docs/install.md): the compose default (768) is sized for a 2GB host; a host with more
+# RAM gets 1024 so heavy hub-side jobs (importer, migration ingest, backup streaming) have headroom. Only-if-unset: an
+# operator's own value is never overwritten.
+if declare -F swap_ram_kb >/dev/null 2>&1; then
+  heap_ram_kb="$(swap_ram_kb)"
+  case "$heap_ram_kb" in ''|*[!0-9]*) ;; *) [ "$heap_ram_kb" -gt 2621440 ] && ensure_env HUB_MAX_HEAP_MB 1024 ;; esac
+fi
+
 PG_PWD="$(env_get POSTGRES_PASSWORD)"
 set_env NODE_ENV       "production"
 set_env DATABASE_URL   "postgresql://tugra:${PG_PWD}@postgres:5432/tugra?schema=public"

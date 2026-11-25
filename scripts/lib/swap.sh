@@ -43,7 +43,10 @@ swap_fstab_has() { [ -f "$SWAP_FS/etc/fstab" ] && awk -v f="$SWAP_FILE" '$1 == f
 
 swap_persist() {
   if ! swap_fstab_has; then
-    printf '%s none swap sw 0 0\n' "$SWAP_FILE" >> "$SWAP_FS/etc/fstab" 2>/dev/null || note "Could not add the swapfile to /etc/fstab: it will not come back after a reboot."
+    local tab="$SWAP_FS/etc/fstab"
+    # A last line without a trailing newline would swallow the entry (corrupting both lines): end it first.
+    if [ -s "$tab" ] && [ "$(tail -c1 "$tab" 2>/dev/null | wc -l | tr -d ' ')" = "0" ]; then echo >> "$tab" 2>/dev/null || true; fi
+    printf '%s none swap sw 0 0\n' "$SWAP_FILE" >> "$tab" 2>/dev/null || note "Could not add the swapfile to /etc/fstab: it will not come back after a reboot."
   fi
   mkdir -p "$SWAP_FS/etc/sysctl.d" 2>/dev/null || true
   printf '# Written by the Tugra installer: prefer RAM, use swap only under pressure.\nvm.swappiness=%s\n' "$SWAP_SWAPPINESS" > "$SWAP_FS/etc/sysctl.d/99-tugra-swap.conf" 2>/dev/null || true

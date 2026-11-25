@@ -265,10 +265,12 @@ key and what it does. The stability secrets (`JWT_ACCESS_SECRET`, `JWT_REFRESH_S
 across re-runs — regenerating them would invalidate sessions, encrypted data and the signing identity.
 
 **Hub memory on small hosts.** The hub's JavaScript heap is capped (`--max-old-space-size`) at `HUB_MAX_HEAP_MB` MB
-(default `768`) through `NODE_OPTIONS` in `deploy/docker-compose.yml`, so a burst of panel traffic turns into a
-garbage-collection-heavy moment instead of growing until the host's OOM killer picks the hub. Set `HUB_MAX_HEAP_MB=1536`
-(or any value) in `.env` and run `docker compose up -d hub-api` if a very large fleet needs more headroom; leave it at
-the default on a 4 GB host. The cap bounds the JS heap only: the database driver's query engine and Node's buffers live
+(compose default `768`; the installer writes `1024` on a host with more than 2.5 GiB RAM) through `NODE_OPTIONS` in
+`deploy/docker-compose.yml`, so a burst of panel traffic turns into a garbage-collection-heavy moment instead of growing
+until the host's OOM killer picks the hub. **If the hub log shows `FATAL ERROR: ... JavaScript heap out of memory` (a
+fatal abort, followed by a container restart), the cap is too low for the work that was running (a large import, a
+migration upload, a big backup): raise `HUB_MAX_HEAP_MB`** (for example `1536` on a host with 8 GB or more) in `.env` and
+run `docker compose up -d hub-api`. On a 4 GB host keep it at or below `1536`, or the cap stops protecting the host. The cap bounds the JS heap only: the database driver's query engine and Node's buffers live
 outside it, which is why the hub also keeps its own reads small (one row per server for the newest sample, chart series
 thinned in SQL) and why the installer adds the swapfile above on small hosts.
 
