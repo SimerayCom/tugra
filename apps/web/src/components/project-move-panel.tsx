@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ProjectMoveView } from "@tugra/shared";
 import { api, type ProjectMovePreviewView } from "../lib/api";
@@ -150,6 +151,7 @@ export function ProjectMovePanel({ projectId, projectName, teamId, excludeServer
 
   return (
     <SectionCard title={t("projectMove.title")} desc={t("projectMove.subtitle")}>
+      {moves.data && !last && <p data-testid="project-move-none" style={{ ...dim, margin: "0 0 10px" }}>{t("projectMove.none")}</p>}
       {last && <Progress move={last} />}
       {last && moveCanCancel(last) && (
         <div style={{ marginTop: 10 }}>
@@ -224,6 +226,9 @@ export function ProjectMovePanel({ projectId, projectName, teamId, excludeServer
         </div>
       )}
       {err && <p role="alert" style={note("var(--c-r)")}>{t(moveErrorKey(err))}</p>}
+      <p style={{ margin: "12px 0 0", fontSize: 12 }}>
+        <Link href="/import/move-off-coolify" className="tg-link" style={{ minHeight: 44, display: "inline-flex", alignItems: "center" }}>{t("projectMove.checklistLink")}</Link>
+      </p>
     </SectionCard>
   );
 }

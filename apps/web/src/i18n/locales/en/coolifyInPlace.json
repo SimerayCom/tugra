@@ -131,8 +131,8 @@
       "confirm": "Give back"
     }
   },
-  "back": "Back to migrations",
-  "missing": "Open this from a same-server migration run: it needs the server and the import.",
+  "back": "Back to Move off Coolify",
+  "missing": "Open this from a server page or the Move off Coolify checklist: it needs a server.",
   "link": "Take over this server in place",
   "database": {
     "badge": "Database",
@@ -147,5 +147,7 @@
       "failed": "Differs from before"
     }
   },
-  "afterSwitch": "Starts after its database"
+  "afterSwitch": "Starts after its database",
+  "needsRun": "A takeover starts from the Import page: choose \"Same machine (proxy swap)\" for this server in the placement step.",
+  "needsRunLink": "Open Import"
 }

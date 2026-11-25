@@ -115,5 +115,7 @@
   },
   "confirmBody": "This stops {n} running items for a short time, copies the data and moves the project to {server}. The old copy stays for {days} days.",
   "purgeBody": "This removes the old databases and the old app volumes that were kept as a safety copy.",
-  "purged": "Removed {removed}, kept {kept}"
+  "purged": "Removed {removed}, kept {kept}",
+  "none": "No move yet. Nothing changes until you start one.",
+  "checklistLink": "Part of Move off Coolify, step C"
 }

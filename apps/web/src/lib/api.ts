@@ -1,10 +1,9 @@
-import type { CleanupView, ProjectMoveView } from "@tugra/shared";
+import type { CleanupView, CoolifyHostGrantView, CoolifySecretClass, MoveOffStatusView, ProjectMoveView } from "@tugra/shared";
 import type { SettingsApplyBody, SettingsApplyResult, SettingsPreview } from "./import-settings";
 import type { BulkTransferResponse, TransferPlan } from "./server-transfer";
 import type { BeszelApplyInput, BeszelApplyResult, BeszelConnectResult, BeszelPreview, BeszelSavedConnection } from "./beszel-import";
 import type { CoolifyChecklist, CoolifyDetect, CoolifyInventoryView } from "./coolify-takeover";
 import type { CoolifySshRunView } from "./coolify-ssh";
-import type { CoolifyHostGrantView } from "./coolify-agent";
 import { HUB_UNREACHABLE_CODE, hubUnreachableMessage, isHubDownStatus, isNetworkFailure, reportHubDown } from "./hub-connection";
 import { observeServerDate } from "./clock-skew";
 import type { CampaignRunPlan, CampaignView, SourceServerPlacementView, TakeoverView } from "@tugra/shared";
@@ -2655,7 +2654,7 @@ export const api = {
     return apiFetch<{ hostLinks: Record<string, { serverId: string | null }> }>(`/import/sessions/${encodeURIComponent(sessionId)}/host-link`, { method: "PUT", body: JSON.stringify(input) });
   },
   // Consent to the sealed read of Coolify's secret values for ONE import session (team owner; the host's name typed). Ends with the import.
-  coolifySecretsGrant(input: { serverId: string; confirm: string; importSessionId: string; classes?: string[]; hours?: number }) {
+  coolifySecretsGrant(input: { serverId: string; confirm: string; importSessionId?: string; classes?: CoolifySecretClass[] | string[]; hours?: number }) {
     return apiFetch<CoolifyHostGrantView>("/coolify-takeover/secrets/grants", { method: "POST", body: JSON.stringify(input) });
   },
   coolifySecretsGrants(teamId: string) {
@@ -2922,6 +2921,10 @@ export const api = {
   },
   cancelCampaign(id: string) {
     return apiFetch<CampaignView>(`/migration-campaigns/${encodeURIComponent(id)}/cancel`, { method: "POST" });
+  },
+  // ── Coolify hub takeover: guided "Move off Coolify" progress and the consent to read secrets ──
+  coolifyMoveStatus(teamId: string) {
+    return apiFetch<MoveOffStatusView>(`/coolify-move/status?teamId=${encodeURIComponent(teamId)}`);
   },
   // ── Coolify hub takeover: take a server over in place (lane F) ──
   planInPlace(body: { serverId: string; opId: string; rebuild?: string[] }) {

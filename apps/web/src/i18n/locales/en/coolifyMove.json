@@ -1,0 +1,141 @@
+{
+  "title": "Move off Coolify",
+  "subtitle": "Four steps, one server at a time. Nothing changes until you press a button, and every step can be undone until the cleanup.",
+  "navHint": "Walk the whole move: take over in place, clean up, consolidate projects, shut Coolify down.",
+  "team": "Team",
+  "loading": "Loading the progress",
+  "error": {
+    "generic": "Could not load the progress. Try again in a moment.",
+    "forbidden": "Only a team owner or admin can see this."
+  },
+  "overall": "{done} of {total} Coolify servers are cleaned off",
+  "noServers": "No Coolify server is known yet. Connect your Coolify host first; Tugra then finds the servers it manages.",
+  "prelude": {
+    "title": "Before you start",
+    "desc": "Connect the Coolify host so Tugra can read it. Nothing on it is changed.",
+    "none": "No Coolify host is connected yet.",
+    "connect": "Connect Coolify",
+    "openHost": "Open the Coolify host"
+  },
+  "line": {
+    "read": {
+      "label": "Read Coolify",
+      "done": "Read {when}, {servers} servers known",
+      "doneNoCount": "Read {when}",
+      "never": "Connected, not read yet",
+      "open": "Open"
+    },
+    "agents": {
+      "label": "Agents on Coolify's servers",
+      "some": "{online} of {total} online, {failed} failed, {pending} in progress",
+      "none": "No install started",
+      "open": "Install agents"
+    },
+    "secrets": {
+      "label": "Read secret values",
+      "none": "Not allowed",
+      "active": "Allowed until {when}",
+      "expired": "Expired",
+      "revoked": "Stopped"
+    },
+    "takeover": {
+      "label": "Take over in place",
+      "none": "Not started",
+      "open": "Open"
+    },
+    "cleanup": {
+      "label": "Clean up Coolify",
+      "none": "Not checked",
+      "open": "Open"
+    },
+    "agent": {
+      "label": "Agent",
+      "online": "Online",
+      "offline": "Offline"
+    },
+    "next": {
+      "label": "Next"
+    },
+    "hubLast": "The Coolify host is shut down last, in step D."
+  },
+  "stage": {
+    "agent": "Bring the agent back online",
+    "takeover": "Take it over in place",
+    "cleanup": "Check and clean up Coolify's leftovers",
+    "done": "Done: Coolify is cleaned off this server",
+    "hub": "Shut down last, with Coolify itself",
+    "not_coolify": "Coolify does not manage this server"
+  },
+  "card": {
+    "title": "Move off Coolify",
+    "desc": "Where this server stands. Each line opens the screen where you press the button.",
+    "open": "Open the checklist"
+  },
+  "step": {
+    "takeover": {
+      "title": "A. Take over in place",
+      "desc": "Each app and database starts under Tugra on the machine it already runs on. No data is copied; the ports are handed over after every domain has been tested."
+    },
+    "cleanup": {
+      "title": "B. Clean up Coolify",
+      "desc": "Once Tugra has everything, remove what Coolify left on each server. A checklist compares every item first."
+    },
+    "consolidate": {
+      "title": "C. Consolidate projects",
+      "desc": "Optional. Move a whole project to another server with Move project on its page, then shut down the servers that are empty."
+    },
+    "shutdown": {
+      "title": "D. Shut down Coolify",
+      "desc": "Last. When every server is cleaned, the Coolify host itself can be taken over or shut down."
+    },
+    "progress": "{done} of {total}",
+    "complete": "Complete",
+    "optional": "Optional",
+    "current": "Work on this now"
+  },
+  "rowAction": {
+    "agent": "Open server",
+    "takeoverStart": "Start from Import",
+    "takeoverOpen": "Open takeover",
+    "cleanup": "Clean up",
+    "done": "Open server"
+  },
+  "others": "Not managed by Coolify ({count})",
+  "consolidate": {
+    "none": "No project has been moved yet.",
+    "counts": "{total} moves: {completed} completed, {active} running, {failed} failed",
+    "openProjects": "Open projects",
+    "campaigns": "Campaign reports"
+  },
+  "shutdown": {
+    "ready": "Every Coolify server is cleaned off. You can now shut Coolify down.",
+    "notReady": "Not yet. {count} servers still need work.",
+    "noHub": "Connect the Coolify host first."
+  },
+  "campaigns": {
+    "title": "Campaign reports",
+    "desc": "A campaign is made when servers are placed differently in the Import wizard. Each report shows its runs.",
+    "none": "No campaign yet.",
+    "runs": "{count} runs",
+    "open": "Open report",
+    "error": "Could not load the campaigns."
+  },
+  "consent": {
+    "open": "Allow or stop reading secret values",
+    "intro": "Tugra can read Coolify's secret values (environment variables, database passwords, storage keys) so a takeover or move needs no re-typing. Each value is decrypted on the Coolify server and sealed for your hub.",
+    "classes": "What may be read",
+    "hours": "Allowed for (hours)",
+    "typeHost": "Type {name} to allow",
+    "allow": "Allow",
+    "stop": "Stop allowing",
+    "activeUntil": "Allowed until {when}.",
+    "error": {
+      "generic": "Could not change the consent. Try again in a moment.",
+      "forbidden": "Only a team owner can change this.",
+      "name": "The name did not match.",
+      "agent_offline": "The agent on the Coolify server is offline.",
+      "agent_too_old": "The agent is too old for this. Update it first.",
+      "grant_active": "A different consent is already active. Stop it first."
+    }
+  }
+}

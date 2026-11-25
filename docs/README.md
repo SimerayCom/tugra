@@ -13,6 +13,7 @@ Short, in-order guides with the steps, what each one changes, how to undo it and
 - [Domains and Cloudflare](domains-and-cloudflare.md) — the panel's domain, app domains, one-click DNS and the Cloudflare settings that matter.
 - [Move from Coolify](move-from-coolify.md) — to a new server, with a dry run, a freeze and a switch you can undo.
 - [Move from Coolify on the same server](move-from-coolify-same-server.md) — swap the proxy in place.
+- [Move off Coolify](move-off-coolify.md) — the whole move in four steps: take over in place, clean up, consolidate projects, shut Coolify down.
 
 ## Getting started
 

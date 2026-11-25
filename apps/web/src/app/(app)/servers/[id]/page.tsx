@@ -25,6 +25,7 @@ import { LiveGauges } from "../../../../components/live-gauges";
 import { GpuCard } from "../../../../components/gpu-card";
 import { ServerScanCard } from "../../../../components/server-scan-card";
 import { CoolifyCleanupCard } from "../../../../components/coolify-cleanup-card";
+import { CoolifyHostCard } from "../../../../components/coolify-host-card";
 import { InfoTip } from "../../../../components/info-tip";
 import { DiscoverAdoptCard } from "../../../../components/discover-adopt-card";
 import { Modal } from "../../../../components/modal";
@@ -236,6 +237,7 @@ export default function ServerDetailPage() {
               setTimeout(find, 0);
             }}
           />
+          <CoolifyHostCard serverId={id} serverName={server.name} teamId={server.teamId} role={teamOf(server.teamId)?.role} />
           {teamOf(server.teamId)?.role === "OWNER" && <CoolifyCleanupCard serverId={id} serverName={server.name} online={server.status === "ONLINE"} />}
           <GpuCard serverId={id} canOps={server.canOps} online={server.status === "ONLINE"} />
         </>

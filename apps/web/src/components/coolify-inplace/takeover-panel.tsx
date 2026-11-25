@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { TakeoverCertState, TakeoverItemView, TakeoverView } from "@tugra/shared";
 import { api, ApiError } from "../../lib/api";
@@ -34,7 +35,7 @@ const CHECK_TONE = { pending: "muted", ok: "ok", failed: "danger" } as const;
  * Names, counts and codes only. The two steps that change the box's ports ask for the server's name to be typed. Mobile first: one column,
  * wrapping rows, 44px targets.
  */
-export function TakeoverPanel({ serverId, serverName, opId }: { serverId: string; serverName: string; opId: string }) {
+export function TakeoverPanel({ serverId, serverName, opId }: { serverId: string; serverName: string; opId?: string }) {
   const t = useT();
   const toast = useToast();
   const qc = useQueryClient();
@@ -51,7 +52,7 @@ export function TakeoverPanel({ serverId, serverName, opId }: { serverId: string
   const selected = chosen ?? rebuildOf(view?.status === "PLANNED" ? view : null);
   // Only before anything is changed on the box: a plan changes nothing, so it can be redone with another choice
   const picking = q.isSuccess && (!view || view.status === "GIVEN_BACK" || view.status === "PLANNED");
-  const op = useQuery({ queryKey: ["import-op-takeover", opId], queryFn: () => api.getImportOperation(opId), enabled: picking, staleTime: 60_000 });
+  const op = useQuery({ queryKey: ["import-op-takeover", opId], queryFn: () => api.getImportOperation(opId ?? ""), enabled: picking && !!opId, staleTime: 60_000 });
   const candidates = rebuildCandidates(op.data);
   const done = (v: TakeoverView) => {
     qc.setQueryData<TakeoverView[]>(["coolify-inplace", serverId], (old) => [v, ...(old ?? []).filter((x) => x.id !== v.id)]);
@@ -60,7 +61,7 @@ export function TakeoverPanel({ serverId, serverName, opId }: { serverId: string
   };
   const fail = (e: unknown) => toast(takeoverErrorText(t, e), "error");
   const plan = useMutation({
-    mutationFn: () => api.planInPlace({ serverId, opId, ...(selected.length > 0 ? { rebuild: selected } : {}) }),
+    mutationFn: () => api.planInPlace({ serverId, opId: opId ?? "", ...(selected.length > 0 ? { rebuild: selected } : {}) }),
     onSuccess: (v: TakeoverView) => {
       done(v);
       setChosen(null);
@@ -72,7 +73,8 @@ export function TakeoverPanel({ serverId, serverName, opId }: { serverId: string
   const swap = useMutation({ mutationFn: () => api.swapInPlace(view!.id, name.trim()), onSuccess: done, onError: fail });
   const giveBack = useMutation({ mutationFn: () => api.giveBackInPlace(view!.id, name.trim()), onSuccess: done, onError: fail });
   const busy = plan.isPending || test.isPending || verify.isPending || swap.isPending || giveBack.isPending;
-  const actions = actionsFor(view);
+  // Planning needs the guided run it belongs to: without one this screen only shows and continues a takeover that exists.
+  const actions = actionsFor(view).filter((a) => a !== "plan" || !!opId);
   const r = view ? rollup(view) : null;
   const dbr = view ? dbRollup(view) : null;
 
@@ -89,6 +91,11 @@ export function TakeoverPanel({ serverId, serverName, opId }: { serverId: string
       {q.isLoading && <Spinner />}
       {q.isError && <p role="alert" style={{ color: "var(--c-r)", fontSize: 13 }}>{t("coolifyInPlace.error.generic")}</p>}
       {!q.isLoading && !view && <p style={{ fontSize: 13, color: "var(--c-tx2)", lineHeight: 1.5 }}>{t("coolifyInPlace.none", { server: serverName })}</p>}
+      {!q.isLoading && !view && !opId && (
+        <p data-testid="takeover-needs-run" style={{ fontSize: 13, color: "var(--c-tx2)", lineHeight: 1.5 }}>
+          {t("coolifyInPlace.needsRun")} <Link href="/import">{t("coolifyInPlace.needsRunLink")}</Link>
+        </p>
+      )}
       {view && (
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
