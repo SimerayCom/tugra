@@ -191,4 +191,31 @@ describe("TakeoverPanel", () => {
       expect(screen.queryByTestId("rebuild-picker")).toBeNull();
     });
   });
+
+  it("shows a database as a database: how it is checked, whether it passed, and the apps that start after it", async () => {
+    vi.spyOn(api, "listInPlace").mockResolvedValue([
+      view("SWAPPED", [
+        item({ itemRef: "database:s:pg", name: "main", kind: "database", exclusive: true, domains: [], verify: { level: "counts", state: "ok" } }),
+        item({ itemRef: "database:s:r", name: "cache", kind: "database", exclusive: true, domains: [], verify: { level: "alive", state: "failed" } }),
+        item({ itemRef: "database:s:old", name: "old", kind: "database", skipped: true, issues: ["db_image_differs"], domains: [] }),
+        item({ afterSwitch: true, domains: [dom({ tempCheck: "pending", finalCheck: "ok", cert: "issued" })] }),
+      ]),
+    ]);
+    mount();
+    const rows = await screen.findAllByTestId("takeover-item");
+    expect(within(rows[0]).getByText("Database")).toBeTruthy();
+    expect(within(rows[0]).getByText("Same as before (row counts)")).toBeTruthy();
+    expect(within(rows[1]).getByText("Differs from before (answers)")).toBeTruthy();
+    expect(within(rows[2]).getByText("Left out")).toBeTruthy();
+    expect(within(rows[2]).getByText(/another image than the one Coolify runs/)).toBeTruthy();
+    expect(within(rows[3]).getByText("Starts after its database")).toBeTruthy();
+    expect(screen.getByTestId("takeover-db-rollup").textContent).toBe("2 databases take part (1 left out). Checked the same after the switch: 1.");
+    // databases are not counted as apps
+    expect(screen.getByTestId("takeover-rollup").textContent).toBe("1 apps (0 left out), 1 domains. Tested: 0. Checked after the switch: 1. New certificates: 1.");
+  });
+  it("an app that starts after its database does not block taking the ports for lack of a test", async () => {
+    vi.spyOn(api, "listInPlace").mockResolvedValue([view("TESTING", [item({ afterSwitch: true, domains: [dom({ tempCheck: "pending" })] }), item({ itemRef: "database:s:pg", name: "main", kind: "database", exclusive: true, domains: [], verify: { level: "counts", state: "pending" } })])]);
+    mount();
+    expect(await screen.findByRole("button", { name: "Take over the ports" })).toBeTruthy();
+  });
 });

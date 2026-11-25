@@ -27,6 +27,7 @@ export const IP_MARK = {
   policy: "TUGRA_IP_POLICY",
   fallback: "TUGRA_IP_FALLBACK",
   cert: "TUGRA_IP_CERT",
+  dbfp: "TUGRA_IP_DBFP",
 } as const;
 
 /** Where Coolify keeps its proxy's ACME store on the host when nothing says otherwise. */
@@ -430,4 +431,136 @@ export function parseNewCertCheck(out: string, host: string): ServedCert | null 
 /** Is a served certificate a NEW Let's Encrypt one (a different serial than the fallback's, issued by Let's Encrypt)? */
 export function isNewLetsEncryptCert(served: ServedCert, fallbackSerial: string | null): boolean {
   return served.state === "served" && /let'?s encrypt|\bO=ISRG\b|\bCN=(R|E)\d{1,2}\b/i.test(served.issuer) && (fallbackSerial === null || served.serial !== fallbackSerial.toUpperCase());
+}
+
+// ───────────────────────────── is the database the same? (read-only, by the container's own environment) ─────────────────────────────
+
+/** Engines the takeover can check (the others are refused: nothing could say the data survived). */
+export type FingerprintEngine = "POSTGRES" | "MYSQL" | "MARIADB" | "REDIS" | "KEYDB" | "DRAGONFLY" | "MONGO";
+export const FINGERPRINT_ENGINES: readonly FingerprintEngine[] = ["POSTGRES", "MYSQL", "MARIADB", "REDIS", "KEYDB", "DRAGONFLY", "MONGO"];
+export type DbCheckLevel = "counts" | "alive";
+/** How each engine is checked: exact row counts where the container's own env can log in, else "does it answer". */
+export const checkLevelOf = (e: FingerprintEngine): DbCheckLevel => (e === "POSTGRES" || e === "MYSQL" || e === "MARIADB" ? "counts" : "alive");
+export const isFingerprintEngine = (e: string): e is FingerprintEngine => (FINGERPRINT_ENGINES as readonly string[]).includes(e);
+
+/** A name docker accepts for a container, used to address the Tugra side (which has no recorded id). */
+const CTR_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
+
+// What is sent to the database inside the container: a query that writes one count statement per table, which a second pass runs.
+const PG_LIST = "select format('select %L, count(*) from %I.%I;', n.nspname || '.' || c.relname, n.nspname, c.relname) from pg_class c join pg_namespace n on n.oid = c.relnamespace where c.relkind = 'r' and n.nspname not in ('pg_catalog', 'information_schema') and n.nspname not like 'pg_toast%' order by n.nspname, c.relname limit 500;";
+const MY_LIST = "select concat('select \\'', table_schema, '.', table_name, '\\', count(*) from `', table_schema, '`.`', table_name, '`;') from information_schema.tables where table_type = 'BASE TABLE' and table_schema not in ('mysql', 'information_schema', 'performance_schema', 'sys') order by table_schema, table_name limit 500;";
+
+export type DbTarget = { engine: FingerprintEngine; ref: { kind: "recorded"; ctr: RecordedCtr } | { kind: "name"; name: string } };
+
+/**
+ * For each container (a RECORDED id with its identity checked, or the name Tugra gave its own): can the database be read, and how many
+ * tables and rows does it hold? Printed as `<level>|<state>|<tables>|<rows>|<sha256 of the sorted per-table counts>`: no table name, no
+ * value, no credential. The login happens INSIDE the container with the variables the image itself was started with; the hub never sees a
+ * password. The level is `alive` for engines whose rows cannot be counted that way (the redis family, mongo): the engine answers (or asks for
+ * a password, which is also an answer) and the numbers are `-`. Nothing here writes, and nothing removes anything.
+ */
+export function buildDbFingerprintScript(targets: readonly DbTarget[]): string {
+  const M = IP_MARK.dbfp;
+  for (const t of targets) {
+    if (!isFingerprintEngine(t.engine)) throw new Error("inplace: unsupported engine");
+    if (t.ref.kind === "recorded") assertRecorded([t.ref.ctr]);
+    else if (!CTR_NAME_RE.test(t.ref.name)) throw new Error("inplace: invalid container name");
+  }
+  const pgcli = `PGPASSWORD="$POSTGRES_PASSWORD" exec psql -X -q -At -F "|" -U "\${POSTGRES_USER:-postgres}" -d "\${POSTGRES_DB:-\${POSTGRES_USER:-postgres}}" -v ON_ERROR_STOP=1`;
+  const mycli = `C=$(command -v mariadb || command -v mysql) || exit 127; exec "$C" -uroot -p"\${MARIADB_ROOT_PASSWORD:-\${MYSQL_ROOT_PASSWORD:-}}" -N -B`;
+  return [
+    "set -u",
+    ...IDENT,
+    "hashstdin() {",
+    '  if command -v sha256sum >/dev/null 2>&1; then sha256sum | cut -d" " -f1',
+    '  elif command -v shasum >/dev/null 2>&1; then shasum -a 256 | cut -d" " -f1',
+    "  else echo none; fi",
+    "}",
+    "summarize() {",
+    `  awk -F'|' 'NF>=2 { t++; r+=$NF } END { printf "%d|%d\\n", t+0, r+0 }'`,
+    "}",
+    "pgcounts() {",
+    `  docker exec -i "$1" sh -c '${pgcli}' <<'SQL' | docker exec -i "$1" sh -c '${pgcli}'`,
+    PG_LIST,
+    "SQL",
+    "}",
+    "mycounts() {",
+    `  docker exec -i "$1" sh -c '${mycli}' <<'SQL' | docker exec -i "$1" sh -c '${mycli}'`,
+    MY_LIST,
+    "SQL",
+    "}",
+    "alive() {",
+    '  case "$2" in',
+    `    REDIS|KEYDB|DRAGONFLY) r=$(docker exec "$1" sh -c 'redis-cli ping 2>&1 || keydb-cli ping 2>&1' 2>/dev/null) ;;`,
+    `    MONGO) r=$(docker exec "$1" sh -c 'mongosh --quiet --eval "db.adminCommand({ping:1}).ok" 2>&1 || mongo --quiet --eval "db.adminCommand({ping:1}).ok" 2>&1' 2>/dev/null) ;;`,
+    '    *) r="" ;;',
+    "  esac",
+    '  case "$r" in *PONG*|*NOAUTH*|*1*) return 0 ;; esac',
+    "  return 1",
+    "}",
+    "fp() {",
+    // $1 = container ref (id or name), $2 = engine, $3 = the label printed back
+    '  out=""; lv=alive',
+    '  case "$2" in',
+    `    POSTGRES) lv=counts; out=$(pgcounts "$1" 2>/dev/null) && st=ok || st=failed ;;`,
+    `    MYSQL|MARIADB) lv=counts; out=$(mycounts "$1" 2>/dev/null) && st=ok || st=failed ;;`,
+    `    *) if alive "$1" "$2"; then st=ok; else st=failed; fi ;;`,
+    "  esac",
+    '  if [ "$lv" = counts ] && [ "$st" = ok ]; then',
+    `    sum=$(printf '%s\\n' "$out" | summarize); h=$(printf '%s\\n' "$out" | sort | hashstdin)`,
+    `    printf '${M}|%s|%s|%s|%s|%s\\n' "$3" "$lv" "$st" "$sum" "$h"`,
+    "  else",
+    `    printf '${M}|%s|%s|%s|-|-|-\\n' "$3" "$lv" "$st"`,
+    "  fi",
+    "}",
+    "one_recorded() {",
+    '  ident "$1" "$2" "$3"; r=$?',
+    `  [ "$r" = 2 ] && { printf '${M}|%s|-|absent|-|-|-\\n' "$1"; return; }`,
+    `  [ "$r" = 1 ] && { printf '${M}|%s|-|mismatch|-|-|-\\n' "$1"; return; }`,
+    '  fp "$1" "$4" "$1"',
+    "}",
+    "one_named() {",
+    `  docker inspect "$1" >/dev/null 2>&1 || { printf '${M}|%s|-|absent|-|-|-\\n' "$1"; return; }`,
+    '  fp "$1" "$2" "$1"',
+    "}",
+    ...targets.map((t) => (t.ref.kind === "recorded" ? `one_recorded ${shq(t.ref.ctr.id)} ${shq(t.ref.ctr.name)} ${shq(t.ref.ctr.image)} ${shq(t.engine)}` : `one_named ${shq(t.ref.name)} ${shq(t.engine)}`)),
+    "",
+  ].join("\n");
+}
+
+export type DbFingerprintState = "ok" | "failed" | "absent" | "mismatch";
+export interface DbFingerprint {
+  level: DbCheckLevel | null;
+  state: DbFingerprintState;
+  tables: number | null;
+  rows: number | null;
+  hash: string | null;
+}
+
+/** Parse the fingerprint output, keyed by the ref asked for. A missing or malformed line is absent from the map (never a pass). */
+export function parseDbFingerprint(out: string, refs: readonly string[]): Map<string, DbFingerprint> | null {
+  if (out.includes("…(truncated)")) return null;
+  const want = new Set(refs);
+  const res = new Map<string, DbFingerprint>();
+  for (const l of out.split(/\r?\n/)) {
+    const f = l.split("|");
+    if (f[0] !== IP_MARK.dbfp || f.length !== 7 || !want.has(f[1])) continue;
+    const [, ref, lv, st, tables, rows, hash] = f;
+    if (!["ok", "failed", "absent", "mismatch"].includes(st)) continue;
+    const level = lv === "counts" || lv === "alive" ? lv : null;
+    const n = (v: string): number | null => (/^\d{1,12}$/.test(v) ? Number(v) : null);
+    res.set(ref, { level, state: st as DbFingerprintState, tables: n(tables), rows: n(rows), hash: HEX64.test(hash) ? hash : null });
+  }
+  return res;
+}
+
+/**
+ * Is what Tugra's container shows the same as what Coolify's container showed? `counts` needs both to have been read, with the same tables,
+ * rows and hash; `alive` needs the Tugra side to answer (there is nothing to compare). Anything unread is a failure, never a pass.
+ */
+export function sameDatabase(before: DbFingerprint | null | undefined, after: DbFingerprint | null | undefined): boolean {
+  if (!after || after.state !== "ok") return false;
+  if (after.level === "alive") return true;
+  if (!before || before.state !== "ok" || before.level !== "counts" || after.level !== "counts") return false;
+  return before.hash !== null && before.hash === after.hash && before.tables === after.tables && before.rows === after.rows;
 }

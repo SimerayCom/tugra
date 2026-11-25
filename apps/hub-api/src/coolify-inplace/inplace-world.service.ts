@@ -1,10 +1,13 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, Optional } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
 import { ApplicationsService } from "../applications/applications.service";
 import { runTag } from "../deploy/deploy-script";
 import { ProxyOpsService } from "../server-ops/proxy-ops.service";
-import type { DeployState, InPlaceWorld, OpApp, WorldApp, WorldServer } from "./inplace-world";
+import { CryptoService } from "../crypto/crypto.service";
+import { DatabasesService } from "../databases/databases.service";
+import { dataMountFor, dbContainerName, pgDataLayout, resolveImage, type DbEngine } from "../databases/database-script";
+import type { DeployState, InPlaceWorld, OpApp, OpDatabase, WorldApp, WorldDatabase, WorldServer } from "./inplace-world";
 
 /** Statuses of a guided run that holds its target server. */
 const LIVE_RUN = ["RUNNING", "WAITING", "PAUSED", "ABORTING", "ROLLING_BACK", "REVERSING"] as const;
@@ -25,6 +28,8 @@ export class InPlaceWorldService implements InPlaceWorld {
     private readonly agentWs: AgentWsServer,
     private readonly apps: ApplicationsService,
     private readonly proxyOps: ProxyOpsService,
+    private readonly databases: DatabasesService,
+    @Optional() private readonly crypto?: CryptoService,
   ) {}
 
   async server(serverId: string): Promise<WorldServer | null> {
@@ -61,6 +66,64 @@ export class InPlaceWorldService implements InPlaceWorld {
       volumes: asList(a.volumes, (x) => (typeof x.name === "string" && typeof x.path === "string" ? { name: x.name, path: x.path } : null)),
       hostMounts: asList(a.hostMounts, (x) => (typeof x.hostPath === "string" && typeof x.containerPath === "string" ? { hostPath: x.hostPath, containerPath: x.containerPath } : null)),
     };
+  }
+
+  async opDatabases(opId: string, teamId: string, serverId: string): Promise<OpDatabase[] | null> {
+    const op = await this.prisma.bulkOperation.findUnique({ where: { id: opId }, select: { id: true } });
+    if (!op) return null;
+    const tasks = await this.prisma.bulkTask.findMany({ where: { opId, kind: "database", status: "DONE", resourceType: "database" }, select: { itemRef: true, resourceId: true } });
+    const ids = tasks.map((t) => t.resourceId).filter((x): x is string => !!x);
+    const rows = await this.prisma.database.findMany({ where: { id: { in: ids }, teamId, serverId }, select: { id: true } });
+    const ok = new Set(rows.map((r) => r.id));
+    return tasks.flatMap((t) => (t.resourceId && t.itemRef && ok.has(t.resourceId) ? [{ databaseId: t.resourceId, itemRef: t.itemRef }] : []));
+  }
+
+  async database(databaseId: string): Promise<WorldDatabase | null> {
+    const d = await this.prisma.database.findUnique({ where: { id: databaseId }, select: { id: true, teamId: true, serverId: true, name: true, engine: true, version: true, image: true, volumes: true, pgParentMount: true } });
+    if (!d) return null;
+    const engine = d.engine as DbEngine;
+    return {
+      id: d.id,
+      teamId: d.teamId,
+      serverId: d.serverId,
+      name: d.name,
+      engine: d.engine,
+      image: d.image ?? resolveImage(engine, d.version),
+      dataMount: dataMountFor(engine, pgDataLayout({ engine: d.engine, version: d.version, image: d.image, pgParentMount: d.pgParentMount })),
+      volumes: asList(d.volumes, (x) => (typeof x.name === "string" && typeof x.path === "string" ? { name: x.name, path: x.path } : null)),
+    };
+  }
+
+  async runDatabase(userId: string, databaseId: string): Promise<{ ok: boolean }> {
+    const v = await this.databases.provision(userId, databaseId);
+    return { ok: v.status === "RUNNING" };
+  }
+
+  /**
+   * Stop Tugra's container and PROVE it stopped: the database service swallows a failed `docker stop`, and a Coolify container started on the same
+   * data while Tugra's still runs would corrupt it. Anything but a plain "not running" answer is an error, so the give-back never goes on.
+   */
+  async stopDatabase(userId: string, databaseId: string): Promise<void> {
+    await this.databases.stop(userId, databaseId);
+    const row = await this.prisma.database.findUnique({ where: { id: databaseId }, select: { serverId: true } });
+    if (!row) throw new Error("database not found");
+    const r = await this.agentWs.sendCommand(row.serverId, `docker inspect -f '{{.State.Running}}' ${dbContainerName({ id: databaseId })} 2>/dev/null || echo absent`, "deploy", 30_000);
+    const out = r.output.trim().split(/\r?\n/).pop() ?? "";
+    if (out !== "false" && out !== "absent") throw new Error("database still running");
+  }
+
+  async appMentions(appId: string, needles: readonly string[]): Promise<boolean | null> {
+    if (!this.crypto) return null;
+    const r = await this.prisma.application.findUnique({ where: { id: appId }, select: { env: true, envEnc: true } });
+    if (!r) return null;
+    try {
+      const env = r.envEnc ? (JSON.parse(this.crypto.decrypt(r.envEnc)) as Record<string, unknown>) : ((r.env ?? {}) as Record<string, unknown>);
+      if (!env || typeof env !== "object" || Array.isArray(env)) return null;
+      // values are only searched, never kept or returned
+      return Object.values(env).some((v) => typeof v === "string" && needles.some((n) => v.includes(n)));
+    } catch {
+      return null;
+    }
   }
 
   exec(serverId: string, script: string, timeoutMs = 60_000): Promise<{ exitCode: number; output: string }> {

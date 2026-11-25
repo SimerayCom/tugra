@@ -14,7 +14,7 @@ const taking = (i: TakeoverItemView): boolean => !i.skipped;
 export function canSwap(v: Pick<TakeoverView, "status" | "items">): boolean {
   if (v.status !== "TESTING") return false;
   const active = v.items.filter(taking);
-  return active.length > 0 && active.every((i) => i.exclusive || i.domains.every((d) => d.tempCheck === "ok"));
+  return active.length > 0 && active.every((i) => i.exclusive || i.afterSwitch || i.domains.every((d) => d.tempCheck === "ok"));
 }
 
 /** The buttons worth showing for a takeover (or none yet: only "plan"). In the order the owner should press them. */
@@ -45,6 +45,7 @@ export interface TakeoverRollup {
 export function rollup(v: Pick<TakeoverView, "items">): TakeoverRollup {
   const r: TakeoverRollup = { apps: 0, skipped: 0, domains: 0, tested: 0, testFailed: 0, checked: 0, checkFailed: 0, certs: { pending: 0, fallback: 0, issued: 0, failed: 0 } };
   for (const i of v.items) {
+    if (i.kind === "database") continue; // counted by dbRollup
     if (i.skipped) {
       r.skipped += 1;
       continue;
@@ -97,3 +98,10 @@ export const toggleChoice = (chosen: readonly string[], itemRef: string): string
 
 /** The apps a planned takeover will rebuild (what the picker shows as chosen until the owner changes it). */
 export const rebuildOf = (v: Pick<TakeoverView, "items"> | null | undefined): string[] => (v?.items ?? []).filter((i) => i.buildMode === "rebuild-verify").map((i) => i.itemRef);
+
+/** The databases of a takeover: how many take part and how many were checked the same after the switch. Apps are counted by {@link rollup}. */
+export function dbRollup(v: Pick<TakeoverView, "items">): { total: number; ok: number; failed: number; skipped: number } {
+  const dbs = v.items.filter((i) => i.kind === "database");
+  const active = dbs.filter((i) => !i.skipped);
+  return { total: active.length, ok: active.filter((i) => i.verify?.state === "ok").length, failed: active.filter((i) => i.verify?.state === "failed").length, skipped: dbs.length - active.length };
+}

@@ -237,6 +237,20 @@ describe("VERIFY of an in-place run", () => {
       ["verify.inplace-app-no-domain", "warn", false],
     ]);
   });
+  it("a database and an app that starts after it are shown as warnings (checked after the switch), never as untested failures", () => {
+    const base = { id: "tk1", status: "TESTING" as const, failureCode: null, gate: { ok: true as const }, pending: 0, certWorkLeft: false, verified: false, proxy: {} as never, bindBefore: "public" };
+    const suite = inPlaceSuite({
+      ...base,
+      items: [
+        { itemRef: "database:s:d", name: "main", kind: "database", buildMode: "reuse-image", exclusive: true, verify: { level: "counts", state: "pending" }, domains: [] },
+        { itemRef: "app:s:a", name: "web", buildMode: "reuse-image", afterSwitch: true, domains: [{ host: "a.example.com", tempCheck: "pending", finalCheck: "pending", cert: "pending" }] },
+      ],
+    });
+    expect(suite.map((x) => [x.code, x.status])).toEqual([
+      ["verify.inplace-database", "warn"],
+      ["verify.inplace-after-switch", "warn"],
+    ]);
+  });
   it("a failed domain blocks and nobody may accept it; no takeover or a takeover past its test blocks too", () => {
     const base = { id: "tk1", failureCode: null, gate: { ok: false as const, code: "test_failed" as const }, pending: 0, certWorkLeft: false, verified: false, proxy: {} as never, bindBefore: "public" };
     const failed = inPlaceSuite({ ...base, status: "TESTING", items: [{ itemRef: "x", name: "web", buildMode: "reuse-image", domains: [{ host: "a.example.com", tempCheck: "failed", finalCheck: "pending", cert: "pending" }] }] });

@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type { TakeoverItemView, TakeoverStatus, TakeoverView } from "@tugra/shared";
-import { actionsFor, canSwap, confirmMatches, pollMs, rebuildCandidates, rebuildOf, rollup, toggleChoice, verifyHasWork } from "./inplace";
+import { actionsFor, canSwap, confirmMatches, dbRollup, pollMs, rebuildCandidates, rebuildOf, rollup, toggleChoice, verifyHasWork } from "./inplace";
 
 type D = TakeoverItemView["domains"][number];
 const dom = (o: Partial<D> = {}): D => ({ host: "a.example.com", tempCheck: "ok", finalCheck: "pending", cert: "pending", ...o });
@@ -93,5 +93,18 @@ describe("the rebuild picker's rules", () => {
     expect(toggleChoice(["x", "y"], "x")).toEqual(["y"]);
     expect(rebuildOf(view("PLANNED", [item({ buildMode: "rebuild-verify" }), item({ itemRef: "app:s:b" })]))).toEqual(["app:s:a"]);
     expect(rebuildOf(null)).toEqual([]);
+  });
+});
+
+describe("databases in the rules", () => {
+  const dbi = (o: Partial<TakeoverItemView> = {}): TakeoverItemView => item({ itemRef: "database:s:d", name: "d", kind: "database", exclusive: true, domains: [], verify: { level: "counts", state: "pending" }, ...o });
+  it("databases are counted apart from apps", () => {
+    const v = view("SWAPPED", [item(), dbi({ verify: { level: "counts", state: "ok" } }), dbi({ itemRef: "database:s:e", verify: { level: "alive", state: "failed" } }), dbi({ itemRef: "database:s:f", skipped: true })]);
+    expect(rollup(v).apps).toBe(1);
+    expect(dbRollup(v)).toEqual({ total: 2, ok: 1, failed: 1, skipped: 1 });
+  });
+  it("the ports may be taken with a database and an app that starts after it, neither tested", () => {
+    expect(canSwap(view("TESTING", [dbi(), item({ afterSwitch: true, domains: [dom({ tempCheck: "pending" })] })]))).toBe(true);
+    expect(canSwap(view("TESTING", [dbi(), item({ domains: [dom({ tempCheck: "pending" })] })]))).toBe(false);
   });
 });

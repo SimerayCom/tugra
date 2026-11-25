@@ -6,6 +6,7 @@ function make() {
     bulkOperation: { findUnique: jest.fn(async () => ({ id: "op1" })) },
     bulkTask: { findMany: jest.fn() },
     application: { findMany: jest.fn(), findUnique: jest.fn() },
+    database: { findMany: jest.fn(), findUnique: jest.fn() },
     appServiceDomain: { findMany: jest.fn(async () => [{ hostname: "svc.example.com" }]) },
     coolifyTakeover: { count: jest.fn(async () => 0) },
     migrationRun: { count: jest.fn(async () => 0) },
@@ -14,8 +15,10 @@ function make() {
   const agentWs = { sendCommand: jest.fn(async () => ({ exitCode: 0, output: "ok" })) };
   const apps = { rollback: jest.fn(), deploy: jest.fn(), stop: jest.fn() };
   const proxyOps = { start: jest.fn(), status: jest.fn(async () => ({ status: "running" })) };
-  const w = new InPlaceWorldService(prisma as never, agentWs as never, apps as never, proxyOps as never);
-  return { w, prisma, agentWs, apps, proxyOps };
+  const databases = { provision: jest.fn(async () => ({ status: "RUNNING" })), stop: jest.fn(async () => undefined) };
+  const crypto = { decrypt: jest.fn((s: string) => s) };
+  const w = new InPlaceWorldService(prisma as never, agentWs as never, apps as never, proxyOps as never, databases as never, crypto as never);
+  return { w, prisma, agentWs, apps, proxyOps, databases, crypto };
 }
 
 describe("InPlaceWorldService", () => {
@@ -82,5 +85,56 @@ describe("InPlaceWorldService", () => {
     expect(await w.deployState("d")).toBe("SUCCESS");
     expect(await w.deployState("d")).toBe("FAILED");
     expect(await w.deployState("d")).toBe("unknown");
+  });
+
+  it("opDatabases keeps only the databases of this team that sit on this server", async () => {
+    const { w, prisma } = make();
+    prisma.bulkTask.findMany.mockResolvedValue([
+      { itemRef: "database:s:u1", resourceId: "d1" },
+      { itemRef: "database:s:u2", resourceId: "d2" },
+    ]);
+    prisma.database.findMany.mockResolvedValue([{ id: "d1" }]);
+    expect(await w.opDatabases("op1", "team1", "srv1")).toEqual([{ databaseId: "d1", itemRef: "database:s:u1" }]);
+    expect(prisma.database.findMany).toHaveBeenCalledWith({ where: { id: { in: ["d1", "d2"] }, teamId: "team1", serverId: "srv1" }, select: { id: true } });
+    expect(prisma.bulkTask.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ kind: "database", resourceType: "database", status: "DONE" }) }));
+  });
+  it("database reads the engine, the image Tugra runs it on, the data mount and the declared extra volumes", async () => {
+    const { w, prisma } = make();
+    prisma.database.findUnique.mockResolvedValue({ id: "d1", teamId: "t", serverId: "s", name: "main", engine: "POSTGRES", version: "16", image: null, pgParentMount: false, volumes: [{ name: "ext", path: "/ext" }, { bad: 1 }] });
+    expect(await w.database("d1")).toEqual({ id: "d1", teamId: "t", serverId: "s", name: "main", engine: "POSTGRES", image: "postgres:16", dataMount: "/var/lib/postgresql/data", volumes: [{ name: "ext", path: "/ext" }] });
+  });
+  it("a database is started and stopped through the database service, and only a RUNNING provision is ok", async () => {
+    const { w, databases, prisma, agentWs } = make();
+    prisma.database.findUnique.mockResolvedValue({ serverId: "srv1" });
+    agentWs.sendCommand.mockResolvedValue({ exitCode: 0, output: "false\n" });
+    expect(await w.runDatabase("u", "d1")).toEqual({ ok: true });
+    databases.provision.mockResolvedValueOnce({ status: "FAILED" });
+    expect(await w.runDatabase("u", "d1")).toEqual({ ok: false });
+    await w.stopDatabase("u", "d1");
+    expect(databases.stop).toHaveBeenCalledWith("u", "d1");
+  });
+  it("stopping Tugra's database is proven: a container that still runs (the service swallows a failed stop) fails it, so the give-back never goes on", async () => {
+    const { w, prisma, agentWs } = make();
+    prisma.database.findUnique.mockResolvedValue({ serverId: "srv1" });
+    agentWs.sendCommand.mockResolvedValueOnce({ exitCode: 0, output: "absent" });
+    await expect(w.stopDatabase("u", "d1")).resolves.toBeUndefined();
+    agentWs.sendCommand.mockResolvedValueOnce({ exitCode: 0, output: "true" });
+    await expect(w.stopDatabase("u", "d1")).rejects.toThrow("database still running");
+    agentWs.sendCommand.mockResolvedValueOnce({ exitCode: 0, output: "" });
+    await expect(w.stopDatabase("u", "d1")).rejects.toThrow("database still running");
+    expect(agentWs.sendCommand).toHaveBeenLastCalledWith("srv1", expect.stringContaining("tugra_db_d1"), "deploy", expect.any(Number));
+  });
+  it("appMentions searches the decrypted environment for the names and returns nothing of it; an unreadable environment is null", async () => {
+    const { w, prisma, crypto } = make();
+    prisma.application.findUnique.mockResolvedValue({ env: null, envEnc: "enc" });
+    crypto.decrypt.mockReturnValue(JSON.stringify({ DATABASE_URL: "postgres://u:pw-canary@tugra_db_d1:5432/x", OTHER: "x" }));
+    expect(await w.appMentions("a1", ["tugra_db_d1"])).toBe(true);
+    expect(await w.appMentions("a1", ["tugra_db_d9"])).toBe(false);
+    crypto.decrypt.mockImplementation(() => {
+      throw new Error("bad key");
+    });
+    expect(await w.appMentions("a1", ["tugra_db_d1"])).toBeNull();
+    prisma.application.findUnique.mockResolvedValue(null);
+    expect(await w.appMentions("a1", ["x"])).toBeNull();
   });
 });

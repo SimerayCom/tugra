@@ -5,6 +5,8 @@ import { ApiAuthGuard } from "../api-tokens/api-auth.guard";
 import { ScopesGuard } from "../api-tokens/scopes.guard";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
 import { ApplicationsService } from "../applications/applications.service";
+import { DatabasesService } from "../databases/databases.service";
+import { CryptoService } from "../crypto/crypto.service";
 import { AuditService } from "../audit/audit.service";
 import { TeamAccessService } from "../common/team-access.service";
 import { PrismaService } from "../prisma/prisma.service";
@@ -28,6 +30,8 @@ describe("CoolifyInPlaceModule wiring", () => {
         { provide: AgentWsServer, useValue: {} },
         { provide: ApplicationsService, useValue: {} },
         { provide: ProxyOpsService, useValue: {} },
+        { provide: DatabasesService, useValue: {} },
+        { provide: CryptoService, useValue: {} },
       ],
     })
       .overrideGuard(ApiAuthGuard)

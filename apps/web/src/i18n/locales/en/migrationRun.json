@@ -1341,7 +1341,11 @@
     "cutover_inplace-swap-start-failed": "Tugra's proxy could not take the ports. Everything was put back.",
     "cutover_inplace-fallback-overdue": "Coolify's certificate has been served for longer than a few minutes and no new certificate came.",
     "cutover_inplace-cert-check-unavailable": "The server cannot check certificates (openssl is missing), so Coolify's certificate stays. Install openssl, or give the server back.",
-    "cutover_inplace-reversed": "The takeover was already given back to Coolify."
+    "cutover_inplace-reversed": "The takeover was already given back to Coolify.",
+    "cutover_inplace-database-start-failed": "A database's container would not start on its data. Everything was put back.",
+    "cutover_inplace-database-verify-failed": "A database did not look the same after Tugra took it over. Everything was put back.",
+    "verify_inplace-after-switch": "{app} talks to a database that is taken over, so it starts after the database at the switch and is checked right after. Giving back is one click.",
+    "verify_inplace-database": "Database {app}: Tugra's container runs on the same data, the same image. After the switch it is checked ({level}: counts compare every table's rows, alive means the engine answers); if it differs, everything is put back."
   },
   "version": {
     "title": "Source version",

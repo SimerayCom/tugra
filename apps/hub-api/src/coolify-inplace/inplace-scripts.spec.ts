@@ -21,6 +21,11 @@ import {
   parseInPlaceProbe,
   parseNewCertCheck,
   parsePolicy,
+  buildDbFingerprintScript,
+  checkLevelOf,
+  parseDbFingerprint,
+  sameDatabase,
+  type DbFingerprint,
 } from "./inplace-scripts";
 import { PROXY_DYNAMIC_DIR } from "../deploy/panel-router";
 
@@ -357,5 +362,104 @@ describe("served-certificate check, executed against a fake openssl", () => {
     expect(parseNewCertCheck(run(buildNewCertCheckScript("a.example.com"), { PATH: bin }).stdout, "a.example.com")).toEqual({ state: "noopenssl" });
     writeBin("openssl", "exit 1");
     expect(parseNewCertCheck(run(buildNewCertCheckScript("a.example.com")).stdout, "a.example.com")).toEqual({ state: "none" });
+  });
+});
+
+describe("the database fingerprint script", () => {
+  const rec = { kind: "recorded" as const, ctr };
+  const identBin = `
+case "$1" in
+  inspect) case "$2" in -f) echo "/\${CTR_NAME:-abc-20261125T101010}|\${CTR_IMAGE:-abc:1234}";; *) exit 0;; esac;;
+  exec) shift; [ "$1" = -i ] && shift; shift; exec "$@";;
+esac
+`;
+  const fakePsql = `
+in=$(cat)
+case "$in" in
+  *pg_class*) printf "select 'public.users', count(*) from public.users;\\nselect 'public.orders', count(*) from public.orders;\\n";;
+  *) printf 'public.users|%s\\npublic.orders|%s\\n' "\${USERS:-5}" "\${ORDERS:-10}";;
+esac
+`;
+  const fakeMysql = `
+in=$(cat)
+case "$in" in
+  *information_schema*) printf "select 'db.t', count(*) from db.t;\\n";;
+  *) printf 'db.t|%s\\n' "\${ROWS:-3}";;
+esac
+`;
+  const setup = () => {
+    writeBin("docker", identBin);
+    writeBin("psql", fakePsql);
+    writeBin("mysql", fakeMysql);
+    writeBin("redis-cli", 'echo "NOAUTH Authentication required."');
+    writeBin("mongosh", "echo 1");
+  };
+
+  it("is read-only: it removes nothing, writes no file, and never asks docker for an environment", () => {
+    const s = buildDbFingerprintScript([{ engine: "POSTGRES", ref: rec }, { engine: "REDIS", ref: { kind: "name", name: "tugra_db_x" } }]);
+    expect(s).not.toMatch(/docker\s+(rm|kill|prune|rmi|system|volume|update|stop|start|run)\b/);
+    expect(s).not.toMatch(/\.Config\.Env|printenv|--env|\s-e\s/);
+    expect(s).not.toMatch(/rm\s+-[a-z]*r|>\s*\/(?!dev\/null)|>>/);
+    expect(spawnSync("/bin/sh", ["-n", "-c", s]).status).toBe(0);
+  });
+  it("refuses an engine it cannot check, a bad recorded container and a hostile name before anything runs", () => {
+    expect(() => buildDbFingerprintScript([{ engine: "CLICKHOUSE" as never, ref: rec }])).toThrow();
+    expect(() => buildDbFingerprintScript([{ engine: "POSTGRES", ref: { kind: "recorded", ctr: { ...ctr, id: "short" } } }])).toThrow();
+    expect(() => buildDbFingerprintScript([{ engine: "POSTGRES", ref: { kind: "name", name: "x; id" } }])).toThrow();
+  });
+  it("counts every table inside the container and prints only numbers and a hash: the password and the table names stay in the container", () => {
+    setup();
+    const r = run(buildDbFingerprintScript([{ engine: "POSTGRES", ref: rec }]), { POSTGRES_PASSWORD: "pw-canary-9f2", USERS: "5", ORDERS: "10" });
+    const fp = parseDbFingerprint(r.stdout, [ID])!.get(ID)!;
+    expect(fp).toMatchObject({ level: "counts", state: "ok", tables: 2, rows: 15 });
+    const want = createHash("sha256").update("public.orders|10\npublic.users|5\n").digest("hex");
+    expect(fp.hash).toBe(want);
+    expect(r.stdout + r.stderr).not.toMatch(/pw-canary|users|orders/);
+  });
+  it("a changed row count changes the hash, an unchanged database prints the same line", () => {
+    setup();
+    const a = parseDbFingerprint(run(buildDbFingerprintScript([{ engine: "POSTGRES", ref: rec }]), { USERS: "5" }).stdout, [ID])!.get(ID)!;
+    const b = parseDbFingerprint(run(buildDbFingerprintScript([{ engine: "POSTGRES", ref: rec }]), { USERS: "5" }).stdout, [ID])!.get(ID)!;
+    const c = parseDbFingerprint(run(buildDbFingerprintScript([{ engine: "POSTGRES", ref: rec }]), { USERS: "6" }).stdout, [ID])!.get(ID)!;
+    expect(sameDatabase(a, b)).toBe(true);
+    expect(sameDatabase(a, c)).toBe(false);
+  });
+  it("mysql and mariadb are counted the same way, and a server that asks for a password still counts as answering for the redis family and mongo", () => {
+    setup();
+    const my = parseDbFingerprint(run(buildDbFingerprintScript([{ engine: "MYSQL", ref: rec }]), { MYSQL_ROOT_PASSWORD: "x" }).stdout, [ID])!.get(ID)!;
+    expect(my).toMatchObject({ level: "counts", state: "ok", tables: 1, rows: 3 });
+    const alive = parseDbFingerprint(run(buildDbFingerprintScript([{ engine: "REDIS", ref: rec }, { engine: "MONGO", ref: { kind: "name", name: "tugra_db_m" } }])).stdout, [ID, "tugra_db_m"])!;
+    expect(alive.get(ID)).toMatchObject({ level: "alive", state: "ok", tables: null, rows: null, hash: null });
+    expect(alive.get("tugra_db_m")).toMatchObject({ level: "alive", state: "ok" });
+  });
+  it("a container that is gone or that is not the recorded one is never read, and a login that fails is `failed`, not a pass", () => {
+    setup();
+    const gone = run(buildDbFingerprintScript([{ engine: "POSTGRES", ref: rec }]), { CTR_NAME: "other-name" });
+    expect(parseDbFingerprint(gone.stdout, [ID])!.get(ID)).toMatchObject({ state: "mismatch" });
+    writeBin("psql", "exit 2");
+    const failed = run(buildDbFingerprintScript([{ engine: "POSTGRES", ref: rec }]));
+    expect(parseDbFingerprint(failed.stdout, [ID])!.get(ID)).toMatchObject({ level: "counts", state: "failed", hash: null });
+  });
+  it("the parser ignores refs it did not ask for, malformed lines and cut output", () => {
+    const line = (ref: string, st: string) => `TUGRA_IP_DBFP|${ref}|counts|${st}|2|15|${"d".repeat(64)}`;
+    expect(parseDbFingerprint(`${line(ID, "ok")}\n${line(ID2, "ok")}\nTUGRA_IP_DBFP|${ID}|bogus`, [ID])!.size).toBe(1);
+    expect(parseDbFingerprint(line(ID, "weird"), [ID])!.size).toBe(0);
+    expect(parseDbFingerprint(`${line(ID, "ok")}\n…(truncated)`, [ID])).toBeNull();
+  });
+  it("sameDatabase: counts need both sides read and equal, alive needs the Tugra side to answer, anything unread is a failure", () => {
+    const ok = (o: Partial<DbFingerprint> = {}): DbFingerprint => ({ level: "counts", state: "ok", tables: 2, rows: 15, hash: "d".repeat(64), ...o });
+    expect(sameDatabase(ok(), ok())).toBe(true);
+    expect(sameDatabase(ok(), ok({ rows: 16 }))).toBe(false);
+    expect(sameDatabase(ok(), ok({ hash: "e".repeat(64) }))).toBe(false);
+    expect(sameDatabase(null, ok())).toBe(false);
+    expect(sameDatabase(ok({ state: "failed" }), ok())).toBe(false);
+    expect(sameDatabase(ok(), ok({ state: "failed" }))).toBe(false);
+    expect(sameDatabase(ok(), null)).toBe(false);
+    expect(sameDatabase(null, { level: "alive", state: "ok", tables: null, rows: null, hash: null })).toBe(true);
+    expect(sameDatabase(null, { level: "alive", state: "failed", tables: null, rows: null, hash: null })).toBe(false);
+  });
+  it("which engines are counted and which only asked", () => {
+    expect(["POSTGRES", "MYSQL", "MARIADB"].map((e) => checkLevelOf(e as never))).toEqual(["counts", "counts", "counts"]);
+    expect(["REDIS", "KEYDB", "DRAGONFLY", "MONGO"].map((e) => checkLevelOf(e as never))).toEqual(["alive", "alive", "alive", "alive"]);
   });
 });

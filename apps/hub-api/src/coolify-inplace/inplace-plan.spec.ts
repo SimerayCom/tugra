@@ -1,5 +1,5 @@
 import { TAKEOVER_STATUSES, TAKEOVER_CERT_STATES, type TakeoverStatus } from "@tugra/shared";
-import { adoptTagFor, canCertTransition, canGiveBack, canTakeoverTransition, cleanCommit, certWorkLeft, domainsOf, FALLBACK_MAX_MS, isVerified, overdueFallbacks, judgeProbe, mapMounts, portsMayBeTugras, swapGate, toItemView, type TakeoverItem } from "./inplace-plan";
+import { adoptTagFor, canCertTransition, canGiveBack, canTakeoverTransition, cleanCommit, certWorkLeft, domainsOf, FALLBACK_MAX_MS, isVerified, overdueFallbacks, judgeProbe, mapDbMounts, mapMounts, portsMayBeTugras, sameImageRef, swapGate, toItemView, type TakeoverItem } from "./inplace-plan";
 import type { ProbeResult } from "./inplace-scripts";
 
 const H = (c: string) => c.repeat(64);
@@ -191,3 +191,59 @@ describe("overdueFallbacks and certWorkLeft", () => {
     expect(certWorkLeft([sw({ domains: [{ host: "a.example.com", tempCheck: "ok", finalCheck: "ok", cert: "issued" }] })])).toBe(false);
   });
 });
+
+describe("mapDbMounts", () => {
+  const db = { id: "db1", dataMount: "/var/lib/postgresql/data", volumes: [{ name: "ext", path: "/ext" }] };
+  const vol = (source: string, destination: string, rw = true) => ({ type: "volume" as const, source, destination, rw });
+  it("the volume at the engine's data directory becomes an alias of the database's own data volume, an extra volume one of its extra volume", () => {
+    expect(mapDbMounts({ mounts: [vol("coolify-data", "/var/lib/postgresql/data"), vol("coolify-ext", "/ext")] }, db)).toEqual({
+      volumes: [
+        { from: "coolify-data", to: "tugra_dbv_db1" },
+        { from: "coolify-ext", to: "tugra_dbv_db1_ext" },
+      ],
+      issues: [],
+    });
+  });
+  it("a data directory that is a bind mount, read-only or not mounted at all keeps the database out", () => {
+    expect(mapDbMounts({ mounts: [{ type: "bind", source: "/srv/pg", destination: "/var/lib/postgresql/data", rw: true }] }, db).issues).toEqual(["db_volume_unmapped"]);
+    expect(mapDbMounts({ mounts: [vol("c", "/var/lib/postgresql/data", false)] }, db).issues).toEqual(["db_volume_unmapped"]);
+    expect(mapDbMounts({ mounts: [] }, db).issues).toEqual(["db_volume_unmapped"]);
+  });
+  it("a writable mount Tugra's database does not declare keeps it out; a read-only one and a tmpfs do not", () => {
+    expect(mapDbMounts({ mounts: [vol("c", "/var/lib/postgresql/data"), vol("x", "/unknown")] }, db).issues).toEqual(["db_volume_unmapped"]);
+    expect(mapDbMounts({ mounts: [vol("c", "/var/lib/postgresql/data"), vol("x", "/unknown", false), { type: "tmpfs", source: "", destination: "/run", rw: true }] }, db)).toMatchObject({ issues: [] });
+  });
+});
+
+describe("sameImageRef", () => {
+  it("spells images the way docker does", () => {
+    expect(sameImageRef("postgres:16", "docker.io/library/postgres:16")).toBe(true);
+    expect(sameImageRef("redis", "redis:latest")).toBe(true);
+    expect(sameImageRef("Postgres:16-Alpine", "postgres:16-alpine")).toBe(true);
+    expect(sameImageRef("postgres:16", "postgres:17")).toBe(false);
+    expect(sameImageRef("postgres:16", "ghcr.io/x/postgres:16")).toBe(false);
+    expect(sameImageRef("a@sha256:" + "a".repeat(64), "a@sha256:" + "b".repeat(64))).toBe(false);
+  });
+});
+
+describe("a takeover with databases", () => {
+  const base = { itemRef: "database:s:d", name: "main", buildMode: "reuse-image" as const, domains: [], appId: "db1", uuid: "d", commitSha: null, container: null, volumes: [], binds: 0, exclusive: true, adoptDeploymentId: null, adoptTag: null, rebuildDeploymentId: null, issues: [], baseline: {}, fallbackSerial: {}, fallbackAt: {}, certAttempts: {} };
+  const dbItem = (o: Partial<TakeoverItem> = {}): TakeoverItem => ({ ...base, kind: "database", state: "switched", verify: { level: "counts", state: "ok" }, ...o });
+  it("is verified only when the database was checked, whatever the domains say", () => {
+    expect(isVerified([dbItem()])).toBe(true);
+    expect(isVerified([dbItem({ verify: { level: "counts", state: "pending" } })])).toBe(false);
+    expect(isVerified([dbItem({ verify: { level: "alive", state: "failed" } })])).toBe(false);
+  });
+  it("the gate does not ask a test of an app that starts after its database", () => {
+    const app: TakeoverItem = { ...base, kind: undefined, itemRef: "app:s:a", name: "a", appId: "a1", exclusive: false, afterSwitch: true, state: "prepared", domains: [{ host: "a.example.com", tempCheck: "pending", finalCheck: "pending", cert: "pending" }] };
+    expect(swapGate([dbItem({ state: "prepared" }), app])).toEqual({ ok: true });
+    expect(swapGate([dbItem({ state: "prepared" }), { ...app, afterSwitch: false }])).toMatchObject({ ok: false, code: "not_tested" });
+  });
+  it("the screen sees the kind, the check level and state, and the after-switch flag, and no id, container or fingerprint", () => {
+    const v = toItemView(dbItem({ container: { id: H("a"), name: "n", image: "i", restart: "no", imageId: "sha256:" + H("b") }, dbBefore: { level: "counts", state: "ok", tables: 1, rows: 2, hash: H("c") }, engine: "POSTGRES" }));
+    expect(v).toMatchObject({ kind: "database", verify: { level: "counts", state: "ok" }, exclusive: true });
+    expect(JSON.stringify(v)).not.toMatch(/dbBefore|container|imageId|sha256|fingerprint|appId|uuid/);
+    expect(toItemView({ ...dbItem(), kind: undefined, afterSwitch: true, verify: undefined })).toMatchObject({ afterSwitch: true });
+  });
+});
+

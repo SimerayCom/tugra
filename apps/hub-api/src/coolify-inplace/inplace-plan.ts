@@ -6,7 +6,8 @@
  */
 import type { TakeoverBuildMode, TakeoverCertState, TakeoverIssueCode, TakeoverItemView, TakeoverStatus } from "@tugra/shared";
 import { appVolumeName } from "../deploy/deploy-script";
-import type { CtrDetail, InPlaceRestartPolicy, ProbeResult } from "./inplace-scripts";
+import { dbExtraVolumeName, dbVolumeName } from "../databases/database-script";
+import type { CtrDetail, DbFingerprint, InPlaceRestartPolicy, ProbeResult } from "./inplace-scripts";
 
 // ───────────────────────────── the item ─────────────────────────────
 
@@ -24,6 +25,14 @@ export interface TakeoverItem extends TakeoverItemView {
   binds: number;
   /** The container shares writable data (a volume or a bind) with Tugra's copy, so the two cannot run together: it is switched, not tested alongside. */
   exclusive: boolean;
+  /**
+   * The app talks to a database that is taken over in place (or Tugra could not read its environment to tell). That database is not there for
+   * Tugra's copy until the switch, so the copy cannot be tested alongside: it is started after the databases and checked after the switch.
+   */
+  afterSwitch?: boolean;
+  /** Databases only: the engine, and what Coolify's container showed before anything changed (the yardstick of the check after the switch). */
+  engine?: string;
+  dbBefore?: DbFingerprint | null;
   /** The synthetic deployment that carries the adopted image, and its tag. Set once the image was adopted. */
   adoptDeploymentId: string | null;
   adoptTag: string | null;
@@ -81,6 +90,47 @@ export function mapMounts(
     }
   }
   return { volumes, binds, exclusive, issues: [...new Set(issues)] };
+}
+
+/**
+ * How a Coolify database container's data lines up with the Tugra database's own volumes: the volume at the engine's data directory becomes an
+ * alias of the Tugra database's data volume, an extra volume mounted at a path the Tugra database declares becomes an alias of that extra
+ * volume. No copy: the same files. A writable mount with no counterpart (or the data directory as a bind mount, or not mounted at all) is an
+ * issue and the database stays out of the takeover: starting it without its data would be worse than not starting it.
+ */
+export function mapDbMounts(
+  detail: Pick<CtrDetail, "mounts">,
+  db: { id: string; dataMount: string; volumes: ReadonlyArray<{ name: string; path: string }> },
+): { volumes: Array<{ from: string; to: string }>; issues: TakeoverIssue[] } {
+  const volumes: Array<{ from: string; to: string }> = [];
+  const issues: TakeoverIssue[] = [];
+  let data = false;
+  for (const m of detail.mounts) {
+    if (m.type === "tmpfs" || m.type === "other") continue;
+    if (m.destination === db.dataMount) {
+      if (m.type !== "volume" || !m.rw) issues.push("db_volume_unmapped");
+      else {
+        volumes.push({ from: m.source, to: dbVolumeName(db) });
+        data = true;
+      }
+      continue;
+    }
+    if (m.type === "volume") {
+      const v = db.volumes.find((x) => x.path === m.destination);
+      if (v) volumes.push({ from: m.source, to: dbExtraVolumeName(db, v.name) });
+      else if (m.rw) issues.push("db_volume_unmapped");
+    } else if (m.rw) issues.push("db_volume_unmapped");
+  }
+  if (!data) issues.push("db_volume_unmapped");
+  return { volumes, issues: [...new Set(issues)] };
+}
+
+/** The same image, spelled the same way docker would (the default registry and the implicit `latest` do not make two images different). */
+export const sameImageRef = (a: string, b: string): boolean => normImage(a) === normImage(b);
+function normImage(ref: string): string {
+  let r = ref.trim().toLowerCase().replace(/^docker\.io\//, "").replace(/^library\//, "");
+  if (!r.includes("@") && !/:[^/]+$/.test(r)) r += ":latest";
+  return r;
 }
 
 /** Tugra's versioned tag for the adopted image: `tugra_<appId>:<deploymentId>` (the tag the rollback path runs). */
@@ -184,7 +234,7 @@ export function swapGate(items: readonly TakeoverItem[]): SwapGate {
   if (active.length === 0) return { ok: false, code: "no_items" };
   for (const i of active) {
     if (i.state !== "prepared") return { ok: false, code: "item_not_ready", itemRef: i.itemRef };
-    if (i.exclusive) continue;
+    if (i.exclusive || i.afterSwitch) continue;
     for (const d of i.domains) {
       if (d.tempCheck === "failed") return { ok: false, code: "test_failed", itemRef: i.itemRef, host: d.host };
       if (d.tempCheck !== "ok") return { ok: false, code: "not_tested", itemRef: i.itemRef, host: d.host };
@@ -201,7 +251,7 @@ export function domainsOf(items: readonly TakeoverItem[]): Array<{ itemRef: stri
 /** Done when every domain passed its check after the swap and holds a new certificate. */
 export function isVerified(items: readonly TakeoverItem[]): boolean {
   const active = items.filter((i) => i.state !== "skipped");
-  return active.length > 0 && active.every((i) => i.domains.every((d) => d.finalCheck === "ok" && d.cert === "issued"));
+  return active.length > 0 && active.every((i) => (i.kind === "database" ? i.verify?.state === "ok" : i.domains.every((d) => d.finalCheck === "ok" && d.cert === "issued")));
 }
 
 /** What the screen is shown: no uuid, no container id, no tag, no baseline. */
@@ -209,9 +259,11 @@ export function toItemView(i: TakeoverItem): TakeoverItemView {
   return {
     itemRef: i.itemRef,
     name: i.name,
+    ...(i.kind === "database" ? { kind: i.kind, ...(i.verify ? { verify: i.verify } : {}) } : {}),
     buildMode: i.buildMode,
     ...(i.state === "skipped" ? { skipped: true } : {}),
     ...(i.exclusive ? { exclusive: true } : {}),
+    ...(i.afterSwitch ? { afterSwitch: true } : {}),
     ...(i.issues.length ? { issues: i.issues } : {}),
     domains: i.domains.map((d) => ({ host: d.host, tempCheck: d.tempCheck, finalCheck: d.finalCheck, cert: d.cert })),
   };

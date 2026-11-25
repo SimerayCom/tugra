@@ -5,7 +5,8 @@
  */
 import { createHash } from "node:crypto";
 import { buildProxyStopScript } from "../deploy/deploy-script";
-import type { DeployState, InPlaceWorld, OpApp, WorldApp, WorldServer } from "./inplace-world";
+import { dbContainerName } from "../databases/database-script";
+import type { DeployState, InPlaceWorld, OpApp, OpDatabase, WorldApp, WorldDatabase, WorldServer } from "./inplace-world";
 
 export const H = (c: string): string => c.repeat(64);
 const sha = (s: string): string => createHash("sha256").update(s).digest("hex");
@@ -23,6 +24,25 @@ export interface BoxApp {
   mounts?: Array<{ type: "volume" | "bind"; source: string; dest: string; rw: boolean }>;
   volumes?: Array<{ name: string; path: string }>;
   ctrRunning?: boolean;
+  restart?: string;
+}
+
+export interface BoxDb {
+  dbId: string;
+  itemRef: string;
+  name: string;
+  engine: string;
+  ctrId: string;
+  ctrName: string;
+  /** The image Coolify's container runs. */
+  image: string;
+  /** The image Tugra's row is set to (defaults to the same). */
+  tugraImage?: string;
+  mounts?: NonNullable<BoxApp["mounts"]>;
+  /** Extra volumes the Tugra row declares. */
+  volumes?: Array<{ name: string; path: string }>;
+  dataMount?: string;
+  rows?: number;
   restart?: string;
 }
 
@@ -44,6 +64,16 @@ export class Box implements InPlaceWorld {
   bind = "public";
   controlPlane = "";
   apps: BoxApp[] = [];
+  dbs: BoxDb[] = [];
+  tugraDbRunning = new Set<string>();
+  /** databases whose Tugra container will not start, and whose rows differ once Tugra runs them */
+  failDbStart = new Set<string>();
+  /** databases whose rows cannot be read from Coolify's container (a login that fails) */
+  dbReadFails = new Set<string>();
+  dbDiffers = new Set<string>();
+  /** apps whose environment mentions a database, and apps whose environment cannot be read */
+  mentions = new Set<string>();
+  mentionsUnreadable = new Set<string>();
   ctrs = new Map<string, Ctr>();
   coolifyProxy = { running: true, restart: "unless-stopped" };
   tugraProxy: { state: "absent" | "running" | "exited"; published: boolean } = { state: "absent", published: false };
@@ -85,6 +115,15 @@ export class Box implements InPlaceWorld {
     this.images.add(a.image);
     for (const m of a.mounts ?? []) if (m.type === "volume") this.volumes.add(m.source);
     this.acme.add(a.host);
+    return this;
+  }
+
+  addDb(d: BoxDb): this {
+    this.dbs.push(d);
+    const mounts = d.mounts ?? [{ type: "volume" as const, source: `${d.ctrName}-data`, dest: d.dataMount ?? "/var/lib/postgresql/data", rw: true }];
+    this.ctrs.set(d.ctrId, { name: d.ctrName, image: d.image, running: true, restart: d.restart ?? "unless-stopped", mounts });
+    this.images.add(d.image);
+    for (const m of mounts) if (m.type === "volume") this.volumes.add(m.source);
     return this;
   }
 
@@ -143,7 +182,7 @@ export class Box implements InPlaceWorld {
       return "";
     }
     if (s.includes("TUGRA_CTR")) {
-      return this.apps.map((a) => ["TUGRA_CTR", a.itemRef, a.ctrId, a.ctrName, a.image, "", this.ctrs.get(a.ctrId)?.running ? "running" : "exited"].join("\t")).join("\n");
+      return [...this.apps.map((a) => ({ ref: a.itemRef, id: a.ctrId, name: a.ctrName, image: a.image })), ...this.dbs.map((d) => ({ ref: d.itemRef, id: d.ctrId, name: d.ctrName, image: d.image }))].map((a) => ["TUGRA_CTR", a.ref, a.id, a.name, a.image, "", this.ctrs.get(a.id)?.running ? "running" : "exited"].join("\t")).join("\n");
     }
     if (s.includes("TUGRA_IP_DETAIL_END")) {
       const out: string[] = [];
@@ -218,6 +257,7 @@ export class Box implements InPlaceWorld {
       }
       return out.join("\n");
     }
+    if (s.includes("TUGRA_IP_DBFP")) return this.dbfpOut(s);
     if (s.includes("TUGRA_IP_PROBE")) return this.probeOut(s);
     if (s.includes("TUGRA_IP_FALLBACK_REMOVED")) {
       for (const m of s.matchAll(/tls-fb-([a-z0-9-]+)\.yml/g)) {
@@ -259,6 +299,29 @@ export class Box implements InPlaceWorld {
     return "";
   }
 
+  /** Coolify's container shows `rows`; Tugra's shows the same unless `dbDiffers` says it lost or gained some. Nothing readable from a stopped container. */
+  private dbfpOut(s: string): string {
+    const out: string[] = [];
+    const line = (ref: string, db: BoxDb, running: boolean, extra: number): void => {
+      const level = ["POSTGRES", "MYSQL", "MARIADB"].includes(db.engine) ? "counts" : "alive";
+      if (!running) return void out.push(`TUGRA_IP_DBFP|${ref}|${level}|failed|-|-|-`);
+      const rows = (db.rows ?? 10) + extra;
+      out.push(level === "counts" ? `TUGRA_IP_DBFP|${ref}|counts|ok|1|${rows}|${sha(`t|${rows}`)}` : `TUGRA_IP_DBFP|${ref}|alive|ok|-|-|-`);
+    };
+    for (const m of s.matchAll(/^one_recorded '([0-9a-f]{64})' '[^']+' '[^']+' '([A-Z]+)'/gm)) {
+      const db = this.dbs.find((d) => d.ctrId === m[1]);
+      if (!db) out.push(`TUGRA_IP_DBFP|${m[1]}|-|absent|-|-|-`);
+      else line(m[1], db, !!this.ctrs.get(db.ctrId)?.running && !this.dbReadFails.has(db.dbId), 0);
+    }
+    for (const m of s.matchAll(/^one_named '([^']+)' '([A-Z]+)'/gm)) {
+      const db = this.dbs.find((d) => dbContainerName({ id: d.dbId }) === m[1]);
+      if (!db) out.push(`TUGRA_IP_DBFP|${m[1]}|-|absent|-|-|-`);
+      else line(m[1], db, this.tugraDbRunning.has(db.dbId), this.dbDiffers.has(db.dbId) ? 1 : 0);
+    }
+    this.events.push("dbfp");
+    return out.join("\n");
+  }
+
   private probeOut(s: string): string {
     if (this.noCurl) return "TUGRA_IP_PROBE|NOCURL\nTUGRA_IP_PROBE_END";
     const dark = s.includes("tugra-proxy");
@@ -282,6 +345,29 @@ export class Box implements InPlaceWorld {
   }
   async opApps(opId: string): Promise<OpApp[] | null> {
     return opId === "op1" ? this.apps.map((a) => ({ appId: a.appId, itemRef: a.itemRef })) : null;
+  }
+  async opDatabases(opId: string): Promise<OpDatabase[] | null> {
+    return opId === "op1" ? this.dbs.map((d) => ({ databaseId: d.dbId, itemRef: d.itemRef })) : null;
+  }
+  async database(id: string): Promise<WorldDatabase | null> {
+    const d = this.dbs.find((x) => x.dbId === id);
+    return d ? { id, teamId: this.teamId, serverId: this.serverId, name: d.name, engine: d.engine, image: d.tugraImage ?? d.image, dataMount: d.dataMount ?? "/var/lib/postgresql/data", volumes: d.volumes ?? [] } : null;
+  }
+  async runDatabase(_u: string, id: string): Promise<{ ok: boolean }> {
+    const d = this.dbs.find((x) => x.dbId === id)!;
+    if (this.failDbStart.has(id)) return { ok: false };
+    // two database containers on one data directory are never allowed to run at once
+    if (this.ctrs.get(d.ctrId)!.running) throw new Error("two containers would share writable data");
+    this.tugraDbRunning.add(id);
+    this.events.push(`tugra-db:start:${id}`);
+    return { ok: true };
+  }
+  async stopDatabase(_u: string, id: string): Promise<void> {
+    this.tugraDbRunning.delete(id);
+    this.events.push(`tugra-db:stop:${id}`);
+  }
+  async appMentions(appId: string): Promise<boolean | null> {
+    return this.mentionsUnreadable.has(appId) ? null : this.mentions.has(appId);
   }
   async app(appId: string): Promise<WorldApp | null> {
     const a = this.apps.find((x) => x.appId === appId);

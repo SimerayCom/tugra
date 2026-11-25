@@ -6,6 +6,7 @@ import { AuditService } from "../audit/audit.service";
 import { TeamAccessService } from "../common/team-access.service";
 import { CUTOVER_HOSTNAME_RE } from "../cutover/cutover.logic";
 import { buildProxyStopScript } from "../deploy/deploy-script";
+import { dbContainerName } from "../databases/database-script";
 import { coolifyRefOf } from "../importer/sources/coolify-control";
 import { buildSourceInspectScript, buildSourceStartScript, buildSourceStopScript, parseSourceInspect, parseStartOutput, parseStopOutput } from "../migration-runs/steps/data/source-control/source-scripts";
 import type { CoolifyProxySnapshot } from "../migration-runs/steps/cutover/proxy-swap";
@@ -22,7 +23,9 @@ import {
   isVerified,
   overdueFallbacks,
   judgeProbe,
+  mapDbMounts,
   mapMounts,
+  sameImageRef,
   swapGate,
   toItemView,
   type TakeoverItem,
@@ -30,13 +33,17 @@ import {
 import {
   buildAdoptImageScript,
   buildContainerDetailScript,
+  buildDbFingerprintScript,
   buildFallbackInstallScript,
   buildFallbackRemoveScript,
   buildInPlaceProbeScript,
   buildNewCertCheckScript,
   buildRestartPolicyScript,
   buildVolumeAliasScript,
+  checkLevelOf,
+  isFingerprintEngine,
   isNewLetsEncryptCert,
+  parseDbFingerprint,
   parseAdopt,
   parseAlias,
   parseContainerDetail,
@@ -44,7 +51,10 @@ import {
   parseInPlaceProbe,
   parseNewCertCheck,
   parsePolicy,
+  sameDatabase,
   type CtrDetail,
+  type DbFingerprint,
+  type DbTarget,
   type ProbeResult,
   type ProbeVia,
   type RecordedCtr,
@@ -162,7 +172,8 @@ export class CoolifyInPlaceService implements InPlaceRunPort {
 
     const opApps = await this.world.opApps(input.opId, server.teamId, server.id);
     if (!opApps) throw new NotFoundException("op-not-found");
-    if (opApps.length === 0) throw unprocessable("takeover_no_apps");
+    const opDbs = (await this.world.opDatabases(input.opId, server.teamId, server.id)) ?? [];
+    if (opApps.length === 0 && opDbs.length === 0) throw unprocessable("takeover_no_apps");
     const known = new Set(opApps.map((a) => a.itemRef));
     for (const r of input.rebuild) if (!known.has(r)) throw unprocessable("takeover_unknown_item", { itemRef: r });
 
@@ -174,7 +185,7 @@ export class CoolifyInPlaceService implements InPlaceRunPort {
     const tugraProxy = await this.world.proxyStatus(userId, server.id).catch(() => "unknown" as const);
     if (server.proxyBind !== "none" && (tugraProxy === "running" || tugraProxy === "unknown")) throw unprocessable("takeover_tugra_proxy_in_use");
 
-    const items = await this.readItems(server.teamId, server.id, opApps, new Set(input.rebuild));
+    const items = await this.readItems(server.teamId, server.id, opApps, new Set(input.rebuild), opDbs);
     const doc: PlanDoc = { opId: input.opId, serverName: server.name, proxy: proxy.snapshot };
     const row = await this.prisma.coolifyTakeover.create({
       data: {
@@ -189,13 +200,13 @@ export class CoolifyInPlaceService implements InPlaceRunPort {
         giveBackAvailable: true,
       },
     });
-    await this.audit.log({ actor: userId, action: "coolify.takeover.plan", target: row.id, meta: { serverId: server.id, ...(link.runId ? { runId: link.runId } : {}), apps: items.length, skipped: items.filter((i) => i.state === "skipped").length, rebuild: items.filter((i) => i.buildMode === "rebuild-verify").length } });
+    await this.audit.log({ actor: userId, action: "coolify.takeover.plan", target: row.id, meta: { serverId: server.id, ...(link.runId ? { runId: link.runId } : {}), apps: items.filter((i) => i.kind !== "database").length, databases: items.filter((i) => i.kind === "database").length, skipped: items.filter((i) => i.state === "skipped").length, rebuild: items.filter((i) => i.buildMode === "rebuild-verify").length } });
     return this.view(row as Row);
   }
 
   /** What Coolify runs for each app of the op, mapped to the Tugra app. Read-only on the host. Apps that cannot be taken over are kept, marked skipped, with the reasons. */
-  private async readItems(teamId: string, serverId: string, apps: ReadonlyArray<{ appId: string; itemRef: string; containerPrefix?: string; commitSha?: string | null }>, rebuild: ReadonlySet<string>): Promise<TakeoverItem[]> {
-    const withRef = apps.filter((a) => coolifyRefOf(a.itemRef));
+  private async readItems(teamId: string, serverId: string, apps: ReadonlyArray<{ appId: string; itemRef: string; containerPrefix?: string; commitSha?: string | null }>, rebuild: ReadonlySet<string>, dbs: ReadonlyArray<{ databaseId: string; itemRef: string }> = []): Promise<TakeoverItem[]> {
+    const withRef = [...apps.map((a) => ({ itemRef: a.itemRef, containerPrefix: a.containerPrefix })), ...dbs.map((d) => ({ itemRef: d.itemRef, containerPrefix: undefined }))].filter((a) => coolifyRefOf(a.itemRef));
     let found: ReturnType<typeof parseSourceInspect> = [];
     if (withRef.length > 0) {
       try {
@@ -269,7 +280,89 @@ export class CoolifyInPlaceService implements InPlaceRunPort {
       if (rebuild.has(a.itemRef) && m.exclusive) throw unprocessable("takeover_rebuild_needs_side_by_side", { itemRef: a.itemRef });
       items.push({ ...base, container: { id: list[0].id, name: list[0].name, image: list[0].image, restart: d.restart, imageId: d.imageId }, volumes: m.volumes, binds: m.binds, exclusive: m.exclusive });
     }
+    const dbItems = await this.readDbItems(teamId, serverId, dbs, byRef, detail);
+    items.push(...dbItems);
+    await this.markAfterSwitch(items);
     return items;
+  }
+
+  /**
+   * The databases the import created on the box, mapped to the containers Coolify runs for them. Always switched (their data is shared with
+   * Coolify's container), never tested alongside. One that cannot be taken over is kept, marked skipped, with the reason.
+   */
+  private async readDbItems(teamId: string, serverId: string, dbs: ReadonlyArray<{ databaseId: string; itemRef: string }>, byRef: ReadonlyMap<string, Array<{ id: string; name: string; image: string }>>, detail: ReadonlyMap<string, CtrDetail>): Promise<TakeoverItem[]> {
+    const out: TakeoverItem[] = [];
+    for (const d of dbs) {
+      const db = await this.world.database(d.databaseId);
+      if (!db || db.teamId !== teamId || db.serverId !== serverId) continue;
+      const base: TakeoverItem = {
+        itemRef: d.itemRef,
+        name: db.name,
+        kind: "database",
+        buildMode: "reuse-image",
+        domains: [],
+        appId: db.id,
+        uuid: coolifyRefOf(d.itemRef)?.uuid ?? "",
+        commitSha: null,
+        container: null,
+        volumes: [],
+        binds: 0,
+        exclusive: true,
+        engine: db.engine,
+        adoptDeploymentId: null,
+        adoptTag: null,
+        rebuildDeploymentId: null,
+        state: "planned",
+        issues: [],
+        baseline: {},
+        fallbackSerial: {},
+        fallbackAt: {},
+        certAttempts: {},
+      };
+      const skip = (issue: TakeoverItem["issues"][number]): void => {
+        out.push({ ...base, state: "skipped", issues: [issue] });
+      };
+      if (!isFingerprintEngine(db.engine)) {
+        skip("db_engine_unsupported");
+        continue;
+      }
+      const list = byRef.get(d.itemRef) ?? [];
+      if (list.length === 0) {
+        skip("container_absent");
+        continue;
+      }
+      const dt = list.length === 1 ? detail.get(list[0].id) : undefined;
+      if (!dt) {
+        skip("container_changed");
+        continue;
+      }
+      if (!sameImageRef(db.image, list[0].image)) {
+        skip("db_image_differs");
+        continue;
+      }
+      const m = mapDbMounts(dt, db);
+      if (m.issues.length > 0) {
+        out.push({ ...base, state: "skipped", issues: m.issues });
+        continue;
+      }
+      out.push({ ...base, verify: { level: checkLevelOf(db.engine), state: "pending" }, container: { id: list[0].id, name: list[0].name, image: list[0].image, restart: dt.restart, imageId: dt.imageId }, volumes: m.volumes });
+    }
+    return out;
+  }
+
+  /**
+   * An app that talks to a database that is taken over cannot be tested alongside: the database is not there for Tugra's copy until the
+   * switch. Judged from the app's environment (names only, never values kept); an environment that cannot be read counts as talking to it.
+   */
+  private async markAfterSwitch(items: TakeoverItem[]): Promise<void> {
+    const dbs = items.filter((i) => i.kind === "database" && i.state !== "skipped");
+    if (dbs.length === 0) return;
+    const needles = dbs.flatMap((i) => [dbContainerName({ id: i.appId }), ...(i.uuid ? [i.uuid] : [])]);
+    for (const i of items) {
+      if (i.kind === "database" || i.state === "skipped" || i.exclusive) continue;
+      const m = await this.world.appMentions(i.appId, needles);
+      if (m !== false) i.afterSwitch = true;
+    }
   }
 
   // ───────────────────────────── test ─────────────────────────────
@@ -321,6 +414,8 @@ export class CoolifyInPlaceService implements InPlaceRunPort {
       await save();
     };
 
+    if (item.kind === "database") return this.prepareDb(row, items, item);
+
     if (item.buildMode === "rebuild-verify") {
       if (!item.rebuildDeploymentId) {
         item.rebuildDeploymentId = (await this.world.rebuild(userId, item.appId)).deploymentId;
@@ -360,12 +455,53 @@ export class CoolifyInPlaceService implements InPlaceRunPort {
         if (r !== "created" && r !== "present") return skip("volume_alias_failed");
       }
     }
-    if (!item.exclusive) {
+    // an app that shares data, or that talks to a database taken over with it, starts at the switch (the database is not there before)
+    if (!item.exclusive && !item.afterSwitch) {
       const r = await this.world.runAdopted(userId, item.appId, item.adoptDeploymentId);
       if (!r.ok) return skip("prepare_failed");
     }
     item.state = "prepared";
     await save();
+  }
+
+  /**
+   * A database: its Coolify volumes become aliases of the Tugra database's own volumes (no copy), and what Coolify's running container shows
+   * is read once as the yardstick of the check after the switch. A database that cannot be read the way its engine is checked stays out: a
+   * switch nobody could verify would be a guess.
+   */
+  private async prepareDb(row: Row, items: TakeoverItem[], item: TakeoverItem): Promise<void> {
+    const save = () => this.saveItems(row.id, items);
+    const skip = async (issue: TakeoverItem["issues"][number]): Promise<void> => {
+      item.state = "skipped";
+      item.issues = [...new Set([...item.issues, issue])];
+      await save();
+    };
+    const ctr = item.container;
+    if (!ctr || !isFingerprintEngine(item.engine ?? "")) return skip("container_absent");
+    if (item.volumes.length > 0) {
+      const targets = item.volumes.map((v) => v.to);
+      const res = await this.run(row.serverId, buildVolumeAliasScript(item.volumes), (o) => parseAlias(o, targets));
+      if (!res) return skip("volume_alias_failed");
+      for (const t of targets) {
+        const r = res.get(t);
+        if (r === "foreign") return skip("volume_alias_foreign");
+        if (r !== "created" && r !== "present") return skip("volume_alias_failed");
+      }
+    }
+    if (!item.dbBefore) {
+      const fps = await this.fingerprint(row.serverId, [{ engine: item.engine as DbTarget["engine"], ref: { kind: "recorded", ctr: recorded(item) } }]);
+      const fp = fps?.get(ctr.id);
+      if (!fp || fp.state !== "ok") return skip("db_verify_failed");
+      item.dbBefore = fp;
+    }
+    item.state = "prepared";
+    await save();
+  }
+
+  /** Read databases through the container's own environment (see {@link buildDbFingerprintScript}). `null` when the host could not be read. */
+  private async fingerprint(serverId: string, targets: readonly DbTarget[]): Promise<Map<string, DbFingerprint> | null> {
+    const refs = targets.map((t) => (t.ref.kind === "recorded" ? t.ref.ctr.id : t.ref.name));
+    return this.run(serverId, buildDbFingerprintScript(targets), (o) => parseDbFingerprint(o, refs));
   }
 
   /**
@@ -380,7 +516,7 @@ export class CoolifyInPlaceService implements InPlaceRunPort {
     const baseline = await this.probe(serverId, "coolify", all, true);
     if ("fail" in baseline) return "probe_unavailable";
     for (const i of ready) for (const d of i.domains) if (baseline.hosts[d.host]) i.baseline[d.host] = baseline.hosts[d.host];
-    const side = ready.filter((i) => !i.exclusive);
+    const side = ready.filter((i) => !i.exclusive && !i.afterSwitch);
     const hosts = [...new Set(side.flatMap((i) => i.domains.map((d) => d.host)))];
     if (hosts.length === 0) return null;
     const dark = await this.probe(serverId, "tugra-dark", hosts, false);
@@ -428,10 +564,33 @@ export class CoolifyInPlaceService implements InPlaceRunPort {
       if (ids.some((x) => pol.get(x) !== "ok")) return this.abandon(userId, row, items, "exclusive_policy_failed");
       const stop = parseStopOutput((await this.world.exec(server.id, buildSourceStopScript(ex.map((i) => recordedFull(i))), 150_000)).output, ids);
       if (ids.some((x) => stop.get(x) !== "stopped" && stop.get(x) !== "gone")) return this.abandon(userId, row, items, "exclusive_stop_failed");
-      for (const i of ex) {
+      // databases first (what the apps need), each checked against what Coolify's container showed; then the apps that share data
+      const dbs = ex.filter((i) => i.kind === "database");
+      for (const i of dbs) {
+        const r = await this.world.runDatabase(userId, i.appId);
+        if (!r.ok) return this.abandon(userId, row, items, "database_start_failed");
+      }
+      if (dbs.length > 0) {
+        const targets: DbTarget[] = dbs.map((i) => ({ engine: i.engine as DbTarget["engine"], ref: { kind: "name", name: dbContainerName({ id: i.appId }) } }));
+        const after = await this.fingerprint(server.id, targets);
+        let bad = false;
+        for (const i of dbs) {
+          const ok = sameDatabase(i.dbBefore, after?.get(dbContainerName({ id: i.appId })));
+          i.verify = { level: i.verify?.level ?? checkLevelOf(i.engine as DbTarget["engine"]), state: ok ? "ok" : "failed" };
+          if (!ok) bad = true;
+        }
+        await this.saveItems(row.id, items);
+        if (bad) return this.abandon(userId, row, items, "database_verify_failed");
+      }
+      for (const i of ex.filter((x) => x.kind !== "database")) {
         const r = await this.world.runAdopted(userId, i.appId, i.adoptDeploymentId as string);
         if (!r.ok) return this.abandon(userId, row, items, "exclusive_start_failed");
       }
+    }
+    // apps that talk to a switched database run once it does
+    for (const i of active.filter((x) => x.afterSwitch && !x.exclusive)) {
+      const r = await this.world.runAdopted(userId, i.appId, i.adoptDeploymentId as string);
+      if (!r.ok) return this.abandon(userId, row, items, "exclusive_start_failed");
     }
 
     // 2. Coolify's certificates as the fallback, before Tugra's proxy takes the ports
@@ -649,7 +808,7 @@ export class CoolifyInPlaceService implements InPlaceRunPort {
       // 1. switched apps: Tugra's copy stops (frees the data), Coolify's container gets its policy back and starts
       const ex = items.filter((i) => i.exclusive && i.container && i.state !== "skipped");
       if (rb.exclusiveStopped && ex.length > 0) {
-        for (const i of ex) await this.world.stopApp(userId, i.appId);
+        for (const i of ex) await (i.kind === "database" ? this.world.stopDatabase(userId, i.appId) : this.world.stopApp(userId, i.appId));
         const ids = ex.map((i) => (i.container as NonNullable<TakeoverItem["container"]>).id);
         const pol = parsePolicy((await this.world.exec(serverId, buildRestartPolicyScript(ex.map((i) => ({ ...recorded(i), policy: (i.container as NonNullable<TakeoverItem["container"]>).restart }))), HOST_T)).output, ids);
         if (ids.some((x) => pol.get(x) !== "ok")) return { ok: false, step: "coolify_policy" };

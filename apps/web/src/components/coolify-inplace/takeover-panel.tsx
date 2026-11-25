@@ -5,7 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { TakeoverCertState, TakeoverItemView, TakeoverView } from "@tugra/shared";
 import { api, ApiError } from "../../lib/api";
 import { useT } from "../../i18n/provider";
-import { actionsFor, confirmMatches, pollMs, rebuildCandidates, rebuildOf, rollup, toggleChoice, verifyHasWork, type TakeoverAction } from "../../lib/inplace";
+import { actionsFor, confirmMatches, dbRollup, pollMs, rebuildCandidates, rebuildOf, rollup, toggleChoice, verifyHasWork, type TakeoverAction } from "../../lib/inplace";
 import { Badge, Btn, SectionCard, Spinner } from "../ui";
 import { Modal } from "../modal";
 import { Field, TextInput } from "../form";
@@ -74,6 +74,7 @@ export function TakeoverPanel({ serverId, serverName, opId }: { serverId: string
   const busy = plan.isPending || test.isPending || verify.isPending || swap.isPending || giveBack.isPending;
   const actions = actionsFor(view);
   const r = view ? rollup(view) : null;
+  const dbr = view ? dbRollup(view) : null;
 
   const press = (a: TakeoverAction) => {
     if (a === "plan") plan.mutate();
@@ -98,6 +99,11 @@ export function TakeoverPanel({ serverId, serverName, opId }: { serverId: string
           {r && (
             <p data-testid="takeover-rollup" style={{ margin: 0, fontSize: 12, color: "var(--c-tx2)", lineHeight: 1.5 }}>
               {t("coolifyInPlace.rollup", { apps: r.apps, skipped: r.skipped, domains: r.domains, tested: r.tested, checked: r.checked, issued: r.certs.issued })}
+            </p>
+          )}
+          {dbr && dbr.total + dbr.skipped > 0 && (
+            <p data-testid="takeover-db-rollup" style={{ margin: 0, fontSize: 12, color: "var(--c-tx2)", lineHeight: 1.5 }}>
+              {t("coolifyInPlace.database.rollup", { count: dbr.total, ok: dbr.ok, skipped: dbr.skipped })}
             </p>
           )}
           <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "flex", flexDirection: "column", gap: 10 }}>
@@ -172,8 +178,10 @@ function ItemRow({ item, t }: { item: TakeoverItemView; t: T }) {
     <li data-testid="takeover-item" style={{ border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: 10, display: "flex", flexDirection: "column", gap: 6, minWidth: 0 }}>
       <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
         <strong style={{ fontSize: 13, overflowWrap: "anywhere" }}>{item.name}</strong>
-        <Badge>{t(`coolifyInPlace.build.${item.buildMode}`)}</Badge>
+        {item.kind === "database" ? <Badge tone="lapis">{t("coolifyInPlace.database.badge")}</Badge> : <Badge>{t(`coolifyInPlace.build.${item.buildMode}`)}</Badge>}
         {item.exclusive && <Badge tone="warn">{t("coolifyInPlace.exclusive")}</Badge>}
+        {item.afterSwitch && <Badge tone="warn">{t("coolifyInPlace.afterSwitch")}</Badge>}
+        {item.kind === "database" && item.verify && !item.skipped && <Badge tone={item.verify.state === "ok" ? "ok" : item.verify.state === "failed" ? "danger" : "muted"}>{t(`coolifyInPlace.database.verify.${item.verify.state}`)} ({t(`coolifyInPlace.database.level.${item.verify.level}`)})</Badge>}
         {item.skipped && <Badge tone="danger">{t("coolifyInPlace.skipped")}</Badge>}
       </div>
       {item.issues?.map((c) => (

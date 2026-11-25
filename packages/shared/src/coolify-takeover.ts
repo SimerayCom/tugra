@@ -143,21 +143,42 @@ export const TAKEOVER_ISSUES = [
   "volume_alias_foreign",
   "prepare_failed",
   "rebuild_failed",
+  // databases (their data volume is reused in place, Tugra's container runs on the same image)
+  "db_image_differs",
+  "db_engine_unsupported",
+  "db_volume_unmapped",
+  "db_start_failed",
+  "db_verify_failed",
 ] as const;
 export type TakeoverIssueCode = (typeof TAKEOVER_ISSUES)[number];
 
 /** Why a takeover step failed (the takeover itself, not one app). */
-export const TAKEOVER_FAILURE_CODES = ["probe_unavailable", "exclusive_policy_failed", "exclusive_stop_failed", "exclusive_start_failed", "swap_stop_failed", "swap_start_failed", "give_back_failed", "fallback_overdue", "cert_check_unavailable"] as const;
+export const TAKEOVER_FAILURE_CODES = ["probe_unavailable", "exclusive_policy_failed", "exclusive_stop_failed", "exclusive_start_failed", "swap_stop_failed", "swap_start_failed", "give_back_failed", "fallback_overdue", "cert_check_unavailable", "database_start_failed", "database_verify_failed"] as const;
 export type TakeoverFailureCode = (typeof TAKEOVER_FAILURE_CODES)[number];
+
+/** What an item of a takeover is: an app (default), or a database whose data volume is reused in place. */
+export type TakeoverItemKind = "app" | "database";
+/**
+ * How a database is checked after Tugra's container took over its data: `counts` = the same tables with the same exact row counts as
+ * Coolify's container had before (a hash of both, no names or values), `alive` = the engine answers (engines whose rows cannot be read with
+ * the container's own environment: the redis family, mongo).
+ */
+export type TakeoverDbVerifyLevel = "counts" | "alive";
 
 export interface TakeoverItemView {
   itemRef: string;
   name: string;
+  /** Absent = an app. */
+  kind?: TakeoverItemKind;
+  /** Databases only: how it is checked and whether it passed after the switch. */
+  verify?: { level: TakeoverDbVerifyLevel; state: "pending" | "ok" | "failed" };
   buildMode: TakeoverBuildMode;
   /** Left out of the takeover; `issues` says why. Absent = takes part. */
   skipped?: boolean;
   /** The app shares writable data with Coolify's copy, so it is switched rather than tested alongside. */
   exclusive?: boolean;
+  /** The app talks to a database that is taken over with it: it starts after the database at the switch and is checked right after. */
+  afterSwitch?: boolean;
   issues?: TakeoverIssueCode[];
   domains: Array<{ host: string; tempCheck: "pending" | "ok" | "failed"; finalCheck: "pending" | "ok" | "failed"; cert: TakeoverCertState }>;
 }

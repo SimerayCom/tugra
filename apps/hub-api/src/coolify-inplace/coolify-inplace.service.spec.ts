@@ -1,7 +1,7 @@
 import { BadRequestException, ConflictException, ForbiddenException, NotFoundException, UnprocessableEntityException } from "@nestjs/common";
 import { Role } from "@prisma/client";
 import { CoolifyInPlaceService } from "./coolify-inplace.service";
-import { Box, H, PROXY_ID, type BoxApp } from "./inplace-box";
+import { Box, H, PROXY_ID, type BoxApp, type BoxDb } from "./inplace-box";
 import { PlanSchema } from "./dto";
 
 const ACTOR = "u1";
@@ -19,9 +19,10 @@ const data: BoxApp = {
   volumes: [{ name: "data", path: "/data" }],
 };
 
-function build(o: { role?: Role | null; apps?: BoxApp[] } = {}) {
+function build(o: { role?: Role | null; apps?: BoxApp[]; dbs?: BoxDb[] } = {}) {
   const box = new Box();
   for (const a of o.apps ?? [web, data]) box.add(a);
+  for (const d of o.dbs ?? []) box.addDb(d);
   const rows = new Map<string, Record<string, unknown>>();
   let n = 0;
   const prisma = {
@@ -597,3 +598,156 @@ describe("safety across the whole flow", () => {
     expect(() => PlanSchema.parse({ serverId: "s", opId: "o", rebuild: ["database:x:y"] })).toThrow();
   });
 });
+
+// ───────────────────────────── databases ─────────────────────────────
+
+const pg: BoxDb = { dbId: "db1", itemRef: "database:s1:pguuid", name: "main", engine: "POSTGRES", ctrId: H("c"), ctrName: "pguuid", image: "postgres:16-alpine", rows: 42 };
+const withDb = (o: { apps?: BoxApp[]; db?: Partial<BoxDb> } = {}) => build({ apps: o.apps ?? [web], dbs: [{ ...pg, ...o.db }] });
+const dbItem = (v: { items: Array<{ itemRef: string; kind?: string }> }) => v.items.find((i) => i.itemRef === pg.itemRef) as { itemRef: string; kind?: string; skipped?: boolean; exclusive?: boolean; issues?: string[]; verify?: { level: string; state: string } };
+
+describe("databases in the takeover", () => {
+  it("plan maps a database to the container Coolify runs for it: always switched, never tested alongside, checked by row counts for postgres", async () => {
+    const t = withDb();
+    const v = await plan(t);
+    expect(dbItem(v)).toMatchObject({ kind: "database", exclusive: true, verify: { level: "counts", state: "pending" } });
+    expect(dbItem(v).skipped).toBeUndefined();
+    expect(t.box.events).toEqual([]); // reading changed nothing
+  });
+  it("an app that talks to a taken-over database starts after it at the switch; one that does not is tested alongside as before", async () => {
+    const t = withDb({ apps: [web, { ...data, appId: "appother", itemRef: "app:s1:otheruuid", host: "other.example.com", ctrId: H("d"), ctrName: "otheruuid-20261125T101010", image: "otheruuid:ccc", mounts: undefined }] });
+    t.box.mentions.add("appweb");
+    const v = await plan(t);
+    expect(v.items.find((i) => i.itemRef === web.itemRef)).toMatchObject({ afterSwitch: true });
+    expect(v.items.find((i) => i.itemRef === "app:s1:otheruuid")?.afterSwitch).toBeUndefined();
+  });
+  it("an environment that cannot be read counts as talking to the database (never silently tested alongside)", async () => {
+    const t = withDb();
+    t.box.mentionsUnreadable.add("appweb");
+    expect((await plan(t)).items.find((i) => i.itemRef === web.itemRef)).toMatchObject({ afterSwitch: true });
+  });
+  it("keeps a database it cannot take over, with the reason: another image, an engine nobody could check, a data volume Tugra does not declare, no container", async () => {
+    const cases: Array<[Partial<BoxDb>, string]> = [
+      [{ tugraImage: "postgres:17" }, "db_image_differs"],
+      [{ engine: "CLICKHOUSE" }, "db_engine_unsupported"],
+      [{ dataMount: "/somewhere/else", mounts: [{ type: "volume", source: "pguuid-data", dest: "/var/lib/postgresql/data", rw: true }] }, "db_volume_unmapped"],
+      [{ mounts: [{ type: "bind", source: "/srv/pg", dest: "/var/lib/postgresql/data", rw: true }] }, "db_volume_unmapped"],
+    ];
+    for (const [db, issue] of cases) {
+      const v = await plan(withDb({ db }));
+      expect(dbItem(v)).toMatchObject({ skipped: true, issues: [issue] });
+    }
+    const gone = withDb();
+    gone.box.ctrs.get(pg.ctrId)!.running = false;
+    expect(dbItem(await plan(gone))).toMatchObject({ skipped: true, issues: ["container_absent"] });
+  });
+  it("the image is compared the way docker spells it: the default registry and the implicit latest are the same image", async () => {
+    expect(dbItem(await plan(withDb({ db: { image: "redis", tugraImage: "docker.io/library/redis:latest", engine: "REDIS", dataMount: "/data", itemRef: pg.itemRef } })))).not.toMatchObject({ skipped: true });
+  });
+  it("test aliases the volume to the Tugra database's own (no copy), reads what Coolify shows as the yardstick and starts nothing of Tugra's database", async () => {
+    const t = withDb();
+    const p = await plan(t);
+    await t.svc.test(ACTOR, p.id);
+    expect(t.box.aliases.get("tugra_dbv_db1")).toBe("pguuid-data");
+    expect(t.box.tugraDbRunning.size).toBe(0);
+    expect(t.box.ctrs.get(pg.ctrId)!.running).toBe(true);
+    expect(t.rows.get(p.id)!.items as unknown[]).toBeDefined();
+    const stored = (t.rows.get(p.id)!.items as Array<{ itemRef: string; state: string; dbBefore?: { rows: number } }>).find((i) => i.itemRef === pg.itemRef)!;
+    expect(stored).toMatchObject({ state: "prepared", dbBefore: { rows: 42 } });
+  });
+  it("a database whose rows cannot be read the way its engine is checked stays out: a switch nobody could verify would be a guess", async () => {
+    const t = withDb();
+    t.box.dbReadFails.add("db1");
+    const p = await plan(t);
+    const v = await t.svc.test(ACTOR, p.id);
+    expect(dbItem(v)).toMatchObject({ skipped: true, issues: ["db_verify_failed"] });
+  });
+  it("the swap stops Coolify's containers first, starts Tugra's database on the same data, checks it against the yardstick, and only then starts the apps that depend on it", async () => {
+    const t = withDb();
+    t.box.mentions.add("appweb");
+    const p = await plan(t);
+    await t.svc.test(ACTOR, p.id);
+    expect(t.box.tugraRunning.has("appweb")).toBe(false); // not started before the switch
+    const v = await t.svc.swap(ACTOR, p.id, { confirm: "olgu-box" });
+    expect(v.status).toBe("SWAPPED");
+    const at = (e: string) => t.box.events.indexOf(e);
+    expect(at("coolify-ctr:stop:pguuid")).toBeGreaterThan(-1);
+    expect(at("coolify-ctr:stop:pguuid")).toBeLessThan(at("tugra-db:start:db1"));
+    expect(t.box.events.lastIndexOf("dbfp")).toBeGreaterThan(at("tugra-db:start:db1"));
+    expect(at("tugra-db:start:db1")).toBeLessThan(at("tugra-app:start:appweb"));
+    expect(t.box.tugraRunning.has("appweb")).toBe(true);
+    expect(dbItem(v).verify).toEqual({ level: "counts", state: "ok" });
+  });
+  it("the takeover is verified only when the database was checked too, besides every domain's certificate", async () => {
+    const t = withDb();
+    const p = await plan(t);
+    await t.svc.test(ACTOR, p.id);
+    await t.svc.swap(ACTOR, p.id, { confirm: "olgu-box" });
+    const v = await t.svc.verify(ACTOR, p.id);
+    expect(v.status).toBe("VERIFIED");
+    // a database that did not pass keeps it from being verified even when the domains are fine
+    (t.rows.get(p.id)!.items as Array<{ itemRef: string; verify: { state: string } }>).find((i) => i.itemRef === pg.itemRef)!.verify.state = "failed";
+    expect((await t.svc.verify(ACTOR, p.id)).status).toBe("SWAPPED");
+  });
+  it("a database that will not start on its data puts everything back: Coolify's containers run again, Tugra's database is stopped, FAILED with the reason", async () => {
+    const t = withDb();
+    t.box.failDbStart.add("db1");
+    const p = await plan(t);
+    await t.svc.test(ACTOR, p.id);
+    const v = await t.svc.swap(ACTOR, p.id, { confirm: "olgu-box" });
+    expect(v.status).toBe("FAILED");
+    expect(v.failureCode).toBe("database_start_failed");
+    expect(t.box.ctrs.get(pg.ctrId)!.running).toBe(true);
+    expect(t.box.tugraDbRunning.size).toBe(0);
+    expect(t.box.coolifyProxy.running).toBe(true);
+    expect(t.box.tugraProxy.published).toBe(false);
+  });
+  it("a database that looks different after the switch is put back with its rows untouched: nothing is deleted, the verdict says failed", async () => {
+    const t = withDb();
+    t.box.dbDiffers.add("db1");
+    const p = await plan(t);
+    await t.svc.test(ACTOR, p.id);
+    const v = await t.svc.swap(ACTOR, p.id, { confirm: "olgu-box" });
+    expect(v.status).toBe("FAILED");
+    expect(v.failureCode).toBe("database_verify_failed");
+    expect(dbItem(v).verify).toEqual({ level: "counts", state: "failed" });
+    expect(t.box.ctrs.get(pg.ctrId)!.running).toBe(true);
+    expect(t.box.tugraDbRunning.size).toBe(0);
+    expect(t.box.scripts.some((s) => /docker\s+(rm|rmi|volume rm|system prune)\b/.test(s))).toBe(false);
+  });
+  it("give back restores Coolify's database container with its recorded restart policy and stops Tugra's", async () => {
+    const t = withDb({ db: { restart: "always" } });
+    const p = await plan(t);
+    await t.svc.test(ACTOR, p.id);
+    await t.svc.swap(ACTOR, p.id, { confirm: "olgu-box" });
+    expect(t.box.ctrs.get(pg.ctrId)).toMatchObject({ running: false, restart: "no" });
+    const v = await t.svc.giveBack(ACTOR, p.id, { confirm: "olgu-box" });
+    expect(v.status).toBe("GIVEN_BACK");
+    expect(t.box.ctrs.get(pg.ctrId)).toMatchObject({ running: true, restart: "always" });
+    expect(t.box.tugraDbRunning.size).toBe(0);
+    expect(t.box.events.indexOf("tugra-db:stop:db1")).toBeLessThan(t.box.events.lastIndexOf("coolify-ctr:start:pguuid"));
+  });
+  it("Tugra's database stopping is proven before Coolify's container starts: a stop that cannot be proven leaves the give-back FAILED and Coolify's container stopped", async () => {
+    const t = withDb();
+    const p = await plan(t);
+    await t.svc.test(ACTOR, p.id);
+    await t.svc.swap(ACTOR, p.id, { confirm: "olgu-box" });
+    t.box.stopDatabase = async () => {
+      throw new Error("database still running");
+    };
+    const v = await t.svc.giveBack(ACTOR, p.id, { confirm: "olgu-box" });
+    expect(v.status).toBe("FAILED");
+    expect(v.failureCode).toBe("give_back_failed");
+    expect(t.box.ctrs.get(pg.ctrId)!.running).toBe(false); // never two containers on one data directory
+  });
+  it("the swap gate counts the database as prepared and an after-switch app as not needing a test", async () => {
+    const t = withDb();
+    t.box.mentions.add("appweb");
+    const p = await plan(t);
+    const v = await t.svc.test(ACTOR, p.id);
+    expect(v.failureCode).toBeNull();
+    const web1 = v.items.find((i) => i.itemRef === web.itemRef)!;
+    expect(web1.domains[0].tempCheck).toBe("pending"); // never tested alongside
+    await expect(t.svc.swap(ACTOR, p.id, { confirm: "olgu-box" })).resolves.toMatchObject({ status: "SWAPPED" });
+  });
+});
+

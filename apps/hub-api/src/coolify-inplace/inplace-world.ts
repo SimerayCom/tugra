@@ -26,6 +26,27 @@ export interface WorldApp {
   hostMounts: Array<{ hostPath: string; containerPath: string }>;
 }
 
+/** A Tugra database as the takeover needs it: what it runs on, where its data lives and which extra volumes it declares. */
+export interface WorldDatabase {
+  id: string;
+  teamId: string;
+  serverId: string;
+  name: string;
+  /** `POSTGRES`, `MYSQL`, ... */
+  engine: string;
+  /** The image Tugra runs it on (the row's own, else the engine's default for its version). */
+  image: string;
+  /** Where the image keeps its data (the engine's data directory, or the parent directory for the newer Postgres layout). */
+  dataMount: string;
+  volumes: Array<{ name: string; path: string }>;
+}
+
+/** One database the import op created on the server, with the source item it came from. */
+export interface OpDatabase {
+  databaseId: string;
+  itemRef: string;
+}
+
 /** One app the import op created on the server, with the source item it came from. */
 export interface OpApp {
   appId: string;
@@ -43,6 +64,17 @@ export interface InPlaceWorld {
   /** The apps the op created (team-checked by the caller) whose app row sits on `serverId`. */
   opApps(opId: string, teamId: string, serverId: string): Promise<OpApp[] | null>;
   app(appId: string): Promise<WorldApp | null>;
+  /** The databases the op created (team-checked by the caller) whose row sits on `serverId`. */
+  opDatabases(opId: string, teamId: string, serverId: string): Promise<OpDatabase[] | null>;
+  database(databaseId: string): Promise<WorldDatabase | null>;
+  /** Start Tugra's container for the database on its (aliased) data volume: the database's own provision. */
+  runDatabase(userId: string, databaseId: string): Promise<{ ok: boolean }>;
+  stopDatabase(userId: string, databaseId: string): Promise<void>;
+  /**
+   * Does the app's environment mention any of these names (the database container names it would connect to)? `null` when the environment could
+   * not be read: the caller then treats the app as depending on them.
+   */
+  appMentions(appId: string, needles: readonly string[]): Promise<boolean | null>;
   /** Run a hub-built script on the host through the agent (`deploy` capability). */
   exec(serverId: string, script: string, timeoutMs?: number): Promise<{ exitCode: number; output: string }>;
   setProxyBind(serverId: string, bind: "public" | "loopback" | "none"): Promise<void>;

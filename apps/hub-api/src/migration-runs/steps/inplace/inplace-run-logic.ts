@@ -38,6 +38,8 @@ export const INPLACE_RUN_CODES = [
   "verify.inplace-domain-failed",
   "verify.inplace-domain-untested",
   "verify.inplace-switched",
+  "verify.inplace-after-switch",
+  "verify.inplace-database",
   "verify.inplace-app-left-out",
   "verify.inplace-app-no-domain",
   "verify.inplace-probe-unavailable",
@@ -59,6 +61,8 @@ export const INPLACE_RUN_CODES = [
   "cutover.inplace-swap-start-failed",
   "cutover.inplace-fallback-overdue",
   "cutover.inplace-cert-check-unavailable",
+  "cutover.inplace-database-start-failed",
+  "cutover.inplace-database-verify-failed",
   "cutover.inplace-reversed",
 ] as const;
 export type InPlaceRunCode = (typeof INPLACE_RUN_CODES)[number];
@@ -74,6 +78,8 @@ export const CUTOVER_FAILURE: Readonly<Record<TakeoverFailureCode, InPlaceRunCod
   give_back_failed: "cutover.inplace-give-back-failed",
   fallback_overdue: "cutover.inplace-fallback-overdue",
   cert_check_unavailable: "cutover.inplace-cert-check-unavailable",
+  database_start_failed: "cutover.inplace-database-start-failed",
+  database_verify_failed: "cutover.inplace-database-verify-failed",
 };
 
 type Step = "deploy-dark" | "cutover";
@@ -128,7 +134,9 @@ export function inPlaceSuite(state: RunTakeoverState | null): SuiteCheck[] {
       );
       continue;
     }
-    if (i.exclusive) out.push(mk("inplace-switch", i.itemRef, { status: "warn", code: "verify.inplace-switched", params: { app: i.name }, evidence: "hub-verified" }));
+    if (i.kind === "database") out.push(mk("inplace-switch", i.itemRef, { status: "warn", code: "verify.inplace-database", params: { app: i.name, level: i.verify?.level ?? "alive" }, evidence: "hub-verified" }));
+    else if (i.afterSwitch) out.push(mk("inplace-switch", i.itemRef, { status: "warn", code: "verify.inplace-after-switch", params: { app: i.name }, evidence: "hub-verified" }));
+    else if (i.exclusive) out.push(mk("inplace-switch", i.itemRef, { status: "warn", code: "verify.inplace-switched", params: { app: i.name }, evidence: "hub-verified" }));
     else
       for (const d of i.domains) {
         const code = d.tempCheck === "ok" ? "verify.inplace-domain-checked" : d.tempCheck === "failed" ? "verify.inplace-domain-failed" : "verify.inplace-domain-untested";
