@@ -6036,6 +6036,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/import/sessions/{sessionId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete: operations["ImporterController_revokeSession"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/import/sessions/{sessionId}/mapping": {
         parameters: {
             query?: never;
@@ -44088,6 +44104,10 @@ export interface operations {
                                 managedBy: "coolify" | "dokploy" | null;
                                 ports: number[];
                                 adoptable: boolean;
+                                /** @default false */
+                                platformInfra: boolean;
+                                /** @default false */
+                                swarm: boolean;
                             }[];
                             composeProjects: {
                                 name: string;
@@ -44262,6 +44282,10 @@ export interface operations {
                                 managedBy: "coolify" | "dokploy" | null;
                                 ports: number[];
                                 adoptable: boolean;
+                                /** @default false */
+                                platformInfra: boolean;
+                                /** @default false */
+                                swarm: boolean;
                             }[];
                             composeProjects: {
                                 name: string;
@@ -46428,6 +46452,70 @@ export interface operations {
             };
             /** @description Authenticated but not permitted (scope or team permission). */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate limit exceeded; see Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    ImporterController_revokeSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                sessionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Authenticated but not permitted (scope or team permission). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

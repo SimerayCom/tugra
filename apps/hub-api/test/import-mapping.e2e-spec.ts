@@ -49,6 +49,8 @@ describe("Import mapping (e2e)", () => {
     userId = reg.body.user.id;
     teamId = (await prisma.membership.findFirst({ where: { userId } }))!.teamId;
     serverId = (await request(app.getHttpServer()).post("/servers").set("Authorization", `Bearer ${token}`).send({ name: "map-box", teamId }).expect(201)).body.server.id;
+    // An import only places onto a server whose agent is connected and may deploy (a new server is PENDING until it enrolls).
+    await prisma.server.update({ where: { id: serverId }, data: { status: "ONLINE" } });
   });
 
   afterAll(async () => {
