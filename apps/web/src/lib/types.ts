@@ -1514,7 +1514,7 @@ export interface ImportTugraMatch {
   serverId: string;
   name: string;
   teamId: string;
-  via: "public-ip" | "reported-ip" | "hostname";
+  via: "public-ip" | "reported-ip" | "hostname" | "owner";
   /** certain: a public address matched; probable: a private range or only the host name matched. */
   confidence: "certain" | "probable";
 }
@@ -1535,6 +1535,10 @@ export interface ImportPreflight {
   /** Agent transport only: what the one agent read found, and the Coolify teams of the projects. */
   agentRead?: ImportAgentRead;
   teams?: Array<{ ref: string; name: string }>;
+  /** The consent for reading secret values that stands for this session now (the classes it covers); absent = none. */
+  secretsConsent?: { classes: string[] };
+  /** Values the agent could not open (names and a fixed code only). */
+  unreadable?: Array<{ itemRef: string; field: string; code: string }>;
   /** The Tugra server the source's own panel box is (Dokploy: items that live on no named server). A verdict only, never an address. */
   panel?: { tugra: ImportTugraMatch };
   /** The source team's name (Coolify), to default the target team by name. */
@@ -1638,6 +1642,8 @@ export interface ImportSession {
 /** The answer of connecting Coolify through its host's agent: the session plus what the first read found. */
 export interface ImportAgentSession extends ImportSession {
   read: ImportAgentRead;
+  /** The Coolify teams that have projects (a settings import reads one of them). */
+  teams?: Array<{ ref: string; name: string }>;
 }
 export type ImportTaskStatus =
   | "PENDING" | "RUNNING" | "DONE" | "FAILED" | "SKIPPED" | "ROLLED_BACK" | "FAILED_VERIFY" | "AWAITING_CUTOVER" | "CANCELLED";

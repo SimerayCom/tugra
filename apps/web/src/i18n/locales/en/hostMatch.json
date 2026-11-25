@@ -19,5 +19,52 @@
     "auto": "Matched automatically",
     "user": "Chosen by you"
   },
-  "notSame": "This is not the same server"
+  "notSame": "This is not the same server",
+  "table": {
+    "title": "Servers of this Coolify",
+    "hint": "Tugra checks which of your servers is the same machine as each Coolify server. Check the unsure ones before anything moves.",
+    "coolifyHost": "Coolify host (this server)",
+    "agent": "Tugra agent: {state}",
+    "agentOnline": "online",
+    "agentOffline": "offline",
+    "matchedTo": "Same machine as {name}",
+    "noneYet": "No Tugra server matches yet",
+    "sureCount": "{n} to check",
+    "allSure": "Every server is matched.",
+    "hostItself": "This is the server Tugra reads Coolify from, so it is always the same machine.",
+    "evidenceTitle": "What the hub found",
+    "noEvidence": "Nothing in common was found."
+  },
+  "strength": {
+    "identity": "Proves it",
+    "address": "Suggests it",
+    "weak": "Never decides"
+  },
+  "differs": {
+    "ssh_host_key": "Different SSH host key",
+    "machine_id": "Different machine id",
+    "docker_engine_id": "Different Docker engine",
+    "ip": "Different address",
+    "hostname": "Different host name",
+    "cloud_instance_id": "Different cloud instance"
+  },
+  "answer": {
+    "pick": "Which Tugra server is it?",
+    "same": "This is the same server",
+    "notSame": "This is not the same server",
+    "undo": "Take my answer back",
+    "mine": "Your answer",
+    "conflict": "The machine identity of the two servers differs, so they cannot be the same machine.",
+    "sameHelp": "Use this only when you know it. Moving in place swaps the proxy on that very machine."
+  },
+  "error": {
+    "identity_conflict": "The machine identity of the two servers differs, so they cannot be the same machine.",
+    "local_row": "The Coolify host itself is always this server.",
+    "forbidden": "You cannot manage that Tugra server.",
+    "expired": "This import session has ended. Connect again.",
+    "generic": "Could not save your answer."
+  },
+  "installHint": "Servers without a Tugra agent can get one in one click on the Read this Coolify page.",
+  "continue": "Continue",
+  "continueUnsure": "Continue with {n} to check"
 }

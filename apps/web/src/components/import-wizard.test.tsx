@@ -639,6 +639,66 @@ describe("ImportWizard", () => {
     expect(screen.getByText("Paste an API key to see what will move.")).toBeTruthy();
   });
 
+  describe("the agent path (Through the Coolify server agent)", () => {
+    const READ = { transport: "agent", agentServerId: "srv1", schemaVersion: null, coolifyImage: null, readAt: "2026-11-26T00:00:00Z", counts: { teams: 1, projects: 1, servers: 2, applications: 1, databases: 0, services: 0 } };
+    const agentPlan = (): ImportPlan => ({
+      ...plan,
+      preflight: {
+        databases: [],
+        services: [],
+        agentRead: READ,
+        hosts: [
+          { ref: "local", name: "localhost", controlPlane: true, tugra: { serverId: "srv1", name: "Server A", teamId: "t1", via: "public-ip", confidence: "certain" }, match: { status: "certain", linkedBy: "auto", evidence: [{ kind: "machine_id", equal: true }] }, agentOnline: true },
+          { ref: "edge", name: "edge", match: { status: "ambiguous", linkedBy: null, evidence: [{ kind: "hostname", equal: true }] } },
+        ],
+      },
+    }) as unknown as ImportPlan;
+    beforeEach(() => {
+      vi.spyOn(api, "listServers").mockResolvedValue([{ id: "srv1", name: "Server A", teamId: "t1", status: "ONLINE", clusterId: null, tags: [], canWrite: true }] as never);
+      vi.spyOn(api, "coolifyDetect").mockResolvedValue({ found: true, image: null });
+    });
+
+    it("is a second way next to the token: choosing it swaps the token form for the server picker, and back", async () => {
+      wrap(<ImportWizard />);
+      await screen.findByLabelText("Coolify URL");
+      expect(screen.getByRole("button", { name: "Connect with an API token" }).getAttribute("aria-pressed")).toBe("true");
+      fireEvent.click(screen.getByRole("button", { name: "Connect through the agent (recommended)" }));
+      await screen.findByLabelText("Tugra server where Coolify runs");
+      expect(screen.queryByLabelText("Coolify URL")).toBeNull();
+      expect(screen.queryByLabelText("API token")).toBeNull();
+      expect(screen.queryByTestId("import-needs")).toBeNull(); // the token instructions are not shown for the agent path
+      fireEvent.click(screen.getByRole("button", { name: "Connect with an API token" }));
+      await screen.findByLabelText("Coolify URL");
+    });
+
+    it("read → continue → match the servers (the owner's answer included) → first step", async () => {
+      const connect = vi.spyOn(api, "importConnectAgent").mockResolvedValue({ sessionId: "sess-a", expiresAt: "2026-01-01T00:00:00.000Z", read: READ } as never);
+      const planSpy = vi.spyOn(api, "importPlan").mockResolvedValue(agentPlan());
+      const link = vi.spyOn(api, "importHostLink").mockResolvedValue({ hostLinks: {} });
+      wrap(<ImportWizard />);
+      await screen.findByLabelText("Coolify URL");
+      await waitFor(() => expect(qc.getQueryData(["teams"])).toBeTruthy());
+      fireEvent.click(screen.getByRole("button", { name: "Connect through the agent (recommended)" }));
+      fireEvent.change(await screen.findByLabelText("Tugra server where Coolify runs"), { target: { value: "srv1" } });
+      fireEvent.click(screen.getByRole("button", { name: "Read Coolify" }));
+      await screen.findByText("Found in Coolify");
+      expect(connect).toHaveBeenCalledWith({ teamId: "t1", serverId: "srv1" });
+      fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+      // the match step comes before anything is placed
+      await screen.findByText("Match servers");
+      expect(planSpy).toHaveBeenCalledWith({ sourceKind: "coolify", sessionId: "sess-a" });
+      expect(screen.getByText("1 to check")).toBeTruthy();
+      expect(screen.getByText("Not sure")).toBeTruthy();
+      fireEvent.change(screen.getByLabelText("Which Tugra server is it?"), { target: { value: "srv1" } });
+      fireEvent.click(screen.getByRole("button", { name: "This is the same server" }));
+      await waitFor(() => expect(link).toHaveBeenCalledWith("sess-a", { coolifyServerUuid: "edge", serverId: "srv1" }));
+      await waitFor(() => expect(planSpy).toHaveBeenCalledTimes(2)); // the plan is read again with the answer
+      fireEvent.click(screen.getByRole("button", { name: /^Continue/ }));
+      await screen.findByText("Import preview");
+      expect(screen.queryByText("Match servers")).toBeNull();
+    });
+  });
+
   it("start over keeps the chosen source", async () => {
     vi.spyOn(api, "importConnect").mockResolvedValue({ sessionId: "s2", expiresAt: "2026-01-01T00:00:00.000Z" });
     vi.spyOn(api, "importPlan").mockResolvedValue({ ...plan, sourceKind: "dokploy" });

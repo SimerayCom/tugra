@@ -1,0 +1,141 @@
+"use client";
+
+import { useState } from "react";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { api, ApiError } from "../../lib/api";
+import { useT } from "../../i18n/provider";
+import { agentReadyServers } from "../../lib/coolify-agent-connect";
+import type { ImportAgentSession, ServerView } from "../../lib/types";
+import { Btn } from "../ui";
+import { Select } from "../form";
+import { useToast } from "../toast";
+import { AgentConsentCard } from "./agent-consent";
+
+type T = ReturnType<typeof useT>;
+
+function errorText(t: T, e: unknown): string {
+  if (e instanceof ApiError) {
+    const key = `coolifyAgent.error.${e.code ?? ""}`;
+    const text = t(key);
+    if (e.code && text !== key) return text;
+    if (e.status === 403) return t("coolifyAgent.error.forbidden");
+    if (e.status === 409) return t("coolifyAgent.error.agent_offline");
+  }
+  return t("coolifyAgent.error.generic");
+}
+
+const COUNT_KEYS = ["teams", "projects", "servers", "applications", "databases", "services"] as const;
+
+/**
+ * "Through the Coolify server agent": the second way to connect Coolify in the import wizard. Pick the Tugra server where Coolify runs,
+ * read it once (read-only, nothing changed or stopped), ask for consent to read secret values, then match the servers. No token, no URL.
+ */
+export function AgentConnectPanel({
+  servers,
+  onConnected,
+  busy,
+}: {
+  servers: ServerView[];
+  /** The session is ready (read done); the wizard plans it and shows the match step. */
+  onConnected: (session: ImportAgentSession, server: { id: string; name: string; teamId: string }) => void;
+  busy?: boolean;
+}) {
+  const t = useT();
+  const toast = useToast();
+  const candidates = agentReadyServers(servers);
+  const [serverId, setServerId] = useState("");
+  const [needsOptIn, setNeedsOptIn] = useState(false);
+  const [session, setSession] = useState<ImportAgentSession | null>(null);
+  const server = candidates.find((s) => s.id === serverId) ?? null;
+
+  const { data: detect } = useQuery({ queryKey: ["coolify-detect", serverId], queryFn: () => api.coolifyDetect(serverId), enabled: !!serverId && !session, retry: false, staleTime: 30_000 });
+
+  const connect = useMutation({
+    mutationFn: async (optIn: boolean) => {
+      if (optIn) await api.coolifyEnable(serverId);
+      return api.importConnectAgent({ teamId: server!.teamId, serverId });
+    },
+    onSuccess: (s) => {
+      setNeedsOptIn(false);
+      setSession(s);
+    },
+    onError: (e) => {
+      if (e instanceof ApiError && e.code === "not_enabled") {
+        setNeedsOptIn(true);
+        return;
+      }
+      toast(errorText(t, e), "error");
+    },
+  });
+
+  if (session && server) {
+    const counts = session.read.counts;
+    const secretTotal = Object.values(session.read.secretCounts ?? {}).reduce((a, b) => a + b, 0);
+    return (
+      <div style={{ display: "grid", gap: 16 }}>
+        <section aria-label={t("coolifyAgent.connect.found")} style={{ display: "grid", gap: 8 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: "var(--c-tx)" }}>{t("coolifyAgent.connect.found")}</div>
+          <ul style={{ display: "flex", flexWrap: "wrap", gap: "6px 16px", margin: 0, padding: 0, listStyle: "none", fontSize: 13, color: "var(--c-tx2)" }}>
+            {COUNT_KEYS.map((k) => (
+              <li key={k}>{t(`coolifyAgent.counts.${k}`)}: <strong>{counts[k]}</strong></li>
+            ))}
+          </ul>
+          {session.read.coolifyImage && <p style={{ margin: 0, fontSize: 12, color: "var(--c-tx3)" }}>{t("coolifyAgent.connect.version", { version: session.read.coolifyImage.split(":").pop() ?? "" })}</p>}
+          {secretTotal > 0 && <p style={{ margin: 0, fontSize: 12, color: "var(--c-tx3)" }}>{t("coolifyAgent.connect.secretsFound")}: {secretTotal}</p>}
+          <p style={{ margin: 0, fontSize: 12, color: "var(--c-tx3)" }}>{t("coolifyAgent.read.nothingChanged")}</p>
+        </section>
+
+        <AgentConsentCard serverId={server.id} serverName={server.name} teamId={server.teamId} sessionId={session.sessionId} secretCounts={session.read.secretCounts} />
+
+        <div style={{ display: "grid", gap: 6 }}>
+          <Btn onClick={() => onConnected(session, { id: server.id, name: server.name, teamId: server.teamId })} disabled={busy}>{t("coolifyAgent.connect.continue")}</Btn>
+          <p style={{ margin: 0, fontSize: 12, color: "var(--c-tx3)" }}>{t("coolifyAgent.connect.continueHint")}</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ display: "grid", gap: 12 }}>
+      <p style={{ margin: 0, fontSize: 13, color: "var(--c-tx2)", lineHeight: 1.5 }}>{t("coolifyAgent.subtitle")}</p>
+      {candidates.length === 0 ? (
+        <p role="status" style={{ margin: 0, fontSize: 13, color: "var(--c-am)", lineHeight: 1.5 }}>{t("coolifyAgent.connect.noServers")}</p>
+      ) : (
+        <div style={{ display: "grid", gap: 6 }}>
+          <label htmlFor="agent-server" style={{ fontSize: 12, fontWeight: 600, color: "var(--c-tx2)" }}>{t("coolifyAgent.connect.serverLabel")}</label>
+          <Select
+            id="agent-server"
+            value={serverId}
+            onChange={(v) => {
+              setServerId(v);
+              setNeedsOptIn(false);
+              connect.reset();
+            }}
+            placeholder={t("coolifyAgent.connect.serverPlaceholder")}
+            options={candidates.map((s) => ({ value: s.id, label: s.online ? s.name : t("coolifyAgent.connect.serverOffline", { name: s.name }), disabled: !s.online }))}
+            style={{ maxWidth: 420 }}
+          />
+          <p style={{ margin: 0, fontSize: 12, color: "var(--c-tx3)", lineHeight: 1.5 }}>{t("coolifyAgent.connect.serverHint")}</p>
+        </div>
+      )}
+
+      {serverId && detect && !detect.found && (
+        <p role="status" style={{ margin: 0, fontSize: 12, color: "var(--c-am)", lineHeight: 1.5 }}>{t(`coolifyAgent.error.${detect.reason === "no_docker" ? "no_docker" : detect.reason === "db_stopped" ? "db_stopped" : "no_coolify"}`)}</p>
+      )}
+
+      {needsOptIn && (
+        <div role="note" style={{ border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: 12, display: "grid", gap: 8 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: "var(--c-tx)" }}>{t("coolifyAgent.connect.optInTitle")}</div>
+          <p style={{ margin: 0, fontSize: 12, color: "var(--c-tx2)", lineHeight: 1.5 }}>{t("coolifyAgent.connect.optIn")}</p>
+        </div>
+      )}
+
+      <div style={{ display: "grid", gap: 6 }}>
+        <Btn onClick={() => connect.mutate(needsOptIn)} disabled={!serverId || busy} loading={connect.isPending}>
+          {connect.isPending ? t("coolifyAgent.read.reading") : needsOptIn ? t("coolifyAgent.connect.optInButton") : t("coolifyAgent.read.button")}
+        </Btn>
+        <p style={{ margin: 0, fontSize: 12, color: "var(--c-tx3)" }}>{t("coolifyAgent.read.nothingChanged")}</p>
+      </div>
+    </div>
+  );
+}

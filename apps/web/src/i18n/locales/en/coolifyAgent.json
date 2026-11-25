@@ -3,7 +3,8 @@
   "subtitle": "Tugra reads the Coolify database on its server through the Tugra agent. No Coolify API token needed.",
   "choice": {
     "agent": "Connect through the agent (recommended)",
-    "api": "Connect with an API token"
+    "api": "Connect with an API token",
+    "title": "How do you want to read Coolify?"
   },
   "read": {
     "title": "Read Coolify",
@@ -21,6 +22,31 @@
   },
   "error": {
     "agent_offline": "The agent is offline. Try again when it is back.",
-    "generic": "Could not read Coolify."
+    "generic": "Could not read Coolify.",
+    "not_enabled": "Allow reading this Coolify first.",
+    "no_coolify": "No Coolify was found on this server.",
+    "no_docker": "Docker is not available on this server.",
+    "db_stopped": "Coolify's database is not running on this server.",
+    "not_read_only": "Coolify could not be read in a safe, read-only way.",
+    "unreadable": "Coolify's database could not be read completely.",
+    "agent_unavailable": "The agent did not answer.",
+    "agent_read_failed": "Coolify could not be read through the agent.",
+    "forbidden": "Only an owner or admin of the team can connect Coolify through the agent.",
+    "unknown_team": "That Coolify team has no projects."
+  },
+  "connect": {
+    "serverLabel": "Tugra server where Coolify runs",
+    "serverHint": "Pick the server that runs your Coolify. Its Tugra agent reads Coolify's own database, read-only.",
+    "serverPlaceholder": "Pick a server",
+    "serverOffline": "{name} (agent offline)",
+    "noServers": "None of your servers has a connected Tugra agent yet. Add the Coolify server to Tugra first.",
+    "optInTitle": "Allow reading this Coolify",
+    "optIn": "Tugra will read the Coolify database on this server through its agent. Nothing is changed or stopped, and no secret value is read yet.",
+    "optInButton": "Allow and read Coolify",
+    "found": "Found in Coolify",
+    "version": "Coolify version {version}",
+    "secretsFound": "Secret values found, not read yet",
+    "continue": "Continue",
+    "continueHint": "Next: match Coolify's servers to your Tugra servers."
   }
 }

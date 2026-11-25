@@ -25,6 +25,9 @@ import { GitLinksPanel, GitRelinkCard, DeployKeyBlock } from "./import/git-links
 import { ImportSettingsPanel } from "./import/settings-panel";
 import { ImportServicesPanel } from "./import-services-panel";
 import { ConnectionStatus, useConnectionTest } from "./import/connection-test";
+import { AgentConnectPanel } from "./import/agent-connect";
+import { AgentMatchStep } from "./import/agent-match-step";
+import { needsMatchStep } from "../lib/coolify-agent";
 import { MoreInfo } from "./help-link";
 import { guideUrl } from "../lib/help-links";
 import { ImportChecklist } from "./import-checklist";
@@ -73,6 +76,10 @@ export function ImportWizard() {
   const qc = useQueryClient();
 
   const [kind, setKind] = useState<ImportRemoteKind>("coolify");
+  // Coolify can be read two ways: with an API token, or through the Tugra agent on the Coolify server (no token).
+  const [connectMode, setConnectMode] = useState<"token" | "agent">("token");
+  // The agent path: the match of the Coolify servers to Tugra servers is checked once per session before the first step.
+  const [matchedHosts, setMatchedHosts] = useState(false);
   const [baseUrl, setBaseUrl] = useState("");
   /** True once the address field was left after its last edit: only then may the token be sent to it for the test. */
   const [urlConfirmed, setUrlConfirmed] = useState(false);
@@ -235,6 +242,7 @@ export function ImportWizard() {
   const pickKind = (next: ImportRemoteKind) => {
     if (next === kind) return;
     setKind(next);
+    setConnectMode("token");
     setBaseUrl("");
     setUrlConfirmed(false);
     setToken("");
@@ -256,6 +264,7 @@ export function ImportWizard() {
     setSessionId(null);
     setOpId(null);
     setToken("");
+    setMatchedHosts(false);
     connect.reset();
     planM.reset();
   };
@@ -283,6 +292,25 @@ export function ImportWizard() {
     // The settings step needs the live source session: after a reload (?op=) there is none, so it is simply not offered.
     const teamServers = servers.filter((sv) => sv.teamId === effectiveTeam).map((sv) => ({ id: sv.id, name: sv.name }));
     return <Timeline opId={opId} onReset={reset} settings={sessionId ? { sessionId, kind, servers: teamServers, teamId: effectiveTeam } : undefined} />;
+  }
+
+  // The agent path: which Tugra server is each Coolify server, checked (and answered by the owner where unsure) before anything is placed.
+  if (plan && sessionId && !matchedHosts && needsMatchStep(plan)) {
+    const hostId = plan.preflight?.agentRead?.agentServerId;
+    const host = servers.find((s) => s.id === hostId);
+    return (
+      <AgentMatchStep
+        plan={plan}
+        sessionId={sessionId}
+        servers={servers}
+        teamId={host?.teamId ?? effectiveTeam}
+        coolifyServer={host ? { id: host.id, name: host.name } : null}
+        onContinue={() => setMatchedHosts(true)}
+        onRecheck={recheck}
+        onStartOver={startOver}
+        rechecking={planM.isPending}
+      />
+    );
   }
 
   if (plan && sessionId && !scope && plan.mapping?.features?.includes("mapping-v1")) {
@@ -330,6 +358,8 @@ export function ImportWizard() {
     <SectionCard title={t(src.title)} desc={t(src.hint)} style={{ padding: 20, maxWidth: 560, marginBottom: 0 }}>
       {resumeNote === "expired" && <p role="status" style={{ fontSize: 12, color: "var(--c-am)", margin: "0 0 12px" }}>{t("import.resumeExpired")}</p>}
       {focus?.fromServerName && <p role="note" style={{ fontSize: 12, color: "var(--c-tx2)", margin: "0 0 10px" }}>{t("import.fromServer", { server: focus.fromServerName })}</p>}
+      {!(kind === "coolify" && connectMode === "agent") && (
+        <>
       <p data-testid="import-needs" style={{ fontSize: 13, margin: "0 0 4px" }}>{t(kind === "coolify" ? "import.needsCoolify" : "import.needsDokploy")}</p>
       <MoreInfo label={t("import.needsMore")} style={{ margin: "0 0 14px" }}>
         {tokenPageUrl(kind, baseUrl) && (
@@ -343,6 +373,8 @@ export function ImportWizard() {
           </p>
         )}
       </MoreInfo>
+        </>
+      )}
 
       <div id="imp-source-label" style={label}>{t("import.sourcePicker")}</div>
       <div role="radiogroup" aria-labelledby="imp-source-label" style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 16 }}>
@@ -377,6 +409,56 @@ export function ImportWizard() {
         })}
       </div>
 
+      {kind === "coolify" && (
+        <>
+          <div id="imp-mode-label" style={label}>{t("coolifyAgent.choice.title")}</div>
+          <div role="group" aria-labelledby="imp-mode-label" style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 16 }}>
+            {(["token", "agent"] as const).map((m) => {
+              const checked = m === connectMode;
+              return (
+                <button
+                  key={m}
+                  type="button"
+                  aria-pressed={checked}
+                  disabled={busy}
+                  onClick={() => setConnectMode(m)}
+                  style={{
+                    flex: "1 1 200px",
+                    minHeight: 44,
+                    fontFamily: "inherit",
+                    fontSize: 13,
+                    fontWeight: 600,
+                    padding: "8px 14px",
+                    borderRadius: "var(--r1)",
+                    cursor: busy ? "not-allowed" : "pointer",
+                    opacity: busy ? 0.6 : 1,
+                    border: "1px solid var(--c-bd)",
+                    background: checked ? "var(--c-a)" : "var(--c-el)",
+                    color: checked ? "var(--c-on-a)" : "var(--c-tx)",
+                  }}
+                >
+                  {t(m === "agent" ? "coolifyAgent.choice.agent" : "coolifyAgent.choice.api")}
+                </button>
+              );
+            })}
+          </div>
+        </>
+      )}
+
+      {kind === "coolify" && connectMode === "agent" ? (
+        <AgentConnectPanel
+          servers={servers}
+          busy={planM.isPending}
+          onConnected={(s) => {
+            setSessionId(s.sessionId);
+            setScope(null);
+            setLastSelection(undefined);
+            setMatchedHosts(false);
+            planM.mutate({ sid: s.sessionId });
+          }}
+        />
+      ) : (
+      <>
       <label style={label} htmlFor="imp-url">{t(src.url)}</label>
       <input id="imp-url" style={field} value={baseUrl} onChange={(e) => { setBaseUrl(e.target.value); setUrlConfirmed(false); if (connect.isError) connect.reset(); }} onBlur={() => setUrlConfirmed(true)} placeholder={t(src.ph)} inputMode="url" autoComplete="off" spellCheck={false} />
 
@@ -414,6 +496,8 @@ export function ImportWizard() {
       <Btn onClick={() => connect.mutate()} disabled={busy || !connectTeam || !baseUrl.trim() || !token.trim()}>
         {connect.isPending ? t("import.connecting") : planM.isPending ? t("import.planning") : t("import.connect")}
       </Btn>
+      </>
+      )}
 
       <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "16px 0 0" }}>
         {t("import.localDockerHint")} <Link href="/servers" style={{ color: "var(--c-lapis)" }}>{t("import.localDockerLink")}</Link>

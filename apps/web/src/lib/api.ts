@@ -4,6 +4,7 @@ import type { BulkTransferResponse, TransferPlan } from "./server-transfer";
 import type { BeszelApplyInput, BeszelApplyResult, BeszelConnectResult, BeszelPreview, BeszelSavedConnection } from "./beszel-import";
 import type { CoolifyChecklist, CoolifyDetect, CoolifyInventoryView } from "./coolify-takeover";
 import type { CoolifySshRunView } from "./coolify-ssh";
+import type { CoolifyHostGrantView } from "./coolify-agent";
 import { HUB_UNREACHABLE_CODE, hubUnreachableMessage, isHubDownStatus, isNetworkFailure, reportHubDown } from "./hub-connection";
 import { observeServerDate } from "./clock-skew";
 import type { CampaignRunPlan, CampaignView, SourceServerPlacementView, TakeoverView } from "@tugra/shared";
@@ -2643,8 +2644,22 @@ export const api = {
     return apiFetch<ImportSession>("/import/connect", { method: "POST", body: JSON.stringify(input) });
   },
   // Coolify through the agent on the Coolify host: no token, no URL. Reads that host's Coolify database once, read-only.
-  importConnectAgent(input: { teamId: string; serverId: string; scopeLabel?: string }) {
+  importConnectAgent(input: { teamId: string; serverId: string; scopeLabel?: string; sourceTeamRef?: string }) {
     return apiFetch<ImportAgentSession>("/import/connect-agent", { method: "POST", body: JSON.stringify({ sourceKind: "coolify", ...input }) });
+  },
+  // The owner's own answer to "is this Coolify server that Tugra server" (agent session): a server, null for "not the same", or a reset.
+  importHostLink(sessionId: string, input: { coolifyServerUuid: string; serverId: string | null; reset?: boolean }) {
+    return apiFetch<{ hostLinks: Record<string, { serverId: string | null }> }>(`/import/sessions/${encodeURIComponent(sessionId)}/host-link`, { method: "PUT", body: JSON.stringify(input) });
+  },
+  // Consent to the sealed read of Coolify's secret values for ONE import session (team owner; the host's name typed). Ends with the import.
+  coolifySecretsGrant(input: { serverId: string; confirm: string; importSessionId: string; classes?: string[]; hours?: number }) {
+    return apiFetch<CoolifyHostGrantView>("/coolify-takeover/secrets/grants", { method: "POST", body: JSON.stringify(input) });
+  },
+  coolifySecretsGrants(teamId: string) {
+    return apiFetch<CoolifyHostGrantView[]>(`/coolify-takeover/secrets/grants?teamId=${encodeURIComponent(teamId)}`);
+  },
+  coolifySecretsRevoke(grantId: string) {
+    return apiFetch<CoolifyHostGrantView>(`/coolify-takeover/secrets/grants/${encodeURIComponent(grantId)}`, { method: "DELETE" });
   },
   // Beszel import (dry-run preview, then an apply bound to the reviewed preview's hash). Credentials are stored encrypted for the import only.
   beszelConnect(input: { teamId: string; baseUrl: string; identity: string; password: string; keepCredentials?: boolean }) {
