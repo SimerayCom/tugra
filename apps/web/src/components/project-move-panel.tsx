@@ -5,7 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ProjectMoveView } from "@tugra/shared";
 import { api, type ProjectMovePreviewView } from "../lib/api";
 import { useT } from "../i18n/provider";
-import { blockersOf, moveCanCancel, moveErrorKey, moveHasSafetyCopy, moveIsActive, parseWarning, targetServers } from "../lib/project-server-move";
+import { blockersOf, moveCanCancel, moveCanRollback, moveErrorKey, moveHasSafetyCopy, moveIsActive, parseWarning, targetServers } from "../lib/project-server-move";
 import { formatDateTime } from "../lib/format-time";
 import { Badge, Btn, SectionCard } from "./ui";
 import { Checkbox, Select } from "./form";
@@ -120,13 +120,14 @@ export function ProjectMovePanel({ projectId, projectName, teamId, excludeServer
     onError: (e) => setStartBlockers(blockersOf(e)),
   });
   const cancel = useMutation({ mutationFn: (id: string) => api.projectMoveCancel(id), onSuccess: () => qc.invalidateQueries({ queryKey: ["project-moves", projectId] }) });
+  const rollback = useMutation({ mutationFn: (id: string) => api.projectMoveRollback(id, projectName), onSuccess: () => qc.invalidateQueries({ queryKey: ["project-moves", projectId] }) });
   const purge = useMutation({ mutationFn: (id: string) => api.projectMovePurge(id), onSuccess: () => qc.invalidateQueries({ queryKey: ["project-moves", projectId] }) });
 
   const options = targetServers(servers.data ?? [], teamId, excludeServerNames);
   const p = preview.data;
   const blockers = startBlockers ?? p?.blockers ?? [];
   const running = moveIsActive(last);
-  const err = preview.error ?? (startBlockers ? null : start.error) ?? cancel.error ?? purge.error;
+  const err = preview.error ?? (startBlockers ? null : start.error) ?? cancel.error ?? rollback.error ?? purge.error;
 
   const onStart = async () => {
     if (!p) return;
@@ -139,6 +140,10 @@ export function ProjectMovePanel({ projectId, projectName, teamId, excludeServer
     });
     if (ok) start.mutate();
   };
+  const onRollback = async (id: string) => {
+    const ok = await confirm({ title: t("projectMove.rollback"), body: t("projectMove.rollbackBody"), confirmLabel: t("projectMove.rollback"), confirmText: projectName, danger: true });
+    if (ok) rollback.mutate(id);
+  };
   const onPurge = async (id: string) => {
     if (await confirm({ title: t("projectMove.purge"), body: t("projectMove.purgeBody"), confirmLabel: t("projectMove.purge"), danger: true })) purge.mutate(id);
   };
@@ -149,6 +154,12 @@ export function ProjectMovePanel({ projectId, projectName, teamId, excludeServer
       {last && moveCanCancel(last) && (
         <div style={{ marginTop: 10 }}>
           <Btn variant="ghost" disabled={cancel.isPending} onClick={() => cancel.mutate(last.id)} style={{ minHeight: 44 }}>{t("projectMove.cancel")}</Btn>
+        </div>
+      )}
+      {last && moveCanRollback(last) && (
+        <div style={{ marginTop: 10 }}>
+          <Btn variant="danger" disabled={rollback.isPending} loading={rollback.isPending} onClick={() => void onRollback(last.id)} style={{ minHeight: 44 }}>{t("projectMove.rollback")}</Btn>
+          <p style={note("var(--c-tx3)")}>{t("projectMove.rollbackHint")}</p>
         </div>
       )}
       {last && moveHasSafetyCopy(last) && (

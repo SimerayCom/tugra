@@ -187,4 +187,46 @@ describe("ProjectMovePanel: a move in progress and after it", () => {
     // a finished move can be followed by a new one
     expect(screen.getByRole("button", { name: "Move to another server" })).toBeTruthy();
   });
+
+  it("a failed move that changed something offers to undo it; the project's name is typed first; the call carries it", async () => {
+    vi.spyOn(api, "projectMoveList").mockResolvedValue([move({ phase: "FAILED", failureCode: "partial_move", rollbackAvailable: true })]);
+    const rollback = vi.spyOn(api, "projectMoveRollback").mockResolvedValue({ moveId: "m1", phase: "ROLLING_BACK" });
+    show();
+    expect((await screen.findByRole("alert")).textContent).toBe("Some items moved and some did not. Nothing was undone for you.");
+    fireEvent.click(screen.getByRole("button", { name: "Undo this move" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(rollback).not.toHaveBeenCalled();
+    const go = within(dialog).getByRole("button", { name: "Undo this move" }) as HTMLButtonElement;
+    expect(go.disabled).toBe(true);
+    fireEvent.change(within(dialog).getByLabelText(/Acme/), { target: { value: "Acme" } });
+    fireEvent.click(go);
+    await waitFor(() => expect(rollback).toHaveBeenCalledWith("m1", "Acme"));
+  });
+
+  it("no undo for a failed move that changed nothing, for a running or finished move, or while it is already rolling back", async () => {
+    for (const m of [move({ phase: "FAILED", failureCode: "agent_offline", rollbackAvailable: false }), move({ phase: "MOVING", rollbackAvailable: true }), move({ phase: "COMPLETED", archiveUntil: null, rollbackAvailable: true }), move({ phase: "ROLLING_BACK" })]) {
+      vi.spyOn(api, "projectMoveList").mockResolvedValue([m]);
+      show();
+      await screen.findByTestId("project-move-progress");
+      expect(screen.queryByRole("button", { name: "Undo this move" })).toBeNull();
+      cleanup();
+    }
+  });
+
+  it("a refused undo says why in words", async () => {
+    vi.spyOn(api, "projectMoveList").mockResolvedValue([move({ phase: "FAILED", failureCode: "partial_move", rollbackAvailable: true })]);
+    vi.spyOn(api, "projectMoveRollback").mockRejectedValue(new ApiError(409, "child_move_active", "child_move_active"));
+    show();
+    fireEvent.click(await screen.findByRole("button", { name: "Undo this move" }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.change(within(dialog).getByLabelText(/Acme/), { target: { value: "Acme" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Undo this move" }));
+    expect(await screen.findByText("An app move of this project is still running. Wait for it to finish.")).toBeTruthy();
+  });
+
+  it("the undone move says so in words", async () => {
+    vi.spyOn(api, "projectMoveList").mockResolvedValue([move({ phase: "ROLLED_BACK", failureCode: "rolled_back_by_owner" })]);
+    show();
+    expect((await screen.findByRole("alert")).textContent).toBe("You undid this move. The apps are back on the old server.");
+  });
 });

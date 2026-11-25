@@ -22,3 +22,7 @@ export const StartProjectMoveSchema = PreviewProjectMoveSchema.extend({
   confirmName: z.string().min(1).max(128),
 }).strict();
 export type StartProjectMoveInput = z.infer<typeof StartProjectMoveSchema>;
+
+/** The owner's undo of a failed move: the project's exact name, as for starting one. */
+export const RollbackProjectMoveSchema = z.object({ confirmName: z.string().min(1).max(128) }).strict();
+export type RollbackProjectMoveInput = z.infer<typeof RollbackProjectMoveSchema>;

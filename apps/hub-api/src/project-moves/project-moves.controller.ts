@@ -8,7 +8,7 @@ import { RequireScopes } from "../api-tokens/require-scopes.decorator";
 import { AuthUser } from "../auth/strategies/jwt.strategy";
 import { ApiZodBody } from "../openapi/openapi";
 import { ProjectMovesService } from "./project-moves.service";
-import { PreviewProjectMoveSchema, StartProjectMoveSchema, type PreviewProjectMoveInput, type StartProjectMoveInput } from "./dto";
+import { PreviewProjectMoveSchema, RollbackProjectMoveSchema, StartProjectMoveSchema, type PreviewProjectMoveInput, type RollbackProjectMoveInput, type StartProjectMoveInput } from "./dto";
 
 /**
  * Move a project and everything under it to another server. Team OWNER only for everything that changes something; members who can see
@@ -55,6 +55,18 @@ export class ProjectMovesController {
   async cancel(@CurrentUser() user: AuthUser, @Param("id") id: string) {
     await this.moves.cancel(user.userId, id);
     return { ok: true as const };
+  }
+
+  /**
+   * Undo a move that ended FAILED (some apps moved, some did not): the apps that moved go back, the databases are brought up to date on the
+   * source, the links are put back and the copies are removed. Owner only, the project's name typed. 202: the undo runs in the background.
+   */
+  @Post(":id/rollback")
+  @HttpCode(202)
+  @RequireScopes("write")
+  @ApiZodBody(RollbackProjectMoveSchema)
+  rollback(@CurrentUser() user: AuthUser, @Param("id") id: string, @Body(new ZodValidationPipe(RollbackProjectMoveSchema)) body: RollbackProjectMoveInput) {
+    return this.moves.rollback(user.userId, id, body);
   }
 
   /** Remove the safety copy now (the old databases and the apps' archived volumes). */

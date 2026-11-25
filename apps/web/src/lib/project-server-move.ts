@@ -5,11 +5,13 @@ const TERMINAL: readonly ProjectMovePhase[] = ["COMPLETED", "ROLLED_BACK", "FAIL
 export const moveIsActive = (m: Pick<ProjectMoveView, "phase"> | null | undefined): boolean => !!m && !TERMINAL.includes(m.phase);
 /** Cancel is offered until an app has been cut over (the hub refuses later). */
 export const moveCanCancel = (m: Pick<ProjectMoveView, "phase">): boolean => m.phase === "QUEUED" || m.phase === "PRECHECK" || m.phase === "MOVING";
+/** The owner's undo is offered for a failed move that changed something (the hub says so; it re-checks everything). */
+export const moveCanRollback = (m: Pick<ProjectMoveView, "phase" | "rollbackAvailable">): boolean => m.phase === "FAILED" && m.rollbackAvailable === true;
 export const moveHasSafetyCopy = (m: Pick<ProjectMoveView, "phase" | "archiveUntil">): boolean => m.phase === "COMPLETED" && !!m.archiveUntil;
 
 export function moveErrorKey(e: unknown): string {
   if (e instanceof ApiError) {
-    const known = ["preflight_failed", "project_move_active", "move_not_cancellable", "move_not_completed", "nothing_to_purge", "confirm_name_mismatch"];
+    const known = ["preflight_failed", "project_move_active", "move_not_cancellable", "move_not_completed", "nothing_to_purge", "confirm_name_mismatch", "move_not_rollbackable", "nothing_to_roll_back", "child_move_active"];
     if (e.code && known.includes(e.code)) return `projectMove.error.${e.code}`;
     if (e.status === 403) return "projectMove.error.forbidden";
   }

@@ -8,12 +8,13 @@ import { ProjectMoveRecoveryService } from "./project-move-recovery.service";
 import { ProjectMoveRunnerService } from "./project-move-runner.service";
 import { ProjectMovesController } from "./project-moves.controller";
 import { ProjectMovesService } from "./project-moves.service";
+import { ProjectMoveVolumeCarryService } from "./project-move-volume-carry.service";
 
 // PrismaService, TeamAccessService and AuditService come from @Global modules.
 @Module({
   imports: [AgentGatewayModule, AppMovesModule, ApplicationsModule, BackupsModule, DatabasesModule],
   controllers: [ProjectMovesController],
-  providers: [ProjectMovesService, ProjectMoveRunnerService, ProjectMoveRecoveryService],
+  providers: [ProjectMovesService, ProjectMoveRunnerService, ProjectMoveRecoveryService, ProjectMoveVolumeCarryService],
   exports: [ProjectMovesService],
 })
 export class ProjectMovesModule {}

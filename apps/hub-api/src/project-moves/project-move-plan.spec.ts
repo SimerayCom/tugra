@@ -58,7 +58,9 @@ describe("planProjectMove", () => {
   it("a database needs a backup engine, an S3 destination, no extra volumes and no app outside the project linked to it", () => {
     expect(codes(input({ dbs: [db({ engine: "LIBSQL" })] }))).toEqual(["db_engine_unsupported"]);
     expect(codes(input({ dbs: [db({ backupDestinationId: null })] }))).toEqual(["db_needs_s3_destination"]);
-    expect(codes(input({ dbs: [db({ extraVolumes: 2 })] }))).toEqual(["db_extra_volumes"]);
+    // extra volumes are carried now: a warning, never a blocker
+    expect(codes(input({ dbs: [db({ extraVolumes: 2 })] }))).toEqual([]);
+    expect(planProjectMove(input({ dbs: [db({ extraVolumes: 2 })] })).warnings).toContainEqual({ code: "db_extra_volumes_carried", ref: "main" });
     expect(codes(input({ dbs: [db({ outsideLinkedApps: ["other-app"] })] }))).toEqual(["db_linked_outside"]);
     expect(codes(input({ dbs: [db({ outsideLinkedApps: ["a1"] })] }))).toEqual([]); // linked only by an app of the same project
   });

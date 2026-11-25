@@ -254,7 +254,6 @@ export const PROJECT_MOVE_BLOCKERS = [
   "server_not_ready",
   "db_engine_unsupported",
   "db_needs_s3_destination",
-  "db_extra_volumes",
   "db_linked_outside",
   "db_not_ready",
   "app_preflight_failed",
@@ -263,18 +262,20 @@ export const PROJECT_MOVE_BLOCKERS = [
 ] as const;
 export type ProjectMoveBlockerCode = (typeof PROJECT_MOVE_BLOCKERS)[number];
 
-export const PROJECT_MOVE_WARNINGS = ["app_redeploy_after_relink", "pitr_not_carried", "db_config_only", "items_left_behind"] as const;
+export const PROJECT_MOVE_WARNINGS = ["app_redeploy_after_relink", "pitr_not_carried", "db_config_only", "db_extra_volumes_carried", "items_left_behind"] as const;
 export type ProjectMoveWarningCode = (typeof PROJECT_MOVE_WARNINGS)[number];
 
 export const PROJECT_MOVE_FAILURE_CODES = [
   "db_copy_failed",
   "db_backup_failed",
   "db_restore_failed",
+  "db_volume_failed",
   "app_move_failed",
   "app_move_rolled_back",
   "verify_failed",
   "partial_move",
   "rollback_incomplete",
+  "rolled_back_by_owner",
   "agent_offline",
   "timeout",
   "cancelled",
@@ -340,6 +341,11 @@ export interface ProjectMoveView {
   /** Fixed failure code (the web maps it to text) when the move failed or was rolled back. */
   failureCode: string | null;
   report: ProjectMoveReport | null;
+  /**
+   * The owner can undo a move that ended FAILED (some apps moved, some did not, or the automatic undo did not finish): the apps that moved
+   * go back to the source, the databases are brought up to date there, the links are put back and the copies are removed.
+   */
+  rollbackAvailable?: boolean;
   createdAt: string;
   finishedAt: string | null;
 }

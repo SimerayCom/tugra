@@ -1608,6 +1608,9 @@ export const api = {
   projectMoveCancel(id: string) {
     return apiFetch<{ ok: true }>(`/project-moves/${id}/cancel`, { method: "POST" });
   },
+  projectMoveRollback(id: string, confirmName: string) {
+    return apiFetch<{ moveId: string; phase: string }>(`/project-moves/${id}/rollback`, { method: "POST", body: JSON.stringify({ confirmName }) });
+  },
   projectMovePurge(id: string) {
     return apiFetch<{ removed: number; kept: number }>(`/project-moves/${id}/purge-safety-copy`, { method: "POST" });
   },

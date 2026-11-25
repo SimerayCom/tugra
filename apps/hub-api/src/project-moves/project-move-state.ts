@@ -18,6 +18,21 @@ export interface StoredDb {
   oldName: string;
   /** The source database was renamed and stopped: it is now the safety copy. */
   setAside?: boolean;
+  /** Names of the extra volumes already copied to the target (an interrupted copy resumes with the rest). */
+  volumesDone?: string[];
+  /** The source database was stopped early so its extra volumes could be copied as they are: a rollback starts it again. */
+  sourceStopped?: boolean;
+}
+
+/**
+ * The owner's undo of a move that ended FAILED. Each app and database has its own stage so an interrupted undo resumes where it stopped
+ * (an app is never moved back twice, a database is never brought up to date twice).
+ */
+export type UndoAppStage = "pending" | "stopped" | "unlinked" | "moving" | "moved" | "relinked" | "done";
+export type UndoDbStage = "pending" | "synced" | "unset" | "copy_removed";
+export interface UndoState {
+  apps: Record<string, { stage: UndoAppStage; moveId?: string }>;
+  dbs: Record<string, { stage: UndoDbStage; backupId?: string }>;
 }
 
 /** `unlinking`: the links and flags are recorded, removal is under way (a crash here still leaves what rollback needs). */
@@ -44,8 +59,14 @@ export interface StoredPlan {
   report?: ProjectMoveReport;
   /** The safety copy (set-aside databases) was removed. */
   safetyPurged?: boolean;
+  /** The owner asked for the undo of a failed move (the runner then runs the full rollback, not the automatic one). */
+  ownerRollback?: boolean;
+  undo?: UndoState;
   warnings: string[];
 }
+
+/** Something happened that an undo would have to put back: an app left its first step, or a database copy exists. */
+export const hasUndoable = (p: StoredPlan): boolean => Object.values(p.apps).some((a) => a.stage !== "pending") || Object.values(p.dbs).some((d) => !!d.targetDbId);
 
 export function parsePlan(v: unknown): StoredPlan {
   const o = v && typeof v === "object" && !Array.isArray(v) ? (v as Partial<StoredPlan>) : {};
@@ -60,6 +81,8 @@ export function parsePlan(v: unknown): StoredPlan {
     targetIp: typeof o.targetIp === "string" ? o.targetIp : null,
     report: o.report,
     safetyPurged: o.safetyPurged === true,
+    ownerRollback: o.ownerRollback === true,
+    ...(o.undo && typeof o.undo === "object" ? { undo: { apps: o.undo.apps ?? {}, dbs: o.undo.dbs ?? {} } } : {}),
     warnings: Array.isArray(o.warnings) ? o.warnings.filter((x): x is string => typeof x === "string") : [],
   };
 }

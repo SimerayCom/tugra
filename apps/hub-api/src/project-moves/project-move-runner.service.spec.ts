@@ -1,4 +1,5 @@
 import { ProjectMoveRunnerService, StepError } from "./project-move-runner.service";
+import { VolumeCarryError } from "./project-move-volume-carry.service";
 import { parsePlan, type StoredPlan } from "./project-move-state";
 
 const CANARY = "pw-canary-7c1e";
@@ -20,6 +21,9 @@ interface Opts {
   failProvision?: boolean;
   failBackup?: boolean;
   failRestore?: boolean;
+  failCarry?: boolean;
+  /** Extra volumes of the source database d1 (name and path). */
+  extraVolumes?: Array<{ name: string; path: string }>;
   /** App id -> the phase the app move ends in (default COMPLETED). */
   appMovePhase?: Record<string, string>;
   /** Make the target app not run after the move, so the verification fails. */
@@ -36,7 +40,7 @@ function make(o: Opts = {}) {
   const kind = o.items ?? "linked";
   w.apps.set("a1", { id: "a1", name: "web", status: "RUNNING", serverId: "s1", dbNetwork: kind === "linked", domain: "web.example.com", extraDomains: [], domains: [] });
   w.apps.set("a2", { id: "a2", name: "worker", status: "RUNNING", serverId: "s1", dbNetwork: false, domain: null, extraDomains: [], domains: [] });
-  w.dbs.set("d1", { id: "d1", name: "main", status: kind === "config-only" ? "NEW" : "RUNNING", serverId: "s1" });
+  w.dbs.set("d1", { id: "d1", name: "main", status: kind === "config-only" ? "NEW" : "RUNNING", serverId: "s1", volumes: o.extraVolumes ?? [] });
   if (kind === "linked") w.links.push({ id: "l1", appId: "a1", databaseId: "d1", envVar: "DATABASE_URL" });
 
   const items = [
@@ -136,8 +140,9 @@ function make(o: Opts = {}) {
       w.restores.push({ databaseId: tgt, status: "SUCCESS" });
     }),
   };
+  const carry = { carry: jest.fn(async (i: { dstVolume: string }) => { w.calls.push(`carry:${i.dstVolume}`); if (o.failCarry) throw new VolumeCarryError("pack_failed"); }) };
   const lease = { bootId: "boot1" };
-  const svc = new ProjectMoveRunnerService(prisma as never, audit as never, agentWs as never, apps as never, links as never, appMoves as never, databases as never, backups as never, lease as never);
+  const svc = new ProjectMoveRunnerService(prisma as never, audit as never, agentWs as never, apps as never, links as never, appMoves as never, databases as never, backups as never, lease as never, carry as never);
   svc.pollMs = 0;
   return { svc, w, prisma, apps, links, appMoves, databases, backups, agentWs };
 }
@@ -145,6 +150,15 @@ function make(o: Opts = {}) {
 const planOf = (w: World) => parsePlan(w.move.plan);
 const order = (w: World, ...prefixes: string[]) => prefixes.map((p) => w.calls.findIndex((c) => c.startsWith(p)));
 const increasing = (xs: number[]) => xs.every((x, i) => x >= 0 && (i === 0 || x > xs[i - 1]));
+/** The calls happened in this order (each exact call found after the one before; other calls may sit between). */
+const inOrder = (w: World, ...calls: string[]): boolean => {
+  let at = -1;
+  for (const c of calls) {
+    at = w.calls.indexOf(c, at + 1);
+    if (at < 0) return false;
+  }
+  return true;
+};
 
 describe("ProjectMoveRunnerService: the good path", () => {
   it("copies the database, freezes its writer, moves each app, relinks, redeploys and sets the old database aside", async () => {
@@ -462,5 +476,163 @@ describe("ProjectMoveRunnerService: resuming after a restart does only what is l
 describe("StepError", () => {
   it("carries only a fixed code", () => {
     expect(new StepError("db_copy_failed").message).toBe("db_copy_failed");
+  });
+});
+
+describe("ProjectMoveRunnerService: a database's extra volumes travel with it", () => {
+  const VOLS = [{ name: "ext", path: "/ext" }, { name: "wal", path: "/wal" }];
+  it("stops both sides, copies each volume under the copy's own name, starts the copy again, then moves the apps", async () => {
+    const { svc, w } = make({ extraVolumes: VOLS });
+    await svc.run("pm1");
+    expect(w.move.phase).toBe("COMPLETED");
+    expect(inOrder(w, "restore:d1->d1copy", "db.stop:d1", "db.stop:d1copy", "carry:tugra_dbv_d1copy_ext", "carry:tugra_dbv_d1copy_wal", "db.provision:d1copy", "appmove.start:a1")).toBe(true);
+    // the provision that follows the carry is the second one (the first made the copy)
+    expect(w.calls.filter((c) => c === "db.provision:d1copy")).toHaveLength(2);
+    expect(planOf(w).dbs.d1.volumesDone).toEqual(["ext", "wal"]);
+    expect(w.dbs.get("d1copy")).toMatchObject({ status: "RUNNING" });
+  });
+  it("a database with no extra volumes is not stopped early and nothing is carried", async () => {
+    const { svc, w } = make();
+    await svc.run("pm1");
+    expect(w.calls.some((c) => c.startsWith("carry:"))).toBe(false);
+    expect(w.calls.filter((c) => c === "db.stop:d1")).toHaveLength(1); // only the set-aside at the end
+  });
+  it("a restart in the middle copies only the volumes that are left", async () => {
+    const { svc, w } = make({ extraVolumes: VOLS, plan: { dbs: { d1: { stage: "restored", configOnly: false, oldName: "main", targetDbId: "d1copy", sourceStopped: true, volumesDone: ["ext"] } }, frozen: [] } });
+    w.dbs.set("d1copy", { id: "d1copy", name: "main", status: "STOPPED", serverId: "s2" });
+    w.move.phase = "MOVING";
+    await svc.run("pm1");
+    expect(w.calls.filter((c) => c.startsWith("carry:"))).toEqual(["carry:tugra_dbv_d1copy_wal"]);
+    expect(w.calls).not.toContain("db.stop:d1copy"); // it was already stopped
+  });
+  it("a volume that cannot be carried rolls the move back by itself: the source database runs again, the copy is removed, no app moved", async () => {
+    const { svc, w } = make({ extraVolumes: VOLS, failCarry: true });
+    await svc.run("pm1");
+    expect(w.move.phase).toBe("ROLLED_BACK");
+    expect(w.move.failureReason).toBe("db_volume_failed");
+    expect(inOrder(w, "db.stop:d1", "db.provision:d1", "db.remove:d1copy")).toBe(true);
+    expect(w.calls.some((c) => c.startsWith("appmove.start"))).toBe(false);
+    expect(w.dbs.get("d1")).toMatchObject({ status: "RUNNING" });
+    expect(w.apps.get("a1")).toMatchObject({ status: "RUNNING", serverId: "s1" });
+  });
+  it("an agent that goes away during the copy is an agent failure, not a volume failure", async () => {
+    const { svc, w } = make({ extraVolumes: VOLS });
+    const { VolumeCarryError: E } = await import("./project-move-volume-carry.service");
+    (svc as unknown as { carry: { carry: jest.Mock } }).carry.carry.mockRejectedValueOnce(new E("agent_offline"));
+    await svc.run("pm1");
+    expect(w.move.failureReason).toBe("agent_offline");
+  });
+});
+
+describe("ProjectMoveRunnerService: the owner's undo of a partly moved project", () => {
+  /** a1 (with its database) moved to s2 and runs on the copy; a2 never moved; the move ended FAILED and the owner asked to undo it. */
+  function partial(extra: Partial<Opts> = {}) {
+    const t = make({
+      ...extra,
+      plan: {
+        ownerRollback: true,
+        frozen: ["a1", "a2"],
+        dbs: { d1: { stage: "restored", configOnly: false, oldName: "main", targetDbId: "d1copy", backupId: "b0" } },
+        apps: {
+          a1: { stage: "redeployed", moveId: "mv-a1", links: [{ envVar: "DATABASE_URL", databaseId: "d1" }], hadDbNetwork: true, wasRunning: true },
+          a2: { stage: "pending", links: [], hadDbNetwork: false, wasRunning: false },
+          ...(extra.plan?.apps ?? {}),
+        },
+        ...(extra.plan ?? {}),
+      },
+      moveRow: { phase: "ROLLING_BACK", failureReason: "app_move_failed", ...(extra.moveRow ?? {}) },
+    });
+    const { w } = t;
+    w.apps.get("a1")!.serverId = "s2";
+    w.apps.get("a1")!.status = "RUNNING";
+    w.apps.get("a2")!.status = "STOPPED";
+    w.dbs.set("d1copy", { id: "d1copy", name: "main", status: "RUNNING", serverId: "s2" });
+    w.links.length = 0;
+    w.links.push({ id: "l9", appId: "a1", databaseId: "d1copy", envVar: "DATABASE_URL" });
+    w.appMoves.set("mv-a1", { id: "mv-a1", phase: "COMPLETED", plan: {} });
+    return t;
+  }
+
+  it("stops the app, brings the database up to date on the source, moves the app back, links it to the source again, starts the rest and removes the copy last", async () => {
+    const { svc, w } = partial();
+    await svc.run("pm1");
+    expect(w.move.phase).toBe("ROLLED_BACK");
+    expect(w.move.failureReason).toBe("rolled_back_by_owner");
+    expect(inOrder(w, "app.stop:a1", "link.remove:a1:l9", "backup:d1copy", "restore:d1copy->d1", "appmove.start:a1", "link.create:a1:d1:DATABASE_URL", "app.deploy:a1", "app.start:a2", "db.remove:d1copy")).toBe(true);
+    // the app is back on the source, linked to the SOURCE database, which runs and has its own name; the copy is gone
+    expect(w.apps.get("a1")).toMatchObject({ serverId: "s1", status: "RUNNING" });
+    expect(w.links).toEqual([expect.objectContaining({ appId: "a1", databaseId: "d1", envVar: "DATABASE_URL" })]);
+    expect(w.dbs.has("d1copy")).toBe(false);
+    expect(w.dbs.get("d1")).toMatchObject({ status: "RUNNING", serverId: "s1" });
+    // the app that never moved is just started again
+    expect(w.apps.get("a2")).toMatchObject({ status: "RUNNING", serverId: "s1" });
+    // the app move that brings the app back targets the SOURCE, with the app's exact name
+    expect(w.calls).toContain("appmove.start:a1");
+    expect(planOf(w).undo?.apps.a1.stage).toBe("done");
+    expect(planOf(w).undo?.dbs.d1.stage).toBe("copy_removed");
+  });
+
+  it("the audit trail says the owner undid it; the plan holds no value", async () => {
+    const { svc, w } = partial();
+    await svc.run("pm1");
+    expect(w.audits.some((a) => a.action === "project.move.rolled_back" && a.meta?.byOwner === true)).toBe(true);
+    expect(JSON.stringify(w.move.plan) + JSON.stringify(w.audits)).not.toContain(CANARY);
+  });
+
+  it("a source database that was set aside is started again and gets its old name back", async () => {
+    const t = partial({ plan: { dbs: { d1: { stage: "source_stopped", configOnly: false, oldName: "main", targetDbId: "d1copy", setAside: true } } } as never });
+    t.w.dbs.get("d1")!.status = "STOPPED";
+    t.w.dbs.get("d1")!.name = "main (before move abc123)";
+    await t.svc.run("pm1");
+    expect(t.w.move.phase).toBe("ROLLED_BACK");
+    expect(inOrder(t.w, "db.provision:d1", "backup:d1copy", "restore:d1copy->d1", "db.rename:d1")).toBe(true);
+    expect(t.w.dbs.get("d1")).toMatchObject({ status: "RUNNING", name: "main" });
+  });
+
+  it("when no app ever wrote to the copy nothing is copied back: the source simply keeps its data", async () => {
+    const t = partial({ plan: { apps: { a1: { stage: "moved", moveId: "mv-a1", links: [{ envVar: "DATABASE_URL", databaseId: "d1" }], hadDbNetwork: true, wasRunning: true } } } as never });
+    await t.svc.run("pm1");
+    expect(t.w.move.phase).toBe("ROLLED_BACK");
+    expect(t.w.calls.some((c) => c.startsWith("backup:") || c.startsWith("restore:"))).toBe(false);
+  });
+
+  it("a database copy is not removed while an app that moved is still away from the source", async () => {
+    const t = partial({ moveRow: {} });
+    t.appMoves.start.mockImplementationOnce(async (_u: string, appId: string) => {
+      t.w.calls.push(`appmove.start:${appId}`);
+      t.w.appMoves.set("mv-a1", { id: "mv-a1", phase: "ROLLED_BACK", plan: {} });
+      return { moveId: "mv-a1", phase: "QUEUED" };
+    });
+    await t.svc.run("pm1");
+    expect(t.w.move.phase).toBe("FAILED");
+    expect(t.w.move.failureReason).toBe("rollback_incomplete");
+    expect(t.w.calls.some((c) => c.startsWith("db.remove"))).toBe(false);
+    expect(t.w.apps.get("a1")).toMatchObject({ serverId: "s2" });
+  });
+
+  it("pressing it again after a failed step continues from the stored stages: the app is not stopped or moved twice", async () => {
+    const t = partial();
+    t.backups.restoreTo.mockRejectedValueOnce(new Error(`pg said ${CANARY}`));
+    await t.svc.run("pm1");
+    expect(t.w.move.phase).toBe("FAILED");
+    expect(t.w.move.failureReason).toBe("rollback_incomplete");
+    const stopsBefore = t.w.calls.filter((c) => c === "app.stop:a1").length;
+    // the owner presses it again: the same state the service writes
+    t.w.move.phase = "ROLLING_BACK";
+    t.w.move.ownerId = null;
+    await t.svc.run("pm1");
+    expect(t.w.move.phase).toBe("ROLLED_BACK");
+    expect(t.w.calls.filter((c) => c === "app.stop:a1").length).toBe(stopsBefore);
+    expect(t.w.calls.filter((c) => c === "appmove.start:a1")).toHaveLength(1);
+    expect(JSON.stringify(t.w.move.plan) + JSON.stringify(t.w.audits)).not.toContain(CANARY);
+  });
+
+  it("an agent that goes away leaves it FAILED as an agent failure so the owner can press it again", async () => {
+    const { AgentOfflineException } = await import("../agent-gateway/agent-offline.exception");
+    const t = partial();
+    t.appMoves.start.mockRejectedValueOnce(new AgentOfflineException("s2"));
+    await t.svc.run("pm1");
+    expect(t.w.move.phase).toBe("FAILED");
+    expect(t.w.move.failureReason).toBe("rollback_incomplete");
   });
 });

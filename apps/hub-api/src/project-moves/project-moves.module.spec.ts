@@ -1,6 +1,7 @@
 import { Test } from "@nestjs/testing";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
 import { AppMovesService } from "../app-moves/app-moves.service";
+import { PartTransferService } from "../app-moves/part-transfer.service";
 import { AppDatabaseLinksService } from "../applications/app-database-links.service";
 import { ApplicationsService } from "../applications/applications.service";
 import { DeployLeaseService } from "../applications/deploy-lease.service";
@@ -19,7 +20,7 @@ import { ProjectMovesService } from "./project-moves.service";
 describe("ProjectMovesModule dependency graph", () => {
   const providers = [
     ...(Reflect.getMetadata("providers", ProjectMovesModule) as unknown[]),
-    ...[PrismaService, TeamAccessService, AuditService, AgentWsServer, ApplicationsService, AppDatabaseLinksService, AppMovesService, DatabasesService, BackupsService].map((p) => ({ provide: p, useValue: {} })),
+    ...[PrismaService, TeamAccessService, AuditService, AgentWsServer, ApplicationsService, AppDatabaseLinksService, AppMovesService, DatabasesService, BackupsService, PartTransferService].map((p) => ({ provide: p, useValue: {} })),
     { provide: DeployLeaseService, useValue: { bootId: "boot-test" } },
   ];
 

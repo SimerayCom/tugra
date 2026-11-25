@@ -15,6 +15,8 @@ import { BackupsService } from "../backups/backups.service";
 import { isTerminalPhase } from "./project-move-plan";
 import { buildReport, reportOk, type ReportApp, type ReportDb } from "./project-move-report";
 import { parseItems, parsePlan, type StoredPlan } from "./project-move-state";
+import { ProjectMoveVolumeCarryService, VolumeCarryError } from "./project-move-volume-carry.service";
+import { dbExtraVolumeName } from "../databases/database-script";
 
 /** A step that failed for a reason the owner can read: the code is one of PROJECT_MOVE_FAILURE_CODES, never a message. */
 export class StepError extends Error {
@@ -53,6 +55,7 @@ export class ProjectMoveRunnerService {
     private readonly databases: DatabasesService,
     private readonly backups: BackupsService,
     private readonly lease: DeployLeaseService,
+    private readonly carry: ProjectMoveVolumeCarryService,
   ) {}
 
   private sleep(ms: number): Promise<void> {
@@ -111,9 +114,11 @@ export class ProjectMoveRunnerService {
         await this.audit.log({ actor: row.actorId, action: "project.move.complete", target: row.projectId, meta: { moveId: row.id, to: row.targetServerId } });
         return;
       }
-      case "ROLLING_BACK":
+      case "ROLLING_BACK": {
         await this.rollback(row);
-        return this.phase(row.id, "ROLLED_BACK", { finishedAt: new Date(), ownerId: null });
+        // an undo the owner asked for says so (the code that failed the move is replaced: it was not what ended it)
+        return this.phase(row.id, "ROLLED_BACK", { finishedAt: new Date(), ownerId: null, ...(parsePlan(row.plan).ownerRollback ? { failureReason: "rolled_back_by_owner" } : {}) });
+      }
       default:
         return;
     }
@@ -197,6 +202,45 @@ export class ProjectMoveRunnerService {
         });
         st.stage = "restored";
         await save();
+      }
+    }
+
+    // 3b. Extra volumes of a database travel with it: both sides are stopped so the copy matches, the volumes are copied one by one, and the
+    // copy is started again. Resumable: the names already copied are stored, the source stays stopped (a rollback starts it again).
+    let volIdx = 0;
+    for (const it of dbItems) {
+      const st = plan.dbs[it.refId];
+      if (!st || st.configOnly || st.stage !== "restored" || !st.targetDbId) continue;
+      const vols = await this.extraVolumesOf(it.refId);
+      if (vols.length === 0) continue;
+      const done = new Set(st.volumesDone ?? []);
+      if (vols.every((v) => done.has(v.name))) {
+        volIdx += vols.length;
+        continue;
+      }
+      try {
+        if (!st.sourceStopped) {
+          st.sourceStopped = true; // recorded before the stop: a restart in between still knows to start it again on rollback
+          await save();
+          await this.databases.stop(row.actorId, it.refId);
+        }
+        const copy = await this.prisma.database.findUnique({ where: { id: st.targetDbId }, select: { status: true } });
+        if (copy?.status === "RUNNING") await this.databases.stop(row.actorId, st.targetDbId);
+        for (const v of vols) {
+          const idx = volIdx++;
+          if (done.has(v.name)) continue;
+          if (await cancelled()) throw new StepError("cancelled");
+          await this.carry.carry({ moveId: row.id, idx, srcServerId: row.sourceServerId, dstServerId: row.targetServerId, srcVolume: dbExtraVolumeName({ id: it.refId }, v.name), dstVolume: dbExtraVolumeName({ id: st.targetDbId }, v.name) });
+          done.add(v.name);
+          st.volumesDone = [...done];
+          await save();
+        }
+        const view = await this.databases.provision(row.actorId, st.targetDbId);
+        if (view.status !== "RUNNING") throw new StepError("db_copy_failed");
+      } catch (e) {
+        if (e instanceof StepError) throw e;
+        if (e instanceof VolumeCarryError) throw e.reason === "agent_offline" ? new StepError("agent_offline") : new StepError("db_volume_failed");
+        throw this.wrap(e, "db_volume_failed");
       }
     }
 
@@ -386,9 +430,17 @@ export class ProjectMoveRunnerService {
     await this.audit.log({ actor: row.actorId, action: "project.move.fail", target: row.projectId, meta: { moveId: row.id, code } });
   }
 
+  /** The extra volumes a database declares (name and path only). */
+  private async extraVolumesOf(databaseId: string): Promise<Array<{ name: string; path: string }>> {
+    const row = await this.prisma.database.findUnique({ where: { id: databaseId }, select: { volumes: true } });
+    const v = (row as { volumes?: unknown } | null)?.volumes;
+    return Array.isArray(v) ? v.filter((x): x is { name: string; path: string } => !!x && typeof (x as { name?: unknown }).name === "string" && typeof (x as { path?: unknown }).path === "string") : [];
+  }
+
   /** Put everything back as it was: links to the source databases, apps restarted, the copies removed. Idempotent. */
   private async rollback(row: ProjectMove): Promise<void> {
     const plan = parsePlan(row.plan);
+    if (plan.ownerRollback) return this.undoMove(row, plan);
     if (!(await this.sourceAuthoritative(row, plan))) throw new StepError("rollback_incomplete");
     if (await this.childMoveActive(row, plan, false)) throw new StepError("rollback_incomplete");
     for (const [appId, st] of Object.entries(plan.apps)) {
@@ -410,12 +462,164 @@ export class ProjectMoveRunnerService {
       if (st.configOnly) {
         await this.databases.moveToServer(row.actorId, sourceId, row.sourceServerId).catch(() => undefined);
       } else {
-        // The copy is ours (we created it) and the source was never touched: remove the copy.
+        // The source database was stopped early so its extra volumes could be copied: it runs again before the copy goes.
+        if (st.sourceStopped && !st.setAside) await this.databases.provision(row.actorId, sourceId);
+        // The copy is ours (we created it) and the source's data was never touched: remove the copy.
         const exists = await this.prisma.database.findUnique({ where: { id: st.targetDbId }, select: { id: true } });
         if (exists) await this.databases.remove(row.actorId, st.targetDbId, { keepVolume: false });
       }
     }
     await this.audit.log({ actor: row.actorId, action: "project.move.rolled_back", target: row.projectId, meta: { moveId: row.id } });
+  }
+
+  // ───────────────────────────── the owner's undo of a failed move ─────────────────────────────
+
+  /**
+   * Undo a move that ended FAILED after some apps had already moved (the owner asked for it). Order, each step resumable from its stage:
+   *  1. every app the move touched is stopped (nothing may write while the data goes back),
+   *  2. the links to the database copies come off,
+   *  3. each database whose copy an app wrote to is brought back up to date on the source (a backup of the copy restored into the source;
+   *     a source that was set aside or stopped early is started and named as before), one whose copy nobody wrote to just comes back,
+   *  4. each app that moved goes back with the app move (volumes, domains), one at a time,
+   *  5. the apps are linked to the source databases again and started the way they were,
+   *  6. the copies are removed (a database that was never deployed is moved back instead).
+   * Nothing is removed before everything it could have held has been brought back, and a step that cannot finish fails the undo (the owner
+   * can press it again: it continues). Two things are not guaranteed: what an app wrote to a database copy is carried back only by the
+   * backup/restore pair, and an app's own safety copy on the source (kept by its first move) is not consulted.
+   */
+  private async undoMove(row: ProjectMove, plan: StoredPlan): Promise<void> {
+    const actor = row.actorId;
+    if (await this.childMoveActive(row, plan, false)) throw new StepError("rollback_incomplete");
+    const undo = (plan.undo ??= { apps: {}, dbs: {} });
+    const save = () => this.prisma.projectMove.update({ where: { id: row.id }, data: { plan: plan as unknown as Prisma.InputJsonValue } });
+    const fail = (e: unknown): never => {
+      if (e instanceof StepError) throw e;
+      this.log.warn(`project move undo failed: ${e instanceof Error ? e.constructor.name : "unknown"}`);
+      throw new StepError(e instanceof AgentOfflineException ? "agent_offline" : "rollback_incomplete");
+    };
+    const copyIds = new Set(Object.values(plan.dbs).map((d) => d.targetDbId).filter((x): x is string => !!x));
+    const touched = Object.entries(plan.apps).filter(([, a]) => a.stage !== "pending");
+    const wroteToCopy = (sourceId: string): boolean => touched.some(([, a]) => (a.stage === "relinked" || a.stage === "redeployed") && a.links.some((l) => l.databaseId === sourceId));
+
+    try {
+      // 1. + 2. stop the apps and take their links to copies off
+      for (const [appId] of touched) {
+        const u = (undo.apps[appId] ??= { stage: "pending" });
+        if (u.stage === "pending") {
+          const app = await this.prisma.application.findUnique({ where: { id: appId }, select: { status: true } });
+          if (app?.status === "RUNNING") await this.apps.stop(actor, appId);
+          u.stage = "stopped";
+          await save();
+        }
+        if (u.stage === "stopped") {
+          const links = await this.prisma.appDatabaseLink.findMany({ where: { appId }, select: { id: true, databaseId: true } });
+          for (const l of links) if (copyIds.has(l.databaseId)) await this.links.remove(actor, appId, l.id);
+          u.stage = "unlinked";
+          await save();
+        }
+      }
+
+      // 3. the databases: bring the source up to date and name it as before
+      for (const [sourceId, st] of Object.entries(plan.dbs)) {
+        if (!st.targetDbId || st.configOnly) continue;
+        const d = (undo.dbs[sourceId] ??= { stage: "pending" });
+        const mustRun = async (id: string): Promise<void> => {
+          const cur = await this.prisma.database.findUnique({ where: { id }, select: { status: true } });
+          if (cur?.status !== "RUNNING") {
+            const v = await this.databases.provision(actor, id);
+            if (v.status !== "RUNNING") throw new StepError("rollback_incomplete");
+          }
+        };
+        if (d.stage === "pending") {
+          if (wroteToCopy(sourceId)) {
+            await mustRun(sourceId);
+            await mustRun(st.targetDbId);
+            const b = await this.backups.backupNow(actor, st.targetDbId);
+            if (b.status !== "SUCCESS") throw new StepError("rollback_incomplete");
+            d.backupId = b.id;
+            await save();
+            await this.backups.restoreTo(actor, st.targetDbId, b.id, sourceId);
+          }
+          d.stage = "synced";
+          await save();
+        }
+        if (d.stage === "synced") {
+          if (st.setAside || st.sourceStopped) {
+            await mustRun(sourceId);
+            if (st.setAside) await this.databases.rename(actor, sourceId, st.oldName);
+            st.setAside = false;
+            st.sourceStopped = false;
+          }
+          d.stage = "unset";
+          await save();
+        }
+      }
+
+      // 4. + 5. the apps that moved go back, then are linked and started the way they were
+      const rows = await this.prisma.application.findMany({ where: { id: { in: touched.map(([id]) => id) } }, select: { id: true, name: true, serverId: true } });
+      const where = new Map(rows.map((r) => [r.id, r]));
+      for (const [appId, st] of touched) {
+        const u = undo.apps[appId];
+        const app = where.get(appId);
+        if (!app) continue;
+        if (u.stage === "unlinked") {
+          if (app.serverId === row.targetServerId) {
+            const started = await this.appMoves.start(actor, appId, { targetServerId: row.sourceServerId, acknowledge: plan.acks, repointDns: row.repointDns, archiveRetainDays: row.retainDays, confirmName: app.name });
+            u.moveId = started.moveId;
+            u.stage = "moving";
+            await save();
+          } else {
+            u.stage = "moved";
+            await save();
+          }
+        }
+        if (u.stage === "moving" && u.moveId) {
+          const phase = await this.waitForAppMove(u.moveId, row.id);
+          if (phase !== "COMPLETED") throw new StepError("rollback_incomplete");
+          u.stage = "moved";
+          await save();
+        }
+        if (u.stage === "moved") {
+          const have = new Set((await this.prisma.appDatabaseLink.findMany({ where: { appId }, select: { envVar: true } })).map((l) => l.envVar));
+          for (const l of st.links) if (!have.has(l.envVar)) await this.links.create(actor, appId, { databaseId: l.databaseId, envVar: l.envVar });
+          if (st.links.length === 0 && st.hadDbNetwork) await this.prisma.application.update({ where: { id: appId }, data: { dbNetwork: true } });
+          u.stage = "relinked";
+          await save();
+        }
+        if (u.stage === "relinked") {
+          const cur = await this.prisma.application.findUnique({ where: { id: appId }, select: { status: true } });
+          if (st.wasRunning && cur?.status !== "RUNNING") {
+            // linked again, so the environment changed: a deploy starts it with the links; an app with none is simply started
+            if (st.links.length > 0) await this.apps.deploy(actor, appId, {}, `pmove-undo:${row.id}:${appId}`);
+            else await this.apps.start(actor, appId);
+          }
+          u.stage = "done";
+          await save();
+        }
+      }
+      for (const appId of plan.frozen) {
+        const app = await this.prisma.application.findUnique({ where: { id: appId }, select: { status: true } });
+        if (app && app.status !== "RUNNING" && !touched.some(([id]) => id === appId)) await this.apps.start(actor, appId);
+      }
+
+      // 6. the copies go (or, for a database never deployed, the row goes back)
+      for (const [sourceId, st] of Object.entries(plan.dbs)) {
+        if (!st.targetDbId) continue;
+        const d = (undo.dbs[sourceId] ??= { stage: st.configOnly ? "unset" : "pending" });
+        if (d.stage === "copy_removed") continue;
+        if (st.configOnly) {
+          await this.databases.moveToServer(actor, sourceId, row.sourceServerId).catch(() => undefined);
+        } else {
+          const exists = await this.prisma.database.findUnique({ where: { id: st.targetDbId }, select: { id: true } });
+          if (exists) await this.databases.remove(actor, st.targetDbId, { keepVolume: false });
+        }
+        d.stage = "copy_removed";
+        await save();
+      }
+    } catch (e) {
+      fail(e);
+    }
+    await this.audit.log({ actor, action: "project.move.rolled_back", target: row.projectId, meta: { moveId: row.id, byOwner: true } });
   }
 
   // ───────────────────────────── helpers ─────────────────────────────

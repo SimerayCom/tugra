@@ -17,6 +17,7 @@ interface Opts {
   dbRows?: Record<string, Row>;
   linkCounts?: Record<string, number>;
   due?: Row[];
+  childActive?: boolean;
 }
 
 function make(o: Opts = {}) {
@@ -48,9 +49,9 @@ function make(o: Opts = {}) {
       count: jest.fn(async ({ where }: { where: { databaseId: string } }) => o.linkCounts?.[where.databaseId] ?? 0),
     },
     server: { findUnique: jest.fn(async ({ where }: { where: { id: string } }) => servers[where.id] ?? null) },
-    appMove: { findMany: jest.fn(async () => []) },
+    appMove: { findMany: jest.fn(async () => []), findFirst: jest.fn(async () => (o.childActive ? { id: "mv-a1" } : null)) },
     projectMove: {
-      findFirst: jest.fn(async () => (o.active ? { id: "other" } : null)),
+      findFirst: jest.fn(async (_a?: unknown) => (o.active ? { id: "other" } : null)),
       findUnique: jest.fn(async () => (move ? { ...move } : null)),
       findMany: jest.fn(async ({ where }: { where: { phase?: unknown } }) => (where.phase === "COMPLETED" ? (o.due ?? []) : move ? [{ ...move }] : [])),
       create: jest.fn(async ({ data }: { data: Row }) => {
@@ -59,7 +60,7 @@ function make(o: Opts = {}) {
         return row;
       }),
       update: jest.fn(async ({ data }: { data: Row }) => void Object.assign(move ?? {}, data)),
-      updateMany: jest.fn(async () => ({ count: 1 })),
+      updateMany: jest.fn(async (_a?: unknown) => ({ count: 1 })),
     },
     $queryRaw: jest.fn(async () => []),
     $transaction: undefined as unknown as jest.Mock,
@@ -262,5 +263,66 @@ describe("reads", () => {
   });
   it("an unknown move is 404", async () => {
     await expect(make({ move: null }).svc.get("u1", "nope")).rejects.toBeInstanceOf(NotFoundException);
+  });
+});
+
+describe("ProjectMovesService.rollback (the owner's undo of a failed move)", () => {
+  const moved = { a1: { stage: "redeployed", moveId: "mv-a1", links: [], hadDbNetwork: false, wasRunning: true } };
+  const failed = (over: Row = {}) => ({ phase: "FAILED", failureReason: "partial_move", plan: { v: 1, apps: moved, dbs: {}, frozen: [], warnings: [] }, ...over });
+  const NAME = { confirmName: "proj" };
+
+  it("owner only: an admin, a member or a stranger is refused before anything is read or changed", async () => {
+    for (const role of ["ADMIN", "VIEWER", null]) {
+      const t = make({ role, move: failed() });
+      await expect(t.svc.rollback("u1", "pm1", NAME)).rejects.toBeInstanceOf(ForbiddenException);
+      expect(t.prisma.projectMove.updateMany).not.toHaveBeenCalled();
+      expect(t.runner.run).not.toHaveBeenCalled();
+    }
+  });
+  it("needs the project's exact name", async () => {
+    const t = make({ move: failed() });
+    await expect(t.svc.rollback("u1", "pm1", { confirmName: "PROJ" })).rejects.toBeInstanceOf(BadRequestException);
+    expect(t.runner.run).not.toHaveBeenCalled();
+  });
+  it("only a FAILED move can be undone: a running, completed or already rolled back one is a 409", async () => {
+    for (const phase of ["MOVING", "COMPLETED", "ROLLED_BACK", "ROLLING_BACK", "CUTOVER"]) {
+      const t = make({ move: failed({ phase }) });
+      await expect(t.svc.rollback("u1", "pm1", NAME)).rejects.toMatchObject({ response: { code: "move_not_rollbackable" } });
+      expect(t.prisma.projectMove.updateMany).not.toHaveBeenCalled();
+    }
+  });
+  it("a move that changed nothing has nothing to undo, and a move whose safety copy was removed cannot be undone", async () => {
+    const none = make({ move: failed({ plan: { v: 1, apps: { a1: { stage: "pending", links: [], hadDbNetwork: false, wasRunning: false } }, dbs: {}, frozen: [], warnings: [] } }) });
+    await expect(none.svc.rollback("u1", "pm1", NAME)).rejects.toMatchObject({ response: { code: "nothing_to_roll_back" } });
+    const purged = make({ move: failed({ plan: { v: 1, apps: moved, dbs: {}, frozen: [], warnings: [], safetyPurged: true } }) });
+    await expect(purged.svc.rollback("u1", "pm1", NAME)).rejects.toMatchObject({ response: { code: "move_not_rollbackable" } });
+  });
+  it("is refused while another move of the project runs or one of the project move's app moves is still running", async () => {
+    const busy = make({ move: failed(), active: true });
+    await expect(busy.svc.rollback("u1", "pm1", NAME)).rejects.toMatchObject({ response: { code: "project_move_active" } });
+    const child = make({ move: failed(), childActive: true });
+    await expect(child.svc.rollback("u1", "pm1", NAME)).rejects.toMatchObject({ response: { code: "child_move_active" } });
+    expect(child.runner.run).not.toHaveBeenCalled();
+  });
+  it("hands the undo to the runner: FAILED becomes ROLLING_BACK only from FAILED, the plan carries the owner's request, and it is audited", async () => {
+    const t = make({ move: failed() });
+    expect(await t.svc.rollback("u1", "pm1", NAME)).toEqual({ moveId: "pm1", phase: "ROLLING_BACK" });
+    const call = t.prisma.projectMove.updateMany.mock.calls[0][0] as { where: Row; data: { phase: string; plan: { ownerRollback: boolean }; ownerId: null } };
+    expect(call.where).toEqual({ id: "pm1", phase: "FAILED" });
+    expect(call.data).toMatchObject({ phase: "ROLLING_BACK", ownerId: null });
+    expect(call.data.plan.ownerRollback).toBe(true);
+    expect(t.runner.run).toHaveBeenCalledWith("pm1");
+    expect(t.audits.find((a) => a.action === "project.move.owner-rollback")).toMatchObject({ meta: { moveId: "pm1", failure: "partial_move" } });
+  });
+  it("losing the race with another change of phase is a 409 and the runner is not started", async () => {
+    const t = make({ move: failed() });
+    t.prisma.projectMove.updateMany.mockResolvedValueOnce({ count: 0 });
+    await expect(t.svc.rollback("u1", "pm1", NAME)).rejects.toBeInstanceOf(ConflictException);
+    expect(t.runner.run).not.toHaveBeenCalled();
+  });
+  it("the view says the undo is available only for a FAILED move that changed something", async () => {
+    expect((await make({ move: failed() }).svc.get("u1", "pm1")).rollbackAvailable).toBe(true);
+    expect((await make({ move: failed({ phase: "COMPLETED" }) }).svc.get("u1", "pm1")).rollbackAvailable).toBe(false);
+    expect((await make({ move: failed({ plan: { v: 1, apps: {}, dbs: {}, frozen: [], warnings: [] } }) }).svc.get("u1", "pm1")).rollbackAvailable).toBe(false);
   });
 });

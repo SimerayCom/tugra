@@ -112,7 +112,8 @@ export function planProjectMove(input: PlanInput): Plan {
     }
     if (!input.backupEngines.has(d.engine)) block({ code: "db_engine_unsupported", ref: d.name });
     if (!d.backupDestinationId) block({ code: "db_needs_s3_destination", ref: d.name });
-    if (d.extraVolumes > 0) block({ code: "db_extra_volumes", ref: d.name });
+    // the extra volumes travel with the database: copied volume by volume while it is stopped, after its data was restored
+    if (d.extraVolumes > 0) warnings.push({ code: "db_extra_volumes_carried", ref: d.name });
     if (d.outsideLinkedApps.some((id) => !inProject.has(id))) block({ code: "db_linked_outside", ref: d.name });
     if (d.pitrEnabled) warnings.push({ code: "pitr_not_carried", ref: d.name });
   }

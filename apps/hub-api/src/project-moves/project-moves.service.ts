@@ -10,8 +10,8 @@ import { DatabasesService } from "../databases/databases.service";
 import { supportsBackup, type DbEngine } from "../databases/database-script";
 import { planProjectMove, resolveSource, type Plan, type PlanApp, type PlanDb } from "./project-move-plan";
 import { ProjectMoveRunnerService } from "./project-move-runner.service";
-import { parseItems, parsePlan, type StoredPlan } from "./project-move-state";
-import type { PreviewProjectMoveInput, StartProjectMoveInput } from "./dto";
+import { hasUndoable, parseItems, parsePlan, type StoredPlan } from "./project-move-state";
+import type { PreviewProjectMoveInput, RollbackProjectMoveInput, StartProjectMoveInput } from "./dto";
 
 const NON_TERMINAL = ["QUEUED", "PRECHECK", "MOVING", "VERIFYING", "CUTOVER", "ROLLING_BACK"];
 const CANCELLABLE = ["QUEUED", "PRECHECK", "MOVING"];
@@ -224,6 +224,37 @@ export class ProjectMovesService {
   }
 
   /**
+   * Undo a FAILED move (the owner's decision after a partial move). The project's name is typed; nothing else may be moving this project,
+   * and none of the app moves the project move started may still be running (the undo would race them). The runner does the work and
+   * says how it ended; pressing it again after a failed undo continues from where it stopped.
+   */
+  async rollback(userId: string, id: string, input: RollbackProjectMoveInput): Promise<{ moveId: string; phase: "ROLLING_BACK" }> {
+    const row = await this.loadRow(id);
+    await this.requireOwner(userId, row.teamId, row.projectId);
+    const project = await this.loadProject(row.projectId);
+    if (input.confirmName !== project.name) throw new BadRequestException({ statusCode: 400, message: "type the project's exact name to confirm", code: "confirm_name_mismatch" });
+    if (row.phase !== "FAILED") throw conflict("move_not_rollbackable", "only a failed move can be undone");
+    const plan = parsePlan(row.plan);
+    if (plan.safetyPurged) throw conflict("move_not_rollbackable", "the safety copy was already removed");
+    if (!hasUndoable(plan)) throw conflict("nothing_to_roll_back", "this move changed nothing that needs undoing");
+    const other = await this.prisma.projectMove.findFirst({ where: { projectId: row.projectId, phase: { in: NON_TERMINAL }, NOT: { id } }, select: { id: true } });
+    if (other) throw conflict("project_move_active", "this project already has a move in progress");
+    const childIds = Object.values(plan.apps).map((a) => a.moveId).filter((x): x is string => !!x);
+    const live = childIds.length ? await this.prisma.appMove.findFirst({ where: { id: { in: childIds }, phase: { notIn: ["COMPLETED", "ROLLED_BACK", "FAILED"] } }, select: { id: true } }) : null;
+    if (live) throw conflict("child_move_active", "an app move of this project is still running");
+
+    plan.ownerRollback = true;
+    const won = await this.prisma.projectMove.updateMany({
+      where: { id, phase: "FAILED" },
+      data: { phase: "ROLLING_BACK", plan: plan as unknown as Prisma.InputJsonValue, finishedAt: null, ownerId: null, heartbeatAt: null },
+    });
+    if (won.count !== 1) throw conflict("move_not_rollbackable", "only a failed move can be undone");
+    await this.audit.log({ actor: userId, action: "project.move.owner-rollback", target: row.projectId, meta: { moveId: id, failure: row.failureReason ?? null } });
+    void this.runner.run(id).catch((e: unknown) => this.log.error(`project move undo failed: ${e instanceof Error ? e.constructor.name : "unknown"}`));
+    return { moveId: id, phase: "ROLLING_BACK" };
+  }
+
+  /**
    * Remove the safety copy of a COMPLETED move now: the old databases that were set aside (only when stopped and used by nothing) and the
    * apps' archived source volumes. Returns how many databases were removed.
    */
@@ -302,6 +333,7 @@ export class ProjectMovesService {
       archiveUntil: row.archiveUntil?.toISOString() ?? null,
       failureCode: row.failureReason,
       report: plan.report ?? null,
+      rollbackAvailable: row.phase === "FAILED" && !plan.safetyPurged && hasUndoable(plan),
       createdAt: row.createdAt.toISOString(),
       finishedAt: row.finishedAt?.toISOString() ?? null,
     };

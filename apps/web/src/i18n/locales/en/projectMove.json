@@ -29,6 +29,9 @@
   "starting": "Starting...",
   "cancel": "Cancel the move",
   "purge": "Remove the old copy now",
+  "rollback": "Undo this move",
+  "rollbackBody": "This stops the apps that moved, brings the databases back up to date on the old server, moves the apps back, links them to the old databases again and starts them. Then the copies on the new server are removed. You can press it again if a step fails.",
+  "rollbackHint": "Some apps moved and some did not. Undoing puts everything back on the old server.",
   "repointDns": "Point the DNS records at the new server too",
   "willMove": "What moves",
   "from": "From {server}",
@@ -52,7 +55,6 @@
     "server_not_ready": "A server is not online yet.",
     "db_engine_unsupported": "A database engine cannot be copied by backup.",
     "db_needs_s3_destination": "A database needs a backup destination (S3) that both servers can reach.",
-    "db_extra_volumes": "A database has extra volumes that a backup does not carry.",
     "db_linked_outside": "An app outside this project uses one of its databases.",
     "db_not_ready": "A database is not running.",
     "app_preflight_failed": "An app cannot move yet: {codes}",
@@ -63,7 +65,8 @@
     "app_redeploy_after_relink": "{ref} is redeployed after it is linked to its new database.",
     "pitr_not_carried": "{ref}: point-in-time recovery is not carried to the new database.",
     "db_config_only": "{ref} was never deployed: only its settings move.",
-    "items_left_behind": "Some items of this project are on other servers and stay where they are."
+    "items_left_behind": "Some items of this project are on other servers and stay where they are.",
+    "db_extra_volumes_carried": "{ref}: its extra volumes are copied with it while it is stopped for a short time."
   },
   "failure": {
     "db_copy_failed": "A database copy did not come up.",
@@ -77,7 +80,9 @@
     "agent_offline": "An agent went offline.",
     "timeout": "A step took too long.",
     "cancelled": "The move was cancelled.",
-    "unexpected": "Something unexpected stopped the move."
+    "unexpected": "Something unexpected stopped the move.",
+    "db_volume_failed": "An extra volume of a database could not be copied.",
+    "rolled_back_by_owner": "You undid this move. The apps are back on the old server."
   },
   "check": {
     "app_running": "The app is running on the new server",
@@ -103,7 +108,10 @@
     "move_not_completed": "Only a finished move has an old copy.",
     "nothing_to_purge": "The old copy was already removed.",
     "confirm_name_mismatch": "That is not the project's name.",
-    "generic": "That did not work. Try again."
+    "generic": "That did not work. Try again.",
+    "move_not_rollbackable": "Only a failed move can be undone.",
+    "nothing_to_roll_back": "This move changed nothing that needs undoing.",
+    "child_move_active": "An app move of this project is still running. Wait for it to finish."
   },
   "confirmBody": "This stops {n} running items for a short time, copies the data and moves the project to {server}. The old copy stays for {days} days.",
   "purgeBody": "This removes the old databases and the old app volumes that were kept as a safety copy.",
