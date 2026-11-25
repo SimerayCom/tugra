@@ -292,9 +292,13 @@ them (Postgres and Redis restart for a few seconds, the hub reconnects). What th
   young generation, and `MALLOC_ARENA_MAX=2` stops glibc keeping up to 8 allocation arenas per core. **If the hub log shows
   `FATAL ERROR: ... JavaScript heap out of memory` (a fatal abort, then a container restart), the cap is too low for the work that
   was running (a large import, a migration upload, a big backup): raise `HUB_MAX_HEAP_MB`** in `.env` (for example `768` on a
-  small host that runs big imports, `1536` on 8 GB or more) and run `docker compose up -d hub-api`. The cap bounds the JS heap
-  only: the database driver's query engine and Node's buffers live outside it, which is why the container ceilings below add
-  headroom on top of the cap.
+  small host that runs big imports, `1536` on 8 GB or more) and run `docker compose up -d hub-api`. **On a `tiny` or `small` host
+  raise `HUB_MEM_LIMIT` with it**, to the new cap plus about 400 MB (`768` -> `1152m`): the container ceiling is sized for the
+  profile's own cap, and a heap that grows past it is killed by the kernel (exit 137) and restarted in a loop. The installer and
+  `--doctor` warn when `HUB_MAX_HEAP_MB` plus the native overhead no longer fits `HUB_MEM_LIMIT` (the same goes for
+  `WEB_MAX_HEAP_MB` / `WEB_MEM_LIMIT` and `TUGRA_REDIS_MAXMEMORY` / `REDIS_MEM_LIMIT`); `HUB_MEM_LIMIT=0` removes the ceiling.
+  The cap bounds the JS heap only: the database driver's query engine and Node's buffers live outside it, which is why the
+  container ceilings below add headroom on top of the cap.
 - **Postgres** gets `shared_buffers`, `effective_cache_size`, `work_mem`, `maintenance_work_mem`, `max_connections`,
   `max_wal_size`, `checkpoint_timeout`, `wal_compression=on` and `max_parallel_workers_per_gather` on its command line.
   `max_connections` stays above the hub's pool plus the migration step at boot and the hub backup's `pg_dump`. Parallel query
@@ -318,8 +322,10 @@ them (Postgres and Redis restart for a few seconds, the hub reconnects). What th
 of one) keeps working: each key falls back to a default in `deploy/docker-compose.yml` that is today's behaviour or better (hub heap
 768, semi-space 16, pool 16, Postgres `shared_buffers` 128 MB, Redis `maxmemory` 256 MB, no ceilings). An in-app update recreates
 only the hub and web containers; Postgres and Redis pick up their new command line the next time they are recreated, e.g. by
-re-running `./scripts/install.sh`, which also detects and stores the profile (a key already in `.env`, such as an earlier
-`HUB_MAX_HEAP_MB`, is never overwritten).
+re-running `./scripts/install.sh` with `--profile=<name>`. A plain re-run of the installer on an install that is already running
+does **not** change its sizing: it prints which profile fits the host and leaves `.env` alone (an install is only sized by a
+profile on first install or when you pass `--profile`; a key already in `.env`, such as an earlier `HUB_MAX_HEAP_MB`, is never
+overwritten by the first detection).
 
 **Minimum host.** The floor is **1 vCPU and 1 GB RAM** with the `tiny` profile and the 2 GB swapfile the installer adds
 (`--no-swap` opts out). Measured on the harness with 50 servers and 1000 containers seeded (hub, web, Postgres, Redis; the local

@@ -780,6 +780,11 @@ fi
 [ -f "$ENV_FILE" ] || (umask 077; : > "$ENV_FILE")
 chmod 600 "$ENV_FILE"   # BEFORE any secret is appended (a pre-existing 0644 .env must not leak them in the interim)
 
+# An install that is already running (its .env had a database password before this run AND the Postgres volume exists) was sized by the
+# compose defaults; the RAM profile (lib/profile.sh) only advises on it, it does not shrink it behind the operator's back.
+EXISTING_INSTALL=0
+if env_has POSTGRES_PASSWORD && command -v docker >/dev/null 2>&1 && docker volume inspect tugra_tugra_pg >/dev/null 2>&1; then EXISTING_INSTALL=1; fi
+
 ensure_env JWT_ACCESS_SECRET     "$(rand_b64 24)"
 ensure_env JWT_REFRESH_SECRET    "$(rand_b64 24)"
 ensure_env SECRETS_ENCRYPTION_KEY "$(rand_b64 24)"
@@ -874,9 +879,10 @@ fi
 
 # RAM profile (lib/profile.sh): sizes the hub/web heap caps, Postgres, Redis, the database pool and (tiny/small) the container
 # memory ceilings from this host's RAM. An explicit --profile overwrites; a first install fills the keys that are not set yet (an
-# operator's own HUB_MAX_HEAP_MB survives); a flag-less re-run keeps the stored choice. Never fatal for the install itself.
+# operator's own HUB_MAX_HEAP_MB survives); a flag-less re-run keeps the stored choice; an install that is already running only gets
+# advice (no TUGRA_PROFILE yet = it keeps the sizing it has). Never fatal for the install itself.
 if declare -F profile_select >/dev/null 2>&1; then
-  profile_select "$PROFILE_ARG" || { [ -z "$PROFILE_ARG" ] || exit 1; warn "could not apply a RAM profile; compose defaults apply"; }
+  profile_select "$PROFILE_ARG" "$EXISTING_INSTALL" || { [ -z "$PROFILE_ARG" ] || exit 1; warn "could not apply a RAM profile; compose defaults apply"; }
 elif [ -n "$PROFILE_ARG" ]; then
   err "scripts/lib/profile.sh not found next to this installer: update the checkout and re-run"; exit 1
 fi

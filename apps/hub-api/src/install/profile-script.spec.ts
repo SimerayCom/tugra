@@ -20,6 +20,13 @@ const clean = { PATH: process.env.PATH } as NodeJS.ProcessEnv;
 const URLS = ["--hub-url", "http://10.0.0.5:3000", "--web-url", "http://10.0.0.5:3001"];
 
 let n = 0;
+/** A `docker` stub first on PATH: whether the Postgres volume of "an install that is already running" exists must not depend on this machine's real Docker. */
+function dockerStub(volumeExists: boolean): string {
+  const bin = join(dir, `bin-${n++}`);
+  mkdirSync(bin, { recursive: true });
+  writeFileSync(join(bin, "docker"), `#!/bin/sh\n[ "$1 $2 $3" = "volume inspect tugra_tugra_pg" ] && exit ${volumeExists ? 0 : 1}\nexit 1\n`, { mode: 0o755 });
+  return `${bin}:${process.env.PATH}`;
+}
 /** A fake host: /proc/meminfo (and an empty /proc/swaps) under a private TUGRA_FS_ROOT. kb=null leaves meminfo out. */
 function host(kb: number | null): string {
   const root = join(dir, `host-${n++}`);
@@ -39,7 +46,7 @@ function install(args: string[], opts: { kb?: number | null; initial?: string; n
   if (opts.initial !== undefined) writeFileSync(envFile, opts.initial);
   const r = spawnSync(BASH, [INSTALL, "--dry-run", "--env-file", envFile, ...URLS, ...args], {
     encoding: "utf8",
-    env: { ...clean, TUGRA_FS_ROOT: host(opts.kb === undefined ? 3_900_000 : opts.kb) },
+    env: { ...clean, PATH: dockerStub(false), TUGRA_FS_ROOT: host(opts.kb === undefined ? 3_900_000 : opts.kb) },
   });
   const env = existsSync(envFile) ? readFileSync(envFile, "utf8") : "";
   const get = (k: string) => new RegExp(`^${k}=(.*)$`, "m").exec(env)?.[1];
@@ -120,6 +127,39 @@ describe("scripts/lib/profile.sh", () => {
       expect([std.HUB_MEM_LIMIT, std.WEB_MEM_LIMIT, std.REDIS_MEM_LIMIT]).toEqual(["0", "0", "0"]);
     });
   });
+
+  describe("container ceilings versus raised heap caps", () => {
+    const check = (env: string) => {
+      const f = join(dir, `ceil-${n++}.env`);
+      writeFileSync(f, env);
+      return execFileSync(BASH, ["-c", `ENV_FILE="${f}"; env_get() { { grep "^$1=" "$ENV_FILE" 2>/dev/null || true; } | head -n1 | cut -d= -f2-; }; . "${LIB}"; profile_ceiling_problems`]).toString();
+    };
+    it("the shipped profiles fit their own ceilings", () => {
+      for (const name of ["tiny", "small", "standard"]) {
+        const v = profileValues(name);
+        expect(check(Object.entries(v).map(([k, x]) => `${k}=${x}`).join("\n"))).toBe("");
+      }
+    });
+
+    it("flags the documented fix (a raised heap cap) when HUB_MEM_LIMIT stays at the profile's value", () => {
+      const out = check("HUB_MAX_HEAP_MB=768\nHUB_MEM_LIMIT=640m\n");
+      expect(out).toMatch(/HUB_MEM_LIMIT=640m allows 640 MB but HUB_MAX_HEAP_MB=768 needs about 1152 MB/);
+      expect(out).toMatch(/Raise HUB_MEM_LIMIT to at least 1152m/);
+    });
+
+    it("is quiet when the ceiling is raised together with the cap, in any unit, or when there is no ceiling", () => {
+      expect(check("HUB_MAX_HEAP_MB=768\nHUB_MEM_LIMIT=1152m\n")).toBe("");
+      expect(check("HUB_MAX_HEAP_MB=768\nHUB_MEM_LIMIT=2g\n")).toBe("");
+      expect(check("HUB_MAX_HEAP_MB=1536\nHUB_MEM_LIMIT=0\n")).toBe("");
+      expect(check("HUB_MAX_HEAP_MB=1536\n")).toBe("");
+    });
+
+    it("uses the compose default cap (768) when only the ceiling is set, and checks web and Redis too", () => {
+      expect(check("HUB_MEM_LIMIT=640m\n")).toMatch(/HUB_MAX_HEAP_MB=768 needs about 1152/);
+      expect(check("WEB_MAX_HEAP_MB=256\nWEB_MEM_LIMIT=256m\n")).toMatch(/WEB_MEM_LIMIT=256m allows 256 MB but WEB_MAX_HEAP_MB=256 needs about 416/);
+      expect(check("TUGRA_REDIS_MAXMEMORY=192mb\nREDIS_MEM_LIMIT=192m\n")).toMatch(/REDIS_MEM_LIMIT=192m allows 192 MB but TUGRA_REDIS_MAXMEMORY=192mb needs about 256/);
+    });
+  });
 });
 
 describe("scripts/install.sh --profile wiring", () => {
@@ -187,6 +227,46 @@ describe("scripts/install.sh --profile wiring", () => {
   it("leaves DATABASE_URL untouched: the pool is applied in the hub process, so pg_dump and migrate keep a plain URL", () => {
     const r = install(["--profile=tiny"]);
     expect(r.get("DATABASE_URL")).toMatch(/^postgresql:\/\/tugra:[^@]+@postgres:5432\/tugra\?schema=public$/);
+  });
+
+  it("a re-run on an install that is already running does not shrink it: advice only, nothing written", () => {
+    const path = dockerStub(true);
+    const envFile = join(dir, `existing-${n++}.env`);
+    writeFileSync(envFile, "POSTGRES_PASSWORD=abc\nHUB_PORT=3000\n");
+    const r = spawnSync(BASH, [INSTALL, "--dry-run", "--env-file", envFile, ...URLS], {
+      encoding: "utf8",
+      env: { ...clean, PATH: path, TUGRA_FS_ROOT: host(1_000_000) },
+    });
+    const env = readFileSync(envFile, "utf8");
+    expect(r.status).toBe(0);
+    for (const k of ["TUGRA_PROFILE", ...KEYS]) expect(env).not.toMatch(new RegExp(`^${k}=`, "m"));
+    expect(r.stdout + r.stderr).toMatch(/Profile: none set; this install keeps the sizing it runs with today/);
+    expect(r.stdout + r.stderr).toMatch(/the 'tiny' profile .* fits it\. Nothing was changed; to apply it run:  \.\/scripts\/install\.sh --profile=tiny/);
+    // --profile is still the explicit way in.
+    const forced = spawnSync(BASH, [INSTALL, "--dry-run", "--env-file", envFile, ...URLS, "--profile=tiny"], {
+      encoding: "utf8",
+      env: { ...clean, PATH: path, TUGRA_FS_ROOT: host(1_000_000) },
+    });
+    expect(forced.status).toBe(0);
+    expect(readFileSync(envFile, "utf8")).toMatch(/^TUGRA_PROFILE=tiny$/m);
+  });
+
+  it("a .env left by an install that never started (no Postgres volume) is still a fresh install and gets its profile", () => {
+    const r = install([], { kb: 1_000_000, initial: "POSTGRES_PASSWORD=abc\n" });
+    expect(r.get("TUGRA_PROFILE")).toBe("tiny");
+  });
+
+  it("warns when the operator raised the heap cap but left the container ceiling, in the installer and in --doctor", () => {
+    const r = install([], { kb: 1_000_000, initial: "TUGRA_PROFILE=tiny\nHUB_MAX_HEAP_MB=768\nHUB_MEM_LIMIT=640m\n" });
+    expect(r.status).toBe(0);
+    expect(r.out).toMatch(/HUB_MEM_LIMIT=640m allows 640 MB but HUB_MAX_HEAP_MB=768 needs about 1152 MB/);
+    const envFile = join(dir, `doctor-ceil-${n++}.env`);
+    writeFileSync(envFile, "TUGRA_PROFILE=tiny\nHUB_MAX_HEAP_MB=768\nHUB_MEM_LIMIT=640m\n");
+    const d = spawnSync(BASH, [INSTALL, "--doctor", "--env-file", envFile], { encoding: "utf8", env: { ...clean, TUGRA_FS_ROOT: host(1_000_000) }, timeout: 60_000 });
+    expect(d.stdout + d.stderr).toMatch(/HUB_MEM_LIMIT=640m allows 640 MB but HUB_MAX_HEAP_MB=768/);
+    // the installer does not rewrite either value
+    expect(r.get("HUB_MAX_HEAP_MB")).toBe("768");
+    expect(r.get("HUB_MEM_LIMIT")).toBe("640m");
   });
 
   it("--doctor on a host that has no profile prints the matching advice and changes nothing", () => {

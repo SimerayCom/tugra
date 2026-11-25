@@ -133,6 +133,56 @@ EOF
   esac
 }
 
+# A memory size ("640m", "1g", "96mb", "512k", plain bytes, "0") in whole MB; empty when it is not one.
+profile_mb() {
+  local v num unit; v="$(printf '%s' "$1" | tr -d "\"' \r" | tr 'A-Z' 'a-z')"
+  printf '%s' "$v" | grep -Eq '^[0-9]+(b|k|kb|m|mb|g|gb)?$' || return 0
+  num="$(printf '%s' "$v" | tr -dc '0-9')"; unit="$(printf '%s' "$v" | tr -d '0-9')"
+  case "$unit" in
+    ''|b) echo $(( num / 1048576 )) ;;
+    k|kb) echo $(( num / 1024 )) ;;
+    m|mb) echo "$num" ;;
+    g|gb) echo $(( num * 1024 )) ;;
+  esac
+}
+
+# The container ceilings only hold while the heap caps stay below them: HUB_MEM_LIMIT is the heap cap plus the native overhead
+# (Prisma's query engine, Node buffers, the runtime itself: 384 MB measured on the load harness), so an operator who raises
+# HUB_MAX_HEAP_MB without raising HUB_MEM_LIMIT makes the kernel OOM-kill the hub (exit 137) once the heap grows, and
+# `restart: unless-stopped` turns that into a crash loop. Nothing derives one from the other (compose cannot do arithmetic), so
+# this says so, for the installer and --doctor. "0" or no key = no ceiling = nothing to check. Prints one line per mismatch.
+PROFILE_HUB_OVERHEAD_MB=384
+PROFILE_WEB_OVERHEAD_MB=160
+PROFILE_REDIS_OVERHEAD_MB=64
+profile_ceiling_problems() {
+  local pair svc limit_key cap_key cap_default overhead cap limit cap_mb limit_mb
+  for pair in "HUB_MEM_LIMIT HUB_MAX_HEAP_MB 768 $PROFILE_HUB_OVERHEAD_MB" "WEB_MEM_LIMIT WEB_MAX_HEAP_MB 512 $PROFILE_WEB_OVERHEAD_MB" "REDIS_MEM_LIMIT TUGRA_REDIS_MAXMEMORY 256mb $PROFILE_REDIS_OVERHEAD_MB"; do
+    set -- $pair; limit_key="$1"; cap_key="$2"; cap_default="$3"; overhead="$4"
+    limit="$(env_get "$limit_key")"; limit_mb="$(profile_mb "$limit")"
+    case "$limit_mb" in ''|0) continue ;; esac
+    cap="$(env_get "$cap_key")"; [ -n "$cap" ] || cap="$cap_default"
+    case "$cap_key" in
+      TUGRA_REDIS_MAXMEMORY) cap_mb="$(profile_mb "$cap")" ;;
+      *) cap_mb="$(profile_mb "${cap}m")" ;;
+    esac
+    case "$cap_mb" in ''|0) continue ;; esac
+    if [ $(( cap_mb + overhead )) -gt "$limit_mb" ]; then
+      printf '%s=%s allows %s MB but %s=%s needs about %s MB (the cap plus ~%s MB of native memory): the kernel would kill the container once it grows. Raise %s to at least %sm in .env, or lower %s, then: docker compose up -d\n' \
+        "$limit_key" "$limit" "$limit_mb" "$cap_key" "$cap" "$(( cap_mb + overhead ))" "$overhead" "$limit_key" "$(( cap_mb + overhead ))" "$cap_key"
+    fi
+  done
+}
+
+# Installer / doctor wrapper: each mismatch is a warning (the install itself is not blocked; the operator may be about to lower the cap).
+profile_check_ceilings() {
+  local line rc=0
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    warn "$line"; rc=1
+  done < <(profile_ceiling_problems)
+  return "$rc"
+}
+
 # The stored profile name, quotes/whitespace stripped; empty when none (or an unknown one: treated as none, never fatal).
 profile_stored() {
   local v; v="$(env_get TUGRA_PROFILE | tr -d "\"' \r")"
@@ -158,8 +208,11 @@ profile_describe() {
 }
 
 # Pick + persist the profile for this run. $1 = the --profile value ("" = none given, "auto" = detect again).
+# $2 = 1 when this .env belongs to an install that is already running (set by install.sh): a first detection there is advice, not
+# a change, because that install was sized by the compose defaults (hub heap 768, max_connections 100, no container ceilings) and
+# its data, imports and backups with it. A smaller profile would silently downgrade it the first time the installer is re-run.
 profile_select() {
-  local want="$1" stored detected name
+  local want="$1" existing="${2:-0}" stored detected name
   stored="$(profile_stored)"; detected="$(profile_detect)"
   if [ -n "$want" ] && [ "$want" != "auto" ]; then
     profile_valid "$want" || { err "--profile must be one of: tiny, small, standard, auto (got: $want)"; return 1; }
@@ -174,10 +227,16 @@ profile_select() {
     if [ "$detected" != "$stored" ]; then
       note "This host's RAM ($(profile_describe)) suggests the '$detected' profile; re-run with --profile=$detected (or --profile=auto) to switch."
     fi
+  elif [ "$existing" = "1" ]; then
+    ok "Profile: none set; this install keeps the sizing it runs with today (compose defaults)"
+    if [ "$detected" != "standard" ]; then
+      note "This host has $(profile_describe): the '$detected' profile (smaller heap caps, Postgres and Redis limits) fits it. Nothing was changed; to apply it run:  ./scripts/install.sh --profile=$detected"
+    fi
   else
     profile_apply "$detected" fill || return 1
     ok "Profile: $detected (detected from $(profile_describe); change with --profile=<tiny|small|standard>)"
   fi
+  profile_check_ceilings || true
 }
 
 # Read-only, for --doctor. Never a failure: a profile that does not match the RAM is advice.
@@ -195,4 +254,5 @@ profile_doctor() {
   else
     note "Profile: $stored in .env, but $(profile_describe) fits '$detected'. Switch:  ./scripts/install.sh --profile=$detected"
   fi
+  profile_check_ceilings || true
 }
