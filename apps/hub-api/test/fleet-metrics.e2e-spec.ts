@@ -78,14 +78,14 @@ describe("fleet metrics reads (real database)", () => {
     const big = `${tag}-big`;
     beforeAll(async () => {
       await prisma.server.create({ data: { id: big, name: big, teamId, enrollToken: `${big}-tok`, status: "ONLINE" } });
-      // 12 000 raw host samples 5 s apart (~16.7 h) with a distinctive cpu = index, and 3 containers of two series.
+      // 12 000 raw host samples 5 s apart (~16.7 h) with a distinctive cpu = index, and 4 containers of 1 400 samples each (15 s apart, ~5.8 h: inside the 6 h container raw retention).
       await prisma.$executeRawUnsafe(`
         INSERT INTO "Metric" ("id","serverId","ts","cpu","memUsed","memTotal","diskUsed","diskTotal","netRx","netTx","diskRead","diskWrite")
         SELECT '${big}-m' || g, '${big}', (now() at time zone 'utc') - g * interval '5 seconds', g, 1, 2, 3, 4, 0, 0, 0, 0 FROM generate_series(0, 11999) g`);
       await prisma.$executeRawUnsafe(`
         INSERT INTO "ContainerMetric" ("id","serverId","containerName","containerId","ts","cpu","memUsed","memTotal","memPct","netRx","netTx","blkRead","blkWrite")
         SELECT '${big}-' || n || '#' || g, '${big}', n, 'id', (now() at time zone 'utc') - g * interval '15 seconds', g, 1, 2, 3, 0, 0, 0, 0
-        FROM unnest(ARRAY['tugra_app1', 'tugra_app1-web-1', 'tugraXapp1', 'tugra_app12']) n, generate_series(0, 5199) g`);
+        FROM unnest(ARRAY['tugra_app1', 'tugra_app1-web-1', 'tugraXapp1', 'tugra_app12']) n, generate_series(0, 1399) g`);
     });
 
     it("host history returns <= 1000 points, oldest and newest included, every value a stored sample", async () => {
@@ -104,11 +104,11 @@ describe("fleet metrics reads (real database)", () => {
     });
 
     it("forApp: prefix match is airtight (underscore is not a wildcard), one bounded series per container", async () => {
-      const out = await containers.forApp(big, "tugra_app1", "24h");
+      const out = await containers.forApp(big, "tugra_app1", "6h");
       expect(out.containers.map((c) => c.name)).toEqual(["tugra_app1", "tugra_app1-web-1"]); // not tugraXapp1, not tugra_app12
       for (const c of out.containers) {
         expect(c.samples.length).toBeLessThanOrEqual(1000);
-        expect(c.samples[0].cpu).toBe(5199);
+        expect(c.samples[0].cpu).toBe(1399);
         expect(c.samples[c.samples.length - 1].cpu).toBe(0);
       }
     });

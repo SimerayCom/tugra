@@ -32,6 +32,7 @@ const { RetentionRunnerService } = require(path.join(dist, "retention/retention-
     let metric = 0, containerMetric = 0;
     for (let i = 0; i < 2; i++) { metric += await roll.rollHost(); containerMetric += await roll.rollContainer(); }
     out.buckets = { metric, containerMetric };
+    out.ms = Date.now() - t0;
   } else {
     if (mode !== "prune") {
       const tot = { metric: 0, containerMetric: 0, metric5m: 0, containerMetric5m: 0 };
