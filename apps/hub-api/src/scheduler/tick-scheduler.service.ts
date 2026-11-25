@@ -1,4 +1,4 @@
-import { Injectable, Logger, OnApplicationBootstrap } from "@nestjs/common";
+import { Injectable, Logger, OnApplicationBootstrap, OnModuleDestroy } from "@nestjs/common";
 import type { Job, Queue } from "bullmq";
 import { QueueHubService } from "./queue-hub.service";
 import { retireLegacyQueues, type LegacyCleanupResult } from "./legacy-queues";
@@ -9,6 +9,15 @@ export const tickSchedulerId = (name: string) => `tick:${name}`;
 /** How long a job that fired before its handler was registered (a restart with overdue ticks, while the feature services
  *  are still booting) waits for the registration before it fails. The next tick simply tries again. */
 const HANDLER_WAIT_MS = 120_000;
+/** Once boot has settled every feature service has registered its ticks, so a name nobody claimed will not get a
+ *  handler later: such a job (an orphaned scheduler) waits only this long before it fails. */
+const SETTLED_HANDLER_WAIT_MS = 5_000;
+/** Delay after boot before orphaned `tick:*` schedulers (no handler registered in this process) are removed. Must be
+ *  shorter than {@link HANDLER_WAIT_MS}; Nest has finished every bootstrap hook (all `register` calls) well before. */
+const ORPHAN_SWEEP_DELAY_MS = 30_000;
+/** A tick that is skipped this many times in a row (its previous run never finished) is reported as a failure: the
+ *  skip is logged at error level and the job is failed so it shows up in the queue's failed list. */
+export const MAX_CONSECUTIVE_SKIPS = 3;
 /** One slot per job name is enough (a name never runs twice at once); this caps how many different ticks run in parallel. */
 const WORKER_CONCURRENCY = 24;
 
@@ -43,12 +52,17 @@ type Entry = { run: (job: Pick<Job, "name" | "data">) => Promise<unknown> | unkn
  * Disabled under NODE_ENV=test (nothing touches Redis); specs drive the runners directly.
  */
 @Injectable()
-export class TickSchedulerService implements OnApplicationBootstrap {
+export class TickSchedulerService implements OnApplicationBootstrap, OnModuleDestroy {
   private readonly logger = new Logger(TickSchedulerService.name);
   private queue?: Queue;
   private readonly entries = new Map<string, Entry>();
   private readonly waiters = new Map<string, Array<(e: Entry) => void>>();
   private readonly running = new Set<string>();
+  /** Cancels every job still waiting for its handler (shutdown): the worker's graceful close waits for active jobs. */
+  private readonly aborts = new Set<() => void>();
+  private readonly skips = new Map<string, number>();
+  private settled = false;
+  private orphanTimer?: NodeJS.Timeout;
   private legacyCleanup?: Promise<LegacyCleanupResult | undefined>;
 
   constructor(private readonly hub: QueueHubService) {}
@@ -69,6 +83,11 @@ export class TickSchedulerService implements OnApplicationBootstrap {
   async onApplicationBootstrap(): Promise<void> {
     if (!this.enabled) return;
     this.ensure();
+    this.orphanTimer = setTimeout(() => {
+      this.settled = true;
+      void this.removeOrphanSchedulers().catch((e) => this.logger.warn(`orphan scheduler sweep failed: ${e instanceof Error ? e.message : e}`));
+    }, ORPHAN_SWEEP_DELAY_MS);
+    this.orphanTimer.unref?.();
     // Old per-feature queues: drop their repeat keys and pending jobs (and carry over scheduled reboots) so the
     // previous version's ticks do not linger in Redis. Never blocks or fails boot.
     this.legacyCleanup = retireLegacyQueues(this.hub, this)
@@ -84,9 +103,36 @@ export class TickSchedulerService implements OnApplicationBootstrap {
       });
   }
 
+  onModuleDestroy(): void {
+    if (this.orphanTimer) clearTimeout(this.orphanTimer);
+    for (const abort of [...this.aborts]) abort();
+  }
+
   /** Resolves when the boot-time legacy cleanup has finished (specs / diagnostics); undefined result = it failed. */
   legacyCleanupDone(): Promise<LegacyCleanupResult | undefined> {
     return this.legacyCleanup ?? Promise.resolve(undefined);
+  }
+
+  /**
+   * Removes `tick:*` schedulers left in Redis whose name no feature registered in this process (a tick that was
+   * renamed or dropped in a newer version, or whose feature is gone). Without this they would fire forever and each
+   * firing would hold a worker slot until it times out. Per-feature kill switches already `disable` their own tick;
+   * this only catches names nobody claims. Returns the removed names.
+   */
+  async removeOrphanSchedulers(): Promise<string[]> {
+    if (!this.enabled) return [];
+    const queue = this.ensure();
+    const removed: string[] = [];
+    for (const s of await queue.getJobSchedulers(0, -1)) {
+      const id = s.key;
+      if (!id?.startsWith("tick:")) continue;
+      const name = id.slice("tick:".length);
+      if (this.entries.has(name)) continue;
+      await queue.removeJobScheduler(id);
+      removed.push(name);
+    }
+    if (removed.length) this.logger.log(`removed ${removed.length} orphaned scheduler tick(s) no feature claims: ${removed.join(", ")}`);
+    return removed;
   }
 
   /** Register (or re-register) a periodic tick. Idempotent: the same name upserts the same scheduler. */
@@ -147,17 +193,26 @@ export class TickSchedulerService implements OnApplicationBootstrap {
     const have = this.entries.get(name);
     if (have) return Promise.resolve(have);
     return new Promise<Entry>((resolve, reject) => {
-      const timer = setTimeout(() => {
+      const forget = () => {
+        clearTimeout(timer);
+        this.aborts.delete(abort);
         const list = this.waiters.get(name)?.filter((r) => r !== onReady) ?? [];
         if (list.length) this.waiters.set(name, list);
         else this.waiters.delete(name);
-        reject(new Error(`no handler registered for scheduler job "${name}"`));
-      }, HANDLER_WAIT_MS);
+      };
+      const fail = (message: string) => {
+        forget();
+        reject(new Error(message));
+      };
+      const timer = setTimeout(() => fail(`no handler registered for scheduler job "${name}"`), this.settled ? SETTLED_HANDLER_WAIT_MS : HANDLER_WAIT_MS);
       timer.unref?.();
       const onReady = (e: Entry) => {
         clearTimeout(timer);
+        this.aborts.delete(abort);
         resolve(e);
       };
+      const abort = () => fail(`hub is shutting down, scheduler job "${name}" not started`);
+      this.aborts.add(abort);
       this.waiters.set(name, [...(this.waiters.get(name) ?? []), onReady]);
     });
   }
@@ -167,9 +222,18 @@ export class TickSchedulerService implements OnApplicationBootstrap {
     const entry = await this.waitFor(job.name);
     if (entry.exclusive) {
       if (this.running.has(job.name)) {
-        this.logger.warn(`tick ${job.name} is still running from its previous run, skipping this one`);
-        return;
+        const n = (this.skips.get(job.name) ?? 0) + 1;
+        this.skips.set(job.name, n);
+        if (n < MAX_CONSECUTIVE_SKIPS) {
+          this.logger.warn(`tick ${job.name} is still running from its previous run, skipping this one (${n} in a row)`);
+          return;
+        }
+        // Permanently slower than its interval (or hung): make it visible instead of reporting "completed".
+        const msg = `tick ${job.name} is still running from its previous run, ${n} runs skipped in a row`;
+        this.logger.error(msg);
+        throw new Error(msg);
       }
+      this.skips.delete(job.name);
       this.running.add(job.name);
     }
     const t0 = Date.now();

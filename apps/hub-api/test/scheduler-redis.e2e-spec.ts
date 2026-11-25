@@ -30,7 +30,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
     booted.push(hub);
     const ticks = new TickSchedulerService(hub);
     await ticks.onApplicationBootstrap();
-    return { hub, ticks, stop: () => hub.onModuleDestroy() };
+    return { hub, ticks, stop: () => { ticks.onModuleDestroy(); return hub.onModuleDestroy(); } };
   }
 
   beforeAll(async () => {
@@ -124,6 +124,21 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
     await h.ticks.disable("update-check");
     expect(await admin.zcard(`bull:${SCHEDULER_QUEUE}:repeat`)).toBe(0);
     expect(await admin.zcard(`bull:${SCHEDULER_QUEUE}:delayed`)).toBe(0);
+    await h.stop();
+  });
+
+  it("an orphaned tick:* scheduler left by another version is removed (with its pending job); claimed ticks stay", async () => {
+    const h = await bootHub();
+    await h.ticks.register({ name: "kept", every: 60_000, run: async () => undefined });
+    const conn = new Redis(URL, { maxRetriesPerRequest: null });
+    const q = new Queue(SCHEDULER_QUEUE, { connection: conn as never });
+    await q.upsertJobScheduler("tick:dropped-in-new-version", { every: 60_000 }, { name: "dropped-in-new-version", data: {} });
+    expect(await admin.zcard(`bull:${SCHEDULER_QUEUE}:repeat`)).toBe(2);
+    expect(await h.ticks.removeOrphanSchedulers()).toEqual(["dropped-in-new-version"]);
+    expect(await admin.zrange(`bull:${SCHEDULER_QUEUE}:repeat`, 0, -1)).toEqual(["tick:kept"]);
+    expect(await admin.zcard(`bull:${SCHEDULER_QUEUE}:delayed`)).toBe(1);
+    await q.close();
+    conn.disconnect();
     await h.stop();
   });
 

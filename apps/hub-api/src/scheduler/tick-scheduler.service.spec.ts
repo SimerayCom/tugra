@@ -1,4 +1,4 @@
-import { TickSchedulerService, SCHEDULER_QUEUE, tickSchedulerId, nextBoundary } from "./tick-scheduler.service";
+import { TickSchedulerService, SCHEDULER_QUEUE, tickSchedulerId, nextBoundary, MAX_CONSECUTIVE_SKIPS } from "./tick-scheduler.service";
 import { FakeHub } from "./testing/fake-hub";
 
 jest.mock("./legacy-queues", () => ({ retireLegacyQueues: jest.fn().mockResolvedValue({ retiredQueues: [], removedRepeatables: 0, movedJobs: 0 }) }));
@@ -118,6 +118,34 @@ describe("TickSchedulerService", () => {
     expect(slow).toHaveBeenCalledTimes(2);
   });
 
+  it("a tick skipped MAX_CONSECUTIVE_SKIPS times in a row (permanently slower than its interval) is logged at error level and fails the job; the count resets once it runs again", async () => {
+    const { svc, dispatch } = make();
+    let release!: () => void;
+    const slow = jest.fn().mockImplementationOnce(() => new Promise<void>((r) => (release = r))).mockResolvedValue(undefined);
+    const logger = (svc as unknown as { logger: { warn: () => void; error: () => void } }).logger;
+    const warn = jest.spyOn(logger, "warn").mockImplementation(() => undefined);
+    const error = jest.spyOn(logger, "error").mockImplementation(() => undefined);
+    await svc.register({ name: "slow", every: 1000, run: slow });
+    const first = dispatch("slow");
+    for (let i = 1; i < MAX_CONSECUTIVE_SKIPS; i++) await expect(dispatch("slow")).resolves.toBeUndefined(); // early skips: warn only
+    expect(warn).toHaveBeenCalledTimes(MAX_CONSECUTIVE_SKIPS - 1);
+    expect(error).not.toHaveBeenCalled();
+    await expect(dispatch("slow")).rejects.toThrow(/skipped in a row/); // the Nth: visible failure
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("slow"));
+    await expect(dispatch("slow")).rejects.toThrow(/skipped in a row/); // and it stays visible while the run hangs
+    release();
+    await first;
+    await dispatch("slow"); // runs again
+    expect(slow).toHaveBeenCalledTimes(2);
+    // the counter was reset: the next overlap is a plain warn-skip again
+    let release2!: () => void;
+    slow.mockImplementationOnce(() => new Promise<void>((r) => (release2 = r)));
+    const again = dispatch("slow");
+    await expect(dispatch("slow")).resolves.toBeUndefined();
+    release2();
+    await again;
+  });
+
   it("a failed run releases its lane, so the next tick of the same job runs", async () => {
     const { svc, dispatch } = make();
     const run = jest.fn().mockRejectedValueOnce(new Error("x")).mockResolvedValue(undefined);
@@ -163,6 +191,45 @@ describe("TickSchedulerService", () => {
     const assertion = expect(pending).rejects.toThrow(/no handler registered for scheduler job "ghost"/);
     await jest.advanceTimersByTimeAsync(121_000);
     await assertion;
+  });
+
+  it("removes orphaned tick:* schedulers no feature registered in this process (and leaves claimed ones and non-tick schedulers alone)", async () => {
+    const { svc, queue } = make();
+    await svc.register({ name: "kept", every: 1000, run: jest.fn() });
+    await queue().upsertJobScheduler("tick:old-renamed", { every: 1000 }, {});
+    await queue().upsertJobScheduler("tick:gone", { every: 1000 }, {});
+    await queue().upsertJobScheduler("custom:other", { every: 1000 }, {});
+    expect((await svc.removeOrphanSchedulers()).sort()).toEqual(["gone", "old-renamed"]);
+    expect([...queue().schedulers.keys()].sort()).toEqual(["custom:other", "tick:kept"]);
+    expect(await svc.removeOrphanSchedulers()).toEqual([]);
+  });
+
+  it("sweeps orphans on its own once boot has settled, after which an unclaimed job name fails fast instead of holding a slot for 2 minutes", async () => {
+    jest.useFakeTimers();
+    const { svc, queue, dispatch } = make();
+    await svc.register({ name: "kept", every: 1000, run: jest.fn() });
+    await queue().upsertJobScheduler("tick:ghost", { every: 1000 }, {});
+    const early = dispatch("early-ghost"); // boot not settled: may still be a late registration, waits
+    const earlyAssert = expect(early).rejects.toThrow(/no handler registered/);
+    await jest.advanceTimersByTimeAsync(31_000);
+    expect([...queue().schedulers.keys()]).toEqual(["tick:kept"]);
+    const late = dispatch("ghost-2");
+    const lateAssert = expect(late).rejects.toThrow(/no handler registered/);
+    await jest.advanceTimersByTimeAsync(6_000); // far less than the 120s boot wait
+    await lateAssert;
+    await jest.advanceTimersByTimeAsync(90_000);
+    await earlyAssert;
+    svc.onModuleDestroy();
+  });
+
+  it("shutdown does not wait for a job that is still waiting for a handler (the worker's graceful close would hang for 2 minutes)", async () => {
+    jest.useFakeTimers();
+    const { svc, dispatch } = make();
+    const pending = dispatch("never-registered");
+    const assertion = expect(pending).rejects.toThrow(/shutting down/);
+    svc.onModuleDestroy();
+    await assertion;
+    await jest.advanceTimersByTimeAsync(121_000); // its timer was cancelled: nothing fires later
   });
 
   it("disable() drops the scheduler (kill switch) and its handler; unknown names are harmless", async () => {

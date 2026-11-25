@@ -39,6 +39,9 @@ export class FakeQueue {
     const r = this.schedulers.get(id)?.repeat as { every?: number } | undefined;
     return r ? { every: r.every } : undefined;
   }
+  async getJobSchedulers(): Promise<Array<{ key: string; name: string }>> {
+    return [...this.schedulers.keys()].map((key) => ({ key, name: key.replace(/^tick:/, "") }));
+  }
   async removeJobScheduler(id: string): Promise<boolean> {
     return this.schedulers.delete(id);
   }
