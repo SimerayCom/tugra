@@ -93,7 +93,7 @@ describe("agent view with the opened secrets (the answers of a token that may re
     });
 
     it("the list rows carry the same text", () => {
-      expect(sens("/applications").find((a: any) => a.uuid === "app-stack").docker_compose_raw).toBe(CANARY.composeStack);
+      expect(sens("/applications", overlayOf(), "1").find((a: any) => a.uuid === "app-stack").docker_compose_raw).toBe(CANARY.composeStack);
     });
   });
 
@@ -178,6 +178,21 @@ describe("agent view with the opened secrets (the answers of a token that may re
       expect(sens("/databases/db-pg/tags")).toEqual([{ name: "prod" }]);
       expect(sens("/services/svc-analytics/tags")).toEqual([{ name: "prod" }]);
       expect(sens("/applications/app-img/tags")).toEqual([]);
+    });
+
+    it("lists only the chosen team's own resources, servers and projects, so a task, a tag or a shared variable of another team is never read", () => {
+      const uuids = (p: string, team: string) => sens(p, overlayOf(), team).map((x: any) => x.uuid);
+      expect(uuids("/applications", "1")).toEqual(["app-web", "app-img", "app-stack"]);
+      expect(uuids("/applications", "2")).toEqual(["app-site"]);
+      expect(uuids("/databases", "1")).toEqual(["db-pg", "db-cache"]);
+      expect(uuids("/databases", "2")).toEqual([]);
+      expect(uuids("/services", "1")).toEqual(["svc-analytics"]);
+      expect(uuids("/servers", "1")).toEqual(["srv-edge", "srv-build"]);
+      expect(uuids("/projects", "1")).toEqual(["p-web"]);
+      expect(uuids("/projects", "2")).toEqual(["p-lab"]);
+      // with no team chosen there is no list at all
+      expect(() => view().route("/applications", overlayOf(), true)).toThrow(AgentApiNotFound);
+      expect(() => view().route("/projects", overlayOf(), true)).toThrow(AgentApiNotFound);
     });
 
     it("serves a server's docker cleanup settings, and 404s a server without any", () => {

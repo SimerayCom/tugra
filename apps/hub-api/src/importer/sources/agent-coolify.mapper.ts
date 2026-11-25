@@ -197,7 +197,7 @@ export function buildAgentView(read: AgentRead, agentServerId: string, opts: Age
     delete out.server_id;
     const uuid = str(s.uuid) ?? "";
     const server = s.server_id !== undefined && s.server_id !== null ? serverUuid.get(key(s.server_id)) : serverOfDestination(s.destination_type, s.destination_id);
-    return { row: out, id: key(s.id), uuid, server };
+    return { row: out, id: key(s.id), uuid, server, environmentId: s.environment_id };
   });
   const memberApps = (serviceId: string) =>
     serviceApps.filter((m) => key(m.service_id) === serviceId).map((m) => ({ uuid: m.uuid, name: m.name, fqdn: m.fqdn ?? null, image: m.image ?? null, ...(m.is_removed_from_compose === true ? { is_removed_from_compose: true } : {}) }));
@@ -358,6 +358,16 @@ export function buildAgentView(read: AgentRead, agentServerId: string, opts: Age
     if (a === "team" && b === "members" && parts.length === 2) {
       if (!currentTeamId) throw miss;
       return members;
+    }
+    // The settings readers list resources to ask each one for its tasks and tags: only the chosen team's own (a Coolify token sees one team).
+    if (parts.length === 1 && (a === "applications" || a === "databases" || a === "services" || a === "servers" || a === "projects")) {
+      if (!currentTeamId) throw miss;
+      const mine = (environmentId: unknown): boolean => teamOfProject.get(projectOfEnvironment.get(key(environmentId)) ?? "") === currentTeamId;
+      if (a === "applications") return apps.filter((x) => mine(x.source.environment_id)).map((x) => withText(x.row, overlay, `application:${x.uuid}`, APP_SEALED_TEXT));
+      if (a === "databases") return dbs.filter((x) => mine(x.source.environment_id)).map((x) => withText(x.row, overlay, `database:${x.uuid}`, DB_CONF_TEXT));
+      if (a === "services") return services.filter((x) => mine(x.environmentId)).map((x) => withText(x.row, overlay, `service:${x.uuid}`, ["docker_compose_raw"]));
+      if (a === "servers") return servers.filter((x) => key(x.team_id) === currentTeamId).map(serverRow);
+      return projects.filter((x) => key(x.team_id) === currentTeamId).map((x) => ({ uuid: x.uuid, name: x.name, description: x.description ?? null }));
     }
     if (a === "tags" && parts.length === 1) {
       if (!currentTeamId) throw miss;
