@@ -5,7 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { TakeoverCertState, TakeoverItemView, TakeoverView } from "@tugra/shared";
 import { api, ApiError } from "../../lib/api";
 import { useT } from "../../i18n/provider";
-import { actionsFor, confirmMatches, pollMs, rollup, verifyHasWork, type TakeoverAction } from "../../lib/inplace";
+import { actionsFor, confirmMatches, pollMs, rebuildCandidates, rebuildOf, rollup, toggleChoice, verifyHasWork, type TakeoverAction } from "../../lib/inplace";
 import { Badge, Btn, SectionCard, Spinner } from "../ui";
 import { Modal } from "../modal";
 import { Field, TextInput } from "../form";
@@ -46,13 +46,27 @@ export function TakeoverPanel({ serverId, serverName, opId }: { serverId: string
     refetchInterval: (query) => pollMs(current(query.state.data ?? [])),
   });
   const view = current(q.data ?? []);
+  // The owner's choice of apps to rebuild with Tugra; until something is chosen, what a planned takeover already says
+  const [chosen, setChosen] = useState<string[] | null>(null);
+  const selected = chosen ?? rebuildOf(view?.status === "PLANNED" ? view : null);
+  // Only before anything is changed on the box: a plan changes nothing, so it can be redone with another choice
+  const picking = q.isSuccess && (!view || view.status === "GIVEN_BACK" || view.status === "PLANNED");
+  const op = useQuery({ queryKey: ["import-op-takeover", opId], queryFn: () => api.getImportOperation(opId), enabled: picking, staleTime: 60_000 });
+  const candidates = rebuildCandidates(op.data);
   const done = (v: TakeoverView) => {
     qc.setQueryData<TakeoverView[]>(["coolify-inplace", serverId], (old) => [v, ...(old ?? []).filter((x) => x.id !== v.id)]);
     setTyped(null);
     setName("");
   };
   const fail = (e: unknown) => toast(takeoverErrorText(t, e), "error");
-  const plan = useMutation({ mutationFn: () => api.planInPlace({ serverId, opId }), onSuccess: done, onError: fail });
+  const plan = useMutation({
+    mutationFn: () => api.planInPlace({ serverId, opId, ...(selected.length > 0 ? { rebuild: selected } : {}) }),
+    onSuccess: (v: TakeoverView) => {
+      done(v);
+      setChosen(null);
+    },
+    onError: fail,
+  });
   const test = useMutation({ mutationFn: () => api.testInPlace(view!.id), onSuccess: done, onError: fail });
   const verify = useMutation({ mutationFn: () => api.verifyInPlace(view!.id), onSuccess: done, onError: fail });
   const swap = useMutation({ mutationFn: () => api.swapInPlace(view!.id, name.trim()), onSuccess: done, onError: fail });
@@ -94,7 +108,24 @@ export function TakeoverPanel({ serverId, serverName, opId }: { serverId: string
           {verifyHasWork(view) && <p style={{ margin: 0, fontSize: 12, color: "var(--c-tx3)" }}>{t("coolifyInPlace.verifyAgain")}</p>}
         </div>
       )}
+      {picking && candidates.length > 0 && (
+        <fieldset data-testid="rebuild-picker" style={{ border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: 12, margin: "14px 0 0", display: "flex", flexDirection: "column", gap: 8, minWidth: 0 }}>
+          <legend style={{ fontSize: 13, fontWeight: 600, padding: "0 6px" }}>{t("coolifyInPlace.rebuild.title")}</legend>
+          <p style={{ margin: 0, fontSize: 12, color: "var(--c-tx3)", lineHeight: 1.5 }}>{t("coolifyInPlace.rebuild.hint")}</p>
+          {candidates.map((c) => (
+            <label key={c.itemRef} style={{ display: "flex", gap: 10, alignItems: "center", minHeight: 44, fontSize: 13, overflowWrap: "anywhere" }}>
+              <input type="checkbox" checked={selected.includes(c.itemRef)} onChange={() => setChosen(toggleChoice(selected, c.itemRef))} disabled={busy} style={{ width: 20, height: 20, flexShrink: 0 }} />
+              <span>{t("coolifyInPlace.rebuild.option", { name: c.name })}</span>
+            </label>
+          ))}
+        </fieldset>
+      )}
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 14 }}>
+        {view?.status === "PLANNED" && (
+          <Btn variant="ghost" onClick={() => plan.mutate()} disabled={busy} loading={plan.isPending} style={{ minHeight: 44 }}>
+            {t("coolifyInPlace.action.replan")}
+          </Btn>
+        )}
         {actions.map((a) => (
           <Btn key={a} variant={a === "giveBack" ? "ghost" : "primary"} onClick={() => press(a)} disabled={busy} loading={busy && ((a === "plan" && plan.isPending) || (a === "test" && test.isPending) || (a === "verify" && verify.isPending))} style={{ minHeight: 44 }}>
             {label(a)}

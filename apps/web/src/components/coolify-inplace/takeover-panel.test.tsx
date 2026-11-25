@@ -6,6 +6,7 @@ import type { TakeoverItemView, TakeoverStatus, TakeoverView } from "@tugra/shar
 import { I18nProvider } from "../../i18n/provider";
 import { ToastProvider } from "../toast";
 import { api, ApiError } from "../../lib/api";
+import type { ImportOperation } from "../../lib/types";
 import { TakeoverPanel, takeoverErrorText } from "./takeover-panel";
 
 afterEach(cleanup);
@@ -30,6 +31,9 @@ const mount = () =>
       </I18nProvider>
     </QueryClientProvider>,
   );
+
+const task = (o: Record<string, unknown>) => ({ itemRef: "app:s:web", kind: "app", name: "web", status: "DONE", resourceType: "application", resourceId: "a1", message: null, startedAt: null, finishedAt: null, ...o });
+const op = (tasks: unknown[]): ImportOperation => ({ id: "op1", sourceKind: "coolify", serverId: "srv1", planHash: null, status: "SUCCEEDED", cancelRequested: false, createdAt: "2026-11-26T10:00:00Z", totals: { total: 0, done: 0, failed: 0, skipped: 0, running: 0, pending: 0, cancelled: 0, rolledBack: 0 }, tasks: tasks as never });
 
 describe("TakeoverPanel", () => {
   it("with no takeover it explains that planning changes nothing and offers only to plan", async () => {
@@ -124,5 +128,67 @@ describe("TakeoverPanel", () => {
     expect(takeoverErrorText(t, new ApiError(409, "takeover_test_failed", "takeover_test_failed"))).toBe("A domain failed its test. Fix it and test again.");
     expect(takeoverErrorText(t, new ApiError(500, "SELECT * FROM secrets", "weird_code"))).toBe("That did not work. Try again.");
     expect(takeoverErrorText(t, new Error("boom"))).toBe("That did not work. Try again.");
+  });
+
+  describe("the per-app rebuild picker", () => {
+    it("lists the import's apps, defaults to reusing Coolify's image, and plans with exactly the apps ticked", async () => {
+      vi.spyOn(api, "listInPlace").mockResolvedValue([]);
+      vi.spyOn(api, "getImportOperation").mockResolvedValue(op([task({}), task({ itemRef: "app:s:api", name: "api" }), task({ itemRef: "service:s:cache", kind: "service", name: "cache", resourceType: "application" }), task({ itemRef: "app:s:gone", name: "gone", status: "FAILED" })]));
+      const plan = vi.spyOn(api, "planInPlace").mockResolvedValue(view("PLANNED"));
+      mount();
+      const picker = await screen.findByTestId("rebuild-picker");
+      const boxes = within(picker).getAllByRole("checkbox") as HTMLInputElement[];
+      // apps only, done only; nothing is ticked by default
+      expect(within(picker).getByText("Rebuild web with Tugra and verify")).toBeTruthy();
+      expect(within(picker).getByText("Rebuild api with Tugra and verify")).toBeTruthy();
+      expect(within(picker).queryByText(/cache|gone/)).toBeNull();
+      expect(boxes.map((b) => b.checked)).toEqual([false, false]);
+      fireEvent.click(screen.getByRole("button", { name: "Plan the takeover" }));
+      await waitFor(() => expect(plan).toHaveBeenCalledWith({ serverId: "srv1", opId: "op1" }));
+      expect(plan.mock.calls[0][0]).not.toHaveProperty("rebuild");
+      expect(await screen.findByRole("button", { name: "Plan again with this choice" })).toBeTruthy();
+    });
+    it("a ticked app is sent as the rebuild list, and a planned takeover can be planned again with another choice", async () => {
+      vi.spyOn(api, "listInPlace").mockResolvedValue([]);
+      vi.spyOn(api, "getImportOperation").mockResolvedValue(op([task({}), task({ itemRef: "app:s:api", name: "api" })]));
+      const plan = vi.spyOn(api, "planInPlace").mockResolvedValue(view("PLANNED", [item({ buildMode: "rebuild-verify" }), item({ itemRef: "app:s:api", name: "api" })]));
+      mount();
+      const picker = await screen.findByTestId("rebuild-picker");
+      fireEvent.click(within(picker).getByLabelText("Rebuild web with Tugra and verify"));
+      fireEvent.click(screen.getByRole("button", { name: "Plan the takeover" }));
+      await waitFor(() => expect(plan).toHaveBeenCalledWith({ serverId: "srv1", opId: "op1", rebuild: ["app:s:web"] }));
+      // planned: the picker still shows, ticked as the plan says, and a new choice means a new plan
+      const again = await screen.findByRole("button", { name: "Plan again with this choice" });
+      const boxes = within(screen.getByTestId("rebuild-picker")).getAllByRole("checkbox") as HTMLInputElement[];
+      expect(boxes.map((b) => b.checked)).toEqual([true, false]);
+      fireEvent.click(boxes[1]);
+      fireEvent.click(again);
+      await waitFor(() => expect(plan).toHaveBeenLastCalledWith({ serverId: "srv1", opId: "op1", rebuild: ["app:s:web", "app:s:api"] }));
+    });
+    it("is gone once the box has been touched: nothing can be rebuilt after the test has started", async () => {
+      vi.spyOn(api, "listInPlace").mockResolvedValue([view("TESTING")]);
+      const ops = vi.spyOn(api, "getImportOperation").mockResolvedValue(op([task({})]));
+      mount();
+      await screen.findByTestId("takeover-item");
+      expect(screen.queryByTestId("rebuild-picker")).toBeNull();
+      expect(screen.queryByRole("button", { name: "Plan again with this choice" })).toBeNull();
+      expect(ops).not.toHaveBeenCalled();
+    });
+    it("a refused rebuild of an app that shares data says why in words", async () => {
+      vi.spyOn(api, "listInPlace").mockResolvedValue([]);
+      vi.spyOn(api, "getImportOperation").mockResolvedValue(op([task({})]));
+      vi.spyOn(api, "planInPlace").mockRejectedValue(new ApiError(422, "takeover_rebuild_needs_side_by_side", "takeover_rebuild_needs_side_by_side"));
+      mount();
+      fireEvent.click(within(await screen.findByTestId("rebuild-picker")).getByRole("checkbox"));
+      fireEvent.click(screen.getByRole("button", { name: "Plan the takeover" }));
+      expect(await screen.findByText("An app that shares data with Coolify's copy cannot be rebuilt next to it.")).toBeTruthy();
+    });
+    it("with no readable import the screen still plans, without the picker", async () => {
+      vi.spyOn(api, "listInPlace").mockResolvedValue([]);
+      vi.spyOn(api, "getImportOperation").mockRejectedValue(new Error("down"));
+      mount();
+      await screen.findByRole("button", { name: "Plan the takeover" });
+      expect(screen.queryByTestId("rebuild-picker")).toBeNull();
+    });
   });
 });

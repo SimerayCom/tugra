@@ -43,6 +43,11 @@ function build(o: { role?: Role | null; apps?: BoxApp[] } = {}) {
         return r ? { ...r, createdAt: new Date("2026-11-26T10:00:00Z"), finishedAt: r.finishedAt ? new Date(r.finishedAt as never) : null } : null;
       }),
       findMany: jest.fn(async () => [...rows.values()].map((r) => ({ ...r, createdAt: new Date("2026-11-26T10:00:00Z"), finishedAt: null }))),
+      deleteMany: jest.fn(async ({ where }: { where: { serverId: string; status: string; runId: null } }) => {
+        const hit = [...rows.values()].filter((r) => r.serverId === where.serverId && r.status === where.status && (r.runId ?? null) === where.runId);
+        for (const r of hit) rows.delete(r.id as string);
+        return { count: hit.length };
+      }),
     },
   };
   const access = { teamRole: jest.fn(async (..._a: unknown[]) => (o.role === undefined ? Role.OWNER : o.role)) };
@@ -72,6 +77,19 @@ describe("plan", () => {
     // plan only reads: no state-changing command reached the box
     expect(t.box.events).toEqual([]);
     expect(t.box.tugraProxy.state).toBe("absent");
+  });
+  it("planning again replaces a takeover that was only planned (nothing was changed), so the owner can change the rebuild choice; a tested one is never replaced", async () => {
+    const t = build();
+    const first = await plan(t);
+    const second = await plan(t, ["app:s1:webuuid"]);
+    expect(second.id).not.toBe(first.id);
+    expect(t.rows.size).toBe(1);
+    expect(second.items.find((i) => i.itemRef === "app:s1:webuuid")?.buildMode).toBe("rebuild-verify");
+    expect(t.audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "coolify.takeover.replan", meta: { replaced: 1 } }));
+    await t.svc.test(ACTOR, second.id);
+    // now the box has been touched: planning again never deletes that takeover (the live server stays held by it)
+    await plan(t);
+    expect(t.rows.has(second.id)).toBe(true);
   });
   it("is owner-only and a non-member cannot tell it exists", async () => {
     await expect(plan(build({ role: Role.ADMIN }))).rejects.toBeInstanceOf(ForbiddenException);

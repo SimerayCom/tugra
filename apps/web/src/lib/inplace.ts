@@ -1,6 +1,7 @@
 // The in-place takeover screen's rules (Coolify hub takeover, lane F). Pure: what each button may do, and the rollups the cards show.
 // The hub re-checks everything; this only decides what is worth offering.
 import type { TakeoverCertState, TakeoverItemView, TakeoverStatus, TakeoverView } from "@tugra/shared";
+import type { ImportOperation } from "./types";
 
 export type TakeoverAction = "plan" | "test" | "swap" | "verify" | "giveBack";
 
@@ -69,3 +70,30 @@ export const pollMs = (v: Pick<TakeoverView, "status"> | null | undefined): numb
 
 /** The typed confirmation: the server's name, exactly (a trailing space does not matter). */
 export const confirmMatches = (typed: string, serverName: string): boolean => typed.trim() === serverName.trim() && serverName.trim().length > 0;
+
+/** An app of the import that a takeover could rebuild with Tugra instead of reusing Coolify's image. */
+export interface RebuildCandidate {
+  itemRef: string;
+  name: string;
+}
+
+/**
+ * The apps the picker offers: the import's apps that were created (done), once each, in the order the import made them. Services and
+ * databases are not offered (the takeover takes apps over; a rebuild is an app's choice).
+ */
+export function rebuildCandidates(op: Pick<ImportOperation, "tasks"> | null | undefined): RebuildCandidate[] {
+  const seen = new Set<string>();
+  const out: RebuildCandidate[] = [];
+  for (const t of op?.tasks ?? []) {
+    if (t.kind !== "app" || t.status !== "DONE" || t.resourceType !== "application" || !t.itemRef || seen.has(t.itemRef)) continue;
+    seen.add(t.itemRef);
+    out.push({ itemRef: t.itemRef, name: t.name ?? t.itemRef });
+  }
+  return out;
+}
+
+/** Add or remove one app from the chosen set (a new array; the order of choosing is kept). */
+export const toggleChoice = (chosen: readonly string[], itemRef: string): string[] => (chosen.includes(itemRef) ? chosen.filter((x) => x !== itemRef) : [...chosen, itemRef]);
+
+/** The apps a planned takeover will rebuild (what the picker shows as chosen until the owner changes it). */
+export const rebuildOf = (v: Pick<TakeoverView, "items"> | null | undefined): string[] => (v?.items ?? []).filter((i) => i.buildMode === "rebuild-verify").map((i) => i.itemRef);

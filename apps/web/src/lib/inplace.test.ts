@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type { TakeoverItemView, TakeoverStatus, TakeoverView } from "@tugra/shared";
-import { actionsFor, canSwap, confirmMatches, pollMs, rollup, verifyHasWork } from "./inplace";
+import { actionsFor, canSwap, confirmMatches, pollMs, rebuildCandidates, rebuildOf, rollup, toggleChoice, verifyHasWork } from "./inplace";
 
 type D = TakeoverItemView["domains"][number];
 const dom = (o: Partial<D> = {}): D => ({ host: "a.example.com", tempCheck: "ok", finalCheck: "pending", cert: "pending", ...o });
@@ -75,5 +75,23 @@ describe("rollup and polling", () => {
     expect(confirmMatches("box-1 ", "box-1")).toBe(true);
     expect(confirmMatches("Box-1", "box-1")).toBe(false);
     expect(confirmMatches("", "")).toBe(false);
+  });
+});
+
+describe("the rebuild picker's rules", () => {
+  const t = (o: Record<string, unknown>) => ({ itemRef: "app:s:a", kind: "app", name: "a", status: "DONE", resourceType: "application", ...o });
+  it("offers the apps the import created once each, in order, and no service, database or failed task", () => {
+    const tasks = [t({}), t({}), t({ itemRef: "app:s:b", name: null }), t({ itemRef: "service:s:c", kind: "service" }), t({ itemRef: "app:s:d", status: "FAILED" }), t({ itemRef: null }), t({ itemRef: "app:s:e", resourceType: "database" })];
+    expect(rebuildCandidates({ tasks } as never)).toEqual([
+      { itemRef: "app:s:a", name: "a" },
+      { itemRef: "app:s:b", name: "app:s:b" },
+    ]);
+    expect(rebuildCandidates(null)).toEqual([]);
+  });
+  it("toggles one app without touching the others, and reads a plan's choice back", () => {
+    expect(toggleChoice([], "x")).toEqual(["x"]);
+    expect(toggleChoice(["x", "y"], "x")).toEqual(["y"]);
+    expect(rebuildOf(view("PLANNED", [item({ buildMode: "rebuild-verify" }), item({ itemRef: "app:s:b" })]))).toEqual(["app:s:a"]);
+    expect(rebuildOf(null)).toEqual([]);
   });
 });

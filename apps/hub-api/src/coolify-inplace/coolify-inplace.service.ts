@@ -151,6 +151,12 @@ export class CoolifyInPlaceService implements InPlaceRunPort {
     await this.requireOwner(userId, server.teamId);
     if (server.status !== "ONLINE") throw unprocessable("takeover_server_offline");
     if (!server.capabilities.includes("deploy")) throw unprocessable("takeover_capability");
+    // A takeover that was only planned changed nothing on the box: planning again (say, with another rebuild choice) replaces it instead of
+    // being refused because of it. A run's takeover is the run's: it is never replaced from here.
+    if (!link.runId) {
+      const replaced = await this.prisma.coolifyTakeover.deleteMany({ where: { serverId: server.id, status: "PLANNED", runId: null } });
+      if (replaced.count > 0) await this.audit.log({ actor: userId, action: "coolify.takeover.replan", target: server.id, meta: { replaced: replaced.count } });
+    }
     // the guided run that carries this takeover holds the server itself: it is not "another" holder
     if (await this.world.serverBusy(server.id, link.runId)) throw new ConflictException("takeover_server_busy");
 
