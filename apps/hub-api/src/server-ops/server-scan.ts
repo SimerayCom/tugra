@@ -42,7 +42,7 @@ const DOCKER_FORMAT =
   "[{{json .Name}},{{json .Config.Image}},{{json .State.Status}}," +
   '{{json (index .Config.Labels "com.docker.compose.project")}},{{json (index .Config.Labels "com.docker.compose.service")}},' +
   '{{json (index .Config.Labels "com.docker.compose.project.working_dir")}},{{json (index .Config.Labels "coolify.managed")}},' +
-  '{{json (index .Config.Labels "tugra.role")}},"{{range $p, $b := .HostConfig.PortBindings}}{{range $b}}{{.HostPort}} {{end}}{{end}}"]';
+  '{{json (index .Config.Labels "tugra.role")}},"{{range $p, $b := .HostConfig.PortBindings}}{{range $b}}{{.HostPort}} {{end}}{{end}}",{{json (index .Config.Labels "com.docker.swarm.service.name")}}]';
 
 /** Parameterless docker probe: a pure constant, nothing from the hub or the request is interpolated. */
 export function buildDockerScanScript(): string {
@@ -207,6 +207,10 @@ export const ScanContainerSchema = z.object({
   managedBy: z.enum(["coolify", "dokploy"]).nullable(),
   ports: z.array(port).max(20),
   adoptable: z.boolean(),
+  /** Part of the platform's own stack (Coolify, Dokploy): it stays where it is and is not moved. Absent in reports stored before it existed. */
+  platformInfra: z.boolean().default(false),
+  /** A Docker Swarm service task (Dokploy runs its apps this way): Tugra does not adopt it one by one. */
+  swarm: z.boolean().default(false),
 });
 export type ScanContainer = z.infer<typeof ScanContainerSchema>;
 
@@ -253,6 +257,7 @@ export interface DockerRow {
   workingDir: string | null;
   coolifyManaged: boolean;
   tugraRole: boolean;
+  swarmService: boolean;
   ports: number[];
 }
 
@@ -282,7 +287,8 @@ export function parseDockerScan(output: string): DockerScan | null {
     } catch {
       continue;
     }
-    if (!Array.isArray(a) || a.length !== 9) continue;
+    // 9 fields before the swarm label was added to the probe, 10 now.
+    if (!Array.isArray(a) || (a.length !== 9 && a.length !== 10)) continue;
     const name = cleanStr(a[0], 130).replace(/^\//, "");
     if (!CONTAINER_REF_RE.test(name)) continue;
     if (rows.length >= MAX_SCAN_CONTAINERS) {
@@ -304,6 +310,7 @@ export function parseDockerScan(output: string): DockerScan | null {
       workingDir: cleanStr(a[5], 200) || null,
       coolifyManaged: cleanStr(a[6], 10).toLowerCase() === "true",
       tugraRole: cleanStr(a[7], 40) !== "",
+      swarmService: a.length === 10 && cleanStr(a[9], 100) !== "",
       ports,
     });
   }
@@ -364,6 +371,12 @@ function managedByOf(r: DockerRow, sw: SoftwareRef | null): "coolify" | "dokploy
   return null;
 }
 
+/** The platform's own containers (Coolify: coolify, coolify-db, coolify-proxy ...; Dokploy: dokploy-*): they stay where they are. */
+function isPlatformInfra(r: DockerRow, sw: SoftwareRef | null, managedBy: "coolify" | "dokploy" | null): boolean {
+  if (!managedBy) return false;
+  return (managedBy === "coolify" ? COOLIFY_NAME_RE : DOKPLOY_NAME_RE).test(r.name) || sw?.id === managedBy;
+}
+
 export interface BuildReportInput {
   docker: DockerScan | null;
   host: HostScanResult;
@@ -387,7 +400,9 @@ export function buildScanReport({ docker, host, now }: BuildReportInput): ScanRe
       software: sw?.id ?? null,
       managedBy,
       ports: r.ports,
-      adoptable: r.project === null && managedBy === null && r.image !== "",
+      adoptable: r.project === null && managedBy === null && !r.swarmService && r.image !== "",
+      platformInfra: isPlatformInfra(r, sw, managedBy),
+      swarm: r.swarmService,
     };
   });
 

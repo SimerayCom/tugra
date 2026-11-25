@@ -44,6 +44,10 @@ export interface DiscoveredContainer {
   composeProject: string | null;
   /** Another platform runs this container (its own stack or one of its apps): move it with that platform's import. */
   managedBy: ForeignPlatform | null;
+  /** The platform's own stack (Coolify's proxy, database, realtime ...): not an app, it stays where it is. */
+  platformInfra?: boolean;
+  /** A Docker Swarm service task (Dokploy deploys its apps this way): adopting it would fight the Swarm scheduler. */
+  swarm?: boolean;
 }
 
 export type ForeignPlatform = "coolify" | "dokploy";
@@ -59,6 +63,16 @@ export function foreignPlatform(c: { name: string; image: string; labelKeys: rea
   if (c.labelKeys.some((k) => k.startsWith("dokploy")) || /^dokploy[-_]/.test(c.name) || /(^|\/)dokploy\//.test(image)) return "dokploy";
   return null;
 }
+
+/** Is this one of the platform's own containers (not an app deployed by it)? */
+export function isPlatformInfra(c: { name: string; image: string }, platform: ForeignPlatform | null): boolean {
+  if (!platform) return false;
+  const image = c.image.toLowerCase();
+  return platform === "coolify" ? /^coolify([-_]|$)/.test(c.name) || /(^|\/)coollabsio\//.test(image) : /^dokploy([-_]|$)/.test(c.name) || /(^|\/)dokploy\//.test(image);
+}
+
+/** Does a container run as a Docker Swarm service task? */
+export const isSwarmTask = (labelKeys: readonly string[]): boolean => labelKeys.some((k) => k === "com.docker.swarm.service.name" || k === "com.docker.swarm.task");
 
 /** Parser-internal view: the public fields plus the identity signals the Tugra-ownership classifier reads. */
 export interface ParsedContainer extends DiscoveredContainer {
@@ -321,6 +335,7 @@ export function parseDiscovered(output: string): ParsedContainer[] {
     const image = typeof config.Image === "string" ? config.Image : "";
     const tugraReason = classifyTugraOwned({ name, image, composeProject, composeService, composeWorkingDir, labelKeys });
     const projectAnchor = isProjectAnchor({ image, composeProject, composeService, composeWorkingDir });
+    const managedBy = foreignPlatform({ name, image, labelKeys });
     out.push({
       id: typeof raw.Id === "string" ? raw.Id : "",
       name,
@@ -332,7 +347,9 @@ export function parseDiscovered(output: string): ParsedContainer[] {
       restartPolicy: hostConfig.RestartPolicy?.Name ?? "",
       isTugra: tugraReason !== null,
       composeProject,
-      managedBy: foreignPlatform({ name, image, labelKeys }),
+      managedBy,
+      platformInfra: isPlatformInfra({ name, image }, managedBy),
+      swarm: isSwarmTask(labelKeys),
       composeService,
       composeWorkingDir,
       composeConfigFiles,

@@ -87,7 +87,7 @@ export class MigratorService {
         // fresh server-side. Don't ship potentially-secret env values over the wire.
         env: c.env.map((e) => ({ key: e.key, value: "" })),
         // compose-managed = not adoptable (v1); a Coolify/Dokploy container moves with that platform's import instead
-        adoptable: c.composeProject === null && c.managedBy === null,
+        adoptable: c.composeProject === null && c.managedBy === null && c.swarm !== true,
       }));
     return { containers, stacks };
   }
@@ -209,6 +209,7 @@ export class MigratorService {
       throw new BadRequestException("compose-managed containers can't be adopted one by one; adopt the whole stack instead");
     }
     if (found.managedBy) throw new BadRequestException(`this container is managed by ${found.managedBy === "coolify" ? "Coolify" : "Dokploy"}; move it with the ${found.managedBy === "coolify" ? "Coolify" : "Dokploy"} import`);
+    if (found.swarm === true) throw new BadRequestException("this container is a Docker Swarm service (Dokploy runs its apps this way); move it with the Dokploy import");
     if (!found.image) throw new BadRequestException("could not determine the container's image");
 
     // An explicit port choice must actually exist on the freshly-inspected container — otherwise we'd

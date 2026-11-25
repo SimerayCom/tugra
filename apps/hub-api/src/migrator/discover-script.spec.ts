@@ -267,7 +267,7 @@ describe("discover-script", () => {
 
     it("toPublicContainer drops the classifier-internal fields", () => {
       const pub = toPublicContainer(parseDiscovered(FOREIGN.web)[0]) as unknown as Record<string, unknown>;
-      expect(Object.keys(pub).sort()).toEqual(["composeProject", "env", "id", "image", "isTugra", "managedBy", "mounts", "name", "ports", "restartPolicy", "state"]);
+      expect(Object.keys(pub).sort()).toEqual(["composeProject", "env", "id", "image", "isTugra", "managedBy", "mounts", "name", "platformInfra", "ports", "restartPolicy", "state", "swarm"]);
     });
 
     it("the discover script asks the host for its own hostname", () => {
@@ -286,5 +286,22 @@ describe("foreignPlatform", () => {
   it("leaves a plain container alone", () => {
     expect(foreignPlatform({ name: "beszel-agent", image: "henrygd/beszel-agent", labelKeys: ["com.docker.compose.project"] })).toBeNull();
     expect(foreignPlatform({ name: "my-coolify-notes", image: "nginx:1", labelKeys: [] })).toBeNull();
+  });
+});
+
+describe("platform infra and swarm tasks", () => {
+  const one = (name: string, image: string, labels: Record<string, string> = {}) =>
+    parseDiscovered(inspectJson({ Name: `/${name}`, Config: { Image: image, Env: [], Labels: labels } }))[0];
+  it("Coolify's own containers are infra; an app it deployed is not", () => {
+    expect(one("coolify-proxy", "traefik:v3").platformInfra).toBe(true);
+    expect(one("coolify-db", "postgres:15").platformInfra).toBe(true);
+    expect(one("meilisearch-n5w7", "getmeili/meilisearch:latest", { "coolify.managed": "true" })).toMatchObject({ managedBy: "coolify", platformInfra: false });
+  });
+  it("Dokploy's own containers are infra", () => {
+    expect(one("dokploy-postgres", "postgres:16").platformInfra).toBe(true);
+  });
+  it("a Swarm task is flagged and a plain container is not", () => {
+    expect(one("web.1.abcd", "nginx:1", { "com.docker.swarm.service.name": "web" }).swarm).toBe(true);
+    expect(one("web", "nginx:1").swarm).toBe(false);
   });
 });

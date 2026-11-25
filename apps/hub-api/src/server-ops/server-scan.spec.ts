@@ -17,8 +17,8 @@ import { SOFTWARE, softwareForImage, softwareForUnit, imageSegments } from "./se
 const NOW = new Date("2026-11-24T10:00:00Z");
 
 /** One docker-probe row: [name, image, state, project, service, workingDir, coolifyManaged, tugraRole, "ports"]. */
-const row = (name: string, image: string, state = "running", project = "", service = "", wd = "", coolify = "", role = "", ports = "") =>
-  JSON.stringify([`/${name}`, image, state, project, service, wd, coolify, role, ports]);
+const row = (name: string, image: string, state = "running", project = "", service = "", wd = "", coolify = "", role = "", ports = "", swarm = "") =>
+  JSON.stringify([`/${name}`, image, state, project, service, wd, coolify, role, ports, swarm]);
 const dockerOut = (...lines: string[]) => ["TUGRA_SCAN_DOCKER_BEGIN", ...lines, "TUGRA_SCAN_DOCKER_END"].join("\n");
 
 describe("probe scripts", () => {
@@ -239,6 +239,25 @@ describe("buildScanReport", () => {
     expect(r.containers.find((c) => c.name === "abc123-1234")).toMatchObject({ managedBy: "coolify", adoptable: false });
     expect(r.containers.find((c) => c.name === "loose")).toMatchObject({ managedBy: null, adoptable: true });
     expect(r.containers.find((c) => c.name === "coolify-proxy")).toMatchObject({ software: "traefik", managedBy: "coolify" });
+  });
+
+  it("tells Coolify's own containers from the apps it deployed", () => {
+    const docker = dockerAvail([row("coolify", "ghcr.io/coollabsio/coolify:4"), row("coolify-db", "postgres:15"), row("abc123-1234", "node:22", "running", "abc123", "app", "", "true"), row("dokploy-redis", "redis:7")]);
+    const r = buildScanReport({ docker, host: hostOk({ markers: [] }), now: NOW });
+    const by = (n: string) => r.containers.find((c) => c.name === n)!;
+    expect(by("coolify").platformInfra).toBe(true);
+    expect(by("coolify-db").platformInfra).toBe(true);
+    expect(by("abc123-1234").platformInfra).toBe(false);
+    expect(by("dokploy-redis")).toMatchObject({ managedBy: "dokploy", platformInfra: true });
+  });
+
+  it("a Swarm service task is never adoptable and the old 9-field probe still parses", () => {
+    const docker = dockerAvail([row("web.1.xyz", "nginx:1", "running", "", "", "", "", "", "", "web"), row("loose", "nginx:1")]);
+    const r = buildScanReport({ docker, host: hostOk({ markers: [] }), now: NOW });
+    expect(r.containers.find((c) => c.name === "web.1.xyz")).toMatchObject({ swarm: true, adoptable: false });
+    expect(r.containers.find((c) => c.name === "loose")).toMatchObject({ swarm: false, adoptable: true });
+    const old = parseDockerScan(dockerOut(JSON.stringify(["/old", "nginx:1", "running", "", "", "", "", "", ""])))!;
+    expect(old.available && old.rows[0].swarmService).toBe(false);
   });
 
   it("compose members are not adoptable and are grouped by project", () => {
