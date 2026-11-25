@@ -20,7 +20,8 @@ export interface StoredDb {
   setAside?: boolean;
 }
 
-export type AppStage = "pending" | "unlinked" | "moving" | "moved" | "relinked" | "redeployed";
+/** `unlinking`: the links and flags are recorded, removal is under way (a crash here still leaves what rollback needs). */
+export type AppStage = "pending" | "unlinking" | "unlinked" | "moving" | "moved" | "relinked" | "redeployed";
 export interface StoredApp {
   stage: AppStage;
   moveId?: string;

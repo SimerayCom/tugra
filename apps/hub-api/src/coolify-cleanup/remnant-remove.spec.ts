@@ -117,7 +117,7 @@ interface Lab {
   calls: () => string;
 }
 
-function lab(setup: (l: { st: string; root: string; container: (n: string, o?: { image?: string; label?: string; running?: boolean; mounts?: string[] }) => void; network: (n: string, c: number) => void; image: (r: string, inuse?: boolean) => void; dir: (p: string) => void }) => void): Lab {
+function lab(setup: (l: { st: string; root: string; container: (n: string, o?: { image?: string; label?: string; running?: boolean; mounts?: string[] }) => void; network: (n: string, c: number) => void; image: (r: string, inuse?: boolean) => void; dir: (p: string, files?: string[]) => void }) => void): Lab {
   const base = realpathSync(mkdtempSync(join(tmpdir(), "cleanup-lab-")));
   const st = join(base, "state");
   const bin = join(base, "bin");
@@ -136,9 +136,12 @@ function lab(setup: (l: { st: string; root: string; container: (n: string, o?: {
       writeFileSync(join(st, "i", k), "");
       if (inuse) writeFileSync(join(st, "i", `${k}.inuse`), "");
     },
-    dir: (p: string) => {
+    dir: (p: string, files: string[] = ["file"]) => {
       mkdirSync(join(root, p), { recursive: true });
-      writeFileSync(join(root, p, "file"), "x");
+      for (const f of files) {
+        mkdirSync(join(root, p, f, ".."), { recursive: true });
+        writeFileSync(join(root, p, f), "x");
+      }
     },
   };
   setup(api);
@@ -218,7 +221,7 @@ describe("the removal script on a fake host", () => {
   it("removes Coolify's own directories; refuses a mounted one, a symlink and anything that resolves elsewhere; keeps the owner's data", () => {
     const l = L((x) => {
       x.dir("proxy");
-      x.dir("applications/app1");
+      x.dir("applications/app1", ["docker-compose.yml", ".env"]);
       x.dir("applications/app2");
       x.dir("databases/dbuuid");
       x.dir("backups");
@@ -241,6 +244,32 @@ describe("the removal script on a fake host", () => {
     expect(existsSync(join(l.root, "databases", "dbuuid", "file"))).toBe(true);
     expect(existsSync(join(l.root, "backups", "file"))).toBe(true);
     expect(existsSync(l.root)).toBe(true); // not empty: the root stays
+  });
+
+  it("a resource directory holding anything besides compose files and .env is the owner's data: refused, even when no container mounts it", () => {
+    const l = L((x) => {
+      x.dir("services/svc1", ["docker-compose.yaml", ".env"]);
+      x.dir("services/svc2", ["docker-compose.yaml", "data/pgdata/PG_VERSION"]);
+      x.dir("applications/app3", ["uploads/photo.jpg"]);
+    });
+    const res = codes(l.run([rem("directory", "/data/coolify/services/svc1"), rem("directory", "/data/coolify/services/svc2"), rem("directory", "/data/coolify/applications/app3")]));
+    expect(res).toEqual({
+      "directory:/data/coolify/services/svc1": "ok",
+      "directory:/data/coolify/services/svc2": "refused",
+      "directory:/data/coolify/applications/app3": "refused",
+    });
+    expect(existsSync(join(l.root, "services", "svc2", "data", "pgdata", "PG_VERSION"))).toBe(true);
+    expect(existsSync(join(l.root, "applications", "app3", "uploads", "photo.jpg"))).toBe(true);
+  });
+
+  it("a container removed in the same run still protects the directory it mounted (the mounts are read before anything is removed)", () => {
+    const l = L((x) => {
+      x.dir("services/svc1", ["docker-compose.yaml"]);
+      x.container("svc1-web", { label: "true", mounts: [`${x.root}/services/svc1`] }); // stopped, managed: goes in this very run
+    });
+    const res = codes(l.run([rem("container", "svc1-web"), rem("directory", "/data/coolify/services/svc1")]));
+    expect(res).toEqual({ "container:svc1-web": "ok", "directory:/data/coolify/services/svc1": "mounted" });
+    expect(existsSync(join(l.root, "services", "svc1", "docker-compose.yaml"))).toBe(true);
   });
 
   it("removes the empty parents when everything inside went, and only then", () => {

@@ -14,6 +14,7 @@
     "database": "Databases",
     "service": "Services",
     "domain": "Domains",
+    "traffic": "Traffic on Tugra (DNS and certificate)",
     "env_keys": "Variable names",
     "volume": "Volumes",
     "scheduled_task": "Scheduled tasks",
@@ -70,6 +71,8 @@
     "scan_unreadable": "The list from the server was cut short, so nothing was trusted.",
     "no_docker": "Docker is not available on this server.",
     "partial": "Some of it could not be removed. Look at the list.",
+    "recheck": "What you confirmed is removed. More is free to remove now: check again to see it.",
+    "read_stale": "The stored Coolify read is too old. Read the Coolify again first.",
     "conflict": "Something changed."
   },
   "error": {
@@ -81,6 +84,7 @@
     "cleanup_active": "A cleanup is already running on this server.",
     "control_plane": "This server runs Coolify itself. It is retired separately.",
     "no_coolify_link": "Read the Coolify first.",
+    "read_stale": "The stored Coolify read is too old. Read the Coolify again first.",
     "confirm_name_mismatch": "That is not the server's name.",
     "generic": "That did not work. Try again."
   },

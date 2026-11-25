@@ -1,5 +1,8 @@
 import { spawnSync } from "node:child_process";
-import { buildScanScript, classifyScan, listHash, parseHumanSize, parseScan, ScanError, type ScanResult } from "./remnant-scan";
+import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { buildScanScript, classifyScan, containerBelongsTo, listHash, parseHumanSize, parseScan, ScanError, type ScanResult } from "./remnant-scan";
 
 const UUID = "abcd1234efgh5678ijkl9012";
 const scan = (over: Partial<ScanResult> = {}): ScanResult => ({ volumes: [], containers: [], networks: [], images: [], mounts: [], dirs: [], ...over });
@@ -19,6 +22,40 @@ describe("the scan script", () => {
   });
 });
 
+describe("the scan script on a fake /data/coolify: what counts as the owner's data", () => {
+  it("marks a resource directory as data when it holds anything besides compose files and .env", () => {
+    const base = realpathSync(mkdtempSync(join(tmpdir(), "scan-lab-")));
+    try {
+      const root = join(base, "data", "coolify");
+      const bin = join(base, "bin");
+      mkdirSync(bin, { recursive: true });
+      writeFileSync(join(bin, "docker"), "#!/bin/sh\nexit 0\n");
+      chmodSync(join(bin, "docker"), 0o755);
+      const put = (p: string) => {
+        mkdirSync(join(root, p, ".."), { recursive: true });
+        writeFileSync(join(root, p), "x");
+      };
+      put("services/plain1/docker-compose.yaml");
+      put("services/plain1/.env");
+      put("services/data1/docker-compose.yaml");
+      put("services/data1/pgdata/PG_VERSION");
+      put("applications/up1/uploads/a.jpg");
+      put("applications/plain2/docker-compose.yml");
+      put("proxy/acme.json");
+      const script = buildScanScript().split("/data/coolify").join(root);
+      const r = spawnSync("sh", ["-c", script], { env: { PATH: `${bin}:/usr/bin:/bin` }, encoding: "utf8" });
+      expect(r.status).toBe(0);
+      const dirs = Object.fromEntries(parseScan(r.stdout.split(root).join("/data/coolify")).dirs.map((d) => [d.path, d.data]));
+      expect(dirs["/data/coolify/services/plain1"]).toBe(false);
+      expect(dirs["/data/coolify/applications/plain2"]).toBe(false);
+      expect(dirs["/data/coolify/services/data1"]).toBe(true);
+      expect(dirs["/data/coolify/applications/up1"]).toBe(true);
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("parseScan", () => {
   const out = [
     "Welcome banner",
@@ -31,7 +68,8 @@ describe("parseScan", () => {
     "TUGRA_CU_V|bad name with spaces",
     "TUGRA_CU_I|ghcr.io/coollabsio/coolify-helper:1.0.8|abc123|35.5MB",
     "TUGRA_CU_M|/coolify-proxy|/data/coolify/proxy;/var/run/docker.sock;",
-    "TUGRA_CU_D|/data/coolify/proxy|2048",
+    "TUGRA_CU_D|/data/coolify/proxy|2048|plain",
+    "TUGRA_CU_D|/data/coolify/applications/y|10|data",
     "TUGRA_CU_D|/data/coolify/applications/x|link",
     "TUGRA_CU_D|/etc/passwd|1",
     "TUGRA_CU_END",
@@ -45,7 +83,11 @@ describe("parseScan", () => {
     expect(r.volumes).toEqual(["abc-data"]);
     expect(r.images[0]).toMatchObject({ ref: "ghcr.io/coollabsio/coolify-helper:1.0.8", sizeBytes: 35_500_000 });
     expect(r.mounts[0]).toEqual({ container: "coolify-proxy", sources: ["/data/coolify/proxy", "/var/run/docker.sock"] });
-    expect(r.dirs).toEqual([{ path: "/data/coolify/proxy", sizeBytes: 2048 * 1024, link: false }, { path: "/data/coolify/applications/x", sizeBytes: null, link: true }]);
+    expect(r.dirs).toEqual([
+      { path: "/data/coolify/proxy", sizeBytes: 2048 * 1024, link: false, data: false },
+      { path: "/data/coolify/applications/y", sizeBytes: 10 * 1024, link: false, data: true },
+      { path: "/data/coolify/applications/x", sizeBytes: null, link: true, data: true },
+    ]);
   });
   it("a cut listing is unreadable, never empty", () => {
     expect(() => parseScan("TUGRA_CU_BEGIN\nTUGRA_CU_C|a|b|exited|")).toThrow(ScanError);
@@ -72,9 +114,37 @@ describe("classifyScan: containers", () => {
           { name: `${UUID}-123`, image: `${UUID}:abc`, state: "exited", managed: true },
         ],
       }),
-      { knownUuids: [] },
+      { knownUuids: [UUID], completeUuids: [UUID] },
     );
     for (const n of ["coolify-proxy", "coolify-sentinel", "helper1", `${UUID}-123`]) expect(find(c, "container", n)?.keep).toBeUndefined();
+  });
+
+  it("a stopped managed container is removable only when its uuid is known AND matched complete; any other is kept", () => {
+    const stopped = [
+      { name: `${UUID}-123`, image: "x", state: "exited", managed: true }, // application: <uuid>-<stamp>
+      { name: `plausible-${UUID}`, image: "x", state: "exited", managed: true }, // service: <name>-<uuid>
+      { name: "zzzz9999yyyy8888xxxx7777", image: "x", state: "exited", managed: true }, // created in Coolify after the read
+      { name: "old-app", image: "x", state: "exited", managed: true }, // no uuid in the name at all
+    ];
+    const none = classifyScan(scan({ containers: stopped }), { knownUuids: [UUID] }); // known but not matched complete
+    for (const x of stopped) expect(find(none, "container", x.name)).toMatchObject({ keep: true, reason: "unknown" });
+    const some = classifyScan(scan({ containers: stopped }), { knownUuids: [UUID], completeUuids: [UUID] });
+    expect(find(some, "container", `${UUID}-123`)?.keep).toBeUndefined();
+    expect(find(some, "container", `plausible-${UUID}`)?.keep).toBeUndefined();
+    expect(find(some, "container", "zzzz9999yyyy8888xxxx7777")).toMatchObject({ keep: true, reason: "unknown" });
+    expect(find(some, "container", "old-app")).toMatchObject({ keep: true, reason: "unknown" });
+    // complete but not known to the stored read: nothing
+    const unknown = classifyScan(scan({ containers: stopped }), { knownUuids: [], completeUuids: [UUID] });
+    expect(find(unknown, "container", `${UUID}-123`)).toMatchObject({ keep: true });
+  });
+
+  it("containerBelongsTo matches a whole dash-separated token only", () => {
+    expect(containerBelongsTo(UUID, UUID)).toBe(true);
+    expect(containerBelongsTo(`${UUID}-99`, UUID)).toBe(true);
+    expect(containerBelongsTo(`db-${UUID}`, UUID)).toBe(true);
+    expect(containerBelongsTo(`${UUID}x`, UUID)).toBe(false);
+    expect(containerBelongsTo(`x${UUID}`, UUID)).toBe(false);
+    expect(containerBelongsTo("anything", "short")).toBe(false);
   });
 
   it("a running proxy, a running helper and a running managed app are kept, never removed", () => {
@@ -147,36 +217,61 @@ describe("classifyScan: networks and images", () => {
 });
 
 describe("classifyScan: directories under /data/coolify", () => {
-  const dir = (path: string, sizeBytes: number | null = 1024, link = false) => ({ path, sizeBytes, link });
+  const dir = (path: string, sizeBytes: number | null = 1024, link = false, data = false) => ({ path, sizeBytes, link, data });
   it("Coolify's own machinery is removable; database dumps and backups are the owner's data and are kept", () => {
     const c = classifyScan(
-      scan({ dirs: [dir("/data/coolify/proxy"), dir("/data/coolify/ssh"), dir("/data/coolify/databases/abc"), dir("/data/coolify/backups"), dir("/data/coolify/weird"), dir("/data/coolify/applications/app1")] }),
-      { knownUuids: [] },
+      scan({ dirs: [dir("/data/coolify/proxy"), dir("/data/coolify/ssh"), dir("/data/coolify/databases/abc"), dir("/data/coolify/backups"), dir("/data/coolify/weird"), dir(`/data/coolify/applications/${UUID}`)] }),
+      { knownUuids: [UUID], completeUuids: [UUID] },
     );
     expect(find(c, "directory", "/data/coolify/proxy")?.keep).toBeUndefined();
     expect(find(c, "directory", "/data/coolify/ssh")?.keep).toBeUndefined();
-    expect(find(c, "directory", "/data/coolify/applications/app1")?.keep).toBeUndefined();
+    expect(find(c, "directory", `/data/coolify/applications/${UUID}`)?.keep).toBeUndefined();
     expect(find(c, "directory", "/data/coolify/databases/abc")).toMatchObject({ keep: true, reason: "user_data" });
     expect(find(c, "directory", "/data/coolify/backups")).toMatchObject({ keep: true, reason: "user_data" });
     expect(find(c, "directory", "/data/coolify/weird")).toMatchObject({ keep: true, reason: "unknown" });
   });
 
-  it("a directory a surviving container mounts (itself, a child or a parent) is in use; a mount by a removable container does not count", () => {
+  it("a directory ANY container mounts (itself, a child or a parent) is in use, including one that is itself about to be removed", () => {
     const base = scan({
       containers: [
         { name: "coolify-proxy", image: "traefik", state: "exited", managed: true },
         { name: "web", image: "x", state: "running", managed: true },
       ],
-      dirs: [dir("/data/coolify/proxy"), dir("/data/coolify/applications/app1"), dir("/data/coolify/applications/app2")],
+      dirs: [dir("/data/coolify/proxy"), dir(`/data/coolify/applications/${UUID}`), dir("/data/coolify/applications/zzzz9999yyyy8888xxxx7777")],
       mounts: [
         { container: "coolify-proxy", sources: ["/data/coolify/proxy"] },
-        { container: "web", sources: ["/data/coolify/applications/app1/files", "/data/coolify/applications"] },
+        { container: "web", sources: [`/data/coolify/applications/${UUID}/files`, "/data/coolify/applications"] },
       ],
     });
-    const c = classifyScan(base, { knownUuids: [] });
-    expect(find(c, "directory", "/data/coolify/proxy")?.keep).toBeUndefined(); // mounted only by the proxy that is going away
-    expect(find(c, "directory", "/data/coolify/applications/app1")).toMatchObject({ keep: true, reason: "in_use" });
-    expect(find(c, "directory", "/data/coolify/applications/app2")).toMatchObject({ keep: true, reason: "in_use" }); // the parent is mounted
+    const c = classifyScan(base, { knownUuids: [UUID, "zzzz9999yyyy8888xxxx7777"], completeUuids: [UUID, "zzzz9999yyyy8888xxxx7777"] });
+    expect(find(c, "directory", "/data/coolify/proxy")).toMatchObject({ keep: true, reason: "in_use" }); // the stopped proxy still mounts it
+    expect(find(c, "directory", `/data/coolify/applications/${UUID}`)).toMatchObject({ keep: true, reason: "in_use" });
+    expect(find(c, "directory", "/data/coolify/applications/zzzz9999yyyy8888xxxx7777")).toMatchObject({ keep: true, reason: "in_use" }); // the parent is mounted
+  });
+
+  it("a stopped managed container's bind data under /data/coolify/services/<uuid> is never removed with it", () => {
+    const c = classifyScan(
+      scan({
+        containers: [{ name: `db-${UUID}`, image: "postgres:16", state: "exited", managed: true }],
+        dirs: [dir(`/data/coolify/services/${UUID}`, 5_000_000, false, true)],
+        mounts: [{ container: `db-${UUID}`, sources: [`/data/coolify/services/${UUID}/pgdata`] }],
+      }),
+      { knownUuids: [UUID], completeUuids: [UUID] },
+    );
+    expect(find(c, "container", `db-${UUID}`)?.keep).toBeUndefined(); // the container may go
+    expect(find(c, "directory", `/data/coolify/services/${UUID}`)).toMatchObject({ keep: true }); // its data stays
+  });
+
+  it("an applications or services directory is removable only for a uuid matched complete, and never when it holds more than compose files", () => {
+    const U2 = "wxyz1234abcd5678efgh9012";
+    const dirs = [dir(`/data/coolify/applications/${UUID}`), dir(`/data/coolify/services/${UUID}`, 1, false, true), dir(`/data/coolify/applications/${U2}`), dir("/data/coolify/services/notauuid")];
+    const c = classifyScan(scan({ dirs }), { knownUuids: [UUID], completeUuids: [UUID] });
+    expect(find(c, "directory", `/data/coolify/applications/${UUID}`)?.keep).toBeUndefined();
+    expect(find(c, "directory", `/data/coolify/services/${UUID}`)).toMatchObject({ keep: true, reason: "user_data" });
+    expect(find(c, "directory", `/data/coolify/applications/${U2}`)).toMatchObject({ keep: true, reason: "unknown" }); // created after the read
+    expect(find(c, "directory", "/data/coolify/services/notauuid")).toMatchObject({ keep: true, reason: "unknown" });
+    const known = classifyScan(scan({ dirs }), { knownUuids: [UUID] }); // known, but the checklist did not match it complete
+    expect(find(known, "directory", `/data/coolify/applications/${UUID}`)).toMatchObject({ keep: true, reason: "unknown" });
   });
 
   it("a symlink is never removable", () => {

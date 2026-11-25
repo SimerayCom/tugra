@@ -49,7 +49,13 @@ export function buildScanScript(): string {
     `    case "$d" in ${COOLIFY_ROOT}/applications|${COOLIFY_ROOT}/services|${COOLIFY_ROOT}/databases) continue;; esac`,
     `    if [ -L "$d" ]; then echo "TUGRA_CU_D|$d|link"; continue; fi`,
     `    kb=$(du -sk "$d" 2>/dev/null | cut -f1)`,
-    `    echo "TUGRA_CU_D|$d|\${kb:-0}"`,
+    // Anything in a resource directory other than its compose file and .env is the owner's data (bind-mounted files, uploads, dumps).
+    // An unreadable directory counts as data.
+    `    data=plain`,
+    `    case "$d" in ${COOLIFY_ROOT}/applications/*|${COOLIFY_ROOT}/services/*)`,
+    `      if [ ! -r "$d" ] || [ ! -x "$d" ]; then data=data; else x=$(find "$d" -mindepth 1 ! -type d ! -name docker-compose.yaml ! -name docker-compose.yml ! -name .env 2>/dev/null | head -n 1); [ -n "$x" ] && data=data; fi;;`,
+    `    esac`,
+    `    echo "TUGRA_CU_D|$d|\${kb:-0}|$data"`,
     `  done`,
     `fi`,
     `echo ${SCAN_END}`,
@@ -83,6 +89,8 @@ export interface ScanDir {
   path: string;
   sizeBytes: number | null;
   link: boolean;
+  /** Holds anything besides compose files (the owner's data), or could not be read. Absent in an older listing = unknown = data. */
+  data: boolean;
 }
 export interface ScanResult {
   /** Docker volume NAMES, read for the checklist only. */
@@ -129,7 +137,7 @@ export function parseScan(output: string): ScanResult {
     else if (tag === "TUGRA_CU_M" && f.length >= 2) out.mounts.push({ container: f[0].replace(/^\//, ""), sources: (f[1] ?? "").split(";").filter(Boolean) });
     else if (tag === "TUGRA_CU_D" && f.length >= 2 && f[0].startsWith(`${COOLIFY_ROOT}/`)) {
       const link = f[1] === "link";
-      out.dirs.push({ path: f[0], sizeBytes: link || !/^\d+$/.test(f[1]) ? null : Number(f[1]) * 1024, link });
+      out.dirs.push({ path: f[0], sizeBytes: link || !/^\d+$/.test(f[1]) ? null : Number(f[1]) * 1024, link, data: f[2] !== "plain" });
     }
   }
   return out;
@@ -146,18 +154,36 @@ export interface Classified {
 const sorted = (r: CleanupRemnant[]): CleanupRemnant[] =>
   [...r].sort((a, b) => a.kind.localeCompare(b.kind) || a.name.localeCompare(b.name));
 
+/**
+ * Does this Coolify container belong to the resource with this uuid? Coolify names them `<uuid>` (databases), `<uuid>-<stamp>`
+ * (applications) and `<name>-<uuid>` (service components, sometimes followed by a suffix). The uuid is 16 to 40 lowercase letters or
+ * digits, so it can only match as a whole dash-separated token.
+ */
+export function containerBelongsTo(name: string, uuid: string): boolean {
+  if (!UUID_RE.test(uuid)) return false;
+  return name.split("-").includes(uuid);
+}
+
 /** Under or above: a bind mount whose source contains the directory, or sits inside it, keeps it in use. */
 function mountTouches(source: string, dir: string): boolean {
   return source === dir || source.startsWith(`${dir}/`) || dir.startsWith(`${source}/`);
 }
 
-export function classifyScan(scan: ScanResult, opts: { knownUuids: readonly string[] }): Classified {
+/**
+ * `knownUuids` = every Coolify resource uuid the stored read named on this server. `completeUuids` = the ones matched COMPLETE in the
+ * checklist. A managed container or an applications/services directory is only removable when its uuid is in `completeUuids`: what the
+ * checklist did not verify (a uuid the read does not know, created after the read, or an item that is not complete) is kept.
+ */
+export function classifyScan(scan: ScanResult, opts: { knownUuids: readonly string[]; completeUuids?: readonly string[] }): Classified {
   const remnants: CleanupRemnant[] = [];
   const control = scan.containers.some((c) => CONTROL_PLANE_CONTAINERS.includes(c.name));
   if (control) {
     for (const c of scan.containers) if (CONTROL_PLANE_CONTAINERS.includes(c.name)) remnants.push({ kind: "container", name: c.name, sizeBytes: null, keep: true, reason: "control_plane" });
     return { controlPlane: true, remnants: sorted(remnants) };
   }
+
+  const known = new Set(opts.knownUuids.filter((u) => UUID_RE.test(u)));
+  const complete = new Set((opts.completeUuids ?? []).filter((u) => known.has(u)));
 
   // Containers.
   const removableContainers = new Set<string>();
@@ -171,8 +197,13 @@ export function classifyScan(scan: ScanResult, opts: { knownUuids: readonly stri
     if (!isProxy && !isSentinel && !isHelper && !isManaged) continue;
     // The sentinel is Coolify's metrics agent: useless after the takeover, safe to stop. The proxy, a helper mid-job and a managed app container
     // that is still running are doing something: shown, not removed.
+    // A managed container that is Coolify's own machinery (proxy, sentinel, helper) needs no uuid. Any other managed container is an app,
+    // database or service container: only when its uuid is one the checklist matched complete.
+    const machinery = isProxy || isSentinel || isHelper;
     if (running && !isSentinel) {
       remnants.push({ kind: "container", name: c.name, sizeBytes: null, keep: true, reason: "running" });
+    } else if (!machinery && ![...complete].some((u) => containerBelongsTo(c.name, u))) {
+      remnants.push({ kind: "container", name: c.name, sizeBytes: null, keep: true, reason: "unknown" });
     } else {
       removableContainers.add(c.name);
       remnants.push({ kind: "container", name: c.name, sizeBytes: null });
@@ -197,7 +228,8 @@ export function classifyScan(scan: ScanResult, opts: { knownUuids: readonly stri
   }
 
   // Directories under /data/coolify.
-  const liveSources = scan.mounts.filter((m) => !removableContainers.has(m.container)).flatMap((m) => m.sources);
+  // Every container counts, including those about to be removed: a stopped container's bind data is exactly what must not vanish with it.
+  const liveSources = scan.mounts.flatMap((m) => m.sources);
   for (const d of scan.dirs) {
     const rel = d.path.slice(COOLIFY_ROOT.length + 1);
     const parts = rel.split("/");
@@ -206,8 +238,12 @@ export function classifyScan(scan: ScanResult, opts: { knownUuids: readonly stri
     if (d.link || parts.some((p) => !p || p === "." || p === "..")) keep = "unknown";
     else if (DATA_DIRECTORIES.includes(top)) keep = "user_data";
     else if (parts.length === 1 && OWN_DIRECTORIES.includes(top)) keep = null;
-    else if (parts.length === 2 && (top === "applications" || top === "services") && /^[A-Za-z0-9_-]{1,64}$/.test(parts[1])) keep = null;
-    else keep = "unknown";
+    else if (parts.length === 2 && (top === "applications" || top === "services") && /^[A-Za-z0-9_-]{1,64}$/.test(parts[1])) {
+      // Only a directory of an item the checklist matched complete, and holding nothing but compose files.
+      if (d.data) keep = "user_data";
+      else if (!complete.has(parts[1])) keep = "unknown";
+      else keep = null;
+    } else keep = "unknown";
     if (keep === null && liveSources.some((s) => mountTouches(s, d.path))) keep = "in_use";
     remnants.push(keep ? { kind: "directory", name: d.path, sizeBytes: d.sizeBytes, keep: true, reason: keep } : { kind: "directory", name: d.path, sizeBytes: d.sizeBytes });
   }

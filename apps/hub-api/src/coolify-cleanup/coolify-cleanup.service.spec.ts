@@ -39,6 +39,13 @@ interface Opts {
   links?: Record<string, { serverId: string }>;
   apps?: Array<Record<string, unknown>>;
   scripts?: (script: string, n: number) => { exitCode: number; output: string } | Error;
+  /** What the public name resolves to (default: this server). */
+  dnsA?: string[];
+  /** Whether Tugra presents a valid certificate (default yes). */
+  ssl?: boolean;
+  /** When the stored Coolify read was taken (default: now). null = no time recorded. */
+  readAt?: Date | null;
+  dbs?: Array<Record<string, unknown>>;
 }
 
 function make(o: Opts = {}) {
@@ -52,11 +59,11 @@ function make(o: Opts = {}) {
   const inv = o.inv === undefined ? inventory() : o.inv;
   const prisma = {
     server: { findUnique: jest.fn(async ({ where }: { where: { id: string } }) => (where.id === "s1" ? SERVER : null)) },
-    coolifyInventory: { findMany: jest.fn(async () => (inv ? [{ id: "i1", teamId: "t1", serverId: o.invServerId ?? "hub", snapshot: inv, serverLinks: o.links ?? {} }] : [])) },
+    coolifyInventory: { findMany: jest.fn(async () => (inv ? [{ id: "i1", teamId: "t1", serverId: o.invServerId ?? "hub", snapshot: inv, serverLinks: o.links ?? {}, readAt: o.readAt === undefined ? new Date() : o.readAt }] : [])) },
     application: {
       findMany: jest.fn(async () => o.apps ?? [{ id: "a1", name: "blog", status: "RUNNING", envEnc: "ENC", domain: "blog.example.com", extraDomains: [], domainRedirect: null, volumes: volumesFixture, composeFile: null, domains: [] }]),
     },
-    database: { findMany: jest.fn(async () => []) },
+    database: { findMany: jest.fn(async () => o.dbs ?? []) },
     notificationChannel: { findMany: jest.fn(async () => []) },
     scheduledTask: { findMany: jest.fn(async () => []) },
     bulkTask: { findMany: jest.fn(async () => []) },
@@ -103,8 +110,10 @@ function make(o: Opts = {}) {
     }),
   };
   const crypto = { decrypt: jest.fn(() => JSON.stringify({ A: CANARY, B: CANARY })) };
-  const svc = new CoolifyCleanupService(prisma as never, access as never, audit as never, agentWs as never, servers as never, crypto as never);
-  return { svc, prisma, access, audit, audits, agentWs, servers, caps, sent, calls, rows, crypto };
+  const dns = { resolve4: jest.fn(async () => o.dnsA ?? ["203.0.113.10"]), resolve6: jest.fn(async () => [] as string[]) };
+  const net = { sslAt: jest.fn(async () => ({ ok: o.ssl !== false })) };
+  const svc = new CoolifyCleanupService(prisma as never, access as never, audit as never, agentWs as never, servers as never, crypto as never, dns as never, net as never);
+  return { svc, prisma, access, audit, audits, agentWs, servers, caps, sent, calls, rows, crypto, dns, net };
 }
 
 /** Scans return the same list until the removal script has run; after it, the scan returns `after`. */
@@ -193,6 +202,76 @@ describe("CoolifyCleanupService.check", () => {
     expect(t.audits.map((a) => a.action)).toEqual(["coolify.cleanup.check", "coolify.cleanup.scan"]);
   });
 
+  it("a stored read older than the window (or with no time) is refused before anything runs", async () => {
+    for (const readAt of [new Date(Date.now() - 31 * 60_000), null]) {
+      const t = make({ readAt });
+      await expect(t.svc.check("u1", "s1")).rejects.toMatchObject({ response: expect.objectContaining({ code: "read_stale" }) });
+      expect([...t.rows.values()][0]).toMatchObject({ status: "FAILED", failureCode: "read_stale" });
+      expect(t.agentWs.sendCommand).not.toHaveBeenCalled();
+    }
+  });
+
+  it("traffic: a domain that still resolves to Coolify keeps the checklist INCOMPLETE and nothing removable is offered", async () => {
+    const t = make({ dnsA: ["198.51.100.7"] });
+    const v = await t.svc.check("u1", "s1");
+    expect(v.status).toBe("INCOMPLETE");
+    expect(v.completeness.find((r) => r.kind === "traffic")).toMatchObject({ coolify: 1, tugra: 0, missing: ["blog.example.com"] });
+    expect(t.net.sslAt).not.toHaveBeenCalled();
+  });
+
+  it("traffic: Tugra without a valid certificate for the name is not cut over either", async () => {
+    const t = make({ ssl: false });
+    const v = await t.svc.check("u1", "s1");
+    expect(v.status).toBe("INCOMPLETE");
+    expect(v.completeness.find((r) => r.kind === "traffic")?.missing).toEqual(["blog.example.com"]);
+    expect(t.net.sslAt).toHaveBeenCalledWith("203.0.113.10", "blog.example.com");
+  });
+
+  it("a database's data volume (postgres-data-<uuid>) is compared with the Tugra database's volumes", async () => {
+    const DB = "uuiddb001uuiddb001uuiddb";
+    const inv = inventory({ databases: [{ id: "3", uuid: DB, name: "main-db", type: "postgresql", image: null, status: "running:healthy", isPublic: false, teamId: "1", projectId: null, environment: null, serverId: "5" }] });
+    const scans = (output: string) => ({ scripts: () => ({ exitCode: 0, output }) });
+    const out = SCAN_OK([`TUGRA_CU_V|postgres-data-${DB}`, `TUGRA_CU_C|${DB}|postgres:16|running|true`]);
+    const tdb = (volumes: unknown[]) => [{ id: "d1", name: "main-db", status: "RUNNING", backupEnabled: false, volumes }];
+    const ok = await make({ inv, dbs: tdb([]), ...scans(out) }).svc.check("u1", "s1");
+    const only = (r: typeof ok) => r.completeness.find((x) => x.kind === "volume")!;
+    expect(only(ok)).toMatchObject({ coolify: 2, tugra: 2, missing: [] }); // the app's data volume and the database's engine data (Tugra's built-in "data") are compared
+    expect(ok.status).toBe("READY");
+    // a second volume Tugra does not have
+    const extra = SCAN_OK([`TUGRA_CU_V|postgres-data-${DB}`, `TUGRA_CU_V|extra-vol-${DB}`]);
+    const miss = await make({ inv, dbs: tdb([]), ...scans(extra) }).svc.check("u1", "s1");
+    expect(only(miss).missing).toEqual(["main-db/extra-vol"]);
+    expect(miss.status).toBe("INCOMPLETE");
+  });
+
+  it("a running database whose data volume the host does not show is unreadable: the checklist cannot be complete", async () => {
+    const DB = "uuiddb001uuiddb001uuiddb";
+    const inv = inventory({ databases: [{ id: "3", uuid: DB, name: "main-db", type: "postgresql", image: null, status: "running:healthy", isPublic: false, teamId: "1", projectId: null, environment: null, serverId: "5" }] });
+    const t = make({ inv, dbs: [{ id: "d1", name: "main-db", status: "RUNNING", backupEnabled: false, volumes: [] }], scripts: () => ({ exitCode: 0, output: SCAN_OK([`TUGRA_CU_C|${DB}|postgres:16|running|true`]) }) });
+    const v = await t.svc.check("u1", "s1");
+    expect(v.completeness.find((r) => r.kind === "volume")?.unreadable).toBe(true);
+    expect(v.status).toBe("INCOMPLETE");
+  });
+
+  it("a stopped Coolify container and directory of an item the checklist verified are removable; what the read does not know is kept", async () => {
+    const UA = "uuidapp1uuidapp1uuidapp1";
+    const OTHER = "zzzz9999yyyy8888xxxx7777"; // created in Coolify after the read
+    const out = SCAN_OK([
+      `TUGRA_CU_C|${UA}-170000|x|exited|true`,
+      `TUGRA_CU_C|${OTHER}-170000|x|exited|true`,
+      `TUGRA_CU_D|/data/coolify/applications/${UA}|4|plain`,
+      `TUGRA_CU_D|/data/coolify/applications/${OTHER}|4|plain`,
+      `TUGRA_CU_D|/data/coolify/services/${UA}|900|data`,
+    ]);
+    const v = await make({ scripts: () => ({ exitCode: 0, output: out }) }).svc.check("u1", "s1");
+    const gone = v.remnants.filter((r) => !r.keep).map((r) => `${r.kind}:${r.name}`);
+    expect(gone).toContain(`container:${UA}-170000`);
+    expect(gone).toContain(`directory:/data/coolify/applications/${UA}`);
+    expect(gone).not.toContain(`container:${OTHER}-170000`);
+    expect(gone).not.toContain(`directory:/data/coolify/applications/${OTHER}`);
+    expect(gone).not.toContain(`directory:/data/coolify/services/${UA}`);
+  });
+
   it("an unreadable scan fails the check instead of reading as empty", async () => {
     const t = make({ scripts: () => ({ exitCode: 0, output: "TUGRA_CU_BEGIN\nTUGRA_CU_C|coolify-proxy|x|exited|true" }) });
     const v = await t.svc.check("u1", "s1");
@@ -254,6 +333,21 @@ describe("CoolifyCleanupService.confirm", () => {
     expect(t.rows.get(v.id)).toMatchObject({ status: "INCOMPLETE" });
   });
 
+  it("the DNS check runs again at confirm: a domain moved back to Coolify since the check closes the checklist, nothing is removed", async () => {
+    const { t, v } = await ready();
+    t.dns.resolve4.mockResolvedValue(["198.51.100.7"]);
+    await expect(t.svc.confirm("u1", v.id, { confirm: "olgu-box", listHash: v.listHash! })).rejects.toMatchObject({ response: expect.objectContaining({ code: "incomplete" }) });
+    expect(t.sent.some((s) => isRemoval(s.script))).toBe(false);
+    expect(t.rows.get(v.id)).toMatchObject({ status: "INCOMPLETE" });
+  });
+
+  it("a stored read that became too old between the check and the confirm is refused, nothing is removed", async () => {
+    const { t, v } = await ready();
+    t.prisma.coolifyInventory.findMany.mockResolvedValue([{ id: "i1", teamId: "t1", serverId: "hub", snapshot: inventory(), serverLinks: {}, readAt: new Date(Date.now() - 2 * 3600_000) }] as never);
+    await expect(t.svc.confirm("u1", v.id, { confirm: "olgu-box", listHash: v.listHash! })).rejects.toMatchObject({ response: expect.objectContaining({ code: "read_stale" }) });
+    expect(t.sent).toHaveLength(0);
+  });
+
   it("the list changed on the host since the check: refused, the new list is stored for a second look", async () => {
     let calls = 0;
     const { t, v } = await ready({ scripts: () => ({ exitCode: 0, output: ++calls === 1 ? SCAN_OK() : SCAN_OK(["TUGRA_CU_C|coolify-sentinel|ghcr.io/coollabsio/sentinel:1|running|"]) }) });
@@ -287,6 +381,20 @@ describe("CoolifyCleanupService.confirm", () => {
     await t.svc.settled(v.id);
     expect(await t.svc.get("u1", v.id)).toMatchObject({ status: "FAILED", failureCode: "partial" });
     expect(t.prisma.coolifyTakeover.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("a directory freed only by the removed container is not removed in the same run: the run ends FAILED (recheck), never silently more than was confirmed", async () => {
+    const UA = "uuidapp1uuidapp1uuidapp1";
+    const before = SCAN_OK([`TUGRA_CU_C|${UA}-1|x|exited|true`, `TUGRA_CU_D|/data/coolify/applications/${UA}|4|plain`, `TUGRA_CU_M|${UA}-1|/data/coolify/applications/${UA}/c;`]);
+    const afterRm = `TUGRA_CU_BEGIN\nTUGRA_CU_D|/data/coolify/applications/${UA}|4|plain\nTUGRA_CU_END\n`; // container gone, the directory is now free
+    let removed = false;
+    const { t, v } = await ready({ scripts: (script) => (isRemoval(script) ? ((removed = true), { exitCode: 0, output: `TUGRA_CU_R|container|${UA}-1|ok\nTUGRA_CU_R|container|coolify-proxy|ok\nTUGRA_CU_R|network|coolify|ok\nTUGRA_CU_DONE\n` }) : { exitCode: 0, output: removed ? afterRm : before }) });
+    expect(v.remnants.find((r) => r.kind === "directory")).toMatchObject({ keep: true, reason: "in_use" });
+    await t.svc.confirm("u1", v.id, { confirm: "olgu-box", listHash: v.listHash! });
+    await t.svc.settled(v.id);
+    const removal = t.sent.find((x) => isRemoval(x.script))!;
+    expect(removal.script).not.toContain(`applications/${UA}'`);
+    expect(await t.svc.get("u1", v.id)).toMatchObject({ status: "FAILED", failureCode: "recheck" });
   });
 
   it("something still removable after an all-ok removal is not CLEANED", async () => {

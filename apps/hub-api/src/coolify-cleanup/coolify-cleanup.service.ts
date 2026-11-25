@@ -12,7 +12,10 @@ import { composeVolumes } from "../deploy/compose-script";
 import type { CoolifyInventoryData } from "../coolify-takeover/coolify-inventory";
 import { compareCompleteness, isComplete, type TugraApp, type TugraDb, type TugraSide } from "./completeness";
 import { coolifyServerFor, coolifySideFor, withHostVolumes } from "./coolify-side";
-import { buildScanScript, classifyScan, listHash, parseScan, removable, ScanError } from "./remnant-scan";
+import { buildScanScript, classifyScan, listHash, parseScan, removable, ScanError, type ScanResult } from "./remnant-scan";
+import { DnsLookupService } from "../dns/dns-lookup.service";
+import { NetProbe } from "../cutover/net-probe";
+import { checkTraffic } from "./traffic-check";
 import { buildRemoveScript, parseRemoveOutput } from "./remnant-remove";
 import type { ConfirmInput } from "./dto";
 
@@ -21,6 +24,11 @@ const SCAN_TIMEOUT_MS = 60_000;
 const REMOVE_TIMEOUT_MS = 240_000;
 /** A CHECKING or CLEANING row nobody finished (hub restarted) stops blocking a new check after this long. The removal is idempotent. */
 const STALE_MS = 15 * 60_000;
+/**
+ * The stored Coolify read is trusted for this long. Items created in Coolify after the read are not in it (and so are never removed),
+ * but a read older than this says too little about what is on the server now: the owner reads the Coolify again first.
+ */
+const READ_MAX_AGE_MS = 30 * 60_000;
 
 const isInventory = (v: unknown): v is CoolifyInventoryData =>
   !!v && typeof v === "object" && (v as { v?: unknown }).v === 1 && Array.isArray((v as { servers?: unknown }).servers) && Array.isArray((v as { applications?: unknown }).applications);
@@ -51,6 +59,8 @@ export class CoolifyCleanupService {
     private readonly agentWs: AgentWsServer,
     private readonly servers: ServersService,
     private readonly crypto: CryptoService,
+    private readonly dns: DnsLookupService,
+    private readonly net: NetProbe,
   ) {}
 
   // ───────────────────────────── authorization ─────────────────────────────
@@ -83,8 +93,9 @@ export class CoolifyCleanupService {
     await this.audit.log({ actor: userId, action: "coolify.cleanup.check", target: serverId, meta: { cleanupId: row.id } });
     try {
       const found = await this.resolveCoolify(userId, server);
-      const scan = await this.scan(serverId, found.knownUuids);
-      const { rows, complete } = await this.judge(server, found, scan.volumes);
+      const raw = await this.scan(serverId);
+      const { rows, complete, completeUuids } = await this.judge(server, found, raw);
+      const scan = classifyScan(raw, { knownUuids: found.knownUuids, completeUuids });
       if (scan.controlPlane) return await this.finish(row.id, "FAILED", { completeness: rows, remnants: scan.remnants, failureCode: "control_plane" });
       const out = await this.finish(row.id, complete ? "READY" : "INCOMPLETE", { completeness: rows, remnants: scan.remnants });
       const gone = removable(scan.remnants).length;
@@ -137,8 +148,9 @@ export class CoolifyCleanupService {
     // A fresh look: the checklist must still be complete and the list the very one the owner confirmed.
     const found = await this.resolveCoolify(userId, server);
     const knownUuids = found.knownUuids;
-    const scan = await this.scan(row.serverId, knownUuids);
-    const { rows, complete } = await this.judge(server, found, scan.volumes);
+    const raw = await this.scan(row.serverId);
+    const { rows, complete, completeUuids } = await this.judge(server, found, raw);
+    const scan = classifyScan(raw, { knownUuids, completeUuids });
     if (scan.controlPlane) {
       await this.finish(row.id, "FAILED", { completeness: rows, remnants: scan.remnants, failureCode: "control_plane" });
       throw conflict("control_plane", "this server is the Coolify host: it is retired separately");
@@ -156,7 +168,7 @@ export class CoolifyCleanupService {
     if (claimed.count !== 1) throw conflict("not_ready", "this cleanup is not ready to confirm");
     await this.audit.log({ actor: userId, action: "coolify.cleanup.confirm", target: row.serverId, meta: { cleanupId: id, removable: removable(scan.remnants).length } });
 
-    const job = this.execute(id, userId, row.serverId, knownUuids, removable(scan.remnants)).catch((e: unknown) => this.log.error(`cleanup run failed: ${e instanceof Error ? e.constructor.name : "unknown"}`));
+    const job = this.execute(id, userId, row.serverId, knownUuids, completeUuids, removable(scan.remnants)).catch((e: unknown) => this.log.error(`cleanup run failed: ${e instanceof Error ? e.constructor.name : "unknown"}`));
     this.running.set(id, job);
     void job.finally(() => this.running.delete(id));
     return this.toView(await this.loadRow(id));
@@ -167,7 +179,7 @@ export class CoolifyCleanupService {
     await this.running.get(id);
   }
 
-  private async execute(id: string, userId: string, serverId: string, knownUuids: string[], items: CleanupRemnant[]): Promise<void> {
+  private async execute(id: string, userId: string, serverId: string, knownUuids: string[], completeUuids: string[], items: CleanupRemnant[]): Promise<void> {
     let results: CleanupResult[] = [];
     let after: CleanupRemnant[] | null = null;
     let failureCode: string | null = null;
@@ -178,9 +190,14 @@ export class CoolifyCleanupService {
         return { removal, verify };
       });
       results = items.length ? parseRemoveOutput(out.removal.output, items) : [];
-      after = classifyScan(parseScan(out.verify.output), { knownUuids }).remnants;
+      after = classifyScan(parseScan(out.verify.output), { knownUuids, completeUuids }).remnants;
       for (const r of results) await this.audit.log({ actor: userId, action: "coolify.cleanup.remove", target: serverId, meta: { cleanupId: id, kind: r.kind, name: r.name, code: r.code } });
-      if (results.some((r) => r.code !== "ok" && r.code !== "absent") || removable(after).length > 0) failureCode = "partial";
+      const confirmed = new Set(items.map((i) => `${i.kind}:${i.name}`));
+      const left = removable(after);
+      if (results.some((r) => r.code !== "ok" && r.code !== "absent") || left.some((r) => confirmed.has(`${r.kind}:${r.name}`))) failureCode = "partial";
+      // Something that was held back by a container this run removed (its directory) is now free, but the owner never confirmed it:
+      // it waits for the next look.
+      else if (left.length > 0) failureCode = "recheck";
     } catch (e) {
       failureCode = e instanceof ScanError ? "scan_unreadable" : "agent_error";
       this.log.warn(`cleanup removal failed: ${e instanceof Error ? e.constructor.name : "unknown"}`);
@@ -219,11 +236,10 @@ export class CoolifyCleanupService {
     }
   }
 
-  /** The host's side: the classified remnants and the docker volume names (for the checklist only). The uuids come from the stored read. */
-  private async scan(serverId: string, knownUuids: string[]) {
+  /** The host's side: the parsed listing (containers, volume names and mounts). Classification needs the checklist first, see {@link judge}. */
+  private async scan(serverId: string): Promise<ScanResult> {
     const out = await this.withCapability(serverId, () => this.agentWs.sendCommand(serverId, buildScanScript(), CAPABILITY, SCAN_TIMEOUT_MS));
-    const parsed = parseScan(out.output);
-    return { ...classifyScan(parsed, { knownUuids }), volumes: parsed.volumes };
+    return parseScan(out.output);
   }
 
   /** The stored read that knows this server and its Coolify side. Throws 409 when the server is the Coolify host or no read knows it. */
@@ -238,16 +254,23 @@ export class CoolifyCleanupService {
       const cs = coolifyServerFor(inv.snapshot, links, server);
       if (!cs) continue;
       if (cs.isLocal) throw conflict("control_plane", "this server is the Coolify host: it is retired separately");
+      // Fail closed on the age of the read: no time, or too old, is refused.
+      if (!inv.readAt || Date.now() - new Date(inv.readAt).getTime() > READ_MAX_AGE_MS) throw conflict("read_stale", "the stored Coolify read is too old: read the Coolify again first");
       return coolifySideFor(inv.snapshot, cs.id);
     }
     throw conflict("no_coolify_link", "read the Coolify first: no stored Coolify read knows this server");
   }
 
-  /** The checklist: Coolify's side (volumes from the host where the read has none) against what Tugra holds on this server. */
-  private async judge(server: Server, found: ReturnType<typeof coolifySideFor>, hostVolumes: readonly string[]): Promise<{ rows: CompletenessRow[]; complete: boolean }> {
-    const result = compareCompleteness(withHostVolumes(found.side, hostVolumes), await this.tugraSide(server));
+  /** The checklist: Coolify's side (volumes and running state from the host where the read has none) against what Tugra holds on this server. */
+  private async judge(server: Server, found: ReturnType<typeof coolifySideFor>, raw: ScanResult): Promise<{ rows: CompletenessRow[]; complete: boolean; completeUuids: string[] }> {
+    const side = withHostVolumes(found.side, raw.volumes, raw.containers);
+    const hosts = side.applications.flatMap((a) => a.domains);
+    const cutover = hosts.length ? await checkTraffic(hosts, { ipv4: server.publicIp, ipv6: server.publicIpv6 }, { dns: this.dns, net: this.net }) : {};
+    const result = compareCompleteness(side, { ...(await this.tugraSide(server)), cutover });
     const rows = result.rows.map((r) => ((found.unreadable as string[]).includes(r.kind) ? { ...r, unreadable: true } : r));
-    return { rows, complete: isComplete(rows) };
+    const complete = isComplete(rows);
+    // A section the read could not carry makes the whole checklist incomplete; no item may then count as verified.
+    return { rows, complete, completeUuids: complete ? result.completeUuids : [] };
   }
 
   private async tugraSide(server: Server): Promise<TugraSide> {

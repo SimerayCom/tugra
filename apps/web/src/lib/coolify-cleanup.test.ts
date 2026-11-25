@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
 import type { CleanupView } from "@tugra/shared";
+import { COMPLETENESS_KINDS } from "@tugra/shared";
 import { ApiError } from "./api";
+import cleanupLocale from "../i18n/locales/en/coolifyCleanup.json";
 import { canOfferConfirm, cleanupErrorKey, cleanupFailureKey, rowNeedsAttention, sizeText, splitRemnants } from "./coolify-cleanup";
 
 const view = (over: Partial<CleanupView> = {}): CleanupView => ({
@@ -11,6 +13,7 @@ describe("cleanupErrorKey", () => {
   it("uses the hub's stable code when it has a line, else the status", () => {
     expect(cleanupErrorKey(new ApiError(409, "x", "list_changed"))).toBe("coolifyCleanup.error.list_changed");
     expect(cleanupErrorKey(new ApiError(409, "x", "incomplete"))).toBe("coolifyCleanup.error.incomplete");
+    expect(cleanupErrorKey(new ApiError(409, "x", "read_stale"))).toBe("coolifyCleanup.error.read_stale");
     expect(cleanupErrorKey(new ApiError(403, "only a team owner"))).toBe("coolifyCleanup.error.forbidden");
     expect(cleanupErrorKey(new ApiError(503, "agent offline"))).toBe("coolifyCleanup.error.offline");
     expect(cleanupErrorKey(new ApiError(500, "boom"))).toBe("coolifyCleanup.error.generic");
@@ -56,5 +59,13 @@ describe("sizeText", () => {
     expect(sizeText(512)).toBe("512 B");
     expect(sizeText(1536)).toBe("1.5 KB");
     expect(sizeText(5 * 1024 * 1024)).toBe("5.0 MB");
+  });
+});
+
+describe("locale coverage for what the hub can now say", () => {
+  it("every checklist kind (including traffic) has a line, and every stale-read or recheck code the hub stores has one", () => {
+    for (const k of COMPLETENESS_KINDS) expect(Object.keys(cleanupLocale.kind)).toContain(k);
+    expect(Object.keys(cleanupLocale.failure)).toEqual(expect.arrayContaining(["read_stale", "recheck", "partial"]));
+    expect(Object.keys(cleanupLocale.error)).toContain("read_stale");
   });
 });

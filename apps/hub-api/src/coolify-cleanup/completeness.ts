@@ -75,6 +75,11 @@ export interface TugraSide {
   databases: TugraDb[];
   /** Tugra notification channel types the team has. */
   notificationTypes: string[];
+  /**
+   * Traffic check per hostname (true = the name resolves to this server AND Tugra answers with a valid certificate for it). Absent = the
+   * check did not run: when Coolify served any domain the traffic row is then unreadable, never complete.
+   */
+  cutover?: Record<string, boolean>;
 }
 
 // ---- helpers ----------------------------------------------------------------------------------------------------------
@@ -95,10 +100,24 @@ export function hostsOfFqdn(fqdn: string | null | undefined): string[] {
   return [...new Set(fqdn.split(",").map(hostOf).filter((h): h is string => !!h))];
 }
 
-/** Coolify names a docker volume `<uuid>-<name>` or `<uuid>_<name>`; the part after the uuid is what Tugra calls it. */
-export function logicalVolumeName(dockerName: string, uuid: string): string {
-  if (uuid && (dockerName.startsWith(`${uuid}-`) || dockerName.startsWith(`${uuid}_`))) return dockerName.slice(uuid.length + 1);
+/**
+ * Coolify names a docker volume `<uuid>-<name>` or `<uuid>_<name>` (applications, services) or `<name>-<uuid>` (databases:
+ * `postgres-data-<uuid>`); the part beside the uuid is what Tugra calls it. A database's engine data volume (`<engine>-data`) is
+ * Tugra's `data`.
+ */
+export function logicalVolumeName(dockerName: string, uuid: string, isDatabase = false): string {
+  if (!uuid) return dockerName;
+  if (dockerName.startsWith(`${uuid}-`) || dockerName.startsWith(`${uuid}_`)) return dockerName.slice(uuid.length + 1);
+  if (dockerName.endsWith(`-${uuid}`) || dockerName.endsWith(`_${uuid}`)) {
+    const base = dockerName.slice(0, dockerName.length - uuid.length - 1);
+    return isDatabase && /-data$/.test(base) ? "data" : base;
+  }
   return dockerName;
+}
+
+/** Does this docker volume belong to the Coolify resource with this uuid (uuid first or last, `-` or `_`)? */
+export function volumeBelongsTo(volume: string, uuid: string): boolean {
+  return !!uuid && (volume.startsWith(`${uuid}-`) || volume.startsWith(`${uuid}_`) || volume.endsWith(`-${uuid}`) || volume.endsWith(`_${uuid}`));
 }
 
 const norm = (s: string): string => s.trim().toLowerCase();
@@ -123,6 +142,11 @@ export interface CompletenessResult {
   rows: CompletenessRow[];
   /** Every row complete and every Coolify side readable. */
   complete: boolean;
+  /**
+   * The Coolify uuids of the items matched COMPLETE one by one (counterpart present and running where Coolify's was, variables, volumes
+   * read and present, domains and traffic, tasks, backup). Only these may have their leftovers (containers, directories) removed.
+   */
+  completeUuids: string[];
 }
 
 export function compareCompleteness(coolify: CoolifySide, tugra: TugraSide): CompletenessResult {
@@ -130,16 +154,26 @@ export function compareCompleteness(coolify: CoolifySide, tugra: TugraSide): Com
   const row = (kind: CompletenessKind, c: number, t: number, missing: string[], extra: Partial<CompletenessRow> = {}): void => {
     rows.push({ kind, coolify: c, tugra: t, missing: [...new Set(missing)].sort(), ...extra });
   };
+  /** uuids of items that failed any row: they are never "matched complete". */
+  const bad = new Set<string>();
   const appOf = (ref: string, name: string) => counterpart(tugra.applications, ref, name);
   const apps = coolify.applications.map((a) => ({ a, t: appOf(a.ref, a.name) }));
   const svcs = coolify.services.map((s) => ({ s, t: appOf(s.ref, s.name) })); // a Coolify service is a compose app in Tugra
   const dbs = coolify.databases.map((d) => ({ d, t: counterpart(tugra.databases, d.ref, d.name) }));
 
-  const missingApps = apps.map(({ a, t }) => presence(a.running, t, a.name)).filter((x): x is string => !!x);
+  const missingOf = (items: Array<{ uuid: string; running: boolean; name: string; t: { running: boolean } | undefined }>): string[] =>
+    items
+      .map((i) => {
+        const m = presence(i.running, i.t, i.name);
+        if (m) bad.add(i.uuid);
+        return m;
+      })
+      .filter((x): x is string => !!x);
+  const missingApps = missingOf(apps.map(({ a, t }) => ({ uuid: a.uuid, running: a.running, name: a.name, t })));
   row("application", apps.length, apps.length - missingApps.length, missingApps);
-  const missingDbs = dbs.map(({ d, t }) => presence(d.running, t, d.name)).filter((x): x is string => !!x);
+  const missingDbs = missingOf(dbs.map(({ d, t }) => ({ uuid: d.uuid, running: d.running, name: d.name, t })));
   row("database", dbs.length, dbs.length - missingDbs.length, missingDbs);
-  const missingSvcs = svcs.map(({ s, t }) => presence(s.running, t, s.name)).filter((x): x is string => !!x);
+  const missingSvcs = missingOf(svcs.map(({ s, t }) => ({ uuid: s.uuid, running: s.running, name: s.name, t })));
   row("service", svcs.length, svcs.length - missingSvcs.length, missingSvcs);
 
   // Domains: every hostname Coolify served must be a hostname of the matched Tugra app.
@@ -149,10 +183,26 @@ export function compareCompleteness(coolify: CoolifySide, tugra: TugraSide): Com
     const have = new Set((t?.domains ?? []).map((h) => hostOf(h)).filter((h): h is string => !!h));
     for (const h of a.domains) {
       domainTotal++;
-      if (!have.has(h)) domainMissing.push(h);
+      if (!have.has(h)) {
+        domainMissing.push(h);
+        bad.add(a.uuid);
+      }
     }
   }
   row("domain", domainTotal, domainTotal - new Set(domainMissing).size, domainMissing);
+
+  // Traffic: a hostname only counts when it already resolves to Tugra's server and Tugra answers with a valid certificate for it. Removing
+  // Coolify's proxy and certificates while DNS still points at Coolify would be an outage; the owner's fallback would be gone.
+  const trafficHosts = new Map<string, string[]>();
+  for (const { a } of apps) for (const h of a.domains) trafficHosts.set(h, [...(trafficHosts.get(h) ?? []), a.uuid]);
+  const trafficMissing: string[] = [];
+  for (const [h, owners] of trafficHosts) {
+    if (tugra.cutover?.[h] !== true) {
+      trafficMissing.push(h);
+      for (const u of owners) bad.add(u);
+    }
+  }
+  row("traffic", trafficHosts.size, trafficHosts.size - trafficMissing.length, trafficMissing, trafficHosts.size > 0 && !tugra.cutover ? { unreadable: true } : {});
 
   // Variable names: a count per matched item. Tugra may hold more (its own); fewer means something did not come across.
   const envMissing: string[] = [];
@@ -161,29 +211,40 @@ export function compareCompleteness(coolify: CoolifySide, tugra: TugraSide): Com
   for (const { a, t } of apps) {
     envCoolify += a.envKeys;
     envTugra += Math.min(t?.envKeys ?? 0, a.envKeys);
-    if ((t?.envKeys ?? 0) < a.envKeys) envMissing.push(a.name);
+    if ((t?.envKeys ?? 0) < a.envKeys) {
+      envMissing.push(a.name);
+      bad.add(a.uuid);
+    }
   }
   for (const { s, t } of svcs) {
     envCoolify += s.envKeys;
     envTugra += Math.min(t?.envKeys ?? 0, s.envKeys);
-    if ((t?.envKeys ?? 0) < s.envKeys) envMissing.push(s.name);
+    if ((t?.envKeys ?? 0) < s.envKeys) {
+      envMissing.push(s.name);
+      bad.add(s.uuid);
+    }
   }
   row("env_keys", envCoolify, envTugra, envMissing);
 
   // Volumes: only when every Coolify item carries its volume list; otherwise the row says it cannot tell.
-  const volItems: Array<{ name: string; uuid: string; volumes: string[] | null; t: { volumes: string[] } | undefined }> = [
-    ...apps.map(({ a, t }) => ({ name: a.name, uuid: a.uuid, volumes: a.volumes, t })),
-    ...svcs.map(({ s, t }) => ({ name: s.name, uuid: s.uuid, volumes: s.volumes, t })),
-    ...dbs.map(({ d, t }) => ({ name: d.name, uuid: d.uuid, volumes: d.volumes, t })),
+  const volItems: Array<{ name: string; uuid: string; db: boolean; volumes: string[] | null; t: { volumes: string[] } | undefined }> = [
+    ...apps.map(({ a, t }) => ({ name: a.name, uuid: a.uuid, db: false, volumes: a.volumes, t })),
+    ...svcs.map(({ s, t }) => ({ name: s.name, uuid: s.uuid, db: false, volumes: s.volumes, t })),
+    ...dbs.map(({ d, t }) => ({ name: d.name, uuid: d.uuid, db: true, volumes: d.volumes, t })),
   ];
   const unreadableVolumes = volItems.some((v) => v.volumes === null);
   const volMissing: string[] = [];
   let volTotal = 0;
   for (const v of volItems) {
+    if (v.volumes === null) bad.add(v.uuid);
     const have = new Set((v.t?.volumes ?? []).map(norm));
     for (const dockerName of v.volumes ?? []) {
       volTotal++;
-      if (!have.has(norm(logicalVolumeName(dockerName, v.uuid)))) volMissing.push(`${v.name}/${logicalVolumeName(dockerName, v.uuid)}`);
+      const logical = logicalVolumeName(dockerName, v.uuid, v.db);
+      if (!have.has(norm(logical))) {
+        volMissing.push(`${v.name}/${logical}`);
+        bad.add(v.uuid);
+      }
     }
   }
   row("volume", volTotal, volTotal - volMissing.length, volMissing, unreadableVolumes ? { unreadable: true } : {});
@@ -192,7 +253,10 @@ export function compareCompleteness(coolify: CoolifySide, tugra: TugraSide): Com
   const taskMissing: string[] = [];
   for (const task of coolify.tasks) {
     const owner = counterpart(tugra.applications, "", task.owner);
-    if (!owner || !owner.tasks.map(norm).includes(norm(task.name))) taskMissing.push(`${task.owner}/${task.name}`);
+    if (!owner || !owner.tasks.map(norm).includes(norm(task.name))) {
+      taskMissing.push(`${task.owner}/${task.name}`);
+      for (const x of [...apps.map(({ a }) => a), ...svcs.map(({ s }) => s)]) if (norm(x.name) === norm(task.owner)) bad.add(x.uuid);
+    }
   }
   row("scheduled_task", coolify.tasks.length, coolify.tasks.length - taskMissing.length, taskMissing);
 
@@ -201,7 +265,10 @@ export function compareCompleteness(coolify: CoolifySide, tugra: TugraSide): Com
   const backupNames = [...new Set(coolify.backups.map(norm))];
   for (const name of backupNames) {
     const db = tugra.databases.find((d) => norm(d.name) === name);
-    if (!db?.backupEnabled) backupMissing.push(name);
+    if (!db?.backupEnabled) {
+      backupMissing.push(name);
+      for (const { d } of dbs) if (norm(d.name) === name) bad.add(d.uuid);
+    }
   }
   row("backup", backupNames.length, backupNames.length - backupMissing.length, backupMissing);
 
@@ -213,7 +280,8 @@ export function compareCompleteness(coolify: CoolifySide, tugra: TugraSide): Com
   const notifMissing = carried.filter((k) => !haveTypes.has(CHANNEL_TYPE[k] ?? k));
   row("notification", carried.length, carried.length - notifMissing.length, notifMissing, notCarried.length ? { notCarried } : {});
 
-  return { rows, complete: isComplete(rows) };
+  const all = [...apps.map(({ a }) => a.uuid), ...svcs.map(({ s }) => s.uuid), ...dbs.map(({ d }) => d.uuid)];
+  return { rows, complete: isComplete(rows), completeUuids: [...new Set(all.filter((u) => u && !bad.has(u)))] };
 }
 
 /** Complete = nothing missing anywhere and no row that could not be read. An unreadable row is never "complete". */

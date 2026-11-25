@@ -209,12 +209,21 @@ export class ProjectMoveRunnerService {
         const app = await this.prisma.application.findUnique({ where: { id: it.refId }, select: { status: true, dbNetwork: true, name: true } });
         if (!app) throw new StepError("unexpected");
         const links = await this.prisma.appDatabaseLink.findMany({ where: { appId: it.refId }, select: { id: true, envVar: true, databaseId: true } });
+        // Record everything rollback needs BEFORE the first link is touched, in its own stage: a failure or a restart half-way through the
+        // removals still leaves a stored list to put back (rollback restores any app past "pending").
         st.links = links.map((l) => ({ envVar: l.envVar, databaseId: l.databaseId }));
         st.hadDbNetwork = app.dbNetwork;
         st.wasRunning = app.status === "RUNNING" || plan.frozen.includes(it.refId);
+        st.stage = "unlinking";
+        await save();
+      }
+      if (st.stage === "unlinking") {
         // The app move refuses an app that still has database links (they are per server): take them off, and put them back on the copies.
-        for (const l of links) await this.links.remove(row.actorId, it.refId, l.id);
-        if (app.dbNetwork) await this.prisma.application.update({ where: { id: it.refId }, data: { dbNetwork: false } });
+        // Re-reads the links that remain, so a restart half-way removes only what is left.
+        const left = await this.prisma.appDatabaseLink.findMany({ where: { appId: it.refId }, select: { id: true, envVar: true } });
+        const mine = new Set(st.links.map((l) => l.envVar));
+        for (const l of left) if (mine.has(l.envVar)) await this.links.remove(row.actorId, it.refId, l.id);
+        if (st.hadDbNetwork) await this.prisma.application.update({ where: { id: it.refId }, data: { dbNetwork: false } });
         st.stage = "unlinked";
         await save();
       }
@@ -331,6 +340,19 @@ export class ProjectMoveRunnerService {
     return new StepError(code);
   }
 
+  /** Is any app move this project move started still running? Optionally asks it to cancel (best effort; only an early move can stop). */
+  private async childMoveActive(row: ProjectMove, plan: StoredPlan, cancel: boolean): Promise<boolean> {
+    let active = false;
+    for (const [appId, st] of Object.entries(plan.apps)) {
+      if (!st.moveId) continue;
+      const m = await this.prisma.appMove.findUnique({ where: { id: st.moveId }, select: { phase: true } });
+      if (!m || (APP_MOVE_TERMINAL as readonly string[]).includes(m.phase)) continue;
+      active = true;
+      if (cancel) await this.appMoves.cancel(row.actorId, appId, st.moveId).catch(() => undefined);
+    }
+    return active;
+  }
+
   /** Every app of the move is still on the source server: nothing has been cut over, so the move can be undone. */
   private async sourceAuthoritative(row: ProjectMove, plan: StoredPlan): Promise<boolean> {
     const apps = await this.prisma.application.findMany({ where: { id: { in: Object.keys(plan.apps) } }, select: { serverId: true } });
@@ -347,6 +369,13 @@ export class ProjectMoveRunnerService {
       await this.audit.log({ actor: row.actorId, action: "project.move.fail", target: row.projectId, meta: { moveId: row.id, code: "rollback_incomplete" } });
       return;
     }
+    // A child app move that is still running (a timeout, a failed poll) may yet land its app on the target: never remove the database copies
+    // under it. Ask it to cancel, and end FAILED with the copies kept; the owner decides once it is over.
+    if (await this.childMoveActive(fresh, plan, true)) {
+      await this.phase(row.id, "FAILED", { failureReason: code, finishedAt: new Date(), ownerId: null });
+      await this.audit.log({ actor: row.actorId, action: "project.move.fail", target: row.projectId, meta: { moveId: row.id, code, childActive: true } });
+      return;
+    }
     if (await this.sourceAuthoritative(fresh, plan)) {
       await this.phase(row.id, "ROLLING_BACK", { failureReason: code });
       await this.audit.log({ actor: row.actorId, action: "project.move.rollback", target: row.projectId, meta: { moveId: row.id, code } });
@@ -361,6 +390,7 @@ export class ProjectMoveRunnerService {
   private async rollback(row: ProjectMove): Promise<void> {
     const plan = parsePlan(row.plan);
     if (!(await this.sourceAuthoritative(row, plan))) throw new StepError("rollback_incomplete");
+    if (await this.childMoveActive(row, plan, false)) throw new StepError("rollback_incomplete");
     for (const [appId, st] of Object.entries(plan.apps)) {
       if (st.stage === "pending") continue;
       const existing = await this.prisma.appDatabaseLink.findMany({ where: { appId }, select: { envVar: true } });
@@ -399,7 +429,7 @@ export class ProjectMoveRunnerService {
         return { ...i, phase, childId: st?.targetDbId ?? i.childId };
       }
       const st = plan.apps[i.refId];
-      const phase = !st ? i.phase : st.stage === "pending" ? "pending" : st.stage === "unlinked" ? "preparing" : st.stage === "redeployed" ? "moved" : "moving";
+      const phase = !st ? i.phase : st.stage === "pending" ? "pending" : st.stage === "unlinked" || st.stage === "unlinking" ? "preparing" : st.stage === "redeployed" ? "moved" : "moving";
       return { ...i, phase, childId: st?.moveId ?? i.childId };
     });
   }

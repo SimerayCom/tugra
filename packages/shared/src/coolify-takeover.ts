@@ -180,7 +180,7 @@ export const CLEANUP_STATUSES = ["CHECKING", "INCOMPLETE", "READY", "CLEANING", 
 export type CleanupStatus = (typeof CLEANUP_STATUSES)[number];
 
 /** The things compared one by one between Coolify and Tugra. */
-export const COMPLETENESS_KINDS = ["application", "database", "service", "domain", "env_keys", "volume", "scheduled_task", "backup", "notification"] as const;
+export const COMPLETENESS_KINDS = ["application", "database", "service", "domain", "traffic", "env_keys", "volume", "scheduled_task", "backup", "notification"] as const;
 export type CompletenessKind = (typeof COMPLETENESS_KINDS)[number];
 
 export interface CompletenessRow {
