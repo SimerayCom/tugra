@@ -9,8 +9,6 @@ import { CoolifyInPlaceModule } from "../coolify-inplace/coolify-inplace.module"
 import { CoolifyInPlaceService } from "../coolify-inplace/coolify-inplace.service";
 import { MigrationCampaignsModule } from "../migration-campaigns/migration-campaigns.module";
 import { MigrationCampaignsService } from "../migration-campaigns/migration-campaigns.service";
-import { ProjectMovesModule } from "../project-moves/project-moves.module";
-import { ProjectMovesService } from "../project-moves/project-moves.service";
 import { CoolifyHostGrantService } from "./coolify-host-grant.service";
 import { CoolifySshInstallService } from "./coolify-ssh-install.service";
 import { CoolifyTakeoverModule } from "./coolify-takeover.module";
@@ -36,12 +34,6 @@ describe("Coolify takeover contract: capabilities on the hub", () => {
 });
 
 describe("Coolify takeover contract: skeleton modules", () => {
-  it("instantiates every still-empty takeover service on its own (no hidden dependency yet)", async () => {
-    // Lanes B, C and D filled their services (they have their own specs); the rest are still empty here.
-    const mod = await Test.createTestingModule({ providers: [ProjectMovesService] }).compile();
-    for (const S of [ProjectMovesService]) expect(mod.get(S)).toBeInstanceOf(S);
-  });
-
   it("registers the takeover services in the existing takeover module and exports them", () => {
     const providers = Reflect.getMetadata("providers", CoolifyTakeoverModule) as unknown[];
     const exported = Reflect.getMetadata("exports", CoolifyTakeoverModule) as unknown[];
@@ -51,16 +43,6 @@ describe("Coolify takeover contract: skeleton modules", () => {
     }
   });
 
-  it.each([
-    ["cleanup (G)", CoolifyCleanupModule, CoolifyCleanupService],
-    ["in place (F)", CoolifyInPlaceModule, CoolifyInPlaceService],
-    ["campaigns (E)", MigrationCampaignsModule, MigrationCampaignsService],
-    ["project moves (H)", ProjectMovesModule, ProjectMovesService],
-  ])("the new %s module compiles on its own and serves its empty service", async (_name, Mod, Svc) => {
-    const mod = await Test.createTestingModule({ imports: [Mod as never] }).compile();
-    expect(mod.get(Svc as never)).toBeInstanceOf(Svc);
-  });
-
   it("wires the four new modules into AppModule", () => {
     const src = readFileSync(join(__dirname, "../app.module.ts"), "utf8");
     for (const name of ["CoolifyInPlaceModule", "CoolifyCleanupModule", "MigrationCampaignsModule", "ProjectMovesModule"]) {
@@ -68,11 +50,6 @@ describe("Coolify takeover contract: skeleton modules", () => {
     }
   });
 
-  it("the skeleton services are empty: no method, no field", () => {
-    for (const S of [ProjectMovesService]) {
-      expect(Object.getOwnPropertyNames(S.prototype)).toEqual(["constructor"]);
-    }
-  });
 });
 
 describe("Coolify takeover contract: Prisma state and migrations", () => {

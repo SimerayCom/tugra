@@ -242,6 +242,44 @@ export interface CleanupView {
 export const PROJECT_MOVE_PHASES = ["QUEUED", "PRECHECK", "MOVING", "VERIFYING", "CUTOVER", "COMPLETED", "ROLLING_BACK", "ROLLED_BACK", "FAILED"] as const;
 export type ProjectMovePhase = (typeof PROJECT_MOVE_PHASES)[number];
 
+/** Everything that can stop a project move before it starts (hub plan) and how a running one can end badly. Each code has a line in the web locale. */
+export const PROJECT_MOVE_BLOCKERS = [
+  "same_server",
+  "empty_project",
+  "items_on_several_servers",
+  "agent_offline_source",
+  "agent_offline_target",
+  "server_not_ready",
+  "db_engine_unsupported",
+  "db_needs_s3_destination",
+  "db_extra_volumes",
+  "db_linked_outside",
+  "db_not_ready",
+  "app_preflight_failed",
+  "app_move_active",
+  "project_move_active",
+] as const;
+export type ProjectMoveBlockerCode = (typeof PROJECT_MOVE_BLOCKERS)[number];
+
+export const PROJECT_MOVE_WARNINGS = ["app_redeploy_after_relink", "pitr_not_carried", "db_config_only", "items_left_behind"] as const;
+export type ProjectMoveWarningCode = (typeof PROJECT_MOVE_WARNINGS)[number];
+
+export const PROJECT_MOVE_FAILURE_CODES = [
+  "db_copy_failed",
+  "db_backup_failed",
+  "db_restore_failed",
+  "app_move_failed",
+  "app_move_rolled_back",
+  "verify_failed",
+  "partial_move",
+  "rollback_incomplete",
+  "agent_offline",
+  "timeout",
+  "cancelled",
+  "unexpected",
+] as const;
+export type ProjectMoveFailureCode = (typeof PROJECT_MOVE_FAILURE_CODES)[number];
+
 export type ProjectMoveItemKind = "application" | "database" | "service";
 
 /** One member of the move. `childId` is the id of the AppMove (or database move) that carries it. */
