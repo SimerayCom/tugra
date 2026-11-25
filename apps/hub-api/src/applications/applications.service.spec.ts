@@ -9185,3 +9185,69 @@ describe("ApplicationsService.canLinkGitSource (shared Git sources)", () => {
     expect(await svcWith(false, perms).canLinkGitSource("u", { teamId: "t1", sharedAllTeams: true }, "t2")).toBe(false);
   });
 });
+
+describe("ApplicationsService.buildLocalRunScript (the PM2 in-place move starts a prepared app with exactly a redeploy's run line)", () => {
+  const CWD = "/home/acme/htdocs/app.example.com";
+  const row = {
+    ...app,
+    source: "IMAGE",
+    image: "node:20",
+    status: "NEW",
+    envEnc: '{"PORT":"3000","DB_PASSWORD":"s3cr3t-value"}',
+    envMetaEnc: null,
+    buildSecretsEnc: null,
+    hostPort: null,
+    containerPort: 3000,
+    domain: null,
+    dockerOptions: `--network host -u 1001:1001 -w ${CWD} -v ${CWD}:${CWD}`,
+    allowPrivilegedDockerOptions: true,
+    containerCommand: ["node", `${CWD}/server.js`, "--port", "3000"],
+    containerEntrypoint: null,
+    restartPolicy: "unless-stopped",
+    deployStrategy: "RECREATE",
+    networks: [],
+    networkAliases: [],
+    containerAlias: null,
+    dbNetwork: false,
+    clusterId: null,
+    hostMounts: null,
+    volumes: null,
+    customLabels: null,
+  };
+  const build = (r: Record<string, unknown>) => {
+    const prisma = { application: { findUnique: jest.fn().mockResolvedValue(r) }, sharedVariable: { findMany: jest.fn().mockResolvedValue([]) } } as unknown as PrismaService;
+    return make(prisma, accessWith({}), {} as AgentWsServer, undefined, undefined, undefined, undefined, undefined, undefined, undefined, { resolveLinkedEnv: jest.fn().mockResolvedValue({}) }, null, { resolveSecretEnv: jest.fn().mockResolvedValue({}) });
+  };
+
+  it("is the Tugra run line: host network, the process's uid, working dir, the same-path bind, the argv, restart policy; no pull and no build", async () => {
+    const s = await build(row).buildLocalRunScript("app1", "dep1");
+    expect(s).toContain("docker run -d");
+    expect(s).toContain("--name tugra_app1");
+    expect(s).toContain("--restart unless-stopped");
+    // Every option word is shell-quoted individually (see dockerOptionsArgs).
+    expect(s).toContain("'--network' 'host'");
+    expect(s).toContain("'-u' '1001:1001'");
+    expect(s).toContain(`'-w' '${CWD}'`);
+    expect(s).toContain(`'-v' '${CWD}:${CWD}'`);
+    expect(s).toContain("'tugra_app1:dep1' 'node' '" + CWD + "/server.js' '--port' '3000'"); // the locally tagged image, then the argv
+    expect(s).not.toContain("docker pull");
+    expect(s).not.toContain("docker build");
+    expect(s).not.toMatch(/docker run[^\n]* -p \d/); // no published port on the host network
+    expect(s).not.toContain("--network tugra"); // never the proxy / apps bridge
+    expect(s).not.toContain("traefik");
+  });
+
+  it("carries the environment through an env file, never in docker's argv", async () => {
+    const s = await build(row).buildLocalRunScript("app1", "dep1");
+    expect(s).toContain("--env-file /etc/tugra/env/app1.env");
+    expect(s).not.toContain("s3cr3t-value");
+  });
+
+  it("refuses to run the options without the owner's grant (the gate every deploy has)", async () => {
+    await expect(build({ ...row, allowPrivilegedDockerOptions: false }).buildLocalRunScript("app1", "dep1")).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it("404s an unknown app", async () => {
+    await expect(build(null as never).buildLocalRunScript("nope", "d")).rejects.toBeInstanceOf(NotFoundException);
+  });
+});
