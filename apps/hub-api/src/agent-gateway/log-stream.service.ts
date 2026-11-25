@@ -12,6 +12,14 @@ export interface LogStreamEvent {
 // (one runaway client can't spawn unlimited `docker logs -f` on an agent) and a hard max duration.
 const MAX_STREAMS_PER_SERVER = 5;
 const MAX_DURATION_MS = 30 * 60 * 1000; // 30 minutes
+/** One relayed line is cut here: a container that logs a single multi-MB line (a dumped payload, a binary blob) must not
+ *  become a multi-MB SSE frame that the hub, the web proxy hop and the browser all hold at once. */
+export const MAX_CHUNK_CHARS = 64 * 1024;
+
+export function capChunk(chunk: unknown): string {
+  const s = typeof chunk === "string" ? chunk : "";
+  return s.length > MAX_CHUNK_CHARS ? `${s.slice(0, MAX_CHUNK_CHARS)} ...[line truncated by the hub]\n` : s;
+}
 
 /**
  * Bridges an SSE subscriber to a signed agent log-follow session. Each subscribe mints one agent
@@ -55,7 +63,7 @@ export class LogStreamService {
 
       this.agentWs
         .startLogStream(serverId, { target, tail: opts.tail, follow: opts.follow, since: opts.since, search: opts.search, service: opts.service }, {
-          onChunk: (chunk) => subscriber.next({ chunk }),
+          onChunk: (chunk) => subscriber.next({ chunk: capChunk(chunk) }),
           onExit: (exitCode) => {
             subscriber.next({ exitCode });
             subscriber.complete();

@@ -1,5 +1,6 @@
 import { Injectable } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
+import { setBounded } from "../common/bounded-map";
 
 /** The application a request host belongs to (null appId never appears here — unmatched hosts are absent). */
 export interface ResolvedHost {
@@ -74,7 +75,7 @@ export class HostResolverService {
       const teamId = teamOf.get(sd.applicationId);
       if (teamId) add(sd.hostname, sd.applicationId, teamId);
     }
-    this.cache.set(serverId, { at: Date.now(), map });
+    setBounded(this.cache, serverId, { at: Date.now(), map }, 500);
     return map;
   }
 

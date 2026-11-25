@@ -1,5 +1,5 @@
 import { ForbiddenException, ServiceUnavailableException } from "@nestjs/common";
-import { LogStreamService, type LogStreamEvent } from "./log-stream.service";
+import { LogStreamService, MAX_CHUNK_CHARS, type LogStreamEvent } from "./log-stream.service";
 import type { LogListener } from "./agent-ws.server";
 
 const flush = () => new Promise((r) => setImmediate(r));
@@ -34,6 +34,19 @@ describe("LogStreamService", () => {
     expect(events).toEqual([{ chunk: "hello\n" }, { chunk: "world\n" }]);
     sub.unsubscribe();
     expect(agentWs.stopLogStream).toHaveBeenCalledWith("s1", "stream-1");
+  });
+
+  it("cuts a single enormous line to the per-chunk cap and leaves normal lines alone", async () => {
+    const { agentWs, listener } = makeAgentWs();
+    const svc = new LogStreamService(agentWs as never);
+    const events: LogStreamEvent[] = [];
+    svc.stream("s1", "c", { tail: 1, follow: true }).subscribe((e) => events.push(e));
+    await flush();
+    listener()!.onChunk("x".repeat(5_000_000));
+    listener()!.onChunk("ok\n");
+    expect(events[0].chunk!.length).toBeLessThan(MAX_CHUNK_CHARS + 100);
+    expect(events[0].chunk).toContain("truncated by the hub");
+    expect(events[1]).toEqual({ chunk: "ok\n" });
   });
 
   it("completes (and tears down) when the agent stream exits", async () => {

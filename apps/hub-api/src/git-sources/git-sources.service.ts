@@ -9,6 +9,7 @@ import { filterByQuery } from "../common/query-filter";
 import { gitUrlHost, isSshGitUrl } from "../deploy/deploy-script";
 import type { CreateGitSourceInput, CreateGithubAppSourceInput, CreateTokenSourceInput, UpsertGitSourceForImportInput } from "./dto";
 import { GiteaClient, apiUrlHost, isTokenKind, normalizeApiUrl, parseRepoFullName, type GitKind, type TokenGitKind } from "./gitea-client";
+import { setBounded } from "../common/bounded-map";
 
 const GH_API = "https://api.github.com";
 /** Hard cap on how many installation repositories one resolve reads (20 pages of 100). */
@@ -319,7 +320,7 @@ export class GitSourcesService {
     }
     if (!res.ok) throw new BadRequestException(`github: installation token failed (HTTP ${res.status})`);
     const data = (await res.json()) as { token: string; expires_at: string };
-    this.tokenCache.set(key, { token: data.token, exp: new Date(data.expires_at).getTime() });
+    setBounded(this.tokenCache, key, { token: data.token, exp: new Date(data.expires_at).getTime() }, 1000);
     return data.token;
   }
 
@@ -397,7 +398,7 @@ export class GitSourcesService {
     } else {
       count = (await this.eachInstallation(id, (token) => this.readInstallationCount(token))).reduce((a, b) => a + b, 0);
     }
-    this.countCache.set(id, { count, exp: Date.now() + COUNT_TTL_MS });
+    setBounded(this.countCache, id, { count, exp: Date.now() + COUNT_TTL_MS }, 1000);
     return { count };
   }
 

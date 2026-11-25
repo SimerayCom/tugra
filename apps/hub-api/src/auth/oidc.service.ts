@@ -8,6 +8,7 @@ import { InstanceSettingsService } from "../instance/instance-settings.service";
 import { CryptoService } from "../crypto/crypto.service";
 import { currentEdition, editionAtLeast } from "../common/edition";
 import { assertSafeUrl, allowPrivateTargets } from "../notifications/safe-url";
+import { setBounded } from "../common/bounded-map";
 
 const DISCOVERY_TTL_MS = 60 * 60 * 1000; // 1h — the IdP's endpoints/keys rotate slowly
 const FETCH_TIMEOUT_MS = 10_000;
@@ -160,7 +161,7 @@ export class OidcService {
     if (!doc.authorization_endpoint || !doc.token_endpoint || !doc.jwks_uri) {
       throw new BadRequestException("invalid sso discovery document");
     }
-    this.discoveryCache.set(issuer, { doc, exp: Date.now() + DISCOVERY_TTL_MS });
+    setBounded(this.discoveryCache, issuer, { doc, exp: Date.now() + DISCOVERY_TTL_MS }, 64);
     return doc;
   }
 
@@ -183,7 +184,7 @@ export class OidcService {
     let jwks = this.jwksCache.get(jwksUri);
     if (!jwks) {
       jwks = createRemoteJWKSet(new URL(jwksUri));
-      this.jwksCache.set(jwksUri, jwks);
+      setBounded(this.jwksCache, jwksUri, jwks, 64);
     }
     return jwks;
   }

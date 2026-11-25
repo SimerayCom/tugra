@@ -45,6 +45,7 @@ import {
   type BasePick,
   type WalObject,
 } from "./pitr-restore-script";
+import { setBounded } from "../common/bounded-map";
 
 const WINDOW_CACHE_MS = 20_000; // the web card polls; one agent listing per db per 20s is plenty
 const LIST_TIMEOUT_MS = 120_000;
@@ -161,7 +162,7 @@ export class PitrRestoreService implements OnApplicationBootstrap, OnModuleDestr
     const cached = this.windowCache.get(id);
     if (cached && Date.now() - cached.at < WINDOW_CACHE_MS) return cached.value;
     const { view } = await this.computeWindow(db);
-    this.windowCache.set(id, { at: Date.now(), value: view });
+    setBounded(this.windowCache, id, { at: Date.now(), value: view }, 1000);
     return view;
   }
 

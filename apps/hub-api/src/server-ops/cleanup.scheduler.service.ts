@@ -13,6 +13,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { RedisService } from "../redis/redis.service";
 import { CleanupRunnerService } from "./cleanup-runner.service";
 import { planCleanupSchedule, reclaimedNothing, shouldTriggerThresholdCleanup, THRESHOLD_BACKOFF_SEC, THRESHOLD_COOLDOWN_SEC } from "./cleanup-defaults";
+import { setBounded } from "../common/bounded-map";
 
 const QUEUE = "cleanup";
 /** Repeatable job (every 5 min): registers any missing per-server schedule, then checks disk thresholds. */
@@ -116,7 +117,7 @@ export class CleanupSchedulerService
     } catch {
       const until = this.localThrottle.get(serverId);
       if (until != null && now < until) return false;
-      this.localThrottle.set(serverId, now + THRESHOLD_COOLDOWN_SEC * 1000);
+      setBounded(this.localThrottle, serverId, now + THRESHOLD_COOLDOWN_SEC * 1000, 5000);
       return true;
     }
   }
@@ -124,7 +125,7 @@ export class CleanupSchedulerService
   /** A threshold run that freed nothing (disk full of non-Docker data) would repeat hourly forever: hold the
    *  slot for THRESHOLD_BACKOFF_SEC instead, so it does not churn audit rows and notifications. */
   private async extendThresholdSlot(serverId: string, now: number): Promise<void> {
-    this.localThrottle.set(serverId, now + THRESHOLD_BACKOFF_SEC * 1000);
+    setBounded(this.localThrottle, serverId, now + THRESHOLD_BACKOFF_SEC * 1000, 5000);
     await this.redis.client.set(`cleanup:threshold:${serverId}`, String(now), "EX", THRESHOLD_BACKOFF_SEC).catch(() => undefined);
   }
 

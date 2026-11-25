@@ -11,6 +11,7 @@ import { archOf, hostSize, providerOf } from "./cost-size";
 import { advise, RIGHTSIZE_MIN_DAYS, RIGHTSIZE_WINDOW_DAYS, type Candidate, type CurrentSize, type UsageStats } from "./rightsizing";
 import { latestDiskTotals } from "./costs.service";
 import type { AdviceReport, AdviceViewT } from "./costs.dto";
+import { setBounded } from "../common/bounded-map";
 
 const GIB = 1024 ** 3;
 const DAY_MS = 86_400_000;
@@ -184,7 +185,7 @@ export class CostsAdviceService {
         plans = null; // a provider failure never fails the advice list; the snapshot is used instead
       }
     }
-    this.catalogs.set(credentialId, { at: Date.now(), plans });
+    setBounded(this.catalogs, credentialId, { at: Date.now(), plans }, 200);
     return plans;
   }
 

@@ -66,6 +66,7 @@ import {
   type CutoverRunView,
   type Entry,
 } from "./run-cutover-logic";
+import { setBounded } from "../../../common/bounded-map";
 
 /** After the flip/swap, how long CUTOVER keeps re-verifying hosts (DNS propagation, certificates) before it fails (retryable). */
 export const VERIFY_DEADLINE_MS = 30 * 60 * 1000;
@@ -245,7 +246,7 @@ export class CutoverHandler extends CutoverStepBase implements StepHandler<Cutov
     if (hosts.length === 0) return view;
     const last = this.lastManualCheck.get(ctx.run.id) ?? 0;
     if (ctx.now().getTime() - last < MANUAL_CHECK_EVERY_MS) return view;
-    this.lastManualCheck.set(ctx.run.id, ctx.now().getTime());
+    setBounded(this.lastManualCheck, ctx.run.id, ctx.now().getTime(), 500);
     try {
       return await this.cutover.check(ctx.actor.userId, opId, { hostnames: hosts.slice(0, 200), ...(ctx.run.options.healthPath ? { healthPath: ctx.run.options.healthPath } : {}) }, { degradedAtSource: await degradedAtSourceHosts(this.world, opId, ctx.run.sourceBaseline, view.entries) });
     } catch (e) {
@@ -301,7 +302,7 @@ export class CutoverHandler extends CutoverStepBase implements StepHandler<Cutov
       const plan = await this.cutover.flipPlan(ctx.actor.userId, obs.opId, { hostnames: key });
       const records = new Map<string, string[]>();
       for (const c of plan.copyPaste) records.set(c.hostname, [...(records.get(c.hostname) ?? []), recordLine(c)]);
-      this.recordCache.set(ctx.run.id, { at: ctx.now().getTime(), key, records });
+      setBounded(this.recordCache, ctx.run.id, { at: ctx.now().getTime(), key, records }, 200);
       obs.manualRecords = records;
     } catch (e) {
       rethrowLeaseLost(e);
@@ -329,7 +330,7 @@ export class CutoverHandler extends CutoverStepBase implements StepHandler<Cutov
     const hit = this.keyCache.get(ctx.run.id);
     if (hit && hit.ids === ids && ctx.now().getTime() - hit.at < OBJECT_KEYS_TTL_MS) return hit.env;
     const env = await this.world.appObjectEnv(apps.map((a) => a.appId));
-    this.keyCache.set(ctx.run.id, { at: ctx.now().getTime(), ids, env });
+    setBounded(this.keyCache, ctx.run.id, { at: ctx.now().getTime(), ids, env }, 200);
     return env;
   }
 
