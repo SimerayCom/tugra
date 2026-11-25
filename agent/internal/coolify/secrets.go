@@ -407,6 +407,9 @@ func (g *Gate) stageA(ctx context.Context, p plan, revoked func() bool) (rows []
 					cell, present := r.F[f.Col]
 					switch {
 					case !present || !cell.P:
+						if f.Optional {
+							continue // this Coolify version does not have the column: nothing to read, nothing to report
+						}
 						direct = append(direct, protocol.CoolifySecretRecord{Ref: ref, Field: f.Col, Code: "column_missing"})
 					case cell.V == nil:
 						// NULL is a valid value (preserve_compose_null): no record, the hub keeps NULL.

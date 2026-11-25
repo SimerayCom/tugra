@@ -442,3 +442,45 @@ func TestNoFilesWritten(t *testing.T) {
 }
 
 var _ = sync.Mutex{}
+
+// Application build text and a service's config files are sealed under the compose class; a column this Coolify version lacks is a normal
+// answer (no record), a required column that is missing still reports column_missing.
+func TestApplicationTextAndFileVolumesUnderServiceCompose(t *testing.T) {
+	host := newFakeHost(testAppKey())
+	host.put("applications", "app1", "dockerfile", sp("FROM alpine\nRUN echo hi"))
+	host.put("applications", "app1", "custom_labels", sp("dHJhZWZpay5lbmFibGU9dHJ1ZQ=="))
+	host.put("local_file_volumes", "12", "content", sp(string(laravelEncryptCBC(t, testKey, []byte("listen = 8080")))))
+	host.put("services", "svc1", "docker_compose_raw", sp("services:\n  web:\n    image: nginx\n"))
+	h := newHarness(t, host)
+	res := h.send(h.frame([]string{"service_compose"}, []string{"application:app1", "file_volume:12", "service:svc1"}, nil))
+	plain, codes := h.openRecords(res)
+	want := map[string]string{
+		"application:app1|dockerfile":     "FROM alpine\nRUN echo hi",
+		"application:app1|custom_labels":  "dHJhZWZpay5lbmFibGU9dHJ1ZQ==",
+		"file_volume:12|content":          "listen = 8080",
+		"service:svc1|docker_compose_raw": "services:\n  web:\n    image: nginx\n",
+	}
+	for k, v := range want {
+		if plain[k] != v {
+			t.Errorf("%s = %q, want %q", k, plain[k], v)
+		}
+	}
+	if len(codes) != 0 {
+		t.Fatalf("a missing optional column must not be reported: %v", codes)
+	}
+	// the basic-auth class is not consented: its column is never even named
+	if strings.Contains(strings.Join(host.psqlSQL, ""), "http_basic_auth_password") {
+		t.Fatal("an unconsented class was selected")
+	}
+}
+
+func TestRequiredColumnMissingStillReports(t *testing.T) {
+	host := newFakeHost(testAppKey())
+	host.put("services", "svc1", "name", sp("x")) // the row exists, the compose column does not
+	h := newHarness(t, host)
+	res := h.send(h.frame([]string{"service_compose"}, []string{"service:svc1"}, nil))
+	_, codes := h.openRecords(res)
+	if codes["service:svc1|docker_compose_raw"] != "column_missing" {
+		t.Fatalf("%v", codes)
+	}
+}

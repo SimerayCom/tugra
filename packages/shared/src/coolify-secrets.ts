@@ -6,7 +6,7 @@
  */
 
 /** What an agent may be asked to read: the `kind` half of a `kind:uuid` ref. */
-export const COOLIFY_SECRET_REF_KINDS = ["env", "shared_env", "database", "service", "application", "scheduled_task", "s3", "notification", "git_app", "private_key"] as const;
+export const COOLIFY_SECRET_REF_KINDS = ["env", "shared_env", "database", "service", "application", "scheduled_task", "s3", "notification", "git_app", "private_key", "file_volume"] as const;
 export type CoolifySecretRefKind = (typeof COOLIFY_SECRET_REF_KINDS)[number];
 
 /** The consent classes. T1 are on by default; T2 need an explicit opt-in. T0 (APP_KEY, Coolify's own passwords, SSH private keys) is never readable. */

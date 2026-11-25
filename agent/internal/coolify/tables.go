@@ -33,7 +33,7 @@ const (
 var Classes = []string{ClassEnv, ClassSharedEnv, ClassDBCreds, ClassBasicAuth, ClassServiceYAML, ClassTaskCommand, ClassS3, ClassNotify, ClassGitAppKey, ClassDeployKey}
 
 // Kinds is the list of ref kinds, in the shared order.
-var Kinds = []string{"env", "shared_env", "database", "service", "application", "scheduled_task", "s3", "notification", "git_app", "private_key"}
+var Kinds = []string{"env", "shared_env", "database", "service", "application", "scheduled_task", "s3", "notification", "git_app", "private_key", "file_volume"}
 
 // Field forms: how the helper treats the stored text.
 const (
@@ -49,6 +49,9 @@ type Field struct {
 	Class   string
 	Form    string
 	PlainOK bool // may hold an unencrypted value written before Coolify 4.5.0
+	// Optional: the column exists only in some Coolify versions or for some resources (config text, labels). A version without it is a
+	// normal answer, not an error: no record is produced and the hub keeps "absent".
+	Optional bool
 }
 
 // Table is one source table of a kind.
@@ -64,16 +67,26 @@ var kindTables = map[string][]Table{
 	// shared_environment_variables carrying a uuid column is assumed (LAB-DOĞRULA); without it the kind answers column_missing.
 	"shared_env": {{Name: "shared_environment_variables", Key: "uuid", Fields: []Field{{Col: "value", Class: ClassSharedEnv, Form: FormString}}}},
 	"database": {
-		{Name: "standalone_postgresqls", Key: "uuid", Fields: []Field{{Col: "postgres_password", Class: ClassDBCreds, Form: FormString}}},
-		{Name: "standalone_mysqls", Key: "uuid", Fields: []Field{{Col: "mysql_password", Class: ClassDBCreds, Form: FormString}, {Col: "mysql_root_password", Class: ClassDBCreds, Form: FormString}}},
-		{Name: "standalone_mariadbs", Key: "uuid", Fields: []Field{{Col: "mariadb_password", Class: ClassDBCreds, Form: FormString}, {Col: "mariadb_root_password", Class: ClassDBCreds, Form: FormString, PlainOK: true}}},
-		{Name: "standalone_mongodbs", Key: "uuid", Fields: []Field{{Col: "mongo_initdb_root_password", Class: ClassDBCreds, Form: FormAuto, PlainOK: true}}},
-		{Name: "standalone_keydbs", Key: "uuid", Fields: []Field{{Col: "keydb_password", Class: ClassDBCreds, Form: FormString}}},
-		{Name: "standalone_dragonflies", Key: "uuid", Fields: []Field{{Col: "dragonfly_password", Class: ClassDBCreds, Form: FormString}}},
+		{Name: "standalone_postgresqls", Key: "uuid", Fields: []Field{{Col: "postgres_password", Class: ClassDBCreds, Form: FormString}, {Col: "postgres_conf", Class: ClassDBCreds, Form: FormPlain, Optional: true}}},
+		{Name: "standalone_mysqls", Key: "uuid", Fields: []Field{{Col: "mysql_password", Class: ClassDBCreds, Form: FormString}, {Col: "mysql_root_password", Class: ClassDBCreds, Form: FormString}, {Col: "mysql_conf", Class: ClassDBCreds, Form: FormPlain, Optional: true}}},
+		{Name: "standalone_mariadbs", Key: "uuid", Fields: []Field{{Col: "mariadb_password", Class: ClassDBCreds, Form: FormString}, {Col: "mariadb_root_password", Class: ClassDBCreds, Form: FormString, PlainOK: true}, {Col: "mariadb_conf", Class: ClassDBCreds, Form: FormPlain, Optional: true}}},
+		{Name: "standalone_mongodbs", Key: "uuid", Fields: []Field{{Col: "mongo_initdb_root_password", Class: ClassDBCreds, Form: FormAuto, PlainOK: true}, {Col: "mongo_conf", Class: ClassDBCreds, Form: FormPlain, Optional: true}}},
+		{Name: "standalone_keydbs", Key: "uuid", Fields: []Field{{Col: "keydb_password", Class: ClassDBCreds, Form: FormString}, {Col: "keydb_conf", Class: ClassDBCreds, Form: FormPlain, Optional: true}}},
+		{Name: "standalone_dragonflies", Key: "uuid", Fields: []Field{{Col: "dragonfly_password", Class: ClassDBCreds, Form: FormString}, {Col: "dragonfly_conf", Class: ClassDBCreds, Form: FormPlain, Optional: true}}},
+		// A Redis database keeps its password in environment_variables (REDIS_PASSWORD); the table holds only its config text.
+		{Name: "standalone_redis", Key: "uuid", Fields: []Field{{Col: "redis_conf", Class: ClassDBCreds, Form: FormPlain, Optional: true}}},
 		{Name: "standalone_clickhouses", Key: "uuid", Fields: []Field{{Col: "clickhouse_admin_password", Class: ClassDBCreds, Form: FormString}}},
 	},
 	"service": {{Name: "services", Key: "uuid", Fields: []Field{{Col: "docker_compose_raw", Class: ClassServiceYAML, Form: FormPlain}}}},
+	// A config file of a service (and of an application) lives in local_file_volumes; its content is encrypted by Coolify (older rows may
+	// be readable). The ref id is the row id.
+	"file_volume": {{Name: "local_file_volumes", Key: "id::text", Fields: []Field{{Col: "content", Class: ClassServiceYAML, Form: FormString, PlainOK: true}}}},
 	"application": {{Name: "applications", Key: "uuid", Fields: []Field{
+		// Build and compose text of an application (stored readable; sealed here because it can hold a secret). The hub carries these with
+		// the compose file of a service: one consent class, "service_compose".
+		{Col: "docker_compose_raw", Class: ClassServiceYAML, Form: FormPlain, Optional: true},
+		{Col: "dockerfile", Class: ClassServiceYAML, Form: FormPlain, Optional: true},
+		{Col: "custom_labels", Class: ClassServiceYAML, Form: FormPlain, Optional: true},
 		{Col: "http_basic_auth_password", Class: ClassBasicAuth, Form: FormString},
 		{Col: "manual_webhook_secret_github", Class: ClassBasicAuth, Form: FormString},
 		{Col: "manual_webhook_secret_gitlab", Class: ClassBasicAuth, Form: FormString},
