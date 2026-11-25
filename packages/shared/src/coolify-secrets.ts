@@ -102,3 +102,48 @@ export interface CoolifyGrantRequest {
   hours?: number;
   confirm: string;
 }
+
+// This package compiles without DOM/node typings yet runs in node and the browser, where TextEncoder is a global.
+declare const TextEncoder: new () => { encode(input: string): { length: number } };
+const SECRETS_ENC = new TextEncoder();
+function lp(v: string | number): string {
+  const s = String(v);
+  return `${SECRETS_ENC.encode(s).length}:${s}`;
+}
+
+/** Everything the hub signs on a `coolify_secrets_req`. `serverId` is the target agent's id: it is signed but not sent, the agent checks it against its OWN stored id. */
+export interface CoolifySecretsSigFields {
+  serverId: string;
+  reqId: string;
+  runId: string;
+  classes: readonly string[];
+  refs: readonly string[];
+  recipientKey: string;
+  exp: number;
+  capability: string;
+}
+
+/**
+ * Signed payload: "coolify_secrets\n" + 8 fields in this order, each `<utf8ByteLength>:<value>`, joined by "\n"; the class and ref lists are
+ * joined with ",". Must stay byte-identical to the Go `protocol.CanonicalCoolifySecrets` (both assert the same golden string).
+ */
+export function canonicalCoolifySecrets(f: CoolifySecretsSigFields): string {
+  return (
+    "coolify_secrets\n" +
+    [f.serverId, f.reqId, f.runId, f.classes.join(","), f.refs.join(","), f.recipientKey, f.exp, f.capability].map(lp).join("\n")
+  );
+}
+
+/** The AAD of one `tse1` envelope: the value is bound to its run, agent, ref (`kind:uuid`), field and class (NUL separated, no part may contain NUL). */
+export function coolifySealAad(c: { runId: string; serverId: string; ref: string; field: string; cls: string }): string {
+  const parts = [c.runId, c.serverId, c.ref, c.field, c.cls];
+  for (const p of parts) if (p === "" || p.includes("\u0000")) throw new Error("bad seal context");
+  return parts.join("\u0000");
+}
+
+/** Refusal codes an agent may answer a frame with (a closed set); anything else is treated as "failed". */
+export const COOLIFY_SECRETS_REFUSAL_CODES = ["expired", "replay", "denied", "bad_request", "busy", "rate_limited", "not_configured", "failed", "revoked"] as const;
+export type CoolifySecretsRefusalCode = (typeof COOLIFY_SECRETS_REFUSAL_CODES)[number];
+
+/** The ref of a value as the agent knows it: `kind:id`. The id charset is what the agent's SQL allows. */
+export const COOLIFY_SECRET_REF_RE = /^[a-z0-9_]{1,20}:[A-Za-z0-9_-]{1,64}$/;
