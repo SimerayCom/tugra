@@ -1,6 +1,7 @@
 import { ContainerHealthSchedulerService } from "./container-health.scheduler.service";
 import { ContainerHealthRunnerService } from "./container-health.runner.service";
 import { ConfigService } from "@nestjs/config";
+import { FakeTicks } from "../scheduler/testing/fake-ticks";
 
 // Each result is the list of settling container keys for that poll (a boolean is shorthand for one container "c").
 function make(results: (boolean | string[])[]) {
@@ -10,8 +11,9 @@ function make(results: (boolean | string[])[]) {
     const settlingKeys = typeof r === "boolean" ? (r ? ["c"] : []) : r;
     return Promise.resolve({ settling: settlingKeys.length > 0, settlingKeys });
   });
-  const svc = new ContainerHealthSchedulerService({ get: jest.fn() } as unknown as ConfigService, { runTick } as unknown as ContainerHealthRunnerService);
-  return { svc, runTick };
+  const ticks = new FakeTicks();
+  const svc = new ContainerHealthSchedulerService({ get: jest.fn() } as unknown as ConfigService, ticks.asService(), { runTick } as unknown as ContainerHealthRunnerService);
+  return { svc, runTick, ticks };
 }
 
 describe("ContainerHealthSchedulerService fast follow-up", () => {
@@ -81,6 +83,28 @@ describe("ContainerHealthSchedulerService fast follow-up", () => {
     expect(runTick).toHaveBeenCalledTimes(3);
     await jest.advanceTimersByTimeAsync(60_000);
     expect(runTick).toHaveBeenCalledTimes(3);
+    await svc.onModuleDestroy();
+  });
+});
+
+describe("ContainerHealthSchedulerService registration", () => {
+  const OLD = process.env.NODE_ENV;
+  afterEach(() => {
+    process.env.NODE_ENV = OLD;
+  });
+
+  it("registers one 60 s tick on the shared scheduler whose run is the poll + fast follow-up; nothing under test", async () => {
+    const test = make([false]);
+    process.env.NODE_ENV = "test";
+    await test.svc.onApplicationBootstrap();
+    expect(test.ticks.registered).toEqual([]);
+
+    const { svc, runTick, ticks } = make([false]);
+    process.env.NODE_ENV = "production";
+    await svc.onApplicationBootstrap();
+    expect(ticks.spec("container-health").every).toBe(60_000);
+    await ticks.run("container-health");
+    expect(runTick).toHaveBeenCalledTimes(1);
     await svc.onModuleDestroy();
   });
 });

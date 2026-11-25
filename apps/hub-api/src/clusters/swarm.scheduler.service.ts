@@ -1,13 +1,9 @@
-import { Injectable, Logger, OnApplicationBootstrap, OnModuleDestroy } from "@nestjs/common";
+import { Injectable, Logger, OnApplicationBootstrap } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
-import { redisConnectionOptions } from "../common/redis-connection";
-import { Queue, Worker } from "bullmq";
-import { DEFAULT_JOB_OPTIONS } from "../common/queue-options";
+import { TickSchedulerService } from "../scheduler/tick-scheduler.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { SwarmService } from "./swarm.service";
 import { NotificationsService } from "../notifications/notifications.service";
-
-const QUEUE = "swarm-status";
 
 /** Periodic fleet-wide Docker Swarm health poll. Mirrors UpdateCheckSchedulerService's single global
  *  repeatable job (a fleet poll is ONE tick over every ACTIVE cluster, not N per-cluster jobs like
@@ -15,21 +11,16 @@ const QUEUE = "swarm-status";
  *  ACTIVE→DEGRADED edge, never on a cluster that was already DEGRADED before the tick started (those are
  *  excluded by the `swarmStatus: "ACTIVE"` query, so there is no double-notify). Never throws. */
 @Injectable()
-export class SwarmSchedulerService implements OnApplicationBootstrap, OnModuleDestroy {
+export class SwarmSchedulerService implements OnApplicationBootstrap {
   private readonly logger = new Logger(SwarmSchedulerService.name);
-  private queue?: Queue;
-  private worker?: Worker;
 
   constructor(
     private readonly config: ConfigService,
+    private readonly ticks: TickSchedulerService,
     private readonly prisma: PrismaService,
     private readonly swarm: SwarmService,
     private readonly notifications: NotificationsService,
   ) {}
-
-  private connection() {
-    return redisConnectionOptions(this.config.get<string>("REDIS_URL")!);
-  }
 
   /** One tick: for every cluster whose DB swarmStatus IS ACTIVE right now, re-check live status and notify on
    *  ACTIVE→DEGRADED. Each cluster is isolated in its own try/catch so one bad manager can't skip the rest. */
@@ -59,16 +50,8 @@ export class SwarmSchedulerService implements OnApplicationBootstrap, OnModuleDe
 
   async onApplicationBootstrap(): Promise<void> {
     if (process.env.NODE_ENV === "test") return; // schedulers disabled in tests (house convention)
-    const connection = this.connection();
-    this.queue = new Queue(QUEUE, { connection, defaultJobOptions: DEFAULT_JOB_OPTIONS });
-    this.worker = new Worker(QUEUE, async () => { await this.runTick(); }, { connection });
     const intervalSec = this.config.get<number>("SWARM_STATUS_INTERVAL_SEC") ?? 60;
-    await this.queue.add("swarm-status", {}, { repeat: { every: intervalSec * 1000 } });
+    await this.ticks.register({ name: "swarm-status", every: intervalSec * 1000, run: async () => { await this.runTick(); } });
     this.logger.log(`scheduled swarm status checks every ${intervalSec}s`);
-  }
-
-  async onModuleDestroy(): Promise<void> {
-    await this.worker?.close();
-    await this.queue?.close();
   }
 }

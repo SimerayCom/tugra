@@ -1,11 +1,7 @@
-import { Injectable, Logger, OnModuleDestroy } from "@nestjs/common";
-import { ConfigService } from "@nestjs/config";
-import { Queue, Worker } from "bullmq";
-import { redisConnectionOptions } from "../common/redis-connection";
-import { DEFAULT_JOB_OPTIONS } from "../common/queue-options";
+import { Injectable, Logger } from "@nestjs/common";
+import { TickSchedulerService } from "../scheduler/tick-scheduler.service";
 import { rebootTiming } from "./reboot-logic";
 
-const QUEUE = "server-reboot";
 const TICK_JOB = "reboot-tick";
 const DUE_JOB = "reboot-due";
 
@@ -20,51 +16,40 @@ export interface RebootQueueHandlers {
 export const rebootJobId = (rebootId: string) => `reboot-${rebootId}`;
 
 /**
- * BullMQ side of the reboot feature: one delayed job per scheduled reboot (precise start) and one recurring tick that
- * watches every live reboot (verification polling, recovery after a hub restart). The database is the source of truth:
- * the delayed job is only a precise trigger, and the tick also starts any scheduled reboot that is due whether or not
- * its job survived (Redis flushed, or restarted with the host it runs on). Disabled in tests, like the other schedulers.
+ * Scheduler side of the reboot feature, on the shared scheduler queue: one delayed job per scheduled reboot (precise
+ * start) and one recurring tick that watches every live reboot (verification polling, recovery after a hub restart).
+ * The database is the source of truth: the delayed job is only a precise trigger, and the tick also starts any
+ * scheduled reboot that is due whether or not its job survived (Redis flushed, or restarted with the host it runs on).
+ * Disabled in tests, like the other schedulers.
  */
 @Injectable()
-export class RebootQueueService implements OnModuleDestroy {
+export class RebootQueueService {
   private readonly logger = new Logger(RebootQueueService.name);
-  private queue?: Queue;
-  private worker?: Worker;
 
-  constructor(private readonly config: ConfigService) {}
+  constructor(private readonly ticks: TickSchedulerService) {}
 
-  /** Connect and start the watcher. A no-op under NODE_ENV=test. */
+  /** Register the delayed-job handler and start the watcher. A no-op under NODE_ENV=test. */
   async start(handlers: RebootQueueHandlers): Promise<void> {
     if (process.env.NODE_ENV === "test") return;
-    const connection = redisConnectionOptions(this.config.get<string>("REDIS_URL")!);
-    this.queue = new Queue(QUEUE, { connection, defaultJobOptions: DEFAULT_JOB_OPTIONS });
-    this.worker = new Worker(
-      QUEUE,
-      async (job) => {
-        if (job.name === TICK_JOB) await handlers.tick();
-        else if (job.name === DUE_JOB) await handlers.due(String((job.data as { rebootId?: string }).rebootId ?? ""));
-      },
-      { connection },
-    );
-    this.worker.on("failed", (job, err) => this.logger.warn(`reboot job ${job?.name} failed: ${String(err)}`));
-    await this.queue.add(TICK_JOB, {}, { repeat: { every: rebootTiming.tickMs } });
+    this.ticks.handle(DUE_JOB, async (job) => {
+      try {
+        await handlers.due(String((job.data as { rebootId?: string }).rebootId ?? ""));
+      } catch (e) {
+        this.logger.warn(`reboot job ${DUE_JOB} failed: ${String(e)}`);
+        throw e;
+      }
+    });
+    await this.ticks.register({ name: TICK_JOB, every: rebootTiming.tickMs, run: () => handlers.tick() });
     this.logger.log(`watching server reboots every ${rebootTiming.tickMs / 1000}s`);
   }
 
   /** Queue the delayed trigger for a scheduled reboot. Idempotent by job id (re-adding after a restart is harmless). */
   async scheduleAt(rebootId: string, at: Date, now = Date.now()): Promise<void> {
-    if (!this.queue) return;
-    await this.queue.add(DUE_JOB, { rebootId }, { jobId: rebootJobId(rebootId), delay: Math.max(0, at.getTime() - now) });
+    await this.ticks.enqueueAt(DUE_JOB, { rebootId }, rebootJobId(rebootId), at, now);
   }
 
   /** Drop a scheduled reboot's pending trigger (cancelled, or already started). */
   async unschedule(rebootId: string): Promise<void> {
-    if (!this.queue) return;
-    await this.queue.remove(rebootJobId(rebootId)).catch(() => undefined);
-  }
-
-  async onModuleDestroy(): Promise<void> {
-    await this.worker?.close();
-    await this.queue?.close();
+    await this.ticks.removeJob(rebootJobId(rebootId));
   }
 }

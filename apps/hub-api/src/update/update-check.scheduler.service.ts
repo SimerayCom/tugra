@@ -1,14 +1,10 @@
-import { Injectable, Logger, OnApplicationBootstrap, OnModuleDestroy } from "@nestjs/common";
+import { Injectable, Logger, OnApplicationBootstrap } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
-import { redisConnectionOptions } from "../common/redis-connection";
-import { Queue, Worker } from "bullmq";
-import { DEFAULT_JOB_OPTIONS } from "../common/queue-options";
+import { TickSchedulerService } from "../scheduler/tick-scheduler.service";
 import { isAutoApplicable } from "@tugra/shared";
 import { InstanceSettingsService } from "../instance/instance-settings.service";
 import { UpdateService } from "./update.service";
 import { UpdaterService } from "./updater.service";
-
-const QUEUE = "update-check";
 
 /**
  * Periodic self-update version check — ON by default (the official manifest URL + key are env defaults;
@@ -18,21 +14,16 @@ const QUEUE = "update-check";
  * Redis. The check never throws — an offline/unreachable manifest keeps the cached status.
  */
 @Injectable()
-export class UpdateCheckSchedulerService implements OnApplicationBootstrap, OnModuleDestroy {
+export class UpdateCheckSchedulerService implements OnApplicationBootstrap {
   private readonly logger = new Logger(UpdateCheckSchedulerService.name);
-  private queue?: Queue;
-  private worker?: Worker;
 
   constructor(
     private readonly config: ConfigService,
+    private readonly ticks: TickSchedulerService,
     private readonly update: UpdateService,
     private readonly updater: UpdaterService,
     private readonly settings: InstanceSettingsService,
   ) {}
-
-  private connection() {
-    return redisConnectionOptions(this.config.get<string>("REDIS_URL")!);
-  }
 
   /**
    * A recurring check: refresh the cached latest, then — ONLY when auto-update is on AND the new version is
@@ -70,24 +61,20 @@ export class UpdateCheckSchedulerService implements OnApplicationBootstrap, OnMo
     if (process.env.NODE_ENV === "test") return; // schedulers disabled in tests
     if (this.update.isForcedOff()) {
       this.logger.log("update checks disabled by environment (TUGRA_UPDATE_CHECKS=0) — not scheduling");
-      return; // hard off: no Redis, no network, nothing
+      await this.ticks.disable("update-check"); // hard off now, but an earlier boot may have left its schedule behind
+      return; // hard off: no network, nothing scheduled
     }
     if (!this.update.isConfigured()) {
       this.logger.warn(
         "update checks are unconfigured (UPDATE_PUBLISHER_KEY without UPDATE_MANIFEST_URL, or both blank) — set both or TUGRA_UPDATE_CHECKS=0",
       );
+      await this.ticks.disable("update-check");
       return;
     }
     const intervalMin = this.config.get<number>("UPDATE_CHECK_INTERVAL_MIN") ?? 60;
-    const connection = this.connection();
-    this.queue = new Queue(QUEUE, { connection, defaultJobOptions: DEFAULT_JOB_OPTIONS });
-    this.worker = new Worker(QUEUE, async () => { await this.runScheduledCheck(); }, { connection });
-    // Remove any stale repeatable keyed by a previous interval (the old daily default), so an upgraded install
-    // doesn't run a 1440m job AND the new one (BullMQ keys a repeat by its `every` value).
-    for (const r of await this.queue.getRepeatableJobs()) {
-      if (r.name === "update-check") await this.queue.removeRepeatableByKey(r.key);
-    }
-    await this.queue.add("update-check", {}, { repeat: { every: intervalMin * 60_000 } });
+    // The scheduler is keyed by id, not by interval, so an upgraded install (old daily default) or a changed
+    // UPDATE_CHECK_INTERVAL_MIN updates the one schedule in place instead of running two.
+    await this.ticks.register({ name: "update-check", every: intervalMin * 60_000, run: async () => { await this.runScheduledCheck(); } });
     this.logger.log(`scheduled update check every ${intervalMin}m`);
     // Initial check refreshes the cache only (never auto-applies — that's the recurring path's job) and is
     // fire-and-forget: NestJS runs bootstrap hooks before accepting connections, so awaiting a network call
@@ -95,10 +82,5 @@ export class UpdateCheckSchedulerService implements OnApplicationBootstrap, OnMo
     if (await this.dueForInitialCheck(intervalMin)) {
       void this.update.checkRemote().catch((e) => this.logger.warn(`initial update check failed: ${String(e)}`));
     }
-  }
-
-  async onModuleDestroy(): Promise<void> {
-    await this.worker?.close();
-    await this.queue?.close();
   }
 }

@@ -1,11 +1,8 @@
 import { Injectable, Logger, OnApplicationBootstrap, OnModuleDestroy } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
-import { redisConnectionOptions } from "../common/redis-connection";
-import { Queue, Worker } from "bullmq";
-import { DEFAULT_JOB_OPTIONS } from "../common/queue-options";
+import { TickSchedulerService } from "../scheduler/tick-scheduler.service";
 import { ContainerHealthRunnerService } from "./container-health.runner.service";
 
-const QUEUE = "container-health";
 // While a container is mid-transition (starting / restarting / just died) re-check this often instead of waiting
 // for the next interval, so a container that comes back healthy reaches the app header and crash timeline within
 // seconds. Bounded PER CONTAINER: a container that stays settling for MAX_FAST_CHECKS polls in a row (stuck
@@ -19,28 +16,20 @@ const MAX_FAST_CHECKS = 30;
 @Injectable()
 export class ContainerHealthSchedulerService implements OnApplicationBootstrap, OnModuleDestroy {
   private readonly logger = new Logger(ContainerHealthSchedulerService.name);
-  private queue?: Queue;
-  private worker?: Worker;
   private fastTimer?: NodeJS.Timeout;
   private readonly streaks = new Map<string, number>();
   private stopped = false;
 
   constructor(
     private readonly config: ConfigService,
+    private readonly ticks: TickSchedulerService,
     private readonly runner: ContainerHealthRunnerService,
   ) {}
 
-  private connection() {
-    return redisConnectionOptions(this.config.get<string>("REDIS_URL")!);
-  }
-
   async onApplicationBootstrap(): Promise<void> {
     if (process.env.NODE_ENV === "test") return; // schedulers disabled in tests (house convention)
-    const connection = this.connection();
-    this.queue = new Queue(QUEUE, { connection, defaultJobOptions: DEFAULT_JOB_OPTIONS });
-    this.worker = new Worker(QUEUE, async () => { await this.tickAndFollowUp(); }, { connection });
     const intervalSec = this.config.get<number>("CONTAINER_HEALTH_INTERVAL_SEC") ?? 60;
-    await this.queue.add("container-health", {}, { repeat: { every: intervalSec * 1000 } });
+    await this.ticks.register({ name: "container-health", every: intervalSec * 1000, run: async () => { await this.tickAndFollowUp(); } });
     this.logger.log(`scheduled container-health checks every ${intervalSec}s`);
   }
 
@@ -66,7 +55,5 @@ export class ContainerHealthSchedulerService implements OnApplicationBootstrap, 
   async onModuleDestroy(): Promise<void> {
     this.stopped = true;
     if (this.fastTimer) clearTimeout(this.fastTimer);
-    await this.worker?.close();
-    await this.queue?.close();
   }
 }

@@ -1,9 +1,10 @@
-import { ConfigService } from "@nestjs/config";
 import { ServerStatus } from "@prisma/client";
 import { CleanupSchedulerService } from "./cleanup.scheduler.service";
 import { CleanupRunnerService } from "./cleanup-runner.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { RedisService } from "../redis/redis.service";
+import { FakeTicks } from "../scheduler/testing/fake-ticks";
+import { FakeHub } from "../scheduler/testing/fake-hub";
 
 const NOW = new Date("2026-11-26T12:00:00Z");
 const hot = { ts: new Date(NOW.getTime() - 30_000), diskUsed: 90n, diskTotal: 100n };
@@ -37,7 +38,8 @@ function make(opts: {
     return "OK";
   });
   const redis = { client: { set } } as unknown as RedisService;
-  const svc = new CleanupSchedulerService({ get: () => "redis://x" } as unknown as ConfigService, prisma, runner, redis);
+  const ticks = new FakeTicks();
+  const svc = new CleanupSchedulerService(new FakeHub().asService(), ticks.asService(), prisma, runner, redis);
   const added: Array<{ name: string; opts: unknown }> = [];
   const removed: string[] = [];
   const repeatables = (opts.repeatables ?? []).map((n) => ({ name: n, key: `k:${n}` }));
@@ -46,7 +48,7 @@ function make(opts: {
     getRepeatableJobs: jest.fn().mockResolvedValue(repeatables),
     removeRepeatableByKey: jest.fn().mockImplementation(async (k: string) => void removed.push(k)),
   };
-  return { svc, runCleanup, added, removed, set, findMany, ttl };
+  return { svc, runCleanup, added, removed, set, findMany, ttl, ticks };
 }
 
 const srv = (id: string, over: Record<string, unknown> = {}) => ({
@@ -207,9 +209,17 @@ describe("worker handler (processJob) and sweep registration", () => {
     expect(removed).toEqual(["k:cleanup:gone"]);
   });
 
-  it("registerSweep adds the sweep repeatable every 5 minutes", async () => {
-    const { svc, added } = make({ servers: [] });
+  it("registerSweep registers the sweep as a shared-scheduler tick every 5 minutes (not a repeatable on the cleanup queue)", async () => {
+    const { svc, added, ticks } = make({ servers: [] });
     await svc.registerSweep();
-    expect(added).toEqual([{ name: "cleanup-threshold-sweep", opts: { repeat: { every: 300000 } } }]);
+    expect(added).toEqual([]);
+    expect(ticks.spec("cleanup-threshold-sweep").every).toBe(300000);
+  });
+
+  it("the sweep tick runs the reconcile + threshold sweep", async () => {
+    const { svc, ticks, findMany } = make({ servers: [] });
+    await svc.registerSweep();
+    await ticks.run("cleanup-threshold-sweep");
+    expect(findMany).toHaveBeenCalled();
   });
 });

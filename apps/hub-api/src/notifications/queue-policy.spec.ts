@@ -69,7 +69,7 @@ function prismaMock(channel: Record<string, unknown>) {
 }
 
 const make = (prisma: PrismaService, redis: RedisService, cfg: ConfigService = config) =>
-  new NotificationQueueService(prisma, crypto, audit, cfg, new NotifI18nService(), redis);
+  new NotificationQueueService(prisma, crypto, audit, cfg, new NotifI18nService(), redis, {} as never);
 const created = (p: PrismaService) => (p.notificationDelivery.create as jest.Mock).mock.calls;
 
 beforeEach(() => {

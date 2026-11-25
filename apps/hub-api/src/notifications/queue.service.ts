@@ -1,9 +1,8 @@
-import { Injectable, Logger, OnApplicationBootstrap, OnModuleDestroy } from "@nestjs/common";
+import { Injectable, Logger, OnApplicationBootstrap } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
-import { redisConnectionOptions } from "../common/redis-connection";
 import { createHash } from "node:crypto";
-import { Job, Queue, Worker } from "bullmq";
-import { DEFAULT_JOB_OPTIONS } from "../common/queue-options";
+import type { Job, Queue, Worker } from "bullmq";
+import { QueueHubService } from "../scheduler/queue-hub.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { CryptoService } from "../crypto/crypto.service";
@@ -65,7 +64,7 @@ const LEDGER_CAP = 200;
  * (NODE_ENV==="test") no Queue/Worker/Redis is created and delivery runs inline+synchronously.
  */
 @Injectable()
-export class NotificationQueueService implements OnApplicationBootstrap, OnModuleDestroy {
+export class NotificationQueueService implements OnApplicationBootstrap {
   private readonly logger = new Logger(NotificationQueueService.name);
   private queue?: Queue;
   private worker?: Worker;
@@ -77,11 +76,8 @@ export class NotificationQueueService implements OnApplicationBootstrap, OnModul
     private readonly config: ConfigService,
     private readonly i18n: NotifI18nService,
     private readonly redis: RedisService,
+    private readonly hub: QueueHubService,
   ) {}
-
-  private connection() {
-    return redisConnectionOptions(this.config.get<string>("REDIS_URL")!);
-  }
 
   /** Render environment for the templates: deep-link base + a translator bound to the channel's locale. */
   private renderEnv(locale?: string): RenderEnv {
@@ -99,16 +95,9 @@ export class NotificationQueueService implements OnApplicationBootstrap, OnModul
   onApplicationBootstrap(): void {
     // BullMQ worker/Redis are disabled in tests; delivery runs inline (see enqueue/deliverNow).
     if (process.env.NODE_ENV === "test") return;
-    const connection = this.connection();
-    this.queue = new Queue(QUEUE, { connection, defaultJobOptions: DEFAULT_JOB_OPTIONS });
-    this.worker = new Worker<DeliverJob | FlushJob>(QUEUE, (job) => this.handleJob(job), { connection });
+    this.queue = this.hub.queue(QUEUE);
+    this.worker = this.hub.worker<DeliverJob | FlushJob>(QUEUE, (job) => this.handleJob(job));
     this.worker.on("failed", (job, err) => void this.handleFailed(job, err));
-    this.worker.on("error", (err) => this.logger.error(`worker error: ${err.message}`));
-  }
-
-  async onModuleDestroy(): Promise<void> {
-    await this.worker?.close();
-    await this.queue?.close();
   }
 
   /**

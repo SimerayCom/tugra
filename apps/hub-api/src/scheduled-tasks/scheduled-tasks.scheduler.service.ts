@@ -1,13 +1,6 @@
-import {
-  Injectable,
-  Logger,
-  OnApplicationBootstrap,
-  OnModuleDestroy,
-} from "@nestjs/common";
-import { ConfigService } from "@nestjs/config";
-import { redisConnectionOptions } from "../common/redis-connection";
-import { Queue, Worker } from "bullmq";
-import { DEFAULT_JOB_OPTIONS } from "../common/queue-options";
+import { Injectable, Logger, OnApplicationBootstrap } from "@nestjs/common";
+import type { Queue } from "bullmq";
+import { QueueHubService } from "../scheduler/queue-hub.service";
 import { reapIfGone } from "../common/orphan-reap";
 import { PrismaService } from "../prisma/prisma.service";
 import { ScheduledTaskRunnerService } from "./scheduled-task-runner.service";
@@ -16,28 +9,20 @@ const QUEUE = "scheduled-tasks";
 
 /** Mirrors the backup/cleanup schedulers, but uses a cron pattern per task. */
 @Injectable()
-export class ScheduledTasksSchedulerService
-  implements OnApplicationBootstrap, OnModuleDestroy
-{
+export class ScheduledTasksSchedulerService implements OnApplicationBootstrap {
   private readonly logger = new Logger(ScheduledTasksSchedulerService.name);
   private queue?: Queue;
-  private worker?: Worker;
 
   constructor(
-    private readonly config: ConfigService,
+    private readonly hub: QueueHubService,
     private readonly prisma: PrismaService,
     private readonly runner: ScheduledTaskRunnerService,
   ) {}
 
-  private connection() {
-    return redisConnectionOptions(this.config.get<string>("REDIS_URL")!);
-  }
-
   async onApplicationBootstrap(): Promise<void> {
     if (process.env.NODE_ENV === "test") return;
-    const connection = this.connection();
-    this.queue = new Queue(QUEUE, { connection, defaultJobOptions: DEFAULT_JOB_OPTIONS });
-    this.worker = new Worker(
+    this.queue = this.hub.queue(QUEUE);
+    this.hub.worker(
       QUEUE,
       async (job) => {
         const taskId = job.data.taskId as string;
@@ -45,7 +30,6 @@ export class ScheduledTasksSchedulerService
         if (!(await reapIfGone(taskId, () => this.prisma.scheduledTask.findUnique({ where: { id: taskId }, select: { id: true } }).then(Boolean), (i) => this.unschedule(i)))) return;
         await this.runner.runTask(taskId);
       },
-      { connection },
     );
     const tasks = await this.prisma.scheduledTask.findMany({ where: { enabled: true } });
     let ok = 0;
@@ -75,10 +59,5 @@ export class ScheduledTasksSchedulerService
     for (const r of reps) {
       if (r.name === `task:${taskId}`) await this.queue.removeRepeatableByKey(r.key);
     }
-  }
-
-  async onModuleDestroy(): Promise<void> {
-    await this.worker?.close();
-    await this.queue?.close();
   }
 }

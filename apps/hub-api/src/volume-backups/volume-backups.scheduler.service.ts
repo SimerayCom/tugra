@@ -1,8 +1,7 @@
-import { Injectable, Logger, OnApplicationBootstrap, OnModuleDestroy } from "@nestjs/common";
-import { ConfigService } from "@nestjs/config";
-import { redisConnectionOptions } from "../common/redis-connection";
-import { Queue, Worker } from "bullmq";
-import { DEFAULT_JOB_OPTIONS } from "../common/queue-options";
+import { Injectable, Logger, OnApplicationBootstrap } from "@nestjs/common";
+import type { Queue } from "bullmq";
+import { QueueHubService } from "../scheduler/queue-hub.service";
+import { TickSchedulerService } from "../scheduler/tick-scheduler.service";
 import { reapIfGone } from "../common/orphan-reap";
 import { PrismaService } from "../prisma/prisma.service";
 import { VolumeBackupRunnerService } from "./volume-backup-runner.service";
@@ -10,38 +9,35 @@ import { BackupAlertsService } from "../backups/backup-alerts.service";
 import { policyJobExists } from "./policy";
 
 const QUEUE = "volume-backups";
-/** Repeatable job that runs the missing-backup watchdog (not a per-app backup). */
+/** Tick (shared scheduler queue) that runs the missing-backup watchdog (not a per-app backup). Older hubs ran it as a
+ *  repeatable on this queue; handleJob still answers one that fires late, and boot removes the old key. */
 const WATCHDOG_JOB = "watchdog";
+const WATCHDOG_TICK = "volume-backup-watchdog";
 const WATCHDOG_EVERY_MS = 3_600_000; // hourly
 
 type VolJob = { name: string; data: { appId?: string; volumeName?: string; policyId?: string } };
 
 /** Mirrors BackupSchedulerService: BullMQ repeatable jobs, disabled in tests. */
 @Injectable()
-export class VolumeBackupSchedulerService implements OnApplicationBootstrap, OnModuleDestroy {
+export class VolumeBackupSchedulerService implements OnApplicationBootstrap {
   private readonly logger = new Logger(VolumeBackupSchedulerService.name);
   private queue?: Queue;
-  private worker?: Worker;
 
   constructor(
-    private readonly config: ConfigService,
+    private readonly hub: QueueHubService,
+    private readonly ticks: TickSchedulerService,
     private readonly prisma: PrismaService,
     private readonly runner: VolumeBackupRunnerService,
     private readonly alerts: BackupAlertsService,
   ) {}
 
-  private connection() {
-    return redisConnectionOptions(this.config.get<string>("REDIS_URL")!);
-  }
-
   async onApplicationBootstrap(): Promise<void> {
     if (process.env.NODE_ENV === "test") return;
-    const connection = this.connection();
-    this.queue = new Queue(QUEUE, { connection, defaultJobOptions: DEFAULT_JOB_OPTIONS });
-    this.worker = new Worker(QUEUE, (job) => this.handleJob(job as VolJob), { connection });
+    this.queue = this.hub.queue(QUEUE);
+    this.hub.worker(QUEUE, (job) => this.handleJob(job as VolJob));
 
-    // Missing-backup watchdog (see BackupSchedulerService): idempotent re-add of the hourly check.
-    await this.queue.add(WATCHDOG_JOB, {}, { repeat: { every: WATCHDOG_EVERY_MS }, jobId: WATCHDOG_JOB });
+    // Missing-backup watchdog (see BackupSchedulerService): idempotent re-register of the hourly check.
+    await this.ticks.register({ name: WATCHDOG_TICK, every: WATCHDOG_EVERY_MS, run: () => this.alerts.checkApps() });
 
     await this.enrolApps();
   }
@@ -145,10 +141,5 @@ export class VolumeBackupSchedulerService implements OnApplicationBootstrap, OnM
       if (app && policyJobExists(app.volumeBackupEnabled, p)) await this.schedulePolicy(p);
       else await this.unschedulePolicy(p.id);
     }
-  }
-
-  async onModuleDestroy(): Promise<void> {
-    await this.worker?.close();
-    await this.queue?.close();
   }
 }

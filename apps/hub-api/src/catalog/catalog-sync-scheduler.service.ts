@@ -1,11 +1,7 @@
-import { Injectable, Logger, OnApplicationBootstrap, OnModuleDestroy } from "@nestjs/common";
+import { Injectable, Logger, OnApplicationBootstrap } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
-import { redisConnectionOptions } from "../common/redis-connection";
-import { Queue, Worker } from "bullmq";
-import { DEFAULT_JOB_OPTIONS } from "../common/queue-options";
+import { TickSchedulerService } from "../scheduler/tick-scheduler.service";
 import { CatalogSyncRunnerService } from "./catalog-sync-runner.service";
-
-const QUEUE = "catalog-sync";
 
 /**
  * Opt-in periodic catalog sync (only when CATALOG_SOURCE_URL is set). Mirrors the house recurring-job
@@ -14,34 +10,24 @@ const QUEUE = "catalog-sync";
  * needs Redis. The runner never throws — offline fallback keeps the bundled catalog serving.
  */
 @Injectable()
-export class CatalogSyncSchedulerService implements OnApplicationBootstrap, OnModuleDestroy {
+export class CatalogSyncSchedulerService implements OnApplicationBootstrap {
   private readonly logger = new Logger(CatalogSyncSchedulerService.name);
-  private queue?: Queue;
-  private worker?: Worker;
 
   constructor(
     private readonly config: ConfigService,
+    private readonly ticks: TickSchedulerService,
     private readonly runner: CatalogSyncRunnerService,
   ) {}
 
-  private connection() {
-    return redisConnectionOptions(this.config.get<string>("REDIS_URL")!);
-  }
-
   async onApplicationBootstrap(): Promise<void> {
     if (process.env.NODE_ENV === "test") return; // schedulers disabled in tests
-    if (!this.config.get<string>("CATALOG_SOURCE_URL")) return; // opt-in
+    if (!this.config.get<string>("CATALOG_SOURCE_URL")) {
+      await this.ticks.disable("catalog-sync"); // opt-in switched off after an earlier boot: drop the old schedule
+      return; // opt-in
+    }
     await this.runner.sync().catch((e) => this.logger.warn(`initial catalog sync failed: ${String(e)}`));
     const intervalMin = this.config.get<number>("CATALOG_SYNC_INTERVAL_MIN") ?? 60;
-    const connection = this.connection();
-    this.queue = new Queue(QUEUE, { connection, defaultJobOptions: DEFAULT_JOB_OPTIONS });
-    this.worker = new Worker(QUEUE, async () => { await this.runner.sync(); }, { connection });
-    await this.queue.add("catalog-sync", {}, { repeat: { every: intervalMin * 60_000 } });
+    await this.ticks.register({ name: "catalog-sync", every: intervalMin * 60_000, run: async () => { await this.runner.sync(); } });
     this.logger.log(`scheduled catalog sync every ${intervalMin}m`);
-  }
-
-  async onModuleDestroy(): Promise<void> {
-    await this.worker?.close();
-    await this.queue?.close();
   }
 }

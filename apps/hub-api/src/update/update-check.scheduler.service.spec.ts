@@ -1,32 +1,16 @@
-const queueAdd = jest.fn().mockResolvedValue(undefined);
-const queueClose = jest.fn().mockResolvedValue(undefined);
-const getRepeatableJobs = jest.fn().mockResolvedValue([]);
-const removeRepeatableByKey = jest.fn().mockResolvedValue(true);
-const queueCtor = jest.fn();
-const workerCtor = jest.fn();
-jest.mock("bullmq", () => ({
-  Queue: function Queue(...args: unknown[]) {
-    queueCtor(...args);
-    return { add: queueAdd, close: queueClose, getRepeatableJobs, removeRepeatableByKey };
-  },
-  Worker: function Worker(...args: unknown[]) {
-    workerCtor(...args);
-    return { close: jest.fn().mockResolvedValue(undefined) };
-  },
-}));
-
 import { UpdateCheckSchedulerService } from "./update-check.scheduler.service";
 import type { ConfigService } from "@nestjs/config";
 import type { CheckResult, UpdateService } from "./update.service";
 import type { UpdaterService } from "./updater.service";
 import type { InstanceSettingsService } from "../instance/instance-settings.service";
+import { FakeTicks } from "../scheduler/testing/fake-ticks";
 
 // The BullMQ Queue+Worker path needs Redis (CI e2e); the early-return guards + the extracted
 // runScheduledCheck auto-update hook are unit-tested here.
 describe("UpdateCheckSchedulerService", () => {
   const update = { checkRemote: jest.fn().mockResolvedValue({ status: "ok" }) } as unknown as UpdateService;
   const config = (url?: string, interval = 60) =>
-    ({ get: (k: string) => ({ UPDATE_MANIFEST_URL: url, REDIS_URL: "redis://localhost:6379", UPDATE_CHECK_INTERVAL_MIN: interval } as Record<string, unknown>)[k] }) as unknown as ConfigService;
+    ({ get: (k: string) => ({ UPDATE_MANIFEST_URL: url, UPDATE_CHECK_INTERVAL_MIN: interval } as Record<string, unknown>)[k] }) as unknown as ConfigService;
 
   /** A scheduler over a checker stub with the given hard-off / configured state and last-check time. */
   function boot(o: { forcedOff?: boolean; configured?: boolean; lastCheckedAt?: Date | null; interval?: number }) {
@@ -36,25 +20,19 @@ describe("UpdateCheckSchedulerService", () => {
       checkRemote: jest.fn().mockResolvedValue({ status: "ok" }),
     } as unknown as UpdateService;
     const settings = { get: jest.fn().mockResolvedValue({ updateLastCheckedAt: o.lastCheckedAt ?? null }) } as unknown as InstanceSettingsService;
-    const svc = new UpdateCheckSchedulerService(config("https://x/v.json", o.interval ?? 60), upd, { requestUpdate: jest.fn() } as unknown as UpdaterService, settings);
-    return { svc, upd };
+    const ticks = new FakeTicks();
+    const svc = new UpdateCheckSchedulerService(config("https://x/v.json", o.interval ?? 60), ticks.asService(), upd, { requestUpdate: jest.fn() } as unknown as UpdaterService, settings);
+    return { svc, upd, ticks };
   }
 
   function make(check: CheckResult, autoUpdate: boolean) {
     const upd = { checkRemote: jest.fn().mockResolvedValue(check) } as unknown as UpdateService;
     const updater = { requestUpdate: jest.fn().mockResolvedValue({ status: "started", targetVersion: null }) } as unknown as UpdaterService;
     const settings = { get: jest.fn().mockResolvedValue({ autoUpdate }) } as unknown as InstanceSettingsService;
-    return { svc: new UpdateCheckSchedulerService(config("https://x/v.json"), upd, updater, settings), updater };
+    return { svc: new UpdateCheckSchedulerService(config("https://x/v.json"), new FakeTicks().asService(), upd, updater, settings), updater };
   }
 
   const OLD = process.env.NODE_ENV;
-  beforeEach(() => {
-    queueAdd.mockClear();
-    queueCtor.mockClear();
-    workerCtor.mockClear();
-    getRepeatableJobs.mockReset().mockResolvedValue([]);
-    removeRepeatableByKey.mockClear();
-  });
   afterEach(() => {
     process.env.NODE_ENV = OLD;
     (update.checkRemote as jest.Mock).mockClear();
@@ -69,50 +47,41 @@ describe("UpdateCheckSchedulerService", () => {
 
   it("does nothing when TUGRA_UPDATE_CHECKS=0 (never touches the checker or a queue)", async () => {
     process.env.NODE_ENV = "production";
-    const { svc, upd } = boot({ forcedOff: true });
+    const { svc, upd, ticks } = boot({ forcedOff: true });
     await svc.onApplicationBootstrap();
     expect(upd.checkRemote).not.toHaveBeenCalled();
     expect(upd.isConfigured).not.toHaveBeenCalled();
-    expect(queueCtor).not.toHaveBeenCalled();
-    expect(workerCtor).not.toHaveBeenCalled();
+    expect(ticks.registered).toEqual([]);
+    expect(ticks.disabled).toEqual(["update-check"]); // drops a schedule an earlier boot may have left behind
   });
 
   it("warns and returns when only the key is set (unconfigured)", async () => {
     process.env.NODE_ENV = "production";
-    const { svc, upd } = boot({ configured: false });
+    const { svc, upd, ticks } = boot({ configured: false });
     const warn = jest.spyOn((svc as unknown as { logger: { warn: () => void } }).logger, "warn").mockImplementation(() => undefined);
     await svc.onApplicationBootstrap();
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("TUGRA_UPDATE_CHECKS=0"));
     expect(upd.checkRemote).not.toHaveBeenCalled();
-    expect(queueCtor).not.toHaveBeenCalled();
+    expect(ticks.registered).toEqual([]);
   });
 
   it("schedules hourly when the defaults apply, and logs the interval", async () => {
     process.env.NODE_ENV = "production";
-    const { svc } = boot({});
+    const { svc, ticks } = boot({});
     const log = jest.spyOn((svc as unknown as { logger: { log: () => void } }).logger, "log").mockImplementation(() => undefined);
     await svc.onApplicationBootstrap();
-    expect(queueAdd).toHaveBeenCalledWith("update-check", {}, { repeat: { every: 60 * 60_000 } });
+    expect(ticks.spec("update-check").every).toBe(60 * 60_000);
     expect(log).toHaveBeenCalledWith("scheduled update check every 60m");
   });
 
-  it("removes stale 'update-check' repeatables (the old daily one) BEFORE adding the new one, leaving other jobs alone", async () => {
+  it("re-registering with a new interval is one upsert of the same tick name (no stale second schedule to remove)", async () => {
     process.env.NODE_ENV = "production";
-    const order: string[] = [];
-    getRepeatableJobs.mockResolvedValue([
-      { name: "update-check", key: "update-check::86400000" },
-      { name: "something-else", key: "other::1" },
-    ]);
-    removeRepeatableByKey.mockImplementation(async (k: string) => {
-      order.push(`remove:${k}`);
-      return true;
-    });
-    queueAdd.mockImplementation(async () => {
-      order.push("add");
-    });
-    const { svc } = boot({});
-    await svc.onApplicationBootstrap();
-    expect(order).toEqual(["remove:update-check::86400000", "add"]);
+    const day = boot({ interval: 1440 });
+    await day.svc.onApplicationBootstrap();
+    const hour = boot({ interval: 60 });
+    await hour.svc.onApplicationBootstrap();
+    expect(day.ticks.spec("update-check").name).toBe(hour.ticks.spec("update-check").name);
+    expect(hour.ticks.spec("update-check").every).toBe(60 * 60_000);
   });
 
   it("runs the initial check when never checked, WITHOUT awaiting it (boot is not held by the network)", async () => {
@@ -125,10 +94,10 @@ describe("UpdateCheckSchedulerService", () => {
 
   it("skips the initial check when the last successful check is younger than the interval", async () => {
     process.env.NODE_ENV = "production";
-    const { svc, upd } = boot({ lastCheckedAt: new Date(Date.now() - 10 * 60_000) });
+    const { svc, upd, ticks } = boot({ lastCheckedAt: new Date(Date.now() - 10 * 60_000) });
     await svc.onApplicationBootstrap();
     expect(upd.checkRemote).not.toHaveBeenCalled();
-    expect(queueAdd).toHaveBeenCalled(); // still scheduled
+    expect(ticks.registered).toHaveLength(1); // still scheduled
   });
 
   it("runs the initial check when the last one is older than the interval", async () => {

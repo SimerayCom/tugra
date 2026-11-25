@@ -1,13 +1,7 @@
-import {
-  Injectable,
-  Logger,
-  OnApplicationBootstrap,
-  OnModuleDestroy,
-} from "@nestjs/common";
-import { ConfigService } from "@nestjs/config";
-import { redisConnectionOptions } from "../common/redis-connection";
-import { Queue, Worker } from "bullmq";
-import { DEFAULT_JOB_OPTIONS } from "../common/queue-options";
+import { Injectable, Logger, OnApplicationBootstrap } from "@nestjs/common";
+import type { Queue } from "bullmq";
+import { QueueHubService } from "../scheduler/queue-hub.service";
+import { TickSchedulerService } from "../scheduler/tick-scheduler.service";
 import { reapIfGone } from "../common/orphan-reap";
 import { PrismaService } from "../prisma/prisma.service";
 import { RedisService } from "../redis/redis.service";
@@ -16,47 +10,40 @@ import { planCleanupSchedule, reclaimedNothing, shouldTriggerThresholdCleanup, T
 import { setBounded } from "../common/bounded-map";
 
 const QUEUE = "cleanup";
-/** Repeatable job (every 5 min): registers any missing per-server schedule, then checks disk thresholds. */
+/** Tick on the shared scheduler queue (every 5 min): registers any missing per-server schedule, then checks disk
+ *  thresholds. (Older hubs ran it as a repeatable on this queue; processJob still answers one that fires late.) */
 const SWEEP_JOB = "cleanup-threshold-sweep";
 const SWEEP_EVERY_MS = 5 * 60 * 1000;
 
 /** Mirrors the backup/monitor schedulers: BullMQ repeatable jobs, disabled in tests. */
 @Injectable()
-export class CleanupSchedulerService
-  implements OnApplicationBootstrap, OnModuleDestroy
-{
+export class CleanupSchedulerService implements OnApplicationBootstrap {
   private readonly logger = new Logger(CleanupSchedulerService.name);
   private queue?: Queue;
-  private worker?: Worker;
   /** In-process fallback for the once-an-hour throttle when Redis is unreachable (fail closed, not open). */
   private readonly localThrottle = new Map<string, number>(); // serverId -> blocked-until (ms)
 
   constructor(
-    private readonly config: ConfigService,
+    private readonly hub: QueueHubService,
+    private readonly ticks: TickSchedulerService,
     private readonly prisma: PrismaService,
     private readonly runner: CleanupRunnerService,
     private readonly redis: RedisService,
   ) {}
 
-  private connection() {
-    return redisConnectionOptions(this.config.get<string>("REDIS_URL")!);
-  }
-
   async onApplicationBootstrap(): Promise<void> {
     if (process.env.NODE_ENV === "test") return;
-    const connection = this.connection();
-    this.queue = new Queue(QUEUE, { connection, defaultJobOptions: DEFAULT_JOB_OPTIONS });
-    this.worker = new Worker(QUEUE, (job) => this.processJob(job), { connection });
+    this.queue = this.hub.queue(QUEUE);
+    this.hub.worker(QUEUE, (job) => this.processJob(job));
     const registered = await this.registerAll(true);
     this.logger.log(`scheduled ${registered.ok}/${registered.total} docker cleanup(s)`);
     // Missing-schedule reconcile + disk-threshold trigger, every 5 minutes (also covers servers created after boot).
     await this.registerSweep();
   }
 
-  /** Register the 5-minute sweep repeatable (reconcile + disk trigger). Never throws: a failure only logs. */
+  /** Register the 5-minute sweep tick (reconcile + disk trigger). Never throws: a failure only logs. */
   async registerSweep(): Promise<void> {
-    if (!this.queue) return;
-    await this.queue.add(SWEEP_JOB, {}, { repeat: { every: SWEEP_EVERY_MS } }).catch((e) => this.logger.warn(`cleanup sweep not scheduled: ${e instanceof Error ? e.message : e}`));
+    await this.ticks.register({ name: SWEEP_JOB, every: SWEEP_EVERY_MS, run: async () => void (await this.sweep()) }).catch((e) => this.logger.warn(`cleanup sweep not scheduled: ${e instanceof Error ? e.message : e}`));
   }
 
   /** Worker handler: a sweep job runs the reconcile + threshold check; a per-server job runs the daily cleanup. */
@@ -176,10 +163,5 @@ export class CleanupSchedulerService
     for (const r of reps) {
       if (r.name === `cleanup:${serverId}`) await this.queue.removeRepeatableByKey(r.key);
     }
-  }
-
-  async onModuleDestroy(): Promise<void> {
-    await this.worker?.close();
-    await this.queue?.close();
   }
 }

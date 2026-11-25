@@ -5,6 +5,8 @@ import { TeamAccessService } from "../common/team-access.service";
 import { AuditService } from "../audit/audit.service";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
 import { BackupRunnerService } from "./backup-runner.service";
+import { FakeTicks } from "../scheduler/testing/fake-ticks";
+import { FakeHub } from "../scheduler/testing/fake-hub";
 import { BackupSchedulerService } from "./backups.scheduler.service";
 import { NotificationsService } from "../notifications/notifications.service";
 import { BackupAlertsService } from "./backup-alerts.service";
@@ -98,7 +100,8 @@ describe("BackupsService.setBaseBackupSchedule", () => {
 describe("BackupSchedulerService — base family is a no-op without a queue (tests) and never collides with the others", () => {
   it("scheduleBase / scheduleBaseCron / unscheduleBase resolve without a queue", async () => {
     const svc = new BackupSchedulerService(
-      { get: () => "redis://x" } as never,
+      new FakeHub().asService(),
+      new FakeTicks().asService(),
       {} as PrismaService,
       {} as never,
       {} as BackupAlertsService,
@@ -121,7 +124,8 @@ describe("BackupSchedulerService — dispatch + boot enrolment of the base famil
     const runner = { runBackup: jest.fn().mockResolvedValue(undefined), verifyScheduled: jest.fn().mockResolvedValue(undefined) };
     const baseRunner = { runBaseBackupScheduled: jest.fn().mockResolvedValue(undefined) } as unknown as BaseBackupRunnerService;
     const alerts = { checkDatabases: jest.fn(), checkVerifyLiveness: jest.fn() } as unknown as BackupAlertsService;
-    const svc = new BackupSchedulerService({ get: () => "redis://x" } as never, prisma, runner as never, alerts, baseRunner);
+    const ticks = new FakeTicks();
+    const svc = new BackupSchedulerService(new FakeHub().asService(), ticks.asService(), prisma, runner as never, alerts, baseRunner);
     const spies = {
       unschedule: jest.spyOn(svc, "unschedule").mockResolvedValue(undefined),
       unscheduleVerify: jest.spyOn(svc, "unscheduleVerify").mockResolvedValue(undefined),
@@ -129,7 +133,7 @@ describe("BackupSchedulerService — dispatch + boot enrolment of the base famil
       scheduleBase: jest.spyOn(svc, "scheduleBase").mockResolvedValue(undefined),
       scheduleBaseCron: jest.spyOn(svc, "scheduleBaseCron").mockResolvedValue(undefined),
     };
-    return { svc, runner, baseRunner, prisma, ...spies };
+    return { svc, runner, baseRunner, prisma, ticks, alerts, ...spies };
   }
 
   it("a base tick runs the scheduled base backup — never a logical backup — and reaps its OWN family when the database is gone", async () => {
@@ -171,5 +175,30 @@ describe("BackupSchedulerService — dispatch + boot enrolment of the base famil
     expect((m.prisma as unknown as { database: { findMany: jest.Mock } }).database.findMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: expect.objectContaining({ baseBackupEnabled: true, pitrEnabled: true, pitrEnabledAt: { not: null } }) }),
     );
+  });
+});
+
+describe("BackupSchedulerService — the watchdog is a shared-scheduler tick", () => {
+  it("boot registers the hourly missing-backup watchdog as a tick (not a repeatable on the backups queue); a late legacy watchdog job still works", async () => {
+    const prev = process.env.NODE_ENV;
+    process.env.NODE_ENV = "production";
+    try {
+      const prisma = { database: { findMany: jest.fn().mockResolvedValue([]) } } as unknown as PrismaService;
+      const ticks = new FakeTicks();
+      const hub = new FakeHub();
+      const alerts = { checkDatabases: jest.fn().mockResolvedValue(undefined), checkVerifyLiveness: jest.fn().mockResolvedValue(undefined) } as unknown as BackupAlertsService;
+      const svc = new BackupSchedulerService(hub.asService(), ticks.asService(), prisma, {} as never, alerts, {} as BaseBackupRunnerService);
+      await svc.onApplicationBootstrap();
+      expect(ticks.spec("backup-watchdog").every).toBe(3_600_000);
+      expect(hub.queues.get("backups")!.added).toEqual([]);
+      expect([...hub.queues.keys()].sort()).toEqual(["backups", "base-backups"]);
+      await ticks.run("backup-watchdog");
+      expect(alerts.checkDatabases).toHaveBeenCalledTimes(1);
+      expect(alerts.checkVerifyLiveness).toHaveBeenCalledTimes(1);
+      await svc.handleJob({ name: "watchdog", data: {} });
+      expect(alerts.checkDatabases).toHaveBeenCalledTimes(2);
+    } finally {
+      process.env.NODE_ENV = prev;
+    }
   });
 });

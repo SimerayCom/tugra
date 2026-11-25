@@ -1,30 +1,49 @@
-import { ConfigService } from "@nestjs/config";
 import { MonitorSchedulerService } from "./scheduler.service";
-import { PrismaService } from "../prisma/prisma.service";
-import { MonitorRunnerService } from "./runner.service";
+import type { PrismaService } from "../prisma/prisma.service";
+import type { MonitorRunnerService } from "./runner.service";
+import { FakeHub } from "../scheduler/testing/fake-hub";
 
-/**
- * Regression for the BullMQ Redis-connection gap: the scheduler must build its connection from the FULL
- * REDIS_URL (auth, TLS, db-index), not just host+port — otherwise every monitor job fails against an
- * authenticated/TLS/db-indexed Redis. The scheduler delegates to redisConnectionOptions; this proves the wiring.
- */
-describe("MonitorSchedulerService.connection", () => {
-  const build = (redisUrl: string) => {
-    const config = { get: (k: string) => (k === "REDIS_URL" ? redisUrl : undefined) } as unknown as ConfigService;
-    const svc = new MonitorSchedulerService(config, {} as PrismaService, {} as MonitorRunnerService);
-    return (svc as unknown as { connection: () => Record<string, unknown> }).connection();
-  };
-
-  it("carries password, db-index and TLS from an authenticated rediss:// URL", () => {
-    const c = build("rediss://:s3cret@redis.example:6380/3");
-    expect(c).toMatchObject({ host: "redis.example", port: 6380, password: "s3cret", db: 3 });
-    expect(c.tls).toBeDefined();
+describe("MonitorSchedulerService", () => {
+  const OLD = process.env.NODE_ENV;
+  afterEach(() => {
+    process.env.NODE_ENV = OLD;
   });
 
-  it("leaves the default in-compose URL unauthenticated on db 0", () => {
-    const c = build("redis://redis:6379");
-    expect(c).toMatchObject({ host: "redis", port: 6379, db: 0, maxRetriesPerRequest: null });
-    expect(c.password).toBeUndefined();
-    expect(c.tls).toBeUndefined();
+  function make(monitors: Array<{ id: string; intervalSec: number }>) {
+    const hub = new FakeHub();
+    const runCheck = jest.fn().mockResolvedValue(undefined);
+    const prisma = { monitor: { findMany: jest.fn().mockResolvedValue(monitors) } } as unknown as PrismaService;
+    const svc = new MonitorSchedulerService(hub.asService(), prisma, { runCheck } as unknown as MonitorRunnerService);
+    return { svc, hub, runCheck };
+  }
+
+  it("is a no-op under NODE_ENV=test (no queue is created)", async () => {
+    process.env.NODE_ENV = "test";
+    const { svc, hub } = make([{ id: "m1", intervalSec: 30 }]);
+    await svc.onApplicationBootstrap();
+    expect(hub.queues.size).toBe(0);
+  });
+
+  it("creates the monitors queue on the shared hub, schedules every enabled monitor and runs its check from the worker", async () => {
+    process.env.NODE_ENV = "production";
+    const { svc, hub, runCheck } = make([{ id: "m1", intervalSec: 30 }, { id: "m2", intervalSec: 60 }]);
+    await svc.onApplicationBootstrap();
+    const q = hub.queues.get("monitors")!;
+    expect(q.added).toEqual([
+      { name: "check:m1", data: { monitorId: "m1" }, opts: { repeat: { every: 30_000 } } },
+      { name: "check:m2", data: { monitorId: "m2" }, opts: { repeat: { every: 60_000 } } },
+    ]);
+    await hub.processors.get("monitors")!({ name: "check:m1", data: { monitorId: "m1" } });
+    expect(runCheck).toHaveBeenCalledWith("m1");
+  });
+
+  it("unschedule removes only that monitor's repeat key", async () => {
+    process.env.NODE_ENV = "production";
+    const { svc, hub } = make([]);
+    await svc.onApplicationBootstrap();
+    const q = hub.queues.get("monitors")!;
+    q.repeatables = [{ name: "check:m1", key: "k1" }, { name: "check:m2", key: "k2" }];
+    await svc.unschedule("m1");
+    expect(q.removedKeys).toEqual(["k1"]);
   });
 });

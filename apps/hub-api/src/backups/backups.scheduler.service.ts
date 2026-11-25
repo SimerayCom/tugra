@@ -1,13 +1,7 @@
-import {
-  Injectable,
-  Logger,
-  OnApplicationBootstrap,
-  OnModuleDestroy,
-} from "@nestjs/common";
-import { ConfigService } from "@nestjs/config";
-import { redisConnectionOptions } from "../common/redis-connection";
-import { Queue, Worker } from "bullmq";
-import { DEFAULT_JOB_OPTIONS } from "../common/queue-options";
+import { Injectable, Logger, OnApplicationBootstrap } from "@nestjs/common";
+import type { Queue } from "bullmq";
+import { QueueHubService } from "../scheduler/queue-hub.service";
+import { TickSchedulerService } from "../scheduler/tick-scheduler.service";
 import { reapIfGone } from "../common/orphan-reap";
 import { PrismaService } from "../prisma/prisma.service";
 import { BackupRunnerService } from "./backup-runner.service";
@@ -19,49 +13,43 @@ const QUEUE = "backups";
  *  followed by the WAL-aware retention pass, and the shared "backups" Worker runs with concurrency 1 — one base
  *  on it would stall every logical backup, verify drill and the watchdog for every database on the hub. */
 const BASE_QUEUE = "base-backups";
-/** Repeatable job that runs the missing-backup watchdog (not a per-database backup). */
+/** Tick (shared scheduler queue) that runs the missing-backup watchdog (not a per-database backup). Older hubs ran it as
+ *  a repeatable on the "backups" queue; handleJob still answers one that fires late, and boot removes the old key. */
 const WATCHDOG_JOB = "watchdog";
+const WATCHDOG_TICK = "backup-watchdog";
 const WATCHDOG_EVERY_MS = 3_600_000; // hourly
 
 type RepeatJob = { name: string; data: { databaseId?: string } };
 
 /** Mirrors MonitorSchedulerService: BullMQ repeatable jobs, disabled in tests. */
 @Injectable()
-export class BackupSchedulerService
-  implements OnApplicationBootstrap, OnModuleDestroy
-{
+export class BackupSchedulerService implements OnApplicationBootstrap {
   private readonly logger = new Logger(BackupSchedulerService.name);
   private queue?: Queue;
-  private worker?: Worker;
   private baseQueue?: Queue;
-  private baseWorker?: Worker;
 
   constructor(
-    private readonly config: ConfigService,
+    private readonly hub: QueueHubService,
+    private readonly ticks: TickSchedulerService,
     private readonly prisma: PrismaService,
     private readonly runner: BackupRunnerService,
     private readonly alerts: BackupAlertsService,
     private readonly baseRunner: BaseBackupRunnerService,
   ) {}
 
-  private connection() {
-    return redisConnectionOptions(this.config.get<string>("REDIS_URL")!);
-  }
-
   async onApplicationBootstrap(): Promise<void> {
     // The scheduler/worker are disabled in tests; backups are driven directly
     // via POST /databases/:id/backups there.
     if (process.env.NODE_ENV === "test") return;
 
-    const connection = this.connection();
-    this.queue = new Queue(QUEUE, { connection, defaultJobOptions: DEFAULT_JOB_OPTIONS });
-    this.worker = new Worker(QUEUE, (job) => this.handleJob(job as RepeatJob), { connection });
-    this.baseQueue = new Queue(BASE_QUEUE, { connection, defaultJobOptions: DEFAULT_JOB_OPTIONS });
-    this.baseWorker = new Worker(BASE_QUEUE, (job) => this.handleBaseJob(job as RepeatJob), { connection });
+    this.queue = this.hub.queue(QUEUE);
+    this.hub.worker(QUEUE, (job) => this.handleJob(job as RepeatJob));
+    this.baseQueue = this.hub.queue(BASE_QUEUE);
+    this.hub.worker(BASE_QUEUE, (job) => this.handleBaseJob(job as RepeatJob));
 
     // Missing-backup watchdog: a schedule that silently stops producing runs fires nothing by itself, so
-    // check periodically that every backup-enabled database has a recent SUCCESS. Idempotent re-add.
-    await this.queue.add(WATCHDOG_JOB, {}, { repeat: { every: WATCHDOG_EVERY_MS }, jobId: WATCHDOG_JOB });
+    // check periodically that every backup-enabled database has a recent SUCCESS. Idempotent re-register.
+    await this.ticks.register({ name: WATCHDOG_TICK, every: WATCHDOG_EVERY_MS, run: () => this.runWatchdog() });
 
     const dbs = await this.prisma.database.findMany({
       where: { backupEnabled: true, OR: [{ backupIntervalHours: { not: null } }, { backupCron: { not: null } }] },
@@ -100,11 +88,15 @@ export class BackupSchedulerService
     await this.enrolBaseSchedules();
   }
 
+  async runWatchdog(): Promise<void> {
+    await this.alerts.checkDatabases();
+    await this.alerts.checkVerifyLiveness();
+  }
+
   /** The shared-queue dispatcher: watchdog, verify drills, logical backups (the fall-through). */
   async handleJob(job: RepeatJob): Promise<void> {
     if (job.name === WATCHDOG_JOB) {
-      await this.alerts.checkDatabases();
-      await this.alerts.checkVerifyLiveness();
+      await this.runWatchdog();
       return;
     }
     const databaseId = job.data.databaseId as string;
@@ -230,12 +222,5 @@ export class BackupSchedulerService
         await this.baseQueue.removeRepeatableByKey(r.key);
       }
     }
-  }
-
-  async onModuleDestroy(): Promise<void> {
-    await this.worker?.close();
-    await this.queue?.close();
-    await this.baseWorker?.close();
-    await this.baseQueue?.close();
   }
 }

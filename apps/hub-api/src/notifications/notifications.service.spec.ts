@@ -35,7 +35,7 @@ function make(prisma: Partial<PrismaService>, access: Partial<TeamAccessService>
   // its BullMQ queue stays undefined and delivery runs inline (send via the mocked safeSend).
   // Redis stub — config has no NOTIFY_DEDUPE_WINDOW_SEC (→ NaN → dedupe disabled), so it's never consulted.
   const redis = { firstInWindow: jest.fn().mockResolvedValue(true) } as unknown as RedisService;
-  const queue = new NotificationQueueService(prisma as PrismaService, crypto, audit, config, new NotifI18nService(), redis);
+  const queue = new NotificationQueueService(prisma as PrismaService, crypto, audit, config, new NotifI18nService(), redis, {} as never);
   return new NotificationsService(prisma as PrismaService, access as TeamAccessService, audit, crypto, config, queue);
 }
 

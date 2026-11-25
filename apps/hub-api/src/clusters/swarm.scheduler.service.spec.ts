@@ -3,6 +3,7 @@ import type { ConfigService } from "@nestjs/config";
 import type { PrismaService } from "../prisma/prisma.service";
 import type { SwarmService } from "./swarm.service";
 import type { NotificationsService } from "../notifications/notifications.service";
+import { FakeTicks } from "../scheduler/testing/fake-ticks";
 
 // The BullMQ Queue+Worker path needs Redis (CI e2e); the real logic lives in runTick(), unit-tested here.
 describe("SwarmSchedulerService", () => {
@@ -17,7 +18,8 @@ describe("SwarmSchedulerService", () => {
     const swarm = { statusInternal } as unknown as SwarmService;
     const fireForEvent = jest.fn().mockResolvedValue(undefined);
     const notifications = { fireForEvent } as unknown as NotificationsService;
-    return { svc: new SwarmSchedulerService(config, prisma, swarm, notifications), findMany, statusInternal, fireForEvent };
+    const ticks = new FakeTicks();
+    return { svc: new SwarmSchedulerService(config, ticks.asService(), prisma, swarm, notifications), ticks, findMany, statusInternal, fireForEvent };
   }
 
   const degraded = { swarmStatus: "DEGRADED", nodes: [{ swarmRole: "MANAGER" }, { swarmRole: "WORKER" }], live: [{ state: "ready" }] };
@@ -28,9 +30,10 @@ describe("SwarmSchedulerService", () => {
 
   it("is a no-op in test env (never opens a queue/worker)", async () => {
     process.env.NODE_ENV = "test";
-    const { svc, findMany } = make([], async () => active);
+    const { svc, findMany, ticks } = make([], async () => active);
     await svc.onApplicationBootstrap(); // must not throw or need Redis
     expect(findMany).not.toHaveBeenCalled();
+    expect(ticks.registered).toEqual([]);
   });
 
   it("only fetches ACTIVE clusters (a DEGRADED/NONE cluster is never re-notified)", async () => {
@@ -67,5 +70,14 @@ describe("SwarmSchedulerService", () => {
     expect(statusInternal).toHaveBeenCalledTimes(2); // c1 threw, c2 still checked
     expect(fireForEvent).toHaveBeenCalledTimes(1);
     expect(fireForEvent).toHaveBeenCalledWith("t2", "swarm_degraded", expect.objectContaining({ clusterId: "c2" }));
+  });
+
+  it("registers one tick at SWARM_STATUS_INTERVAL_SEC whose run is the fleet poll", async () => {
+    process.env.NODE_ENV = "production";
+    const { svc, ticks, findMany } = make([], async () => active);
+    await svc.onApplicationBootstrap();
+    expect(ticks.spec("swarm-status").every).toBe(60_000);
+    await ticks.run("swarm-status");
+    expect(findMany).toHaveBeenCalledTimes(1);
   });
 });

@@ -1,35 +1,24 @@
-import { Injectable, Logger, OnApplicationBootstrap, OnModuleDestroy } from "@nestjs/common";
-import { ConfigService } from "@nestjs/config";
-import { redisConnectionOptions } from "../common/redis-connection";
-import { Queue, Worker } from "bullmq";
-import { DEFAULT_JOB_OPTIONS } from "../common/queue-options";
+import { Injectable, Logger, OnApplicationBootstrap } from "@nestjs/common";
+import { TickSchedulerService } from "../scheduler/tick-scheduler.service";
 import { InstanceSettingsService } from "../instance/instance-settings.service";
 import { TelemetryService } from "./telemetry.service";
-
-const QUEUE = "telemetry";
 
 /**
  * Periodic anonymous-stats sender (ON by default, opt-out). Mirrors the house recurring-job pattern
  * (BullMQ Queue+Worker in OnApplicationBootstrap, disabled in tests). It is NOT started at all when
- * TUGRA_TELEMETRY=0 — a deployment hard-off then makes ZERO outbound calls and touches neither Redis nor
- * the network. When it is started, each send re-checks the owner-UI toggle (TelemetryService.sendNow), so
+ * TUGRA_TELEMETRY=0 — a deployment hard-off then makes ZERO outbound calls (it only drops a schedule
+ * an earlier boot may have left in the hub's own Redis). When it is started, each send re-checks the owner-UI toggle (TelemetryService.sendNow), so
  * flipping telemetry off in the UI stops sends WITHOUT a restart. The send never throws.
  */
 @Injectable()
-export class TelemetrySchedulerService implements OnApplicationBootstrap, OnModuleDestroy {
+export class TelemetrySchedulerService implements OnApplicationBootstrap {
   private readonly logger = new Logger(TelemetrySchedulerService.name);
-  private queue?: Queue;
-  private worker?: Worker;
 
   constructor(
-    private readonly config: ConfigService,
+    private readonly ticks: TickSchedulerService,
     private readonly telemetry: TelemetryService,
     private readonly settings: InstanceSettingsService,
   ) {}
-
-  private connection() {
-    return redisConnectionOptions(this.config.get<string>("REDIS_URL")!);
-  }
 
   /** Avoid a send on every quick restart: only do the initial boot send when the last successful send is
    *  older than roughly the configured interval. The recurring job owns steady-state cadence. */
@@ -48,18 +37,13 @@ export class TelemetrySchedulerService implements OnApplicationBootstrap, OnModu
     if (process.env.NODE_ENV === "test") return; // schedulers disabled in tests
     if (this.telemetry.isForcedOff()) {
       this.logger.log("telemetry disabled by environment (TUGRA_TELEMETRY=0) — not scheduling");
-      return; // hard off: no Redis, no network, nothing
+      await this.ticks.disable("telemetry"); // hard off now, but an earlier boot may have left its schedule behind
+      return; // hard off: no network, nothing scheduled
     }
     const intervalMin = this.telemetry.intervalMin();
-    const connection = this.connection();
-    this.queue = new Queue(QUEUE, { connection, defaultJobOptions: DEFAULT_JOB_OPTIONS });
-    this.worker = new Worker(QUEUE, async () => { await this.telemetry.sendNow(); }, { connection });
-    // Remove any stale repeatable keyed by a previous interval, so changing TUGRA_TELEMETRY_INTERVAL_MIN
-    // doesn't leave two jobs firing at once (BullMQ keys a repeat by its `every` value).
-    for (const r of await this.queue.getRepeatableJobs()) {
-      if (r.name === "telemetry") await this.queue.removeRepeatableByKey(r.key);
-    }
-    await this.queue.add("telemetry", {}, { repeat: { every: intervalMin * 60_000 } });
+    // A job scheduler is keyed by id, not by its interval, so changing TUGRA_TELEMETRY_INTERVAL_MIN updates the one
+    // schedule in place (no stale second job to clean up).
+    await this.ticks.register({ name: "telemetry", every: intervalMin * 60_000, run: async () => { await this.telemetry.sendNow(); } });
     this.logger.log(`scheduled anonymous stats every ${intervalMin}m`);
     // Initial send is fire-and-forget, ~1 min after boot: NestJS runs bootstrap hooks before it accepts
     // connections, so awaiting a network call here would delay boot by up to the send timeout when the
@@ -74,10 +58,5 @@ export class TelemetrySchedulerService implements OnApplicationBootstrap, OnModu
       }, 60_000);
       t.unref?.();
     }
-  }
-
-  async onModuleDestroy(): Promise<void> {
-    await this.worker?.close();
-    await this.queue?.close();
   }
 }

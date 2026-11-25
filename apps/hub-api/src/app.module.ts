@@ -14,6 +14,7 @@ import { InstanceController } from "./instance/instance.controller";
 import { InstanceSettingsController } from "./instance/instance-settings.controller";
 import { PrismaModule } from "./prisma/prisma.module";
 import { RedisModule } from "./redis/redis.module";
+import { SchedulerModule } from "./scheduler/scheduler.module";
 import { AuditModule } from "./audit/audit.module";
 import { InstanceSettingsModule } from "./instance/instance-settings.module";
 import { ProxyConfigModule } from "./proxy-config/proxy-config.module";
@@ -97,6 +98,7 @@ import { ApiExceptionFilter } from "./common/api-exception.filter";
     JwtModule.register({}), // for EmailVerifiedGuard to verify the access token itself
     PrismaModule,
     RedisModule,
+    SchedulerModule,
     AuditModule,
     InstanceSettingsModule,
     ProxyConfigModule,

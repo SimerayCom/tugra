@@ -1,5 +1,7 @@
-import { ConfigService } from "@nestjs/config";
 import { VolumeBackupSchedulerService } from "./volume-backups.scheduler.service";
+import { FakeTicks } from "../scheduler/testing/fake-ticks";
+import { FakeHub } from "../scheduler/testing/fake-hub";
+
 
 type Repeat = { name: string; key: string };
 
@@ -25,9 +27,10 @@ function make(opts: { app?: unknown; policies?: unknown[]; policyRow?: unknown; 
   };
   const runner = { runBackup: jest.fn().mockResolvedValue([]) };
   const alerts = { checkApps: jest.fn().mockResolvedValue(0) };
-  const svc = new VolumeBackupSchedulerService({ get: () => "redis://x" } as unknown as ConfigService, prisma as never, runner as never, alerts as never);
+  const ticks = new FakeTicks();
+  const svc = new VolumeBackupSchedulerService(new FakeHub().asService(), ticks.asService(), prisma as never, runner as never, alerts as never);
   (svc as unknown as { queue: unknown }).queue = queue;
-  return { svc, add, removeRepeatableByKey, repeatables, prisma, runner, alerts };
+  return { svc, add, removeRepeatableByKey, repeatables, prisma, runner, alerts, ticks };
 }
 
 describe("VolumeBackupSchedulerService — cron + policy jobs", () => {
@@ -85,6 +88,21 @@ describe("VolumeBackupSchedulerService — cron + policy jobs", () => {
     const gone = make({ appRow: null });
     await gone.svc.handleJob({ name: "volbackup:a1", data: { appId: "a1" } });
     expect(gone.runner.runBackup).not.toHaveBeenCalled();
+  });
+
+  it("boot registers the hourly watchdog as a shared-scheduler tick (no repeatable on the volume-backups queue)", async () => {
+    const prev = process.env.NODE_ENV;
+    process.env.NODE_ENV = "production";
+    try {
+      const t = make();
+      await t.svc.onApplicationBootstrap();
+      expect(t.ticks.spec("volume-backup-watchdog").every).toBe(3_600_000);
+      expect(t.add).not.toHaveBeenCalledWith("watchdog", expect.anything(), expect.anything());
+      await t.ticks.run("volume-backup-watchdog");
+      expect(t.alerts.checkApps).toHaveBeenCalled();
+    } finally {
+      process.env.NODE_ENV = prev;
+    }
   });
 
   it("the watchdog job runs the app watchdog", async () => {

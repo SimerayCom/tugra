@@ -44,7 +44,7 @@ const EVENT: NotificationEvent = { type: "deploy_failed", teamId: "t1", ctx: { a
 const webhookChannel = { id: "c1", type: "webhook", configEnc: `enc(${JSON.stringify({ url: "https://hook" })})` };
 
 function make(prisma: Partial<PrismaService>, redis: RedisService = noRedis, cfg: ConfigService = config) {
-  return new NotificationQueueService(prisma as PrismaService, crypto, audit, cfg, new NotifI18nService(), redis);
+  return new NotificationQueueService(prisma as PrismaService, crypto, audit, cfg, new NotifI18nService(), redis, {} as never);
 }
 const createsOf = (prisma: PrismaService) => (prisma.notificationDelivery.create as jest.Mock).mock.calls.length;
 // handleFailed is private (the real worker wires it); invoke it directly in the unit test.

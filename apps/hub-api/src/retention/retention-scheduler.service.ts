@@ -1,35 +1,18 @@
-import {
-  Injectable,
-  Logger,
-  OnApplicationBootstrap,
-  OnModuleDestroy,
-} from "@nestjs/common";
-import { ConfigService } from "@nestjs/config";
-import { redisConnectionOptions } from "../common/redis-connection";
-import { Queue, Worker } from "bullmq";
-import { DEFAULT_JOB_OPTIONS } from "../common/queue-options";
+import { Injectable, Logger, OnApplicationBootstrap } from "@nestjs/common";
+import { TickSchedulerService } from "../scheduler/tick-scheduler.service";
 import { RetentionRunnerService } from "./retention-runner.service";
 import { legacyRetentionNotes } from "../metrics/metric-tiers";
 
-const QUEUE = "retention-prune";
 const HOURLY_MS = 3600 * 1000;
 
 @Injectable()
-export class RetentionSchedulerService
-  implements OnApplicationBootstrap, OnModuleDestroy
-{
+export class RetentionSchedulerService implements OnApplicationBootstrap {
   private readonly logger = new Logger(RetentionSchedulerService.name);
-  private queue?: Queue;
-  private worker?: Worker;
 
   constructor(
-    private readonly config: ConfigService,
+    private readonly ticks: TickSchedulerService,
     private readonly runner: RetentionRunnerService,
   ) {}
-
-  private connection() {
-    return redisConnectionOptions(this.config.get<string>("REDIS_URL")!);
-  }
 
   async onApplicationBootstrap(): Promise<void> {
     // Disabled in tests; the runner is exercised directly via unit specs.
@@ -37,15 +20,7 @@ export class RetentionSchedulerService
 
     for (const note of legacyRetentionNotes()) this.logger.warn(`retention changed with the metric tiers: ${note}`);
 
-    const connection = this.connection();
-    this.queue = new Queue(QUEUE, { connection, defaultJobOptions: DEFAULT_JOB_OPTIONS });
-    this.worker = new Worker(QUEUE, async () => this.runner.prune(), { connection });
-    await this.queue.add("retention-prune", {}, { repeat: { every: HOURLY_MS } });
+    await this.ticks.register({ name: "retention-prune", every: HOURLY_MS, run: () => this.runner.prune() });
     this.logger.log("scheduled hourly metrics/heartbeat retention prune");
-  }
-
-  async onModuleDestroy(): Promise<void> {
-    await this.worker?.close();
-    await this.queue?.close();
   }
 }

@@ -1,48 +1,22 @@
-import {
-  Injectable,
-  Logger,
-  OnApplicationBootstrap,
-  OnModuleDestroy,
-} from "@nestjs/common";
-import { ConfigService } from "@nestjs/config";
-import { redisConnectionOptions } from "../common/redis-connection";
-import { Queue, Worker } from "bullmq";
-import { DEFAULT_JOB_OPTIONS } from "../common/queue-options";
+import { Injectable, Logger, OnApplicationBootstrap } from "@nestjs/common";
+import { TickSchedulerService } from "../scheduler/tick-scheduler.service";
 import { ExpiryRunnerService } from "./expiry-runner.service";
 
-const QUEUE = "expiry";
 const DAILY_MS = 24 * 3600 * 1000;
 
 @Injectable()
-export class ExpirySchedulerService
-  implements OnApplicationBootstrap, OnModuleDestroy
-{
+export class ExpirySchedulerService implements OnApplicationBootstrap {
   private readonly logger = new Logger(ExpirySchedulerService.name);
-  private queue?: Queue;
-  private worker?: Worker;
 
   constructor(
-    private readonly config: ConfigService,
+    private readonly ticks: TickSchedulerService,
     private readonly runner: ExpiryRunnerService,
   ) {}
-
-  private connection() {
-    return redisConnectionOptions(this.config.get<string>("REDIS_URL")!);
-  }
 
   async onApplicationBootstrap(): Promise<void> {
     // Disabled in tests; the runner is exercised directly via unit specs.
     if (process.env.NODE_ENV === "test") return;
-
-    const connection = this.connection();
-    this.queue = new Queue(QUEUE, { connection, defaultJobOptions: DEFAULT_JOB_OPTIONS });
-    this.worker = new Worker(QUEUE, async () => this.runner.runChecks(), { connection });
-    await this.queue.add("expiry-check", {}, { repeat: { every: DAILY_MS } });
+    await this.ticks.register({ name: "expiry-check", every: DAILY_MS, run: () => this.runner.runChecks() });
     this.logger.log("scheduled daily SSL/token expiry check");
-  }
-
-  async onModuleDestroy(): Promise<void> {
-    await this.worker?.close();
-    await this.queue?.close();
   }
 }
