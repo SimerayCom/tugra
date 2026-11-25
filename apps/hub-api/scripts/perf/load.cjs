@@ -5,6 +5,9 @@
  *
  *   node scripts/perf/load.cjs --port 3100 --pid <hub pid> --label before --out result.json [--seconds 20] [--browsers 6]
  *                              [--phases home,server,apps,scan,logs,slowlog,soak] [--snapshot-dir dir]
+ *   Container mode: `--container <docker name>` (instead of --pid) measures a hub that runs in Docker (the shipped image, a RAM profile):
+ *   RSS = the container's summed process RSS read from /proc inside it. The heap side channel does not exist there, so the heapUsed
+ *   columns read 0; use the native hub-boot run for heap numbers.
  *
  * Each phase starts from a forced GC (hub needs --expose-gc) and reports: RSS before / peak / after (MB), heapUsed peak,
  * request count, errors and per-endpoint p50/p95/max latency + bytes. RSS is the kernel number (`ps`), i.e. what the OOM
@@ -22,6 +25,7 @@ const a = (n, d) => {
 };
 const PORT = Number(a("port", 3100));
 const PID = Number(a("pid"));
+const CONTAINER = a("container", "");
 const SECONDS = Number(a("seconds", 20));
 const BROWSERS = Number(a("browsers", 6));
 const PHASES = a("phases", "home,server,scan,logs,slowlog,soak").split(",");
@@ -32,9 +36,16 @@ const SECRET = process.env.JWT_ACCESS_SECRET || "test-jwt-access-secret-01234567
 // No keep-alive: the hub closes idle sockets after 5 s, and a reused one racing that close shows up as a bogus ECONNRESET.
 const agent = new http.Agent({ keepAlive: false, maxSockets: 256 });
 
-const rssMb = () => Number(execFileSync("ps", ["-o", "rss=", "-p", String(PID)]).toString().trim()) / 1024;
+const rssMb = CONTAINER
+  ? () => {
+      const out = execFileSync("docker", ["exec", CONTAINER, "sh", "-c", "cat /proc/[0-9]*/status 2>/dev/null | grep '^VmRSS:' | tr -s ' ' | cut -d' ' -f2"]).toString();
+      return out.split("\n").reduce((n, l) => n + (Number(l) || 0), 0) / 1024;
+    }
+  : () => Number(execFileSync("ps", ["-o", "rss=", "-p", String(PID)]).toString().trim()) / 1024;
 const side = (p) =>
-  new Promise((res, rej) =>
+  CONTAINER
+    ? Promise.resolve({ heapUsed: 0 })
+    : new Promise((res, rej) =>
     http.get({ host: "127.0.0.1", port: PORT + 1, path: p, agent: false }, (r) => {
       let b = "";
       r.on("data", (c) => (b += c));
@@ -205,7 +216,7 @@ async function phase(name, fn, browsers) {
     try {
       heapPeak = Math.max(heapPeak, (await side("/mem")).heapUsed / 1048576);
     } catch {}
-  }, 250);
+  }, CONTAINER ? 1000 : 250);
   await Promise.all(Array.from({ length: browsers }, () => fn(end)));
   clearInterval(sampler);
   const afterNoGc = rssMb();
