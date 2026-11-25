@@ -311,7 +311,7 @@ export function parsePm2MoveOutput(output: string): MoveOutcome {
       if (out.steps.length < 20) out.steps.push(step[1]);
       continue;
     }
-    const res = /^result=([a-z_]{1,20}) reason=([a-z_]{1,40})$/.exec(body);
+    const res = /^result=([a-z0-9_]{1,24}) reason=([a-z_]{1,40})$/.exec(body);
     if (res && RESULTS.has(res[1] as MoveResult)) {
       out.result = res[1] as MoveResult;
       out.reason = res[2];
