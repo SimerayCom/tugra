@@ -650,22 +650,23 @@
       "no-cwd": "No working folder is saved for it.",
       "cwd-missing": "Its working folder doesn't exist.",
       "cwd-unsafe": "Its working folder is too broad or protected to share with a container.",
-      "args-unsafe": "Its start arguments can't be carried over exactly.",
-      "no-user": "Its PM2 account couldn't be identified."
+      "args-unsafe": "Its start arguments can't be carried over exactly."
     },
     "warning": {
       "root": "Runs as root, same as in PM2 today.",
       "node-eol": "This Node version is past end of life. It keeps working, but plan an upgrade.",
       "no-port": "No port is known, so the check only confirms it keeps running.",
       "owner-differs": "The folder belongs to a different user than the process.",
-      "cluster-single": "Cluster mode with one instance runs as a single process."
+      "cluster-single": "Cluster mode with one instance runs as a single process.",
+      "node-guessed": "This Node version comes from the project files (.nvmrc or package.json), not from what PM2 ran. Confirm it before moving.",
+      "shared-env": "Your team has {n} shared variables. Tugra adds them to every app, so this one may get up to {n} variables PM2 never had (its own variables win)."
     },
     "node": "Node version",
     "nodeChoose": "Choose…",
     "nodeSource": {
       "interpreter": "From the Node PM2 uses",
-      "nvmrc": "From .nvmrc",
-      "engines": "From package.json",
+      "nvmrc": "From .nvmrc (a guess, confirm it)",
+      "engines": "From package.json (a guess, confirm it)",
       "override": "Your choice",
       "none": ""
     },
@@ -677,7 +678,8 @@
       "port": "Port",
       "domains": "Serves",
       "command": "Command",
-      "env": "{n} environment variables carried over"
+      "env": "{n} environment variables carried over",
+      "groups": "Groups"
     },
     "confirm": {
       "title": "Review before moving",
@@ -690,7 +692,8 @@
       "s6": "Websites and DNS stay as they are.",
       "privilege": "The new apps run with host networking and read-write access to their own folder. This is recorded in the audit log.",
       "go": "Confirm and move",
-      "back": "Back"
+      "back": "Back",
+      "s7": "Each move is checked once more right before it runs. If the process or its saved environment changed since this preview, it is skipped."
     },
     "job": {
       "title": "Moving…",
@@ -747,7 +750,12 @@
       "invalid": "It can't be carried over exactly.",
       "changed": "The process or its environment changed.",
       "error": "Something went wrong.",
-      "other": "Something went wrong."
-    }
+      "other": "Something went wrong.",
+      "busy": "Another move of this process is still running."
+    },
+    "errTooLarge": "This process's saved environment is too large to move.",
+    "probeInvalid": "Start with / and use only letters, numbers and . _ ~ - / (no spaces or ?).",
+    "nodeConfirm": "Use Node {n}",
+    "envNote": "The environment comes from PM2's saved process list (pm2 save). A variable changed with pm2 restart --update-env and never saved isn't included. Save PM2 first if you did that."
   }
 }

@@ -10,7 +10,10 @@ import type { Pm2MoveChoice, Pm2MoveJob, Pm2MoveJobItem, Pm2MovePlan } from "../
 import { Badge, Btn } from "./ui";
 import { fieldStyle } from "./form";
 
-const NODE_CHOICES = [18, 20, 22, 24];
+const NODE_CHOICES = [12, 14, 16, 18, 20, 22, 24];
+/** The same rule the hub applies to a health-check path (empty = no check). */
+const PROBE_PATH_RE = /^\/[A-Za-z0-9._~/-]{0,200}$/;
+export const isValidProbePath = (v: string): boolean => v === "" || PROBE_PATH_RE.test(v);
 type StartItem = Pm2MoveChoice & { planHash: string };
 
 const rowStyle: CSSProperties = { display: "grid", gap: 6, padding: "10px 0", borderTop: "1px solid var(--c-bd)", fontSize: 13 };
@@ -19,11 +22,14 @@ const dim: CSSProperties = { color: "var(--c-tx3)", fontSize: 12, minWidth: 0, o
 const note = (color = "var(--c-tx3)"): CSSProperties => ({ margin: "8px 0 0", fontSize: 12.5, color });
 
 /** Map a failed call to its i18n key suffix. */
-export function pm2MoveErrorKey(e: unknown): "errOwner" | "errForbidden" | "errOutdated" | "errUnavailable" | "errBusy" | "errGeneric" {
+export function pm2MoveErrorKey(e: unknown): "errOwner" | "errForbidden" | "errOutdated" | "errUnavailable" | "errTooLarge" | "errBusy" | "errGeneric" {
   if (e instanceof ApiError) {
     if (e.status === 409) return "errBusy";
     if (e.status === 403) return /owner/i.test(e.message) ? "errOwner" : "errForbidden";
-    if (e.status === 503) return /agent/i.test(e.message) && /update/i.test(e.message) ? "errOutdated" : "errUnavailable";
+    if (e.status === 503) {
+      if (/too large/i.test(e.message)) return "errTooLarge";
+      return /agent/i.test(e.message) && /update/i.test(e.message) ? "errOutdated" : "errUnavailable";
+    }
   }
   return "errGeneric";
 }
@@ -56,7 +62,7 @@ export function Pm2MovePanel({ serverId, online, canOps }: { serverId: string; o
   const toInput = (c: typeof choices): Pm2MoveChoice[] =>
     Object.entries(c).map(([key, v]) => {
       const [u, ...rest] = key.split("/");
-      return { user: u, name: rest.join("/"), nodeMajor: v.nodeMajor, probePath: v.probePath ? v.probePath : null };
+      return { user: u, name: rest.join("/"), nodeMajor: v.nodeMajor, probePath: v.probePath && isValidProbePath(v.probePath) ? v.probePath : null };
     });
 
   const plan = useMutation({ mutationFn: (c: typeof choices) => api.planPm2Move(serverId, toInput(c)) });
@@ -153,6 +159,7 @@ export function Pm2MovePanel({ serverId, online, canOps }: { serverId: string; o
         </span>
       </div>
       <p style={note()}>{t("servers.pm2Move.intro")}</p>
+      <p style={note()}>{t("servers.pm2Move.envNote")}</p>
       {plan.isError && <p role="alert" style={note("var(--c-r)")}>{t(`servers.pm2Move.${pm2MoveErrorKey(plan.error)}`)}</p>}
       {start.isError && <p role="alert" style={note("var(--c-r)")}>{t(`servers.pm2Move.${pm2MoveErrorKey(start.error)}`)}</p>}
 
@@ -217,6 +224,8 @@ function PlanRow({
 }) {
   const t = useT();
   const [probe, setProbe] = useState(choice?.probePath ?? p.probePath ?? "");
+  const probeBad = !isValidProbePath(probe);
+  const guessed = p.warnings.includes("node-guessed") && p.nodeMajor !== null;
   const supported = p.status !== "unsupported";
   const nodeOptions = [...new Set([...NODE_CHOICES, ...(p.nodeMajor ? [p.nodeMajor] : [])])].sort((a, b) => a - b);
   return (
@@ -234,7 +243,7 @@ function PlanRow({
         <span style={dim}>{p.user}</span>
         <Badge tone={statusTone(p.status)}>{t(`servers.pm2Move.status.${p.status}`)}</Badge>
         {p.status === "ready" && (
-          <Btn variant="ghost" onClick={onMove}>
+          <Btn variant="ghost" onClick={onMove} disabled={probeBad}>
             {t("servers.pm2Move.moveOne")}
           </Btn>
         )}
@@ -264,6 +273,11 @@ function PlanRow({
               </select>
             </label>
             {p.nodeSource !== "none" && <span style={dim}>{t(`servers.pm2Move.nodeSource.${p.nodeSource}`)}</span>}
+            {guessed && (
+              <Btn variant="ghost" onClick={() => onNode(p.nodeMajor as number)}>
+                {t("servers.pm2Move.nodeConfirm", { n: p.nodeMajor as number })}
+              </Btn>
+            )}
           </div>
           {p.status === "ready" && (
             <>
@@ -275,6 +289,13 @@ function PlanRow({
                 <span className="mono">
                   {p.uid}:{p.gid}
                 </span>
+                {p.groups.length > 0 && (
+                  <>
+                    {" · "}
+                    <span>{t("servers.pm2Move.field.groups")}: </span>
+                    <span className="mono">{p.groups.join(", ")}</span>
+                  </>
+                )}
                 {p.port ? (
                   <>
                     {" · "}
@@ -297,13 +318,20 @@ function PlanRow({
                   {t("servers.pm2Move.probe")}
                   <input
                     value={probe}
-                    onChange={(e) => setProbe(e.target.value)}
-                    onBlur={() => probe !== (choice?.probePath ?? p.probePath ?? "") && onProbe(probe)}
+                    onChange={(e) => setProbe(e.target.value.trim())}
+                    // An invalid path is never sent: one bad value must not turn the whole preview into an error.
+                    onBlur={() => !probeBad && probe !== (choice?.probePath ?? p.probePath ?? "") && onProbe(probe)}
                     placeholder="/health"
                     spellCheck={false}
-                    style={{ ...fieldStyle, maxWidth: 320 }}
+                    aria-invalid={probeBad}
+                    style={{ ...fieldStyle, maxWidth: 320, ...(probeBad ? { borderColor: "var(--c-r)" } : {}) }}
                     aria-label={`${t("servers.pm2Move.probe")} ${p.name}`}
                   />
+                  {probeBad && (
+                    <span role="alert" style={{ color: "var(--c-r)" }}>
+                      {t("servers.pm2Move.probeInvalid")}
+                    </span>
+                  )}
                 </label>
               )}
             </>
@@ -312,7 +340,7 @@ function PlanRow({
       )}
       {p.warnings.map((w) => (
         <div key={w} style={{ ...dim, color: "var(--c-am)" }}>
-          {t(`servers.pm2Move.warning.${w}`)}
+          {t(`servers.pm2Move.warning.${w}`, { n: p.sharedEnvCount })}
         </div>
       ))}
     </div>
@@ -326,7 +354,7 @@ function Confirm({ plans, busy, onBack, onGo }: { plans: Pm2MovePlan[]; busy: bo
       <h4 style={{ margin: "0 0 4px", fontSize: 13 }}>{t("servers.pm2Move.confirm.title")}</h4>
       <p style={note()}>{t("servers.pm2Move.confirm.intro")}</p>
       <ol style={{ margin: "6px 0 0", paddingLeft: 20, fontSize: 13, display: "grid", gap: 4 }}>
-        {(["s1", "s2", "s3", "s4", "s5", "s6"] as const).map((k) => (
+        {(["s1", "s2", "s3", "s4", "s5", "s6", "s7"] as const).map((k) => (
           <li key={k}>{t(`servers.pm2Move.confirm.${k}`)}</li>
         ))}
       </ol>

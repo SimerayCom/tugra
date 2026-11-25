@@ -30,11 +30,13 @@ function plan(over: Partial<Pm2MovePlan> = {}): Pm2MovePlan {
     mountDir: "/home/acme/htdocs/a",
     uid: 1001,
     gid: 1001,
+    groups: [],
     port: 3000,
     portSource: "env",
     probePath: null,
     domains: ["a.example.com"],
     envCount: 6,
+    sharedEnvCount: 0,
     planHash: "a".repeat(64),
     ...over,
   };
@@ -186,12 +188,57 @@ describe("Pm2MovePanel", () => {
     expect(pm2MoveErrorKey(new ApiError(403, "capability \"patch\" is not granted"))).toBe("errForbidden");
     expect(pm2MoveErrorKey(new ApiError(409, "a PM2 move is already running on this server"))).toBe("errBusy");
     expect(pm2MoveErrorKey(new ApiError(503, "update this server's agent to read its PM2 processes"))).toBe("errOutdated");
+    expect(pm2MoveErrorKey(new ApiError(503, "the saved environment of this PM2 process is too large to move"))).toBe("errTooLarge");
     expect(pm2MoveErrorKey(new ApiError(503, "x"))).toBe("errUnavailable");
     expect(pm2MoveErrorKey(new Error("x"))).toBe("errGeneric");
     vi.spyOn(api, "planPm2Move").mockRejectedValue(new ApiError(503, "update this server's agent to read its PM2 processes"));
     show();
     fireEvent.click(screen.getByRole("button", { name: "Move to Tugra" }));
     expect((await screen.findByRole("alert")).textContent).toBe("Update this server's agent to read its PM2 processes.");
+  });
+
+  it("an invalid health-check path is flagged in the field and never sent, so the preview keeps working", async () => {
+    const spy = vi.spyOn(api, "planPm2Move").mockResolvedValue({ plans: PLANS, truncated: false });
+    show();
+    await openIt();
+    const calls = spy.mock.calls.length;
+    const box = screen.getByRole("textbox", { name: "Health check path (optional) api" });
+    for (const bad of ["health", "/a?x=1", "/a b".replace(" ", "%")]) {
+      fireEvent.change(box, { target: { value: bad } });
+      fireEvent.blur(box);
+      expect((await screen.findByText(/Start with \//)).textContent).toContain("no spaces");
+      expect(box.getAttribute("aria-invalid")).toBe("true");
+    }
+    expect(spy.mock.calls.length).toBe(calls); // nothing was sent for any of them
+    // The row cannot be moved with a path that was not applied.
+    const enabled = screen.getAllByRole("button", { name: "Move to Tugra" }).filter((b) => !(b as HTMLButtonElement).disabled);
+    expect(enabled).toHaveLength(1); // only "old"
+    fireEvent.change(box, { target: { value: "/health" } });
+    expect(screen.queryByText(/Start with \//)).toBeNull();
+    fireEvent.blur(box);
+    await waitFor(() => expect(spy).toHaveBeenLastCalledWith("s1", [{ user: "acme", name: "api", nodeMajor: undefined, probePath: "/health" }]));
+  });
+
+  it("a Node version guessed from the project files has to be confirmed; the choice re-plans as an override", async () => {
+    const guessed = plan({ key: "acme/g", name: "g", status: "needs-node", nodeMajor: 18, nodeSource: "engines", warnings: ["node-guessed"], planHash: "e".repeat(64) });
+    const spy = vi.spyOn(api, "planPm2Move").mockResolvedValue({ plans: [guessed], truncated: false });
+    show();
+    fireEvent.click(screen.getByRole("button", { name: "Move to Tugra" }));
+    await screen.findByText("g");
+    expect(screen.getByText(/from the project files/)).toBeTruthy();
+    expect((screen.getByRole("checkbox", { name: "g" }) as HTMLInputElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Use Node 18" }));
+    await waitFor(() => expect(spy).toHaveBeenLastCalledWith("s1", [{ user: "acme", name: "g", nodeMajor: 18, probePath: null }]));
+  });
+
+  it("names the supplementary groups, the team shared variables, and where the environment comes from", async () => {
+    vi.spyOn(api, "planPm2Move").mockResolvedValue({ plans: [plan({ groups: [33, 50], sharedEnvCount: 4, warnings: ["shared-env"] })], truncated: false });
+    show();
+    fireEvent.click(screen.getByRole("button", { name: "Move to Tugra" }));
+    await screen.findByText("api");
+    expect(screen.getByText("33, 50")).toBeTruthy();
+    expect(screen.getByText(/Your team has 4 shared variables/)).toBeTruthy();
+    expect(screen.getByText(/never saved isn't included/)).toBeTruthy();
   });
 
   it("an empty server says so", async () => {

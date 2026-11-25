@@ -2713,9 +2713,8 @@ export type Pm2MoveReason =
   | "no-cwd"
   | "cwd-missing"
   | "cwd-unsafe"
-  | "args-unsafe"
-  | "no-user";
-export type Pm2MoveWarning = "root" | "node-eol" | "no-port" | "owner-differs" | "cluster-single";
+  | "args-unsafe";
+export type Pm2MoveWarning = "root" | "node-eol" | "no-port" | "owner-differs" | "cluster-single" | "node-guessed" | "shared-env";
 export interface Pm2MovePlan {
   key: string;
   user: string;
@@ -2732,11 +2731,14 @@ export interface Pm2MovePlan {
   mountDir: string | null;
   uid: number | null;
   gid: number | null;
+  groups: number[];
   port: number | null;
   portSource: "env" | "site" | "none";
   probePath: string | null;
   domains: string[];
   envCount: number;
+  /** Team shared variables Tugra adds to every app of the team (up to this many; the process's own keys win). */
+  sharedEnvCount: number;
   planHash: string;
 }
 export interface Pm2MovePlanView {
