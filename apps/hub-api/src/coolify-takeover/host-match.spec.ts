@@ -280,3 +280,30 @@ describe("matchHosts: the evidence ladder", () => {
     });
   });
 });
+
+describe("identityEvidence: a machine has several sshd host keys", () => {
+  const A = "SHA256:" + "A".repeat(43);
+  const B = "SHA256:" + "B".repeat(43);
+  const a = "SHA256:" + "a".repeat(43);
+
+  it("the key the Coolify host saw is the machine's when it is ANY of the keys the agent reports", () => {
+    expect(identityEvidence({ sshHostKeyFp: B }, { sshHostKeyFp: A, sshHostKeyFps: [A, B] })).toEqual([{ kind: "ssh_host_key", equal: true }]);
+  });
+
+  it("a key that is none of them is a conflict", () => {
+    expect(identityEvidence({ sshHostKeyFp: B }, { sshHostKeyFp: A, sshHostKeyFps: [A] })).toEqual([{ kind: "ssh_host_key", equal: false }]);
+  });
+
+  it("a fingerprint is base64: differing only in case is a different key (it is not lower-cased for the comparison)", () => {
+    expect(identityEvidence({ sshHostKeyFp: A }, { sshHostKeyFp: a })).toEqual([{ kind: "ssh_host_key", equal: false }]);
+    expect(identityEvidence({ sshHostKeyFp: ` ${A} ` }, { sshHostKeyFp: A })).toEqual([{ kind: "ssh_host_key", equal: true }]);
+  });
+
+  it("says nothing when one side reports no key, and the matcher then confirms by the key list alone", () => {
+    expect(identityEvidence({ sshHostKeyFp: A }, {})).toEqual([]);
+    expect(identityEvidence({ sshHostKeyFp: A }, { sshHostKeyFps: [] })).toEqual([]);
+    const v = one(cool("c1", null, { facts: { sshHostKeyFp: B } }), [tugra("a1", { facts: { sshHostKeyFp: A, sshHostKeyFps: [A, B] } }), tugra("b1", { facts: { sshHostKeyFp: A, sshHostKeyFps: [A] } })]);
+    expect(v).toMatchObject({ status: "certain", tugraServerId: "a1" });
+  });
+});
+

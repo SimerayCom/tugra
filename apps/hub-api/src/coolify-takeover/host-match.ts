@@ -63,14 +63,24 @@ const IDENTITY: ReadonlyArray<readonly [HostEvidenceKind, IdentityKey]> = [
 
 const norm = (v: string | null | undefined): string => (typeof v === "string" ? v.trim().toLowerCase() : "");
 
-/** E1 evidence between two fact sets: a kind both sides report is `equal` or a conflict; a kind one side lacks says nothing. */
+/** The values one fact set holds for an identity kind. A key fingerprint is base64: case matters, so it is only trimmed. */
+function identityValues(f: HostIdentityFacts, k: IdentityKey): string[] {
+  if (k === "sshHostKeyFp") return [...new Set([f.sshHostKeyFp, ...(f.sshHostKeyFps ?? [])].map((v) => (typeof v === "string" ? v.trim() : "")).filter(Boolean))];
+  const v = norm(f[k]);
+  return v ? [v] : [];
+}
+
+/**
+ * E1 evidence between two fact sets: a kind both sides report is `equal` or a conflict; a kind one side lacks says nothing. A machine has
+ * several sshd host keys: the fingerprint one side SAW is the other's when it is any one of the keys the other reports.
+ */
 export function identityEvidence(a: HostIdentityFacts | undefined, b: HostIdentityFacts | undefined): HostEvidence[] {
   const out: HostEvidence[] = [];
   if (!a || !b) return out;
   for (const [kind, k] of IDENTITY) {
-    const x = norm(a[k]);
-    const y = norm(b[k]);
-    if (x && y) out.push({ kind, equal: x === y });
+    const x = identityValues(a, k);
+    const y = identityValues(b, k);
+    if (x.length && y.length) out.push({ kind, equal: x.some((v) => y.includes(v)) });
   }
   return out;
 }

@@ -42,6 +42,9 @@ const OWNER_ONLY: Role[] = [Role.OWNER];
 const READ_ROLES: Role[] = [Role.OWNER, Role.ADMIN];
 const MAX_TARGETS_PER_RUN = 100;
 const SWEEP_MS = 60_000;
+/** How long the cross-check waits for a freshly enrolled agent to report its own sshd host keys. */
+const IDENTITY_WAIT_MS = 2_000;
+const IDENTITY_WAIT_TRIES = 6;
 const ENROLL_POLL_MS = 3_000;
 const MIN_ENROLL_WAIT_MS = 60_000;
 const PROBE_TIMEOUT_MS = 120_000;
@@ -566,14 +569,23 @@ export class CoolifySshInstallService implements OnModuleInit, OnModuleDestroy {
 
   private async crossCheck(t: TargetRow, tugraServerId: string): Promise<"fingerprint" | "address" | "unverified" | "mismatch"> {
     let reportedFp: string | null = null;
-    try {
-      reportedFp = (await this.identity?.reportedHostKeyFp(tugraServerId)) ?? null;
-    } catch {
-      reportedFp = null;
+    let reportedFps: string[] = [];
+    // The agent reports its own sshd host keys with its host info, a moment after it comes online: give that report a short while, then
+    // fall back to the address (the check never blocks without a report; it only says how strong the proof was).
+    for (let i = 0; i < IDENTITY_WAIT_TRIES; i++) {
+      try {
+        reportedFp = (await this.identity?.reportedHostKeyFp(tugraServerId)) ?? null;
+        reportedFps = (await this.identity?.reportedHostKeyFps?.(tugraServerId)) ?? [];
+      } catch {
+        reportedFp = null;
+        reportedFps = [];
+      }
+      if (reportedFp || reportedFps.length > 0 || !t.hostKeyFp || !this.identity || i === IDENTITY_WAIT_TRIES - 1) break;
+      await this.clock.sleep(IDENTITY_WAIT_MS);
     }
     const srv = await this.prisma.server.findUnique({ where: { id: tugraServerId }, select: { publicIp: true, publicIpv6: true, reportedIps: true } });
     const address = (await this.factOf(t))?.ip ?? "";
-    return checkEnrolled({ probedFp: t.hostKeyFp, reportedFp, coolifyAddress: address, reportedAddresses: [srv?.publicIp, srv?.publicIpv6, ...(srv?.reportedIps ?? [])] });
+    return checkEnrolled({ probedFp: t.hostKeyFp, reportedFp, reportedFps, coolifyAddress: address, reportedAddresses: [srv?.publicIp, srv?.publicIpv6, ...(srv?.reportedIps ?? [])] });
   }
 
   /** Void an enroll token: the pending Tugra server it belongs to is removed (an enrolled one too, when it turned out to be the wrong machine). */

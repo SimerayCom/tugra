@@ -33,13 +33,17 @@ tugra_write_host_facts() {
   for _hf_kt in ed25519 ecdsa rsa; do
     _hf_kf="$_hf_sshdir/ssh_host_${_hf_kt}_key.pub"
     [ -r "$_hf_kf" ] || continue
+    # a public key line: "<type> <base64> [comment]". Anything else is not a key and is skipped.
+    _hf_ktype="$(awk 'NR==1{print $1}' "$_hf_kf" 2>/dev/null | cut -c1-40)"
+    case "$_hf_ktype" in ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp256|ecdsa-sha2-nistp384|ecdsa-sha2-nistp521) ;; *) continue ;; esac
+    _hf_blob="$(awk 'NR==1{print $2}' "$_hf_kf" 2>/dev/null | cut -c1-2000)"
+    case "$_hf_blob" in ""|*[!A-Za-z0-9+/=]*) continue ;; esac
     _hf_fp=""
     if command -v ssh-keygen >/dev/null 2>&1; then
       _hf_fp="$(ssh-keygen -l -E sha256 -f "$_hf_kf" 2>/dev/null | awk 'NR==1{print $2}')"
     fi
     if [ -z "$_hf_fp" ] && command -v openssl >/dev/null 2>&1; then
-      _hf_blob="$(awk 'NR==1{print $2}' "$_hf_kf" 2>/dev/null | tr -cd 'A-Za-z0-9+/=' | cut -c1-2000)"
-      [ -n "$_hf_blob" ] && _hf_fp="SHA256:$(printf '%s' "$_hf_blob" | openssl base64 -d -A 2>/dev/null | openssl dgst -sha256 -binary 2>/dev/null | openssl base64 -A 2>/dev/null | tr -d '=')"
+      _hf_fp="SHA256:$(printf '%s' "$_hf_blob" | openssl base64 -d -A 2>/dev/null | openssl dgst -sha256 -binary 2>/dev/null | openssl base64 -A 2>/dev/null | tr -d '=')"
     fi
     _hf_fp="$(printf '%s' "$_hf_fp" | tr -cd 'A-Za-z0-9+/:' | cut -c1-50)"
     case "$_hf_fp" in SHA256:*) [ "${#_hf_fp}" = "50" ] || continue ;; *) continue ;; esac

@@ -38,6 +38,36 @@ describe("ImportSourceFactory", () => {
     expect(reader.read).not.toHaveBeenCalled(); // nothing is read until the source is used
   });
 
+  describe("the sealed secrets of an agent session", () => {
+    const adapter = () => {
+      const forRun = jest.fn().mockImplementation((serverId: string, runId: string, userId: string) => ({ forRun: [serverId, runId, userId], onlyFields: () => ({ get: () => undefined }), unreadable: () => [] }));
+      const finish = jest.fn().mockResolvedValue(undefined);
+      return { agentSecrets: { stores: { forRun, finish } }, forRun, finish };
+    };
+    const build = (a: ReturnType<typeof adapter> | undefined) => new ImportSourceFactory({ create: jest.fn() } as never, { create: jest.fn() } as never, { read: jest.fn() } as never, a?.agentSecrets as never);
+
+    it("gives the source the secret store of THIS session (the session is the run) and the chosen team", () => {
+      const a = adapter();
+      const src = build(a).createAgent("srv-agent", { run: { sessionId: "sess-1", userId: "u1" }, teamRef: "7" });
+      expect(src).toBeInstanceOf(AgentCoolifySource);
+      expect(a.forRun).toHaveBeenCalledWith("srv-agent", "sess-1", "u1");
+    });
+
+    it("builds no store without a run (connect and the host-link read carry no secret) and none without the pipeline", () => {
+      const a = adapter();
+      build(a).createAgent("srv-agent");
+      expect(a.forRun).not.toHaveBeenCalled();
+      expect(() => build(undefined).createAgent("srv-agent", { run: { sessionId: "sess-1", userId: "u1" } })).not.toThrow();
+    });
+
+    it("ending a session ends its run's consent (and is a no-op without the pipeline)", async () => {
+      const a = adapter();
+      await build(a).finishAgentRun("srv-agent", "sess-1");
+      expect(a.finish).toHaveBeenCalledWith("srv-agent", "sess-1");
+      await expect(build(undefined).finishAgentRun("srv-agent", "sess-1")).resolves.toBeUndefined();
+    });
+  });
+
   it("refuses to build an agent source when no agent reader is wired", () => {
     expect(() => makeFactory().factory.createAgent("srv-agent")).toThrow(/not available/);
   });

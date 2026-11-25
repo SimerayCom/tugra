@@ -47,6 +47,15 @@ describe("checkEnrolled", () => {
   it("is unverified when nothing can be compared", () => {
     expect(checkEnrolled({ ...base, probedFp: null })).toBe("unverified");
   });
+  it("the key seen on the wire is the machine's when it is any one of the keys the agent reports", () => {
+    const other = "SHA256:" + "C".repeat(43);
+    expect(checkEnrolled({ ...base, reportedFp: other, reportedFps: [other, base.probedFp] })).toBe("fingerprint");
+    expect(checkEnrolled({ ...base, reportedFp: other, reportedFps: [other, "SHA256:" + "D".repeat(43)], reportedAddresses: ["203.0.113.7"] })).toBe("mismatch");
+    expect(checkEnrolled({ ...base, reportedFps: [base.probedFp] })).toBe("fingerprint");
+  });
+  it("an empty report is no report: the address decides how strong the proof is", () => {
+    expect(checkEnrolled({ ...base, reportedFp: "", reportedFps: [], reportedAddresses: ["203.0.113.7"] })).toBe("address");
+  });
 });
 
 describe("codeOfError / helpers", () => {

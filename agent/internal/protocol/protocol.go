@@ -288,6 +288,10 @@ type HostInfo struct {
 	// never content: sha256("tugra-mid-v1" + machine-id) as hex, and the Docker engine id. Omitted when unknown.
 	MachineIDHash  string `json:"machineIdHash,omitempty"`
 	DockerEngineID string `json:"dockerEngineId,omitempty"`
+	// The SHA-256 fingerprints of this machine's own sshd host public keys (ed25519 first; the installer computes them). The hub checks
+	// the key the Coolify host saw on the wire against them after an agent install over Coolify's SSH keys.
+	SSHHostKeyFp  string   `json:"sshHostKeyFp,omitempty"`
+	SSHHostKeyFps []string `json:"sshHostKeyFps,omitempty"`
 }
 
 type HostInfoMsg struct {

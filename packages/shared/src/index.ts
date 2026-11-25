@@ -724,6 +724,9 @@ export interface HostInfo {
   /** Machine identity for matching this server to the same machine elsewhere (Coolify hub takeover). Hash and id only, never content; absent on older agents. */
   machineIdHash?: string; // sha256("tugra-mid-v1" + machine-id), 64 lower-case hex
   dockerEngineId?: string; // the Docker engine id
+  /** SHA-256 fingerprints of this machine's own sshd host PUBLIC keys ("SHA256:<43>", ed25519 first). Compared with the key the Coolify host saw on the wire after an agent install over Coolify's SSH. */
+  sshHostKeyFp?: string;
+  sshHostKeyFps?: string[];
 }
 
 /** Agent -> Hub: host hardware/OS inventory. */

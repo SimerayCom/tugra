@@ -128,3 +128,40 @@ func TestReadHostFactsCarriesTheHashedMachineID(t *testing.T) {
 		t.Fatalf("old file: %+v, %v", hf, ok)
 	}
 }
+
+func TestCleanSSHHostKeyFingerprints(t *testing.T) {
+	good := "SHA256:" + strings.Repeat("A", 43)
+	other := "SHA256:" + strings.Repeat("b", 43)
+	if CleanSSHHostKeyFp(" "+good+"\n") != good {
+		t.Fatal("a fingerprint is kept, trimmed")
+	}
+	for _, bad := range []string{"", "SHA256:", "MD5:" + strings.Repeat("a", 43), good + "=", "SHA256:" + strings.Repeat("A", 42), "SHA256:" + strings.Repeat("A", 42) + ";", "sha256:" + strings.Repeat("A", 43)} {
+		if CleanSSHHostKeyFp(bad) != "" {
+			t.Errorf("CleanSSHHostKeyFp(%q) accepted a non-fingerprint", bad)
+		}
+	}
+	got := CleanSSHHostKeyFps([]string{good, "junk", other, good, good + "x", other, "SHA256:" + strings.Repeat("c", 43), "SHA256:" + strings.Repeat("d", 43), "SHA256:" + strings.Repeat("e", 43)})
+	if len(got) != 4 || got[0] != good || got[1] != other {
+		t.Fatalf("list = %v", got)
+	}
+}
+
+func TestReadHostFactsCarriesTheSshdFingerprints(t *testing.T) {
+	p := t.TempDir() + "/host-facts.json"
+	good := "SHA256:" + strings.Repeat("A", 43)
+	if err := os.WriteFile(p, []byte(`{"source":"install","hostname":"h","sshHostKeyFp":"`+good+`","sshHostKeyFps":["`+good+`"],"ips":[]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	hf, ok := ReadHostFacts(p)
+	if !ok || CleanSSHHostKeyFp(hf.SSHHostKeyFp) != good || len(hf.SSHHostKeyFps) != 1 {
+		t.Fatalf("ReadHostFacts = %+v, %v", hf, ok)
+	}
+	// an older facts file has none: empty, not an error
+	if err := os.WriteFile(p, []byte(`{"source":"install","hostname":"h","ips":[]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	hf, ok = ReadHostFacts(p)
+	if !ok || hf.SSHHostKeyFp != "" || len(hf.SSHHostKeyFps) != 0 {
+		t.Fatalf("old file: %+v, %v", hf, ok)
+	}
+}

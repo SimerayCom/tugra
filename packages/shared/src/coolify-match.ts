@@ -47,6 +47,8 @@ export interface HostMatchVerdict {
 export interface HostIdentityFacts {
   /** SHA-256 fingerprint of the sshd host key. */
   sshHostKeyFp?: string;
+  /** Every sshd host key fingerprint the machine has (ed25519, ecdsa, rsa). A fingerprint seen on the wire is the machine's when it is one of them. */
+  sshHostKeyFps?: string[];
   /** sha256("tugra-mid-v1" + /etc/machine-id), hex. The raw id is never reported. */
   machineIdHash?: string;
   dockerEngineId?: string;

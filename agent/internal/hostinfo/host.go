@@ -86,6 +86,8 @@ func parseDockerInfo(out []byte) (HostOS, bool) {
 var (
 	engineIDRe  = regexp.MustCompile(`^[A-Za-z0-9:_-]{8,128}$`)
 	machineIDRe = regexp.MustCompile(`^[0-9a-f]{64}$`)
+	// sshdFpRe is the text ssh-keygen prints for a SHA-256 key fingerprint: "SHA256:" and 43 unpadded base64 characters.
+	sshdFpRe = regexp.MustCompile(`^SHA256:[A-Za-z0-9+/]{43}$`)
 )
 
 // CleanEngineID returns the Docker engine id when it looks like one (letters, digits, colon, dash, underscore; 8-128 chars), else "".
@@ -106,6 +108,34 @@ func CleanMachineIDHash(h string) string {
 		return ""
 	}
 	return h
+}
+
+// CleanSSHHostKeyFp returns the fingerprint when it is one ("SHA256:" and 43 base64 characters), else "". It is the public key's hash,
+// the same text `ssh-keygen -l` prints; the host's sshd private keys are never read.
+func CleanSSHHostKeyFp(fp string) string {
+	fp = strings.TrimSpace(fp)
+	if !sshdFpRe.MatchString(fp) {
+		return ""
+	}
+	return fp
+}
+
+// CleanSSHHostKeyFps keeps the well-formed fingerprints of a list, once each and in order, at most four (ed25519, ecdsa, rsa and one spare).
+func CleanSSHHostKeyFps(in []string) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, f := range in {
+		c := CleanSSHHostKeyFp(f)
+		if c == "" || seen[c] {
+			continue
+		}
+		seen[c] = true
+		out = append(out, c)
+		if len(out) == 4 {
+			break
+		}
+	}
+	return out
 }
 
 var imageRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/:@-]*$`)
@@ -202,7 +232,11 @@ type HostFacts struct {
 	OSVersion   string `json:"osVersion"`
 	OSPretty    string `json:"osPretty"`
 	// MachineIDHash is sha256("tugra-mid-v1" + /etc/machine-id) as hex, computed by the installer on the host.
-	MachineIDHash string   `json:"machineIdHash"`
+	MachineIDHash string `json:"machineIdHash"`
+	// SSHHostKeyFp / SSHHostKeyFps are the SHA-256 fingerprints of this machine's sshd HOST public keys (ed25519 first), computed by the
+	// installer. The hub compares them with the key the Coolify host saw on the wire after an install over Coolify's SSH.
+	SSHHostKeyFp  string   `json:"sshHostKeyFp"`
+	SSHHostKeyFps []string `json:"sshHostKeyFps"`
 	IPs           []string `json:"ips"`
 }
 

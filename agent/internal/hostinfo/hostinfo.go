@@ -45,6 +45,10 @@ func Collect() (protocol.HostInfo, error) {
 			info.ReportedIps = hf.IPs
 		}
 		info.MachineIDHash = CleanMachineIDHash(hf.MachineIDHash)
+		info.SSHHostKeyFps = CleanSSHHostKeyFps(append([]string{hf.SSHHostKeyFp}, hf.SSHHostKeyFps...))
+		if len(info.SSHHostKeyFps) > 0 {
+			info.SSHHostKeyFp = info.SSHHostKeyFps[0]
+		}
 	}
 	ctx := context.Background()
 	if h, ok := DockerHostOS(ctx); ok {

@@ -348,3 +348,41 @@ describe("CoolifySecretsService: canary leak test (hub side)", () => {
     expect(JSON.stringify(t.audit.log.mock.calls)).not.toContain(CANARIES.env);
   });
 });
+
+describe("CoolifySecretsService: a read is bound to the run (the import session) it was consented for", () => {
+  it("serves a read for the run of the standing grant, and refuses a read for another run before asking the agent", async () => {
+    const h = await grantHarness({ sessions: { sess1: { id: "sess1", actorId: "u1", teamId: "t1", status: "active", expiresAt: new Date(Date.now() + 3_600_000), transport: "agent", agentServerId: "s1" } } });
+    const agentWs = { sendCoolifySecrets: jest.fn(async () => []) } as any;
+    const svc = new CoolifySecretsService(h.svc, h.sealed, agentWs, h.crypto, h.audit);
+    await h.svc.createSecretsGrant("u1", { ...ok, importSessionId: "sess1" });
+
+    await expect(svc.fetchEncrypted({ serverId: "s1", refs: ["env:a"], userId: "u1", runId: "sess1" })).resolves.toMatchObject({ read: 0 });
+    expect(agentWs.sendCoolifySecrets).toHaveBeenCalledTimes(1);
+
+    await expect(svc.fetchEncrypted({ serverId: "s1", refs: ["env:a"], userId: "u1", runId: "sess-other" })).rejects.toMatchObject({ response: { code: "consent_other_run" } });
+    expect(agentWs.sendCoolifySecrets).toHaveBeenCalledTimes(1); // the agent was not asked
+  });
+
+  it("a read without a run id keeps working for any standing grant (the ones that are not part of an import)", async () => {
+    const t = await make();
+    await expect(t.svc2.fetchEncrypted({ serverId: "s1", refs: ["env:a"], userId: "u1" })).resolves.toMatchObject({ read: 0 });
+  });
+
+  it("stops between two frames when the run's consent ends (finishRun by the run id)", async () => {
+    const h = await grantHarness({ sessions: { sess1: { id: "sess1", actorId: "u1", teamId: "t1", status: "active", expiresAt: new Date(Date.now() + 3_600_000), transport: "agent", agentServerId: "s1" } } });
+    const agentWs = {
+      sendCoolifySecrets: jest.fn(async () => {
+        await h.svc.finishRunByRunId("s1", "sess1");
+        return [];
+      }),
+    } as any;
+    const svc = new CoolifySecretsService(h.svc, h.sealed, agentWs, h.crypto, h.audit);
+    await h.svc.createSecretsGrant("u1", { ...ok, importSessionId: "sess1" });
+    const refs = Array.from({ length: 450 }, (_, i) => `env:r${i}`);
+    const r = await svc.fetchEncrypted({ serverId: "s1", refs, userId: "u1", runId: "sess1" });
+    expect(agentWs.sendCoolifySecrets).toHaveBeenCalledTimes(1);
+    expect(r.incomplete?.code).toBe("no_active_grant");
+    expect(r.incomplete?.remainingRefs).toHaveLength(250);
+  });
+});
+

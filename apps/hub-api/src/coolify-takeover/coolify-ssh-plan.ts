@@ -18,6 +18,8 @@ export const COOLIFY_SSH_ACTIVE_STATES: readonly CoolifySshTargetState[] = ["PLA
 export const COOLIFY_HOST_IDENTITY = "COOLIFY_HOST_IDENTITY";
 export interface CoolifyHostIdentityReader {
   reportedHostKeyFp(serverId: string): Promise<string | null>;
+  /** Every sshd host key fingerprint the agent reports about its own machine (a machine has several keys; the one seen on the wire is any one of them). */
+  reportedHostKeyFps?(serverId: string): Promise<string[]>;
 }
 
 export function isActiveState(s: string): boolean {
@@ -52,8 +54,9 @@ export type EnrollCheck = "fingerprint" | "address" | "unverified" | "mismatch";
  * fingerprint the comparison falls back to the address: Coolify's address for the server against the addresses the agent reports (only a
  * public address counts, a private or Tailscale one proves nothing). The fallback never blocks: it only records how strong the proof was.
  */
-export function checkEnrolled(i: { probedFp: string | null; reportedFp: string | null; coolifyAddress: string; reportedAddresses: Array<string | null | undefined> }): EnrollCheck {
-  if (i.probedFp && i.reportedFp) return i.probedFp === i.reportedFp ? "fingerprint" : "mismatch";
+export function checkEnrolled(i: { probedFp: string | null; reportedFp: string | null; reportedFps?: readonly string[]; coolifyAddress: string; reportedAddresses: Array<string | null | undefined> }): EnrollCheck {
+  const reported = [...new Set([i.reportedFp, ...(i.reportedFps ?? [])].filter((f): f is string => typeof f === "string" && f !== ""))];
+  if (i.probedFp && reported.length > 0) return reported.includes(i.probedFp) ? "fingerprint" : "mismatch";
   const want = normalizeAddress(i.coolifyAddress);
   if (want && isPublicAddress(want) && i.reportedAddresses.some((a) => normalizeAddress(a) === want)) return "address";
   return "unverified";

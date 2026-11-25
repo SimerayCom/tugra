@@ -61,6 +61,8 @@ export interface GrantHarnessOpts {
   online?: boolean;
   features?: string[];
   serverName?: string;
+  /** import sessions the grant service may look up (by id) */
+  sessions?: Record<string, Record<string, any>>;
 }
 
 export async function grantHarness(o: GrantHarnessOpts = {}) {
@@ -69,6 +71,7 @@ export async function grantHarness(o: GrantHarnessOpts = {}) {
   const server = { id: "s1", teamId: "t1", name: o.serverName ?? "coolify-host", capabilities: [] as string[] };
   const prisma = {
     ...table,
+    importSession: { findUnique: jest.fn(async ({ where }: { where: { id: string } }) => (o.sessions ?? {})[where.id] ?? null) },
     server: {
       findUnique: jest.fn(async ({ where }: { where: { id: string } }) => (where.id === "s1" ? server : null)),
       findMany: jest.fn(async () => (server.capabilities.includes("coolify_secrets") ? [{ id: "s1" }] : [])),

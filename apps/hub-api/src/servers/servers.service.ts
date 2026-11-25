@@ -144,6 +144,9 @@ export interface HostInfoInput {
   /** Hashed machine id and Docker engine id (Coolify hub takeover, host matching). Held in memory only. */
   machineIdHash?: string;
   dockerEngineId?: string;
+  /** The machine's own sshd host key fingerprints (the agent's installer computes them from the PUBLIC keys). Held in memory only. */
+  sshHostKeyFp?: string;
+  sshHostKeyFps?: string[];
 }
 
 /** Placeholder name of a server added without one; replaced by the host's real hostname when its agent connects. */
@@ -982,6 +985,12 @@ export class ServersService implements OnModuleInit, OnModuleDestroy {
     const facts: HostIdentityFacts = {};
     if (typeof info.machineIdHash === "string" && /^[0-9a-f]{64}$/.test(info.machineIdHash)) facts.machineIdHash = info.machineIdHash;
     if (typeof info.dockerEngineId === "string" && /^[A-Za-z0-9:_-]{8,128}$/.test(info.dockerEngineId)) facts.dockerEngineId = info.dockerEngineId;
+    const fpOk = (v: unknown): v is string => typeof v === "string" && /^SHA256:[A-Za-z0-9+/]{43}$/.test(v);
+    const fps = [...new Set([info.sshHostKeyFp, ...(Array.isArray(info.sshHostKeyFps) ? info.sshHostKeyFps : [])].filter(fpOk))].slice(0, 4);
+    if (fps.length) {
+      facts.sshHostKeyFp = fps[0];
+      facts.sshHostKeyFps = fps;
+    }
     if (Object.keys(facts).length) this.hostIdentity.set(serverId, facts);
     else this.hostIdentity.delete(serverId);
     // The agent's payload is not schema-validated on the socket: keep only well-formed address literals, bounded.

@@ -610,6 +610,25 @@ describe("ServersService.saveHostInfo + uptime view", () => {
     expect(svc.hostIdentityOf("never-connected")).toBeUndefined();
   });
 
+  it("keeps the machine's own sshd host key fingerprints the agent reports (in memory), only well-formed ones, at most four, ed25519 first", async () => {
+    const prisma = { server: { findUnique: jest.fn().mockResolvedValue(null), update: jest.fn().mockResolvedValue({}) } } as unknown as PrismaService;
+    const svc = svcWith(prisma);
+    const fp = (c: string) => `SHA256:${c.repeat(43)}`;
+    await svc.saveHostInfo("s1", hostInfo({ sshHostKeyFp: fp("A"), sshHostKeyFps: [fp("A"), fp("B"), "junk", fp("B"), `${fp("C")}x`, fp("D"), fp("E"), fp("F")] }));
+    expect(svc.hostIdentityOf("s1")).toEqual({ sshHostKeyFp: fp("A"), sshHostKeyFps: [fp("A"), fp("B"), fp("D"), fp("E")] });
+    // never written to the database
+    expect(JSON.stringify((prisma.server.update as jest.Mock).mock.calls, (_k, v) => (typeof v === "bigint" ? Number(v) : v))).not.toContain("SHA256:");
+    // a list alone is enough, and a malformed single value is not kept
+    await svc.saveHostInfo("s1", hostInfo({ sshHostKeyFp: "not a fingerprint", sshHostKeyFps: [fp("B")] }));
+    expect(svc.hostIdentityOf("s1")).toEqual({ sshHostKeyFp: fp("B"), sshHostKeyFps: [fp("B")] });
+    await svc.saveHostInfo("s1", hostInfo({ sshHostKeyFp: "SHA256:short", sshHostKeyFps: ["x", 5 as never] }));
+    expect(svc.hostIdentityOf("s1")).toBeUndefined();
+    // an older agent reports none: the old fact does not linger
+    await svc.saveHostInfo("s1", hostInfo({ sshHostKeyFp: fp("A") }));
+    await svc.saveHostInfo("s1", hostInfo());
+    expect(svc.hostIdentityOf("s1")).toBeUndefined();
+  });
+
   it("keeps the cloud provider the host names as a price-estimate hint, only as a clean slug", async () => {
     const update = jest.fn().mockResolvedValue({});
     const prisma = { server: { findUnique: jest.fn().mockResolvedValue(null), update } } as unknown as PrismaService;
