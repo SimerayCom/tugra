@@ -390,6 +390,7 @@ export const DATA_CODES = {
   opMissing: "data.op-missing",
   vxDisabled: "data.vx-disabled",
   agentNeedsSameHost: "data.agent-requires-same-host",
+  agentMultiSourceHost: "data.agent-multi-source-host",
   capabilityDenied: "data.migrate-capability-denied",
   capabilityMissingTarget: "data.migrate-target-not-found",
   hubUrlUnknown: "data.hub-url-unknown",

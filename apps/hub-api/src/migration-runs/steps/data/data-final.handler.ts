@@ -14,7 +14,7 @@ import {
   type StepHandlerRegistry,
 } from "../../core/run-contract";
 import { CAPABILITY_PORT, CHECK_STORE, DATA_CODES, DATA_PORT, OBJECT_PORT, SOURCE_STATS_CHECK, type CapabilityPort, type CheckStore, type DataPort, type DataSnapshot, type ObjectPort, type ObjectView } from "./data-contract";
-import { FINAL_HOST_LOOP_CODES, byteProgress, dbRestoredAfterFreeze, finalChecks, finalHostChecks, finalHostTally, hasLiveTransfer, isMigratorDb, migratorFlags, migratorWorkRemains, objectIsActive } from "./data-logic";
+import { FINAL_HOST_LOOP_CODES, agentRunnerHost, byteProgress, dbRestoredAfterFreeze, finalChecks, finalHostChecks, finalHostTally, hasLiveTransfer, isMigratorDb, migratorFlags, migratorWorkRemains, objectIsActive } from "./data-logic";
 import { compOf, gateFrom, loadObjects, loadSnapshot, releaseIfOurs, takeObjectStart, type StepComp } from "./handler-util";
 import { HOST_LOOP_CODES } from "./inventory/host-codes";
 import { sourceHostsOf } from "./inventory/host-hosts";
@@ -95,7 +95,8 @@ export class DataFinalHandler implements StepHandler<FinalObs>, OnModuleInit {
   async dryRun(ctx: StepContext): Promise<DryRunItem[]> {
     const run = ctx.run;
     const items: DryRunItem[] = [{ code: "data-final.dry.plan", level: "info", params: { runner: run.options.sourceRunner, flags: migratorFlags("final", run), stopSource: run.options.stopSource } }];
-    if (run.options.sourceRunner === "agent" && run.topology !== "swap-proxy") items.push({ code: DATA_CODES.agentNeedsSameHost, level: "block" });
+    const runnerHost = agentRunnerHost(run);
+    if (run.options.sourceRunner === "agent" && !runnerHost.ok) items.push({ code: runnerHost.code, level: "block" });
     if (!run.opId) return items;
     const snap = await loadSnapshot(this.data, ctx);
     if (isHostLoop(run)) {
@@ -152,7 +153,8 @@ export class DataFinalHandler implements StepHandler<FinalObs>, OnModuleInit {
   preGate(ctx: StepContext, obs: FinalObs): GateResult {
     const checks: GateCheck[] = [];
     if (!obs.frozen) checks.push({ id: "frozen", status: "fail", code: "data-final.source-not-frozen" });
-    if (ctx.run.options.sourceRunner === "agent" && ctx.run.topology !== "swap-proxy") checks.push({ id: "agent-same-host", status: "fail", code: DATA_CODES.agentNeedsSameHost });
+    const runnerHost = agentRunnerHost(ctx.run);
+    if (ctx.run.options.sourceRunner === "agent" && !runnerHost.ok) checks.push({ id: "agent-same-host", status: "fail", code: runnerHost.code });
     if (obs.snap.volumes.some((v) => !v.excluded) && !obs.snap.vxEnabled) checks.push({ id: "vx-disabled", status: "fail", code: DATA_CODES.vxDisabled });
     return gateFrom(checks);
   }

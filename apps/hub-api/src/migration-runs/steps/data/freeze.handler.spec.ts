@@ -378,6 +378,28 @@ describe("FREEZE with the agent controller (same host, against a fake source hos
     host.dispose();
   });
 
+  it("on a two-box run it stops the source's containers through the source host's own agent, never through the target", async () => {
+    const run = agentRun({ topology: "two-box", options: { sourceRunner: "agent", sourceHostServers: { s: "srv-src" } } });
+    const { handler, ctx, host } = build(run);
+    const h = ctx({ run, approval: APPROVAL });
+    const obs = await handler.observe(h.ctx);
+    expect(handler.preGate(h.ctx, obs).checks.map((c) => c.id)).not.toContain("agent-same-host");
+    expect(await handler.act(h.ctx, obs)).toEqual({ outcome: "done" });
+    expect(host.container(A).running).toBe(false);
+    expect(host.runs.length).toBeGreaterThan(0);
+    expect(new Set(host.runs.map((r) => r.serverId))).toEqual(new Set(["srv-src"]));
+    host.dispose();
+  });
+
+  it("on a two-box run with several source machines nothing is stopped and the multi-host code is returned", async () => {
+    const run = agentRun({ topology: "two-box", options: { sourceRunner: "agent", sourceHostServers: { s: "srv-1", t: "srv-2" } } });
+    const { handler, ctx, host } = build(run);
+    const h = ctx({ run, approval: APPROVAL });
+    expect(await handler.act(h.ctx, await handler.observe(h.ctx))).toMatchObject({ outcome: "fail", code: DATA_CODES.agentMultiSourceHost, retryable: false });
+    expect(host.runs).toEqual([]);
+    host.dispose();
+  });
+
   it("after a crash between the record and the stop it re-stops the RECORDED containers without discovering again", async () => {
     const run = agentRun();
     const { handler, ctx, host } = build(run);

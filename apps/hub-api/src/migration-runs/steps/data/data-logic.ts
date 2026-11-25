@@ -289,13 +289,30 @@ export function byteProgress(snap: Pick<DataSnapshot, "volumes">): StepProgress 
 /** The Postgres physical-copy gates evaluated at seed time: `quiesced` is expected to fail until the freeze, so it is excluded. */
 const SEED_PG_GATES = new Set(["inventory", "credentials", "major", "layout", "image", "state"]);
 
+/** Where the `agent` runner's source-side scripts run: the Tugra server whose agent lives on the source host. */
+export type RunnerHost = { ok: true; serverId: string } | { ok: false; code: string };
+
+/**
+ * The server the agent runner talks to. On a same-host swap it is the target itself. Otherwise the source host has an agent of its own
+ * and the hub recorded which server that is at create (`options.sourceHostServers`, derived from the plan's host matches): exactly one
+ * distinct server is a runner host. None is the old "needs the same host" refusal; several would need one launch record per host, which
+ * the agent runner does not keep, so they are refused by their own code (the host loop covers many hosts).
+ */
+export function agentRunnerHost(run: Pick<RunSnapshot, "topology" | "targetServerId" | "options">): RunnerHost {
+  if (run.topology === "swap-proxy") return { ok: true, serverId: run.targetServerId };
+  const ids = [...new Set(Object.values(run.options.sourceHostServers ?? {}))];
+  if (ids.length === 1) return { ok: true, serverId: ids[0] };
+  return { ok: false, code: ids.length === 0 ? DATA_CODES.agentNeedsSameHost : DATA_CODES.agentMultiSourceHost };
+}
+
 const inScopeVolumes = (snap: DataSnapshot): VolumeDataItem[] => snap.volumes.filter((v) => !v.excluded);
 
 /** The checks the DATA_SEED gate is made of (pure; `objects` are the attached object migrations' current views). */
 export function seedChecks(run: RunSnapshot, snap: DataSnapshot, objects: readonly ObjectView[]): GateCheck[] {
   const checks: GateCheck[] = [];
   if (inScopeVolumes(snap).length > 0 && !snap.vxEnabled) checks.push({ id: "vx-disabled", status: "fail", code: DATA_CODES.vxDisabled });
-  if (run.options.sourceRunner === "agent" && run.topology !== "swap-proxy") checks.push({ id: "agent-same-host", status: "fail", code: DATA_CODES.agentNeedsSameHost });
+  const runnerHost = agentRunnerHost(run);
+  if (run.options.sourceRunner === "agent" && !runnerHost.ok) checks.push({ id: "agent-same-host", status: "fail", code: runnerHost.code });
 
   for (const v of snap.volumes) {
     if (v.excluded) {

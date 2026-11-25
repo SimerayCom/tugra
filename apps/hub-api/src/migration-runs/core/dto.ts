@@ -291,6 +291,12 @@ export const RunOptionsSchema = z
     stopSource: z.boolean().default(false),
     /** Who starts the migrator on the source host (`coolify-host-loop`: one script on the Coolify host loops over every mapped source host, R32). */
     sourceRunner: z.enum(SOURCE_RUNNERS).default("operator"),
+    /**
+     * Source server ref to the Tugra server whose agent runs the source-side scripts of the `agent` runner when the run is not a same-host
+     * swap (the source host has its own agent). Hub-derived at create from the plan's host matches: a value the caller sends is discarded.
+     * Absent = the agent runner is only available on a swap-proxy run.
+     */
+    sourceHostServers: z.record(z.string().min(1).max(200), z.string().min(1).max(64)).optional(),
     /** Tuning of the `coolify-host-loop` runner; absent = {@link HOST_LOOP_DEFAULTS} (read it with `hostLoopOf`). */
     hostLoop: HostLoopOptionsSchema.optional(),
     /** Builds started at once per target server (R25: 2 CPU / 4 GB hosts); absent = 1 (read it with `deployConcurrencyOf`). */

@@ -2,7 +2,7 @@ import { Inject, Injectable, Optional } from "@nestjs/common";
 import type { CodeParams } from "../../../core/dto";
 import type { RunSnapshot, StepContext } from "../../../core/run-contract";
 import { CAPABILITY_PORT, DATA_CODES, DATA_PORT, SOURCE_HOST_PORT, type CapabilityPort, type DataPort, type DataSnapshot, type SourceHostPort } from "../data-contract";
-import { migratorFlags, type MigratorPhase } from "../data-logic";
+import { agentRunnerHost, migratorFlags, type MigratorPhase } from "../data-logic";
 import { classifyAgentError, compOf, releaseIfOurs, type LaunchRecord } from "../handler-util";
 import { MIGRATE_RUN_ROOT, buildLaunchScript, buildLauncherStatusScript, buildLauncherStopScript, parseLaunchOutput, parseLauncherStatus, type LauncherStatus, type LaunchTag } from "./migrator-launcher";
 
@@ -30,16 +30,24 @@ export class MigratorRunner {
     @Optional() @Inject(LAUNCHER_ROOT) private readonly root: string = MIGRATE_RUN_ROOT,
   ) {}
 
-  /** Same-host is the only topology in which the target server IS the source host. */
+  /** The agent runner needs an agent on the source host: the target itself on a same-host swap, else the one source host the hub recorded at create. */
   static available(run: RunSnapshot): boolean {
-    return run.options.sourceRunner === "agent" && run.topology === "swap-proxy";
+    return run.options.sourceRunner === "agent" && agentRunnerHost(run).ok;
+  }
+
+  /** The server whose agent runs the launcher scripts (`null` when the run has no usable source host: nothing is dispatched anywhere else). */
+  static hostOf(run: RunSnapshot): string | null {
+    const h = agentRunnerHost(run);
+    return h.ok ? h.serverId : null;
   }
 
   /** Observe the recorded launch (read-only on the host). null = nothing launched yet, or the agent is unreachable. */
   async status(run: RunSnapshot, launch: LaunchRecord | undefined): Promise<LauncherStatus | null> {
     if (!launch) return null;
     try {
-      const res = await this.host.run(run.targetServerId, buildLauncherStatusScript(run.id, launch.seq, this.root, launch.tag), "migrate", SCRIPT_TIMEOUT_MS);
+      const hostId = MigratorRunner.hostOf(run);
+      if (!hostId) return null;
+      const res = await this.host.run(hostId, buildLauncherStatusScript(run.id, launch.seq, this.root, launch.tag), "migrate", SCRIPT_TIMEOUT_MS);
       return parseLauncherStatus(res.output);
     } catch {
       return null; // an unreachable agent is "unknown", never "finished"
@@ -53,11 +61,12 @@ export class MigratorRunner {
    */
   async launch(ctx: StepContext, phase: MigratorPhase, snap: DataSnapshot): Promise<{ ok: true } | RunnerFailure> {
     const run = ctx.run;
-    if (!MigratorRunner.available(run)) return { ok: false, code: DATA_CODES.agentNeedsSameHost, retryable: false };
+    const runner = agentRunnerHost(run);
+    if (!runner.ok || run.options.sourceRunner !== "agent") return { ok: false, code: runner.ok ? DATA_CODES.agentNeedsSameHost : runner.code, retryable: false };
     const hubBase = (process.env.HUB_PUBLIC_URL?.trim() || snap.hubBase || "").replace(/\/+$/, "");
     if (!hubBase) return { ok: false, code: DATA_CODES.hubUrlUnknown, retryable: false };
 
-    const granted = await this.caps.ensureMigrate(ctx.actor.userId, run.targetServerId);
+    const granted = await this.caps.ensureMigrate(ctx.actor.userId, runner.serverId);
     if (!granted.ok) return { ok: false, code: granted.reason === "forbidden" ? DATA_CODES.capabilityDenied : DATA_CODES.capabilityMissingTarget, retryable: false };
     const prior = compOf(ctx);
     if (granted.added) await ctx.recordCompensation({ capAdded: true });
@@ -84,7 +93,7 @@ export class MigratorRunner {
       return { ok: false, code: DATA_CODES.launcherFailed, params: { reason: "invalid-input" }, retryable: false };
     }
     try {
-      const res = await this.host.run(run.targetServerId, script, "migrate", SCRIPT_TIMEOUT_MS);
+      const res = await this.host.run(runner.serverId, script, "migrate", SCRIPT_TIMEOUT_MS);
       const outcome = parseLaunchOutput(res.output);
       if (outcome === "started" || outcome === "already") return { ok: true };
       return { ok: false, code: DATA_CODES.launcherFailed, params: { reason: outcome }, retryable: true };
@@ -97,13 +106,14 @@ export class MigratorRunner {
   /** Stop the migrator's own containers (abort path). Returns true when the host confirmed or there was nothing to do. */
   async stop(ctx: StepContext): Promise<boolean> {
     const run = ctx.run;
-    if (!MigratorRunner.available(run)) return true;
+    const hostId = MigratorRunner.hostOf(run);
+    if (!MigratorRunner.available(run) || !hostId) return true;
     let addedNow = false;
     try {
-      const granted = await this.caps.ensureMigrate(ctx.actor.userId, run.targetServerId);
+      const granted = await this.caps.ensureMigrate(ctx.actor.userId, hostId);
       if (!granted.ok) return false;
       addedNow = granted.added;
-      const res = await this.host.run(run.targetServerId, buildLauncherStopScript(), "migrate", STOP_TIMEOUT_MS);
+      const res = await this.host.run(hostId, buildLauncherStopScript(), "migrate", STOP_TIMEOUT_MS);
       return !res.output.includes("TUGRA_MIG\tfailed");
     } catch {
       return false;

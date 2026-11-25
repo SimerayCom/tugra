@@ -194,7 +194,7 @@ export class MigrationRunsService implements MigrationRunsFacade {
       dryRun: body.dryRun,
       promotedFromId: null,
       applyInput,
-      options: RunOptionsSchema.parse(body.options),
+      options: RunOptionsSchema.parse(await this.withSourceHosts(actor, body, server.teamId)),
       inputs: stampInputs(body.inputs, actor.userId, this.engine.clock.now()),
     });
     const scopeParams = scoped ? { scoped: true, kept: scoped.kept, excluded: scoped.excluded } : {};
@@ -297,6 +297,31 @@ export class MigrationRunsService implements MigrationRunsFacade {
     }
     const v = checkSwapPlacement(hosts, defaultTarget, serverMap);
     if (!v.ok) throw unprocessable(v.code, { sourceServer: v.ref });
+  }
+
+  /**
+   * The create body's options with `sourceHostServers` set by the hub, never by the caller: when the `agent` source runner is chosen on a
+   * run that is not a same-host swap, each source server in scope maps to the Tugra server the plan matched to it (same team). If any
+   * of them has no such server the field stays absent, and the data steps say the agent runner has no source host. A caller's own value is dropped.
+   */
+  private async withSourceHosts(actor: RunActor, body: CreateMigrationRunInput, teamId: string): Promise<CreateMigrationRunInput["options"]> {
+    const { sourceHostServers: _dropped, ...options } = body.options as typeof body.options & { sourceHostServers?: unknown };
+    void _dropped;
+    if (options.sourceRunner !== "agent" || body.topology === "swap-proxy" || !this.imp.sourceHosts) return options;
+    let hosts: Awaited<ReturnType<NonNullable<RunImportPort["sourceHosts"]>>>;
+    try {
+      hosts = await this.imp.sourceHosts(actor.userId, { sessionId: body.sessionId, sourceKind: body.sourceKind, ...(body.scope ? { scope: body.scope } : {}) });
+    } catch {
+      return options;
+    }
+    if (hosts.length === 0 || hosts.some((h) => !h.tugraServerId)) return options;
+    const map: Record<string, string> = {};
+    for (const h of hosts) {
+      const s = await this.env.server(h.tugraServerId as string);
+      if (!s || s.teamId !== teamId) return options;
+      map[h.ref] = h.tugraServerId as string;
+    }
+    return { ...options, sourceHostServers: map };
   }
 
   /** The source's version, when the import port can read it (best effort: a failure leaves it unknown for PREFLIGHT to fill). */

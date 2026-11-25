@@ -33,7 +33,7 @@ import {
   type SourceItem,
 } from "./data-contract";
 import { TICK_GAP_CHECK, TICK_GAP_CODES, TICK_GAP_GATE_CHECK, tickGapCovered } from "./tick-gap";
-import { estimateEquals, estimateWindowDetail, sha256Hex, tickGapOf, windowExtrasOf, type TickGap, type WindowTerms } from "./data-logic";
+import { agentRunnerHost, estimateEquals, estimateWindowDetail, sha256Hex, tickGapOf, windowExtrasOf, type TickGap, type WindowTerms } from "./data-logic";
 import { HOST_LOOP_CODES } from "./inventory/host-codes";
 import { containerPrefixesOfSnapshot, planRefsOf, serverRefOfItem, sourceHostsOf } from "./inventory/host-hosts";
 import { attestableFindings, crossCheckChecks } from "./inventory/cross-check";
@@ -173,7 +173,8 @@ export class FreezeHandler implements StepHandler<FreezeObs>, OnModuleInit {
     const controller = controllerOf(run);
     const items: DryRunItem[] = [{ code: "freeze.dry.plan", level: "info", params: { controller, scheduled: !!run.options.freezeAt, ttlPolicy: run.options.ttlPolicy } }];
     const viaLoop = hostLoopFreeze(run);
-    if (controller === "agent" && !viaLoop && run.topology !== "swap-proxy") items.push({ code: DATA_CODES.agentNeedsSameHost, level: "block" });
+    const runnerHost = agentRunnerHost(run);
+    if (controller === "agent" && !viaLoop && !runnerHost.ok) items.push({ code: runnerHost.code, level: "block" });
     if (!run.opId) return items;
     const stop = buildStopList(await loadSnapshot(this.data, ctx));
     items.push({ code: DATA_CODES.freezeStopList, level: stop.length ? "info" : "warn", params: { count: stop.length, names: stop.slice(0, 40).map((s) => s.name) } });
@@ -224,7 +225,9 @@ export class FreezeHandler implements StepHandler<FreezeObs>, OnModuleInit {
     if (rec.controller === "agent" && rec.containers) {
       if (rec.containers.length === 0) return { total: 0, stopped: 0, running: 0, unknown: 0 };
       try {
-        const res = await this.host.run(ctx.run.targetServerId, buildSourceStateScript(rec.containers), "migrate", SCRIPT_TIMEOUT_MS);
+        const runner = agentRunnerHost(ctx.run);
+        if (!runner.ok) return { total: rec.containers.length, stopped: 0, running: 0, unknown: rec.containers.length };
+        const res = await this.host.run(runner.serverId, buildSourceStateScript(rec.containers), "migrate", SCRIPT_TIMEOUT_MS);
         const st = parseStateOutput(res.output, rec.containers.map((c) => c.id));
         let stopped = 0;
         let running = 0;
@@ -249,7 +252,8 @@ export class FreezeHandler implements StepHandler<FreezeObs>, OnModuleInit {
     const run = ctx.run;
     const checks: GateCheck[] = [];
     let timer: string | null = null;
-    if (obs.controller === "agent" && !hostLoopFreeze(run) && run.topology !== "swap-proxy") checks.push({ id: "agent-same-host", status: "fail", code: DATA_CODES.agentNeedsSameHost });
+    const runnerHost = agentRunnerHost(run);
+    if (obs.controller === "agent" && !hostLoopFreeze(run) && !runnerHost.ok) checks.push({ id: "agent-same-host", status: "fail", code: runnerHost.code });
     if (obs.controller === "api" && obs.apiAvailable !== "ok") checks.push({ id: "api-available", status: "fail", code: DATA_CODES.freezeApiUnavailable, params: { reason: obs.apiAvailable ?? "unknown" }, ownerInput: "sourceController" });
     const seed = ctx.stepState("DATA_SEED").status;
     if (seed !== "PASSED" && seed !== "SKIPPED") checks.push({ id: "data-seed", status: "fail", code: "freeze.data-seed-not-passed", params: { status: seed } });
@@ -514,8 +518,9 @@ export class FreezeHandler implements StepHandler<FreezeObs>, OnModuleInit {
 
   private async actAgent(ctx: StepContext, obs: FreezeObs): Promise<ActResult> {
     const run = ctx.run;
-    if (run.topology !== "swap-proxy") return { outcome: "fail", code: DATA_CODES.agentNeedsSameHost, retryable: false };
-    const granted = await this.caps.ensureMigrate(ctx.actor.userId, run.targetServerId);
+    const runner = agentRunnerHost(run);
+    if (!runner.ok) return { outcome: "fail", code: runner.code, retryable: false };
+    const granted = await this.caps.ensureMigrate(ctx.actor.userId, runner.serverId);
     if (!granted.ok) return { outcome: "fail", code: granted.reason === "forbidden" ? DATA_CODES.capabilityDenied : DATA_CODES.capabilityMissingTarget, retryable: false };
     if (granted.added) await ctx.recordCompensation({ capAdded: true });
     try {
@@ -523,7 +528,7 @@ export class FreezeHandler implements StepHandler<FreezeObs>, OnModuleInit {
       if (!record) {
         // 1. discover + record identity (only what is RUNNING now: a container that was already stopped is never started again)
         const targets = obs.stop.map((s) => ({ itemRef: s.itemRef, ...(s.containerPrefix ? { containerPrefix: s.containerPrefix } : {}) }));
-        const res = await this.host.run(run.targetServerId, buildSourceInspectScript(targets), "migrate", SCRIPT_TIMEOUT_MS);
+        const res = await this.host.run(runner.serverId, buildSourceInspectScript(targets), "migrate", SCRIPT_TIMEOUT_MS);
         const found = parseSourceInspect(res.output, targets);
         const running: RecordedContainer[] = found.filter((c) => c.state === "running").map((c) => ({ id: c.id, name: c.name, image: c.image, ports: c.ports, itemRef: c.itemRef }));
         const unresolved = obs.stop.filter((s) => !found.some((c) => c.itemRef === s.itemRef));
@@ -543,7 +548,7 @@ export class FreezeHandler implements StepHandler<FreezeObs>, OnModuleInit {
       if (containers.length === 0) return { outcome: "done" };
       if (obs.states && obs.states.running === 0 && obs.states.unknown === 0) return { outcome: "done" };
       await ctx.assertLease();
-      const stop = await this.host.run(run.targetServerId, buildSourceStopScript(containers), "migrate", SCRIPT_TIMEOUT_MS);
+      const stop = await this.host.run(runner.serverId, buildSourceStopScript(containers), "migrate", SCRIPT_TIMEOUT_MS);
       const outcomes = parseStopOutput(stop.output, containers.map((c) => c.id));
       const bad = containers.filter((c) => {
         const o = outcomes.get(c.id);
@@ -617,13 +622,15 @@ export class FreezeHandler implements StepHandler<FreezeObs>, OnModuleInit {
     }
     const containers = rec.containers ?? [];
     if (containers.length === 0) return { outcome: "nothing-to-do" };
+    const runner = agentRunnerHost(run);
+    if (!runner.ok) return { outcome: "failed", code: runner.code };
     try {
-      const granted = await this.caps.ensureMigrate(ctx.actor.userId, run.targetServerId);
+      const granted = await this.caps.ensureMigrate(ctx.actor.userId, runner.serverId);
       if (!granted.ok) return { outcome: "failed", code: DATA_CODES.capabilityDenied };
       if (granted.added) await ctx.recordCompensation({ capAdded: true });
       let res: { exitCode: number; output: string };
       try {
-        res = await this.host.run(run.targetServerId, buildSourceStartScript(containers), "migrate", SCRIPT_TIMEOUT_MS);
+        res = await this.host.run(runner.serverId, buildSourceStartScript(containers), "migrate", SCRIPT_TIMEOUT_MS);
       } finally {
         await releaseIfOurs(ctx, this.caps, granted.added); // least privilege: the grant ends with the restart
       }

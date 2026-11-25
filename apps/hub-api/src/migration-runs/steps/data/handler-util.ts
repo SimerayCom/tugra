@@ -4,6 +4,7 @@
  */
 import type { GateCheck, GateResult, WaitSpec } from "../../core/dto";
 import { StepFailure, type StepContext, type StepKey } from "../../core/run-contract";
+import { agentRunnerHost } from "./data-logic";
 import { DATA_CODES, DataPortError, type CapabilityPort, type DataPort, type DataSnapshot, type ObjectPort, type ObjectView } from "./data-contract";
 
 /** The snapshot of the run's op, mapping a port failure to a deterministic step failure. */
@@ -92,7 +93,9 @@ export function classifyAgentError(e: unknown): "offline" | "forbidden" | "timeo
  * an earlier step of the run recorded that it added it. A capability the owner had granted before the run is never touched.
  */
 export async function releaseIfOurs(ctx: StepContext, caps: CapabilityPort, addedNow: boolean): Promise<void> {
-  if (addedNow || runAddedCapability(ctx)) await caps.releaseMigrate(ctx.actor.userId, ctx.run.targetServerId);
+  if (!(addedNow || runAddedCapability(ctx))) return;
+  const runner = agentRunnerHost(ctx.run);
+  await caps.releaseMigrate(ctx.actor.userId, runner.ok ? runner.serverId : ctx.run.targetServerId);
 }
 
 /** Automatic starts of one object migration pass per step before a human has to press retry. */
