@@ -120,6 +120,15 @@ describe("MetricsRollupRunnerService", () => {
       expect(Math.abs(window(into("ContainerMetricRollup")[0]).start - (Date.now() - 6 * 3600_000))).toBeLessThan(61_000);
     });
 
+    it("closes a minute only after the ingest buffer has flushed it (flush interval + margin)", async () => {
+      const { svc, into } = make();
+      await svc.roll();
+      const all = into("MetricRollup").map(window);
+      const last = all[all.length - 1];
+      // telemetry is buffered up to 5 s and the rollup leaves 10 s more: the newest closed minute ends at or before now - 15 s
+      expect(last.end).toBeLessThanOrEqual(Math.floor((Date.now() - 15_000) / MIN) * MIN);
+    });
+
     it("no rows → zero counts for every tier", async () => {
       const { svc } = make();
       expect(await svc.roll()).toEqual({ metric: 0, containerMetric: 0, metric5m: 0, containerMetric5m: 0 });

@@ -1,5 +1,6 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
+import { telemetryFlushMs } from "../common/batch-writer";
 import { PrismaService } from "../prisma/prisma.service";
 import { metricTiers } from "../metrics/metric-tiers";
 
@@ -11,6 +12,9 @@ const BACKFILL_MS = 6 * 3600_000; // first run (no rollups yet): roll the last 6
 // 15 minutes; a run writes at most MAX_FILLED_SLICES non-empty slices (empty gaps are skipped for free) and the next run
 // continues from the watermark. The aggregation itself runs INSIDE Postgres (INSERT ... SELECT ... GROUP BY), so the
 // hub process holds no sample rows at all, whatever the window or fleet size.
+// Samples sit in the ingest buffer for up to telemetryFlushMs() before they reach the DB; the rollup leaves a little
+// extra so a flush that is merely slow still lands before its minute is closed (a bucket is final once written).
+const FLUSH_MARGIN_MS = 10_000;
 export const SLICE_MS = 15 * MINUTE_MS;
 export const MAX_FILLED_SLICES = 8;
 // The 5-minute tier is rolled from the 1-minute tier, a much smaller input (1 row/min/container), so its slices are wider:
@@ -87,9 +91,10 @@ export class MetricsRollupRunnerService {
   }
 
   /** Window [start, end): start = next bucket after the newest rollup (clamped to raw retention),
-   *  or `now - BACKFILL_MS` on first run; end = the current minute floor (partial minute excluded). */
+   *  or `now - BACKFILL_MS` on first run; end = the minute floor of `now - flush interval - margin`, so a minute
+   *  is only closed once every sample of it has been flushed from the ingest buffer (partial minute excluded). */
   private window(maxBucket: Date | undefined, rawMs: number): { start: Date; end: Date } {
-    const end = floorMinute(Date.now());
+    const end = floorMinute(Date.now() - telemetryFlushMs() - FLUSH_MARGIN_MS);
     const startMs = maxBucket
       ? Math.max(maxBucket.getTime() + MINUTE_MS, Date.now() - rawMs) // never look further back than raw retention keeps
       : Date.now() - Math.min(BACKFILL_MS, rawMs);
