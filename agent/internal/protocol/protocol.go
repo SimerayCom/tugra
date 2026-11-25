@@ -6,6 +6,7 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"strconv"
+	"strings"
 )
 
 // Version is the on-wire protocol version — must match PROTOCOL_VERSION in packages/shared.
@@ -133,7 +134,7 @@ const (
 var CoolifyRunCapabilities = []string{CapCoolifySecrets, CapCoolifySSH, CapCoolifyTakeover, CapCoolifyCleanup}
 
 // Features is the list this agent advertises in enroll/auth.
-var Features = []string{FeatureCmdJournal, FeatureLogDrainsV2, FeatureDrainSyslog, FeatureDrainGelf, FeatureDrainFluentd, FeatureFs2, FeatureHubOriginEnv, FeatureHubEndpoints}
+var Features = []string{FeatureCmdJournal, FeatureLogDrainsV2, FeatureDrainSyslog, FeatureDrainGelf, FeatureDrainFluentd, FeatureFs2, FeatureHubOriginEnv, FeatureHubEndpoints, FeatureCoolifySecrets}
 
 // HubEndpointState: Agent -> Hub. Sent right after every successful handshake and as the reply to a "hub_endpoints"
 // frame. It tells the hub which list revision the agent holds and which endpoint this very session is on, so the hub
@@ -415,6 +416,12 @@ type ServerMsg struct {
 	IfMatch string `json:"ifMatch,omitempty"`
 	Xfer    string `json:"xfer,omitempty"`
 	Exp     int64  `json:"exp,omitempty"`
+	// coolify_secrets_req additions (see CoolifySecretsFields / CanonicalCoolifySecrets). reqId, exp, sig and capability reuse the
+	// fields above. Additive: every other message type leaves these empty.
+	RunID        string   `json:"runId,omitempty"`
+	Classes      []string `json:"classes,omitempty"`
+	Refs         []string `json:"refs,omitempty"`
+	RecipientKey string   `json:"recipientKey,omitempty"`
 	// HubProof (enrolled/auth_ok): ed25519 signature, by the hub key, over CanonicalHubProof(challenge nonce, the agent's
 	// HubNonce). The only thing that proves the endpoint just dialled is the hub and not something replaying its
 	// public key. Absent from an older hub.
@@ -707,3 +714,54 @@ var errNotEd25519 = errString("hub key is not ed25519")
 type errString string
 
 func (e errString) Error() string { return string(e) }
+
+// CoolifySecretRecord is one value of a coolify_secrets_result: sealed (Env is a tse1 envelope), or the fixed reason it could not be read
+// (Code). Never a plaintext, never a message. Mirrors @tugra/shared CoolifySecretRecord.
+type CoolifySecretRecord struct {
+	Ref   string `json:"ref"`
+	Field string `json:"field"`
+	Class string `json:"class,omitempty"`
+	Env   string `json:"env,omitempty"`
+	Code  string `json:"code,omitempty"`
+}
+
+// CoolifySecretsResult: Agent -> Hub. A request is answered by one or more of these with the same ReqID; the last carries Final. A
+// refusal (OK false) carries only a fixed Code. Mirrors @tugra/shared CoolifySecretsResultMsg.
+type CoolifySecretsResult struct {
+	Type    string                `json:"type"` // "coolify_secrets_result"
+	ReqID   string                `json:"reqId"`
+	OK      bool                  `json:"ok"`
+	Code    string                `json:"code,omitempty"`
+	Records []CoolifySecretRecord `json:"records,omitempty"`
+	Final   bool                  `json:"final,omitempty"`
+}
+
+// CoolifySecretsFields are every signed field of a coolify_secrets_req. ServerID is the agent's OWN stored id (never taken from the
+// frame), so a frame captured for one server never verifies on another.
+type CoolifySecretsFields struct {
+	ServerID     string
+	ReqID        string
+	RunID        string
+	Classes      []string
+	Refs         []string
+	RecipientKey string
+	Exp          int64
+	Capability   string
+}
+
+// CanonicalCoolifySecrets mirrors @tugra/shared canonicalCoolifySecrets: "coolify_secrets\n" + the 8 fields in order, each
+// `<utf8ByteLength>:<value>`, joined by "\n". The class and ref lists are joined with ",".
+func CanonicalCoolifySecrets(f CoolifySecretsFields) string {
+	parts := []string{
+		f.ServerID, f.ReqID, f.RunID, strings.Join(f.Classes, ","), strings.Join(f.Refs, ","), f.RecipientKey,
+		strconv.FormatInt(f.Exp, 10), f.Capability,
+	}
+	out := "coolify_secrets\n"
+	for i, p := range parts {
+		if i > 0 {
+			out += "\n"
+		}
+		out += strconv.Itoa(len(p)) + ":" + p
+	}
+	return out
+}

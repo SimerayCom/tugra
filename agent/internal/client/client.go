@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/SimerayCom/tugra/agent/internal/config"
+	"github.com/SimerayCom/tugra/agent/internal/coolify"
 	"github.com/SimerayCom/tugra/agent/internal/dockerstats"
 	"github.com/SimerayCom/tugra/agent/internal/drains"
 	"github.com/SimerayCom/tugra/agent/internal/endpoints"
@@ -267,6 +268,12 @@ func runOnce(ctx context.Context, cfg config.Config, kp *keys.KeyPair, store *co
 	// fs2 (write-capable file ops + container FS): its own fail-closed gate (see fs2.go). The legacy fs_req
 	// case below is untouched.
 	fs2 := newFs2Gate(cfg, hubPub, cs, send)
+	// coolify_secrets_req (Coolify hub takeover, sealed secrets): typed, signed, capability-gated; never rides the command path.
+	coolifySecrets := coolify.NewGate(coolify.Config{
+		ServerID: store.ServerID, AgentImage: cfg.AgentImage, HubPub: hubPub, Allows: cs.allows, Send: send,
+		Logf:  func(f string, a ...any) { fmt.Fprintf(os.Stderr, f+"\n", a...) },
+		State: defaultCoolifyState,
+	})
 
 	// Send host inventory right after auth, and refresh it periodically so it
 	// stays current across server upgrades / kernel patches on long sessions.
@@ -573,6 +580,8 @@ func runOnce(ctx context.Context, cfg config.Config, kp *keys.KeyPair, store *co
 				}(m.ReqID, m.Op, m.Volume, m.Path)
 			case "fs2_req":
 				fs2.handle(ctx, m)
+			case "coolify_secrets_req":
+				coolifySecrets.Handle(ctx, m)
 			case "hub_endpoints":
 				handleHubEndpoints(cfg, store, hubPub, ident.proofOK, m, send, switchReq)
 			}
@@ -694,6 +703,10 @@ func allowsCapability(allowed []string, capability string) bool {
 	}
 	return false
 }
+
+// defaultCoolifyState is the replay cache, single-flight flag and rate window of the sealed-secrets gate. Process level on purpose: a
+// frame captured before a reconnect must not replay on the next socket.
+var defaultCoolifyState = coolify.NewState()
 
 // capState holds the agent's live fail-closed capability allowlist. The hub is authoritative and
 // pushes updates (in enrolled/auth_ok and the "capabilities" message). Reads happen on the reader

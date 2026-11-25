@@ -25,9 +25,10 @@ func TestCoolifyTakeoverNamesMirrorShared(t *testing.T) {
 	}
 }
 
-// Advertising a feature the agent does not implement would make the hub send a frame nobody handles: none of the takeover flags is advertised yet.
+// Advertising a feature the agent does not implement would make the hub send a frame nobody handles: only the flags whose lane has landed
+// (secrets, lane B) are advertised; each other lane removes its flag from this list in the same change that handles its frame.
 func TestCoolifyTakeoverFeaturesNotAdvertisedYet(t *testing.T) {
-	banned := map[string]bool{FeatureCoolifySecrets: true, FeatureCoolifySSH: true, FeatureCoolifyTakeover: true, FeatureCoolifyCleanup: true}
+	banned := map[string]bool{FeatureCoolifySSH: true, FeatureCoolifyTakeover: true, FeatureCoolifyCleanup: true}
 	for _, f := range Features {
 		if banned[f] {
 			t.Fatalf("feature %q is advertised before its lane implemented the frame", f)
@@ -44,5 +45,32 @@ func TestCoolifyCapabilitiesAreDistinctFromExistingOnes(t *testing.T) {
 				t.Fatalf("%q collides with an existing capability", c)
 			}
 		}
+	}
+}
+
+func TestCoolifySecretsFeatureIsAdvertised(t *testing.T) {
+	for _, f := range Features {
+		if f == FeatureCoolifySecrets {
+			return
+		}
+	}
+	t.Fatal("the secrets lane handles coolify_secrets_req, so its feature flag must be advertised")
+}
+
+// The signed bytes are a contract with @tugra/shared canonicalCoolifySecrets (the same expected string is asserted there).
+func TestCanonicalCoolifySecretsGolden(t *testing.T) {
+	got := CanonicalCoolifySecrets(CoolifySecretsFields{
+		ServerID: "srv-1", ReqID: "req-1", RunID: "run-1", Classes: []string{"env", "s3"}, Refs: []string{"env:abc", "s3:xyz"},
+		RecipientKey: "AAAA", Exp: 1800000000, Capability: "coolify_secrets",
+	})
+	want := "coolify_secrets\n5:srv-1\n5:req-1\n5:run-1\n6:env,s3\n14:env:abc,s3:xyz\n4:AAAA\n10:1800000000\n15:coolify_secrets"
+	if got != want {
+		t.Fatalf("canonical form drifted:\n got %q\nwant %q", got, want)
+	}
+	// A newline inside a field cannot shift another field (length prefixes).
+	a := CanonicalCoolifySecrets(CoolifySecretsFields{ServerID: "a\n1:b", ReqID: "c"})
+	b := CanonicalCoolifySecrets(CoolifySecretsFields{ServerID: "a", ReqID: "b\n1:c"})
+	if a == b {
+		t.Fatal("field boundary forged")
 	}
 }

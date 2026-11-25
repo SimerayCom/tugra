@@ -18,6 +18,7 @@ import (
 
 	"github.com/SimerayCom/tugra/agent/internal/client"
 	"github.com/SimerayCom/tugra/agent/internal/config"
+	"github.com/SimerayCom/tugra/agent/internal/coolify/open"
 	"github.com/SimerayCom/tugra/agent/internal/ctrfs"
 	"github.com/SimerayCom/tugra/agent/internal/endpoints"
 	"github.com/SimerayCom/tugra/agent/internal/fsd"
@@ -57,6 +58,12 @@ func main() {
 	// the interpreter, arguments and (for one named process only) the environment a faithful re-creation needs.
 	if len(os.Args) > 1 && os.Args[1] == "pm2" {
 		os.Exit(scan.RunPM2CLI(os.Args[2:], os.Stdout, os.Stderr))
+	}
+
+	// `coolify-open` is the sealed-secrets helper: it runs in a sandbox with no network (internal/coolify/open), reads the app key and the
+	// encrypted rows from stdin, and writes sealed envelopes. It opens no hub connection and never reads argv for a secret.
+	if len(os.Args) > 1 && os.Args[1] == "coolify-open" {
+		os.Exit(open.RunCLI(os.Args[2:], os.Stdin, os.Stdout, os.Stderr))
 	}
 
 	if len(os.Args) > 1 && os.Args[1] == "fsd" {
