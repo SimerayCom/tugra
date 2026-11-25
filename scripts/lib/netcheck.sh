@@ -667,6 +667,7 @@ nc_doctor() {
   fi
 
   if declare -F swap_doctor >/dev/null 2>&1; then swap_doctor; fi
+  if declare -F profile_doctor >/dev/null 2>&1; then profile_doctor; fi
 
   printf '\n'; log "Ports"
   local hp wp; hp="$(nc_env HUB_PORT)"; wp="$(nc_env WEB_PORT)"; hp="${hp:-${HUB_PORT:-3000}}"; wp="${wp:-${WEB_PORT:-3001}}"

@@ -20,6 +20,27 @@ services:
     # registry-1.docker.io/v2/library/postgres/manifests/16-alpine.
     image: postgres:16-alpine@sha256:aa6cb33cf4c19c765cefcf48d96176258800870a9a1e930ad126200f9d825139
     restart: unless-stopped
+    # Sized by the RAM profile (scripts/lib/profile.sh, TUGRA_PROFILE in .env). Every value falls back to a default that is today's
+    # behaviour or better, so an install whose .env has no profile keys (an older install, an in-app update) runs unchanged.
+    # No mem_limit on purpose: killing Postgres mid-write costs a crash recovery; shared_buffers + max_connections x work_mem bound it.
+    command:
+      - postgres
+      - -c
+      - "shared_buffers=${TUGRA_PG_SHARED_BUFFERS:-128MB}"
+      - -c
+      - "effective_cache_size=${TUGRA_PG_EFFECTIVE_CACHE_SIZE:-1GB}"
+      - -c
+      - "work_mem=${TUGRA_PG_WORK_MEM:-4MB}"
+      - -c
+      - "maintenance_work_mem=${TUGRA_PG_MAINTENANCE_WORK_MEM:-64MB}"
+      - -c
+      - "max_connections=${TUGRA_PG_MAX_CONNECTIONS:-100}"
+      - -c
+      - "max_wal_size=${TUGRA_PG_MAX_WAL_SIZE:-1GB}"
+      - -c
+      - "checkpoint_timeout=${TUGRA_PG_CHECKPOINT_TIMEOUT:-5min}"
+      - -c
+      - "wal_compression=on"
     environment:
       POSTGRES_USER: tugra
       POSTGRES_PASSWORD: "${POSTGRES_PASSWORD}"
@@ -38,6 +59,12 @@ services:
     # verified): registry-1.docker.io/v2/library/redis/manifests/7-alpine.
     image: redis:7-alpine@sha256:7f7d30b7fdd09467bac58198a1f166dd69789d348d4fe859cccb20e0cf287fbe
     restart: unless-stopped
+    # BullMQ (queues + repeat jobs) and the refresh-token store need `noeviction`: a full Redis then errors on write (loud) instead of
+    # silently dropping a job. maxmemory is a ceiling far above what the hub keeps here. Persistence stays at the image defaults
+    # (RDB snapshots): switching it off would log every session out on a restart. mem_limit only on small hosts (REDIS_MEM_LIMIT,
+    # 0 = none): it sits above maxmemory + the copy-on-write headroom of a background save, so it never trips before the cap does.
+    command: ["redis-server", "--maxmemory", "${TUGRA_REDIS_MAXMEMORY:-256mb}", "--maxmemory-policy", "noeviction"]
+    mem_limit: "${REDIS_MEM_LIMIT:-0}"
     volumes:
       - tugra_redis:/data
     healthcheck:
@@ -56,6 +83,9 @@ services:
       context: ..
       dockerfile: deploy/Dockerfile.hub
     restart: unless-stopped
+    # Container memory ceiling (HUB_MEM_LIMIT, set by the tiny/small RAM profiles; 0 = none). It sits above the heap cap plus the
+    # measured native overhead (query engine, Buffers, code), so the cap bites first and a runaway cannot take Postgres with it.
+    mem_limit: "${HUB_MEM_LIMIT:-0}"
     # The hub image self-runs `prisma migrate deploy` before boot (see deploy/Dockerfile.hub), so no
     # separate migration step is needed — only a healthy database first.
     #
@@ -76,7 +106,14 @@ services:
       # traffic then costs garbage collection instead of growing until the kernel OOM-kills the container on a small host
       # with no swap. The default is >= 2x the heap the hub peaks at under the fleet load harness
       # (apps/hub-api/scripts/perf); the database driver's native memory is outside this cap by design.
-      NODE_OPTIONS: "--max-old-space-size=${HUB_MAX_HEAP_MB:-768}"
+      #   --max-semi-space-size: the young generation (16 MB is V8's own maximum, i.e. today's behaviour; the tiny/small profiles shrink it).
+      #   MALLOC_ARENA_MAX=2: glibc otherwise keeps up to 8 x cores malloc arenas, which on a busy Node process is tens of MB of RSS.
+      NODE_OPTIONS: "--max-old-space-size=${HUB_MAX_HEAP_MB:-768} --max-semi-space-size=${HUB_SEMI_SPACE_MB:-16}"
+      MALLOC_ARENA_MAX: "${HUB_MALLOC_ARENA_MAX:-2}"
+      # The hub's own Prisma pool, applied to its DATABASE_URL in the process (an explicit connection_limit/pool_timeout already in
+      # the URL wins; pg_dump and the migration step keep the untouched URL). Prisma's default is cpus x 2 + 1 (3 on a 1 vCPU host).
+      HUB_DB_CONNECTION_LIMIT: "${HUB_DB_CONNECTION_LIMIT:-16}"
+      HUB_DB_POOL_TIMEOUT: "${HUB_DB_POOL_TIMEOUT:-20}"
       # No phone-home: stop the Prisma CLI (run at boot for `migrate deploy`) pinging checkpoint.prisma.io.
       # Set here (not via .env) so it holds even on an already-pulled image and a user .env can't re-enable it.
       CHECKPOINT_DISABLE: "1"
@@ -133,8 +170,12 @@ services:
         # web terminal / webhook URLs point at the real hub (only applies to the build-from-source path).
         NEXT_PUBLIC_API_URL: "${HUB_PUBLIC_URL}"
     restart: unless-stopped
+    mem_limit: "${WEB_MEM_LIMIT:-0}"
     # Only the internal proxy target — NO secrets in the web container (it never touches the DB or keys).
     environment:
+      # Heap cap of the Next server (a proxy + SSR holds tens of MB of real heap; the cap only bites a runaway).
+      NODE_OPTIONS: "--max-old-space-size=${WEB_MAX_HEAP_MB:-512}"
+      MALLOC_ARENA_MAX: "${HUB_MALLOC_ARENA_MAX:-2}"
       # Production mode for Next at runtime (the custom server entry does not go through `next start`, which forced it).
       NODE_ENV: "production"
       HUB_INTERNAL_URL: "http://hub-api:3000"

@@ -222,9 +222,9 @@ describe("scripts/install.sh swap and heap wiring", () => {
     expect(existsSync(join(root, "swapfile"))).toBe(false);
   });
 
-  it("sets the hub heap cap to 1024 MB on a host above 2.5 GiB, keeps the compose default below, never overwrites", () => {
+  it("sets the hub heap cap from the RAM profile (1024 on a standard host, 384 on a small one) and never overwrites an operator's value", () => {
     expect(envOf("heap-big", [], { TUGRA_FS_ROOT: fsRootWithRam("big", 3_900_000) })).toMatch(/^HUB_MAX_HEAP_MB=1024$/m);
-    expect(envOf("heap-small", [], { TUGRA_FS_ROOT: fsRootWithRam("small", 2_000_000) })).not.toMatch(/HUB_MAX_HEAP_MB/);
+    expect(envOf("heap-small", [], { TUGRA_FS_ROOT: fsRootWithRam("small", 2_000_000) })).toMatch(/^HUB_MAX_HEAP_MB=384$/m);
     const mine = join(dir, "mine.env");
     writeFileSync(mine, "HUB_MAX_HEAP_MB=1536\n");
     execFileSync(BASH, [INSTALL, "--dry-run", "--env-file", mine, ...URLS], { stdio: "pipe", env: { ...clean, TUGRA_FS_ROOT: fsRootWithRam("big2", 8_000_000) } });

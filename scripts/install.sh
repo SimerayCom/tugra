@@ -56,6 +56,10 @@
 #   --no-swap           Do not add a swapfile. By default a host with 4GB RAM or less and no swap gets a 2GB /swapfile
 #                       (fstab entry, vm.swappiness=10) so a load spike slows the hub instead of the kernel's OOM killer
 #                       taking it down. The opt-out is remembered (TUGRA_NO_SWAP=1 in .env); --enable-swap undoes it.
+#   --profile=<name>    Size the stack for this host's RAM: tiny (< 1.5 GiB), small (< 3 GiB) or standard (>= 3 GiB); auto = detect
+#                       again. Sets the hub/web heap caps, Postgres and Redis settings, the database pool and (tiny/small) per-service
+#                       memory ceilings, persisted in .env as TUGRA_PROFILE + one key per setting (see scripts/lib/profile.sh and
+#                       docs/install.md). Without the flag a first install detects it from RAM and an existing choice is kept.
 #   --dry-run           Generate the .env and exit — do not touch Docker.
 #   --sync-checkout     Only bring this git checkout in line with the compose file/scripts the in-app updater wrote
 #                       (it leaves them "modified" and makes `git pull` refuse), then exit. The target is the release in
@@ -100,6 +104,7 @@ ENABLE_TELEMETRY="${TUGRA_ENABLE_TELEMETRY:-0}" # explicit opt-in (skips the con
 NO_TELEMETRY="${TUGRA_NO_TELEMETRY:-0}"         # explicit opt-out of the default-on anonymous usage stats
 NO_SWAP="${TUGRA_NO_SWAP:-0}"                   # --no-swap: never add the safety-net swapfile on a small host (lib/swap.sh)
 ENABLE_SWAP=0                                   # --enable-swap: forget an earlier --no-swap
+PROFILE_ARG="${TUGRA_PROFILE_ARG:-}"           # --profile=<tiny|small|standard|auto>: RAM profile (lib/profile.sh); "" = keep / detect
 RAW_PORTS="${TUGRA_RAW_PORTS:-0}"               # --raw-ports: classic quick start on 3000/3001, no proxy
 HOME_MODE="${TUGRA_HOME_MODE:-0}"               # --home: start the owner in the simple Home launcher (CasaOS-style)
 # Panel-TLS (DİLİM 1): opt-in auto-HTTPS for the control panel. AUTO_TLS "" = undecided, "1"/"0" explicit.
@@ -181,6 +186,8 @@ while [ $# -gt 0 ]; do
     --no-telemetry)         NO_TELEMETRY=1; shift ;;
     --no-swap)              NO_SWAP=1; shift ;;
     --enable-swap)          ENABLE_SWAP=1; shift ;;
+    --profile=*)            PROFILE_ARG="${1#--profile=}"; shift ;;
+    --profile)              PROFILE_ARG="${2:-}"; [ -n "$PROFILE_ARG" ] || { err "--profile needs a value: tiny, small, standard or auto"; exit 1; }; shift 2 ;;
     --detect-public-ip)     DETECT_PUBLIC_IP=1; shift ;;
     --home)                 HOME_MODE=1; shift ;;
     --auto-tls)             AUTO_TLS=1; shift ;;
@@ -209,6 +216,7 @@ done
 if [ "$NO_SWAP" = "1" ] && [ "$ENABLE_SWAP" = "1" ]; then
   err "--no-swap and --enable-swap are mutually exclusive"; exit 1
 fi
+case "$PROFILE_ARG" in ""|tiny|small|standard|auto) ;; *) err "--profile must be one of: tiny, small, standard, auto (got: $PROFILE_ARG)"; exit 1 ;; esac
 if [ "$NO_UPDATE_CHECKS" = "1" ] && [ "$ENABLE_UPDATE_CHECKS" = "1" ]; then
   err "--no-update-checks and --enable-update-checks are mutually exclusive"; exit 1
 fi
@@ -510,6 +518,10 @@ if [ -f "$SCRIPT_DIR/lib/swap.sh" ]; then
   # shellcheck source=lib/swap.sh
   . "$SCRIPT_DIR/lib/swap.sh"
 fi
+if [ -f "$SCRIPT_DIR/lib/profile.sh" ]; then
+  # shellcheck source=lib/profile.sh
+  . "$SCRIPT_DIR/lib/profile.sh"
+fi
 if [ -f "$SCRIPT_DIR/lib/hostfacts.sh" ]; then
   # shellcheck source=lib/hostfacts.sh
   . "$SCRIPT_DIR/lib/hostfacts.sh"
@@ -555,7 +567,12 @@ preflight() {
       # Round to the NEAREST GiB (not truncate): a "4GB" box reports ~3.8 GiB in MemTotal because
       # the kernel/firmware reserve some, and truncating would print a misleading "~3GB".
       memgb=$(( (memkb + 524288) / 1048576 ))
-      if [ "$memkb" -lt 1800000 ]; then note "RAM: ~${memgb}GB — 4GB+ recommended (hub + web + db + redis + agent)"; else ok "RAM: ~${memgb}GB"; fi
+      memmb=$(( (memkb + 512) / 1024 ))
+      # The real floor is the TINY profile (scripts/lib/profile.sh): the whole stack (hub, web, Postgres, Redis, agent) fits a 1 GB
+      # host with 1 vCPU (a "1GB" VM reports ~0.95 GiB, so the check sits at 900 MB). The profile is picked from RAM later in the run.
+      if [ "$memkb" -lt 900000 ]; then note "RAM: ~${memmb}MB: below the 1GB minimum (1 vCPU / 1GB runs the hub, web, database, Redis and the local agent with the 'tiny' profile)"
+      elif [ "$memkb" -lt 1572864 ]; then ok "RAM: ~${memmb}MB (1GB class: the 'tiny' profile applies)"
+      else ok "RAM: ~${memgb}GB"; fi
     fi
   fi
   # MiB -> nearest GiB (df -Pm reports MiB; round, do not truncate)
@@ -855,12 +872,13 @@ if [ "$DRY_RUN" -eq 0 ] && declare -F swap_ensure >/dev/null 2>&1; then
   swap_ensure || true
 fi
 
-# Hub V8 heap cap (HUB_MAX_HEAP_MB, see docs/install.md): the compose default (768) is sized for a 2GB host; a host with more
-# RAM gets 1024 so heavy hub-side jobs (importer, migration ingest, backup streaming) have headroom. Only-if-unset: an
-# operator's own value is never overwritten.
-if declare -F swap_ram_kb >/dev/null 2>&1; then
-  heap_ram_kb="$(swap_ram_kb)"
-  case "$heap_ram_kb" in ''|*[!0-9]*) ;; *) [ "$heap_ram_kb" -gt 2621440 ] && ensure_env HUB_MAX_HEAP_MB 1024 ;; esac
+# RAM profile (lib/profile.sh): sizes the hub/web heap caps, Postgres, Redis, the database pool and (tiny/small) the container
+# memory ceilings from this host's RAM. An explicit --profile overwrites; a first install fills the keys that are not set yet (an
+# operator's own HUB_MAX_HEAP_MB survives); a flag-less re-run keeps the stored choice. Never fatal for the install itself.
+if declare -F profile_select >/dev/null 2>&1; then
+  profile_select "$PROFILE_ARG" || { [ -z "$PROFILE_ARG" ] || exit 1; warn "could not apply a RAM profile; compose defaults apply"; }
+elif [ -n "$PROFILE_ARG" ]; then
+  err "scripts/lib/profile.sh not found next to this installer: update the checkout and re-run"; exit 1
 fi
 
 PG_PWD="$(env_get POSTGRES_PASSWORD)"
