@@ -611,7 +611,7 @@ export class CoolifyInPlaceService {
         await this.saveRollback(rowId, rb);
       }
       // 3. fallback certificates (the files this lane wrote, by name)
-      const hosts = domainsOf(items).map((d) => d.host);
+      const hosts = items.filter((i) => i.state !== "skipped").flatMap((i) => i.domains.filter((d) => d.cert !== "pending" || i.fallbackAt[d.host]).map((d) => d.host));
       if (hosts.length > 0) await this.world.exec(serverId, buildFallbackRemoveScript(hosts), HOST_T);
       // 4. Tugra's copies that ran alongside
       for (const i of items) {

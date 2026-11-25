@@ -1,0 +1,490 @@
+import { BadRequestException, ConflictException, ForbiddenException, NotFoundException, UnprocessableEntityException } from "@nestjs/common";
+import { Role } from "@prisma/client";
+import { CoolifyInPlaceService } from "./coolify-inplace.service";
+import { Box, H, PROXY_ID, type BoxApp } from "./inplace-box";
+import { PlanSchema } from "./dto";
+
+const ACTOR = "u1";
+
+const web: BoxApp = { appId: "appweb", itemRef: "app:s1:webuuid", name: "web", host: "web.example.com", ctrId: H("a"), ctrName: "webuuid-20261125T101010", image: "webuuid:aaa111" };
+const data: BoxApp = {
+  appId: "appdb",
+  itemRef: "app:s1:dbuuid",
+  name: "api",
+  host: "api.example.com",
+  ctrId: H("b"),
+  ctrName: "dbuuid-20261125T101010",
+  image: "dbuuid:bbb222",
+  mounts: [{ type: "volume", source: "dbuuid-data", dest: "/data", rw: true }],
+  volumes: [{ name: "data", path: "/data" }],
+};
+
+function build(o: { role?: Role | null; apps?: BoxApp[] } = {}) {
+  const box = new Box();
+  for (const a of o.apps ?? [web, data]) box.add(a);
+  const rows = new Map<string, Record<string, unknown>>();
+  let n = 0;
+  const prisma = {
+    coolifyTakeover: {
+      create: jest.fn(async ({ data: d }: { data: Record<string, unknown> }) => {
+        const id = `tk${(n += 1)}`;
+        const r = { id, createdAt: new Date("2026-11-26T10:00:00Z"), finishedAt: null, failureCode: null, tempPort: null, sessionId: null, runId: null, ...d };
+        rows.set(id, JSON.parse(JSON.stringify(r)));
+        return { ...rows.get(id), createdAt: r.createdAt } as never;
+      }),
+      update: jest.fn(async ({ where, data: d }: { where: { id: string }; data: Record<string, unknown> }) => {
+        const r = rows.get(where.id)!;
+        Object.assign(r, JSON.parse(JSON.stringify(d)));
+        if (d.finishedAt instanceof Date) r.finishedAt = d.finishedAt;
+        return r;
+      }),
+      findUnique: jest.fn(async ({ where }: { where: { id: string } }) => {
+        const r = rows.get(where.id);
+        return r ? { ...r, createdAt: new Date("2026-11-26T10:00:00Z"), finishedAt: r.finishedAt ? new Date(r.finishedAt as never) : null } : null;
+      }),
+      findMany: jest.fn(async () => [...rows.values()].map((r) => ({ ...r, createdAt: new Date("2026-11-26T10:00:00Z"), finishedAt: null }))),
+    },
+  };
+  const access = { teamRole: jest.fn(async (..._a: unknown[]) => (o.role === undefined ? Role.OWNER : o.role)) };
+  const audit = { log: jest.fn(async (..._a: unknown[]) => undefined) };
+  const svc = new CoolifyInPlaceService(prisma as never, access as never, audit as never, box);
+  return { svc, box, prisma, access, audit, rows };
+}
+
+const plan = (t: ReturnType<typeof build>, rebuild: string[] = []) => t.svc.plan(ACTOR, PlanSchema.parse({ serverId: "srv1", opId: "op1", rebuild }));
+const swapOk = async (t: ReturnType<typeof build>) => {
+  const p = await plan(t);
+  await t.svc.test(ACTOR, p.id);
+  return t.svc.swap(ACTOR, p.id, { confirm: "olgu-box" });
+};
+
+describe("plan", () => {
+  it("reads what Coolify runs and maps each app: the one without writable data runs alongside, the one with a volume is exclusive", async () => {
+    const t = build();
+    const v = await plan(t);
+    expect(v.status).toBe("PLANNED");
+    expect(v.giveBackAvailable).toBe(true);
+    expect(v.tempPort).toBeNull();
+    expect(v.items.map((i) => [i.itemRef, i.buildMode, i.exclusive ?? false, i.skipped ?? false])).toEqual([
+      ["app:s1:webuuid", "reuse-image", false, false],
+      ["app:s1:dbuuid", "reuse-image", true, false],
+    ]);
+    // plan only reads: no state-changing command reached the box
+    expect(t.box.events).toEqual([]);
+    expect(t.box.tugraProxy.state).toBe("absent");
+  });
+  it("is owner-only and a non-member cannot tell it exists", async () => {
+    await expect(plan(build({ role: Role.ADMIN }))).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(plan(build({ role: null }))).rejects.toBeInstanceOf(NotFoundException);
+  });
+  it("refuses an offline agent, a missing deploy capability and a busy server", async () => {
+    const a = build();
+    a.box.status = "OFFLINE";
+    await expect(plan(a)).rejects.toMatchObject({ response: { code: "takeover_server_offline" } });
+    const b = build();
+    b.box.capabilities = [];
+    await expect(plan(b)).rejects.toMatchObject({ response: { code: "takeover_capability" } });
+    const c = build();
+    c.box.busy = true;
+    await expect(plan(c)).rejects.toBeInstanceOf(ConflictException);
+  });
+  it("refuses the box the Coolify control plane runs on, and a proxy that is not running", async () => {
+    const a = build();
+    a.box.controlPlane = "ghcr.io/coollabsio/coolify:4.7.8";
+    await expect(plan(a)).rejects.toMatchObject({ response: { code: "takeover_control_plane" } });
+    const b = build();
+    b.box.coolifyProxy.running = false;
+    await expect(plan(b)).rejects.toMatchObject({ response: { code: "takeover_proxy_not_running" } });
+  });
+  it("an unknown op, an empty op and an unknown rebuild item are refused", async () => {
+    const t = build();
+    await expect(t.svc.plan(ACTOR, PlanSchema.parse({ serverId: "srv1", opId: "nope" }))).rejects.toBeInstanceOf(NotFoundException);
+    await expect(plan(t, ["app:s1:ghost"])).rejects.toMatchObject({ response: { code: "takeover_unknown_item" } });
+    await expect(t.svc.plan(ACTOR, PlanSchema.parse({ serverId: "ghost", opId: "op1" }))).rejects.toBeInstanceOf(NotFoundException);
+  });
+  it("keeps an app it cannot take over, skipped, with the reasons", async () => {
+    const t = build({ apps: [web, { ...data, volumes: [] }, { ...web, appId: "appgone", itemRef: "app:s1:gone", ctrId: H("c"), ctrName: "gone-20261125T101010", host: "gone.example.com", image: "gone:1", ctrRunning: false }] });
+    const v = await plan(t);
+    const byRef = Object.fromEntries(v.items.map((i) => [i.itemRef, i]));
+    expect(byRef["app:s1:dbuuid"]).toMatchObject({ skipped: true, issues: ["volume_unmapped"] });
+    expect(byRef["app:s1:gone"]).toMatchObject({ skipped: true, issues: ["container_absent"] });
+    expect(byRef["app:s1:webuuid"].skipped).toBeUndefined();
+  });
+  it("an app that shares writable data cannot be rebuilt next to Coolify's copy", async () => {
+    await expect(plan(build(), ["app:s1:dbuuid"])).rejects.toMatchObject({ response: { code: "takeover_rebuild_needs_side_by_side" } });
+  });
+  it("the stored plan and the view carry names, counts and codes only", async () => {
+    const t = build();
+    const v = await plan(t);
+    const stored = JSON.stringify([...t.rows.values()].map((r) => r.plan));
+    expect(stored).not.toMatch(/token|secret|password|PRIVATE/i);
+    expect(JSON.stringify(v)).not.toMatch(/sha256|tugra_app|[0-9a-f]{64}|"restart"|"image"/);
+    expect(t.audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "coolify.takeover.plan", meta: expect.objectContaining({ apps: 2 }) }));
+  });
+});
+
+describe("test", () => {
+  it("adopts Coolify's image without a build, aliases the volume without a copy, starts Tugra's proxy with no published port and tests the app that can run alongside", async () => {
+    const t = build();
+    const p = await plan(t);
+    const v = await t.svc.test(ACTOR, p.id);
+    expect(v.status).toBe("TESTING");
+    expect(v.failureCode).toBeNull();
+    expect(t.box.tags).toEqual(new Set(["tugra_appweb:dep1", "tugra_appdb:dep2"]));
+    expect(t.box.aliases.get("tugra_appv_appdb_data")).toBe("dbuuid-data");
+    // the public ports still belong to Coolify's proxy
+    expect(t.box.coolifyProxy.running).toBe(true);
+    expect(t.box.tugraProxy).toEqual({ state: "running", published: false });
+    expect(t.box.proxyBinds).toEqual(["none"]);
+    // the app that runs alongside is up on Tugra's side and tested; the one sharing data is NOT started next to Coolify's copy
+    expect(t.box.tugraRunning).toEqual(new Set(["appweb"]));
+    const web = v.items[0];
+    expect(web.domains[0]).toMatchObject({ host: "web.example.com", tempCheck: "ok", finalCheck: "pending", cert: "pending" });
+    expect(v.items[1].domains[0].tempCheck).toBe("pending");
+    expect(t.box.ctrs.get(H("b"))!.running).toBe(true);
+  });
+  it("a domain whose content differs through Tugra fails, and the swap is then refused", async () => {
+    const t = build();
+    t.box.differs.add("web.example.com");
+    const p = await plan(t);
+    const v = await t.svc.test(ACTOR, p.id);
+    expect(v.items[0].domains[0].tempCheck).toBe("failed");
+    await expect(t.svc.swap(ACTOR, p.id, { confirm: "olgu-box" })).rejects.toMatchObject({ response: { code: "takeover_test_failed", host: "web.example.com" } });
+    expect(t.box.coolifyProxy.running).toBe(true);
+  });
+  it("a page that changes on every request is judged by status only", async () => {
+    const t = build();
+    t.box.dynamic.add("web.example.com");
+    const p = await plan(t);
+    expect((await t.svc.test(ACTOR, p.id)).items[0].domains[0].tempCheck).toBe("ok");
+  });
+  it("an image that is not on the box leaves that app out, drops the deployment it made and never tags", async () => {
+    const t = build();
+    t.box.images.delete("webuuid:aaa111");
+    const p = await plan(t);
+    const v = await t.svc.test(ACTOR, p.id);
+    expect(v.items[0]).toMatchObject({ skipped: true, issues: ["image_missing"] });
+    expect(t.box.dropped).toEqual(["dep1"]);
+    expect(t.box.tags.has("tugra_appweb:dep1")).toBe(false);
+  });
+  it("a Tugra volume that already exists and is not the alias leaves the app out", async () => {
+    const t = build();
+    t.box.aliases.set("tugra_appv_appdb_data", "some-other-volume");
+    const p = await plan(t);
+    expect((await t.svc.test(ACTOR, p.id)).items[1]).toMatchObject({ skipped: true, issues: ["volume_alias_foreign"] });
+  });
+  it("an app Tugra could not start is left out with its reason", async () => {
+    const t = build();
+    t.box.failAdopted.add("appweb");
+    const p = await plan(t);
+    expect((await t.svc.test(ACTOR, p.id)).items[0]).toMatchObject({ skipped: true, issues: ["prepare_failed"] });
+  });
+  it("no curl on the box is a failure code, not a pass", async () => {
+    const t = build();
+    t.box.noCurl = true;
+    const p = await plan(t);
+    const v = await t.svc.test(ACTOR, p.id);
+    expect(v.failureCode).toBe("probe_unavailable");
+    expect(v.items[0].domains[0].tempCheck).toBe("pending");
+  });
+  it("can be pressed again and does not repeat what is done", async () => {
+    const t = build();
+    const p = await plan(t);
+    await t.svc.test(ACTOR, p.id);
+    await t.svc.test(ACTOR, p.id);
+    expect(t.box.events.filter((e) => e.startsWith("tag:")).length).toBe(2);
+    expect(t.box.proxyBinds).toEqual(["none"]);
+  });
+  it("only one action runs at a time per takeover", async () => {
+    const t = build();
+    const p = await plan(t);
+    const slow = t.svc.test(ACTOR, p.id);
+    await expect(t.svc.test(ACTOR, p.id)).rejects.toMatchObject({ response: expect.anything() });
+    await slow;
+  });
+  it("an app built with Tugra (the owner's choice) is started by a normal deploy and read back on the next test", async () => {
+    const t = build({ apps: [web] });
+    const p = await plan(t, ["app:s1:webuuid"]);
+    const v1 = await t.svc.test(ACTOR, p.id);
+    expect(v1.items[0].buildMode).toBe("rebuild-verify");
+    expect(v1.items[0].domains[0].tempCheck).toBe("pending");
+    expect(t.box.tags.size).toBe(0); // no image adopted
+    t.box.deployStates.set("build1", "SUCCESS");
+    t.box.tugraRunning.add("appweb");
+    const v2 = await t.svc.test(ACTOR, p.id);
+    expect(v2.items[0].domains[0].tempCheck).toBe("ok");
+  });
+  it("a failed rebuild leaves the app out", async () => {
+    const t = build({ apps: [web] });
+    const p = await plan(t, ["app:s1:webuuid"]);
+    await t.svc.test(ACTOR, p.id);
+    t.box.deployStates.set("build1", "FAILED");
+    expect((await t.svc.test(ACTOR, p.id)).items[0]).toMatchObject({ skipped: true, issues: ["rebuild_failed"] });
+  });
+});
+
+describe("swap", () => {
+  it("needs a passed test, the typed server name and the owner", async () => {
+    const t = build();
+    const p = await plan(t);
+    await expect(t.svc.swap(ACTOR, p.id, { confirm: "olgu-box" })).rejects.toMatchObject({ response: expect.objectContaining({ message: "takeover_not_tested" }) });
+    await t.svc.test(ACTOR, p.id);
+    await expect(t.svc.swap(ACTOR, p.id, { confirm: "wrong" })).rejects.toBeInstanceOf(BadRequestException);
+    expect(t.box.coolifyProxy.running).toBe(true);
+    const lesser = build({ role: Role.ADMIN });
+    await expect(lesser.svc.swap(ACTOR, "tk1", { confirm: "x" })).rejects.toBeInstanceOf(NotFoundException);
+  });
+  it("takes the ports in order: Coolify's data owner stops before Tugra's starts, certificates are in place before the proxies change, Coolify's proxy stops before Tugra's publishes", async () => {
+    const t = build();
+    const v = await swapOk(t);
+    expect(v.status).toBe("SWAPPED");
+    const ev = t.box.events;
+    const at = (e: string) => ev.indexOf(e);
+    expect(at("policy:no")).toBeLessThan(at("coolify-ctr:stop:dbuuid-20261125T101010"));
+    expect(at("coolify-ctr:stop:dbuuid-20261125T101010")).toBeLessThan(at("tugra-app:start:appdb"));
+    expect(at("tugra-app:start:appdb")).toBeLessThan(at("fallback:install:api.example.com"));
+    expect(at("fallback:install:web.example.com")).toBeLessThan(at("coolify-proxy:stop"));
+    expect(at("coolify-proxy:stop")).toBeLessThan(at("bind:public"));
+    expect(at("bind:public")).toBeLessThan(ev.lastIndexOf("proxy:start:public"));
+    expect(t.box.coolifyProxy).toEqual({ running: false, restart: "no" });
+    expect(t.box.tugraProxy).toEqual({ state: "running", published: true });
+    // the side-by-side app's Coolify container is left running; only the one sharing data was stopped
+    expect(t.box.ctrs.get(H("a"))!.running).toBe(true);
+    expect(t.box.ctrs.get(H("b"))!.running).toBe(false);
+    // every domain was checked again through the proxy that now owns the box, and Coolify's certificate stands in until a new one is verified
+    expect(v.items.flatMap((i) => i.domains).map((d) => [d.finalCheck, d.cert])).toEqual([["ok", "fallback"], ["ok", "fallback"]]);
+  });
+  it("two containers are never running on the same writable data", async () => {
+    const t = build();
+    await swapOk(t); // the fake throws if Tugra's copy starts while Coolify's still runs; reaching here proves the order
+    expect(t.box.tugraRunning).toEqual(new Set(["appweb", "appdb"]));
+  });
+  it("a domain that fails after the swap is shown as failed and the takeover stays swapped for the owner to decide", async () => {
+    const t = build();
+    const p = await plan(t);
+    await t.svc.test(ACTOR, p.id);
+    t.box.differs.add("api.example.com"); // the exclusive app answers differently once Tugra serves it
+    const v = await t.svc.swap(ACTOR, p.id, { confirm: "olgu-box" });
+    expect(v.status).toBe("SWAPPED");
+    expect(v.items[1].domains[0].finalCheck).toBe("failed");
+    expect(v.giveBackAvailable).toBe(true);
+  });
+  it("a Coolify proxy that will not stop reverses the switch by itself and ends FAILED with the reason", async () => {
+    const t = build();
+    const p = await plan(t);
+    await t.svc.test(ACTOR, p.id);
+    t.box.failProxyStop = true;
+    const v = await t.svc.swap(ACTOR, p.id, { confirm: "olgu-box" });
+    expect(v.status).toBe("FAILED");
+    expect(v.failureCode).toBe("swap_stop_failed");
+    expect(t.box.ctrs.get(H("b"))!.running).toBe(true); // Coolify's container is back
+    expect(t.box.ctrs.get(H("b"))!.restart).toBe("unless-stopped"); // with its recorded restart policy
+    expect(t.box.coolifyProxy.running).toBe(true);
+    expect(t.box.tugraRunning.has("appdb")).toBe(false);
+  });
+  it("Tugra's proxy failing to take the ports puts Coolify's proxy back", async () => {
+    const t = build();
+    const p = await plan(t);
+    await t.svc.test(ACTOR, p.id);
+    const orig = t.box.startProxy.bind(t.box);
+    t.box.startProxy = async () => {
+      if (t.box.bind === "public") throw new Error("boom");
+      return orig();
+    };
+    const v = await t.svc.swap(ACTOR, p.id, { confirm: "olgu-box" });
+    expect(v.status).toBe("FAILED");
+    expect(v.failureCode).toBe("swap_start_failed");
+    expect(t.box.coolifyProxy).toEqual({ running: true, restart: "unless-stopped" });
+    expect(t.box.ctrs.get(H("b"))!.running).toBe(true);
+  });
+  it("a Coolify container that will not stop aborts before anything else is touched", async () => {
+    const t = build();
+    const p = await plan(t);
+    await t.svc.test(ACTOR, p.id);
+    t.box.failStopCtr.add(H("b"));
+    const v = await t.svc.swap(ACTOR, p.id, { confirm: "olgu-box" });
+    expect(v.failureCode).toBe("exclusive_stop_failed");
+    expect(t.box.coolifyProxy.running).toBe(true);
+    expect(t.box.tugraProxy.published).toBe(false);
+  });
+  it("audits the swap with counts only", async () => {
+    const t = build();
+    await swapOk(t);
+    const call = t.audit.log.mock.calls.map((c) => c[0] as { action: string; meta: Record<string, unknown> }).find((c) => c.action === "coolify.takeover.swap")!;
+    expect(call.meta).toMatchObject({ apps: 2, switched: 1, domains: 2, fallbacks: 2 });
+    expect(JSON.stringify(call)).not.toMatch(/example\.com|webuuid|[0-9a-f]{64}/);
+  });
+});
+
+describe("verify: new certificates", () => {
+  it("replaces the fallback with a new Let's Encrypt certificate per domain, then the takeover is VERIFIED", async () => {
+    const t = build();
+    const p = await swapOk(t);
+    const v = await t.svc.verify(ACTOR, p.id);
+    expect(v.status).toBe("VERIFIED");
+    expect(v.items.flatMap((i) => i.domains).map((d) => d.cert)).toEqual(["issued", "issued"]);
+    expect(t.box.fallback.size).toBe(0);
+    expect(t.box.leIssued).toEqual(new Set(["web.example.com", "api.example.com"]));
+  });
+  it("when no new certificate comes, Coolify's goes back, the domain is failed, and it is tried again later", async () => {
+    const t = build({ apps: [web] });
+    t.box.leWorks = false;
+    const p = await swapOk(t);
+    const v1 = await t.svc.verify(ACTOR, p.id);
+    expect(v1.status).toBe("SWAPPED");
+    expect(v1.items[0].domains[0].cert).toBe("failed");
+    expect(t.box.fallback.has("web.example.com")).toBe(true); // the domain keeps a valid certificate
+    expect(t.box.sleeps).toBeGreaterThan(0);
+    t.box.leWorks = true;
+    const v2 = await t.svc.verify(ACTOR, p.id);
+    expect(v2.status).toBe("VERIFIED");
+  });
+  it("stops retrying a domain after the attempts are used and never marks it done", async () => {
+    const t = build({ apps: [web] });
+    t.box.leWorks = false;
+    const p = await swapOk(t);
+    for (let i = 0; i < 5; i++) await t.svc.verify(ACTOR, p.id);
+    const view = await t.svc.get(ACTOR, p.id);
+    expect(view.status).toBe("SWAPPED");
+    expect(view.items[0].domains[0].cert).toBe("failed");
+    const removes = t.box.events.filter((e) => e === "fallback:remove:web.example.com").length;
+    expect(removes).toBe(3);
+  });
+  it("handles a few domains per call", async () => {
+    const many = Array.from({ length: 7 }, (_, i) => ({ ...web, appId: `app${i}`, itemRef: `app:s1:u${i}`, host: `h${i}.example.com`, ctrId: H(String(i)), ctrName: `u${i}-20261125T101010`, image: `u${i}:1` }));
+    const t = build({ apps: many });
+    const p = await swapOk(t);
+    const v = await t.svc.verify(ACTOR, p.id);
+    const issued = v.items.flatMap((i) => i.domains).filter((d) => d.cert === "issued").length;
+    expect(issued).toBe(5);
+    expect(v.status).toBe("SWAPPED");
+    expect((await t.svc.verify(ACTOR, p.id)).status).toBe("VERIFIED");
+  });
+  it("is refused before the swap", async () => {
+    const t = build();
+    const p = await plan(t);
+    await expect(t.svc.verify(ACTOR, p.id)).rejects.toBeInstanceOf(ConflictException);
+  });
+});
+
+describe("give back", () => {
+  it("one step puts Coolify back as it was found: containers with their policy, the proxy with its policy, Tugra's copies stopped, fallback gone, bind restored", async () => {
+    const t = build();
+    const p = await swapOk(t);
+    const v = await t.svc.giveBack(ACTOR, p.id, { confirm: "olgu-box" });
+    expect(v.status).toBe("GIVEN_BACK");
+    expect(v.giveBackAvailable).toBe(false);
+    expect(v.finishedAt).not.toBeNull();
+    expect(t.box.coolifyProxy).toEqual({ running: true, restart: "unless-stopped" });
+    expect(t.box.ctrs.get(H("b"))).toMatchObject({ running: true, restart: "unless-stopped" });
+    expect(t.box.ctrs.get(H("a"))!.running).toBe(true);
+    expect(t.box.tugraRunning.size).toBe(0);
+    expect(t.box.tugraProxy.published).toBe(false);
+    expect(t.box.fallback.size).toBe(0);
+    expect(t.box.bind).toBe("public"); // what it was before
+    expect(v.items.flatMap((i) => i.domains).map((d) => [d.finalCheck, d.cert])).toEqual([["pending", "pending"], ["pending", "pending"]]);
+  });
+  it("Coolify's exclusive container starts again BEFORE the proxy goes back and Tugra's copy stops before it starts (never two on one data)", async () => {
+    const t = build();
+    const p = await swapOk(t);
+    t.box.events.length = 0;
+    await t.svc.giveBack(ACTOR, p.id, { confirm: "olgu-box" });
+    const at = (e: string) => t.box.events.indexOf(e);
+    expect(at("tugra-app:stop:appdb")).toBeLessThan(at("coolify-ctr:start:dbuuid-20261125T101010"));
+    expect(at("coolify-ctr:start:dbuuid-20261125T101010")).toBeLessThan(at("proxy:reverse"));
+  });
+  it("works from a takeover that was only tested: Coolify's proxy is never touched and Tugra's dark proxy is stopped", async () => {
+    const t = build();
+    const p = await plan(t);
+    await t.svc.test(ACTOR, p.id);
+    const v = await t.svc.giveBack(ACTOR, p.id, { confirm: "olgu-box" });
+    expect(v.status).toBe("GIVEN_BACK");
+    expect(t.box.events).not.toContain("coolify-proxy:stop");
+    expect(t.box.events).not.toContain("proxy:reverse");
+    expect(t.box.tugraProxy.state).toBe("exited");
+    expect(t.box.tugraRunning.size).toBe(0);
+    expect(t.box.coolifyProxy.running).toBe(true);
+  });
+  it("works from a takeover that was only planned: nothing on the box changes", async () => {
+    const t = build();
+    const p = await plan(t);
+    const v = await t.svc.giveBack(ACTOR, p.id, { confirm: "olgu-box" });
+    expect(v.status).toBe("GIVEN_BACK");
+    expect(t.box.events.filter((e) => !e.startsWith("probe"))).toEqual([]);
+  });
+  it("needs the typed server name and the owner, and cannot be repeated once given back", async () => {
+    const t = build();
+    const p = await swapOk(t);
+    await expect(t.svc.giveBack(ACTOR, p.id, { confirm: "nope" })).rejects.toBeInstanceOf(BadRequestException);
+    expect(t.box.coolifyProxy.running).toBe(false);
+    await t.svc.giveBack(ACTOR, p.id, { confirm: "olgu-box" });
+    await expect(t.svc.giveBack(ACTOR, p.id, { confirm: "olgu-box" })).rejects.toBeInstanceOf(ConflictException);
+  });
+  it("a step that fails ends FAILED and pressing it again finishes the job", async () => {
+    const t = build();
+    const p = await swapOk(t);
+    t.box.coolifyProxy.running = false;
+    const orig = t.box.exec.bind(t.box);
+    let fail = true;
+    t.box.exec = async (s: string, script: string) => {
+      if (fail && script.includes('docker start "$ID"')) {
+        const r = await orig(s, script);
+        return { exitCode: 0, output: r.output.replace("TUGRA_SWAP_SOURCE_RUNNING=true", "TUGRA_SWAP_SOURCE_RUNNING=false") };
+      }
+      return orig(s, script);
+    };
+    const v1 = await t.svc.giveBack(ACTOR, p.id, { confirm: "olgu-box" });
+    expect(v1.status).toBe("FAILED");
+    expect(v1.failureCode).toBe("give_back_failed");
+    fail = false;
+    const v2 = await t.svc.giveBack(ACTOR, p.id, { confirm: "olgu-box" });
+    expect(v2.status).toBe("GIVEN_BACK");
+    expect(t.box.ctrs.get(H("b"))!.running).toBe(true);
+    expect(t.box.coolifyProxy.running).toBe(true);
+  });
+  it("audits the give-back", async () => {
+    const t = build();
+    const p = await swapOk(t);
+    await t.svc.giveBack(ACTOR, p.id, { confirm: "olgu-box" });
+    expect(t.audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "coolify.takeover.give-back", meta: expect.objectContaining({ ok: true }) }));
+  });
+});
+
+describe("safety across the whole flow", () => {
+  it("no script ever removes, kills, prunes or deletes anything, and none asks for an environment or a key", async () => {
+    const t = build();
+    const p = await swapOk(t);
+    await t.svc.verify(ACTOR, p.id);
+    await t.svc.giveBack(ACTOR, p.id, { confirm: "olgu-box" });
+    expect(t.box.scripts.length).toBeGreaterThan(10);
+    for (const s of t.box.scripts) {
+      expect(s).not.toMatch(/docker\s+(rm|kill|prune|rmi|system)\b/);
+      expect(s).not.toMatch(/volume\s+(rm|prune)|image\s+(rm|prune)/);
+      expect(s).not.toMatch(/\.Config\.Env|printenv|docker\s+exec/);
+    }
+  });
+  it("the Coolify proxy is only ever addressed by the id recorded at plan time", async () => {
+    const t = build();
+    await swapOk(t);
+    const stops = t.box.scripts.filter((s) => s.includes('docker update --restart=no "$ID"'));
+    expect(stops).toHaveLength(1);
+    expect(stops[0]).toContain(`ID='${PROXY_ID}'`);
+  });
+  it("a non-member can read nothing about a takeover", async () => {
+    const t = build();
+    const p = await plan(t);
+    (t.access.teamRole as jest.Mock).mockResolvedValue(null);
+    await expect(t.svc.get(ACTOR, p.id)).rejects.toBeInstanceOf(NotFoundException);
+    await expect(t.svc.test(ACTOR, p.id)).rejects.toBeInstanceOf(NotFoundException);
+    await expect(t.svc.giveBack(ACTOR, p.id, { confirm: "olgu-box" })).rejects.toBeInstanceOf(NotFoundException);
+  });
+  it("a swap run cannot be tested again once the ports are Tugra's", async () => {
+    const t = build();
+    const p = await swapOk(t);
+    await expect(t.svc.test(ACTOR, p.id)).rejects.toBeInstanceOf(ConflictException);
+  });
+  it("the DTO refuses unknown fields and a bad item ref", () => {
+    expect(() => PlanSchema.parse({ serverId: "s", opId: "o", extra: 1 })).toThrow();
+    expect(() => PlanSchema.parse({ serverId: "s", opId: "o", rebuild: ["database:x:y"] })).toThrow();
+  });
+});
