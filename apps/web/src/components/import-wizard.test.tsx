@@ -697,6 +697,90 @@ describe("ImportWizard", () => {
       await screen.findByText("Import preview");
       expect(screen.queryByText("Match servers")).toBeNull();
     });
+
+    describe("the consent for secret values where the apply is", () => {
+      const noMatchPlan = (consent: boolean): ImportPlan => {
+        const p = agentPlan();
+        return { ...p, preflight: { ...p.preflight!, hosts: [], ...(consent ? { secretsConsent: { classes: ["env"] } } : {}) } } as ImportPlan;
+      };
+      const reachPreview = async () => {
+        wrap(<ImportWizard />);
+        await screen.findByLabelText("Coolify URL");
+        await waitFor(() => expect(qc.getQueryData(["teams"])).toBeTruthy());
+        fireEvent.click(screen.getByRole("button", { name: "Connect through the agent (recommended)" }));
+        fireEvent.change(await screen.findByLabelText("Tugra server where Coolify runs"), { target: { value: "srv1" } });
+        fireEvent.click(screen.getByRole("button", { name: "Read Coolify" }));
+        await screen.findByText("Found in Coolify");
+        fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+        await screen.findByText("Import preview");
+      };
+      beforeEach(() => {
+        vi.spyOn(api, "importConnectAgent").mockResolvedValue({ sessionId: "sess-a", expiresAt: "2026-01-01T00:00:00.000Z", read: READ } as never);
+        vi.spyOn(api, "getImportOperation").mockResolvedValue(settledOp);
+      });
+
+      it("without a standing consent the preview asks for it and keeps Apply off (nothing is sent)", async () => {
+        vi.spyOn(api, "importPlan").mockResolvedValue(noMatchPlan(false));
+        const apply = vi.spyOn(api, "importApply").mockResolvedValue({ opId: "op1" });
+        await reachPreview();
+        expect(screen.getByText(/Allow reading secret values below before you apply/)).toBeTruthy();
+        expect(screen.getByLabelText("Type the Coolify server name to allow it")).toBeTruthy();
+        expect((screen.getByRole("button", { name: "Import to Tugra" }) as HTMLButtonElement).disabled).toBe(true);
+        fireEvent.click(screen.getByRole("button", { name: "Import to Tugra" }));
+        expect(apply).not.toHaveBeenCalled();
+      });
+
+      it("allowing it in place reads the plan again, and then Apply works", async () => {
+        const planSpy = vi.spyOn(api, "importPlan").mockResolvedValueOnce(noMatchPlan(false));
+        vi.spyOn(api, "coolifySecretsGrant").mockResolvedValue({ id: "g1", serverId: "srv1", kind: "secrets", status: "active", classes: ["env"], expiresAt: "2026-12-01T00:00:00.000Z" } as never);
+        const apply = vi.spyOn(api, "importApply").mockResolvedValue({ opId: "op1" });
+        await reachPreview();
+        planSpy.mockResolvedValue(noMatchPlan(true));
+        fireEvent.change(screen.getByLabelText("Type the Coolify server name to allow it"), { target: { value: "Server A" } });
+        fireEvent.click(screen.getByRole("button", { name: "Allow" }));
+        await waitFor(() => expect(planSpy).toHaveBeenCalledTimes(2));
+        await waitFor(() => expect(screen.queryByText(/Allow reading secret values below before you apply/)).toBeNull());
+        await waitFor(() => expect((screen.getByRole("button", { name: "Import to Tugra" }) as HTMLButtonElement).disabled).toBe(false));
+        fireEvent.click(screen.getByRole("button", { name: "Import to Tugra" }));
+        await waitFor(() => expect(apply).toHaveBeenCalledTimes(1));
+      });
+
+      it("a 403 consent_required from the hub reads the plan again and brings the consent card back (no dead end, no new session)", async () => {
+        const connect = vi.spyOn(api, "importConnectAgent");
+        const planSpy = vi.spyOn(api, "importPlan").mockResolvedValueOnce(noMatchPlan(true));
+        vi.spyOn(api, "importApply").mockRejectedValue(new ApiError(403, "allow reading secret values for this import first", "consent_required"));
+        await reachPreview();
+        expect(screen.queryByText(/Allow reading secret values below before you apply/)).toBeNull();
+        planSpy.mockResolvedValue(noMatchPlan(false)); // the consent has run out since the plan was read
+        fireEvent.click(screen.getByRole("button", { name: "Import to Tugra" }));
+        await screen.findByText(/Allow reading secret values below before you apply/);
+        expect(planSpy).toHaveBeenCalledTimes(2);
+        expect(connect).toHaveBeenCalledTimes(1); // the same session: no Start over
+        expect((screen.getByRole("button", { name: "Import to Tugra" }) as HTMLButtonElement).disabled).toBe(true);
+      });
+
+      it("another refusal is not read as a missing consent: the plan is not read again", async () => {
+        const planSpy = vi.spyOn(api, "importPlan").mockResolvedValue(noMatchPlan(true));
+        vi.spyOn(api, "importApply").mockRejectedValue(new ApiError(403, "forbidden", "not_enabled"));
+        await reachPreview();
+        fireEvent.click(screen.getByRole("button", { name: "Import to Tugra" }));
+        await waitFor(() => expect((screen.getByRole("button", { name: "Import to Tugra" }) as HTMLButtonElement).disabled).toBe(false));
+        expect(planSpy).toHaveBeenCalledTimes(1);
+      });
+
+      it("a token session never asks for it", async () => {
+        vi.spyOn(api, "importConnect").mockResolvedValue({ sessionId: "s1", expiresAt: "2026-01-01T00:00:00.000Z" });
+        vi.spyOn(api, "importPlan").mockResolvedValue(plan);
+        wrap(<ImportWizard />);
+        await screen.findByLabelText("Coolify URL");
+        await waitFor(() => expect(qc.getQueryData(["teams"])).toBeTruthy());
+        fireEvent.change(screen.getByLabelText("Coolify URL"), { target: { value: "https://c.example.com" } });
+        fireEvent.change(screen.getByLabelText("API token"), { target: { value: "tok" } });
+        fireEvent.click(screen.getByRole("button", { name: "Connect & preview" }));
+        await screen.findByRole("option", { name: "Server A" });
+        expect(screen.queryByText(/Allow reading secret values below before you apply/)).toBeNull();
+      });
+    });
   });
 
   it("start over keeps the chosen source", async () => {

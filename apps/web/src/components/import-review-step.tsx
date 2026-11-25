@@ -30,6 +30,7 @@ import {
   setAck,
   setItemField,
 } from "../lib/import-mapping";
+import { isConsentRequired } from "../lib/coolify-agent";
 import type { ImportApplyExtras, ImportMappingDoc, ImportPlan, ImportRemoteKind, ImportResolved, Team } from "../lib/types";
 
 const label: React.CSSProperties = { display: "block", fontSize: 12, color: "var(--c-tx3)", margin: "0 0 4px" };
@@ -56,6 +57,7 @@ export function ImportReviewStep({
   importScope,
   onApplied,
   onBack,
+  onConsentRequired,
 }: {
   plan: ImportPlan;
   kind: ImportRemoteKind;
@@ -69,6 +71,8 @@ export function ImportReviewStep({
   importScope?: ImportScope | null;
   onApplied: (opId: string) => void;
   onBack: () => void;
+  /** The hub refused the apply for want of the consent for secret values: the plan step can ask for it again. */
+  onConsentRequired?: () => void;
 }) {
   const t = useT();
   const toast = useToast();
@@ -165,6 +169,12 @@ export function ImportReviewStep({
       onApplied(r.opId);
     },
     onError: (e) => {
+      if (isConsentRequired(e)) {
+        // The consent for secret values no longer stands: back to the plan, where it can be allowed again.
+        toast(t("coolifySecrets.error.consent_required"), "error");
+        onConsentRequired?.();
+        return;
+      }
       toast(errText(e, t), "error");
       if ((e as { code?: string }).code === "import.mapping_changed") setNonce((n) => n + 1); // re-resolve against the new state
     },

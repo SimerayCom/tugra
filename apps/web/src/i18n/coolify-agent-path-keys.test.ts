@@ -6,7 +6,7 @@ import en from "./locales/en";
 import { translate } from "./translate";
 
 const SRC = path.resolve(__dirname, "..");
-const FILES = ["components/import/agent-connect.tsx", "components/import/agent-consent.tsx", "components/import/agent-match-step.tsx", "components/import-wizard.tsx"];
+const FILES = ["components/import/agent-connect.tsx", "components/import/agent-consent.tsx", "components/import/agent-match-step.tsx", "components/import-wizard.tsx", "components/import/agent-consent-gate.tsx", "components/import-review-step.tsx"];
 const NAMESPACES = ["coolifyAgent", "coolifySecrets", "hostMatch"];
 const text = (key: string): unknown => translate(en as Record<string, unknown>, key);
 
@@ -31,7 +31,7 @@ describe("the agent path of the import wizard: i18n", () => {
     expect(missing("coolifyAgent.counts", ["teams", "projects", "servers", "applications", "databases", "services"])).toEqual([]);
     // every code the hub answers with on these screens
     expect(missing("coolifyAgent.error", ["not_enabled", "no_coolify", "no_docker", "db_stopped", "not_read_only", "unreadable", "agent_offline", "agent_unavailable", "agent_read_failed", "forbidden", "generic"])).toEqual([]);
-    expect(missing("coolifySecrets.error", ["agent_offline", "agent_too_old", "grant_active", "forbidden", "name_mismatch", "expired", "generic"])).toEqual([]);
+    expect(missing("coolifySecrets.error", ["agent_offline", "agent_too_old", "grant_active", "forbidden", "name_mismatch", "expired", "consent_required", "generic"])).toEqual([]);
     expect(missing("hostMatch.error", ["identity_conflict", "local_row", "forbidden", "expired", "generic"])).toEqual([]);
   });
 

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { canAnswer, candidateServers, classCount, consentReady, defaultClasses, evidenceLines, matchRows, needsMatchStep, standingConsent, unsureCount } from "./coolify-agent";
+import { isConsentRequired, needsConsent, canAnswer, candidateServers, classCount, consentReady, defaultClasses, evidenceLines, matchRows, needsMatchStep, standingConsent, unsureCount } from "./coolify-agent";
 import { agentReadyServers } from "./coolify-agent-connect";
 import type { ImportPlan } from "./types";
 
@@ -31,6 +31,22 @@ describe("consent", () => {
     expect(standingConsent(plan([], { agentRead: READ }))).toBeNull();
     expect(standingConsent(plan([], { secretsConsent: { classes: [] } }))).toBeNull();
     expect(standingConsent(null)).toBeNull();
+  });
+
+  it("an agent session needs the consent to stand before an apply; a token session and a standing consent do not", () => {
+    expect(needsConsent(plan([], { agentRead: READ }))).toBe(true);
+    expect(needsConsent(plan([], { agentRead: READ, secretsConsent: { classes: [] } }))).toBe(true);
+    expect(needsConsent(plan([], { agentRead: READ, secretsConsent: { classes: ["env"] } }))).toBe(false);
+    expect(needsConsent(plan([]))).toBe(false);
+    expect(needsConsent(null)).toBe(false);
+  });
+
+  it("knows the hub's 403 consent_required, and only that", () => {
+    expect(isConsentRequired({ status: 403, code: "consent_required" })).toBe(true);
+    expect(isConsentRequired({ status: 403, code: "not_enabled" })).toBe(false);
+    expect(isConsentRequired({ status: 400, code: "consent_required" })).toBe(false);
+    expect(isConsentRequired(new Error("x"))).toBe(false);
+    expect(isConsentRequired(null)).toBe(false);
   });
 });
 

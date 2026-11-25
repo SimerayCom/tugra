@@ -30,6 +30,17 @@ export function standingConsent(plan: Pick<ImportPlan, "preflight"> | null | und
   return known.length ? known : null;
 }
 
+/** An agent-read session: the one apply of it needs the owner's consent for secret values standing at that moment. */
+export function needsConsent(plan: Pick<ImportPlan, "preflight"> | null | undefined): boolean {
+  return !!plan?.preflight?.agentRead && standingConsent(plan) === null;
+}
+
+/** The hub refused an apply because the consent for secret values does not stand (never given, lapsed, or ended with an earlier apply). */
+export function isConsentRequired(e: unknown): boolean {
+  const x = e as { status?: unknown; code?: unknown } | null;
+  return !!x && x.status === 403 && x.code === "consent_required";
+}
+
 export type MatchKind = "certain" | "probable" | "weak" | "none";
 
 export interface EvidenceLine {

@@ -27,7 +27,8 @@ import { ImportServicesPanel } from "./import-services-panel";
 import { ConnectionStatus, useConnectionTest } from "./import/connection-test";
 import { AgentConnectPanel } from "./import/agent-connect";
 import { AgentMatchStep } from "./import/agent-match-step";
-import { needsMatchStep } from "../lib/coolify-agent";
+import { isConsentRequired, needsConsent, needsMatchStep } from "../lib/coolify-agent";
+import { AgentConsentGate } from "./import/agent-consent-gate";
 import { MoreInfo } from "./help-link";
 import { guideUrl } from "../lib/help-links";
 import { ImportChecklist } from "./import-checklist";
@@ -350,6 +351,11 @@ export function ImportWizard() {
         }}
         onApplied={setOpId}
         onReset={reset}
+        agentHost={(() => {
+          const h = servers.find((x) => x.id === plan.preflight?.agentRead?.agentServerId);
+          return h ? { id: h.id, name: h.name, teamId: h.teamId } : null;
+        })()}
+        onRecheck={recheck}
       />
     );
   }
@@ -521,6 +527,8 @@ function PlanView({
   onDbModes,
   onApplied,
   onReset,
+  agentHost,
+  onRecheck,
 }: {
   /** The plan as shown here: only what the first step left in scope. */
   plan: ImportPlan;
@@ -538,10 +546,16 @@ function PlanView({
   onDbModes: (next: Record<string, "volume">) => void;
   onApplied: (opId: string) => void;
   onReset: () => void;
+  /** Agent session: the Tugra server that reads Coolify, to ask for the consent again where the apply is. */
+  agentHost: { id: string; name: string; teamId: string } | null;
+  /** Read the plan again (what consent stands is part of it). */
+  onRecheck: () => void;
 }) {
   const t = useT();
   const toast = useToast();
   const s = planSummary(plan);
+  // An agent session cannot be applied without the owner's consent for secret values standing now: the controls stay off until it does.
+  const consentMissing = needsConsent(fullPlan);
   const groups = itemsByKind(plan);
   const [targetServerId, setTargetServerId] = useState("");
   const [reviewing, setReviewing] = useState(false);
@@ -578,11 +592,34 @@ function PlanView({
   const apply = useMutation({
     mutationFn: () => api.importApply({ sourceKind: kind, sessionId, targetServerId: target, planHash: plan.planHash, ...applyExtras }),
     onSuccess: (r) => onApplied(r.opId),
-    onError: (e) => toast((e as Error).message, "error"),
+    onError: (e) => {
+      if (isConsentRequired(e)) {
+        toast(t("coolifySecrets.error.consent_required"), "error");
+        onRecheck(); // the plan no longer shows a consent: the card to allow it again appears below
+        return;
+      }
+      toast((e as Error).message, "error");
+    },
   });
 
   if (reviewing && mappingSupported) {
-    return <ImportReviewStep plan={fullPlan} importScope={scope} kind={kind} sessionId={sessionId} servers={writableServers} teams={teams} applyExtras={applyExtras} onApplied={onApplied} onBack={() => setReviewing(false)} />;
+    return (
+      <ImportReviewStep
+        plan={fullPlan}
+        importScope={scope}
+        kind={kind}
+        sessionId={sessionId}
+        servers={writableServers}
+        teams={teams}
+        applyExtras={applyExtras}
+        onApplied={onApplied}
+        onBack={() => setReviewing(false)}
+        onConsentRequired={() => {
+          setReviewing(false);
+          onRecheck();
+        }}
+      />
+    );
   }
 
   return (
@@ -679,11 +716,17 @@ function PlanView({
 
         <DbDataModes plan={plan} modes={dbModes} busy={replanning} onChange={onDbModes} />
 
+        {consentMissing && (
+          <div style={{ marginTop: 14 }}>
+            <AgentConsentGate plan={fullPlan} sessionId={sessionId} host={agentHost} onChanged={onRecheck} />
+          </div>
+        )}
+
         <div style={{ borderTop: "1px solid var(--c-bd)", margin: "16px 0 14px" }} />
         {mappingSupported ? (
           <>
             {missingTargets > 0 && <p role="alert" style={{ fontSize: 12, color: "var(--c-am)", margin: "0 0 8px" }}>{t("import.services.needsTarget")}</p>}
-            <Btn onClick={() => setReviewing(true)} disabled={replanning || runnable === 0 || unackedCount > 0 || missingTargets > 0}>{t("import.review.continue")}</Btn>
+            <Btn onClick={() => setReviewing(true)} disabled={replanning || consentMissing || runnable === 0 || unackedCount > 0 || missingTargets > 0}>{t("import.review.continue")}</Btn>
           </>
         ) : (
         <>
@@ -699,12 +742,12 @@ function PlanView({
         )}
         <p style={{ fontSize: 11, color: "var(--c-tx3)", margin: "-4px 0 12px" }}>{t("import.targetHint")}</p>
         {missingTargets > 0 && <p role="alert" style={{ fontSize: 12, color: "var(--c-am)", margin: "0 0 8px" }}>{t("import.services.needsTarget")}</p>}
-        <Btn onClick={() => apply.mutate()} disabled={apply.isPending || replanning || !target || runnable === 0 || unackedCount > 0 || missingTargets > 0}>
+        <Btn onClick={() => apply.mutate()} disabled={apply.isPending || replanning || consentMissing || !target || runnable === 0 || unackedCount > 0 || missingTargets > 0}>
           {apply.isPending ? t("import.applying") : t("import.apply")}
         </Btn>
         </>
         )}
-        <GuidedRunLauncher plan={plan} kind={kind} sessionId={sessionId} servers={writableServers} extras={applyExtras} scope={scope} onChangeScope={onChangeScope} disabled={replanning || runnable === 0 || unackedCount > 0 || missingTargets > 0} />
+        <GuidedRunLauncher plan={plan} kind={kind} sessionId={sessionId} servers={writableServers} extras={applyExtras} scope={scope} onChangeScope={onChangeScope} disabled={replanning || consentMissing || runnable === 0 || unackedCount > 0 || missingTargets > 0} />
       </SectionCard>
 
       <EnvBlockers plan={plan} acked={acked} onChange={setAcked} />

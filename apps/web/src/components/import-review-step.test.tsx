@@ -250,6 +250,20 @@ describe("ImportReviewStep", () => {
     await waitFor(() => expect(toasts.some((m) => m.startsWith("A saved mapping exists for this source"))).toBe(true));
   });
 
+  it("a 403 consent_required says so in one fixed line and hands the owner back to the plan step (no raw message, no dead end)", async () => {
+    const { ApiError } = await import("../lib/api");
+    vi.spyOn(api, "importApply").mockRejectedValue(new ApiError(403, "raw english consent", "consent_required"));
+    const onConsentRequired = vi.fn();
+    wrap(<ImportReviewStep plan={plan()} kind="coolify" sessionId="s1" servers={servers} teams={teams} onApplied={() => undefined} onBack={() => undefined} onConsentRequired={onConsentRequired} />);
+    const apply = await screen.findByRole("button", { name: /^Apply 2 apps/ });
+    await waitFor(() => expect((apply as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(apply);
+    fireEvent.click(await screen.findByRole("button", { name: "Confirm" }));
+    await waitFor(() => expect(onConsentRequired).toHaveBeenCalledTimes(1));
+    expect(toasts.some((m) => m.startsWith("Secret values are not allowed for this import"))).toBe(true);
+    expect(toasts.some((m) => m.includes("raw english consent"))).toBe(false);
+  });
+
   it("advisory validation: aria-invalid + aria-describedby with an icon and text; Esc reverts the draft; Enter commits", async () => {
     mount();
     await screen.findByRole("button", { name: /^Apply 2 apps/ });
