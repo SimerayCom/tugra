@@ -63,6 +63,7 @@ type PM2Fact struct {
 	InterpreterArgs []string          `json:"interpreterArgs"`
 	UID             *int              `json:"uid,omitempty"` // an explicit uid/gid of the process (dump "uid"/"gid"), when it has one
 	GID             *int              `json:"gid,omitempty"`
+	Groups          []int             `json:"groups,omitempty"` // supplementary group ids of the account it runs as (host /etc/group; never 0, never the primary group)
 	Port            int               `json:"port,omitempty"`
 	EnvCount        int               `json:"envCount"`
 	EnvSkipped      int               `json:"envSkipped"` // entries left out (nested objects, arrays, PM2 internals, host-shell noise)
@@ -294,6 +295,58 @@ func idOf(fs rootFS, raw json.RawMessage, file string) *int {
 	return nil
 }
 
+const maxGroups = 16
+
+// supplementaryGroups lists the groups (other than gid 0 and the primary one) that the host's /etc/group names the
+// account of `uid` a member of. A container started with -u uid:gid has none of them unless they are added back.
+func supplementaryGroups(fs rootFS, uid, primary int) []int {
+	pb, err := fs.readFile("/etc/passwd")
+	if err != nil {
+		return nil
+	}
+	user := ""
+	for _, line := range strings.Split(string(pb), "\n") {
+		f := strings.Split(line, ":")
+		if len(f) > 2 && f[0] != "" {
+			if n, err := strconv.Atoi(f[2]); err == nil && n == uid {
+				user = f[0]
+				break
+			}
+		}
+	}
+	if user == "" || uid == 0 {
+		return nil
+	}
+	gb, err := fs.readFile("/etc/group")
+	if err != nil {
+		return nil
+	}
+	var out []int
+	seen := map[int]bool{}
+	for _, line := range strings.Split(string(gb), "\n") {
+		f := strings.Split(line, ":")
+		if len(f) < 4 {
+			continue
+		}
+		gid, err := strconv.Atoi(f[2])
+		if err != nil || gid <= 0 || gid >= 1<<31 || gid == primary || seen[gid] {
+			continue
+		}
+		for _, m := range strings.Split(f[3], ",") {
+			if strings.TrimSpace(m) == user {
+				seen[gid] = true
+				out = append(out, gid)
+				break
+			}
+		}
+	}
+	sort.Ints(out)
+	if len(out) > maxGroups {
+		out = out[:maxGroups]
+	}
+	return out
+}
+
 func firstLine(b []byte, max int) string {
 	s := string(b)
 	if i := strings.IndexAny(s, "\r\n"); i >= 0 {
@@ -378,6 +431,16 @@ func CollectPM2Facts(o PM2Options) PM2Facts {
 		}
 		if len(procs) > maxPM2PerUser {
 			procs = procs[:maxPM2PerUser]
+		}
+		for i := range procs {
+			uid, gid := u.UID, u.GID
+			if procs[i].UID != nil {
+				uid = *procs[i].UID
+			}
+			if procs[i].GID != nil {
+				gid = *procs[i].GID
+			}
+			procs[i].Groups = supplementaryGroups(fs, uid, gid)
 		}
 		u.Procs = procs
 		if u.Daemon || len(u.Procs) > 0 {

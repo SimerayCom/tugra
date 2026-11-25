@@ -28,9 +28,15 @@ export const MOVE_ERR_PREFIX = "TUGRA_PM2MOVE_ERR: ";
 
 export const HEALTH_TIMEOUT_SEC_DEFAULT = 60;
 const HOST_DEADLINE = { deadlineSec: 90, killSec: 10 };
-/** The longest a whole move script may run: pull 300 + stop/port wait ~40 + start ~60 + health + delete/rollback ~150. */
-export const MOVE_SCRIPT_TIMEOUT_MS = 12 * 60_000;
-export const RECOVER_SCRIPT_TIMEOUT_MS = 4 * 60_000;
+/**
+ * The longest a whole move script may run: pull 300 + stop/port wait ~40 + start ~60 + health (up to 300) + delete/rollback ~150,
+ * plus host-op retries; 20 minutes leaves room. The agent kills the script's process group at this limit, and the recovery
+ * additionally waits on the per-app lock (below), so it can never overlap a move that is still alive.
+ */
+export const MOVE_SCRIPT_TIMEOUT_MS = 20 * 60_000;
+/** Lock wait (<= 150 s) + the recovery's own host ops. */
+export const RECOVER_SCRIPT_TIMEOUT_MS = 6 * 60_000;
+const LOCK_WAIT_SEC = 150;
 
 export interface Pm2ScriptInput {
   appId: string;
@@ -147,6 +153,22 @@ function common(i: Pm2ScriptInput): string[] {
   ];
 }
 
+/**
+ * One move (or recovery) per app at a time, by an flock on a per-app file. Every child of the move script inherits the
+ * descriptor, so the lock is held until the whole process group is gone (a killed or timed-out script included). The move
+ * refuses to start while another holds it; the recovery waits for it (bounded), and when the lock never frees it says nothing
+ * final (the outcome stays "unknown", nothing is touched). Without `flock` or a writable lock file the guard is skipped.
+ */
+function lockFragment(kind: "move" | "recover", appId: string): string[] {
+  return [
+    `LOCKDIR="\${TUGRA_PM2MOVE_LOCKDIR:-/etc/tugra}"; LOCKF="$LOCKDIR/pm2move-${appId}.lock"`,
+    'HAVE_LOCK=0; if command -v flock >/dev/null 2>&1 && mkdir -p "$LOCKDIR" 2>/dev/null && [ -w "$LOCKDIR" ] && exec 9>"$LOCKF"; then HAVE_LOCK=1; fi',
+    ...(kind === "move"
+      ? ['if [ $HAVE_LOCK -eq 1 ] && ! flock -n 9; then M "result=aborted reason=busy"; exit 0; fi']
+      : [`if [ $HAVE_LOCK -eq 1 ] && ! flock -w ${LOCK_WAIT_SEC} 9; then M "step=busy"; exit 0; fi`]),
+  ];
+}
+
 /** Wait (bounded) for the process to be reachable again after a restart; never fails the rollback itself. */
 function waitBack(i: Pm2ScriptInput): string[] {
   if (i.healthPort === null) return [];
@@ -190,6 +212,7 @@ export function buildPm2MoveScript(i: Pm2ScriptInput): string {
     // The Tugra deploy script (env file, docker rm -f, docker run ...) as a function; its own `set -e` stays inside the subshell.
     `run_container() (\n${i.runScript}\n)`,
     ...rollbackFn(i),
+    ...lockFragment("move", i.appId),
     // ── precheck ──
     'M "step=precheck"',
     "o=$(hxrun pid)",
@@ -265,6 +288,7 @@ export function buildPm2RecoverScript(i: Omit<Pm2ScriptInput, "runScript">): str
     ...common(i),
     HOST_REASON,
     ...rollbackFn(i),
+    ...lockFragment("recover", i.appId),
     'M "step=recover"',
     "o=$(hxrun pid)",
     'if ! printf %s "$o" | grep -q "TUGRA_PM2_EXISTS="; then M "result=rollback_failed reason=$(hostreason "$o")"; exit 0; fi',

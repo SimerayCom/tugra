@@ -28,9 +28,8 @@ export type Pm2Reason =
   | "no-cwd"
   | "cwd-missing"
   | "cwd-unsafe"
-  | "args-unsafe"
-  | "no-user";
-export type Pm2Warning = "root" | "node-eol" | "no-port" | "owner-differs" | "cluster-single";
+  | "args-unsafe";
+export type Pm2Warning = "root" | "node-eol" | "no-port" | "owner-differs" | "cluster-single" | "node-guessed" | "shared-env";
 export type NodeSource = "interpreter" | "nvmrc" | "engines" | "override" | "none";
 export type Pm2PlanStatus = "ready" | "needs-node" | "unsupported";
 
@@ -64,11 +63,18 @@ export interface Pm2Plan {
   mountDir: string | null;
   uid: number | null;
   gid: number | null;
+  /** Supplementary group ids of the account (never 0); added to the container so group-readable files stay readable. */
+  groups: number[];
   port: number | null;
   portSource: "env" | "site" | "none";
   probePath: string | null;
   domains: string[];
   envCount: number;
+  /**
+   * How many team shared variables Tugra injects into EVERY app of the team (lowest precedence: a key the process itself
+   * sets wins). They are not in PM2's environment, so the container may see up to this many variables PM2 never had.
+   */
+  sharedEnvCount: number;
   planHash: string;
 }
 
@@ -84,6 +90,7 @@ export interface Pm2Exec {
   mountDir: string;
   uid: number;
   gid: number;
+  groups: number[];
   healthPort: number | null;
   probePath: string | null;
   dockerOptions: string;
@@ -223,6 +230,12 @@ export function mountDirProblem(dir: string, home: string): "cwd-unsafe" | null 
 }
 
 const CONTROL = /[\u0000-\u001f\u007f]/;
+const MAX_GROUPS = 16;
+
+/** The docker options of the container (host network, the process's own account and groups, its folder at the same path). */
+export function buildDockerOptions(o: { uid: number; gid: number; groups: number[]; workDir: string; mountDir: string }): string {
+  return ["--network host", `-u ${o.uid}:${o.gid}`, ...o.groups.map((g) => `--group-add ${g}`), `-w ${o.workDir}`, `-v ${o.mountDir}:${o.mountDir}`].join(" ");
+}
 
 // ── the plan ────────────────────────────────────────────────────────────────────────────────────────────────────────
 
@@ -243,7 +256,7 @@ function portFromSites(sites: ScanSiteLite[], user: string, cwd: string): { port
 export function planProcess(
   user: Pm2FactsUser,
   f: Pm2Fact,
-  ctx: { sites: ScanSiteLite[]; override?: Pm2Overrides },
+  ctx: { sites: ScanSiteLite[]; override?: Pm2Overrides; sharedEnvCount?: number },
 ): PlannedProcess {
   const reasons: Pm2Reason[] = [];
   const warnings: Pm2Warning[] = [];
@@ -287,6 +300,12 @@ export function planProcess(
   if (uid === 0 || gid === 0) warnings.push("root");
   if (f.cwdExists && f.cwdUid !== uid) warnings.push("owner-differs");
   if (nv.major !== null && nv.major <= NODE_EOL_MAJOR_MAX) warnings.push("node-eol");
+  // A major read from .nvmrc / engines is a pin or a range, not what PM2 actually ran: the owner confirms it (a choice in the
+  // preview turns it into an override) before the move is offered.
+  const guessed = nv.source === "nvmrc" || nv.source === "engines";
+  if (guessed) warnings.push("node-guessed");
+  const sharedEnvCount = Math.max(0, Math.trunc(ctx.sharedEnvCount ?? 0));
+  if (sharedEnvCount > 0) warnings.push("shared-env");
   if (f.mode === "cluster") warnings.push("cluster-single");
 
   // Port: the saved PORT wins, else the one CloudPanel proxies this directory's site to.
@@ -310,8 +329,9 @@ export function planProcess(
   }
   const image = nv.major !== null ? `node:${nv.major}` : null;
 
-  const status: Pm2PlanStatus = !ready ? "unsupported" : nv.major === null ? "needs-node" : "ready";
-  const dockerOptions = ready && cwd ? `--network host -u ${uid}:${gid} -w ${cwd} -v ${cwd}:${cwd}` : "";
+  const status: Pm2PlanStatus = !ready ? "unsupported" : nv.major === null || guessed ? "needs-node" : "ready";
+  const groups = uid === 0 ? [] : [...new Set(f.groups)].filter((g) => g > 0 && g !== gid).sort((a, b) => a - b).slice(0, MAX_GROUPS);
+  const dockerOptions = ready && cwd ? buildDockerOptions({ uid, gid, groups, workDir: cwd, mountDir: cwd }) : "";
 
   const plan: Pm2Plan = {
     key,
@@ -329,17 +349,19 @@ export function planProcess(
     mountDir: ready ? cwd : null,
     uid: ready ? uid : null,
     gid: ready ? gid : null,
+    groups: ready ? groups : [],
     port,
     portSource,
     probePath,
     domains,
     envCount: f.envCount,
+    sharedEnvCount,
     planHash: "",
   };
   plan.planHash = hashPlan(plan, f.envDigest);
 
   const exec: Pm2Exec | null =
-    ready && nv.major !== null && image && cwd
+    status === "ready" && nv.major !== null && image && cwd
       ? {
           user: user.user,
           home: user.home,
@@ -351,6 +373,7 @@ export function planProcess(
           mountDir: cwd,
           uid,
           gid,
+          groups,
           healthPort: port,
           probePath,
           dockerOptions,
@@ -363,13 +386,13 @@ export function planProcess(
 
 /** A fingerprint of the plan AND the environment it was made with: a move refuses to run when either changed since the preview. */
 export function hashPlan(p: Omit<Pm2Plan, "planHash"> | Pm2Plan, envDigest: string): string {
-  const body = JSON.stringify([p.key, p.status, p.image, p.command, p.workDir, p.mountDir, p.uid, p.gid, p.port, p.probePath, envDigest]);
+  const body = JSON.stringify([p.key, p.status, p.image, p.command, p.workDir, p.mountDir, p.uid, p.gid, p.groups, p.port, p.probePath, envDigest]);
   return createHash("sha256").update(body).digest("hex");
 }
 
 /** Every process of every PM2 home, planned. Overrides are keyed `user/name`. */
-export function planAll(users: Pm2FactsUser[], sites: ScanSiteLite[], overrides: Record<string, Pm2Overrides> = {}): PlannedProcess[] {
+export function planAll(users: Pm2FactsUser[], sites: ScanSiteLite[], overrides: Record<string, Pm2Overrides> = {}, sharedEnvCount = 0): PlannedProcess[] {
   const out: PlannedProcess[] = [];
-  for (const u of users) for (const f of u.procs) out.push(planProcess(u, f, { sites, override: overrides[`${u.user}/${f.name}`] }));
+  for (const u of users) for (const f of u.procs) out.push(planProcess(u, f, { sites, override: overrides[`${u.user}/${f.name}`], sharedEnvCount }));
   return out;
 }

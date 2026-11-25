@@ -31,6 +31,7 @@ function fact(over: Partial<Pm2Fact> = {}): Pm2Fact {
     scriptExists: true,
     cwdUid: 1001,
     cwdGid: 1001,
+    groups: [],
     ...over,
   };
 }
@@ -104,6 +105,38 @@ describe("planProcess: a supported process", () => {
     expect(() => assertSafeDockerOptions(o)).toThrow(); // --network host and the host bind need the owner's grant
     expect(tokenizeDockerOptions(o)).toEqual(["--network", "host", "-u", "1001:1001", "-w", CWD, "-v", `${CWD}:${CWD}`]);
   });
+  it("the account's supplementary groups are added back (never gid 0, the primary group, or duplicates); root gets none", () => {
+    const { plan: p, exec } = plan({ groups: [33, 0, 1001, 50, 33] });
+    expect(p.groups).toEqual([33, 50]);
+    expect(exec?.groups).toEqual([33, 50]);
+    const o = exec!.dockerOptions;
+    expect(() => assertSafeDockerOptions(o, { allowPrivileged: true })).not.toThrow();
+    expect(tokenizeDockerOptions(o)).toEqual(["--network", "host", "-u", "1001:1001", "--group-add", "33", "--group-add", "50", "-w", CWD, "-v", `${CWD}:${CWD}`]);
+    expect(plan({ groups: [33] }).plan.planHash).not.toBe(plan({ groups: [] }).plan.planHash);
+    const root: Pm2FactsUser = { user: "root", home: "/root", uid: 0, gid: 0, daemon: true, procs: [] };
+    expect(planProcess(root, fact({ cwd: "/root/app", script: "/root/app/a.js", cwdUid: 0, groups: [33] }), { sites: [] }).plan.groups).toEqual([]);
+  });
+  it("a node major taken from .nvmrc or engines is a guess: needs the owner's choice (an override makes it ready)", () => {
+    for (const over of [{ interpreter: "node", nvmrc: "v18" }, { interpreter: "node", enginesNode: ">=14" }]) {
+      const g = plan(over);
+      expect(g.plan.status).toBe("needs-node");
+      expect(g.plan.warnings).toContain("node-guessed");
+      expect(g.plan.nodeMajor).not.toBeNull(); // the suggestion stays visible
+      expect(g.exec).toBeNull();
+      const ok = plan(over, { override: { nodeMajor: g.plan.nodeMajor as number } });
+      expect(ok.plan.status).toBe("ready");
+      expect(ok.plan.warnings).not.toContain("node-guessed");
+      expect(ok.exec).not.toBeNull();
+    }
+    expect(plan().plan.warnings).not.toContain("node-guessed"); // the interpreter path is what actually ran
+  });
+  it("team shared variables are named in the plan (count only) and do not change the hash", () => {
+    const a = planProcess(USER, fact(), { sites: [], sharedEnvCount: 3 }).plan;
+    expect(a.sharedEnvCount).toBe(3);
+    expect(a.warnings).toContain("shared-env");
+    expect(a.planHash).toBe(plan().plan.planHash);
+    expect(plan().plan.warnings).not.toContain("shared-env");
+  });
   it("the plan view never carries an environment value, only the count", () => {
     const json = JSON.stringify(plan({ envCount: 4 }).plan);
     expect(json).toContain('"envCount":4');
@@ -115,7 +148,7 @@ describe("planProcess: a supported process", () => {
     expect(p.envCount).toBe(0);
   });
   it("npm / yarn start run through the tool, the script path is the tool, not a file in the directory", () => {
-    const p = plan({ script: "/usr/bin/npm", interpreter: "none", args: ["start"], nvmrc: "v20", scriptExists: true }).plan;
+    const p = plan({ script: "/usr/bin/npm", interpreter: "none", args: ["start"], scriptExists: true }, { override: { nodeMajor: 20 } }).plan;
     expect(p.status).toBe("ready");
     expect(p.command).toEqual(["npm", "start"]);
     expect(plan({ script: "/home/acme/.nvm/versions/node/v20.1.0/bin/yarn", interpreter: "none", args: ["start"], nvmrc: "20" }).plan.command).toEqual(["yarn", "start"]);

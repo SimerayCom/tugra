@@ -14,6 +14,9 @@ export const PM2_END = "TUGRA_PM2_END";
 export const PM2_UNAVAILABLE = "TUGRA_PM2_UNAVAILABLE";
 export const PM2_FAILED = "TUGRA_PM2_FAILED";
 export const PM2_OUTDATED = "TUGRA_PM2_OUTDATED";
+export const PM2_TOOLARGE = "TUGRA_PM2_TOOLARGE";
+/** The most stdout the hub keeps from the helper. The agent stays below it on its own (it drops processes, or refuses an oversized environment), so a cut document is never passed on. */
+export const PM2_MAX_OUT = 48000;
 export const PM2_PROBE_REPLY = "tugra-pm2-v1";
 
 /** A PM2 account directory name (the user part of /home/<user>/.pm2) as the facts subcommand reports it. */
@@ -26,7 +29,7 @@ export function isSafePm2Name(name: string): boolean {
   return PM2_NAME_RE.test(name) && !/^\d+$/.test(name) && !PM2_RESERVED_NAMES.has(name.toLowerCase()) && name === name.trim() && !name.includes("  ");
 }
 
-export type Pm2FactsFailure = "unavailable" | "outdated" | "failed";
+export type Pm2FactsFailure = "unavailable" | "outdated" | "failed" | "toolarge";
 
 /**
  * The facts probe: the agent's OWN image (from the trusted $TUGRA_AGENT_IMAGE only, `--pull never`) run read-only with the
@@ -57,8 +60,10 @@ export function buildPm2FactsScript(opts: { user?: string; name?: string; withEn
     `  -v /:/host:ro --entrypoint tugra-agent "$IMG" pm2 --root=/host --proc=/proc ${narrow} 2>/dev/null); rc=$?`,
     '[ $rc -eq 0 ] || { timeout 10 docker rm -f "$pn" >/dev/null 2>&1;',
     '  pr=$(timeout 20 docker run --rm --pull never --network none --read-only --cap-drop ALL --security-opt no-new-privileges --pids-limit 16 --memory 64m --entrypoint tugra-agent "$IMG" pm2 --probe 2>/dev/null);',
-    `  if [ "$pr" = "${PM2_PROBE_REPLY}" ]; then echo "${PM2_FAILED} rc=$rc"; else echo "${PM2_OUTDATED} rc=$rc"; fi; }`,
-    `[ $rc -eq 0 ] && printf '%s\\n' "$out" | head -c 48000`,
+    // rc 3 = the agent refused an environment larger than one reply can carry (it never cuts a document).
+    `  if [ "$pr" = "${PM2_PROBE_REPLY}" ]; then if [ $rc -eq 3 ]; then echo "${PM2_TOOLARGE}"; else echo "${PM2_FAILED} rc=$rc"; fi; else echo "${PM2_OUTDATED} rc=$rc"; fi; }`,
+    // Never cut a document: more than the cap is reported as such, not passed on as broken JSON.
+    `if [ $rc -eq 0 ]; then n=$(printf '%s' "$out" | wc -c); if [ "$n" -le ${PM2_MAX_OUT} ]; then printf '%s\\n' "$out"; else echo "${PM2_TOOLARGE}"; fi; fi`,
     `echo ${PM2_END}`,
     "exit 0",
   ]
@@ -86,6 +91,8 @@ const FactSchema = z.object({
   interpreterArgs: argv.optional().default([]),
   uid: id.optional(),
   gid: id.optional(),
+  /** Supplementary group ids of the account the process runs as (from the host's /etc/group); absent on an older agent. */
+  groups: z.array(id).max(32).optional().default([]),
   port: port.optional(),
   envCount: z.number().int().min(0).max(100000),
   envSkipped: z.number().int().min(0).max(100000).optional().default(0),
@@ -122,6 +129,7 @@ export type Pm2FactsResult = { status: "ok"; users: Pm2FactsUser[]; truncated: b
 /** The probe's stdout → facts. A malformed user or process is dropped on its own; the rest of the document survives. */
 export function parsePm2Facts(output: string): Pm2FactsResult {
   if (output.includes(PM2_OUTDATED)) return { status: "unavailable", reason: "outdated" };
+  if (output.includes(PM2_TOOLARGE)) return { status: "unavailable", reason: "toolarge" };
   if (output.includes(PM2_FAILED) || output.includes(PM2_UNAVAILABLE)) return { status: "unavailable", reason: output.includes(PM2_UNAVAILABLE) ? "unavailable" : "failed" };
   const lines = output.split(/\r?\n/);
   const begin = lines.findIndex((l) => l.trim() === PM2_BEGIN);

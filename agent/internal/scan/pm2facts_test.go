@@ -236,3 +236,28 @@ func TestFactsOwnerReadsRealStat(t *testing.T) {
 		t.Fatalf("pm2 home owner not read: %d", doc.Users[0].UID)
 	}
 }
+
+func TestFactsSupplementaryGroups(t *testing.T) {
+	root, proc := factsRoot(t)
+	write(t, root, "home/acme/.pm2/dump.pm2", `[
+ {"name":"a","pm_exec_path":"/s/a.js","pm_cwd":"/s","uid":2001,"gid":2001,"env":{}},
+ {"name":"b","pm_exec_path":"/s/b.js","pm_cwd":"/s","uid":0,"env":{}},
+ {"name":"c","pm_exec_path":"/s/c.js","pm_cwd":"/s","uid":4040,"env":{}}
+]`)
+	write(t, root, "etc/passwd", "root:x:0:0::/root:/bin/sh\nsvc:x:2001:2001::/home/svc:/bin/sh\n")
+	write(t, root, "etc/group", "root:x:0:svc\nsvc:x:2001:svc\nwww:x:33:other,svc\ndev:x:50:svc\nnobody:x:65534:nobody\nbad:x:x:svc\n")
+	doc := CollectPM2Facts(PM2Options{Root: root, Proc: proc})
+	by := map[string]PM2Fact{}
+	for _, p := range doc.Users[0].Procs {
+		by[p.Name] = p
+	}
+	if got := by["a"].Groups; len(got) != 2 || got[0] != 33 || got[1] != 50 {
+		t.Fatalf("a: groups %v (gid 0, the primary group and a malformed line must not be listed)", got)
+	}
+	if len(by["b"].Groups) != 0 {
+		t.Fatalf("root has no extra groups: %v", by["b"].Groups)
+	}
+	if len(by["c"].Groups) != 0 {
+		t.Fatalf("unknown account: %v", by["c"].Groups)
+	}
+}

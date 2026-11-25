@@ -12,7 +12,7 @@ import { runTag, tokenizeDockerOptions } from "../deploy/deploy-script";
 import { autoFlagMultiline } from "../importer/env-auto-flags";
 import { parseStoredReport } from "../server-ops/server-scan";
 import { buildPm2FactsScript, parsePm2Facts, type Pm2FactsUser } from "./pm2-facts";
-import { planAll, planProcess, type Pm2Exec, type Pm2Overrides, type Pm2Plan, type ScanSiteLite } from "./pm2-plan";
+import { buildDockerOptions, planAll, planProcess, type Pm2Exec, type Pm2Overrides, type Pm2Plan, type ScanSiteLite } from "./pm2-plan";
 import {
   MOVE_SCRIPT_TIMEOUT_MS,
   RECOVER_SCRIPT_TIMEOUT_MS,
@@ -92,7 +92,7 @@ export class Pm2MoveService {
     const facts = await this.readFacts(serverId);
     const overrides: Record<string, Pm2Overrides> = {};
     for (const it of body.items ?? []) overrides[`${it.user}/${it.name}`] = { nodeMajor: it.nodeMajor, probePath: it.probePath ?? null };
-    const planned = planAll(facts.users, sites, overrides);
+    const planned = planAll(facts.users, sites, overrides, await this.sharedEnvCount(server.teamId));
     return { plans: planned.map((p) => p.plan), truncated: facts.truncated };
   }
 
@@ -343,7 +343,7 @@ export class Pm2MoveService {
     // The options are generated from validated fields only; assert it anyway, and that they tokenize to what we built.
     assertSafeDockerOptions(exec.dockerOptions, { allowPrivileged: true });
     const t = tokenizeDockerOptions(exec.dockerOptions);
-    const want = ["--network", "host", "-u", `${exec.uid}:${exec.gid}`, "-w", exec.workDir, "-v", `${exec.mountDir}:${exec.mountDir}`];
+    const want = tokenizeDockerOptions(buildDockerOptions(exec));
     if (t.length !== want.length || t.some((x, i) => x !== want[i])) throw new BadRequestException("the generated docker options are not the expected ones");
   }
 
@@ -351,9 +351,20 @@ export class Pm2MoveService {
     const r = await this.agentWs.sendCommand(serverId, buildPm2FactsScript(narrow), "bulk", FACTS_TIMEOUT_MS);
     const parsed = parsePm2Facts(r.output);
     if (parsed.status !== "ok") {
-      throw new ServiceUnavailableException(parsed.reason === "outdated" ? "update this server's agent to read its PM2 processes" : "could not read the PM2 processes of this server");
+      throw new ServiceUnavailableException(
+        parsed.reason === "outdated"
+          ? "update this server's agent to read its PM2 processes"
+          : parsed.reason === "toolarge"
+            ? "the saved environment of this PM2 process is too large to move"
+            : "could not read the PM2 processes of this server",
+      );
     }
     return { users: parsed.users, truncated: parsed.truncated };
+  }
+
+  /** Team shared variables are injected into every app of the team (see the plan's sharedEnvCount). */
+  private sharedEnvCount(teamId: string): Promise<number> {
+    return this.prisma.sharedVariable.count({ where: { teamId } });
   }
 
   private sitesOf(stored: unknown): ScanSiteLite[] {

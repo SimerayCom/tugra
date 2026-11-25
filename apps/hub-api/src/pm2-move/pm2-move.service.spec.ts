@@ -57,6 +57,7 @@ function setup(over: { move?: (script: string) => { exitCode: number; output: st
   const prisma = {
     server: { findUnique: jest.fn().mockResolvedValue({ id: "s1", teamId: "t1", scanReport: null, scannedAt: null }) },
     environment: { findFirst: jest.fn().mockResolvedValue({ id: "env1" }) },
+    sharedVariable: { count: jest.fn().mockResolvedValue(0) },
     application: { update: appUpdate },
     deployment: { create: jest.fn().mockResolvedValue({ id: "dep1" }), update: depUpdate },
   };
@@ -91,6 +92,14 @@ describe("Pm2MoveService.plan", () => {
     expect(r.plans).toHaveLength(1);
     expect(r.plans[0]).toMatchObject({ key: "acme/app", status: "ready", image: "node:20" });
     expect(JSON.stringify(r)).not.toContain(SECRET);
+  });
+  it("names the team shared variables that the container would also get", async () => {
+    const { svc, prisma } = setup();
+    prisma.sharedVariable.count.mockResolvedValue(2);
+    const r = await svc.plan("u1", "s1", {});
+    expect(prisma.sharedVariable.count).toHaveBeenCalledWith({ where: { teamId: "t1" } });
+    expect(r.plans[0]).toMatchObject({ sharedEnvCount: 2 });
+    expect(r.plans[0].warnings).toContain("shared-env");
   });
   it("applies per-process choices (node major, probe path)", async () => {
     const { svc } = setup();

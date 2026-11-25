@@ -60,6 +60,13 @@ esac
 exit 0
 `;
 
+/** `flock` itself is not on every dev machine: a fake whose "someone else holds it" is a flag file in the fake state. */
+const FAKE_FLOCK = `#!/bin/bash
+echo "flock $*" >> "$FAKE_STATE/events"
+[ -e "$FAKE_STATE/lock_held" ] && exit 1
+exit 0
+`;
+
 /** Replaces the privileged host helper with functions over the same fake state, and makes sleep instant. */
 const FAKE_HOST = `
 export PATH="$FAKE_BIN:$FAKE_ORIG_PATH"
@@ -94,7 +101,7 @@ function run(script: string, w: World = {}) {
   if (w.ctr) writeFileSync(join(st, "ctr"), w.ctr);
   if (w.httpCode) writeFileSync(join(st, "http_code"), w.httpCode);
   for (const f of w.flags ?? []) writeFileSync(join(st, f), "");
-  const r = spawnSync("bash", ["-c", withFakes(script)], { env: { PATH: process.env.PATH, FAKE_BIN: bin, FAKE_ORIG_PATH: process.env.PATH, FAKE_STATE: st, TUGRA_AGENT_IMAGE: "agent:1" }, encoding: "utf8", timeout: 60_000 });
+  const r = spawnSync("bash", ["-c", withFakes(script)], { env: { PATH: process.env.PATH, TUGRA_PM2MOVE_LOCKDIR: join(dir, "lock"), FAKE_BIN: bin, FAKE_ORIG_PATH: process.env.PATH, FAKE_STATE: st, TUGRA_AGENT_IMAGE: "agent:1" }, encoding: "utf8", timeout: 60_000 });
   const events = existsSync(join(st, "events")) ? readFileSync(join(st, "events"), "utf8").trim().split("\n") : [];
   return {
     exit: r.status,
@@ -114,6 +121,8 @@ beforeAll(() => {
   mkdirSync(bin, { recursive: true });
   writeFileSync(join(bin, "docker"), FAKE_DOCKER);
   chmodSync(join(bin, "docker"), 0o755);
+  writeFileSync(join(bin, "flock"), FAKE_FLOCK);
+  chmodSync(join(bin, "flock"), 0o755);
 });
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
@@ -243,6 +252,17 @@ describe("the cutover script, run for real against fake docker and PM2 state", (
     expect(r.pm2).toBe("stopped");
   });
 
+  it("another move of the same app holds the lock: refused before anything is touched", () => {
+    const r = run(move(), { flags: ["lock_held"] });
+    expect(r.outcome).toMatchObject({ result: "aborted", reason: "busy" });
+    expect(r.events.filter((e) => e.startsWith("pm2:") || e.startsWith("docker:"))).toEqual([]);
+    expect(r.pm2).toBe("online");
+  });
+  it("takes the per-app lock (non-blocking) before the first step", () => {
+    const r = run(move(), { flags: ["ctr_listens"] });
+    expect(r.events[0]).toBe("flock -n 9");
+    expect(existsSync(join(dir, "lock", "pm2move-cmapp1.lock"))).toBe(true);
+  });
   it("exactly one final marker per run", () => {
     const r = run(move(), { flags: ["ctr_listens"] });
     expect(r.out.match(/TUGRA_PM2MOVE: result=/g)).toHaveLength(1);
@@ -273,6 +293,16 @@ describe("the recovery script (outcome unknown)", () => {
   it("gone from PM2 and no container: reported as failed, not hidden", () => {
     const r = run(rec(), { pm2: "gone" });
     expect(r.outcome).toMatchObject({ result: "rollback_failed", reason: "gone" });
+  });
+  it("waits for a move that may still be alive; when the lock never frees, it touches nothing and says nothing final", () => {
+    const held = run(rec(), { pm2: "stopped", ctr: "running", flags: ["lock_held"] });
+    expect(held.events).toEqual(["flock -w 150 9"]);
+    expect(held.outcome.result).toBe("unknown"); // the hub keeps the record and reports it as unknown
+    expect(held.pm2).toBe("stopped");
+    expect(held.ctr).toBe("running");
+    const free = run(rec(), { pm2: "stopped", ctr: "exited" });
+    expect(free.events[0]).toBe("flock -w 150 9");
+    expect(free.outcome.result).toBe("rolled_back");
   });
   it("host helper unavailable: reported", () => {
     const r = run(rec(), { flags: ["host_down"] });
