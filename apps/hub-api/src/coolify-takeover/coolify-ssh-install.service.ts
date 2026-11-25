@@ -17,6 +17,7 @@ import {
   type CoolifySshTargetView,
 } from "@tugra/shared";
 import { PrismaService } from "../prisma/prisma.service";
+import { APP_MOVE_TERMINAL } from "../common/app-move-guard";
 import { AuditService } from "../audit/audit.service";
 import { TeamAccessService } from "../common/team-access.service";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
@@ -46,6 +47,10 @@ const MIN_ENROLL_WAIT_MS = 60_000;
 const PROBE_TIMEOUT_MS = 120_000;
 const INSTALL_TIMEOUT_MS = 5 * 60_000;
 const UNINSTALL_TIMEOUT_MS = 120_000;
+/** Migration run statuses in which the run no longer works on its target servers. */
+const MIGRATION_TERMINAL = ["ABORTED", "ROLLED_BACK", "REVERSED", "COMPLETED", "FAILED", "DRY_RUN_DONE"] as const;
+/** Codes after which the install may have started the container anyway: the hub cannot tell from the code alone, so it looks (a probe). */
+const OUTCOME_UNKNOWN: readonly CoolifySshResultCode[] = ["timeout", "unreachable", "installer_failed"];
 /** Marker kept in the grant's `classes` when THIS run turned the capability on (it is dropped again only then). */
 const CAP_ADDED = "cap_added";
 const EMPTY_SHA256 = createHash("sha256").update("").digest("hex");
@@ -281,6 +286,14 @@ export class CoolifySshInstallService implements OnModuleInit, OnModuleDestroy {
     if (chosen.length === 0) throw new BadRequestException({ code: "unknown_server", message: "None of those servers can be removed" });
     if (input.confirm !== String(chosen.length)) throw new BadRequestException({ code: "confirm_mismatch", message: "type the number of servers to confirm" });
     this.assertAgentReady(serverId);
+    // The agent of a server that works (apps, databases, a move or a migration) is not taken off: the volume goes with it, and so would the
+    // server's records. The owner moves or deletes those first.
+    const busy: string[] = [];
+    for (const t of chosen) if (t.tugraServerId && (await this.serverInUse(t.tugraServerId))) busy.push(t.name);
+    if (busy.length > 0) {
+      await this.audit.log({ actor: userId, action: "coolify.ssh.uninstall_refused", target: serverId, meta: { runId, count: busy.length, reason: "server_in_use" } });
+      throw new ConflictException({ code: "server_in_use", message: `These servers still run apps, databases or a move: ${busy.slice(0, 5).join(", ")}. Move or delete those first.` });
+    }
     await this.renewGrant(userId, inv.teamId, serverId, runId);
     await this.audit.log({ actor: userId, action: "coolify.ssh.uninstall_start", target: serverId, meta: { runId, count: chosen.length } });
     for (const t of chosen) this.track(this.uninstallOne(t.id));
@@ -383,6 +396,7 @@ export class CoolifySshInstallService implements OnModuleInit, OnModuleDestroy {
     const started = this.clock.now();
     let mintedServerId: string | null = null;
     let containerId: string | null = null;
+    let installSent = false;
     const rollback = async (code: CoolifySshResultCode, uninstall: boolean): Promise<void> => {
       if (uninstall && containerId) await this.removeRemote(t0, containerId, userId);
       if (mintedServerId) await this.voidToken(mintedServerId, userId);
@@ -408,6 +422,7 @@ export class CoolifySshInstallService implements OnModuleInit, OnModuleDestroy {
       const script = renderCoolifySshInstallScript(this.agentImage());
       let res: CoolifySshResultMsg;
       try {
+        installSent = true;
         res = await this.agentWs.sendCoolifySsh(
           t.serverId,
           {
@@ -417,12 +432,14 @@ export class CoolifySshInstallService implements OnModuleInit, OnModuleDestroy {
           Math.min(INSTALL_TIMEOUT_MS, COOLIFY_SSH_LIMITS.targetTimeoutMs),
         );
       } catch (e) {
-        await rollback(codeOfError(e), false);
-        return void (await this.auditStep(userId, "install", t, runId, { code: codeOfError(e), durationMs: this.clock.now() - started }));
+        const code = await this.settleUnknownInstall(t, codeOfError(e));
+        await rollback(code, false);
+        return void (await this.auditStep(userId, "install", t, runId, { code, durationMs: this.clock.now() - started }));
       }
       if (!res.ok) {
-        await rollback(res.code, false);
-        return void (await this.auditStep(userId, "install", t, runId, { code: res.code, durationMs: res.durationMs ?? this.clock.now() - started }));
+        const code = await this.settleUnknownInstall(t, res.code);
+        await rollback(code, false);
+        return void (await this.auditStep(userId, "install", t, runId, { code, durationMs: res.durationMs ?? this.clock.now() - started }));
       }
       containerId = res.containerId && COOLIFY_SSH_CONTAINER_ID_RE.test(res.containerId) ? res.containerId : null;
       await this.move(targetId, ["INSTALLING"], "WAIT_ENROLL", { containerId });
@@ -447,7 +464,8 @@ export class CoolifySshInstallService implements OnModuleInit, OnModuleDestroy {
       await this.auditStep(userId, "install", t, runId, { code: "ok_installed", crossCheck: verdict, tugraServerId: mintedServerId, durationMs: this.clock.now() - started });
     } catch (e) {
       this.logger.warn(`ssh install step failed: ${e instanceof Error ? e.constructor.name : "error"}`);
-      await rollback(codeOfError(e), true).catch(() => undefined);
+      const code = installSent && !containerId ? await this.settleUnknownInstall(t0, codeOfError(e)) : codeOfError(e);
+      await rollback(code, true).catch(() => undefined);
     } finally {
       release();
       await this.finalize(runId);
@@ -464,7 +482,12 @@ export class CoolifySshInstallService implements OnModuleInit, OnModuleDestroy {
       const actor = grant?.grantedById ?? "system";
       const ok = await this.removeRemote(t, t.containerId, actor);
       if (ok) {
-        await this.move(targetId, ["UNINSTALLING"], "REMOVED", { code: null, containerId: null, finishedAt: new Date(this.clock.now()) });
+        // Something may have been placed on the server while the agent was being removed: then the row (and its cascade) stays.
+        const tugraId = t.tugraServerId;
+        const dropRow = !!tugraId && !(await this.serverInUse(tugraId));
+        await this.move(targetId, ["UNINSTALLING"], "REMOVED", { code: null, containerId: null, ...(dropRow ? { tugraServerId: null } : {}), finishedAt: new Date(this.clock.now()) });
+        if (dropRow) await this.voidToken(tugraId!, actor);
+        else if (tugraId) this.logger.warn("agent removed but the Tugra server row was kept: it is in use");
       } else {
         await this.move(targetId, ["UNINSTALLING"], "ONLINE", { code: "bad_target" });
       }
@@ -475,6 +498,41 @@ export class CoolifySshInstallService implements OnModuleInit, OnModuleDestroy {
     } finally {
       release();
       await this.finalize(t.runId);
+    }
+  }
+
+  /** True while anything depends on this Tugra server: an app or database on it, a move, or a migration that targets it. */
+  private async serverInUse(tugraServerId: string): Promise<boolean> {
+    const id = tugraServerId;
+    const [apps, dbs, appMoves, lock, runs] = await Promise.all([
+      this.prisma.application.count({ where: { OR: [{ serverId: id }, { buildServerId: id }] } }),
+      this.prisma.database.count({ where: { serverId: id } }),
+      this.prisma.appMove.count({ where: { phase: { notIn: APP_MOVE_TERMINAL }, OR: [{ sourceServerId: id }, { targetServerId: id }] } }),
+      this.prisma.migrationRunServerLock.count({ where: { serverId: id } }),
+      this.prisma.migrationRun.count({ where: { targetServerId: id, status: { notIn: [...MIGRATION_TERMINAL] } } }),
+    ]);
+    return apps + dbs + appMoves + lock + runs > 0;
+  }
+
+  /**
+   * After an install call whose outcome is not known (a timeout, a dropped agent, a generic failure) the container may be running on the
+   * target. The hub looks with a probe (read only, the existing signed script): nothing found keeps the original code; our agent found
+   * means it was left behind; no answer means the owner must look. Never a silent FAILED.
+   */
+  private async settleUnknownInstall(t: TargetRow, code: CoolifySshResultCode): Promise<CoolifySshResultCode> {
+    if (!OUTCOME_UNKNOWN.includes(code)) return code;
+    try {
+      const res = await this.agentWs.sendCoolifySsh(
+        t.serverId,
+        { op: "probe", coolifyServerUuid: t.coolifyServerUuid, scriptSha256: COOLIFY_SSH_PROBE_SHA256, payloadSha256: EMPTY_SHA256, useSudo: false, expectedHostKeyFp: t.hostKeyFp ?? "" },
+        PROBE_TIMEOUT_MS,
+      );
+      const agent = res.probe?.agent;
+      if (res.ok && agent === "none") return code;
+      if (agent === "ours" || agent === "stopped") return "agent_left_behind";
+      return "install_unconfirmed";
+    } catch {
+      return "install_unconfirmed";
     }
   }
 
@@ -555,8 +613,11 @@ export class CoolifySshInstallService implements OnModuleInit, OnModuleDestroy {
   private async revokeGrant(g: { id: string; serverId: string; runId: string | null; classes: string[] }, reason: string, byId: string | null): Promise<void> {
     await this.prisma.coolifyHostGrant.updateMany({ where: { id: g.id, revokedAt: null }, data: { revokedAt: new Date(this.clock.now()), revokedById: byId } });
     if (g.classes.includes(CAP_ADDED)) {
-      const others = await this.prisma.coolifyHostGrant.count({ where: { serverId: g.serverId, kind: "ssh", revokedAt: null, expiresAt: { gt: new Date(this.clock.now()) }, id: { not: g.id } } });
-      if (others === 0) await this.servers.setRunCapability(g.serverId, "coolify_ssh", false);
+      // The marker belongs to the host, not to one run: the grant that turned the capability on may end while another run's grant on the same
+      // host is still live. The marker then passes to a live grant, so the last one to end is the one that turns the capability off.
+      const others = (await this.prisma.coolifyHostGrant.findMany({ where: { serverId: g.serverId, kind: "ssh", revokedAt: null, expiresAt: { gt: new Date(this.clock.now()) }, id: { not: g.id } } })) as Array<{ id: string; classes: string[] }>;
+      if (others.length === 0) await this.servers.setRunCapability(g.serverId, "coolify_ssh", false);
+      else if (!others.some((o) => o.classes.includes(CAP_ADDED))) await this.prisma.coolifyHostGrant.updateMany({ where: { id: others[0].id, revokedAt: null }, data: { classes: [...others[0].classes, CAP_ADDED] } });
     }
     await this.audit.log({ actor: byId ?? "system", action: "coolify.ssh.revoke", target: g.serverId, meta: { runId: g.runId ?? undefined, reason } });
   }
@@ -603,7 +664,9 @@ export class CoolifySshInstallService implements OnModuleInit, OnModuleDestroy {
         this.track(this.resumeEnroll(t, actor));
       } else {
         if (t.tugraServerId) await this.voidToken(t.tugraServerId, actor);
-        await this.fail(t.id, [t.state as CoolifySshTargetState], "timeout", { tugraServerId: null });
+        // An install that was in flight when the hub stopped may have started the container: look before calling it a plain timeout.
+        const code = t.state === "INSTALLING" ? await this.settleUnknownInstall(t, "timeout") : "timeout";
+        await this.fail(t.id, [t.state as CoolifySshTargetState], code, { tugraServerId: null });
         await this.finalize(t.runId);
       }
     }

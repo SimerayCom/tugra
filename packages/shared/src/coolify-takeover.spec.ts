@@ -108,7 +108,7 @@ describe("coolify takeover contract: secrets", () => {
 describe("coolify takeover contract: ssh", () => {
   it("keeps the fixed op and result code sets", () => {
     expect([...COOLIFY_SSH_OPS]).toEqual(["probe", "install", "uninstall"]);
-    expect(COOLIFY_SSH_RESULT_CODES).toHaveLength(21);
+    expect(COOLIFY_SSH_RESULT_CODES).toHaveLength(23);
     expect(unique(COOLIFY_SSH_RESULT_CODES)).toBe(true);
     for (const c of ["hostkey_mismatch", "hostkey_changed", "needs_root", "unsupported_proxy", "enroll_timeout"]) expect(COOLIFY_SSH_RESULT_CODES as readonly string[]).toContain(c);
   });

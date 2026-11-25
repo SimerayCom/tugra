@@ -40,7 +40,9 @@
     "enroll_timeout": "The agent did not connect in time. Rolled back.",
     "unsupported_proxy": "Behind a tunnel or jump host. Use the manual command.",
     "cancelled": "Cancelled.",
-    "timeout": "Timed out."
+    "timeout": "Timed out.",
+    "agent_left_behind": "The install did not finish, but an agent was found on this server. Remove the container named tugra-agent and the volume tugra-agent-data there.",
+    "install_unconfirmed": "The install did not finish and the server could not be checked afterwards. Look for a container named tugra-agent on it and remove it if it is there."
   },
   "state": {
     "PLANNED": "Planned",
@@ -91,6 +93,7 @@
     "nothing_to_remove": "There is no agent from this run left to remove.",
     "not_read": "Read this Coolify first.",
     "unknown_server": "One of those servers is not in this Coolify.",
+    "server_in_use": "That server still runs apps or databases, or is part of a move. Move or delete those first.",
     "forbidden": "Only a team owner can do this.",
     "generic": "Something went wrong. Try again."
   },

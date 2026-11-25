@@ -24,8 +24,10 @@ type Row = Record<string, any>;
 function matches(row: Row, where: Row | undefined): boolean {
   if (!where) return true;
   return Object.entries(where).every(([k, v]) => {
+    if (k === "OR") return (v as Row[]).some((w) => matches(row, w));
     if (v && typeof v === "object" && !(v instanceof Date)) {
       if ("in" in v) return (v.in as unknown[]).includes(row[k]);
+      if ("notIn" in v) return !(v.notIn as unknown[]).includes(row[k]);
       if ("not" in v) return row[k] !== v.not && !(v.not === null && row[k] === null);
       if ("gt" in v) return row[k] > v.gt;
       if ("lt" in v) return row[k] < v.lt;
@@ -106,7 +108,12 @@ function world(o: Opts = {}) {
   const targets = table([]);
   const grants = table([]);
   const servers = table([...(o.knownServers ?? [])]);
-  const prisma = { coolifyInventory: inventory, coolifySshTarget: targets, coolifyHostGrant: grants, server: servers } as any;
+  const application = table([]);
+  const database = table([]);
+  const appMove = table([]);
+  const migrationRun = table([]);
+  const migrationRunServerLock = table([]);
+  const prisma = { coolifyInventory: inventory, coolifySshTarget: targets, coolifyHostGrant: grants, server: servers, application, database, appMove, migrationRun, migrationRunServerLock } as any;
 
   let role = "owner";
   const access = {
@@ -185,7 +192,7 @@ function world(o: Opts = {}) {
   let now = 1_800_000_000_000;
   svc.clock = { now: () => now, sleep: async (ms: number) => { now += ms; await new Promise((r) => setImmediate(r)); }, random: () => 0 };
   return {
-    svc, prisma, targets, grants, servers, auditLog, audit, agentWs, serversSvc, sent, capCalls, deleted, minted, uuids,
+    svc, prisma, targets, grants, servers, application, database, appMove, migrationRun, migrationRunServerLock, auditLog, audit, agentWs, serversSvc, sent, capCalls, deleted, minted, uuids,
     caps: () => caps,
     setRole: (r: string) => (role = r),
     advance: (ms: number) => (now += ms),
@@ -592,7 +599,7 @@ describe("CoolifySshInstallService: cancel, undo, expiry, restart", () => {
     expect(b).toMatchObject({ state: "FAILED", code: "timeout", tugraServerId: null });
     expect(w.deleted).toContain("NEWX");
     expect(w.sent.every((s) => s.req.op === "probe")).toBe(true);
-    expect(w.sent).toHaveLength(1);
+    expect(w.sent).toHaveLength(2); // the re-probe of a, and the look at what the interrupted install may have left on b
     void view;
   });
 
@@ -657,5 +664,227 @@ describe("CoolifySshInstallService: wiring", () => {
     } finally {
       jest.useRealTimers();
     }
+  });
+});
+
+// ---- review findings -----------------------------------------------------------------------------------------------------------------
+
+describe("CoolifySshInstallService: the capability follows the host's consent, not one run", () => {
+  const twoRuns = async (w: ReturnType<typeof world>) => {
+    const r1 = await w.svc.startRun("u1", "HOST", { coolifyServerUuids: ["srvaaa111111"], teamId: "T_NEW", confirm: "1" });
+    await w.svc.idle();
+    const r2 = await w.svc.startRun("u1", "HOST", { coolifyServerUuids: ["srvbbb222222"], teamId: "T_NEW", confirm: "1" });
+    await w.svc.idle();
+    return [r1.runId, r2.runId] as const;
+  };
+
+  it("overlapping runs: the first one to end leaves the capability on, the last one turns it off (first run ends first)", async () => {
+    const w = world();
+    const [r1, r2] = await twoRuns(w);
+    expect(w.grants.rows[0].classes).toEqual(["cap_added"]);
+    expect(w.grants.rows[1].classes).toEqual([]); // it found the capability already on
+    await w.svc.cancelRun("u1", "HOST", r1);
+    expect(w.caps()).toContain("coolify_ssh");
+    expect(w.grants.rows[1].classes).toContain("cap_added"); // the duty to switch it off passed on
+    await w.svc.cancelRun("u1", "HOST", r2);
+    expect(w.caps()).not.toContain("coolify_ssh");
+  });
+
+  it("overlapping runs: the second run ends first, the capability still goes off when the last one ends", async () => {
+    const w = world();
+    const [r1, r2] = await twoRuns(w);
+    await w.svc.cancelRun("u1", "HOST", r2);
+    expect(w.caps()).toContain("coolify_ssh");
+    await w.svc.cancelRun("u1", "HOST", r1);
+    expect(w.caps()).not.toContain("coolify_ssh");
+  });
+
+  it("expiry of the grant that added it does not strand the capability while a later run's consent is live", async () => {
+    const w = world();
+    await twoRuns(w);
+    w.advance(2 * 3_600_000 + 1); // both expire
+    await w.svc.sweep();
+    expect(w.grants.rows.every((g) => g.revokedAt instanceof Date)).toBe(true);
+    expect(w.caps()).not.toContain("coolify_ssh");
+  });
+
+  it("a capability the owner turned on before any run is never dropped, however the runs overlap", async () => {
+    const w = world({ capsAtStart: ["deploy", "coolify_ssh"] });
+    const [r1, r2] = await twoRuns(w);
+    await w.svc.cancelRun("u1", "HOST", r1);
+    await w.svc.cancelRun("u1", "HOST", r2);
+    expect(w.caps()).toContain("coolify_ssh");
+    expect(w.capCalls.filter(([, on]) => !on)).toEqual([]);
+  });
+});
+
+describe("CoolifySshInstallService: an install whose outcome is unknown is never a silent failure", () => {
+  const run = async (o: Opts) => {
+    const w = world({ uuids: ["srvaaa111111"], ...o });
+    const view = await start(w);
+    await w.svc.idle();
+    await w.svc.startInstall("u1", "HOST", view.runId, { confirm: "1" });
+    await w.svc.idle();
+    return { w, runId: view.runId };
+  };
+  const probesSent = (w: ReturnType<typeof world>) => w.sent.filter((s) => s.req.op === "probe").length;
+
+  it("a timeout with nothing found on the server after it is still a timeout (token voided, no extra uninstall)", async () => {
+    const { w } = await run({ install: () => new AgentCommandTimeoutException() });
+    expect(w.targets.rows[0]).toMatchObject({ state: "FAILED", code: "timeout", tugraServerId: null });
+    expect(probesSent(w)).toBe(2);
+    expect(w.deleted).toEqual(["NEW1"]);
+  });
+
+  it("a timeout after which our agent is found is agent_left_behind, with no manual install command", async () => {
+    const { w, runId } = await run({
+      install: () => new AgentCommandTimeoutException(),
+      probe: (_u, n) => (n === 1 ? readyProbe() : readyProbe({ agent: "ours" })),
+    });
+    expect(w.targets.rows[0]).toMatchObject({ state: "FAILED", code: "agent_left_behind", tugraServerId: null });
+    expect(w.deleted).toEqual(["NEW1"]); // the token is void either way: a left-over agent can never enroll
+    const view = await w.svc.getRun("u1", "HOST", runId);
+    expect(view.targets[0].manualCommand).toBe(false);
+    const step = w.auditLog.filter((a) => a.action === "coolify.ssh.install").pop()!;
+    expect(step.meta.code).toBe("agent_left_behind");
+  });
+
+  it("a stopped agent counts as left behind too", async () => {
+    const { w } = await run({ install: () => new AgentOfflineException(), probe: (_u, n) => (n === 1 ? readyProbe() : readyProbe({ agent: "stopped" })) });
+    expect(w.targets.rows[0].code).toBe("agent_left_behind");
+  });
+
+  it("when the server cannot be checked afterwards the target says so: install_unconfirmed", async () => {
+    const { w } = await run({ install: () => new AgentOfflineException(), probe: (_u, n) => (n === 1 ? readyProbe() : new AgentOfflineException()) });
+    expect(w.targets.rows[0]).toMatchObject({ state: "FAILED", code: "install_unconfirmed" });
+    const { w: w2 } = await run({ install: () => fail("installer_failed"), probe: (_u, n) => (n === 1 ? readyProbe() : fail("unreachable", { agent: "unknown" })) });
+    expect(w2.targets.rows[0].code).toBe("install_unconfirmed");
+  });
+
+  it("a probe that reports an unknown agent state is not read as 'nothing there'", async () => {
+    const { w } = await run({ install: () => fail("timeout"), probe: (_u, n) => (n === 1 ? readyProbe() : readyProbe({ agent: "unknown" })) });
+    expect(w.targets.rows[0].code).toBe("install_unconfirmed");
+  });
+
+  it("a failure the installer reports before it starts anything (a pull, a missing docker) is not probed again", async () => {
+    const { w } = await run({ install: () => fail("pull_failed") });
+    expect(w.targets.rows[0].code).toBe("pull_failed");
+    expect(probesSent(w)).toBe(1);
+  });
+
+  it("the look afterwards is the read-only probe: no token, no script body, no install", async () => {
+    const { w } = await run({ install: () => new AgentOfflineException(), probe: (_u, n) => (n === 1 ? readyProbe() : readyProbe({ agent: "ours" })) });
+    const after = w.sent.filter((s) => s.req.op === "probe")[1];
+    expect(after.req.scriptSha256).toBe(COOLIFY_SSH_PROBE_SHA256);
+    expect(after.req.script).toBeUndefined();
+    expect(after.req.payload).toBeUndefined();
+    expect(JSON.stringify(w.auditLog)).not.toContain(TOKEN);
+  });
+
+  it("restart: an install that was in flight is checked, and a left-over agent is reported", async () => {
+    const w = world({ uuids: ["srvaaa111111"], probe: (_u, n) => (n === 1 ? readyProbe() : readyProbe({ agent: "ours" })) });
+    await start(w);
+    await w.svc.idle();
+    const t = w.targets.rows[0];
+    Object.assign(t, { state: "INSTALLING", tugraServerId: "NEWZ" });
+    w.servers.rows.push({ id: "NEWZ", status: "PENDING", teamId: "T_NEW" });
+    await w.svc.recover();
+    await w.svc.idle();
+    expect(t).toMatchObject({ state: "FAILED", code: "agent_left_behind", tugraServerId: null });
+    expect(w.deleted).toContain("NEWZ");
+  });
+
+  it("restart: a target that only had a token minted (nothing sent yet) is not probed for leftovers", async () => {
+    const w = world({ uuids: ["srvaaa111111"] });
+    await start(w);
+    await w.svc.idle();
+    const t = w.targets.rows[0];
+    Object.assign(t, { state: "TOKEN_MINTED", tugraServerId: "NEWW" });
+    w.servers.rows.push({ id: "NEWW", status: "PENDING", teamId: "T_NEW" });
+    w.sent.length = 0;
+    await w.svc.recover();
+    await w.svc.idle();
+    expect(t).toMatchObject({ state: "FAILED", code: "timeout" });
+    expect(w.sent).toHaveLength(0);
+  });
+});
+
+describe("CoolifySshInstallService: removing an agent from a server that works", () => {
+  const online = async (o: Opts = {}) => {
+    const w = world({ uuids: ["srvaaa111111"], ...o });
+    const view = await start(w);
+    await w.svc.idle();
+    await w.svc.startInstall("u1", "HOST", view.runId, { confirm: "1" });
+    await w.svc.idle();
+    expect(w.targets.rows[0].state).toBe("ONLINE");
+    return { w, runId: view.runId, tugraId: w.targets.rows[0].tugraServerId as string };
+  };
+  const uninstalls = (w: ReturnType<typeof world>) => w.sent.filter((s) => s.req.op === "uninstall").length;
+
+  it("refuses while an app runs on the server, even with the right count: nothing is sent, no consent is renewed, the refusal is audited", async () => {
+    const { w, runId, tugraId } = await online();
+    w.application.rows.push({ id: "a1", serverId: tugraId });
+    const grants = w.grants.rows.length;
+    await expect(w.svc.startUninstall("u1", "HOST", runId, { confirm: "1" })).rejects.toMatchObject({ response: { code: "server_in_use" } });
+    expect(uninstalls(w)).toBe(0);
+    expect(w.grants.rows).toHaveLength(grants);
+    expect(w.targets.rows[0].state).toBe("ONLINE");
+    expect(w.auditLog.some((a) => a.action === "coolify.ssh.uninstall_refused")).toBe(true);
+  });
+
+  it("refuses for a database, an app that builds there, a live move and a live migration; a finished move does not block", async () => {
+    const cases: Array<[string, (w: ReturnType<typeof world>, id: string) => void, boolean]> = [
+      ["database", (w, id) => w.database.rows.push({ serverId: id }), true],
+      ["build server", (w, id) => w.application.rows.push({ serverId: "other", buildServerId: id }), true],
+      ["move target", (w, id) => w.appMove.rows.push({ sourceServerId: "x", targetServerId: id, phase: "COPYING" }), true],
+      ["move source", (w, id) => w.appMove.rows.push({ sourceServerId: id, targetServerId: "x", phase: "QUEUED" }), true],
+      ["migration lock", (w, id) => w.migrationRunServerLock.rows.push({ serverId: id }), true],
+      ["running migration", (w, id) => w.migrationRun.rows.push({ targetServerId: id, status: "RUNNING" }), true],
+      ["finished migration", (w, id) => w.migrationRun.rows.push({ targetServerId: id, status: "COMPLETED" }), false],
+      ["finished move", (w, id) => w.appMove.rows.push({ sourceServerId: id, targetServerId: "x", phase: "COMPLETED" }), false],
+      ["app elsewhere", (w) => w.application.rows.push({ serverId: "other" }), false],
+    ];
+    for (const [name, add, blocked] of cases) {
+      const { w, runId, tugraId } = await online();
+      add(w, tugraId);
+      const p = w.svc.startUninstall("u1", "HOST", runId, { confirm: "1" });
+      if (blocked) await expect(p).rejects.toMatchObject({ response: { code: "server_in_use" } });
+      else await expect(p).resolves.toBeDefined();
+      await w.svc.idle();
+      expect(uninstalls(w) === 1).toBe(!blocked);
+      void name;
+    }
+  });
+
+  it("an unused server is removed and its Tugra row goes with it (no stale offline server in the team)", async () => {
+    const { w, runId, tugraId } = await online();
+    await w.svc.startUninstall("u1", "HOST", runId, { confirm: "1" });
+    await w.svc.idle();
+    expect(w.targets.rows[0]).toMatchObject({ state: "REMOVED", containerId: null, tugraServerId: null });
+    expect(w.deleted).toContain(tugraId);
+    expect(w.servers.rows.find((r) => r.id === tugraId)).toBeUndefined();
+  });
+
+  it("when something was placed on the server while the agent was being removed, the row is kept (its cascade would delete that)", async () => {
+    let hold: ReturnType<typeof world> | undefined;
+    const { w, runId, tugraId } = await online({
+      uninstall: () => {
+        hold!.application.rows.push({ id: "late", serverId: hold!.targets.rows[0].tugraServerId });
+        return { type: "coolify_ssh_result", reqId: "r", ok: true, code: "ok_installed" };
+      },
+    });
+    hold = w;
+    await w.svc.startUninstall("u1", "HOST", runId, { confirm: "1" });
+    await w.svc.idle();
+    expect(w.targets.rows[0]).toMatchObject({ state: "REMOVED", tugraServerId: tugraId });
+    expect(w.deleted).not.toContain(tugraId);
+    expect(w.servers.rows.find((r) => r.id === tugraId)).toBeDefined();
+  });
+
+  it("still owner only, and a stranger's refusal comes before any check of the server", async () => {
+    const { w, runId, tugraId } = await online();
+    w.application.rows.push({ id: "a1", serverId: tugraId });
+    w.setRole("admin");
+    await expect(w.svc.startUninstall("u1", "HOST", runId, { confirm: "1" })).rejects.toBeInstanceOf(ForbiddenException);
   });
 });

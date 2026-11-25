@@ -12,6 +12,8 @@ export const COOLIFY_SSH_RESULT_CODES = [
   "ok_installed", "skipped_present", "skipped_foreign", "unreachable", "auth_failed", "hostkey_changed", "hostkey_mismatch", "no_key_file",
   "bad_target", "needs_root", "sudo_tty", "docker_missing", "docker_perm", "arch_unsupported", "pull_failed", "hub_unreachable_from_target",
   "installer_failed", "enroll_timeout", "unsupported_proxy", "cancelled", "timeout",
+  // Hub-side outcomes of an install whose result the hub could not trust: our agent was found afterwards / nothing could be confirmed.
+  "agent_left_behind", "install_unconfirmed",
 ] as const;
 export type CoolifySshResultCode = (typeof COOLIFY_SSH_RESULT_CODES)[number];
 

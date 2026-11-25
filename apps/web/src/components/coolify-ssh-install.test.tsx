@@ -139,6 +139,16 @@ describe("CoolifySshInstall", () => {
     await waitFor(() => expect(un).toHaveBeenCalledWith("s1", "run1", { confirm: "1" }));
   });
 
+  it("tells the owner to clean up when an install may have left an agent behind, and offers no install command for it", async () => {
+    vi.spyOn(api, "coolifySshLatest").mockResolvedValue(
+      RUN([tv("edgeuuid0001", "edge", "FAILED", { code: "agent_left_behind" }), tv("builduuid001", "builder", "FAILED", { code: "install_unconfirmed" })], true),
+    );
+    mount();
+    expect(await screen.findByText(/an agent was found on this server\. Remove the container named tugra-agent/)).toBeTruthy();
+    expect(screen.getByText(/could not be checked afterwards\. Look for a container named tugra-agent/)).toBeTruthy();
+    expect(screen.queryByText("Use the install command for this server in the list above.")).toBeNull();
+  });
+
   it("cancels a run that is working", async () => {
     vi.spyOn(api, "coolifySshLatest").mockResolvedValue(RUN([tv("edgeuuid0001", "edge", "PROBING")]));
     const cancel = vi.spyOn(api, "coolifySshCancel").mockResolvedValue(RUN([tv("edgeuuid0001", "edge", "FAILED", { code: "cancelled" })], true));
