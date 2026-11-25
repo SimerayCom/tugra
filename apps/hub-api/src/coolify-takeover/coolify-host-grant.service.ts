@@ -128,7 +128,7 @@ export class CoolifyHostGrantService implements OnModuleInit, OnModuleDestroy {
    * (notification tokens, Git App keys, deploy keys) are only ever included when the owner lists them. Idempotent for the same classes:
    * a second call while a grant is active returns it (two admins clicking at once get one run).
    */
-  async createSecretsGrant(userId: string, input: Omit<CoolifyGrantRequest, "kind"> & { runId?: string }): Promise<CoolifyHostGrantView> {
+  async createSecretsGrant(userId: string, input: Omit<CoolifyGrantRequest, "kind"> & { runId?: string; importSessionId?: string }): Promise<CoolifyHostGrantView> {
     const server = await this.prisma.server.findUnique({ where: { id: input.serverId }, select: { id: true, teamId: true, name: true } });
     if (!server) throw new NotFoundException("server not found");
     await this.access.requireRole(userId, server.teamId, OWNER_ONLY);
@@ -136,7 +136,16 @@ export class CoolifyHostGrantService implements OnModuleInit, OnModuleDestroy {
 
     const classes = this.resolveClasses(input.classes);
     const hours = this.resolveHours(input.hours);
-    if (input.runId !== undefined && !RUN_ID_RE.test(input.runId)) throw new BadRequestException("invalid run id");
+    // The consent of an import belongs to ITS session: the run id is the session id, and the session must be the granting owner's own,
+    // still active, and connected through the agent of this very server.
+    let runIdWanted = input.runId;
+    if (input.importSessionId !== undefined) {
+      const session = await this.prisma.importSession.findUnique({ where: { id: input.importSessionId }, select: { id: true, actorId: true, status: true, expiresAt: true, transport: true, agentServerId: true, teamId: true } });
+      if (!session || session.actorId !== userId || session.teamId !== server.teamId || session.transport !== "agent" || session.agentServerId !== server.id) throw new NotFoundException("import session not found");
+      if (session.status !== "active" || session.expiresAt.getTime() <= Date.now()) throw new BadRequestException("import session expired or revoked - reconnect");
+      runIdWanted = session.id;
+    }
+    if (runIdWanted !== undefined && !RUN_ID_RE.test(runIdWanted)) throw new BadRequestException("invalid run id");
 
     if (!this.agentWs.isOnline(server.id)) throw new ConflictException({ statusCode: 409, code: "agent_offline", message: "the agent on this server is offline" });
     if (!this.agentWs.agentSupports(server.id, AGENT_FEATURE_COOLIFY_SECRETS)) {
@@ -145,12 +154,17 @@ export class CoolifyHostGrantService implements OnModuleInit, OnModuleDestroy {
 
     const existing = await this.prisma.coolifyHostGrant.findFirst({ where: { serverId: server.id, kind: "secrets", revokedAt: null, expiresAt: { gt: new Date() }, recipientKeyEnc: { not: null } } });
     if (existing) {
-      if (sameSet(existing.classes, classes)) return this.view(existing as GrantRow, new Date());
-      throw new ConflictException({ statusCode: 409, code: "grant_active", message: "a grant with other classes is active on this server - revoke it first" });
+      // The same consent asked again for the same run is the same grant (two clicks, one run).
+      if (sameSet(existing.classes, classes) && (runIdWanted === undefined || existing.runId === runIdWanted)) return this.view(existing as GrantRow, new Date());
+      if (runIdWanted === undefined) throw new ConflictException({ statusCode: 409, code: "grant_active", message: "a grant with other classes is active on this server - revoke it first" });
+      // A consent given for an import replaces the one an earlier run left standing (the owner just consented again, for this run): the old
+      // run's key is destroyed and its capability handed over.
+      await this.end(existing as GrantRow, userId);
+      await this.audit.log({ actor: userId, action: "coolify.secrets.revoke", target: server.id, meta: { grantId: existing.id, reason: "superseded" } });
     }
 
     const key = this.sealed.newRunKey();
-    const runId = input.runId ?? `cfy-${randomUUID()}`;
+    const runId = runIdWanted ?? `cfy-${randomUUID()}`;
     const row = await this.prisma.coolifyHostGrant.create({
       data: {
         teamId: server.teamId, serverId: server.id, kind: "secrets", classes, grantedById: userId, runId,
@@ -181,6 +195,12 @@ export class CoolifyHostGrantService implements OnModuleInit, OnModuleDestroy {
     if (!row || (!row.recipientKeyEnc && (row.revokedAt || row.expiresAt.getTime() <= Date.now()))) return;
     await this.end(row as GrantRow, null);
     await this.audit.log({ actor: "system", action: `coolify.${row.kind}.revoke`, target: row.serverId, meta: { grantId, reason: "run_ended" } });
+  }
+
+  /** An import session ended: end the secrets grant that was made for that run (if it is still standing). Idempotent. */
+  async finishRunByRunId(serverId: string, runId: string): Promise<void> {
+    const rows = await this.prisma.coolifyHostGrant.findMany({ where: { serverId, kind: "secrets", runId, recipientKeyEnc: { not: null } }, take: 10 });
+    for (const r of rows) await this.finishRun(r.id);
   }
 
   /**

@@ -172,6 +172,8 @@ export class ImportExecutorService {
   private async applyRemote(userId: string, input: Extract<ImportApplyInput, { sourceKind: RemoteSourceKind }>): Promise<{ opId: string; mappingApplied: boolean }> {
     const { source, session } = await this.importer.openSession(userId, input.sessionId, input.sourceKind); // session ownership + team authz + kind pin
     try {
+      // An agent session needs the owner's consent for its secrets standing NOW (403 `consent_required`, nothing created); other sources have no such step.
+      await source.beginApply?.();
       const fleet = await source.discover();
       const plan = planImport(fleet, { sourceKind: input.sourceKind, ...(input.dbDataModes && Object.keys(input.dbDataModes).length ? { dbDataModes: input.dbDataModes } : {}) });
       if (plan.planHash !== input.planHash) {
@@ -363,7 +365,11 @@ export class ImportExecutorService {
       });
       void this.fanout(op.id, [...runners.keys()], (taskId) => runners.get(taskId)!())
         .catch(() => undefined)
-        .finally(() => source.close()); // close only once the async fan-out is done with the client
+        .finally(async () => {
+          // The import is over: an agent session ends the owner's consent for its secrets here (and forgets every value it read).
+          await source.finishApply?.().catch(() => undefined);
+          await source.close(); // close only once the async fan-out is done with the client
+        });
       // The op row exists: keep the applied mapping as the editable profile for the next run (best effort).
       if (res && input.mapping && input.saveMapping !== false) await this.mappings!.markApplied(userId, session, op.id, input.mapping);
       return { opId: op.id, mappingApplied: !!res };

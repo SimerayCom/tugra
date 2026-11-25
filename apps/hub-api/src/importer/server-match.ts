@@ -7,7 +7,8 @@ import { isIP } from "node:net";
  * only, never the source's address.
  */
 
-export type MatchVia = "public-ip" | "reported-ip" | "hostname";
+/** `owner`: the owner said so (the same-machine answer of an agent session), with the evidence the hub had shown beside it. */
+export type MatchVia = "public-ip" | "reported-ip" | "hostname" | "owner";
 export type MatchConfidence = "certain" | "probable";
 
 export interface MatchCandidate {

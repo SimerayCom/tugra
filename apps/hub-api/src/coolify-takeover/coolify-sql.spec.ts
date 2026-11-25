@@ -51,4 +51,10 @@ describe("coolify read SQL", () => {
       expect(names).toContain(n);
     }
   });
+
+  it("outputs the per-event toggles of a channel through a validated prefix, and refuses an unsafe one", () => {
+    const sql = buildSectionSql({ name: "n", table: "telegram_notification_settings", plain: ["id"], prefixes: ["telegram_notifications_"], limit: 10 });
+    expect(sql).toContain("e.k ~ '^(telegram_notifications_)'");
+    expect(() => buildSectionSql({ name: "n", table: "t", plain: ["id"], prefixes: ["x') or ('1'='1"], limit: 10 })).toThrow(/unsafe identifier/);
+  });
 });

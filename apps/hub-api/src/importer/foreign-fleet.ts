@@ -436,7 +436,7 @@ export interface PreflightHost {
   unreachableCount?: number;
   os?: string;
   /** The registered Tugra server that is the same machine (matched by address, then host name), as a verdict only: no source address. Added by the plan route, outside planHash. */
-  tugra?: { serverId: string; name: string; teamId: string; via: "public-ip" | "reported-ip" | "hostname"; confidence: "certain" | "probable" };
+  tugra?: { serverId: string; name: string; teamId: string; via: "public-ip" | "reported-ip" | "hostname" | "owner"; confidence: "certain" | "probable" };
   /** Coolify hub takeover (lane D): the evidence behind the verdict, how it was linked, and the status of an unlinked candidate set. Verdict data only, no address. Additive; NOT part of planHash. */
   match?: { status: HostMatchStatus; linkedBy: HostLinkedBy | null; evidence: HostEvidence[] };
   /** Coolify hub takeover (lane E): the placement the screen preselects for this server, and whether its agent is online. Additive; NOT part of planHash. */

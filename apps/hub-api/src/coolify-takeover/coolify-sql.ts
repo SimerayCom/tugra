@@ -30,6 +30,8 @@ export interface SectionSpec {
   present?: string[];
   /** Also output boolean-ish columns whose name ends with `_enabled` / `_notifications` (notification toggles). */
   toggles?: boolean;
+  /** Also output every column whose name starts with one of these prefixes (the per-event toggles of a notification channel). */
+  prefixes?: string[];
   /** Constant keys added to every row (e.g. the database type). */
   literal?: Record<string, string>;
   limit: number;
@@ -52,7 +54,8 @@ export function buildSectionSql(spec: SectionSpec): string {
   const plain = arr(spec.plain);
   const scrub = arr(spec.scrubUrl ?? []);
   const present = arr(spec.present ?? []);
-  const toggle = spec.toggles ? "or e.k ~ '(_enabled|_notifications)$'" : "";
+  const prefixRe = spec.prefixes?.length ? `^(${spec.prefixes.map((x) => ident(x)).join("|")})` : "";
+  const toggle = [spec.toggles ? "e.k ~ '(_enabled|_notifications)$'" : "", prefixRe ? `e.k ~ '${prefixRe}'` : ""].filter(Boolean).map((c) => `or ${c}`).join(" ");
   const literal = spec.literal
     ? ` || jsonb_build_object(${Object.entries(spec.literal)
         .map(([k, v]) => `${lit(ident(k))}, ${lit(v)}`)

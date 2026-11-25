@@ -18,6 +18,8 @@ import {
   type ImportConnectInput,
   ImportConnectAgentSchema,
   type ImportConnectAgentInput,
+  ImportHostLinkSchema,
+  type ImportHostLinkInput,
   ImportTestSchema,
   type ImportTestInput,
   ImportPlanRequestSchema,
@@ -232,6 +234,21 @@ export class ImporterController {
   }
 
   /** End an import session now (the wizard's "Start over"): its stored token can no longer be used. */
+  /**
+   * The owner's own answer to "is this Coolify server the same machine as that Tugra server" for an agent session (or "not the same", or
+   * a reset). Refused when the machine identity of the two differs. `write` scope; owner/admin of the session's team.
+   */
+  @Put("sessions/:sessionId/host-link")
+  @RequireScopes("write")
+  @ApiZodBody(ImportHostLinkSchema)
+  setHostLink(
+    @CurrentUser() user: AuthUser,
+    @Param("sessionId") sessionId: string,
+    @Body(new ZodValidationPipe(ImportHostLinkSchema)) body: ImportHostLinkInput,
+  ) {
+    return this.importer.setHostLink(user.userId, sessionId, body);
+  }
+
   @Delete("sessions/:sessionId")
   @RequireScopes("deploy")
   revokeSession(@CurrentUser() user: AuthUser, @Param("sessionId") sessionId: string) {

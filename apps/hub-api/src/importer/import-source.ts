@@ -147,6 +147,12 @@ export interface ImportSource {
    *  consumed in memory by the settings import and NEVER serialised (the preview is derived from it by `buildSettingsPlan`). A
    *  section the source cannot answer is `{ ok: false, reason }`, never a guess. A source without it carries no settings. */
   readSettings?(only?: ReadonlySet<SettingsSection>): Promise<RawSettings>;
+  /** OPTIONAL (agent transport): the source servers as one cheap read gives them (uuid, address, whether it is the Coolify host itself). Names and addresses stay on the hub. */
+  sourceServers?(): Promise<Array<{ ref: string; address: string | null; controlPlane: boolean }>>;
+  /** OPTIONAL (agent transport): the apply is about to start. Refuses (403 `consent_required`) when the owner's consent for this import is not standing. */
+  beginApply?(): Promise<void>;
+  /** OPTIONAL (agent transport): the apply is over. Ends the owner's consent for this import and forgets every value read for it. */
+  finishApply?(): Promise<void>;
   /** Dump a database's contents (requires capabilities().dbDataDump). */
   dumpDb?(ref: string): Promise<DumpHandle>;
   /** Open a volume's bytes as a tar stream (requires capabilities().volumeRead). */

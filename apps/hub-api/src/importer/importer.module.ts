@@ -39,6 +39,7 @@ import { ServerOpsModule } from "../server-ops/server-ops.module";
 import { TeamsModule } from "../teams/teams.module";
 import { CoolifyTakeoverModule } from "../coolify-takeover/coolify-takeover.module";
 import { AgentCoolifyReader } from "./agent-coolify.reader";
+import { AgentSecretsAdapter } from "./agent-secrets.adapter";
 
 // Reuses MigratorService (MigratorModule) for local-docker adopt/unadopt, ApplicationsService
 // (ApplicationsModule) to create/remove apps and DatabasesService (DatabasesModule) to provision
@@ -48,7 +49,7 @@ import { AgentCoolifyReader } from "./agent-coolify.reader";
 @Module({
   imports: [MigratorModule, CryptoModule, ApplicationsModule, DatabasesModule, BackupsModule, VolumeBackupsModule, GitSourcesModule, ProjectsModule, AgentGatewayModule, AppMovesModule, NotificationsModule, DestinationsModule, SharedVariablesModule, ScheduledTasksModule, ServerOpsModule, TeamsModule, CoolifyTakeoverModule],
   controllers: [ImporterController, MigrationIngestController, MigrationArtifactController, MigrationVolumeController],
-  providers: [ImporterService, ImportExecutorService, GitLinkResolverService, ImportGitLinksService, MigrationTokenService, MigrationTokenGuard, MigrationIngestService, EgressIpService, CoolifyClientFactory, DokployClientFactory, ImportSourceFactory, AgentCoolifyReader, CutoverCertService, ImportMappingService, VxService, VxApplyService, VxRecoveryService, VxPartRegistry, ImportSettingsService],
+  providers: [ImporterService, ImportExecutorService, GitLinkResolverService, ImportGitLinksService, MigrationTokenService, MigrationTokenGuard, MigrationIngestService, EgressIpService, CoolifyClientFactory, DokployClientFactory, ImportSourceFactory, AgentCoolifyReader, CutoverCertService, ImportMappingService, VxService, VxApplyService, VxRecoveryService, VxPartRegistry, ImportSettingsService, AgentSecretsAdapter],
   exports: [ImporterService, ImportExecutorService, CutoverCertService, ImportMappingService], // the MCP server wraps these as import_* tools
 })
 export class ImporterModule {}

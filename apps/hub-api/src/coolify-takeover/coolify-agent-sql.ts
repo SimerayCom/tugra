@@ -70,8 +70,22 @@ const GIT_APP = (name: string, table: string): SectionSpec => ({
   limit: 1000,
 });
 
+/**
+ * One notification channel's settings row (one per Coolify team). The channel's own non-secret columns (switches, recipients, host, the
+ * per-event toggles) are read as they are; its token, webhook URL, key and password become `<column>_present` and travel only through
+ * the sealed pipeline (class `notification`, opt-in).
+ */
+const NOTIFY_AGENT = (name: string, table: string, plain: string[], prefix: string): SectionSpec => ({ name, table, plain: ["id", "team_id", ...plain], prefixes: [prefix], limit: 1000 });
+
 /** Sections the agent read adds to or replaces from the v1 list. Anything not replaced keeps its v1 definition. */
 const REPLACED: SectionSpec[] = [
+  { name: "team_members", table: "team_user", plain: ["team_id", "user_id", "role"], limit: 5000 },
+  NOTIFY_AGENT("notify_email", "email_notification_settings", ["smtp_enabled", "resend_enabled", "use_instance_email_settings", "smtp_from_address", "smtp_from_name", "smtp_recipients", "smtp_host", "smtp_port", "smtp_encryption", "smtp_username"], "smtp_notifications_"),
+  NOTIFY_AGENT("notify_discord", "discord_notification_settings", ["discord_enabled"], "discord_notifications_"),
+  NOTIFY_AGENT("notify_telegram", "telegram_notification_settings", ["telegram_enabled", "telegram_chat_id"], "telegram_notifications_"),
+  NOTIFY_AGENT("notify_slack", "slack_notification_settings", ["slack_enabled"], "slack_notifications_"),
+  NOTIFY_AGENT("notify_pushover", "pushover_notification_settings", ["pushover_enabled"], "pushover_notifications_"),
+  NOTIFY_AGENT("notify_webhook", "webhook_notification_settings", ["webhook_enabled"], "webhook_notifications_"),
   {
     name: "servers",
     table: "servers",
@@ -83,6 +97,8 @@ const REPLACED: SectionSpec[] = [
     table: "server_settings",
     plain: [
       "server_id", "is_reachable", "is_usable", "is_build_server", "is_swarm_manager", "is_swarm_worker", "is_jump_server", "is_cloudflare_tunnel", "wildcard_domain",
+      // The server's own docker cleanup settings (they are settings of the team, carried by the settings import).
+      "docker_cleanup_frequency", "docker_cleanup_threshold", "delete_unused_volumes", "delete_unused_networks", "force_docker_cleanup",
     ],
     limit: 2000,
   },
@@ -101,14 +117,15 @@ const REPLACED: SectionSpec[] = [
   {
     name: "env_vars",
     table: "environment_variables",
-    plain: ["id", "key", "is_preview", "is_build_time", "is_buildtime", "is_runtime", "is_literal", "is_multiline", "is_shown_once", "resourceable_type", "resourceable_id"],
+    // `uuid` names the row for the sealed read (ref `env:<uuid>`); it is an id, not a secret.
+    plain: ["id", "uuid", "key", "is_preview", "is_build_time", "is_buildtime", "is_runtime", "is_literal", "is_multiline", "is_shown_once", "resourceable_type", "resourceable_id"],
     present: ["value"],
     limit: 100000,
   },
   {
     name: "shared_vars",
     table: "shared_environment_variables",
-    plain: ["id", "key", "type", "team_id", "project_id", "environment_id", "is_multiline", "is_literal"],
+    plain: ["id", "uuid", "key", "type", "team_id", "project_id", "environment_id", "is_multiline", "is_literal", "is_shown_once"],
     present: ["value"],
     limit: 20000,
   },
@@ -152,6 +169,8 @@ const ADDED: SectionSpec[] = [
     present: ["content"],
     limit: 100000,
   },
+  // Members of a team: the user's name and email (no password, no 2FA secret: those columns are never listed and only flagged as present).
+  { name: "users", table: "users", plain: ["id", "name", "email"], limit: 5000 },
   { name: "tags", table: "tags", plain: ["id", "name", "team_id"], limit: 20000 },
   { name: "taggables", table: "taggables", plain: ["tag_id", "taggable_id", "taggable_type"], limit: 100000 },
 ];

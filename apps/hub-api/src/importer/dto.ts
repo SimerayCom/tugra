@@ -40,8 +40,21 @@ export const ImportConnectAgentSchema = z.object({
   /** The Tugra server whose agent runs on the Coolify host. */
   serverId: z.string().min(1),
   scopeLabel: z.string().regex(/^[a-z0-9._-]{1,64}$/).optional(),
+  /** The Coolify team whose settings (notifications, shared variables, tags, members) the session reads. Needed only when several Coolify teams have projects. */
+  sourceTeamRef: z.string().regex(/^[A-Za-z0-9_-]{1,40}$/).optional(),
 });
 export type ImportConnectAgentInput = z.infer<typeof ImportConnectAgentSchema>;
+
+/**
+ * The owner's own answer to "is this Coolify server the same machine as that Tugra server" for an agent session. `serverId` is the
+ * Tugra server the owner says it is, or null for "this is not the same server"; `reset` takes the answer back. Ids only.
+ */
+export const ImportHostLinkSchema = z.object({
+  coolifyServerUuid: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/),
+  serverId: z.string().min(1).max(60).nullable(),
+  reset: z.boolean().optional(),
+});
+export type ImportHostLinkInput = z.infer<typeof ImportHostLinkSchema>;
 
 /** The one-line connection test shown as soon as the token is pasted: the same credentials as connect, nothing is stored. */
 export const ImportTestSchema = ImportConnectSchema.omit({ scopeLabel: true });

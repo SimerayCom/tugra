@@ -61,7 +61,7 @@ describe("Coolify takeover contract: Prisma state and migrations", () => {
   it("adds seven migrations after the previous newest, strictly increasing, one per lane, with no duplicate timestamp", () => {
     // The contract's seven, then each lane's own later migrations in its band 202612080X0000 (X = 1 A, 2 B, 3 C, 4 D, 5 E, 6 F, 7 G, 8 H).
     expect(mine.filter((n) => n < "20261208").map((n) => n.slice(0, 14))).toEqual(["20261207010000", "20261207020000", "20261207030000", "20261207040000", "20261207050000", "20261207060000", "20261207070000"]);
-    for (const n of mine.filter((n) => n >= "20261208")) expect(n).toMatch(/^202612080[1-8]0000_/);
+    for (const n of mine.filter((n) => n >= "20261208")) expect(n).toMatch(/^(202612080[1-8]|202612090[1-9])0000_/);
     expect(new Set(names.map((n) => n.slice(0, 14))).size).toBe(names.length);
     const before = names.filter((n) => n < "20261207010000");
     expect(before[before.length - 1].slice(0, 14) < "20261207010000").toBe(true);

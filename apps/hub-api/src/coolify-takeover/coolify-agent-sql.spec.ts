@@ -76,9 +76,15 @@ describe("agent read SQL: what is read", () => {
     expect(AGENT_SECTIONS.find((s) => s.name === "app_settings")!.plain).toEqual(expect.arrayContaining(["is_static", "custom_container_name_prefix"]));
   });
 
-  it("does not read the people (no user table, no email, no password hash)", () => {
-    expect(AGENT_SECTIONS.map((s) => s.table)).not.toContain("users");
-    expect(AGENT_SECTIONS.flatMap((s) => s.plain).filter((c) => /email|password|two_factor|remember_token/.test(c))).toEqual([]);
+  it("reads a member's name and email only (never a password hash, a 2FA secret or a session token)", () => {
+    const users = AGENT_SECTIONS.find((s) => s.table === "users")!;
+    expect(users.plain).toEqual(["id", "name", "email"]);
+    expect(users.present ?? []).toEqual([]);
+    expect(AGENT_SECTIONS.flatMap((s) => s.plain).filter((c) => /password|two_factor|remember_token/.test(c))).toEqual([]);
+    // the statement projects through the allow-list: the secret-looking columns of `users` can only come out as a presence flag
+    const sql = buildAgentReadSql();
+    expect(sql).toMatch(/public\.users t/);
+    expect(sql).not.toMatch(/'password'|two_factor_secret'|remember_token'/);
   });
 
   it("v1 sections are untouched in name and table except where the agent read widens them", () => {

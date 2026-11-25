@@ -26,6 +26,8 @@ export const SecretsGrantSchema = z.object({
   classes: z.array(z.enum(COOLIFY_SECRET_CLASSES)).min(1).max(COOLIFY_SECRET_CLASSES.length).optional(),
   hours: z.number().int().min(1).max(COOLIFY_SECRETS_GRANT_MAX_HOURS).optional(),
   confirm: z.string().min(1).max(200),
+  /** The import session this consent is for: its run id is the session id, and the grant ends with the import. */
+  importSessionId: z.string().min(1).max(64).optional(),
 });
 export type SecretsGrantInput = z.infer<typeof SecretsGrantSchema>;
 

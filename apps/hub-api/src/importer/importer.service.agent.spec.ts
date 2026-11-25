@@ -112,7 +112,7 @@ describe("ImporterService.plan — agent session", () => {
   it("opens through the agent (never through a token), and adds the agent facts to the preflight outside planHash", async () => {
     const { svc, sources, crypto, reads } = make({ session: agentSession() });
     const plan = await svc.plan("u1", { sourceKind: "coolify", sessionId: "sess-a" });
-    expect(sources.createAgent).toHaveBeenCalledWith("srv-agent");
+    expect(sources.createAgent).toHaveBeenCalledWith("srv-agent", expect.objectContaining({ run: { sessionId: "sess-a", userId: "u1" } }));
     expect(sources.create).not.toHaveBeenCalled();
     expect(crypto.decrypt).not.toHaveBeenCalled(); // no token to decrypt
     expect(reads.read).toHaveBeenCalledTimes(1);

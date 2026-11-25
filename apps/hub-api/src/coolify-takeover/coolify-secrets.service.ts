@@ -67,6 +67,11 @@ export interface FetchSecretsInput {
   classes?: CoolifySecretClass[];
   /** Who asked (audit). Omit for the system. */
   userId?: string;
+  /**
+   * The run (an import session) the read belongs to. When given, only the grant that was made for THAT run serves the read: a consent
+   * given for one import is never used by another. Omit it for a read that is not part of an import.
+   */
+  runId?: string;
   /** When a frame fails for good, stop and report what is left (`incomplete`) instead of throwing away the values already read. */
   keepPartial?: boolean;
 }
@@ -127,7 +132,7 @@ export class CoolifySecretsService {
     if (refs.length === 0) throw new BadRequestException("no refs");
     for (const r of refs) if (!COOLIFY_SECRET_REF_RE.test(r)) throw new BadRequestException("invalid ref");
 
-    let grant = await this.requireGrant(input.serverId);
+    let grant = await this.requireGrant(input.serverId, input.runId);
     const classes = input.classes ?? grant.classes;
     for (const c of classes) {
       if (!(COOLIFY_SECRET_CLASSES as readonly string[]).includes(c) || !grant.classes.includes(c)) {
@@ -150,7 +155,7 @@ export class CoolifySecretsService {
         try {
           let attempt = 0;
           for (;;) {
-            grant = await this.requireGrant(input.serverId); // revoked or lapsed between two chunks (or retries): stop here
+            grant = await this.requireGrant(input.serverId, input.runId); // revoked or lapsed between two chunks (or retries): stop here
             try {
               records = await this.agentWs.sendCoolifySecrets(input.serverId, { runId: grant.runId, classes, refs: refsChunk, recipientKey: grant.recipientPublicKey }, REQUEST_TIMEOUT_MS);
               break;
@@ -185,9 +190,12 @@ export class CoolifySecretsService {
     return { read, unreadable, usedPreviousKey, ...(incomplete ? { incomplete } : {}) };
   }
 
-  private async requireGrant(serverId: string) {
+  private async requireGrant(serverId: string, runId?: string) {
     const g = await this.grants.activeSecretsGrant(serverId);
     if (!g) throw new ForbiddenException({ statusCode: 403, code: "no_active_grant", message: "no active consent for reading secrets on this server" });
+    if (runId !== undefined && g.runId !== runId) {
+      throw new ForbiddenException({ statusCode: 403, code: "consent_other_run", message: "the consent on this server belongs to another import" });
+    }
     return g;
   }
 
