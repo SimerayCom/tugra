@@ -1200,3 +1200,36 @@ html[data-ui-style="3d"] .tg-btn:not(:disabled):active {
     font-size: 12px;
   }
 }
+
+/* Instant tooltip for icon-only controls and badges: `data-tip="…"` shows a small bubble above the element on hover
+   and on keyboard focus (the native title tooltip is slow, easy to miss and never shows on focus). The text is also the
+   element's aria-label or sr-only label, so the bubble itself stays decorative. */
+[data-tip] {
+  position: relative;
+}
+[data-tip]:hover::after,
+[data-tip]:focus-visible::after {
+  content: attr(data-tip);
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 50;
+  width: max-content;
+  max-width: 260px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  background: var(--c-tx);
+  color: var(--c-bg);
+  font: 500 12px/1.35 var(--font-sans, system-ui, sans-serif);
+  letter-spacing: 0;
+  text-transform: none;
+  white-space: normal;
+  text-align: left;
+  pointer-events: none;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
+}
+[data-tip=""]:hover::after,
+[data-tip=""]:focus-visible::after {
+  display: none;
+}

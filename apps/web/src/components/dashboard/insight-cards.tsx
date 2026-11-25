@@ -1,6 +1,7 @@
 "use client";
 
 import type { CSSProperties, ReactNode } from "react";
+import { AutoUpdateHint } from "../agent-fleet-notice";
 import Link from "next/link";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { AlertTriangle, DatabaseBackup, HardDrive, Rocket, ShieldCheck } from "lucide-react";
@@ -189,6 +190,7 @@ export function UpdatesCard({ servers }: { servers: ServerView[] }) {
       <div role="status" style={{ fontSize: 13, fontWeight: 600, margin: "0 0 8px", color: behind.length ? "var(--c-am)" : "var(--c-tx2)" }}>
         {behind.length === 0 ? t("dashboard.updatesAgentsCurrent") : behind.length === 1 ? t("dashboard.updatesAgentsOne") : t("dashboard.updatesAgents", { n: behind.length })}
       </div>
+      {behind.length > 0 && <AutoUpdateHint />}
       {shown.length > 0 && (
         <ListCard style={{ marginBottom: 10 }}>
           {shown.map((s, i) => (

@@ -237,7 +237,7 @@ export function ServerTable({
               </th>
               {showTeamCol && <th scope="col" style={cell} aria-sort={ariaSort("team")}>{sortBtn("team", t("servers.team"))}</th>}
               <th scope="col" style={cell} aria-sort={ariaSort("cpu")}>{sortBtn("cpu", t("servers.colTrend"))}</th>
-              <th scope="col" style={cell}>{t("servers.access")}</th>
+              <th scope="col" style={cell}>{t("servers.accessColumn")}</th>
               <th scope="col" style={cell} aria-sort={ariaSort("lastSeen")}>{sortBtn("lastSeen", t("servers.lastSeen"))}</th>
               <th scope="col" style={{ ...cell, width: 150 }}><span className="sr-only">{t("servers.rowActions")}</span></th>
             </tr>
@@ -293,7 +293,7 @@ export function ServerTable({
                           <div className="mono" style={{ fontSize: 11, color: "var(--c-tx3)" }}>
                             {s.hostname ?? "—"}
                             {s.agentVersion && (
-                              <span data-agent-state={verState} title={verState === "outdated" && agentTarget ? t("servers.agentOutdated", { from: s.agentVersion, to: agentTarget }) : verState === "current" ? t("servers.agentCurrent") : undefined} style={{ marginLeft: 8, color: verState === "outdated" ? "var(--c-am)" : verState === "current" ? "var(--c-g)" : "var(--c-tx3)" }}>
+                              <span data-agent-state={verState} data-tip={verState === "outdated" && agentTarget ? t("servers.agentOutdated", { from: s.agentVersion, to: agentTarget }) : verState === "current" ? t("servers.agentCurrent") : undefined} tabIndex={verState === "unknown" ? undefined : 0} style={{ marginLeft: 8, color: verState === "outdated" ? "var(--c-am)" : verState === "current" ? "var(--c-g)" : "var(--c-tx3)" }}>
                                 {s.agentVersion}
                                 {verState === "outdated" && <span className="sr-only"> — {t("servers.agentUpdateAvailable")}</span>}
                               </span>
@@ -328,7 +328,7 @@ export function ServerTable({
                             <ActionLink href={`/servers/${s.id}?tab=maintenance`} icon={Power} label={t("servers.quickRestart")} disabled={false} disabledLabel="" />
                           </>
                         )}
-                        <Link href={`/servers/${s.id}`} style={{ color: "var(--c-lapis)", fontSize: 12, textDecoration: "none", padding: "0 4px" }}>{t("servers.view")}</Link>
+                        <Link href={`/servers/${s.id}`} style={{ color: "var(--c-lapis)", fontSize: 12, textDecoration: "none", padding: "0 4px", whiteSpace: "nowrap" }}>{t("servers.view")}</Link>
                       </div>
                     </td>
                   </tr>
@@ -460,13 +460,13 @@ const actionStyle = (disabled: boolean, tone: "plain" | "warn" = "plain"): React
 function ActionLink({ href, icon: Icon, label, disabled, disabledLabel }: { href: string; icon: typeof Terminal; label: string; disabled: boolean; disabledLabel: string }) {
   if (disabled) {
     return (
-      <span role="img" aria-label={disabledLabel} title={disabledLabel} style={actionStyle(true)}>
+      <span role="img" aria-label={disabledLabel} data-tip={disabledLabel} tabIndex={0} style={actionStyle(true)}>
         <Icon size={15} aria-hidden="true" />
       </span>
     );
   }
   return (
-    <Link href={href} aria-label={label} title={label} className="tg-row" style={actionStyle(false)}>
+    <Link href={href} aria-label={label} data-tip={label} className="tg-row" style={actionStyle(false)}>
       <Icon size={15} aria-hidden="true" />
     </Link>
   );
@@ -474,7 +474,7 @@ function ActionLink({ href, icon: Icon, label, disabled, disabledLabel }: { href
 
 function ActionButton({ icon: Icon, label, disabled, busy, tone, onClick }: { icon: typeof Terminal; label: string; disabled: boolean; busy: boolean; tone: "plain" | "warn"; onClick: () => void }) {
   return (
-    <button type="button" aria-label={label} title={label} aria-busy={busy || undefined} disabled={disabled} className="tg-row" onClick={onClick} style={actionStyle(disabled, tone)}>
+    <button type="button" aria-label={label} data-tip={label} aria-busy={busy || undefined} disabled={disabled} className="tg-row" onClick={onClick} style={actionStyle(disabled, tone)}>
       <Icon size={15} aria-hidden="true" />
     </button>
   );

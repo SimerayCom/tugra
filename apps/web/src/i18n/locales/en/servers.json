@@ -566,10 +566,13 @@
   "agentFleetBehind": "{n}/{total} agents are on an older version",
   "agentFleetAuto": "They are updating one by one.",
   "agentFleetWaitingHub": "The hub updates first, then the agents follow.",
-  "agentFleetManual": "Update them all in one click.",
+  "agentFleetManual": "Update them all in one click, or turn on automatic updates and the hub keeps every agent current.",
   "agentFleetUpdateAll": "Update all",
   "agentFleetSent": "Update sent to {n} agents",
   "agentFleetNone": "Nothing could be updated right now.",
   "agentFleetHubBehind": "Update the hub first. Agents never run ahead of it.",
-  "agentFleetFailed": "Could not start the update."
+  "agentFleetFailed": "Could not start the update.",
+  "accessColumn": "Access",
+  "capOffHint": "{name} off · turn it on in Access (select servers) or the server's Settings",
+  "agentFleetTurnOnAuto": "Turn on automatic updates"
 }

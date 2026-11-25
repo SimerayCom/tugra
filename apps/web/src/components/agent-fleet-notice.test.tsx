@@ -40,7 +40,8 @@ describe("AgentFleetNotice", () => {
     vi.spyOn(api, "getAgentFleetStatus").mockResolvedValue(status());
     renderIt();
     expect(await screen.findByText("3/24 agents are on an older version")).toBeTruthy();
-    expect(screen.getByText("Update them all in one click.")).toBeTruthy();
+    expect(screen.getByText("Update them all in one click, or turn on automatic updates and the hub keeps every agent current.")).toBeTruthy();
+    expect(screen.getByRole("link", { name: /Turn on automatic updates/ }).getAttribute("href")).toBe("/settings?tab=instance&section=backups#updates");
     expect(screen.getByRole("status")).toBeTruthy();
   });
 

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import { useT } from "../i18n/provider";
@@ -11,6 +12,21 @@ import { Btn } from "./ui";
  * caller manages (the hub decides; a viewer never sees it). With "Apply updates automatically" on, the hub already
  * rolls them out one by one, and the line says so; the button stays for anyone who does not want to wait.
  */
+/** Settings → Instance → Updates, where "Apply updates automatically" lives (owner-only; others see it read-only). */
+export const AUTO_UPDATE_SETTINGS = "/settings?tab=instance&section=backups#updates";
+
+/** One line under an "agents are behind" summary: a link to turn on automatic updates, shown only while it is off. */
+export function AutoUpdateHint() {
+  const t = useT();
+  const { data } = useQuery({ queryKey: ["agentFleetStatus"], queryFn: () => api.getAgentFleetStatus(), retry: false });
+  if (!data || data.outdated === 0 || data.autoUpdate) return null;
+  return (
+    <Link href={AUTO_UPDATE_SETTINGS} style={{ display: "inline-block", fontSize: 12, color: "var(--c-lapis)", textDecoration: "none", marginBottom: 10 }}>
+      {t("servers.agentFleetTurnOnAuto")} →
+    </Link>
+  );
+}
+
 export function AgentFleetNotice() {
   const t = useT();
   const toast = useToast();
@@ -46,6 +62,9 @@ export function AgentFleetNotice() {
       <div style={{ minWidth: 200 }}>
         <div style={{ fontSize: 14, fontWeight: 600 }}>{t("servers.agentFleetBehind", { n: data.outdated, total: data.total })}</div>
         <div style={{ fontSize: 12, color: "var(--c-tx3)" }}>{t(!data.autoUpdate ? "servers.agentFleetManual" : data.hubBehind ? "servers.agentFleetWaitingHub" : "servers.agentFleetAuto")}</div>
+        {!data.autoUpdate && (
+          <Link href={AUTO_UPDATE_SETTINGS} style={{ fontSize: 12, color: "var(--c-lapis)", textDecoration: "none" }}>{t("servers.agentFleetTurnOnAuto")} →</Link>
+        )}
       </div>
       <Btn variant="ghost" style={{ minHeight: 44 }} onClick={() => updateAll.mutate()} loading={updateAll.isPending} disabled={updateAll.isPending}>
         {t("servers.agentFleetUpdateAll")}
