@@ -27,6 +27,8 @@ export class StepError extends Error {
 
 const POLL_MS = 3000;
 const APP_MOVE_DEADLINE_MS = 12 * 3600_000;
+/** The undo's volume carries stage under their own indexes, apart from the forward carries of the same move (0..). */
+const UNDO_VOLUME_IDX_BASE = 500;
 
 /**
  * Drives one project move through its phases (lane H). It composes what the platform already does: a database's data travels by a
@@ -484,8 +486,8 @@ export class ProjectMoveRunnerService {
    *  5. the apps are linked to the source databases again and started the way they were,
    *  6. the copies are removed (a database that was never deployed is moved back instead).
    * Nothing is removed before everything it could have held has been brought back, and a step that cannot finish fails the undo (the owner
-   * can press it again: it continues). Two things are not guaranteed: what an app wrote to a database copy is carried back only by the
-   * backup/restore pair, and an app's own safety copy on the source (kept by its first move) is not consulted.
+   * can press it again: it continues). Two things are not guaranteed: what an app wrote to a database copy is carried back by the
+   * backup/restore pair and, for its extra volumes, by a volume carry with both databases stopped, and an app's own safety copy on the source (kept by its first move) is not consulted.
    */
   private async undoMove(row: ProjectMove, plan: StoredPlan): Promise<void> {
     const actor = row.actorId;
@@ -495,7 +497,7 @@ export class ProjectMoveRunnerService {
     const fail = (e: unknown): never => {
       if (e instanceof StepError) throw e;
       this.log.warn(`project move undo failed: ${e instanceof Error ? e.constructor.name : "unknown"}`);
-      throw new StepError(e instanceof AgentOfflineException ? "agent_offline" : "rollback_incomplete");
+      throw new StepError(e instanceof AgentOfflineException || (e instanceof VolumeCarryError && e.reason === "agent_offline") ? "agent_offline" : "rollback_incomplete");
     };
     const copyIds = new Set(Object.values(plan.dbs).map((d) => d.targetDbId).filter((x): x is string => !!x));
     const touched = Object.entries(plan.apps).filter(([, a]) => a.stage !== "pending");
@@ -544,6 +546,26 @@ export class ProjectMoveRunnerService {
           await save();
         }
         if (d.stage === "synced") {
+          // The extra volumes an app may have written to on the copy go back too: both sides stopped so the copy of the files is whole.
+          // Only when an app wrote to the copy (otherwise the source's own volumes are the newer ones and nothing is overwritten).
+          if (wroteToCopy(sourceId)) {
+            const vols = await this.extraVolumesOf(sourceId);
+            const back = new Set(d.volumesBack ?? []);
+            if (vols.some((v) => !back.has(v.name))) {
+              for (const id of [sourceId, st.targetDbId]) {
+                const cur = await this.prisma.database.findUnique({ where: { id }, select: { status: true } });
+                if (cur?.status === "RUNNING") await this.databases.stop(actor, id);
+              }
+              for (const v of vols) {
+                if (back.has(v.name)) continue;
+                await this.carry.carry({ moveId: row.id, idx: UNDO_VOLUME_IDX_BASE + (d.volumesBack?.length ?? 0), srcServerId: row.targetServerId, dstServerId: row.sourceServerId, srcVolume: dbExtraVolumeName({ id: st.targetDbId }, v.name), dstVolume: dbExtraVolumeName({ id: sourceId }, v.name) });
+                back.add(v.name);
+                d.volumesBack = [...back];
+                await save();
+              }
+              await mustRun(sourceId);
+            }
+          }
           if (st.setAside || st.sourceStopped) {
             await mustRun(sourceId);
             if (st.setAside) await this.databases.rename(actor, sourceId, st.oldName);

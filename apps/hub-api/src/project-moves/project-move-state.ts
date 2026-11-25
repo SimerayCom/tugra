@@ -32,7 +32,7 @@ export type UndoAppStage = "pending" | "stopped" | "unlinked" | "moving" | "move
 export type UndoDbStage = "pending" | "synced" | "unset" | "copy_removed";
 export interface UndoState {
   apps: Record<string, { stage: UndoAppStage; moveId?: string }>;
-  dbs: Record<string, { stage: UndoDbStage; backupId?: string }>;
+  dbs: Record<string, { stage: UndoDbStage; backupId?: string; /** Names of the extra volumes already carried back to the source (an interrupted undo resumes with the rest). */ volumesBack?: string[] }>;
 }
 
 /** `unlinking`: the links and flags are recorded, removal is under way (a crash here still leaves what rollback needs). */

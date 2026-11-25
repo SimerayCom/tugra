@@ -480,7 +480,6 @@ describe("StepError", () => {
 });
 
 describe("ProjectMoveRunnerService: a database's extra volumes travel with it", () => {
-  const VOLS = [{ name: "ext", path: "/ext" }, { name: "wal", path: "/wal" }];
   it("stops both sides, copies each volume under the copy's own name, starts the copy again, then moves the apps", async () => {
     const { svc, w } = make({ extraVolumes: VOLS });
     await svc.run("pm1");
@@ -523,6 +522,8 @@ describe("ProjectMoveRunnerService: a database's extra volumes travel with it", 
     expect(w.move.failureReason).toBe("agent_offline");
   });
 });
+
+const VOLS = [{ name: "ext", path: "/ext" }, { name: "wal", path: "/wal" }];
 
 describe("ProjectMoveRunnerService: the owner's undo of a partly moved project", () => {
   /** a1 (with its database) moved to s2 and runs on the copy; a2 never moved; the move ended FAILED and the owner asked to undo it. */
@@ -570,6 +571,49 @@ describe("ProjectMoveRunnerService: the owner's undo of a partly moved project",
     expect(w.calls).toContain("appmove.start:a1");
     expect(planOf(w).undo?.apps.a1.stage).toBe("done");
     expect(planOf(w).undo?.dbs.d1.stage).toBe("copy_removed");
+  });
+
+  it("the extra volumes of a database an app wrote to are carried back with both databases stopped, before the source runs again and before the copy goes", async () => {
+    const { svc, w } = partial({ extraVolumes: VOLS });
+    await svc.run("pm1");
+    expect(w.move.phase).toBe("ROLLED_BACK");
+    expect(w.calls.filter((c) => c.startsWith("carry:"))).toEqual(["carry:tugra_dbv_d1_ext", "carry:tugra_dbv_d1_wal"]);
+    expect(inOrder(w, "restore:d1copy->d1", "db.stop:d1", "db.stop:d1copy", "carry:tugra_dbv_d1_ext", "carry:tugra_dbv_d1_wal", "db.provision:d1", "db.remove:d1copy")).toBe(true);
+    expect(w.dbs.get("d1")).toMatchObject({ status: "RUNNING" });
+    expect(planOf(w).undo?.dbs.d1.volumesBack).toEqual(["ext", "wal"]);
+  });
+
+  it("nothing is carried back when no app wrote to the copy", async () => {
+    const t = partial({ extraVolumes: VOLS, plan: { apps: { a1: { stage: "moved", moveId: "mv-a1", links: [{ envVar: "DATABASE_URL", databaseId: "d1" }], hadDbNetwork: true, wasRunning: true } } } as never });
+    await t.svc.run("pm1");
+    expect(t.w.move.phase).toBe("ROLLED_BACK");
+    expect(t.w.calls.some((c) => c.startsWith("carry:"))).toBe(false);
+  });
+
+  it("a carry that fails leaves the undo FAILED with the copy kept; pressing it again carries only the volumes not yet back", async () => {
+    const t = partial({ extraVolumes: VOLS });
+    const { VolumeCarryError: E } = await import("./project-move-volume-carry.service");
+    (t.svc as unknown as { carry: { carry: jest.Mock } }).carry.carry.mockImplementationOnce(async () => void 0).mockRejectedValueOnce(new E("pack_failed"));
+    await t.svc.run("pm1");
+    expect(t.w.move.phase).toBe("FAILED");
+    expect(t.w.move.failureReason).toBe("rollback_incomplete");
+    expect(t.w.calls.some((c) => c.startsWith("db.remove"))).toBe(false);
+    expect(planOf(t.w).undo?.dbs.d1.volumesBack).toEqual(["ext"]);
+    t.w.move.phase = "ROLLING_BACK";
+    t.w.move.ownerId = null;
+    await t.svc.run("pm1");
+    expect(t.w.move.phase).toBe("ROLLED_BACK");
+    const carried = (t.svc as unknown as { carry: { carry: jest.Mock } }).carry.carry.mock.calls.map((c) => c[0].dstVolume);
+    expect(carried).toEqual(["tugra_dbv_d1_ext", "tugra_dbv_d1_wal", "tugra_dbv_d1_wal"]);
+  });
+
+  it("an agent that is offline during the carry back leaves it FAILED so the owner can press it again", async () => {
+    const t = partial({ extraVolumes: VOLS });
+    const { VolumeCarryError: E } = await import("./project-move-volume-carry.service");
+    (t.svc as unknown as { carry: { carry: jest.Mock } }).carry.carry.mockRejectedValueOnce(new E("agent_offline"));
+    await t.svc.run("pm1");
+    expect(t.w.move.phase).toBe("FAILED");
+    expect(t.w.move.failureReason).toBe("rollback_incomplete");
   });
 
   it("the audit trail says the owner undid it; the plan holds no value", async () => {
