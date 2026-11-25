@@ -45,8 +45,13 @@ function hostScan() {
   // ── fake agent: the only thing replaced ──
   ws.isOnline = () => true;
   ws.isCapabilityGranted = async () => true;
+  const TELE_SERVERS = Number(process.env.FAKE_TELEMETRY_SERVERS || 0);
+  const TELE_CONTAINERS = Number(process.env.FAKE_TELEMETRY_CONTAINERS || 17);
+  const tele = TELE_SERVERS ? require("./fake-telemetry.cjs") : null;
   ws.sendCommand = async (serverId, script) => {
     await new Promise((r) => setTimeout(r, 30));
+    // container-health poll (CONTAINER_HEALTH_SCRIPT): answer with the fake containers of this server
+    if (tele && script.includes("##INSPECT")) return { exitCode: 0, output: tele.inspectOutput(Number(serverId.replace(/\D/g, "")), TELE_CONTAINERS) };
     if (script.includes("TUGRA_SCAN_DOCKER_BEGIN")) return { exitCode: 0, output: dockerScan() };
     if (script.includes("TUGRA_SCAN_HOST_BEGIN")) return { exitCode: 0, output: hostScan() };
     if (script.includes("TUGRA_GPU_PROBE")) return { exitCode: 0, output: "TUGRA_GPU_PROBE v1\nTUGRA_GPU_PROBE_END" };
@@ -87,6 +92,18 @@ function hostScan() {
 
   const port = Number(process.env.PORT || 3100);
   await app.listen(port);
+  // Fake-agent telemetry at the real cadence (FAKE_TELEMETRY_SERVERS=N), through the real message handler.
+  let teleHandle = null;
+  if (tele) {
+    const { PrismaService } = require(path.join(dist, "prisma/prisma.service"));
+    teleHandle = await tele.start(ws, app.get(PrismaService), { servers: TELE_SERVERS, containers: TELE_CONTAINERS });
+    console.log(`fake telemetry: ${TELE_SERVERS} servers x ${TELE_CONTAINERS} containers`);
+    // NODE_ENV=test switches the BullMQ schedulers off (house convention), so drive the container-health poll by hand at its
+    // production interval (CONTAINER_HEALTH_INTERVAL_SEC, default 60 s) over the same fake containers.
+    const { ContainerHealthRunnerService } = require(path.join(dist, "server-ops/container-health.runner.service"));
+    const health = app.get(ContainerHealthRunnerService);
+    setInterval(() => health.runTick().catch((e) => console.error("container-health tick failed", e)), Number(process.env.CONTAINER_HEALTH_INTERVAL_SEC || 60) * 1000).unref();
+  }
   // Side channel (loopback, perf only): process memory, forced GC and heap snapshots, on PORT+1.
   const v8 = require("node:v8");
   require("node:http")
@@ -99,7 +116,7 @@ function hostScan() {
       const m = process.memoryUsage();
       const h = v8.getHeapStatistics();
       res.setHeader("content-type", "application/json");
-      res.end(JSON.stringify({ rss: m.rss, heapUsed: m.heapUsed, heapTotal: m.heapTotal, external: m.external, arrayBuffers: m.arrayBuffers, heapLimit: h.heap_size_limit }));
+      res.end(JSON.stringify({ sent: teleHandle?.sent(), rss: m.rss, heapUsed: m.heapUsed, heapTotal: m.heapTotal, external: m.external, arrayBuffers: m.arrayBuffers, heapLimit: h.heap_size_limit }));
     })
     .listen(port + 1, "127.0.0.1");
   console.log(`hub-boot listening on :${port} (perf side channel :${port + 1}) pid=${process.pid} dist=${dist}`);

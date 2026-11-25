@@ -6,6 +6,7 @@ import request from "supertest";
 import { WebSocket } from "ws";
 import { AppModule } from "../src/app.module";
 import { PrismaService } from "../src/prisma/prisma.service";
+import { MetricsService } from "../src/metrics/metrics.service";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -241,6 +242,8 @@ describe("Servers + Agent (e2e)", () => {
     expect(detail.body.memTotalBytes).toBe("8589934592");
     expect(detail.body.uptimeSeconds).toBeGreaterThanOrEqual(3500);
 
+    // Host samples are buffered (5 s multi-row writes); the DB read below sees them after a flush.
+    await app.get(MetricsService).flush();
     const metrics = await request(app.getHttpServer())
       .get(`/servers/${serverId}/metrics`)
       .set("Authorization", `Bearer ${accessToken}`)

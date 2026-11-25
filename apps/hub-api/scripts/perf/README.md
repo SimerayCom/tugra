@@ -28,3 +28,11 @@ Not shipped: `apps/hub-api/scripts` is outside the TypeScript `include` and the 
    real 5 s cadence; `home` adds the one-shot /costs calls. Browsers start at a random point of their cycle (`--jitter ms`,
    0 = lock-step, which flatters any request coalescing). With `DATABASE_URL` set and `create extension pg_stat_statements`
    (`shared_preload_libraries = 'pg_stat_statements'`), every phase prints `db statements/s` (`--pgstat 0` turns it off).
+9. Agent-telemetry ingest cost (DB statements/s, hub CPU / RSS): run `hub-boot.cjs` with `FAKE_TELEMETRY_SERVERS=27 FAKE_TELEMETRY_CONTAINERS=17`
+   (or `50` / `20`). `fake-telemetry.cjs` then drives the hub's real message handler with `metrics` + `heartbeat` every 5 s and
+   `container_metrics` every 15 s per server (the agent's real cadence), registers fake authed sockets, and runs the container-health
+   poll every 60 s over the same containers (NODE_ENV=test turns the BullMQ schedulers off). A scratch Postgres with
+   `shared_preload_libraries = 'pg_stat_statements'` is needed; then
+   `DATABASE_URL=... node scripts/perf/ingest-measure.cjs --port 3100 --pid <hub pid> --label after --warmup 45 --seconds 150 --out r.json`
+   prints client statements/s by shape (Postgres' own per-row foreign-key probes are reported separately), tuples inserted/updated per
+   table, and the hub's RSS and CPU % of one core. `seed.cjs --raw-hours 1 --rollup-days 1` is enough history for this.
