@@ -8271,7 +8271,7 @@ export interface components {
                 basis: {
                     code: string;
                     params?: {
-                        [key: string]: string | number | boolean | ("null" | null) | (string | number | boolean | ("null" | null))[];
+                        [key: string]: string | number | boolean | (null) | (string | number | boolean | (null))[];
                     };
                 }[];
                 estimatedAt: string;
@@ -8291,7 +8291,7 @@ export interface components {
                 stepKey: "PREFLIGHT" | "IMPORT" | "DNS_PREPARE" | "DATA_SEED" | "FREEZE" | "DATA_FINAL" | "REMAP_ENV" | "DEPLOY_DARK" | "TLS_PREISSUE" | "VERIFY" | "CUTOVER" | "OBSERVE" | "FINALIZE" | "DECOMMISSION" | null;
                 code: string;
                 params?: {
-                    [key: string]: string | number | boolean | ("null" | null) | (string | number | boolean | ("null" | null))[];
+                    [key: string]: string | number | boolean | (null) | (string | number | boolean | (null))[];
                 };
                 since: string;
                 notBefore?: string | null;
@@ -8305,7 +8305,7 @@ export interface components {
                     ackable: string[];
                     requiredAcks: string[];
                     review: {
-                        [key: string]: string | number | boolean | ("null" | null) | (string | number | boolean | ("null" | null))[];
+                        [key: string]: string | number | boolean | (null) | (string | number | boolean | (null))[];
                     };
                 };
                 attest?: string[];
@@ -8342,7 +8342,7 @@ export interface components {
                         status: "pass" | "fail" | "warn" | "unknown";
                         code: string;
                         params?: {
-                            [key: string]: string | number | boolean | ("null" | null) | (string | number | boolean | ("null" | null))[];
+                            [key: string]: string | number | boolean | (null) | (string | number | boolean | (null))[];
                         };
                         subject?: string;
                         /** @enum {string} */
@@ -8358,7 +8358,7 @@ export interface components {
                         kind: "operator";
                         code: string;
                         params?: {
-                            [key: string]: string | number | boolean | ("null" | null) | (string | number | boolean | ("null" | null))[];
+                            [key: string]: string | number | boolean | (null) | (string | number | boolean | (null))[];
                         };
                         offersCommand?: boolean;
                         /** @enum {string} */
@@ -8377,7 +8377,7 @@ export interface components {
                             ackable: string[];
                             requiredAcks: string[];
                             review: {
-                                [key: string]: string | number | boolean | ("null" | null) | (string | number | boolean | ("null" | null))[];
+                                [key: string]: string | number | boolean | (null) | (string | number | boolean | (null))[];
                             };
                         };
                     } | {
@@ -8386,7 +8386,7 @@ export interface components {
                         notBefore: string;
                         code: string;
                         params?: {
-                            [key: string]: string | number | boolean | ("null" | null) | (string | number | boolean | ("null" | null))[];
+                            [key: string]: string | number | boolean | (null) | (string | number | boolean | (null))[];
                         };
                     };
                 } | null;
@@ -8403,7 +8403,7 @@ export interface components {
                     kind: "operator";
                     code: string;
                     params?: {
-                        [key: string]: string | number | boolean | ("null" | null) | (string | number | boolean | ("null" | null))[];
+                        [key: string]: string | number | boolean | (null) | (string | number | boolean | (null))[];
                     };
                     offersCommand?: boolean;
                     /** @enum {string} */
@@ -8422,7 +8422,7 @@ export interface components {
                         ackable: string[];
                         requiredAcks: string[];
                         review: {
-                            [key: string]: string | number | boolean | ("null" | null) | (string | number | boolean | ("null" | null))[];
+                            [key: string]: string | number | boolean | (null) | (string | number | boolean | (null))[];
                         };
                     };
                 } | {
@@ -8431,7 +8431,7 @@ export interface components {
                     notBefore: string;
                     code: string;
                     params?: {
-                        [key: string]: string | number | boolean | ("null" | null) | (string | number | boolean | ("null" | null))[];
+                        [key: string]: string | number | boolean | (null) | (string | number | boolean | (null))[];
                     };
                 }) | null;
                 progress: {
@@ -8446,7 +8446,7 @@ export interface components {
                         level: "info" | "warn" | "block" | "unknown";
                         subject?: string;
                         params?: {
-                            [key: string]: string | number | boolean | ("null" | null) | (string | number | boolean | ("null" | null))[];
+                            [key: string]: string | number | boolean | (null) | (string | number | boolean | (null))[];
                         };
                     }[];
                 } | null;
@@ -23256,7 +23256,7 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
-                    aliases: (string & (unknown & unknown))[];
+                    aliases: (string & (string))[];
                 };
             };
         };
@@ -23336,7 +23336,7 @@ export interface operations {
             content: {
                 "application/json": {
                     networks?: string[];
-                    containerAlias?: (string & (unknown & unknown)) | null;
+                    containerAlias?: (string & (string)) | null;
                 };
             };
         };
@@ -24886,7 +24886,7 @@ export interface operations {
                     networks: {
                         network: string;
                         service: string;
-                        aliases: (string & (unknown & unknown))[];
+                        aliases: (string & (string))[];
                     }[];
                 };
             };
@@ -44098,7 +44098,7 @@ export interface operations {
                                 user: string;
                                 daemon: boolean;
                                 procs: {
-                                    name: (string) & string;
+                                    name: string;
                                     /** @default  */
                                     script: string;
                                     /** @default  */
@@ -44116,7 +44116,7 @@ export interface operations {
                             sites: {
                                 /** @enum {string} */
                                 server: "nginx" | "apache";
-                                names: ((string) & string)[];
+                                names: string[];
                                 /** @default  */
                                 root: string;
                                 /** @enum {string} */
@@ -44272,7 +44272,7 @@ export interface operations {
                                 user: string;
                                 daemon: boolean;
                                 procs: {
-                                    name: (string) & string;
+                                    name: string;
                                     /** @default  */
                                     script: string;
                                     /** @default  */
@@ -44290,7 +44290,7 @@ export interface operations {
                             sites: {
                                 /** @enum {string} */
                                 server: "nginx" | "apache";
-                                names: ((string) & string)[];
+                                names: string[];
                                 /** @default  */
                                 root: string;
                                 /** @enum {string} */
@@ -45163,6 +45163,7 @@ export interface operations {
                         user: string;
                         name: string;
                         nodeMajor?: number;
+                        /** @default null */
                         probePath?: string | null;
                     }[];
                 };
@@ -53298,7 +53299,7 @@ export interface operations {
                             level: "info" | "warn" | "error";
                             code: string;
                             params: {
-                                [key: string]: string | number | boolean | ("null" | null) | (string | number | boolean | ("null" | null))[];
+                                [key: string]: string | number | boolean | (null) | (string | number | boolean | (null))[];
                             } | null;
                             actorId: string | null;
                         }[];
@@ -54691,7 +54692,7 @@ export interface operations {
                         manual: {
                             code: string;
                             params?: {
-                                [key: string]: string | number | boolean | ("null" | null) | (string | number | boolean | ("null" | null))[];
+                                [key: string]: string | number | boolean | (null) | (string | number | boolean | (null))[];
                             };
                         }[];
                     };
