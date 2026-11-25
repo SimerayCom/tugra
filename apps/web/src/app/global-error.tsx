@@ -3,8 +3,14 @@
 // Catastrophic boundary: replaces the root layout, so it has no Providers/i18n.
 // Keep it self-contained (own <html>/<body>, fixed English, theme via globals.css).
 import "./globals.css";
+import { useEffect } from "react";
+import { isStaleBuildError, reloadForNewBuild } from "../lib/stale-build";
 
-export default function GlobalError({ reset }: { error: Error & { digest?: string }; reset: () => void }) {
+export default function GlobalError({ error, reset }: { error: Error & { digest?: string }; reset: () => void }) {
+  useEffect(() => {
+    console.error(error);
+    if (isStaleBuildError(error)) reloadForNewBuild();
+  }, [error]);
   return (
     <html lang="en" data-theme="dark">
       <body>
@@ -14,7 +20,7 @@ export default function GlobalError({ reset }: { error: Error & { digest?: strin
             The app hit an unexpected error. Reloading usually fixes it.
           </p>
           <button
-            onClick={() => reset()}
+            onClick={() => (isStaleBuildError(error) ? window.location.reload() : reset())}
             style={{ background: "var(--c-a)", color: "#0d0d11", fontWeight: 600, fontSize: 14, padding: "9px 16px", borderRadius: "var(--r1)", border: "none", cursor: "pointer", fontFamily: "inherit" }}
           >
             Reload

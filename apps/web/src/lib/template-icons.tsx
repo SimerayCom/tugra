@@ -81,7 +81,8 @@ export function TemplateLogo({
       width={size}
       height={size}
       onError={() => setExt(ext === "svg" ? "png" : null)}
-      style={{ objectFit: "contain", display: "block" }}
+      // Inline size wins over any `img { height: auto }` rule, so a tall logo (MongoDB, MinIO) stays in its square.
+      style={{ width: size, height: size, objectFit: "contain", display: "block", flexShrink: 0 }}
     />
   );
 }

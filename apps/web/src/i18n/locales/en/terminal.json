@@ -27,5 +27,12 @@
   "groupApps": "Apps",
   "groupDatabases": "Databases",
   "noTargets": "Nothing to connect to yet.",
-  "offline": "offline"
+  "offline": "offline",
+  "enableTitle": "Terminal is off for this server.",
+  "enableAction": "Turn on terminal",
+  "enableConfirm": "Turn on the terminal for this server? Team members with write access get an interactive root shell from the panel. Every session is recorded in the audit log, and you can turn it off again under Maintenance → Capabilities.",
+  "enableYes": "Turn on and connect",
+  "enableCancel": "Cancel",
+  "enableForbidden": "You need permission to manage this server to turn on the terminal.",
+  "enableFailed": "Couldn't turn on the terminal. Try again from Maintenance → Capabilities."
 }
