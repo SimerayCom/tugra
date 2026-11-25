@@ -325,8 +325,6 @@
     "adoptReview": "Review",
     "managedHint": "{n} containers are managed by {platform}. Move them with the {platform} import.",
     "managedHintOne": "1 container is managed by {platform}. Move it with the {platform} import.",
-    "pm2Soon": "PM2 migration support is coming.",
-    "panelSoon": "{panel} migration support is coming.",
     "containers": "Containers",
     "containersCount": "Containers ({n})",
     "composeProject": "Compose project {name}",
@@ -389,7 +387,10 @@
       "app": "Apps",
       "tool": "Tools"
     },
-    "tugraOwnHint": "Tugra's own containers (hub, agent, proxy). Managed by Tugra, nothing to move."
+    "tugraOwnHint": "Tugra's own containers (hub, agent, proxy). Managed by Tugra, nothing to move.",
+    "pm2MoveHint": "PM2 processes can move to Tugra in place: same folder, same port, no DNS or website changes.",
+    "pm2MoveHintOwnerOnly": "Only the instance owner can move PM2 processes to Tugra.",
+    "phpStays": "PHP sites stay on CloudPanel for now."
   },
   "gpus": {
     "title": "Detected GPUs",
@@ -611,5 +612,142 @@
     "name_clash": "Another container's name starts with this project's name, so the two can't be told apart. Rename the project first."
   },
   "adoptManagedBy": "Move with the {platform} import",
-  "adoptManagedHint": "{platform} runs this container. The {platform} import moves it together with its settings, domains and data."
+  "adoptManagedHint": "{platform} runs this container. The {platform} import moves it together with its settings, domains and data.",
+  "pm2Move": {
+    "title": "Move PM2 processes to Tugra",
+    "intro": "Each process keeps running from its own folder, on the same port, with the same environment and user. Your web server and DNS are not touched.",
+    "open": "Move to Tugra",
+    "preparing": "Preparing…",
+    "refresh": "Refresh preview",
+    "close": "Close",
+    "errOwner": "Only the instance owner can do this.",
+    "errForbidden": "Needs server-ops permission and the 'patch' and 'deploy' capabilities on this server.",
+    "errOutdated": "Update this server's agent to read its PM2 processes.",
+    "errUnavailable": "Couldn't read the PM2 processes. Check that the agent is online.",
+    "errGeneric": "Something went wrong. Try again.",
+    "errBusy": "A move is already running on this server.",
+    "truncated": "Only the first processes are shown.",
+    "empty": "No PM2 processes found.",
+    "selectReady": "Select all that can move",
+    "selectNone": "Clear selection",
+    "moveSelected": "Move {n} selected",
+    "moveOne": "Move to Tugra",
+    "selectedCount": "{n} selected",
+    "status": {
+      "ready": "Ready",
+      "needs-node": "Needs a Node version",
+      "unsupported": "Can't move yet"
+    },
+    "reason": {
+      "not-running": "It isn't running in PM2. Start it first.",
+      "cluster-instances": "It runs several instances in cluster mode. That isn't moved yet.",
+      "duplicate-name": "Several PM2 entries share this name.",
+      "name-unsafe": "The name can't be used safely with PM2 commands.",
+      "interpreter": "It runs with {interpreter}, which isn't Node.",
+      "script-kind": "It isn't a Node script.",
+      "script-missing": "The script file wasn't found.",
+      "script-outside": "The script is outside its working folder.",
+      "no-cwd": "No working folder is saved for it.",
+      "cwd-missing": "Its working folder doesn't exist.",
+      "cwd-unsafe": "Its working folder is too broad or protected to share with a container.",
+      "args-unsafe": "Its start arguments can't be carried over exactly.",
+      "no-user": "Its PM2 account couldn't be identified."
+    },
+    "warning": {
+      "root": "Runs as root, same as in PM2 today.",
+      "node-eol": "This Node version is past end of life. It keeps working, but plan an upgrade.",
+      "no-port": "No port is known, so the check only confirms it keeps running.",
+      "owner-differs": "The folder belongs to a different user than the process.",
+      "cluster-single": "Cluster mode with one instance runs as a single process."
+    },
+    "node": "Node version",
+    "nodeChoose": "Choose…",
+    "nodeSource": {
+      "interpreter": "From the Node PM2 uses",
+      "nvmrc": "From .nvmrc",
+      "engines": "From package.json",
+      "override": "Your choice",
+      "none": ""
+    },
+    "probe": "Health check path (optional)",
+    "probeHint": "For example /health. After the port opens, this path must answer.",
+    "field": {
+      "folder": "Folder",
+      "user": "Runs as",
+      "port": "Port",
+      "domains": "Serves",
+      "command": "Command",
+      "env": "{n} environment variables carried over"
+    },
+    "confirm": {
+      "title": "Review before moving",
+      "intro": "Each selected process is moved one after the other. This is what happens to each:",
+      "s1": "The Node image is downloaded first, while the process keeps running.",
+      "s2": "The process is stopped in PM2. Downtime is a few seconds, until the new container is listening.",
+      "s3": "It starts as a Tugra container on the host network: same port, same folder (read and write), same user, same environment, restarts automatically.",
+      "s4": "Tugra checks that it keeps running and that the port answers.",
+      "s5": "If it's healthy, it's removed from PM2. If anything fails, the container is removed and the process is restarted in PM2 exactly as it was.",
+      "s6": "Websites and DNS stay as they are.",
+      "privilege": "The new apps run with host networking and read-write access to their own folder. This is recorded in the audit log.",
+      "go": "Confirm and move",
+      "back": "Back"
+    },
+    "job": {
+      "title": "Moving…",
+      "doneTitle": "Move finished",
+      "scanAgain": "Scan the server again to refresh this list.",
+      "openApp": "Open app",
+      "pm2Left": "Moved, but it couldn't be removed from PM2. Delete the stopped entry with pm2 delete, then pm2 save.",
+      "logTitle": "Last output from the process",
+      "errTitle": "Docker said",
+      "status": {
+        "queued": "Waiting",
+        "running": "Moving",
+        "moved": "Moved",
+        "rolled_back": "Rolled back, PM2 is running it again",
+        "aborted": "Not moved, nothing changed",
+        "plan_changed": "Not moved, it changed since the preview",
+        "rollback_failed": "Failed and PM2 could not be restarted. Check it now.",
+        "unknown": "Outcome unknown. Check the server.",
+        "failed": "Not moved"
+      },
+      "step": {
+        "precheck": "Checking",
+        "pull": "Downloading the image",
+        "stop": "Stopping in PM2",
+        "start": "Starting the container",
+        "health": "Checking health",
+        "delete": "Removing from PM2",
+        "rollback": "Rolling back",
+        "recover": "Recovering"
+      }
+    },
+    "code": {
+      "ok": "",
+      "not_online": "It isn't online in PM2.",
+      "pull_failed": "The Node image couldn't be downloaded.",
+      "stop_failed": "PM2 couldn't stop it.",
+      "port_busy": "Something else still holds the port.",
+      "start_failed": "The container couldn't start.",
+      "container_exited": "The container stopped or kept restarting.",
+      "not_listening": "The port never opened.",
+      "http_failed": "The health check path didn't answer properly.",
+      "interrupted": "The move was interrupted.",
+      "delete_failed": "PM2 couldn't remove the entry.",
+      "host_unavailable": "The server's host helper isn't available.",
+      "user": "The PM2 account doesn't match.",
+      "nohome": "The PM2 folder wasn't found.",
+      "nobin": "The pm2 program wasn't found for this account.",
+      "norunuser": "The runuser tool is missing on the host.",
+      "recovered": "Recovered after losing contact with the server.",
+      "gone": "It is neither in PM2 nor running. Check it now.",
+      "agent_offline": "The agent is offline.",
+      "agent_unreachable": "The agent couldn't be reached.",
+      "capability": "A required capability is turned off for this server.",
+      "invalid": "It can't be carried over exactly.",
+      "changed": "The process or its environment changed.",
+      "error": "Something went wrong.",
+      "other": "Something went wrong."
+    }
+  }
 }

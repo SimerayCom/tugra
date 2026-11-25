@@ -119,13 +119,16 @@ describe("ServerScanCard", () => {
     expect(screen.queryByText(/^Containers \(/)).toBeNull();
   });
 
-  it("only suggests: adoption goes through the existing flow, PM2/CloudPanel get a 'coming' note", async () => {
+  it("only suggests: adoption goes through the existing flow; PM2 is owner-only; CloudPanel PHP sites honestly stay", async () => {
     vi.spyOn(api, "getServerScan").mockResolvedValue({ report: report() });
     const onReviewAdopt = vi.fn();
     show({ onReviewAdopt });
     expect(await screen.findByText("2 containers can be adopted as Tugra apps.")).toBeTruthy();
     expect(screen.getByText("1 container is managed by Coolify. Move it with the Coolify import.")).toBeTruthy();
-    expect(screen.getByText("PM2 migration support is coming.")).toBeTruthy();
+    expect(screen.getByText("Only the instance owner can move PM2 processes to Tugra.")).toBeTruthy();
+    expect(screen.getByText("PHP sites stay on CloudPanel for now.")).toBeTruthy();
+    expect(screen.queryByText(/migration support is coming/)).toBeNull();
+    expect(screen.queryByRole("button", { name: "Move to Tugra" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Review" }));
     expect(onReviewAdopt).toHaveBeenCalledTimes(1);
   });
@@ -133,7 +136,7 @@ describe("ServerScanCard", () => {
   it("a read-only member sees no adopt suggestion", async () => {
     vi.spyOn(api, "getServerScan").mockResolvedValue({ report: report() });
     show({ canWrite: false });
-    await screen.findByText("PM2 migration support is coming.");
+    await screen.findByText("PHP sites stay on CloudPanel for now.");
     expect(screen.queryByRole("button", { name: "Review" })).toBeNull();
     expect(screen.queryByText(/can be adopted as Tugra apps/)).toBeNull();
   });

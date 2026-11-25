@@ -175,6 +175,9 @@ import type {
   DiskUsage,
   GpuReport,
   ScanView,
+  Pm2MoveChoice,
+  Pm2MoveJob,
+  Pm2MovePlanView,
   TemplateManifest,
   TokenPair,
   TunnelView,
@@ -1097,6 +1100,16 @@ export const api = {
   },
   runServerScan(id: string) {
     return apiFetch<ScanView>(`/servers/${id}/scan`, { method: "POST" });
+  },
+  /** Owner-only preview of moving this server's PM2 processes to Tugra in place (read-only). */
+  planPm2Move(id: string, items?: Pm2MoveChoice[]) {
+    return apiFetch<Pm2MovePlanView>(`/servers/${id}/pm2-move/plan`, { method: "POST", body: JSON.stringify(items ? { items } : {}) });
+  },
+  startPm2Move(id: string, body: { environmentId?: string; items: (Pm2MoveChoice & { planHash: string })[] }) {
+    return apiFetch<Pm2MoveJob>(`/servers/${id}/pm2-move`, { method: "POST", body: JSON.stringify(body) });
+  },
+  getPm2MoveJob(id: string, jobId: string) {
+    return apiFetch<Pm2MoveJob>(`/servers/${id}/pm2-move/${jobId}`);
   },
   refreshServerGpus(id: string) {
     return apiFetch<GpuReport>(`/servers/${id}/gpus/refresh`, { method: "POST" });

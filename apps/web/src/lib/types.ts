@@ -2700,6 +2700,77 @@ export interface ScanView {
   report: ScanReport | null;
 }
 
+// ── PM2 "Move to Tugra (in place)" (instance owner only) ────────────────────────────────────────────────────────────
+export type Pm2MoveReason =
+  | "not-running"
+  | "cluster-instances"
+  | "duplicate-name"
+  | "name-unsafe"
+  | "interpreter"
+  | "script-kind"
+  | "script-missing"
+  | "script-outside"
+  | "no-cwd"
+  | "cwd-missing"
+  | "cwd-unsafe"
+  | "args-unsafe"
+  | "no-user";
+export type Pm2MoveWarning = "root" | "node-eol" | "no-port" | "owner-differs" | "cluster-single";
+export interface Pm2MovePlan {
+  key: string;
+  user: string;
+  name: string;
+  status: "ready" | "needs-node" | "unsupported";
+  reasons: Pm2MoveReason[];
+  warnings: Pm2MoveWarning[];
+  interpreter: string | null;
+  nodeMajor: number | null;
+  nodeSource: "interpreter" | "nvmrc" | "engines" | "override" | "none";
+  image: string | null;
+  command: string[];
+  workDir: string | null;
+  mountDir: string | null;
+  uid: number | null;
+  gid: number | null;
+  port: number | null;
+  portSource: "env" | "site" | "none";
+  probePath: string | null;
+  domains: string[];
+  envCount: number;
+  planHash: string;
+}
+export interface Pm2MovePlanView {
+  plans: Pm2MovePlan[];
+  truncated: boolean;
+}
+export interface Pm2MoveChoice {
+  user: string;
+  name: string;
+  nodeMajor?: number;
+  probePath?: string | null;
+}
+export type Pm2MoveItemStatus = "queued" | "running" | "moved" | "rolled_back" | "aborted" | "plan_changed" | "rollback_failed" | "unknown" | "failed";
+export interface Pm2MoveJobItem {
+  key: string;
+  user: string;
+  name: string;
+  status: Pm2MoveItemStatus;
+  step: string | null;
+  reason: string | null;
+  appId: string | null;
+  pm2Left: boolean;
+  logTail: string[];
+  errTail: string[];
+}
+export interface Pm2MoveJob {
+  id: string;
+  serverId: string;
+  state: "running" | "done";
+  startedAt: string;
+  finishedAt: string | null;
+  items: Pm2MoveJobItem[];
+}
+
 // ── Traffic Analytics (proxy access-log based, read-level, team-scoped) ─────────────────────────────
 export interface TrafficTotals {
   requests: number;

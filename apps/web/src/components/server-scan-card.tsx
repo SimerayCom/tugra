@@ -8,6 +8,8 @@ import type { ExposedService, ScanContainer, ScanReport, ScanSite, ScanSoftware 
 import { useT } from "../i18n/provider";
 import { TemplateLogo } from "../lib/template-icons";
 import { TriangleAlert } from "lucide-react";
+import { useAuth } from "../lib/auth";
+import { Pm2MovePanel } from "./pm2-move-panel";
 import { Badge, Btn, SectionCard } from "./ui";
 
 export const scanQueryKey = (serverId: string) => ["server-scan", serverId] as const;
@@ -148,6 +150,9 @@ export function ServerScanCard({
       )}
       {report && (
         <ScanResult
+          serverId={serverId}
+          canOps={canOps}
+          online={online}
           report={report}
           filter={filter}
           setFilter={setFilter}
@@ -160,12 +165,18 @@ export function ServerScanCard({
 }
 
 function ScanResult({
+  serverId,
+  canOps,
+  online,
   report,
   filter,
   setFilter,
   canWrite,
   onReviewAdopt,
 }: {
+  serverId: string;
+  canOps: boolean;
+  online: boolean;
   report: ScanReport;
   filter: string | null;
   setFilter: (id: string | null) => void;
@@ -173,6 +184,8 @@ function ScanResult({
   onReviewAdopt: () => void;
 }) {
   const t = useT();
+  const { user } = useAuth();
+  const isOwner = !!user?.isInstanceOwner;
   const active = filter ? report.software.find((s) => s.id === filter) ?? null : null;
   const containers = report.containers.filter((c) => inFilter(c, active?.id ?? null));
   const sites = report.sites.filter((s) => !active || s.server === active.id || (active.id === "cloudpanel" && s.panel === "cloudpanel"));
@@ -185,8 +198,9 @@ function ScanResult({
     .map((p) => ({ p, n: report.containers.filter((c) => c.managedBy === p).length }))
     .filter((x) => x.n > 0);
   const hasPm2 = report.pm2.some((u) => u.procs.length > 0);
-  const hasCloudpanel = report.software.some((s) => s.id === "cloudpanel");
-  const hasSteps = (canWrite && adoptable > 0) || managed.length > 0 || hasPm2 || hasCloudpanel;
+  // No fake action for CloudPanel PHP sites: they are listed below and the note says they stay where they are.
+  const hasPanelPhp = report.sites.some((s) => s.panel === "cloudpanel" && s.kind === "php");
+  const hasSteps = (canWrite && adoptable > 0) || managed.length > 0 || hasPm2 || hasPanelPhp;
   const nothing = report.software.length === 0 && report.containers.length === 0 && report.sites.length === 0 && !hasPm2;
 
   const hostNote =
@@ -276,8 +290,8 @@ function ScanResult({
                 {n === 1 ? t("servers.serverScan.managedHintOne", { platform: PLATFORM_LABEL[p] }) : t("servers.serverScan.managedHint", { n, platform: PLATFORM_LABEL[p] })}
               </li>
             ))}
-            {hasPm2 && <li style={{ color: "var(--c-tx2)" }}>{t("servers.serverScan.pm2Soon")}</li>}
-            {hasCloudpanel && <li style={{ color: "var(--c-tx2)" }}>{t("servers.serverScan.panelSoon", { panel: "CloudPanel" })}</li>}
+            {hasPm2 && <li style={{ color: "var(--c-tx2)" }}>{isOwner ? t("servers.serverScan.pm2MoveHint") : t("servers.serverScan.pm2MoveHintOwnerOnly")}</li>}
+            {hasPanelPhp && <li style={{ color: "var(--c-tx2)" }}>{t("servers.serverScan.phpStays")}</li>}
           </ul>
         </>
       )}
@@ -320,6 +334,7 @@ function ScanResult({
               ))}
             </div>
           ))}
+          <Pm2MovePanel serverId={serverId} online={online} canOps={canOps} />
         </>
       )}
 
