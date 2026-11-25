@@ -928,6 +928,7 @@ export class ServersService {
       providerServerId?: string | null;
       providerManualLink?: boolean;
       scanReport?: unknown;
+      scanExposedCount?: number | null;
     },
     canWrite: boolean,
     canOps: boolean,
@@ -983,7 +984,9 @@ export class ServersService {
       provider: s.provider ?? null,
       providerServerId: s.providerServerId ?? null,
       providerManualLink: s.providerManualLink ?? false,
-      exposedServices: exposedCountOf(s.scanReport),
+      // scanReport is omitted from list/detail reads (memory); the count is stored beside it at scan time. A row loaded
+      // with the report (older callers) still works through the JSON.
+      exposedServices: s.scanExposedCount ?? exposedCountOf(s.scanReport),
       canWrite,
       canOps,
     };

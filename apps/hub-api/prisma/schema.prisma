@@ -366,6 +366,9 @@ model Server {
   gpuCheckedAt           DateTime? // when gpuInventory was last written
   scanReport             Json? // sanitized server scan ("What runs on this server", server-ops/server-scan.ts). NULL = never scanned. Holds no env values or secrets.
   scannedAt              DateTime? // when scanReport was last written
+  // Exposed-service count of the latest scan (null = host half not checked). Kept beside the JSON so server lists, which
+  // never load scanReport, can show the fleet-wide warning cheaply.
+  scanExposedCount       Int?
   cleanupEnabled         Boolean                 @default(false)
   cleanupIntervalHours   Int?
   cleanupCron            String? // optional 5-field cron; when set, overrides cleanupIntervalHours

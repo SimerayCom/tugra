@@ -108,6 +108,16 @@ describe("ServersService exposedServices (from the stored scan)", () => {
     expect(await listed({ host: { status: "ok" } })).toBeNull();
     expect(await listed({ host: { status: "unavailable" }, exposed: [] })).toBeNull();
   });
+  it("uses the count stored beside the report, because the list never loads the report itself", async () => {
+    const findMany = jest.fn().mockResolvedValue([{ ...row("s1", "teamA"), scanExposedCount: 2 }]);
+    const prisma = {
+      membership: { findMany: jest.fn().mockResolvedValue([{ teamId: "teamA", role: Role.OWNER }]) },
+      server: { findMany },
+    } as unknown as PrismaService;
+    const [view] = await svcWith(prisma).listForUser("u1");
+    expect(view.exposedServices).toBe(2);
+    expect(findMany.mock.calls[0][0].omit).toMatchObject({ scanReport: true });
+  });
 });
 
 describe("ServersService.getForUser (cluster membership exposed)", () => {

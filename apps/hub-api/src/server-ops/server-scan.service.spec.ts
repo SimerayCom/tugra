@@ -69,7 +69,7 @@ describe("ServerScanService.run", () => {
     expect(sendCommand).toHaveBeenCalledWith("s1", buildDockerScanScript(), "bulk", expect.any(Number));
     expect(sendCommand).toHaveBeenCalledWith("s1", buildHostScanScript(), "bulk", expect.any(Number));
     expect(v.report?.software.map((s) => s.id).sort()).toEqual(["docker", "nginx", "redis"]);
-    expect(update).toHaveBeenCalledWith({ where: { id: "s1" }, data: { scanReport: v.report, scannedAt: NOW } });
+    expect(update).toHaveBeenCalledWith({ where: { id: "s1" }, data: { scanReport: v.report, scannedAt: NOW, scanExposedCount: v.report?.exposed.length } });
     const log = (audit.log as jest.Mock).mock.calls[0][0];
     expect(log).toMatchObject({ actor: "u1", action: "server.scan", target: "s1" });
     expect(JSON.stringify(log)).not.toMatch(/redis|cache/);

@@ -217,7 +217,7 @@ describe("ServerScanCard", () => {
     });
     show();
     const card = await screen.findByTestId("exposed-services");
-    expect(within(card).getByText("3 services are open to the internet")).toBeTruthy();
+    expect(within(card).getByText("3 services listen on all interfaces")).toBeTruthy();
     expect(within(card).getByText("Redis")).toBeTruthy();
     expect(within(card).getAllByText("Critical").length).toBe(2);
     expect(within(card).getByText(/"127\.0\.0\.1:6482:6482"/)).toBeTruthy();

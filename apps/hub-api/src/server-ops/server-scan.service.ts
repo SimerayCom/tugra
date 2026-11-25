@@ -89,7 +89,11 @@ export class ServerScanService {
       const report = buildScanReport({ docker, host, now: scannedAt });
       await this.prisma.server.update({
         where: { id: serverId },
-        data: { scanReport: report as unknown as Prisma.InputJsonValue, scannedAt },
+        data: {
+          scanReport: report as unknown as Prisma.InputJsonValue,
+          scannedAt,
+          scanExposedCount: report.host.status === "ok" ? report.exposed.length : null,
+        },
       });
       // Counts only: names, images and domains stay out of the audit trail.
       await this.audit.log({

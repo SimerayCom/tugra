@@ -17,7 +17,7 @@
   "attentionMonitor": "Monitor down",
   "attentionSslExpiring": "SSL certificate expiring",
   "attentionSslError": "SSL certificate error",
-  "attentionExposed": "Services open to the internet (see the server scan)",
+  "attentionExposed": "Databases or admin tools listening on all interfaces (see the server scan)",
   "attentionExposedCount": "{n} exposed",
   "recentActivity": "Recent activity",
   "viewAll": "View all →",
