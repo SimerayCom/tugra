@@ -40,6 +40,7 @@ function setup(opts: { perms?: string[] | null; snap?: BeszelSnapshot; session?:
     notificationChannel: { findMany: jest.fn().mockResolvedValue([]) },
     metric: { findFirst: jest.fn().mockResolvedValue(null) },
     metricRollup: { findFirst: jest.fn().mockResolvedValue(null), createMany: jest.fn().mockResolvedValue({ count: 0 }) },
+    metricRollup5m: { findFirst: jest.fn().mockResolvedValue(null), createMany: jest.fn().mockResolvedValue({ count: 0 }) },
   };
   const perms = opts.perms === undefined ? ["monitors", "integrations", "servers:ops"] : opts.perms;
   const access: any = { membershipPermissions: jest.fn().mockResolvedValue(perms ? new Set(perms) : null) };
@@ -139,11 +140,12 @@ describe("BeszelImportService.preview", () => {
     expect(p.alerts.map((a) => [a.id, a.outcome])).toEqual([["a1", "create"], ["a2", "covered"], ["a3", "noServer"]]);
     expect(p.channels.map((c) => c.outcome)).toEqual(["create", "skip"]);
     expect(p.servers).toEqual([{ id: "srv1", name: "app-1" }]);
-    expect(p.history.windowDays).toBe(30);
+    expect(p.history.windowDays).toBe(28);
     expect(JSON.stringify(p)).not.toContain("AAA");
     expect(notifications.create).not.toHaveBeenCalled();
     expect(monitors.create).not.toHaveBeenCalled();
     expect(prisma.metricRollup.createMany).not.toHaveBeenCalled();
+    expect(prisma.metricRollup5m.createMany).not.toHaveBeenCalled();
   });
 
   it("counts the history it would import, never over data Tugra holds", async () => {
@@ -242,7 +244,9 @@ describe("BeszelImportService.apply", () => {
     const p = await t.svc.preview("u1", { sessionId: "sess1" });
     const r = await t.svc.apply("u1", applyBody(p.hash, { parts: { alerts: false, channels: false, history: true } }));
     expect(t.source.stats).toHaveBeenCalledTimes(2 * 1); // once in the preview, once in the apply (one matched system)
-    const call = t.prisma.metricRollup.createMany.mock.calls[0][0];
+    // 10 days old: only the 5-minute tier (the 1-minute tier keeps 48 h and would prune it at once).
+    expect(t.prisma.metricRollup.createMany).not.toHaveBeenCalled();
+    const call = t.prisma.metricRollup5m.createMany.mock.calls[0][0];
     expect(call.skipDuplicates).toBe(true);
     expect(call.data[0]).toMatchObject({ serverId: "srv1", avgCpu: 3, avgLoad5: 2 });
     expect(r.history).toEqual({ systems: 1, points: 1 });

@@ -436,6 +436,8 @@ model Server {
   containerEvents        ContainerEvent[]
   metricRollups          MetricRollup[]
   containerMetricRollups ContainerMetricRollup[]
+  metricRollups5m        MetricRollup5m[]
+  containerMetricRollups5m ContainerMetricRollup5m[]
   trafficMetrics         TrafficMetric[]
   trafficPaths           TrafficPath[]
   trafficCountries       TrafficCountry[]
@@ -727,6 +729,54 @@ model ContainerMetricRollup {
   avgBlkWrite   BigInt
 
   @@unique([serverId, containerName, bucket])
+  @@index([bucket])
+}
+
+// 5-minute tier of MetricRollup: one row per (serverId, 5-minute bucket), rolled up from the 1-minute rows and kept
+// METRICS_ROLLUP_RETENTION_DAYS (28) while the 1-minute rows are kept only METRICS_ROLLUP_1M_RETENTION_HOURS (48).
+// A separate table (not a resolution column) so the live table is never rewritten or re-keyed, each tier prunes by
+// its own bucket index, and the composite key replaces the surrogate id + unique index (about a quarter smaller).
+model MetricRollup5m {
+  server       Server   @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  serverId     String
+  bucket       DateTime // 5-minute aligned
+  avgCpu       Float
+  maxCpu       Float
+  avgMemUsed   BigInt
+  avgMemTotal  BigInt
+  avgDiskUsed  BigInt
+  avgDiskTotal BigInt
+  avgNetRx     BigInt
+  avgNetTx     BigInt
+  avgDiskRead  BigInt
+  avgDiskWrite BigInt
+  avgLoad1     Float?
+  avgLoad5     Float?
+  avgLoad15    Float?
+  avgSwapUsed  BigInt?
+  avgSwapTotal BigInt?
+
+  @@id([serverId, bucket])
+  @@index([bucket])
+}
+
+// 5-minute tier of ContainerMetricRollup (see MetricRollup5m).
+model ContainerMetricRollup5m {
+  server        Server   @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  serverId      String
+  containerName String
+  bucket        DateTime // 5-minute aligned
+  avgCpu        Float
+  maxCpu        Float
+  avgMemUsed    BigInt
+  avgMemTotal   BigInt
+  avgMemPct     Float
+  avgNetRx      BigInt
+  avgNetTx      BigInt
+  avgBlkRead    BigInt
+  avgBlkWrite   BigInt
+
+  @@id([serverId, containerName, bucket])
   @@index([bucket])
 }
 

@@ -281,18 +281,19 @@ export class MetricsService {
   }
 
   /**
-   * Host metrics over a `range` (asc by time). Ranges within raw retention (≤24h) read raw rows at
-   * full fidelity; longer ranges (7d) read the 1-minute rollups so history survives past raw
-   * retention (48h). The result is LTTB down-sampled to keep the visual shape under MAX_POINTS.
+   * Host metrics over a `range` (asc by time). Ranges within raw retention (≤24h; host raw is kept 26 h) read raw
+   * rows at full fidelity; longer ranges (7d/30d) read the 5-minute rollups so history survives past raw
+   * retention (the 1-minute tier serves a range only when raw retention is configured shorter than it). The result is LTTB down-sampled to keep the visual shape under MAX_POINTS.
    * `recent()` stays the live/last-N reader; this is the range-aware reader for the monitoring tab.
    */
   async history(serverId: string, range?: string): Promise<HostMetricPoint[]> {
-    const { sinceMs, useRollup } = rangeToMs(range);
+    const { sinceMs, tier } = rangeToMs(range, "host");
     let samples: HostMetricPoint[];
-    if (useRollup) {
-      // Strided in SQL (see series-sampling): a 7d series is 10 080 rows, the chart draws 1000 points.
+    if (tier !== "raw") {
+      // Strided in SQL (see series-sampling): a 7d series is 2 016 5-minute rows, a 1-minute 48 h one 2 880; the chart draws 1000 points.
+      const table = tier === "5m" ? Prisma.raw(`"MetricRollup5m"`) : Prisma.raw(`"MetricRollup"`);
       const rows = await this.prisma.$queryRaw<RollupRow[]>(
-        strided(Prisma.sql`SELECT * FROM "MetricRollup" WHERE "serverId" = ${serverId} AND "bucket" >= ${new Date(sinceMs)}`, ROLLUP_COLS, "bucket"),
+        strided(Prisma.sql`SELECT * FROM ${table} WHERE "serverId" = ${serverId} AND "bucket" >= ${new Date(sinceMs)}`, ROLLUP_COLS, "bucket"),
       );
       samples = rows.map((r) => ({
         ts: r.bucket.getTime(),

@@ -64,11 +64,13 @@ describe("validateEnv — throttle + redis timeout (ops hardening)", () => {
 });
 
 describe("validateEnv — retention", () => {
-  it("defaults raw metric retention to 48h, heartbeat to 30d, and rollup to 30d", () => {
+  it("defaults host raw 26h, container raw 6h, 1-minute rollup 48h, heartbeat 30d, 5-minute rollup 28d", () => {
     const env = validateEnv({ ...base, NODE_ENV: "development" });
-    expect(env.METRICS_RAW_RETENTION_HOURS).toBe(48);
+    expect(env.METRICS_RAW_RETENTION_HOURS).toBe(26);
+    expect(env.METRICS_CONTAINER_RAW_RETENTION_HOURS).toBe(6);
+    expect(env.METRICS_ROLLUP_1M_RETENTION_HOURS).toBe(48);
     expect(env.HEARTBEAT_RETENTION_DAYS).toBe(30);
-    expect(env.METRICS_ROLLUP_RETENTION_DAYS).toBe(30);
+    expect(env.METRICS_ROLLUP_RETENTION_DAYS).toBe(28);
   });
   it("coerces string overrides to positive integers", () => {
     const env = validateEnv({ ...base, NODE_ENV: "development", METRICS_RAW_RETENTION_HOURS: "72", HEARTBEAT_RETENTION_DAYS: "7", METRICS_ROLLUP_RETENTION_DAYS: "90" });

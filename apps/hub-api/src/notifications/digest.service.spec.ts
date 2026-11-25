@@ -24,7 +24,7 @@ function prismaMock(over: Record<string, unknown> = {}) {
     heartbeat: { count: g(0) },
     server: { findMany: g([{ id: "s1", name: "web-1" }, { id: "s2", name: "db-1" }]) },
     application: { findUnique: g({ name: "Acme API" }) },
-    metricRollup: {
+    metricRollup5m: {
       groupBy: g([
         { serverId: "s1", _avg: { avgCpu: 41.6, avgDiskUsed: 50, avgDiskTotal: 100 } },
         { serverId: "s2", _avg: { avgCpu: 12, avgDiskUsed: 95, avgDiskTotal: 100 } },
@@ -92,7 +92,7 @@ describe("DigestService.collect / buildEvent", () => {
 
   it("falls back to raw samples when there are no rollups yet", async () => {
     const prisma = prismaMock({
-      metricRollup: { groupBy: jest.fn().mockResolvedValue([]) },
+      metricRollup5m: { groupBy: jest.fn().mockResolvedValue([]) },
       metric: { groupBy: jest.fn().mockResolvedValue([{ serverId: "s2", _avg: { cpu: 70, diskUsed: 10, diskTotal: 100 } }]) },
     });
     const stats = await new DigestService(prisma, access(), audit, queue()).collect("t1", new Date());

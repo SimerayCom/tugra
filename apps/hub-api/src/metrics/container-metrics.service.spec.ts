@@ -53,14 +53,19 @@ describe("rangeToMs", () => {
     expect(rangeToMs("'; DROP" as string).range).toBe("1h");
     expect(rangeToMs("90d").range).toBe("1h"); // beyond rollup retention → clamped
   });
-  it("maps useRollup by window: within raw retention (≤24h) reads raw, only 7d reads rollups", () => {
-    expect(rangeToMs("1h").useRollup).toBe(false);
-    expect(rangeToMs("6h").useRollup).toBe(false); // still within 48h raw retention → full fidelity
-    expect(rangeToMs("24h").useRollup).toBe(false); // ditto — spikes preserved from raw
-    expect(rangeToMs("7d").range).toBe("7d");
-    expect(rangeToMs("7d").useRollup).toBe(true); // exceeds raw retention → rollup
+  it("maps the serving tier by window: container raw is 6 h, 24h reads the 1-minute rollups, 7d/30d the 5-minute rollups", () => {
+    expect(rangeToMs("1h", "container").tier).toBe("raw");
+    expect(rangeToMs("6h", "container").tier).toBe("raw"); // exactly the container raw retention
+    expect(rangeToMs("24h", "container").tier).toBe("1m");
+    expect(rangeToMs("7d", "container").tier).toBe("5m");
+    expect(rangeToMs("7d", "container").useRollup).toBe(true);
+    expect(rangeToMs("6h", "container").useRollup).toBe(false);
   });
-  it("unlocks 30d: it maps to a 30-day window that reads the 1-minute ROLLUPS (like 7d)", () => {
+  it("host raw is kept longer (26 h): 24h is still raw, 7d reads the 5-minute rollups", () => {
+    expect(rangeToMs("24h", "host").tier).toBe("raw");
+    expect(rangeToMs("7d").tier).toBe("5m"); // `host` is the default kind
+  });
+  it("unlocks 30d: it maps to a 30-day window that reads the 5-minute ROLLUPS (like 7d)", () => {
     const base = Date.now();
     const r = rangeToMs("30d");
     expect(r.range).toBe("30d");
@@ -99,7 +104,7 @@ describe("ContainerMetricsService", () => {
     const prisma = {
       // forServer reads its live inventory through one DISTINCT ON query (newest sample per container, done in SQL).
       // History reads (forApp) are ONE strided raw query per table; the live inventory (forServer) a DISTINCT ON one.
-      $queryRaw: jest.fn(async (q: { sql: string; values: unknown[] }) => (/FROM "ContainerMetricRollup"/.test(q.sql) ? rollupRows : /FROM "ContainerMetric" WHERE/.test(q.sql) ? historyRows : liveRows)),
+      $queryRaw: jest.fn(async (q: { sql: string; values: unknown[] }) => (/FROM "ContainerMetricRollup/.test(q.sql) ? rollupRows : /FROM "ContainerMetric" WHERE/.test(q.sql) ? historyRows : liveRows)),
       containerMetric: { createMany, findMany: jest.fn().mockResolvedValue([]) },
       containerMetricRollup: { findMany: jest.fn().mockResolvedValue([]) },
       // forServer joins apps + databases to build friendly container labels, and ContainerState for crash badges.
@@ -181,7 +186,20 @@ describe("ContainerMetricsService", () => {
     expect(typeof main.samples[0].memUsed).toBe("number");
   });
 
-  it("forApp: beyond-retention range (7d) reads ROLLUPS — maps avg*→field, bucket→ts, prefix match", async () => {
+  it("forApp: 24h is past the 6 h container raw retention → the 1-minute rollup table", async () => {
+    const { svc, queryRaw } = make([], [rollupRow({ containerName: "tugra_app1", avgCpu: 4 })]);
+    const out = await svc.forApp("s1", "tugra_app1", "24h");
+    expect(sqlOf(queryRaw).sql).toMatch(/FROM "ContainerMetricRollup" WHERE/);
+    expect(out.containers[0].samples[0].cpu).toBe(4);
+  });
+
+  it("forApp: 6h is still within the container raw retention → the raw table", async () => {
+    const { svc, queryRaw } = make([row({})]);
+    await svc.forApp("s1", "tugra_app1", "6h");
+    expect(sqlOf(queryRaw).sql).toMatch(/FROM "ContainerMetric" WHERE/);
+  });
+
+  it("forApp: beyond-retention range (7d) reads the 5-MINUTE ROLLUPS — maps avg*→field, bucket→ts, prefix match", async () => {
     const { svc, queryRaw } = make(
       [],
       [
@@ -192,7 +210,7 @@ describe("ContainerMetricsService", () => {
     const out = await svc.forApp("s1", "tugra_app1", "7d");
     expect(queryRaw).toHaveBeenCalledTimes(1);
     const q = sqlOf(queryRaw);
-    expect(q.sql).toMatch(/FROM "ContainerMetricRollup" WHERE "serverId" = ANY\(\?::text\[\]\) AND "bucket" >= \?/);
+    expect(q.sql).toMatch(/FROM "ContainerMetricRollup5m" WHERE "serverId" = ANY\(\?::text\[\]\) AND "bucket" >= \?/);
     expect(q.sql).toMatch(/PARTITION BY "containerName" ORDER BY "bucket"/);
     expect(q.values[0]).toEqual(["s1"]);
     expect(out.containers.map((c) => c.name)).toEqual(["tugra_app1", "tugra_app1-web-1"]);

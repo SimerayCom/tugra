@@ -1,14 +1,12 @@
 import { RetentionRunnerService } from "./retention-runner.service";
 
 describe("RetentionRunnerService", () => {
-  function make(cfg: Record<string, unknown> = {}) {
+  function make(cfg: Record<string, unknown> = {}, opts: { newest5m?: { bucket: Date } | null } = {}) {
+    const statements: Array<{ table: string; sql: string; values: unknown[] }> = [];
+    const deleted: Record<string, number[]> = {};
     // Each model: findMany returns queued pages (one array per call), then [] to end the loop.
     const pages: Record<string, { id: string }[][]> = {
-      metric: [[]],
-      containerMetric: [[]],
       heartbeat: [[]],
-      metricRollup: [[]],
-      containerMetricRollup: [[]],
       deployment: [[]],
       notificationDelivery: [[]],
       auditLog: [[]],
@@ -26,11 +24,7 @@ describe("RetentionRunnerService", () => {
       deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
     });
     const prisma = {
-      metric: model("metric"),
-      containerMetric: model("containerMetric"),
       heartbeat: model("heartbeat"),
-      metricRollup: model("metricRollup"),
-      containerMetricRollup: model("containerMetricRollup"),
       deployment: model("deployment"),
       notificationDelivery: model("notificationDelivery"),
       auditLog: model("auditLog"),
@@ -42,48 +36,88 @@ describe("RetentionRunnerService", () => {
       trafficLatency: model("trafficLatency"),
       trafficUnique: model("trafficUnique"),
       trafficUniqueHour: model("trafficUniqueHour"),
+      // The metric tables are pruned with ctid-batched raw DELETEs: `deleted[table]` queues how many rows each statement reports.
+      metricRollup5m: { findFirst: jest.fn().mockResolvedValue(opts.newest5m === undefined ? { bucket: new Date(0) } : opts.newest5m) },
+      containerMetricRollup5m: { findFirst: jest.fn().mockResolvedValue(opts.newest5m === undefined ? { bucket: new Date(0) } : opts.newest5m) },
+      $executeRaw: jest.fn(async (q: { sql: string; values: unknown[] }) => {
+        const table = /DELETE FROM "(\w+)"/.exec(q.sql)![1];
+        statements.push({ table, sql: q.sql, values: q.values });
+        return deleted[table]?.shift() ?? 0;
+      }),
     } as any;
     const config = { get: jest.fn((k: string) => cfg[k]) } as any;
-    return { svc: new RetentionRunnerService(prisma, config), prisma, pages };
+    return { svc: new RetentionRunnerService(prisma, config), prisma, pages, statements, deleted };
   }
 
-  it("queries each table by ts < cutoff and only heartbeat filters important=false", async () => {
-    const { svc, prisma } = make();
+  const cutoffOf = (st: { values: unknown[] }) => st.values[0] as Date;
+  const forTable = (statements: Array<{ table: string; sql: string; values: unknown[] }>, t: string) => statements.filter((x) => x.table === t);
+
+  it("prunes every metric tier with a ctid-batched DELETE keyed on its own column; only heartbeat filters important=false", async () => {
+    const { svc, prisma, statements } = make();
     await svc.prune();
-    const metricWhere = prisma.metric.findMany.mock.calls[0][0].where;
-    const hbWhere = prisma.heartbeat.findMany.mock.calls[0][0].where;
-    expect(metricWhere.ts.lt).toBeInstanceOf(Date);
-    expect(metricWhere.important).toBeUndefined(); // metrics have no important flag
-    expect(prisma.containerMetric.findMany.mock.calls[0][0].where.important).toBeUndefined();
-    expect(hbWhere.important).toBe(false); // status-change beats preserved
-    expect(hbWhere.ts.lt).toBeInstanceOf(Date);
+    expect(statements.map((x) => x.table)).toEqual(["Metric", "ContainerMetric", "MetricRollup", "ContainerMetricRollup", "MetricRollup5m", "ContainerMetricRollup5m"]);
+    for (const st of statements) expect(st.sql).toMatch(/DELETE FROM "\w+" WHERE ctid IN \(SELECT ctid FROM "\w+" WHERE "(ts|bucket)" < \? LIMIT \?\)/);
+    expect(forTable(statements, "Metric")[0].sql).toContain('"ts" <');
+    expect(forTable(statements, "MetricRollup5m")[0].sql).toContain('"bucket" <');
+    expect(prisma.heartbeat.findMany.mock.calls[0][0].where.important).toBe(false); // status-change beats preserved
   });
 
-  it("uses a longer cutoff (days) for heartbeats than for raw metrics (hours)", async () => {
-    const { svc, prisma } = make({ METRICS_RAW_RETENTION_HOURS: 48, HEARTBEAT_RETENTION_DAYS: 30 });
+  it("cutoffs follow the tiers: host raw 26 h, container raw 6 h, 1-minute 48 h, 5-minute 28 d, heartbeats 30 d", async () => {
+    const { svc, prisma, statements } = make({}, { newest5m: { bucket: new Date(Date.now() + 86_400_000) } });
+    const t0 = Date.now();
     await svc.prune();
-    const metricCut = prisma.metric.findMany.mock.calls[0][0].where.ts.lt as Date;
+    const age = (table: string) => (t0 - cutoffOf(forTable(statements, table)[0]).getTime()) / 3600_000;
+    expect(age("Metric")).toBeCloseTo(26, 1);
+    expect(age("ContainerMetric")).toBeCloseTo(6, 1);
+    expect(age("MetricRollup")).toBeCloseTo(48, 1);
+    expect(age("ContainerMetricRollup")).toBeCloseTo(48, 1);
+    expect(age("MetricRollup5m")).toBeCloseTo(28 * 24, 1);
+    expect(age("ContainerMetricRollup5m")).toBeCloseTo(28 * 24, 1);
     const hbCut = prisma.heartbeat.findMany.mock.calls[0][0].where.ts.lt as Date;
-    // 30 days ago is far older than 48h ago.
-    expect(hbCut.getTime()).toBeLessThan(metricCut.getTime());
+    expect(hbCut.getTime()).toBeLessThan(cutoffOf(forTable(statements, "MetricRollup5m")[0]).getTime() + 3 * 86_400_000);
   });
 
-  it("deletes in id-paged batches and terminates on a short/empty page", async () => {
-    const { svc, prisma, pages } = make();
-    const full = Array.from({ length: 5000 }, (_, i) => ({ id: `m${i}` }));
-    pages.metric = [full, [{ id: "last" }]]; // one full page (5000) → continue, then a short page → stop
-    const res = await svc.prune();
-    expect(prisma.metric.findMany).toHaveBeenCalledTimes(2); // stopped after the short page
-    expect(prisma.metric.deleteMany).toHaveBeenCalledTimes(2);
-    expect(prisma.metric.deleteMany.mock.calls[1][0].where.id.in).toEqual(["last"]);
-    expect(res.metric).toBe(5001);
+  it("honours the configured retention overrides", async () => {
+    const { svc, statements } = make({ METRICS_RAW_RETENTION_HOURS: 48, METRICS_CONTAINER_RAW_RETENTION_HOURS: 12, METRICS_ROLLUP_1M_RETENTION_HOURS: 72, METRICS_ROLLUP_RETENTION_DAYS: 14 }, { newest5m: { bucket: new Date(Date.now() + 86_400_000) } });
+    const t0 = Date.now();
+    await svc.prune();
+    const age = (table: string) => (t0 - cutoffOf(forTable(statements, table)[0]).getTime()) / 3600_000;
+    expect(age("Metric")).toBeCloseTo(48, 1);
+    expect(age("ContainerMetric")).toBeCloseTo(12, 1);
+    expect(age("MetricRollup")).toBeCloseTo(72, 1);
+    expect(age("ContainerMetricRollup5m")).toBeCloseTo(14 * 24, 1);
   });
 
-  it("does nothing (no deleteMany) when a table has no aged-out rows", async () => {
-    const { svc, prisma } = make();
+  it("deletes in 20 000-row batches and stops on the first short batch", async () => {
+    const { svc, statements, deleted } = make();
+    deleted.ContainerMetric = [20_000, 20_000, 123]; // two full batches → continue, a short one → stop
     const res = await svc.prune();
-    expect(prisma.metric.deleteMany).not.toHaveBeenCalled();
-    expect(res).toEqual({ metric: 0, containerMetric: 0, heartbeat: 0, metricRollup: 0, containerMetricRollup: 0, deployment: 0, notificationDelivery: 0, auditLog: 0, containerEvent: 0, trafficMetric: 0, trafficPath: 0, trafficCountry: 0, trafficBreakdown: 0, trafficLatency: 0, trafficUnique: 0, trafficUniqueHour: 0 });
+    expect(forTable(statements, "ContainerMetric")).toHaveLength(3);
+    expect(forTable(statements, "ContainerMetric")[0].values[1]).toBe(20_000); // LIMIT
+    expect(res.containerMetric).toBe(40_123);
+  });
+
+  it("never prunes a 1-minute rollup the 5-minute roll has not consumed: cutoff = min(48 h ago, newest 5-minute bucket)", async () => {
+    const newest5m = new Date(Date.now() - 20 * 86_400_000); // back-fill only got 8 days into the history
+    const { svc, statements } = make({}, { newest5m: { bucket: newest5m } });
+    await svc.prune();
+    expect(cutoffOf(forTable(statements, "MetricRollup")[0]).getTime()).toBe(newest5m.getTime());
+    expect(cutoffOf(forTable(statements, "ContainerMetricRollup")[0]).getTime()).toBe(newest5m.getTime());
+  });
+
+  it("does not touch the 1-minute rollups at all while the 5-minute tier is still empty (upgrade, first run)", async () => {
+    const { svc, statements } = make({}, { newest5m: null });
+    const res = await svc.prune();
+    expect(forTable(statements, "MetricRollup")).toHaveLength(0);
+    expect(forTable(statements, "ContainerMetricRollup")).toHaveLength(0);
+    expect(forTable(statements, "Metric")).toHaveLength(1); // raw is still pruned
+    expect(res.metricRollup).toBe(0);
+  });
+
+  it("does nothing when no table has aged-out rows", async () => {
+    const { svc } = make();
+    const res = await svc.prune();
+    expect(res).toEqual({ metric: 0, containerMetric: 0, heartbeat: 0, metricRollup: 0, containerMetricRollup: 0, metricRollup5m: 0, containerMetricRollup5m: 0, deployment: 0, notificationDelivery: 0, auditLog: 0, containerEvent: 0, trafficMetric: 0, trafficPath: 0, trafficCountry: 0, trafficBreakdown: 0, trafficLatency: 0, trafficUnique: 0, trafficUniqueHour: 0 });
   });
 
   it("prunes only terminal, non-rollbackable deployments (QUEUED/RUNNING and rollbackable rows are kept)", async () => {
@@ -116,19 +150,13 @@ describe("RetentionRunnerService", () => {
     expect(on.prisma.auditLog.findMany.mock.calls[0][0].where.createdAt.lt).toBeInstanceOf(Date);
   });
 
-  it("prunes rollups by bucket < cutoff (own retention window, not ts)", async () => {
-    const { svc, prisma, pages } = make({ METRICS_ROLLUP_RETENTION_DAYS: 30 });
-    pages.metricRollup = [[{ id: "r1" }, { id: "r2" }]]; // one short page → deleted then stop
-    pages.containerMetricRollup = [[{ id: "cr1" }]];
+  it("reports the rollup rows pruned per tier", async () => {
+    const { svc, deleted } = make({}, { newest5m: { bucket: new Date(Date.now() + 86_400_000) } });
+    deleted.MetricRollup = [2];
+    deleted.ContainerMetricRollup = [1];
+    deleted.MetricRollup5m = [7];
     const res = await svc.prune();
-    // rollups filter on `bucket`, never `ts`
-    const mrWhere = prisma.metricRollup.findMany.mock.calls[0][0].where;
-    expect(mrWhere.bucket.lt).toBeInstanceOf(Date);
-    expect(mrWhere.ts).toBeUndefined();
-    expect(prisma.containerMetricRollup.findMany.mock.calls[0][0].where.bucket.lt).toBeInstanceOf(Date);
-    expect(prisma.metricRollup.deleteMany.mock.calls[0][0].where.id.in).toEqual(["r1", "r2"]);
-    expect(res.metricRollup).toBe(2);
-    expect(res.containerMetricRollup).toBe(1);
+    expect(res).toMatchObject({ metricRollup: 2, containerMetricRollup: 1, metricRollup5m: 7, containerMetricRollup5m: 0 });
   });
 
   it("prunes traffic metric/path/country/breakdown/latency rows by bucket < the traffic cutoff", async () => {

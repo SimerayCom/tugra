@@ -1,15 +1,33 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
+import { Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
+import { metricTiers } from "../metrics/metric-tiers";
 
 const BATCH = 5000;
+// The metric tables are the big ones (millions of rows): their prune is a ctid-batched DELETE, larger batches and a short
+// breather between them so a first prune after an upgrade (hours of now-expired raw rows) never holds a long lock or starves ingest.
+const METRIC_BATCH = 20_000;
+const METRIC_PAUSE_MS = 25;
+
+/** The time-series tables the batched prune may touch, with the indexed column its cutoff applies to (never user input). */
+const METRIC_TABLES = {
+  Metric: "ts",
+  ContainerMetric: "ts",
+  MetricRollup: "bucket",
+  ContainerMetricRollup: "bucket",
+  MetricRollup5m: "bucket",
+  ContainerMetricRollup5m: "bucket",
+} as const;
+type MetricTable = keyof typeof METRIC_TABLES;
 
 /**
  * Deletes aged-out rows from the unbounded time-series tables (Metric, ContainerMetric, Heartbeat,
- * and the 1-minute rollups). Raw metrics are kept for METRICS_RAW_RETENTION_HOURS; rollups for
- * METRICS_ROLLUP_RETENTION_DAYS; non-important heartbeats for HEARTBEAT_RETENTION_DAYS — `important`
- * (status-change) beats are NEVER pruned. Deletes run in id-paged batches so a large backlog never
- * becomes one long, table-locking DELETE.
+ * and the 1-minute / 5-minute rollups). Tiers (metrics/metric-tiers.ts): raw host samples
+ * METRICS_RAW_RETENTION_HOURS, raw container samples METRICS_CONTAINER_RAW_RETENTION_HOURS, 1-minute rollups
+ * METRICS_ROLLUP_1M_RETENTION_HOURS, 5-minute rollups METRICS_ROLLUP_RETENTION_DAYS; non-important heartbeats
+ * for HEARTBEAT_RETENTION_DAYS — `important` (status-change) beats are NEVER pruned. Deletes run in small
+ * batches so a large backlog never becomes one long, table-locking DELETE.
  */
 @Injectable()
 export class RetentionRunnerService {
@@ -26,6 +44,8 @@ export class RetentionRunnerService {
     heartbeat: number;
     metricRollup: number;
     containerMetricRollup: number;
+    metricRollup5m: number;
+    containerMetricRollup5m: number;
     deployment: number;
     notificationDelivery: number;
     auditLog: number;
@@ -38,43 +58,49 @@ export class RetentionRunnerService {
     trafficUnique: number;
     trafficUniqueHour: number;
   }> {
-    const rawHours = Number(this.config.get("METRICS_RAW_RETENTION_HOURS") ?? 48);
+    const tiers = metricTiers({
+      METRICS_RAW_RETENTION_HOURS: this.config.get("METRICS_RAW_RETENTION_HOURS"),
+      METRICS_CONTAINER_RAW_RETENTION_HOURS: this.config.get("METRICS_CONTAINER_RAW_RETENTION_HOURS"),
+      METRICS_ROLLUP_1M_RETENTION_HOURS: this.config.get("METRICS_ROLLUP_1M_RETENTION_HOURS"),
+      METRICS_ROLLUP_RETENTION_DAYS: this.config.get("METRICS_ROLLUP_RETENTION_DAYS"),
+    });
     const hbDays = Number(this.config.get("HEARTBEAT_RETENTION_DAYS") ?? 30);
-    const rollupDays = Number(this.config.get("METRICS_ROLLUP_RETENTION_DAYS") ?? 30);
     const deployDays = Number(this.config.get("DEPLOYMENT_RETENTION_DAYS") ?? 90);
     const notifDays = Number(this.config.get("NOTIFICATION_RETENTION_DAYS") ?? 30);
     const auditDays = Number(this.config.get("AUDIT_RETENTION_DAYS") ?? 0);
     const containerEventDays = Number(this.config.get("CONTAINER_EVENT_RETENTION_DAYS") ?? 14);
     const trafficDays = Number(this.config.get("TRAFFIC_RETENTION_DAYS") ?? 30);
     const trafficCutoff = new Date(Date.now() - trafficDays * 86_400_000);
-    const metricsCutoff = new Date(Date.now() - rawHours * 3600_000);
+    const hostRawCutoff = new Date(Date.now() - tiers.hostRawMs);
+    const containerRawCutoff = new Date(Date.now() - tiers.containerRawMs);
     const hbCutoff = new Date(Date.now() - hbDays * 86_400_000);
-    const rollupCutoff = new Date(Date.now() - rollupDays * 86_400_000);
+    const rollup1mCutoff = new Date(Date.now() - tiers.rollup1mMs);
+    const rollup5mCutoff = new Date(Date.now() - tiers.rollup5mMs);
     const deployCutoff = new Date(Date.now() - deployDays * 86_400_000);
     const notifCutoff = new Date(Date.now() - notifDays * 86_400_000);
     const containerEventCutoff = new Date(Date.now() - containerEventDays * 86_400_000);
 
-    const metric = await this.pruneOlderThan(
-      (take) => this.prisma.metric.findMany({ where: { ts: { lt: metricsCutoff } }, select: { id: true }, take }),
-      (ids) => this.prisma.metric.deleteMany({ where: { id: { in: ids } } }),
-    );
-    const containerMetric = await this.pruneOlderThan(
-      (take) => this.prisma.containerMetric.findMany({ where: { ts: { lt: metricsCutoff } }, select: { id: true }, take }),
-      (ids) => this.prisma.containerMetric.deleteMany({ where: { id: { in: ids } } }),
-    );
+    const metric = await this.pruneBatched("Metric", hostRawCutoff);
+    const containerMetric = await this.pruneBatched("ContainerMetric", containerRawCutoff);
     // Preserve `important` beats (monitor up/down transitions) regardless of age.
     const heartbeat = await this.pruneOlderThan(
       (take) => this.prisma.heartbeat.findMany({ where: { ts: { lt: hbCutoff }, important: false }, select: { id: true }, take }),
       (ids) => this.prisma.heartbeat.deleteMany({ where: { id: { in: ids } } }),
     );
-    const metricRollup = await this.pruneOlderThan(
-      (take) => this.prisma.metricRollup.findMany({ where: { bucket: { lt: rollupCutoff } }, select: { id: true }, take }),
-      (ids) => this.prisma.metricRollup.deleteMany({ where: { id: { in: ids } } }),
-    );
-    const containerMetricRollup = await this.pruneOlderThan(
-      (take) => this.prisma.containerMetricRollup.findMany({ where: { bucket: { lt: rollupCutoff } }, select: { id: true }, take }),
-      (ids) => this.prisma.containerMetricRollup.deleteMany({ where: { id: { in: ids } } }),
-    );
+    // The 1-minute rollups are only the input of the 5-minute tier: never drop a minute the 5-minute roll has not
+    // consumed yet (the 5-minute watermark is that tier's newest bucket; on the first run after an upgrade it is empty
+    // and the 1-minute history is still being folded in, so nothing is pruned until it has started).
+    const [newest5mHost, newest5mContainer] = await Promise.all([
+      this.prisma.metricRollup5m.findFirst({ orderBy: { bucket: "desc" }, select: { bucket: true } }),
+      this.prisma.containerMetricRollup5m.findFirst({ orderBy: { bucket: "desc" }, select: { bucket: true } }),
+    ]);
+    const guard = (cutoff: Date, newest5m: { bucket: Date } | null) => (newest5m ? new Date(Math.min(cutoff.getTime(), newest5m.bucket.getTime())) : null);
+    const hostGuard = guard(rollup1mCutoff, newest5mHost);
+    const containerGuard = guard(rollup1mCutoff, newest5mContainer);
+    const metricRollup = hostGuard ? await this.pruneBatched("MetricRollup", hostGuard) : 0;
+    const containerMetricRollup = containerGuard ? await this.pruneBatched("ContainerMetricRollup", containerGuard) : 0;
+    const metricRollup5m = await this.pruneBatched("MetricRollup5m", rollup5mCutoff);
+    const containerMetricRollup5m = await this.pruneBatched("ContainerMetricRollup5m", rollup5mCutoff);
     // Terminal deployments past the cutoff that are NO LONGER rollback targets (no local tag, registry ref or
     // digest). A QUEUED/RUNNING row or any still-rollbackable row — including the live version, whose image is
     // never pruned — is kept, so rollback() and the auto-rollback prev-finder keep working. Each row holds up
@@ -137,12 +163,29 @@ export class RetentionRunnerService {
         )
       : 0;
 
-    if (metric || containerMetric || heartbeat || metricRollup || containerMetricRollup || deployment || notificationDelivery || auditLog || containerEvent || trafficMetric || trafficPath || trafficCountry || trafficBreakdown || trafficLatency || trafficUnique || trafficUniqueHour) {
+    if (metric || containerMetric || heartbeat || metricRollup || containerMetricRollup || metricRollup5m || containerMetricRollup5m || deployment || notificationDelivery || auditLog || containerEvent || trafficMetric || trafficPath || trafficCountry || trafficBreakdown || trafficLatency || trafficUnique || trafficUniqueHour) {
       this.logger.log(
-        `retention prune: metric=${metric} containerMetric=${containerMetric} heartbeat=${heartbeat} metricRollup=${metricRollup} containerMetricRollup=${containerMetricRollup} deployment=${deployment} notificationDelivery=${notificationDelivery} auditLog=${auditLog} containerEvent=${containerEvent} trafficMetric=${trafficMetric} trafficPath=${trafficPath} trafficCountry=${trafficCountry} trafficBreakdown=${trafficBreakdown} trafficLatency=${trafficLatency} trafficUnique=${trafficUnique} trafficUniqueHour=${trafficUniqueHour}`,
+        `retention prune: metric=${metric} containerMetric=${containerMetric} heartbeat=${heartbeat} metricRollup=${metricRollup} containerMetricRollup=${containerMetricRollup} metricRollup5m=${metricRollup5m} containerMetricRollup5m=${containerMetricRollup5m} deployment=${deployment} notificationDelivery=${notificationDelivery} auditLog=${auditLog} containerEvent=${containerEvent} trafficMetric=${trafficMetric} trafficPath=${trafficPath} trafficCountry=${trafficCountry} trafficBreakdown=${trafficBreakdown} trafficLatency=${trafficLatency} trafficUnique=${trafficUnique} trafficUniqueHour=${trafficUniqueHour}`,
       );
     }
-    return { metric, containerMetric, heartbeat, metricRollup, containerMetricRollup, deployment, notificationDelivery, auditLog, containerEvent, trafficMetric, trafficPath, trafficCountry, trafficBreakdown, trafficLatency, trafficUnique, trafficUniqueHour };
+    return { metric, containerMetric, heartbeat, metricRollup, containerMetricRollup, metricRollup5m, containerMetricRollup5m, deployment, notificationDelivery, auditLog, containerEvent, trafficMetric, trafficPath, trafficCountry, trafficBreakdown, trafficLatency, trafficUnique, trafficUniqueHour };
+  }
+
+  /**
+   * Delete every row of a time-series table older than `cutoff`, METRIC_BATCH rows per statement
+   * (`DELETE ... WHERE ctid IN (SELECT ctid ... LIMIT n)`: one short transaction per batch, no id round-trip through the hub).
+   */
+  private async pruneBatched(table: MetricTable, cutoff: Date): Promise<number> {
+    const t = Prisma.raw(`"${table}"`);
+    const col = Prisma.raw(`"${METRIC_TABLES[table]}"`);
+    let total = 0;
+    for (;;) {
+      const n = await this.prisma.$executeRaw(Prisma.sql`DELETE FROM ${t} WHERE ctid IN (SELECT ctid FROM ${t} WHERE ${col} < ${cutoff} LIMIT ${METRIC_BATCH})`);
+      total += n;
+      if (n < METRIC_BATCH) break; // short batch — nothing older left
+      await new Promise((r) => setTimeout(r, METRIC_PAUSE_MS));
+    }
+    return total;
   }
 
   /** Page through matching ids and delete them in batches until a short/empty page ends the run. */

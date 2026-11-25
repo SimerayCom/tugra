@@ -1,198 +1,233 @@
-import { MAX_FILLED_SLICES, MetricsRollupRunnerService, SLICE_MS, slices } from "./metrics-rollup-runner.service";
+import {
+  FIVE_MIN_MS,
+  MAX_FILLED_SLICES,
+  MAX_FILLED_SLICES_5M,
+  MetricsRollupRunnerService,
+  SLICE_5M_MS,
+  SLICE_MS,
+  slices,
+} from "./metrics-rollup-runner.service";
 
-// A minute-aligned timestamp to build in-bucket rows around.
-const BUCKET_MS = 1_700_000_040_000; // divisible by 60_000
+// The aggregation maths (avg / max / rounding / optional columns / 5-minute folding) runs in Postgres and is pinned
+// against a real database in test/metric-rollup-sql.e2e-spec.ts. This spec covers what the service itself decides:
+// which window each statement covers (slicing + watermarks), which tables it writes, and that no sample row is read.
+
+type Stmt = { sql: string; values: unknown[] };
+const MIN = 60_000;
 
 function make(opts: {
-  metricRows?: unknown[];
-  containerRows?: unknown[];
-  maxHostBucket?: Date;
-  maxContainerBucket?: Date;
+  newestHost?: Date; newestContainer?: Date;
+  oldestHost?: Date; oldestContainer?: Date;
+  newest5mHost?: Date; newest5mContainer?: Date;
+  /** rows each statement "inserts", by table; default 0 */
+  inserted?: (table: string, s: Stmt, call: number) => number;
 } = {}) {
-  const metricCreateMany = jest.fn().mockResolvedValue({ count: 0 });
-  const containerCreateMany = jest.fn().mockResolvedValue({ count: 0 });
+  const stmts: Stmt[] = [];
+  // findFirst answers by sort direction: newest (desc) / oldest (asc)
+  const rollupModel = (newest?: Date, oldest?: Date) => ({
+    findFirst: jest.fn(async (args: { orderBy: { bucket: "asc" | "desc" } }) => {
+      const d = args.orderBy.bucket === "desc" ? newest : oldest;
+      return d ? { bucket: d } : null;
+    }),
+  });
+  let call = 0;
   const prisma = {
-    // The runner reads the window slice by slice: the rows come back for the first slice, later slices are empty.
-    metric: { findMany: jest.fn().mockResolvedValueOnce(opts.metricRows ?? []).mockResolvedValue([]) },
-    containerMetric: { findMany: jest.fn().mockResolvedValueOnce(opts.containerRows ?? []).mockResolvedValue([]) },
-    metricRollup: {
-      findFirst: jest.fn().mockResolvedValue(opts.maxHostBucket ? { bucket: opts.maxHostBucket } : null),
-      createMany: metricCreateMany,
-    },
-    containerMetricRollup: {
-      findFirst: jest.fn().mockResolvedValue(opts.maxContainerBucket ? { bucket: opts.maxContainerBucket } : null),
-      createMany: containerCreateMany,
-    },
+    metricRollup: rollupModel(opts.newestHost, opts.oldestHost ?? opts.newestHost),
+    containerMetricRollup: rollupModel(opts.newestContainer, opts.oldestContainer ?? opts.newestContainer),
+    metricRollup5m: rollupModel(opts.newest5mHost, opts.newest5mHost),
+    containerMetricRollup5m: rollupModel(opts.newest5mContainer, opts.newest5mContainer),
+    // No findMany on the sample tables: the runner must never pull rows into the hub.
+    metric: {},
+    containerMetric: {},
+    $executeRaw: jest.fn(async (q: Stmt) => {
+      stmts.push(q);
+      const table = /INSERT INTO "(\w+)"/.exec(q.sql)![1];
+      return opts.inserted ? opts.inserted(table, q, call++) : 0;
+    }),
   } as any;
-  return { svc: new MetricsRollupRunnerService(prisma), prisma, metricCreateMany, containerCreateMany };
+  const into = (table: string) => stmts.filter((s) => new RegExp(`INSERT INTO "${table}" `).test(s.sql));
+  return { svc: new MetricsRollupRunnerService(prisma), prisma, stmts, into };
 }
 
-function hostRow(over: Partial<Record<string, unknown>> = {}) {
-  return {
-    serverId: "s1",
-    ts: new Date(BUCKET_MS),
-    cpu: 10,
-    memUsed: 100n,
-    memTotal: 1000n,
-    diskUsed: 0n,
-    diskTotal: 0n,
-    netRx: 0n,
-    netTx: 0n,
-    diskRead: 0n,
-    diskWrite: 0n,
-    ...over,
-  };
-}
+const window = (s: Stmt) => ({ start: (s.values[0] as Date).getTime(), end: (s.values[1] as Date).getTime() });
 
 describe("MetricsRollupRunnerService", () => {
-  it("aggregates same-minute rows into one bucket: avg for values, MAX for cpu, BigInt-rounded means", async () => {
-    const { svc, metricCreateMany } = make({
-      metricRows: [
-        hostRow({ ts: new Date(BUCKET_MS), cpu: 10, memUsed: 100n }),
-        hostRow({ ts: new Date(BUCKET_MS + 15_000), cpu: 30, memUsed: 201n }), // same minute
-      ],
+  describe("1-minute tier (SQL, no rows in Node)", () => {
+    it("rolls raw rows with one INSERT ... SELECT ... GROUP BY per slice and ON CONFLICT DO NOTHING (idempotent)", async () => {
+      const { svc, into } = make();
+      await svc.roll();
+      const host = into("MetricRollup")[0];
+      expect(host.sql).toMatch(/INSERT INTO "MetricRollup" /);
+      expect(host.sql).toMatch(/FROM "Metric"\s+WHERE "ts" >= \? AND "ts" < \?/);
+      expect(host.sql).toMatch(/GROUP BY "serverId", date_trunc\('minute', "ts"\)/);
+      expect(host.sql).toMatch(/ON CONFLICT \("serverId", "bucket"\) DO NOTHING/);
+      const cont = into("ContainerMetricRollup")[0];
+      expect(cont.sql).toMatch(/FROM "ContainerMetric"\s+WHERE "ts" >= \? AND "ts" < \?/);
+      expect(cont.sql).toMatch(/GROUP BY "serverId", "containerName", date_trunc\('minute', "ts"\)/);
+      expect(cont.sql).toMatch(/ON CONFLICT \("serverId", "containerName", "bucket"\) DO NOTHING/);
     });
-    const res = await svc.roll();
-    expect(res.metric).toBe(1);
-    const data = metricCreateMany.mock.calls[0][0].data;
-    expect(data).toHaveLength(1);
-    expect(data[0].serverId).toBe("s1");
-    expect(data[0].bucket).toEqual(new Date(BUCKET_MS)); // floored to the minute
-    expect(data[0].avgCpu).toBe(20); // (10+30)/2
-    expect(data[0].maxCpu).toBe(30); // spike preserved
-    expect(data[0].avgMemUsed).toBe(151n); // round((100+201)/2)=150.5→151
-    expect(metricCreateMany.mock.calls[0][0].skipDuplicates).toBe(true); // idempotent re-run
-  });
 
-  it("load/swap: averaged over only the reporting samples; NULL when none reported", async () => {
-    const { svc, metricCreateMany } = make({
-      metricRows: [
-        hostRow({ ts: new Date(BUCKET_MS), load1: 1, swapUsed: 100n, swapTotal: 1000n }),
-        hostRow({ ts: new Date(BUCKET_MS + 15_000), load1: 3, swapUsed: 300n, swapTotal: 1000n }),
-        hostRow({ ts: new Date(BUCKET_MS + 30_000) }), // old-agent sample: no load/swap
-        hostRow({ ts: new Date(BUCKET_MS + 60_000) }), // next minute: nothing reported
-      ],
+    it("averages with avg(), keeps the peak with max(), rounds BigInt means, and lets avg() skip NULL for the optional columns", async () => {
+      const { svc, into } = make();
+      await svc.roll();
+      const sql = into("MetricRollup")[0].sql;
+      expect(sql).toMatch(/avg\("cpu"\), max\("cpu"\)/);
+      expect(sql).toMatch(/round\(avg\("memUsed"\)\)::bigint/);
+      expect(sql).toMatch(/avg\("load1"\), avg\("load5"\), avg\("load15"\), round\(avg\("swapUsed"\)\)::bigint, round\(avg\("swapTotal"\)\)::bigint/);
     });
-    await svc.roll();
-    const data = metricCreateMany.mock.calls[0][0].data;
-    expect(data[0].avgLoad1).toBe(2);
-    expect(data[0].avgLoad5).toBeNull();
-    expect(data[0].avgSwapUsed).toBe(200n);
-    expect(data[0].avgSwapTotal).toBe(1000n);
-    expect(data[1].avgLoad1).toBeNull();
-    expect(data[1].avgSwapUsed).toBeNull();
-  });
 
-  it("splits rows in different minutes into separate buckets, and different servers", async () => {
-    const { svc, metricCreateMany } = make({
-      metricRows: [
-        hostRow({ serverId: "s1", ts: new Date(BUCKET_MS), cpu: 1 }),
-        hostRow({ serverId: "s1", ts: new Date(BUCKET_MS + 60_000), cpu: 2 }), // next minute
-        hostRow({ serverId: "s2", ts: new Date(BUCKET_MS), cpu: 3 }), // other server
-      ],
+    it("watermark: with existing rollups, the window starts at maxBucket + 1 minute", async () => {
+      const maxBucket = new Date(Math.floor((Date.now() - 5 * MIN) / MIN) * MIN);
+      const { svc, into } = make({ newestHost: maxBucket });
+      await svc.roll();
+      expect(window(into("MetricRollup")[0]).start).toBe(maxBucket.getTime() + MIN);
     });
-    const res = await svc.roll();
-    expect(res.metric).toBe(3);
-    expect(metricCreateMany.mock.calls[0][0].data).toHaveLength(3);
-  });
 
-  it("watermark: with existing rollups, the window starts at maxBucket + 1 minute", async () => {
-    const maxBucket = new Date(Math.floor((Date.now() - 5 * 60_000) / 60_000) * 60_000); // a real (minute-aligned) bucket 5 min ago
-    const { svc, prisma } = make({ maxHostBucket: maxBucket, metricRows: [hostRow()] });
-    await svc.roll();
-    const where = prisma.metric.findMany.mock.calls[0][0].where;
-    expect(where.ts.gte.getTime()).toBe(maxBucket.getTime() + 60_000); // next bucket after the newest
-  });
-
-  it("first run (no rollups) backfills the last 6h; window end is the CURRENT minute floor (partial minute excluded)", async () => {
-    const { svc, prisma } = make({ metricRows: [hostRow()] });
-    await svc.roll();
-    const where = prisma.metric.findMany.mock.calls[0][0].where;
-    const backfill = Date.now() - 6 * 3600_000;
-    expect(Math.abs(where.ts.gte.getTime() - backfill)).toBeLessThan(61_000); // ≈ now-6h, floored to the minute
-    expect(where.ts.gte.getTime() % 60_000).toBe(0);
-    // end (upper bound) is minute-aligned and not in the future → the still-filling minute is excluded
-    expect(where.ts.lt.getTime() % 60_000).toBe(0);
-    expect(where.ts.lt.getTime()).toBeLessThanOrEqual(Date.now());
-  });
-
-  it("no rows → no createMany, returns zero counts", async () => {
-    const { svc, metricCreateMany, containerCreateMany } = make();
-    const res = await svc.roll();
-    expect(metricCreateMany).not.toHaveBeenCalled();
-    expect(containerCreateMany).not.toHaveBeenCalled();
-    expect(res).toEqual({ metric: 0, containerMetric: 0 });
-  });
-
-  it("clamps a non-finite mean to 0 instead of throwing (BigInt(NaN) guard)", async () => {
-    const { svc, metricCreateMany } = make({
-      // memTotal huge + a poisoned value can't reach here (rows are DB-clean), but guard the mean anyway.
-      metricRows: [hostRow({ memUsed: 100n }), hostRow({ ts: new Date(BUCKET_MS + 1000), memUsed: 100n })],
+    it("first run (no rollups) backfills the last 6h; window end is the CURRENT minute floor (partial minute excluded)", async () => {
+      const { svc, into } = make();
+      await svc.roll();
+      const first = window(into("MetricRollup")[0]);
+      expect(Math.abs(first.start - (Date.now() - 6 * 3600_000))).toBeLessThan(61_000);
+      expect(first.start % MIN).toBe(0);
+      const all = into("MetricRollup").map(window);
+      const last = all[all.length - 1];
+      expect(last.end % MIN).toBe(0);
+      expect(last.end).toBeLessThanOrEqual(Date.now());
     });
-    await expect(svc.roll()).resolves.toBeDefined();
-    expect(metricCreateMany.mock.calls[0][0].data[0].avgMemUsed).toBe(100n);
+
+    it("the first-run backfill is clamped to a shorter configured raw retention", async () => {
+      const prev = process.env.METRICS_CONTAINER_RAW_RETENTION_HOURS;
+      process.env.METRICS_CONTAINER_RAW_RETENTION_HOURS = "2";
+      try {
+        const { svc, into } = make();
+        await svc.roll();
+        expect(Math.abs(window(into("ContainerMetricRollup")[0]).start - (Date.now() - 2 * 3600_000))).toBeLessThan(61_000);
+      } finally {
+        if (prev === undefined) delete process.env.METRICS_CONTAINER_RAW_RETENTION_HOURS;
+        else process.env.METRICS_CONTAINER_RAW_RETENTION_HOURS = prev;
+      }
+    });
+
+    it("never looks further back than the kind's raw retention (host 26 h, container 6 h)", async () => {
+      const { svc, into } = make({ newestHost: new Date(Date.now() - 40 * 3600_000), newestContainer: new Date(Date.now() - 40 * 3600_000) });
+      await svc.roll();
+      expect(Math.abs(window(into("MetricRollup")[0]).start - (Date.now() - 26 * 3600_000))).toBeLessThan(61_000);
+      expect(Math.abs(window(into("ContainerMetricRollup")[0]).start - (Date.now() - 6 * 3600_000))).toBeLessThan(61_000);
+    });
+
+    it("no rows → zero counts for every tier", async () => {
+      const { svc } = make();
+      expect(await svc.roll()).toEqual({ metric: 0, containerMetric: 0, metric5m: 0, containerMetric5m: 0 });
+    });
+
+    it("reports the buckets each statement wrote", async () => {
+      const { svc } = make({ newestHost: new Date(Date.now() - 20 * MIN), inserted: (t) => (t === "MetricRollup" ? 3 : 0) });
+      const res = await svc.roll();
+      expect(res.metric).toBe(6); // 20 min = 2 slices, 3 buckets each
+    });
   });
 
-  it("container rollups: key by server|name|minute; averages memPct; separate containers stay separate", async () => {
-    const cRow = (over: Partial<Record<string, unknown>> = {}) => ({
-      serverId: "s1",
-      containerName: "web",
-      ts: new Date(BUCKET_MS),
-      cpu: 5,
-      memUsed: 10n,
-      memTotal: 100n,
-      memPct: 20,
-      netRx: 0n,
-      netTx: 0n,
-      blkRead: 0n,
-      blkWrite: 0n,
-      ...over,
-    });
-    const { svc, containerCreateMany } = make({
-      containerRows: [
-        cRow({ containerName: "web", cpu: 5, memPct: 20 }),
-        cRow({ containerName: "web", ts: new Date(BUCKET_MS + 20_000), cpu: 15, memPct: 40 }), // same bucket
-        cRow({ containerName: "db", cpu: 9, memPct: 60 }), // different container
-      ],
-    });
-    const res = await svc.roll();
-    expect(res.containerMetric).toBe(2); // web (merged) + db
-    const data = containerCreateMany.mock.calls[0][0].data;
-    const web = data.find((d: any) => d.containerName === "web");
-    expect(web.avgCpu).toBe(10); // (5+15)/2
-    expect(web.maxCpu).toBe(15);
-    expect(web.avgMemPct).toBe(30); // (20+40)/2
-    expect(containerCreateMany.mock.calls[0][0].skipDuplicates).toBe(true);
-  });
-
-  describe("slicing (no catch-up OOM)", () => {
+  describe("slicing (a long catch-up is bounded work per statement)", () => {
     it("splits a window into minute-aligned 15-minute slices, last one clipped", () => {
-      const start = new Date(BUCKET_MS);
-      const end = new Date(BUCKET_MS + 40 * 60_000);
+      const start = new Date(1_700_000_040_000);
+      const end = new Date(start.getTime() + 40 * MIN);
       const out = slices(start, end);
-      expect(out.map((s) => (s.end.getTime() - s.start.getTime()) / 60_000)).toEqual([15, 15, 10]);
+      expect(out.map((s) => (s.end.getTime() - s.start.getTime()) / MIN)).toEqual([15, 15, 10]);
       expect(out[0].start.getTime()).toBe(start.getTime());
       expect(out[2].end.getTime()).toBe(end.getTime());
     });
 
-    it("a 48 h catch-up never reads more than one slice per query", async () => {
-      const maxBucket = new Date(Date.now() - 47 * 3600_000);
-      const { svc, prisma } = make({ maxHostBucket: maxBucket });
+    it("a 25 h host catch-up never covers more than one slice per statement, and walks empty gaps in the same run", async () => {
+      const { svc, into } = make({ newestHost: new Date(Date.now() - 25 * 3600_000) });
       await svc.roll();
-      for (const [arg] of prisma.metric.findMany.mock.calls) {
-        expect(arg.where.ts.lt.getTime() - arg.where.ts.gte.getTime()).toBeLessThanOrEqual(SLICE_MS);
-      }
-      // empty gaps are skipped within the same run, so the whole window was walked
-      expect(prisma.metric.findMany.mock.calls.length).toBeGreaterThan(180);
+      const ws = into("MetricRollup").map(window);
+      for (const w of ws) expect(w.end - w.start).toBeLessThanOrEqual(SLICE_MS);
+      expect(ws.length).toBeGreaterThan(95);
     });
 
     it("stops after MAX_FILLED_SLICES slices that wrote buckets; the next run resumes from the watermark", async () => {
-      const maxBucket = new Date(Date.now() - 10 * 3600_000);
-      const { svc, prisma } = make({ maxHostBucket: maxBucket });
-      prisma.metric.findMany.mockReset();
-      prisma.metric.findMany.mockImplementation(async ({ where }: { where: { ts: { gte: Date } } }) => [hostRow({ ts: where.ts.gte })]);
+      const { svc, into } = make({ newestHost: new Date(Date.now() - 10 * 3600_000), inserted: (t) => (t === "MetricRollup" ? 5 : 0) });
       await svc.roll();
-      expect(prisma.metric.findMany).toHaveBeenCalledTimes(MAX_FILLED_SLICES);
+      expect(into("MetricRollup")).toHaveLength(MAX_FILLED_SLICES);
+    });
+  });
+
+  describe("5-minute tier (folded from the 1-minute tier in SQL)", () => {
+    const fiveFloor = (ms: number) => Math.floor(ms / FIVE_MIN_MS) * FIVE_MIN_MS;
+
+    it("writes MetricRollup5m / ContainerMetricRollup5m from the 1-minute tables with avg-of-avg, max-of-max, ON CONFLICT DO NOTHING", async () => {
+      const newest = new Date(fiveFloor(Date.now() - 30 * MIN) + 7 * MIN);
+      const oldest = new Date(newest.getTime() - 60 * MIN);
+      const { svc, into } = make({ newestHost: newest, oldestHost: oldest, newestContainer: newest, oldestContainer: oldest });
+      await svc.roll();
+      const host = into("MetricRollup5m")[0];
+      expect(host.sql).toMatch(/FROM "MetricRollup"\s+WHERE "bucket" >= \? AND "bucket" < \?/);
+      expect(host.sql).toMatch(/avg\("avgCpu"\), max\("maxCpu"\)/);
+      expect(host.sql).toMatch(/GROUP BY "serverId", "b5"/);
+      expect(host.sql).toMatch(/ON CONFLICT \("serverId", "bucket"\) DO NOTHING/);
+      const cont = into("ContainerMetricRollup5m")[0];
+      expect(cont.sql).toMatch(/FROM "ContainerMetricRollup"\s+WHERE "bucket" >= \? AND "bucket" < \?/);
+      expect(cont.sql).toMatch(/ON CONFLICT \("serverId", "containerName", "bucket"\) DO NOTHING/);
+    });
+
+    it("only rolls COMPLETE 5-minute buckets: the window ends at the last boundary the 1-minute watermark has passed", async () => {
+      // 1-minute watermark = minute :07 of a 5-minute grid -> minutes up to :07 are settled -> only [.., :05) is complete
+      const base = fiveFloor(Date.now() - 30 * MIN);
+      const { svc, into } = make({ newestHost: new Date(base + 7 * MIN), oldestHost: new Date(base - 20 * MIN) });
+      await svc.roll();
+      const ws = into("MetricRollup5m").map(window);
+      expect(ws[ws.length - 1].end).toBe(base + 5 * MIN);
+      // a watermark at :09 completes the bucket [:05, :10)
+      const b = make({ newestHost: new Date(base + 9 * MIN), oldestHost: new Date(base - 20 * MIN) });
+      await b.svc.roll();
+      const wb = b.into("MetricRollup5m").map(window);
+      expect(wb[wb.length - 1].end).toBe(base + 10 * MIN);
+    });
+
+    it("watermark: continues after the newest 5-minute bucket", async () => {
+      const base = fiveFloor(Date.now() - 60 * MIN);
+      const { svc, into } = make({ newestHost: new Date(base + 40 * MIN), oldestHost: new Date(base - 3 * 3600_000), newest5mHost: new Date(base + 10 * MIN) });
+      await svc.roll();
+      expect(window(into("MetricRollup5m")[0]).start).toBe(base + 15 * MIN);
+    });
+
+    it("first run back-fills from the OLDEST 1-minute bucket (the upgrade case), 6 h slices", async () => {
+      const oldest = new Date(fiveFloor(Date.now() - 14 * 86_400_000) + 2 * MIN);
+      const { svc, into } = make({ newestHost: new Date(Date.now() - 4 * MIN), oldestHost: oldest });
+      await svc.roll();
+      const ws = into("MetricRollup5m").map(window);
+      expect(ws[0].start).toBe(fiveFloor(oldest.getTime())); // 5-minute aligned
+      for (const w of ws) expect(w.end - w.start).toBeLessThanOrEqual(SLICE_5M_MS);
+    });
+
+    it("the back-fill is bounded per run: at most MAX_FILLED_SLICES_5M non-empty slices, the next run continues", async () => {
+      const { svc, into } = make({
+        newestHost: new Date(Date.now() - 4 * MIN),
+        oldestHost: new Date(Date.now() - 14 * 86_400_000),
+        inserted: (t) => (t === "MetricRollup5m" ? 100 : 0),
+      });
+      await svc.roll();
+      expect(into("MetricRollup5m")).toHaveLength(MAX_FILLED_SLICES_5M);
+    });
+
+    it("never reaches back past the 28-day tier retention", async () => {
+      const { svc, into } = make({ newestHost: new Date(Date.now() - 4 * MIN), oldestHost: new Date(Date.now() - 90 * 86_400_000) });
+      await svc.roll();
+      expect(window(into("MetricRollup5m")[0]).start).toBeGreaterThanOrEqual(Date.now() - 28 * 86_400_000 - FIVE_MIN_MS);
+    });
+
+    it("does nothing while there is no 1-minute data at all", async () => {
+      const { svc, into } = make();
+      await svc.roll();
+      expect(into("MetricRollup5m")).toHaveLength(0);
+      expect(into("ContainerMetricRollup5m")).toHaveLength(0);
+    });
+
+    it("is idle when the 5-minute watermark is already at the last complete bucket", async () => {
+      const base = fiveFloor(Date.now() - 20 * MIN);
+      const { svc, into } = make({ newestHost: new Date(base + 9 * MIN), oldestHost: new Date(base - 3600_000), newest5mHost: new Date(base + 5 * MIN) });
+      await svc.roll();
+      expect(into("MetricRollup5m")).toHaveLength(0);
     });
   });
 });

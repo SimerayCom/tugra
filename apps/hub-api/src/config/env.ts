@@ -192,13 +192,16 @@ export const envSchema = z
   // When true, unverified users are blocked from write actions after login. Off by default
   // (self-host convenience); not wired to email verification yet.
   REQUIRE_EMAIL_VERIFICATION: z.enum(["true", "false"]).default("false"),
-  // Retention: the hourly prune deletes raw metric/container-metric rows older than this many hours
-  // (UI charts range up to 24h; long-range history comes from 1-minute rollups), and non-important
-  // heartbeats older than this many days. Rollups (the source for >2h ranges up to 7d) are kept for
-  // METRICS_ROLLUP_RETENTION_DAYS.
-  METRICS_RAW_RETENTION_HOURS: z.coerce.number().int().positive().default(48),
+  // Retention tiers (see metrics/metric-tiers.ts). The hourly prune deletes raw HOST samples older than
+  // METRICS_RAW_RETENTION_HOURS (default 26: a 24 h chart keeps full fidelity) and raw CONTAINER samples older than
+  // METRICS_CONTAINER_RAW_RETENTION_HOURS (default 6: all the live charts need). The 1-minute rollups are kept
+  // METRICS_ROLLUP_1M_RETENTION_HOURS (48), the 5-minute rollups METRICS_ROLLUP_RETENTION_DAYS (28); longer chart
+  // ranges are served from those. Non-important heartbeats are kept HEARTBEAT_RETENTION_DAYS.
+  METRICS_RAW_RETENTION_HOURS: z.coerce.number().int().positive().default(26),
+  METRICS_CONTAINER_RAW_RETENTION_HOURS: z.coerce.number().int().positive().default(6),
+  METRICS_ROLLUP_1M_RETENTION_HOURS: z.coerce.number().int().positive().default(48),
   HEARTBEAT_RETENTION_DAYS: z.coerce.number().int().positive().default(30),
-  METRICS_ROLLUP_RETENTION_DAYS: z.coerce.number().int().positive().default(30),
+  METRICS_ROLLUP_RETENTION_DAYS: z.coerce.number().int().positive().default(28),
   // Terminal (SUCCESS/FAILED/CANCELLED) deployment rows older than this are pruned — but only once they are
   // no longer rollback targets (no local tag, registry ref or digest), so the live version and recent
   // rollbackable images always survive. Each row can carry up to 64KB of logs, so this is the main bound.

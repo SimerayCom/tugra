@@ -46,12 +46,12 @@ export interface ResolvedCost {
   syncedAt: Date | null;
 }
 
-/** Latest measured disk size (bytes) per server from the metric rollups (the last 3 days; one row per server). */
+/** Latest measured disk size (bytes) per server from the 5-minute metric rollups (the last 3 days; one row per server). */
 export async function latestDiskTotals(prisma: PrismaService, serverIds: string[]): Promise<Map<string, number>> {
   if (!serverIds.length) return new Map();
   const rows = await prisma.$queryRaw<Array<{ serverId: string; disk: number }>>(Prisma.sql`
     SELECT DISTINCT ON ("serverId") "serverId", "avgDiskTotal"::float8 AS disk
-    FROM "MetricRollup"
+    FROM "MetricRollup5m"
     WHERE "serverId" IN (${Prisma.join(serverIds)}) AND bucket > ${new Date(Date.now() - 3 * 86_400_000)}
     ORDER BY "serverId", bucket DESC`);
   return new Map(rows.filter((r) => Number(r.disk) > 0).map((r) => [r.serverId, Number(r.disk)]));
@@ -261,11 +261,11 @@ export class CostsService {
     return { teams: out };
   }
 
-  /** Per-container CPU / memory sums over the usage window, by server. */
+  /** Per-container CPU / memory sums over the usage window, by server (5-minute rollups: the shares only need ratios). */
   private async containerUse(serverIds: string[]): Promise<Map<string, Array<{ containerName: string; cpuSum: number; memSum: number }>>> {
     const out = new Map<string, Array<{ containerName: string; cpuSum: number; memSum: number }>>();
     if (!serverIds.length) return out;
-    const rows = await this.prisma.containerMetricRollup.groupBy({
+    const rows = await this.prisma.containerMetricRollup5m.groupBy({
       by: ["serverId", "containerName"],
       where: { serverId: { in: serverIds }, bucket: { gte: new Date(Date.now() - USAGE_WINDOW_MS) } },
       _sum: { avgCpu: true, avgMemUsed: true },

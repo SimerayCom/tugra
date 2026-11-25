@@ -165,6 +165,49 @@ export interface RollupRow {
   avgSwapTotal: bigint | null;
 }
 
+/** Fold minute rollup rows into 5-minute buckets (the long-range tier): mean of the means, max of the maxes; the
+ *  optional columns average over only the rows that carry them (null when none do). */
+export function toFiveMinute(rows: RollupRow[]): RollupRow[] {
+  const FIVE = 300_000;
+  const groups = new Map<number, RollupRow[]>();
+  for (const r of rows) {
+    const k = Math.floor(r.bucket.getTime() / FIVE) * FIVE;
+    const g = groups.get(k);
+    if (g) g.push(r);
+    else groups.set(k, [r]);
+  }
+  const mean = (xs: number[]): number => xs.reduce((a, b) => a + b, 0) / xs.length;
+  const meanBig = (xs: bigint[]): bigint => BigInt(Math.round(mean(xs.map(Number))));
+  const opt = (xs: Array<number | null>): number | null => {
+    const v = xs.filter((x): x is number => x != null);
+    return v.length ? mean(v) : null;
+  };
+  const optBig = (xs: Array<bigint | null>): bigint | null => {
+    const v = xs.filter((x): x is bigint => x != null);
+    return v.length ? meanBig(v) : null;
+  };
+  return [...groups.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([k, g]) => ({
+      bucket: new Date(k),
+      avgCpu: mean(g.map((r) => r.avgCpu)),
+      maxCpu: Math.max(...g.map((r) => r.maxCpu)),
+      avgMemUsed: meanBig(g.map((r) => r.avgMemUsed)),
+      avgMemTotal: meanBig(g.map((r) => r.avgMemTotal)),
+      avgDiskUsed: meanBig(g.map((r) => r.avgDiskUsed)),
+      avgDiskTotal: meanBig(g.map((r) => r.avgDiskTotal)),
+      avgNetRx: meanBig(g.map((r) => r.avgNetRx)),
+      avgNetTx: meanBig(g.map((r) => r.avgNetTx)),
+      avgDiskRead: meanBig(g.map((r) => r.avgDiskRead)),
+      avgDiskWrite: meanBig(g.map((r) => r.avgDiskWrite)),
+      avgLoad1: opt(g.map((r) => r.avgLoad1)),
+      avgLoad5: opt(g.map((r) => r.avgLoad5)),
+      avgLoad15: opt(g.map((r) => r.avgLoad15)),
+      avgSwapUsed: optBig(g.map((r) => r.avgSwapUsed)),
+      avgSwapTotal: optBig(g.map((r) => r.avgSwapTotal)),
+    }));
+}
+
 const GIB = 1024 ** 3;
 const MIB = 1024 ** 2;
 const n = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);

@@ -42,7 +42,7 @@ const idleUsage = (o: Record<string, number> = {}) => ({
 function make(o: { servers?: ReturnType<typeof server>[]; usage?: unknown[]; firstDays?: number; catalog?: unknown; catalogError?: boolean; active?: string[]; diskGib?: number } = {}) {
   const prisma = {
     server: { findMany: jest.fn().mockResolvedValue(o.servers ?? [server()]) },
-    metricRollup: { groupBy: jest.fn().mockResolvedValue([{ serverId: "s1", _min: { bucket: new Date(Date.now() - (o.firstDays ?? 20) * DAY) } }]) },
+    metricRollup5m: { groupBy: jest.fn().mockResolvedValue([{ serverId: "s1", _min: { bucket: new Date(Date.now() - (o.firstDays ?? 20) * DAY) } }]) },
     serverRescale: { findMany: jest.fn().mockResolvedValue((o.active ?? []).map((serverId) => ({ serverId }))) },
     cloudCredential: { findUnique: jest.fn().mockResolvedValue({ id: "cc1", teamId: "t1", provider: "hetzner", apiTokenEnc: "enc:TOKEN" }) },
     $queryRaw: jest.fn().mockImplementation(async (q: { strings?: string[]; sql?: string }) => {
@@ -173,7 +173,7 @@ describe("CostsAdviceService", () => {
 
   it("sorts the servers with something to say first", async () => {
     const c = make({ servers: [server({ id: "s2", name: "aaa" }), server()], usage: [idleUsage(), { ...idleUsage(), serverId: "s2", cpu_p95: 95, cpu_peak: 100 }] });
-    c.prisma.metricRollup.groupBy.mockResolvedValue([
+    c.prisma.metricRollup5m.groupBy.mockResolvedValue([
       { serverId: "s1", _min: { bucket: new Date(Date.now() - 20 * DAY) } },
       { serverId: "s2", _min: { bucket: new Date(Date.now() - 20 * DAY) } },
     ]);

@@ -1,4 +1,4 @@
-import { buildHistory, mapAlert, matchSystems, parsePbDate, statsToRollup, statsWindow, type BeszelStatsRecord, type TugraServerLite } from "./beszel-map";
+import { buildHistory, toFiveMinute, mapAlert, matchSystems, parsePbDate, statsToRollup, statsWindow, type BeszelStatsRecord, type TugraServerLite } from "./beszel-map";
 
 const srv = (id: string, over: Partial<TugraServerLite> = {}): TugraServerLite => ({ id, name: id, hostname: null, publicIp: null, publicIpv6: null, reportedIps: [], ...over });
 const sys = (id: string, host: string, name = id) => ({ id, name, host, status: "up" });
@@ -114,5 +114,19 @@ describe("buildHistory", () => {
 
   it("ignores unknown resolutions", () => {
     expect(buildHistory([{ ...rec("1m", 60_000), type: "5m" }], { now, before: now, floor: 0 })).toEqual([]);
+  });
+});
+
+describe("toFiveMinute", () => {
+  const row = (min: number, over: Record<string, unknown> = {}) => ({
+    bucket: new Date(Date.UTC(2026, 10, 20, 10, min)), avgCpu: 10, maxCpu: 10, avgMemUsed: 100n, avgMemTotal: 1000n, avgDiskUsed: 1n, avgDiskTotal: 2n,
+    avgNetRx: 0n, avgNetTx: 0n, avgDiskRead: 0n, avgDiskWrite: 0n, avgLoad1: null, avgLoad5: null, avgLoad15: null, avgSwapUsed: null, avgSwapTotal: null, ...over,
+  }) as ReturnType<typeof statsToRollup> & object;
+
+  it("folds minutes into 5-minute buckets: mean of means, max of maxes, optional columns over the rows that have them", () => {
+    const out = toFiveMinute([row(0, { avgCpu: 10, maxCpu: 20, avgLoad1: 1 }), row(2, { avgCpu: 20, maxCpu: 50, avgLoad1: 3, avgMemUsed: 201n }), row(5, { avgCpu: 7 })]);
+    expect(out.map((r) => r.bucket.getUTCMinutes())).toEqual([0, 5]);
+    expect(out[0]).toMatchObject({ avgCpu: 15, maxCpu: 50, avgLoad1: 2, avgLoad5: null, avgMemUsed: 151n });
+    expect(out[1].avgCpu).toBe(7);
   });
 });

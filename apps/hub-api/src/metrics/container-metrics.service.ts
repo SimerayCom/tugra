@@ -4,6 +4,7 @@ import type { ContainerMetricsMsg } from "@tugra/shared";
 import { downsampleLTTB } from "../common/lttb";
 import { strided } from "../common/series-sampling";
 import { PrismaService } from "../prisma/prisma.service";
+import { tierFor, type MetricKind, type MetricTier } from "./metric-tiers";
 import { nameFromLabels, sameLabels, sanitizeContainerMeta, type ContainerLabelRow } from "./container-labels";
 
 /** One point of a container's history (hub → web read shape; BigInt fields widened to Number). */
@@ -118,11 +119,9 @@ export function clampHottestLimit(limit?: number): number {
 const LIVE_WINDOW_MS = 90_000;
 
 const MAX_POINTS = 1000; // per-container chart density cap (LTTB keeps the shape while down-sampling)
-// Ranges within this window are served from RAW rows at full fidelity (raw is retained 48h, so
-// 1h/6h/24h all fit comfortably and keep sub-minute spikes). Only longer ranges (7d/30d) read the
-// 1-minute rollups, because they reach past the raw retention window where no raw rows survive.
-// 30d matches the default rollup retention (METRICS_ROLLUP_RETENTION_DAYS=30).
-const RAW_THRESHOLD_MS = 24 * 3600_000;
+// Which table serves a chart depends on the range and the retention tiers (metric-tiers.ts): within a kind's raw
+// retention (host 26 h, container 6 h by default) the RAW rows are served at full fidelity, up to the 1-minute rollup
+// retention (48 h) the 1-minute rollups, beyond that (7d / 30d) the 5-minute rollups, which cover the whole 28 days.
 const RANGES: Record<string, number> = {
   "1h": 3600_000,
   "6h": 6 * 3600_000,
@@ -131,13 +130,15 @@ const RANGES: Record<string, number> = {
   "30d": 30 * 86_400_000,
 };
 
-/** Map a range token to a lookback window in ms + whether it reads rollups (>2h) rather than raw
- *  rows. Unknown/missing → 1h (the shortest, cheapest). Uses an OWN-property check, not `in`: `in`
- *  walks the prototype chain, so `?range=constructor` / `toString` / `__proto__` would otherwise pass
- *  the clamp, resolve to a function, and yield a NaN window → `new Date(NaN)` → a Prisma 500. */
-export function rangeToMs(range?: string): { range: string; sinceMs: number; useRollup: boolean } {
+/** Map a range token to a lookback window in ms + the tier that serves it (`useRollup` = anything but raw). Unknown /
+ *  missing → 1h (the shortest, cheapest). Uses an OWN-property check, not `in`: `in` walks the prototype chain, so
+ *  `?range=constructor` / `toString` / `__proto__` would otherwise pass the clamp, resolve to a function, and yield a
+ *  NaN window → `new Date(NaN)` → a Prisma 500. `kind` picks the raw retention: host samples are kept longer (26 h)
+ *  than container samples (6 h). */
+export function rangeToMs(range?: string, kind: MetricKind = "host"): { range: string; sinceMs: number; useRollup: boolean; tier: MetricTier } {
   const key = range && Object.prototype.hasOwnProperty.call(RANGES, range) ? range : "1h";
-  return { range: key, sinceMs: Date.now() - RANGES[key], useRollup: RANGES[key] > RAW_THRESHOLD_MS };
+  const tier = tierFor(kind, RANGES[key]);
+  return { range: key, sinceMs: Date.now() - RANGES[key], useRollup: tier !== "raw", tier };
 }
 
 /** Evenly down-sample a series to at most `max` points, always keeping the first and last. */
@@ -245,13 +246,13 @@ export class ContainerMetricsService {
    * Per-container history for an app over `range`, grouped by container name. namePrefix is the
    * app's `tugra_<id>` — a row matches if its name IS the prefix (single-container app) OR starts
    * with `<prefix>-` (a compose service container). The `-` separator makes the prefix match airtight
-   * against a sibling app whose id merely starts with this one's. Ranges within raw retention (≤24h)
-   * read raw rows; longer ranges (7d/30d) read the 1-minute rollups so history survives past it. Both paths are
+   * against a sibling app whose id merely starts with this one's. Ranges within the container raw
+   * retention (≤6h by default) read raw rows; 24h reads the 1-minute rollups, 7d/30d the 5-minute rollups. All paths are
    * LTTB down-sampled to keep the visual shape. Metrics carry no secrets, so this is a read-level
    * query (any team member); BigInt byte fields widen to Number for the JSON wire.
    */
   async forApp(serverId: string | string[], namePrefix: string, range?: string, swarm = false): Promise<AppContainerMetrics> {
-    const { sinceMs, useRollup } = rangeToMs(range);
+    const { sinceMs, tier } = rangeToMs(range, "container");
     // Swarm apps run as `docker service tugra_<id>`; their task containers are named
     // `tugra_<id>.<slot>.<taskid>` and scattered across the cluster's member nodes, so we match the `.`
     // task-suffix too and query ALL member serverIds. The delimiter (`.`/`-`) keeps the prefix airtight
@@ -268,10 +269,11 @@ export class ContainerMetricsService {
 
     // Each container is its own series, strided in SQL to ≤ ~3000 stored rows before LTTB (see series-sampling): a 24 h raw
     // series is 5 760 rows and a 7-day rollup series 10 080, per container, per request.
-    if (useRollup) {
+    if (tier !== "raw") {
+      const table = tier === "5m" ? Prisma.raw(`"ContainerMetricRollup5m"`) : Prisma.raw(`"ContainerMetricRollup"`);
       const rows = await this.prisma.$queryRaw<ContainerRollupRow[]>(
         strided(
-          Prisma.sql`SELECT * FROM "ContainerMetricRollup" WHERE "serverId" = ANY(${serverIds}::text[]) AND "bucket" >= ${new Date(sinceMs)} AND ${nameMatch}`,
+          Prisma.sql`SELECT * FROM ${table} WHERE "serverId" = ANY(${serverIds}::text[]) AND "bucket" >= ${new Date(sinceMs)} AND ${nameMatch}`,
           ["containerName", "bucket", "avgCpu", "maxCpu", "avgMemUsed", "avgMemTotal", "avgMemPct", "avgNetRx", "avgNetTx", "avgBlkRead", "avgBlkWrite"],
           "bucket",
           "containerName",

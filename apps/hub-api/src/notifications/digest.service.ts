@@ -187,7 +187,7 @@ export class DigestService {
       if (app) worstApp = { name: app.name, failed: failedByApp[0]._count._all };
     }
 
-    // Busiest server by average CPU over the week, and the fullest disk, from the 1-minute rollups (raw
+    // Busiest server by average CPU over the week, and the fullest disk, from the 5-minute rollups (raw
     // samples as a fallback while a young hub has no rollups yet).
     const ids = servers.map((s) => s.id);
     const name = new Map(servers.map((s) => [s.id, s.name]));
@@ -195,7 +195,7 @@ export class DigestService {
     let fullestDisk: WeekStats["fullestDisk"] = null;
     if (ids.length) {
       let rows: Array<{ serverId: string; cpu: number; disk: number }> = [];
-      const rolled = await this.prisma.metricRollup.groupBy({
+      const rolled = await this.prisma.metricRollup5m.groupBy({
         by: ["serverId"],
         where: { serverId: { in: ids }, bucket: { gte: since } },
         _avg: { avgCpu: true, avgDiskUsed: true, avgDiskTotal: true },

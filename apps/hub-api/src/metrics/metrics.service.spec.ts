@@ -8,7 +8,7 @@ describe("MetricsService", () => {
     const rollupFindMany = jest.fn().mockResolvedValue(rollupRows);
     const publish = jest.fn().mockResolvedValue(0);
     // Chart history reads go through ONE strided raw query (series-sampling.ts); route by the table it names.
-    const queryRaw = jest.fn(async (q: { sql: string; values: unknown[] }) => (/"MetricRollup"/.test(q.sql) ? rollupRows : /FROM "Metric" WHERE/.test(q.sql) ? rows : []));
+    const queryRaw = jest.fn(async (q: { sql: string; values: unknown[] }) => (/"MetricRollup/.test(q.sql) ? rollupRows : /FROM "Metric" WHERE/.test(q.sql) ? rows : []));
     const prisma = { metric: { create, findMany }, metricRollup: { findMany: rollupFindMany }, $queryRaw: queryRaw } as any;
     const redis = { client: { publish } } as any;
     return { svc: new MetricsService(prisma, redis), create, findMany, rollupFindMany, publish, queryRaw };
@@ -135,7 +135,7 @@ describe("MetricsService", () => {
     expect(findMany).not.toHaveBeenCalled();
     expect(rollupFindMany).not.toHaveBeenCalled();
     const q = queryRaw.mock.calls[0][0] as unknown as { sql: string; values: unknown[] };
-    expect(q.sql).toMatch(/FROM "MetricRollup" WHERE "serverId" = \? AND "bucket" >= \?/);
+    expect(q.sql).toMatch(/FROM "MetricRollup5m" WHERE "serverId" = \? AND "bucket" >= \?/);
     expect(q.sql).toMatch(/ORDER BY "bucket" ASC$/);
     expect(q.values[0]).toBe("s1");
     expect(q.values[1]).toBeInstanceOf(Date);

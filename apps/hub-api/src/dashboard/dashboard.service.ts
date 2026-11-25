@@ -89,7 +89,7 @@ export class DashboardService {
       this.metrics.latestForServers(ids),
       this.prisma.$queryRaw<{ serverId: string; h: Date; used: number }[]>(Prisma.sql`
         SELECT "serverId", date_trunc('hour', "bucket") AS h, AVG("avgDiskUsed")::float8 AS used
-        FROM "MetricRollup"
+        FROM "MetricRollup5m"
         WHERE "serverId" IN (${Prisma.join(ids)}) AND "bucket" >= ${since}
         GROUP BY "serverId", date_trunc('hour', "bucket")
         ORDER BY "serverId", h ASC`),

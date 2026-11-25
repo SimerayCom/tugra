@@ -35,7 +35,7 @@ function make(o: { servers?: ReturnType<typeof baseServer>[]; perms?: string[]; 
     application: { findMany: jest.fn().mockResolvedValue([{ id: "app1", name: "Shop", serverId: "s1" }]) },
     database: { findMany: jest.fn().mockResolvedValue([]) },
     containerLabel: { findMany: jest.fn().mockResolvedValue([]) },
-    containerMetricRollup: { groupBy: jest.fn().mockResolvedValue([]) },
+    containerMetricRollup5m: { groupBy: jest.fn().mockResolvedValue([]) },
     costBaseline: { findMany: jest.fn().mockResolvedValue([]), count: jest.fn().mockResolvedValue(0), create: jest.fn().mockResolvedValue({ id: "b1" }), findUnique: jest.fn(), delete: jest.fn() },
     serverCost: { findUnique: jest.fn().mockResolvedValue(null), upsert: jest.fn().mockResolvedValue({}), deleteMany: jest.fn().mockResolvedValue({}) },
     cloudCredential: { findUnique: jest.fn().mockResolvedValue(o.creds === undefined ? { id: "cc1", teamId: "t1", name: "Prod", provider: "hetzner", apiTokenEnc: "enc:TOKEN" } : o.creds) },
@@ -162,7 +162,7 @@ describe("CostsService.report", () => {
 
   it("splits the price over apps by resource use and the shares add up", async () => {
     const c = make({ servers: [baseServer({ cloudHint: "hetzner" })] });
-    c.prisma.containerMetricRollup.groupBy.mockResolvedValue([
+    c.prisma.containerMetricRollup5m.groupBy.mockResolvedValue([
       { serverId: "s1", containerName: "tugra_app1", _sum: { avgCpu: 30, avgMemUsed: BigInt(100) } },
       { serverId: "s1", containerName: "tugra_app1-worker-1", _sum: { avgCpu: 30, avgMemUsed: BigInt(100) } },
       { serverId: "s1", containerName: "tugra-hub-api-1", _sum: { avgCpu: 20, avgMemUsed: BigInt(100) } },
@@ -175,7 +175,7 @@ describe("CostsService.report", () => {
 
   it("hides app names from a restricted viewer", async () => {
     const c = make({ scoped: true, perms: [], servers: [baseServer({ cloudHint: "hetzner" })] });
-    c.prisma.containerMetricRollup.groupBy.mockResolvedValue([{ serverId: "s1", containerName: "tugra_app1", _sum: { avgCpu: 30, avgMemUsed: BigInt(100) } }]);
+    c.prisma.containerMetricRollup5m.groupBy.mockResolvedValue([{ serverId: "s1", containerName: "tugra_app1", _sum: { avgCpu: 30, avgMemUsed: BigInt(100) } }]);
     const s = (await c.svc.report("u1")).teams[0].servers[0];
     expect(s.apps).toEqual([]);
     expect(s.monthlyCents).not.toBeNull();

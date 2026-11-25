@@ -10,7 +10,8 @@ import { MonitorsService } from "../monitors/monitors.service";
 import { assertAllowedUrl } from "../importer/sources/ssrf-guard";
 import { mapLimit } from "../importer/sources/map-limit";
 import { BeszelClient, BeszelError, type BeszelSnapshot } from "./beszel-client";
-import { buildHistory, STATS_TYPES, type BeszelStatsRecord } from "./beszel-map";
+import { buildHistory, STATS_TYPES, toFiveMinute, type BeszelStatsRecord } from "./beszel-map";
+import { metricTiers } from "../metrics/metric-tiers";
 import { buildPlan, channelKey, metricLabel, type PlanView } from "./beszel-plan";
 import type { BeszelApplyInput, BeszelConnectInput, BeszelPreviewInput } from "./dto";
 
@@ -252,8 +253,17 @@ export class BeszelImportService {
         await mapLimit(matched, 3, async (s) => {
           try {
             const { rows } = await this.historyRows(source, s.id, s.match!.serverId);
-            for (let i = 0; i < rows.length; i += 500) {
-              await this.prisma.metricRollup.createMany({ data: rows.slice(i, i + 500).map((r) => ({ ...r, serverId: s.match!.serverId })), skipDuplicates: true });
+            // Long-range tier: every imported minute, folded to 5-minute buckets. The last 48 h also go to the
+            // 1-minute tier, which serves the 24 h chart; older minutes would be pruned from it at once.
+            const serverId = s.match!.serverId;
+            const five = toFiveMinute(rows);
+            for (let i = 0; i < five.length; i += 500) {
+              await this.prisma.metricRollup5m.createMany({ data: five.slice(i, i + 500).map((r) => ({ ...r, serverId })), skipDuplicates: true });
+            }
+            const recentFrom = Date.now() - metricTiers().rollup1mMs;
+            const recent = rows.filter((r) => r.bucket.getTime() >= recentFrom);
+            for (let i = 0; i < recent.length; i += 500) {
+              await this.prisma.metricRollup.createMany({ data: recent.slice(i, i + 500).map((r) => ({ ...r, serverId })), skipDuplicates: true });
             }
             if (rows.length) {
               result.history.systems++;
@@ -364,19 +374,20 @@ export class BeszelImportService {
   }
 
   private rollupDays(): number {
-    const d = Number(this.config.get("METRICS_ROLLUP_RETENTION_DAYS") ?? 30);
-    return Math.min(30, Number.isFinite(d) && d > 0 ? d : 30);
+    const d = Number(this.config.get("METRICS_ROLLUP_RETENTION_DAYS") ?? 28);
+    return Math.min(28, Number.isFinite(d) && d > 0 ? d : 28);
   }
 
   /** The rollup rows to write for one system: never over a bucket Tugra holds, never older than Tugra keeps them. */
   private async historyRows(source: BeszelSource, systemId: string, serverId: string) {
     const now = Date.now();
     const windowDays = this.rollupDays();
-    const [rawFirst, rollFirst] = await Promise.all([
+    const [rawFirst, rollFirst, roll5mFirst] = await Promise.all([
       this.prisma.metric.findFirst({ where: { serverId }, orderBy: { ts: "asc" }, select: { ts: true } }),
       this.prisma.metricRollup.findFirst({ where: { serverId }, orderBy: { bucket: "asc" }, select: { bucket: true } }),
+      this.prisma.metricRollup5m.findFirst({ where: { serverId }, orderBy: { bucket: "asc" }, select: { bucket: true } }),
     ]);
-    const before = Math.min(now, rawFirst?.ts.getTime() ?? now, rollFirst?.bucket.getTime() ?? now);
+    const before = Math.min(now, rawFirst?.ts.getTime() ?? now, rollFirst?.bucket.getTime() ?? now, roll5mFirst?.bucket.getTime() ?? now);
     const records = await source.stats(systemId, STATS_TYPES);
     return { rows: buildHistory(records, { now, before, floor: now - windowDays * 86_400_000 }), windowDays };
   }

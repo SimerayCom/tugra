@@ -60,7 +60,7 @@ export class CostsAdviceService {
     const ids = servers.map((s) => s.id);
     const [usage, firstSeen, disks, active] = await Promise.all([
       this.usageRows(ids),
-      this.prisma.metricRollup.groupBy({ by: ["serverId"], where: { serverId: { in: ids } }, _min: { bucket: true } }),
+      this.prisma.metricRollup5m.groupBy({ by: ["serverId"], where: { serverId: { in: ids } }, _min: { bucket: true } }),
       latestDiskTotals(this.prisma, ids),
       this.prisma.serverRescale.findMany({ where: { serverId: { in: ids }, phase: { notIn: ["DONE", "FAILED"] } }, select: { serverId: true } }),
     ]);
@@ -208,13 +208,13 @@ export class CostsAdviceService {
     return plans;
   }
 
-  /** Usage over the last 14 days per server, from the 1-minute rollups (p95 computed in the database). */
+  /** Usage over the last 14 days per server, from the 5-minute rollups (p95 computed in the database; `n` counts minutes covered). */
   private async usageRows(serverIds: string[]): Promise<Map<string, UsageRow>> {
     if (!serverIds.length) return new Map();
     const since = new Date(Date.now() - RIGHTSIZE_WINDOW_DAYS * DAY_MS);
     const rows = await this.prisma.$queryRaw<UsageRow[]>(Prisma.sql`
       SELECT "serverId",
-        COUNT(*)::int AS n,
+        (COUNT(*) * 5)::int AS n,
         AVG("avgCpu")::float8 AS cpu_avg,
         percentile_cont(0.95) WITHIN GROUP (ORDER BY "avgCpu")::float8 AS cpu_p95,
         MAX("maxCpu")::float8 AS cpu_peak,
@@ -224,7 +224,7 @@ export class CostsAdviceService {
         COALESCE(MAX(CASE WHEN "avgMemTotal" > 0 THEN "avgMemUsed"::float8 / "avgMemTotal"::float8 END), 0)::float8 AS mem_peak,
         (array_agg("avgDiskUsed"::float8 ORDER BY bucket DESC))[1]::float8 AS disk_used_b,
         COALESCE((array_agg(CASE WHEN "avgDiskTotal" > 0 THEN "avgDiskUsed"::float8 / "avgDiskTotal"::float8 END ORDER BY bucket DESC))[1], 0)::float8 AS disk_pct
-      FROM "MetricRollup"
+      FROM "MetricRollup5m"
       WHERE "serverId" IN (${Prisma.join(serverIds)}) AND bucket >= ${since}
       GROUP BY "serverId"`);
     return new Map(rows.map((r) => [r.serverId, r]));
