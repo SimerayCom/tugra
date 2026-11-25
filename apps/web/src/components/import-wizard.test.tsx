@@ -821,6 +821,28 @@ describe("ImportWizard — editable mapping", () => {
       expect(window.sessionStorage.getItem("tugra.import.resume")).toBeNull();
     });
 
+    it("starting an apply drops the resume record, so a later visit does not reopen the spent picks", async () => {
+      window.sessionStorage.setItem("tugra.import.resume", JSON.stringify({ v: 1, kind: "coolify", baseUrl: "https://c.example.com", sessionId: SID, dbModes: {} }));
+      vi.spyOn(api, "importPlan").mockResolvedValue(plan); // legacy one-click plan
+      vi.spyOn(api, "importApply").mockResolvedValue({ opId: "op1" });
+      vi.spyOn(api, "getImportOperation").mockResolvedValue(settledOp);
+      wrap(<ImportWizard />);
+      await screen.findByRole("option", { name: "Server A" });
+      expect(window.sessionStorage.getItem("tugra.import.resume")).not.toBeNull();
+      fireEvent.click(screen.getByRole("button", { name: "Import to Tugra" }));
+      await screen.findByText("DONE");
+      expect(window.sessionStorage.getItem("tugra.import.resume")).toBeNull();
+    });
+
+    it("opening a running op through ?op= drops a stale resume record", async () => {
+      window.sessionStorage.setItem("tugra.import.resume", JSON.stringify({ v: 1, kind: "coolify", baseUrl: "https://c.example.com", sessionId: SID, dbModes: {} }));
+      window.history.replaceState(null, "", "/import?op=op1");
+      vi.spyOn(api, "getImportOperation").mockResolvedValue(settledOp);
+      wrap(<ImportWizard />);
+      await screen.findByText("DONE");
+      expect(window.sessionStorage.getItem("tugra.import.resume")).toBeNull();
+    });
+
     it("Start over ends the hub session and forgets the resume state", async () => {
       window.sessionStorage.setItem("tugra.import.resume", JSON.stringify({ v: 1, kind: "coolify", baseUrl: "https://c.example.com", sessionId: SID, dbModes: {} }));
       vi.spyOn(api, "importPlan").mockResolvedValue(multi);

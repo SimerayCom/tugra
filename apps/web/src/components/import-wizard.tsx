@@ -130,6 +130,11 @@ export function ImportWizard() {
     planM.mutate({ sid: r.sessionId, kind: r.kind, modes: r.dbModes, resume: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  // Once an apply has started (or a finished op is reopened through ?op) the picks are spent: drop the resume record so a later
+  // visit to the import page cannot re-plan the same source and reopen the scope step on the old picks.
+  useEffect(() => {
+    if (opId) clearImportResume();
+  }, [opId]);
   useEffect(() => {
     if (sessionId && !opId) saveImportResume({ kind, baseUrl, sessionId, selection: liveSelection.current ?? lastSelection, dbModes });
   }, [sessionId, opId, kind, baseUrl, dbModes, lastSelection, scope]);
