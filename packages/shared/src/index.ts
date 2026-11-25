@@ -15,6 +15,7 @@ export * from "./coolify-secrets";
 export * from "./coolify-ssh";
 export * from "./coolify-match";
 export * from "./coolify-takeover";
+export * from "./coolify-move";
 import type { CoolifySecretsReqMsg, CoolifySecretsResultMsg } from "./coolify-secrets";
 import type { CoolifySshReqMsg, CoolifySshResultMsg } from "./coolify-ssh";
 export * from "./import-reasons";

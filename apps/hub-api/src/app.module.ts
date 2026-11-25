@@ -36,6 +36,7 @@ import { CoolifyInPlaceModule } from "./coolify-inplace/coolify-inplace.module";
 import { CoolifyCleanupModule } from "./coolify-cleanup/coolify-cleanup.module";
 import { MigrationCampaignsModule } from "./migration-campaigns/migration-campaigns.module";
 import { ProjectMovesModule } from "./project-moves/project-moves.module";
+import { CoolifyMoveModule } from "./coolify-move/coolify-move.module";
 import { BulkModule } from "./bulk/bulk.module";
 import { RolloutsModule } from "./rollouts/rollouts.module";
 import { AgentUpdateModule } from "./agent-update/agent-update.module";
@@ -126,6 +127,7 @@ import { ApiExceptionFilter } from "./common/api-exception.filter";
     CoolifyCleanupModule, // Coolify hub takeover: completeness checklist and leftover cleanup
     MigrationCampaignsModule, // Coolify hub takeover: campaigns of guided runs (mixed placement)
     ProjectMovesModule, // move a whole project between Tugra servers
+    CoolifyMoveModule, // Coolify hub takeover: read-only progress of the whole move off Coolify
     BulkModule,
     RolloutsModule,
     AgentUpdateModule,

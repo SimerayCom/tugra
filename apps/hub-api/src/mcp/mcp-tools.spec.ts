@@ -30,7 +30,7 @@ describe("MCP_TOOLS catalog", () => {
   it("has the expected tool count — keep docs (README/api.md) in sync when this changes", () => {
     // A drift guard: the MCP tool count is referenced in prose in README.md + docs/api.md. When you add or
     // remove a tool, bump this number AND those docs in the same commit.
-    expect(MCP_TOOLS).toHaveLength(76);
+    expect(MCP_TOOLS).toHaveLength(82);
     // Names are unique.
     expect(new Set(MCP_TOOLS.map((t) => t.name)).size).toBe(MCP_TOOLS.length);
   });
@@ -1273,5 +1273,66 @@ describe("guided migration run tools", () => {
       await tool("cancel_server_reboot").execute(deps, "u1", { id: "s1" });
       expect(serverReboot.cancel).toHaveBeenCalledWith("u1", "s1");
     });
+  });
+});
+
+describe("move-off-Coolify status tools", () => {
+  const NAMES = ["coolify_move_status", "coolify_takeover_status", "migration_campaign_status", "coolify_cleanup_status", "coolify_ssh_install_status", "project_move_status"];
+  const mk = () => {
+    const coolifyMove = {
+      status: jest.fn().mockResolvedValue({ steps: [] }),
+      takeoverStatus: jest.fn().mockResolvedValue({ takeovers: [] }),
+      campaignStatus: jest.fn().mockResolvedValue({ campaigns: [] }),
+      cleanupStatus: jest.fn().mockResolvedValue({ cleanup: null }),
+      sshInstallStatus: jest.fn().mockResolvedValue({ run: null }),
+      projectMoveStatus: jest.fn().mockResolvedValue({ moves: [] }),
+    };
+    return { deps: { coolifyMove } as unknown as McpDeps, coolifyMove };
+  };
+
+  it("are all read tools: an agent can look but never act", () => {
+    for (const n of NAMES) expect(tool(n).scope).toBe("read");
+  });
+
+  it("pass the caller's user id and the ids straight to the status service", async () => {
+    const { deps, coolifyMove } = mk();
+    await tool("coolify_move_status").execute(deps, "u1", { teamId: "t1" });
+    expect(coolifyMove.status).toHaveBeenCalledWith("u1", "t1");
+    await tool("coolify_takeover_status").execute(deps, "u1", { serverId: "s1" });
+    expect(coolifyMove.takeoverStatus).toHaveBeenCalledWith("u1", "s1");
+    await tool("coolify_cleanup_status").execute(deps, "u1", { serverId: "s1" });
+    expect(coolifyMove.cleanupStatus).toHaveBeenCalledWith("u1", "s1");
+    await tool("migration_campaign_status").execute(deps, "u1", { teamId: "t1" });
+    expect(coolifyMove.campaignStatus).toHaveBeenCalledWith("u1", "t1", undefined);
+    await tool("migration_campaign_status").execute(deps, "u1", { teamId: "t1", id: "c1" });
+    expect(coolifyMove.campaignStatus).toHaveBeenLastCalledWith("u1", "t1", "c1");
+    await tool("coolify_ssh_install_status").execute(deps, "u1", { serverId: "s1" });
+    expect(coolifyMove.sshInstallStatus).toHaveBeenCalledWith("u1", "s1", undefined);
+    await tool("coolify_ssh_install_status").execute(deps, "u1", { serverId: "s1", runId: "r1" });
+    expect(coolifyMove.sshInstallStatus).toHaveBeenLastCalledWith("u1", "s1", "r1");
+    await tool("project_move_status").execute(deps, "u1", { projectId: "p1" });
+    expect(coolifyMove.projectMoveStatus).toHaveBeenCalledWith("u1", "p1", undefined);
+    await tool("project_move_status").execute(deps, "u1", { projectId: "p1", moveId: "m1" });
+    expect(coolifyMove.projectMoveStatus).toHaveBeenLastCalledWith("u1", "p1", "m1");
+  });
+
+  it("refuse a missing, empty, non-string or oversized id before calling anything", async () => {
+    const { deps, coolifyMove } = mk();
+    const bad = [{}, { teamId: "" }, { teamId: 5 }, { teamId: "x".repeat(65) }];
+    for (const a of bad) await expect(Promise.resolve().then(() => tool("coolify_move_status").execute(deps, "u1", a))).rejects.toThrow();
+    await expect(Promise.resolve().then(() => tool("coolify_takeover_status").execute(deps, "u1", {}))).rejects.toThrow(/serverId/);
+    // an optional id that is present but wrong is an error, never a silent switch to the list
+    await expect(Promise.resolve().then(() => tool("migration_campaign_status").execute(deps, "u1", { teamId: "t1", id: 7 }))).rejects.toThrow(/id/);
+    await expect(Promise.resolve().then(() => tool("coolify_ssh_install_status").execute(deps, "u1", { serverId: "s1", runId: "" }))).rejects.toThrow(/runId/);
+    await expect(Promise.resolve().then(() => tool("project_move_status").execute(deps, "u1", { projectId: "p1", moveId: "m".repeat(65) }))).rejects.toThrow(/moveId/);
+    for (const fn of Object.values(coolifyMove)) expect(fn).not.toHaveBeenCalled();
+  });
+
+  it("declare no secret-bearing input, and no tool here can act on a server", () => {
+    for (const n of NAMES) {
+      const t = tool(n) as unknown as { sensitiveArgs?: string[]; inputSchema: { properties: Record<string, unknown> } };
+      expect(t.sensitiveArgs).toBeUndefined();
+      expect(Object.keys(t.inputSchema.properties).every((k) => /Id$/.test(k) || k === "id")).toBe(true);
+    }
   });
 });

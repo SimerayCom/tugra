@@ -26,6 +26,7 @@ import { summarizeContainer, summarizeHost } from "../metrics/metrics-summary";
 import type { SecretProvidersService } from "../secret-providers/secret-providers.service";
 import type { DnsCredentialsService } from "../dns/dns-credentials.service";
 import type { TunnelService } from "../tunnel/tunnel.service";
+import type { CoolifyMoveService } from "../coolify-move/coolify-move.service";
 import type { MigrationRunsFacade, RunActor } from "../migration-runs/core/run-contract";
 import {
   AbortRunSchema,
@@ -62,6 +63,7 @@ export interface McpDeps {
   dnsCredentials: DnsCredentialsService;
   tunnel: TunnelService;
   migrationRuns: MigrationRunsFacade;
+  coolifyMove: CoolifyMoveService;
 }
 
 /** What the MCP server knows about the call beyond the user id: the token's granted scopes. The migration-run
@@ -89,6 +91,12 @@ export interface McpTool {
 function reqStr(args: Record<string, unknown>, key: string): string {
   const v = args[key];
   if (typeof v !== "string" || v.length === 0) throw new Error(`missing required argument: ${key}`);
+  return v;
+}
+/** An id argument: a non-empty string of at most 64 characters (the ids of this hub are cuids). */
+function reqId(args: Record<string, unknown>, key: string): string {
+  const v = reqStr(args, key);
+  if (v.length > 64) throw new Error(`invalid argument: ${key}`);
   return v;
 }
 function optStr(args: Record<string, unknown>, key: string): string | undefined {
@@ -1202,6 +1210,59 @@ export const MCP_TOOLS: McpTool[] = [
       if (a.acknowledgeDataLoss !== true) throw new Error("reverse refused — pass acknowledgeDataLoss=true: data Tugra wrote after the cutover is not restored on the source");
       return d.migrationRuns.reverse(mcpActor(userId, ctx), runId, parseWith(ReverseRunSchema, { confirmName: runId, acknowledgeDataLoss: true }));
     },
+  },
+
+  // ── read: the move off Coolify (takeover, cleanup, campaigns, SSH agent install, project moves) ──────────────
+  // Status only, all scope:"read". They call the same hub services as the REST routes, which check the team role again
+  // (owner/admin) and return names, counts, statuses and fixed codes: never a secret value, a key, a token or an address.
+  // Acting (taking over, cleaning up, installing, moving) stays in the panel: those steps need the owner's typed consent.
+  {
+    name: "coolify_move_status",
+    description:
+      "Progress of the whole move off Coolify for a team, in ONE call: per server (agent online, takeover status, cleanup status and the stage it needs next: agent | takeover | cleanup | done | hub | not_coolify), the Coolify host (last read, whether the consent to read Coolify's secrets is active, the newest agent install over SSH as counts), the campaigns, the project moves, and the four steps (takeover, cleanup, consolidate, shutdown) with done/total. Team owner or admin. Read-only.",
+    scope: "read",
+    inputSchema: { type: "object", properties: { teamId: { type: "string" } }, required: ["teamId"] },
+    execute: async (d, userId, a) => d.coolifyMove.status(userId, reqId(a, "teamId")),
+  },
+  {
+    name: "coolify_takeover_status",
+    description:
+      "Take-over status of one server: the Coolify inventory read on it (counts only, no inventory body), the consent to read Coolify's secrets (classes, window, status; never a value or key) and the in-place takeovers with their status, tested domains and certificate state. Args: serverId (the Tugra server). Team owner or admin. Read-only.",
+    scope: "read",
+    inputSchema: { type: "object", properties: { serverId: { type: "string" } }, required: ["serverId"] },
+    execute: async (d, userId, a) => d.coolifyMove.takeoverStatus(userId, reqId(a, "serverId")),
+  },
+  {
+    name: "migration_campaign_status",
+    description:
+      "Status of the migration campaigns (a mixed placement becomes one guided run per source server, in waves): pass teamId to list them, or teamId and id for one (its runs and where each stands come from migration_run_list with campaign=<label>). Team owner or admin. Read-only.",
+    scope: "read",
+    inputSchema: { type: "object", properties: { teamId: { type: "string" }, id: { type: "string" } }, required: ["teamId"] },
+    execute: async (d, userId, a) => d.coolifyMove.campaignStatus(userId, reqId(a, "teamId"), a.id === undefined ? undefined : reqId(a, "id")),
+  },
+  {
+    name: "coolify_cleanup_status",
+    description:
+      "The newest Coolify cleanup checklist of one server (null when none was made): Coolify's items compared one by one with their Tugra counterparts (missing refs, unreadable rows), the leftovers found (names and sizes, with why one is kept), and whether the checklist is complete. Never a value or key. Args: serverId. Team owner or admin. Read-only; it does not check the server, to check or remove use the panel.",
+    scope: "read",
+    inputSchema: { type: "object", properties: { serverId: { type: "string" } }, required: ["serverId"] },
+    execute: async (d, userId, a) => d.coolifyMove.cleanupStatus(userId, reqId(a, "serverId")),
+  },
+  {
+    name: "coolify_ssh_install_status",
+    description:
+      "Status of installing the Tugra agent on the servers Coolify knows, over Coolify's own SSH keys: for the newest run (or runId) every server with its state (planned, probing, ready, installing, online, failed, skipped, ...), the fixed failure code, whether a manual install command is offered and whether the agent can be removed again. No key, token, command or address. Args: serverId (the Coolify host's Tugra server), runId (optional). Team owner or admin. Read-only.",
+    scope: "read",
+    inputSchema: { type: "object", properties: { serverId: { type: "string" }, runId: { type: "string" } }, required: ["serverId"] },
+    execute: async (d, userId, a) => d.coolifyMove.sshInstallStatus(userId, reqId(a, "serverId"), a.runId === undefined ? undefined : reqId(a, "runId")),
+  },
+  {
+    name: "project_move_status",
+    description:
+      "Status of moving a whole project (apps, databases, services, volumes, domains) from one Tugra server to another: pass projectId for its newest moves, or projectId and moveId for one move with its items, verification report, DNS steps to do and the safety-copy deadline. Read-only; starting or cancelling a move stays in the panel.",
+    scope: "read",
+    inputSchema: { type: "object", properties: { projectId: { type: "string" }, moveId: { type: "string" } }, required: ["projectId"] },
+    execute: async (d, userId, a) => d.coolifyMove.projectMoveStatus(userId, reqId(a, "projectId"), a.moveId === undefined ? undefined : reqId(a, "moveId")),
   },
 
   // ── read: fleet aggregators (agent-native fleet-first) ────────────────────────────────────────────

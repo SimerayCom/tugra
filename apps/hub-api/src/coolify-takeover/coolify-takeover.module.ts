@@ -35,6 +35,6 @@ import { ServersService } from "../servers/servers.service";
       inject: [ServersService],
     },
   ],
-  exports: [SealedChannelService, CoolifyHostGrantService, CoolifySecretsService, CoolifySshInstallService, HostMatchService],
+  exports: [CoolifyTakeoverService, SealedChannelService, CoolifyHostGrantService, CoolifySecretsService, CoolifySshInstallService, HostMatchService],
 })
 export class CoolifyTakeoverModule {}

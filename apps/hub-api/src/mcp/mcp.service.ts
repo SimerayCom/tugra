@@ -19,6 +19,7 @@ import { SecretProvidersService } from "../secret-providers/secret-providers.ser
 import { DnsCredentialsService } from "../dns/dns-credentials.service";
 import { TunnelService } from "../tunnel/tunnel.service";
 import { MetricsService } from "../metrics/metrics.service";
+import { CoolifyMoveService } from "../coolify-move/coolify-move.service";
 import { MCP_TOOLS, type McpDeps, type McpTool } from "./mcp-tools";
 import { MCP_PROMPTS, type McpPrompt } from "./mcp-prompts";
 import { sanitizeToolResult } from "./tool-result-sanitizer";
@@ -71,9 +72,10 @@ export class McpService {
     dnsCredentials: DnsCredentialsService,
     tunnel: TunnelService,
     @Inject(MIGRATION_RUNS_FACADE) migrationRuns: MigrationRunsFacade,
+    coolifyMove: CoolifyMoveService,
     private readonly audit: AuditService,
   ) {
-    this.deps = { apps, dbLinks, servers, serverReboot, oob, clusters, swarm, databases, backups, monitors, importer, executor, license, metrics, secretProviders, dnsCredentials, tunnel, migrationRuns };
+    this.deps = { apps, dbLinks, servers, serverReboot, oob, clusters, swarm, databases, backups, monitors, importer, executor, license, metrics, secretProviders, dnsCredentials, tunnel, migrationRuns, coolifyMove };
   }
 
   /** Handle one JSON-RPC message. Returns the response object, or null for notifications (no body). */

@@ -229,7 +229,7 @@ Tugra also runs an [MCP](https://modelcontextprotocol.io) (Model Context Protoco
 plain HTTP (Streamable-HTTP transport, protocol version `2025-06-18`) — no SSE or stdio; `GET /api/v1/mcp`
 returns `405` with `Allow: POST`.
 
-- **Status:** read **and** write. 76 tools total — 39 read + 37 PAT-scoped mutate/ops tools (14 of them are the `migration_run_*`
+- **Status:** read **and** write. 82 tools total — 45 read + 37 PAT-scoped mutate/ops tools (14 of them are the `migration_run_*`
   guided-migration tools: dry-run by default, and a human approves the point of no return, see
   [guided migration](runbooks/guided-migration.md)). The server also
   exposes **guided prompts** (`prompts/list` + `prompts/get`: diagnose a failing deploy, fleet rollout, fleet
