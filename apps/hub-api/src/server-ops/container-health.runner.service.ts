@@ -1,5 +1,7 @@
 import { Injectable, Logger } from "@nestjs/common";
+import type { ContainerState } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
+import { mapLimit } from "../importer/sources/map-limit";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
 import { NotificationsService } from "../notifications/notifications.service";
 import { resolveContainerLabel } from "../metrics/container-metrics.service";
@@ -17,6 +19,13 @@ import {
 
 const POLL_TIMEOUT_MS = 15_000;
 const SEED_WINDOW_SEC = 120; // first tick: look back this far for the events cursor
+// Servers polled at once. Each poll mostly waits on the agent, but every one also uses the (small) DB pool, so
+// the bound is low: a 50-server tick finishes in a few round-trips instead of 50 in a row.
+const CHECK_CONCURRENCY = 4;
+// An UNCHANGED container row is not rewritten each tick; its `updatedAt` (which `reduceHealth` reads as "observed
+// recently", trusted for CONTAINER_STATE_MAX_AGE_MS = 180 s) is refreshed at most this often, in ONE statement
+// per server. Worst-case age a reader sees = this + one poll interval (60 s) = 150 s < 180 s.
+const STATE_REFRESH_MS = 90_000;
 const MEM_WINDOW_MS = 5 * 60 * 1000; // look back this far for container-metric samples when judging mem pressure
 const MEM_SAMPLE_MAX_AGE_MS = 60 * 1000; // newest sample must be at most this old (agent samples ~15s) — else stale
 const MAX_LOG_FETCH_PER_TICK = 8; // cap the extra `docker logs` pulls per server per tick (a mass-crash storm)
@@ -62,22 +71,51 @@ export class ContainerHealthRunnerService {
   }
 
   private async tick(): Promise<TickResult> {
-    const servers = await this.prisma.server.findMany({ where: { status: "ONLINE" }, select: { id: true, name: true, teamId: true, hostname: true } });
+    const all = await this.prisma.server.findMany({ where: { status: "ONLINE" }, select: { id: true, name: true, teamId: true, hostname: true } });
+    const servers = all.filter((s) => this.agentWs.isOnline(s.id));
     const settlingKeys: string[] = [];
-    for (const server of servers) {
+    if (servers.length === 0) return { settling: false, settlingKeys };
+    // Three statements for the whole fleet (previous states, apps, databases), grouped per server here, instead
+    // of three per server per tick.
+    const ids = servers.map((s) => s.id);
+    const [stateRows, appRows, dbRows] = await Promise.all([
+      this.prisma.containerState.findMany({ where: { serverId: { in: ids } } }),
+      this.prisma.application.findMany({ where: { serverId: { in: ids } }, select: { id: true, serverId: true, name: true, status: true, memoryMb: true } }),
+      this.prisma.database.findMany({ where: { serverId: { in: ids } }, select: { id: true, serverId: true, name: true, memoryMb: true } }),
+    ]);
+    const group = <T extends { serverId: string }>(rows: T[]): Map<string, T[]> => {
+      const m = new Map<string, T[]>();
+      for (const r of rows) {
+        const arr = m.get(r.serverId);
+        if (arr) arr.push(r);
+        else m.set(r.serverId, [r]);
+      }
+      return m;
+    };
+    const statesBy = group(stateRows);
+    const appsBy = group(appRows);
+    const dbsBy = group(dbRows);
+    await mapLimit(servers, CHECK_CONCURRENCY, async (server) => {
       try {
-        if (!this.agentWs.isOnline(server.id)) continue;
-        for (const name of await this.checkServer(server)) settlingKeys.push(`${server.id}/${name}`);
+        const names = await this.checkServer(server, { prevRows: statesBy.get(server.id) ?? [], apps: appsBy.get(server.id) ?? [], dbs: dbsBy.get(server.id) ?? [] });
+        for (const name of names) settlingKeys.push(`${server.id}/${name}`);
       } catch (e) {
         this.logger.warn(`container-health check failed for server ${server.id}: ${String(e)}`);
       }
-    }
+    });
     return { settling: settlingKeys.length > 0, settlingKeys };
   }
 
   /** Persists the server's container states; returns the names of the containers that are still settling. */
-  private async checkServer(server: { id: string; name: string; teamId: string; hostname: string | null }): Promise<string[]> {
-    const prevRows = await this.prisma.containerState.findMany({ where: { serverId: server.id } });
+  private async checkServer(
+    server: { id: string; name: string; teamId: string; hostname: string | null },
+    ctx: {
+      prevRows: ContainerState[];
+      apps: { id: string; name: string; status: string; memoryMb: number | null }[];
+      dbs: { id: string; name: string; memoryMb: number | null }[];
+    },
+  ): Promise<string[]> {
+    const { prevRows, apps, dbs } = ctx;
     const seed = prevRows.length === 0;
     const nowSec = Math.floor(Date.now() / 1000);
     const cursor = seed ? nowSec - SEED_WINDOW_SEC : Math.max(nowSec - SEED_WINDOW_SEC, ...prevRows.map((r) => Number(r.lastEventTs)));
@@ -90,18 +128,6 @@ export class ContainerHealthRunnerService {
     const parsed = parseHealthOutput(r.output);
     if (parsed.truncated) this.logger.warn(`container-health output truncated on server ${server.id} (too many containers)`);
 
-    const [apps, dbs, metricRows] = await Promise.all([
-      this.prisma.application.findMany({ where: { serverId: server.id }, select: { id: true, name: true, status: true, memoryMb: true } }),
-      this.prisma.database.findMany({ where: { serverId: server.id }, select: { id: true, name: true, memoryMb: true } }),
-      // Recent per-container memory samples (agent-pushed docker stats) for the pre-OOM pressure check.
-      // memTotal is docker stats' LIMIT column (== cgroup limit when one is set, else host RAM); containerId
-      // + ts let us scope to the current incarnation and reject stale data.
-      this.prisma.containerMetric.findMany({
-        where: { serverId: server.id, ts: { gte: new Date(Date.now() - MEM_WINDOW_MS) } },
-        select: { containerName: true, containerId: true, memPct: true, memTotal: true, ts: true },
-        orderBy: { ts: "asc" },
-      }),
-    ]);
     const appsById = new Map(apps.map((a) => [a.id, a.name]));
     const dbsById = new Map(dbs.map((d) => [d.id, d.name]));
     const stoppedAppIds = new Set(apps.filter((a) => a.status === "STOPPED").map((a) => a.id));
@@ -111,6 +137,26 @@ export class ContainerHealthRunnerService {
     const memLimitByResource = new Map<string, number>();
     for (const a of apps) if (a.memoryMb && a.memoryMb > 0) memLimitByResource.set(a.id, a.memoryMb);
     for (const d of dbs) if (d.memoryMb && d.memoryMb > 0) memLimitByResource.set(d.id, d.memoryMb);
+    // Recent per-container memory samples (agent-pushed docker stats) for the pre-OOM pressure check. Only the
+    // RUNNING managed apps/dbs that declare a memory limit can ever alert, so only those containers are read
+    // (usually none: no query at all) instead of five minutes of every container on the server.
+    // memTotal is docker stats' LIMIT column (== cgroup limit when one is set, else host RAM); containerId
+    // + ts let us scope to the current incarnation and reject stale data.
+    const memCandidates: string[] = [];
+    if (memLimitByResource.size > 0) {
+      for (const snap of parsed.containers) {
+        if (snap.status !== "running") continue;
+        const l = resolveContainerLabel(snap.name, appsById, dbsById);
+        if ((l.kind === "app" || l.kind === "db") && l.resourceId && memLimitByResource.has(l.resourceId)) memCandidates.push(snap.name);
+      }
+    }
+    const metricRows = memCandidates.length
+      ? await this.prisma.containerMetric.findMany({
+          where: { serverId: server.id, containerName: { in: memCandidates }, ts: { gte: new Date(Date.now() - MEM_WINDOW_MS) } },
+          select: { containerName: true, containerId: true, memPct: true, memTotal: true, ts: true },
+          orderBy: { ts: "asc" },
+        })
+      : [];
     type MemSample = { containerId: string; memPct: number; memTotal: bigint; ts: Date };
     const memSamplesByName = new Map<string, MemSample[]>();
     for (const m of metricRows) {
@@ -122,6 +168,7 @@ export class ContainerHealthRunnerService {
     const prevByName = new Map(prevRows.map((row) => [row.containerName, row]));
     const now = Date.now();
     let logFetches = 0;
+    const refreshNames: string[] = [];
 
     for (const snap of parsed.containers) {
       const prevRow = prevByName.get(snap.name);
@@ -192,7 +239,12 @@ export class ContainerHealthRunnerService {
           })
           .catch(() => undefined);
       }
-      await this.persist(server.id, snap, next);
+      // Write only a row that CHANGED; an unchanged one is only freshness-refreshed (batched, after the loop).
+      if (prevRow && sameState(prevRow, stateData(next))) {
+        if (now - prevRow.updatedAt.getTime() >= STATE_REFRESH_MS) refreshNames.push(snap.name);
+      } else {
+        await this.persist(server.id, snap, next);
+      }
 
       // Pre-OOM memory-pressure alert — only for a RUNNING managed app/db that genuinely runs under a memory
       // limit (else memPct is share-of-host, meaningless). Guards: scope samples to THIS incarnation, require
@@ -257,7 +309,17 @@ export class ContainerHealthRunnerService {
     // Drop rows for containers that no longer exist (removed/renamed) so the table stays bounded.
     const liveNames = parsed.containers.map((c) => c.name);
     // No live container: drop every row of the server (a NUL placeholder in notIn is rejected by PostgreSQL as invalid UTF-8).
-    await this.prisma.containerState.deleteMany({ where: liveNames.length ? { serverId: server.id, containerName: { notIn: liveNames } } : { serverId: server.id } });
+    // Skipped when every stored row is still live (the steady state): nothing to delete, so no statement.
+    const live = new Set(liveNames);
+    if (prevRows.some((r) => !live.has(r.containerName))) {
+      await this.prisma.containerState.deleteMany({ where: liveNames.length ? { serverId: server.id, containerName: { notIn: liveNames } } : { serverId: server.id } });
+    }
+    if (refreshNames.length) {
+      // One statement keeps every unchanged row's `updatedAt` inside the freshness window readers require.
+      await this.prisma.containerState
+        .updateMany({ where: { serverId: server.id, containerName: { in: refreshNames } }, data: { updatedAt: new Date(now) } })
+        .catch(() => undefined);
+    }
     // A container of a deliberately stopped app is expected to sit exited; only a live transition is "settling".
     return parsed.containers
       .filter((c) => {
@@ -311,26 +373,53 @@ export class ContainerHealthRunnerService {
   }
 
   private async persist(serverId: string, snap: ContainerSnap, next: NextState): Promise<void> {
-    const data = {
-      containerId: next.containerId,
-      status: next.status,
-      exitCode: next.exitCode,
-      oomKilled: next.oomKilled,
-      restartCount: next.restartCount,
-      startedAt: next.startedAt ? new Date(next.startedAt) : null,
-      finishedAt: next.finishedAt ? new Date(next.finishedAt) : null,
-      health: next.health,
-      lastEventTs: BigInt(Math.max(0, Math.floor(next.lastEventTs))),
-      lastNotifiedKey: next.lastNotifiedKey,
-      lastNotifiedAt: next.lastNotifiedAt ? new Date(next.lastNotifiedAt) : null,
-      restartCountAtNotify: next.restartCountAtNotify,
-      unhealthySince: next.unhealthySince ? new Date(next.unhealthySince) : null,
-      healthNotifiedAt: next.healthNotifiedAt ? new Date(next.healthNotifiedAt) : null,
-    };
+    const data = stateData(next);
     await this.prisma.containerState.upsert({
       where: { serverId_containerName: { serverId, containerName: snap.name } },
       create: { serverId, containerName: snap.name, ...data },
       update: data,
     });
   }
+}
+
+/** The persisted columns of a ContainerState row, from a diffed NextState. */
+function stateData(next: NextState) {
+  return {
+    containerId: next.containerId,
+    status: next.status,
+    exitCode: next.exitCode,
+    oomKilled: next.oomKilled,
+    restartCount: next.restartCount,
+    startedAt: next.startedAt ? new Date(next.startedAt) : null,
+    finishedAt: next.finishedAt ? new Date(next.finishedAt) : null,
+    health: next.health,
+    lastEventTs: BigInt(Math.max(0, Math.floor(next.lastEventTs))),
+    lastNotifiedKey: next.lastNotifiedKey,
+    lastNotifiedAt: next.lastNotifiedAt ? new Date(next.lastNotifiedAt) : null,
+    restartCountAtNotify: next.restartCountAtNotify,
+    unhealthySince: next.unhealthySince ? new Date(next.unhealthySince) : null,
+    healthNotifiedAt: next.healthNotifiedAt ? new Date(next.healthNotifiedAt) : null,
+  };
+}
+
+const ms = (d: Date | null) => (d ? d.getTime() : null);
+
+/** True when writing `data` would not change the stored row (every persisted column equal). */
+export function sameState(row: ContainerState, data: ReturnType<typeof stateData>): boolean {
+  return (
+    row.containerId === data.containerId &&
+    row.status === data.status &&
+    row.exitCode === data.exitCode &&
+    row.oomKilled === data.oomKilled &&
+    row.restartCount === data.restartCount &&
+    ms(row.startedAt) === ms(data.startedAt) &&
+    ms(row.finishedAt) === ms(data.finishedAt) &&
+    row.health === data.health &&
+    row.lastEventTs === data.lastEventTs &&
+    row.lastNotifiedKey === data.lastNotifiedKey &&
+    ms(row.lastNotifiedAt) === ms(data.lastNotifiedAt) &&
+    row.restartCountAtNotify === data.restartCountAtNotify &&
+    ms(row.unhealthySince) === ms(data.unhealthySince) &&
+    ms(row.healthNotifiedAt) === ms(data.healthNotifiedAt)
+  );
 }

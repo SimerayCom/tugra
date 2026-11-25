@@ -10,36 +10,38 @@ function inspectOut(restartCount: number, extra = "") {
   return ["##INSPECT", `/tugra_app1\tc1\trunning\t0\tfalse\t${restartCount}\t2026-10-30T00:00:00Z\t0001-01-01T00:00:00Z\t`, "##EVENTS", extra].join("\n");
 }
 
-function make(opts: { rows?: unknown[]; online?: boolean; output?: string; exitCode?: number; apps?: unknown[]; metrics?: unknown[] } = {}) {
+function make(opts: { rows?: unknown[]; online?: boolean; output?: string; exitCode?: number; apps?: unknown[]; metrics?: unknown[]; servers?: unknown[]; delayMs?: number } = {}) {
   const fireForEvent = jest.fn().mockResolvedValue(undefined);
   const upsert = jest.fn().mockResolvedValue({});
   const update = jest.fn().mockResolvedValue({});
+  const updateMany = jest.fn().mockResolvedValue({ count: 0 });
   const deleteMany = jest.fn().mockResolvedValue({ count: 0 });
   const create = jest.fn().mockResolvedValue({});
   const prisma = {
-    server: { findMany: jest.fn().mockResolvedValue([SERVER]) },
-    containerState: { findMany: jest.fn().mockResolvedValue(opts.rows ?? []), upsert, update, deleteMany },
+    server: { findMany: jest.fn().mockResolvedValue(opts.servers ?? [SERVER]) },
+    containerState: { findMany: jest.fn().mockResolvedValue(opts.rows ?? []), upsert, update, updateMany, deleteMany },
     containerEvent: { create },
     containerMetric: { findMany: jest.fn().mockResolvedValue(opts.metrics ?? []) },
-    application: { findMany: jest.fn().mockResolvedValue(opts.apps ?? [{ id: "app1", name: "Shop", status: "RUNNING" }]) },
+    application: { findMany: jest.fn().mockResolvedValue((opts.apps ?? [{ id: "app1", name: "Shop", status: "RUNNING" }]).map((a) => ({ serverId: "s1", ...(a as object) }))) },
     database: { findMany: jest.fn().mockResolvedValue([]) },
   } as unknown as PrismaService;
   // The poll command returns the inspect/events output; a later `docker logs` fetch returns a canned tail.
-  const sendCommand = jest.fn().mockImplementation((_id: string, cmd: string) =>
-    Promise.resolve(
+  const sendCommand = jest.fn().mockImplementation(async (_id: string, cmd: string) => {
+    if (opts.delayMs) await new Promise((r) => setTimeout(r, opts.delayMs));
+    return Promise.resolve(
       cmd.includes("docker logs")
         ? { exitCode: 0, output: "2026-10-30T00:00:01Z panic: boom\n" }
         : { exitCode: opts.exitCode ?? 0, output: opts.output ?? inspectOut(0) },
-    ),
-  );
+    );
+  });
   const agentWs = { isOnline: jest.fn().mockReturnValue(opts.online ?? true), sendCommand } as unknown as AgentWsServer;
   const notifications = { fireForEvent } as unknown as NotificationsService;
-  return { svc: new ContainerHealthRunnerService(prisma, agentWs, notifications), fireForEvent, upsert, update, deleteMany, create, sendCommand };
+  return { svc: new ContainerHealthRunnerService(prisma, agentWs, notifications), prisma, fireForEvent, upsert, update, updateMany, deleteMany, create, sendCommand };
 }
 
 const prevRow = (over: Record<string, unknown> = {}) => ({
   serverId: "s1", containerName: "tugra_app1", containerId: "c1", status: "running", exitCode: 0, oomKilled: false,
-  restartCount: 0, startedAt: null, finishedAt: null, health: null, lastEventTs: 0n,
+  restartCount: 0, startedAt: null, finishedAt: null, health: null, lastEventTs: 0n, updatedAt: new Date(),
   lastNotifiedKey: null, lastNotifiedAt: null, restartCountAtNotify: 0, unhealthySince: null, healthNotifiedAt: null, ...over,
 });
 
@@ -103,10 +105,11 @@ describe("ContainerHealthRunnerService.runTick", () => {
   });
 
   it("swallows a ContainerEvent write failure without aborting the tick (per-container isolation)", async () => {
-    const { svc, create, deleteMany } = make({ rows: [prevRow({ restartCount: 2, restartCountAtNotify: 2 })], output: inspectOut(3) });
+    const { svc, create, upsert } = make({ rows: [prevRow({ restartCount: 2, restartCountAtNotify: 2 }), prevRow({ containerName: "tugra_gone" })], output: inspectOut(3) });
     create.mockRejectedValueOnce(new Error("23502 bad byte"));
     await expect(svc.runTick()).resolves.toEqual({ settling: false, settlingKeys: [] });
-    expect(deleteMany).toHaveBeenCalled(); // the tick ran to completion past the failed row
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(upsert).toHaveBeenCalledTimes(1); // state was persisted before the failed timeline row
   });
 
   it("a server with no containers clears its rows without a NUL placeholder (PostgreSQL rejects 0x00 in a query)", async () => {
@@ -276,5 +279,78 @@ describe("ContainerHealthRunnerService settling + overlap", () => {
     expect(sendCommand.mock.calls.filter((c) => !String(c[1]).includes("docker logs"))).toHaveLength(1);
     await svc.runTick(); // and a later call polls again
     expect(sendCommand.mock.calls.filter((c) => !String(c[1]).includes("docker logs"))).toHaveLength(2);
+  });
+});
+
+describe("ContainerHealthRunnerService write volume", () => {
+  const ago = (ms: number) => new Date(Date.now() - ms);
+  const STARTED = new Date("2026-10-30T00:00:00Z"); // the inspect fixtures' StartedAt
+  const same = (over: Record<string, unknown> = {}) => prevRow({ startedAt: STARTED, ...over });
+
+  it("an unchanged container costs NO write on a steady tick (no upsert, no delete, no refresh while fresh)", async () => {
+    const { svc, upsert, deleteMany, updateMany, update } = make({ rows: [same({ updatedAt: ago(30_000) })], output: inspectOut(0) });
+    await svc.runTick();
+    expect(upsert).not.toHaveBeenCalled();
+    expect(deleteMany).not.toHaveBeenCalled();
+    expect(updateMany).not.toHaveBeenCalled();
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("keeps unchanged rows inside reduceHealth's 180 s freshness window with ONE statement per server, not one upsert per container", async () => {
+    const rows = [same({ updatedAt: ago(100_000) }), same({ containerName: "tugra_app2", containerId: "c2", updatedAt: ago(100_000) })];
+    const output = ["##INSPECT", "/tugra_app1\tc1\trunning\t0\tfalse\t0\t2026-10-30T00:00:00Z\t0001-01-01T00:00:00Z\t", "/tugra_app2\tc2\trunning\t0\tfalse\t0\t2026-10-30T00:00:00Z\t0001-01-01T00:00:00Z\t", "##EVENTS", ""].join("\n");
+    const { svc, upsert, updateMany } = make({ rows, output });
+    await svc.runTick();
+    expect(upsert).not.toHaveBeenCalled();
+    expect(updateMany).toHaveBeenCalledTimes(1);
+    const arg = updateMany.mock.calls[0][0];
+    expect(arg.where).toEqual({ serverId: "s1", containerName: { in: ["tugra_app1", "tugra_app2"] } });
+    expect(arg.data.updatedAt).toBeInstanceOf(Date);
+  });
+
+  it("still upserts a row whose state CHANGED", async () => {
+    const { svc, upsert } = make({ rows: [same({ updatedAt: ago(10_000) })], output: inspectHealth("starting") });
+    await svc.runTick();
+    expect(upsert).toHaveBeenCalledTimes(1);
+  });
+
+  it("skips the memory-sample read unless a running app/db with a memory limit exists", async () => {
+    const none = make({ rows: [same()], output: inspectOut(0) });
+    await none.svc.runTick();
+    expect((none.prisma as any).containerMetric.findMany).not.toHaveBeenCalled();
+    const limited = make({ rows: [prevRow()], output: inspectOut(0), apps: [{ id: "app1", name: "Shop", status: "RUNNING", memoryMb: 512 }] });
+    await limited.svc.runTick();
+    const q = (limited.prisma as any).containerMetric.findMany.mock.calls[0][0];
+    expect(q.where.containerName).toEqual({ in: ["tugra_app1"] }); // only the candidate, never every container
+  });
+
+  it("loads previous states, apps and databases ONCE per tick for the whole fleet", async () => {
+    const servers = Array.from({ length: 10 }, (_, i) => ({ id: `s${i}`, name: `n${i}`, teamId: "t1", hostname: null }));
+    const { svc, prisma } = make({ servers, rows: [] });
+    await svc.runTick();
+    const p = prisma as any;
+    expect(p.containerState.findMany).toHaveBeenCalledTimes(1);
+    expect(p.application.findMany).toHaveBeenCalledTimes(1);
+    expect(p.database.findMany).toHaveBeenCalledTimes(1);
+  });
+
+  it("polls servers with bounded parallelism (4 at a time, not 50 in a row, not 50 at once)", async () => {
+    const servers = Array.from({ length: 12 }, (_, i) => ({ id: `s${i}`, name: `n${i}`, teamId: "t1", hostname: null }));
+    const { svc, sendCommand } = make({ servers, rows: [], delayMs: 10 });
+    let active = 0;
+    let max = 0;
+    const inner = sendCommand.getMockImplementation()!;
+    sendCommand.mockImplementation(async (...a: unknown[]) => {
+      active++;
+      max = Math.max(max, active);
+      try {
+        return await (inner as (...x: unknown[]) => Promise<unknown>)(...a);
+      } finally {
+        active--;
+      }
+    });
+    await svc.runTick();
+    expect(sendCommand).toHaveBeenCalledTimes(12);
+    expect(max).toBe(4);
   });
 });
