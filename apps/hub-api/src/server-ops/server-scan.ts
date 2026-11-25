@@ -132,7 +132,7 @@ const HostServiceSchema = z.object({
   exec: text(40).optional(),
   workDir: text(200).optional(),
 });
-const HostPortSchema = z.object({ port, proto: z.literal("tcp"), scope: z.enum(["public", "local"]) });
+const HostPortSchema = z.object({ port, proto: z.literal("tcp"), scope: z.enum(["public", "local"]), user: z.string().regex(/^[a-z_][a-z0-9_-]{0,31}$/).optional() });
 
 /** Keep the items that validate, drop the rest (one malformed row must not discard the whole section). */
 function lenient<S extends z.ZodTypeAny>(schema: S, max: number) {
@@ -462,7 +462,7 @@ export function buildScanReport({ docker, host, now }: BuildReportInput): ScanRe
   // ── ports ──
   const published = new Map<number, string>();
   for (const r of allRows) for (const p of r.ports) if (!published.has(p)) published.set(p, r.name);
-  const ports = (hostData?.ports ?? []).map((p) => ({ port: p.port, scope: p.scope, owner: published.get(p.port) ?? WELL_KNOWN_PORTS[p.port] ?? null }));
+  const ports = (hostData?.ports ?? []).map((p) => ({ port: p.port, scope: p.scope, owner: published.get(p.port) ?? WELL_KNOWN_PORTS[p.port] ?? p.user ?? null }));
   // Exposure verdict: the image of the publishing container (Tugra's own included: an app database published on every
   // interface is just as reachable) decides what a public port is.
   const publishedBy = new Map<number, ExposureOwner>();

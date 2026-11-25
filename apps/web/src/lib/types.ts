@@ -2678,7 +2678,7 @@ export interface ExposedService {
   kind: ExposedKind;
   severity: "critical" | "high" | "medium";
   container: string | null;
-  basis: "container" | "port";
+  basis: "container" | "account" | "port";
   fix: "publish_local" | "bind_local" | "docker_api";
 }
 export interface ScanReport {

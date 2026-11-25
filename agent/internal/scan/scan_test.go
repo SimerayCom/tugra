@@ -332,8 +332,8 @@ func TestPorts(t *testing.T) {
 		"   0: 00000000000000000000000001000000:1F90 00000000000000000000000000000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 5 1 0000\n" + // [::1]:8080
 		"   1: 00000000000000000000000000000000:01BB 00000000000000000000000000000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 6 1 0000\n" // [::]:443
 	proc := fakeProc(t, nil, tcp, tcp6)
-	got := collectPorts(proc, new([]string))
-	want := []Port{{80, "tcp", "public"}, {443, "tcp", "public"}, {3000, "tcp", "local"}, {8080, "tcp", "local"}}
+	got := collectPorts(newRootFS(t.TempDir()), proc, new([]string))
+	want := []Port{{80, "tcp", "public", ""}, {443, "tcp", "public", ""}, {3000, "tcp", "local", ""}, {8080, "tcp", "local", ""}}
 	if len(got) != len(want) {
 		t.Fatalf("got %+v", got)
 	}
@@ -421,5 +421,30 @@ func TestProbeReply(t *testing.T) {
 	var out, errb strings.Builder
 	if code := RunCLI([]string{"--probe"}, &out, &errb); code != 0 || strings.TrimSpace(out.String()) != ProbeReply {
 		t.Fatalf("code %d out %q", code, out.String())
+	}
+}
+
+func TestPortsReportTheOwningAccount(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "etc"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	passwd := "root:x:0:0:root:/root:/bin/bash\nredis:x:110:111::/var/lib/redis:/usr/sbin/nologin\nmysql:x:112:113::/nonexistent:/bin/false\nBad Name:x:120:120::/:/bin/false\n"
+	if err := os.WriteFile(filepath.Join(root, "etc", "passwd"), []byte(passwd), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	tcp := tcpHeader +
+		"   0: 00000000:1952 00000000:0000 0A 00000000:00000000 00:00000000 00000000   110        0 1 1 0000\n" + // 0.0.0.0:6482 redis
+		"   1: 00000000:0CEA 00000000:0000 0A 00000000:00000000 00:00000000 00000000   112        0 2 1 0000\n" + // 0.0.0.0:3306 mysql
+		"   2: 00000000:0050 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 3 1 0000\n" + // 0.0.0.0:80 root: no account reported
+		"   3: 00000000:1F90 00000000:0000 0A 00000000:00000000 00:00000000 00000000   120        0 4 1 0000\n" // 0.0.0.0:8080 odd account name: dropped
+	proc := fakeProc(t, nil, tcp, tcpHeader)
+	got := collectPorts(newRootFS(root), proc, new([]string))
+	by := map[int]string{}
+	for _, p := range got {
+		by[p.Port] = p.User
+	}
+	if by[6482] != "redis" || by[3306] != "mysql" || by[80] != "" || by[8080] != "" {
+		t.Fatalf("got %+v", got)
 	}
 }

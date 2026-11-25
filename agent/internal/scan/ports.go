@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -11,8 +12,10 @@ import (
 
 // collectPorts lists listening TCP sockets from /proc/net/tcp and /proc/net/tcp6 (state 0A). Run with the host network
 // namespace these are the HOST's listeners. Process names are not resolved (that would need ptrace rights); the hub
-// maps a port to a container or a well-known service itself.
-func collectPorts(proc string, errs *[]string) []Port {
+// maps a port to a container or a well-known service itself, and uses the owning account (see Port.User) for native
+// services on unusual ports.
+func collectPorts(fs rootFS, proc string, errs *[]string) []Port {
+	users := passwdUsers(fs)
 	byPort := map[int]Port{}
 	read := func(file string, v6 bool) {
 		f, err := os.Open(filepath.Join(proc, "net", file))
@@ -46,9 +49,18 @@ func collectPorts(proc string, errs *[]string) []Port {
 			if isLoopbackHex(addr, v6) {
 				scope = "local"
 			}
+			user := ""
+			if len(fields) > 7 {
+				if uid, err := strconv.Atoi(fields[7]); err == nil {
+					user = users[uid]
+				}
+			}
 			prev, seen := byPort[int(p)]
 			if !seen || (prev.Scope == "local" && scope == "public") {
-				byPort[int(p)] = Port{Port: int(p), Proto: "tcp", Scope: scope}
+				byPort[int(p)] = Port{Port: int(p), Proto: "tcp", Scope: scope, User: user}
+			} else if prev.User == "" && user != "" && prev.Scope == scope {
+				prev.User = user
+				byPort[int(p)] = prev
 			}
 		}
 	}
@@ -79,4 +91,30 @@ func isLoopbackHex(addr string, v6 bool) bool {
 		return true
 	}
 	return false
+}
+
+var accountNameRe = regexp.MustCompile(`^[a-z_][a-z0-9_-]{0,31}$`)
+
+// passwdUsers maps uid → account name from the host's /etc/passwd, for every NON-root account with a sane name. Root is left
+// out on purpose: a root-owned listener says nothing about what it is.
+func passwdUsers(fs rootFS) map[int]string {
+	out := map[int]string{}
+	b, err := fs.readFile("/etc/passwd")
+	if err != nil {
+		return out
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		f := strings.Split(line, ":")
+		if len(f) < 3 || !accountNameRe.MatchString(f[0]) {
+			continue
+		}
+		uid, err := strconv.Atoi(f[2])
+		if err != nil || uid <= 0 {
+			continue
+		}
+		if _, dup := out[uid]; !dup {
+			out[uid] = f[0]
+		}
+	}
+	return out
 }

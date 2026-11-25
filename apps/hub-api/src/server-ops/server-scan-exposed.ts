@@ -26,8 +26,9 @@ export const ExposedServiceSchema = z.object({
   severity: z.enum(EXPOSED_SEVERITIES),
   /** The container publishing the port, or null when a host process / unknown owner holds it. */
   container: z.string().max(128).nullable(),
-  /** "container": the image identified it; "port": only the well-known port number did (confirm before acting). */
-  basis: z.enum(["container", "port"]),
+  /** "container": the image identified it; "account": the (non-root) account owning the socket is a data store's
+   *  (mysql, redis...); "port": only the well-known port number did (confirm before acting). */
+  basis: z.enum(["container", "account", "port"]),
   fix: z.enum(EXPOSED_FIXES),
 });
 export type ExposedService = z.infer<typeof ExposedServiceSchema>;
@@ -95,6 +96,29 @@ const BY_PORT: Record<number, Def> = {
   9092: d("Kafka", "queue", "high"),
 };
 
+/** The account a native data-store service runs as (the host scan reports the socket owner) → what it is. Catches
+ *  a systemd Redis on 6482 or a MongoDB on 49157 that no port table could. Root-owned listeners are never reported. */
+const BY_ACCOUNT: Record<string, Def> = {
+  mysql: d("MySQL", "database", "high"),
+  mariadb: d("MariaDB", "database", "high"),
+  postgres: d("PostgreSQL", "database", "high"),
+  mongodb: d("MongoDB", "database", "critical"),
+  mongod: d("MongoDB", "database", "critical"),
+  redis: d("Redis", "cache", "critical"),
+  valkey: d("Valkey", "cache", "critical"),
+  keydb: d("KeyDB", "cache", "critical"),
+  memcache: d("Memcached", "cache", "critical"),
+  memcached: d("Memcached", "cache", "critical"),
+  "memcache-d": d("Memcached", "cache", "critical"),
+  elasticsearch: d("Elasticsearch", "search", "critical"),
+  opensearch: d("OpenSearch", "search", "critical"),
+  rabbitmq: d("RabbitMQ", "queue", "high"),
+  clickhouse: d("ClickHouse", "database", "high"),
+  couchdb: d("CouchDB", "database", "critical"),
+  cassandra: d("Cassandra", "database", "high"),
+  etcd: d("etcd", "database", "critical"),
+};
+
 /** The unambiguous, scan-visible slice of a docker row this module needs. */
 export interface ExposureOwner {
   name: string;
@@ -114,7 +138,7 @@ const SEVERITY_RANK: Record<ExposedSeverity, number> = { critical: 0, high: 1, m
  * The exposed services of one host. `ports` are the host scan's listening sockets (only `public` ones count; `local`
  * means bound to loopback / a private interface), `publishedBy` maps a host port to the container that publishes it.
  */
-export function computeExposed(ports: { port: number; scope: "public" | "local" }[], publishedBy: ReadonlyMap<number, ExposureOwner>): ExposedService[] {
+export function computeExposed(ports: { port: number; scope: "public" | "local"; user?: string }[], publishedBy: ReadonlyMap<number, ExposureOwner>): ExposedService[] {
   const out: ExposedService[] = [];
   const seen = new Set<number>();
   for (const p of ports) {
@@ -122,7 +146,7 @@ export function computeExposed(ports: { port: number; scope: "public" | "local" 
     seen.add(p.port);
     const owner = publishedBy.get(p.port);
     let def: Def | null = null;
-    let basis: "container" | "port" = "container";
+    let basis: ExposedService["basis"] = "container";
     if (owner) {
       def = classifyImage(owner.image);
       // A container the image does not identify may still sit on a well-known data-store port (a custom build).
@@ -130,6 +154,9 @@ export function computeExposed(ports: { port: number; scope: "public" | "local" 
         def = BY_PORT[p.port];
         basis = "port";
       }
+    } else if (p.user && Object.prototype.hasOwnProperty.call(BY_ACCOUNT, p.user)) {
+      def = BY_ACCOUNT[p.user];
+      basis = "account";
     } else if (Object.prototype.hasOwnProperty.call(BY_PORT, p.port)) {
       def = BY_PORT[p.port];
       basis = "port";

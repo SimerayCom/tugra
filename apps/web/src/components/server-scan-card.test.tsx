@@ -206,6 +206,21 @@ describe("ServerScanCard", () => {
     expect(within(card).queryAllByRole("button").length).toBe(0);
   });
 
+  it("says the exposure could not be checked when the host half is unavailable, and labels an account-identified service", async () => {
+    vi.spyOn(api, "getServerScan").mockResolvedValue({ report: report({ host: { status: "unavailable", reason: "agent_outdated" }, exposed: [] }) });
+    show();
+    expect(await screen.findByTestId("exposed-unchecked")).toHaveProperty("textContent", expect.stringMatching(/could not be checked/));
+    expect(screen.queryByTestId("exposed-services")).toBeNull();
+    cleanup();
+    vi.spyOn(api, "getServerScan").mockResolvedValue({
+      report: report({ exposed: [{ port: 6482, service: "Redis", kind: "cache", severity: "critical", container: null, basis: "account", fix: "bind_local" }] }),
+    });
+    show();
+    const card = await screen.findByTestId("exposed-services");
+    expect(within(card).getByText("Identified by the account it runs as")).toBeTruthy();
+    expect(screen.queryByTestId("exposed-unchecked")).toBeNull();
+  });
+
   it("shows no warning when nothing is exposed or the report predates the check", async () => {
     vi.spyOn(api, "getServerScan").mockResolvedValue({ report: report({ exposed: [] }) });
     show();

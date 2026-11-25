@@ -5,7 +5,7 @@ const NOW = new Date("2026-12-05T10:00:00Z");
 const row = (name: string, image: string, ports = "", state = "running", project = "") =>
   JSON.stringify([`/${name}`, image, state, project, "", "", "", "", ports]);
 const dockerOf = (...rows: string[]): DockerScan => parseDockerScan(["TUGRA_SCAN_DOCKER_BEGIN", ...rows, "TUGRA_SCAN_DOCKER_END"].join("\n"))!;
-const hostOf = (ports: { port: number; scope: "public" | "local" }[]): HostScanResult =>
+const hostOf = (ports: { port: number; scope: "public" | "local"; user?: string }[]): HostScanResult =>
   parseHostScan(["TUGRA_SCAN_HOST_BEGIN", JSON.stringify({ v: 1, markers: [], pm2: [], sites: [], services: [], ports: ports.map((p) => ({ ...p, proto: "tcp" })) }), "TUGRA_SCAN_HOST_END"].join("\n"));
 const pub = (...ports: number[]) => ports.map((port) => ({ port, scope: "public" as const }));
 
@@ -42,6 +42,29 @@ describe("computeExposed", () => {
       [27017, "port", null, "bind_local"],
       [5432, "port", null, "bind_local"],
     ]);
+  });
+
+  it("identifies a native service on an arbitrary port by the account that owns the socket", () => {
+    const out = computeExposed(
+      [
+        { port: 6482, scope: "public", user: "redis" },
+        { port: 49157, scope: "public", user: "mongodb" },
+        { port: 40001, scope: "public", user: "www-data" }, // an ordinary account: not a finding
+        { port: 40002, scope: "local", user: "redis" }, // loopback: never a finding
+        { port: 3306, scope: "public", user: "mysql" },
+      ],
+      new Map(),
+    );
+    expect(out.map((e) => [e.port, e.service, e.basis, e.container, e.fix])).toEqual([
+      [6482, "Redis", "account", null, "bind_local"],
+      [49157, "MongoDB", "account", null, "bind_local"],
+      [3306, "MySQL", "account", null, "bind_local"],
+    ]);
+  });
+
+  it("a published container is identified by its image before the account or the port", () => {
+    const out = computeExposed([{ port: 6482, scope: "public", user: "mysql" }], new Map([[6482, { name: "cache", image: "redis:7" }]]));
+    expect(out).toMatchObject([{ service: "Redis", basis: "container" }]);
   });
 
   it("treats the Docker API as critical with its own fix", () => {
@@ -88,6 +111,18 @@ describe("buildScanReport exposed section", () => {
     expect(r.exposed.map((e) => [e.port, e.service])).toEqual([[6482, "Redis"], [3306, "MySQL / MariaDB"]]);
     expect(ScanReportSchema.safeParse(r).success).toBe(true);
     expect(parseStoredReport(JSON.parse(JSON.stringify(r)))?.exposed).toEqual(r.exposed);
+  });
+
+  it("reads the socket owner from the host scan, shows it as the port's owner and flags a native service on an odd port", () => {
+    const r = buildScanReport({
+      docker: dockerOf(),
+      host: hostOf([{ port: 6482, scope: "public", user: "redis" }, { port: 7000, scope: "public", user: "BAD NAME" }, { port: 8000, scope: "public", user: "www-data" }]),
+      now: NOW,
+    });
+    expect(r.exposed.map((e) => [e.port, e.service, e.basis])).toEqual([[6482, "Redis", "account"]]);
+    expect(r.ports.find((p) => p.port === 6482)?.owner).toBe("redis");
+    expect(r.ports.find((p) => p.port === 8000)?.owner).toBe("www-data");
+    expect(r.ports.find((p) => p.port === 7000)).toBeUndefined(); // the malformed row is dropped, not the report
   });
 
   it("includes Tugra's own app databases when they are published publicly", () => {

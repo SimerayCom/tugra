@@ -358,6 +358,8 @@
     "exposedTitle": "{n} services are open to the internet",
     "exposedTitleOne": "1 service is open to the internet",
     "exposedIntro": "These ports accept connections from any address. Databases, caches and admin panels should only be reachable from this server or a private network. Tugra changes nothing here.",
+    "exposedUnchecked": "Open ports could not be checked, so no exposure warning is shown. This is not a clean result.",
+    "exposedByAccount": "Identified by the account it runs as",
     "exposedByPort": "Identified by its port number",
     "exposedFirewall": "Or block the port for outside addresses with ufw or your provider's firewall.",
     "exposedSeverity": { "critical": "Critical", "high": "High", "medium": "Medium" },

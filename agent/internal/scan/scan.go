@@ -100,6 +100,10 @@ type Port struct {
 	Port  int    `json:"port"`
 	Proto string `json:"proto"`
 	Scope string `json:"scope"` // public | local
+	// User is the (non-root) account that owns the listening socket, from the socket's uid in /proc/net/tcp and the host's
+	// /etc/passwd. A native database or cache runs as its own account (mysql, postgres, redis...), which lets the hub
+	// recognise it on a non-default port without resolving process names (that would need ptrace rights).
+	User string `json:"user,omitempty"`
 }
 
 // Run collects everything. Each collector is independent: one failing adds a short code to Errors and the rest still run.
@@ -117,7 +121,7 @@ func Run(o Options) Report {
 	r.PM2 = collectPM2(fs, o.Proc, &r.Errors)
 	r.Sites = collectSites(fs, hasMarker(r.Markers, "cloudpanel"), &r.Errors)
 	r.Services = collectServices(fs, comms, &r.Errors)
-	r.Ports = collectPorts(o.Proc, &r.Errors)
+	r.Ports = collectPorts(fs, o.Proc, &r.Errors)
 	return r
 }
 

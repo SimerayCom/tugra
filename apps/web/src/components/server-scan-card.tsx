@@ -80,6 +80,7 @@ export function ExposedServicesCard({ exposed }: { exposed: ExposedService[] }) 
             <Badge tone={SEVERITY_TONE[e.severity]}>{t(`servers.serverScan.exposedSeverity.${e.severity}`)}</Badge>
             {e.container && <span className="mono" style={{ ...dim, fontSize: 12 }}>{e.container}</span>}
             {e.basis === "port" && <span style={{ ...dim, fontSize: 12 }}>{t("servers.serverScan.exposedByPort")}</span>}
+            {e.basis === "account" && <span style={{ ...dim, fontSize: 12 }}>{t("servers.serverScan.exposedByAccount")}</span>}
             <span style={{ flexBasis: "100%", fontSize: 12.5, color: "var(--c-tx2)" }}>
               {t(`servers.serverScan.exposedFix.${e.fix}`, { port: e.port })} {e.fix !== "docker_api" && t("servers.serverScan.exposedFirewall")}
             </span>
@@ -201,6 +202,8 @@ function ScanResult({
     <div>
       <ExposedServicesCard exposed={report.exposed ?? []} />
       {hostNote && <p role="note" style={{ ...noteStyle("var(--c-am)"), marginTop: 0 }}>{hostNote}</p>}
+      {/* Without the host half there is no port list: say so, so an empty warning area never reads as "safe". */}
+      {report.host.status !== "ok" && <p role="note" data-testid="exposed-unchecked" style={{ ...noteStyle("var(--c-am)"), marginTop: 0 }}>{t("servers.serverScan.exposedUnchecked")}</p>}
       {!report.docker.available && <p style={noteStyle()}>{t("servers.serverScan.noDocker")}</p>}
       {report.docker.truncated && <p style={noteStyle()}>{t("servers.serverScan.truncated", { n: report.containers.length })}</p>}
       {nothing && <p style={noteStyle()}>{t("servers.serverScan.nothing")}</p>}
