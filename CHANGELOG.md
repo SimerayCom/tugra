@@ -7,11 +7,36 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.0-beta.30] - 2026-11-25
+
+- **A light hub: about a sixth of the disk, flat memory as the fleet grows.** Metric rollups run inside Postgres in
+  15-minute slices (the hub holds no sample rows), history keeps 1-minute buckets for 48 hours and 5-minute buckets for
+  28 days, raw container samples are kept 6 hours and host samples 26 hours, and old rows are pruned in small batches.
+  On a seeded 27-server fleet the metrics tables shrink from 9.1 GiB to 1.5 GiB (50 servers: 19.3 → 3.2 GiB). Agent
+  telemetry is written in 5-second batches, "last seen" is kept in memory and flushed every 30–60 s, unchanged container
+  states are not rewritten, and the periodic jobs share one scheduler queue and one Redis connection. Panel reads that
+  many tabs poll are answered once per 1.5 s per permitted set, with ETags, and pages poll 4x slower after a minute
+  without input (anything watching a running operation stays fast). With 24 browsers, hub memory peaks at 262 MB for
+  50 servers and 326 MB for 200 servers (beta.29: 345 / 636 MB).
 - **The hub sizes itself to the host.** The installer picks a RAM profile (tiny under 1.5 GiB, small under 3 GiB, standard
   above; `--profile=<name>` overrides, `--doctor` shows which fits) and sets the hub and web heap caps, Postgres, Redis (with
   `noeviction`, as the queues require), the hub's database pool and, on small hosts, memory ceilings for hub, web and Redis. A
   1 vCPU / 1 GB host runs the stack with 50 servers and 1000 containers at about 0.4 GB idle. Installs that never ran a profile
   keep working on today's behaviour or better.
+- **Hub health.** Settings shows the hub's own memory, heap limit, event-loop delay, restarts, database connections and
+  largest tables, Redis memory and queue depths; Needs attention warns before the heap limit is reached.
+- **The host shell opens on the host.** "Open host shell" used to land in the agent container (no PM2, no /home); it now
+  enters the host from a short-lived helper made from the agent's own image and gives a root login shell with the host's
+  own profile. Container terminals are unchanged.
+- **Scans stay current.** Select servers and scan them together from the Servers list; a scan taken with an older agent
+  or older than a day refreshes itself when the server page opens; the fleet-wide "listening on all interfaces" count
+  works (it was always empty), and the wording now says what is measured.
+- **Dependencies.** zod 4 (fixes a high-severity memory-exhaustion advisory) with the API's error wording kept, NestJS 11
+  on Express 5 (fixes a moderate advisory), pnpm 10 with an explicit build-script allow-list, Alpine 3.24 for the GeoIP
+  build stage. `pnpm audit`: no known vulnerabilities.
+- **Smaller fixes.** The Tugra mark is no longer cropped in the scan; software logos show for scans stored before they
+  were added; the in-app guide links (first setup, add a server, connect GitHub, move from Coolify, domains, imports)
+  open on tugra.io instead of a 404.
 
 ## [0.1.0-beta.29] - 2026-11-25
 
