@@ -6,6 +6,7 @@ import type { CampaignStatus } from "@tugra/shared";
 import { api } from "../lib/api";
 import { useT } from "../i18n/provider";
 import { campaignReportHref, validCampaign } from "../lib/migration-run";
+import { useTeamContext, useTeamScope } from "./team-scope";
 import { relativeTime } from "../lib/fleet";
 import { Badge, SectionCard, Spinner } from "./ui";
 
@@ -42,4 +43,13 @@ export function CampaignReportList({ teamId }: { teamId: string }) {
       )}
     </SectionCard>
   );
+}
+
+/** The report list for the team the person is looking at (an owner or admin of it); nothing for a member, who has no campaigns to open. */
+export function TeamCampaignReportList() {
+  const { teams } = useTeamContext();
+  const { teamId: scope } = useTeamScope();
+  const eligible = teams.filter((tm) => tm.role === "OWNER" || tm.role === "ADMIN");
+  const teamId = eligible.find((tm) => tm.id === scope)?.id ?? eligible[0]?.id;
+  return teamId ? <CampaignReportList teamId={teamId} /> : null;
 }

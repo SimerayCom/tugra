@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useT } from "../../../i18n/provider";
 import { ImportWizard } from "../../../components/import-wizard";
 import { HelpLink } from "../../../components/help-link";
+import { TeamCampaignReportList } from "../../../components/campaign-report-list";
 
 export default function ImportPage() {
   const t = useT();
@@ -14,7 +15,13 @@ export default function ImportPage() {
         <HelpLink guide="move-from-coolify" />
       </div>
       <p style={{ fontSize: 13, color: "var(--c-tx3)", margin: "0 0 20px" }}>{t("import.subtitle")}</p>
+      <p data-testid="move-off-link" style={{ fontSize: 13, margin: "0 0 16px" }}>
+        <Link href="/import/move-off-coolify" className="tg-link">{t("coolifyMove.title")}</Link> - {t("coolifyMove.navHint")}
+      </p>
       <ImportWizard />
+      <div style={{ marginTop: 20 }}>
+        <TeamCampaignReportList />
+      </div>
       <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "16px 0 0" }}>
         <Link href="/import/coolify-host">{t("coolifyTakeover.title")}</Link> - {t("coolifyTakeover.linkHint")}
       </p>

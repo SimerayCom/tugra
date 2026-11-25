@@ -230,3 +230,18 @@ describe("ProjectMovePanel: a move in progress and after it", () => {
     expect((await screen.findByRole("alert")).textContent).toBe("You undid this move. The apps are back on the old server.");
   });
 });
+
+describe("ProjectMovePanel: entry point", () => {
+  it("says there is no move yet in one line, and links to the Move off Coolify checklist", async () => {
+    show();
+    expect((await screen.findByTestId("project-move-none")).textContent).toBe("No move yet. Nothing changes until you start one.");
+    expect(screen.getByRole("link", { name: "Part of Move off Coolify, step C" }).getAttribute("href")).toBe("/import/move-off-coolify");
+  });
+
+  it("does not say there is no move once one exists", async () => {
+    vi.spyOn(api, "projectMoveList").mockResolvedValue([move({ phase: "COMPLETED", finishedAt: "2026-11-26T01:00:00Z" })]);
+    show();
+    await screen.findByTestId("project-move-progress");
+    expect(screen.queryByTestId("project-move-none")).toBeNull();
+  });
+});

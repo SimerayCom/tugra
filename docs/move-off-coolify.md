@@ -52,7 +52,7 @@ The permission lasts two hours at most. **Undo** removes the agents this run ins
 
 Open the server from the checklist, or start from **Import** and choose **Same machine (proxy swap)** for it.
 
-1. **Plan.** Tugra reads what Coolify runs on the server and matches it to the apps in Tugra. Nothing is changed. Per app you can choose to reuse the image Coolify built (the default) or to rebuild with Tugra and verify.
+1. **Plan.** Tugra reads what Coolify runs on the server and matches it to the apps in Tugra. Nothing is changed. Each app reuses the image Coolify already built; the first Tugra build happens on the next normal deploy.
 2. **Test.** Tugra's proxy starts next to Coolify's on a temporary port with no public access, and every domain is checked against what Coolify answers. A domain that does not match is shown, and you can test again.
 3. **Take over.** You type the server's name. Coolify's proxy stops, Tugra's takes ports 80 and 443, and the sites keep their addresses. Apps that share data with Coolify are switched with a short break.
 4. **Verify.** Coolify's certificate is served for a few minutes as a fallback while Tugra gets a new certificate for each domain. The page shows each domain until all of them are verified.
@@ -75,7 +75,7 @@ On a project's page, **Move to another server** moves the project and everything
 
 1. **Preview.** Shows what moves and anything that blocks it, such as an offline agent, a database engine that cannot move yet, or items on several servers.
 2. **Start.** You type the project's name. The items stop for a short time, copy over and start on the new server, and Tugra checks them. You can also have the DNS records pointed at the new server.
-3. The old copy stays for the number of days you chose (7 by default) as a safety copy. **Remove the old copy** deletes it sooner.
+3. The old copy stays for the number of days you chose (7 by default) as a safety copy. **Remove the old copy now** deletes it sooner.
 
 A move that has not started moving can be cancelled. A failed move says why in plain words.
 
@@ -104,7 +104,7 @@ The progress is read-only everywhere it is offered:
 - Before taking over: nothing to undo.
 - After taking over, before cleaning up: **Give back to Coolify**.
 - After cleaning up: Coolify is gone from that server. The apps run under Tugra, and your Docker volumes and data are untouched.
-- A project move: **Cancel** before it moves anything; afterwards the safety copy of the old server stays for the days you chose.
+- A project move: **Cancel the move** before it moves anything; afterwards the safety copy of the old server stays for the days you chose.
 
 ## FAQ
 

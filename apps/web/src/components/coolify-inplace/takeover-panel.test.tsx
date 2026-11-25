@@ -21,12 +21,12 @@ const dom = (o: Partial<D> = {}): D => ({ host: "web.example.com", tempCheck: "o
 const item = (o: Partial<TakeoverItemView> = {}): TakeoverItemView => ({ itemRef: "app:s:web", name: "web", buildMode: "reuse-image", domains: [dom()], ...o });
 const view = (status: TakeoverStatus, items: TakeoverItemView[] = [item()], o: Partial<TakeoverView> = {}): TakeoverView => ({ id: "tk1", serverId: "srv1", status, tempPort: null, items, giveBackAvailable: true, createdAt: "2026-11-26T10:00:00Z", finishedAt: null, ...o });
 
-const mount = () =>
+const mount = (opId: string | null = "op1") =>
   render(
     <QueryClientProvider client={qc}>
       <I18nProvider>
         <ToastProvider>
-          <TakeoverPanel serverId="srv1" serverName="olgu-box" opId="op1" />
+          <TakeoverPanel serverId="srv1" serverName="olgu-box" opId={opId ?? undefined} />
         </ToastProvider>
       </I18nProvider>
     </QueryClientProvider>,
@@ -34,6 +34,25 @@ const mount = () =>
 
 const task = (o: Record<string, unknown>) => ({ itemRef: "app:s:web", kind: "app", name: "web", status: "DONE", resourceType: "application", resourceId: "a1", message: null, startedAt: null, finishedAt: null, ...o });
 const op = (tasks: unknown[]): ImportOperation => ({ id: "op1", sourceKind: "coolify", serverId: "srv1", planHash: null, status: "SUCCEEDED", cancelRequested: false, createdAt: "2026-11-26T10:00:00Z", totals: { total: 0, done: 0, failed: 0, skipped: 0, running: 0, pending: 0, cancelled: 0, rolledBack: 0 }, tasks: tasks as never });
+
+describe("TakeoverPanel without a guided run (opened from a server page or the checklist)", () => {
+  it("cannot plan: it says a takeover starts from Import and offers no plan button", async () => {
+    vi.spyOn(api, "listInPlace").mockResolvedValue([]);
+    const plan = vi.spyOn(api, "planInPlace").mockResolvedValue(view("PLANNED"));
+    mount(null);
+    expect((await screen.findByTestId("takeover-needs-run")).textContent).toMatch(/starts from the Import page/);
+    expect(screen.getByRole("link", { name: "Open Import" }).getAttribute("href")).toBe("/import");
+    expect(screen.queryByRole("button", { name: "Plan the takeover" })).toBeNull();
+    expect(plan).not.toHaveBeenCalled();
+  });
+
+  it("still shows and continues a takeover that exists", async () => {
+    vi.spyOn(api, "listInPlace").mockResolvedValue([view("PLANNED")]);
+    mount(null);
+    expect(await screen.findByRole("button", { name: "Test on a temporary address" })).toBeTruthy();
+    expect(screen.queryByTestId("takeover-needs-run")).toBeNull();
+  });
+});
 
 describe("TakeoverPanel", () => {
   it("with no takeover it explains that planning changes nothing and offers only to plan", async () => {
