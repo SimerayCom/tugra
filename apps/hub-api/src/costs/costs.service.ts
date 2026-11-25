@@ -8,7 +8,7 @@ import { CloudProviderFactory } from "../cloud/providers/provider-factory.servic
 import { oobHttpError } from "../cloud/oob.service";
 import { resolveContainerLabel } from "../metrics/container-metrics.service";
 import type { ContainerLabelRow } from "../metrics/container-labels";
-import { PRICE_SNAPSHOT_DATE, snapshotFor } from "./price-snapshot.data";
+import { PRICE_SNAPSHOT_DATE, SIMILAR_PROVIDER, snapshotFor } from "./price-snapshot.data";
 import { estimateCost, noEstimateReason, planLabel, similarCost, toCents, type NoEstimateReason, type SimilarCost } from "./cost-estimate";
 import { allocate, groupUse } from "./cost-allocation";
 import { hostSize, providerHintOf, type ProviderHint } from "./cost-size";
@@ -35,6 +35,8 @@ export interface ResolvedCost {
   /** Estimates only: the plan is from the host's own provider list. */
   estimateBasis: "list" | null;
   snapshotVerified: boolean | null;
+  /** Estimates only: true when the list's prices include VAT (the rest are net). */
+  snapshotVatIncluded: boolean | null;
   /** Estimates only: the day that provider's list was read. */
   snapshotDate: string | null;
   /** Unknown prices only: why there is no estimate. */
@@ -75,6 +77,7 @@ export function resolveCost(server: ServerRow, diskBytes: number | null): Resolv
       planLabel: snapPlan ? planLabel(snapPlan) : row.planSlug ? row.planSlug.toUpperCase() : null,
       estimateBasis: null,
       snapshotVerified: null,
+      snapshotVatIncluded: null,
       snapshotDate: null,
       unknownReason: null,
       similar: null,
@@ -96,9 +99,12 @@ export function resolveCost(server: ServerRow, diskBytes: number | null): Resolv
       planLabel: null,
       estimateBasis: null,
       snapshotVerified: null,
+      snapshotVatIncluded: null,
       snapshotDate: null,
       unknownReason: reason,
-      similar: reason === "no_size" ? null : similarCost(size),
+      // A comparison only for a host with no list of its own; a listed provider with no close plan, or the comparison
+      // provider itself, would show a "similar size" that is self-referential.
+      similar: (reason === "no_provider" || reason === "no_list") && provider !== SIMILAR_PROVIDER ? similarCost(size) : null,
       syncedAt: null,
     };
   }
@@ -112,6 +118,7 @@ export function resolveCost(server: ServerRow, diskBytes: number | null): Resolv
     planLabel: est.planLabel,
     estimateBasis: est.basis,
     snapshotVerified: est.verified,
+    snapshotVatIncluded: est.vatIncluded,
     snapshotDate: est.snapshotDate,
     unknownReason: null,
     similar: null,
@@ -193,6 +200,7 @@ export class CostsService {
           planLabel: cost.planLabel,
           estimateBasis: cost.estimateBasis,
           snapshotVerified: cost.snapshotVerified,
+          snapshotVatIncluded: cost.snapshotVatIncluded,
           snapshotDate: cost.snapshotDate,
           unknownReason: cost.unknownReason,
           similar: cost.similar,

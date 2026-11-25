@@ -121,6 +121,7 @@ function ServerCostRow({ server: s, canManage, snapshotDate }: { server: ServerC
       {note && (
         <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "8px 0 0" }}>
           {note}
+          {s.source === "estimate" && s.snapshotVatIncluded ? ` ${t("costs.estimate.vatIncluded")}` : ""}
           {s.source === "estimate" && s.snapshotVerified === false ? ` ${t("costs.estimate.stale")}` : ""}
           {hint ? ` ${hint}` : ""}
         </p>

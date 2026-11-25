@@ -4,7 +4,7 @@
  * hand from the providers' public price pages and bump the date; nothing here is fetched at run time, and nothing
  * here is a quote. Each provider carries its own read date and the URL it was read from.
  *
- * VAT: figures are net of VAT unless a provider's note below says otherwise. Promotional and long-commitment
+ * VAT: figures are net of VAT unless a provider's `vatIncluded` flag says otherwise (Contabo, see its note below). Promotional and long-commitment
  * discounts are NOT applied: where a page shows a struck-through regular price next to a discounted one, the regular
  * price is listed. One-time setup fees, backups, extra storage and extra IPs are not included.
  *
@@ -14,8 +14,10 @@
  *  - vultr: Cloud Compute regular plans, read from Vultr's public plan list (api.vultr.com/v2/plans). A few regions
  *    are priced higher; the standard price is listed.
  *  - contabo: contabo.com/en/vps, Cloud VPS line. The struck-through monthly price is listed (the 24-month term price
- *    is lower). The page does not say whether the figure includes VAT (it follows the visitor's country); treat it as
- *    an approximation. Where a plan offers SSD or NVMe, the SSD size is listed.
+ *    is lower). Read 2026-11-25: the page's footnote says the price shown includes applicable taxes, at the rate of
+ *    the visitor's tax country (it has an Including/Excluding VAT toggle). The rate is not known here, so the rows
+ *    are NOT converted to net: the snapshot carries `vatIncluded: true` and the estimate says so. Where a plan offers
+ *    SSD or NVMe, the SSD size is listed.
  *  - ovh: ovhcloud.com/en-ie/vps (EUR, "ex. VAT"); the "from" price of the four current VPS plans.
  *  - netcup: netcup.com/en/server/vps, VPS G12.5 line. The page shows VAT-inclusive prices (19%); the regular
  *    (struck-through) price is divided by 1.19 and rounded.
@@ -55,6 +57,8 @@ export interface ProviderSnapshot {
   currency: string;
   /** false = this provider's rows were not re-read on PRICE_SNAPSHOT_DATE. */
   verified: boolean;
+  /** true = the rows include VAT at an unknown rate and could not be made net; absent = net of VAT. */
+  vatIncluded?: boolean;
   plans: readonly SnapshotPlan[];
 }
 
@@ -138,6 +142,7 @@ export const PRICE_SNAPSHOT: readonly ProviderSnapshot[] = [
     sourceUrl: "https://contabo.com/en/vps/",
     currency: "EUR",
     verified: true,
+    vatIncluded: true,
     plans: [
       p("cloud-vps-4", 4, 8, 100, 550, "x86", "Cloud VPS 4"),
       p("cloud-vps-6", 6, 12, 200, 750, "x86", "Cloud VPS 6"),

@@ -57,6 +57,8 @@ const ServerCostView = z.object({
   estimateBasis: z.enum(["list"]).nullable(),
   /** Estimates only: false when this provider's snapshot rows were not re-read on the snapshot date. */
   snapshotVerified: z.boolean().nullable(),
+  /** Estimates only: true when this provider's list prices include VAT (the other lists are net of VAT). */
+  snapshotVatIncluded: z.boolean().nullable(),
   /** Estimates only: the day this provider's list was read. */
   snapshotDate: z.string().nullable(),
   /** Unknown prices only: no size yet, no provider known, no list for this provider, or no plan close to this size. */

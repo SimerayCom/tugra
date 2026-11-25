@@ -27,6 +27,8 @@ export interface ServerCostView {
   /** Estimates only: the plan is from the host's own provider list. */
   estimateBasis: "list" | null;
   snapshotVerified: boolean | null;
+  /** Estimates only: true when the list prices include VAT (the other lists are net). */
+  snapshotVatIncluded: boolean | null;
   /** Estimates only: the day that provider's list was read. */
   snapshotDate: string | null;
   /** Unknown prices only: why there is no estimate. */

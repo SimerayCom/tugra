@@ -19,6 +19,8 @@ export interface CostEstimate {
   currency: string;
   /** Whether the snapshot rows of this provider were re-read on its snapshot date. */
   verified: boolean;
+  /** True when this provider's list prices include VAT (unlike the others, which are net). */
+  vatIncluded: boolean;
   /** The day this provider's rows were read. */
   snapshotDate: string;
 }
@@ -112,6 +114,7 @@ export function estimateCost(provider: string | null | undefined, host: HostSize
     monthlyCents: best.monthlyCents,
     currency: snap.currency,
     verified: snap.verified,
+    vatIncluded: snap.vatIncluded === true,
     snapshotDate: snap.date,
   };
 }

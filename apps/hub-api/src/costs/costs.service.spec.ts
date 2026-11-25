@@ -85,6 +85,17 @@ describe("resolveCost", () => {
     const r = resolveCost(baseServer({ cloudHint: "aws" }) as never, 38 * GIB);
     expect(r).toMatchObject({ source: "unknown", provider: "aws", providerHint: "agent", unknownReason: "no_list", monthlyCents: null });
   });
+  it("carries the VAT basis of the provider's list: Contabo includes VAT, Hetzner is net", () => {
+    expect(resolveCost(baseServer({ hostname: "vmi2419591", cpuCores: 12, memTotalBytes: BigInt(Math.round(47 * GIB)) }) as never, 774 * GIB).snapshotVatIncluded).toBe(true);
+    expect(resolveCost(baseServer({ cloudHint: "hetzner" }) as never, 38 * GIB).snapshotVatIncluded).toBe(false);
+  });
+  it("shows no similar size for a listed provider with no close plan, nor for the comparison provider itself", () => {
+    const big = { cpuCores: 12, memTotalBytes: BigInt(Math.round(47 * GIB)) };
+    const ovh = resolveCost(baseServer({ cloudHint: "ovh", ...big }) as never, 774 * GIB);
+    expect(ovh).toMatchObject({ source: "unknown", unknownReason: "no_plan", similar: null });
+    const hz = resolveCost(baseServer({ cloudHint: "hetzner", cpuCores: 100, memTotalBytes: BigInt(900 * GIB) }) as never, 774 * GIB);
+    expect(hz).toMatchObject({ source: "unknown", unknownReason: "no_plan", similar: null });
+  });
   it("a typed price replaces the estimate whatever the hint says", () => {
     const r = resolveCost(baseServer({ hostname: "vmi2419591", cost: { source: "manual", monthlyCents: 2799, currency: "EUR", provider: null, planSlug: null, syncedAt: null } }) as never, 38 * GIB);
     expect(r).toMatchObject({ source: "manual", monthlyCents: 2799, provider: "contabo", providerHint: "hostname", similar: null, unknownReason: null });

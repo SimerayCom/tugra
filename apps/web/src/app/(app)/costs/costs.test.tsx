@@ -35,6 +35,7 @@ const server = (o: Partial<ServerCostView> = {}): ServerCostView => ({
   planLabel: "CX23 · 2 vCPU · 4 GB · 40 GB",
   estimateBasis: "list",
   snapshotVerified: true,
+  snapshotVatIncluded: false,
   snapshotDate: "2026-11-24",
   unknownReason: null,
   similar: null,
@@ -116,6 +117,7 @@ describe("CostsPage", () => {
       planLabel: null,
       estimateBasis: null,
       snapshotVerified: null,
+      snapshotVatIncluded: null,
       snapshotDate: null,
       unknownReason: "no_provider",
       similar: { provider: "hetzner", monthlyCents: 11799, currency: "EUR", snapshotDate: "2026-11-24" },
@@ -138,7 +140,7 @@ describe("CostsPage", () => {
   });
 
   it("entering a price for an unknown server saves it as a typed price", async () => {
-    const unknown = server({ monthlyCents: null, currency: null, source: "unknown", provider: null, providerHint: null, planSlug: null, planLabel: null, estimateBasis: null, snapshotVerified: null, snapshotDate: null, unknownReason: "no_provider" });
+    const unknown = server({ monthlyCents: null, currency: null, source: "unknown", provider: null, providerHint: null, planSlug: null, planLabel: null, estimateBasis: null, snapshotVerified: null, snapshotVatIncluded: null, snapshotDate: null, unknownReason: "no_provider" });
     mock(team({ servers: [unknown], totals: [] }));
     const set = vi.spyOn(api, "setServerCost").mockResolvedValue({ ok: true });
     wrap(<CostsPage />);
@@ -151,12 +153,19 @@ describe("CostsPage", () => {
   });
 
   it("a provider without a price list says so by name and still offers 'Enter your price'", async () => {
-    const aws = server({ monthlyCents: null, currency: null, source: "unknown", provider: "aws", providerHint: "agent", planSlug: null, planLabel: null, estimateBasis: null, snapshotVerified: null, snapshotDate: null, unknownReason: "no_list" });
+    const aws = server({ monthlyCents: null, currency: null, source: "unknown", provider: "aws", providerHint: "agent", planSlug: null, planLabel: null, estimateBasis: null, snapshotVerified: null, snapshotVatIncluded: null, snapshotDate: null, unknownReason: "no_list" });
     mock(team({ servers: [aws], totals: [] }));
     wrap(<CostsPage />);
     await waitFor(() => expect(screen.getByText(/We have no public price list for AWS yet/)).toBeTruthy());
     expect(screen.getByText("Enter your price")).toBeTruthy();
     expect(screen.queryByText("Provider unknown")).toBeNull();
+  });
+
+  it("an estimate from a list that includes VAT says so", async () => {
+    const contabo = server({ name: "vmi2419591", provider: "contabo", providerHint: "hostname", planSlug: "cloud-vps-12", planLabel: "Cloud VPS 12 · 12 vCPU · 48 GB · 400 GB", monthlyCents: 2500, snapshotDate: "2026-11-25", snapshotVatIncluded: true });
+    mock(team({ servers: [contabo], totals: [{ currency: "EUR", monthlyCents: 2500, estimatedCents: 2500, servers: 1 }], snapshotDate: "2026-11-25" }));
+    wrap(<CostsPage />);
+    await waitFor(() => expect(screen.getByText(/list prices include VAT/)).toBeTruthy());
   });
 
   it("an estimate from a detected provider uses that provider's own date and says when the provider was guessed from the host name", async () => {
@@ -173,7 +182,7 @@ describe("CostsPage", () => {
   });
 
   it("a viewer sees an unknown price without the 'Enter your price' action", async () => {
-    const unknown = server({ monthlyCents: null, currency: null, source: "unknown", provider: null, providerHint: null, planSlug: null, planLabel: null, estimateBasis: null, snapshotVerified: null, snapshotDate: null, unknownReason: "no_provider" });
+    const unknown = server({ monthlyCents: null, currency: null, source: "unknown", provider: null, providerHint: null, planSlug: null, planLabel: null, estimateBasis: null, snapshotVerified: null, snapshotVatIncluded: null, snapshotDate: null, unknownReason: "no_provider" });
     mock(team({ canManage: false, canOps: false, servers: [unknown], totals: [] }));
     wrap(<CostsPage />);
     await waitFor(() => expect(screen.getByText("Provider unknown")).toBeTruthy());

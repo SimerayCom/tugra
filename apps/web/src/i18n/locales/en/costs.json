@@ -30,6 +30,7 @@
   "estimate": {
     "list": "Estimated from {provider} list prices, {date}.",
     "stale": "This price list may be out of date.",
+    "vatIncluded": "This provider's list prices include VAT, so the estimate may be a little higher than your price without VAT.",
     "unknown": "Not enough information about this server to estimate a price."
   },
   "unknown": {
