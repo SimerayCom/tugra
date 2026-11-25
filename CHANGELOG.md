@@ -7,6 +7,36 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.0-beta.29] - 2026-11-25
+
+- **The hub stays small with a real fleet.** Fleet, dashboard and server pages asked for "each server's latest sample"
+  by loading every raw metric row of the last 48 hours into memory; with 27 servers one dashboard tab could push the
+  hub past 8 GB and a 4 GB host OOM-killed it. Latest, hottest and history reads now run in SQL (one row per server,
+  ranked and limited in the database, history thinned before it leaves Postgres), the server list no longer carries
+  scan and GPU reports, a live log stream whose reader stalls is closed instead of buffering, and metric rollups read
+  15-minute slices so a long catch-up after downtime can't exhaust memory. Measured on a seeded 27-server fleet: one
+  dashboard 8.3 GB → 207 MB, "Scan again" 7.0 GB → 189 MB, fleet latest 17.5 s → 22 ms.
+- **Safety nets for small hosts.** The installer adds a 2 GiB swapfile on hosts with 4 GiB RAM or less and no swap
+  (`--no-swap` to opt out, shown in `--doctor`), and the hub's V8 heap is capped (`HUB_MAX_HEAP_MB`, default 768).
+- **Move PM2 apps to Tugra in place.** From the server scan, each PM2 process can run as a Tugra-managed container in
+  the same folder, on the same port, with the same environment and user, so CloudPanel vhosts and DNS stay untouched.
+  A plan preview comes first; if the container does not come up, the PM2 process is restored exactly as before.
+  Owner-only and audited. PHP sites stay on CloudPanel for now.
+- **Exposed services warning.** The scan flags databases, caches, queues and admin UIs that listen on the public
+  network (MySQL, PostgreSQL, Redis, MongoDB, Memcached, Docker API and others) with a plain fix hint.
+- **Adopt a docker compose stack in place.** A whole compose project can be adopted without recreating its
+  containers; Coolify and Dokploy containers point to their import instead of Adopt.
+- **Update without restarting apps.** OS updates default to "keep apps running" (the container engine is held for
+  the run, needrestart cannot restart Docker); packages are grouped into container engine, kernel (needs reboot) and
+  other; the same option is in bulk updates.
+- **Fair prices for every provider.** Dated public price lists for Contabo, OVHcloud, Netcup, Akamai/Linode, Scaleway
+  and IONOS; Contabo is recognised from its hostnames; an unknown provider asks for your price instead of showing
+  another provider's plan; DigitalOcean and Vultr prices sync when their API is linked.
+- **Smaller fixes.** Instant tooltips on server badges and actions; automatic updates are on for new installs and a
+  "Turn on automatic updates" link shows while they are off; brand logos for scanned software and 30 more templates;
+  a tab left open across a hub update reloads itself instead of showing an error; turn the terminal on from the
+  terminal itself; the project page leads with its environments.
+
 ## [0.1.0-beta.28] - 2026-11-24
 
 - **Migration: choose what you move, see it verified, keep a safety copy.** The import starts with "What are you
