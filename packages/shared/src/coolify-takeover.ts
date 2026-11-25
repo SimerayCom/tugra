@@ -5,7 +5,7 @@
  * half, lane E the placement and campaign half.
  */
 import type { HostEvidence, HostLinkedBy, HostMatchStatus } from "./coolify-match";
-import type { UnreadableValue } from "./coolify-secrets";
+import type { CoolifySecretClass, UnreadableValue } from "./coolify-secrets";
 
 // ── session transport (lane A) ─────────────────────────────────────────────────────────────────────
 
@@ -42,6 +42,8 @@ export interface AgentPlanAdditions {
   agentRead?: AgentReadMeta;
   teams?: PlanTeam[];
   unreadable?: UnreadableValue[];
+  /** The owner's consent for reading secret values that stands for THIS import session right now (the classes it covers). Absent = none. Classes only. */
+  secretsConsent?: { classes: CoolifySecretClass[] };
 }
 
 // ── placement and campaign (lane E) ────────────────────────────────────────────────────────────────

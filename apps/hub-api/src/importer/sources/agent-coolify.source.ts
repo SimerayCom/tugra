@@ -71,7 +71,14 @@ export class AgentCoolifySource extends CoolifySource {
   async agentPlan(): Promise<AgentPlanAdditions> {
     const view = await this.agentClient.agentView();
     const unreadable = this.store?.unreadable() ?? [];
-    return { agentRead: view.meta, ...(view.teams.length ? { teams: view.teams } : {}), ...(unreadable.length ? { unreadable } : {}) };
+    const consented = this.store ? await this.store.consentedClasses() : [];
+    return {
+      agentRead: view.meta,
+      ...(view.teams.length ? { teams: view.teams } : {}),
+      ...(unreadable.length ? { unreadable } : {}),
+      // Classes only: whether the owner's consent for THIS session stands, so the screen can say so after a reload.
+      ...(consented.length ? { secretsConsent: { classes: consented } } : {}),
+    };
   }
 
   /** The Coolify servers of the read with their addresses (the same facts the host match needs): one cheap read, no secret. */

@@ -186,6 +186,12 @@ describe("AgentCoolifySource with the owner's consent: as complete as a read:sen
     });
   });
 
+  it("the plan's agent block says which classes the owner's consent covers for this session, and nothing when there is none", async () => {
+    expect((await make().source.agentPlan()).secretsConsent).toEqual({ classes: [...T1] });
+    expect((await make({ granted: null }).source.agentPlan()).secretsConsent).toBeUndefined();
+    expect((await make({ noStore: true }).source.agentPlan()).secretsConsent).toBeUndefined();
+  });
+
   it("the source servers come from one cheap read, with the Coolify host marked", async () => {
     expect(await make().source.sourceServers()).toEqual([
       { ref: "srv-local", address: "host.docker.internal", controlPlane: true },
