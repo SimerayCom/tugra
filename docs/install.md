@@ -9,6 +9,7 @@ install reference; the [project README](../README.md) has the short version.
 - A **Linux host** you control (amd64; arm64 works but builds from source — see below).
 - **Docker** + the **Compose v2** plugin. The installer installs Docker for you if it's missing.
 - `curl` (present on virtually every host); `git` is fetched by the installer if needed.
+- **1 vCPU and 1 GB RAM** is the floor (2 GB is comfortable): the installer sizes the whole stack from the host's RAM, see [RAM profiles](#ram-profiles).
 
 ## Quick start
 
@@ -230,6 +231,7 @@ the `Secure` flag on HTTPS installs.
 | `--no-telemetry` / `--enable-telemetry` | Opt out of / explicitly accept the anonymous usage stats (also `TUGRA_TELEMETRY=0\|1`). |
 | `--no-update-checks` / `--enable-update-checks` | Opt out of (or re-enable) the signed self-update checks, which are on by default (also `TUGRA_UPDATE_CHECKS=0`). |
 | `--no-swap` / `--enable-swap` | On a host with 4 GB RAM or less and no swap the installer adds a 2 GB `/swapfile` (`fallocate`, mode `0600`, `/etc/fstab` entry, `vm.swappiness=10`) so a load spike slows the hub down instead of the kernel's OOM killer taking it out. It never touches a host that already has swap and never fails the install. `--no-swap` skips it and is remembered (`TUGRA_NO_SWAP=1` in `.env`); `--enable-swap` undoes that. `--doctor` reports the swap state. |
+| `--profile=<tiny\|small\|standard\|auto>` | Size the stack for this host's RAM (see [RAM profiles](#ram-profiles)): heap caps, Postgres, Redis, the database pool and, on small hosts, per-service memory ceilings. Detected from RAM on a first install and kept on re-runs; `--profile=<name>` forces one and `--profile=auto` detects again. `--doctor` shows the profile that fits this host. |
 | `--public-ip <ip>` / `--detect-public-ip` | Pin this host's public IP (or opt in to a best-effort probe) so deployed-app URLs resolve from outside. |
 | `--doctor` | Check this host and the Tugra stack without changing anything (ports 80/443, firewall, cloud provider, IPv6/DNS, containers, proxy routes, certificate, agent) and print the fix for each problem. Exit `0` = fine, `1` = problems. See [Troubleshooting](#troubleshooting). |
 | `--restore-from <bundle>` | Restore a hub bundle made by `scripts/hub-migrate.sh pack` onto this host (see [Disaster recovery](disaster-recovery.md)). |
@@ -264,19 +266,66 @@ key and what it does. The stability secrets (`JWT_ACCESS_SECRET`, `JWT_REFRESH_S
 `SECRETS_ENCRYPTION_KEY`, `HUB_SIGNING_KEY`, `POSTGRES_PASSWORD`) are generated once and preserved
 across re-runs — regenerating them would invalidate sessions, encrypted data and the signing identity.
 
-**Hub memory on small hosts.** The hub's JavaScript heap is capped (`--max-old-space-size`) at `HUB_MAX_HEAP_MB` MB
-(compose default `768`; the installer writes `1024` on a host with more than 2.5 GiB RAM) through `NODE_OPTIONS` in
-`deploy/docker-compose.yml`, so a burst of panel traffic turns into a garbage-collection-heavy moment instead of growing
-until the host's OOM killer picks the hub. **If the hub log shows `FATAL ERROR: ... JavaScript heap out of memory` (a
-fatal abort, followed by a container restart), the cap is too low for the work that was running (a large import, a
-migration upload, a big backup): raise `HUB_MAX_HEAP_MB`** (for example `1536` on a host with 8 GB or more) in `.env` and
-run `docker compose up -d hub-api`. On a 4 GB host keep it at or below `1536`, or the cap stops protecting the host. The cap bounds the JS heap only: the database driver's query engine and Node's buffers live
-outside it, which is why the hub also keeps its own reads small (one row per server for the newest sample, chart series
-thinned in SQL) and why the installer adds the swapfile above on small hosts.
-
 **arm64 control plane:** the published hub/web/updater images are amd64-only. On an arm64 host
 (e.g. a Pi control plane) run `./scripts/install.sh --build` to build natively; the agent image is
 multi-arch, so managed servers of any architecture are supported.
+
+### RAM profiles
+
+The hub has to run on a 1 vCPU / 1 GB host as well as on a big one, so the installer picks a **profile** from the host's
+RAM (`MemTotal`) and writes it to `.env` as `TUGRA_PROFILE`, together with one key per setting:
+
+| Profile | RAM | Hub heap cap / young gen | Web heap | Postgres (`shared_buffers`, `max_connections`, parallel workers) | Redis `maxmemory` | Hub DB pool | Container ceilings (hub / web / redis) |
+|---|---|---|---|---|---|---|---|
+| `tiny` | below 1.5 GiB (a "1 GB" VM) | 256 MB / 2 MB | 96 MB | 64 MB, 30, 0 | 96 MB | 8 | 640 MB / 256 MB / 192 MB |
+| `small` | below 3 GiB (a "2 GB" VM) | 384 MB / 4 MB | 128 MB | 128 MB, 40, 1 | 128 MB | 10 | 768 MB / 320 MB / 256 MB |
+| `standard` | 3 GiB and up (also: RAM unknown) | 1024 MB / 16 MB | 512 MB | 256 MB, 60, 2 | 256 MB | 16 | none |
+
+Every value is a key in `.env` (`HUB_MAX_HEAP_MB`, `HUB_SEMI_SPACE_MB`, `WEB_MAX_HEAP_MB`, `TUGRA_PG_*`, `TUGRA_REDIS_MAXMEMORY`,
+`HUB_DB_CONNECTION_LIMIT`, `HUB_DB_POOL_TIMEOUT`, `HUB_MEM_LIMIT`, `WEB_MEM_LIMIT`, `REDIS_MEM_LIMIT`; all listed in
+[`.env.example`](../.env.example)). Edit one by hand and it stays: a re-run of the installer keeps the stored profile and your
+edits, and only says when the host's RAM now suggests another profile. `./scripts/install.sh --profile=<name>` rewrites all of
+them (Postgres and Redis restart for a few seconds, the hub reconnects). What the settings do:
+
+- **Hub and web heap.** `--max-old-space-size` (the `HUB_MAX_HEAP_MB` key) caps the JavaScript heap, so a burst of panel traffic
+  turns into garbage collection instead of growing until the host's OOM killer picks a process; `--max-semi-space-size` sizes the
+  young generation, and `MALLOC_ARENA_MAX=2` stops glibc keeping up to 8 allocation arenas per core. **If the hub log shows
+  `FATAL ERROR: ... JavaScript heap out of memory` (a fatal abort, then a container restart), the cap is too low for the work that
+  was running (a large import, a migration upload, a big backup): raise `HUB_MAX_HEAP_MB`** in `.env` (for example `768` on a
+  small host that runs big imports, `1536` on 8 GB or more) and run `docker compose up -d hub-api`. The cap bounds the JS heap
+  only: the database driver's query engine and Node's buffers live outside it, which is why the container ceilings below add
+  headroom on top of the cap.
+- **Postgres** gets `shared_buffers`, `effective_cache_size`, `work_mem`, `maintenance_work_mem`, `max_connections`,
+  `max_wal_size`, `checkpoint_timeout`, `wal_compression=on` and `max_parallel_workers_per_gather` on its command line.
+  `max_connections` stays above the hub's pool plus the migration step at boot and the hub backup's `pg_dump`. Parallel query
+  workers each take their own `work_mem`; on the fleet load harness they added ~100 MB to Postgres' peak and no speed on one or
+  two vCPUs.
+- **Redis** gets `maxmemory` with the **`noeviction`** policy: BullMQ (every queue and repeat job) and the refresh-token store
+  need it, so a full Redis answers a write with an error you can see instead of silently dropping a job. Persistence is left at
+  the image defaults on purpose (switching snapshots off would log every session out on a restart). The hub's own data in Redis is a
+  few MB at 50 servers / 1000 containers, so the limits sit more than 10x above it.
+- **The hub's database pool** (`HUB_DB_CONNECTION_LIMIT`, `HUB_DB_POOL_TIMEOUT`) is added to a copy of `DATABASE_URL` inside the
+  hub process (an explicit `connection_limit` or `pool_timeout` already in the URL always wins; `pg_dump` and the migration step
+  keep the plain URL). Prisma's own default is `cpus x 2 + 1`, i.e. 3 connections on a 1 vCPU host, which the ingest, the panel
+  and the background workers then share: on the harness that gave HTTP 500s from pool timeouts, a pool of 8 and a 20 s wait did not.
+- **Container ceilings** (`mem_limit`) exist only on `tiny` and `small`, and only on hub, web and Redis: each sits above the
+  service's own cap plus the native overhead measured on the harness, so the cap bites first and a runaway stays inside its
+  container instead of the OOM killer picking Postgres. **Postgres, the agent and the updater get no ceiling** (killing Postgres
+  mid-write costs a crash recovery; the updater's pulls and the agent's child processes spike legitimately), and there is no
+  swap limit on any container: the swapfile the installer adds on hosts of 4 GB or less is the cushion for a spike.
+
+**Existing installs.** An install whose `.env` has no `TUGRA_PROFILE` (every install made before profiles, and every in-app update
+of one) keeps working: each key falls back to a default in `deploy/docker-compose.yml` that is today's behaviour or better (hub heap
+768, semi-space 16, pool 16, Postgres `shared_buffers` 128 MB, Redis `maxmemory` 256 MB, no ceilings). An in-app update recreates
+only the hub and web containers; Postgres and Redis pick up their new command line the next time they are recreated, e.g. by
+re-running `./scripts/install.sh`, which also detects and stores the profile (a key already in `.env`, such as an earlier
+`HUB_MAX_HEAP_MB`, is never overwritten).
+
+**Minimum host.** The floor is **1 vCPU and 1 GB RAM** with the `tiny` profile and the 2 GB swapfile the installer adds
+(`--no-swap` opts out). Measured on the harness with 50 servers and 1000 containers seeded (hub, web, Postgres, Redis; the local
+agent adds roughly 60 to 120 MB): about 0.4 GB idle and about 0.6 GB at the peak of 8 simultaneous panel sessions, with the hub
+at or below 260 MB. The Docker daemon and the OS need another 200 to 300 MB, so 2 GB is the comfortable size and the point where
+the `small` profile is the better fit; `./scripts/install.sh --doctor` tells you which profile fits the host.
 
 ## Troubleshooting
 

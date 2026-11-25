@@ -7,6 +7,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **The hub sizes itself to the host.** The installer picks a RAM profile (tiny under 1.5 GiB, small under 3 GiB, standard
+  above; `--profile=<name>` overrides, `--doctor` shows which fits) and sets the hub and web heap caps, Postgres, Redis (with
+  `noeviction`, as the queues require), the hub's database pool and, on small hosts, memory ceilings for hub, web and Redis. A
+  1 vCPU / 1 GB host runs the stack with 50 servers and 1000 containers at about 0.4 GB idle. Installs that never ran a profile
+  keep working on today's behaviour or better.
+
 ## [0.1.0-beta.29] - 2026-11-25
 
 - **The hub stays small with a real fleet.** Fleet, dashboard and server pages asked for "each server's latest sample"
