@@ -398,7 +398,7 @@ export type OwnerInputsRequest = z.infer<typeof OwnerInputsRequestSchema>;
 const REMOTE_KINDS = z.enum(REMOTE_SOURCE_KINDS);
 
 /** The editable-mapping and apply fields shared by the frozen apply input and the create body (same names as importer apply). */
-const applyFields = {
+export const applyFields = {
   sourceKind: REMOTE_KINDS,
   targetServerId: Id,
   environmentId: Id.optional(),

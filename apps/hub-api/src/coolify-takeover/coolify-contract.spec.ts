@@ -7,8 +7,6 @@ import { CoolifyCleanupModule } from "../coolify-cleanup/coolify-cleanup.module"
 import { CoolifyCleanupService } from "../coolify-cleanup/coolify-cleanup.service";
 import { CoolifyInPlaceModule } from "../coolify-inplace/coolify-inplace.module";
 import { CoolifyInPlaceService } from "../coolify-inplace/coolify-inplace.service";
-import { MigrationCampaignsModule } from "../migration-campaigns/migration-campaigns.module";
-import { MigrationCampaignsService } from "../migration-campaigns/migration-campaigns.service";
 import { ProjectMovesModule } from "../project-moves/project-moves.module";
 import { ProjectMovesService } from "../project-moves/project-moves.service";
 import { CoolifyHostGrantService } from "./coolify-host-grant.service";
@@ -54,7 +52,6 @@ describe("Coolify takeover contract: skeleton modules", () => {
   it.each([
     ["in place (F)", CoolifyInPlaceModule, CoolifyInPlaceService],
     ["cleanup (G)", CoolifyCleanupModule, CoolifyCleanupService],
-    ["campaigns (E)", MigrationCampaignsModule, MigrationCampaignsService],
     ["project moves (H)", ProjectMovesModule, ProjectMovesService],
   ])("the new %s module compiles on its own and serves its empty service", async (_name, Mod, Svc) => {
     const mod = await Test.createTestingModule({ imports: [Mod as never] }).compile();
@@ -69,7 +66,7 @@ describe("Coolify takeover contract: skeleton modules", () => {
   });
 
   it("the skeleton services are empty: no method, no field", () => {
-    for (const S of [CoolifyInPlaceService, CoolifyCleanupService, MigrationCampaignsService, ProjectMovesService]) {
+    for (const S of [CoolifyInPlaceService, CoolifyCleanupService, ProjectMovesService]) {
       expect(Object.getOwnPropertyNames(S.prototype)).toEqual(["constructor"]);
     }
   });

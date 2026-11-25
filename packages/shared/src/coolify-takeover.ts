@@ -78,6 +78,8 @@ export interface SourceServerPlacementView {
 /** One guided run of a campaign: one source server, one target, one topology. */
 export interface CampaignRunPlan {
   sourceServerRef: string;
+  /** Every source server the run carries (more than one only for the group of other-server placements, one two-box run). Absent = just `sourceServerRef`. */
+  sourceServerRefs?: string[];
   kind: PlacementKind;
   targetServerId: string;
   topology: "swap-proxy" | "two-box";
