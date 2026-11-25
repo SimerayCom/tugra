@@ -48,13 +48,11 @@ describe("focusSelection", () => {
     expect([...sel.hosts]).toEqual(["srvA"]);
     expect(sel.placement).toEqual({ srvA: "t1" });
     expect(sel.teamId).toBe("team1"); // from the server itself
-    expect(sel.pickTarget).toBe(true);
   });
   it("never invents a placement when the Tugra server is unknown, and leaves the destination to be picked", () => {
     const sel = focusSelection(plan, { sourceServerUuid: "srvB" }, writable)!;
     expect(sel.placement).toEqual({});
     expect(sel.teamId).toBeUndefined();
-    expect(sel.pickTarget).toBe(true);
   });
   it("drops a connected server the user cannot write to (or does not see), and its team", () => {
     for (const w of [[], [{ id: "other", teamId: "team9" }]]) {
@@ -69,7 +67,6 @@ describe("focusSelection", () => {
     expect([...sel.projects]).toEqual(["p1"]);
     expect(sel.placement).toEqual({}); // the project spans two source servers: no single target is implied
     expect(sel.teamId).toBeUndefined();
-    expect(sel.pickTarget).toBe(true);
     const one = { items: [{ itemRef: "app:srvA:a1", kind: "app" }], preflight: { hosts: [{ ref: "srvA", name: "Box A" }], projects: [{ ref: "p1", name: "Shop", itemRefs: ["app:srvA:a1"] }] } } as unknown as ImportPlan;
     const placed = focusSelection(one, { sourceProjectUuid: "p1", targetServerId: "t2" }, writable)!;
     expect(placed.placement).toEqual({ srvA: "t2" });

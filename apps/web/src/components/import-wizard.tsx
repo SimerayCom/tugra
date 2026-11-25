@@ -296,6 +296,7 @@ export function ImportWizard() {
         onStartOver={startOver}
         onSelectionChange={onSelectionChange}
         onRecheck={recheck}
+        startNote={startNote || undefined}
         rechecking={planM.isPending}
       />
     );

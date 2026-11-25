@@ -34,6 +34,22 @@ const LOCAL_NAMES = new Set(["localhost", "host.docker.internal", "gateway.docke
 const clean = (s: string): string => {
   let a = s.trim().toLowerCase();
   if (a.startsWith("[") && a.includes("]")) a = a.slice(1, a.indexOf("]")); // [::1]:22
+  a = a.replace(/%.*$/, "").replace(/\.$/, ""); // IPv6 zone id, FQDN trailing dot
+  if (isIP(a) === 6) {
+    // One spelling per address: 2001:0db8:0:0::1 and 2001:db8::1 must match; ::ffff:10.0.0.1 is the IPv4 10.0.0.1.
+    try {
+      a = new URL(`http://[${a}]/`).hostname.slice(1, -1);
+    } catch {
+      return a;
+    }
+    const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(a) ?? /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(a);
+    if (mapped) {
+      if (mapped.length === 2) return mapped[1];
+      const hi = parseInt(mapped[1], 16);
+      const lo = parseInt(mapped[2], 16);
+      return `${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`;
+    }
+  }
   return a;
 };
 

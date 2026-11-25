@@ -51,3 +51,13 @@ describe("baseUrlHost", () => {
     expect(baseUrlHost(undefined)).toBeNull();
   });
 });
+
+describe("address spelling", () => {
+  it("treats different spellings of one IPv6 address, and IPv4-mapped IPv6, as the same address", () => {
+    expect(isPrivateAddress("::ffff:10.0.0.1")).toBe(true);
+    expect(isPrivateAddress("::ffff:a00:1")).toBe(true);
+    expect(isPrivateAddress("2001:0db8:0000:0000:0000:0000:0000:0001")).toBe(false);
+    expect(comparableAddress("2001:0db8:0:0:0:0:0:1")).toBe(comparableAddress("2001:db8::1"));
+    expect(comparableAddress("[2001:DB8::1]")).toBe(comparableAddress("2001:db8::1"));
+  });
+});

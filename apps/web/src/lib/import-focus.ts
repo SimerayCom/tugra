@@ -105,7 +105,7 @@ export interface FocusTarget {
  * The scope step's starting pick for a focus: the one source server or project the user came from, ticked. It is placed on the Tugra
  * server it is connected as only when that server is one of `writable` (read-only, missing or other-team servers are dropped, and the
  * team is taken from the server itself), otherwise it stays unplaced and the step asks. Whatever is ticked, the destination is never
- * defaulted: the step waits for a pick (`pickTarget`). Null when the focus names nothing this plan contains, so the step opens as usual.
+ * defaulted: the step waits for a pick (it never defaults a target). Null when the focus names nothing this plan contains, so the step opens as usual.
  */
 export function focusSelection(plan: ImportPlan, focus: ImportFocus | null, writable: ReadonlyArray<FocusTarget>): ScopeSelection | null {
   if (!focus) return null;
@@ -114,7 +114,7 @@ export function focusSelection(plan: ImportPlan, focus: ImportFocus | null, writ
   if (focus.sourceServerUuid) {
     const row = sourceHostRows(plan).find((r) => r.ref === focus.sourceServerUuid);
     if (row) {
-      return { ...emptySelection(), mode: "servers", hosts: new Set([row.ref]), placement: target ? { [row.ref]: target.id } : {}, pickTarget: true, ...team };
+      return { ...emptySelection(), mode: "servers", hosts: new Set([row.ref]), placement: target ? { [row.ref]: target.id } : {}, ...team };
     }
   }
   if (focus.sourceProjectUuid) {
@@ -123,7 +123,7 @@ export function focusSelection(plan: ImportPlan, focus: ImportFocus | null, writ
       const hosts = sourceHostRows(plan);
       // a project that spans several source servers has no single destination
       const placed = target && hosts.length === 1 ? { [hosts[0].ref]: target.id } : {};
-      return { ...emptySelection(), mode: "projects", projects: new Set([row.ref]), placement: placed, pickTarget: true, ...(target && hosts.length === 1 ? team : {}) };
+      return { ...emptySelection(), mode: "projects", projects: new Set([row.ref]), placement: placed, ...(target && hosts.length === 1 ? team : {}) };
     }
   }
   return null;

@@ -405,3 +405,11 @@ export function projectChoicesFor(
   for (const n of sourceNames) if (n && !out.has(n.toLowerCase())) out.set(n.toLowerCase(), { name: n, isNew: true });
   return [...out.values()];
 }
+
+/** One word for the whole move: every placed server in place, every one elsewhere, a mix, or nothing placed yet. */
+export function overallPlacement(scope: Pick<ImportScope, "placementKind"> | null | undefined): "in-place" | "other-server" | "mixed" | null {
+  const kinds = new Set(Object.values(scope?.placementKind ?? {}));
+  if (kinds.size === 0) return null;
+  if (kinds.size > 1) return "mixed";
+  return kinds.has("in-place") ? "in-place" : "other-server";
+}

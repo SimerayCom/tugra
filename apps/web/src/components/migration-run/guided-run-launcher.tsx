@@ -28,7 +28,7 @@ import {
 import { AdvancedFields, type AdvancedState } from "./launch-advanced";
 import { PlacementFields } from "./launch-placement";
 import { HelpLink } from "../help-link";
-import { scopePayload, type ImportScope } from "../../lib/import-scope";
+import { scopePayload, type ImportScope, overallPlacement } from "../../lib/import-scope";
 import type { ImportApplyExtras, ImportPlan, ImportRemoteKind, MigrationRunMode, MigrationRunServerMap, MigrationRunTopology } from "../../lib/types";
 
 /** A server the run may land on: what the launcher needs to say, before the click, that one cannot take it. */
@@ -80,7 +80,7 @@ function LaunchDialog({ plan, kind, sessionId, servers, extras, scope, onChangeS
   const [dryRun, setDryRun] = useState(true);
   const [mode, setMode] = useState<MigrationRunMode>("copy");
   // In place (same machine, proxy swap) is only for Coolify, and only when the first step says every source is on its own target.
-  const [topology, setTopology] = useState<MigrationRunTopology>(kind === "coolify" && scope?.placementKind === "in-place" ? "swap-proxy" : "two-box");
+  const [topology, setTopology] = useState<MigrationRunTopology>(kind === "coolify" && overallPlacement(scope) === "in-place" ? "swap-proxy" : "two-box");
   const [acmeEmail, setAcmeEmail] = useState("");
   const [controller, setController] = useState<"manual" | "api" | "agent">("manual");
   const [allowBind, setAllowBind] = useState(false);
@@ -174,7 +174,7 @@ function LaunchDialog({ plan, kind, sessionId, servers, extras, scope, onChangeS
           <div role="note" data-testid="launch-summary" style={{ display: "flex", gap: 8, alignItems: "baseline", flexWrap: "wrap", fontSize: 12, color: "var(--c-tx2)", lineHeight: 1.5 }}>
             <span style={{ flex: "1 1 240px" }}>
               {t("migrationRun.launch.summary", { targets: targetNames.join(", ") || "-", apps: counts.apps, databases: counts.databases, services: counts.services })}{" "}
-              {scope.placementKind === "in-place" ? t("migrationRun.launch.sameMachine") : t("migrationRun.launch.otherServer")}
+              {overallPlacement(scope) === "in-place" ? t("migrationRun.launch.sameMachine") : t("migrationRun.launch.otherServer")}
             </span>
             {onChangeScope && <Btn variant="ghost" onClick={() => { onClose(); onChangeScope(); }} disabled={create.isPending}>{t("import.scope.change")}</Btn>}
           </div>

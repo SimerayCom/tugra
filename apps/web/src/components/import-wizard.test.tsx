@@ -328,7 +328,7 @@ describe("ImportWizard", () => {
     it("opens unplaced, asking, when that server is read-only for the user", async () => {
       await run({ sourceServerUuid: "srvB", targetServerId: "ro", targetTeamId: "t1" });
       expect((screen.getByLabelText(/Box B moves to/) as HTMLSelectElement).value).toBe("");
-      expect(screen.getByText("Pick a server to move to.")).toBeTruthy();
+      expect(screen.getByText("Choose a server for: Box B.")).toBeTruthy();
       expect((screen.getByRole("button", { name: "Continue" }) as HTMLButtonElement).disabled).toBe(true);
     });
 

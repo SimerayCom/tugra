@@ -55,6 +55,7 @@ export function ImportScopeStep({
   onSelectionChange,
   onRecheck,
   rechecking,
+  startNote,
 }: {
   plan: ImportPlan;
   /** Servers the user can write to. */
@@ -67,6 +68,8 @@ export function ImportScopeStep({
   onSelectionChange?: (sel: ScopeSelection) => void;
   /** Read the servers and the plan again (a server was just added, or an agent came online). */
   onRecheck?: () => void;
+  /** Why the step opened as it did (came from a server's scan, an item's Move): one plain line above the choices. */
+  startNote?: string;
   rechecking?: boolean;
 }) {
   const t = useT();
@@ -156,6 +159,7 @@ export function ImportScopeStep({
         right={<Btn variant="ghost" onClick={onStartOver}>{t("import.startOver")}</Btn>}
         style={{ padding: 20, marginBottom: 0 }}
       >
+        {startNote && <p data-testid="scope-note" role="note" style={{ fontSize: 12, color: "var(--c-tx2)", margin: "0 0 10px" }}>{startNote}</p>}
         <div role="radiogroup" aria-label={t("import.scope.title")} style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 16 }}>
           {MODES.filter((m) => m.show).map(({ mode }) => {
             const checked = sel.mode === mode;

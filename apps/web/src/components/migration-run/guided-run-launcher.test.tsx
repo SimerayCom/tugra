@@ -267,6 +267,8 @@ describe("GuidedRunLauncher", () => {
       narrowed: false,
       defaultServerId: "srv2",
       serverMap: undefined,
+      placed: { s1: "srv2", s2: "srv2" },
+      placementKind: { s1: "other-server", s2: "other-server" },
       ...over,
     });
     const open = async () => {
@@ -303,12 +305,12 @@ describe("GuidedRunLauncher", () => {
     });
 
     it("an in-place choice starts on the proxy swap for Coolify, never for Dokploy", async () => {
-      mount({ plan: whole, scope: everything({ placementKind: "in-place" }) });
+      mount({ plan: whole, scope: everything({ placementKind: { s1: "in-place", s2: "in-place" } }) });
       let dialog = await open();
       expect((within(dialog).getByLabelText("Topology") as HTMLSelectElement).value).toBe("swap-proxy");
       expect(within(dialog).getByTestId("launch-summary").textContent).toContain("Same machine");
       cleanup();
-      mount({ plan: whole, scope: everything({ placementKind: "in-place" }), kind: "dokploy" });
+      mount({ plan: whole, scope: everything({ placementKind: { s1: "in-place", s2: "in-place" } }), kind: "dokploy" });
       dialog = await open();
       expect((within(dialog).getByLabelText("Topology") as HTMLSelectElement).value).toBe("two-box");
       expect([...(within(dialog).getByLabelText("Topology") as HTMLSelectElement).options].map((o) => o.value).filter(Boolean)).toEqual(["two-box"]);
