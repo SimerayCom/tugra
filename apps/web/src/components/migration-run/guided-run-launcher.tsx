@@ -8,6 +8,8 @@ import { api } from "../../lib/api";
 import { useT } from "../../i18n/provider";
 import { Btn } from "../ui";
 import { Modal } from "../modal";
+import { BlockedNote } from "../cta-parts";
+import { blockTag, serverBlock, type CtaBlock } from "../../lib/cta-readiness";
 import { Checkbox, Field, NumberInput, Select, TextInput } from "../form";
 import { useToast } from "../toast";
 import {
@@ -29,14 +31,23 @@ import { HelpLink } from "../help-link";
 import { scopePayload, type ImportScope } from "../../lib/import-scope";
 import type { ImportApplyExtras, ImportPlan, ImportRemoteKind, MigrationRunMode, MigrationRunServerMap, MigrationRunTopology } from "../../lib/types";
 
+/** A server the run may land on: what the launcher needs to say, before the click, that one cannot take it. */
+type LaunchServer = { id: string; name: string; teamId: string; status?: "PENDING" | "ONLINE" | "OFFLINE"; capabilities?: string[]; canWrite?: boolean };
+
+/** The run's target (and every placement target) runs the deploy and database steps through its agent. */
+const RUN_CAPS = ["deploy", "database"] as const;
+const blockOf = (s: LaunchServer | undefined): CtaBlock | null => (s && s.status !== undefined && s.capabilities !== undefined ? serverBlock({ status: s.status, canWrite: true, capabilities: s.capabilities }, RUN_CAPS, { write: false }) : null);
+
 interface Props {
   plan: ImportPlan;
   kind: ImportRemoteKind;
   sessionId: string;
-  servers: Array<{ id: string; name: string; teamId: string }>;
+  servers: LaunchServer[];
   extras: ImportApplyExtras;
   /** The import's first step: when it narrowed the move, the run carries it, so it moves exactly what was chosen. */
   scope?: ImportScope | null;
+  /** Back to the import's first step (the "Change" link of the summary). */
+  onChangeScope?: () => void;
   disabled?: boolean;
 }
 
@@ -56,17 +67,20 @@ export function GuidedRunLauncher(props: Props) {
   );
 }
 
-function LaunchDialog({ plan, kind, sessionId, servers, extras, scope, onClose }: Props & { onClose: () => void }) {
+function LaunchDialog({ plan, kind, sessionId, servers, extras, scope, onChangeScope, onClose }: Props & { onClose: () => void }) {
   const t = useT();
   const toast = useToast();
   const router = useRouter();
   const qc = useQueryClient();
-  // a narrowed move starts from what the first step chose: its default target, and its placement when it used several servers
-  const chosenTarget = scope?.narrowed && servers.some((s) => s.id === scope.defaultServerId) ? scope.defaultServerId : "";
-  const [targetServerId, setTarget] = useState(chosenTarget || servers[0]?.id || "");
+  // The run starts from what the first step chose, narrowed or not: its target, and its placement when it used several servers.
+  const chosenTarget = scope && servers.some((s) => s.id === scope.defaultServerId) ? scope.defaultServerId : "";
+  // Without a first-step choice, the first server that can take the run, never one that is offline or lacks the capabilities.
+  const fallbackTarget = servers.find((s) => !blockOf(s))?.id ?? "";
+  const [targetServerId, setTarget] = useState(chosenTarget || fallbackTarget);
   const [dryRun, setDryRun] = useState(true);
   const [mode, setMode] = useState<MigrationRunMode>("copy");
-  const [topology, setTopology] = useState<MigrationRunTopology>("two-box");
+  // In place (same machine, proxy swap) is only for Coolify, and only when the first step says every source is on its own target.
+  const [topology, setTopology] = useState<MigrationRunTopology>(kind === "coolify" && scope?.placementKind === "in-place" ? "swap-proxy" : "two-box");
   const [acmeEmail, setAcmeEmail] = useState("");
   const [controller, setController] = useState<"manual" | "api" | "agent">("manual");
   const [allowBind, setAllowBind] = useState(false);
@@ -88,6 +102,34 @@ function LaunchDialog({ plan, kind, sessionId, servers, extras, scope, onClose }
   // Only servers of the target's team can take part in the run (the hub refuses another team's server).
   const teamId = servers.find((s) => s.id === targetServerId)?.teamId;
   const placeable = useMemo(() => servers.filter((s) => !teamId || s.teamId === teamId), [servers, teamId]);
+  // A run chosen in the first step stays in that step's team; to use another team, go back and change it.
+  const targetChoices = scope && chosenTarget ? placeable : servers;
+  const targetOptions = targetChoices.map((s) => {
+    const b = blockOf(s);
+    return { value: s.id, label: b ? `${s.name} (${blockTag(t, b)})` : s.name, disabled: !!b && s.id !== targetServerId };
+  });
+  const placeableOptions = placeable.map((s) => {
+    const b = blockOf(s);
+    return { id: s.id, name: b ? `${s.name} (${blockTag(t, b)})` : s.name };
+  });
+  // every server the run would use must be able to take it
+  const used = [...new Set([targetServerId, ...Object.values(placement ?? {})].filter(Boolean))];
+  const blockedUsed = used.flatMap((id) => {
+    const b = blockOf(servers.find((s) => s.id === id));
+    return b ? [{ id, name: servers.find((s) => s.id === id)?.name ?? id, block: b }] : [];
+  });
+  // the summary of the first step's choice
+  const counts = useMemo(() => {
+    const c = { apps: 0, databases: 0, services: 0 };
+    for (const it of plan.items) {
+      if (scope && !scope.inScope.has(it.itemRef)) continue;
+      if (it.kind === "app") c.apps += 1;
+      else if (it.kind === "database") c.databases += 1;
+      else if (it.kind === "service") c.services += 1;
+    }
+    return c;
+  }, [plan.items, scope]);
+  const targetNames = [...new Set([targetServerId, ...Object.values(placement ?? {})].map((id) => servers.find((s) => s.id === id)?.name).filter(Boolean))] as string[];
   const sourceRows = useMemo(() => sourceServersOf(plan.items ?? [], plan.preflight?.hosts), [plan.items, plan.preflight?.hosts]);
   const changeTarget = (id: string) => {
     // a host that was on the old default follows the new default; hosts the operator moved elsewhere stay where they are
@@ -128,12 +170,27 @@ function LaunchDialog({ plan, kind, sessionId, servers, extras, scope, onClose }
             {t("migrationRun.launch.scoped", { count: plan.items.filter((i) => i.kind === "app" || i.kind === "database" || i.kind === "service").length })}
           </p>
         )}
+        {scope && (
+          <div role="note" data-testid="launch-summary" style={{ display: "flex", gap: 8, alignItems: "baseline", flexWrap: "wrap", fontSize: 12, color: "var(--c-tx2)", lineHeight: 1.5 }}>
+            <span style={{ flex: "1 1 240px" }}>
+              {t("migrationRun.launch.summary", { targets: targetNames.join(", ") || "-", apps: counts.apps, databases: counts.databases, services: counts.services })}{" "}
+              {scope.placementKind === "in-place" ? t("migrationRun.launch.sameMachine") : t("migrationRun.launch.otherServer")}
+            </span>
+            {onChangeScope && <Btn variant="ghost" onClick={() => { onClose(); onChangeScope(); }} disabled={create.isPending}>{t("import.scope.change")}</Btn>}
+          </div>
+        )}
 
         <Field label={t("migrationRun.launch.target")} hint={t("migrationRun.launch.targetHint")} error={issues.includes("target") ? t("migrationRun.launch.targetMissing") : undefined}>
-          <Select value={targetServerId} onChange={changeTarget} options={servers.map((s) => ({ value: s.id, label: s.name }))} style={{ minHeight: 44 }} />
+          <Select value={targetServerId} onChange={changeTarget} options={targetOptions} style={{ minHeight: 44 }} />
         </Field>
+        {blockedUsed.map((b) => (
+          <p key={b.id} style={{ margin: 0 }}>
+            <strong style={{ fontSize: 12 }}>{b.name}: </strong>
+            <BlockedNote block={b.block} serverId={b.id} />
+          </p>
+        ))}
 
-        <PlacementFields rows={sourceRows} servers={placeable} defaultId={targetServerId} value={placement} onChange={setPlacement} invalid={issues.includes("placement")} />
+        <PlacementFields rows={sourceRows} servers={placeableOptions} defaultId={targetServerId} value={placement} onChange={setPlacement} invalid={issues.includes("placement")} />
 
         <div>
           <Checkbox checked={dryRun} onChange={setDryRun} label={t("migrationRun.launch.dryRun")} />
@@ -145,7 +202,7 @@ function LaunchDialog({ plan, kind, sessionId, servers, extras, scope, onClose }
             <Select value={mode} onChange={(v) => setMode(v as MigrationRunMode)} options={(["copy", "takeover"] as const).map((m) => ({ value: m, label: t(MODE_KEY[m]) }))} style={{ minHeight: 44 }} />
           </Field>
           <Field label={t("migrationRun.launch.topology")} hint={t(TOPOLOGY_HINT_KEY[topology])}>
-            <Select value={topology} onChange={(v) => setTopology(v as MigrationRunTopology)} options={(["two-box", "swap-proxy"] as const).map((m) => ({ value: m, label: t(TOPOLOGY_KEY[m]) }))} style={{ minHeight: 44 }} />
+            <Select value={topology} onChange={(v) => setTopology(v as MigrationRunTopology)} options={(kind === "coolify" ? (["two-box", "swap-proxy"] as const) : (["two-box"] as const)).map((m) => ({ value: m, label: t(TOPOLOGY_KEY[m]) }))} style={{ minHeight: 44 }} />
           </Field>
         </div>
 
@@ -177,7 +234,7 @@ function LaunchDialog({ plan, kind, sessionId, servers, extras, scope, onClose }
 
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>
           <Btn variant="ghost" onClick={onClose} disabled={create.isPending}>{t("common.cancel")}</Btn>
-          <Btn type="submit" disabled={issues.length > 0 || servers.length === 0} loading={create.isPending}>
+          <Btn type="submit" disabled={issues.length > 0 || servers.length === 0 || blockedUsed.length > 0} loading={create.isPending}>
             {dryRun ? t("migrationRun.launch.createDry") : t("migrationRun.launch.create")}
           </Btn>
         </div>

@@ -794,13 +794,10 @@
     "standalone_one": "1 container can be adopted as a Tugra app.",
     "standalone_other": "{n} containers can be adopted as Tugra apps.",
     "sitesStay": "Websites on nginx, Apache or CloudPanel stay where they are. Tugra doesn't move them; they keep running next to it.",
-    "reviewNeeds": "Review is off here.",
-    "pm2Needs": "Moving PM2 processes needs the patch and deploy capabilities on this server.",
     "swarmRefused": "This container is a Swarm service (often Dokploy). Move it with the Dokploy import.",
     "infraRow": "Part of {platform} itself. Not moved.",
     "needsImport": "Needs the {platform} import and an API token.",
     "openImport": "Open the import",
-    "stackManaged": "{platform} runs this stack. Moving it needs the {platform} import and an API token.",
     "addServer": "Add a server",
     "noOtherServer": "There is no other server in this team."
   }

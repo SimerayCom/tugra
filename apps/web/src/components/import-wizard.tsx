@@ -293,7 +293,7 @@ export function ImportWizard() {
         onChangeScope={() => setScope(null)}
         kind={kind}
         servers={servers.filter((s) => s.teamId === effectiveTeam).map((s) => ({ id: s.id, name: s.name }))}
-        writableServers={servers.filter((s) => s.canWrite).map((s) => ({ id: s.id, name: s.name, teamId: s.teamId }))}
+        writableServers={servers.filter((s) => s.canWrite).map((s) => ({ id: s.id, name: s.name, teamId: s.teamId, status: s.status, capabilities: s.capabilities, canWrite: s.canWrite }))}
         teams={teams}
         sessionId={sessionId}
         dbModes={dbModes}
@@ -428,7 +428,7 @@ function PlanView({
   onChangeScope: () => void;
   kind: ImportRemoteKind;
   servers: { id: string; name: string }[];
-  writableServers: { id: string; name: string; teamId: string }[];
+  writableServers: { id: string; name: string; teamId: string; status?: "PENDING" | "ONLINE" | "OFFLINE"; capabilities?: string[]; canWrite?: boolean }[];
   teams: Team[];
   sessionId: string;
   dbModes: Record<string, "volume">;
@@ -602,7 +602,7 @@ function PlanView({
         </Btn>
         </>
         )}
-        <GuidedRunLauncher plan={plan} kind={kind} sessionId={sessionId} servers={writableServers} extras={applyExtras} scope={scope} disabled={replanning || runnable === 0 || unackedCount > 0 || missingTargets > 0} />
+        <GuidedRunLauncher plan={plan} kind={kind} sessionId={sessionId} servers={writableServers} extras={applyExtras} scope={scope} onChangeScope={onChangeScope} disabled={replanning || runnable === 0 || unackedCount > 0 || missingTargets > 0} />
       </SectionCard>
 
       <EnvBlockers plan={plan} acked={acked} onChange={setAcked} />

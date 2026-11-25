@@ -257,4 +257,89 @@ describe("GuidedRunLauncher", () => {
     await waitFor(() => expect(create).toHaveBeenCalledTimes(1));
     expect(create.mock.calls[0][0]).not.toHaveProperty("scope");
   });
+
+  describe("the first step's choice", () => {
+    const item = (itemRef: string, kind: "app" | "database") => ({ itemRef, kind, name: itemRef, proposed: {}, risks: [], dependsOn: [] });
+    const whole = { ...plan, items: [item("app:s1:web", "app"), item("app:s2:api", "app"), item("database:s2:db", "database")] } as ImportPlan;
+    const everything = (over: Partial<ImportScope> = {}): ImportScope => ({
+      selection: { mode: "everything", hosts: new Set(), projects: new Set(), extra: new Set(), placement: { s1: "srv2", s2: "srv2" } },
+      inScope: new Set(["app:s1:web", "app:s2:api", "database:s2:db"]),
+      narrowed: false,
+      defaultServerId: "srv2",
+      serverMap: undefined,
+      ...over,
+    });
+    const open = async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Run guided migration" }));
+      return screen.findByRole("dialog");
+    };
+
+    it("moving everything still starts from the target the first step picked, not the first server", async () => {
+      const create = vi.spyOn(api, "createMigrationRun").mockResolvedValue(mkRun({ id: "all1" }));
+      mount({ plan: whole, scope: everything() });
+      const dialog = await open();
+      expect((within(dialog).getByLabelText("Target server") as HTMLSelectElement).value).toBe("srv2");
+      expect(within(dialog).getByTestId("launch-summary").textContent).toContain("2 apps, 1 databases and 0 services, moving to Server B.");
+      expect(within(dialog).getByTestId("launch-summary").textContent).toContain("Another server");
+      fireEvent.click(within(dialog).getByRole("button", { name: "Create dry run" }));
+      await waitFor(() => expect(create).toHaveBeenCalledTimes(1));
+      expect(create.mock.calls[0][0]).toMatchObject({ targetServerId: "srv2", dryRun: true, topology: "two-box" });
+    });
+
+    it("carries the several-server placement of a whole move", async () => {
+      const create = vi.spyOn(api, "createMigrationRun").mockResolvedValue(mkRun({ id: "all2" }));
+      mount({ plan: whole, scope: everything({ serverMap: { s1: "srv1", s2: "srv2" } }) });
+      const dialog = await open();
+      fireEvent.click(within(dialog).getByRole("button", { name: "Create dry run" }));
+      await waitFor(() => expect(create).toHaveBeenCalledTimes(1));
+      expect(create.mock.calls[0][0]).toMatchObject({ targetServerId: "srv2", serverMap: { s1: "srv1", s2: "srv2" } });
+    });
+
+    it("the Target select stays in the first step's team", async () => {
+      mount({ plan: whole, scope: everything(), servers: [...servers, { id: "srv9", name: "Other team box", teamId: "t2" }] });
+      const dialog = await open();
+      const options = [...(within(dialog).getByLabelText("Target server") as HTMLSelectElement).options].map((o) => o.textContent);
+      expect(options).not.toContain("Other team box");
+    });
+
+    it("an in-place choice starts on the proxy swap for Coolify, never for Dokploy", async () => {
+      mount({ plan: whole, scope: everything({ placementKind: "in-place" }) });
+      let dialog = await open();
+      expect((within(dialog).getByLabelText("Topology") as HTMLSelectElement).value).toBe("swap-proxy");
+      expect(within(dialog).getByTestId("launch-summary").textContent).toContain("Same machine");
+      cleanup();
+      mount({ plan: whole, scope: everything({ placementKind: "in-place" }), kind: "dokploy" });
+      dialog = await open();
+      expect((within(dialog).getByLabelText("Topology") as HTMLSelectElement).value).toBe("two-box");
+      expect([...(within(dialog).getByLabelText("Topology") as HTMLSelectElement).options].map((o) => o.value).filter(Boolean)).toEqual(["two-box"]);
+    });
+
+    it("the summary's Change goes back to the first step", async () => {
+      const onChangeScope = vi.fn();
+      mount({ plan: whole, scope: everything(), onChangeScope });
+      const dialog = await open();
+      fireEvent.click(within(dialog).getByRole("button", { name: "Change" }));
+      expect(onChangeScope).toHaveBeenCalledTimes(1);
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    });
+
+    it("blocks Create and says why when a server the run uses is offline or lacks deploy and database", async () => {
+      const facts = [
+        { id: "srv1", name: "Server A", teamId: "t1", status: "ONLINE" as const, capabilities: ["deploy", "database"] },
+        { id: "srv2", name: "Server B", teamId: "t1", status: "ONLINE" as const, capabilities: ["deploy"] },
+        { id: "srv3", name: "Server C", teamId: "t1", status: "OFFLINE" as const, capabilities: ["deploy", "database"] },
+      ];
+      mount({ plan: whole, scope: everything(), servers: facts });
+      let dialog = await open();
+      expect(within(dialog).getByText(/Needs the Databases capability on this server\./)).toBeTruthy();
+      expect((within(dialog).getByRole("button", { name: "Create dry run" }) as HTMLButtonElement).disabled).toBe(true);
+      const sel = within(dialog).getByLabelText("Target server") as HTMLSelectElement;
+      expect([...sel.options].find((o) => o.textContent?.startsWith("Server C"))?.textContent).toBe("Server C (offline)");
+      cleanup();
+      // with no first-step choice the default is the first server that can take the run
+      mount({ servers: facts });
+      dialog = await open();
+      expect((within(dialog).getByLabelText("Target server") as HTMLSelectElement).value).toBe("srv1");
+    });
+  });
 });

@@ -544,7 +544,10 @@
       "stopSourceHint": "Off by default. Without it the freeze step asks you to stop the writers.",
       "largeDbHintRefuse": "A database over the dump limit pauses the run. Nothing moves for it until you decide.",
       "largeDbHintStream": "Its whole copy counts as downtime. A dry run shows how long it takes."
-    }
+    },
+    "summary": "From your choice: {apps} apps, {databases} databases and {services} services, moving to {targets}.",
+    "sameMachine": "Same machine: the proxy is swapped, with a few minutes of downtime.",
+    "otherServer": "Another server: data is copied, then the address is switched."
   },
   "units": {
     "item": "items",
@@ -607,7 +610,12 @@
     "volumes": "Volumes",
     "env": "Variables",
     "showSame": "Show {count} matching",
-    "verdict": { "same": "Same", "similar": "Close", "differs": "Differs", "unknown": "Unknown" },
+    "verdict": {
+      "same": "Same",
+      "similar": "Close",
+      "differs": "Differs",
+      "unknown": "Unknown"
+    },
     "status": "Status {status}",
     "noAnswer": "No answer",
     "page": {
@@ -671,8 +679,14 @@
     "cancel": "Cancel",
     "restored": "Went back to the copy on {date}.",
     "restoreDone": "Restore started",
-    "kind": { "database": "Database", "volume": "Files" },
-    "item": { "SUCCESS": "Copied", "FAILED": "Not copied" },
+    "kind": {
+      "database": "Database",
+      "volume": "Files"
+    },
+    "item": {
+      "SUCCESS": "Copied",
+      "FAILED": "Not copied"
+    },
     "note": {
       "nothing-to-copy": "There was nothing to copy.",
       "run-over": "The move ended before the copy was taken.",
