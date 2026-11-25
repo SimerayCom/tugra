@@ -23,3 +23,8 @@ Not shipped: `apps/hub-api/scripts` is outside the TypeScript `include` and the 
    prunes (the upgrade of a seeded hub; `1m` times only the raw -> 1-minute step), printing time and peak RSS / heap. Table rows and sizes:
    `SELECT relname, pg_size_pretty(pg_total_relation_size(oid)) FROM pg_class WHERE relname ~ '^(Container)?Metric(Rollup(5m)?)?$'` (add
    `VACUUM FULL` on those tables first to see the steady-state size rather than the not-yet-returned dead space).
+9. Polling load (group 13): `--phases idle,poll,home --browsers 6|12 --seconds 45` measures requests that reach Postgres.
+   `poll` drives only what the panel polls on /fleet + /dashboard (servers, fleet latest / trend / hottest, insights) at the
+   real 5 s cadence; `home` adds the one-shot /costs calls. Browsers start at a random point of their cycle (`--jitter ms`,
+   0 = lock-step, which flatters any request coalescing). With `DATABASE_URL` set and `create extension pg_stat_statements`
+   (`shared_preload_libraries = 'pg_stat_statements'`), every phase prints `db statements/s` (`--pgstat 0` turns it off).

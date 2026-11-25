@@ -3,6 +3,7 @@ import {
   Controller,
   Delete,
   Get,
+  Header,
   HttpCode,
   Param,
   Post,
@@ -77,6 +78,7 @@ export class ServersController {
     private readonly coalescer: ReadCoalescer,
   ) {}
 
+  @Header("Cache-Control", "private, no-cache") // revalidated every poll via the ETag (304 when unchanged); never shared
   @Get()
   @ApiZodResponse(ServerViewSchema, { isArray: true })
   @Paginated()
@@ -122,6 +124,7 @@ export class ServersController {
   }
 
   /** Live inventory of every container on this host (Tugra + others) with its latest stats. */
+  @Header("Cache-Control", "private, no-cache") // revalidated every poll via the ETag (304 when unchanged); never shared
   @Get(":id/metrics/containers")
   async serverContainers(@CurrentUser() user: AuthUser, @Param("id") id: string) {
     await this.servers.getForUser(user.userId, id); // authz: membership check (read-level), never cached

@@ -102,6 +102,7 @@ export class ServerOpsController {
   }
 
   /** Host-wide container list INCLUDING stopped ones (so the tab can offer Start). Writer-level service-side. */
+  @Header("Cache-Control", "private, no-cache") // revalidated every poll via the ETag (304 when unchanged); never shared
   @Get("containers/all")
   listContainers(@CurrentUser() user: AuthUser, @Param("id") id: string) {
     return this.coalescer.run(`ops:containers:${user.userId}:${id}`, () => this.containerOps.list(user.userId, id));

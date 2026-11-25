@@ -1,4 +1,4 @@
-import { Body, Controller, Get, HttpCode, Post, Query, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, Header, HttpCode, Post, Query, UseGuards } from "@nestjs/common";
 import { ApiTags, ApiSecurity } from "@nestjs/swagger";
 import { ServerStatus } from "@prisma/client";
 import { ApiZodBody, ApiZodResponse } from "../openapi/openapi";
@@ -39,6 +39,7 @@ export class FleetController {
   // Fleet overview: the newest metrics sample for every server the caller can see, in ONE call
   // (DISTINCT ON over [serverId, ts]) — the live-table source. listForUser scopes the id set to the
   // caller's teams, so a bulk metrics read can never leak another team's servers. Read-level (no scope).
+  @Header("Cache-Control", "private, no-cache") // revalidated every poll via the ETag (304 when unchanged); never shared
   @Get("metrics/latest")
   @ApiZodResponse(FleetLatestRowSchema, { isArray: true })
   async latestMetrics(
@@ -55,6 +56,7 @@ export class FleetController {
 
   // Sparkline source: the last `minutes` (clamped 5-120, default 30) of per-minute CPU/mem % for every
   // visible server in ONE aggregate query. Same team scoping as metrics/latest (listForUser).
+  @Header("Cache-Control", "private, no-cache") // revalidated every poll via the ETag (304 when unchanged); never shared
   @Get("metrics/trend")
   @ApiZodResponse(FleetTrendRowSchema, { isArray: true })
   async trendMetrics(
@@ -72,6 +74,7 @@ export class FleetController {
   // Hottest containers across the fleet: the top `limit` (clamped 1-50, default 10) live containers by CPU
   // over every server the caller can see. Same team scoping as metrics/latest (listForUser) — the service
   // only ever queries that id set, so another team's containers can never appear. Read-level (no scope).
+  @Header("Cache-Control", "private, no-cache") // revalidated every poll via the ETag (304 when unchanged); never shared
   @Get("containers/hottest")
   @ApiZodResponse(FleetHottestContainerSchema, { isArray: true })
   async hottestContainers(

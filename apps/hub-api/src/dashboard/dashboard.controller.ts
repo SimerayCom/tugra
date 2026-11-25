@@ -1,4 +1,4 @@
-import { Controller, Get, Query, UseGuards } from "@nestjs/common";
+import { Controller, Get, Header, Query, UseGuards } from "@nestjs/common";
 import { ApiSecurity, ApiTags } from "@nestjs/swagger";
 import { ApiZodResponse } from "../openapi/openapi";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
@@ -17,6 +17,7 @@ import { DashboardInsightsSchema } from "./dto";
 export class DashboardController {
   constructor(private readonly dashboard: DashboardService) {}
 
+  @Header("Cache-Control", "private, no-cache") // revalidated every poll via the ETag (304 when unchanged); never shared
   @Get("insights")
   @ApiZodResponse(DashboardInsightsSchema)
   insights(@CurrentUser() user: AuthUser, @Query("teamId") teamId?: string) {

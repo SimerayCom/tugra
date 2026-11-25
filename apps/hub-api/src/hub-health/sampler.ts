@@ -30,10 +30,14 @@ export const SAMPLE_EVERY_MS = 20_000;
 export const SAMPLE_KEEP = 45;
 
 const NS_PER_MS = 1e6;
+/** monitorEventLoopDelay samples a timer of this period; the histogram records the whole interval, so an idle loop reads
+ *  ~RESOLUTION_MS, not 0. The real delay is what exceeds it. */
+const RESOLUTION_MS = 20;
+const lag = (ns: number) => Math.max(0, ns / NS_PER_MS - RESOLUTION_MS);
 
 /** The real sources: process.memoryUsage, V8 heap limit, perf_hooks event-loop histogram and a GC PerformanceObserver. */
 export function processSources(): SamplerSources & { stop(): void } {
-  const hist: IntervalHistogram = monitorEventLoopDelay({ resolution: 20 });
+  const hist: IntervalHistogram = monitorEventLoopDelay({ resolution: RESOLUTION_MS });
   hist.enable();
   let gcMs = 0;
   const gc = new PerformanceObserver((list) => {
@@ -54,8 +58,8 @@ export function processSources(): SamplerSources & { stop(): void } {
     takeLoop: () => {
       // An empty histogram reports NaN/min-int: treat "no ticks yet" as 0.
       const ok = hist.count > 0;
-      const r = ok ? { p50: hist.percentile(50) / NS_PER_MS, p99: hist.percentile(99) / NS_PER_MS, max: hist.max / NS_PER_MS } : { p50: 0, p99: 0, max: 0 };
-      hist.reset();
+      const r = ok ? { p50: lag(hist.percentile(50)), p99: lag(hist.percentile(99)), max: lag(hist.max) } : { p50: 0, p99: 0, max: 0 };
+      hist.reset(); // the first tick after a reset only re-arms the histogram (<= 20 ms of the next window)
       return r;
     },
     takeGcMs: () => {

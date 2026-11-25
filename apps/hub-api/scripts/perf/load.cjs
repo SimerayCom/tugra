@@ -32,6 +32,20 @@ const PHASES = a("phases", "home,server,scan,logs,slowlog,soak").split(",");
 const LABEL = a("label", "run");
 const OUT = a("out", "");
 const SERVERS = Number(a("servers", 27));
+// Real tabs are not in lock-step: each simulated browser starts at a random point of its 5 s poll cycle (0 = lock-step).
+const JITTER_MS = Number(a("jitter", 5000));
+// With DATABASE_URL set, count the statements the hub sends to Postgres during a phase (needs pg_stat_statements).
+const { PrismaClient } = require("@prisma/client");
+const prisma = process.env.DATABASE_URL && a("pgstat", "1") !== "0" ? new PrismaClient() : null;
+async function dbCalls() {
+  if (!prisma) return null;
+  try {
+    const r = await prisma.$queryRawUnsafe("SELECT coalesce(sum(calls),0)::float8 AS calls FROM pg_stat_statements WHERE query NOT ILIKE '%pg_stat_statements%' AND query NOT ILIKE '%pg_stat_database%'");
+    return Number(r[0].calls);
+  } catch {
+    return null;
+  }
+}
 const SECRET = process.env.JWT_ACCESS_SECRET || "test-jwt-access-secret-0123456789";
 // No keep-alive: the hub closes idle sockets after 5 s, and a reused one racing that close shows up as a bogus ECONNRESET.
 const agent = new http.Agent({ keepAlive: false, maxSockets: 256 });
@@ -129,6 +143,19 @@ const pages = {
       await sleep(5000);
     }
   },
+  // Only the calls the panel POLLS on /fleet + /dashboard (no one-shot /costs): servers, fleet latest / trend / hottest, insights.
+  poll: async (end) => {
+    while (Date.now() < end) {
+      await Promise.all([
+        req("GET /servers", "GET", "/servers"),
+        req("GET /fleet/metrics/latest", "GET", "/fleet/metrics/latest"),
+        req("GET /fleet/metrics/trend", "GET", "/fleet/metrics/trend?minutes=30"),
+        req("GET /fleet/containers/hottest", "GET", "/fleet/containers/hottest?limit=10"),
+        req("GET /dashboard/insights", "GET", "/dashboard/insights"),
+      ]);
+      await sleep(5000);
+    }
+  },
   // server detail: server, metrics ranges, containers inventory, scan view, gpus view, disk usage
   server: async (end) => {
     const s = srv(rnd(SERVERS));
@@ -211,14 +238,16 @@ async function phase(name, fn, browsers) {
   let peak = before;
   let heapPeak = heap0;
   const end = Date.now() + SECONDS * 1000;
+  const calls0 = await dbCalls();
   const sampler = setInterval(async () => {
     peak = Math.max(peak, rssMb());
     try {
       heapPeak = Math.max(heapPeak, (await side("/mem")).heapUsed / 1048576);
     } catch {}
   }, CONTAINER ? 1000 : 250);
-  await Promise.all(Array.from({ length: browsers }, () => fn(end)));
+  await Promise.all(Array.from({ length: browsers }, async () => { await sleep(Math.random() * JITTER_MS); await fn(end); }));
   clearInterval(sampler);
+  const calls1 = await dbCalls();
   const afterNoGc = rssMb();
   await side("/gc");
   await sleep(1000);
@@ -229,8 +258,8 @@ async function phase(name, fn, browsers) {
     const l = v.lat.sort((x, y) => x - y);
     endpoints[k] = { n: v.n, err: v.err, codes: v.codes, kbPerReq: Math.round(v.bytes / v.n / 1024), p50: l[Math.floor(l.length * 0.5)], p95: l[Math.floor(l.length * 0.95)], max: l[l.length - 1] };
   }
-  const row = { phase: name, browsers, rssBeforeMb: Math.round(before), rssPeakMb: Math.round(peak), rssEndNoGcMb: Math.round(afterNoGc), rssAfterGcMb: Math.round(rssMb()), heapUsedBeforeMb: Math.round(heap0), heapUsedPeakMb: Math.round(heapPeak), heapUsedAfterGcMb: Math.round(mem.heapUsed / 1048576), endpoints };
-  console.log(`[${LABEL}] ${name} x${browsers}: rss ${row.rssBeforeMb} -> peak ${row.rssPeakMb} MB (after gc ${row.rssAfterGcMb}); heapUsed peak ${row.heapUsedPeakMb} MB`);
+  const row = { phase: name, browsers, rssBeforeMb: Math.round(before), rssPeakMb: Math.round(peak), rssEndNoGcMb: Math.round(afterNoGc), rssAfterGcMb: Math.round(rssMb()), heapUsedBeforeMb: Math.round(heap0), heapUsedPeakMb: Math.round(heapPeak), heapUsedAfterGcMb: Math.round(mem.heapUsed / 1048576), dbStatementsPerSec: calls0 !== null && calls1 !== null ? Math.round(((calls1 - calls0) / SECONDS) * 10) / 10 : null, endpoints };
+  console.log(`[${LABEL}] ${name} x${browsers}: rss ${row.rssBeforeMb} -> peak ${row.rssPeakMb} MB (after gc ${row.rssAfterGcMb}); heapUsed peak ${row.heapUsedPeakMb} MB; db statements/s ${row.dbStatementsPerSec}`);
   return row;
 }
 
@@ -246,6 +275,8 @@ async function phase(name, fn, browsers) {
         while (Date.now() < end) await req(`GET ${u}`, "GET", u);
       }, BROWSERS);
     }
+    if (p === "idle") await run("idle", async (end) => { while (Date.now() < end) await sleep(500); }, 1);
+    if (p === "poll") await run("poll", pages.poll, BROWSERS);
     if (p === "home") await run("home", pages.home, BROWSERS);
     if (p === "server") await run("server", pages.server, BROWSERS);
     if (p === "scan") await run("scan", pages.scan, 3);

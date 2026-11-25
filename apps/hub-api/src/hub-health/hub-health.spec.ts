@@ -1,4 +1,4 @@
-import { HubHealthSampler, SAMPLE_KEEP, type SamplerSources } from "./sampler";
+import { HubHealthSampler, SAMPLE_KEEP, processSources, type SamplerSources } from "./sampler";
 import { evaluateWarnings } from "./warnings";
 import { HubHealthService, parseInfo, restartsLast24h } from "./hub-health.service";
 import { HubHealthController } from "./hub-health.controller";
@@ -195,5 +195,30 @@ describe("HubHealthController", () => {
   it("is owner-only: session guard + owner guard on the class", () => {
     const guards = Reflect.getMetadata("__guards__", HubHealthController) as unknown[];
     expect(guards).toEqual([JwtAuthGuard, InstanceOwnerGuard]);
+  });
+});
+
+describe("processSources (real perf_hooks)", () => {
+  it("reads ~0 for an idle loop and the stall for a blocked one", async () => {
+    const src = processSources();
+    try {
+      await new Promise((r) => setTimeout(r, 300));
+      const idle = src.takeLoop();
+      expect(idle.p99).toBeLessThan(15);
+      await new Promise((r) => setTimeout(r, 80)); // the first tick after a reset only re-arms the histogram
+      const end = Date.now() + 200;
+      await new Promise((r) => setImmediate(r));
+      while (Date.now() < end) {
+        /* block the loop */
+      }
+      await new Promise((r) => setTimeout(r, 60));
+      const blocked = src.takeLoop();
+      expect(blocked.max).toBeGreaterThan(100);
+      expect(src.memory().rss).toBeGreaterThan(0);
+      expect(src.heapLimit()).toBeGreaterThan(64 * 1024 * 1024);
+      expect(src.takeGcMs()).toBeGreaterThanOrEqual(0);
+    } finally {
+      src.stop();
+    }
   });
 });
