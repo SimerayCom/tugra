@@ -8,6 +8,7 @@ import * as reboot from "./commands/reboot";
 import * as oob from "./commands/oob";
 import * as cutover from "./commands/cutover";
 import * as run from "./commands/run";
+import * as coolify from "./commands/coolify";
 import * as api from "./commands/api";
 import * as objects from "./commands/objects";
 import * as version from "./commands/version";
@@ -26,6 +27,7 @@ api.register(program);
 objects.register(program);
 cutover.register(program);
 run.register(program);
+coolify.register(program);
 version.register(program);
 
 program.parseAsync(process.argv).catch((err) => {

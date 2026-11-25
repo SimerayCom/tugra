@@ -61,6 +61,7 @@ tugra logout --profile prod   # forget the token locally (does NOT revoke it —
 | `tugra apps logs <id> [--tail <n>]` | Fetch recent app logs. |
 | `tugra db ls` | List databases. |
 | `tugra backup run <dbId>` | Start a database backup (needs `deploy`). |
+| `tugra coolify <status|takeover|consent|campaigns|cleanup|ssh|move>` | Where the move off Coolify stands, read-only: `status --team <id>` (every server and the four steps), `takeover <serverId>`, `consent --team <id>` (the consent to read Coolify secrets), `campaigns --team <id>`, `cleanup <serverId>`, `ssh <coolifyHostServerId>` (agent install over SSH), `move <projectId>`. Nothing here acts on a server. |
 | `tugra api <method> <path> [--data <json>]` | Raw authenticated request to any API endpoint (e.g. `tugra api GET /apps`) — the whole REST API from the CLI. |
 | `tugra version` | Show CLI + hub version, edition and protocol. |
 
