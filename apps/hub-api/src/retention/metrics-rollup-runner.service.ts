@@ -14,15 +14,30 @@ const BACKFILL_MS = 6 * 3600_000; // first run (no rollups yet): roll the last 6
 export const SLICE_MS = 15 * MINUTE_MS;
 export const MAX_FILLED_SLICES = 8;
 // The 5-minute tier is rolled from the 1-minute tier, a much smaller input (1 row/min/container), so its slices are wider:
-// 6 h per slice, 4 filled slices (24 h of history) per run. That is also how the tier back-fills after the upgrade.
+// 6 h per slice, 4 filled slices (24 h of history) per run.
+// After the upgrade the tier is empty and every reader of long ranges (costs, forecast, digest, rightsizing, the 7 d chart)
+// looks at the RECENT past, so it is back-filled newest-first: the first run folds the last SEED_5M_MS (3 days), and each
+// following run walks one step further back (MAX_FILLED_SLICES_5M slices) until the tier reaches its retention floor or
+// the oldest 1-minute bucket. Whatever is already folded is therefore always one contiguous span ending at "now".
 export const SLICE_5M_MS = 6 * 3600_000;
 export const MAX_FILLED_SLICES_5M = 4;
+export const SEED_5M_MS = 3 * 86_400_000;
+export const SEED_FILLED_SLICES_5M = Math.ceil(SEED_5M_MS / SLICE_5M_MS);
 
 /** The [start, end) slices of a window, oldest first. */
 export function slices(start: Date, end: Date, sliceMs = SLICE_MS): Array<{ start: Date; end: Date }> {
   const out: Array<{ start: Date; end: Date }> = [];
   for (let t = start.getTime(); t < end.getTime(); t += sliceMs) {
     out.push({ start: new Date(t), end: new Date(Math.min(t + sliceMs, end.getTime())) });
+  }
+  return out;
+}
+
+/** The [start, end) slices of a window walked newest-first: the first slice ends at `end`, the last one is clipped at `start`. */
+export function slicesNewestFirst(start: Date, end: Date, sliceMs = SLICE_MS): Array<{ start: Date; end: Date }> {
+  const out: Array<{ start: Date; end: Date }> = [];
+  for (let t = end.getTime(); t > start.getTime(); t -= sliceMs) {
+    out.push({ start: new Date(Math.max(t - sliceMs, start.getTime())), end: new Date(t) });
   }
   return out;
 }
@@ -82,17 +97,18 @@ export class MetricsRollupRunnerService {
     return { start: floorMinute(startMs), end };
   }
 
-  /** Roll a window slice by slice; stops after `maxFilled` slices that produced buckets. */
+  /** Roll a window slice by slice (oldest first, or newest first); stops after `maxFilled` slices that produced buckets. */
   private async bySlice(
     start: Date,
     end: Date,
     roll: (s: Date, e: Date) => Promise<number>,
     sliceMs = SLICE_MS,
     maxFilled = MAX_FILLED_SLICES,
+    newestFirst = false,
   ): Promise<number> {
     let total = 0;
     let filled = 0;
-    for (const sl of slices(start, end, sliceMs)) {
+    for (const sl of newestFirst ? slicesNewestFirst(start, end, sliceMs) : slices(start, end, sliceMs)) {
       const n = await roll(sl.start, sl.end);
       total += n;
       if (n > 0 && ++filled >= maxFilled) break;
@@ -142,26 +158,42 @@ export class MetricsRollupRunnerService {
   }
 
   /**
-   * 1-minute rollup -> 5-minute rollup. The window ends at the last 5-minute boundary the 1-minute watermark has passed
-   * (so a 5-minute bucket is only written once all its minutes are settled) and starts after the 5-minute watermark, or,
-   * on the first run (the upgrade, or a Beszel import into an empty tier), at the oldest 1-minute bucket inside the tier's
-   * retention: that back-fills the existing history, 24 h per run, and the 1-minute prune never passes this watermark.
+   * 1-minute rollup -> 5-minute rollup, in two directions around the already-folded span [oldest5, newest5]:
+   *  - forward: from the 5-minute watermark (newest bucket + 5 min) up to the last 5-minute boundary the 1-minute
+   *    watermark has passed (so a 5-minute bucket is only written once all its minutes are settled), oldest first;
+   *  - backward (the upgrade, or a Beszel import into an empty tier): from the oldest folded bucket down to the oldest
+   *    1-minute bucket inside the tier's retention, NEWEST first, so recent data is complete after one run and the
+   *    deeper history follows. An empty tier starts with a 3-day seed ending at the 1-minute watermark.
+   * The 1-minute prune never passes either edge of the span (see RetentionRunnerService).
    */
   private async roll5m(kind: "host" | "container"): Promise<number> {
-    const src = kind === "host" ? this.prisma.metricRollup : this.prisma.containerMetricRollup;
-    const dst = kind === "host" ? this.prisma.metricRollup5m : this.prisma.containerMetricRollup5m;
-    const [newest1, oldest1, newest5] = await Promise.all([
-      (src as typeof this.prisma.metricRollup).findFirst({ orderBy: { bucket: "desc" }, select: { bucket: true } }),
-      (src as typeof this.prisma.metricRollup).findFirst({ orderBy: { bucket: "asc" }, select: { bucket: true } }),
-      (dst as typeof this.prisma.metricRollup5m).findFirst({ orderBy: { bucket: "desc" }, select: { bucket: true } }),
-    ]);
+    // The four models share the (bucket) column; only that one is read here.
+    type Edge = { findFirst(args: { orderBy: { bucket: "asc" | "desc" }; select: { bucket: true } }): Promise<{ bucket: Date } | null> };
+    const src = (kind === "host" ? this.prisma.metricRollup : this.prisma.containerMetricRollup) as unknown as Edge;
+    const dst = (kind === "host" ? this.prisma.metricRollup5m : this.prisma.containerMetricRollup5m) as unknown as Edge;
+    const edge = (m: Edge, order: "asc" | "desc") => m.findFirst({ orderBy: { bucket: order }, select: { bucket: true } });
+    const [newest1, oldest1, newest5, oldest5] = await Promise.all([edge(src, "desc"), edge(src, "asc"), edge(dst, "desc"), edge(dst, "asc")]);
     if (!newest1 || !oldest1) return 0;
     const end = floor5m(newest1.bucket.getTime() + MINUTE_MS);
     const floorMs = Date.now() - metricTiers().rollup5mMs;
-    const first = floor5m(Math.max(oldest1.bucket.getTime(), floorMs));
-    const start = newest5 ? new Date(Math.max(newest5.bucket.getTime() + FIVE_MIN_MS, first.getTime())) : first;
-    if (start >= end) return 0;
-    return this.bySlice(start, end, (s, e) => (kind === "host" ? this.roll5mHostSlice(s, e) : this.roll5mContainerSlice(s, e)), SLICE_5M_MS, MAX_FILLED_SLICES_5M);
+    const first = floor5m(Math.max(oldest1.bucket.getTime(), floorMs)); // the oldest minute worth folding
+    const roll = (s: Date, e: Date) => (kind === "host" ? this.roll5mHostSlice(s, e) : this.roll5mContainerSlice(s, e));
+    let total = 0;
+
+    if (newest5) {
+      const start = new Date(Math.max(newest5.bucket.getTime() + FIVE_MIN_MS, first.getTime()));
+      if (start < end) total += await this.bySlice(start, end, roll, SLICE_5M_MS, MAX_FILLED_SLICES_5M);
+    }
+
+    // Backward: an empty tier is seeded from the newest end of the 1-minute data.
+    const boundary = oldest5 ? oldest5.bucket : end;
+    const stop = oldest5 ? first : new Date(Math.max(first.getTime(), end.getTime() - SEED_5M_MS));
+    if (stop < boundary) {
+      total += await this.bySlice(stop, boundary, roll, SLICE_5M_MS, oldest5 ? MAX_FILLED_SLICES_5M : SEED_FILLED_SLICES_5M, true);
+      // An empty tier whose last 3 days hold no 1-minute data at all (sparse history): do not stay stuck on the seed window.
+      if (!oldest5 && total === 0 && first < stop) total += await this.bySlice(first, stop, roll, SLICE_5M_MS, MAX_FILLED_SLICES_5M, true);
+    }
+    return total;
   }
 
   private roll5mHostSlice(start: Date, end: Date): Promise<number> {

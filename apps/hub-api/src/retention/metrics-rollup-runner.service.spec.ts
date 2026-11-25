@@ -3,9 +3,12 @@ import {
   MAX_FILLED_SLICES,
   MAX_FILLED_SLICES_5M,
   MetricsRollupRunnerService,
+  SEED_5M_MS,
+  SEED_FILLED_SLICES_5M,
   SLICE_5M_MS,
   SLICE_MS,
   slices,
+  slicesNewestFirst,
 } from "./metrics-rollup-runner.service";
 
 // The aggregation maths (avg / max / rounding / optional columns / 5-minute folding) runs in Postgres and is pinned
@@ -19,6 +22,8 @@ function make(opts: {
   newestHost?: Date; newestContainer?: Date;
   oldestHost?: Date; oldestContainer?: Date;
   newest5mHost?: Date; newest5mContainer?: Date;
+  /** oldest 5-minute bucket; defaults to the newest (a one-bucket tier) */
+  oldest5mHost?: Date; oldest5mContainer?: Date;
   /** rows each statement "inserts", by table; default 0 */
   inserted?: (table: string, s: Stmt, call: number) => number;
 } = {}) {
@@ -34,8 +39,8 @@ function make(opts: {
   const prisma = {
     metricRollup: rollupModel(opts.newestHost, opts.oldestHost ?? opts.newestHost),
     containerMetricRollup: rollupModel(opts.newestContainer, opts.oldestContainer ?? opts.newestContainer),
-    metricRollup5m: rollupModel(opts.newest5mHost, opts.newest5mHost),
-    containerMetricRollup5m: rollupModel(opts.newest5mContainer, opts.newest5mContainer),
+    metricRollup5m: rollupModel(opts.newest5mHost, opts.oldest5mHost ?? opts.newest5mHost),
+    containerMetricRollup5m: rollupModel(opts.newest5mContainer, opts.oldest5mContainer ?? opts.newest5mContainer),
     // No findMany on the sample tables: the runner must never pull rows into the hub.
     metric: {},
     containerMetric: {},
@@ -137,6 +142,11 @@ describe("MetricsRollupRunnerService", () => {
       expect(out[2].end.getTime()).toBe(end.getTime());
     });
 
+    it("walks a window newest-first, the oldest slice clipped", () => {
+      const out = slicesNewestFirst(new Date(0), new Date(40 * MIN)).map((x) => [x.start.getTime() / MIN, x.end.getTime() / MIN]);
+      expect(out).toEqual([[25, 40], [10, 25], [0, 10]]);
+    });
+
     it("a 25 h host catch-up never covers more than one slice per statement, and walks empty gaps in the same run", async () => {
       const { svc, into } = make({ newestHost: new Date(Date.now() - 25 * 3600_000) });
       await svc.roll();
@@ -186,28 +196,77 @@ describe("MetricsRollupRunnerService", () => {
 
     it("watermark: continues after the newest 5-minute bucket", async () => {
       const base = fiveFloor(Date.now() - 60 * MIN);
-      const { svc, into } = make({ newestHost: new Date(base + 40 * MIN), oldestHost: new Date(base - 3 * 3600_000), newest5mHost: new Date(base + 10 * MIN) });
+      const { svc, into } = make({ newestHost: new Date(base + 40 * MIN), oldestHost: new Date(base - 3 * 3600_000), newest5mHost: new Date(base + 10 * MIN), oldest5mHost: new Date(base - 3 * 3600_000) });
       await svc.roll();
       expect(window(into("MetricRollup5m")[0]).start).toBe(base + 15 * MIN);
     });
 
-    it("first run back-fills from the OLDEST 1-minute bucket (the upgrade case), 6 h slices", async () => {
-      const oldest = new Date(fiveFloor(Date.now() - 14 * 86_400_000) + 2 * MIN);
-      const { svc, into } = make({ newestHost: new Date(Date.now() - 4 * MIN), oldestHost: oldest });
+    it("an EMPTY tier (the upgrade) is seeded newest-first: the last 3 days ending at the 1-minute watermark, newest slice first", async () => {
+      const newest = new Date(Date.now() - 4 * MIN);
+      const { svc, into } = make({ newestHost: newest, oldestHost: new Date(Date.now() - 14 * 86_400_000), inserted: (t) => (t === "MetricRollup5m" ? 100 : 0) });
       await svc.roll();
       const ws = into("MetricRollup5m").map(window);
-      expect(ws[0].start).toBe(fiveFloor(oldest.getTime())); // 5-minute aligned
+      const end = fiveFloor(newest.getTime() + MIN);
+      expect(ws[0].end).toBe(end); // the newest slice goes first
+      for (let i = 1; i < ws.length; i++) expect(ws[i].end).toBe(ws[i - 1].start); // contiguous, walking backwards
+      expect(ws[ws.length - 1].start).toBe(end - SEED_5M_MS);
       for (const w of ws) expect(w.end - w.start).toBeLessThanOrEqual(SLICE_5M_MS);
+      expect(ws[0].start % FIVE_MIN_MS).toBe(0); // 5-minute aligned: no bucket is ever split between slices
     });
 
-    it("the back-fill is bounded per run: at most MAX_FILLED_SLICES_5M non-empty slices, the next run continues", async () => {
+    it("the seed is bounded to SEED_FILLED_SLICES_5M non-empty slices (a run never folds more than the 3 days)", async () => {
       const { svc, into } = make({
         newestHost: new Date(Date.now() - 4 * MIN),
         oldestHost: new Date(Date.now() - 14 * 86_400_000),
         inserted: (t) => (t === "MetricRollup5m" ? 100 : 0),
       });
       await svc.roll();
-      expect(into("MetricRollup5m")).toHaveLength(MAX_FILLED_SLICES_5M);
+      expect(into("MetricRollup5m")).toHaveLength(SEED_FILLED_SLICES_5M);
+    });
+
+    it("a partly folded tier keeps walking BACKWARDS from its oldest bucket, at most MAX_FILLED_SLICES_5M slices per run", async () => {
+      const base = fiveFloor(Date.now() - 30 * MIN);
+      const oldest5 = new Date(fiveFloor(Date.now() - 3 * 86_400_000));
+      const { svc, into } = make({
+        newestHost: new Date(base + 9 * MIN), // -> window end = base + 10 min
+        oldestHost: new Date(Date.now() - 14 * 86_400_000),
+        newest5mHost: new Date(base - 5 * MIN),
+        oldest5mHost: oldest5,
+        inserted: (t) => (t === "MetricRollup5m" ? 100 : 0),
+      });
+      await svc.roll();
+      const ws = into("MetricRollup5m").map(window);
+      expect(ws[0]).toEqual({ start: base, end: base + 10 * MIN }); // the small forward gap first
+      const back = ws.slice(1);
+      expect(back).toHaveLength(MAX_FILLED_SLICES_5M);
+      expect(back[0].end).toBe(oldest5.getTime());
+      for (let i = 1; i < back.length; i++) expect(back[i].end).toBe(back[i - 1].start);
+    });
+
+    it("the back-fill stops at the oldest 1-minute bucket and is idle once the tier reaches it", async () => {
+      const base = fiveFloor(Date.now() - 2 * 3600_000);
+      const oldest = new Date(base + 2 * MIN); // 2 min into its 5-minute bucket
+      const behind = make({ newestHost: new Date(Date.now() - 4 * MIN), oldestHost: oldest, newest5mHost: new Date(fiveFloor(Date.now() - 4 * MIN)), oldest5mHost: new Date(base + 30 * MIN) });
+      await behind.svc.roll();
+      const w = behind.into("MetricRollup5m").map(window);
+      expect(w[w.length - 1].start).toBe(base); // floor of the oldest minute
+      const done = make({ newestHost: new Date(Date.now() - 4 * MIN), oldestHost: oldest, newest5mHost: new Date(fiveFloor(Date.now() - 4 * MIN)), oldest5mHost: new Date(base) });
+      await done.svc.roll();
+      expect(done.into("MetricRollup5m")).toHaveLength(0);
+    });
+
+    it("an empty tier whose last 3 days hold no 1-minute data does not stay stuck on the seed window", async () => {
+      const { svc, into } = make({
+        newestHost: new Date(Date.now() - 4 * MIN),
+        oldestHost: new Date(Date.now() - 10 * 86_400_000),
+        // only slices older than the seed window have data
+        inserted: (t, st) => (t === "MetricRollup5m" && window(st).end <= Date.now() - SEED_5M_MS ? 50 : 0),
+      });
+      await svc.roll();
+      const ws = into("MetricRollup5m").map(window);
+      expect(ws.length).toBeGreaterThan(SEED_FILLED_SLICES_5M);
+      expect(ws[ws.length - 1].end).toBeLessThanOrEqual(Date.now() - SEED_5M_MS + 2 * SLICE_5M_MS);
+      expect(ws.filter((w) => w.end <= Date.now() - SEED_5M_MS)).toHaveLength(MAX_FILLED_SLICES_5M);
     });
 
     it("never reaches back past the 28-day tier retention", async () => {
@@ -225,7 +284,7 @@ describe("MetricsRollupRunnerService", () => {
 
     it("is idle when the 5-minute watermark is already at the last complete bucket", async () => {
       const base = fiveFloor(Date.now() - 20 * MIN);
-      const { svc, into } = make({ newestHost: new Date(base + 9 * MIN), oldestHost: new Date(base - 3600_000), newest5mHost: new Date(base + 5 * MIN) });
+      const { svc, into } = make({ newestHost: new Date(base + 9 * MIN), oldestHost: new Date(base - 3600_000), newest5mHost: new Date(base + 5 * MIN), oldest5mHost: new Date(base - 3600_000) });
       await svc.roll();
       expect(into("MetricRollup5m")).toHaveLength(0);
     });

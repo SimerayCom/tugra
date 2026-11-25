@@ -88,17 +88,27 @@ export class RetentionRunnerService {
       (ids) => this.prisma.heartbeat.deleteMany({ where: { id: { in: ids } } }),
     );
     // The 1-minute rollups are only the input of the 5-minute tier: never drop a minute the 5-minute roll has not
-    // consumed yet (the 5-minute watermark is that tier's newest bucket; on the first run after an upgrade it is empty
-    // and the 1-minute history is still being folded in, so nothing is pruned until it has started).
-    const [newest5mHost, newest5mContainer] = await Promise.all([
+    // folded yet. The 5-minute tier is filled newest-first after an upgrade (the recent days first, then backwards), so
+    // "folded" is the span [oldest 5-minute bucket, newest 5-minute bucket]:
+    //   - minutes newer than the newest 5-minute bucket are still waiting for the forward roll  -> cutoff <= newest;
+    //   - minutes older than the oldest 5-minute bucket but inside the tier window are still waiting for the back-fill
+    //     (protected range [5-minute floor, oldest)); once it has caught up, `oldest` sits at the floor and nothing is protected;
+    //   - minutes older than the whole 5-minute window will never be folded and go with the normal cutoff.
+    // While the 5-minute tier is empty (first run after an upgrade) the whole tier window is protected.
+    const [newest5mHost, newest5mContainer, oldest5mHost, oldest5mContainer] = await Promise.all([
       this.prisma.metricRollup5m.findFirst({ orderBy: { bucket: "desc" }, select: { bucket: true } }),
       this.prisma.containerMetricRollup5m.findFirst({ orderBy: { bucket: "desc" }, select: { bucket: true } }),
+      this.prisma.metricRollup5m.findFirst({ orderBy: { bucket: "asc" }, select: { bucket: true } }),
+      this.prisma.containerMetricRollup5m.findFirst({ orderBy: { bucket: "asc" }, select: { bucket: true } }),
     ]);
-    const guard = (cutoff: Date, newest5m: { bucket: Date } | null) => (newest5m ? new Date(Math.min(cutoff.getTime(), newest5m.bucket.getTime())) : null);
-    const hostGuard = guard(rollup1mCutoff, newest5mHost);
-    const containerGuard = guard(rollup1mCutoff, newest5mContainer);
-    const metricRollup = hostGuard ? await this.pruneBatched("MetricRollup", hostGuard) : 0;
-    const containerMetricRollup = containerGuard ? await this.pruneBatched("ContainerMetricRollup", containerGuard) : 0;
+    const guard = (newest: { bucket: Date } | null, oldest: { bucket: Date } | null) => ({
+      cutoff: newest ? new Date(Math.min(rollup1mCutoff.getTime(), newest.bucket.getTime())) : rollup1mCutoff,
+      protect: { from: rollup5mCutoff, to: oldest ? oldest.bucket : rollup1mCutoff },
+    });
+    const hostGuard = guard(newest5mHost, oldest5mHost);
+    const containerGuard = guard(newest5mContainer, oldest5mContainer);
+    const metricRollup = await this.pruneBatched("MetricRollup", hostGuard.cutoff, hostGuard.protect);
+    const containerMetricRollup = await this.pruneBatched("ContainerMetricRollup", containerGuard.cutoff, containerGuard.protect);
     const metricRollup5m = await this.pruneBatched("MetricRollup5m", rollup5mCutoff);
     const containerMetricRollup5m = await this.pruneBatched("ContainerMetricRollup5m", rollup5mCutoff);
     // Terminal deployments past the cutoff that are NO LONGER rollback targets (no local tag, registry ref or
@@ -175,12 +185,17 @@ export class RetentionRunnerService {
    * Delete every row of a time-series table older than `cutoff`, METRIC_BATCH rows per statement
    * (`DELETE ... WHERE ctid IN (SELECT ctid ... LIMIT n)`: one short transaction per batch, no id round-trip through the hub).
    */
-  private async pruneBatched(table: MetricTable, cutoff: Date): Promise<number> {
+  private async pruneBatched(table: MetricTable, cutoff: Date, protect?: { from: Date; to: Date }): Promise<number> {
     const t = Prisma.raw(`"${table}"`);
     const col = Prisma.raw(`"${METRIC_TABLES[table]}"`);
+    // `protect` [from, to): rows that are old but must stay (not folded into the next tier yet). Only added to the
+    // statement while the range is non-empty, so the steady-state DELETE is the plain indexed `col < cutoff`.
+    const keep = protect && protect.from < protect.to && protect.from < cutoff
+      ? Prisma.sql` AND NOT (${col} >= ${protect.from} AND ${col} < ${protect.to})`
+      : Prisma.empty;
     let total = 0;
     for (;;) {
-      const n = await this.prisma.$executeRaw(Prisma.sql`DELETE FROM ${t} WHERE ctid IN (SELECT ctid FROM ${t} WHERE ${col} < ${cutoff} LIMIT ${METRIC_BATCH})`);
+      const n = await this.prisma.$executeRaw(Prisma.sql`DELETE FROM ${t} WHERE ctid IN (SELECT ctid FROM ${t} WHERE ${col} < ${cutoff}${keep} LIMIT ${METRIC_BATCH})`);
       total += n;
       if (n < METRIC_BATCH) break; // short batch — nothing older left
       await new Promise((r) => setTimeout(r, METRIC_PAUSE_MS));

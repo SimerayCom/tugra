@@ -1,7 +1,7 @@
 import { RetentionRunnerService } from "./retention-runner.service";
 
 describe("RetentionRunnerService", () => {
-  function make(cfg: Record<string, unknown> = {}, opts: { newest5m?: { bucket: Date } | null } = {}) {
+  function make(cfg: Record<string, unknown> = {}, opts: { newest5m?: { bucket: Date } | null; oldest5m?: { bucket: Date } | null } = {}) {
     const statements: Array<{ table: string; sql: string; values: unknown[] }> = [];
     const deleted: Record<string, number[]> = {};
     // Each model: findMany returns queued pages (one array per call), then [] to end the loop.
@@ -23,6 +23,9 @@ describe("RetentionRunnerService", () => {
       findMany: jest.fn().mockImplementation(() => Promise.resolve(pages[name].shift() ?? [])),
       deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
     });
+    const newest5m = opts.newest5m === undefined ? { bucket: new Date(0) } : opts.newest5m;
+    const oldest5m = opts.oldest5m === undefined ? (newest5m ? { bucket: new Date(0) } : null) : opts.oldest5m;
+    const edge = async (a: { orderBy: { bucket: "asc" | "desc" } }) => (a.orderBy.bucket === "desc" ? newest5m : oldest5m);
     const prisma = {
       heartbeat: model("heartbeat"),
       deployment: model("deployment"),
@@ -37,8 +40,9 @@ describe("RetentionRunnerService", () => {
       trafficUnique: model("trafficUnique"),
       trafficUniqueHour: model("trafficUniqueHour"),
       // The metric tables are pruned with ctid-batched raw DELETEs: `deleted[table]` queues how many rows each statement reports.
-      metricRollup5m: { findFirst: jest.fn().mockResolvedValue(opts.newest5m === undefined ? { bucket: new Date(0) } : opts.newest5m) },
-      containerMetricRollup5m: { findFirst: jest.fn().mockResolvedValue(opts.newest5m === undefined ? { bucket: new Date(0) } : opts.newest5m) },
+      // findFirst answers by sort direction: newest (desc) / oldest (asc). Default tier: from the epoch up to opts.newest5m.
+      metricRollup5m: { findFirst: jest.fn(edge) },
+      containerMetricRollup5m: { findFirst: jest.fn(edge) },
       $executeRaw: jest.fn(async (q: { sql: string; values: unknown[] }) => {
         const table = /DELETE FROM "(\w+)"/.exec(q.sql)![1];
         statements.push({ table, sql: q.sql, values: q.values });
@@ -97,21 +101,47 @@ describe("RetentionRunnerService", () => {
     expect(res.containerMetric).toBe(40_123);
   });
 
-  it("never prunes a 1-minute rollup the 5-minute roll has not consumed: cutoff = min(48 h ago, newest 5-minute bucket)", async () => {
-    const newest5m = new Date(Date.now() - 20 * 86_400_000); // back-fill only got 8 days into the history
+  it("never prunes a 1-minute rollup the forward roll has not folded: cutoff = min(48 h ago, newest 5-minute bucket)", async () => {
+    const newest5m = new Date(Date.now() - 60 * 3600_000); // the forward roll is 60 h behind (hub was down)
     const { svc, statements } = make({}, { newest5m: { bucket: newest5m } });
     await svc.prune();
     expect(cutoffOf(forTable(statements, "MetricRollup")[0]).getTime()).toBe(newest5m.getTime());
     expect(cutoffOf(forTable(statements, "ContainerMetricRollup")[0]).getTime()).toBe(newest5m.getTime());
   });
 
-  it("does not touch the 1-minute rollups at all while the 5-minute tier is still empty (upgrade, first run)", async () => {
+  it("steady state (5-minute tier reaches its floor): the 1-minute prune is the plain indexed `bucket < cutoff`", async () => {
+    const { svc, statements } = make({}, { newest5m: { bucket: new Date() }, oldest5m: { bucket: new Date(Date.now() - 28 * 86_400_000 - 3600_000) } });
+    await svc.prune();
+    for (const t of ["MetricRollup", "ContainerMetricRollup"]) {
+      expect(forTable(statements, t)[0].sql).not.toContain("NOT (");
+      expect(forTable(statements, t)[0].values).toHaveLength(2); // cutoff, LIMIT
+    }
+  });
+
+  it("protects the not-yet-back-filled history: minutes older than the oldest 5-minute bucket (inside the tier window) are kept", async () => {
+    const oldest5m = new Date(Date.now() - 3 * 86_400_000); // newest-first back-fill has reached 3 days so far
+    const { svc, statements } = make({}, { newest5m: { bucket: new Date() }, oldest5m: { bucket: oldest5m } });
+    const t0 = Date.now();
+    await svc.prune();
+    for (const t of ["MetricRollup", "ContainerMetricRollup"]) {
+      const st = forTable(statements, t)[0];
+      expect(st.sql).toMatch(/"bucket" < \? AND NOT \("bucket" >= \? AND "bucket" < \?\)/);
+      const [cutoff, from, to] = st.values as Date[];
+      expect((t0 - cutoff.getTime()) / 3600_000).toBeCloseTo(48, 1); // folded span reaches "now": the 48 h cutoff applies
+      expect((t0 - from.getTime()) / 86_400_000).toBeCloseTo(28, 1); // protected from the 5-minute window floor ...
+      expect(to.getTime()).toBe(oldest5m.getTime()); // ... up to the oldest folded bucket
+    }
+  });
+
+  it("while the 5-minute tier is still empty (upgrade, first run) the whole tier window of the 1-minute rollups is protected; raw is still pruned", async () => {
     const { svc, statements } = make({}, { newest5m: null });
-    const res = await svc.prune();
-    expect(forTable(statements, "MetricRollup")).toHaveLength(0);
-    expect(forTable(statements, "ContainerMetricRollup")).toHaveLength(0);
-    expect(forTable(statements, "Metric")).toHaveLength(1); // raw is still pruned
-    expect(res.metricRollup).toBe(0);
+    await svc.prune();
+    for (const t of ["MetricRollup", "ContainerMetricRollup"]) {
+      const [cutoff, from, to] = forTable(statements, t)[0].values as Date[];
+      expect(to.getTime()).toBe(cutoff.getTime()); // [28 d floor, 48 h cutoff) kept: only rows older than the tier window go
+      expect(from.getTime()).toBeLessThan(cutoff.getTime());
+    }
+    expect(forTable(statements, "Metric")).toHaveLength(1);
   });
 
   it("does nothing when no table has aged-out rows", async () => {

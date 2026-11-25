@@ -139,7 +139,8 @@ describe("metric rollup tiers (real database)", () => {
     const older = new Date(old.getTime() - 3600_000);
     const row = (bucket: Date) => ({ id: `${tag}-old-${bucket.getTime()}`, serverId: sB, bucket, avgCpu: 1, maxCpu: 1, avgMemUsed: 1n, avgMemTotal: 1n, avgDiskUsed: 1n, avgDiskTotal: 1n, avgNetRx: 0n, avgNetTx: 0n, avgDiskRead: 0n, avgDiskWrite: 0n });
     await prisma.metricRollup.createMany({ data: [row(old), row(older)] });
-    // 5-minute watermark of server B's tier (global newest) is recent -> both are consumed -> pruned
+    // the 5-minute tier already holds history older than both rows (a folded span from 4 days ago up to now) -> both are consumed -> pruned
+    await prisma.metricRollup5m.create({ data: { serverId: sB, bucket: new Date(Math.floor((Date.now() - 4 * 86_400_000) / FIVE) * FIVE), avgCpu: 1, maxCpu: 1, avgMemUsed: 1n, avgMemTotal: 1n, avgDiskUsed: 1n, avgDiskTotal: 1n, avgNetRx: 0n, avgNetTx: 0n, avgDiskRead: 0n, avgDiskWrite: 0n } });
     await retention.prune();
     expect(await prisma.metricRollup.count({ where: { serverId: sB, bucket: { in: [old, older] } } })).toBe(0);
     // recent 1-minute rows (within 48 h) survive
@@ -167,5 +168,26 @@ describe("metric rollup tiers (real database)", () => {
     expect(hour.containers).toEqual([]);
     const six = await containers.forApp(sA, "web", "6h"); // raw within the 6 h container retention
     expect(six.containers[0].samples.some((s) => s.cpu === 5 && !("cpuMax" in s))).toBe(true);
+  });
+
+  it("back-fills the 5-minute tier BACKWARDS from its oldest bucket, and the 1-minute prune keeps unfolded history until then", async () => {
+    // history older than anything the 5-minute tier holds (it was written before the tier existed): 6 days back
+    const sixDays = Math.floor((Date.now() - 6 * 86_400_000) / FIVE) * FIVE;
+    const row = (ms: number, cpu: number) => ({ id: `${tag}-bf-${ms}`, serverId: sB, bucket: new Date(sixDays + ms), avgCpu: cpu, maxCpu: cpu + 5, avgMemUsed: 1n, avgMemTotal: 1n, avgDiskUsed: 1n, avgDiskTotal: 1n, avgNetRx: 0n, avgNetTx: 0n, avgDiskRead: 0n, avgDiskWrite: 0n });
+    await prisma.metricRollup.createMany({ data: [row(0, 10), row(MIN, 20), row(2 * MIN, 30), row(5 * MIN, 40)] });
+    // not folded yet and inside the 28-day tier window -> the prune must leave them alone
+    await retention.prune();
+    expect(await prisma.metricRollup.count({ where: { id: { startsWith: `${tag}-bf-` } } })).toBe(4);
+    // the roll walks back from the oldest 5-minute bucket and folds them (mean of the minute means, max of the maxes)
+    const res = await runner.roll();
+    expect(res.metric5m).toBeGreaterThanOrEqual(2);
+    const b0 = (await prisma.metricRollup5m.findFirst({ where: { serverId: sB, bucket: new Date(sixDays) } }))!;
+    expect(b0.avgCpu).toBe(20); // (10 + 20 + 30) / 3
+    expect(b0.maxCpu).toBe(35);
+    expect((await prisma.metricRollup5m.findFirst({ where: { serverId: sB, bucket: new Date(sixDays + FIVE) } }))!.avgCpu).toBe(40);
+    // now they are inside the folded span -> pruned like any other consumed minute
+    await retention.prune();
+    expect(await prisma.metricRollup.count({ where: { id: { startsWith: `${tag}-bf-` } } })).toBe(0);
+    expect(await prisma.metricRollup5m.count({ where: { serverId: sB, bucket: { in: [new Date(sixDays), new Date(sixDays + FIVE)] } } })).toBe(2);
   });
 });
