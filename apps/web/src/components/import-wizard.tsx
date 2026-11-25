@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { TriangleAlert } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
@@ -12,6 +12,7 @@ import { CopyBtn } from "./copy-row";
 import { ImportReviewStep } from "./import-review-step";
 import { ImportScopeStep } from "./import-scope-step";
 import { scopedPlan, scopeServiceSkips, type ImportScope, type ScopeSelection } from "../lib/import-scope";
+import { clearImportResume, loadImportResume, saveImportResume } from "../lib/import-resume";
 import { IMPORT_PREFILL_KEY } from "../lib/coolify-takeover";
 import { CutoverPanel } from "./cutover-panel";
 import { planSummary, itemsByKind, riskTone, opProgress, coverageApps, coverageCounts, hasDeferredCoverage, reasonText, ackableItems, buildAcks, runnableAfterAcks, serviceChoicesPayload, volumeCopyCandidates, selectedDbModes, vxCommandsWithFlags } from "../lib/import";
@@ -56,6 +57,7 @@ export function ImportWizard() {
   const toast = useToast();
   const { data: teams = [] } = useQuery({ queryKey: ["teams"], queryFn: () => api.listTeams() });
   const { data: servers = [] } = useQuery({ queryKey: ["servers"], queryFn: () => api.listServers() });
+  const qc = useQueryClient();
 
   const [kind, setKind] = useState<ImportRemoteKind>("coolify");
   const [baseUrl, setBaseUrl] = useState("");
@@ -75,6 +77,9 @@ export function ImportWizard() {
   const [scope, setScope] = useState<ImportScope | null>(null);
   // What was picked last, so "Change" reopens the first step as it was left.
   const [lastSelection, setLastSelection] = useState<ScopeSelection | undefined>(undefined);
+  // The step's live selection (kept in sessionStorage so a refresh resumes at the first step), and why a resume did not work.
+  const liveSelection = useRef<ScopeSelection | undefined>(undefined);
+  const [resumeNote, setResumeNote] = useState<"expired" | null>(null);
 
   // There is no team to pick up front: the connection belongs to the team of the first server you can write to (else your first
   // team), and the target team follows from the server the import lands on.
@@ -107,11 +112,47 @@ export function ImportWizard() {
     window.history.replaceState(window.history.state, "", url);
   }, [opId]);
 
+  // A refresh keeps the wizard where it was: the hub session and the picked scope come back from sessionStorage, the plan is read
+  // again (so the matches are current) and the first step opens on what was picked. The token is never stored.
+  const resumed = useRef(false);
+  useEffect(() => {
+    if (resumed.current) return;
+    resumed.current = true;
+    if (new URLSearchParams(window.location.search).get("op")) return;
+    const r = loadImportResume();
+    if (!r) return;
+    setKind(r.kind);
+    if (r.baseUrl) setBaseUrl(r.baseUrl);
+    setSessionId(r.sessionId);
+    setDbModes(r.dbModes);
+    setLastSelection(r.selection);
+    liveSelection.current = r.selection;
+    planM.mutate({ sid: r.sessionId, kind: r.kind, modes: r.dbModes, resume: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  useEffect(() => {
+    if (sessionId && !opId) saveImportResume({ kind, baseUrl, sessionId, selection: liveSelection.current ?? lastSelection, dbModes });
+  }, [sessionId, opId, kind, baseUrl, dbModes, lastSelection, scope]);
+
   const planM = useMutation({
-    mutationFn: (v: { sid: string; modes?: Record<string, "volume"> }) =>
-      api.importPlan({ sourceKind: kind, sessionId: v.sid, ...(v.modes && Object.keys(v.modes).length ? { dbDataModes: v.modes } : {}) }),
-    onSuccess: setPlan,
-    onError: (e) => toast((e as Error).message, "error"),
+    mutationFn: (v: { sid: string; kind?: ImportRemoteKind; modes?: Record<string, "volume">; resume?: boolean }) =>
+      api.importPlan({ sourceKind: v.kind ?? kind, sessionId: v.sid, ...(v.modes && Object.keys(v.modes).length ? { dbDataModes: v.modes } : {}) }),
+    onSuccess: (p) => {
+      setResumeNote(null);
+      setPlan(p);
+    },
+    onError: (e, v) => {
+      if (v.resume) {
+        // the hub session ended (it lives for an hour): start from the connect form again, with the address kept
+        clearImportResume();
+        setSessionId(null);
+        setPlan(null);
+        setLastSelection(undefined);
+        setResumeNote("expired");
+        return;
+      }
+      toast((e as Error).message, "error");
+    },
   });
   const connect = useMutation({
     mutationFn: () => api.importConnect({ sourceKind: kind, teamId: connectTeam, baseUrl: baseUrl.trim(), token: token.trim(), ...(scopeLabel.trim() ? { scopeLabel: scopeLabel.trim() } : {}) }),
@@ -151,6 +192,9 @@ export function ImportWizard() {
   };
 
   const reset = () => {
+    clearImportResume();
+    liveSelection.current = undefined;
+    setResumeNote(null);
     setDbModes({});
     setPlan(null);
     setScope(null);
@@ -162,6 +206,24 @@ export function ImportWizard() {
     planM.reset();
   };
 
+  // "Start over" on the first step also ends the hub session, so the stored token stops being usable now instead of at its expiry.
+  const startOver = () => {
+    if (sessionId) api.importRevoke(sessionId).catch(() => undefined);
+    reset();
+  };
+  const onSelectionChange = useCallback(
+    (sel: ScopeSelection) => {
+      liveSelection.current = sel;
+      if (sessionId) saveImportResume({ kind, baseUrl, sessionId, selection: sel, dbModes });
+    },
+    [sessionId, kind, baseUrl, dbModes],
+  );
+  // a server was just added or an agent came online: read the servers and the plan again so the matches are current
+  const recheck = () => {
+    void qc.invalidateQueries({ queryKey: ["servers"] });
+    if (sessionId) planM.mutate({ sid: sessionId, modes: dbModes });
+  };
+
   const busy = connect.isPending || planM.isPending;
   if (opId) {
     // The settings step needs the live source session: after a reload (?op=) there is none, so it is simply not offered.
@@ -170,7 +232,19 @@ export function ImportWizard() {
   }
 
   if (plan && sessionId && !scope && plan.mapping?.features?.includes("mapping-v1")) {
-    return <ImportScopeStep plan={plan} servers={writableServers} teams={teams} initial={lastSelection} onContinue={(sc) => { setScope(sc); setLastSelection(sc.selection); }} onStartOver={reset} />;
+    return (
+      <ImportScopeStep
+        plan={plan}
+        servers={writableServers.map((s) => ({ id: s.id, name: s.name, teamId: s.teamId, status: s.status, capabilities: s.capabilities, lastSeenAt: s.lastSeenAt }))}
+        teams={teams}
+        initial={lastSelection}
+        onContinue={(sc) => { setScope(sc); setLastSelection(sc.selection); }}
+        onStartOver={startOver}
+        onSelectionChange={onSelectionChange}
+        onRecheck={recheck}
+        rechecking={planM.isPending}
+      />
+    );
   }
 
   if (plan && sessionId) {
@@ -199,6 +273,7 @@ export function ImportWizard() {
 
   return (
     <SectionCard title={t(src.title)} desc={t(src.hint)} style={{ padding: 20, maxWidth: 560, marginBottom: 0 }}>
+      {resumeNote === "expired" && <p role="status" style={{ fontSize: 12, color: "var(--c-am)", margin: "0 0 12px" }}>{t("import.resumeExpired")}</p>}
 
       <div id="imp-source-label" style={label}>{t("import.sourcePicker")}</div>
       <div role="radiogroup" aria-labelledby="imp-source-label" style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 16 }}>

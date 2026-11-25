@@ -2628,6 +2628,10 @@ export const api = {
   importResolve(input: { sessionId: string; sourceKind: ImportRemoteKind; planHash: string; targetServerId: string; environmentId?: string; reconcile?: boolean; acks?: ImportAck[]; dbDataModes?: Record<string, "volume">; serverMap?: Record<string, string>; mapping: ImportMappingDoc }) {
     return apiFetch<ImportResolved>("/import/mapping/resolve", { method: "POST", body: JSON.stringify(input) });
   },
+  /** End an import session now ("Start over"): the stored token can no longer be used. */
+  importRevoke(sessionId: string) {
+    return apiFetch<{ ok: true }>(`/import/sessions/${encodeURIComponent(sessionId)}`, { method: "DELETE" });
+  },
   importMappingGet(sessionId: string) {
     return apiFetch<ImportStoredMapping>(`/import/sessions/${encodeURIComponent(sessionId)}/mapping`);
   },

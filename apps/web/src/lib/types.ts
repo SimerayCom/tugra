@@ -1487,6 +1487,15 @@ export interface ImportSourceProject {
   name: string;
   itemRefs: string[];
 }
+/** The registered Tugra server that is the same machine as a source server, found by the hub (a verdict, never the source's address). */
+export interface ImportTugraMatch {
+  serverId: string;
+  name: string;
+  teamId: string;
+  via: "public-ip" | "reported-ip" | "hostname";
+  /** certain: a public address matched; probable: a private range or only the host name matched. */
+  confidence: "certain" | "probable";
+}
 export interface ImportPreflight {
   databases: Array<{ name: string; engine: string; dataPlane: DbDataPlane; reason: string; backup?: { schedules?: number; s3?: boolean; interval?: string; targets?: string[] } }>;
   services: Array<{ name: string; members: number; note: string; objectStore?: true; verdict?: ImportServiceVerdict; hold?: boolean; volumes?: Array<{ key: string; dataPlane: string; origin?: "host-bind" }> }>;
@@ -1500,7 +1509,11 @@ export interface ImportPreflight {
   /** Git hosts the apps clone from (host + app count). */
   git?: { hosts: Array<{ host: string; apps: number }> };
   /** The source servers by name (Coolify, Dokploy), so a host is shown by its name and not by its uuid. */
-  hosts?: Array<{ ref: string; name?: string; controlPlane?: true; unreachableCount?: number; os?: string }>;
+  hosts?: Array<{ ref: string; name?: string; controlPlane?: true; unreachableCount?: number; os?: string; tugra?: ImportTugraMatch }>;
+  /** The Tugra server the source's own panel box is (Dokploy: items that live on no named server). A verdict only, never an address. */
+  panel?: { tugra: ImportTugraMatch };
+  /** The source team's name (Coolify), to default the target team by name. */
+  sourceTeam?: string;
   /** The source projects with the plan items (apps, databases, services) in each, so the first import step can select whole projects. */
   projects?: ImportSourceProject[];
   /** Apps already failing at the source (exited, unhealthy, crash-looping): they migrate as they are. */

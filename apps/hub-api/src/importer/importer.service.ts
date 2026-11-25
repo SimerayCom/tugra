@@ -225,6 +225,18 @@ export class ImporterService {
     }
   }
 
+  /** End a session now ("Start over"): the stored token stops being usable instead of waiting for its expiry. Owner only; idempotent. */
+  async revokeSession(userId: string, sessionId: string): Promise<{ ok: true }> {
+    const session = await this.prisma.importSession.findUnique({ where: { id: sessionId } });
+    if (!session || !isRemoteSourceKind(session.sourceKind)) throw new NotFoundException("import session not found");
+    if (session.actorId !== userId) throw new ForbiddenException("not your import session");
+    if (session.status === "active") {
+      await this.prisma.importSession.update({ where: { id: session.id }, data: { status: "revoked" } });
+      await this.audit.log({ actor: userId, action: "import.session.revoke", target: session.id, meta: { sourceKind: session.sourceKind } });
+    }
+    return { ok: true };
+  }
+
   /** The saved mapping profile for a session's source scope (`doc` is null when none is saved). */
   async getMapping(userId: string, sessionId: string) {
     if (!this.mappings) throw new Error("mapping service unavailable");

@@ -1,5 +1,5 @@
-import type { ImportMappingDoc, ImportPlan, ImportPlanItem, ImportServiceChoice, MigrationRunScope } from "./types";
-import { UNKNOWN_SOURCE_HOST, sourceServersOf, type SourceServerRow } from "./migration-run";
+import type { ImportMappingDoc, ImportPlan, ImportPlanItem, ImportServiceChoice, ImportTugraMatch, MigrationRunScope } from "./types";
+import { SERVER_MAP_MAX, UNKNOWN_SOURCE_HOST, sourceServersOf, type SourceServerRow } from "./migration-run";
 import { setItemField } from "./import-mapping";
 
 // Pure helpers for the import's first step, "What are you moving?": pick a source server, one or more source projects, or
@@ -22,6 +22,16 @@ export interface ScopeSelection {
   teamId?: string;
 }
 
+/** A Tugra server the user can write to, as the first step needs it (state included so a dead target is never offered as if it worked). */
+export interface ScopeServer {
+  id: string;
+  name: string;
+  teamId: string;
+  status?: string;
+  capabilities?: string[];
+  lastSeenAt?: string | null;
+}
+
 export const emptySelection = (): ScopeSelection => ({ mode: "everything", hosts: new Set(), projects: new Set(), extra: new Set(), placement: {} });
 
 /** What the scope step hands to the later steps. */
@@ -31,11 +41,18 @@ export interface ImportScope {
   inScope: ReadonlySet<string>;
   /** True when something of the plan is left out (a guided run then carries the scope, see {@link scopePayload}). */
   narrowed: boolean;
-  /** The default target server (the first involved source server's pick). */
+  /** The default target server (the first involved source server's target); empty while that server has none. */
   defaultServerId: string;
   /** Sent as `serverMap` only when the involved source servers land on more than one Tugra server; otherwise undefined. */
   serverMap: Record<string, string> | undefined;
+  /** Source server ref to its target, for the involved source servers that have one (explicit pick, else a sure match). */
+  placed: Readonly<Record<string, string>>;
+  /** Per placed source server: "in-place" when the target is the machine it already runs on (proxy swap, data stays), else "other-server"
+   *  (data copied, temporary address, DNS cutover). The guided run reads its topology from this. */
+  placementKind: Readonly<Record<string, PlacementKind>>;
 }
+
+export type PlacementKind = "in-place" | "other-server";
 
 /**
  * What a guided run is told about a narrowed scope: the picked source servers or projects and the items pulled in on top. The hub
@@ -148,40 +165,176 @@ export function missingDependencies(plan: ImportPlan, inScope: ReadonlySet<strin
   return [...need.entries()].map(([itemRef, neededBy]) => ({ itemRef, name: byRef.get(itemRef)!.name, neededBy })).sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
 }
 
-/** The default selection the step opens with: everything, every source server placed on `defaultServerId`. */
-export function initialSelection(plan: ImportPlan, defaultServerId: string): ScopeSelection {
-  return { ...emptySelection(), placement: Object.fromEntries(sourceHostRows(plan).map((r) => [r.ref, defaultServerId])) };
+/** The Tugra server the hub found to be the same machine as a source server (a verdict, never an address). */
+export function hostTugra(plan: ImportPlan, ref: string): ImportTugraMatch | undefined {
+  return ref === UNKNOWN_SOURCE_HOST ? plan.preflight?.panel?.tugra : plan.preflight?.hosts?.find((h) => h.ref === ref)?.tugra;
+}
+
+/** True for the box the source's own control plane runs on (Coolify: `is_coolify_host`). */
+export const isControlPlaneHost = (plan: ImportPlan, ref: string): boolean => !!plan.preflight?.hosts?.find((h) => h.ref === ref)?.controlPlane;
+
+/**
+ * Why a source server cannot be moved onto the machine it runs on, or null when it can. Only Coolify has a proxy swap, and the box that
+ * runs Coolify itself must stay up while its other servers move (stopping its proxy would take every managed server offline).
+ */
+export function inPlaceBlock(plan: ImportPlan, ref: string): "control-plane" | "unsupported-source" | null {
+  if (plan.sourceKind !== "coolify") return "unsupported-source";
+  return isControlPlaneHost(plan, ref) ? "control-plane" : null;
+}
+
+/** The target a sure match gives a source server by itself (a public address matched and the same-machine move is possible), or "". */
+export function autoTargetOf(plan: ImportPlan, ref: string): string {
+  const m = hostTugra(plan, ref);
+  return m && m.confidence === "certain" && !inPlaceBlock(plan, ref) ? m.serverId : "";
 }
 
 /**
- * Turn a selection into what the later steps need. `placement` is completed for every involved source server (a server the user
- * has not picked a target for falls back to `fallbackServerId`), and a serverMap exists only when more than one Tugra server is used.
+ * The Tugra server a source server goes to: the user's pick, else the sure match. Never a guess: no match and no pick means no target.
+ * `allowed` (the ids of the chosen team's servers) drops a target outside the team.
  */
-export function buildScope(plan: ImportPlan, sel: ScopeSelection, fallbackServerId: string): ImportScope {
+export function targetOf(plan: ImportPlan, sel: ScopeSelection, ref: string, allowed?: ReadonlySet<string>): string {
+  const pick = sel.placement[ref];
+  if (pick && (!allowed || allowed.has(pick))) return pick;
+  const auto = autoTargetOf(plan, ref);
+  return auto && (!allowed || allowed.has(auto)) ? auto : "";
+}
+
+export function placementKindOf(plan: ImportPlan, ref: string, targetId: string): PlacementKind {
+  const m = hostTugra(plan, ref);
+  return m && m.serverId === targetId && !inPlaceBlock(plan, ref) ? "in-place" : "other-server";
+}
+
+export type ServerReadiness = "ready" | "pending" | "offline" | "no-deploy";
+
+/** Can this Tugra server take apps now? Its agent must be connected (not waiting, not offline) and have the deploy grant. */
+export function serverReadiness(s: Pick<ScopeServer, "status" | "capabilities"> | undefined): ServerReadiness {
+  if (!s) return "ready";
+  if (s.status === "PENDING") return "pending";
+  if (s.status !== undefined && s.status !== "ONLINE") return "offline";
+  if (s.capabilities !== undefined && !s.capabilities.includes("deploy")) return "no-deploy";
+  return "ready";
+}
+
+/** The team the step starts on, or "" when the user has to pick: the team that owns most of the matched servers, else the team named like
+ *  the source team, else the only team there is. Never the first team of a list. */
+export function defaultTeamId(plan: ImportPlan, servers: readonly ScopeServer[], teams: ReadonlyArray<{ id: string; name: string }>, refs?: ReadonlySet<string>): string {
+  const teamIds = [...new Set(servers.map((s) => s.teamId))];
+  const byId = new Map(servers.map((s) => [s.id, s.teamId] as const));
+  const tally = new Map<string, number>();
+  for (const h of plan.preflight?.hosts ?? []) {
+    if (refs && !refs.has(h.ref)) continue;
+    const t = autoTargetOf(plan, h.ref);
+    const team = t ? byId.get(t) : undefined;
+    if (team) tally.set(team, (tally.get(team) ?? 0) + 1);
+  }
+  const ranked = [...tally.entries()].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1));
+  if (ranked.length > 0 && (ranked.length === 1 || ranked[0][1] > ranked[1][1])) return ranked[0][0];
+  const name = plan.preflight?.sourceTeam?.trim().toLowerCase();
+  const named = name ? teams.filter((t) => teamIds.includes(t.id) && t.name.trim().toLowerCase() === name) : [];
+  if (named.length === 1) return named[0].id;
+  return teamIds.length === 1 ? teamIds[0] : "";
+}
+
+/**
+ * What the step opens with. A source server the hub matched to a registered Tugra server by a public address is already connected: it
+ * is ticked and goes onto that server (the same machine). Everything else stays unticked and unplaced; nothing is chosen for the user.
+ * A source with one server (or none matched) opens on "everything" / "a server" with nothing placed.
+ */
+export function autoSelection(plan: ImportPlan): ScopeSelection {
+  const rows = sourceHostRows(plan);
+  const connected = rows.filter((r) => autoTargetOf(plan, r.ref) !== "").map((r) => r.ref);
+  if (rows.length > 1) return { ...emptySelection(), mode: "servers", hosts: new Set(connected) };
+  return emptySelection();
+}
+
+/**
+ * Turn a selection into what the later steps need. `placed` has a target for each involved source server that has one (the pick, else a
+ * sure match); a server with neither stays out of it and {@link scopeIssue} says so. A serverMap exists only when every involved server
+ * is placed and more than one Tugra server is used. `allowed` (the chosen team's server ids) drops targets outside the team.
+ */
+export function buildScope(plan: ImportPlan, sel: ScopeSelection, allowed?: ReadonlySet<string>): ImportScope {
   const inScope = inScopeRefs(plan, sel);
   const hosts = involvedHosts(plan, inScope);
   const placed: Record<string, string> = {};
-  for (const h of hosts) placed[h.ref] = sel.placement[h.ref] || fallbackServerId;
+  const placementKind: Record<string, PlacementKind> = {};
+  for (const h of hosts) {
+    const id = targetOf(plan, sel, h.ref, allowed);
+    if (!id) continue;
+    placed[h.ref] = id;
+    placementKind[h.ref] = placementKindOf(plan, h.ref, id);
+  }
   const targets = [...new Set(Object.values(placed))];
-  const defaultServerId = hosts.length > 0 ? placed[hosts[0].ref] : fallbackServerId;
+  const complete = hosts.every((h) => placed[h.ref]);
   return {
     selection: sel,
     inScope,
     narrowed: plan.items.some((i) => isPlaceable(i) && !inScope.has(i.itemRef)),
-    defaultServerId,
-    serverMap: targets.length > 1 ? placed : undefined,
+    defaultServerId: hosts.length > 0 ? placed[hosts[0].ref] ?? "" : "",
+    serverMap: complete && targets.length > 1 ? placed : undefined,
+    placed,
+    placementKind,
   };
 }
 
-/** Why the selection cannot continue yet, or null: nothing picked, a target missing, or targets in different teams. */
-export function scopeIssue(plan: ImportPlan, scope: ImportScope, teamOf: (serverId: string) => string | undefined): "nothing" | "target" | "teams" | null {
+export type ScopeIssue = "nothing" | "target" | "teams" | "blocked" | "unready" | "mixed" | "limit";
+
+/**
+ * Why the selection cannot continue yet, or null: nothing picked, a source server without a target, targets in different teams, a
+ * same-machine move that is not possible, a target that cannot take apps, in-place and copied moves mixed in one go, or too many servers.
+ */
+export function scopeIssue(
+  plan: ImportPlan,
+  scope: ImportScope,
+  teamOf: (serverId: string) => string | undefined,
+  readinessOf?: (serverId: string) => ServerReadiness,
+): ScopeIssue | null {
   const apps = plan.items.filter((i) => isPlaceable(i) && scope.inScope.has(i.itemRef));
   if (apps.length === 0) return "nothing";
   const hosts = involvedHosts(plan, scope.inScope);
-  const ids = hosts.map((h) => scope.selection.placement[h.ref] || scope.defaultServerId);
-  if (ids.some((id) => !id)) return "target";
+  if (hosts.some((h) => !scope.placed[h.ref])) return "target";
+  const ids = hosts.map((h) => scope.placed[h.ref]);
   if (new Set(ids.map((id) => teamOf(id) ?? id)).size > 1) return "teams";
+  if (hosts.some((h) => hostTugra(plan, h.ref)?.serverId === scope.placed[h.ref] && inPlaceBlock(plan, h.ref))) return "blocked";
+  if (readinessOf && ids.some((id) => readinessOf(id) !== "ready")) return "unready";
+  const kinds = new Set(Object.values(scope.placementKind));
+  if (kinds.has("in-place") && kinds.has("other-server")) return "mixed";
+  if (hosts.length > SERVER_MAP_MAX) return "limit";
   return null;
+}
+
+/** Same-machine placements of a scope (how many source servers stay on their own box). */
+export const inPlaceCount = (scope: Pick<ImportScope, "placementKind">): number => Object.values(scope.placementKind).filter((k) => k === "in-place").length;
+
+// ───────────── what survives a refresh (names and ids only; never a token) ─────────────
+
+const MAX_STORED = 4000;
+
+/** The selection as JSON for sessionStorage: refs and ids only. */
+export function serializeSelection(sel: ScopeSelection): string {
+  return JSON.stringify({ v: 1, mode: sel.mode, hosts: [...sel.hosts].sort(), projects: [...sel.projects].sort(), extra: [...sel.extra].sort(), placement: sel.placement, ...(sel.teamId ? { teamId: sel.teamId } : {}) });
+}
+
+/** A selection read back from sessionStorage; anything that does not look like one is undefined (a stale or tampered value starts fresh). */
+export function restoreSelection(raw: string | null | undefined): ScopeSelection | undefined {
+  if (!raw) return undefined;
+  try {
+    const o = JSON.parse(raw) as Record<string, unknown>;
+    const strs = (v: unknown): string[] | null => (Array.isArray(v) && v.length <= MAX_STORED && v.every((x) => typeof x === "string" && x.length <= 200) ? (v as string[]) : null);
+    const hosts = strs(o.hosts);
+    const projects = strs(o.projects);
+    const extra = strs(o.extra);
+    const place = o.placement;
+    if (o.v !== 1 || (o.mode !== "servers" && o.mode !== "projects" && o.mode !== "everything") || !hosts || !projects || !extra) return undefined;
+    if (!place || typeof place !== "object" || Array.isArray(place)) return undefined;
+    const placement: Record<string, string> = Object.create(null);
+    for (const [k, v] of Object.entries(place as Record<string, unknown>)) {
+      if (k === "__proto__" || typeof v !== "string" || k.length > 200 || v.length > 200) return undefined;
+      placement[k] = v;
+    }
+    return { mode: o.mode, hosts: new Set(hosts), projects: new Set(projects), extra: new Set(extra), placement: { ...placement }, ...(typeof o.teamId === "string" && o.teamId ? { teamId: o.teamId } : {}) };
+  } catch {
+    return undefined;
+  }
 }
 
 /** Add the out-of-scope items to a mapping document as excluded; in-scope ones are included (an explicit include clears a stored exclude). */

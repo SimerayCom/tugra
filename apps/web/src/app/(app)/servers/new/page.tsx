@@ -1,7 +1,7 @@
 "use client";
 
 import { TeamPicker } from "../../../../components/team-picker";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
@@ -64,6 +64,18 @@ function ManualForm() {
   const [teamId, setTeamId] = useState("");
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
+
+  // The import's first step links here with the source server's name and the target team (`?name=...&team=...`). Both are only a
+  // starting point: the name is trimmed and capped, and the team counts only when it is one of yours.
+  useEffect(() => {
+    const q = new URLSearchParams(window.location.search);
+    const n = q.get("name")?.trim().slice(0, 100);
+    if (n) setName((cur) => cur || n);
+  }, []);
+  useEffect(() => {
+    const want = new URLSearchParams(window.location.search).get("team");
+    if (want && teams.some((tm) => tm.id === want)) setTeamId(want);
+  }, [teams]);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();

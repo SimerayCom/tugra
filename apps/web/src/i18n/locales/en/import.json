@@ -34,6 +34,7 @@
   "connectFailed": "Could not connect to Coolify",
   "connectFailedDokploy": "Could not connect to Dokploy",
   "startOver": "Start over",
+  "resumeExpired": "Your earlier import session ended. Connect again to continue; the address is kept.",
   "planTitle": "Import preview",
   "apps": "Apps",
   "databases": "Databases",
@@ -774,17 +775,63 @@
     "placementTitle": "Where should it go?",
     "team": "Team",
     "teamIs": "Team: {team}",
-    "movesTo": "Moves to {server}.",
     "movesToLabel": "{name} moves to",
     "summary": "{apps} apps, {databases} databases and {services} services will move.",
     "issue": {
       "nothing": "Pick at least one to continue.",
-      "teams": "Choose servers from one team."
+      "teams": "Choose servers from one team.",
+      "team": "Choose the team these go to.",
+      "target": "Choose a server for: {names}.",
+      "blocked": "A server cannot be moved onto the machine Coolify runs on. Choose another server.",
+      "unready": "A chosen server is offline, has no agent connected or cannot deploy.",
+      "mixed": "Same-machine and other-server moves cannot go together. Move the same-machine ones first, then the rest.",
+      "limit": "At most {max} source servers per move. Pick fewer."
     },
     "continue": "Continue",
     "change": "Change",
     "more": "More",
-    "moreBody": "Nothing is changed or stopped on the source. You can still rename, move and leave out apps and databases on the next steps."
+    "moreBody": "Nothing is changed or stopped on the source. You can still rename, move and leave out apps and databases on the next steps.",
+    "panelHost": "Dokploy server (this machine)",
+    "connectedHeadline": "{connected} of {total} source servers are already connected to Tugra.",
+    "selectAll": "Select all",
+    "selectConnected": "Select connected ({count})",
+    "clear": "Clear",
+    "match": {
+      "connected": "Connected as {name}",
+      "probable": "Probably {name}",
+      "none": "Not connected to Tugra yet"
+    },
+    "controlPlane": "Coolify control plane",
+    "needsCount": "Needed by what you picked: {count} items.",
+    "sourceTeam": "Source team: {team}",
+    "teamDiffers": "This team has a different name than the source team. Check this is intended.",
+    "choose": "Choose a server",
+    "state": {
+      "pending": "agent not connected",
+      "offline": "offline",
+      "no-deploy": "no deploy permission"
+    },
+    "sameMachineTag": "same machine",
+    "kind": {
+      "inPlaceTitle": "Same machine (in place).",
+      "inPlace": "The proxy is swapped, a few minutes of downtime, the data stays.",
+      "otherTitle": "Another server.",
+      "other": "Data is copied, a temporary address is used and DNS is switched at the end."
+    },
+    "block": {
+      "controlPlane": "Coolify itself runs here. Stopping its proxy would take every managed server offline. Move these apps to another server, then retire Coolify yourself.",
+      "unsupported": "Moving onto the same machine is not available for this source yet. Choose another server."
+    },
+    "useIt": "Use it",
+    "matchedState": {
+      "pending": "{name} is connected but its agent has not connected yet.",
+      "offline": "{name} is offline.",
+      "no-deploy": "{name} has no deploy permission."
+    },
+    "addServer": "Add this server",
+    "inPlaceNote": "{count} servers stay on their own machine. Each is a separate proxy swap, one at a time.",
+    "recheck": "Check again",
+    "recheckHint": "After adding a server or starting an agent."
   },
   "settings": {
     "title": "Settings",

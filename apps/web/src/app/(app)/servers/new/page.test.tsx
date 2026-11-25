@@ -36,6 +36,20 @@ describe("Add server page", () => {
     expect(within(d).getAllByRole("listitem")).toHaveLength(4);
   });
 
+  it("opens with the name and team the import step passed along, ignoring a team that is not yours", async () => {
+    window.history.replaceState(null, "", "/servers/new?name=Box%20One&team=t1");
+    wrap();
+    expect((await screen.findByDisplayValue("Box One")) as HTMLInputElement).toBeTruthy();
+    await screen.findByRole("option", { name: "Team One (OWNER)" });
+    expect((screen.getByRole("combobox") as HTMLSelectElement).value).toBe("t1");
+    cleanup();
+    window.history.replaceState(null, "", "/servers/new?team=nope");
+    wrap();
+    await screen.findByRole("option", { name: "Team One (OWNER)" });
+    expect((screen.getByRole("combobox") as HTMLSelectElement).value).toBe("t1"); // the first team, as always
+    window.history.replaceState(null, "", "/");
+  });
+
   it("keeps the guide link when switching to another tab", () => {
     wrap();
     fireEvent.click(screen.getByRole("tab", { name: "Add many" }));

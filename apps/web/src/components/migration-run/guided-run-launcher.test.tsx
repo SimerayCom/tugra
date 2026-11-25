@@ -230,6 +230,8 @@ describe("GuidedRunLauncher", () => {
       narrowed: true,
       defaultServerId: "srv2",
       serverMap: { s1: "srv1", s2: "srv2" },
+      placed: { s1: "srv1", s2: "srv2" },
+      placementKind: { s1: "other-server", s2: "other-server" },
     };
     const item = (itemRef: string, kind: "app" | "database") => ({ itemRef, kind, name: itemRef, proposed: {}, risks: [], dependsOn: [] });
     const scoped = { ...plan, items: [item("app:s1:web", "app"), item("app:s2:api", "app"), item("database:s3:db", "database")] } as ImportPlan;

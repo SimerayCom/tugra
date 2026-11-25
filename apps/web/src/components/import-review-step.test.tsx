@@ -331,6 +331,8 @@ describe("ImportReviewStep", () => {
       narrowed: true,
       defaultServerId: "srv2",
       serverMap: { srv: "srv2", other: "srv1" },
+      placed: { srv: "srv2", other: "srv1" },
+      placementKind: { srv: "other-server", other: "other-server" },
     };
     mount(plan(), { onApplied, importScope });
     await waitFor(() => expect(resolveSpy).toHaveBeenCalled());
@@ -351,7 +353,7 @@ describe("ImportReviewStep", () => {
   }, 15000);
 
   it("Include all brings back what the scope left out", async () => {
-    const importScope: ImportScope = { selection: { mode: "servers", hosts: new Set(), projects: new Set(), extra: new Set(), placement: {} }, inScope: new Set([APP]), narrowed: true, defaultServerId: "srv1", serverMap: undefined };
+    const importScope: ImportScope = { selection: { mode: "servers", hosts: new Set(), projects: new Set(), extra: new Set(), placement: {} }, inScope: new Set([APP]), narrowed: true, defaultServerId: "srv1", serverMap: undefined, placed: {}, placementKind: {} };
     mount(plan(), { importScope });
     expect(await screen.findByRole("button", { name: /^Apply 1 apps, 0 databases; 2 excluded/ }, { timeout: 3000 })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Include all" }));

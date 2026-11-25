@@ -213,6 +213,13 @@ export class ImporterController {
     return this.importer.resolveMapping(user.userId, body);
   }
 
+  /** End an import session now (the wizard's "Start over"): its stored token can no longer be used. */
+  @Delete("sessions/:sessionId")
+  @RequireScopes("deploy")
+  revokeSession(@CurrentUser() user: AuthUser, @Param("sessionId") sessionId: string) {
+    return this.importer.revokeSession(user.userId, sessionId);
+  }
+
   /** The saved mapping profile for this session's source scope (`doc` is null when none is saved). */
   @Get("sessions/:sessionId/mapping")
   @RequireScopes("read:secrets")

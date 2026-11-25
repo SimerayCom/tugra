@@ -183,6 +183,23 @@ describe("ImporterService.plan — which source servers are already in Tugra", (
   });
 });
 
+describe("ImporterService.revokeSession", () => {
+  const live = { id: "sess-1", sourceKind: "coolify", actorId: "u1", teamId: "t1", baseUrl: "https://c.example.com", tokenEnc: "enc(TOK)", status: "active", expiresAt: new Date(Date.now() + 60_000) };
+  it("marks the owner's session revoked, so it can no longer be opened", async () => {
+    const { svc, importSession, audit } = make({ session: live });
+    await expect(svc.revokeSession("u1", "sess-1")).resolves.toEqual({ ok: true });
+    expect(importSession.update).toHaveBeenCalledWith({ where: { id: "sess-1" }, data: { status: "revoked" } });
+    expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "import.session.revoke", target: "sess-1" }));
+  });
+  it("is idempotent, and refuses another user's or an unknown session", async () => {
+    const done = make({ session: { ...live, status: "revoked" } });
+    await expect(done.svc.revokeSession("u1", "sess-1")).resolves.toEqual({ ok: true });
+    expect(done.importSession.update).not.toHaveBeenCalled();
+    await expect(make({ session: live }).svc.revokeSession("u2", "sess-1")).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(make({ session: null }).svc.revokeSession("u1", "x")).rejects.toBeInstanceOf(NotFoundException);
+  });
+});
+
 describe("ImporterService.plan — coverage (G3-C)", () => {
   const session = (kind: string) => ({ id: "sess-1", sourceKind: kind, actorId: "u1", teamId: "t1", baseUrl: "https://c.example.com", tokenEnc: "enc(TOK)", status: "active", expiresAt: new Date(Date.now() + 60_000) });
   const app = { sourceRef: "web-1", name: "web", kind: "git" as const, buildPack: "nixpacks" as const, git: { url: "https://git/x" }, serverRef: "s1", notCarried: [{ field: "registry", level: "info" as const, reason: "r" }] };

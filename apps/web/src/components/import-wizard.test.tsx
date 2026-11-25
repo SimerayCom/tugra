@@ -658,6 +658,12 @@ describe("ImportWizard — editable mapping", () => {
   });
   afterEach(() => vi.restoreAllMocks());
 
+  /** The first step asks for the team and a target for each source server (nothing is chosen for the user): pick them. */
+  const chooseTarget = async (host: string, team = "t1", server = "srv1") => {
+    fireEvent.change(await screen.findByLabelText("Team"), { target: { value: team } });
+    fireEvent.change(screen.getByLabelText(`${host} moves to`), { target: { value: server } });
+  };
+
   const withMapping: ImportPlan = { ...plan, mapping: { features: ["mapping-v1"], stored: null, storedVersion: null, scopeKey: "team-3" } };
 
   it("sends the optional source team label on connect; a hub that offers mapping shows 'Review & rename' (no direct apply)", async () => {
@@ -672,7 +678,8 @@ describe("ImportWizard — editable mapping", () => {
     fireEvent.change(screen.getByLabelText("API token"), { target: { value: "tok" } });
     fireEvent.change(screen.getByLabelText("Source team label"), { target: { value: "Team-3" } });
     fireEvent.click(screen.getByRole("button", { name: "Connect & preview" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Continue" })); // the first step: What are you moving? (one source server: Everything)
+    await chooseTarget("srv"); // the first step: What are you moving? (one source server: Everything)
+    fireEvent.click(await screen.findByRole("button", { name: "Continue" }));
     await screen.findByText("Import preview");
     expect(connectSpy).toHaveBeenCalledWith({ sourceKind: "coolify", teamId: "t1", baseUrl: "https://coolify.example.com", token: "tok", scopeLabel: "team-3" });
     expect(screen.queryByRole("button", { name: "Import to Tugra" })).toBeNull();
@@ -712,6 +719,7 @@ describe("ImportWizard — editable mapping", () => {
     fireEvent.change(screen.getByLabelText("Coolify URL"), { target: { value: "https://c.example.com" } });
     fireEvent.change(screen.getByLabelText("API token"), { target: { value: "tok" } });
     fireEvent.click(screen.getByRole("button", { name: "Connect & preview" }));
+    await chooseTarget("srv");
     fireEvent.click(await screen.findByRole("button", { name: "Continue" }));
     const group = await screen.findByRole("radiogroup", { name: "Data mode: orders-db" });
     fireEvent.click(within(group).getByRole("radio", { name: "Volume copy" }));
@@ -754,6 +762,7 @@ describe("ImportWizard — editable mapping", () => {
     await screen.findByText("What are you moving?");
     expect((screen.getByRole("button", { name: "Continue" }) as HTMLButtonElement).disabled).toBe(true);
     fireEvent.click(screen.getByRole("checkbox", { name: /Box Two/ }));
+    await chooseTarget("Box Two");
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
     await screen.findByText("Import preview");
     expect(screen.getByText("api-app")).toBeTruthy();
@@ -763,6 +772,66 @@ describe("ImportWizard — editable mapping", () => {
     fireEvent.click(screen.getByRole("button", { name: "Change" }));
     await screen.findByText("What are you moving?");
     expect((screen.getByRole("checkbox", { name: /Box Two/ }) as HTMLInputElement).checked).toBe(true);
+  });
+
+  describe("a refresh resumes the first step", () => {
+    const multi: ImportPlan = {
+      ...plan,
+      items: [
+        { itemRef: "app:s1:web", kind: "app", name: "web-app", proposed: {}, risks: [], dependsOn: [] },
+        { itemRef: "app:s2:api", kind: "app", name: "api-app", proposed: {}, risks: [], dependsOn: [] },
+      ],
+      preflight: { databases: [], services: [], appsWithVolumeData: 0, hosts: [{ ref: "s1", name: "Box One" }, { ref: "s2", name: "Box Two" }] },
+      mapping: { features: ["mapping-v1"], stored: null, storedVersion: null, scopeKey: "team-3" },
+    };
+    const SID = "sess-0123456789";
+    beforeEach(() => window.sessionStorage.clear());
+
+    it("keeps the session and the picked servers in sessionStorage (never the token), and a reload reopens the first step as it was left", async () => {
+      vi.spyOn(api, "importConnect").mockResolvedValue({ sessionId: SID, expiresAt: "2026-01-01T00:00:00.000Z" });
+      const planSpy = vi.spyOn(api, "importPlan").mockResolvedValue(multi);
+      const first = wrap(<ImportWizard />);
+      await screen.findByLabelText("Coolify URL");
+      await waitFor(() => expect(qc.getQueryData(["teams"])).toBeTruthy());
+      fireEvent.change(screen.getByLabelText("Coolify URL"), { target: { value: "https://c.example.com" } });
+      fireEvent.change(screen.getByLabelText("API token"), { target: { value: "super-secret-token" } });
+      fireEvent.click(screen.getByRole("button", { name: "Connect & preview" }));
+      await screen.findByText("What are you moving?");
+      fireEvent.click(screen.getByRole("checkbox", { name: /Box Two/ }));
+      const stored = window.sessionStorage.getItem("tugra.import.resume")!;
+      expect(stored).toContain(SID);
+      expect(stored).not.toContain("super-secret-token");
+      first.unmount();
+      cleanup();
+      qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      wrap(<ImportWizard />);
+      await screen.findByText("What are you moving?");
+      expect(planSpy).toHaveBeenLastCalledWith({ sourceKind: "coolify", sessionId: SID });
+      expect((screen.getByRole("checkbox", { name: /Box Two/ }) as HTMLInputElement).checked).toBe(true);
+      expect((screen.getByRole("checkbox", { name: /Box One/ }) as HTMLInputElement).checked).toBe(false);
+    });
+
+    it("an ended hub session falls back to the connect form with the address kept and says why", async () => {
+      window.sessionStorage.setItem("tugra.import.resume", JSON.stringify({ v: 1, kind: "coolify", baseUrl: "https://c.example.com", sessionId: SID, dbModes: {} }));
+      vi.spyOn(api, "importPlan").mockRejectedValue(new ApiError(400, "import session expired or revoked — reconnect"));
+      wrap(<ImportWizard />);
+      await screen.findByText(/Your earlier import session ended/);
+      expect((screen.getByLabelText("Coolify URL") as HTMLInputElement).value).toBe("https://c.example.com");
+      expect((screen.getByLabelText("API token") as HTMLInputElement).value).toBe("");
+      expect(window.sessionStorage.getItem("tugra.import.resume")).toBeNull();
+    });
+
+    it("Start over ends the hub session and forgets the resume state", async () => {
+      window.sessionStorage.setItem("tugra.import.resume", JSON.stringify({ v: 1, kind: "coolify", baseUrl: "https://c.example.com", sessionId: SID, dbModes: {} }));
+      vi.spyOn(api, "importPlan").mockResolvedValue(multi);
+      const revoke = vi.spyOn(api, "importRevoke").mockResolvedValue({ ok: true });
+      wrap(<ImportWizard />);
+      await screen.findByText("What are you moving?");
+      fireEvent.click(screen.getByRole("button", { name: "Start over" }));
+      expect(revoke).toHaveBeenCalledWith(SID);
+      await screen.findByLabelText("Coolify URL");
+      expect(window.sessionStorage.getItem("tugra.import.resume")).toBeNull();
+    });
   });
 
   it("an older hub (no mapping feature flag) keeps the legacy one-click apply and never sends mapping fields", async () => {
