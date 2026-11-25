@@ -1,3 +1,4 @@
+import type { AgentPlanAdditions, HostEvidence, HostLinkedBy, HostMatchStatus, PlacementKind, PlanTeam } from "@tugra/shared";
 import type { Unmapped } from "./reason";
 /**
  * Neutral, source-agnostic description of what a competitor PaaS (Coolify/Dokploy/CapRover/Dokku) is
@@ -390,7 +391,8 @@ export interface ImportCoverage {
   git?: { apps: number; https: number; ssh: number; githubApp: number };
 }
 
-export interface ImportPreflight {
+/** `AgentPlanAdditions` (agentRead, teams, unreadable) are filled by the agent read only (Coolify hub takeover, lane A); an API-path plan leaves them out. */
+export interface ImportPreflight extends AgentPlanAdditions {
   databases: Array<{ name: string; engine: string; dataPlane: DbDataPlane; reason: string; /** The source's scheduled backups of this database (Coolify): not carried, recreate them in Tugra after the import. */ backup?: NonNullable<ForeignDb["backupSchedule"]> }>;
   /** Services (compose / one-click stacks) are discovered but NOT imported yet — surfaced here so they are
    *  never a silent drop on the review screen. */
@@ -433,6 +435,11 @@ export interface PreflightHost {
   os?: string;
   /** The registered Tugra server that is the same machine (matched by address, then host name), as a verdict only: no source address. Added by the plan route, outside planHash. */
   tugra?: { serverId: string; name: string; teamId: string; via: "public-ip" | "reported-ip" | "hostname"; confidence: "certain" | "probable" };
+  /** Coolify hub takeover (lane D): the evidence behind the verdict, how it was linked, and the status of an unlinked candidate set. Verdict data only, no address. Additive; NOT part of planHash. */
+  match?: { status: HostMatchStatus; linkedBy: HostLinkedBy | null; evidence: HostEvidence[] };
+  /** Coolify hub takeover (lane E): the placement the screen preselects for this server, and whether its agent is online. Additive; NOT part of planHash. */
+  suggestedPlacement?: PlacementKind | null;
+  agentOnline?: boolean;
 }
 
 /** One source project of the plan: its name and the itemRefs (apps, databases, services) that live in it. Names and refs only. */
@@ -440,6 +447,8 @@ export interface PreflightProject {
   ref: string;
   name: string;
   itemRefs: string[];
+  /** The Coolify team the project belongs to (agent read: one pass sees every team). Additive; NOT part of planHash. */
+  team?: PlanTeam;
 }
 
 export interface ImportCutoverHint {

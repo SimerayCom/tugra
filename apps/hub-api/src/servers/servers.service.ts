@@ -13,7 +13,7 @@ import { Subject, type Observable } from "rxjs";
 import { z } from "zod";
 import { Prisma, Role, ServerStatus } from "@prisma/client";
 import { DEFAULT_CLEANUP_DATA } from "../server-ops/cleanup-defaults";
-import { AGENT_CAPABILITIES } from "@tugra/shared";
+import { AGENT_CAPABILITIES, COOLIFY_RUN_CAPABILITIES } from "@tugra/shared";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService, type AuditFilters } from "../audit/audit.service";
 import { NotificationsService } from "../notifications/notifications.service";
@@ -562,6 +562,12 @@ export class ServersService implements OnModuleInit, OnModuleDestroy {
     if (!server) throw new NotFoundException("server not found");
     await this.access.requirePermission(userId, server.teamId, "servers:manage");
     const next = [...new Set(capabilities)].filter((c) => ALL_CAPABILITIES.includes(c));
+    // The Coolify takeover capabilities are granted by their run (owner-only consent record), never added by hand here; keeping one that is
+    // already granted is fine (the server card sends back the whole set it loaded).
+    const held = new Set<string>(server.capabilities ?? []);
+    if (next.some((c) => (COOLIFY_RUN_CAPABILITIES as readonly string[]).includes(c) && !held.has(c))) {
+      throw new BadRequestException("a Coolify takeover capability is granted by its consent flow, not set by hand");
+    }
     // "files_write" (upload/edit/rename/chmod/delete on app volumes) only makes sense on top of "files" (browse/read):
     // refuse the incoherent set rather than silently granting write without read. Dropping "files" therefore means
     // the caller drops "files_write" in the same request (the web card does this when files is unchecked).

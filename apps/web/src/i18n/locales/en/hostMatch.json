@@ -1,0 +1,23 @@
+{
+  "title": "Match servers",
+  "subtitle": "Which Tugra server is the same machine as each Coolify server.",
+  "status": {
+    "certain": "Same machine",
+    "probable": "Probably the same",
+    "ambiguous": "Not sure",
+    "none": "No match"
+  },
+  "evidence": {
+    "ssh_host_key": "Same SSH host key",
+    "machine_id": "Same machine id",
+    "docker_engine_id": "Same Docker engine",
+    "ip": "Same address",
+    "hostname": "Same host name",
+    "cloud_instance_id": "Same cloud instance"
+  },
+  "linkedBy": {
+    "auto": "Matched automatically",
+    "user": "Chosen by you"
+  },
+  "notSame": "This is not the same server"
+}

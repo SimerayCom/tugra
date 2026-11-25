@@ -1,0 +1,23 @@
+{
+  "title": "Move a project",
+  "subtitle": "Move a project and everything under it to another server.",
+  "phase": {
+    "QUEUED": "Waiting",
+    "PRECHECK": "Checking",
+    "MOVING": "Moving",
+    "VERIFYING": "Verifying",
+    "CUTOVER": "Switching",
+    "COMPLETED": "Done",
+    "ROLLING_BACK": "Rolling back",
+    "ROLLED_BACK": "Rolled back",
+    "FAILED": "Failed"
+  },
+  "item": {
+    "application": "Application",
+    "database": "Database",
+    "service": "Service"
+  },
+  "retain": {
+    "label": "Keep the old copy for (days)"
+  }
+}

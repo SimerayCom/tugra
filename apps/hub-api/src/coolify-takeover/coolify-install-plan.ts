@@ -1,3 +1,4 @@
+import type { CoolifyServerLink } from "@tugra/shared";
 import type { InvServer } from "./coolify-inventory";
 
 /**
@@ -36,10 +37,8 @@ export interface ChecklistRow {
   ssh: string;
 }
 
-export interface ServerLink {
-  teamId: string;
-  serverId: string;
-}
+/** One `CoolifyInventory.serverLinks` entry. `linkedBy` and `evidence` are lane D's additive fields: a row written before them reads as a user link. */
+export type ServerLink = CoolifyServerLink;
 
 /** Only characters a host name or address can have reach the display line. */
 const SAFE_HOST_RE = /^[A-Za-z0-9._:-]{1,255}$/;

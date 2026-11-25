@@ -1,0 +1,51 @@
+{
+  "title": "Install the Tugra agent",
+  "subtitle": "One click installs the agent on the servers Coolify manages, using Coolify's own SSH keys. The keys never leave the Coolify server.",
+  "card": {
+    "title": "Install on {count} servers",
+    "details": "What happens",
+    "typeCount": "Type {count} to install",
+    "install": "Install",
+    "rollback": "Undo"
+  },
+  "probe": {
+    "title": "Checking first. Nothing is changed yet."
+  },
+  "code": {
+    "ok_installed": "Agent installed.",
+    "skipped_present": "A Tugra agent is already here.",
+    "skipped_foreign": "Another Tugra hub runs an agent here. Left untouched.",
+    "unreachable": "Could not reach the server.",
+    "auth_failed": "The server did not accept Coolify's key.",
+    "hostkey_changed": "The server's host key changed.",
+    "hostkey_mismatch": "The server that enrolled is not the one that was probed. Stopped and removed.",
+    "no_key_file": "Coolify's key file was not found.",
+    "bad_target": "This server cannot be a target.",
+    "needs_root": "Needs root or passwordless sudo. Use the manual command.",
+    "sudo_tty": "sudo asks for a terminal. Use the manual command.",
+    "docker_missing": "Docker is not installed.",
+    "docker_perm": "The user cannot use Docker.",
+    "arch_unsupported": "This CPU architecture is not supported.",
+    "pull_failed": "Could not download the agent image.",
+    "hub_unreachable_from_target": "The server cannot reach your hub.",
+    "installer_failed": "The installer failed.",
+    "enroll_timeout": "The agent did not connect in time. Rolled back.",
+    "unsupported_proxy": "Behind a tunnel or jump host. Use the manual command.",
+    "cancelled": "Cancelled.",
+    "timeout": "Timed out."
+  },
+  "state": {
+    "PLANNED": "Planned",
+    "PROBING": "Checking",
+    "SKIPPED_PRESENT": "Already there",
+    "SKIPPED_FOREIGN": "Another hub",
+    "READY": "Ready",
+    "FAILED": "Failed",
+    "TOKEN_MINTED": "Preparing",
+    "INSTALLING": "Installing",
+    "WAIT_ENROLL": "Waiting for the agent",
+    "ONLINE": "Online",
+    "UNINSTALLING": "Removing",
+    "REMOVED": "Removed"
+  }
+}

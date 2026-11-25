@@ -191,6 +191,8 @@ model Team {
   objectMigrations   ObjectMigration[]
   importMappings     ImportMapping[]
   coolifyInventories CoolifyInventory[]
+  coolifyHostGrants  CoolifyHostGrant[]
+  coolifySshTargets  CoolifySshTarget[]
   createdAt          DateTime              @default(now())
 }
 
@@ -449,6 +451,8 @@ model Server {
   proxyDynamicConfigs    ProxyDynamicConfig[]
   reboots                ServerReboot[]
   coolifyInventory       CoolifyInventory?
+  coolifyHostGrants      CoolifyHostGrant[]
+  coolifySshTargets      CoolifySshTarget[]
   tunnel                 ServerTunnel?
   cost                   ServerCost?
   rescales               ServerRescale[]
@@ -1342,6 +1346,12 @@ model ImportSession {
   expiresAt  DateTime
   createdAt  DateTime  @default(now())
   lastUsedAt DateTime?
+  // Coolify hub takeover (lane A). `transport` "api" = the token path above; "agent" = read through the agent on the Coolify host:
+  // baseUrl is then the synthetic `agent://<serverId>` and tokenEnc stays "" (the rotation skips an empty value).
+  transport     String  @default("api") // api | agent
+  agentServerId String? // the Tugra server whose agent reads Coolify (agent transport only)
+  snapshotEnc   String? // CryptoService-encrypted snapshot of the last agent read (secret-free plan source); never returned by any endpoint
+  sessionKeyEnc String? // CryptoService-encrypted per-session X25519 private key of the sealed pipeline; never returned by any endpoint
 
   @@index([teamId])
 }
@@ -3032,4 +3042,150 @@ model ServerRescale {
   finishedAt  DateTime?
 
   @@index([serverId, startedAt])
+}
+
+/// Consent for the Coolify hub takeover on ONE Coolify host (lanes B and C): "secrets" lets the agent decrypt Coolify's values and seal them
+/// to the per-run key below; "ssh" lets it use Coolify's own SSH keys to install agents on the servers Coolify knows. Owner-only, time-limited,
+/// revocable. The capability the grant turned on is dropped when the grant ends. The private half of the run key is wrapped with CryptoService
+/// (tk1), kept only so a restart can resume, and cleared (set null) when the run ends or the grant expires: later-stolen envelopes stay shut.
+model CoolifyHostGrant {
+  id                 String    @id @default(cuid())
+  team               Team      @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  teamId             String
+  server             Server    @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  serverId           String // the agent server that runs Coolify
+  kind               String // secrets | ssh
+  classes            String[]  @default([]) // consent classes ticked (secrets only; see COOLIFY_SECRET_CLASSES)
+  grantedById        String
+  runId              String? // the import session / run the key belongs to
+  recipientPublicKey String? // base64 X25519 public key (secrets only)
+  recipientKeyEnc    String? // CryptoService-wrapped X25519 private key; NULL once destroyed. Never returned by any endpoint
+  expiresAt          DateTime
+  revokedAt          DateTime?
+  revokedById        String?
+  createdAt          DateTime  @default(now())
+
+  @@index([serverId, kind, expiresAt])
+  @@index([teamId, createdAt(sort: Desc)])
+}
+
+/// One Coolify-known server the Tugra agent is installed on over SSH (lane C). The state machine is persisted per target so a restart resumes
+/// with a probe (never a blind re-run). Names, states and fixed codes only: never a key, a token, a command line or a key path.
+model CoolifySshTarget {
+  id                String    @id @default(cuid())
+  team              Team      @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  teamId            String // the Tugra team that owns the Coolify host's inventory
+  server            Server    @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  serverId          String // the agent server that runs Coolify (the SSH comes from there)
+  runId             String // one install run = many targets
+  grantId           String? // the CoolifyHostGrant (kind "ssh") this run runs under
+  coolifyServerUuid String
+  name              String
+  state             String    @default("PLANNED") // see COOLIFY_SSH_TARGET_STATES
+  code              String? // see COOLIFY_SSH_RESULT_CODES
+  targetTeamId      String? // Tugra team the new server goes to (loose ref)
+  tugraServerId     String? // the Server row minted for this target (loose ref); null until a token is minted
+  probe             Json? // CoolifyProbeFacts of the last probe
+  hostKeyFp         String? // sshd host key fingerprint the probe saw (cross-checked at enroll)
+  attempts          Int       @default(0)
+  startedAt         DateTime?
+  finishedAt        DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  // One active row per (Coolify host, Coolify server) is the lane's lock; a partial unique index may be added by lane C (Prisma cannot model it).
+  @@unique([runId, coolifyServerUuid])
+  @@index([serverId, state])
+  @@index([teamId])
+}
+
+/// A campaign of guided runs (lane E): a mixed placement (some servers in place, some moved) becomes one MigrationRun per source server, in waves.
+/// `label` is the value of MigrationRun.campaign. Loose refs, no FK, so the history survives team/server deletion.
+model MigrationCampaign {
+  id        String   @id @default(cuid())
+  teamId    String
+  actorId   String
+  label     String
+  sessionId String? // the ImportSession the plan was read through
+  status    String   @default("draft") // see CAMPAIGN_STATUSES
+  plan      Json     @default("[]") // CampaignRunPlan[] (names/refs/ids only)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([teamId, label])
+  @@index([teamId, createdAt(sort: Desc)])
+}
+
+/// Taking over one server in place (lane F): Tugra proxy on a temporary port, tested, then the ports are handed over; "give back to Coolify" undoes it
+/// until the cleanup lane removes Coolify's leftovers. `plan` and `rollback` name containers, images, ports and domains; they hold no env value or key.
+model CoolifyTakeover {
+  id                String    @id @default(cuid())
+  teamId            String
+  serverId          String // the Tugra server taken over (loose ref)
+  actorId           String
+  sessionId         String?
+  runId             String? // the MigrationRun that carries it, when run as part of one
+  status            String    @default("PLANNED") // see TAKEOVER_STATUSES
+  tempPort          Int?
+  plan              Json      @default("{}")
+  rollback          Json      @default("{}")
+  items             Json      @default("[]") // TakeoverItemView[]
+  giveBackAvailable Boolean   @default(true)
+  failureCode       String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  finishedAt        DateTime?
+
+  @@index([serverId, createdAt(sort: Desc)])
+  @@index([teamId, status])
+}
+
+/// Coolify leftover cleanup and the completeness checklist that gates it (lane G). The owner confirms the list before anything is removed;
+/// every step is audited. Names, counts and sizes only.
+model CoolifyCleanup {
+  id            String    @id @default(cuid())
+  teamId        String
+  serverId      String // loose ref
+  actorId       String
+  status        String    @default("CHECKING") // see CLEANUP_STATUSES
+  completeness  Json      @default("[]") // CompletenessRow[]
+  remnants      Json      @default("[]") // CleanupRemnant[]
+  results       Json      @default("[]") // per-remnant outcome, fixed codes
+  confirmedById String?
+  confirmedAt   DateTime?
+  cleanedAt     DateTime?
+  failureCode   String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@index([serverId, createdAt(sort: Desc)])
+  @@index([teamId, status])
+}
+
+/// Move a whole project (apps + databases + services + volumes + domains) from one Tugra server to another (lane H). It composes the existing
+/// AppMove and database moves: `items` lists the children. Same safety copy as AppMove (retainDays). Loose refs like AppMove.
+model ProjectMove {
+  id              String    @id @default(cuid())
+  teamId          String
+  actorId         String
+  projectId       String // loose ref
+  sourceServerId  String
+  targetServerId  String
+  phase           String    @default("QUEUED") // see PROJECT_MOVE_PHASES
+  plan            Json      @default("{}") // frozen preflight (no secret values)
+  items           Json      @default("[]") // ProjectMoveItemView[]
+  retainDays      Int       @default(7)
+  repointDns      Boolean   @default(false)
+  archiveUntil    DateTime?
+  failureReason   String?
+  cancelRequested Boolean   @default(false)
+  ownerId         String? // hub bootId driving the job; NULL = awaiting recovery
+  heartbeatAt     DateTime?
+  startedAt       DateTime?
+  finishedAt      DateTime?
+  createdAt       DateTime  @default(now())
+
+  @@index([projectId, createdAt(sort: Desc)])
+  @@index([phase])
+  @@index([teamId])
 }

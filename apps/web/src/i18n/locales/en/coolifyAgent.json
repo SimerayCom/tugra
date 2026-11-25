@@ -1,0 +1,26 @@
+{
+  "title": "Connect a Coolify through its agent",
+  "subtitle": "Tugra reads the Coolify database on its server through the Tugra agent. No Coolify API token needed.",
+  "choice": {
+    "agent": "Connect through the agent (recommended)",
+    "api": "Connect with an API token"
+  },
+  "read": {
+    "title": "Read Coolify",
+    "button": "Read Coolify",
+    "reading": "Reading Coolify...",
+    "nothingChanged": "Nothing is changed or stopped."
+  },
+  "counts": {
+    "teams": "Teams",
+    "projects": "Projects",
+    "servers": "Servers",
+    "applications": "Applications",
+    "databases": "Databases",
+    "services": "Services"
+  },
+  "error": {
+    "agent_offline": "The agent is offline. Try again when it is back.",
+    "generic": "Could not read Coolify."
+  }
+}

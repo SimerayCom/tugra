@@ -113,6 +113,25 @@ const FeatureHubOriginEnv = "hub_origin_env_v1"
 // Mirrors AGENT_FEATURE_HUB_ENDPOINTS in packages/shared.
 const FeatureHubEndpoints = "hub_endpoints_v1"
 
+// Coolify hub takeover: the capability names and feature flags the lanes build on. They mirror COOLIFY_RUN_CAPABILITIES and
+// AGENT_FEATURE_COOLIFY_* in packages/shared. A feature is added to Features by the lane that implements its frame, never before:
+// advertising a frame the agent cannot handle would make the hub send it. Reading Coolify's database WITHOUT secrets uses the
+// existing `database` capability.
+const (
+	CapCoolifySecrets  = "coolify_secrets"  // decrypt Coolify's values on this host and seal them to the hub's per-run key
+	CapCoolifySSH      = "coolify_ssh"      // probe/install/remove the agent on a Coolify-known server with Coolify's SSH key
+	CapCoolifyTakeover = "coolify_takeover" // adopt Coolify-run containers in place and give them back
+	CapCoolifyCleanup  = "coolify_cleanup"  // remove Coolify's leftovers after the owner confirms
+
+	FeatureCoolifySecrets  = "coolify_secrets_v1"
+	FeatureCoolifySSH      = "coolify_ssh_v1"
+	FeatureCoolifyTakeover = "coolify_takeover_v1"
+	FeatureCoolifyCleanup  = "coolify_cleanup_v1"
+)
+
+// CoolifyRunCapabilities lists the takeover capabilities in the shared order.
+var CoolifyRunCapabilities = []string{CapCoolifySecrets, CapCoolifySSH, CapCoolifyTakeover, CapCoolifyCleanup}
+
 // Features is the list this agent advertises in enroll/auth.
 var Features = []string{FeatureCmdJournal, FeatureLogDrainsV2, FeatureDrainSyslog, FeatureDrainGelf, FeatureDrainFluentd, FeatureFs2, FeatureHubOriginEnv, FeatureHubEndpoints}
 

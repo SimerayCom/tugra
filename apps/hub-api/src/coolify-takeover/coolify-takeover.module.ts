@@ -3,11 +3,17 @@ import { AgentGatewayModule } from "../agent-gateway/agent-gateway.module";
 import { ServersModule } from "../servers/servers.module";
 import { CoolifyTakeoverController } from "./coolify-takeover.controller";
 import { CoolifyTakeoverService } from "./coolify-takeover.service";
+import { CoolifyHostGrantService } from "./coolify-host-grant.service";
+import { CoolifySshInstallService } from "./coolify-ssh-install.service";
+import { HostMatchService } from "./host-match.service";
+import { SealedChannelService } from "./sealed-channel.service";
 
 // PrismaService, TeamAccessService and AuditService come from @Global modules.
 @Module({
   imports: [AgentGatewayModule, ServersModule],
   controllers: [CoolifyTakeoverController],
-  providers: [CoolifyTakeoverService],
+  // Lane B: SealedChannelService, CoolifyHostGrantService. Lane C: CoolifySshInstallService. Lane D: HostMatchService. Empty skeletons until those lanes land.
+  providers: [CoolifyTakeoverService, SealedChannelService, CoolifyHostGrantService, CoolifySshInstallService, HostMatchService],
+  exports: [SealedChannelService, CoolifyHostGrantService, CoolifySshInstallService, HostMatchService],
 })
 export class CoolifyTakeoverModule {}

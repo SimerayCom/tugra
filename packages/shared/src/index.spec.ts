@@ -278,10 +278,10 @@ describe("fs2 protocol", () => {
     expect(fs2RequiredCapabilities("volume", "list")).toEqual([]);
   });
 
-  it("ships migrate as an opt-in capability that is unique and last (appended, never reordered)", () => {
+  it("ships migrate as an opt-in capability that is unique and stays where it was (new ones are appended after it, never reordered)", () => {
     expect(AGENT_CAPABILITIES).toContain("migrate");
     expect(AGENT_CAPABILITIES.filter((c) => c === "migrate")).toHaveLength(1);
-    expect(AGENT_CAPABILITIES[AGENT_CAPABILITIES.length - 1]).toBe("migrate");
+    expect(AGENT_CAPABILITIES.indexOf("migrate")).toBe(AGENT_CAPABILITIES.indexOf("files_write") + 1);
     expect(new Set(AGENT_CAPABILITIES).size).toBe(AGENT_CAPABILITIES.length);
   });
 

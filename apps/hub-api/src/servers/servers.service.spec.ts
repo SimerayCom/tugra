@@ -796,6 +796,27 @@ describe("ServersService capabilities", () => {
     expect(update).toHaveBeenLastCalledWith(expect.objectContaining({ data: { capabilities: ["files"] } }));
   });
 
+  it("never ADDS a Coolify takeover capability by hand, not even for an owner; keeping or dropping one is allowed", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const held = { ...row("s1", "teamA"), capabilities: ["deploy", "coolify_secrets"] };
+    const prisma = {
+      server: { findUnique: jest.fn().mockResolvedValue(held), update },
+      ...owner(Role.OWNER),
+    } as unknown as PrismaService;
+    const svc = svcWith(prisma);
+    for (const cap of ["coolify_secrets", "coolify_ssh", "coolify_takeover", "coolify_cleanup"]) expect(DEFAULT_CAPABILITIES).not.toContain(cap);
+    // adding one that is not held: refused, nothing written
+    await expect(svc.setCapabilities("u1", "s1", ["deploy", "coolify_secrets", "coolify_ssh"])).rejects.toThrow(/consent flow/);
+    await expect(svc.setCapabilities("u1", "s1", ["coolify_cleanup"])).rejects.toThrow(/consent flow/);
+    expect(update).not.toHaveBeenCalled();
+    // the server card sends back what it loaded: kept as is
+    await svc.setCapabilities("u1", "s1", ["deploy", "coolify_secrets"]);
+    expect(update).toHaveBeenLastCalledWith(expect.objectContaining({ data: { capabilities: ["deploy", "coolify_secrets"] } }));
+    // unchecking drops it (revoking is always allowed)
+    await svc.setCapabilities("u1", "s1", ["deploy"]);
+    expect(update).toHaveBeenLastCalledWith(expect.objectContaining({ data: { capabilities: ["deploy"] } }));
+  });
+
   it("grantedCapabilities returns the stored set", async () => {
     const prisma = {
       server: { findUnique: jest.fn().mockResolvedValue({ capabilities: ["deploy"] }) },

@@ -11,6 +11,12 @@ export * from "./version";
 // shared by the hub's requireEdition gate and any web edition display.
 export * from "./editions";
 export * from "./app-move";
+export * from "./coolify-secrets";
+export * from "./coolify-ssh";
+export * from "./coolify-match";
+export * from "./coolify-takeover";
+import type { CoolifySecretsReqMsg, CoolifySecretsResultMsg } from "./coolify-secrets";
+import type { CoolifySshReqMsg, CoolifySshResultMsg } from "./coolify-ssh";
 export * from "./import-reasons";
 // Client-IP trust (X-Forwarded-For / Cloudflare) — shared by the hub and the web server. Node-only (node:net).
 export * from "./client-ip";
@@ -211,6 +217,11 @@ export const AGENT_FEATURE_HUB_ORIGIN_ENV = "hub_origin_env_v1";
  * reports `hub_endpoint_state`. An agent without it keeps working on the single URL it was installed with.
  */
 export const AGENT_FEATURE_HUB_ENDPOINTS = "hub_endpoints_v1";
+/** Coolify hub takeover: the agent understands the typed, signed frames of each lane. Absent on older agents. */
+export const AGENT_FEATURE_COOLIFY_SECRETS = "coolify_secrets_v1";
+export const AGENT_FEATURE_COOLIFY_SSH = "coolify_ssh_v1";
+export const AGENT_FEATURE_COOLIFY_TAKEOVER = "coolify_takeover_v1";
+export const AGENT_FEATURE_COOLIFY_CLEANUP = "coolify_cleanup_v1";
 /** Signed payload of a `hub_endpoints` frame. Byte-identical to the Go agent's CanonicalHubEndpoints. The serverId
  *  stops a frame captured for server A being replayed to server B (the hub key is fleet-wide). */
 export function canonicalHubEndpoints(serverId: string, rev: number, endpointsJson: string): string {
@@ -461,7 +472,18 @@ export const AGENT_CAPABILITIES = [
   "files", // read/list/stat/download an app volume's files via the sandboxed fsd helper; default-off
   "files_write", // opt-in, requires "files": upload/create/edit/rename/chmod/delete (volume write profile); never default
   "migrate", // opt-in, default-off: lets the hub start the one-click migrator (`docker run` of the agent image) and stop/start RECORDED source containers on THIS host; granted for a migration run and revoked when it ends
+  // Coolify hub takeover. All four are opt-in, default-off, granted per run and dropped when it ends or the consent window closes; a capability the owner granted before is never revoked by a run. Reading Coolify's database WITHOUT secrets rides the existing "database".
+  "coolify_secrets", // decrypt Coolify's values on THIS host and seal them to the hub's per-run key (sealed `coolify_secrets_req` frames only)
+  "coolify_ssh", // probe/install/remove the Tugra agent on a Coolify-known server with Coolify's own SSH key (signed `coolify_ssh_req` frames only)
+  "coolify_takeover", // adopt Coolify-run containers in place: Tugra proxy on a temp port, port handover, give back
+  "coolify_cleanup", // remove Coolify's leftovers (proxy, sentinel, helpers, /data/coolify, networks, images) after the owner confirms
 ] as const;
+
+/**
+ * The takeover capabilities a RUN grants (with its consent record) and drops again. The generic capability setter never ADDS one by hand
+ * (it may keep one that is already granted, so the server card and the grant API do not fight): the owner-only consent flow is the only way in.
+ */
+export const COOLIFY_RUN_CAPABILITIES = ["coolify_secrets", "coolify_ssh", "coolify_takeover", "coolify_cleanup"] as const satisfies readonly (typeof AGENT_CAPABILITIES)[number][];
 
 /** What a command is for — the agent can locally allowlist these. */
 export type AgentCapability = (typeof AGENT_CAPABILITIES)[number];
@@ -991,7 +1013,9 @@ export type AgentMessage =
   | Fs2ResultMsg
   | CommandStateMsg
   | DrainStatusMsg
-  | HubEndpointStateMsg;
+  | HubEndpointStateMsg
+  | CoolifySecretsResultMsg
+  | CoolifySshResultMsg;
 export type HubMessage =
   | ChallengeMsg
   | EnrolledMsg
@@ -1011,4 +1035,6 @@ export type HubMessage =
   | FsReqMsg
   | Fs2ReqMsg
   | CommandStatusMsg
-  | HubEndpointsMsg;
+  | HubEndpointsMsg
+  | CoolifySecretsReqMsg
+  | CoolifySshReqMsg;

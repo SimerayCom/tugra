@@ -1,0 +1,26 @@
+{
+  "title": "Where should things go",
+  "subtitle": "Pick, for each source server, to keep it on the same machine or move it to another server.",
+  "kind": {
+    "in-place": "Same machine (proxy swap)",
+    "other-server": "Another server"
+  },
+  "inPlaceNote": "Same machine: no data is copied, the sites keep their DNS, the old setup stays until you remove it.",
+  "lock": {
+    "match_uncertain": "Not sure which server this is. Choose one first.",
+    "agent_offline": "The agent on this server is offline.",
+    "control_plane": "This runs Coolify itself. It is handled last.",
+    "agent_missing": "This server has no Tugra agent yet."
+  },
+  "campaign": {
+    "title": "Campaign",
+    "status": {
+      "draft": "Draft",
+      "running": "Running",
+      "paused": "Paused",
+      "done": "Done",
+      "cancelled": "Cancelled"
+    },
+    "wave": "Wave {n}"
+  }
+}

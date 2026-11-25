@@ -1,0 +1,33 @@
+{
+  "title": "Take over in place",
+  "subtitle": "Tugra starts next to Coolify on a temporary port, every domain is checked, then the ports are handed over.",
+  "status": {
+    "PLANNED": "Planned",
+    "TESTING": "Testing on a temporary port",
+    "SWAPPING": "Handing over ports",
+    "SWAPPED": "Handed over",
+    "VERIFIED": "Verified",
+    "GIVING_BACK": "Giving back to Coolify",
+    "GIVEN_BACK": "Given back to Coolify",
+    "FAILED": "Failed"
+  },
+  "build": {
+    "reuse-image": "Use the image Coolify built",
+    "rebuild-verify": "Rebuild with Tugra and verify"
+  },
+  "cert": {
+    "pending": "Waiting for a new certificate",
+    "fallback": "Coolify's certificate, for a few minutes",
+    "issued": "New certificate issued",
+    "failed": "Certificate failed"
+  },
+  "check": {
+    "pending": "Not checked",
+    "ok": "Works",
+    "failed": "Does not work"
+  },
+  "giveBack": {
+    "button": "Give back to Coolify",
+    "hint": "Stops Tugra's proxy and starts Coolify's again."
+  }
+}

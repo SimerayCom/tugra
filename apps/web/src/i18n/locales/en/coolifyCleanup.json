@@ -1,0 +1,33 @@
+{
+  "title": "Clean up Coolify",
+  "subtitle": "First check that everything is in Tugra, then remove what Coolify left on the server.",
+  "status": {
+    "CHECKING": "Checking",
+    "INCOMPLETE": "Something is missing",
+    "READY": "Ready to clean",
+    "CLEANING": "Cleaning",
+    "CLEANED": "Cleaned",
+    "FAILED": "Failed"
+  },
+  "kind": {
+    "application": "Applications",
+    "database": "Databases",
+    "service": "Services",
+    "domain": "Domains",
+    "env_keys": "Variable names",
+    "volume": "Volumes",
+    "scheduled_task": "Scheduled tasks",
+    "backup": "Backups",
+    "notification": "Notifications"
+  },
+  "remnant": {
+    "container": "Container",
+    "network": "Network",
+    "image": "Image",
+    "directory": "Directory"
+  },
+  "confirm": {
+    "title": "Remove these",
+    "button": "Remove"
+  }
+}
