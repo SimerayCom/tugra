@@ -680,8 +680,15 @@ export interface LogDrainInput {
   allowPrivate?: boolean;
 }
 
+/** Where a pending package is listed: the container engine (updating it restarts Docker), kernel packages
+ *  (need a reboot), everything else. Absent from a hub older than this field (treat as "other"). */
+export type PackageGroup = "engine" | "kernel" | "other";
+/** What an OS update run covers: everything, or everything except the container engine (apps keep running). */
+export type PatchScope = "all" | "except-engine";
+
 export interface UpgradablePackage {
   name: string;
+  group?: PackageGroup;
   current: string;
   candidate: string;
 }

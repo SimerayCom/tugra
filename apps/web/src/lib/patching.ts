@@ -1,4 +1,4 @@
-import type { PatchInfo, UpgradablePackage } from "./types";
+import type { PackageGroup, PatchInfo, UpgradablePackage } from "./types";
 
 /** Packages whose upgrade restarts the container engine (dockerd / containerd / the OCI runtime) — and with it
  *  every container on the host. Exact names: `docker-ce-cli` and friends do not restart anything. */
@@ -106,4 +106,18 @@ export function shouldToastReboot(
   after: { supported: boolean; rebootRequired?: boolean },
 ): boolean {
   return exitCode === 0 && !!sum && sum.updated > 0 && after.supported && !!after.rebootRequired;
+}
+
+/** The pending packages split into the three display groups, in list order. A package without a group (older hub)
+ *  counts as "other". Pure. */
+export function groupPackages<T extends { group?: PackageGroup }>(packages: T[]): Record<PackageGroup, T[]> {
+  const out: Record<PackageGroup, T[]> = { engine: [], kernel: [], other: [] };
+  for (const p of packages) out[p.group ?? "other"].push(p);
+  return out;
+}
+
+/** After an "update without the container engine" run: did it leave ONLY engine packages pending (what the run is
+ *  meant to leave), so the result is "done, apps kept running" rather than "held back"? Pure. */
+export function onlyEngineLeft(after: { packages: { group?: PackageGroup }[] }): boolean {
+  return after.packages.length > 0 && after.packages.every((p) => p.group === "engine");
 }

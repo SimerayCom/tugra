@@ -122,6 +122,7 @@ import type {
   MyInvitation,
   InvitationPreview,
   PatchInfo,
+  PatchScope,
   DashboardInsights,
   FleetPatchCheckResult,
   FleetPatchApplyResult,
@@ -1220,8 +1221,9 @@ export const api = {
   cancelServerReboot(id: string) {
     return apiFetch<RebootView>(`/servers/${id}/reboot`, { method: "DELETE" });
   },
-  upgradeAll(id: string) {
-    return apiFetch<{ output: string; exitCode: number }>(`/servers/${id}/updates/apply`, { method: "POST" });
+  /** `scope` "except-engine" keeps the container engine out of the run so Docker (and every app) keeps running. */
+  upgradeAll(id: string, scope: PatchScope = "all") {
+    return apiFetch<{ output: string; exitCode: number }>(`/servers/${id}/updates/apply`, { method: "POST", body: JSON.stringify({ scope }) });
   },
   upgradeOne(id: string, pkg: string) {
     return apiFetch<{ output: string; exitCode: number }>(`/servers/${id}/updates/apply/${pkg}`, { method: "POST" });
@@ -1268,10 +1270,10 @@ export const api = {
       body: JSON.stringify({ serverIds }),
     });
   },
-  bulkUpgradeAll(serverIds: string[]) {
+  bulkUpgradeAll(serverIds: string[], scope: PatchScope = "all") {
     return apiFetch<FleetPatchApplyResult>(`/fleet/updates/apply`, {
       method: "POST",
-      body: JSON.stringify({ serverIds }),
+      body: JSON.stringify({ serverIds, scope }),
     });
   },
   updateAgent(id: string) {

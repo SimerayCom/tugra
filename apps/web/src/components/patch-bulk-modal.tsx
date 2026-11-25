@@ -1,10 +1,12 @@
 "use client";
 
+import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import { bulkSummary } from "../lib/bulk";
 import { useT } from "../i18n/provider";
 import type { FleetPatchCheckRow, ServerView } from "../lib/types";
+import { useOptionalConfirm } from "./confirm";
 import { Modal } from "./modal";
 import { Btn } from "./ui";
 
@@ -27,11 +29,27 @@ export function PatchBulkModal({
   const sum = bulkSummary(servers, new Set(selectedIds));
   const nameOf = (id: string) => servers.find((s) => s.id === id)?.name ?? id;
 
+  const confirm = useOptionalConfirm();
+  // Default: leave the container engine out, so no app on any selected server restarts. Unticking it is confirmed.
+  const [keepApps, setKeepApps] = useState(true);
+
   const check = useMutation({ mutationFn: () => api.bulkCheckUpdates(selectedIds) });
   const apply = useMutation({
-    mutationFn: () => api.bulkUpgradeAll(selectedIds),
+    mutationFn: () => api.bulkUpgradeAll(selectedIds, keepApps ? "except-engine" : "all"),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["servers"] }),
   });
+  const runApply = async () => {
+    if (!keepApps && confirm) {
+      const ok = await confirm({
+        title: t("bulk.patchRestartConfirmTitle"),
+        body: t("bulk.patchRestartConfirm", { n: sum.writable }),
+        confirmLabel: t("bulk.patchRestartConfirmButton"),
+        danger: true,
+      });
+      if (!ok) return;
+    }
+    apply.mutate();
+  };
 
   const checkLabel = (r: FleetPatchCheckRow): string => {
     if (!r.online) return t("bulk.offline");
@@ -74,12 +92,20 @@ export function PatchBulkModal({
             </div>
           )}
 
+          <label style={{ display: "flex", alignItems: "flex-start", gap: 8, fontSize: 12, marginBottom: 12, cursor: "pointer" }}>
+            <input type="checkbox" checked={keepApps} onChange={(e) => setKeepApps(e.target.checked)} style={{ marginTop: 2 }} />
+            <span>
+              <span style={{ fontWeight: 600 }}>{t("bulk.patchKeepApps")}</span>
+              <span style={{ display: "block", color: keepApps ? "var(--c-tx3)" : "var(--c-am)" }}>{t(keepApps ? "bulk.patchKeepAppsHint" : "bulk.patchRestartWarn")}</span>
+            </span>
+          </label>
+
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>
             <Btn variant="ghost" type="button" onClick={onClose}>{t("bulk.close")}</Btn>
             <Btn variant="ghost" type="button" onClick={() => check.mutate()} disabled={check.isPending || sum.writable === 0}>
               {check.isPending ? "…" : t("bulk.checkUpdates")}
             </Btn>
-            <Btn type="button" onClick={() => apply.mutate()} disabled={apply.isPending || sum.writable === 0}>
+            <Btn type="button" onClick={() => void runApply()} disabled={apply.isPending || sum.writable === 0}>
               {apply.isPending ? t("bulk.applying") : t("bulk.applyUpdates")}
             </Btn>
           </div>

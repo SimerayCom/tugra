@@ -15,7 +15,7 @@ import { InstallTransportNote } from "../../../../components/install-transport-n
 import { useConfirm } from "../../../../components/confirm";
 import { pct, fmtBytesStr, formatUptime } from "../../../../lib/fleet";
 import { diskPctSeries, humanizeRatePair } from "../../../../lib/metrics";
-import type { MetricsRange, PatchInfo, ServerStatus, ServerView, AgentUpdateResponse } from "../../../../lib/types";
+import type { MetricsRange, PatchInfo, PatchScope, ServerStatus, ServerView, AgentUpdateResponse } from "../../../../lib/types";
 import { useT } from "../../../../i18n/provider";
 import { MetricChart, METRIC_GRID_STYLE, METRIC_CHART_HEIGHT } from "../../../../components/charts";
 import { ServerContainersCard } from "../../../../components/server-containers-card";
@@ -43,7 +43,7 @@ import type { ProxyStatus } from "../../../../lib/types";
 import { PageHeader } from "../../../../components/page-header";
 import { Tabs } from "../../../../components/tabs-nav";
 import { RuntimeUpdateWarning } from "../../../../components/runtime-update-warning";
-import { containerRuntimeUpdates, interruptedNames, isAgentDropError, isTransientPatchError, patchTiming, phasedToastKey, settledApplyLog, shouldToastReboot, summarizeApply } from "../../../../lib/patching";
+import { containerRuntimeUpdates, groupPackages, interruptedNames, onlyEngineLeft, isAgentDropError, isTransientPatchError, patchTiming, phasedToastKey, settledApplyLog, shouldToastReboot, summarizeApply } from "../../../../lib/patching";
 import { usePatchLogStream } from "../../../../hooks/useDeployLogStream";
 import { useMetricsStream } from "../../../../hooks/useMetricsStream";
 import { useServerReconnect } from "../../../../hooks/useServerReconnect";
@@ -638,6 +638,7 @@ function PatchCard({ id, onOpenReboot }: { id: string; onOpenReboot: () => void 
   const [stale, setStale] = useState(false);
   const [phase, setPhase] = useState<PatchPhase>("idle");
   const [applyTarget, setApplyTarget] = useState<string | null>(null); // package name, or null for "update all"
+  const [applyScope, setApplyScope] = useState<PatchScope>("all"); // which "update all" is running
   const alive = useRef(true);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   const check = useMutation({
@@ -672,9 +673,11 @@ function PatchCard({ id, onOpenReboot }: { id: string; onOpenReboot: () => void 
   };
 
   // `forced`: install a phased package now (the per-package path that bypasses Ubuntu's rollout); never set for "update all".
-  const apply = async (pkg: string | null, forced = false) => {
+  // `scope`: "except-engine" keeps the container engine out of the run (apps keep running); only for "update all".
+  const apply = async (pkg: string | null, forced = false, scope: PatchScope = "all") => {
     // Finishing an interrupted dpkg that includes the container engine restarts Docker: say so first, never silently.
     const interrupted = info?.dpkgInterrupted;
+    const engineNames = pkg === null && scope === "all" ? (info?.packages ?? []).filter((p) => p.group === "engine").map((p) => p.name) : [];
     if (interrupted?.containerEngine) {
       const ok = await confirm({
         title: t("patching.interruptedConfirmTitle"),
@@ -683,16 +686,26 @@ function PatchCard({ id, onOpenReboot }: { id: string; onOpenReboot: () => void 
         danger: true,
       });
       if (!ok) return;
+    } else if (engineNames.length > 0) {
+      // "Update all" with the engine pending restarts Docker and every app: confirm, naming what causes it.
+      const ok = await confirm({
+        title: t("patching.updateAllConfirmTitle"),
+        body: t("patching.updateAllConfirm", { packages: engineNames.join(", ") }),
+        confirmLabel: t("patching.updateAllConfirmButton"),
+        danger: true,
+      });
+      if (!ok) return;
     }
     const before = forced && pkg ? [{ name: pkg }] : (info?.packages ?? []);
     setOutput("");
     setApplyTarget(pkg);
+    setApplyScope(scope);
     setPhase("applying");
     setApplying(true);
     let exitCode = 0;
     let dropped = false;
     try {
-      const r = pkg && forced ? await api.upgradePhased(id, pkg) : pkg ? await api.upgradeOne(id, pkg) : await api.upgradeAll(id);
+      const r = pkg && forced ? await api.upgradePhased(id, pkg) : pkg ? await api.upgradeOne(id, pkg) : await api.upgradeAll(id, scope);
       if (!alive.current) return;
       setOutput(settledApplyLog(r.output, streamedRef.current));
       exitCode = r.exitCode;
@@ -727,6 +740,9 @@ function PatchCard({ id, onOpenReboot }: { id: string; onOpenReboot: () => void 
       toast(t("patching.failedCounts", sum), "error");
     } else if (dropped) {
       toast(t(sum.remaining === 0 ? "patching.restartedDone" : "patching.restartedPartial", sum), sum.remaining === 0 ? "success" : "info");
+    } else if (scope === "except-engine" && pkg === null && sum.remaining > 0 && onlyEngineLeft(after)) {
+      // Exactly what this run is meant to leave behind: not "held back", and the apps never restarted.
+      toast(t("patching.appliedKeepEngine", sum), "success");
     } else if (phasedToastKey(sum)) {
       // Ubuntu's phased rollout deferred these: not "held back", and they install by themselves later.
       toast(t(phasedToastKey(sum)!, sum), "info");
@@ -741,10 +757,15 @@ function PatchCard({ id, onOpenReboot }: { id: string; onOpenReboot: () => void 
     }
     if (shouldToastReboot(exitCode, sum, after)) toast(t("patching.rebootRequiredToast"), "info");
   };
-  const runAll = () => { void apply(null); };
+  const runKeep = () => { void apply(null, false, "except-engine"); };
+  const runAll = () => { void apply(null, false, "all"); };
   const runOne = (pkg: string) => { void apply(pkg); };
   const runPhased = (pkg: string) => { void apply(pkg, true); };
   const list = stale ? null : info;
+  // Pending packages by display group; headings only appear when there is something besides "other" to tell apart.
+  const groups = groupPackages(list?.packages ?? []);
+  const showHeadings = groups.engine.length > 0 || groups.kernel.length > 0;
+  const groupLabel = (g: "engine" | "kernel" | "other") => t(g === "engine" ? "patching.groupEngine" : g === "kernel" ? "patching.groupKernel" : "patching.groupOther");
 
   return (
     <SectionCard
@@ -807,7 +828,7 @@ function PatchCard({ id, onOpenReboot }: { id: string; onOpenReboot: () => void 
           ) : list.count === 0 ? (
             list.dpkgInterrupted ? (
               // Nothing to upgrade, but dpkg is unfinished: "up to date" would be a lie. The update path finishes it.
-              <Btn onClick={runAll} loading={phase === "applying" && applyTarget === null} disabled={busy || list.applyRunning}>
+              <Btn onClick={list.dpkgInterrupted.containerEngine ? runAll : runKeep} loading={phase === "applying" && applyTarget === null} disabled={busy || list.applyRunning}>
                 {phase === "applying" && applyTarget === null ? t("patching.running") : t("patching.finishInterrupted")}
               </Btn>
             ) : (
@@ -815,29 +836,45 @@ function PatchCard({ id, onOpenReboot }: { id: string; onOpenReboot: () => void 
             )
           ) : (
             <>
-              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
-                <span style={{ fontSize: 13, fontWeight: 600 }}>{t("patching.count", { n: list.count })}</span>
-                <div style={{ flex: 1 }} />
-                <Btn onClick={runAll} loading={phase === "applying" && applyTarget === null} disabled={busy || list.applyRunning}>
-                  {phase === "applying" && applyTarget === null ? t("patching.running") : t("patching.updateAll")}
-                </Btn>
-              </div>
+              <PatchActions
+                count={list.count}
+                hasEngine={groups.engine.length > 0}
+                keepBlocked={!!list.dpkgInterrupted?.containerEngine}
+                running={phase === "applying" && applyTarget === null ? applyScope : null}
+                disabled={busy || list.applyRunning}
+                onKeep={runKeep}
+                onAll={runAll}
+              />
               <RuntimeUpdateWarning packages={containerRuntimeUpdates(list.packages)} />
-              <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 12 }}>
-                {list.packages.map((p) => (
-                  <div key={p.name} style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 12 }}>
-                    <span style={{ fontWeight: 600, width: 180, overflow: "hidden", textOverflow: "ellipsis" }}>{p.name}</span>
-                    <span className="mono" style={{ color: "var(--c-tx3)", flex: 1, overflow: "hidden", textOverflow: "ellipsis" }}>{p.current ? `${p.current} → ${p.candidate}` : `↑ ${p.candidate}`}</span>
-                    <button
-                      onClick={() => runOne(p.name)}
-                      disabled={busy || list.applyRunning}
-                      aria-busy={(phase === "applying" && applyTarget === p.name) || undefined}
-                      style={{ background: "transparent", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", color: "var(--c-lapis)", fontSize: 11, cursor: "pointer", padding: "2px 8px", fontFamily: "inherit" }}
-                    >
-                      {phase === "applying" && applyTarget === p.name ? t("patching.running") : t("patching.update")}
-                    </button>
-                  </div>
-                ))}
+              <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 12 }}>
+                {(["engine", "kernel", "other"] as const).map((g) =>
+                  groups[g].length === 0 ? null : (
+                    <div key={g} data-testid={`patch-group-${g}`} role="group" aria-label={showHeadings ? groupLabel(g) : undefined}>
+                      {showHeadings && (
+                        <div style={{ marginBottom: 6 }}>
+                          <div style={{ fontSize: 12, fontWeight: 700 }}>{groupLabel(g)} <span style={{ color: "var(--c-tx3)", fontWeight: 400 }}>({groups[g].length})</span></div>
+                          {g !== "other" && <div style={{ fontSize: 11, color: "var(--c-tx3)" }}>{t(g === "engine" ? "patching.groupEngineHint" : "patching.groupKernelHint")}</div>}
+                        </div>
+                      )}
+                      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                        {groups[g].map((p) => (
+                          <div key={p.name} style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "4px 10px", fontSize: 12 }}>
+                            <span style={{ fontWeight: 600, minWidth: 0, flex: "1 1 140px", overflow: "hidden", textOverflow: "ellipsis" }}>{p.name}</span>
+                            <span className="mono" style={{ color: "var(--c-tx3)", flex: "2 1 160px", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>{p.current ? `${p.current} → ${p.candidate}` : `↑ ${p.candidate}`}</span>
+                            <button
+                              onClick={() => runOne(p.name)}
+                              disabled={busy || list.applyRunning}
+                              aria-busy={(phase === "applying" && applyTarget === p.name) || undefined}
+                              style={{ background: "transparent", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", color: "var(--c-lapis)", fontSize: 11, cursor: "pointer", padding: "2px 8px", fontFamily: "inherit" }}
+                            >
+                              {phase === "applying" && applyTarget === p.name ? t("patching.running") : t("patching.update")}
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ),
+                )}
               </div>
             </>
           )}
@@ -871,6 +908,57 @@ function PatchCard({ id, onOpenReboot }: { id: string; onOpenReboot: () => void 
         <pre ref={logRef} className="mono" style={{ margin: "8px 0 0", fontSize: 11, color: "var(--c-tx3)", whiteSpace: "pre-wrap", maxHeight: 220, overflowY: "auto", background: "var(--c-el)", padding: 10, borderRadius: "var(--r1)" }}>{logText}</pre>
       )}
     </SectionCard>
+  );
+}
+
+/** The "update all" actions of the patching card. With the container engine pending there are two: the default keeps
+ *  every app running (engine left out); the other updates the engine too and restarts Docker (confirmed by the caller).
+ *  Without it there is one plain "Update all" that still leaves the engine out, so an engine package that shows up
+ *  between the check and the run cannot restart anything. */
+function PatchActions({
+  count,
+  hasEngine,
+  keepBlocked,
+  running,
+  disabled,
+  onKeep,
+  onAll,
+}: {
+  count: number;
+  hasEngine: boolean;
+  keepBlocked: boolean;
+  running: PatchScope | null;
+  disabled: boolean;
+  onKeep: () => void;
+  onAll: () => void;
+}) {
+  const t = useT();
+  const busyLabel = t("patching.running");
+  return (
+    <div style={{ marginBottom: 10 }}>
+      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10 }}>
+        <span style={{ fontSize: 13, fontWeight: 600, flex: "1 1 160px" }}>{t("patching.count", { n: count })}</span>
+        {hasEngine ? (
+          <>
+            <Btn onClick={onKeep} loading={running === "except-engine"} disabled={disabled || keepBlocked} title={t("patching.updateKeepHint")}>
+              {running === "except-engine" ? busyLabel : t("patching.updateKeep")}
+            </Btn>
+            <Btn variant="ghost" onClick={onAll} loading={running === "all"} disabled={disabled} title={t("patching.updateAllRestartHint")}>
+              {running === "all" ? busyLabel : t("patching.updateAllRestart")}
+            </Btn>
+          </>
+        ) : (
+          <Btn onClick={keepBlocked ? onAll : onKeep} loading={running !== null} disabled={disabled} title={t("patching.updateAllNoEngineHint")}>
+            {running !== null ? busyLabel : t("patching.updateAll")}
+          </Btn>
+        )}
+      </div>
+      {hasEngine && (
+        <div style={{ fontSize: 11, color: "var(--c-tx3)", marginTop: 6 }}>
+          {keepBlocked ? t("patching.keepBlockedInterrupted") : t("patching.updateKeepHint")}
+        </div>
+      )}
+    </div>
   );
 }
 

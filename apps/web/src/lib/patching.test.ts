@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { ApiError } from "./api";
 import { HUB_UNREACHABLE_CODE } from "./hub-connection";
-import { containerRuntimeUpdates, interruptedNames, isAgentDropError, isContainerRuntimePackage, isTransientPatchError, phasedToastKey, settledApplyLog, shouldToastReboot, summarizeApply } from "./patching";
+import { containerRuntimeUpdates, groupPackages, onlyEngineLeft, interruptedNames, isAgentDropError, isContainerRuntimePackage, isTransientPatchError, phasedToastKey, settledApplyLog, shouldToastReboot, summarizeApply } from "./patching";
 
 describe("containerRuntimeUpdates", () => {
   it("picks docker-ce, containerd.io and runc out of the pending list", () => {
@@ -118,5 +118,23 @@ describe("interruptedNames", () => {
   it("lists the half-configured packages, empty when dpkg is clean", () => {
     expect(interruptedNames({ dpkgInterrupted: { packages: [{ name: "docker-ce", state: "half-configured" }, { name: "vim", state: "unpacked" }], containerEngine: true } })).toEqual(["docker-ce", "vim"]);
     expect(interruptedNames({ dpkgInterrupted: null })).toEqual([]);
+  });
+});
+
+describe("groupPackages / onlyEngineLeft", () => {
+  it("splits by group in list order; a package without a group (older hub) is 'other'", () => {
+    const g = groupPackages([{ name: "a", group: "other" as const }, { name: "b", group: "engine" as const }, { name: "c" }, { name: "d", group: "kernel" as const }, { name: "e", group: "engine" as const }]);
+    expect(g.engine.map((p) => p.name)).toEqual(["b", "e"]);
+    expect(g.kernel.map((p) => p.name)).toEqual(["d"]);
+    expect(g.other.map((p) => p.name)).toEqual(["a", "c"]);
+  });
+  it("is empty per group for an empty list", () => {
+    expect(groupPackages([])).toEqual({ engine: [], kernel: [], other: [] });
+  });
+  it("onlyEngineLeft is true only when something is left and all of it is the engine", () => {
+    expect(onlyEngineLeft({ packages: [{ group: "engine" }, { group: "engine" }] })).toBe(true);
+    expect(onlyEngineLeft({ packages: [{ group: "engine" }, { group: "other" }] })).toBe(false);
+    expect(onlyEngineLeft({ packages: [{}] })).toBe(false);
+    expect(onlyEngineLeft({ packages: [] })).toBe(false);
   });
 });

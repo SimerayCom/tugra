@@ -452,7 +452,7 @@ describe("server patching: interrupted dpkg and a still-running update", () => {
     expect(banner).toHaveTextContent("Checking never repairs this");
     expect(banner).toHaveTextContent("container engine");
     expect(banner).toHaveTextContent("restarts Docker");
-    expect(banner).toHaveTextContent("“Update all”");
+    expect(banner).toHaveTextContent("“Update all (restarts apps)”");
     expect(upgradeAll).not.toHaveBeenCalled();
   });
 
@@ -489,6 +489,7 @@ describe("server patching: interrupted dpkg and a still-running update", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Update all" }));
     fireEvent.click(await screen.findByRole("button", { name: "Update and restart Docker" }));
     await waitFor(() => expect(upgradeAll).toHaveBeenCalledTimes(1));
+    expect(upgradeAll).toHaveBeenCalledWith("s1", "all"); // the except-engine run refuses a half-configured engine, so this one must not use it
   });
 
   it("nothing to upgrade but dpkg interrupted is NOT 'up to date': it offers to finish the update", async () => {
@@ -604,5 +605,126 @@ describe("docker cleanup card (default-on, what it does and does not delete)", (
     await stateText();
     expect(screen.getByLabelText("Also at disk %")).toHaveValue(80);
     expect(screen.getByText(/also runs when this server's disk usage reaches this percentage/)).toBeInTheDocument();
+  });
+});
+
+describe("server patching: update without restarting Docker", () => {
+  const info = (o: Record<string, unknown> = {}) => ({
+    supported: true, manager: "apt", checkFailed: false, rebootRequired: false, dpkgInterrupted: null, applyRunning: false, phased: [], ...o,
+  });
+  const pkg = (name: string, group: "engine" | "kernel" | "other") => ({ name, group, current: "1", candidate: "2" });
+  const mixed = [pkg("docker-ce", "engine"), pkg("containerd.io", "engine"), pkg("linux-image-6.8.0-50-generic", "kernel"), pkg("openssl", "other")];
+  const clickCheck = async () => fireEvent.click(await screen.findByRole("button", { name: "Check for updates" }));
+  const checkOnce = (first: Record<string, unknown>, then: Record<string, unknown>) => {
+    let calls = 0;
+    stubs.fns.checkUpdates = async () => (++calls === 1 ? first : then);
+  };
+
+  it("with the engine pending: two actions, the apps-keep-running one is the default, and the list is grouped", async () => {
+    nav.tab = "updates";
+    stubs.fns.checkUpdates = async () => info({ count: 4, packages: mixed });
+    mount();
+    await clickCheck();
+    const keep = await screen.findByRole("button", { name: "Update (keep apps running)" });
+    const all = screen.getByRole("button", { name: "Update all (restarts apps)" });
+    expect(keep).toBeEnabled();
+    expect(all).toBeEnabled();
+    expect(keep.compareDocumentPosition(all) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy(); // primary first
+    expect(keep).toHaveAttribute("title", expect.stringContaining("keep running"));
+    expect(screen.queryByRole("button", { name: "Update all" })).toBeNull();
+    const engine = screen.getByTestId("patch-group-engine");
+    const kernel = screen.getByTestId("patch-group-kernel");
+    const other = screen.getByTestId("patch-group-other");
+    expect(within(engine).getByText("Container engine")).toBeInTheDocument();
+    expect(within(engine).getByText("docker-ce")).toBeInTheDocument();
+    expect(within(engine).getByText("containerd.io")).toBeInTheDocument();
+    expect(within(kernel).getByText("Kernel (needs reboot)")).toBeInTheDocument();
+    expect(within(kernel).getByText("linux-image-6.8.0-50-generic")).toBeInTheDocument();
+    expect(within(other).getByText("Other")).toBeInTheDocument();
+    expect(within(other).getByText("openssl")).toBeInTheDocument();
+    expect(within(other).queryByText("docker-ce")).toBeNull();
+  });
+
+  it("the default action runs without any confirmation, leaves the engine out, and says the apps kept running", async () => {
+    nav.tab = "updates";
+    const upgradeAll = vi.fn(async () => ({ output: "done", exitCode: 0 }));
+    stubs.fns.upgradeAll = upgradeAll;
+    checkOnce(info({ count: 3, packages: [pkg("docker-ce", "engine"), pkg("containerd.io", "engine"), pkg("openssl", "other")] }), info({ count: 2, packages: [pkg("docker-ce", "engine"), pkg("containerd.io", "engine")] }));
+    mount();
+    await clickCheck();
+    fireEvent.click(await screen.findByRole("button", { name: "Update (keep apps running)" }));
+    await waitFor(() => expect(upgradeAll).toHaveBeenCalledWith("s1", "except-engine"));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    await waitFor(() => expect(toastTexts()).toContain("1 package(s) updated. 2 container engine package(s) were left alone so your apps kept running."));
+    expect(toasts.some((x) => x.type === "error")).toBe(false);
+  });
+
+  it("updating everything including the engine is confirmed first: cancel runs nothing, confirm runs scope all", async () => {
+    nav.tab = "updates";
+    const upgradeAll = vi.fn(async () => ({ output: "done", exitCode: 0 }));
+    stubs.fns.upgradeAll = upgradeAll;
+    checkOnce(info({ count: 4, packages: mixed }), info({ count: 0, packages: [] }));
+    mount();
+    await clickCheck();
+    fireEvent.click(await screen.findByRole("button", { name: "Update all (restarts apps)" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveTextContent("docker-ce, containerd.io");
+    expect(dialog).toHaveTextContent("restarts and is briefly unavailable");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(upgradeAll).not.toHaveBeenCalled();
+    fireEvent.click(await screen.findByRole("button", { name: "Update all (restarts apps)" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Update all and restart apps" }));
+    await waitFor(() => expect(upgradeAll).toHaveBeenCalledWith("s1", "all"));
+  });
+
+  it("without the engine pending there is one plain Update all (no restart wording), still leaving the engine out", async () => {
+    nav.tab = "updates";
+    const upgradeAll = vi.fn(async () => ({ output: "done", exitCode: 0 }));
+    stubs.fns.upgradeAll = upgradeAll;
+    checkOnce(info({ count: 1, packages: [pkg("openssl", "other")] }), info({ count: 0, packages: [] }));
+    mount();
+    await clickCheck();
+    expect(screen.queryByRole("button", { name: "Update (keep apps running)" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Update all (restarts apps)" })).toBeNull();
+    expect(screen.queryByTestId("patch-group-engine")).toBeNull();
+    expect(screen.queryByText("Other")).toBeNull(); // a single group needs no heading
+    fireEvent.click(await screen.findByRole("button", { name: "Update all" }));
+    await waitFor(() => expect(upgradeAll).toHaveBeenCalledWith("s1", "except-engine"));
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("a pending kernel update shows the reboot banner with the existing reboot link (nothing reboots by itself)", async () => {
+    nav.tab = "updates";
+    stubs.fns.checkUpdates = async () => info({ count: 1, packages: [pkg("linux-image-6.8.0-50-generic", "kernel")], rebootRequired: true });
+    const reboot = vi.fn();
+    stubs.fns.requestServerReboot = reboot;
+    mount();
+    await clickCheck();
+    expect(await screen.findByTestId("patch-group-kernel")).toHaveTextContent("Kernel (needs reboot)");
+    expect(screen.getByText("A reboot is required to finish applying updates.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Reboot this server…" }));
+    expect(reboot).not.toHaveBeenCalled();
+  });
+
+  it("a half-configured engine blocks the keep-running action (finishing it restarts Docker) and says why", async () => {
+    nav.tab = "updates";
+    const brokenEngine = { packages: [{ name: "docker-ce", state: "half-configured" }], containerEngine: true };
+    stubs.fns.checkUpdates = async () => info({ count: 2, packages: [pkg("docker-ce", "engine"), pkg("openssl", "other")], dpkgInterrupted: brokenEngine });
+    mount();
+    await clickCheck();
+    expect(await screen.findByRole("button", { name: "Update (keep apps running)" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Update all (restarts apps)" })).toBeEnabled();
+    expect(screen.getByText(/only “Update all \(restarts apps\)” can do it/)).toBeInTheDocument();
+  });
+
+  it("a package list from a hub that sends no group falls back to one ungrouped list", async () => {
+    nav.tab = "updates";
+    stubs.fns.checkUpdates = async () => info({ count: 2, packages: [{ name: "curl", current: "1", candidate: "2" }, { name: "vim", current: "1", candidate: "2" }] });
+    mount();
+    await clickCheck();
+    expect(await screen.findByText("curl")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Update all" })).toBeEnabled();
+    expect(screen.queryByText("Kernel (needs reboot)")).toBeNull();
   });
 });

@@ -54,5 +54,11 @@
   "running": "Running…",
   "noOutput": "(no output)",
   "rebootHint": "Reboots are never automatic. Run Check updates on a server to see whether one is pending.",
-  "dpkgInterrupted": "dpkg interrupted"
+  "dpkgInterrupted": "dpkg interrupted",
+  "patchKeepApps": "Keep apps running (skip the container engine)",
+  "patchKeepAppsHint": "Installs everything except Docker and containerd, so no app restarts. Untick to update those too.",
+  "patchRestartWarn": "The container engine is updated too: Docker restarts on every selected server, and every app and database on them restarts and is briefly unavailable.",
+  "patchRestartConfirmTitle": "Update the container engine too?",
+  "patchRestartConfirm": "Docker restarts on {n} server(s), so every app and database on them restarts and is briefly unavailable.",
+  "patchRestartConfirmButton": "Update and restart apps"
 }
