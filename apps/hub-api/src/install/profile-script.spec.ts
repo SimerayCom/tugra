@@ -91,7 +91,7 @@ describe("scripts/lib/profile.sh", () => {
 
     it("grows monotonically with the host: tiny <= small <= standard", () => {
       const [t, s, st] = ["tiny", "small", "standard"].map(profileValues);
-      for (const k of ["HUB_MAX_HEAP_MB", "HUB_SEMI_SPACE_MB", "WEB_MAX_HEAP_MB", "TUGRA_PG_MAX_CONNECTIONS", "HUB_DB_CONNECTION_LIMIT"]) {
+      for (const k of ["HUB_MAX_HEAP_MB", "HUB_SEMI_SPACE_MB", "WEB_MAX_HEAP_MB", "TUGRA_PG_MAX_CONNECTIONS", "TUGRA_PG_PARALLEL_WORKERS", "HUB_DB_CONNECTION_LIMIT"]) {
         expect(Number(t[k])).toBeLessThanOrEqual(Number(s[k]));
         expect(Number(s[k])).toBeLessThanOrEqual(Number(st[k]));
       }
@@ -233,13 +233,24 @@ describeCompose("deploy/docker-compose.yml profile interpolation", () => {
     if (r.status !== 0) throw new Error(r.stderr);
     return JSON.parse(r.stdout) as { services: Record<string, { command?: string[]; mem_limit?: string | number; environment: Record<string, string> }> };
   }
+  /** Every setting must be its own `-c key=value` pair: a bare `key=value` after the program name is not a valid postgres argument. */
+  const assertWellFormedPostgresCommand = (cmd: string[] | undefined) => {
+    expect(cmd?.[0]).toBe("postgres");
+    const rest = cmd!.slice(1);
+    expect(rest.length % 2).toBe(0);
+    for (let i = 0; i < rest.length; i += 2) {
+      expect(rest[i]).toBe("-c");
+      expect(rest[i + 1]).toMatch(/^[a-z_]+=\S+$/);
+    }
+  };
   const flag = (cmd: string[] | undefined, key: string) => cmd?.find((a) => a.startsWith(`${key}=`))?.slice(key.length + 1);
 
   it("without any profile key (an older install, an in-app update) the stack gets today's behaviour or better", () => {
     const { services: s } = config("");
-    expect(s.postgres.command?.[0]).toBe("postgres");
+    assertWellFormedPostgresCommand(s.postgres.command);
     expect(flag(s.postgres.command, "shared_buffers")).toBe("128MB");
     expect(flag(s.postgres.command, "max_connections")).toBe("100");
+    expect(flag(s.postgres.command, "max_parallel_workers_per_gather")).toBe("2");
     expect(flag(s.postgres.command, "wal_compression")).toBe("on");
     expect(s.redis.command).toEqual(["redis-server", "--maxmemory", "256mb", "--maxmemory-policy", "noeviction"]);
     expect(s["hub-api"].environment.NODE_OPTIONS).toBe("--max-old-space-size=768 --max-semi-space-size=16");
@@ -254,11 +265,13 @@ describeCompose("deploy/docker-compose.yml profile interpolation", () => {
   it.each(["tiny", "small", "standard"])("the %s profile's keys reach every service", (name) => {
     const v = profileValues(name);
     const { services: s } = config(Object.entries(v).map(([k, x]) => `${k}=${x}`).join("\n"));
+    assertWellFormedPostgresCommand(s.postgres.command);
     expect(flag(s.postgres.command, "shared_buffers")).toBe(v.TUGRA_PG_SHARED_BUFFERS);
     expect(flag(s.postgres.command, "effective_cache_size")).toBe(v.TUGRA_PG_EFFECTIVE_CACHE_SIZE);
     expect(flag(s.postgres.command, "work_mem")).toBe(v.TUGRA_PG_WORK_MEM);
     expect(flag(s.postgres.command, "maintenance_work_mem")).toBe(v.TUGRA_PG_MAINTENANCE_WORK_MEM);
     expect(flag(s.postgres.command, "max_connections")).toBe(v.TUGRA_PG_MAX_CONNECTIONS);
+    expect(flag(s.postgres.command, "max_parallel_workers_per_gather")).toBe(v.TUGRA_PG_PARALLEL_WORKERS);
     expect(flag(s.postgres.command, "max_wal_size")).toBe(v.TUGRA_PG_MAX_WAL_SIZE);
     expect(flag(s.postgres.command, "checkpoint_timeout")).toBe(v.TUGRA_PG_CHECKPOINT_TIMEOUT);
     expect(s.redis.command).toEqual(["redis-server", "--maxmemory", v.TUGRA_REDIS_MAXMEMORY, "--maxmemory-policy", "noeviction"]);

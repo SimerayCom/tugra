@@ -35,6 +35,10 @@ services:
       - "maintenance_work_mem=${TUGRA_PG_MAINTENANCE_WORK_MEM:-64MB}"
       - -c
       - "max_connections=${TUGRA_PG_MAX_CONNECTIONS:-100}"
+      # Parallel query workers each take their own work_mem and a process; measured on the fleet harness they add ~100 MB to Postgres'
+      # peak and no speed on a 1-2 vCPU host (PostgreSQL's own default is 2, kept when the key is absent).
+      - -c
+      - "max_parallel_workers_per_gather=${TUGRA_PG_PARALLEL_WORKERS:-2}"
       - -c
       - "max_wal_size=${TUGRA_PG_MAX_WAL_SIZE:-1GB}"
       - -c
