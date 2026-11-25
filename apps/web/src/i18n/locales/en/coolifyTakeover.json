@@ -132,8 +132,10 @@
       "waiting": "Waiting for its agent",
       "expired": "Command expired",
       "no_access": "Managed by another team admin",
-      "not_generated": "Not added"
+      "not_generated": "Not added",
+      "ambiguous": "Matches more than one server"
     },
+    "ambiguousHint": "More than one of your Tugra servers sits at this address, so none was picked. Remove the duplicate, then check again.",
     "expiresAt": "Valid until {when}"
   },
   "error": {

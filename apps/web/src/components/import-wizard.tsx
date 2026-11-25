@@ -15,7 +15,7 @@ import { ImportScopeStep } from "./import-scope-step";
 import { scopedPlan, scopeServiceSkips, type ImportScope, type ScopeSelection } from "../lib/import-scope";
 import { clearImportResume, loadImportResume, saveImportResume } from "../lib/import-resume";
 import { IMPORT_PREFILL_KEY } from "../lib/coolify-takeover";
-import { focusSelection, lastImportUrl, rememberLastImportUrl, takeImportFocus, type ImportFocus } from "../lib/import-focus";
+import { focusSelection, focusSubject, lastImportUrl, rememberLastImportUrl, takeImportFocus, type ImportFocus } from "../lib/import-focus";
 import { rememberObjectMigrationContext } from "../lib/object-migration-context";
 import { CutoverPanel } from "./cutover-panel";
 import { planSummary, itemsByKind, riskTone, opProgress, coverageApps, coverageCounts, hasDeferredCoverage, reasonText, ackableItems, buildAcks, runnableAfterAcks, serviceChoicesPayload, volumeCopyCandidates, selectedDbModes, vxCommandsWithFlags } from "../lib/import";
@@ -96,10 +96,15 @@ export function ImportWizard() {
   // Where the user came from (a server's scan card, the Read-this-Coolify page): the source address, and a server or project to start with.
   const [focus, setFocus] = useState<ImportFocus | null>(null);
   const focusRef = useRef<ImportFocus | null>(null);
+  // A line for the first step saying what the click that brought the user here ticked for them (empty when nothing).
+  const [startNote, setStartNote] = useState("");
 
   // There is no team to pick up front: the connection belongs to the team of the first server you can write to (else your first
   // team), and the target team follows from the server the import lands on.
   const writableServers = servers.filter((s) => s.canWrite);
+  // read by the plan mutation's callback, which can outlive the render it was created in
+  const writableRef = useRef(writableServers);
+  writableRef.current = writableServers;
   const connectTeam = writableServers[0]?.teamId ?? teams[0]?.id ?? "";
   const effectiveTeam = (scope && servers.find((s) => s.id === scope.defaultServerId)?.teamId) || connectTeam;
   const src = SRC[kind];
@@ -173,8 +178,19 @@ export function ImportWizard() {
       setResumeNote(null);
       setPlan(p);
       // Start the first step on what the user came for (one server or project), once.
-      const sel = focusSelection(p, focusRef.current);
+      const f = focusRef.current;
+      const sel = focusSelection(p, f, writableRef.current.map((s) => ({ id: s.id, teamId: s.teamId })));
       if (sel) setLastSelection(sel);
+      const what = focusSubject(p, sel);
+      setStartNote(
+        f?.fromItemName
+          ? what
+            ? t("import.scope.startedFromItem", { item: f.fromItemName, project: what.name })
+            : t("import.scope.startedFromItemNone", { item: f.fromItemName })
+          : what
+            ? t("import.scope.startedFrom", { name: what.name })
+            : "",
+      );
       focusRef.current = null;
     },
     onError: (e, v) => {
@@ -236,6 +252,7 @@ export function ImportWizard() {
     setPlan(null);
     setScope(null);
     setLastSelection(undefined);
+    setStartNote("");
     setSessionId(null);
     setOpId(null);
     setToken("");

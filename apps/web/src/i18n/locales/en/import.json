@@ -782,7 +782,7 @@
       "nothing": "Pick at least one to continue.",
       "teams": "Choose servers from one team.",
       "team": "Choose the team these go to.",
-      "target": "Choose a server for: {names}.",
+      "target": "Pick a server to move to.",
       "blocked": "A server cannot be moved onto the machine Coolify runs on. Choose another server.",
       "unready": "A chosen server is offline, has no agent connected or cannot deploy.",
       "mixed": "Same-machine and other-server moves cannot go together. Move the same-machine ones first, then the rest.",
@@ -832,7 +832,11 @@
     "addServer": "Add this server",
     "inPlaceNote": "{count} servers stay on their own machine. Each is a separate proxy swap, one at a time.",
     "recheck": "Check again",
-    "recheckHint": "After adding a server or starting an agent."
+    "recheckHint": "After adding a server or starting an agent.",
+    "pickServer": "Pick a server",
+    "startedFrom": "Started with {name} ticked. Untick what you do not want to move.",
+    "startedFromItem": "You opened {item}. Its whole project, {project}, is ticked. Untick what you do not want to move.",
+    "startedFromItemNone": "You opened {item}. Nothing is ticked yet, so pick what to move."
   },
   "settings": {
     "title": "Settings",

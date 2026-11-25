@@ -27,13 +27,19 @@ const sectionTitle = { fontSize: 11, fontWeight: 700, color: "var(--c-tx3)", tex
 /** A Coolify server (by its internal id) that is already a Tugra server. */
 type Connected = ReadonlyMap<string, { tugraServerId: string; teamId: string | null }>;
 
-/** Hand the import what this row knows (the Coolify address, the server or project to start with, and the Tugra server it is already connected as). */
-function openImport(address: string | null, w: { serverUuid: string | null; projectUuid: string | null; connected?: { tugraServerId: string; teamId: string | null } }): void {
+/**
+ * Hand the import what this row knows (the Coolify address, the server or project to start with, and the Tugra server it is already
+ * connected as). A server's own link starts from that server. An item's link starts from its project (the smallest thing the import can
+ * tick) and never from the whole server it runs on; an item with no project ticks nothing and only says what was clicked.
+ */
+function openImport(address: string | null, w: { serverUuid: string | null; projectUuid: string | null; itemName?: string; connected?: { tugraServerId: string; teamId: string | null } }): void {
+  const start = w.itemName ? (w.projectUuid ? { sourceProjectUuid: w.projectUuid } : {}) : w.serverUuid ? { sourceServerUuid: w.serverUuid } : w.projectUuid ? { sourceProjectUuid: w.projectUuid } : {};
   rememberImportFocus({
     kind: "coolify",
     address,
-    ...(w.serverUuid ? { sourceServerUuid: w.serverUuid } : w.projectUuid ? { sourceProjectUuid: w.projectUuid } : {}),
-    ...(w.connected ? { targetServerId: w.connected.tugraServerId, ...(w.connected.teamId ? { targetTeamId: w.connected.teamId } : {}) } : {}),
+    ...start,
+    ...(w.itemName ? { fromItemName: w.itemName.slice(0, 120) } : {}),
+    ...(w.connected && Object.keys(start).length > 0 ? { targetServerId: w.connected.tugraServerId, ...(w.connected.teamId ? { targetTeamId: w.connected.teamId } : {}) } : {}),
   });
 }
 
@@ -70,7 +76,7 @@ function Item({ item, address, connected }: { item: InventoryItem; address: stri
         {item.server ? ` · ${t("coolifyTakeover.item.on", { server: item.server })}` : ""}
         {item.environment ? ` · ${item.environment}` : ""}
       </span>
-      <Link href="/import" onClick={() => { rememberImportAddress(address); openImport(address, { serverUuid: item.serverUuid, projectUuid: item.projectUuid, connected }); }} className="tg-link" aria-label={t("coolifyTakeover.item.moveLabel", { name: item.name })} style={{ fontSize: 13, minHeight: 44, display: "inline-flex", alignItems: "center", padding: "0 8px" }}>
+      <Link href="/import" onClick={() => { rememberImportAddress(address); openImport(address, { serverUuid: item.serverUuid, projectUuid: item.projectUuid, itemName: item.name, connected }); }} className="tg-link" aria-label={t("coolifyTakeover.item.moveLabel", { name: item.name })} style={{ fontSize: 13, minHeight: 44, display: "inline-flex", alignItems: "center", padding: "0 8px" }}>
         {t("coolifyTakeover.item.move")}
       </Link>
     </li>

@@ -18,6 +18,8 @@ export interface ImportFocus {
   targetTeamId?: string;
   /** A source project (its uuid) to start with. */
   sourceProjectUuid?: string;
+  /** The one app, database or service the user clicked Move on (shown as a note: what was ticked for it, and why). */
+  fromItemName?: string;
 }
 
 export const IMPORT_FOCUS_KEY = "tugra.import.focus";
@@ -51,6 +53,8 @@ export function parseImportFocus(raw: string | null): ImportFocus | null {
   if (targetTeamId) out.targetTeamId = targetTeamId;
   const sourceProjectUuid = short(o.sourceProjectUuid, 80);
   if (sourceProjectUuid) out.sourceProjectUuid = sourceProjectUuid;
+  const fromItemName = short(o.fromItemName);
+  if (fromItemName) out.fromItemName = fromItemName;
   return Object.keys(out).length > 0 ? out : null;
 }
 
@@ -91,31 +95,52 @@ export function lastImportUrl(kind: "coolify" | "dokploy"): string | null {
   }
 }
 
+/** A Tugra server the user can write to (what the scope step offers as a destination). */
+export interface FocusTarget {
+  id: string;
+  teamId: string;
+}
+
 /**
- * The scope step's starting pick for a focus: the one source server or project the user came from, ticked, and (for a server) already
- * placed on the Tugra server it is connected as. Null when the focus names nothing this plan contains, so the step opens as usual.
- * Never places anything on a server it was not told about.
+ * The scope step's starting pick for a focus: the one source server or project the user came from, ticked. It is placed on the Tugra
+ * server it is connected as only when that server is one of `writable` (read-only, missing or other-team servers are dropped, and the
+ * team is taken from the server itself), otherwise it stays unplaced and the step asks. Whatever is ticked, the destination is never
+ * defaulted: the step waits for a pick (`pickTarget`). Null when the focus names nothing this plan contains, so the step opens as usual.
  */
-export function focusSelection(plan: ImportPlan, focus: ImportFocus | null): ScopeSelection | null {
+export function focusSelection(plan: ImportPlan, focus: ImportFocus | null, writable: ReadonlyArray<FocusTarget>): ScopeSelection | null {
   if (!focus) return null;
+  const target = focus.targetServerId ? writable.find((s) => s.id === focus.targetServerId) : undefined;
+  const team = target ? { teamId: target.teamId } : {};
   if (focus.sourceServerUuid) {
     const row = sourceHostRows(plan).find((r) => r.ref === focus.sourceServerUuid);
     if (row) {
-      return {
-        ...emptySelection(),
-        mode: "servers",
-        hosts: new Set([row.ref]),
-        placement: focus.targetServerId ? { [row.ref]: focus.targetServerId } : {},
-        ...(focus.targetTeamId ? { teamId: focus.targetTeamId } : {}),
-      };
+      return { ...emptySelection(), mode: "servers", hosts: new Set([row.ref]), placement: target ? { [row.ref]: target.id } : {}, pickTarget: true, ...team };
     }
   }
   if (focus.sourceProjectUuid) {
     const row = sourceProjectRows(plan).find((r) => r.ref === focus.sourceProjectUuid);
     if (row) {
       const hosts = sourceHostRows(plan);
-      return { ...emptySelection(), mode: "projects", projects: new Set([row.ref]), placement: focus.targetServerId && hosts.length === 1 ? { [hosts[0].ref]: focus.targetServerId } : {}, ...(focus.targetTeamId ? { teamId: focus.targetTeamId } : {}) };
+      // a project that spans several source servers has no single destination
+      const placed = target && hosts.length === 1 ? { [hosts[0].ref]: target.id } : {};
+      return { ...emptySelection(), mode: "projects", projects: new Set([row.ref]), placement: placed, pickTarget: true, ...(target && hosts.length === 1 ? team : {}) };
     }
+  }
+  return null;
+}
+
+/** What the focus ticked, by name (the source server's or project's), for the note the first step shows. Null when nothing was ticked. */
+export function focusSubject(plan: ImportPlan, sel: ScopeSelection | null): { kind: "server" | "project"; name: string } | null {
+  if (!sel) return null;
+  if (sel.mode === "servers") {
+    const ref = [...sel.hosts][0];
+    const row = sourceHostRows(plan).find((r) => r.ref === ref);
+    return row ? { kind: "server", name: row.name ?? row.ref } : null;
+  }
+  if (sel.mode === "projects") {
+    const ref = [...sel.projects][0];
+    const row = sourceProjectRows(plan).find((r) => r.ref === ref);
+    return row ? { kind: "project", name: row.name } : null;
   }
   return null;
 }

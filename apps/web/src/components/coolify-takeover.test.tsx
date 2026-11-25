@@ -119,14 +119,14 @@ describe("CoolifyTakeover", () => {
     expect(opt("plain-box").textContent).toBe("plain-box (capability off)");
   });
 
-  it("an item opens the import on its server, already placed on the Tugra server it is connected as", async () => {
+  it("an item opens the import on its project, never the whole server, and names what was clicked", async () => {
     vi.spyOn(api, "coolifyInventory").mockResolvedValue(INV);
     vi.spyOn(api, "coolifyServers").mockResolvedValue({ ...CHECKLIST, rows: [CHECKLIST.rows[0], row({ state: "already_added", tugraServerId: "s2", teamId: "t1" })] });
     await pickServer();
     await screen.findByText("Acme Coolify");
     await screen.findAllByText("Connected as edge-box");
     fireEvent.click(screen.getByRole("link", { name: "Open web in the import" }));
-    expect(JSON.parse(window.sessionStorage.getItem("tugra.import.focus") ?? "{}")).toEqual({ kind: "coolify", address: "https://coolify.example.com", sourceServerUuid: "u1", targetServerId: "s2", targetTeamId: "t1" });
+    expect(JSON.parse(window.sessionStorage.getItem("tugra.import.focus") ?? "{}")).toEqual({ kind: "coolify", address: "https://coolify.example.com", sourceProjectUuid: "p1", fromItemName: "web", targetServerId: "s2", targetTeamId: "t1" });
     expect(screen.getAllByText(/Open in import needs the Coolify API token/).length).toBeGreaterThan(0);
   });
 

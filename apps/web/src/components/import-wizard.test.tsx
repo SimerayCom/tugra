@@ -289,6 +289,62 @@ describe("ImportWizard", () => {
     expect((screen.getByRole("checkbox", { name: /Box A/ }) as HTMLInputElement).checked).toBe(false);
   });
 
+  describe("a focus that names a Tugra server", () => {
+    const scoped = {
+      ...plan,
+      items: [
+        { itemRef: "app:srvA:web", kind: "app", name: "web-app", proposed: {}, risks: [], dependsOn: [] },
+        { itemRef: "app:srvB:api", kind: "app", name: "api-app", proposed: {}, risks: [], dependsOn: [] },
+      ],
+      mapping: { features: ["mapping-v1"] },
+      preflight: { hosts: [{ ref: "srvA", name: "Box A" }, { ref: "srvB", name: "Box B" }], projects: [{ ref: "p1", name: "Shop", itemRefs: ["app:srvA:web"] }] },
+    } as unknown as ImportPlan;
+    const run = async (focus: Record<string, unknown>) => {
+      window.sessionStorage.setItem("tugra.import.focus", JSON.stringify({ kind: "coolify", ...focus }));
+      vi.spyOn(api, "listServers").mockResolvedValue([
+        { id: "srv1", name: "Server A", teamId: "t1", status: "ONLINE", clusterId: null, tags: [], canWrite: true },
+        { id: "srv2", name: "Server B", teamId: "t1", status: "ONLINE", clusterId: null, tags: [], canWrite: true },
+        { id: "ro", name: "Read-only", teamId: "t1", status: "ONLINE", clusterId: null, tags: [], canWrite: false },
+      ] as never);
+      vi.spyOn(api, "importConnect").mockResolvedValue({ sessionId: "s1", expiresAt: "2026-01-01T00:00:00.000Z" });
+      vi.spyOn(api, "importPlan").mockResolvedValue(scoped);
+      wrap(<ImportWizard />);
+      await screen.findByLabelText("Coolify URL");
+      await waitFor(() => expect(qc.getQueryData(["teams"])).toBeTruthy());
+      await waitFor(() => expect(qc.getQueryData(["servers"])).toBeTruthy());
+      fireEvent.change(screen.getByLabelText("Coolify URL"), { target: { value: "https://coolify.example.com" } });
+      fireEvent.change(screen.getByLabelText("API token"), { target: { value: "tok" } });
+      fireEvent.click(screen.getByRole("button", { name: "Connect & preview" }));
+      await screen.findByText("What are you moving?");
+    };
+
+    it("opens placed on that server when the user can write to it", async () => {
+      await run({ sourceServerUuid: "srvB", targetServerId: "srv2", targetTeamId: "t1" });
+      expect((screen.getByLabelText(/Box B moves to/) as HTMLSelectElement).value).toBe("srv2");
+      expect((screen.getByRole("button", { name: "Continue" }) as HTMLButtonElement).disabled).toBe(false);
+      expect(screen.getByTestId("scope-note").textContent).toBe("Started with Box B ticked. Untick what you do not want to move.");
+    });
+
+    it("opens unplaced, asking, when that server is read-only for the user", async () => {
+      await run({ sourceServerUuid: "srvB", targetServerId: "ro", targetTeamId: "t1" });
+      expect((screen.getByLabelText(/Box B moves to/) as HTMLSelectElement).value).toBe("");
+      expect(screen.getByText("Pick a server to move to.")).toBeTruthy();
+      expect((screen.getByRole("button", { name: "Continue" }) as HTMLButtonElement).disabled).toBe(true);
+    });
+
+    it("never defaults to the first server when a server is ticked but not connected", async () => {
+      await run({ sourceServerUuid: "srvB" });
+      expect((screen.getByLabelText(/Box B moves to/) as HTMLSelectElement).value).toBe("");
+      expect((screen.getByRole("button", { name: "Continue" }) as HTMLButtonElement).disabled).toBe(true);
+    });
+
+    it("says what an item's Move ticked: its project, not its server", async () => {
+      await run({ sourceProjectUuid: "p1", fromItemName: "web" });
+      expect((screen.getByRole("checkbox", { name: /Shop/ }) as HTMLInputElement).checked).toBe(true);
+      expect(screen.getByTestId("scope-note").textContent).toBe("You opened web. Its whole project, Shop, is ticked. Untick what you do not want to move.");
+    });
+  });
+
   it("keeps the token hint to one line and the rules behind More", async () => {
     wrap(<ImportWizard />);
     await screen.findByLabelText("Coolify URL");

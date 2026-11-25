@@ -18,8 +18,9 @@ const STATE = {
   expired: "coolifyTakeover.checklist.state.expired",
   no_access: "coolifyTakeover.checklist.state.no_access",
   not_generated: "coolifyTakeover.checklist.state.not_generated",
+  ambiguous: "coolifyTakeover.checklist.state.ambiguous",
 } as const;
-const TONE = { this_server: "lapis", already_added: "ok", waiting: "warn", expired: "danger", no_access: "muted", not_generated: "muted" } as const;
+const TONE = { this_server: "lapis", already_added: "ok", waiting: "warn", expired: "danger", no_access: "muted", not_generated: "muted", ambiguous: "warn" } as const;
 
 function Row({
   r,
@@ -68,6 +69,7 @@ function Row({
           </Btn>
         )}
       </div>
+      {r.state === "ambiguous" && <p style={{ margin: "0 0 4px 4px", fontSize: 12, color: "var(--c-tx3)" }}>{t("coolifyTakeover.checklist.ambiguousHint")}</p>}
       {r.state === "waiting" && r.installCommand && (
         <div style={{ marginLeft: 4, display: "grid", gap: 6 }}>
           <span style={{ fontSize: 12, color: "var(--c-tx3)" }}>

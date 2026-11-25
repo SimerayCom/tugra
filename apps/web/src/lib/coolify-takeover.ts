@@ -156,7 +156,7 @@ export interface CoolifyInventoryView {
 
 export type CoolifyDetect = { found: boolean; image: string | null; reason?: "no_docker" | "db_stopped" };
 
-export type ChecklistState = "this_server" | "already_added" | "waiting" | "expired" | "no_access" | "not_generated";
+export type ChecklistState = "this_server" | "already_added" | "waiting" | "expired" | "no_access" | "not_generated" | "ambiguous";
 export interface ChecklistRow {
   coolifyServerId: string;
   name: string;
