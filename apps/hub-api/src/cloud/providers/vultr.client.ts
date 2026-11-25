@@ -1,9 +1,16 @@
 import { Injectable } from "@nestjs/common";
-import type { CloudProvider, CloudServerCreateOpts, CloudServerCreateResult } from "./cloud-provider.interface";
+import type { CloudPriceReader, CloudProvider, CloudServerCreateOpts, CloudServerCreateResult, ProviderServerPlan } from "./cloud-provider.interface";
+import { PriceReadGuard } from "./price-read-guard";
 import { vultrOsId, vultrPlan, vultrRegion } from "../vultr-catalog";
 
 const VULTR_API_BASE = "https://api.vultr.com/v2"; // fixed host — never user-supplied
 const VULTR_TIMEOUT_MS = 20_000;
+/** Read-only price reads: page size and pages per list (bounded), cache lifetimes, spacing between requests. */
+const VULTR_LIST_PER_PAGE = 500;
+const VULTR_LIST_MAX_PAGES = 5;
+const VULTR_PRICE_TTL_MS = 5 * 60_000;
+const VULTR_PLANS_TTL_MS = 60 * 60_000;
+const VULTR_REQUEST_GAP_MS = 250;
 
 /** A Vultr API failure. `status` 0 = network/timeout; 400 from a curated-key miss. */
 export class VultrApiError extends Error {
@@ -28,8 +35,9 @@ interface VultrInstance {
  * reveal the credential from the Authorization header.
  */
 @Injectable()
-export class VultrApiClient implements CloudProvider {
+export class VultrApiClient implements CloudProvider, CloudPriceReader {
   readonly name = "vultr";
+  private readonly reads = new PriceReadGuard(VULTR_PRICE_TTL_MS, VULTR_REQUEST_GAP_MS);
 
   /** GET /account — 200 → valid; 401/403 → invalid (not a throw). */
   async verifyToken(token: string): Promise<{ valid: boolean }> {
@@ -80,6 +88,79 @@ export class VultrApiClient implements CloudProvider {
     }
   }
 
+  /**
+   * GET /instances (bounded cursor pages) read as plan + monthly price, USD: the price is the plan's monthly cost from
+   * GET /plans, at the instance's region when the plan is priced differently there. Read-only, paced, cached.
+   */
+  listServerPlans(token: string): Promise<ProviderServerPlan[]> {
+    return this.reads.cached(PriceReadGuard.key("vultr-plans", token), async () => {
+      const instances: VultrListedInstance[] = [];
+      let cursor = "";
+      for (let page = 1; page <= VULTR_LIST_MAX_PAGES; page++) {
+        await this.reads.pace();
+        const res = await this.request<{ instances?: VultrListedInstance[]; meta?: { links?: { next?: string } } }>(
+          "GET",
+          `/instances?per_page=${VULTR_LIST_PER_PAGE}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`,
+          token,
+        );
+        for (const i of res?.instances ?? []) if (typeof i?.id === "string" && i.id) instances.push(i);
+        cursor = res?.meta?.links?.next ?? "";
+        if (!cursor) break;
+      }
+      if (!instances.length) return [];
+      const plans = await this.planList(token);
+      const out: ProviderServerPlan[] = [];
+      for (const i of instances) {
+        const slug = typeof i.plan === "string" ? i.plan : "";
+        if (!/^[a-z0-9.-]{1,64}$/.test(slug)) continue;
+        const plan = plans.get(slug);
+        const region = typeof i.region === "string" ? i.region : null;
+        const monthly = plan ? (plan.regionMonthly.get(region ?? "") ?? plan.monthly) : null;
+        out.push({
+          providerServerId: i.id as string,
+          plan: {
+            slug,
+            cores: plan?.cores ?? finiteNum(i.vcpu_count) ?? 0,
+            memoryGb: (plan?.ramMb ?? finiteNum(i.ram) ?? 0) / 1024,
+            diskGb: plan?.diskGb ?? finiteNum(i.disk) ?? 0,
+            architecture: "x86",
+          },
+          location: region,
+          monthlyCents: monthly === null ? null : Math.round(monthly * 100),
+          currency: "USD",
+        });
+      }
+      return out;
+    });
+  }
+
+  /** GET /plans?type=all (bounded cursor pages): the public plan list with prices, cached for an hour. */
+  private planList(token: string): Promise<Map<string, VultrPlanPrice>> {
+    return this.reads.cached(
+      PriceReadGuard.key("vultr-catalog", token),
+      async () => {
+        const out = new Map<string, VultrPlanPrice>();
+        let cursor = "";
+        for (let page = 1; page <= VULTR_LIST_MAX_PAGES; page++) {
+          await this.reads.pace();
+          const res = await this.request<{ plans?: unknown[]; meta?: { links?: { next?: string } } }>(
+            "GET",
+            `/plans?type=all&per_page=${VULTR_LIST_PER_PAGE}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`,
+            token,
+          );
+          for (const raw of res?.plans ?? []) {
+            const pl = toVultrPlan(raw);
+            if (pl) out.set(pl.id, pl);
+          }
+          cursor = res?.meta?.links?.next ?? "";
+          if (!cursor) break;
+        }
+        return out;
+      },
+      VULTR_PLANS_TTL_MS,
+    );
+  }
+
   private async request<T = unknown>(method: string, path: string, token: string, body?: unknown): Promise<T> {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), VULTR_TIMEOUT_MS);
@@ -113,6 +194,43 @@ export class VultrApiClient implements CloudProvider {
       clearTimeout(timer);
     }
   }
+}
+
+interface VultrListedInstance {
+  id?: unknown;
+  plan?: unknown;
+  region?: unknown;
+  vcpu_count?: unknown;
+  ram?: unknown;
+  disk?: unknown;
+}
+
+interface VultrPlanPrice {
+  id: string;
+  cores: number | null;
+  ramMb: number | null;
+  diskGb: number | null;
+  /** USD per month. */
+  monthly: number;
+  /** USD per month at the regions that price the plan differently. */
+  regionMonthly: Map<string, number>;
+}
+
+const finiteNum = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : null);
+
+/** A Vultr plan as far as it is well-formed; null without an id and a monthly cost. */
+function toVultrPlan(raw: unknown): VultrPlanPrice | null {
+  const o = raw as { id?: unknown; vcpu_count?: unknown; ram?: unknown; disk?: unknown; monthly_cost?: unknown; location_cost?: unknown } | null | undefined;
+  const monthly = finiteNum(o?.monthly_cost);
+  if (!o || typeof o.id !== "string" || !o.id || monthly === null) return null;
+  const regionMonthly = new Map<string, number>();
+  if (o.location_cost && typeof o.location_cost === "object") {
+    for (const [region, v] of Object.entries(o.location_cost as Record<string, unknown>)) {
+      const m = finiteNum((v as { monthly_cost?: unknown } | null)?.monthly_cost);
+      if (m !== null) regionMonthly.set(region, m);
+    }
+  }
+  return { id: o.id, cores: finiteNum(o.vcpu_count), ramMb: finiteNum(o.ram), diskGb: finiteNum(o.disk), monthly, regionMonthly };
 }
 
 const assigned = (v: string | null | undefined): boolean => typeof v === "string" && v.length > 0;

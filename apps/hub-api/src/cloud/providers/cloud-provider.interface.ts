@@ -111,13 +111,19 @@ export interface ProviderPlan extends ProviderPlanSpec {
 }
 
 /**
- * Providers whose API reports plan prices and can change a VM's plan. Same contract as CloudProvider: the token is an
- * explicit argument, never kept, never in a thrown message. Hetzner is the first.
+ * Providers whose API reports what their VMs cost (read-only). Same contract as CloudProvider: the token is an
+ * explicit argument, never kept, never in a thrown message. Hetzner, DigitalOcean and Vultr.
  */
-export interface CloudPlanProvider {
+export interface CloudPriceReader {
   readonly name: string;
   /** The VMs of the token's project with the plan they run and its price (first pages only: bounded). */
   listServerPlans(token: string): Promise<ProviderServerPlan[]>;
+}
+
+/**
+ * Providers that can also list their plans and change a VM's plan (one-click rescale). Hetzner is the first.
+ */
+export interface CloudPlanProvider extends CloudPriceReader {
   /** The plans one can switch to, with prices per location. */
   listPlanCatalog(token: string): Promise<ProviderPlan[]>;
   getServerPlan(token: string, providerServerId: string): Promise<ProviderServerPlan>;

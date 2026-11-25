@@ -15,6 +15,7 @@ const baseServer = (o: Record<string, unknown> = {}) => ({
   providerServerId: null as string | null,
   cloudCredentialId: null as string | null,
   cloudHint: null as string | null,
+  hostname: null as string | null,
   cpuCores: 2,
   memTotalBytes: BigInt(Math.round(3.7 * GIB)),
   arch: "amd64",
@@ -50,7 +51,10 @@ function make(o: { servers?: ReturnType<typeof baseServer>[]; perms?: string[]; 
   const audit = { log: jest.fn().mockResolvedValue(undefined) };
   const crypto = { decrypt: jest.fn().mockImplementation((s: string) => s.replace(/^enc:/, "")) };
   const planClient = { listServerPlans: jest.fn().mockResolvedValue(o.plans ?? []) };
-  const providers = { getPlans: jest.fn().mockImplementation((p: string) => (p === "hetzner" ? planClient : null)) };
+  const providers = {
+    getPlans: jest.fn().mockImplementation((p: string) => (p === "hetzner" ? planClient : null)),
+    getPrices: jest.fn().mockImplementation((p: string) => (p === "hetzner" || p === "digitalocean" || p === "vultr" ? planClient : null)),
+  };
   const svc = new CostsService(prisma as unknown as PrismaService, access as unknown as TeamAccessService, audit as unknown as AuditService, crypto as unknown as CryptoService, providers as unknown as CloudProviderFactory);
   return { svc, prisma, access, audit, crypto, planClient, providers };
 }
@@ -64,8 +68,31 @@ describe("resolveCost", () => {
     const r = resolveCost(baseServer({ cloudHint: "hetzner" }) as never, 38 * GIB);
     expect(r).toMatchObject({ source: "estimate", provider: "hetzner", planSlug: "cx23", monthlyCents: 599, estimateBasis: "list", currency: "EUR" });
   });
+  it("gives a host of an unknown provider no price and no plan name, only a muted similar size", () => {
+    const r = resolveCost(baseServer({ cpuCores: 12, memTotalBytes: BigInt(Math.round(47 * GIB)) }) as never, 774 * GIB);
+    expect(r).toMatchObject({ source: "unknown", monthlyCents: null, currency: null, planSlug: null, planLabel: null, provider: null, providerHint: null, unknownReason: "no_provider", estimateBasis: null });
+    expect(r.similar).toMatchObject({ provider: "hetzner", currency: "EUR" });
+  });
+  it("detects Contabo from its vmi host name and prices it from the Contabo list, as a hint", () => {
+    const r = resolveCost(baseServer({ hostname: "vmi2419591", cpuCores: 12, memTotalBytes: BigInt(Math.round(47 * GIB)), arch: "x86_64" }) as never, 774 * GIB);
+    expect(r).toMatchObject({ source: "estimate", provider: "contabo", providerHint: "hostname", planSlug: "cloud-vps-12", monthlyCents: 2500, currency: "EUR", snapshotDate: "2026-11-25", similar: null });
+  });
+  it("trusts the agent's report and a link before a host-name guess", () => {
+    expect(resolveCost(baseServer({ hostname: "vmi2419591", cloudHint: "hetzner" }) as never, 38 * GIB)).toMatchObject({ provider: "hetzner", providerHint: "agent" });
+    expect(resolveCost(baseServer({ hostname: "vmi2419591", cloudHint: "hetzner", provider: "digitalocean" }) as never, 38 * GIB)).toMatchObject({ provider: "digitalocean", providerHint: "linked" });
+  });
+  it("says why a known provider without a list has no price", () => {
+    const r = resolveCost(baseServer({ cloudHint: "aws" }) as never, 38 * GIB);
+    expect(r).toMatchObject({ source: "unknown", provider: "aws", providerHint: "agent", unknownReason: "no_list", monthlyCents: null });
+  });
+  it("a typed price replaces the estimate whatever the hint says", () => {
+    const r = resolveCost(baseServer({ hostname: "vmi2419591", cost: { source: "manual", monthlyCents: 2799, currency: "EUR", provider: null, planSlug: null, syncedAt: null } }) as never, 38 * GIB);
+    expect(r).toMatchObject({ source: "manual", monthlyCents: 2799, provider: "contabo", providerHint: "hostname", similar: null, unknownReason: null });
+  });
   it("is 'unknown' when the host size is unknown", () => {
-    expect(resolveCost(baseServer({ cpuCores: null, memTotalBytes: null }) as never, null).source).toBe("unknown");
+    const r = resolveCost(baseServer({ cpuCores: null, memTotalBytes: null, cloudHint: "hetzner" }) as never, null);
+    expect(r.source).toBe("unknown");
+    expect(r).toMatchObject({ unknownReason: "no_size", similar: null });
   });
 });
 
@@ -88,6 +115,35 @@ describe("CostsService.report", () => {
     expect(teams[0].canManage).toBe(true);
   });
 
+  it("reports an unknown-provider server without a price, a plan or a total, and keeps the hint's origin", async () => {
+    const c = make({
+      servers: [
+        baseServer({ id: "s1", name: "mystery", cpuCores: 12, memTotalBytes: BigInt(Math.round(47 * GIB)) }),
+        baseServer({ id: "s2", name: "vmi-box", hostname: "vmi2419591", cpuCores: 12, memTotalBytes: BigInt(Math.round(47 * GIB)) }),
+      ],
+    });
+    const [mystery, contabo] = (await c.svc.report("u1")).teams[0].servers;
+    expect(mystery).toMatchObject({ source: "unknown", monthlyCents: null, currency: null, planLabel: null, planSlug: null, provider: null, unknownReason: "no_provider" });
+    expect(mystery.similar).toMatchObject({ provider: "hetzner" });
+    expect(contabo).toMatchObject({ source: "estimate", provider: "contabo", providerHint: "hostname", planLabel: expect.stringContaining("Cloud VPS 12"), monthlyCents: 2500 });
+    const totals = (await c.svc.report("u1")).teams[0].totals;
+    expect(totals).toEqual([{ currency: "EUR", monthlyCents: 2500, estimatedCents: 2500, servers: 1 }]);
+  });
+
+  it("canSync is true for Hetzner, DigitalOcean and Vultr links and false for others", async () => {
+    const link = { providerServerId: "1", cloudCredentialId: "cc1" };
+    const c = make({
+      servers: [
+        baseServer({ id: "a", provider: "hetzner", ...link }),
+        baseServer({ id: "b", provider: "digitalocean", ...link }),
+        baseServer({ id: "c", provider: "vultr", ...link }),
+        baseServer({ id: "d", provider: "aws", ...link }),
+      ],
+    });
+    const rows = (await c.svc.report("u1")).teams[0].servers;
+    expect(rows.map((r) => r.canSync)).toEqual([true, true, true, false]);
+  });
+
   it("refuses a team the caller is not in", async () => {
     const c = make();
     await expect(c.svc.report("u1", "other")).rejects.toBeInstanceOf(ForbiddenException);
@@ -107,7 +163,7 @@ describe("CostsService.report", () => {
   });
 
   it("hides app names from a restricted viewer", async () => {
-    const c = make({ scoped: true, perms: [] });
+    const c = make({ scoped: true, perms: [], servers: [baseServer({ cloudHint: "hetzner" })] });
     c.prisma.containerMetricRollup.groupBy.mockResolvedValue([{ serverId: "s1", containerName: "tugra_app1", _sum: { avgCpu: 30, avgMemUsed: BigInt(100) } }]);
     const s = (await c.svc.report("u1")).teams[0].servers[0];
     expect(s.apps).toEqual([]);
@@ -137,6 +193,12 @@ describe("CostsService prices", () => {
     await c.svc.setServerCost("u1", "s1", { monthly: 12.5, currency: "EUR" });
     expect(c.prisma.serverCost.upsert).toHaveBeenCalledWith(expect.objectContaining({ create: expect.objectContaining({ serverId: "s1", monthlyCents: 1250, currency: "EUR", source: "manual" }) }));
     expect(c.audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "server.cost.set" }));
+  });
+
+  it("a host-name guess is never written down as the provider of a typed price", async () => {
+    const c = make({ servers: [baseServer({ hostname: "vmi2419591" })] });
+    await c.svc.setServerCost("u1", "s1", { monthly: 27.5, currency: "EUR" });
+    expect(c.prisma.serverCost.upsert).toHaveBeenCalledWith(expect.objectContaining({ create: expect.objectContaining({ provider: null, monthlyCents: 2750 }) }));
   });
 
   it("an unknown server is a 404", async () => {
@@ -184,6 +246,18 @@ describe("CostsService.sync", () => {
     expect(r.failed).toHaveLength(1);
     expect(r.failed[0].credentialName).toBe("Prod");
     expect(r.failed[0].message).not.toContain("TOKEN");
+  });
+
+  it("syncs a DigitalOcean credential through the price reader and stores USD", async () => {
+    const doServer = baseServer({ provider: "digitalocean", providerServerId: "99", cloudCredentialId: "cc1" });
+    const c = make({
+      servers: [doServer],
+      creds: { id: "cc1", teamId: "t1", name: "DO", provider: "digitalocean", apiTokenEnc: "enc:DOTOKEN" },
+      plans: [{ providerServerId: "99", plan: { slug: "s-2vcpu-4gb", cores: 2, memoryGb: 4, diskGb: 80, architecture: "x86" }, location: "fra1", monthlyCents: 2400, currency: "USD" }],
+    });
+    expect(await c.svc.sync("u1", "t1")).toEqual({ synced: 1, failed: [] });
+    expect(c.planClient.listServerPlans).toHaveBeenCalledWith("DOTOKEN");
+    expect(c.prisma.serverCost.upsert).toHaveBeenCalledWith(expect.objectContaining({ create: expect.objectContaining({ provider: "digitalocean", currency: "USD", monthlyCents: 2400, planSlug: "s-2vcpu-4gb" }) }));
   });
 
   it("skips a credential of another team", async () => {

@@ -49,12 +49,20 @@ const ServerCostView = z.object({
   /** provider = read from the provider API; manual = typed; estimate = from the bundled dated price snapshot. */
   source: z.enum(["provider", "manual", "estimate", "unknown"]),
   provider: z.string().nullable(),
+  /** Where `provider` came from: a link or provisioning, the host's own agent, or a guess from its host name. A hint the price can replace. */
+  providerHint: z.enum(["linked", "agent", "hostname"]).nullable(),
   planSlug: z.string().nullable(),
   planLabel: z.string().nullable(),
-  /** Estimates only: the host's own provider list ("list") or a reference list standing in for an unlisted provider. */
-  estimateBasis: z.enum(["list", "reference"]).nullable(),
+  /** Estimates only: the plan is from the host's own provider list. Another provider's list never stands in. */
+  estimateBasis: z.enum(["list"]).nullable(),
   /** Estimates only: false when this provider's snapshot rows were not re-read on the snapshot date. */
   snapshotVerified: z.boolean().nullable(),
+  /** Estimates only: the day this provider's list was read. */
+  snapshotDate: z.string().nullable(),
+  /** Unknown prices only: no size yet, no provider known, no list for this provider, or no plan close to this size. */
+  unknownReason: z.enum(["no_size", "no_provider", "no_list", "no_plan"]).nullable(),
+  /** Unknown prices only: a muted comparison, a similar size on another provider's public list. Never this server's plan. */
+  similar: z.object({ provider: z.string(), monthlyCents: z.number().int(), currency: z.string(), snapshotDate: z.string() }).nullable(),
   syncedAt: z.string().nullable(),
   /** The server is linked to a provider whose API can report the real price. */
   canSync: z.boolean(),
@@ -138,8 +146,8 @@ const AdviceView = z.object({
   target: PlanView.nullable(),
   /** Positive = saves per month, negative = costs more; null when no price comparison is possible. */
   savingsCents: z.number().int().nullable(),
-  /** Price source of the comparison: the provider's own price list ("provider"), the dated snapshot ("list") or a reference list. */
-  priceBasis: z.enum(["provider", "list", "reference"]),
+  /** Price source of the comparison: the provider's own price list ("provider"), the dated snapshot of the host's provider ("list"), or none (no price list for this provider: usage only). */
+  priceBasis: z.enum(["provider", "list", "none"]),
   upgradeDisk: z.boolean(),
   /** The smaller plan has a smaller disk than this server: disks do not shrink, so it takes a new, smaller server. */
   diskBlocked: z.boolean(),

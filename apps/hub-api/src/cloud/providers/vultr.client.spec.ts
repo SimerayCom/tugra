@@ -111,3 +111,69 @@ describe("VultrApiClient", () => {
     });
   });
 });
+
+describe("VultrApiClient price reads", () => {
+  const plan = (id: string, cores: number, ramMb: number, disk: number, monthly: number, locationCost: Record<string, unknown> = {}) => ({ id, vcpu_count: cores, ram: ramMb, disk, monthly_cost: monthly, location_cost: locationCost });
+  const instance = (id: string, planId: string, region = "fra") => ({ id, plan: planId, region });
+  const fresh = () => {
+    const c = new VultrApiClient();
+    (c as unknown as { reads: { gapMs: number } }).reads.gapMs = 0;
+    return c;
+  };
+  afterEach(() => jest.restoreAllMocks());
+
+  function mockSeq(...bodies: unknown[]) {
+    const fn = jest.fn();
+    for (const body of bodies) fn.mockResolvedValueOnce({ ok: true, status: 200, json: async () => body } as Response);
+    (global as unknown as { fetch: typeof fetch }).fetch = fn as unknown as typeof fetch;
+    return fn;
+  }
+
+  it("reads each instance's plan and USD monthly price from the plan list, with GET only", async () => {
+    const fn = mockSeq(
+      { instances: [instance("a1", "vc2-2c-4gb"), instance("b2", "vc2-1c-1gb", "sao")], meta: { links: { next: "" } } },
+      { plans: [plan("vc2-2c-4gb", 2, 4096, 80, 20), plan("vc2-1c-1gb", 1, 1024, 25, 5, { sao: { monthly_cost: 7.5 } }), { id: "broken" }], meta: { links: { next: "" } } },
+    );
+    const out = await fresh().listServerPlans(TOKEN);
+    expect(out).toEqual([
+      { providerServerId: "a1", plan: { slug: "vc2-2c-4gb", cores: 2, memoryGb: 4, diskGb: 80, architecture: "x86" }, location: "fra", monthlyCents: 2000, currency: "USD" },
+      { providerServerId: "b2", plan: { slug: "vc2-1c-1gb", cores: 1, memoryGb: 1, diskGb: 25, architecture: "x86" }, location: "sao", monthlyCents: 750, currency: "USD" },
+    ]);
+    expect(fn.mock.calls[0][0]).toBe("https://api.vultr.com/v2/instances?per_page=500");
+    expect(fn.mock.calls[1][0]).toBe("https://api.vultr.com/v2/plans?type=all&per_page=500");
+    for (const call of fn.mock.calls) expect(call[1]).toMatchObject({ method: "GET" });
+  });
+
+  it("a plan the list does not know has a null price (never a guess); no instances means no second read", async () => {
+    mockSeq({ instances: [instance("a1", "vc2-9c-99gb")] }, { plans: [plan("vc2-2c-4gb", 2, 4096, 80, 20)] });
+    const [p] = await fresh().listServerPlans(TOKEN);
+    expect(p).toMatchObject({ providerServerId: "a1", monthlyCents: null, plan: { slug: "vc2-9c-99gb" } });
+    const fn = mockSeq({ instances: [] });
+    expect(await fresh().listServerPlans("another")).toEqual([]);
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+
+  it("follows the cursor up to a bound and rejects a plan id that is not a plain slug", async () => {
+    const fn = mockSeq({ instances: [instance("a1", "vc2-2c-4gb"), instance("x", "../../etc")], meta: { links: { next: "CUR 1" } } }, { instances: [instance("a2", "vc2-2c-4gb")], meta: { links: { next: "" } } }, { plans: [plan("vc2-2c-4gb", 2, 4096, 80, 20)] });
+    const out = await fresh().listServerPlans(TOKEN);
+    expect(out.map((p) => p.providerServerId)).toEqual(["a1", "a2"]);
+    expect(fn.mock.calls[1][0]).toBe("https://api.vultr.com/v2/instances?per_page=500&cursor=CUR%201");
+    const always = jest.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({ instances: [instance("a1", "vc2-2c-4gb")], meta: { links: { next: "more" } } }) } as Response);
+    (global as unknown as { fetch: typeof fetch }).fetch = always as unknown as typeof fetch;
+    await fresh()
+      .listServerPlans("bounded")
+      .catch(() => undefined);
+    expect(always.mock.calls.filter((c) => String(c[0]).includes("/instances")).length).toBe(5);
+  });
+
+  it("caches a credential's read and does not cache a failure; the error never carries the token", async () => {
+    const c = fresh();
+    mockFetch({ ok: false, status: 429, body: { error: `rate limited ${TOKEN}` } });
+    await expect(c.listServerPlans(TOKEN)).rejects.toMatchObject({ status: 429 });
+    await c.listServerPlans(TOKEN).catch((e) => expect((e as Error).message).not.toContain(TOKEN));
+    const fn = mockSeq({ instances: [instance("a1", "vc2-2c-4gb")] }, { plans: [plan("vc2-2c-4gb", 2, 4096, 80, 20)] });
+    await c.listServerPlans(TOKEN);
+    await c.listServerPlans(TOKEN);
+    expect(fn).toHaveBeenCalledTimes(2);
+  });
+});

@@ -9,9 +9,9 @@ import { oobHttpError } from "../cloud/oob.service";
 import { resolveContainerLabel } from "../metrics/container-metrics.service";
 import type { ContainerLabelRow } from "../metrics/container-labels";
 import { PRICE_SNAPSHOT_DATE, snapshotFor } from "./price-snapshot.data";
-import { estimateCost, planLabel, toCents } from "./cost-estimate";
+import { estimateCost, noEstimateReason, planLabel, similarCost, toCents, type NoEstimateReason, type SimilarCost } from "./cost-estimate";
 import { allocate, groupUse } from "./cost-allocation";
-import { hostSize, providerOf } from "./cost-size";
+import { hostSize, providerHintOf, type ProviderHint } from "./cost-size";
 import type { CostsReport, CreateBaselineInput, SetServerCostInput, SyncResult, TeamCostView } from "./costs.dto";
 
 export const USAGE_WINDOW_MS = 14 * 86_400_000;
@@ -28,10 +28,19 @@ export interface ResolvedCost {
   monthlyCents: number | null;
   currency: string | null;
   provider: string | null;
+  /** Where `provider` came from (null when there is none): it is a hint, not a fact, unless it was linked. */
+  providerHint: ProviderHint | null;
   planSlug: string | null;
   planLabel: string | null;
-  estimateBasis: "list" | "reference" | null;
+  /** Estimates only: the plan is from the host's own provider list. */
+  estimateBasis: "list" | null;
   snapshotVerified: boolean | null;
+  /** Estimates only: the day that provider's list was read. */
+  snapshotDate: string | null;
+  /** Unknown prices only: why there is no estimate. */
+  unknownReason: NoEstimateReason | null;
+  /** Unknown prices only: a muted comparison, a similar size at another provider. Never this server's plan. */
+  similar: SimilarCost | null;
   syncedAt: Date | null;
 }
 
@@ -46,36 +55,66 @@ export async function latestDiskTotals(prisma: PrismaService, serverIds: string[
   return new Map(rows.filter((r) => Number(r.disk) > 0).map((r) => [r.serverId, Number(r.disk)]));
 }
 
-/** Resolve a server's price: a stored provider/manual price wins, else an estimate from the dated snapshot. Pure. */
+/**
+ * Resolve a server's price: a stored provider/manual price wins, else an estimate from the host's OWN provider's dated
+ * list. A host whose provider is unknown or has no list gets no price at all (never another provider's plan); it may
+ * carry a muted "similar size" comparison instead. Pure.
+ */
 export function resolveCost(server: ServerRow, diskBytes: number | null): ResolvedCost {
   const row = server.cost;
+  const hint = providerHintOf(server);
   if (row && (row.source === "provider" || row.source === "manual")) {
     const snapPlan = row.planSlug ? snapshotFor(row.provider)?.plans.find((p) => p.slug === row.planSlug) : undefined;
     return {
       source: row.source,
       monthlyCents: row.monthlyCents,
       currency: row.currency,
-      provider: row.provider ?? providerOf(server),
+      provider: row.provider ?? hint?.provider ?? null,
+      providerHint: row.provider ? (hint?.provider === row.provider ? hint.hint : "linked") : (hint?.hint ?? null),
       planSlug: row.planSlug,
       planLabel: snapPlan ? planLabel(snapPlan) : row.planSlug ? row.planSlug.toUpperCase() : null,
       estimateBasis: null,
       snapshotVerified: null,
+      snapshotDate: null,
+      unknownReason: null,
+      similar: null,
       syncedAt: row.syncedAt,
     };
   }
-  const est = estimateCost(providerOf(server), hostSize(server, diskBytes));
+  const size = hostSize(server, diskBytes);
+  const provider = hint?.provider ?? null;
+  const est = estimateCost(provider, size);
   if (!est) {
-    return { source: "unknown", monthlyCents: null, currency: null, provider: providerOf(server), planSlug: null, planLabel: null, estimateBasis: null, snapshotVerified: null, syncedAt: null };
+    const reason = noEstimateReason(provider, size) ?? "no_plan";
+    return {
+      source: "unknown",
+      monthlyCents: null,
+      currency: null,
+      provider,
+      providerHint: hint?.hint ?? null,
+      planSlug: null,
+      planLabel: null,
+      estimateBasis: null,
+      snapshotVerified: null,
+      snapshotDate: null,
+      unknownReason: reason,
+      similar: reason === "no_size" ? null : similarCost(size),
+      syncedAt: null,
+    };
   }
   return {
     source: "estimate",
     monthlyCents: est.monthlyCents,
     currency: est.currency,
-    provider: providerOf(server) ?? est.provider,
+    provider: est.provider,
+    providerHint: hint?.hint ?? null,
     planSlug: est.planSlug,
     planLabel: est.planLabel,
     estimateBasis: est.basis,
     snapshotVerified: est.verified,
+    snapshotDate: est.snapshotDate,
+    unknownReason: null,
+    similar: null,
     syncedAt: null,
   };
 }
@@ -149,12 +188,16 @@ export class CostsService {
           currency: cost.currency,
           source: cost.source,
           provider: cost.provider,
+          providerHint: cost.providerHint,
           planSlug: cost.planSlug,
           planLabel: cost.planLabel,
           estimateBasis: cost.estimateBasis,
           snapshotVerified: cost.snapshotVerified,
+          snapshotDate: cost.snapshotDate,
+          unknownReason: cost.unknownReason,
+          similar: cost.similar,
           syncedAt: cost.syncedAt ? cost.syncedAt.toISOString() : null,
-          canSync: !!(s.provider && s.providerServerId && s.cloudCredentialId && this.providers.getPlans(s.provider)),
+          canSync: !!(s.provider && s.providerServerId && s.cloudCredentialId && this.providers.getPrices(s.provider)),
           cores: s.cpuCores,
           memBytes: s.memTotalBytes === null ? null : Number(s.memTotalBytes),
           diskBytes: disks.get(s.id) ?? null,
@@ -278,7 +321,8 @@ export class CostsService {
       monthlyCents: cents,
       currency: body.currency,
       source: "manual",
-      provider: existing?.provider ?? providerOf(server),
+      // Only what the host or a link says: a guess from its host name is never written down as the provider.
+      provider: existing?.provider ?? server.provider ?? server.cloudHint ?? null,
       planSlug: existing?.planSlug ?? null,
       location: existing?.location ?? null,
       syncedAt: null,
@@ -315,7 +359,7 @@ export class CostsService {
     for (const [credId, list] of byCred) {
       const cred = await this.prisma.cloudCredential.findUnique({ where: { id: credId } });
       if (!cred || cred.teamId !== teamId) continue;
-      const client = this.providers.getPlans(cred.provider);
+      const client = this.providers.getPrices(cred.provider);
       if (!client) continue;
       let plans;
       try {

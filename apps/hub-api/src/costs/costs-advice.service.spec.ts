@@ -90,6 +90,17 @@ describe("CostsAdviceService", () => {
     expect(c.planClient.listPlanCatalog).not.toHaveBeenCalled();
   });
 
+  it("gives a host of a provider without a price list usage-only advice: no plan name, no price, no target", async () => {
+    const c = make({ servers: [server({ cloudHint: "aws" })] });
+    const a = (await c.svc.advice("u1")).advice[0];
+    expect(a).toMatchObject({ kind: "ok", priceBasis: "none", target: null, savingsCents: null, provider: "aws" });
+    expect(a.current).toMatchObject({ slug: null, label: null, cores: 8, monthlyCents: null });
+    const none = make({ servers: [server({ cloudHint: null })], usage: [idleUsage({ cpu_p95: 92, cpu_peak: 100 })] });
+    const n = (await none.svc.advice("u1")).advice[0];
+    expect(n).toMatchObject({ kind: "near_limit", reasons: ["cpu"], priceBasis: "none", target: null });
+    expect(n.current?.label).toBeNull();
+  });
+
   it("flags a server near its limit", async () => {
     const c = make({ usage: [idleUsage({ cpu_p95: 92, cpu_peak: 100 })] });
     const a = (await c.svc.advice("u1")).advice[0];

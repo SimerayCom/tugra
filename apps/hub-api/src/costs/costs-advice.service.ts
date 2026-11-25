@@ -5,7 +5,7 @@ import { CryptoService } from "../crypto/crypto.service";
 import { TeamAccessService } from "../common/team-access.service";
 import { CloudProviderFactory } from "../cloud/providers/provider-factory.service";
 import type { CloudPlanProvider, ProviderPlan } from "../cloud/providers/cloud-provider.interface";
-import { PRICE_SNAPSHOT_DATE, REFERENCE_PROVIDER, snapshotFor, type SnapshotPlan } from "./price-snapshot.data";
+import { PRICE_SNAPSHOT_DATE, snapshotFor, type SnapshotPlan } from "./price-snapshot.data";
 import { estimateCost, planLabel } from "./cost-estimate";
 import { archOf, hostSize, providerOf } from "./cost-size";
 import { advise, RIGHTSIZE_MIN_DAYS, RIGHTSIZE_WINDOW_DAYS, type Candidate, type CurrentSize, type UsageStats } from "./rightsizing";
@@ -94,7 +94,7 @@ export class CostsAdviceService {
       const ctx = await this.context(s, diskBytes);
       const rescaleBlocked = s.isLocal ? ("local_hub" as const) : busy.has(s.id) ? ("active" as const) : null;
       if (!ctx || s.cpuCores === null || s.memTotalBytes === null) {
-        out.push({ ...base, kind: "learning", reasons: [], usage: null, provider: providerOf(s), current: null, target: null, savingsCents: null, priceBasis: "reference", upgradeDisk: false, diskBlocked: false, rescale: "guide", rescaleBlocked });
+        out.push({ ...base, kind: "learning", reasons: [], usage: null, provider: providerOf(s), current: null, target: null, savingsCents: null, priceBasis: "none", upgradeDisk: false, diskBlocked: false, rescale: "guide", rescaleBlocked });
         continue;
       }
       const a = advise(stats && daysCollected >= RIGHTSIZE_MIN_DAYS ? stats : null, ctx.current(s.cpuCores, Number(s.memTotalBytes)), ctx.candidates);
@@ -150,25 +150,44 @@ export class CostsAdviceService {
         };
       }
     }
-    // Snapshot: the closest listed plan stands in for the current one; candidates come from the same list.
+    // Snapshot: the closest plan of the host's OWN provider list stands in for the current one; candidates come from the
+    // same list. A provider without a list (or without a plan near this size) gets usage-only advice: no plan, no price.
     const provider = providerOf(s);
-    const est = estimateCost(provider, hostSize(s, diskBytes));
-    if (!est) return null;
-    const snap = snapshotFor(est.provider) ?? snapshotFor(REFERENCE_PROVIDER);
-    if (!snap) return null;
-    const toCandidate = (p: SnapshotPlan): Candidate => ({ slug: p.slug, label: planLabel(p), cores: p.cores, memoryGb: p.memoryGb, diskGb: p.diskGb, arch: p.arch, monthlyCents: p.monthlyCents, currency: snap.currency });
-    const curPlan = snap.plans.find((p) => p.slug === est.planSlug);
-    if (!curPlan) return null;
+    const size = hostSize(s, diskBytes);
+    if (!size.cores && !size.memBytes) return null;
+    const est = estimateCost(provider, size);
+    const snap = est ? snapshotFor(est.provider) : undefined;
+    const curPlan = est && snap ? snap.plans.find((p) => p.slug === est.planSlug) : undefined;
+    if (!est || !snap || !curPlan) {
+      const measuredDisk = diskBytes ? Math.max(5, Math.floor((diskBytes / GIB) * 1.1 / 5) * 5) : 0;
+      return {
+        candidates: [],
+        priceBasis: "none",
+        live: false,
+        current: (cores, memBytes) => ({ cores, memBytes, diskGb: measuredDisk, arch: archOf(s), comparableMonthlyCents: null, currency: null, planSlug: null }),
+        currentView: {
+          slug: null,
+          label: null,
+          cores: s.cpuCores ?? 0,
+          memoryGb: s.memTotalBytes === null ? 0 : Math.round(Number(s.memTotalBytes) / GIB),
+          diskGb: measuredDisk,
+          monthlyCents: s.cost ? s.cost.monthlyCents : null,
+          currency: s.cost ? s.cost.currency : null,
+        },
+      };
+    }
     // The disk a smaller plan must still hold: what the host measures, as the plan's round number (the file system
     // shows a bit less than the plan names); the closest listed plan's disk when nothing was measured.
-    const diskGb = diskBytes ? Math.max(5, Math.floor((diskBytes / GIB) * 1.1 / 5) * 5) : curPlan.diskGb;
+    const diskGb = diskBytes ? Math.max(5, Math.floor((diskBytes / GIB) * 1.1 / 5) * 5) : (curPlan.diskGb ?? 0);
+    // A plan without a local disk (storage is bought separately) never blocks a move on disk: it counts as this server's disk.
+    const toCandidate = (p: SnapshotPlan): Candidate => ({ slug: p.slug, label: planLabel(p), cores: p.cores, memoryGb: p.memoryGb, diskGb: p.diskGb ?? diskGb, arch: p.arch, monthlyCents: p.monthlyCents, currency: snap.currency });
     const shownPrice = s.cost ? s.cost.monthlyCents : est.monthlyCents;
     return {
       candidates: snap.plans.map(toCandidate),
-      priceBasis: est.basis === "list" ? "list" : "reference",
+      priceBasis: "list",
       live: false,
       current: (cores, memBytes) => ({ cores, memBytes, diskGb, arch: curPlan.arch, comparableMonthlyCents: curPlan.monthlyCents, currency: snap.currency, planSlug: curPlan.slug }),
-      currentView: { slug: curPlan.slug, label: planLabel(curPlan), cores: curPlan.cores, memoryGb: curPlan.memoryGb, diskGb: curPlan.diskGb, monthlyCents: shownPrice, currency: s.cost ? s.cost.currency : est.currency },
+      currentView: { slug: curPlan.slug, label: planLabel(curPlan), cores: curPlan.cores, memoryGb: curPlan.memoryGb, diskGb: curPlan.diskGb ?? diskGb, monthlyCents: shownPrice, currency: s.cost ? s.cost.currency : est.currency },
     };
   }
 
