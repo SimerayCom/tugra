@@ -100,7 +100,8 @@
     "takeover_not_giveable": "There is nothing to give back.",
     "takeover_busy": "Another step is running. Wait for it.",
     "takeover_already_swapped": "The ports are already Tugra's. Check again or give back.",
-    "takeover_plan_again": "This takeover was given back. Plan a new one."
+    "takeover_plan_again": "This takeover was given back. Plan a new one.",
+    "takeover_tugra_proxy_in_use": "Tugra's proxy already runs on this server and serves other apps. Stop it or move those apps first."
   },
   "typed": {
     "label": "Type {name} to confirm",

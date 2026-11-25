@@ -96,6 +96,24 @@ describe("plan", () => {
     b.box.coolifyProxy.running = false;
     await expect(plan(b)).rejects.toMatchObject({ response: { code: "takeover_proxy_not_running" } });
   });
+  it("refuses to start when Tugra's proxy already runs on a real bind (restarting it dark would drop the apps it serves), and when that cannot be told", async () => {
+    const a = build();
+    a.box.tugraProxy = { state: "running", published: false };
+    a.box.bind = "loopback";
+    await expect(plan(a)).rejects.toMatchObject({ response: { code: "takeover_tugra_proxy_in_use" } });
+    const b = build();
+    b.box.proxyStatus = async () => {
+      throw new Error("agent timeout");
+    };
+    await expect(plan(b)).rejects.toMatchObject({ response: { code: "takeover_tugra_proxy_in_use" } });
+    const c = build();
+    c.box.tugraProxy = { state: "running", published: false };
+    c.box.bind = "none"; // already dark: nothing to drop
+    await expect(plan(c)).resolves.toMatchObject({ status: "PLANNED" });
+    const d = build();
+    d.box.tugraProxy = { state: "exited", published: false }; // stopped: nothing is served by it
+    await expect(plan(d)).resolves.toMatchObject({ status: "PLANNED" });
+  });
   it("an unknown op, an empty op and an unknown rebuild item are refused", async () => {
     const t = build();
     await expect(t.svc.plan(ACTOR, PlanSchema.parse({ serverId: "srv1", opId: "nope" }))).rejects.toBeInstanceOf(NotFoundException);

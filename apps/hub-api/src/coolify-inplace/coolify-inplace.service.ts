@@ -159,6 +159,10 @@ export class CoolifyInPlaceService {
     const proxy = await inspectSourceProxy(this.host, server.id);
     if (!proxy.ok) throw unprocessable(PROXY_REFUSAL[proxy.code] ?? "takeover_proxy_identity", { reason: proxy.code });
     if (!proxy.snapshot.running) throw unprocessable("takeover_proxy_not_running");
+    // Tugra's proxy is started with no published port for the test. If it already runs here on a real bind (behind a front proxy, say), restarting
+    // it would take the apps it serves down, so the takeover does not start; a proxy that is already dark (bind none) is harmless to restart.
+    const tugraProxy = await this.world.proxyStatus(userId, server.id).catch(() => "unknown" as const);
+    if (server.proxyBind !== "none" && (tugraProxy === "running" || tugraProxy === "unknown")) throw unprocessable("takeover_tugra_proxy_in_use");
 
     const items = await this.readItems(server.teamId, server.id, opApps, new Set(input.rebuild));
     const doc: PlanDoc = { opId: input.opId, serverName: server.name, proxy: proxy.snapshot };
