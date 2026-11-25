@@ -2213,7 +2213,9 @@ model InstanceSettings {
   // Agent address grace after the panel address moved: the old hosts / the IP route stay routable for `/agent` until every
   // agent reports the new endpoint, the owner confirms, or `expiresAt`. Shape: AgentEndpointGrace (agent-endpoints/grace.ts).
   agentEndpointGrace  Json?
-  autoUpdate          Boolean   @default(false)
+  // On for new installs: the hub applies patch-level updates and rolls agents out one by one. Existing rows keep
+  // the owner's choice (the migration only changes the column default).
+  autoUpdate          Boolean   @default(true)
   // Release channel to track. "auto" (the default) = automatic: a prerelease build (0.1.0-beta.N) tracks "beta",
   // a release build tracks "stable" (see @tugra/shared autoUpdateChannel); "stable" / "beta" are explicit owner
   // pins. A sentinel rather than NULL so the PREVIOUS hub image (required-string client) can still read the row
