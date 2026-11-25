@@ -1,4 +1,4 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, OnModuleDestroy, OnModuleInit } from "@nestjs/common";
 import type { MetricsSample, GpuStat } from "@tugra/shared";
 import { Prisma } from "@prisma/client";
 import { downsampleLTTB } from "../common/lttb";
@@ -6,6 +6,7 @@ import { strided } from "../common/series-sampling";
 import { PrismaService } from "../prisma/prisma.service";
 import { RedisService } from "../redis/redis.service";
 import { rangeToMs } from "./container-metrics.service";
+import { BatchWriter, telemetryFlushMs, type BatchWriterStats } from "../common/batch-writer";
 
 const MAX_POINTS = 1000; // LTTB density cap for the host range charts
 
@@ -156,48 +157,96 @@ interface RollupRow {
 }
 
 @Injectable()
-export class MetricsService {
+export class MetricsService implements OnModuleInit, OnModuleDestroy {
+  /**
+   * Host samples are buffered and written as ONE multi-row INSERT every TELEMETRY_FLUSH_MS (5 s) instead of one
+   * INSERT per message (27-50 servers x 12 samples/min). Max loss window on a hub crash: the last flush interval
+   * of samples. The live Redis fan-out below is NOT buffered, and DB reads of the newest sample lag by at most
+   * one flush interval.
+   */
+  private readonly writer = new BatchWriter<Prisma.MetricCreateManyInput>({
+    name: "metric",
+    write: async (rows) => {
+      await this.prisma.metric.createMany({ data: rows });
+    },
+    flushMs: telemetryFlushMs(),
+    flushRows: 500,
+    maxBuffered: 5000, // ~10 min of a 50-server fleet at 5 s; oldest dropped beyond it
+    chunk: 500,
+  });
+  private closed = false;
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly redis: RedisService,
   ) {}
 
+  onModuleInit(): void {
+    this.writer.start();
+    // Nest destroys the Prisma module before this one: flush through its pre-disconnect hook instead.
+    this.prisma.registerBeforeDisconnect?.(() => this.shutdown());
+  }
+
+  async onModuleDestroy(): Promise<void> {
+    await this.shutdown();
+  }
+
+  /** Write everything buffered now (shutdown / tests). Never throws. */
+  flush(): Promise<void> {
+    return this.writer.flush();
+  }
+
+  ingestStats(): BatchWriterStats {
+    return this.writer.stats();
+  }
+
+  private async shutdown(): Promise<void> {
+    if (this.closed) return;
+    this.closed = true;
+    await this.writer.stop();
+  }
+
   async ingest(serverId: string, sample: MetricsSample): Promise<void> {
     const sens = sanitizeSensors(sample);
     const ls = sanitizeLoadSwap(sample);
-    await this.prisma.metric.create({
-      data: {
-        serverId,
-        ts: new Date(sample.ts),
-        cpu: sample.cpu,
-        memUsed: BigInt(Math.round(sample.memUsed)),
-        memTotal: BigInt(Math.round(sample.memTotal)),
-        diskUsed: BigInt(Math.round(sample.diskUsed)),
-        diskTotal: BigInt(Math.round(sample.diskTotal)),
-        netRx: BigInt(Math.round(sample.netRx)),
-        netTx: BigInt(Math.round(sample.netTx)),
-        // Finite-guard: an OLDER agent doesn't send these → sample.diskRead is undefined →
-        // BigInt(Math.round(undefined)) = BigInt(NaN) would THROW and drop the whole metrics message
-        // (disconnecting the agent every tick). Coerce undefined/NaN/Infinity → 0.
-        diskRead: BigInt(Math.round(Number.isFinite(sample.diskRead) ? sample.diskRead : 0)),
-        diskWrite: BigInt(Math.round(Number.isFinite(sample.diskWrite) ? sample.diskWrite : 0)),
-        // Load average + swap — nullable; an older agent leaves them NULL.
-        load1: ls.load1,
-        load5: ls.load5,
-        load15: ls.load15,
-        swapUsed: ls.swapUsed,
-        swapTotal: ls.swapTotal,
-        // Optional sensors — all nullable; an older agent / sensorless host leaves them NULL.
-        temp: sens.temp,
-        gpuUtil: sens.gpuUtil,
-        gpuMemUsed: sens.gpuMemUsed,
-        gpuMemTotal: sens.gpuMemTotal,
-        gpuTemp: sens.gpuTemp,
-        batteryPct: sens.batteryPct,
-        batteryState: sens.batteryState,
-        detail: sens.detail ?? Prisma.DbNull,
-      },
-    });
+    const row: Prisma.MetricCreateManyInput = {
+      serverId,
+      ts: new Date(sample.ts),
+      cpu: sample.cpu,
+      memUsed: BigInt(Math.round(sample.memUsed)),
+      memTotal: BigInt(Math.round(sample.memTotal)),
+      diskUsed: BigInt(Math.round(sample.diskUsed)),
+      diskTotal: BigInt(Math.round(sample.diskTotal)),
+      netRx: BigInt(Math.round(sample.netRx)),
+      netTx: BigInt(Math.round(sample.netTx)),
+      // Finite-guard: an OLDER agent doesn't send these → sample.diskRead is undefined →
+      // BigInt(Math.round(undefined)) = BigInt(NaN) would THROW and drop the whole metrics message
+      // (disconnecting the agent every tick). Coerce undefined/NaN/Infinity → 0.
+      diskRead: BigInt(Math.round(Number.isFinite(sample.diskRead) ? sample.diskRead : 0)),
+      diskWrite: BigInt(Math.round(Number.isFinite(sample.diskWrite) ? sample.diskWrite : 0)),
+      // Load average + swap — nullable; an older agent leaves them NULL.
+      load1: ls.load1,
+      load5: ls.load5,
+      load15: ls.load15,
+      swapUsed: ls.swapUsed,
+      swapTotal: ls.swapTotal,
+      // Optional sensors — all nullable; an older agent / sensorless host leaves them NULL.
+      temp: sens.temp,
+      gpuUtil: sens.gpuUtil,
+      gpuMemUsed: sens.gpuMemUsed,
+      gpuMemTotal: sens.gpuMemTotal,
+      gpuTemp: sens.gpuTemp,
+      batteryPct: sens.batteryPct,
+      batteryState: sens.batteryState,
+      // createMany takes a plain null for a nullable Json column (DbNull is the single-row create API).
+      ...(sens.detail != null ? { detail: sens.detail } : {}),
+    };
+    if (this.closed) {
+      // Shutting down: the buffer is already flushed and its timer stopped, so write this straggler directly.
+      await this.prisma.metric.createMany({ data: [row] }).catch(() => undefined);
+    } else {
+      this.writer.push(row);
+    }
     // Live fan-out for the UI (best-effort). Publish the SANITIZED sample — the raw agent JSON carries
     // untrusted strings (GPU name, battery state, sensor keys) and is relayed verbatim to browsers.
     const clean: MetricsSample = {

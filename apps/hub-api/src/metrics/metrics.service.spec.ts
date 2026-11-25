@@ -9,9 +9,17 @@ describe("MetricsService", () => {
     const publish = jest.fn().mockResolvedValue(0);
     // Chart history reads go through ONE strided raw query (series-sampling.ts); route by the table it names.
     const queryRaw = jest.fn(async (q: { sql: string; values: unknown[] }) => (/"MetricRollup/.test(q.sql) ? rollupRows : /FROM "Metric" WHERE/.test(q.sql) ? rows : []));
-    const prisma = { metric: { create, findMany }, metricRollup: { findMany: rollupFindMany }, $queryRaw: queryRaw } as any;
+    const prisma = { metric: { createMany: create, findMany }, metricRollup: { findMany: rollupFindMany }, $queryRaw: queryRaw } as any;
     const redis = { client: { publish } } as any;
-    return { svc: new MetricsService(prisma, redis), create, findMany, rollupFindMany, publish, queryRaw };
+    const svc = new MetricsService(prisma, redis);
+    // Ingest is buffered (flushed every 5 s in production): flush after each call so the row-shape tests below
+    // read the multi-row INSERT the way the timer would write it. The buffering itself is covered further down.
+    const ingest = svc.ingest.bind(svc);
+    svc.ingest = async (...args: Parameters<MetricsService["ingest"]>) => {
+      await ingest(...args);
+      await svc.flush();
+    };
+    return { svc, create, findMany, rollupFindMany, publish, queryRaw };
   }
 
   const sample: MetricsSample = {
@@ -27,10 +35,57 @@ describe("MetricsService", () => {
     diskWrite: 4096.4,
   };
 
+  describe("buffered ingest", () => {
+    function raw() {
+      const createMany = jest.fn().mockResolvedValue({ count: 0 });
+      const publish = jest.fn().mockResolvedValue(0);
+      const hooks: (() => Promise<void>)[] = [];
+      const prisma = { metric: { createMany }, registerBeforeDisconnect: (fn: () => Promise<void>) => hooks.push(fn) } as any;
+      const svc = new MetricsService(prisma, { client: { publish } } as any);
+      return { svc, createMany, publish, hooks };
+    }
+
+    it("buffers: N messages from many servers cost ONE multi-row INSERT at flush, and the live publish is immediate", async () => {
+      const { svc, createMany, publish } = raw();
+      for (let i = 0; i < 30; i++) await svc.ingest(`s${i % 10}`, { ...sample, ts: sample.ts + i });
+      expect(createMany).not.toHaveBeenCalled(); // nothing written per message
+      expect(publish).toHaveBeenCalledTimes(30); // the live view does not wait for a flush
+      await svc.flush();
+      expect(createMany).toHaveBeenCalledTimes(1);
+      expect(createMany.mock.calls[0][0].data).toHaveLength(30);
+      expect(svc.ingestStats()).toMatchObject({ buffered: 0, flushed: 30, dropped: 0 });
+    });
+
+    it("flushes through the Prisma pre-disconnect hook on shutdown (rows are not lost to module destroy order)", async () => {
+      const { svc, createMany, hooks } = raw();
+      svc.onModuleInit();
+      await svc.ingest("s1", sample);
+      expect(hooks).toHaveLength(1);
+      await hooks[0]();
+      expect(createMany).toHaveBeenCalledTimes(1);
+      // a straggler arriving after shutdown is written directly instead of sitting in a dead buffer
+      await svc.ingest("s1", sample);
+      expect(createMany).toHaveBeenCalledTimes(2);
+      await svc.onModuleDestroy(); // idempotent
+      expect(createMany).toHaveBeenCalledTimes(2);
+    });
+
+    it("a database outage keeps the rows (bounded) instead of failing ingest or closing the agent socket", async () => {
+      const { svc, createMany } = raw();
+      createMany.mockRejectedValue(new Error("connect ECONNREFUSED"));
+      await expect(svc.ingest("s1", sample)).resolves.toBeUndefined();
+      await svc.flush();
+      expect(svc.ingestStats()).toMatchObject({ buffered: 1, failedFlushes: 1 });
+      createMany.mockResolvedValue({ count: 1 });
+      await svc.flush();
+      expect(svc.ingestStats().buffered).toBe(0);
+    });
+  });
+
   it("ingest rounds every byte field to a BigInt (incl. the new disk I/O rates) + publishes", async () => {
     const { svc, create, publish } = make();
     await svc.ingest("s1", sample);
-    const data = create.mock.calls[0][0].data;
+    const data = create.mock.calls[0][0].data[0];
     expect(data.serverId).toBe("s1");
     expect(data.netRx).toBe(BigInt(1025));
     expect(data.diskRead).toBe(BigInt(2049)); // rounded
@@ -43,7 +98,7 @@ describe("MetricsService", () => {
     // An older agent doesn't send diskRead/diskWrite → undefined; a bad one could send Infinity.
     const legacy = { ...sample, diskRead: undefined, diskWrite: Infinity } as unknown as MetricsSample;
     await expect(svc.ingest("s1", legacy)).resolves.toBeUndefined();
-    const data = create.mock.calls[0][0].data;
+    const data = create.mock.calls[0][0].data[0];
     expect(data.diskRead).toBe(BigInt(0));
     expect(data.diskWrite).toBe(BigInt(0));
   });
@@ -51,7 +106,7 @@ describe("MetricsService", () => {
   it("ingest persists load/swap (swap as BigInt) and publishes them", async () => {
     const { svc, create, publish } = make();
     await svc.ingest("s1", { ...sample, load1: 0.5, load5: 0.4, load15: 0.3, swapUsed: 1024.4, swapTotal: 4096 });
-    const data = create.mock.calls[0][0].data;
+    const data = create.mock.calls[0][0].data[0];
     expect(data).toMatchObject({ load1: 0.5, load5: 0.4, load15: 0.3, swapUsed: BigInt(1024), swapTotal: BigInt(4096) });
     expect(publish).toHaveBeenCalledWith("metrics:s1", expect.stringContaining('"swapTotal":4096'));
   });
@@ -59,7 +114,7 @@ describe("MetricsService", () => {
   it("ingest keeps a measured zero (idle load, unused swap) as 0, not NULL", async () => {
     const { svc, create, publish } = make();
     await svc.ingest("s1", { ...sample, load1: 0, load5: 0, load15: 0, swapUsed: 0, swapTotal: 4096 });
-    const data = create.mock.calls[0][0].data;
+    const data = create.mock.calls[0][0].data[0];
     expect(data).toMatchObject({ load1: 0, load15: 0, swapUsed: BigInt(0), swapTotal: BigInt(4096) });
     expect(publish).toHaveBeenCalledWith("metrics:s1", expect.stringContaining('"swapUsed":0'));
   });
@@ -67,7 +122,7 @@ describe("MetricsService", () => {
   it("ingest of an old sample (no load/swap) writes NULLs and omits them from the live payload", async () => {
     const { svc, create, publish } = make();
     await svc.ingest("s1", sample);
-    const data = create.mock.calls[0][0].data;
+    const data = create.mock.calls[0][0].data[0];
     expect(data.load1).toBeNull();
     expect(data.swapUsed).toBeNull();
     expect(data.swapTotal).toBeNull();
@@ -243,7 +298,7 @@ describe("MetricsService", () => {
       battery: { percent: 73, state: "Discharging" },
     };
     await svc.ingest("s1", withSensors);
-    const data = create.mock.calls[0][0].data;
+    const data = create.mock.calls[0][0].data[0];
     expect(data.temp).toBe(61.2);
     expect(data.gpuUtil).toBe(42); // max over GPUs
     expect(data.gpuMemUsed).toBe(3_000_000n); // summed, BigInt
@@ -259,7 +314,7 @@ describe("MetricsService", () => {
   it("ingest leaves sensor columns NULL for a legacy/sensorless sample and does not throw", async () => {
     const { svc, create } = make();
     await expect(svc.ingest("s1", sample)).resolves.toBeUndefined();
-    const data = create.mock.calls[0][0].data;
+    const data = create.mock.calls[0][0].data[0];
     expect(data.temp).toBeNull();
     expect(data.gpuUtil).toBeNull();
     expect(data.batteryPct).toBeNull();

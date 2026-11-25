@@ -113,8 +113,16 @@ describe("ContainerMetricsService", () => {
       containerState: { findMany: stateFindMany ?? jest.fn().mockResolvedValue([]) },
       containerLabel: { findMany: jest.fn().mockResolvedValue([]), upsert: jest.fn().mockResolvedValue({}), deleteMany: jest.fn().mockResolvedValue({ count: 0 }) },
     } as any;
+    const svc = new ContainerMetricsService(prisma);
+    // Ingest is buffered (flushed every 5 s in production): flush after each call so the row-shape tests below
+    // read the multi-row INSERT the way the timer would write it. The buffering itself has its own tests.
+    const ingest = svc.ingest.bind(svc);
+    svc.ingest = async (...args: Parameters<ContainerMetricsService["ingest"]>) => {
+      await ingest(...args);
+      await svc.flush();
+    };
     return {
-      svc: new ContainerMetricsService(prisma),
+      svc,
       prisma,
       createMany,
       findMany: prisma.containerMetric.findMany,
@@ -366,6 +374,36 @@ describe("ContainerMetricsService", () => {
     expect(prisma.containerLabel.upsert).not.toHaveBeenCalled();
     expect(prisma.containerLabel.deleteMany).toHaveBeenCalledTimes(1);
     expect(prisma.containerLabel.deleteMany.mock.calls[0][0].where.updatedAt.lt).toBeInstanceOf(Date);
+  });
+
+  it("buffers container samples: many messages cost one multi-row INSERT at flush", async () => {
+    const { prisma, createMany } = make();
+    const raw = new ContainerMetricsService(prisma); // un-wrapped: the real buffered path
+    const msg = (ts: number) => ({
+      type: "container_metrics" as const,
+      ts,
+      samples: Array.from({ length: 17 }, (_, i) => ({ id: `c${i}`, name: `ctr${i}`, cpu: 1, memUsed: 1, memTotal: 2, memPct: 50, netRx: 0, netTx: 0, blkRead: 0, blkWrite: 0 })),
+    });
+    for (let s = 0; s < 5; s++) await raw.ingest(`s${s}`, msg(1_700_000_000_000 + s));
+    expect(createMany).not.toHaveBeenCalled();
+    await raw.flush();
+    expect(createMany).toHaveBeenCalledTimes(1);
+    expect(createMany.mock.calls[0][0].data).toHaveLength(85);
+    expect(raw.ingestStats()).toMatchObject({ buffered: 0, flushed: 85 });
+  });
+
+  it("flushes on shutdown through the pre-disconnect hook; a later straggler is written directly", async () => {
+    const { prisma, createMany } = make();
+    const hooks: (() => Promise<void>)[] = [];
+    prisma.registerBeforeDisconnect = (fn: () => Promise<void>) => hooks.push(fn);
+    const raw = new ContainerMetricsService(prisma);
+    raw.onModuleInit();
+    const msg = { type: "container_metrics" as const, ts: 1, samples: [{ id: "c", name: "web", cpu: 0, memUsed: 0, memTotal: 0, memPct: 0, netRx: 0, netTx: 0, blkRead: 0, blkWrite: 0 }] };
+    await raw.ingest("s1", msg);
+    await hooks[0]();
+    expect(createMany).toHaveBeenCalledTimes(1);
+    await raw.ingest("s1", msg);
+    expect(createMany).toHaveBeenCalledTimes(2);
   });
 
   it("no-ops on an empty batch (no createMany call)", async () => {

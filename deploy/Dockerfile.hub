@@ -61,4 +61,5 @@ ENV CHECKPOINT_DISABLE=1 \
 
 EXPOSE 3000
 # Apply migrations, then boot. DATABASE_URL/REDIS_URL come from compose env.
-CMD ["sh", "-c", "prisma migrate deploy && node dist/main.js"]
+# `exec` makes node the container main process, so `docker stop` (SIGTERM) reaches it and the hub flushes buffered telemetry.
+CMD ["sh", "-c", "prisma migrate deploy && exec node dist/main.js"]

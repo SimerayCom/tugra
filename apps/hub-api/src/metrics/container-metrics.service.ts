@@ -1,10 +1,11 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, OnModuleDestroy, OnModuleInit } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import type { ContainerMetricsMsg } from "@tugra/shared";
 import { downsampleLTTB } from "../common/lttb";
 import { strided } from "../common/series-sampling";
 import { PrismaService } from "../prisma/prisma.service";
 import { tierFor, type MetricKind, type MetricTier } from "./metric-tiers";
+import { BatchWriter, telemetryFlushMs, type BatchWriterStats } from "../common/batch-writer";
 import { nameFromLabels, sameLabels, sanitizeContainerMeta, type ContainerLabelRow } from "./container-labels";
 
 /** One point of a container's history (hub → web read shape; BigInt fields widened to Number). */
@@ -179,8 +180,50 @@ interface ContainerRollupRow {
 }
 
 @Injectable()
-export class ContainerMetricsService {
+export class ContainerMetricsService implements OnModuleInit, OnModuleDestroy {
   constructor(private readonly prisma: PrismaService) {}
+
+  /**
+   * Container samples (every container of every server, every 15 s) are buffered and written as multi-row
+   * INSERTs every TELEMETRY_FLUSH_MS (5 s) rather than one createMany per message. Max loss window on a hub
+   * crash: the last flush interval. Reads of the newest sample lag by at most one flush interval.
+   */
+  private readonly writer = new BatchWriter<Prisma.ContainerMetricCreateManyInput>({
+    name: "container-metric",
+    write: async (rows) => {
+      await this.prisma.containerMetric.createMany({ data: rows });
+    },
+    flushMs: telemetryFlushMs(),
+    flushRows: 1000,
+    maxBuffered: 30_000, // ~7 min of 1000 containers at 15 s; oldest dropped beyond it (~7 MB of rows)
+    chunk: 1000,
+  });
+  private closed = false;
+
+  onModuleInit(): void {
+    this.writer.start();
+    // Nest destroys the Prisma module before this one: flush through its pre-disconnect hook instead.
+    this.prisma.registerBeforeDisconnect?.(() => this.shutdown());
+  }
+
+  async onModuleDestroy(): Promise<void> {
+    await this.shutdown();
+  }
+
+  /** Write everything buffered now (shutdown / tests). Never throws. */
+  flush(): Promise<void> {
+    return this.writer.flush();
+  }
+
+  ingestStats(): BatchWriterStats {
+    return this.writer.stats();
+  }
+
+  private async shutdown(): Promise<void> {
+    if (this.closed) return;
+    this.closed = true;
+    await this.writer.stop();
+  }
 
   // What this hub process last wrote per `${serverId}\0${containerName}`, so an unchanged label set costs no DB write.
   private readonly labelCache = new Map<string, { row: ContainerLabelRow; at: number }>();
@@ -192,22 +235,22 @@ export class ContainerMetricsService {
   async ingest(serverId: string, msg: ContainerMetricsMsg): Promise<void> {
     if (!msg.samples?.length) return;
     const ts = new Date(msg.ts);
-    await this.prisma.containerMetric.createMany({
-      data: msg.samples.map((s) => ({
-        serverId,
-        containerName: s.name,
-        containerId: s.id,
-        ts,
-        cpu: num(s.cpu),
-        memUsed: big(s.memUsed),
-        memTotal: big(s.memTotal),
-        memPct: num(s.memPct),
-        netRx: big(s.netRx),
-        netTx: big(s.netTx),
-        blkRead: big(s.blkRead),
-        blkWrite: big(s.blkWrite),
-      })),
-    });
+    const rows = msg.samples.map((s) => ({
+      serverId,
+      containerName: s.name,
+      containerId: s.id,
+      ts,
+      cpu: num(s.cpu),
+      memUsed: big(s.memUsed),
+      memTotal: big(s.memTotal),
+      memPct: num(s.memPct),
+      netRx: big(s.netRx),
+      netTx: big(s.netTx),
+      blkRead: big(s.blkRead),
+      blkWrite: big(s.blkWrite),
+    }));
+    if (this.closed) await this.prisma.containerMetric.createMany({ data: rows }).catch(() => undefined); // straggler during shutdown
+    else this.writer.pushMany(rows);
     // Labels are decoration: a failure here must never fail (and close the socket of) the metrics batch.
     await this.recordLabels(serverId, msg).catch(() => undefined);
   }

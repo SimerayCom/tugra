@@ -19,6 +19,8 @@ import { largeJsonBody } from "./common/large-json";
 async function bootstrap() {
   // rawBody is needed to verify HMAC webhook signatures over the exact payload bytes.
   const app = await NestFactory.create(AppModule, { rawBody: true });
+  // SIGTERM/SIGINT run the modules' destroy hooks (buffered telemetry and heartbeat times are flushed to the DB, queues close).
+  app.enableShutdownHooks();
   // nosniff / no framing / no referrer on every hub response (also reachable on the raw hub port).
   app.use(securityHeadersMiddleware);
   // A monitoring backup can be a few hundred kB: allow 4 MB of JSON for the Uptime Kuma import routes only.
