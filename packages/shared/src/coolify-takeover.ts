@@ -54,6 +54,21 @@ export type PlacementKind = (typeof PLACEMENT_KINDS)[number];
 export const PLACEMENT_LOCK_REASONS = ["match_uncertain", "agent_offline", "control_plane", "agent_missing"] as const;
 export type PlacementLockReason = (typeof PLACEMENT_LOCK_REASONS)[number];
 
+/** Why a placement is refused (the owner sees one line per code). */
+export const PLACEMENT_FAILURE_CODES = [
+  "placement_empty",
+  "placement_duplicate",
+  "placement_unknown_source",
+  "placement_in_place_locked",
+  "placement_in_place_target_mismatch",
+  "placement_target_missing",
+  "placement_target_unknown",
+  "placement_target_not_ready",
+  "placement_other_is_source_host",
+  "placement_teams_differ",
+] as const;
+export type PlacementFailureCode = (typeof PLACEMENT_FAILURE_CODES)[number];
+
 /** One source server's placement choice. `targetServerId` is the Tugra server: the matched one for in-place, the chosen one otherwise. */
 export interface SourcePlacement {
   sourceServerRef: string;

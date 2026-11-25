@@ -209,16 +209,16 @@ describe("matched servers", () => {
     dk.preflight!.panel = { tugra: { serverId: "t1", name: "Target A", teamId: "team1", via: "hostname", confidence: "probable" } };
     expect(placementKindOf(dk, "_", "t1")).toBe("other-server");
   });
-  it("mixing same-machine and copied moves in one go is blocked", () => {
+  it("mixing same-machine and copied moves in one go is allowed: the hub makes a campaign of runs", () => {
     const scope = buildScope(matched(), all({ s1: "t1", s2: "t3" }));
-    expect(scopeIssue(matched(), scope, () => "A")).toBe("mixed");
+    expect(scopeIssue(matched(), scope, () => "A")).toBeNull();
     expect(scopeIssue(matched(), buildScope(matched(), all({ s1: "t1", s2: "t2" })), () => "A")).toBeNull();
   });
   it("a pick that puts the Coolify box (or a Dokploy box) back on its own machine is refused, whatever the placement kind says", () => {
     const cp = matched();
     cp.preflight!.hosts![0].controlPlane = true;
     expect(scopeIssue(cp, buildScope(cp, all({ s1: "t1", s2: "t2" })), () => "A")).toBe("blocked");
-    expect(scopeIssue(cp, buildScope(cp, all({ s1: "t3", s2: "t2" })), () => "A")).toBe("mixed");
+    expect(scopeIssue(cp, buildScope(cp, all({ s1: "t3", s2: "t2" })), () => "A")).toBeNull();
     expect(scopeIssue(cp, buildScope(cp, all({ s1: "t3", s2: "t3" })), () => "A")).toBeNull();
     const dk = { ...matched(), sourceKind: "dokploy" } as ImportPlan;
     expect(scopeIssue(dk, buildScope(dk, all({ s1: "t1", s2: "t3" })), () => "A")).toBe("blocked");

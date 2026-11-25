@@ -10,11 +10,14 @@ import {
   COOLIFY_SSH_RESULT_CODES,
   COOLIFY_SSH_TARGET_STATES,
   HOST_EVIDENCE_KINDS,
+  PLACEMENT_FAILURE_CODES,
   PLACEMENT_KINDS,
   PLACEMENT_LOCK_REASONS,
   PROJECT_MOVE_PHASES,
   REMNANT_KINDS,
   TAKEOVER_CERT_STATES,
+  TAKEOVER_FAILURE_CODES,
+  TAKEOVER_ISSUES,
   TAKEOVER_STATUSES,
 } from "@tugra/shared";
 import en from "./locales/en";
@@ -47,6 +50,12 @@ describe("Coolify takeover i18n contract", () => {
     expect(present("placement.campaign.status", CAMPAIGN_STATUSES)).toEqual([]);
     expect(present("coolifyInPlace.status", TAKEOVER_STATUSES)).toEqual([]);
     expect(present("coolifyInPlace.cert", TAKEOVER_CERT_STATES)).toEqual([]);
+    expect(present("coolifyInPlace.issue", TAKEOVER_ISSUES)).toEqual([]);
+    expect(present("coolifyInPlace.failure", TAKEOVER_FAILURE_CODES)).toEqual([]);
+    expect(present("coolifyInPlace.hint", TAKEOVER_STATUSES)).toEqual([]);
+    expect(present("coolifyInPlace.check", ["pending", "ok", "failed"])).toEqual([]);
+    expect(present("coolifyInPlace.action", ["plan", "test", "swap", "verify", "giveBack"])).toEqual([]);
+    expect(present("placement.failure", PLACEMENT_FAILURE_CODES)).toEqual([]);
     expect(present("coolifyCleanup.status", CLEANUP_STATUSES)).toEqual([]);
     expect(present("coolifyCleanup.kind", COMPLETENESS_KINDS)).toEqual([]);
     expect(present("coolifyCleanup.remnant", REMNANT_KINDS)).toEqual([]);

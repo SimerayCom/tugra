@@ -11,6 +11,7 @@ import type {
   HostEvidence,
   HostLinkedBy,
   HostMatchStatus,
+  PlacementFailureCode,
   PlacementKind,
   PlacementLockReason,
   SourcePlacement,
@@ -71,19 +72,7 @@ export function placementViews(facts: readonly PlacementHostFact[]): SourceServe
   }));
 }
 
-export const PLACEMENT_FAILURES = [
-  "placement_empty",
-  "placement_duplicate",
-  "placement_unknown_source",
-  "placement_in_place_locked",
-  "placement_in_place_target_mismatch",
-  "placement_target_missing",
-  "placement_target_unknown",
-  "placement_target_not_ready",
-  "placement_other_is_source_host",
-  "placement_teams_differ",
-] as const;
-export type PlacementFailureCode = (typeof PLACEMENT_FAILURES)[number];
+
 
 export type PlacementCheck = { ok: true; teamId: string; placements: SourcePlacement[] } | { ok: false; code: PlacementFailureCode; ref?: string; reason?: PlacementLockReason };
 

@@ -276,11 +276,12 @@ export function buildScope(plan: ImportPlan, sel: ScopeSelection, allowed?: Read
   };
 }
 
-export type ScopeIssue = "nothing" | "target" | "teams" | "blocked" | "unready" | "mixed" | "limit";
+export type ScopeIssue = "nothing" | "target" | "teams" | "blocked" | "unready" | "limit";
 
 /**
  * Why the selection cannot continue yet, or null: nothing picked, a source server without a target, targets in different teams, a
- * same-machine move that is not possible, a target that cannot take apps, in-place and copied moves mixed in one go, or too many servers.
+ * same-machine move that is not possible, a target that cannot take apps, or too many servers. Same-machine and copied moves in one go are fine: the
+ * hub turns them into a campaign of runs (see lib/campaign.ts).
  */
 export function scopeIssue(
   plan: ImportPlan,
@@ -296,8 +297,6 @@ export function scopeIssue(
   if (new Set(ids.map((id) => teamOf(id) ?? id)).size > 1) return "teams";
   if (hosts.some((h) => hostTugra(plan, h.ref)?.serverId === scope.placed[h.ref] && inPlaceBlock(plan, h.ref))) return "blocked";
   if (readinessOf && ids.some((id) => readinessOf(id) !== "ready")) return "unready";
-  const kinds = new Set(Object.values(scope.placementKind));
-  if (kinds.has("in-place") && kinds.has("other-server")) return "mixed";
   if (hosts.length > SERVER_MAP_MAX) return "limit";
   return null;
 }

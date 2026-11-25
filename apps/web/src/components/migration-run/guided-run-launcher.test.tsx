@@ -305,12 +305,12 @@ describe("GuidedRunLauncher", () => {
     });
 
     it("an in-place choice starts on the proxy swap for Coolify, never for Dokploy", async () => {
-      mount({ plan: whole, scope: everything({ placementKind: { s1: "in-place", s2: "in-place" } }) });
+      mount({ plan: whole, scope: everything({ placed: { s1: "srv2" }, placementKind: { s1: "in-place" } }) });
       let dialog = await open();
       expect((within(dialog).getByLabelText("Topology") as HTMLSelectElement).value).toBe("swap-proxy");
       expect(within(dialog).getByTestId("launch-summary").textContent).toContain("Same machine");
       cleanup();
-      mount({ plan: whole, scope: everything({ placementKind: { s1: "in-place", s2: "in-place" } }), kind: "dokploy" });
+      mount({ plan: whole, scope: everything({ placed: { s1: "srv2" }, placementKind: { s1: "in-place" } }), kind: "dokploy" });
       dialog = await open();
       expect((within(dialog).getByLabelText("Topology") as HTMLSelectElement).value).toBe("two-box");
       expect([...(within(dialog).getByLabelText("Topology") as HTMLSelectElement).options].map((o) => o.value).filter(Boolean)).toEqual(["two-box"]);
@@ -390,5 +390,96 @@ describe("GuidedRunLauncher: a move needs an agent on every source server", () =
     mount({ plan: gapPlan, kind: "dokploy" });
     const d2 = await open();
     expect(within(d2).queryByTestId("agent-gap")).toBeNull();
+  });
+});
+
+describe("a mixed placement is a campaign", () => {
+  const item = (itemRef: string, kind: "app" | "database") => ({ itemRef, kind, name: itemRef, proposed: {}, risks: [], dependsOn: [] });
+  const whole = { ...plan, items: [item("app:s1:web", "app"), item("app:s2:api", "app")], preflight: { databases: [], services: [], appsWithVolumeData: 0, hosts: [{ ref: "s1", name: "Alpha" }, { ref: "s2", name: "Beta" }] } } as unknown as ImportPlan;
+  const mixed: ImportScope = {
+    selection: { mode: "everything", hosts: new Set(), projects: new Set(), extra: new Set(), placement: { s1: "srv1", s2: "srv2" } },
+    inScope: new Set(["app:s1:web", "app:s2:api"]),
+    narrowed: false,
+    defaultServerId: "srv1",
+    serverMap: undefined,
+    placed: { s1: "srv1", s2: "srv2" },
+    placementKind: { s1: "in-place", s2: "other-server" },
+  };
+  const runs = [
+    { sourceServerRef: "s2", kind: "other-server" as const, targetServerId: "srv2", topology: "two-box" as const, wave: 0 },
+    { sourceServerRef: "s1", kind: "in-place" as const, targetServerId: "srv1", topology: "swap-proxy" as const, wave: 1 },
+  ];
+  const open = async () => {
+    fireEvent.click(screen.getByRole("button", { name: "Run guided migration" }));
+    return screen.findByRole("dialog");
+  };
+
+  it("shows the runs the hub would create, asks for no topology and creates the campaign, then opens its report", async () => {
+    const planCampaign = vi.spyOn(api, "planCampaign").mockResolvedValue({ planHash: "a".repeat(32), views: [], runs, failure: null });
+    const createCampaign = vi.spyOn(api, "createCampaign").mockResolvedValue({ id: "c1", label: "campaign-x", sessionId: "s1", status: "draft", plan: runs, runIds: ["r1", "r2"], createdAt: "2026-11-26T10:00:00Z" });
+    const createRun = vi.spyOn(api, "createMigrationRun");
+    mount({ plan: whole, scope: mixed });
+    const dialog = await open();
+    expect(within(dialog).queryByLabelText("Topology")).toBeNull();
+    const card = await within(dialog).findByTestId("campaign-preview");
+    await waitFor(() => expect(card.textContent).toContain("Wave 2"));
+    expect(card.textContent).toContain("Beta moves to Server B");
+    expect(card.textContent).toContain("Alpha stays on its own machine");
+    expect(planCampaign.mock.calls[0][0]).toEqual({
+      sessionId: "s1",
+      planHash: "a".repeat(32),
+      placements: [{ sourceServerRef: "s1", kind: "in-place", targetServerId: "srv1" }, { sourceServerRef: "s2", kind: "other-server", targetServerId: "srv2" }],
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Create campaign (2 runs)" }));
+    await waitFor(() => expect(createCampaign).toHaveBeenCalledTimes(1));
+    expect(createCampaign.mock.calls[0][0]).toMatchObject({ sessionId: "s1", planHash: "a".repeat(32), confirm: 2, dryRun: true });
+    expect(createCampaign.mock.calls[0][0]).not.toHaveProperty("targetServerId");
+    expect(createCampaign.mock.calls[0][0]).not.toHaveProperty("topology");
+    expect(createRun).not.toHaveBeenCalled();
+    await waitFor(() => expect(push).toHaveBeenCalledWith("/import/runs/campaign?c=campaign-x"));
+  });
+
+  it("a refused placement says why and keeps the create button off", async () => {
+    vi.spyOn(api, "planCampaign").mockResolvedValue({ planHash: "a".repeat(32), views: [], runs: null, failure: { code: "placement_in_place_locked", ref: "s1", reason: "agent_offline" } });
+    const createCampaign = vi.spyOn(api, "createCampaign");
+    mount({ plan: whole, scope: mixed });
+    const dialog = await open();
+    const alert = await within(dialog).findByRole("alert");
+    expect(alert.textContent).toContain("Staying on the same machine is not possible for this server.");
+    expect(alert.textContent).toContain("Alpha");
+    expect(alert.textContent).toContain("The agent on this server is offline.");
+    const submit = within(dialog).getByRole("button", { name: /Create campaign/ }) as HTMLButtonElement;
+    expect(submit.disabled).toBe(true);
+    fireEvent.submit(submit.closest("form")!);
+    expect(createCampaign).not.toHaveBeenCalled();
+  });
+
+  it("an unreadable check keeps the button off too", async () => {
+    vi.spyOn(api, "planCampaign").mockRejectedValue(new Error("down"));
+    mount({ plan: whole, scope: mixed });
+    const dialog = await open();
+    await within(dialog).findByText("The placement could not be checked. Try again.");
+    expect((within(dialog).getByRole("button", { name: /Create campaign/ }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("several same-machine servers are a campaign too; one is a plain run", async () => {
+    const planCampaign = vi.spyOn(api, "planCampaign").mockResolvedValue({ planHash: "a".repeat(32), views: [], runs, failure: null });
+    mount({ plan: whole, scope: { ...mixed, placementKind: { s1: "in-place", s2: "in-place" } } });
+    await open();
+    await waitFor(() => expect(planCampaign).toHaveBeenCalled());
+    cleanup();
+    planCampaign.mockClear();
+    mount({ plan: whole, scope: { ...mixed, placed: { s1: "srv1" }, placementKind: { s1: "in-place" } } });
+    const dialog = await open();
+    expect(within(dialog).getByLabelText("Topology")).toBeTruthy();
+    expect(planCampaign).not.toHaveBeenCalled();
+  });
+
+  it("a Dokploy source never makes a campaign", async () => {
+    const planCampaign = vi.spyOn(api, "planCampaign");
+    mount({ plan: whole, scope: mixed, kind: "dokploy" });
+    const dialog = await open();
+    expect(within(dialog).queryByTestId("campaign-preview")).toBeNull();
+    expect(planCampaign).not.toHaveBeenCalled();
   });
 });

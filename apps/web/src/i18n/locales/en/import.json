@@ -785,7 +785,6 @@
       "target": "Choose a server for: {names}.",
       "blocked": "A server cannot be moved onto the machine Coolify runs on. Choose another server.",
       "unready": "A chosen server is offline, has no agent connected or cannot deploy.",
-      "mixed": "Same-machine and other-server moves cannot go together. Move the same-machine ones first, then the rest.",
       "limit": "At most {max} source servers per move. Pick fewer."
     },
     "continue": "Continue",
@@ -831,6 +830,7 @@
     },
     "addServer": "Add this server",
     "inPlaceNote": "{count} servers stay on their own machine. Each is a separate proxy swap, one at a time.",
+    "campaignNote": "This is a campaign: the servers that move to another server go together in one run, and each server that stays on its own machine gets its own run, one after the other.",
     "recheck": "Check again",
     "recheckHint": "After adding a server or starting an agent.",
     "pickServer": "Pick a server",

@@ -1,0 +1,71 @@
+// The in-place takeover screen's rules (Coolify hub takeover, lane F). Pure: what each button may do, and the rollups the cards show.
+// The hub re-checks everything; this only decides what is worth offering.
+import type { TakeoverCertState, TakeoverItemView, TakeoverStatus, TakeoverView } from "@tugra/shared";
+
+export type TakeoverAction = "plan" | "test" | "swap" | "verify" | "giveBack";
+
+/** The statuses from which the owner can still give the server back. */
+export const GIVE_BACK_FROM: readonly TakeoverStatus[] = ["PLANNED", "TESTING", "SWAPPING", "SWAPPED", "VERIFIED", "FAILED"];
+
+const taking = (i: TakeoverItemView): boolean => !i.skipped;
+
+/** May the ports be taken? Mirrors the hub's gate: something takes part, and every domain of an app that runs alongside has passed its test. */
+export function canSwap(v: Pick<TakeoverView, "status" | "items">): boolean {
+  if (v.status !== "TESTING") return false;
+  const active = v.items.filter(taking);
+  return active.length > 0 && active.every((i) => i.exclusive || i.domains.every((d) => d.tempCheck === "ok"));
+}
+
+/** The buttons worth showing for a takeover (or none yet: only "plan"). In the order the owner should press them. */
+export function actionsFor(v: TakeoverView | null | undefined): TakeoverAction[] {
+  if (!v || v.status === "GIVEN_BACK") return ["plan"];
+  const out: TakeoverAction[] = [];
+  if (v.status === "PLANNED" || v.status === "TESTING" || (v.status === "FAILED" && !hasSwapped(v))) out.push("test");
+  if (canSwap(v)) out.push("swap");
+  if (v.status === "SWAPPED" || v.status === "VERIFIED") out.push("verify");
+  if (v.giveBackAvailable && GIVE_BACK_FROM.includes(v.status)) out.push("giveBack");
+  return out;
+}
+
+/** A failed takeover that never took the ports (it can be tested again). A failed give-back is not tested again, it is given back again. */
+const hasSwapped = (v: TakeoverView): boolean => v.items.some((i) => i.domains.some((d) => d.cert !== "pending" || d.finalCheck !== "pending"));
+
+export interface TakeoverRollup {
+  apps: number;
+  skipped: number;
+  domains: number;
+  tested: number;
+  testFailed: number;
+  checked: number;
+  checkFailed: number;
+  certs: Record<TakeoverCertState, number>;
+}
+
+export function rollup(v: Pick<TakeoverView, "items">): TakeoverRollup {
+  const r: TakeoverRollup = { apps: 0, skipped: 0, domains: 0, tested: 0, testFailed: 0, checked: 0, checkFailed: 0, certs: { pending: 0, fallback: 0, issued: 0, failed: 0 } };
+  for (const i of v.items) {
+    if (i.skipped) {
+      r.skipped += 1;
+      continue;
+    }
+    r.apps += 1;
+    for (const d of i.domains) {
+      r.domains += 1;
+      if (d.tempCheck === "ok") r.tested += 1;
+      if (d.tempCheck === "failed") r.testFailed += 1;
+      if (d.finalCheck === "ok") r.checked += 1;
+      if (d.finalCheck === "failed") r.checkFailed += 1;
+      r.certs[d.cert] += 1;
+    }
+  }
+  return r;
+}
+
+/** True while another press of "verify" has work to do: a domain still on the fallback, pending or failed with attempts left is for the hub to say; the screen keeps offering it until verified. */
+export const verifyHasWork = (v: Pick<TakeoverView, "status" | "items">): boolean => v.status === "SWAPPED" && v.items.some((i) => !i.skipped && i.domains.some((d) => d.cert !== "issued"));
+
+/** Polling interval for the screen: only while something may change without a click (never when settled). */
+export const pollMs = (v: Pick<TakeoverView, "status"> | null | undefined): number | false => (v && (v.status === "TESTING" || v.status === "SWAPPING" || v.status === "GIVING_BACK") ? 4000 : false);
+
+/** The typed confirmation: the server's name, exactly (a trailing space does not matter). */
+export const confirmMatches = (typed: string, serverName: string): boolean => typed.trim() === serverName.trim() && serverName.trim().length > 0;

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { ShieldAlert, ShieldCheck } from "lucide-react";
 import { useT } from "../../i18n/provider";
 import { Badge, Card, SectionCard } from "../ui";
@@ -99,6 +100,11 @@ export function RunFacts({ run }: { run: MigrationRunView }) {
         <Fact label={t("migrationRun.facts.topology")}>
           {t(run.topology === "swap-proxy" ? "migrationRun.topology.swap-proxy" : "migrationRun.topology.two-box")}
           <div style={{ fontSize: 11, color: "var(--c-tx3)", marginTop: 2, lineHeight: 1.4 }}>{t(TOPOLOGY_HINT_KEY[run.topology])}</div>
+          {run.topology === "swap-proxy" && run.opId && (
+            <div style={{ fontSize: 12, marginTop: 4 }}>
+              <Link href={`/import/inplace?serverId=${encodeURIComponent(run.targetServerId)}&opId=${encodeURIComponent(run.opId)}`}>{t("coolifyInPlace.link")}</Link>
+            </div>
+          )}
         </Fact>
         <Fact label={t("migrationRun.facts.progress")}>
           <MeterBar value={pct} text={`${sum.passed}/${sum.total}`} grow label={t("migrationRun.facts.progress")} />

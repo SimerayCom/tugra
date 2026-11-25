@@ -29,5 +29,93 @@
   "giveBack": {
     "button": "Give back to Coolify",
     "hint": "Stops Tugra's proxy and starts Coolify's again."
-  }
+  },
+  "none": "No takeover yet for {server}. Planning only reads what Coolify runs on it; nothing is changed.",
+  "action": {
+    "plan": "Plan the takeover",
+    "test": "Test on a temporary address",
+    "swap": "Take over the ports",
+    "verify": "Check again and get new certificates",
+    "giveBack": "Give back to Coolify"
+  },
+  "hint": {
+    "PLANNED": "Read from the server. Nothing has been changed yet.",
+    "TESTING": "Tugra's proxy is up with no public port. Every domain is checked against what Coolify answers.",
+    "SWAPPING": "Handing the ports over. This takes a minute.",
+    "SWAPPED": "Tugra serves the sites now, with Coolify's certificate as a short fallback. Press check again until every domain has its new certificate.",
+    "VERIFIED": "Every domain works and has a new certificate. Coolify is still on the server until you remove it.",
+    "GIVING_BACK": "Putting Coolify back. This takes a minute.",
+    "GIVEN_BACK": "Coolify serves the sites again, as before.",
+    "FAILED": "The last step did not finish. Test again, or give the server back to Coolify."
+  },
+  "rollup": "{apps} apps ({skipped} left out), {domains} domains. Tested: {tested}. Checked after the switch: {checked}. New certificates: {issued}.",
+  "exclusive": "Switched, not tested alongside",
+  "skipped": "Left out",
+  "testShort": "Test",
+  "afterShort": "After",
+  "verifyAgain": "Some domains still wait for a new certificate. Check again in a minute.",
+  "issue": {
+    "container_absent": "Coolify does not run this app right now, so there is nothing to take over.",
+    "container_changed": "Coolify's container changed while it was read. Plan again.",
+    "volume_unmapped": "This app writes to a volume Tugra's copy of the app does not declare. Add the volume to the app first.",
+    "bind_unmapped": "This app writes to a host folder Tugra's copy of the app does not mount. Add the mount to the app first.",
+    "no_domain": "This app has no domain to check.",
+    "image_missing": "The image Coolify built is no longer on the server.",
+    "adopt_failed": "The image could not be reused.",
+    "volume_alias_failed": "The data volume could not be shared with Tugra's copy.",
+    "volume_alias_foreign": "Tugra already has a different volume with that name.",
+    "prepare_failed": "Tugra's copy of the app did not start.",
+    "rebuild_failed": "The rebuild with Tugra failed."
+  },
+  "failure": {
+    "probe_unavailable": "The server could not run the checks (curl is missing or the proxy is not up).",
+    "exclusive_policy_failed": "Coolify's restart policy could not be changed. Nothing was stopped.",
+    "exclusive_stop_failed": "A Coolify container would not stop. Everything was put back.",
+    "exclusive_start_failed": "Tugra's copy would not start on the shared data. Everything was put back.",
+    "swap_stop_failed": "Coolify's proxy would not stop. Everything was put back.",
+    "swap_start_failed": "Tugra's proxy could not take the ports. Everything was put back.",
+    "give_back_failed": "Giving back did not finish. Press it again."
+  },
+  "error": {
+    "generic": "That did not work. Try again.",
+    "forbidden": "Only a team owner can take a server over.",
+    "bad_confirmation": "The name you typed is not the server's name.",
+    "takeover_server_offline": "The server's agent is offline.",
+    "takeover_capability": "The server's agent cannot deploy.",
+    "takeover_server_busy": "Another takeover or run holds this server.",
+    "takeover_no_apps": "The import created no apps on this server.",
+    "takeover_unknown_item": "An app chosen for rebuild is not in the import.",
+    "takeover_control_plane": "This server runs Coolify itself. It is handled last, not in place.",
+    "takeover_proxy_absent": "Coolify's proxy was not found on this server.",
+    "takeover_proxy_identity": "The proxy on this server is not Coolify's. Nothing was touched.",
+    "takeover_proxy_unreadable": "The server could not be read. Try again.",
+    "takeover_proxy_not_running": "Coolify's proxy is not running, so there is nothing to hand over.",
+    "takeover_host_unreadable": "The server could not be read. Try again.",
+    "takeover_rebuild_needs_side_by_side": "An app that shares data with Coolify's copy cannot be rebuilt next to it.",
+    "takeover_not_tested": "Test it first.",
+    "takeover_test_failed": "A domain failed its test. Fix it and test again.",
+    "takeover_item_not_ready": "An app is not ready yet. Test again.",
+    "takeover_no_items": "Nothing is left to take over.",
+    "takeover_not_swapped": "The ports have not been handed over yet.",
+    "takeover_not_giveable": "There is nothing to give back.",
+    "takeover_busy": "Another step is running. Wait for it.",
+    "takeover_already_swapped": "The ports are already Tugra's. Check again or give back.",
+    "takeover_plan_again": "This takeover was given back. Plan a new one."
+  },
+  "typed": {
+    "label": "Type {name} to confirm",
+    "swap": {
+      "title": "Take over the ports",
+      "body": "Coolify's proxy stops and Tugra's proxy takes ports 80 and 443. The sites keep their addresses. Apps that share data with Coolify are switched with a short break. You can give the server back with one click.",
+      "confirm": "Take over"
+    },
+    "giveBack": {
+      "title": "Give back to Coolify",
+      "body": "Tugra's proxy and copies stop and Coolify's proxy and containers start again, as they were.",
+      "confirm": "Give back"
+    }
+  },
+  "back": "Back to migrations",
+  "missing": "Open this from a same-server migration run: it needs the server and the import.",
+  "link": "Take over this server in place"
 }

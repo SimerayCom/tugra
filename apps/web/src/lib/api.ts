@@ -5,6 +5,8 @@ import type { CoolifyChecklist, CoolifyDetect, CoolifyInventoryView } from "./co
 import type { CoolifySshRunView } from "./coolify-ssh";
 import { HUB_UNREACHABLE_CODE, hubUnreachableMessage, isHubDownStatus, isNetworkFailure, reportHubDown } from "./hub-connection";
 import { observeServerDate } from "./clock-skew";
+import type { CampaignRunPlan, CampaignView, SourceServerPlacementView, TakeoverView } from "@tugra/shared";
+import type { CampaignCreateBody } from "./campaign";
 import type { AdviceReport, CostsReport, CostSyncResult, RescaleView } from "./costs";
 import type {
   BulkCapabilityResult,
@@ -2834,6 +2836,48 @@ export const api = {
   createMigrationRun(input: MigrationRunCreateInput) {
     return apiFetch<MigrationRunView>("/migration-runs", { method: "POST", body: JSON.stringify(input) });
   },
+  // ── Coolify hub takeover: placement per source server and the campaign of runs it becomes (lane E) ──
+  campaignPlacement(sessionId: string, planHash: string) {
+    const q = new URLSearchParams({ sessionId, planHash });
+    return apiFetch<{ planHash: string; views: SourceServerPlacementView[] }>(`/migration-campaigns/placement?${q.toString()}`);
+  },
+  planCampaign(body: Pick<CampaignCreateBody, "sessionId" | "planHash" | "placements">) {
+    return apiFetch<CampaignPreview>("/migration-campaigns/plan", { method: "POST", body: JSON.stringify(body) });
+  },
+  createCampaign(body: CampaignCreateBody) {
+    return apiFetch<CampaignView>("/migration-campaigns", { method: "POST", body: JSON.stringify(body) });
+  },
+  listCampaigns(teamId: string) {
+    return apiFetch<CampaignView[]>(`/migration-campaigns?teamId=${encodeURIComponent(teamId)}`);
+  },
+  getCampaign(id: string) {
+    return apiFetch<CampaignView>(`/migration-campaigns/${encodeURIComponent(id)}`);
+  },
+  cancelCampaign(id: string) {
+    return apiFetch<CampaignView>(`/migration-campaigns/${encodeURIComponent(id)}/cancel`, { method: "POST" });
+  },
+  // ── Coolify hub takeover: take a server over in place (lane F) ──
+  planInPlace(body: { serverId: string; opId: string; rebuild?: string[] }) {
+    return apiFetch<TakeoverView>("/coolify-inplace/plan", { method: "POST", body: JSON.stringify({ ...body, rebuild: body.rebuild ?? [] }) });
+  },
+  listInPlace(serverId: string) {
+    return apiFetch<TakeoverView[]>(`/coolify-inplace?serverId=${encodeURIComponent(serverId)}`);
+  },
+  getInPlace(id: string) {
+    return apiFetch<TakeoverView>(`/coolify-inplace/${encodeURIComponent(id)}`);
+  },
+  testInPlace(id: string) {
+    return apiFetch<TakeoverView>(`/coolify-inplace/${encodeURIComponent(id)}/test`, { method: "POST" });
+  },
+  swapInPlace(id: string, confirm: string) {
+    return apiFetch<TakeoverView>(`/coolify-inplace/${encodeURIComponent(id)}/swap`, { method: "POST", body: JSON.stringify({ confirm }) });
+  },
+  verifyInPlace(id: string) {
+    return apiFetch<TakeoverView>(`/coolify-inplace/${encodeURIComponent(id)}/verify`, { method: "POST" });
+  },
+  giveBackInPlace(id: string, confirm: string) {
+    return apiFetch<TakeoverView>(`/coolify-inplace/${encodeURIComponent(id)}/give-back`, { method: "POST", body: JSON.stringify({ confirm }) });
+  },
   getMigrationRunVerification(id: string) {
     return apiFetch<VerificationView>(`/migration-runs/${encodeURIComponent(id)}/verification`);
   },
@@ -2937,3 +2981,11 @@ export const api = {
     return apiFetch<{ ok: true }>(`/shared-variables/${id}`, { method: "DELETE" });
   },
 };
+
+/** `POST /migration-campaigns/plan`: what each source server offers, and (when the placement is accepted) the runs it would create. */
+export interface CampaignPreview {
+  planHash: string;
+  views: SourceServerPlacementView[];
+  runs: CampaignRunPlan[] | null;
+  failure: { code: string; ref?: string; reason?: string } | null;
+}

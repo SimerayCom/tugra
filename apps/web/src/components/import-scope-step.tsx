@@ -28,6 +28,7 @@ import {
   type ScopeSelection,
   type ScopeServer,
 } from "../lib/import-scope";
+import { needsCampaign } from "../lib/campaign";
 import type { ImportPlan, Team } from "../lib/types";
 
 export type { ScopeServer };
@@ -145,7 +146,6 @@ export function ImportScopeStep({
       case "target": return t("import.scope.issue.target", { names: unplaced.slice(0, NAMES_SHOWN).join(", ") + (unplaced.length > NAMES_SHOWN ? ` +${unplaced.length - NAMES_SHOWN}` : "") });
       case "blocked": return t("import.scope.issue.blocked");
       case "unready": return t("import.scope.issue.unready");
-      case "mixed": return t("import.scope.issue.mixed");
       case "limit": return t("import.scope.issue.limit", { max: 64 });
       default: return t("import.scope.summary", counts);
     }
@@ -311,6 +311,7 @@ export function ImportScopeStep({
               </div>
             )}
             {inPlaceCount(scope) > 1 && <p style={{ ...note, marginTop: 10 }}>{t("import.scope.inPlaceNote", { count: inPlaceCount(scope) })}</p>}
+            {needsCampaign(scope) && <p role="note" style={{ ...note, marginTop: 10 }}>{t("import.scope.campaignNote")}</p>}
             {onRecheck && (involved.some((h) => !hostTugra(plan, h.ref)) || (teamId !== "" && involved.some((h) => { const m = hostTugra(plan, h.ref); return m && serverReadiness(serverById.get(m.serverId)) !== "ready"; }))) && (
               <div style={{ marginTop: 10 }}>
                 <Btn variant="ghost" onClick={onRecheck} disabled={rechecking}>{t("import.scope.recheck")}</Btn>

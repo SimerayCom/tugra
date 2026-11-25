@@ -21,6 +21,25 @@
       "done": "Done",
       "cancelled": "Cancelled"
     },
-    "wave": "Wave {n}"
+    "wave": "Wave {n}",
+    "hint": "Moves to another server go together in one run. Each server that stays on its own machine gets its own run, one after the other.",
+    "checking": "Checking the placement...",
+    "unreadable": "The placement could not be checked. Try again.",
+    "runInPlace": "{source} stays on its own machine (proxy swap, no data copied).",
+    "runOther": "{source} moves to {target} (data is copied, then the address is switched).",
+    "create": "Create campaign ({count} runs)"
+  },
+  "failure": {
+    "placement_empty": "Pick at least one source server.",
+    "placement_duplicate": "A source server is listed twice.",
+    "placement_unknown_source": "A source server in the choice is not in the plan any more. Read the source again.",
+    "placement_in_place_locked": "Staying on the same machine is not possible for this server.",
+    "placement_in_place_target_mismatch": "The server chosen is not the machine this source server runs on.",
+    "placement_target_missing": "Choose a server to move it to.",
+    "placement_target_unknown": "The chosen server was not found.",
+    "placement_target_not_ready": "The chosen server is offline, has no agent connected or cannot deploy.",
+    "placement_other_is_source_host": "That is the machine the source server already runs on. Choose \"same machine\" or another server.",
+    "placement_teams_differ": "All the servers must belong to one team.",
+    "unknown": "This placement was refused."
   }
 }

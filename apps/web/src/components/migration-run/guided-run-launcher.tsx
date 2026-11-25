@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Route } from "lucide-react";
 import { api } from "../../lib/api";
 import { useT } from "../../i18n/provider";
@@ -29,6 +29,8 @@ import { AdvancedFields, type AdvancedState } from "./launch-advanced";
 import { PlacementFields } from "./launch-placement";
 import { AgentGapNotice } from "./agent-gap-notice";
 import { sourceAgentGapsOf } from "../../lib/coolify-ssh";
+import { CampaignPreviewCard } from "./launch-campaign";
+import { campaignBody, needsCampaign, placementsOf } from "../../lib/campaign";
 import { HelpLink } from "../help-link";
 import { scopePayload, type ImportScope, overallPlacement, involvedHosts } from "../../lib/import-scope";
 import type { ImportApplyExtras, ImportPlan, ImportRemoteKind, MigrationRunMode, MigrationRunServerMap, MigrationRunTopology } from "../../lib/types";
@@ -150,11 +152,31 @@ function LaunchDialog({ plan, kind, sessionId, servers, extras, scope, onChangeS
     placement, scope: scopePayload(scope), campaign: adv.campaign, sourceRunner: adv.sourceRunner, hostLoop: adv.hostLoop, deployWaves: adv.deployWaves, deployConcurrency: adv.deployConcurrency, largeDbMode: adv.largeDbMode, serviceStart: adv.serviceStart, stopSource: adv.stopSource, policies: adv.policies,
   };
   const issues = launchIssues(form);
+  // Same-machine and copied moves together, or several same-machine servers: the hub makes a campaign of runs (one per same-machine server,
+  // one for the rest), so the topology and the placement are its to decide and are not asked here.
+  const campaign = kind === "coolify" && needsCampaign(scope);
+  const placements = useMemo(() => (scope ? placementsOf(scope) : []), [scope]);
+  const preview = useQuery({
+    queryKey: ["campaign-plan", sessionId, plan.planHash, placements],
+    queryFn: () => api.planCampaign({ sessionId, planHash: plan.planHash, placements: placements.map((p) => ({ sourceServerRef: p.sourceServerRef, kind: p.kind, targetServerId: p.targetServerId ?? null })) }),
+    enabled: campaign && placements.length > 0,
+    retry: false,
+  });
+  const campaignRefused = campaign && (preview.isLoading || preview.isError || !!preview.data?.failure || !preview.data?.runs);
   const create = useMutation({
-    mutationFn: () => api.createMigrationRun(buildLaunchInput(form)),
-    onSuccess: (run) => {
+    mutationFn: async (): Promise<{ href: string }> => {
+      const input = buildLaunchInput(form);
+      if (campaign) {
+        const c = await api.createCampaign(campaignBody(input, placements));
+        return { href: `/import/runs/campaign?c=${encodeURIComponent(c.label)}` };
+      }
+      const run = await api.createMigrationRun(input);
+      return { href: `/import/runs/${run.id}` };
+    },
+    onSuccess: ({ href }) => {
       void qc.invalidateQueries({ queryKey: ["migration-runs"] });
-      router.push(`/import/runs/${run.id}`);
+      void qc.invalidateQueries({ queryKey: ["migration-campaigns"] });
+      router.push(href);
     },
     onError: (e) => toast(errorText(t, e), "error"),
   });
@@ -164,7 +186,7 @@ function LaunchDialog({ plan, kind, sessionId, servers, extras, scope, onChangeS
       <form
         onSubmit={(e) => {
           e.preventDefault();
-          if (issues.length === 0 && !create.isPending) create.mutate();
+          if (issues.length === 0 && !campaignRefused && !create.isPending) create.mutate();
         }}
         style={{ display: "flex", flexDirection: "column", gap: 14 }}
       >
@@ -200,7 +222,11 @@ function LaunchDialog({ plan, kind, sessionId, servers, extras, scope, onChangeS
 
         <AgentGapNotice gaps={agentGaps} dryRun={dryRun} />
 
-        <PlacementFields rows={sourceRows} servers={placeableOptions} defaultId={targetServerId} value={placement} onChange={setPlacement} invalid={issues.includes("placement")} />
+        {campaign ? (
+          <CampaignPreviewCard preview={preview.data ?? null} loading={preview.isLoading} failed={preview.isError} rows={sourceRows} servers={servers} />
+        ) : (
+          <PlacementFields rows={sourceRows} servers={placeableOptions} defaultId={targetServerId} value={placement} onChange={setPlacement} invalid={issues.includes("placement")} />
+        )}
 
         <div>
           <Checkbox checked={dryRun} onChange={setDryRun} label={t("migrationRun.launch.dryRun")} />
@@ -211,9 +237,11 @@ function LaunchDialog({ plan, kind, sessionId, servers, extras, scope, onChangeS
           <Field label={t("migrationRun.launch.mode")} hint={t(MODE_HINT_KEY[mode])}>
             <Select value={mode} onChange={(v) => setMode(v as MigrationRunMode)} options={(["copy", "takeover"] as const).map((m) => ({ value: m, label: t(MODE_KEY[m]) }))} style={{ minHeight: 44 }} />
           </Field>
-          <Field label={t("migrationRun.launch.topology")} hint={t(TOPOLOGY_HINT_KEY[topology])}>
-            <Select value={topology} onChange={(v) => setTopology(v as MigrationRunTopology)} options={(kind === "coolify" ? (["two-box", "swap-proxy"] as const) : (["two-box"] as const)).map((m) => ({ value: m, label: t(TOPOLOGY_KEY[m]) }))} style={{ minHeight: 44 }} />
-          </Field>
+          {!campaign && (
+            <Field label={t("migrationRun.launch.topology")} hint={t(TOPOLOGY_HINT_KEY[topology])}>
+              <Select value={topology} onChange={(v) => setTopology(v as MigrationRunTopology)} options={(kind === "coolify" ? (["two-box", "swap-proxy"] as const) : (["two-box"] as const)).map((m) => ({ value: m, label: t(TOPOLOGY_KEY[m]) }))} style={{ minHeight: 44 }} />
+            </Field>
+          )}
         </div>
 
         <div style={{ display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 220px), 1fr))" }}>
@@ -244,8 +272,8 @@ function LaunchDialog({ plan, kind, sessionId, servers, extras, scope, onChangeS
 
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>
           <Btn variant="ghost" onClick={onClose} disabled={create.isPending}>{t("common.cancel")}</Btn>
-          <Btn type="submit" disabled={issues.length > 0 || servers.length === 0 || blockedUsed.length > 0 || (!dryRun && agentGaps.length > 0)} loading={create.isPending}>
-            {dryRun ? t("migrationRun.launch.createDry") : t("migrationRun.launch.create")}
+          <Btn type="submit" disabled={issues.length > 0 || servers.length === 0 || blockedUsed.length > 0 || !!campaignRefused || (!dryRun && agentGaps.length > 0)} loading={create.isPending}>
+            {campaign ? t("placement.campaign.create", { count: preview.data?.runs?.length ?? 0 }) : dryRun ? t("migrationRun.launch.createDry") : t("migrationRun.launch.create")}
           </Btn>
         </div>
       </form>

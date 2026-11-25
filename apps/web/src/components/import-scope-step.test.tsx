@@ -111,14 +111,15 @@ describe("ImportScopeStep", () => {
     expect(scope.defaultServerId).toBe("t1");
   });
 
-  it("choosing another server for a matched one says 'Another server'; mixing it with a same-machine move blocks Continue", () => {
+  it("choosing another server for a matched one says 'Another server'; mixing it with a same-machine move is allowed and explained as a campaign", () => {
     const p = withMatches([{ ref: "s1", name: "Box One", tugra: hit("t1", "Target A") }, { ref: "s2", name: "Box Two", tugra: hit("t2", "Target B") }]);
     mount({ plan: p });
     expect((screen.getByRole("checkbox", { name: /Box Two/ }) as HTMLInputElement).checked).toBe(true);
     expect(continueBtn().disabled).toBe(false);
     fireEvent.change(screen.getByLabelText("Box Two moves to"), { target: { value: "t1" } });
-    expect(screen.getByText(/cannot go together/)).toBeTruthy();
-    expect(continueBtn().disabled).toBe(true);
+    expect(screen.getByText(/This is a campaign/)).toBeTruthy();
+    expect(screen.queryByText(/cannot go together/)).toBeNull();
+    expect(continueBtn().disabled).toBe(false);
   });
 
   it("a source server not registered in Tugra says so and offers to add it, with its name and team prefilled", () => {
