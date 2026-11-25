@@ -837,6 +837,38 @@ describe("ServersService capabilities", () => {
     expect(update).toHaveBeenLastCalledWith(expect.objectContaining({ data: { capabilities: ["deploy"] } }));
   });
 
+  it("applyCoolifyRunCapability is the one way a takeover capability is added: only those names, live-pushed, no-op when unchanged", async () => {
+    const state = { capabilities: ["deploy"] as string[] };
+    const update = jest.fn(async ({ data }: { data: { capabilities: string[] } }) => {
+      state.capabilities = data.capabilities;
+      return {};
+    });
+    const prisma = { server: { findUnique: jest.fn(async () => ({ capabilities: state.capabilities })), update } } as unknown as PrismaService;
+    const svc = svcWith(prisma);
+    const push = jest.fn();
+    svc.setCapabilityPusher(push);
+
+    await expect(svc.applyCoolifyRunCapability("s1", "deploy", true)).rejects.toThrow(/not a Coolify takeover capability/);
+    await expect(svc.applyCoolifyRunCapability("s1", "terminal", true)).rejects.toThrow(/not a Coolify takeover capability/);
+    expect(update).not.toHaveBeenCalled();
+
+    expect(await svc.applyCoolifyRunCapability("s1", "coolify_secrets", true)).toBe(true);
+    expect(state.capabilities).toEqual(["deploy", "coolify_secrets"]);
+    expect(push).toHaveBeenLastCalledWith("s1", ["deploy", "coolify_secrets"]);
+    expect(await svc.applyCoolifyRunCapability("s1", "coolify_secrets", true)).toBe(false); // already held
+    expect(update).toHaveBeenCalledTimes(1);
+
+    expect(await svc.applyCoolifyRunCapability("s1", "coolify_secrets", false)).toBe(true);
+    expect(state.capabilities).toEqual(["deploy"]); // other capabilities are untouched
+    expect(push).toHaveBeenLastCalledWith("s1", ["deploy"]);
+    expect(await svc.applyCoolifyRunCapability("s1", "coolify_secrets", false)).toBe(false);
+  });
+
+  it("applyCoolifyRunCapability on a missing server is a 404, not a silent grant", async () => {
+    const prisma = { server: { findUnique: jest.fn().mockResolvedValue(null), update: jest.fn() } } as unknown as PrismaService;
+    await expect(svcWith(prisma).applyCoolifyRunCapability("nope", "coolify_secrets", true)).rejects.toThrow(/not found/);
+  });
+
   it("grantedCapabilities returns the stored set", async () => {
     const prisma = {
       server: { findUnique: jest.fn().mockResolvedValue({ capabilities: ["deploy"] }) },
