@@ -6,17 +6,21 @@ import { TickSchedulerService, SCHEDULER_QUEUE } from "../src/scheduler/tick-sch
 import { retireLegacyQueues, RETIRED_QUEUES } from "../src/scheduler/legacy-queues";
 
 /**
- * Real-Redis proof for the consolidated scheduler: nothing here is mocked. It runs on Redis db 14 of REDIS_URL (flushed
- * before and after) with the hub's queue plumbing switched on (NODE_ENV is "test" in the suite, which turns every
- * scheduler off, so the spec flips it for its own duration).
+ * Real-Redis proof for the consolidated scheduler: nothing here is mocked. It FLUSHES the Redis database it runs on, so
+ * it only runs when TEST_REDIS_URL is set explicitly, and that URL must name a non-default database
+ * (e.g. redis://localhost:6379/14). Without it the suite is skipped and no Redis is ever touched, so pointing a shell
+ * at a shared REDIS_URL cannot wipe anything. The hub's queue plumbing is switched on by stubbing `enabled` (it is off
+ * under NODE_ENV=test), without touching the process environment.
  */
-const base = (process.env.REDIS_URL ?? "redis://localhost:6379").replace(/\/\d+$/, "");
-const URL = `${base}/14`;
+const URL = process.env.TEST_REDIS_URL ?? "";
+const dbIndex = /\/(\d+)$/.exec(URL)?.[1];
+const safe = URL !== "" && dbIndex !== undefined && dbIndex !== "0";
+if (URL && !safe) throw new Error("TEST_REDIS_URL must end in a non-default database index, e.g. redis://localhost:6379/14 (the suite flushes it)");
 const config = { get: (k: string) => (k === "REDIS_URL" ? URL : undefined) } as unknown as ConfigService;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-describe("scheduler on a real Redis (restart safety, legacy cleanup)", () => {
-  const OLD_ENV = process.env.NODE_ENV;
+(safe ? describe : describe.skip)("scheduler on a real Redis (restart safety, legacy cleanup)", () => {
+  let enabledSpy: jest.SpyInstance;
   let admin: Redis;
   const booted: QueueHubService[] = [];
 
@@ -30,7 +34,7 @@ describe("scheduler on a real Redis (restart safety, legacy cleanup)", () => {
   }
 
   beforeAll(async () => {
-    process.env.NODE_ENV = "scheduler-itest";
+    enabledSpy = jest.spyOn(QueueHubService.prototype, "enabled", "get").mockReturnValue(true);
     admin = new Redis(URL);
     await admin.flushdb();
   });
@@ -38,7 +42,7 @@ describe("scheduler on a real Redis (restart safety, legacy cleanup)", () => {
     for (const h of booted) await h.onModuleDestroy().catch(() => undefined);
     await admin.flushdb();
     admin.disconnect();
-    process.env.NODE_ENV = OLD_ENV;
+    enabledSpy.mockRestore();
   });
   beforeEach(async () => {
     await admin.flushdb();

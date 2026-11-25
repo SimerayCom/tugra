@@ -36,6 +36,7 @@ jobs:
     env:
       DATABASE_URL: postgresql://tugra:tugra@localhost:5432/tugra?schema=public
       REDIS_URL: redis://localhost:6379
+      TEST_REDIS_URL: redis://localhost:6379/14
       JWT_ACCESS_SECRET: ci-access-secret-0123456789
       JWT_REFRESH_SECRET: ci-refresh-secret-0123456789
       SECRETS_ENCRYPTION_KEY: ci-secrets-key-0123456789
