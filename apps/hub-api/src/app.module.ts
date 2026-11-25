@@ -42,6 +42,7 @@ import { VolumeBackupsModule } from "./volume-backups/volume-backups.module";
 import { DestinationsModule } from "./destinations/destinations.module";
 import { ServerOpsModule } from "./server-ops/server-ops.module";
 import { MigratorModule } from "./migrator/migrator.module";
+import { Pm2MoveModule } from "./pm2-move/pm2-move.module";
 import { ImporterModule } from "./importer/importer.module";
 import { BeszelImportModule } from "./beszel-import/beszel-import.module";
 import { MigrationRunsModule } from "./migration-runs/migration-runs.module";
@@ -124,6 +125,7 @@ import { ApiExceptionFilter } from "./common/api-exception.filter";
     DestinationsModule,
     ServerOpsModule,
     MigratorModule,
+    Pm2MoveModule,
     ImporterModule, // fleet importer (Coolify / local Docker)
     BeszelImportModule, // Beszel hub import (systems, alert rules, channels, history)
     CutoverModule, // SSL/DNS cutover of imported apps

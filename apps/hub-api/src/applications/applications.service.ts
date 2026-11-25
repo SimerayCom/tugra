@@ -3323,6 +3323,23 @@ export class ApplicationsService {
     await this.prisma.application.delete({ where: { id: appId } }).catch(() => undefined);
   }
 
+  /**
+   * The exact `docker run` script a Tugra redeploy would run for this app, for an image that is ALREADY tagged locally as
+   * `runTag(app, version)` (no pull, no build; it refuses with exit 7 when the tag is missing). Used by the PM2 in-place
+   * move, which prepares the app record and image first and starts the container itself in the middle of a cutover. The
+   * same safety gates as a deploy apply (docker options, custom labels, resolved env flags); no user permission is
+   * checked here: the caller is a service that already authorized the actor.
+   */
+  async buildLocalRunScript(appId: string, version: string): Promise<string> {
+    const app = await this.prisma.application.findUnique({ where: { id: appId } });
+    if (!app) throw new NotFoundException("application not found");
+    assertSafeDockerOptions(app.dockerOptions, { allowPrivileged: app.allowPrivilegedDockerOptions });
+    this.assertStoredCustomLabels(app);
+    const spec = this.toSpec(app);
+    this.logAutoMultiline(app.id, (await this.attachResolvedEnv(app, spec, { withBuild: false })).autoMultiline);
+    return buildRunScript(spec, version, false);
+  }
+
   async deployments(userId: string, id: string, opts: { slim?: boolean } = {}) {
     // Writer-only: each row carries the raw build/deploy `logs`, which can contain secrets (DSN, tokens,
     // .env dumps in build output) — same rationale as appLogs/listContainers. A VIEWER must not read them.
