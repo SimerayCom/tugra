@@ -5,7 +5,7 @@
     "in-place": "Same machine (proxy swap)",
     "other-server": "Another server"
   },
-  "inPlaceNote": "Same machine: no data is copied, the sites keep their DNS, the old setup stays until you remove it.",
+  "inPlaceNote": "Same machine: the sites keep their DNS and the old setup stays until you remove it. In a campaign this is a normal run with a proxy swap, so it still copies data and needs spare disk space.",
   "lock": {
     "match_uncertain": "Not sure which server this is. Choose one first.",
     "agent_offline": "The agent on this server is offline.",
@@ -25,7 +25,7 @@
     "hint": "Moves to another server go together in one run. Each server that stays on its own machine gets its own run, one after the other.",
     "checking": "Checking the placement...",
     "unreadable": "The placement could not be checked. Try again.",
-    "runInPlace": "{source} stays on its own machine (proxy swap, no data copied).",
+    "runInPlace": "{source} stays on its own machine. This run swaps the proxy and still copies data, so it needs spare disk space.",
     "runOther": "{source} moves to {target} (data is copied, then the address is switched).",
     "create": "Create campaign ({count} runs)"
   },
