@@ -25,11 +25,20 @@ const mount = () =>
   );
 
 describe("in-place takeover page", () => {
-  it("asks to be opened from a run when the server or the import is missing", async () => {
-    search = "serverId=srv1";
+  it("asks to be opened from a server page or the checklist when the server is missing", async () => {
+    search = "opId=op1";
     mount();
     expect(await screen.findByRole("alert")).toBeTruthy();
-    expect(screen.getByRole("alert").textContent).toContain("Open this from a same-server migration run");
+    expect(screen.getByRole("alert").textContent).toContain("Open this from a server page or the Move off Coolify checklist");
+  });
+  it("opens from the checklist with only the server: it shows the takeover and cannot plan a new one", async () => {
+    search = "serverId=srv1";
+    vi.spyOn(api, "getServer").mockResolvedValue({ id: "srv1", name: "olgu-box" } as never);
+    vi.spyOn(api, "listInPlace").mockResolvedValue([]);
+    mount();
+    expect(await screen.findByTestId("takeover-needs-run")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Plan the takeover" })).toBeNull();
+    expect(screen.getByRole("link", { name: "Back to Move off Coolify" }).getAttribute("href")).toBe("/import/move-off-coolify");
   });
   it("shows the takeover of the server named in the address, with the server's own name to type", async () => {
     search = "serverId=srv1&opId=op1";
