@@ -44,10 +44,14 @@ func Collect() (protocol.HostInfo, error) {
 		if len(hf.IPs) > 0 {
 			info.ReportedIps = hf.IPs
 		}
+		info.MachineIDHash = CleanMachineIDHash(hf.MachineIDHash)
 	}
 	ctx := context.Background()
 	if h, ok := DockerHostOS(ctx); ok {
-		info.Hostname = h.Hostname
+		if h.Hostname != "" {
+			info.Hostname = h.Hostname
+		}
+		info.DockerEngineID = h.EngineID
 		if h.OS != "" {
 			info.OS, info.OSVersion = h.OS, h.OSVersion
 		}

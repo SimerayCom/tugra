@@ -721,6 +721,9 @@ export interface HostInfo {
   hostname?: string; // the HOST's hostname (from the Docker daemon); absent on older agents
   metadataIps?: string[]; // public IPs the cloud provider's link-local metadata service reports (no outbound probe)
   cloudProvider?: string; // which provider's metadata answered ("hetzner" | "aws" | "gcp" | "digitalocean" | "vultr")
+  /** Machine identity for matching this server to the same machine elsewhere (Coolify hub takeover). Hash and id only, never content; absent on older agents. */
+  machineIdHash?: string; // sha256("tugra-mid-v1" + machine-id), 64 lower-case hex
+  dockerEngineId?: string; // the Docker engine id
 }
 
 /** Agent -> Hub: host hardware/OS inventory. */

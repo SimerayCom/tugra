@@ -14,6 +14,18 @@ tugra_write_host_facts() {
     _hf_ver="$(. /etc/os-release 2>/dev/null; printf '%s' "${VERSION_ID:-}" | tr -cd 'A-Za-z0-9._-' | cut -c1-40)"
     _hf_pretty="$(. /etc/os-release 2>/dev/null; printf '%s' "${PRETTY_NAME:-}" | tr -cd 'A-Za-z0-9._ ()/-' | cut -c1-80)"
   fi
+  # Hashed machine id (Coolify hub takeover: matches this server to a Coolify server). The raw id never leaves the host:
+  # sha256("tugra-mid-v1" + the id), hex. Absent (empty) when the host has no machine id or no sha256 tool.
+  _hf_mid=""; _hf_mfile="${TUGRA_MACHINE_ID_FILE:-/etc/machine-id}"
+  if [ -r "$_hf_mfile" ]; then
+    _hf_mraw="$(tr -cd '0-9a-f' < "$_hf_mfile" 2>/dev/null | cut -c1-64)"
+    if [ "${#_hf_mraw}" -ge 16 ]; then
+      if command -v sha256sum >/dev/null 2>&1; then _hf_mid="$(printf '%s%s' tugra-mid-v1 "$_hf_mraw" | sha256sum 2>/dev/null | cut -c1-64)"
+      elif command -v shasum >/dev/null 2>&1; then _hf_mid="$(printf '%s%s' tugra-mid-v1 "$_hf_mraw" | shasum -a 256 2>/dev/null | cut -c1-64)"; fi
+    fi
+    _hf_mid="$(printf '%s' "$_hf_mid" | tr -cd '0-9a-f' | cut -c1-64)"
+    [ "${#_hf_mid}" = "64" ] || _hf_mid=""
+  fi
   _hf_ips=""; _hf_fb=0
   if command -v ip >/dev/null 2>&1; then
     _hf_ips="$(ip -o addr show scope global 2>/dev/null | awk '$2 !~ /^(docker|br-|veth|virbr)/ { sub(/\/.*/, "", $4); print $4 }')"
@@ -30,8 +42,8 @@ tugra_write_host_facts() {
     _hf_json="${_hf_json:+$_hf_json,}\"$_hf_ip\""
   done
   _hf_tmp="$_hf_dir/.host-facts.json.tmp"
-  printf '{"source":"install","collectedAt":%s,"hostname":"%s","os":"%s","osVersion":"%s","osPretty":"%s","ips":[%s]}\n' \
-    "$(date +%s 2>/dev/null || echo 0)" "$_hf_hn" "$_hf_id" "$_hf_ver" "$_hf_pretty" "$_hf_json" > "$_hf_tmp" 2>/dev/null \
+  printf '{"source":"install","collectedAt":%s,"hostname":"%s","os":"%s","osVersion":"%s","osPretty":"%s","machineIdHash":"%s","ips":[%s]}\n' \
+    "$(date +%s 2>/dev/null || echo 0)" "$_hf_hn" "$_hf_id" "$_hf_ver" "$_hf_pretty" "$_hf_mid" "$_hf_json" > "$_hf_tmp" 2>/dev/null \
     && chmod 644 "$_hf_tmp" 2>/dev/null && mv -f "$_hf_tmp" "$_hf_dir/host-facts.json" 2>/dev/null || rm -f "$_hf_tmp" 2>/dev/null
   return 0
 }

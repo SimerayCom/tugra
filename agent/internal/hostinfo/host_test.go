@@ -71,3 +71,60 @@ func TestReadHostFacts(t *testing.T) {
 		t.Fatal("garbage must be ok=false")
 	}
 }
+
+func TestParseDockerInfoReadsTheEngineID(t *testing.T) {
+	h, ok := parseDockerInfo([]byte(`{"Name":"web-1","OperatingSystem":"Ubuntu 24.04.1 LTS","OSVersion":"24.04","ID":"7TRN:IPZB:QYBB:VPBQ:UWTP:KJDG:XWNR:UJTA:6DGX:CYX7:TXQT:XUPF"}`))
+	if !ok || h.Hostname != "web-1" || h.OS != "ubuntu" || h.EngineID != "7TRN:IPZB:QYBB:VPBQ:UWTP:KJDG:XWNR:UJTA:6DGX:CYX7:TXQT:XUPF" {
+		t.Fatalf("parseDockerInfo = %+v, %v", h, ok)
+	}
+	// An id that is not shaped like one is dropped, never passed on.
+	h, ok = parseDockerInfo([]byte(`{"Name":"web-1","ID":"bad id; rm -rf /"}`))
+	if !ok || h.EngineID != "" {
+		t.Fatalf("a malformed engine id must be empty: %+v, %v", h, ok)
+	}
+	// Only an engine id is still an answer (hostname and OS stay empty and the caller keeps its own).
+	h, ok = parseDockerInfo([]byte(`{"ID":"ABCD-EFGH-1234"}`))
+	if !ok || h.Hostname != "" || h.EngineID != "ABCD-EFGH-1234" {
+		t.Fatalf("engine id only: %+v, %v", h, ok)
+	}
+	if _, ok := parseDockerInfo([]byte(`not json`)); ok {
+		t.Fatal("garbage must be ok=false")
+	}
+}
+
+func TestCleanIdentityFacts(t *testing.T) {
+	good := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	if CleanMachineIDHash(good) != good || CleanMachineIDHash(" "+strings.ToUpper(good)+"\n") != good {
+		t.Fatal("a 64 hex hash is kept (lower-cased, trimmed)")
+	}
+	for _, bad := range []string{"", "abc", good[:63], good + "0", "g" + good[1:], "0123456789abcdef0123456789abcdef"} {
+		if CleanMachineIDHash(bad) != "" {
+			t.Errorf("CleanMachineIDHash(%q) accepted a non-hash", bad)
+		}
+	}
+	for _, bad := range []string{"", "short", "has space in it", "semi;colon-id-xx", strings.Repeat("a", 129)} {
+		if CleanEngineID(bad) != "" {
+			t.Errorf("CleanEngineID(%q) accepted a bad id", bad)
+		}
+	}
+}
+
+func TestReadHostFactsCarriesTheHashedMachineID(t *testing.T) {
+	p := t.TempDir() + "/host-facts.json"
+	good := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	if err := os.WriteFile(p, []byte(`{"source":"install","hostname":"h","machineIdHash":"`+good+`","ips":[]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	hf, ok := ReadHostFacts(p)
+	if !ok || CleanMachineIDHash(hf.MachineIDHash) != good {
+		t.Fatalf("ReadHostFacts = %+v, %v", hf, ok)
+	}
+	// An older facts file has no field: empty, not an error.
+	if err := os.WriteFile(p, []byte(`{"source":"install","hostname":"h","ips":[]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	hf, ok = ReadHostFacts(p)
+	if !ok || CleanMachineIDHash(hf.MachineIDHash) != "" {
+		t.Fatalf("old file: %+v, %v", hf, ok)
+	}
+}

@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdtempSync, readFileSync as rf, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { HOST_FACTS_SH } from "./host-facts-sh";
@@ -44,6 +45,34 @@ describe("host facts snippet", () => {
       expect(facts.source).toBe("install");
       expect(facts.hostname).toBe("olgu-omer-ortak-newevil"); // quote stripped, never breaks the JSON
       expect(facts.ips).toEqual(["2.29.218.211", "2a01:4f9:c014:8ecc::1", "100.85.166.104"]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("reports the HASHED machine id only (sha256 of the versioned prefix and the id), never the raw id; none when there is no machine id", () => {
+    const dir = mkdtempSync(join(tmpdir(), "hf-mid-"));
+    try {
+      const run = (idFile: string, out: string) =>
+        spawnSync("sh", ["-c", `. "${LIB}"; tugra_write_host_facts`], { env: { PATH: "/usr/bin:/bin", TUGRA_HOST_FACTS_DIR: out, TUGRA_MACHINE_ID_FILE: idFile }, encoding: "utf8" });
+      const raw = "0123456789abcdef0123456789abcdef";
+      const idFile = join(dir, "machine-id");
+      require("node:fs").writeFileSync(idFile, `${raw}\n`);
+      const out1 = join(dir, "a");
+      expect(run(idFile, out1).status).toBe(0);
+      const text = rf(join(out1, "host-facts.json"), "utf8");
+      const facts = JSON.parse(text);
+      expect(facts.machineIdHash).toBe(createHash("sha256").update(`tugra-mid-v1${raw}`).digest("hex"));
+      expect(text).not.toContain(raw);
+      // no machine id on the host: the field is empty, the file is still valid
+      const out2 = join(dir, "b");
+      expect(run(join(dir, "missing"), out2).status).toBe(0);
+      expect(JSON.parse(rf(join(out2, "host-facts.json"), "utf8")).machineIdHash).toBe("");
+      // a too-short value is not an id
+      require("node:fs").writeFileSync(idFile, "abc\n");
+      const out3 = join(dir, "c");
+      run(idFile, out3);
+      expect(JSON.parse(rf(join(out3, "host-facts.json"), "utf8")).machineIdHash).toBe("");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

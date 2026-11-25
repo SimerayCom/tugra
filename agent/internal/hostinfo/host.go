@@ -22,6 +22,7 @@ type dockerInfo struct {
 	OperatingSystem string `json:"OperatingSystem"` // e.g. "Ubuntu 26.04.1 LTS"
 	OSVersion       string `json:"OSVersion"`       // e.g. "26.04"
 	KernelVersion   string `json:"KernelVersion"`
+	ID              string `json:"ID"` // the Docker engine id
 }
 
 // HostOS is the host's identity as seen by the Docker daemon.
@@ -29,6 +30,7 @@ type HostOS struct {
 	Hostname  string
 	OS        string // lower-case distro id, e.g. "ubuntu"
 	OSVersion string // e.g. "26.04"
+	EngineID  string // the Docker engine id ("" when not a plausible id)
 }
 
 var versionRe = regexp.MustCompile(`(?:^|[^0-9.])(\d+(?:\.\d+){0,2})`)
@@ -62,18 +64,48 @@ func DockerHostOS(ctx context.Context) (HostOS, bool) {
 	if err != nil {
 		return HostOS{}, false
 	}
+	return parseDockerInfo(out)
+}
+
+// parseDockerInfo reads the daemon's `docker info --format {{json .}}` answer. Pure.
+func parseDockerInfo(out []byte) (HostOS, bool) {
 	var di dockerInfo
 	if err := json.Unmarshal(out, &di); err != nil {
 		return HostOS{}, false
 	}
-	h := HostOS{Hostname: strings.TrimSpace(di.Name)}
+	h := HostOS{Hostname: strings.TrimSpace(di.Name), EngineID: CleanEngineID(di.ID)}
 	if id, ver, ok := ParseOperatingSystem(di.OperatingSystem, di.OSVersion); ok {
 		h.OS, h.OSVersion = id, ver
 	}
-	if h.Hostname == "" && h.OS == "" {
+	if h.Hostname == "" && h.OS == "" && h.EngineID == "" {
 		return HostOS{}, false
 	}
 	return h, true
+}
+
+var (
+	engineIDRe  = regexp.MustCompile(`^[A-Za-z0-9:_-]{8,128}$`)
+	machineIDRe = regexp.MustCompile(`^[0-9a-f]{64}$`)
+)
+
+// CleanEngineID returns the Docker engine id when it looks like one (letters, digits, colon, dash, underscore; 8-128 chars), else "".
+// The value is parsed from the daemon's own answer and is only ever compared for equality by the hub; it is not trusted further.
+func CleanEngineID(id string) string {
+	id = strings.TrimSpace(id)
+	if !engineIDRe.MatchString(id) {
+		return ""
+	}
+	return id
+}
+
+// CleanMachineIDHash returns the hashed machine id (64 lower-case hex) when it is one, else "". The installer writes it; the raw
+// machine id never reaches the agent or the hub.
+func CleanMachineIDHash(h string) string {
+	h = strings.ToLower(strings.TrimSpace(h))
+	if !machineIDRe.MatchString(h) {
+		return ""
+	}
+	return h
 }
 
 var imageRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/:@-]*$`)
@@ -163,13 +195,15 @@ func PrintHostIPs() int {
 
 // HostFacts is /etc/tugra/host-facts.json, written ON THE HOST by the installer (scripts/lib/hostfacts.sh).
 type HostFacts struct {
-	Source      string   `json:"source"`
-	CollectedAt int64    `json:"collectedAt"`
-	Hostname    string   `json:"hostname"`
-	OS          string   `json:"os"`
-	OSVersion   string   `json:"osVersion"`
-	OSPretty    string   `json:"osPretty"`
-	IPs         []string `json:"ips"`
+	Source      string `json:"source"`
+	CollectedAt int64  `json:"collectedAt"`
+	Hostname    string `json:"hostname"`
+	OS          string `json:"os"`
+	OSVersion   string `json:"osVersion"`
+	OSPretty    string `json:"osPretty"`
+	// MachineIDHash is sha256("tugra-mid-v1" + /etc/machine-id) as hex, computed by the installer on the host.
+	MachineIDHash string   `json:"machineIdHash"`
+	IPs           []string `json:"ips"`
 }
 
 // HostFactsPath is where the installer writes the host facts (the /etc/tugra mount is shared with the host).

@@ -283,6 +283,10 @@ type HostInfo struct {
 	// probe), and which provider answered. Omitted off-cloud.
 	MetadataIps   []string `json:"metadataIps,omitempty"`
 	CloudProvider string   `json:"cloudProvider,omitempty"`
+	// Machine identity for matching this server to the same machine elsewhere (Coolify hub takeover). Hashes and ids only,
+	// never content: sha256("tugra-mid-v1" + machine-id) as hex, and the Docker engine id. Omitted when unknown.
+	MachineIDHash  string `json:"machineIdHash,omitempty"`
+	DockerEngineID string `json:"dockerEngineId,omitempty"`
 }
 
 type HostInfoMsg struct {
