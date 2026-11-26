@@ -6,7 +6,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { TakeoverCertState, TakeoverItemView, TakeoverView } from "@tugra/shared";
 import { api, ApiError } from "../../lib/api";
 import { useT } from "../../i18n/provider";
-import { actionsFor, confirmMatches, dbRollup, pollMs, rebuildCandidates, rebuildOf, rollup, serviceRollup, toggleChoice, verifyHasWork, type TakeoverAction } from "../../lib/inplace";
+import { actionsFor, confirmMatches, dbRollup, pollMs, exclusiveApps, rebuildCandidates, rebuildOf, rollup, serviceRollup, toggleChoice, verifyHasWork, type TakeoverAction } from "../../lib/inplace";
 import { Badge, Btn, SectionCard, Spinner } from "../ui";
 import { Modal } from "../modal";
 import { TypedConfirmField } from "../typed-confirm-field";
@@ -49,7 +49,10 @@ export function TakeoverPanel({ serverId, serverName, opId }: { serverId: string
   const view = current(q.data ?? []);
   // The owner's choice of apps to rebuild with Tugra; until something is chosen, what a planned takeover already says
   const [chosen, setChosen] = useState<string[] | null>(null);
-  const selected = chosen ?? rebuildOf(view?.status === "PLANNED" ? view : null);
+  // Apps that share writable data with Coolify's copy cannot be rebuilt beside it: said at the choice (from an earlier plan, or a refusal already seen here), never ticked
+  const [refused, setRefused] = useState<string[]>([]);
+  const exclusive = exclusiveApps(view, refused);
+  const selected = (chosen ?? rebuildOf(view?.status === "PLANNED" ? view : null)).filter((x) => !exclusive.has(x));
   // Only before anything is changed on the box: a plan changes nothing, so it can be redone with another choice
   const picking = q.isSuccess && (!view || view.status === "GIVEN_BACK" || view.status === "PLANNED");
   const op = useQuery({ queryKey: ["import-op-takeover", opId], queryFn: () => api.getImportOperation(opId ?? ""), enabled: picking && !!opId, staleTime: 60_000 });
@@ -66,7 +69,11 @@ export function TakeoverPanel({ serverId, serverName, opId }: { serverId: string
       done(v);
       setChosen(null);
     },
-    onError: fail,
+    onError: (e) => {
+      const ref = e instanceof ApiError && e.code === "takeover_rebuild_needs_side_by_side" ? e.data?.itemRef : null;
+      if (typeof ref === "string") setRefused((r) => (r.includes(ref) ? r : [...r, ref]));
+      fail(e);
+    },
   });
   const test = useMutation({ mutationFn: () => api.testInPlace(view!.id), onSuccess: done, onError: fail });
   const verify = useMutation({ mutationFn: () => api.verifyInPlace(view!.id), onSuccess: done, onError: fail });
@@ -133,8 +140,13 @@ export function TakeoverPanel({ serverId, serverName, opId }: { serverId: string
           <p style={{ margin: 0, fontSize: 12, color: "var(--c-tx3)", lineHeight: 1.5 }}>{t("coolifyInPlace.rebuild.hint")}</p>
           {candidates.map((c) => (
             <label key={c.itemRef} style={{ display: "flex", gap: 10, alignItems: "center", minHeight: 44, fontSize: 13, overflowWrap: "anywhere" }}>
-              <input type="checkbox" checked={selected.includes(c.itemRef)} onChange={() => setChosen(toggleChoice(selected, c.itemRef))} disabled={busy} style={{ width: 20, height: 20, flexShrink: 0 }} />
-              <span>{t("coolifyInPlace.rebuild.option", { name: c.name })}</span>
+              <input type="checkbox" checked={selected.includes(c.itemRef)} onChange={() => setChosen(toggleChoice(selected, c.itemRef))} disabled={busy || exclusive.has(c.itemRef)} style={{ width: 20, height: 20, flexShrink: 0 }} />
+              <span>
+                {t("coolifyInPlace.rebuild.option", { name: c.name })}
+                {exclusive.has(c.itemRef) && (
+                  <span role="note" data-testid="rebuild-exclusive" style={{ display: "block", fontSize: 12, color: "var(--c-am)", lineHeight: 1.5 }}>{t("coolifyInPlace.rebuild.exclusive", { name: c.name })}</span>
+                )}
+              </span>
             </label>
           ))}
         </fieldset>

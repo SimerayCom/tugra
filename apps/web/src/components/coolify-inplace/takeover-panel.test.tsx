@@ -202,6 +202,37 @@ describe("TakeoverPanel", () => {
       fireEvent.click(screen.getByRole("button", { name: "Plan the takeover" }));
       expect(await screen.findByText("An app that shares data with Coolify's copy cannot be rebuilt next to it.")).toBeTruthy();
     });
+    it("an app an earlier plan read as sharing data is said so before the click, cannot be ticked and is never sent", async () => {
+      vi.spyOn(api, "listInPlace").mockResolvedValue([view("PLANNED", [item({ exclusive: true }), item({ itemRef: "app:s:api", name: "api" })])]);
+      vi.spyOn(api, "getImportOperation").mockResolvedValue(op([task({}), task({ itemRef: "app:s:api", name: "api" })]));
+      const plan = vi.spyOn(api, "planInPlace").mockResolvedValue(view("PLANNED"));
+      mount();
+      const picker = await screen.findByTestId("rebuild-picker");
+      const note = within(picker).getByTestId("rebuild-exclusive");
+      expect(note.textContent).toContain("web shares data with Coolify's copy");
+      const [web, api2] = within(picker).getAllByRole("checkbox") as HTMLInputElement[];
+      expect(web.disabled).toBe(true);
+      expect(api2.disabled).toBe(false);
+      fireEvent.click(api2);
+      fireEvent.click(screen.getByRole("button", { name: "Plan again with this choice" }));
+      await waitFor(() => expect(plan).toHaveBeenCalledWith({ serverId: "srv1", opId: "op1", rebuild: ["app:s:api"] }));
+    });
+    it("a refusal that names the app marks it in the picker and takes it off the choice", async () => {
+      vi.spyOn(api, "listInPlace").mockResolvedValue([]);
+      vi.spyOn(api, "getImportOperation").mockResolvedValue(op([task({}), task({ itemRef: "app:s:api", name: "api" })]));
+      const plan = vi.spyOn(api, "planInPlace").mockRejectedValueOnce(new ApiError(422, "takeover_rebuild_needs_side_by_side", "takeover_rebuild_needs_side_by_side", { itemRef: "app:s:web" })).mockResolvedValue(view("PLANNED"));
+      mount();
+      const picker = await screen.findByTestId("rebuild-picker");
+      fireEvent.click(within(picker).getByLabelText("Rebuild web with Tugra and verify"));
+      fireEvent.click(screen.getByRole("button", { name: "Plan the takeover" }));
+      await screen.findByTestId("rebuild-exclusive");
+      const [web] = within(screen.getByTestId("rebuild-picker")).getAllByRole("checkbox") as HTMLInputElement[];
+      expect(web.checked).toBe(false);
+      expect(web.disabled).toBe(true);
+      fireEvent.click(screen.getByRole("button", { name: "Plan the takeover" }));
+      await waitFor(() => expect(plan).toHaveBeenCalledTimes(2));
+      expect(plan.mock.calls[1][0]).toEqual({ serverId: "srv1", opId: "op1" });
+    });
     it("with no readable import the screen still plans, without the picker", async () => {
       vi.spyOn(api, "listInPlace").mockResolvedValue([]);
       vi.spyOn(api, "getImportOperation").mockRejectedValue(new Error("down"));

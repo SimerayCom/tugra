@@ -33,7 +33,8 @@
   "rebuild": {
     "title": "Rebuild with Tugra and verify",
     "hint": "By default Tugra starts the image Coolify already built and nothing is built. Pick an app to build it with Tugra instead: the build must succeed and the app must answer like Coolify's copy before the ports are taken. Apps that share data with Coolify's copy cannot be rebuilt next to it.",
-    "option": "Rebuild {name} with Tugra and verify"
+    "option": "Rebuild {name} with Tugra and verify",
+    "exclusive": "{name} shares data with Coolify's copy, so it cannot be built next to it. It keeps Coolify's image."
   },
   "none": "No takeover yet for {server}. Planning only reads what Coolify runs on it; nothing is changed.",
   "action": {

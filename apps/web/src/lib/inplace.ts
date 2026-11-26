@@ -100,6 +100,16 @@ export const toggleChoice = (chosen: readonly string[], itemRef: string): string
 /** The apps a planned takeover will rebuild (what the picker shows as chosen until the owner changes it). */
 export const rebuildOf = (v: Pick<TakeoverView, "items"> | null | undefined): string[] => (v?.items ?? []).filter((i) => i.buildMode === "rebuild-verify").map((i) => i.itemRef);
 
+/**
+ * The apps that cannot be rebuilt next to Coolify's copy because they share writable data with it (the hub refuses a rebuild of one with
+ * `takeover_rebuild_needs_side_by_side`): the apps an earlier plan of this server read as exclusive, and the ones the hub already refused on this screen.
+ */
+export function exclusiveApps(v: Pick<TakeoverView, "items"> | null | undefined, refused: readonly string[] = []): Set<string> {
+  const out = new Set<string>(refused);
+  for (const i of v?.items ?? []) if (i.exclusive && i.kind !== "database" && i.kind !== "service") out.add(i.itemRef);
+  return out;
+}
+
 /** The databases of a takeover: how many take part and how many were checked the same after the switch. Apps are counted by {@link rollup}. */
 export function dbRollup(v: Pick<TakeoverView, "items">): { total: number; ok: number; failed: number; skipped: number } {
   const dbs = v.items.filter((i) => i.kind === "database");
