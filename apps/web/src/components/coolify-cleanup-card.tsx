@@ -4,6 +4,9 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { CleanupRemnant, CompletenessRow } from "@tugra/shared";
 import { api } from "../lib/api";
 import { useT } from "../i18n/provider";
+import { cleanupGuard } from "../lib/launch-guards";
+import { MOVE_OFF_HREF, connectHref } from "../lib/coolify-move";
+import Link from "next/link";
 import { canOfferConfirm, cleanupErrorKey, cleanupFailureKey, rowNeedsAttention, sizeText, splitRemnants } from "../lib/coolify-cleanup";
 import { Badge, Btn, SectionCard } from "./ui";
 import { useConfirm } from "./confirm";
@@ -45,11 +48,16 @@ function RemnantRow({ r }: { r: CleanupRemnant }) {
  * "Clean up Coolify" for one server (owner only; the hub enforces it). Checking changes nothing. Removal is offered only for a complete checklist,
  * and only after the owner types the server's name; the request quotes the fingerprint of the list shown, so a changed list is refused.
  */
-export function CoolifyCleanupCard({ serverId, serverName, online }: { serverId: string; serverName: string; online: boolean }) {
+const GUARD_KEY = { control_plane: "coolifyCleanup.error.control_plane", no_coolify_link: "coolifyCleanup.error.no_coolify_link", read_stale: "coolifyCleanup.error.read_stale" } as const;
+
+export function CoolifyCleanupCard({ serverId, serverName, online, teamId }: { serverId: string; serverName: string; online: boolean; teamId?: string }) {
   const t = useT();
   const qc = useQueryClient();
   const confirm = useConfirm();
   const key = ["coolify-cleanup", serverId];
+  // the move-off status the page already loads says, before the click, what the hub would refuse: the Coolify host, an unknown server, an old read
+  const move = useQuery({ queryKey: ["coolify-move", teamId], queryFn: () => api.coolifyMoveStatus(teamId as string), enabled: !!teamId, staleTime: 15_000, retry: false });
+  const guard = cleanupGuard(move.data?.servers.find((x) => x.serverId === serverId), move.data?.hub, Date.now());
   const latest = useQuery({
     queryKey: key,
     queryFn: () => api.coolifyCleanupLatest(serverId),
@@ -82,7 +90,7 @@ export function CoolifyCleanupCard({ serverId, serverName, online }: { serverId:
     <SectionCard title={t("coolifyCleanup.title")} desc={t("coolifyCleanup.subtitle")} right={v ? <Badge tone={STATUS_TONE[v.status]}>{t(`coolifyCleanup.status.${v.status}`)}</Badge> : undefined}>
       <p style={{ ...dim, margin: "0 0 10px" }}>{t("coolifyCleanup.intro")}</p>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-        <Btn variant={v ? "ghost" : "primary"} disabled={!online || busy} onClick={() => check.mutate()} style={{ minHeight: 44 }}>
+        <Btn variant={v ? "ghost" : "primary"} disabled={!online || busy || !!guard} onClick={() => check.mutate()} style={{ minHeight: 44 }}>
           {check.isPending ? t("coolifyCleanup.checking") : v ? t("coolifyCleanup.recheck") : t("coolifyCleanup.check")}
         </Btn>
         {canOfferConfirm(v) && (
@@ -91,6 +99,17 @@ export function CoolifyCleanupCard({ serverId, serverName, online }: { serverId:
           </Btn>
         )}
       </div>
+      {guard && (
+        <p role="note" data-testid="cleanup-guard" style={{ color: "var(--c-am)", fontSize: 12.5, margin: "10px 0 0", lineHeight: 1.5 }}>
+          {t(GUARD_KEY[guard])}
+          {guard !== "control_plane" && (
+            <>
+              {" "}
+              <Link href={guard === "read_stale" && move.data?.hub ? connectHref(move.data.hub.serverId) : MOVE_OFF_HREF} className="tg-link">{t(guard === "read_stale" ? "coolifyCleanup.guard.readAgain" : "coolifyCleanup.guard.openMoveOff")}</Link>
+            </>
+          )}
+        </p>
+      )}
       {err && <p role="alert" style={{ color: "var(--c-r)", fontSize: 12.5, margin: "10px 0 0" }}>{t(cleanupErrorKey(err))}</p>}
       {v?.failureCode && <p role="alert" style={{ color: "var(--c-r)", fontSize: 12.5, margin: "10px 0 0" }}>{t(cleanupFailureKey(v.failureCode) ?? "coolifyCleanup.failure.conflict")}</p>}
 

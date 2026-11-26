@@ -9,7 +9,7 @@
  * Errors are the usual Nest HTTP exceptions whose message is a stable machine code (`plan-changed`, `run-past-ponr`, ...).
  */
 import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, NotFoundException, Optional, UnprocessableEntityException } from "@nestjs/common";
-import { isAgentSessionBaseUrl } from "@tugra/shared";
+import { AGENT_SESSION_URL_PREFIX, isAgentSessionBaseUrl } from "@tugra/shared";
 import { scopeSatisfies, type Scope } from "../../api-tokens/scopes";
 import type { ServiceChoice } from "../../importer/dto";
 import type { ImportMappingDoc } from "../../importer/import-mapping";
@@ -36,6 +36,7 @@ import {
   type RunEventsPage,
   type RunEventsQuery,
   type RunReport,
+  type RunSourceSession,
   type SetRunInputsInput,
   type SourceSessionInput,
   type SourceSessionResult,
@@ -131,7 +132,31 @@ export class MigrationRunsService implements MigrationRunsFacade {
   private async view(run: RunRow): Promise<MigrationRunView> {
     const fresh = (await this.store.get(run.id)) ?? run;
     const [steps, names] = await Promise.all([this.store.steps(run.id), this.env.servers(this.targetIds(fresh))]);
-    return toView(fresh, steps, names.get(fresh.targetServerId) ?? null, names);
+    const view = toView(fresh, steps, names.get(fresh.targetServerId) ?? null, names);
+    // a finished dry run is promoted with a live source session: say so BEFORE the start click instead of refusing it
+    return fresh.status === "DRY_RUN_DONE" ? { ...view, sourceSession: await this.sourceSessionFact(fresh) } : view;
+  }
+
+  /**
+   * What the promotion of a finished dry run has to work with: its source session (active, expired, or gone), and where an agent session
+   * reads from, so the screen can reconnect it. An import session lives an hour and a purged one leaves only the run's `sourceHost`
+   * (for an agent session that is the id of the Tugra server whose agent reads Coolify, lower-cased), so a server of that id names the agent.
+   */
+  private async sourceSessionFact(run: RunRow): Promise<RunSourceSession> {
+    const s = run.sessionId ? await this.env.session(run.actorId, run.sessionId).catch(() => null) : null;
+    if (s) {
+      const viaAgent = isAgentSessionBaseUrl(s.baseUrl);
+      return {
+        state: s.state === "active" && s.expiresAt.getTime() > this.engine.clock.now().getTime() ? "active" : s.state === "revoked" ? "missing" : "expired",
+        expiresAt: s.expiresAt.toISOString(),
+        viaAgent,
+        agentServerId: viaAgent ? s.baseUrl.slice(AGENT_SESSION_URL_PREFIX.length) : null,
+        sourceTeamRef: s.sourceTeamRef ?? null,
+      };
+    }
+    const host = run.sourceHost ?? "";
+    const server = host && !host.includes(".") && !host.includes(":") ? await this.env.server(host).catch(() => null) : null;
+    return { state: "missing", expiresAt: null, viaAgent: !!server, agentServerId: server?.id ?? null, sourceTeamRef: null };
   }
 
   /** Every target server id of a row (default first). */
@@ -445,6 +470,8 @@ export class MigrationRunsService implements MigrationRunsFacade {
     this.assertHandlers(from.mode as RunMode);
     const serverMap = serverMapOf(from.serverMap);
     await this.assertTargetsInTeam(from.teamId, serverMap);
+    // the dry run was reviewed for a while: a target that went offline since is refused here, with its code, not at the first step
+    await this.assertTargetsReady([from.targetServerId, ...Object.values(serverMap)]);
     const run = await this.insert(actor, {
       teamId: from.teamId,
       sourceKind: from.sourceKind,
@@ -883,8 +910,12 @@ export class MigrationRunsService implements MigrationRunsFacade {
   async sourceSession(actor: RunActor, id: string, body: SourceSessionInput): Promise<SourceSessionResult> {
     this.scope(actor, "deploy", "read:secrets");
     const run = await this.loadActing(actor, id);
-    this.requireOpen(run);
-    if (run.dryRun) throw conflict("run-is-dry-run");
+    // a finished dry run takes the renewed session at its promotion (the screen hands the new id to the start call): nothing is stored on it
+    const promotable = run.status === "DRY_RUN_DONE";
+    if (!promotable) {
+      this.requireOpen(run);
+      if (run.dryRun) throw conflict("run-is-dry-run");
+    }
     const old = run.sessionId ? await this.env.session(actor.userId, run.sessionId) : null;
     // A session that reads through the agent has no token to renew: it is reconnected through the agent, not here.
     if (old && isAgentSessionBaseUrl(old.baseUrl)) throw conflict("source-is-agent");
@@ -898,11 +929,13 @@ export class MigrationRunsService implements MigrationRunsFacade {
       token: body.token,
       ...(old?.scopeKey ? { scopeLabel: old.scopeKey } : {}),
     });
-    const ok = await this.store.updateRun(run.id, { statusIn: OPEN_STATUSES }, { sessionId: next.sessionId });
-    if (!ok) throw conflict("run-not-open");
-    await this.event(run.id, actor, "run.session.refreshed", "info", null);
-    await this.audit(actor, "source-session", run.id, { sessionId: next.sessionId });
-    this.engine.kick(run.id, "tick");
+    if (!promotable) {
+      const ok = await this.store.updateRun(run.id, { statusIn: OPEN_STATUSES }, { sessionId: next.sessionId });
+      if (!ok) throw conflict("run-not-open");
+      await this.event(run.id, actor, "run.session.refreshed", "info", null);
+    }
+    await this.audit(actor, "source-session", run.id, { sessionId: next.sessionId, ...(promotable ? { dryRun: true } : {}) });
+    if (!promotable) this.engine.kick(run.id, "tick");
     return { sessionId: next.sessionId, expiresAt: next.expiresAt.toISOString() };
   }
 

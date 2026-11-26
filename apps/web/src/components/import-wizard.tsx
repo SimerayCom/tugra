@@ -775,7 +775,7 @@ function PlanView({
         </Btn>
         </>
         )}
-        <GuidedRunLauncher plan={plan} kind={kind} sessionId={sessionId} servers={writableServers} teams={teams} extras={applyExtras} scope={scope} onChangeScope={onChangeScope} disabled={replanning || consentMissing || runnable === 0 || unackedCount > 0 || missingTargets > 0} />
+        <GuidedRunLauncher plan={plan} kind={kind} sessionId={sessionId} servers={writableServers} teams={teams} extras={applyExtras} scope={scope} onChangeScope={onChangeScope} onRecheck={onRecheck} disabled={replanning || consentMissing || runnable === 0 || unackedCount > 0 || missingTargets > 0} />
       </SectionCard>
 
       <EnvBlockers plan={plan} acked={acked} onChange={setAcked} />

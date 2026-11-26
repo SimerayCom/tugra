@@ -52,6 +52,7 @@ export class RunEnvService implements RunEnvPort {
       host,
       state: s.status !== "active" ? "revoked" : s.expiresAt.getTime() <= Date.now() ? "expired" : "active",
       expiresAt: s.expiresAt,
+      sourceTeamRef: s.sourceTeamRef ?? null,
     };
   }
 

@@ -161,10 +161,10 @@ describe("start and pause rules", () => {
     await w.acceptWarnings(d);
     w.env.sessions.get("s1")!.state = "expired";
     await expect(w.service.start(ACTOR, d, {})).rejects.toThrow(/session-expired/);
-    const s2 = await w.service.sourceSession(ACTOR, d, { token: "t" }).catch((e: Error) => e.message);
-    expect(String(s2)).toMatch(/run-not-open/); // a finished dry-run cannot take a new session: pass it to start instead
-    w.env.sessions.set("s9", { ...w.env.session0("s9") });
-    const ok = await w.service.start(ACTOR, d, { sessionId: "s9" });
+    // a finished dry-run takes a renewed session without storing it: the screen hands the new id to start
+    const renewed = await w.service.sourceSession(ACTOR, d, { token: "t" });
+    expect(w.store.row(d).sessionId).toBe("s1");
+    const ok = await w.service.start(ACTOR, d, { sessionId: renewed.sessionId });
     expect(ok.promotedFromId).toBe(d);
     // a changed source refuses promotion
     w.env.sessions.get("s1")!.state = "active";
@@ -173,6 +173,42 @@ describe("start and pause rules", () => {
     await w.acceptWarnings(d2);
     w.port.plan_ = { ...w.port.plan_, planHash: "e".repeat(32) };
     await expect(w.service.start(ACTOR, d2, {})).rejects.toThrow(/plan-changed/);
+  });
+});
+
+describe("what a finished dry-run says about its session and targets before the start click", () => {
+  it("names the session state, and for an agent session where it reads from", async () => {
+    const w = new RunWorld();
+    const d = await w.create({ dryRun: true });
+    await w.settle(d);
+    expect((await w.service.get(ACTOR, d)).sourceSession).toMatchObject({ state: "active", viaAgent: false, agentServerId: null });
+    const s = w.env.sessions.get("s1")!;
+    s.baseUrl = "agent://srv-agent";
+    s.sourceTeamRef = "team-ref";
+    s.state = "expired";
+    expect((await w.service.get(ACTOR, d)).sourceSession).toMatchObject({ state: "expired", viaAgent: true, agentServerId: "srv-agent", sourceTeamRef: "team-ref" });
+    // a purged session still leaves the agent server id in the run's host
+    w.env.sessions.delete("s1");
+    w.env.serversById.set("srv-agent", { id: "srv-agent", name: "coolify-host", teamId: TEAM });
+    w.store.force(d, { sourceHost: "srv-agent" });
+    expect((await w.service.get(ACTOR, d)).sourceSession).toMatchObject({ state: "missing", viaAgent: true, agentServerId: "srv-agent" });
+    w.store.force(d, { sourceHost: "coolify.example.com" });
+    expect((await w.service.get(ACTOR, d)).sourceSession).toMatchObject({ state: "missing", viaAgent: false, agentServerId: null });
+  });
+
+  it("carries the fact on a finished dry-run only", async () => {
+    const w = new RunWorld();
+    const id = await w.create();
+    expect((await w.service.get(ACTOR, id)).sourceSession).toBeUndefined();
+  });
+
+  it("refuses the promotion with the target's code when its agent went offline since the dry-run", async () => {
+    const w = new RunWorld();
+    const d = await w.create({ dryRun: true });
+    await w.settle(d);
+    await w.acceptWarnings(d);
+    w.env.serversById.get(SERVER)!.status = "OFFLINE";
+    await expect(w.service.start(ACTOR, d, {})).rejects.toThrow(/target-offline/);
   });
 });
 

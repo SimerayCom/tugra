@@ -146,3 +146,44 @@ describe("CoolifyCleanupCard", () => {
     expect((await screen.findByRole("alert")).textContent).toBe("This server runs Coolify itself. It is retired separately.");
   });
 });
+
+describe("what the hub would refuse is said before the check", () => {
+  const status = (over: Record<string, unknown> = {}) =>
+    ({ teamId: "t1", hub: { serverId: "hub1", teamId: "t1", name: "Coolify host", readAt: new Date().toISOString() }, servers: [{ serverId: "s1", name: "olgu-box", agentOnline: true, coolify: true, isCoolifyHub: false, takeover: "none", cleanup: "none", stage: "takeover" }], campaigns: [], projectMoves: {}, steps: [], ...over }) as never;
+  const checkBtn = () => screen.getByRole("button", { name: /Check/ }) as HTMLButtonElement;
+
+  it("the Coolify host itself is retired separately: no check is offered", async () => {
+    vi.spyOn(api, "coolifyCleanupLatest").mockResolvedValue(null as never);
+    vi.spyOn(api, "coolifyMoveStatus").mockResolvedValue(status({ servers: [{ serverId: "s1", name: "olgu-box", agentOnline: true, coolify: true, isCoolifyHub: true, takeover: "none", cleanup: "none", stage: "hub" }] }));
+    show({ teamId: "t1" });
+    expect((await screen.findByTestId("cleanup-guard")).textContent).toContain("runs Coolify itself");
+    expect(checkBtn().disabled).toBe(true);
+  });
+
+  it("a server no Coolify read knows points at the move-off page", async () => {
+    vi.spyOn(api, "coolifyCleanupLatest").mockResolvedValue(null as never);
+    vi.spyOn(api, "coolifyMoveStatus").mockResolvedValue(status({ servers: [{ serverId: "s1", name: "olgu-box", agentOnline: true, coolify: false, isCoolifyHub: false, takeover: "none", cleanup: "none", stage: "not_coolify" }] }));
+    show({ teamId: "t1" });
+    const note = await screen.findByTestId("cleanup-guard");
+    expect(within(note).getByRole("link", { name: "Open Move off Coolify" }).getAttribute("href")).toBe("/import/move-off-coolify");
+    expect(checkBtn().disabled).toBe(true);
+  });
+
+  it("an old read must be taken again, with the link to the Coolify host", async () => {
+    vi.spyOn(api, "coolifyCleanupLatest").mockResolvedValue(null as never);
+    vi.spyOn(api, "coolifyMoveStatus").mockResolvedValue(status({ hub: { serverId: "hub1", teamId: "t1", name: "Coolify host", readAt: "2020-01-01T00:00:00Z" } }));
+    show({ teamId: "t1" });
+    const note = await screen.findByTestId("cleanup-guard");
+    expect(note.textContent).toContain("too old");
+    expect(within(note).getByRole("link", { name: "Read the Coolify again" }).getAttribute("href")).toBe("/import/coolify-host?server=hub1");
+  });
+
+  it("a recent read of a known server leaves the check open", async () => {
+    vi.spyOn(api, "coolifyCleanupLatest").mockResolvedValue(null as never);
+    const m = vi.spyOn(api, "coolifyMoveStatus").mockResolvedValue(status());
+    show({ teamId: "t1" });
+    await waitFor(() => expect(m).toHaveBeenCalled());
+    expect(screen.queryByTestId("cleanup-guard")).toBeNull();
+    expect(checkBtn().disabled).toBe(false);
+  });
+});

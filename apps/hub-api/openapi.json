@@ -97792,6 +97792,48 @@
             "type": "string",
             "minLength": 10,
             "maxLength": 40
+          },
+          "sourceSession": {
+            "nullable": true,
+            "type": "object",
+            "properties": {
+              "state": {
+                "type": "string",
+                "enum": [
+                  "active",
+                  "expired",
+                  "missing"
+                ]
+              },
+              "expiresAt": {
+                "nullable": true,
+                "type": "string",
+                "minLength": 10,
+                "maxLength": 40
+              },
+              "viaAgent": {
+                "type": "boolean"
+              },
+              "agentServerId": {
+                "nullable": true,
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              },
+              "sourceTeamRef": {
+                "nullable": true,
+                "type": "string",
+                "maxLength": 200
+              }
+            },
+            "required": [
+              "state",
+              "expiresAt",
+              "viaAgent",
+              "agentServerId",
+              "sourceTeamRef"
+            ],
+            "additionalProperties": false
           }
         },
         "required": [

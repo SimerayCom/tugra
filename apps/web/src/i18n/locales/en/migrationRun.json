@@ -547,7 +547,28 @@
     },
     "summary": "From your choice: {apps} apps, {databases} databases and {services} services, moving to {targets}.",
     "sameMachine": "Same machine: the proxy is swapped, with a few minutes of downtime.",
-    "otherServer": "Another server: data is copied, then the address is switched."
+    "otherServer": "Another server: data is copied, then the address is switched.",
+    "guard": {
+      "swap": {
+        "unsupported-source": "Same server works only with Coolify.",
+        "control-plane": "Coolify itself runs on this machine. Swapping its proxy would take every Coolify server offline. Move these apps to another server.",
+        "multi-target": "Same server covers one machine, and you placed apps on several servers. Use one target for everything, or choose Another server.",
+        "not-source-host": "Same server needs the target to be the machine the source runs on, and Tugra does not know that match yet. Pick the matching server in the first step, or choose Another server."
+      },
+      "notHere": "not possible here",
+      "useOther": "Use another server instead",
+      "sameHost": "{names} already runs this source. Copying onto it would fight its own ports. Choose another server, or keep it on its own machine from the first step.",
+      "busyTag": "busy",
+      "busy": "{name} already has a guided migration in progress. Finish or abort it first, or choose another server.",
+      "busyOpen": "Open that migration",
+      "fresh": {
+        "plan-changed": "The source changed since you reviewed this plan. Read it again before you start.",
+        "session-ended": "The connection to the source ended (it lasts one hour). Connect again to continue."
+      },
+      "freshRead": "Read the source again",
+      "freshConnect": "Connect again",
+      "freshCheckFailed": "Tugra could not check the source right now. The start will check again."
+    }
   },
   "units": {
     "item": "items",
@@ -715,7 +736,20 @@
     "scope-empty": "Nothing is left to move. Pick at least one item.",
     "plan-changed": "The source changed since you reviewed it. Review the plan again.",
     "source-agent-missing": "A source server has no Tugra agent yet. Add the agent, then start the move.",
-    "source-agents-unverified": "Tugra could not check which source servers have an agent. Try again."
+    "source-agents-unverified": "Tugra could not check which source servers have an agent. Try again.",
+    "target-offline": "A target server is offline. Bring its agent back online, then try again.",
+    "target-agent-pending": "A target server has not connected its agent yet. Finish adding the server, then try again.",
+    "target-capability": "A target server's agent does not have the Deploy apps permission. Turn it on in the server's settings, then try again.",
+    "swap-unsupported-source": "A same-server move works only with Coolify. Choose another server instead.",
+    "swap-multi-target": "A same-server move covers one machine. Use one target for everything, or choose another server.",
+    "swap-control-plane": "Coolify itself runs on this machine, so its proxy cannot be swapped. Move these apps to another server.",
+    "swap-target-not-source-host": "A same-server move needs the target to be the machine the source runs on. Pick that server, or choose another server.",
+    "swap-placement-unreadable": "Tugra could not read where the source servers run. Try again.",
+    "rebuild-needs-in-place": "Building with Tugra is only for a same-server move.",
+    "rebuild-unknown-item": "An app you chose to build is no longer part of this move. Review the plan again.",
+    "session-expired": "The connection to the source ended (it lasts one hour). Connect again, then start.",
+    "source-is-agent": "This source is read through the agent. Read Coolify again from the Coolify host page.",
+    "run-not-startable": "This run cannot be started in its current state. Reload the page."
   },
   "codes": {
     "unknown": "{code}{params}",
@@ -1536,6 +1570,24 @@
       "serverUnmapped": "Map every source server to a target server, or leave its items out, then run a new dry run.",
       "acmeEmail": "Add the certificate email under Owner inputs in Details.",
       "generic": "Fix it on the source or the target, then run the dry run again. Details shows where it was raised."
+    }
+  },
+  "promote": {
+    "target": {
+      "offline": "{name} is offline. Bring its agent back online, then start the real run.",
+      "pending": "{name} has not connected its agent yet. Finish adding it, then start the real run.",
+      "no-deploy": "{name} does not have the Deploy apps permission. Turn it on in its settings, then start the real run."
+    },
+    "openServer": "Open the server",
+    "session": {
+      "agent": "The Coolify read this dry run used has ended (it lasts one hour). Read Coolify again to start the real run. What you decided stays.",
+      "token": "The source session ended (it lasts one hour). Enter the source API token again to start the real run.",
+      "reconnect": "Read Coolify again",
+      "ready": "A fresh Coolify read is ready (valid until {when}).",
+      "hostMissing": "The server that reads Coolify is no longer in your servers. Start the move again from the import page.",
+      "teamTitle": "Which Coolify team?",
+      "teamContinue": "Continue with this team",
+      "error": "Coolify could not be read through the agent. Check that its agent is online, then try again."
     }
   }
 }

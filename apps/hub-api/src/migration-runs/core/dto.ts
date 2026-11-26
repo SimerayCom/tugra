@@ -692,6 +692,20 @@ const OwnerInputsViewSchema = OwnerInputsSchema;
 export const RunTargetServerSchema = z.object({ serverId: Id, serverName: z.string().nullable(), primary: z.boolean() });
 export type RunTargetServer = z.infer<typeof RunTargetServerSchema>;
 
+/**
+ * The source session a finished dry run would be promoted with, as a fact the screen can act on BEFORE the start click (an import
+ * session lives one hour; a dry run is reviewed for longer). Ids and states only. `viaAgent` sessions are renewed by reading Coolify
+ * through the agent again (`agentServerId`, `sourceTeamRef` say where and which team), token sessions by re-entering the token.
+ */
+export const RunSourceSessionSchema = z.object({
+  state: z.enum(["active", "expired", "missing"]),
+  expiresAt: Iso.nullable(),
+  viaAgent: z.boolean(),
+  agentServerId: Id.nullable(),
+  sourceTeamRef: z.string().max(200).nullable(),
+});
+export type RunSourceSession = z.infer<typeof RunSourceSessionSchema>;
+
 /** The full, secret-free run view (`GET /migration-runs/:id` and the response of every action). */
 export const MigrationRunViewSchema = z.object({
   id: Id,
@@ -747,6 +761,8 @@ export const MigrationRunViewSchema = z.object({
   startedAt: Iso.nullable(),
   finishedAt: Iso.nullable(),
   updatedAt: Iso,
+  /** Only on a finished dry run (`DRY_RUN_DONE`): can it be promoted with the session it has, or must the source be reconnected first. */
+  sourceSession: RunSourceSessionSchema.nullable().optional(),
 });
 export type MigrationRunView = z.infer<typeof MigrationRunViewSchema>;
 

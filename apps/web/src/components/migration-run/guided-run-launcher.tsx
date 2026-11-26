@@ -30,6 +30,9 @@ import { PlacementFields } from "./launch-placement";
 import { AgentGapNotice } from "./agent-gap-notice";
 import { sourceAgentGapsOf } from "../../lib/coolify-ssh";
 import { CampaignPreviewCard } from "./launch-campaign";
+import { BusyNote, FreshnessNote, SameHostNote, SwapBlockNote } from "./launch-guard-notes";
+import { busyServers, copyOntoSourceHost, freshnessOf, freshnessOfError, involvedRefs, swapProxyBlock } from "../../lib/launch-guards";
+import { clearImportResume } from "../../lib/import-resume";
 import { campaignBody, campaignOpenHref, campaignsOf, needsCampaign, placementsOf, pruneRebuild } from "../../lib/campaign";
 import { HelpLink } from "../help-link";
 import { scopePayload, type ImportScope, overallPlacement, involvedHosts } from "../../lib/import-scope";
@@ -54,6 +57,8 @@ interface Props {
   scope?: ImportScope | null;
   /** Back to the import's first step (the "Change" link of the summary). */
   onChangeScope?: () => void;
+  /** Read the source again (the plan the owner reviewed is no longer what the source says). */
+  onRecheck?: () => void;
   disabled?: boolean;
 }
 
@@ -73,7 +78,7 @@ export function GuidedRunLauncher(props: Props) {
   );
 }
 
-function LaunchDialog({ plan, kind, sessionId, servers, teams, extras, scope, onChangeScope, onClose }: Props & { onClose: () => void }) {
+function LaunchDialog({ plan, kind, sessionId, servers, teams, extras, scope, onChangeScope, onRecheck, onClose }: Props & { onClose: () => void }) {
   const t = useT();
   const toast = useToast();
   const router = useRouter();
@@ -110,13 +115,20 @@ function LaunchDialog({ plan, kind, sessionId, servers, teams, extras, scope, on
   const placeable = useMemo(() => servers.filter((s) => !teamId || s.teamId === teamId), [servers, teamId]);
   // A run chosen in the first step stays in that step's team; to use another team, go back and change it.
   const targetChoices = scope && chosenTarget ? placeable : servers;
-  const targetOptions = targetChoices.map((s) => {
+  // a server that already carries a live guided migration cannot take another one (the hub refuses it at create)
+  const live = useQuery({ queryKey: ["migration-runs", "live-targets", teamId ?? ""], queryFn: () => api.listMigrationRuns({ teamId, active: true, limit: 100 }), enabled: !!teamId, staleTime: 15_000, retry: false });
+  const busy = useMemo(() => busyServers(live.data), [live.data]);
+  const tagOf = (s: LaunchServer): string | null => {
     const b = blockOf(s);
-    return { value: s.id, label: b ? `${s.name} (${blockTag(t, b)})` : s.name, disabled: !!b && s.id !== targetServerId };
+    return b ? blockTag(t, b) : busy.has(s.id) ? t("migrationRun.launch.guard.busyTag") : null;
+  };
+  const targetOptions = targetChoices.map((s) => {
+    const tag = tagOf(s);
+    return { value: s.id, label: tag ? `${s.name} (${tag})` : s.name, disabled: !!tag && s.id !== targetServerId };
   });
   const placeableOptions = placeable.map((s) => {
-    const b = blockOf(s);
-    return { id: s.id, name: b ? `${s.name} (${blockTag(t, b)})` : s.name };
+    const tag = tagOf(s);
+    return { id: s.id, name: tag ? `${s.name} (${tag})` : s.name };
   });
   // Same-machine and copied moves together, several same-machine servers, or servers of several teams: the hub makes a campaign of runs (one per team, then
   // one per same-machine server and one for the rest), so the target, the topology and the placement are its to decide and are not asked here.
@@ -168,6 +180,26 @@ function LaunchDialog({ plan, kind, sessionId, servers, teams, extras, scope, on
   // (the placement changed) is not sent, so the hub never refuses a stale one.
   const [rebuildChoice, setRebuild] = useState<string[]>([]);
   const rebuild = useMemo(() => (campaign ? pruneRebuild(rebuildChoice, preview.data?.runs, plan.items, scope?.inScope) : []), [campaign, rebuildChoice, preview.data?.runs, plan.items, scope?.inScope]);
+  // what the owner chose here cannot work: said at the choice, with the way out, not after the click
+  const refs = useMemo(() => involvedRefs(plan, scope), [plan, scope]);
+  const swapPossible = swapProxyBlock({ plan, targetId: targetServerId, placement, refs });
+  const swapBlock = !campaign && topology === "swap-proxy" ? swapPossible : null;
+  const sameHost = !campaign && topology !== "swap-proxy" ? copyOntoSourceHost({ plan, targetId: targetServerId, placement, refs }) : [];
+  const sameHostNames = [...new Set(sameHost.map((r) => sourceRows.find((x) => x.ref === r)?.name ?? plan.preflight?.hosts?.find((h) => h.ref === r)?.name ?? r))];
+  const campaignTargets = campaign ? placements.flatMap((p) => (p.targetServerId ? [p.targetServerId] : [])) : [];
+  const usedBusy = [...new Set([...used, ...campaignTargets])].filter((id) => busy.has(id));
+  // the plan and the connection the owner reviewed must still stand; a campaign preview reads them already, a single run re-reads the plan
+  const reread = useQuery({
+    queryKey: ["launch-fresh", sessionId, plan.planHash],
+    queryFn: () => api.importPlan({ sourceKind: kind, sessionId, ...(extras.dbDataModes && Object.keys(extras.dbDataModes).length ? { dbDataModes: extras.dbDataModes } : {}) }),
+    enabled: !campaign,
+    retry: false,
+    staleTime: 0,
+    gcTime: 0,
+    refetchOnWindowFocus: false,
+  });
+  const freshness = campaign ? freshnessOfError(preview.error) : freshnessOf(plan.planHash, { hash: reread.data?.planHash, error: reread.error });
+  const guarded = !!swapBlock || sameHost.length > 0 || usedBusy.length > 0 || !!freshness;
   const campaignRefused = campaign && (preview.isLoading || preview.isError || !!preview.data?.failure || !preview.data?.runs);
   const create = useMutation({
     mutationFn: async (): Promise<{ href: string; campaigns: number }> => {
@@ -194,7 +226,7 @@ function LaunchDialog({ plan, kind, sessionId, servers, teams, extras, scope, on
       <form
         onSubmit={(e) => {
           e.preventDefault();
-          if (issues.length === 0 && !campaignRefused && !create.isPending) create.mutate();
+          if (issues.length === 0 && !campaignRefused && !guarded && !create.isPending) create.mutate();
         }}
         style={{ display: "flex", flexDirection: "column", gap: 14 }}
       >
@@ -231,6 +263,11 @@ function LaunchDialog({ plan, kind, sessionId, servers, teams, extras, scope, on
           </p>
         ))}
 
+        {usedBusy.map((id) => (
+          <BusyNote key={id} name={servers.find((s) => s.id === id)?.name ?? id} runId={busy.get(id) as string} />
+        ))}
+        {freshness && <FreshnessNote freshness={freshness} onRead={() => { onClose(); onRecheck?.(); }} onConnect={() => { clearImportResume(); window.location.reload(); }} />}
+
         <AgentGapNotice gaps={agentGaps} dryRun={dryRun} />
 
         {campaign ? (
@@ -250,10 +287,15 @@ function LaunchDialog({ plan, kind, sessionId, servers, teams, extras, scope, on
           </Field>
           {!campaign && (
             <Field label={t("migrationRun.launch.topology")} hint={t(TOPOLOGY_HINT_KEY[topology])}>
-              <Select value={topology} onChange={(v) => setTopology(v as MigrationRunTopology)} options={(kind === "coolify" ? (["two-box", "swap-proxy"] as const) : (["two-box"] as const)).map((m) => ({ value: m, label: t(TOPOLOGY_KEY[m]) }))} style={{ minHeight: 44 }} />
+              <Select value={topology} onChange={(v) => setTopology(v as MigrationRunTopology)} options={(kind === "coolify" ? (["two-box", "swap-proxy"] as const) : (["two-box"] as const)).map((m) => {
+                const off = m === "swap-proxy" && !!swapPossible && topology !== m;
+                return { value: m, label: off ? `${t(TOPOLOGY_KEY[m])} (${t("migrationRun.launch.guard.notHere")})` : t(TOPOLOGY_KEY[m]), disabled: off };
+              })} style={{ minHeight: 44 }} />
             </Field>
           )}
         </div>
+        {swapBlock && <SwapBlockNote block={swapBlock} onUseOther={() => setTopology("two-box")} disabled={create.isPending} />}
+        {sameHost.length > 0 && <SameHostNote names={sameHostNames} />}
 
         <div style={{ display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 220px), 1fr))" }}>
           <Field label={t("migrationRun.inputs.acmeEmail")} hint={t("migrationRun.launch.acmeHint")} error={acmeEmail.trim() && !looksLikeEmail(acmeEmail) ? t("migrationRun.inputs.emailInvalid") : undefined}>
@@ -283,7 +325,7 @@ function LaunchDialog({ plan, kind, sessionId, servers, teams, extras, scope, on
 
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>
           <Btn variant="ghost" onClick={onClose} disabled={create.isPending}>{t("common.cancel")}</Btn>
-          <Btn type="submit" disabled={issues.length > 0 || servers.length === 0 || blockedUsed.length > 0 || !!campaignRefused || (!dryRun && agentGaps.length > 0)} loading={create.isPending}>
+          <Btn type="submit" disabled={issues.length > 0 || servers.length === 0 || blockedUsed.length > 0 || guarded || !!campaignRefused || (!dryRun && agentGaps.length > 0)} loading={create.isPending}>
             {campaign ? t("placement.campaign.create", { count: preview.data?.runs?.length ?? 0 }) : dryRun ? t("migrationRun.launch.createDry") : t("migrationRun.launch.create")}
           </Btn>
         </div>

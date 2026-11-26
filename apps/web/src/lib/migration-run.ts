@@ -1042,6 +1042,19 @@ export const ERROR_CODE_KEY: Record<string, string> = {
   "plan-changed": "migrationRun.errors.plan-changed",
   "source-agent-missing": "migrationRun.errors.source-agent-missing",
   "source-agents-unverified": "migrationRun.errors.source-agents-unverified",
+  "target-offline": "migrationRun.errors.target-offline",
+  "target-agent-pending": "migrationRun.errors.target-agent-pending",
+  "target-capability": "migrationRun.errors.target-capability",
+  "swap-unsupported-source": "migrationRun.errors.swap-unsupported-source",
+  "swap-multi-target": "migrationRun.errors.swap-multi-target",
+  "swap-control-plane": "migrationRun.errors.swap-control-plane",
+  "swap-target-not-source-host": "migrationRun.errors.swap-target-not-source-host",
+  "swap-placement-unreadable": "migrationRun.errors.swap-placement-unreadable",
+  "rebuild-needs-in-place": "migrationRun.errors.rebuild-needs-in-place",
+  "rebuild-unknown-item": "migrationRun.errors.rebuild-unknown-item",
+  "session-expired": "migrationRun.errors.session-expired",
+  "source-is-agent": "migrationRun.errors.source-is-agent",
+  "run-not-startable": "migrationRun.errors.run-not-startable",
 };
 
 /** An error from the hub as one readable line: a known machine code is localized, anything else is the hub's message. */

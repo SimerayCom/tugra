@@ -1,5 +1,6 @@
 "use client";
 
+import { usePromoteGuard } from "./promote-guard";
 import { useMemo } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, CheckCircle2, XCircle } from "lucide-react";
@@ -140,6 +141,7 @@ export function DryRunDecision({ run, onOpenSafety }: { run: MigrationRunView; o
   const fixedKeys = hints.data?.warningsFixed;
   const d = useMemo(() => decisionOf(run, accepted ?? [], fixedKeys ?? []), [run, accepted, fixedKeys]);
   const { onStart, pending: starting } = useStartRun(run);
+  const guard = usePromoteGuard(run);
   const save = useMutation({
     mutationFn: (acks: Array<{ key: string; accepted: boolean }>) => api.setMigrationRunWarningAcks(run.id, { acks }),
     onSuccess: (next) => {
@@ -166,7 +168,7 @@ export function DryRunDecision({ run, onOpenSafety }: { run: MigrationRunView; o
         : d.accepted.length + d.fixed.length > 0
           ? t("migrationRun.decision.cleanAccepted", { count: d.accepted.length + d.fixed.length })
           : t("migrationRun.decision.clean");
-  const canStart = d.verdict === "clean" && run.allowed.start;
+  const canStart = d.verdict === "clean" && run.allowed.start && !guard.blocked;
 
   return (
     <SectionCard title={t("migrationRun.decision.title")} style={{ marginBottom: 0 }}>
@@ -182,6 +184,8 @@ export function DryRunDecision({ run, onOpenSafety }: { run: MigrationRunView; o
             {t("migrationRun.decision.start")}
           </Btn>
         </div>
+
+        {guard.node}
 
         {d.blockers.length > 0 && (
           <section aria-label={t("migrationRun.decision.blockersTitle")}>

@@ -399,6 +399,13 @@ describe("errors", () => {
     expect(errorText(t, new Error("run-past-ponr"))).toContain("point of no return");
     expect(errorText(t, new Error("human-confirmation-required"))).toContain("person");
     expect(errorText(t, new Error("409 dry-run-warnings-open"))).toBe("Some warnings are still open. Fix or accept each one, then start.");
+    // the refusals a run create or a promotion can give, each in words with the way out
+    expect(errorText(t, new Error("target-offline"))).toContain("offline");
+    expect(errorText(t, new Error("target-capability"))).toContain("Deploy apps");
+    expect(errorText(t, new Error("swap-control-plane"))).toContain("Coolify itself runs on this machine");
+    expect(errorText(t, new Error("swap-target-not-source-host"))).toContain("machine the source runs on");
+    expect(errorText(t, new Error("rebuild-needs-in-place"))).toContain("same-server");
+    expect(errorText(t, new Error("session-expired"))).toContain("Connect again");
     expect(errorText(t, new Error("scope-unknown-project"))).toContain("no longer in the source");
     expect(errorText(t, new Error("scope-empty"))).toContain("Nothing is left");
     expect(errorText(t, new Error("Something specific"))).toBe("Something specific");

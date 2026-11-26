@@ -27,6 +27,8 @@ export interface RunSessionInfo {
   host: string;
   state: "active" | "expired" | "revoked";
   expiresAt: Date;
+  /** The Coolify team an agent session reads, null when it reads every team. */
+  sourceTeamRef?: string | null;
 }
 
 /** The world the run core reads (teams, servers, sessions): all of it read-only except {@link connectSession}. */

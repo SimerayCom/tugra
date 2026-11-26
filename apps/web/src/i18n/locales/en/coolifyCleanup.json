@@ -89,5 +89,9 @@
     "generic": "That did not work. Try again."
   },
   "confirmBody": "This removes the {n} items listed as \"Will be removed\" from {server}. Your Docker volumes are not touched. \"Give back to Coolify\" stops working afterwards.",
-  "confirmLabel": "Remove from {server}"
+  "confirmLabel": "Remove from {server}",
+  "guard": {
+    "readAgain": "Read the Coolify again",
+    "openMoveOff": "Open Move off Coolify"
+  }
 }

@@ -238,7 +238,7 @@ export default function ServerDetailPage() {
             }}
           />
           <CoolifyHostCard serverId={id} serverName={server.name} teamId={server.teamId} role={teamOf(server.teamId)?.role} />
-          {teamOf(server.teamId)?.role === "OWNER" && <CoolifyCleanupCard serverId={id} serverName={server.name} online={server.status === "ONLINE"} />}
+          {teamOf(server.teamId)?.role === "OWNER" && <CoolifyCleanupCard serverId={id} serverName={server.name} online={server.status === "ONLINE"} teamId={server.teamId} />}
           <GpuCard serverId={id} canOps={server.canOps} online={server.status === "ONLINE"} />
         </>
       )}

@@ -627,3 +627,113 @@ describe("a mixed placement is a campaign", () => {
     expect(planCampaign).not.toHaveBeenCalled();
   });
 });
+
+describe("GuidedRunLauncher guards: nothing is offered that fails after the click", () => {
+  const tugra = (serverId: string) => ({ serverId, name: serverId, teamId: "t1", via: "public-ip" as const, confidence: "certain" as const });
+  const hostPlan = { ...plan, preflight: { databases: [], services: [], appsWithVolumeData: 0, hosts: [{ ref: "s1", name: "Alpha", tugra: tugra("srv1") }] } } as unknown as ImportPlan;
+  const openDialog = async () => {
+    fireEvent.click(screen.getByRole("button", { name: "Run guided migration" }));
+    return within(await screen.findByRole("dialog"));
+  };
+  const submitOf = (d: ReturnType<typeof within>) => d.getByRole("button", { name: /Create/ }) as HTMLButtonElement;
+
+  it("a same-server move is not offered for a target that is not the source's own machine, and a chosen one is explained", async () => {
+    mount({ plan: hostPlan });
+    const d = await openDialog();
+    // the first server (srv1) is the source's machine: the option is open
+    const topo = d.getByLabelText("Topology") as HTMLSelectElement;
+    expect((within(topo).getByRole("option", { name: "Same server" }) as HTMLOptionElement).disabled).toBe(false);
+    fireEvent.change(d.getByLabelText("Target server"), { target: { value: "srv2" } });
+    const off = within(topo).getByRole("option", { name: "Same server (not possible here)" }) as HTMLOptionElement;
+    expect(off.disabled).toBe(true);
+  });
+
+  it("a same-server move that cannot work says why, offers the way out, and cannot be submitted", async () => {
+    const create = vi.spyOn(api, "createMigrationRun").mockResolvedValue(mkRun());
+    mount({ plan: hostPlan });
+    const d = await openDialog();
+    fireEvent.change(d.getByLabelText("Topology"), { target: { value: "swap-proxy" } });
+    expect(d.queryByTestId("swap-block")).toBeNull();
+    fireEvent.change(d.getByLabelText("Target server"), { target: { value: "srv2" } });
+    expect(d.getByTestId("swap-block").textContent).toContain("needs the target to be the machine the source runs on");
+    expect(submitOf(d).disabled).toBe(true);
+    fireEvent.submit(submitOf(d).closest("form")!);
+    expect(create).not.toHaveBeenCalled();
+    fireEvent.click(d.getByRole("button", { name: "Use another server instead" }));
+    expect(d.queryByTestId("swap-block")).toBeNull();
+  });
+
+  it("the machine Coolify itself runs on never takes a same-server move", async () => {
+    const cp = { ...hostPlan, preflight: { ...hostPlan.preflight, hosts: [{ ref: "s1", name: "Alpha", controlPlane: true, tugra: tugra("srv1") }] } } as unknown as ImportPlan;
+    mount({ plan: cp });
+    const d = await openDialog();
+    expect((within(d.getByLabelText("Topology")).getByRole("option", { name: "Same server (not possible here)" }) as HTMLOptionElement).disabled).toBe(true);
+  });
+
+  it("a copy onto the machine the source already runs on is refused where it is chosen", async () => {
+    mount({ plan: hostPlan });
+    const d = await openDialog();
+    expect(d.getByTestId("same-host-block").textContent).toContain("Alpha already runs this source");
+    expect(submitOf(d).disabled).toBe(true);
+    fireEvent.change(d.getByLabelText("Target server"), { target: { value: "srv2" } });
+    expect(d.queryByTestId("same-host-block")).toBeNull();
+    expect(submitOf(d).disabled).toBe(false);
+  });
+
+  it("a server with a live guided migration is marked busy, and the one that holds the target links to it", async () => {
+    vi.spyOn(api, "listMigrationRuns").mockResolvedValue([
+      { ...mkRun({ id: "live1" }), targetServerId: "srv2", status: "RUNNING", dryRun: false },
+      { ...mkRun({ id: "dry1" }), targetServerId: "srv1", status: "RUNNING", dryRun: true },
+    ] as never);
+    mount();
+    const d = await openDialog();
+    await waitFor(() => expect(within(d.getByLabelText("Target server")).getByRole("option", { name: "Server B (busy)" })).toBeTruthy());
+    expect((within(d.getByLabelText("Target server")).getByRole("option", { name: "Server B (busy)" }) as HTMLOptionElement).disabled).toBe(true);
+    expect(d.queryByTestId("busy-block")).toBeNull(); // a dry run holds nothing, so srv1 stays usable
+  });
+
+  it("a busy target of the run is explained with a link to the run that holds it, and cannot be submitted", async () => {
+    vi.spyOn(api, "listMigrationRuns").mockResolvedValue([{ ...mkRun({ id: "live1" }), targetServerId: "srv1", status: "WAITING", dryRun: false }] as never);
+    mount();
+    const d = await openDialog();
+    const note = await d.findByTestId("busy-block");
+    expect(note.textContent).toContain("Server A already has a guided migration in progress");
+    expect(within(note).getByRole("link", { name: "Open that migration" }).getAttribute("href")).toBe("/import/runs/live1");
+    expect(submitOf(d).disabled).toBe(true);
+  });
+
+  it("a plan that changed since it was reviewed is said before the click, with a button that reads it again", async () => {
+    vi.spyOn(api, "importPlan").mockResolvedValue({ ...plan, planHash: "b".repeat(32) } as never);
+    const onRecheck = vi.fn();
+    const create = vi.spyOn(api, "createMigrationRun").mockResolvedValue(mkRun());
+    mount({ onRecheck });
+    const d = await openDialog();
+    const note = await d.findByTestId("fresh-block");
+    expect(note.textContent).toContain("The source changed since you reviewed this plan");
+    expect(submitOf(d).disabled).toBe(true);
+    fireEvent.submit(submitOf(d).closest("form")!);
+    expect(create).not.toHaveBeenCalled();
+    fireEvent.click(within(note).getByRole("button", { name: "Read the source again" }));
+    expect(onRecheck).toHaveBeenCalledTimes(1);
+  });
+
+  it("an ended connection is said before the click", async () => {
+    const { ApiError } = await import("../../lib/api");
+    vi.spyOn(api, "importPlan").mockRejectedValue(new ApiError(400, "import session expired or revoked — reconnect"));
+    mount();
+    const d = await openDialog();
+    const note = await d.findByTestId("fresh-block");
+    expect(note.textContent).toContain("The connection to the source ended");
+    expect(within(note).getByRole("button", { name: "Connect again" })).toBeTruthy();
+    expect(submitOf(d).disabled).toBe(true);
+  });
+
+  it("an unchanged plan blocks nothing", async () => {
+    const read = vi.spyOn(api, "importPlan").mockResolvedValue(plan as never);
+    mount();
+    const d = await openDialog();
+    await waitFor(() => expect(read).toHaveBeenCalled());
+    expect(d.queryByTestId("fresh-block")).toBeNull();
+    expect(submitOf(d).disabled).toBe(false);
+  });
+});

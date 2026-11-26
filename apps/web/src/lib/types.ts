@@ -3454,6 +3454,17 @@ export interface MigrationRunView {
   startedAt: string | null;
   finishedAt: string | null;
   updatedAt: string;
+  /** Only on a finished dry run: can it be promoted with its session, or must the source be reconnected first. */
+  sourceSession?: MigrationRunSourceSession | null;
+}
+/** The source session a finished dry run is promoted with (states and ids only). */
+export interface MigrationRunSourceSession {
+  state: "active" | "expired" | "missing";
+  expiresAt: string | null;
+  viaAgent: boolean;
+  /** The Tugra server whose agent reads Coolify, for an agent session. */
+  agentServerId: string | null;
+  sourceTeamRef: string | null;
 }
 export interface MigrationRunSummary {
   id: string;

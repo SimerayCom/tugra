@@ -9065,6 +9065,14 @@ export interface components {
             startedAt: string | null;
             finishedAt: string | null;
             updatedAt: string;
+            sourceSession?: {
+                /** @enum {string} */
+                state: "active" | "expired" | "missing";
+                expiresAt: string | null;
+                viaAgent: boolean;
+                agentServerId: string | null;
+                sourceTeamRef: string | null;
+            } | null;
         };
     };
     responses: never;
