@@ -1828,6 +1828,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/coolify-inplace/run/{runId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["CoolifyInPlaceController_forRun"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/coolify-inplace/{id}": {
         parameters: {
             query?: never;
@@ -8690,6 +8706,7 @@ export interface components {
             /** @enum {string} */
             topology: "two-box" | "swap-proxy";
             dryRun: boolean;
+            inPlace: boolean;
             promotedFromId: string | null;
             /** @enum {string} */
             status: "QUEUED" | "RUNNING" | "WAITING" | "PAUSED" | "ABORTING" | "ABORTED" | "ROLLING_BACK" | "ROLLED_BACK" | "REVERSING" | "REVERSED" | "COMPLETED" | "FAILED" | "DRY_RUN_DONE";
@@ -8759,6 +8776,7 @@ export interface components {
                  * @enum {string}
                  */
                 rowCountMode: "exact" | "estimate";
+                rebuild?: string[];
                 /** @default 72 */
                 decommissionMinAgeHours: number;
                 /** @default 60 */
@@ -17882,6 +17900,70 @@ export interface operations {
             };
             /** @description Authenticated but not permitted (scope or team permission). */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate limit exceeded; see Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    CoolifyInPlaceController_forRun: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                runId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Authenticated but not permitted (scope or team permission). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -48845,6 +48927,7 @@ export interface operations {
                         /** @enum {string} */
                         topology: "two-box" | "swap-proxy";
                         dryRun: boolean;
+                        inPlace: boolean;
                         /** @enum {string} */
                         status: "QUEUED" | "RUNNING" | "WAITING" | "PAUSED" | "ABORTING" | "ABORTED" | "ROLLING_BACK" | "ROLLED_BACK" | "REVERSING" | "REVERSED" | "COMPLETED" | "FAILED" | "DRY_RUN_DONE";
                         /** @enum {string|null} */
@@ -49075,6 +49158,7 @@ export interface operations {
                          * @enum {string}
                          */
                         rowCountMode?: "exact" | "estimate";
+                        rebuild?: string[];
                         /** @default 72 */
                         decommissionMinAgeHours?: number;
                         /** @default 60 */

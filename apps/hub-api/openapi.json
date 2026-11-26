@@ -13638,6 +13638,84 @@
         ]
       }
     },
+    "/api/v1/coolify-inplace/run/{runId}": {
+      "get": {
+        "operationId": "CoolifyInPlaceController_forRun",
+        "parameters": [
+          {
+            "name": "runId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "coolify-inplace"
+        ]
+      }
+    },
     "/api/v1/coolify-inplace/{id}": {
       "get": {
         "operationId": "CoolifyInPlaceController_get",
@@ -72370,6 +72448,14 @@
                           "estimate"
                         ]
                       },
+                      "rebuild": {
+                        "maxItems": 500,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "pattern": "^app:[\\x21-\\x7e]{1,280}$"
+                        }
+                      },
                       "decommissionMinAgeHours": {
                         "default": 72,
                         "type": "integer",
@@ -72745,6 +72831,9 @@
                       "dryRun": {
                         "type": "boolean"
                       },
+                      "inPlace": {
+                        "type": "boolean"
+                      },
                       "status": {
                         "type": "string",
                         "enum": [
@@ -72878,6 +72967,7 @@
                       "mode",
                       "topology",
                       "dryRun",
+                      "inPlace",
                       "status",
                       "currentStep",
                       "ponrAt",
@@ -95474,6 +95564,9 @@
           "dryRun": {
             "type": "boolean"
           },
+          "inPlace": {
+            "type": "boolean"
+          },
           "promotedFromId": {
             "nullable": true,
             "type": "string",
@@ -95679,6 +95772,14 @@
                   "exact",
                   "estimate"
                 ]
+              },
+              "rebuild": {
+                "maxItems": 500,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^app:[\\x21-\\x7e]{1,280}$"
+                }
               },
               "decommissionMinAgeHours": {
                 "default": 72,
@@ -97713,6 +97814,7 @@
           "mode",
           "topology",
           "dryRun",
+          "inPlace",
           "promotedFromId",
           "status",
           "currentStep",
