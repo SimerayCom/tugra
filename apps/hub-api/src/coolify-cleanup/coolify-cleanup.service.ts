@@ -8,7 +8,7 @@ import { AgentWsServer } from "../agent-gateway/agent-ws.server";
 import { AgentOfflineException } from "../agent-gateway/agent-offline.exception";
 import { ServersService } from "../servers/servers.service";
 import { CryptoService } from "../crypto/crypto.service";
-import { composeVolumes } from "../deploy/compose-script";
+import { composeServiceNames, composeVolumes } from "../deploy/compose-script";
 import type { CoolifyInventoryData } from "../coolify-takeover/coolify-inventory";
 import { compareCompleteness, isComplete, type TugraApp, type TugraDb, type TugraSide } from "./completeness";
 import { coolifyServerFor, coolifySideFor, withHostVolumes } from "./coolify-side";
@@ -295,6 +295,7 @@ export class CoolifyCleanupService {
       volumes: [...namedVolumes(a.volumes), ...composeVolumes({ id: a.id, composeFile: a.composeFile }).map((v) => v.key)],
       tasks: taskNames.get(a.id) ?? [],
       running: a.status === "RUNNING",
+      members: a.composeFile ? composeServiceNames(a.composeFile).length : null,
     }));
     const tugraDbs: TugraDb[] = dbs.map((d) => ({ id: d.id, name: d.name, sourceRef: sourceRefs.get(d.id) ?? null, volumes: ["data", ...namedVolumes(d.volumes)], backupEnabled: d.backupEnabled, running: d.status === "RUNNING" }));
     return { applications: tugraApps, databases: tugraDbs, notificationTypes: channels.map((c) => c.type) };

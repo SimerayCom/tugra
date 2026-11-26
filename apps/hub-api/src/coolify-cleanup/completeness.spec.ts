@@ -101,6 +101,32 @@ describe("compareCompleteness", () => {
     expect(ok.complete).toBe(true);
   });
 
+  it("a service needs a Tugra container for every container Coolify runs for it: a dropped member keeps it incomplete and its uuid out of the cleanup", () => {
+    const svc = (components?: number) => side({ applications: [], services: [{ ref: "us1", uuid: "us1", name: "plausible", envKeys: 0, volumes: [], running: true, ...(components ? { components } : {}) }] });
+    const twin = (members: number | null | undefined) => tugra({ applications: [tapp({ name: "plausible", envKeys: 0, volumes: [], domains: [], ...(members === undefined ? {} : { members }) })], cutover: {} });
+    const short = compareCompleteness(svc(3), twin(2));
+    expect(row(short, "service")).toMatchObject({ coolify: 1, tugra: 0, missing: ["plausible (2/3 containers)"] });
+    expect(short.complete).toBe(false);
+    expect(short.completeUuids).toEqual([]);
+    // every container accounted for (or more: Tugra may hold its own), a non-compose twin, and a read that does not say, are not held up
+    for (const [components, members] of [[3, 3], [2, 3], [3, null], [3, undefined], [undefined, 1]] as const) {
+      const r = compareCompleteness(svc(components), twin(members));
+      expect(row(r, "service").missing).toEqual([]);
+      expect(r.completeUuids).toEqual(["us1"]);
+    }
+  });
+  it("a service with no Tugra twin at all is listed once, by name, not twice", () => {
+    const r = compareCompleteness(side({ applications: [], services: [{ ref: "us1", uuid: "us1", name: "plausible", envKeys: 0, volumes: [], running: true, components: 3 }] }), tugra({ applications: [], cutover: {} }));
+    expect(row(r, "service").missing).toEqual(["plausible"]);
+  });
+  it("a service whose twin is not running is listed once even when it is short of members", () => {
+    const r = compareCompleteness(
+      side({ applications: [], services: [{ ref: "us1", uuid: "us1", name: "plausible", envKeys: 0, volumes: [], running: true, components: 3 }] }),
+      tugra({ applications: [tapp({ name: "plausible", envKeys: 0, volumes: [], domains: [], running: false, members: 2 })], cutover: {} }),
+    );
+    expect(row(r, "service").missing).toEqual(["plausible (not running)"]);
+  });
+
   it("scheduled tasks are matched by owner and name", () => {
     const c = side({ tasks: [{ name: "nightly", owner: "blog" }] });
     expect(row(compareCompleteness(c, tugra()), "scheduled_task").missing).toEqual(["blog/nightly"]);

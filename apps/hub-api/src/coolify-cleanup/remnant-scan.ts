@@ -43,6 +43,9 @@ export function buildScanScript(): string {
     `docker volume ls --format 'TUGRA_CU_V|{{.Name}}' 2>/dev/null`,
     `docker image ls --format 'TUGRA_CU_I|{{.Repository}}:{{.Tag}}|{{.ID}}|{{.Size}}' 2>/dev/null`,
     `for id in $(docker ps -aq 2>/dev/null); do docker inspect -f 'TUGRA_CU_M|{{.Name}}|{{range .Mounts}}{{.Source}};{{end}}' "$id" 2>/dev/null; done`,
+    // A local volume that is a bind on a host folder (the in-place takeover makes one of every folder a Coolify container bound): a container
+    // using it shows the volume's own mountpoint, not the folder, so the folder behind it is read here and counts as in use.
+    `for v in $(docker volume ls -q 2>/dev/null); do d=$(docker volume inspect -f '{{index .Options "device"}}' "$v" 2>/dev/null); case "$d" in /*) echo "TUGRA_CU_B|$v|$d";; esac; done`,
     `if [ -d ${COOLIFY_ROOT} ]; then`,
     `  for d in ${COOLIFY_ROOT}/* ${COOLIFY_ROOT}/applications/* ${COOLIFY_ROOT}/services/* ${COOLIFY_ROOT}/databases/*; do`,
     `    [ -e "$d" ] || [ -L "$d" ] || continue`,
@@ -135,6 +138,7 @@ export function parseScan(output: string): ScanResult {
     else if (tag === "TUGRA_CU_N" && f.length >= 2 && f[0]) out.networks.push({ name: f[0], attached: /^\d+$/.test(f[1]) ? Number(f[1]) : null });
     else if (tag === "TUGRA_CU_I" && f.length >= 3 && f[0]) out.images.push({ ref: f[0], id: f[1] ?? "", sizeBytes: parseHumanSize(f[2] ?? "") });
     else if (tag === "TUGRA_CU_M" && f.length >= 2) out.mounts.push({ container: f[0].replace(/^\//, ""), sources: (f[1] ?? "").split(";").filter(Boolean) });
+    else if (tag === "TUGRA_CU_B" && f.length >= 2 && /^[A-Za-z0-9][A-Za-z0-9_.-]{0,254}$/.test(f[0]) && /^\/[\x21-\x7e]{0,500}$/.test(f[1]) && !f[1].includes(";")) out.mounts.push({ container: `volume:${f[0]}`, sources: [f[1]] });
     else if (tag === "TUGRA_CU_D" && f.length >= 2 && f[0].startsWith(`${COOLIFY_ROOT}/`)) {
       const link = f[1] === "link";
       out.dirs.push({ path: f[0], sizeBytes: link || !/^\d+$/.test(f[1]) ? null : Number(f[1]) * 1024, link, data: f[2] !== "plain" });

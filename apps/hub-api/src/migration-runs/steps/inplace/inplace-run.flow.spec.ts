@@ -1,7 +1,7 @@
 import { ConflictException, ForbiddenException } from "@nestjs/common";
 import { Role } from "@prisma/client";
 import { CoolifyInPlaceService } from "../../../coolify-inplace/coolify-inplace.service";
-import { Box, H, type BoxApp } from "../../../coolify-inplace/inplace-box";
+import { Box, H, type BoxApp, type BoxService } from "../../../coolify-inplace/inplace-box";
 import type { RunSnapshot, StepContext, StepSnapshot } from "../../core/run-contract";
 import { RunLeaseLostError, StepFailure, EMPTY_STEP_EVIDENCE } from "../../core/run-contract";
 import { InPlaceCutover } from "../cutover/inplace-cutover";
@@ -14,9 +14,10 @@ const web: BoxApp = { appId: "appweb", itemRef: "app:s1:webuuid", name: "web", h
 const data: BoxApp = { appId: "appdb", itemRef: "app:s1:dbuuid", name: "api", host: "api.example.com", ctrId: H("b"), ctrName: "dbuuid-20261125T101010", image: "dbuuid:bbb222", mounts: [{ type: "volume", source: "dbuuid-data", dest: "/data", rw: true }], volumes: [{ name: "data", path: "/data" }] };
 
 /** The real takeover service over the fake box, with just enough of a table (rows by id, found by run id). */
-function rig(o: { role?: Role | null; apps?: BoxApp[] } = {}) {
+function rig(o: { role?: Role | null; apps?: BoxApp[]; services?: BoxService[] } = {}) {
   const box = new Box();
   for (const a of o.apps ?? [web, data]) box.add(a);
+  for (const v of o.services ?? []) box.addService(v);
   const rows = new Map<string, Record<string, unknown>>();
   let n = 0;
   const view = (r: Record<string, unknown>) => ({ ...r, createdAt: new Date(`2026-11-26T10:00:0${r.seq}Z`), finishedAt: null });
@@ -380,5 +381,110 @@ describe("codes", () => {
     expect(refusalOf("cutover", new ConflictException("takeover_server_busy"))).toMatchObject({ code: "cutover.inplace-server-busy", retryable: true });
     expect(refusalOf("cutover", new RunLeaseLostError("r"))).toBeNull();
     expect(refusalOf("cutover", new Error("boom"))).toBeNull();
+  });
+});
+
+// ───────────────────────────── a campaign's in-place wave with a compose service ─────────────────────────────
+
+const blog: BoxService = {
+  appId: "appsvc",
+  itemRef: "service:s1:svcuuid",
+  name: "blog",
+  hosts: ["blog.example.com"],
+  project: "tugra_appsvc",
+  compose: [
+    { service: "ghost", image: "ghost:5", dependsOn: ["db"], named: [{ source: "content", target: "/var/lib/ghost/content" }] },
+    { service: "db", image: "postgres:16", named: [{ source: "pgdata", target: "/var/lib/postgresql/data" }] },
+  ],
+  composeVolumes: [
+    { key: "content", dockerName: "tugra_appsvc_content", external: false },
+    { key: "pgdata", dockerName: "tugra_appsvc_pgdata", external: false },
+  ],
+  members: [
+    { service: "ghost", ctrId: H("5"), ctrName: "ghost-svcuuid", image: "ghost:5", mounts: [{ type: "volume", source: "svcuuid_content", dest: "/var/lib/ghost/content", rw: true }], networks: [{ name: "svcuuid", aliases: ["ghost"] }] },
+    { service: "db", ctrId: H("6"), ctrName: "db-svcuuid", image: "postgres:16", mounts: [{ type: "volume", source: "svcuuid_pgdata", dest: "/var/lib/postgresql/data", rw: true }], networks: [{ name: "svcuuid", aliases: ["db"] }] },
+  ],
+};
+
+describe("an in-place wave of a campaign takes a compose service over with the apps", () => {
+  async function ready() {
+    const r = rig({ apps: [web], services: [blog] });
+    const s = steps(r);
+    await prepare(s, ctxOf());
+    return { r, s };
+  }
+  const obsOf = async (s: ReturnType<typeof steps>, c: ReturnType<typeof ctxOf>) => ({ opId: "op1", servers: [{ serverId: "srv1", name: "olgu-box", acmeEmailOk: true }], swap: (await s.world.getSwap(RUN, "srv1")) as never, inPlace: await s.cut.state(c.ctx) });
+
+  it("DEPLOY_DARK plans the service with the app in the run's takeover and tests the app that can run alongside", async () => {
+    const { r, s } = await ready();
+    const row = [...r.rows.values()][0];
+    expect(row.runId).toBe(RUN);
+    expect((row.items as Array<{ itemRef: string; kind?: string; state: string }>).map((i) => [i.itemRef, i.kind ?? "app", i.state])).toEqual([
+      ["app:s1:webuuid", "app", "prepared"],
+      ["service:s1:svcuuid", "service", "prepared"],
+    ]);
+    // the service shares data with Coolify's containers: not started next to them
+    expect(r.box.tugraSvcRunning.size).toBe(0);
+    expect(s.dark.postGate(await s.dark.state(ctxOf().ctx)).passed).toBe(true);
+  });
+  it("VERIFY shows the service as a switched-together warning, naming how many containers it has", async () => {
+    const { s } = await ready();
+    const review = s.dark.review(await s.dark.state(ctxOf().ctx));
+    expect(review.suite.map((x) => [x.code, x.status, x.params?.members ?? null])).toEqual([
+      ["verify.inplace-domain-checked", "pass", null],
+      ["verify.inplace-service", "warn", 2],
+    ]);
+    expect(review.hosts).toEqual(["blog.example.com", "web.example.com"]);
+  });
+  it("a service left out of the takeover that has a domain must be accepted by name", () => {
+    const suite = inPlaceSuite({
+      id: "tk1",
+      status: "TESTING",
+      failureCode: null,
+      items: [{ itemRef: "service:s1:x", name: "blog", kind: "service", buildMode: "reuse-image", skipped: true, issues: ["service_member_unmapped"], domains: [{ host: "blog.example.com", tempCheck: "pending", finalCheck: "pending", cert: "pending" }] }],
+      gate: { ok: true },
+      pending: 0,
+      certWorkLeft: false,
+      verified: false,
+      proxy: {} as never,
+      bindBefore: "public",
+    });
+    expect(suite.map((x) => [x.code, x.status, x.ackable ?? false])).toEqual([["verify.inplace-app-left-out", "fail", true]]);
+  });
+  it("CUTOVER switches the service together with the proxies and ends VERIFIED once every domain has its new certificate", async () => {
+    const { r, s } = await ready();
+    const c = ctxOf();
+    const res = await s.cut.act(c.ctx, await obsOf(s, c));
+    expect(res.outcome).toBe("done");
+    expect(r.box.tugraSvcRunning.has("appsvc")).toBe(true);
+    expect([H("5"), H("6")].map((id) => r.box.ctrs.get(id)!.running)).toEqual([false, false]);
+    expect(r.box.leIssued).toEqual(new Set(["web.example.com", "blog.example.com"]));
+    expect(s.cut.postGate(await obsOf(s, c)).passed).toBe(true);
+  });
+  it("a service that does not come up ready fails the step with its own code and puts everything back", async () => {
+    const { r, s } = await ready();
+    r.box.svcUnhealthy.add("appsvc:ghost");
+    const c = ctxOf();
+    await expect(s.cut.act(c.ctx, await obsOf(s, c))).rejects.toMatchObject({ code: "cutover.inplace-service-not-ready", retryable: false });
+    expect(r.box.coolifyProxy.running).toBe(true);
+    expect(r.box.tugraSvcRunning.size).toBe(0);
+    expect([H("5"), H("6")].map((id) => r.box.ctrs.get(id)!.running)).toEqual([true, true]);
+    expect((await s.world.getSwap(RUN, "srv1"))?.state).toBe("REVERSED");
+  });
+  it("a database inside the service that looks different fails with its own code and everything is put back", async () => {
+    const { r, s } = await ready();
+    r.box.dbDiffers.add("appsvc:db");
+    const c = ctxOf();
+    await expect(s.cut.act(c.ctx, await obsOf(s, c))).rejects.toMatchObject({ code: "cutover.inplace-service-verify-failed" });
+    expect(r.box.ctrs.get(H("6"))!.running).toBe(true);
+  });
+  it("reverse gives every container of the service back to Coolify", async () => {
+    const { r, s } = await ready();
+    const c = ctxOf();
+    await s.cut.act(c.ctx, await obsOf(s, c));
+    expect(await s.cut.compensate(c.ctx, "reverse")).toEqual({ outcome: "done" });
+    expect(r.box.tugraSvcRunning.size).toBe(0);
+    expect([...r.box.ctrs.values()].every((x) => x.running)).toBe(true);
+    expect(r.box.coolifyProxy.running).toBe(true);
   });
 });

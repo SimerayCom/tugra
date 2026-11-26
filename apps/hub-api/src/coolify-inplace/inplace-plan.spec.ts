@@ -1,5 +1,5 @@
 import { TAKEOVER_STATUSES, TAKEOVER_CERT_STATES, type TakeoverStatus } from "@tugra/shared";
-import { adoptTagFor, canCertTransition, canGiveBack, canTakeoverTransition, cleanCommit, certWorkLeft, domainsOf, FALLBACK_MAX_MS, isVerified, overdueFallbacks, judgeProbe, mapDbMounts, mapMounts, portsMayBeTugras, sameImageRef, swapGate, toItemView, type TakeoverItem } from "./inplace-plan";
+import { ctrsOf, hasCtrs, membersVerified, stopCtrs, adoptTagFor, canCertTransition, canGiveBack, canTakeoverTransition, cleanCommit, certWorkLeft, domainsOf, FALLBACK_MAX_MS, isVerified, overdueFallbacks, judgeProbe, mapDbMounts, mapMounts, portsMayBeTugras, sameImageRef, swapGate, toItemView, type TakeoverItem } from "./inplace-plan";
 import type { ProbeResult } from "./inplace-scripts";
 
 const H = (c: string) => c.repeat(64);
@@ -247,3 +247,53 @@ describe("a takeover with databases", () => {
   });
 });
 
+
+describe("services: containers, start and stop order, verified", () => {
+  const rec = (service: string, id: string, engine?: "POSTGRES") => ({
+    service,
+    container: { id: H(id), name: `${service}-u`, image: `${service}:1`, restart: "always" as const, imageId: "sha256:" + H("b") },
+    composeImage: `${service}:1`,
+    volumes: [],
+    binds: [],
+    ...(engine ? { engine } : {}),
+    ready: "ok" as const,
+    ...(engine ? { dbVerify: { level: "counts" as const, state: "ok" as const } } : {}),
+  });
+  // in start order: the database first, then what needs it
+  const svc = (o: Partial<TakeoverItem> = {}): TakeoverItem => item({ itemRef: "service:s:u", kind: "service", container: null, members: [rec("db", "1", "POSTGRES"), rec("cache", "2"), rec("web", "3")], ...o });
+  it("ctrsOf lists the containers in start order and stopCtrs the reverse, so dependents stop first", () => {
+    expect(ctrsOf(svc()).map((c) => c.name)).toEqual(["db-u", "cache-u", "web-u"]);
+    expect(stopCtrs(svc()).map((c) => c.name)).toEqual(["web-u", "cache-u", "db-u"]);
+  });
+  it("stopCtrs splits a service into the database-like containers (stopped last) and the rest", () => {
+    expect(stopCtrs(svc(), "rest").map((c) => c.name)).toEqual(["web-u", "cache-u"]);
+    expect(stopCtrs(svc(), "db").map((c) => c.name)).toEqual(["db-u"]);
+    // an app has no such split: everything is "rest", nothing is "db"
+    expect(stopCtrs(item({ itemRef: "a" }), "rest")).toHaveLength(1);
+    expect(stopCtrs(item({ itemRef: "a" }), "db")).toEqual([]);
+  });
+  it("every recorded container carries what the give-back needs: id, name, image and the restart policy it had", () => {
+    expect(ctrsOf(svc())[0]).toEqual({ id: H("1"), name: "db-u", image: "db:1", restart: "always", ports: "", itemRef: "service:s:u" });
+    expect(hasCtrs(svc())).toBe(true);
+    expect(hasCtrs(item({ itemRef: "a", container: null }))).toBe(false);
+  });
+  it("is verified only when every member is ready and every database-like member answered the same, besides the domains", () => {
+    const ok = { host: "a.example.com", tempCheck: "ok" as const, finalCheck: "ok" as const, cert: "issued" as const };
+    const good = svc({ domains: [ok], state: "switched" });
+    expect(membersVerified(good)).toBe(true);
+    expect(isVerified([good])).toBe(true);
+    const unready = svc({ domains: [ok], members: [rec("db", "1", "POSTGRES"), { ...rec("web", "3"), ready: "failed" }] });
+    expect(isVerified([unready])).toBe(false);
+    const unchecked = svc({ domains: [ok], members: [{ ...rec("db", "1", "POSTGRES"), dbVerify: { level: "counts", state: "failed" } }] });
+    expect(isVerified([unchecked])).toBe(false);
+    expect(isVerified([svc({ domains: [{ ...ok, cert: "fallback" }] })])).toBe(false);
+    expect(isVerified([svc({ domains: [], members: [] })])).toBe(false);
+    // an internal service with no domain is verified by its members alone
+    expect(isVerified([svc({ domains: [] })])).toBe(true);
+  });
+  it("the view of a service lists its members by name with their readiness and carries no container, image or id", () => {
+    const v = JSON.stringify(toItemView(svc()));
+    expect(JSON.parse(v)).toMatchObject({ kind: "service", members: [{ name: "db", ready: "ok", verify: { level: "counts", state: "ok" } }, { name: "cache", ready: "ok" }, { name: "web", ready: "ok" }] });
+    expect(v).not.toMatch(/db-u|sha256|[0-9a-f]{64}|composeImage|restart/);
+  });
+});

@@ -11,14 +11,15 @@ const find = (c: ReturnType<typeof classifyScan>, kind: string, name: string) =>
 describe("the scan script", () => {
   const script = buildScanScript();
   it("is read-only: no removal, stop, prune or write verb anywhere", () => {
-    for (const bad of [/\brm\b/, /\brmi\b/, /\bprune\b/, /\bstop\b/, /\bkill\b/, /docker volume (rm|create|prune|inspect)/, /\bmkdir\b/, /\bchmod\b/, />\s*\/(?!dev\/null)/]) expect(script).not.toMatch(bad);
+    for (const bad of [/\brm\b/, /\brmi\b/, /\bprune\b/, /\bstop\b/, /\bkill\b/, /docker volume (rm|create|prune)/, /\bmkdir\b/, /\bchmod\b/, />\s*\/(?!dev\/null)/]) expect(script).not.toMatch(bad);
   });
   it("is valid sh", () => {
     expect(spawnSync("sh", ["-n"], { input: script }).status).toBe(0);
   });
-  it("reads docker volume NAMES (for the checklist) and nothing else about them", () => {
-    expect(script.match(/docker volume \w+/g)).toEqual(["docker volume ls"]);
+  it("reads docker volume NAMES (for the checklist) and, for a local bind volume, the host folder behind it (so that folder counts as in use) and nothing else about them", () => {
+    expect(script.match(/docker volume \w+/g)).toEqual(["docker volume ls", "docker volume ls", "docker volume inspect"]);
     expect(script).toContain("TUGRA_CU_V|{{.Name}}");
+    expect(script.match(/volume inspect -f '([^']+)'/)?.[1]).toBe('{{index .Options "device"}}');
   });
 });
 
@@ -88,6 +89,10 @@ describe("parseScan", () => {
       { path: "/data/coolify/applications/y", sizeBytes: 10 * 1024, link: false, data: true },
       { path: "/data/coolify/applications/x", sizeBytes: null, link: true, data: true },
     ]);
+  });
+  it("a bind volume's host folder is read as a mount of that volume; a device that is not an absolute path or a bad name is dropped", () => {
+    const r = parseScan(["TUGRA_CU_BEGIN", "TUGRA_CU_B|tugra_a_content|/data/coolify/services/u/uploads", "TUGRA_CU_B|bad name|/x", "TUGRA_CU_B|v|relative", "TUGRA_CU_B|w|/a;/b", "TUGRA_CU_END"].join("\n"));
+    expect(r.mounts).toEqual([{ container: "volume:tugra_a_content", sources: ["/data/coolify/services/u/uploads"] }]);
   });
   it("a cut listing is unreadable, never empty", () => {
     expect(() => parseScan("TUGRA_CU_BEGIN\nTUGRA_CU_C|a|b|exited|")).toThrow(ScanError);
@@ -260,6 +265,20 @@ describe("classifyScan: directories under /data/coolify", () => {
     );
     expect(find(c, "container", `db-${UUID}`)?.keep).toBeUndefined(); // the container may go
     expect(find(c, "directory", `/data/coolify/services/${UUID}`)).toMatchObject({ keep: true }); // its data stays
+  });
+
+  it("a service folder that a Tugra bind volume points at is in use even when it holds nothing but compose files (it may hold an empty data folder)", () => {
+    const c = classifyScan(
+      scan({
+        dirs: [dir(`/data/coolify/services/${UUID}`, 4_000, false, false)],
+        mounts: [{ container: "volume:tugra_app_content", sources: [`/data/coolify/services/${UUID}/uploads`] }],
+      }),
+      { knownUuids: [UUID], completeUuids: [UUID] },
+    );
+    expect(find(c, "directory", `/data/coolify/services/${UUID}`)).toMatchObject({ keep: true, reason: "in_use" });
+    // the same folder with no such volume is removable
+    const free = classifyScan(scan({ dirs: [dir(`/data/coolify/services/${UUID}`, 4_000, false, false)] }), { knownUuids: [UUID], completeUuids: [UUID] });
+    expect(find(free, "directory", `/data/coolify/services/${UUID}`)?.keep).toBeUndefined();
   });
 
   it("an applications or services directory is removable only for a uuid matched complete, and never when it holds more than compose files", () => {

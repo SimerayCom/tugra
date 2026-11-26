@@ -47,7 +47,7 @@ export function coolifySideFor(data: CoolifyInventoryData, coolifyServerId: stri
     side: {
       applications: apps.map((a) => ({ ref: a.uuid, name: a.name, uuid: a.uuid, envKeys: a.envCount, domains: hostsOfFqdn(a.fqdn), volumes: volumesOf(a), running: runningText(a.status) })),
       databases: dbs.map((d) => ({ ref: d.uuid, name: d.name, uuid: d.uuid, envKeys: 0, volumes: volumesOf(d), running: runningText(d.status) })),
-      services: services.map((s) => ({ ref: s.uuid, name: s.name, uuid: s.uuid, envKeys: s.envCount, volumes: volumesOf(s), running: false })),
+      services: services.map((s) => ({ ref: s.uuid, name: s.name, uuid: s.uuid, envKeys: s.envCount, volumes: volumesOf(s), running: false, ...(s.components > 0 ? { components: s.components } : {}) })),
       tasks: data.scheduledTasks.filter((t) => t.targetName && owners.has(t.targetName.trim().toLowerCase())).map((t) => ({ name: t.name, owner: t.targetName as string })),
       backups: data.backups.filter((b) => b.enabled && b.databaseName && dbNames.has(b.databaseName.trim().toLowerCase())).map((b) => b.databaseName as string),
       notifications: [...notifications].sort(),

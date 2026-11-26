@@ -1,4 +1,4 @@
-import { withHostVolumes } from "./coolify-side";
+import { coolifySideFor, withHostVolumes } from "./coolify-side";
 import type { CoolifySide } from "./completeness";
 
 const UA = "uuidapp1uuidapp1uuidapp1";
@@ -14,6 +14,27 @@ const side = (over: Partial<CoolifySide> = {}): CoolifySide => ({
   ...over,
 });
 const c = (name: string, state = "running") => ({ name, image: "x", state, managed: true });
+
+describe("coolifySideFor", () => {
+  it("carries how many containers Coolify runs for a service, and nothing when the read does not say", () => {
+    const data = {
+      servers: [],
+      teams: [],
+      applications: [],
+      databases: [],
+      services: [
+        { id: "1", uuid: US, name: "plausible", kind: null, components: 3, envCount: 0, serverId: "5", teamId: null },
+        { id: "2", uuid: "other", name: "bare", kind: null, components: 0, envCount: 0, serverId: "5", teamId: null },
+        { id: "3", uuid: "elsewhere", name: "far", kind: null, components: 2, envCount: 0, serverId: "9", teamId: null },
+      ],
+      scheduledTasks: [],
+      backups: [],
+      unavailable: [],
+    } as never;
+    const out = coolifySideFor(data, "5").side.services;
+    expect(out.map((s) => [s.name, s.components])).toEqual([["plausible", 3], ["bare", undefined]]);
+  });
+});
 
 describe("withHostVolumes", () => {
   it("takes a database's volumes from the host by their <name>-<uuid> name, and an app's or service's by <uuid>-<name>", () => {

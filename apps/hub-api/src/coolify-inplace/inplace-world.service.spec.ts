@@ -137,4 +137,83 @@ describe("InPlaceWorldService", () => {
     prisma.application.findUnique.mockResolvedValue(null);
     expect(await w.appMentions("a1", ["x"])).toBeNull();
   });
+
+  it("opServices keeps only the compose services of this team that sit on this server, from the op's service tasks", async () => {
+    const { w, prisma } = make();
+    prisma.bulkTask.findMany.mockResolvedValue([
+      { itemRef: "service:s:u1", resourceId: "a1" },
+      { itemRef: "service:s:u2", resourceId: "a2" },
+      { itemRef: "service:s:u3", resourceId: null },
+    ]);
+    prisma.application.findMany.mockResolvedValue([{ id: "a1" }]);
+    expect(await w.opServices("op1", "team1", "srv1")).toEqual([{ appId: "a1", itemRef: "service:s:u1" }]);
+    expect(prisma.bulkTask.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ kind: "service", resourceType: "application", status: "DONE" }) }));
+    expect(prisma.application.findMany).toHaveBeenCalledWith({ where: { id: { in: ["a1", "a2"] }, teamId: "team1", serverId: "srv1" }, select: { id: true } });
+    prisma.bulkOperation.findUnique.mockResolvedValueOnce(null as never);
+    expect(await w.opServices("nope", "t", "s")).toBeNull();
+  });
+  it("opApps and opServices never mix: apps are the op's app tasks, services its service tasks", async () => {
+    const { w, prisma } = make();
+    prisma.bulkTask.findMany.mockResolvedValue([]);
+    prisma.application.findMany.mockResolvedValue([]);
+    await w.opApps("op1", "t", "s");
+    await w.opServices("op1", "t", "s");
+    const kinds = prisma.bulkTask.findMany.mock.calls.map((c) => (c[0] as { where: { kind: string } }).where.kind);
+    expect(kinds).toEqual(["app", "service"]);
+  });
+  it("service reads the compose project, the stored compose, its volumes, its network attachments, and whether the takeover can drive it", async () => {
+    const { w, prisma } = make();
+    prisma.application.findUnique
+      .mockResolvedValueOnce({ id: "a1", teamId: "t", serverId: "s", name: "blog", domain: null, extraDomains: [], volumes: [], hostMounts: [] } as never)
+      .mockResolvedValueOnce({
+        source: "COMPOSE",
+        composeFile: "services:\n  web:\n    image: x\n    volumes:\n      - data:/d\nvolumes:\n  data: {}\n",
+        composePath: null,
+        gitUrl: null,
+        composeAdopt: null,
+        clusterId: null,
+        composeNetworks: [{ network: "n", service: "web", aliases: ["w", 3] }, { bad: 1 }],
+      } as never);
+    expect(await w.service("a1")).toEqual({
+      id: "a1",
+      teamId: "t",
+      serverId: "s",
+      name: "blog",
+      hosts: ["svc.example.com"],
+      volumes: [],
+      hostMounts: [],
+      project: "tugra_a1",
+      composeFile: expect.stringContaining("services:"),
+      composeVolumes: [{ key: "data", dockerName: "tugra_a1_data", external: false }],
+      networks: [{ network: "n", service: "web", aliases: ["w"] }],
+      usable: true,
+    });
+  });
+  it("a git compose, an adopted project, a clustered app and a non-compose app are not usable", async () => {
+    const { w, prisma } = make();
+    const base = { id: "a1", teamId: "t", serverId: "s", name: "blog", domain: null, extraDomains: [], volumes: [], hostMounts: [] };
+    const compose = { source: "COMPOSE", composeFile: "services:\n  web:\n    image: x\n", composePath: null, gitUrl: null, composeAdopt: null, clusterId: null, composeNetworks: null };
+    for (const over of [{ composePath: "docker-compose.yml" }, { gitUrl: "https://x/y.git" }, { composeAdopt: { v: 1 } }, { clusterId: "c1" }, { source: "IMAGE" }, { composeFile: null }]) {
+      prisma.application.findUnique.mockResolvedValueOnce(base as never).mockResolvedValueOnce({ ...compose, ...over } as never);
+      expect((await w.service("a1"))!.usable).toBe(false);
+    }
+    prisma.application.findUnique.mockResolvedValueOnce(null as never);
+    expect(await w.service("ghost")).toBeNull();
+  });
+  it("the adopted compose deployment is a successful row that carries the stored compose file, so the rollback path can run the stack", async () => {
+    const { w, prisma } = make();
+    prisma.application.findUnique.mockResolvedValueOnce({ composeFile: "services:\n  web:\n    image: x\n" } as never);
+    expect(await w.createAdoptComposeDeployment("a1")).toBe("dep1");
+    expect(prisma.deployment.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ appId: "a1", status: "SUCCESS", trigger: "takeover", configSnapshot: { snapV: 2, source: "COMPOSE", composeFile: "services:\n  web:\n    image: x\n" } }),
+    });
+    prisma.application.findUnique.mockResolvedValueOnce({ composeFile: null } as never);
+    await expect(w.createAdoptComposeDeployment("a1")).rejects.toThrow("no stored compose file");
+  });
+  it("network attachments go through the apps service, which re-checks the owner's rights", async () => {
+    const { w, apps } = make();
+    (apps as unknown as { setComposeNetworks: jest.Mock }).setComposeNetworks = jest.fn(async () => undefined);
+    await w.setComposeNetworks("u", "a1", [{ network: "n", service: "web", aliases: [] }]);
+    expect((apps as unknown as { setComposeNetworks: jest.Mock }).setComposeNetworks).toHaveBeenCalledWith("u", "a1", [{ network: "n", service: "web", aliases: [] }]);
+  });
 });

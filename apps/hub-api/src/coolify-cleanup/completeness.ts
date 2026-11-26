@@ -31,6 +31,8 @@ export interface CoolifyNamed {
   envKeys: number;
   volumes: string[] | null;
   running: boolean;
+  /** Services: how many containers (compose services) Coolify runs for it. Absent when the stored read does not say. */
+  components?: number;
 }
 export interface CoolifyTaskItem {
   name: string;
@@ -61,6 +63,8 @@ export interface TugraApp {
   volumes: string[];
   tasks: string[];
   running: boolean;
+  /** Compose apps: how many services the stored compose declares (the containers the app runs). Absent or null = not a compose app. */
+  members?: number | null;
 }
 export interface TugraDb {
   id: string;
@@ -174,6 +178,15 @@ export function compareCompleteness(coolify: CoolifySide, tugra: TugraSide): Com
   const missingDbs = missingOf(dbs.map(({ d, t }) => ({ uuid: d.uuid, running: d.running, name: d.name, t })));
   row("database", dbs.length, dbs.length - missingDbs.length, missingDbs);
   const missingSvcs = missingOf(svcs.map(({ s, t }) => ({ uuid: s.uuid, running: s.running, name: s.name, t })));
+  // A service is complete only with a Tugra container for every container Coolify runs for it: a member the import dropped would be left
+  // without a counterpart, and its Coolify container must stay (it is shown, never removed).
+  for (const { s, t } of svcs) {
+    const have = t?.members;
+    if (t && s.components && s.components > 0 && typeof have === "number" && have < s.components && !missingSvcs.some((m) => m === s.name || m.startsWith(`${s.name} (`))) {
+      missingSvcs.push(`${s.name} (${have}/${s.components} containers)`);
+      bad.add(s.uuid);
+    }
+  }
   row("service", svcs.length, svcs.length - missingSvcs.length, missingSvcs);
 
   // Domains: every hostname Coolify served must be a hostname of the matched Tugra app.

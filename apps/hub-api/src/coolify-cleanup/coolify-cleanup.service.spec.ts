@@ -184,6 +184,26 @@ describe("CoolifyCleanupService.check", () => {
     expect(v.status).toBe("INCOMPLETE");
   });
 
+  describe("a compose service Coolify runs several containers for", () => {
+    const blog = { id: "a1", name: "blog", status: "RUNNING", envEnc: "ENC", domain: "blog.example.com", extraDomains: [], domainRedirect: null, volumes: [{ name: "data", path: "/data" }], composeFile: null, domains: [] };
+    const twin = (services: string[]) => ({ id: "a2", name: "plausible", status: "RUNNING", envEnc: null, domain: null, extraDomains: [], domainRedirect: null, volumes: [], composeFile: `services:\n${services.map((x) => `  ${x}:\n    image: ${x}:1\n`).join("")}`, domains: [] });
+    const withService = (components: number) =>
+      inventory({ services: [{ id: "11", uuid: "uuidsvc01uuidsvc01uuidsv", name: "plausible", kind: null, components, envCount: 0, teamId: "1", projectId: null, environment: null, serverId: "5" } as never] });
+    it("a Tugra twin with fewer containers than Coolify ran keeps the checklist closed and names the shortfall", async () => {
+      const t = make({ inv: withService(2), apps: [blog, twin(["web"])] });
+      const v = await t.svc.check("u1", "s1");
+      expect(v.status).toBe("INCOMPLETE");
+      expect(v.completeness.find((r) => r.kind === "service")?.missing).toEqual(["plausible (1/2 containers)"]);
+      expect(t.sent.some((s) => isRemoval(s.script))).toBe(false);
+    });
+    it("a twin with every container counts as present", async () => {
+      const t = make({ inv: withService(2), apps: [blog, twin(["web", "db"])] });
+      const v = await t.svc.check("u1", "s1");
+      expect(v.completeness.find((r) => r.kind === "service")).toMatchObject({ coolify: 1, tugra: 1, missing: [] });
+      expect(v.status).toBe("READY");
+    });
+  });
+
   it("a stored read that lists the volumes is used as it is, not replaced by the host's names", async () => {
     const t = make({ inv: inventory({ applications: [{ ...inventory().applications[0], volumes: ["uuidapp1uuidapp1uuidapp1-uploads"] } as never] }) });
     const v = await t.svc.check("u1", "s1");
