@@ -63,7 +63,7 @@ describe("CoolifySecretsConsent", () => {
     const allow = await screen.findByRole("button", { name: "Allow" });
     fireEvent.change(screen.getByLabelText("Type coolify-hub to allow"), { target: { value: "coolify-hub" } });
     for (const c of defaultClasses()) {
-      const label = { env: "Environment variables", shared_env: "Shared variables", db_credentials: "Database credentials", basic_auth: "Basic-auth passwords", service_compose: "Service definitions", task_command: "Scheduled task commands", s3: "S3 storage keys" }[c as string] as string;
+      const label = { env: "Environment variables", shared_env: "Shared variables", db_credentials: "Database credentials", basic_auth: "Basic-auth passwords", service_compose: "Compose files, Dockerfiles and labels", task_command: "Scheduled task commands", s3: "S3 storage keys" }[c as string] as string;
       fireEvent.click(screen.getByLabelText(label));
     }
     expect((allow as HTMLButtonElement).disabled).toBe(true);
