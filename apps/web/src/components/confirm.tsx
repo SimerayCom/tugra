@@ -4,7 +4,7 @@ import { createContext, useCallback, useContext, useState, type ReactNode } from
 import { useT } from "../i18n/provider";
 import { Btn } from "./ui";
 import { Modal } from "./modal";
-import { fieldStyle } from "./form";
+import { TypedConfirmField } from "./typed-confirm-field";
 
 export interface ConfirmOptions {
   title?: string;
@@ -74,22 +74,14 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
           <h2 style={{ fontSize: 15, fontWeight: 700, margin: opts?.body ? "0 0 8px" : "0 0 14px" }}>{opts?.title ?? t("common.confirmTitle")}</h2>
           {opts?.body && <p style={{ fontSize: 13, color: "var(--c-tx2)", margin: "0 0 14px", lineHeight: 1.5, whiteSpace: "pre-line", overflowWrap: "anywhere" }}>{opts.body}</p>}
           {needsText && (
-            <label style={{ display: "block", marginBottom: 14 }}>
-              <span style={{ display: "block", fontSize: 12, color: "var(--c-tx2)", marginBottom: 6, lineHeight: 1.5 }}>
-                {t("common.typeToConfirm", { text: opts!.confirmText! })}
-              </span>
-              <input
-                autoFocus
-                value={typed}
-                onChange={(e) => setTyped(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Enter" && canConfirm) close(true); }}
-                aria-label={t("common.typeToConfirm", { text: opts!.confirmText! })}
-                autoComplete="off"
-                autoCapitalize="off"
-                spellCheck={false}
-                style={fieldStyle}
-              />
-            </label>
+            <TypedConfirmField
+              autoFocus
+              expected={opts!.confirmText!}
+              value={typed}
+              onChange={setTyped}
+              onEnter={() => { if (canConfirm) close(true); }}
+              label={t("common.typeToConfirm", { text: opts!.confirmText! })}
+            />
           )}
           {opts?.checkbox &&
             (Array.isArray(opts.checkbox) ? opts.checkbox : [opts.checkbox]).map((box, i) => (

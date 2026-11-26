@@ -12,6 +12,7 @@ import { CopyBtn } from "./copy-row";
 import { useToast } from "./toast";
 import { useOptionalConfirm } from "./confirm";
 import type { OobConsoleResult, OobPowerAction, OobRescueResult, OobStatus } from "../lib/types";
+import { TypedConfirmField } from "./typed-confirm-field";
 
 export const OOB_QUERY_KEY = (id: string) => ["server-oob", id] as const;
 
@@ -244,21 +245,13 @@ function PowerDialog({ id, serverName, action, onClose, onDone }: { id: string; 
     <Modal onClose={onClose} labelledBy="oob-dlg-title" closeOnBackdrop={false}>
       <h3 id="oob-dlg-title" style={{ margin: "0 0 10px", fontSize: 15 }}>{t(keys.title, { server: serverName })}</h3>
       <p style={{ fontSize: 13, color: "var(--c-tx2)", lineHeight: 1.5, margin: "0 0 12px" }}>{t(keys.body)}</p>
-      <label style={{ display: "block", marginBottom: 14 }}>
-        <span style={{ display: "block", fontSize: 12, color: "var(--c-tx2)", marginBottom: 6, lineHeight: 1.5 }}>{t("oob.confirm.typeToConfirm", { name: serverName })}</span>
-        <input
-          value={typed}
-          onChange={(e) => setTyped(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && canSend) send.mutate();
-          }}
-          aria-label={t("oob.confirm.typeToConfirm", { name: serverName })}
-          autoComplete="off"
-          autoCapitalize="off"
-          spellCheck={false}
-          style={fieldStyle}
-        />
-      </label>
+      <TypedConfirmField
+        expected={serverName}
+        value={typed}
+        onChange={setTyped}
+        onEnter={() => { if (canSend) send.mutate(); }}
+        label={t("oob.confirm.typeToConfirm", { name: serverName })}
+      />
       <div style={{ display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "flex-end" }}>
         <Btn variant="ghost" onClick={onClose} disabled={send.isPending}>{t("oob.confirm.cancel")}</Btn>
         <Btn variant="danger" onClick={() => send.mutate()} disabled={!canSend} loading={send.isPending}>{t(keys.confirm)}</Btn>
@@ -411,7 +404,7 @@ function LinkDialog({ id, serverName, onClose, onDone }: { id: string; serverNam
                 <ShieldAlert size={14} aria-hidden style={{ flexShrink: 0, marginTop: 2 }} />
                 <span><strong>{t("oob.link.mismatchTitle")}.</strong> {t("oob.link.mismatchBody", { name: nameToType })}</span>
               </div>
-              <input value={typed} onChange={(e) => setTyped(e.target.value)} aria-label={t("oob.link.mismatchBody", { name: nameToType })} autoComplete="off" autoCapitalize="off" spellCheck={false} style={fieldStyle} />
+              <TypedConfirmField expected={nameToType} value={typed} onChange={setTyped} label={t("oob.link.mismatchBody", { name: nameToType })} />
             </div>
           )}
         </>

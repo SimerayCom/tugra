@@ -1255,7 +1255,6 @@
   "moveRetainOption_0": "Remove right away",
   "moveRetainOption_n": "{n} day(s)",
   "moveConfirmLabel": "Type the app name to confirm",
-  "moveConfirmPlaceholder": "App name",
   "moveSubmit": "Move app",
   "moveContinue": "Continue",
   "moveBack": "Back",

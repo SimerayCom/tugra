@@ -22,6 +22,7 @@ import { useToast } from "./toast";
 import { Modal } from "./modal";
 import { Btn } from "./ui";
 import { Checkbox, Select, fieldStyle } from "./form";
+import { TypedConfirmField } from "./typed-confirm-field";
 
 type Step = "target" | "review" | "confirm";
 const STEPS: Step[] = ["target", "review", "confirm"];
@@ -257,18 +258,15 @@ export function MoveAppModal({
       {step === "confirm" && (
         <>
           {!cheap && <p style={{ fontSize: 12.5, color: "var(--c-am)", margin: "0 0 12px", lineHeight: 1.5 }}>{t("apps.moveColdMoveNotice")}</p>}
-          <label style={{ display: "block", marginBottom: 12 }}>
-            <span style={{ display: "block", fontSize: 12, color: "var(--c-tx2)", marginBottom: 6 }}>{t("apps.moveConfirmLabel")}: <strong className="mono">{appName}</strong></span>
-            <input
-              autoFocus
-              value={typed}
-              onChange={(e) => setTyped(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter" && typed === appName && !start.isPending) start.mutate(); }}
-              placeholder={t("apps.moveConfirmPlaceholder")}
-              aria-label={t("apps.moveConfirmLabel")}
-              style={fieldStyle}
-            />
-          </label>
+          <TypedConfirmField
+            autoFocus
+            expected={appName}
+            value={typed}
+            onChange={setTyped}
+            onEnter={() => { if (typed === appName && !start.isPending) start.mutate(); }}
+            label={t("apps.moveConfirmLabel")}
+            hint={<strong className="mono">{appName}</strong>}
+          />
           {start.isError && !(start.error instanceof ApiError && start.error.code === "preflight_failed") && (
             <div role="alert" style={{ color: "var(--c-r)", fontSize: 12, marginBottom: 8 }}>{(start.error as Error).message || t("apps.moveStartFailed")}</div>
           )}

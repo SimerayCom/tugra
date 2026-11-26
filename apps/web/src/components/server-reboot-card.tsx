@@ -26,6 +26,7 @@ import {
   REBOOT_MIN_LEAD_MS,
   type RebootPhase,
 } from "../lib/reboot";
+import { TypedConfirmField } from "./typed-confirm-field";
 
 type Tone = "ok" | "warn" | "danger" | "muted";
 const RESULT_TONE: Record<RebootResult, Tone> = { ok: "ok", degraded: "warn", failed: "danger", cancelled: "muted" };
@@ -167,19 +168,13 @@ function RebootDialog({ id, serverName, mode, onClose, onDone }: { id: string; s
         )}
       </div>
 
-      <label style={{ display: "block", marginBottom: 14 }}>
-        <span style={{ display: "block", fontSize: 12, color: "var(--c-tx2)", marginBottom: 6, lineHeight: 1.5 }}>{t("reboot.dialog.typeToConfirm", { name: serverName })}</span>
-        <input
-          value={typed}
-          onChange={(e) => setTyped(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter" && canSend) send.mutate(); }}
-          aria-label={t("reboot.dialog.typeToConfirm", { name: serverName })}
-          autoComplete="off"
-          autoCapitalize="off"
-          spellCheck={false}
-          style={fieldStyle}
-        />
-      </label>
+      <TypedConfirmField
+        expected={serverName}
+        value={typed}
+        onChange={setTyped}
+        onEnter={() => { if (canSend) send.mutate(); }}
+        label={t("reboot.dialog.typeToConfirm", { name: serverName })}
+      />
 
       <div style={{ display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "flex-end" }}>
         <Btn variant="ghost" onClick={onClose} disabled={send.isPending}>{t("reboot.dialog.cancel")}</Btn>

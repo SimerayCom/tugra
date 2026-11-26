@@ -30,6 +30,7 @@
   "containerRestarted": "Container restarted",
   "containerRemoved": "Container removed",
   "containerRemoveTitle": "Remove container",
+  "containerRemoveType": "Type {name} to confirm",
   "containerRemoveBody": "This force-removes the container \"{name}\" on this server. Managed Tugra apps/databases are deleted from their own page — this is only for foreign containers. Type the name to confirm:",
   "net": "Network",
   "disk": "Disk I/O",

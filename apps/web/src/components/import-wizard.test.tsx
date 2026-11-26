@@ -884,6 +884,9 @@ describe("ImportWizard", () => {
         await reachPreview();
         expect(screen.getByText(/Allow reading secret values below before you apply/)).toBeTruthy();
         expect(screen.getByLabelText("Type the Coolify server name to allow it")).toBeTruthy();
+        // the box is not blank: the name to type is its placeholder, with a copy button beside it
+        expect((screen.getByLabelText("Type the Coolify server name to allow it") as HTMLInputElement).placeholder).toBe("Server A");
+        expect(screen.getByRole("button", { name: "Copy" })).toBeTruthy();
         expect((screen.getByRole("button", { name: "Import to Tugra" }) as HTMLButtonElement).disabled).toBe(true);
         fireEvent.click(screen.getByRole("button", { name: "Import to Tugra" }));
         expect(apply).not.toHaveBeenCalled();

@@ -56,6 +56,7 @@ import { useStickToBottom } from "../../../../hooks/useStickToBottom";
 import { ScopedTeamBadge, useTeamContext } from "../../../../components/team-scope";
 import { HelpLink } from "../../../../components/help-link";
 import { ServerAccessHelp } from "../../../../components/server-access-help";
+import { TypedConfirmField } from "../../../../components/typed-confirm-field";
 
 const serverColor = (s: ServerStatus) =>
   s === "ONLINE" ? "var(--c-g)" : s === "PENDING" ? "var(--c-am)" : "var(--c-r)";
@@ -1165,20 +1166,14 @@ function DeleteServerCard({ id, server }: { id: string; server: ServerView }) {
               </span>
             </label>
           )}
-          <label style={{ display: "block", marginBottom: 14 }}>
-            <span style={{ display: "block", fontSize: 12, color: "var(--c-tx2)", marginBottom: 6, lineHeight: 1.5 }}>{t("common.typeToConfirm", { text: server.name })}</span>
-            <input
-              autoFocus
-              value={confirmName}
-              onChange={(e) => setConfirmName(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter" && canDelete) del.mutate(); }}
-              aria-label={t("common.typeToConfirm", { text: server.name })}
-              autoComplete="off"
-              autoCapitalize="off"
-              spellCheck={false}
-              style={fieldStyle}
-            />
-          </label>
+          <TypedConfirmField
+            autoFocus
+            expected={server.name}
+            value={confirmName}
+            onChange={setConfirmName}
+            onEnter={() => { if (canDelete) del.mutate(); }}
+            label={t("common.typeToConfirm", { text: server.name })}
+          />
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
             <Btn variant="ghost" onClick={() => setOpen(false)} disabled={del.isPending}>{t("common.cancel")}</Btn>
             <Btn variant="danger" onClick={() => del.mutate()} disabled={!canDelete}>{del.isPending ? "…" : t("servers.deleteServer")}</Btn>

@@ -9,7 +9,8 @@ import { api, ApiError } from "../lib/api";
 import { useT } from "../i18n/provider";
 import { formatDateTime } from "../lib/format-time";
 import { Badge, Btn } from "./ui";
-import { Checkbox, Field, NumberInput, TextInput } from "./form";
+import { Checkbox, Field, NumberInput } from "./form";
+import { TypedConfirmField } from "./typed-confirm-field";
 
 type T = ReturnType<typeof useT>;
 
@@ -95,9 +96,7 @@ export function CoolifySecretsConsent({ teamId, serverId, serverName, isOwner }:
             <Field label={t("coolifyMove.consent.hours")}>
               <NumberInput min={1} max={COOLIFY_SECRETS_GRANT_MAX_HOURS} value={hours} onChange={(e) => setHours(e.target.value)} style={{ minHeight: 44 }} />
             </Field>
-            <Field label={t("coolifyMove.consent.typeHost", { name: serverName })}>
-              <TextInput value={typed} onChange={(e) => setTyped(e.target.value)} autoComplete="off" style={{ minHeight: 44 }} />
-            </Field>
+            <TypedConfirmField expected={serverName} value={typed} onChange={setTyped} label={t("coolifyMove.consent.typeHost", { name: serverName })} />
             <div>
               <Btn type="submit" disabled={typed.trim() !== serverName || classes.length === 0} loading={allow.isPending} style={{ minHeight: 44 }}>
                 {t("coolifyMove.consent.allow")}

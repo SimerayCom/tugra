@@ -9,7 +9,7 @@ import { useT } from "../../i18n/provider";
 import { actionsFor, confirmMatches, dbRollup, pollMs, rebuildCandidates, rebuildOf, rollup, serviceRollup, toggleChoice, verifyHasWork, type TakeoverAction } from "../../lib/inplace";
 import { Badge, Btn, SectionCard, Spinner } from "../ui";
 import { Modal } from "../modal";
-import { Field, TextInput } from "../form";
+import { TypedConfirmField } from "../typed-confirm-field";
 import { useToast } from "../toast";
 
 type T = ReturnType<typeof useT>;
@@ -165,9 +165,7 @@ export function TakeoverPanel({ serverId, serverName, opId }: { serverId: string
           >
             <h2 style={{ fontSize: 15, fontWeight: 700, margin: 0 }}>{t(`coolifyInPlace.typed.${typed.kind}.title`)}</h2>
             <p style={{ margin: 0, fontSize: 13, lineHeight: 1.5, color: "var(--c-tx2)" }}>{t(`coolifyInPlace.typed.${typed.kind}.body`)}</p>
-            <Field label={t("coolifyInPlace.typed.label", { name: serverName })}>
-              <TextInput value={name} onChange={(e) => setName(e.target.value)} autoComplete="off" style={{ minHeight: 44 }} />
-            </Field>
+            <TypedConfirmField expected={serverName} value={name} onChange={setName} label={t("coolifyInPlace.typed.label", { name: serverName })} />
             <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>
               <Btn variant="ghost" onClick={() => setTyped(null)} disabled={busy}>{t("common.cancel")}</Btn>
               <Btn type="submit" disabled={!confirmMatches(name, serverName) || busy} loading={swap.isPending || giveBack.isPending}>

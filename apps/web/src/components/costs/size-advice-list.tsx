@@ -6,10 +6,11 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../lib/api";
 import { useT } from "../../i18n/provider";
 import { Badge, Btn, Card, EmptyState, SectionCard } from "../ui";
-import { Checkbox, Field, TextInput } from "../form";
+import { Checkbox } from "../form";
 import { Modal } from "../modal";
 import { useToast } from "../toast";
 import { formatMoney, guideKey, pct, providerName, rescaleActive, rescaleStep, type RescaleView, type ServerAdvice } from "../../lib/costs";
+import { TypedConfirmField } from "../typed-confirm-field";
 
 /** Size advice per server: "can go down to X, saves about Y a month", "near its limit", or still learning. */
 export function SizeAdviceList({ advice, snapshotDate, canManage }: { advice: ServerAdvice[]; snapshotDate: string; canManage: boolean }) {
@@ -199,9 +200,7 @@ function RescaleDialog({ advice: a, onClose }: { advice: ServerAdvice; onClose: 
             <Checkbox checked={grow} onChange={setGrow} label={t("costs.advice.growDisk")} />
           </div>
         )}
-        <Field label={t("costs.rescale.type")} htmlFor="rescale-confirm">
-          <TextInput id="rescale-confirm" value={typed} onChange={(e) => setTyped(e.target.value)} autoComplete="off" placeholder={a.name} />
-        </Field>
+        <TypedConfirmField id="rescale-confirm" expected={a.name} value={typed} onChange={setTyped} label={t("costs.rescale.type")} />
         {start.isError && (
           <div role="alert" style={{ color: "var(--c-r)", fontSize: 12, marginTop: 8 }}>
             {(start.error as Error).message}

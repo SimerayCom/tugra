@@ -11,6 +11,7 @@ import { Btn, Spinner } from "./ui";
 import { Modal } from "./modal";
 import { CutoverTtlGuidance } from "./cutover-ttl-guidance";
 import { CutoverSourceStop } from "./cutover-source-stop";
+import { TypedConfirmField } from "./typed-confirm-field";
 
 const ACTION_KEY: Record<CutoverFlipPlanRecord["action"], string> = {
   create: "cutover.flip.recordCreate",
@@ -167,10 +168,7 @@ export function CutoverFlipDialog({ opId, hostnames, entries, onClose }: { opId:
       {stateful && <Check checked={ackData} onChange={setAckData} label={t("cutover.flip.acceptDataRisk")} tone="warn" />}
       {http01Gap && <Check checked={ackGap} onChange={setAckGap} label={t("cutover.flip.acceptHttp01Gap")} tone="warn" />}
 
-      <label style={{ display: "block", marginBottom: 12 }}>
-        <span style={{ display: "block", fontSize: 12, color: "var(--c-tx2)", marginBottom: 6 }}>{t("cutover.flip.confirmType", { id: opId })}</span>
-        <input value={typed} onChange={(e) => setTyped(e.target.value)} aria-label={t("cutover.flip.confirmType", { id: opId })} autoComplete="off" autoCapitalize="off" spellCheck={false} style={fieldStyle} />
-      </label>
+      <TypedConfirmField expected={opId} value={typed} onChange={setTyped} label={t("cutover.flip.confirmType", { id: opId })} />
 
       {flip.isError && <div role="alert" style={{ color: "var(--c-r)", fontSize: 12, marginBottom: 10 }}>{(flip.error as Error).message}</div>}
       <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>

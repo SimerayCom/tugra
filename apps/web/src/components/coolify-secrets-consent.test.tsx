@@ -43,6 +43,7 @@ describe("CoolifySecretsConsent", () => {
     const allow = await screen.findByRole("button", { name: "Allow" });
     expect((allow as HTMLButtonElement).disabled).toBe(true);
     const input = screen.getByLabelText("Type coolify-hub to allow");
+    expect((input as HTMLInputElement).placeholder).toBe("coolify-hub");
     fireEvent.change(input, { target: { value: "coolify-hu" } });
     expect((allow as HTMLButtonElement).disabled).toBe(true);
     fireEvent.change(input, { target: { value: "coolify-hub" } });

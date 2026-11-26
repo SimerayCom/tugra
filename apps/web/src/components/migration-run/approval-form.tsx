@@ -6,7 +6,7 @@ import { ShieldAlert } from "lucide-react";
 import { api } from "../../lib/api";
 import { useT } from "../../i18n/provider";
 import { Btn } from "../ui";
-import { Checkbox, fieldStyle } from "../form";
+import { Checkbox } from "../form";
 import {
   CONFIRM_PROMPT_KEY,
   STEP_TITLE_KEY,
@@ -21,6 +21,7 @@ import {
 } from "../../lib/migration-run";
 import type { MigrationRunApprovalBinding, MigrationRunGate, MigrationRunView, MigrationRunStepKey } from "../../lib/types";
 import { useRunPlumbing } from "./use-run-actions";
+import { TypedConfirmField } from "../typed-confirm-field";
 
 const ISSUE_KEY: Record<ApprovalIssue, string> = {
   stale: "migrationRun.approval.issue.stale",
@@ -140,20 +141,16 @@ export function ApprovalForm({ run, stepKey, binding, gate }: { run: MigrationRu
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           <div style={{ fontSize: 12, color: "var(--c-tx2)", lineHeight: 1.5 }}>{t(CONFIRM_PROMPT_KEY[binding.confirm])}</div>
           {expected.map((name, i) => (
-            <label key={name + i} style={{ display: "block" }}>
-              <span style={{ display: "block", fontSize: 12, color: "var(--c-tx2)", marginBottom: 6, wordBreak: "break-word" }}>{t("migrationRun.confirm.typeToConfirm", { name })}</span>
-              <input
-                value={typed[i] ?? ""}
-                disabled={stale}
-                onChange={(e) => setTyped((prev) => expected.map((_, j) => (j === i ? e.target.value : prev[j] ?? "")))}
-                aria-label={t("migrationRun.confirm.typeToConfirm", { name })}
-                autoComplete="off"
-                autoCapitalize="off"
-                spellCheck={false}
-                className="mono"
-                style={{ ...fieldStyle, minHeight: 44, fontSize: 14 }}
-              />
-            </label>
+            <TypedConfirmField
+              key={name + i}
+              mono
+              expected={name}
+              value={typed[i] ?? ""}
+              disabled={stale}
+              onChange={(v) => setTyped((prev) => expected.map((_, j) => (j === i ? v : prev[j] ?? "")))}
+              label={t("migrationRun.confirm.typeToConfirm", { name })}
+              style={{ fontSize: 14 }}
+            />
           ))}
         </div>
       )}

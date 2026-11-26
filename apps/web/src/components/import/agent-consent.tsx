@@ -11,6 +11,7 @@ import { CONSENT_HOURS, classCount, consentReady, defaultClasses, type CoolifyHo
 import { Badge, Btn, SectionCard } from "../ui";
 import { Checkbox, Select } from "../form";
 import { useToast } from "../toast";
+import { TypedConfirmField } from "../typed-confirm-field";
 
 type T = ReturnType<typeof useT>;
 
@@ -145,12 +146,15 @@ export function AgentConsentCard({
         <Select id="consent-hours" value={hours} onChange={setHours} options={CONSENT_HOURS.map((h) => ({ value: String(h), label: t("coolifySecrets.consent.hoursOption", { n: h }) }))} style={{ maxWidth: 160 }} />
       </div>
 
-      <div style={{ display: "grid", gap: 6, marginTop: 14 }}>
-        <label htmlFor="consent-host" style={{ fontSize: 12, fontWeight: 600, color: "var(--c-tx2)" }}>{t("coolifySecrets.consent.typeHost")}</label>
-        <p style={{ margin: 0, fontSize: 12, color: "var(--c-tx3)" }}>
-          {t("coolifySecrets.consent.hostName", { name: serverName })} {t("coolifySecrets.consent.typeHostHint")}
-        </p>
-        <input id="consent-host" value={typed} onChange={(e) => setTyped(e.target.value)} autoComplete="off" spellCheck={false} style={{ width: "100%", minHeight: 44, boxSizing: "border-box", padding: "8px 12px", fontSize: 14, borderRadius: "var(--r1)", border: "1px solid var(--c-bd)", background: "var(--c-el)", color: "var(--c-tx)", fontFamily: "inherit" }} />
+      <div style={{ marginTop: 14 }}>
+        <TypedConfirmField
+          id="consent-host"
+          expected={serverName}
+          value={typed}
+          onChange={setTyped}
+          label={t("coolifySecrets.consent.typeHost")}
+          hint={`${t("coolifySecrets.consent.hostName", { name: serverName })} ${t("coolifySecrets.consent.typeHostHint")}`}
+        />
       </div>
 
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 16 }}>

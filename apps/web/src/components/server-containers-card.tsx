@@ -16,6 +16,7 @@ import { Modal } from "./modal";
 import { LiveLogsCard } from "./live-logs-card";
 import { useToast } from "./toast";
 import { useShowSystemContainers, splitSystem } from "../lib/system-containers";
+import { TypedConfirmField } from "./typed-confirm-field";
 
 /** Live inventory of every container on a server (Tugra + others) with its latest CPU/RAM/Net/Disk.
  *  Read-level stats; writers can also open any container's live logs from here. Polls (no SSE for stats). */
@@ -157,13 +158,7 @@ export function ServerContainersCard({ id, canWrite = false }: { id: string; can
         >
           <h2 style={{ fontSize: 15, fontWeight: 700, margin: "0 0 10px" }}>{t("servers.containerRemoveTitle")}</h2>
           <p style={{ fontSize: 13, color: "var(--c-tx2)", margin: "0 0 14px" }}>{t("servers.containerRemoveBody", { name: removeFor })}</p>
-          <input
-            value={confirmText}
-            onChange={(e) => setConfirmText(e.target.value)}
-            placeholder={removeFor}
-            autoFocus
-            style={{ width: "100%", padding: "8px 10px", background: "var(--c-el)", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", color: "var(--c-tx)", fontSize: 13, fontFamily: "var(--font-mono)" }}
-          />
+          <TypedConfirmField autoFocus mono expected={removeFor} value={confirmText} onChange={setConfirmText} label={t("servers.containerRemoveType", { name: removeFor })} />
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 14 }}>
             <Btn variant="ghost" onClick={() => { setRemoveFor(null); setConfirmText(""); }}>{t("servers.cancel")}</Btn>
             <Btn

@@ -4,7 +4,7 @@ import { useState, type ReactNode } from "react";
 import { useT } from "../../i18n/provider";
 import { Btn } from "../ui";
 import { Modal } from "../modal";
-import { fieldStyle } from "../form";
+import { TypedConfirmField } from "../typed-confirm-field";
 
 /** A destructive or irreversible step: the operator types the exact name(s) before the button enables. One input per
  *  name, in order (a takeover approval asks for the target server and the source host). `extra` renders further
@@ -41,25 +41,17 @@ export function TypedConfirmDialog({
       <h2 style={{ fontSize: 15, fontWeight: 700, margin: "0 0 8px" }}>{title}</h2>
       <p style={{ fontSize: 13, color: "var(--c-tx2)", margin: "0 0 14px", lineHeight: 1.5 }}>{body}</p>
       {names.map((n, i) => (
-        <label key={n + i} style={{ display: "block", marginBottom: 12 }}>
-          <span style={{ display: "block", fontSize: 12, color: "var(--c-tx2)", marginBottom: 6, lineHeight: 1.5, wordBreak: "break-word" }}>
-            {t("migrationRun.confirm.typeToConfirm", { name: n })}
-          </span>
-          <input
-            autoFocus={i === 0}
-            value={typed[i] ?? ""}
-            onChange={(e) => setTyped((prev) => prev.map((v, j) => (j === i ? e.target.value : v)))}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && ready) onConfirm(typed);
-            }}
-            aria-label={t("migrationRun.confirm.typeToConfirm", { name: n })}
-            autoComplete="off"
-            autoCapitalize="off"
-            spellCheck={false}
-            className="mono"
-            style={{ ...fieldStyle, minHeight: 44, fontSize: 14 }}
-          />
-        </label>
+        <TypedConfirmField
+          key={n + i}
+          autoFocus={i === 0}
+          mono
+          expected={n}
+          value={typed[i] ?? ""}
+          onChange={(v) => setTyped((prev) => prev.map((x, j) => (j === i ? v : x)))}
+          onEnter={() => { if (ready) onConfirm(typed); }}
+          label={t("migrationRun.confirm.typeToConfirm", { name: n })}
+          style={{ fontSize: 14 }}
+        />
       ))}
       {extra}
       <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>

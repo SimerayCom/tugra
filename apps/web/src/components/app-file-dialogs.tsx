@@ -6,6 +6,7 @@ import { entryNameProblem, gridToMode, isValidMode, modeToGrid, normalizeMode, t
 import { Checkbox, Field, TextInput } from "./form";
 import { Modal } from "./modal";
 import { Btn } from "./ui";
+import { TypedConfirmField } from "./typed-confirm-field";
 
 /** Shared dialog chrome: a title, optional body, and a right-aligned action row. */
 function DialogShell({ title, onClose, children, actions }: { title: string; onClose: () => void; children?: ReactNode; actions: ReactNode }) {
@@ -255,19 +256,17 @@ export function DeleteConfirmDialog({
         {t(recursive ? "apps.files.deleteDir" : "apps.files.deleteFile", { name })}
       </p>
       {recursive && (
-        <Field label={t("apps.files.deleteTypeName", { name })} htmlFor="file-delete-type" error={error}>
-          <TextInput
+        <>
+          <TypedConfirmField
             id="file-delete-type"
+            expected={name}
             value={typed}
-            autoComplete="off"
-            autoCapitalize="off"
-            spellCheck={false}
-            onChange={(e) => setTyped(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && ok && !busy) onConfirm(recursive);
-            }}
+            onChange={setTyped}
+            onEnter={() => { if (ok && !busy) onConfirm(recursive); }}
+            label={t("apps.files.deleteTypeName", { name })}
           />
-        </Field>
+          {error && <div role="alert" style={{ fontSize: 12, color: "var(--c-r)" }}>{error}</div>}
+        </>
       )}
       {!recursive && error && <div role="alert" style={{ fontSize: 12, color: "var(--c-r)" }}>{error}</div>}
     </DialogShell>
