@@ -47,6 +47,7 @@ export function ServerTable({
   onUpdateAgent,
   updatingAgentIds,
   initialPageSize = SERVER_PAGE_SIZE,
+  scope = null,
 }: {
   /** Recent CPU/RAM trend per server (one batch call) → the usage bars column; absent → "—" cells. */
   trends?: Map<string, FleetTrendRow>;
@@ -62,6 +63,8 @@ export function ServerTable({
   updatingAgentIds?: ReadonlySet<string>;
   /** Rows per page to start with (the user can change it). */
   initialPageSize?: number;
+  /** Set while the top team switcher is on one team: `servers` is that team's, so the total chip names the team and the all-teams count. */
+  scope?: { teamName: string; allCount: number } | null;
 }) {
   const t = useT();
   const push = useGuardedPush();
@@ -187,7 +190,7 @@ export function ServerTable({
   return (
     <div>
       <div style={{ display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap" }}>
-        {statusChip(null, t("servers.total", { n: servers.length }), "var(--c-tx3)")}
+        {statusChip(null, scope ? t("servers.totalScoped", { n: servers.length, team: scope.teamName, all: scope.allCount }) : t("servers.total", { n: servers.length }), "var(--c-tx3)")}
         {statusChip("ONLINE", `● ${t("servers.online", { n: counts.ONLINE })}`, "var(--c-g)")}
         {statusChip("PENDING", `● ${t("servers.pending", { n: counts.PENDING })}`, "var(--c-am)")}
         {statusChip("OFFLINE", `● ${t("servers.offline", { n: counts.OFFLINE })}`, "var(--c-r)")}

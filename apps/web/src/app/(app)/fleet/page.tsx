@@ -5,7 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "../../../lib/api";
 import { useT } from "../../../i18n/provider";
 import { useTeamScope } from "../../../components/team-scope";
-import { scopeByTeam } from "../../../lib/team-scope";
+import { scopeByTeam, scopeTeamName } from "../../../lib/team-scope";
 import { statusCounts, filterByStatus } from "../../../lib/fleet";
 import { buildFleetRows, sortFleetRows, matchesFleetSearch, type FleetSortKey, type SortDir } from "../../../lib/fleet-view";
 import { useFleetTrendState } from "../../../hooks/useFleetTrend";
@@ -67,6 +67,8 @@ export default function FleetPage() {
   }, [clusters]);
 
   const scoped = useMemo(() => scopeByTeam(servers ?? [], teamId), [servers, teamId]);
+  const { data: teams = [] } = useQuery({ queryKey: ["teams"], queryFn: () => api.listTeams() });
+  const scopeName = scopeTeamName(teams, teamId);
   const counts = useMemo(() => statusCounts(scoped), [scoped]);
 
   // The Table keeps its OWN sort state so switching views never clobbers its order. The Wall and the Heatmap
@@ -108,7 +110,7 @@ export default function FleetPage() {
 
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", marginBottom: 14 }}>
         <div role="group" aria-label={t("fleet.filterStatus")} style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-          <Chip active={status === null} onClick={() => setStatus(null)} color="var(--c-tx3)">{t("servers.total", { n: scoped.length })}</Chip>
+          <Chip active={status === null} onClick={() => setStatus(null)} color="var(--c-tx3)">{scopeName ? t("servers.totalScoped", { n: scoped.length, team: scopeName, all: servers?.length ?? scoped.length }) : t("servers.total", { n: scoped.length })}</Chip>
           <Chip active={status === "ONLINE"} onClick={() => setStatus("ONLINE")} color="var(--c-g)">● {t("servers.online", { n: counts.ONLINE })}</Chip>
           <Chip active={status === "PENDING"} onClick={() => setStatus("PENDING")} color="var(--c-am)">● {t("servers.pending", { n: counts.PENDING })}</Chip>
           <Chip active={status === "OFFLINE"} onClick={() => setStatus("OFFLINE")} color="var(--c-r)">● {t("servers.offline", { n: counts.OFFLINE })}</Chip>

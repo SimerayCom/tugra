@@ -6,6 +6,7 @@ import { I18nProvider } from "../../../i18n/provider";
 import { api } from "../../../lib/api";
 import { wallSeries } from "../../../lib/fleet-wall";
 import { buildHeatmap, heatStep } from "../../../lib/fleet-heatmap";
+import { TeamScopeProvider } from "../../../components/team-scope";
 import FleetPage from "./page";
 
 vi.mock("next/link", () => ({
@@ -22,7 +23,9 @@ const wrap = () =>
   render(
     <QueryClientProvider client={qc}>
       <I18nProvider>
-        <FleetPage />
+        <TeamScopeProvider>
+          <FleetPage />
+        </TeamScopeProvider>
       </I18nProvider>
     </QueryClientProvider>,
   );
@@ -405,5 +408,24 @@ describe("wallSeries", () => {
     expect(wallSeries({ serverId: "a", points: [{ ts: 1, cpu: 1, mem: 1 }] }, "cpu")).toBeNull();
     expect(wallSeries(row, "disk")).toBeNull();
     expect(wallSeries(row, "net")).toBeNull();
+  });
+});
+
+describe("FleetPage: the total chip and the team scope", () => {
+  it("names the team and the all-teams count while a team is picked", async () => {
+    localStorage.setItem("tugra.teamScope", "t1");
+    vi.spyOn(api, "listServers").mockResolvedValue([srv("a", "alpha"), srv("b", "bravo"), { ...(srv("c", "charlie") as object), teamId: "t2" } as never]);
+    vi.spyOn(api, "listTeams").mockResolvedValue([
+      { id: "t1", name: "Acme", role: "OWNER" },
+      { id: "t2", name: "Other", role: "OWNER" },
+    ] as never);
+    wrap();
+    await waitFor(() => expect(screen.getByText("2 in Acme · 3 in all teams")).toBeTruthy());
+    expect(screen.queryByText(/\(all teams\)/)).toBeNull();
+  });
+
+  it("is a plain total with no team picked", async () => {
+    wrap();
+    await waitFor(() => expect(screen.getByText("3 total")).toBeTruthy());
   });
 });

@@ -1,6 +1,7 @@
 {
   "title": "Command Center",
   "subtitle": "All your teams' resources at a glance.",
+  "subtitleTeam": "Resources in {team} at a glance.",
   "resources": "Resources",
   "fleet": "Fleet",
   "projects": "Projects",

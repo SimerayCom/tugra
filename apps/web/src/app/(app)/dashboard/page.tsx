@@ -11,7 +11,7 @@ import { buildFleetRows, metricTone } from "../../../lib/fleet-view";
 import { useFleetTrend } from "../../../hooks/useFleetTrend";
 import { useHubHealth } from "../../../hooks/useHubHealth";
 import { HubHealthAttention } from "../../../components/dashboard/hub-health-attention";
-import { scopeByTeam } from "../../../lib/team-scope";
+import { scopeByTeam, scopeTeamName } from "../../../lib/team-scope";
 import { LIST_LIMIT, limitRows } from "../../../lib/dashboard-lists";
 import { useDashboardLayout, visibleCards, type DashboardCardId } from "../../../lib/dashboard-layout";
 import { useAuth } from "../../../lib/auth";
@@ -70,6 +70,9 @@ export default function DashboardPage() {
   const { data: allApps = [], isSuccess: appsLoaded } = useQuery({ queryKey: ["apps"], queryFn: () => api.listApps() });
   const { data: allDatabases = [], isSuccess: dbsLoaded } = useQuery({ queryKey: ["databases"], queryFn: () => api.listDatabases() });
   const { data: teams = [] } = useQuery({ queryKey: ["teams"], queryFn: () => api.listTeams() });
+  // "All your teams" is only true with no team picked in the switcher.
+  const scopeName = scopeTeamName(teams, teamId);
+  const subtitle = scopeName ? t("dashboard.subtitleTeam", { team: scopeName }) : t("dashboard.subtitle");
   const monitorsQ = useQuery({ queryKey: ["monitors"], queryFn: () => api.listMonitors() });
   const allMonitors = monitorsQ.data ?? [];
   const domainsQ = useQuery({ queryKey: ["domains"], queryFn: () => api.listDomains() });
@@ -123,7 +126,7 @@ export default function DashboardPage() {
     return (
       <div style={{ padding: "var(--page-pad)" }}>
         <h1 style={{ fontSize: 22, fontWeight: 700, margin: "0 0 4px" }}>{t("dashboard.title")}</h1>
-        <p style={{ color: "var(--c-tx3)", fontSize: 14, margin: "0 0 22px" }}>{t("dashboard.subtitle")}</p>
+        <p style={{ color: "var(--c-tx3)", fontSize: 14, margin: "0 0 22px" }}>{subtitle}</p>
 
         <div style={loadingTitle}>{t("dashboard.attention")}</div>
         <div style={{ marginBottom: 28 }}>
@@ -386,7 +389,7 @@ export default function DashboardPage() {
       <div style={{ display: "flex", alignItems: "flex-start", gap: 12, flexWrap: "wrap", margin: "0 0 22px" }}>
         <div style={{ flex: "1 1 240px", minWidth: 0 }}>
           <h1 style={{ fontSize: 22, fontWeight: 700, margin: "0 0 4px" }}>{t("dashboard.title")}</h1>
-          <p style={{ color: "var(--c-tx3)", fontSize: 14, margin: 0 }}>{t("dashboard.subtitle")}</p>
+          <p style={{ color: "var(--c-tx3)", fontSize: 14, margin: 0 }}>{subtitle}</p>
         </div>
         <Btn variant="ghost" icon={SlidersHorizontal} aria-expanded={customizing} onClick={() => setCustomizing((v) => !v)}>{t("dashboard.customize")}</Btn>
       </div>

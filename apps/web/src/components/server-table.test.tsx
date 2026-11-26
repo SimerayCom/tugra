@@ -31,7 +31,7 @@ const mk = (over: Partial<ServerView> & { id: string; name: string }): ServerVie
 
 const teams = [{ id: "t1", name: "Alpha" }, { id: "t2", name: "Beta" }];
 
-const renderTable = (servers: ServerView[], props: { status?: ServerStatus | null; onStatusChange?: (s: ServerStatus | null) => void; initialPageSize?: number } = {}) =>
+const renderTable = (servers: ServerView[], props: { status?: ServerStatus | null; onStatusChange?: (s: ServerStatus | null) => void; initialPageSize?: number; scope?: { teamName: string; allCount: number } | null } = {}) =>
   render(
     <I18nProvider>
       <ServerTable servers={servers} teams={teams} {...props} />
@@ -360,5 +360,19 @@ describe("ServerTable list overhaul", () => {
     expect(within(charlie).queryByRole("button", { name: "Update agent" })).toBeNull();
     expect(within(charlie).queryByRole("link", { name: "Open terminal" })).toBeNull();
     expect(within(charlie).queryByRole("link", { name: /Restart/ })).toBeNull();
+  });
+});
+
+describe("ServerTable total chip and the team scope", () => {
+  it("says plain '3 total' with no team picked, never '(all teams)'", () => {
+    renderTable(fleet);
+    expect(screen.getByRole("button", { name: "3 total" })).toBeTruthy();
+    expect(screen.queryByText(/all teams/)).toBeNull();
+  });
+
+  it("with a team picked it names the team and the all-teams count", () => {
+    renderTable(fleet.slice(1), { scope: { teamName: "Olgu Bey", allCount: 28 } });
+    expect(screen.getByRole("button", { name: "2 in Olgu Bey · 28 in all teams" })).toBeTruthy();
+    expect(screen.queryByText(/total \(all teams\)/)).toBeNull();
   });
 });

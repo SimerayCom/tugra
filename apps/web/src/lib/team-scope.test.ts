@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { scopeByTeam, defaultTeamId } from "./team-scope";
+import { scopeByTeam, defaultTeamId, scopeTeamName } from "./team-scope";
 
 const items = [{ teamId: "t1", n: 1 }, { teamId: "t2", n: 2 }, { teamId: "t1", n: 3 }];
 
@@ -30,5 +30,18 @@ describe("scopeByTeam", () => {
   });
   it("returns [] when nothing matches", () => {
     expect(scopeByTeam(items, "t9")).toEqual([]);
+  });
+});
+
+describe("scopeTeamName", () => {
+  const teams = [{ id: "t1", name: "Olgu Bey" }, { id: "t2", name: "Acme" }];
+  it("is null with no team picked (all teams)", () => {
+    expect(scopeTeamName(teams, null)).toBeNull();
+  });
+  it("names the picked team", () => {
+    expect(scopeTeamName(teams, "t1")).toBe("Olgu Bey");
+  });
+  it("is null for a scope that is not in the list", () => {
+    expect(scopeTeamName(teams, "gone")).toBeNull();
   });
 });

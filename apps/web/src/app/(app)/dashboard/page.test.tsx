@@ -3,6 +3,7 @@ import { render, screen, cleanup, waitFor, within } from "@testing-library/react
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import React from "react";
 import { I18nProvider } from "../../../i18n/provider";
+import { TeamScopeProvider } from "../../../components/team-scope";
 import DashboardPage from "./page";
 import { api } from "../../../lib/api";
 
@@ -384,5 +385,28 @@ describe("DashboardPage lists, cards and customization", () => {
     mockApi();
     wrap(<DashboardPage />);
     expect(await screen.findByText("All cards are hidden. Open Customize to bring some back.")).toBeTruthy();
+  });
+});
+
+describe("DashboardPage subtitle and the team scope", () => {
+  beforeEach(() => {
+    qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    localStorage.clear();
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  it("says all your teams only while no team is picked", async () => {
+    mockApi({ teams: [{ id: "t1", name: "Olgu Bey", role: "OWNER" }, { id: "t2", name: "Acme", role: "OWNER" }] });
+    wrap(<TeamScopeProvider><DashboardPage /></TeamScopeProvider>);
+    await ready();
+    expect(screen.getByText("All your teams' resources at a glance.")).toBeTruthy();
+  });
+
+  it("names the team once one is picked", async () => {
+    localStorage.setItem("tugra.teamScope", "t1");
+    mockApi({ teams: [{ id: "t1", name: "Olgu Bey", role: "OWNER" }, { id: "t2", name: "Acme", role: "OWNER" }] });
+    wrap(<TeamScopeProvider><DashboardPage /></TeamScopeProvider>);
+    await waitFor(() => expect(screen.getByText("Resources in Olgu Bey at a glance.")).toBeTruthy());
+    expect(screen.queryByText("All your teams' resources at a glance.")).toBeNull();
   });
 });

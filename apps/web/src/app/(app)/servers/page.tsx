@@ -13,7 +13,7 @@ import { AgentFleetNotice } from "../../../components/agent-fleet-notice";
 import { TagFilter } from "../../../components/tags";
 import { Btn } from "../../../components/ui";
 import { ErrorState } from "../../../components/error-state";
-import { scopeByTeam } from "../../../lib/team-scope";
+import { scopeByTeam, scopeTeamName } from "../../../lib/team-scope";
 import { statusFromParam } from "../../../lib/fleet";
 import { useTeamScope } from "../../../components/team-scope";
 import type { ServerStatus } from "../../../lib/types";
@@ -65,6 +65,7 @@ function ServersPageInner() {
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [status, setStatus] = useState<ServerStatus | null>(() => statusFromParam(sp.get("status")));
   const scoped = scopeByTeam(servers ?? [], teamId);
+  const scopeName = scopeTeamName(teams, teamId);
   const allTags = [...new Set(scoped.flatMap((s) => s.tags))].sort();
   const visible = scoped.filter((s) => selectedTags.every((tag) => s.tags.includes(tag)));
 
@@ -89,6 +90,7 @@ function ServersPageInner() {
           <ServerTable
             servers={visible}
             teams={teams}
+            scope={scopeName ? { teamName: scopeName, allCount: servers.length } : null}
             status={status}
             onStatusChange={setStatus}
             trends={trends}
