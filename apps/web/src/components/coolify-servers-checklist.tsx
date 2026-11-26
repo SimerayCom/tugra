@@ -11,6 +11,8 @@ import { Checkbox, Select } from "./form";
 import { CopyBtn } from "./copy-row";
 import { useToast } from "./toast";
 import { CoolifySshInstall } from "./coolify-ssh-install";
+import { HostVerify } from "./import/host-verify";
+import { probableChecklistRows } from "../lib/host-verify";
 
 const STATE = {
   this_server: "coolifyTakeover.checklist.state.this_server",
@@ -123,6 +125,7 @@ export function CoolifyServersChecklist({ serverId }: { serverId: string }) {
     <>
     <CoolifySshInstall serverId={serverId} rows={data.rows} teams={data.teams} ownerOfInventory={ownerOfInventory} />
     <SectionCard title={t("coolifyTakeover.checklist.title")} desc={t("coolifyTakeover.checklist.desc")}>
+      {ownerOfInventory && <HostVerify serverId={serverId} rows={probableChecklistRows(data.rows)} onDone={() => qc.invalidateQueries({ queryKey: key })} />}
       {others.length === 0 ? (
         <p style={{ margin: 0, fontSize: 13, color: "var(--c-tx3)" }}>{t("coolifyTakeover.checklist.empty")}</p>
       ) : (

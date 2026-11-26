@@ -3,6 +3,7 @@
 import { COOLIFY_SSH_UUID_RE } from "@tugra/shared/dist/coolify-ssh";
 import type { CoolifySshRunView } from "./coolify-ssh";
 import type { MatchRow } from "./coolify-agent";
+import type { ChecklistRow } from "./coolify-takeover";
 
 /**
  * The rows a check can settle: a Coolify server (not the Coolify host itself) that the hub matched only by an address guess ("probably the
@@ -30,4 +31,26 @@ export function verifyProgress(run: Pick<CoolifySshRunView, "targets" | "finishe
   const verified = ts.filter((t) => t.state === "VERIFIED").length;
   const failed = ts.filter((t) => t.state === "FAILED").length;
   return { total: ts.length, done: verified + failed, verified, failed, finished: run?.finished === true };
+}
+
+/**
+ * The servers of the Coolify servers checklist that are already in Tugra but only "probably" the same machine, as the rows the check takes.
+ * The hub says which ones (`probable`); nothing is guessed here.
+ */
+export function probableChecklistRows(rows: readonly ChecklistRow[]): MatchRow[] {
+  return rows
+    .filter((r) => r.state === "already_added" && r.probable === true)
+    .map((r) => ({
+      ref: r.coolifyServerUuid,
+      name: r.name,
+      controlPlane: false,
+      kind: "probable",
+      status: "probable",
+      tugraServerId: r.tugraServerId,
+      tugraName: null,
+      agentOnline: true,
+      answeredByOwner: false,
+      evidence: [],
+      identityConflict: false,
+    }));
 }

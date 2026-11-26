@@ -171,6 +171,8 @@ export interface ChecklistRow {
   installCommand: string | null;
   expiresAt: string | null;
   ssh: string;
+  /** An "already_added" row matched only by an address guess: the owner can check it by its identity. */
+  probable?: boolean;
 }
 export interface CoolifyChecklist {
   rows: ChecklistRow[];
