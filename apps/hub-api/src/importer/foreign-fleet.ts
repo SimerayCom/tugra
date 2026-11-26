@@ -423,6 +423,8 @@ export interface ImportPreflight extends AgentPlanAdditions {
   panel?: { tugra: NonNullable<PreflightHost["tugra"]> };
   /** The source team's name (Coolify), so the first import step can default the target team by name. Name only. Additive; NOT part of planHash. */
   sourceTeam?: string;
+  /** The ref of the Coolify team the owner picked for an agent session (several teams): the wizard then shows that team's servers and projects first. Additive; NOT part of planHash. */
+  sourceTeamRef?: string;
   /** The source projects with the plan items that live in each (apps, databases and services), so the first import step can
    *  select "these projects" without guessing. Absent for a source with no project tree. Additive; NOT part of planHash. */
   projects?: PreflightProject[];

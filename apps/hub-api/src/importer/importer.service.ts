@@ -237,7 +237,7 @@ export class ImporterService {
       const preflight = { ...buildPreflight(fleet, opts), ...(coverage ? { coverage } : {}) };
       const agentAdd = await source.agentPlan?.();
       const placement = await this.placementFacts(userId, session.baseUrl, fleet, preflight.hosts, built.items, source, session.agentServerId, session.hostLinks);
-      return { ...built, preflight: { ...preflight, ...(agentAdd ?? {}), ...(placement.hosts ? { hosts: placement.hosts } : {}), ...(placement.panel ? { panel: placement.panel } : {}), ...(placement.sourceTeam ? { sourceTeam: placement.sourceTeam } : {}) }, ...(mapping ? { mapping } : {}) };
+      return { ...built, preflight: { ...preflight, ...(agentAdd ?? {}), ...(placement.hosts ? { hosts: placement.hosts } : {}), ...(placement.panel ? { panel: placement.panel } : {}), ...(placement.sourceTeam ? { sourceTeam: placement.sourceTeam } : {}), ...(session.sourceTeamRef ? { sourceTeamRef: session.sourceTeamRef } : {}) }, ...(mapping ? { mapping } : {}) };
     } finally {
       await source.close();
     }
@@ -469,7 +469,7 @@ export class ImporterService {
     userId: string,
     sessionId: string,
     expectedKind?: RemoteSourceKind,
-  ): Promise<{ source: ImportSource; session: MappingSession & { sourceKind: RemoteSourceKind; agentServerId: string | null; hostLinks: HostLinks } }> {
+  ): Promise<{ source: ImportSource; session: MappingSession & { sourceKind: RemoteSourceKind; agentServerId: string | null; hostLinks: HostLinks; /** The Coolify team the agent session was made for (the one the owner picked), when it was. */ sourceTeamRef?: string | null } }> {
     const session = await this.prisma.importSession.findUnique({ where: { id: sessionId } });
     const kind = session?.sourceKind;
     if (!session || !isRemoteSourceKind(kind) || (expectedKind && kind !== expectedKind)) {
@@ -488,7 +488,7 @@ export class ImporterService {
       await this.requireAgentConsent(session.agentServerId, session.teamId);
       // The session is the run the owner's consent for secrets belongs to: its values come from that consent and from no other.
       const source = this.sources.createAgent(session.agentServerId, { run: { sessionId: session.id, userId }, teamRef: session.sourceTeamRef });
-      return { source, session: { ...info, agentServerId: session.agentServerId, hostLinks: parseHostLinks(session.hostLinks) } };
+      return { source, session: { ...info, agentServerId: session.agentServerId, hostLinks: parseHostLinks(session.hostLinks), sourceTeamRef: session.sourceTeamRef } };
     }
     const token = this.crypto.decrypt(session.tokenEnc);
     return { source: this.sources.create(kind, session.baseUrl, token), session: info };

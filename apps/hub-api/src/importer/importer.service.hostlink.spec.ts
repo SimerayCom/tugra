@@ -241,6 +241,14 @@ describe("ImporterService: the agent session around connect and revoke", () => {
     expect(m.sources.createAgent).toHaveBeenCalledWith("srv-agent", { run: { sessionId: "sess-a", userId: "u1" }, teamRef: "2" });
   });
 
+  it("the plan names the team the owner picked (ref) and the Coolify team of each server, and no team when none was picked", async () => {
+    const picked = await make({ session: { sourceTeamRef: "2" } }).svc.plan("u1", { sourceKind: "coolify", sessionId: "sess-a" });
+    expect(picked.preflight!.sourceTeamRef).toBe("2");
+    expect(picked.preflight!.hosts!.find((h) => h.ref === "srv-edge")!.team).toEqual({ ref: "1", name: "Acme" });
+    const none = await make().svc.plan("u1", { sourceKind: "coolify", sessionId: "sess-a" });
+    expect(none.preflight).not.toHaveProperty("sourceTeamRef");
+  });
+
   it("ending the session ends the consent of its run; an API session has none to end", async () => {
     const m = make();
     await m.svc.revokeSession("u1", "sess-a");
