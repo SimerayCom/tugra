@@ -7,6 +7,29 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.0-beta.33] - 2026-11-26
+
+- **One move across many teams.** One Coolify often manages servers that sit in different Tugra teams. Taking them
+  over together now makes one campaign per team in one step (the owner role is checked in every team before anything
+  is written) instead of failing at the placement step. Move off Coolify finds the Coolify host in another team and
+  shows each team's servers, and "Take over in place" works from any team.
+- **Your answers carry forward.** A server you confirm as the same machine shows as confirmed on the next steps and
+  is placed on itself, so the same question is never asked twice. "Confirm all suggested" answers the obvious matches
+  at once, and the buttons respond immediately.
+- **Machines are checked for you.** "Check these machines automatically" probes the Coolify servers through the
+  Coolify host over its own SSH keys, read-only and without installing anything, and compares each sshd host key with
+  the one the Tugra agent reports; matching machines turn from "probably the same" to "same machine".
+- **Only the team you picked.** After you pick a Coolify team, matching, the scope and placement list that team's
+  servers and projects, and "Everything" means everything of that team. "Show all teams" brings the rest back.
+- **Choices that cannot work are not offered.** The launcher marks busy servers, an invalid same-server takeover, a
+  copy onto the machine the source already runs on and a source that changed since you read it, at the step where
+  you choose, with the way out, instead of refusing after the click. Only a server where the agent found Coolify can
+  be read.
+- **Smaller fixes.** Typed confirmations show the expected name as a placeholder with a copy button. The server page
+  leads with "Read this Coolify" instead of asking for an API token, and the Coolify read page opens its rows through
+  the agent. A cleanup that only needs a Coolify read says so instead of "Failed". The Servers total names the team
+  it counts. The browser tab shows the Tugra icon. A refreshed import says it picked up where you left off.
+
 ## [0.1.0-beta.32] - 2026-11-26
 
 - **Move off Coolify through its own server.** Connect the Tugra agent on the server Coolify runs on and Tugra reads
