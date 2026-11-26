@@ -802,7 +802,7 @@
       "probable": "Probably {name}",
       "none": "Not connected to Tugra yet",
       "confirmedByYou": "Confirmed by you: {name}",
-      "notSameByYou": "You said this is not a Tugra server"
+      "notSameByYou": "Your answer: no matching Tugra server"
     },
     "controlPlane": "Coolify control plane",
     "needsCount": "Needed by what you picked: {count} items.",

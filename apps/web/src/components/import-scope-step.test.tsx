@@ -416,7 +416,7 @@ describe("ImportScopeStep", () => {
       const p = withMatches([{ ref: "s1", name: "Box One" }, { ref: "s2", name: "Box Two" }]);
       (p.preflight!.hosts![0] as { match?: unknown }).match = { status: "none", linkedBy: "user", evidence: [] };
       mount({ plan: p });
-      expect(screen.getByText("You said this is not a Tugra server")).toBeTruthy();
+      expect(screen.getByText("Your answer: no matching Tugra server")).toBeTruthy();
       expect(screen.getByText("Not connected to Tugra yet")).toBeTruthy(); // Box Two, unanswered
     });
   });
