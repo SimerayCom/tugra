@@ -774,6 +774,8 @@ export const MigrationRunSummarySchema = z.object({
   targetServerName: z.string().nullable(),
   /** How many distinct target servers the run places resources on (1 for a single-target run). */
   targetServerCount: z.number().int().min(1),
+  /** Every target server of the run (default first, each once): the servers a live run holds. */
+  targetServerIds: z.array(Id).min(1),
   sourceKind: z.enum(REMOTE_SOURCE_KINDS),
   sourceHost: z.string().nullable(),
   sourceVersion: z.string().max(64).nullable(),

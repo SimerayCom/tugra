@@ -55,7 +55,7 @@ describe("create with a serverMap", () => {
     ]);
     expect(MigrationRunViewSchema.parse(JSON.parse(JSON.stringify(v))).targetServers).toHaveLength(3);
     const [s] = await w.service.list(ACTOR, { limit: 5 });
-    expect(s).toMatchObject({ targetServerCount: 3, campaign: "wave-1" });
+    expect(s).toMatchObject({ targetServerCount: 3, targetServerIds: [SERVER, "srv2", "srv3"], campaign: "wave-1" });
     expect(MigrationRunSummarySchema.parse(JSON.parse(JSON.stringify(s))).targetServerCount).toBe(3);
     expect(w.sink.audits.find((a) => a.action === "migration.run.create")?.meta).toMatchObject({ serverIds: [SERVER, "srv2", "srv3"], campaign: "wave-1" });
   });

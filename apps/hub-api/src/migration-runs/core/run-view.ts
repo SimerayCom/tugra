@@ -172,6 +172,7 @@ export function toSummary(r: RunRow, steps: readonly StepRow[], serverName: stri
     targetServerId: r.targetServerId,
     targetServerName: serverName,
     targetServerCount: targetServerIdsOf({ targetServerId: r.targetServerId, serverMap: serverMapOf(r.serverMap) }).length,
+    targetServerIds: targetServerIdsOf({ targetServerId: r.targetServerId, serverMap: serverMapOf(r.serverMap) }),
     sourceKind: r.sourceKind as MigrationRunSummary["sourceKind"],
     sourceHost: r.sourceHost,
     sourceVersion: r.sourceVersion,
