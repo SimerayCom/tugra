@@ -11,7 +11,7 @@ import { TriangleAlert } from "lucide-react";
 import { useAuth } from "../lib/auth";
 import { serverBlock, type CtaBlock } from "../lib/cta-readiness";
 import { scanSteps } from "../lib/scan-steps";
-import { BlockedNote, ImportLaunchBtn, PLATFORM_NAME, PlatformMoveBlock } from "./cta-parts";
+import { BlockedNote, ImportLaunchBtn, PLATFORM_NAME, PlatformMoveBlock, TokenLink } from "./cta-parts";
 import { Pm2MovePanel } from "./pm2-move-panel";
 import { Badge, Btn, LinkBtn, SectionCard } from "./ui";
 
@@ -341,8 +341,8 @@ function ScanResult({
                 {p === "coolify" && !platformsWithApps.includes(p) && (
                   <span style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
                     <span>{t("servers.cta.runsCoolifyRead")}</span>
-                    <LinkBtn href={"/import/coolify-host?server=" + encodeURIComponent(serverId)} variant="ghost">{t("servers.cta.readCoolify")}</LinkBtn>
-                    <ImportLaunchBtn platform="coolify" serverName={serverName} />
+                    <LinkBtn href={"/import/coolify-host?server=" + encodeURIComponent(serverId)} variant="primary">{t("servers.cta.readCoolify")}</LinkBtn>
+                    <TokenLink platform="coolify" serverName={serverName} />
                   </span>
                 )}
               </li>

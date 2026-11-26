@@ -149,6 +149,9 @@ describe("ServerScanCard", () => {
     // the only Coolify container is Coolify's own: nothing to move, and no "move with the import" promise
     expect(screen.getByText(/This server runs Coolify itself\./)).toBeTruthy();
     expect(screen.queryByTestId("platform-move-coolify")).toBeNull();
+    // Coolify itself runs here: reading it through the agent is the primary path, no token claim
+    expect(screen.getByRole("link", { name: "Read this Coolify" }).getAttribute("href")).toBe("/import/coolify-host?server=s1");
+    expect(screen.queryByText(/API token\./)).toBeNull();
     expect(screen.getByText("Only the instance owner can move PM2 processes to Tugra.")).toBeTruthy();
     expect(screen.getByText(/Websites on nginx, Apache or CloudPanel stay where they are/)).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Move to Tugra" })).toBeNull();
@@ -169,16 +172,33 @@ describe("ServerScanCard", () => {
     show({ serverName: "Box 1" });
     const block = await screen.findByTestId("platform-move-coolify");
     expect(block.textContent).toContain("2 apps are deployed by Coolify.");
-    expect(block.textContent).toContain("To move them you need a Coolify API token.");
+    // no claim that a token is needed: the agent path reads the Coolify itself
+    expect(block.textContent).not.toMatch(/you need a Coolify API token/);
+    expect(block.textContent).toContain("Tugra reads them from Coolify itself, through its agent.");
     expect(screen.getByText(/Coolify itself \(1 container\) stays where it is/)).toBeTruthy();
-    // the real config is not on this server: token import, or reading the Coolify host that this very server runs
-    const token = within(block).getByRole("link", { name: "Use your Coolify API token" });
+    // the real config is not on this server: reading the Coolify host that this very server runs is the primary path, the token import a quiet link
+    const read = within(block).getByRole("link", { name: "Read this Coolify" });
+    expect(read.getAttribute("href")).toBe("/import/coolify-host?server=s1");
+    expect(read.getAttribute("style")).toContain("var(--c-a)"); // primary chrome
+    expect(within(block).queryByRole("link", { name: "Use your Coolify API token" })).toBeNull();
+    const token = within(block).getByRole("link", { name: "Or use a Coolify API token instead" });
     expect(token.getAttribute("href")).toBe("/import");
-    expect(within(block).getByRole("link", { name: "Read this Coolify" }).getAttribute("href")).toBe("/import/coolify-host?server=s1");
     fireEvent.click(token);
     expect(JSON.parse(sessionStorage.getItem("tugra.import.focus") ?? "{}")).toEqual({ kind: "coolify", fromServerName: "Box 1" });
     // compose projects of platform apps are not offered as stacks to adopt
     expect(screen.queryByText(/compose stack/)).toBeNull();
+  });
+
+  it("Coolify apps whose Coolify is not on this server lead with connecting it, token stays secondary", async () => {
+    const rep = report({
+      containers: [{ name: "abc-1", image: "node:22", state: "running", project: "abc", service: "app", software: null, managedBy: "coolify", ports: [], adoptable: false, platformInfra: false }],
+    });
+    vi.spyOn(api, "getServerScan").mockResolvedValue({ report: rep });
+    show();
+    const block = await screen.findByTestId("platform-move-coolify");
+    expect(block.textContent).not.toMatch(/you need a Coolify API token/);
+    expect(within(block).getByRole("link", { name: "Connect your Coolify server" }).getAttribute("href")).toBe("/import/coolify-host");
+    expect(within(block).getByRole("link", { name: "Or use a Coolify API token instead" }).getAttribute("href")).toBe("/import");
   });
 
   it("Dokploy apps use the Dokploy import and never offer Read this Coolify", async () => {
