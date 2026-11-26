@@ -310,7 +310,8 @@ export class CoolifyTakeoverService {
     });
     const byId = new Map(known.map((k) => [k.id, k]));
     // The ladder's verdict for every Coolify server that has no stored link yet (a stored link always wins).
-    const unlinked = data.servers.filter((cs) => !cs.isLocal && !links[cs.id]);
+    // A link the hub made itself (an address guess) is read again too: its verdict says whether the machine is still only "probably" the same.
+    const unlinked = data.servers.filter((cs) => !cs.isLocal && (!links[cs.id] || links[cs.id].linkedBy === "auto"));
     const verdicts = new Map((await this.hostMatch.verdicts(userId, unlinked.map((cs) => this.hostInput(cs)), { localServerId: agentServerId })).map((v) => [v.coolifyServerUuid, v] as const));
 
     const rows: ChecklistRow[] = [];
@@ -340,7 +341,9 @@ export class CoolifyTakeoverService {
       const verdict = verdicts.get(cs.id);
       const adopted = linked ?? (verdict ? byId.get(linkOf(verdict)?.serverId ?? "") : undefined);
       if (adopted) {
-        rows.push({ ...base, state: "already_added", teamId: adopted.teamId, tugraServerId: adopted.id });
+        // Only an address guess is worth a check: a user's own link and an identity match are settled.
+        const probable = link?.linkedBy !== "user" && verdict?.status === "probable";
+        rows.push({ ...base, state: "already_added", teamId: adopted.teamId, tugraServerId: adopted.id, ...(probable ? { probable: true } : {}) });
         continue;
       }
       if (verdict?.status === "ambiguous") {

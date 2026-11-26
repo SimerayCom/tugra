@@ -37,6 +37,8 @@ export interface ChecklistRow {
   expiresAt: string | null;
   /** `ssh -p 22 root@203.0.113.7`: where to run the command. Display only. */
   ssh: string;
+  /** An "already_added" row the hub matched only by an address guess ("probably the same"): the owner can check it by its identity. */
+  probable?: boolean;
 }
 
 /** One `CoolifyInventory.serverLinks` entry. `linkedBy` and `evidence` are lane D's additive fields: a row written before them reads as a user link. */

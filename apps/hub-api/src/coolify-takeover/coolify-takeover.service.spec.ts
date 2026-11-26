@@ -235,6 +235,25 @@ describe("checklist and generate (nothing runs)", () => {
     expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ meta: { created: 0, adopted: 1 } }));
   });
 
+  it("marks an already-added row that is matched only by an address as probable, so the owner can check it", async () => {
+    const { svc } = make({ snapshot: SNAPSHOT, known: [{ id: "existing", teamId: "t1", publicIp: "198.51.100.7" }] });
+    const row = (await svc.checklist("u", "s1")).rows.find((r) => r.name === "edge")!;
+    expect(row).toMatchObject({ state: "already_added", tugraServerId: "existing", probable: true });
+    // the same after the hub stored its own address-based link
+    const links = { "1": { teamId: "t1", serverId: "existing", linkedBy: "auto" } };
+    const again = make({ snapshot: SNAPSHOT, links, known: [{ id: "existing", teamId: "t1", publicIp: "198.51.100.7" }] });
+    expect((await again.svc.checklist("u", "s1")).rows.find((r) => r.name === "edge")).toMatchObject({ state: "already_added", probable: true });
+  });
+
+  it("does not offer the check for a link the owner made, or for a server that is not matched at all", async () => {
+    const links = { "1": { teamId: "t1", serverId: "existing", linkedBy: "user" } };
+    const { svc } = make({ snapshot: SNAPSHOT, links, known: [{ id: "existing", teamId: "t1", publicIp: "198.51.100.7" }] });
+    const rows = (await svc.checklist("u", "s1")).rows;
+    expect(rows.find((r) => r.name === "edge")?.probable).toBeUndefined();
+    const plain = make({ snapshot: SNAPSHOT });
+    expect((await plain.svc.checklist("u", "s1")).rows.every((r) => r.probable === undefined)).toBe(true);
+  });
+
   it("a host name alone never links: it is a weak clue, so the owner picks (and nothing is created either)", async () => {
     const named = { ...SNAPSHOT, servers: SNAPSHOT.servers.map((x) => (x.id === "1" ? { ...x, ip: "edge.example.com" } : x)) };
     const { svc, servers, getRow } = make({ snapshot: named, known: [{ id: "named", teamId: "t1", hostname: "edge.example.com" }] });
