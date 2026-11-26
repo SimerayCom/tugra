@@ -272,10 +272,13 @@ describe("CampaignReportList", () => {
     const list = await screen.findByTestId("campaign-list");
     const items = within(list).getAllByRole("listitem");
     expect(items).toHaveLength(2);
-    expect(within(items[0]).getByText("Running")).toBeTruthy();
-    expect(within(items[0]).getByText("2 runs")).toBeTruthy();
-    expect(within(items[0]).getByRole("link", { name: "Open report" }).getAttribute("href")).toBe("/import/runs/campaign?c=wave%201");
-    expect(within(items[1]).getByRole("link", { name: "Open report" }).getAttribute("href")).toBe("/import/runs/campaign?c=a%26b");
+    // the list is newest first; both fixtures are made "now", so find each line by its label rather than its position
+    const wave = items.find((li) => within(li).queryByText("wave 1"))!;
+    const ab = items.find((li) => within(li).queryByText("a&b"))!;
+    expect(within(wave).getByText("Running")).toBeTruthy();
+    expect(within(wave).getByText("2 runs")).toBeTruthy();
+    expect(within(wave).getByRole("link", { name: "Open report" }).getAttribute("href")).toBe("/import/runs/campaign?c=wave%201");
+    expect(within(ab).getByRole("link", { name: "Open report" }).getAttribute("href")).toBe("/import/runs/campaign?c=a%26b");
   });
 
   it("the campaigns of several teams under one label are one line: runs added up, the teams counted, the state that needs the owner first", async () => {
