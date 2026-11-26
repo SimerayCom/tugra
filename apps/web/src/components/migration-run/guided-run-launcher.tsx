@@ -28,6 +28,7 @@ import {
 import { AdvancedFields, type AdvancedState } from "./launch-advanced";
 import { PlacementFields } from "./launch-placement";
 import { AgentGapNotice } from "./agent-gap-notice";
+import { TakeoverStartNote, useTakeoverStartBlock } from "../takeover-start-guard";
 import { sourceAgentGapsOf } from "../../lib/coolify-ssh";
 import { CampaignPreviewCard } from "./launch-campaign";
 import { BusyNote, FreshnessNote, SameHostNote, SwapBlockNote } from "./launch-guard-notes";
@@ -199,7 +200,11 @@ function LaunchDialog({ plan, kind, sessionId, servers, teams, extras, scope, on
     refetchOnWindowFocus: false,
   });
   const freshness = campaign ? freshnessOfError(preview.error) : freshnessOf(plan.planHash, { hash: reread.data?.planHash, error: reread.error });
-  const guarded = !!swapBlock || sameHost.length > 0 || usedBusy.length > 0 || !!freshness;
+  // a same-machine move starts an in-place takeover: a takeover already on the server, or Tugra's own proxy already serving apps there, is refused at its plan
+  const takeoverBlock = useTakeoverStartBlock(targetServerId, !campaign && topology === "swap-proxy" && !swapBlock && !!targetServerId, busy.get(targetServerId) ?? null);
+  // a server held by a live run already has its own note above
+  const takeoverNote = takeoverBlock === "server_busy" && busy.has(targetServerId) ? null : takeoverBlock;
+  const guarded = !!swapBlock || sameHost.length > 0 || usedBusy.length > 0 || !!freshness || !!takeoverNote;
   const campaignRefused = campaign && (preview.isLoading || preview.isError || !!preview.data?.failure || !preview.data?.runs);
   const create = useMutation({
     mutationFn: async (): Promise<{ href: string; campaigns: number }> => {
@@ -266,6 +271,7 @@ function LaunchDialog({ plan, kind, sessionId, servers, teams, extras, scope, on
         {usedBusy.map((id) => (
           <BusyNote key={id} name={servers.find((s) => s.id === id)?.name ?? id} runId={busy.get(id) as string} />
         ))}
+        {takeoverNote && <TakeoverStartNote block={takeoverNote} serverId={targetServerId} />}
         {freshness && <FreshnessNote freshness={freshness} onRead={() => { onClose(); onRecheck?.(); }} onConnect={() => { clearImportResume(); window.location.reload(); }} />}
 
         <AgentGapNotice gaps={agentGaps} dryRun={dryRun} />

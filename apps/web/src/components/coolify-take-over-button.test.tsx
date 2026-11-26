@@ -27,6 +27,64 @@ const show = (props: Partial<React.ComponentProps<typeof CoolifyTakeOverButton>>
   );
 const focus = () => JSON.parse(window.sessionStorage.getItem("tugra.import.focus") ?? "null");
 
+describe("CoolifyTakeOverButton refuses before the click what the hub would refuse at the plan", () => {
+  const startBtn = () => screen.getByRole("button", { name: "Take over in place" }) as HTMLButtonElement;
+  const run = (o: Record<string, unknown>) => ({ id: "r1", targetServerId: "s1", topology: "two-box", dryRun: false, status: "RUNNING", createdAt: "2026-11-26T00:00:00Z", ...o });
+
+  it("another live run holds the server: the button is off and the note links to that run", async () => {
+    vi.spyOn(api, "listMigrationRuns").mockResolvedValue([run({})] as never);
+    const connect = vi.spyOn(api, "importConnectAgent");
+    show();
+    const note = await screen.findByTestId("takeover-start-block");
+    expect(note.textContent).toContain("Another takeover or run holds this server");
+    expect(note.querySelector("a")?.getAttribute("href")).toBe("/import/runs/r1");
+    expect(startBtn().disabled).toBe(true);
+    fireEvent.click(startBtn());
+    expect(connect).not.toHaveBeenCalled();
+  });
+
+  it("Tugra's proxy already publishes ports and runs here: the button is off and the note links to the server", async () => {
+    vi.spyOn(api, "listServers").mockResolvedValue([{ id: "s1", name: "box", proxyBind: "public" }] as never);
+    vi.spyOn(api, "getProxyStatus").mockResolvedValue({ status: "running" });
+    vi.spyOn(api, "listInPlace").mockResolvedValue([]);
+    show();
+    const note = await screen.findByTestId("takeover-start-block");
+    expect(note.textContent).toContain("Tugra's proxy already runs on this server");
+    expect(note.querySelector("a")?.getAttribute("href")).toBe("/servers/s1");
+    expect(startBtn().disabled).toBe(true);
+  });
+
+  it("a proxy that publishes nothing, or one that is stopped, is no reason to refuse", async () => {
+    vi.spyOn(api, "listServers").mockResolvedValue([{ id: "s1", name: "box", proxyBind: "none" }] as never);
+    const status = vi.spyOn(api, "getProxyStatus").mockResolvedValue({ status: "running" });
+    vi.spyOn(api, "listInPlace").mockResolvedValue([]);
+    show();
+    await waitFor(() => expect(api.listInPlace).toHaveBeenCalled());
+    expect(status).not.toHaveBeenCalled(); // not even asked: it publishes no port
+    expect(screen.queryByTestId("takeover-start-block")).toBeNull();
+    expect(startBtn().disabled).toBe(false);
+  });
+
+  it("the guided run that carries this very server is opened, not refused", async () => {
+    vi.spyOn(api, "listMigrationRuns").mockResolvedValue([run({ topology: "swap-proxy" })] as never);
+    vi.spyOn(api, "listServers").mockResolvedValue([{ id: "s1", name: "box", proxyBind: "public" }] as never);
+    vi.spyOn(api, "getProxyStatus").mockResolvedValue({ status: "running" });
+    vi.spyOn(api, "getMigrationRun").mockResolvedValue({ opId: "op9" } as never);
+    show();
+    await waitFor(() => expect(api.listMigrationRuns).toHaveBeenCalled());
+    expect(screen.queryByTestId("takeover-start-block")).toBeNull();
+    fireEvent.click(startBtn());
+    await waitFor(() => expect(nav.push).toHaveBeenCalledWith("/import/inplace?serverId=s1&opId=op9"));
+  });
+
+  it("a takeover already on record is never refused here: it is opened", async () => {
+    vi.spyOn(api, "listMigrationRuns").mockResolvedValue([run({})] as never);
+    show({ row: { serverId: "s1", name: "box", takeover: "TESTING" } as never });
+    await waitFor(() => expect(api.listMigrationRuns).not.toHaveBeenCalled());
+    expect(screen.queryByTestId("takeover-start-block")).toBeNull();
+  });
+});
+
 describe("CoolifyTakeOverButton", () => {
   it("makes the agent-path session on the Coolify host and opens the import with that session and server, nothing defaulted", async () => {
     const connect = vi.spyOn(api, "importConnectAgent").mockResolvedValue({ sessionId: "sess-1234abcd", expiresAt: "x", read: {} } as never);

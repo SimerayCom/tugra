@@ -1,17 +1,20 @@
 "use client";
 
 import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { MoveOffServerRow } from "@tugra/shared";
 import { api, ApiError } from "../lib/api";
 import { useT } from "../i18n/provider";
 import { connectHref } from "../lib/coolify-move";
-import { decideTakeOver, needsTeamChoice } from "../lib/coolify-take-over";
+import { decideTakeOver, guidedRunFor, needsTeamChoice } from "../lib/coolify-take-over";
+import { busyServers } from "../lib/launch-guards";
 import { rememberImportFocus } from "../lib/import-focus";
 import type { ImportAgentSession } from "../lib/types";
 import { Btn } from "./ui";
 import { AgentTeamPick } from "./import/agent-team-pick";
+import { TakeoverStartNote, useTakeoverStartBlock } from "./takeover-start-guard";
 
 /**
  * "Take over in place" for one server: it starts the right flow itself. A takeover or a guided run for this server opens that; with none,
@@ -35,6 +38,14 @@ export function CoolifyTakeOverButton({ row, teamId, hubServerId, hubTeamId }: {
     setError(e instanceof ApiError && e.code === "not_enabled" ? "notEnabled" : "generic");
     setBusy(false);
   };
+
+  // Before the click: starting a new takeover is refused when another run or takeover holds the server, or Tugra's proxy already serves apps here.
+  // A takeover or a guided run that exists is opened, not started again, so it is never refused here.
+  const starting = row.takeover === "none";
+  const runs = useQuery({ queryKey: ["migration-runs", "takeover-start", teamId], queryFn: () => api.listMigrationRuns({ teamId, active: true, limit: 100 }), enabled: starting, staleTime: 15_000, retry: false });
+  const carrying = starting && !!runs.data && !!guidedRunFor(runs.data, row.serverId);
+  const holdingRun = starting && !carrying ? (busyServers(runs.data).get(row.serverId) ?? null) : null;
+  const block = useTakeoverStartBlock(row.serverId, starting && !carrying && !runs.isLoading, holdingRun);
 
   // The import session is made in the Coolify host's own team, which is often not the team of the server being taken over.
   const press = async () => {
@@ -94,11 +105,12 @@ export function CoolifyTakeOverButton({ row, teamId, hubServerId, hubTeamId }: {
         </div>
       ) : (
         <div>
-          <Btn variant="ghost" onClick={press} disabled={busy} loading={busy} style={{ minHeight: 44 }}>
+          <Btn variant="ghost" onClick={press} disabled={busy || !!block} loading={busy} style={{ minHeight: 44 }}>
             {busy ? t("coolifyMove.takeOver.working") : row.takeover === "none" ? t("coolifyMove.rowAction.takeoverStart") : t("coolifyMove.rowAction.takeoverOpen")}
           </Btn>
         </div>
       )}
+      {block && <TakeoverStartNote block={block} serverId={row.serverId} runId={holdingRun} />}
       {error && (
         <p role="alert" style={{ margin: 0, fontSize: 12.5, color: "var(--c-r)", lineHeight: 1.5 }}>
           {t(`coolifyMove.takeOver.error.${error}`)}

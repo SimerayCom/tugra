@@ -109,6 +109,10 @@
     "working": "Preparing the takeover",
     "teamTitle": "Which Coolify team?",
     "teamContinue": "Continue to the takeover",
+    "block": {
+      "openTakeover": "Open the takeover",
+      "openServer": "Open the server"
+    },
     "error": {
       "generic": "Could not start the takeover. Try again in a moment.",
       "noHub": "Connect and read the Coolify host first.",

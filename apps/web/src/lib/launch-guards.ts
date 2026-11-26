@@ -4,7 +4,7 @@
 import type { MoveOffHub, MoveOffServerRow } from "@tugra/shared";
 import { ApiError } from "./api";
 import { hostTugra, involvedHosts, isControlPlaneHost, serverReadiness, type ImportScope, type ScopeServer, type ServerReadiness } from "./import-scope";
-import type { ImportPlan, MigrationRunServerMap, MigrationRunSummary, MigrationRunView } from "./types";
+import type { ImportPlan, MigrationRunServerMap, MigrationRunSummary, MigrationRunView, ProxyStatus } from "./types";
 
 // ───────────── topology: the proxy swap needs one machine that is the source's own ─────────────
 
@@ -58,6 +58,26 @@ export function busyServers(runs: readonly Pick<MigrationRunSummary, "id" | "tar
     for (const id of r.targetServerIds && r.targetServerIds.length > 0 ? r.targetServerIds : [r.targetServerId]) if (!out.has(id)) out.set(id, r.id);
   }
   return out;
+}
+
+// ───────────── taking a server over in place: what the hub refuses at the plan ─────────────
+
+export type TakeoverStartBlock = "server_busy" | "tugra_proxy_in_use";
+
+/** Takeover statuses that hold the server (the hub's own list): from planned until it is given back. */
+const LIVE_TAKEOVER: ReadonlySet<string> = new Set(["PLANNED", "TESTING", "SWAPPING", "SWAPPED", "VERIFIED", "GIVING_BACK"]);
+export const takeoverIsLive = (status: string | null | undefined): boolean => !!status && LIVE_TAKEOVER.has(status);
+
+/**
+ * Why the plan of an in-place takeover would be refused on this server, known before it is started (the hub answers `takeover_server_busy` and
+ * `takeover_tugra_proxy_in_use` there). Busy: another live run or takeover holds the server. Proxy: Tugra's own proxy already publishes ports here
+ * and runs, so starting it dark for the test would take the apps it serves down. A fact that is not known yet (the server list or the proxy status
+ * did not answer) is not judged: the hub still decides.
+ */
+export function takeoverStartBlock(i: { busyRunId: string | null; takeoverLive: boolean; proxyBind: string | undefined; proxy: ProxyStatus | undefined }): TakeoverStartBlock | null {
+  if (i.busyRunId || i.takeoverLive) return "server_busy";
+  if (i.proxyBind !== undefined && i.proxyBind !== "none" && i.proxy === "running") return "tugra_proxy_in_use";
+  return null;
 }
 
 // ───────────── is what the owner reviewed still true? ─────────────

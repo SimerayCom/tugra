@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { ApiError } from "./api";
-import { busyServers, cleanupGuard, copyOntoSourceHost, freshnessOf, freshnessOfError, promoteBlocks, swapProxyBlock } from "./launch-guards";
+import { takeoverStartBlock, busyServers, cleanupGuard, copyOntoSourceHost, freshnessOf, freshnessOfError, promoteBlocks, swapProxyBlock } from "./launch-guards";
 import type { ImportPlan } from "./types";
 
 const tugra = (serverId: string) => ({ serverId, name: serverId, teamId: "t1", via: "public-ip" as const, confidence: "certain" as const });
@@ -126,5 +126,25 @@ describe("cleanupGuard", () => {
   it("goes ahead on a recent read, and says nothing while the status is unknown", () => {
     expect(cleanupGuard({ coolify: true, isCoolifyHub: false }, fresh, now)).toBeNull();
     expect(cleanupGuard(undefined, fresh, now)).toBeNull();
+  });
+});
+
+describe("takeoverStartBlock", () => {
+  const base = { busyRunId: null, takeoverLive: false, proxyBind: "public" as string | undefined, proxy: "running" as const };
+  it("a run or a takeover that holds the server comes first", () => {
+    expect(takeoverStartBlock({ ...base, busyRunId: "r1" })).toBe("server_busy");
+    expect(takeoverStartBlock({ ...base, takeoverLive: true })).toBe("server_busy");
+  });
+  it("Tugra's proxy that publishes ports and runs is in use; stopped, absent, not publishing or not known is not judged", () => {
+    expect(takeoverStartBlock(base)).toBe("tugra_proxy_in_use");
+    expect(takeoverStartBlock({ ...base, proxy: "stopped" as never })).toBeNull();
+    expect(takeoverStartBlock({ ...base, proxyBind: "none" })).toBeNull();
+    expect(takeoverStartBlock({ ...base, proxyBind: undefined })).toBeNull();
+    expect(takeoverStartBlock({ ...base, proxy: undefined as never })).toBeNull();
+  });
+  it("names the live takeover statuses the hub holds a server for", async () => {
+    const { takeoverIsLive } = await import("./launch-guards");
+    for (const s of ["PLANNED", "TESTING", "SWAPPING", "SWAPPED", "VERIFIED", "GIVING_BACK"]) expect(takeoverIsLive(s)).toBe(true);
+    for (const s of ["GIVEN_BACK", "FAILED", undefined]) expect(takeoverIsLive(s)).toBe(false);
   });
 });

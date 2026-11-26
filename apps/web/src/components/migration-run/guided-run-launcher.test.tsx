@@ -663,6 +663,35 @@ describe("GuidedRunLauncher guards: nothing is offered that fails after the clic
     expect(d.queryByTestId("swap-block")).toBeNull();
   });
 
+  it("a same-server move onto a server whose Tugra proxy already serves apps is refused where it is chosen", async () => {
+    vi.spyOn(api, "listServers").mockResolvedValue([{ id: "srv1", name: "Server A", teamId: "t1", proxyBind: "public" }] as never);
+    vi.spyOn(api, "getProxyStatus").mockResolvedValue({ status: "running" });
+    vi.spyOn(api, "listInPlace").mockResolvedValue([]);
+    const create = vi.spyOn(api, "createMigrationRun").mockResolvedValue(mkRun());
+    mount({ plan: hostPlan });
+    const d = await openDialog();
+    expect(d.queryByTestId("takeover-start-block")).toBeNull(); // a copy to another machine does not need the proxy
+    fireEvent.change(d.getByLabelText("Topology"), { target: { value: "swap-proxy" } });
+    const note = await d.findByTestId("takeover-start-block");
+    expect(note.textContent).toContain("Tugra's proxy already runs on this server");
+    expect(within(note).getByRole("link", { name: "Open the server" }).getAttribute("href")).toBe("/servers/srv1");
+    expect(submitOf(d).disabled).toBe(true);
+    fireEvent.submit(submitOf(d).closest("form")!);
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("a same-server move onto a server that already has a takeover says another takeover holds it", async () => {
+    vi.spyOn(api, "listServers").mockResolvedValue([{ id: "srv1", name: "Server A", teamId: "t1", proxyBind: "none" }] as never);
+    vi.spyOn(api, "listInPlace").mockResolvedValue([{ id: "tk1", serverId: "srv1", status: "TESTING", items: [] }] as never);
+    mount({ plan: hostPlan });
+    const d = await openDialog();
+    fireEvent.change(d.getByLabelText("Topology"), { target: { value: "swap-proxy" } });
+    const note = await d.findByTestId("takeover-start-block");
+    expect(note.textContent).toContain("Another takeover or run holds this server");
+    expect(within(note).getByRole("link", { name: "Open the takeover" }).getAttribute("href")).toBe("/import/inplace?serverId=srv1");
+    expect(submitOf(d).disabled).toBe(true);
+  });
+
   it("the machine Coolify itself runs on never takes a same-server move", async () => {
     const cp = { ...hostPlan, preflight: { ...hostPlan.preflight, hosts: [{ ref: "s1", name: "Alpha", controlPlane: true, tugra: tugra("srv1") }] } } as unknown as ImportPlan;
     mount({ plan: cp });
