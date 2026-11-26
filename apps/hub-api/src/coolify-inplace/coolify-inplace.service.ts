@@ -766,29 +766,66 @@ export class CoolifyInPlaceService implements InPlaceRunPort {
       const r = await this.world.runAdopted(userId, item.appId, item.adoptDeploymentId as string);
       return r.ok ? null : "exclusive_start_failed";
     }
-    if (item.networksWanted) {
-      // what the app had is recorded BEFORE the change: a crash must still leave the way back
-      if (item.networksBefore === undefined) {
-        item.networksBefore = (await this.world.service(item.appId))?.networks ?? [];
-        await this.saveItems(row.id, items);
-      }
-      try {
-        await this.world.setComposeNetworks(userId, item.appId, item.networksWanted);
-      } catch {
-        // a refusal that changed nothing leaves nothing to put back (what the app has now is what it had)
-        const now = (await this.world.service(item.appId).catch(() => null))?.networks;
-        if (now && sameNetworkRows(now, item.networksBefore ?? [])) {
-          item.networksBefore = undefined;
-          await this.saveItems(row.id, items);
-        }
-        return "exclusive_start_failed";
-      }
-    }
+    if (!(await this.joinNetworks(userId, row, items, item))) return "exclusive_start_failed";
     const r = await this.world.runAdopted(userId, item.appId, item.adoptDeploymentId as string);
     if (!r.ok) return "exclusive_start_failed";
     const rd = await this.waitReady(serverId, item);
     await this.saveItems(row.id, items);
     if (!rd.ok) return "service_not_ready";
+    const same = await this.verifyMemberDbs(serverId, item);
+    await this.saveItems(row.id, items);
+    return same ? null : "service_verify_failed";
+  }
+
+  /**
+   * The compose app takes on the network names of Coolify's containers (what the app had is recorded BEFORE the change, so a crash still leaves
+   * the way back). False when the hub refuses; a refusal that changed nothing leaves nothing to put back.
+   */
+  private async joinNetworks(userId: string, row: Row, items: TakeoverItem[], item: TakeoverItem): Promise<boolean> {
+    if (!item.networksWanted) return true;
+    if (item.networksBefore === undefined) {
+      item.networksBefore = (await this.world.service(item.appId))?.networks ?? [];
+      await this.saveItems(row.id, items);
+    }
+    try {
+      await this.world.setComposeNetworks(userId, item.appId, item.networksWanted);
+      return true;
+    } catch {
+      const now = (await this.world.service(item.appId).catch(() => null))?.networks;
+      if (now && sameNetworkRows(now, item.networksBefore ?? [])) {
+        item.networksBefore = undefined;
+        await this.saveItems(row.id, items);
+      }
+      return false;
+    }
+  }
+
+  /**
+   * A service that ran next to Coolify's copy (no shared data) is settled at the switch: it takes on Coolify's network names, so they still
+   * resolve once Coolify's containers are gone, and is recreated on them and waited for; its database-like containers are checked against
+   * what Coolify's running ones show NOW (the test-time reading is stale). The failure code, or null.
+   */
+  private async settleAlongside(userId: string, row: Row, items: TakeoverItem[], serverId: string, item: TakeoverItem): Promise<TakeoverFailureCode | null> {
+    if (item.networksWanted) {
+      if (!(await this.joinNetworks(userId, row, items, item))) return "exclusive_start_failed";
+      const r = await this.world.runAdopted(userId, item.appId, item.adoptDeploymentId as string);
+      if (!r.ok) return "exclusive_start_failed";
+      const rd = await this.waitReady(serverId, item);
+      await this.saveItems(row.id, items);
+      if (!rd.ok) return "service_not_ready";
+    }
+    const dbm = (item.members ?? []).filter((m) => m.engine);
+    if (dbm.length === 0) return null;
+    const fresh = await this.fingerprint(serverId, dbm.map((m) => ({ engine: m.engine as DbTarget["engine"], ref: { kind: "recorded" as const, ctr: { id: m.container.id, name: m.container.name, image: m.container.image } } })));
+    for (const m of dbm) {
+      const fp = fresh?.get(m.container.id);
+      if (!fp || fp.state !== "ok") {
+        m.dbVerify = { level: memberLevel(m), state: "failed" };
+        await this.saveItems(row.id, items);
+        return "service_verify_failed";
+      }
+      m.dbBefore = fp;
+    }
     const same = await this.verifyMemberDbs(serverId, item);
     await this.saveItems(row.id, items);
     return same ? null : "service_verify_failed";
@@ -943,6 +980,12 @@ export class CoolifyInPlaceService implements InPlaceRunPort {
       if (code) return this.abandon(userId, row, items, code);
     }
 
+    // services that ran next to Coolify's copy: network names and databases settled before the proxies change
+    for (const i of active.filter((x) => x.kind === "service" && !x.exclusive && !x.afterSwitch)) {
+      const code = await this.settleAlongside(userId, row, items, server.id, i);
+      if (code) return this.abandon(userId, row, items, code);
+    }
+
     // 2. Coolify's certificates as the fallback, before Tugra's proxy takes the ports
     const hosts = domainsOf(active).map((d) => d.host);
     const fb = await this.run(server.id, buildFallbackInstallScript({ hosts }), (o) => parseFallbackInstall(o, hosts));
@@ -988,7 +1031,7 @@ export class CoolifyInPlaceService implements InPlaceRunPort {
     const r = await this.undo(userId, row.id, items);
     await this.saveItems(row.id, items);
     await this.prisma.coolifyTakeover.update({ where: { id: row.id }, data: { status: "FAILED", failureCode: r.ok ? code : "give_back_failed" } });
-    await this.audit.log({ actor: userId, action: "coolify.takeover.swap", target: row.id, meta: { failure: code, reversed: r.ok } });
+    await this.audit.log({ actor: userId, action: "coolify.takeover.swap", target: row.id, meta: { failure: code, reversed: r.ok, ...(r.ok && r.networksLeft > 0 ? { networksNotRestored: r.networksLeft } : {}) } });
     return this.fresh(row.id);
   }
 
@@ -1143,7 +1186,7 @@ export class CoolifyInPlaceService implements InPlaceRunPort {
       return this.fresh(row.id);
     }
     await this.prisma.coolifyTakeover.update({ where: { id: row.id }, data: { status: "GIVEN_BACK", giveBackAvailable: false, finishedAt: this.world.now(), failureCode: null } });
-    await this.audit.log({ actor: userId, action: "coolify.takeover.give-back", target: row.id, meta: { ok: true, apps: items.filter((i) => i.state !== "skipped").length, ...(row.runId ? { runId: row.runId } : {}) } });
+    await this.audit.log({ actor: userId, action: "coolify.takeover.give-back", target: row.id, meta: { ok: true, apps: items.filter((i) => i.state !== "skipped").length, ...(r.networksLeft > 0 ? { networksNotRestored: r.networksLeft } : {}), ...(row.runId ? { runId: row.runId } : {}) } });
     return this.fresh(row.id);
   }
 
@@ -1151,7 +1194,7 @@ export class CoolifyInPlaceService implements InPlaceRunPort {
    * Reverse everything done to the box, in the order that keeps each app reachable: the apps that were switched get Coolify's container back
    * first, then the proxies, then the fallback certificates and Tugra's side-by-side copies. Every step tolerates having been done already.
    */
-  private async undo(userId: string, rowId: string, items: TakeoverItem[]): Promise<{ ok: true } | { ok: false; step: string }> {
+  private async undo(userId: string, rowId: string, items: TakeoverItem[]): Promise<{ ok: true; networksLeft: number } | { ok: false; step: string }> {
     const row = await this.rowOf(rowId);
     const plan = this.planOf(row);
     const rb = this.rollbackOf(row);
@@ -1162,13 +1205,6 @@ export class CoolifyInPlaceService implements InPlaceRunPort {
       const ex = items.filter((i) => (i.exclusive || i.afterSwitch) && hasCtrs(i) && i.state !== "skipped");
       if (rb.exclusiveStopped && ex.length > 0) {
         for (const i of ex.filter((x) => x.exclusive)) await (i.kind === "database" ? this.world.stopDatabase(userId, i.appId) : this.world.stopApp(userId, i.appId));
-        // the compose apps' network attachments go back to what they were (the takeover added Coolify's)
-        for (const i of ex.filter((x) => x.kind === "service" && x.networksBefore !== undefined)) {
-          const now = (await this.world.service(i.appId).catch(() => null))?.networks;
-          if (!now || !sameNetworkRows(now, i.networksBefore ?? [])) await this.world.setComposeNetworks(userId, i.appId, i.networksBefore ?? []);
-          i.networksBefore = undefined;
-          await this.saveItems(rowId, items);
-        }
         const list = [...ex.filter((i) => i.kind === "database"), ...ex.filter((i) => i.kind !== "database")].flatMap((i) => ctrsOf(i));
         const ids = list.map((c) => c.id);
         const pol = parsePolicy((await this.world.exec(serverId, buildRestartPolicyScript(list.map((c) => ({ id: c.id, name: c.name, image: c.image, policy: c.restart }))), HOST_T)).output, ids);
@@ -1201,6 +1237,21 @@ export class CoolifyInPlaceService implements InPlaceRunPort {
         if (i.state === "skipped" || i.exclusive) continue;
         if (i.adoptDeploymentId || i.rebuildDeploymentId) await this.world.stopApp(userId, i.appId);
       }
+      // 5. the compose apps' network attachments go back to what they were (the takeover added Coolify's). Last, once Coolify's containers run
+      // again: a refusal is reported and never keeps Coolify's containers down; what was not restored stays recorded on the item
+      let networksLeft = 0;
+      for (const i of items) {
+        if (i.kind !== "service" || i.networksBefore === undefined) continue;
+        try {
+          const before = i.networksBefore ?? [];
+          const now = (await this.world.service(i.appId).catch(() => null))?.networks;
+          if (!now || !sameNetworkRows(now, before)) await this.world.setComposeNetworks(userId, i.appId, before);
+          i.networksBefore = undefined;
+        } catch {
+          networksLeft += 1;
+        }
+        await this.saveItems(rowId, items);
+      }
       for (const i of items) {
         if (i.state === "skipped") continue;
         i.state = "given-back";
@@ -1213,7 +1264,7 @@ export class CoolifyInPlaceService implements InPlaceRunPort {
           d.finalCheck = "pending";
         }
       }
-      return { ok: true };
+      return { ok: true, networksLeft };
     } catch {
       return { ok: false, step: "host" };
     }
