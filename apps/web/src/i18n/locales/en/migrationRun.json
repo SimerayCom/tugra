@@ -1588,6 +1588,9 @@
       "teamTitle": "Which Coolify team?",
       "teamContinue": "Continue with this team",
       "error": "Coolify could not be read through the agent. Check that its agent is online, then try again."
+    },
+    "agents": {
+      "recheck": "Check again"
     }
   }
 }

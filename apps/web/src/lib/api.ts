@@ -3,7 +3,7 @@ import type { SettingsApplyBody, SettingsApplyResult, SettingsPreview } from "./
 import type { BulkTransferResponse, TransferPlan } from "./server-transfer";
 import type { BeszelApplyInput, BeszelApplyResult, BeszelConnectResult, BeszelPreview, BeszelSavedConnection } from "./beszel-import";
 import type { CoolifyChecklist, CoolifyDetect, CoolifyInventoryView } from "./coolify-takeover";
-import type { CoolifySshRunView } from "./coolify-ssh";
+import type { CoolifySshRunView, SourceAgentGap } from "./coolify-ssh";
 import { HUB_UNREACHABLE_CODE, hubUnreachableMessage, isHubDownStatus, isNetworkFailure, reportHubDown } from "./hub-connection";
 import { observeServerDate } from "./clock-skew";
 import type { CampaignRunPlan, CampaignTeamPlan, CampaignView, RunInPlaceView, SourceServerPlacementView, TakeoverView } from "@tugra/shared";
@@ -3026,6 +3026,10 @@ export const api = {
   /** Re-enter the source token when the 1 h import session expired (never returned). */
   migrationRunSourceSession(id: string, body: { token: string }) {
     return apiFetch<{ sessionId: string; expiresAt: string }>(`/migration-runs/${encodeURIComponent(id)}/source-session`, { method: "POST", body: JSON.stringify(body) });
+  },
+  /** A finished dry run: the source servers without an online agent (what its promotion refuses on). `unverified` while the session ended or the source cannot be read. */
+  getMigrationRunSourceAgents(id: string, sessionId?: string) {
+    return apiFetch<{ gaps: SourceAgentGap[]; unverified: boolean }>(`/migration-runs/${encodeURIComponent(id)}/source-agents${sessionId ? `?sessionId=${encodeURIComponent(sessionId)}` : ""}`);
   },
   getMigrationRunSafetyHints(id: string) {
     return apiFetch<MigrationRunSafetyHints>(`/migration-runs/${encodeURIComponent(id)}/safety-hints`);

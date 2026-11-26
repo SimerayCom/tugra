@@ -6,10 +6,12 @@ import { api } from "../../lib/api";
 import { useT } from "../../i18n/provider";
 import { capabilitiesHref } from "../../lib/cta-readiness";
 import { promoteBlocks, type PromoteBlock } from "../../lib/launch-guards";
+import { readFirstHref } from "../../lib/coolify-move";
 import { needsTeamChoice } from "../../lib/coolify-take-over";
 import type { ImportAgentSession, MigrationRunView } from "../../lib/types";
 import { Btn, LinkBtn } from "../ui";
 import { AgentTeamPick } from "../import/agent-team-pick";
+import { AgentGapNotice } from "./agent-gap-notice";
 import { SourceSessionForm } from "./source-session-card";
 import { sessionQueryKey, useFreshSession } from "./use-run-actions";
 
@@ -26,10 +28,40 @@ const TARGET_KEY = {
  * grant, and a source session that ended during the review (an hour is short). `blocked` keeps Start off; `node` says why and how to go on.
  */
 export function usePromoteGuard(run: MigrationRunView): { blocked: boolean; node: React.ReactNode } {
+  const t = useT();
   const fresh = useFreshSession(run.id);
-  const servers = useQuery({ queryKey: ["servers"], queryFn: () => api.listServers(), enabled: run.status === "DRY_RUN_DONE", staleTime: 15_000 });
-  const blocks = run.status === "DRY_RUN_DONE" ? promoteBlocks(run, servers.data ?? [], !!fresh) : [];
-  return { blocked: blocks.length > 0, node: blocks.length > 0 ? <PromoteBlocks run={run} blocks={blocks} servers={servers.data ?? []} /> : null };
+  const done = run.status === "DRY_RUN_DONE";
+  const servers = useQuery({ queryKey: ["servers"], queryFn: () => api.listServers(), enabled: done, staleTime: 15_000 });
+  const blocks = done ? promoteBlocks(run, servers.data ?? [], !!fresh) : [];
+  // The agents on the source servers are read on the session the promotion would use: only once there is one (an ended session is its own block above).
+  const askAgents = done && !run.inPlace && !blocks.some((b) => b.kind === "session");
+  const agents = useQuery({
+    queryKey: ["migration-run-source-agents", run.id, fresh?.sessionId ?? null],
+    queryFn: () => api.getMigrationRunSourceAgents(run.id, fresh?.sessionId),
+    enabled: askAgents,
+    staleTime: 15_000,
+    retry: false,
+  });
+  const gaps = askAgents ? (agents.data?.gaps ?? []) : [];
+  const unverified = askAgents && agents.data?.unverified === true && gaps.length === 0;
+  const node = (
+    <>
+      {blocks.length > 0 ? <PromoteBlocks run={run} blocks={blocks} servers={servers.data ?? []} /> : null}
+      {gaps.length > 0 && (
+        <div data-testid="promote-agent-gap">
+          <AgentGapNotice gaps={gaps} dryRun={false} href={readFirstHref(run.sourceSession?.agentServerId)} />
+        </div>
+      )}
+      {unverified && (
+        <p role="alert" data-testid="promote-agents-unverified" style={note}>
+          <span style={{ flex: "1 1 240px" }}>{t("coolifyInstall.gap.unverified")}</span>
+          <Btn variant="ghost" onClick={() => void agents.refetch()} loading={agents.isFetching} style={{ minHeight: 44 }}>{t("migrationRun.promote.agents.recheck")}</Btn>
+        </p>
+      )}
+    </>
+  );
+  const blocked = blocks.length > 0 || gaps.length > 0 || unverified;
+  return { blocked, node: blocked ? node : null };
 }
 
 function PromoteBlocks({ run, blocks, servers }: { run: MigrationRunView; blocks: PromoteBlock[]; servers: Array<{ id: string; teamId: string }> }) {

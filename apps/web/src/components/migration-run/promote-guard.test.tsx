@@ -42,6 +42,7 @@ const active = { state: "active" as const, expiresAt: "2099-01-01T00:00:00Z", vi
 describe("the start of a finished dry run says what would stop it before the click", () => {
   beforeEach(() => {
     vi.spyOn(api, "getMigrationRunSafetyHints").mockResolvedValue(hints);
+    vi.spyOn(api, "getMigrationRunSourceAgents").mockResolvedValue({ gaps: [], unverified: false });
   });
 
   it("a ready target and a live session leave Start open and say nothing", async () => {
@@ -110,5 +111,47 @@ describe("the start of a finished dry run says what would stop it before the cli
     const panel = await screen.findByTestId("promote-session-token");
     expect(within(panel).getByLabelText("Source API token")).toBeTruthy();
     expect(startBtn().disabled).toBe(true);
+  });
+
+  it("a source server without an online agent keeps Start off, names it and links to the Coolify page of the host", async () => {
+    vi.spyOn(api, "listServers").mockResolvedValue([server()] as never);
+    vi.spyOn(api, "getMigrationRunSourceAgents").mockResolvedValue({ gaps: [{ ref: "u1", name: "Edge A", state: "no_agent" }, { ref: "u2", name: "Edge B", state: "offline" }], unverified: false });
+    mount(run({ sourceSession: { ...active, viaAgent: true, agentServerId: "hub1" } }));
+    const block = await screen.findByTestId("promote-agent-gap");
+    expect(block.textContent).toContain("Edge A");
+    expect(block.textContent).toContain("Agent offline");
+    expect(block.textContent).not.toContain("A dry run still works");
+    expect(within(block).getByRole("link", { name: "Open the Coolify page" }).getAttribute("href")).toBe("/import/coolify-host?server=hub1");
+    await waitFor(() => expect(startBtn().disabled).toBe(true));
+  });
+
+  it("when the agents cannot be checked, Start stays off and a button asks again", async () => {
+    vi.spyOn(api, "listServers").mockResolvedValue([server()] as never);
+    const read = vi.spyOn(api, "getMigrationRunSourceAgents").mockResolvedValue({ gaps: [], unverified: true });
+    mount(run({ sourceSession: active }));
+    const note = await screen.findByTestId("promote-agents-unverified");
+    expect(note.textContent).toContain("could not check which servers have an agent");
+    expect(startBtn().disabled).toBe(true);
+    read.mockResolvedValue({ gaps: [], unverified: false });
+    fireEvent.click(within(note).getByRole("button", { name: "Check again" }));
+    await waitFor(() => expect(screen.queryByTestId("promote-agents-unverified")).toBeNull());
+    expect(startBtn().disabled).toBe(false);
+  });
+
+  it("does not ask about the agents while the source session has ended, and asks on the renewed one", async () => {
+    vi.spyOn(api, "listServers").mockResolvedValue([server()] as never);
+    const read = vi.spyOn(api, "getMigrationRunSourceAgents").mockResolvedValue({ gaps: [], unverified: false });
+    mount(run({ sourceSession: { ...active, state: "expired" } }));
+    await screen.findByTestId("promote-guard");
+    expect(read).not.toHaveBeenCalled();
+  });
+
+  it("a failed check call blocks nothing: the hub still refuses what it must", async () => {
+    vi.spyOn(api, "listServers").mockResolvedValue([server()] as never);
+    vi.spyOn(api, "getMigrationRunSourceAgents").mockRejectedValue(new Error("down"));
+    mount(run({ sourceSession: active }));
+    await waitFor(() => expect(api.getMigrationRunSourceAgents).toHaveBeenCalled());
+    expect(screen.queryByTestId("promote-agent-gap")).toBeNull();
+    expect(startBtn().disabled).toBe(false);
   });
 });

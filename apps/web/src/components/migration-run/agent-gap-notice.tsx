@@ -7,9 +7,9 @@ import type { SourceAgentGap } from "../../lib/coolify-ssh";
 /**
  * "A move needs a Tugra agent on both servers": the source servers that have none, and how to add one. Over Coolify's own SSH keys in one click
  * when the Coolify host is connected through its agent, otherwise with the install command, a cloud console or cloud-init. A dry run still
- * works; a real run starts when every source server has an agent.
+ * works; a real run starts when every source server has an agent. `href` is the Coolify page of the host the source is read through, when known.
  */
-export function AgentGapNotice({ gaps, dryRun }: { gaps: readonly SourceAgentGap[]; dryRun: boolean }) {
+export function AgentGapNotice({ gaps, dryRun, href = "/import/coolify-host" }: { gaps: readonly SourceAgentGap[]; dryRun: boolean; href?: string }) {
   const t = useT();
   if (gaps.length === 0) return null;
   return (
@@ -26,7 +26,7 @@ export function AgentGapNotice({ gaps, dryRun }: { gaps: readonly SourceAgentGap
       <span style={{ color: "var(--c-tx3)" }}>{t("coolifyInstall.gap.sshHint")}</span>
       <span style={{ color: "var(--c-tx3)" }}>{t("coolifyInstall.gap.commandHint")}</span>
       {dryRun && <span style={{ color: "var(--c-tx3)" }}>{t("coolifyInstall.gap.dryRunNote")}</span>}
-      <Link href="/import/coolify-host" style={{ color: "var(--c-lapis)", minHeight: 44, display: "inline-flex", alignItems: "center" }}>
+      <Link href={href} style={{ color: "var(--c-lapis)", minHeight: 44, display: "inline-flex", alignItems: "center" }}>
         {t("coolifyInstall.gap.link")}
       </Link>
     </div>
