@@ -836,7 +836,9 @@
     "pickServer": "Pick a server",
     "startedFrom": "Started with {name} ticked. Untick what you do not want to move.",
     "startedFromItem": "You opened {item}. Its whole project, {project}, is ticked. Untick what you do not want to move.",
-    "startedFromItemNone": "You opened {item}. Nothing is ticked yet, so pick what to move."
+    "startedFromItemNone": "You opened {item}. Nothing is ticked yet, so pick what to move.",
+    "startedInPlace": "Taking {name} over in place. Check where it goes below, then continue.",
+    "inPlaceNotFound": "Could not tell which of Coolify's servers is {server}. Pick what to move below."
   },
   "settings": {
     "title": "Settings",

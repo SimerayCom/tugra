@@ -1,14 +1,22 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
-import { render, screen, cleanup, waitFor, within } from "@testing-library/react";
+import { render, screen, cleanup, waitFor, within, fireEvent } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import React from "react";
 import type { CampaignView, MoveOffServerRow, MoveOffStatusView } from "@tugra/shared";
 import { I18nProvider } from "../i18n/provider";
 import { api, ApiError } from "../lib/api";
 import { CoolifyMoveChecklist } from "./coolify-move-checklist";
+import { TeamScopeProvider } from "./team-scope";
 import { CampaignReportList, TeamCampaignReportList } from "./campaign-report-list";
 
+const nav = vi.hoisted(() => ({ push: vi.fn() }));
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push: nav.push, replace: vi.fn() }), usePathname: () => "/", useSearchParams: () => new URLSearchParams() }));
+
 afterEach(cleanup);
+beforeEach(() => {
+  nav.push.mockClear();
+  window.sessionStorage.clear();
+});
 
 const row = (o: Partial<MoveOffServerRow>): MoveOffServerRow => ({ serverId: "s1", name: "box", agentOnline: true, coolify: true, isCoolifyHub: false, takeover: "none", cleanup: "none", stage: "takeover", ...o });
 const view = (o: Partial<MoveOffStatusView> = {}): MoveOffStatusView => ({
@@ -41,7 +49,7 @@ beforeEach(() => {
   vi.spyOn(api, "listTeams").mockResolvedValue([{ id: "t1", name: "Team", role: "OWNER" }]);
   vi.spyOn(api, "listCampaigns").mockResolvedValue([]);
 });
-const wrap = (ui: React.ReactNode) => render(<QueryClientProvider client={qc}><I18nProvider>{ui}</I18nProvider></QueryClientProvider>);
+const wrap = (ui: React.ReactNode) => render(<QueryClientProvider client={qc}><I18nProvider><TeamScopeProvider>{ui}</TeamScopeProvider></I18nProvider></QueryClientProvider>);
 
 describe("CoolifyMoveChecklist", () => {
   it("walks the four steps A to D with a count for each and marks the one to work on", async () => {
@@ -70,7 +78,9 @@ describe("CoolifyMoveChecklist", () => {
     expect(rows).toEqual(["row-takeover-d", "row-takeover-c", "row-takeover-b", "row-takeover-a"]);
     expect(within(screen.getByTestId("row-takeover-d")).getByText("Offline")).toBeTruthy();
     expect(within(screen.getByTestId("row-takeover-d")).getByRole("link", { name: "Open server" }).getAttribute("href")).toBe("/servers/d");
-    expect(within(screen.getByTestId("row-takeover-c")).getByRole("link", { name: "Start from Import" }).getAttribute("href")).toBe("/import");
+    expect(within(screen.getByTestId("row-takeover-c")).getByRole("button", { name: "Take over in place" })).toBeTruthy();
+    expect(within(screen.getByTestId("row-takeover-d")).queryByRole("button", { name: "Take over in place" })).toBeNull(); // offline agent: bring it back first
+    expect(within(screen.getByTestId("row-takeover-b")).queryByRole("button")).toBeNull(); // already taken over
     expect(within(screen.getByTestId("row-takeover-b")).getByText("Complete")).toBeTruthy();
     // Step B: a server not yet taken over waits for step A; one taken over offers the cleanup; a cleaned one is done.
     expect(within(screen.getByTestId("row-cleanup-c")).queryByRole("link", { name: "Clean up" })).toBeNull();
@@ -130,6 +140,100 @@ describe("CoolifyMoveChecklist", () => {
     await screen.findByTestId("step-consolidate");
     expect(within(screen.getByTestId("step-consolidate")).getByText("3 moves: 1 completed, 1 running, 1 failed")).toBeTruthy();
     expect(within(screen.getByTestId("step-consolidate")).getByText("1 of 3")).toBeTruthy();
+  });
+
+  describe("Take over in place on a row", () => {
+    it("with no guided run it reads Coolify through the agent on the Coolify host and opens the import on that server", async () => {
+      vi.spyOn(api, "coolifyMoveStatus").mockResolvedValue(view());
+      vi.spyOn(api, "listMigrationRuns").mockResolvedValue([]);
+      const connect = vi.spyOn(api, "importConnectAgent").mockResolvedValue({ sessionId: "sess-1234abcd", expiresAt: "x", read: {} } as never);
+      wrap(<CoolifyMoveChecklist />);
+      await screen.findByTestId("step-takeover");
+      fireEvent.click(within(screen.getByTestId("row-takeover-c")).getByRole("button", { name: "Take over in place" }));
+      await waitFor(() => expect(nav.push).toHaveBeenCalledWith("/import"));
+      expect(connect).toHaveBeenCalledWith({ teamId: "t1", serverId: "hub" });
+      expect(JSON.parse(window.sessionStorage.getItem("tugra.import.focus") ?? "{}")).toEqual({ kind: "coolify", agentSessionId: "sess-1234abcd", inPlaceServerId: "c", fromServerName: "charlie" });
+    });
+
+    it("with a guided run for that server it opens the takeover on the run's operation and makes no session", async () => {
+      vi.spyOn(api, "coolifyMoveStatus").mockResolvedValue(view());
+      vi.spyOn(api, "listMigrationRuns").mockResolvedValue([{ id: "r9", teamId: "t1", targetServerId: "c", topology: "swap-proxy", dryRun: false, status: "WAITING", createdAt: "2026-11-25T00:00:00Z" }] as never);
+      vi.spyOn(api, "getMigrationRun").mockResolvedValue({ id: "r9", opId: "op 7" } as never);
+      const connect = vi.spyOn(api, "importConnectAgent");
+      wrap(<CoolifyMoveChecklist />);
+      await screen.findByTestId("step-takeover");
+      fireEvent.click(within(screen.getByTestId("row-takeover-c")).getByRole("button", { name: "Take over in place" }));
+      await waitFor(() => expect(nav.push).toHaveBeenCalledWith("/import/inplace?serverId=c&opId=op%207"));
+      expect(connect).not.toHaveBeenCalled();
+    });
+
+    it("says so and links to the Coolify host when reading it is not turned on yet; nothing is opened", async () => {
+      vi.spyOn(api, "coolifyMoveStatus").mockResolvedValue(view());
+      vi.spyOn(api, "listMigrationRuns").mockResolvedValue([]);
+      vi.spyOn(api, "importConnectAgent").mockRejectedValue(new ApiError(409, "RESPONSE-TEXT", "not_enabled"));
+      wrap(<CoolifyMoveChecklist />);
+      await screen.findByTestId("step-takeover");
+      fireEvent.click(within(screen.getByTestId("row-takeover-c")).getByRole("button", { name: "Take over in place" }));
+      const alert = await within(screen.getByTestId("row-takeover-c")).findByRole("alert");
+      expect(alert.textContent).toMatch(/not turned on yet/);
+      expect(within(alert).getByRole("link", { name: "Open the Coolify host" }).getAttribute("href")).toBe("/import/coolify-host?server=hub");
+      expect(nav.push).not.toHaveBeenCalled();
+      expect(document.body.textContent).not.toContain("RESPONSE-TEXT");
+      expect(window.sessionStorage.getItem("tugra.import.focus")).toBeNull();
+    });
+  });
+
+  describe("per-team progress", () => {
+    const teamView = (teamId: string, taken: number, cleaned: number, total: number): MoveOffStatusView => {
+      const servers = Array.from({ length: total }, (_, i) => row({ serverId: `${teamId}-${i}`, name: `${teamId}${i}`, stage: i < cleaned ? "done" : i < taken ? "cleanup" : "takeover" }));
+      return view({ teamId, servers });
+    };
+    const twoTeams = () => {
+      vi.spyOn(api, "listTeams").mockResolvedValue([{ id: "t1", name: "Alpha", role: "OWNER" }, { id: "t2", name: "Beta", role: "ADMIN" }, { id: "t3", name: "Gamma", role: "OWNER" }, { id: "t4", name: "Viewer team", role: "VIEWER" }]);
+      return vi.spyOn(api, "coolifyMoveStatus").mockImplementation(async (id: string) => {
+        if (id === "t1") return teamView("t1", 3, 1, 4);
+        if (id === "t2") return teamView("t2", 2, 2, 2);
+        throw new ApiError(403, "no");
+      });
+    };
+
+    it("shows one line per team that has Coolify, with its taken over and cleaned counts, and the total", async () => {
+      const spy = twoTeams();
+      wrap(<CoolifyMoveChecklist />);
+      const list = await screen.findByTestId("teams-overview");
+      await waitFor(() => expect(within(list).getAllByRole("listitem")).toHaveLength(2));
+      expect(within(screen.getByTestId("team-t1")).getByText("3 of 4 taken over, 1 cleaned")).toBeTruthy();
+      expect(within(screen.getByTestId("team-t2")).getByText("2 of 2 taken over, 2 cleaned")).toBeTruthy();
+      expect(screen.getByTestId("teams-overview-total").textContent).toBe("All teams: 5 of 6 taken over, 3 cleaned");
+      // a team that cannot be read is left out, and a team the person only views is never asked
+      expect(screen.queryByTestId("team-t3")).toBeNull();
+      expect(spy.mock.calls.map((c) => c[0])).not.toContain("t4");
+    });
+
+    it("Show this team switches the steps below to that team; the shown one has no button", async () => {
+      twoTeams();
+      wrap(<CoolifyMoveChecklist />);
+      await screen.findByTestId("team-t2");
+      expect(screen.getByTestId("team-t1").getAttribute("data-current")).toBe("true");
+      expect(within(screen.getByTestId("team-t1")).queryByRole("button", { name: "Show this team" })).toBeNull();
+      fireEvent.click(within(screen.getByTestId("team-t2")).getByRole("button", { name: "Show this team" }));
+      await waitFor(() => expect(screen.getByTestId("team-t2").getAttribute("data-current")).toBe("true"));
+    });
+
+    it("is not shown for a single team, nor when only one team has Coolify", async () => {
+      vi.spyOn(api, "coolifyMoveStatus").mockResolvedValue(view());
+      wrap(<CoolifyMoveChecklist />);
+      await screen.findByTestId("step-takeover");
+      expect(screen.queryByTestId("teams-overview")).toBeNull();
+      cleanup();
+      qc.clear();
+      vi.spyOn(api, "listTeams").mockResolvedValue([{ id: "t1", name: "Alpha", role: "OWNER" }, { id: "t2", name: "Beta", role: "OWNER" }]);
+      vi.spyOn(api, "coolifyMoveStatus").mockImplementation(async (id: string) => (id === "t1" ? view() : view({ teamId: "t2", hub: null, servers: [] })));
+      wrap(<CoolifyMoveChecklist />);
+      await screen.findByTestId("step-takeover");
+      await new Promise((r) => setTimeout(r, 30));
+      expect(screen.queryByTestId("teams-overview")).toBeNull();
+    });
   });
 
   it("a member who is not an owner or admin is told so and nothing is asked of the hub", async () => {

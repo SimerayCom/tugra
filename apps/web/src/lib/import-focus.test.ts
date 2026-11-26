@@ -91,3 +91,37 @@ describe("focusSubject", () => {
     expect(parseImportFocus(JSON.stringify({ sourceProjectUuid: "p1", fromItemName: "web" }))).toEqual({ sourceProjectUuid: "p1", fromItemName: "web" });
   });
 });
+
+describe("an in-place focus (Take over in place on one server)", () => {
+  const ip = {
+    sourceKind: "coolify",
+    items: [{ itemRef: "app:edge:a1", kind: "app" }, { itemRef: "app:local:a2", kind: "app" }],
+    preflight: {
+      hosts: [
+        { ref: "edge", name: "edge", tugra: { serverId: "t1", name: "Edge", teamId: "team1", via: "public-ip", confidence: "certain" } },
+        { ref: "local", name: "localhost", controlPlane: true, tugra: { serverId: "t9", name: "Hub", teamId: "team1", via: "public-ip", confidence: "certain" } },
+        { ref: "far", name: "far" },
+      ],
+    },
+  } as unknown as ImportPlan;
+  const writable = [{ id: "t1", teamId: "team1" }, { id: "t9", teamId: "team1" }, { id: "t2", teamId: "team1" }];
+
+  it("keeps a well-formed session id and server id and drops anything else", () => {
+    expect(parseImportFocus(JSON.stringify({ agentSessionId: "sess-1234abcd", inPlaceServerId: "t1" }))).toEqual({ agentSessionId: "sess-1234abcd", inPlaceServerId: "t1" });
+    expect(parseImportFocus(JSON.stringify({ agentSessionId: "../../x", inPlaceServerId: "x".repeat(200) }))).toBeNull();
+    expect(parseImportFocus(JSON.stringify({ agentSessionId: "short" }))).toBeNull();
+  });
+  it("ticks the Coolify server the hub matched to that Tugra server and places it on it, explicitly", () => {
+    const sel = focusSelection(ip, { inPlaceServerId: "t1" }, writable)!;
+    expect(sel.mode).toBe("servers");
+    expect([...sel.hosts]).toEqual(["edge"]);
+    expect(sel.placement).toEqual({ edge: "t1" });
+    expect(sel.teamId).toBe("team1");
+    expect(focusSubject(ip, sel)).toEqual({ kind: "server", name: "edge" });
+  });
+  it("picks nothing, so the step asks, when there is no match, when it is the Coolify host itself, or when the user cannot write to it", () => {
+    expect(focusSelection(ip, { inPlaceServerId: "t2" }, writable)).toBeNull(); // no Coolify server matches t2
+    expect(focusSelection(ip, { inPlaceServerId: "t9" }, writable)).toBeNull(); // control plane: no same-machine swap
+    expect(focusSelection(ip, { inPlaceServerId: "t1" }, [{ id: "t2", teamId: "team1" }])).toBeNull(); // not writable
+  });
+});

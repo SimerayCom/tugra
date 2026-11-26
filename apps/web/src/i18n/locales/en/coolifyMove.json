@@ -100,10 +100,30 @@
   },
   "rowAction": {
     "agent": "Open server",
-    "takeoverStart": "Start from Import",
+    "takeoverStart": "Take over in place",
     "takeoverOpen": "Open takeover",
     "cleanup": "Clean up",
     "done": "Open server"
+  },
+  "takeOver": {
+    "working": "Preparing the takeover",
+    "teamTitle": "Which Coolify team?",
+    "teamContinue": "Continue to the takeover",
+    "error": {
+      "generic": "Could not start the takeover. Try again in a moment.",
+      "noHub": "Connect and read the Coolify host first.",
+      "notEnabled": "Reading this Coolify is not turned on yet. Open the Coolify host and allow it first.",
+      "openHost": "Open the Coolify host"
+    }
+  },
+  "overview": {
+    "title": "By team",
+    "desc": "Coolify's teams map to your teams. Each line shows how far that team's servers are.",
+    "progress": "{taken} of {total} taken over, {cleaned} cleaned",
+    "hubOnly": "Coolify host connected, no managed server yet",
+    "show": "Show this team",
+    "shown": "Shown below",
+    "total": "All teams: {taken} of {total} taken over, {cleaned} cleaned"
   },
   "others": "Not managed by Coolify ({count})",
   "consolidate": {

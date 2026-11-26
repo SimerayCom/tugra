@@ -73,7 +73,8 @@ export function ImportWizard() {
   const t = useT();
   const toast = useToast();
   const { data: teams = [] } = useQuery({ queryKey: ["teams"], queryFn: () => api.listTeams() });
-  const { data: servers = [] } = useQuery({ queryKey: ["servers"], queryFn: () => api.listServers() });
+  const { data: servers = [], isPending: serversPending } = useQuery({ queryKey: ["servers"], queryFn: () => api.listServers() });
+  const serversReady = !serversPending; // loaded, or failed: either way the in-place read must not wait forever
   const qc = useQueryClient();
 
   const [kind, setKind] = useState<ImportRemoteKind>("coolify");
@@ -159,6 +160,16 @@ export function ImportWizard() {
     if (resumed.current) return;
     resumed.current = true;
     if (new URLSearchParams(window.location.search).get("op")) return;
+    // "Take over in place" from the checklist: the agent session is made already, so read its plan and open on that server.
+    const agentSid = focusRef.current?.agentSessionId;
+    if (agentSid) {
+      clearImportResume();
+      setKind("coolify");
+      setConnectMode("agent");
+      setSessionId(agentSid);
+      inPlaceSession.current = agentSid; // read once the servers are known: the focus is placed on one of them
+      return;
+    }
     const r = loadImportResume();
     if (!r) return;
     setKind(r.kind);
@@ -179,6 +190,15 @@ export function ImportWizard() {
     if (sessionId && !opId) saveImportResume({ kind, baseUrl, sessionId, selection: liveSelection.current ?? lastSelection, dbModes });
   }, [sessionId, opId, kind, baseUrl, dbModes, lastSelection, scope]);
 
+  const inPlaceSession = useRef<string | null>(null);
+  useEffect(() => {
+    const sid = inPlaceSession.current;
+    if (!serversReady || !sid) return;
+    inPlaceSession.current = null;
+    planM.mutate({ sid, kind: "coolify", resume: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [serversReady]);
+
   const planM = useMutation({
     mutationFn: (v: { sid: string; kind?: ImportRemoteKind; modes?: Record<string, "volume">; resume?: boolean }) =>
       api.importPlan({ sourceKind: v.kind ?? kind, sessionId: v.sid, ...(v.modes && Object.keys(v.modes).length ? { dbDataModes: v.modes } : {}) }),
@@ -191,7 +211,11 @@ export function ImportWizard() {
       if (sel) setLastSelection(sel);
       const what = focusSubject(p, sel);
       setStartNote(
-        f?.fromItemName
+        f?.inPlaceServerId
+          ? what
+            ? t("import.scope.startedInPlace", { name: what.name })
+            : t("import.scope.inPlaceNotFound", { server: f.fromServerName ?? "" })
+          : f?.fromItemName
           ? what
             ? t("import.scope.startedFromItem", { item: f.fromItemName, project: what.name })
             : t("import.scope.startedFromItemNone", { item: f.fromItemName })
@@ -199,7 +223,8 @@ export function ImportWizard() {
             ? t("import.scope.startedFrom", { name: what.name })
             : "",
       );
-      focusRef.current = null;
+      // An in-place focus that found nothing keeps waiting: the owner may still answer a match, and the re-read then ticks the server.
+      if (sel || !f?.inPlaceServerId) focusRef.current = null;
     },
     onError: (e, v) => {
       if (v.resume) {
@@ -321,7 +346,7 @@ export function ImportWizard() {
         servers={writableServers.map((s) => ({ id: s.id, name: s.name, teamId: s.teamId, status: s.status, capabilities: s.capabilities, lastSeenAt: s.lastSeenAt }))}
         teams={teams}
         initial={lastSelection}
-        onContinue={(sc) => { setScope(sc); setLastSelection(sc.selection); }}
+        onContinue={(sc) => { focusRef.current = null; setScope(sc); setLastSelection(sc.selection); }}
         onStartOver={startOver}
         onSelectionChange={onSelectionChange}
         onRecheck={recheck}

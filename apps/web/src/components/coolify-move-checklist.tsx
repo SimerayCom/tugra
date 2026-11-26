@@ -1,17 +1,18 @@
 "use client";
 
 import Link from "next/link";
-import { useQuery } from "@tanstack/react-query";
+import { useQueries, useQuery } from "@tanstack/react-query";
 import type { MoveOffServerRow, MoveOffStatusView, MoveOffStep, MoveOffStepProgress } from "@tugra/shared";
 import { api, ApiError } from "../lib/api";
 import { useT } from "../i18n/provider";
 import { useTeamContext, useTeamScope } from "./team-scope";
-import { GRANT_TONE, STAGE_TONE, STEP_LETTER, connectHref, coolifyRows, currentStep, readyToShutDown, rowAction, sortRows, stepOf } from "../lib/coolify-move";
+import { GRANT_TONE, STAGE_TONE, STEP_LETTER, connectHref, coolifyRows, hasCoolifyMove, currentStep, readyToShutDown, rowAction, sortRows, startsTakeoverFlow, stepOf, teamProgress } from "../lib/coolify-move";
 import { formatDateTime } from "../lib/format-time";
 import { relativeTime } from "../lib/fleet";
 import { Select } from "./form";
 import { Badge, LinkBtn, SectionCard, Spinner } from "./ui";
 import { CampaignReportList } from "./campaign-report-list";
+import { CoolifyTakeOverButton } from "./coolify-take-over-button";
 
 type T = ReturnType<typeof useT>;
 
@@ -41,10 +42,11 @@ function StepCard({ step, progress, current, children }: { step: MoveOffStep; pr
   );
 }
 
-function RowAction({ row, step, t }: { row: MoveOffServerRow; step: "takeover" | "cleanup"; t: T }) {
+function RowAction({ row, step, t, teamId, hubServerId }: { row: MoveOffServerRow; step: "takeover" | "cleanup"; t: T; teamId: string; hubServerId: string | null }) {
   // Step B only starts once a server is taken over; before that its action is step A's.
   if (step === "cleanup" && (row.stage === "agent" || row.stage === "takeover")) return <span style={{ fontSize: 12, color: "var(--c-tx3)" }}>{t("coolifyMove.step.takeover.title")}</span>;
   if (step === "takeover" && (row.stage === "cleanup" || row.stage === "done")) return <Badge tone="ok">{t("coolifyMove.step.complete")}</Badge>;
+  if (step === "takeover" && startsTakeoverFlow(row)) return <CoolifyTakeOverButton row={row} teamId={teamId} hubServerId={hubServerId} />;
   const a = rowAction(row);
   if (!a) return null;
   return (
@@ -54,7 +56,7 @@ function RowAction({ row, step, t }: { row: MoveOffServerRow; step: "takeover" |
   );
 }
 
-function ServerList({ rows, step }: { rows: MoveOffServerRow[]; step: "takeover" | "cleanup" }) {
+function ServerList({ rows, step, teamId, hubServerId }: { rows: MoveOffServerRow[]; step: "takeover" | "cleanup"; teamId: string; hubServerId: string | null }) {
   const t = useT();
   if (rows.length === 0) return <p style={dim}>{t("coolifyMove.noServers")}</p>;
   return (
@@ -75,7 +77,7 @@ function ServerList({ rows, step }: { rows: MoveOffServerRow[]; step: "takeover"
             </Badge>
           )}
           <span style={{ fontSize: 12, color: "var(--c-tx3)", flexBasis: "100%" }}>{t(`coolifyMove.stage.${r.stage}`)}</span>
-          <RowAction row={r} step={step} t={t} />
+          <RowAction row={r} step={step} t={t} teamId={teamId} hubServerId={hubServerId} />
         </li>
       ))}
     </ul>
@@ -147,10 +149,10 @@ export function MoveOffBody({ v, teamId }: { v: MoveOffStatusView; teamId: strin
       <Prelude v={v} />
       {movers.length === 0 && <p style={dim}>{t("coolifyMove.noServers")}</p>}
       <StepCard step="takeover" progress={stepOf(v, "takeover")} current={cur === "takeover"}>
-        <ServerList rows={movers} step="takeover" />
+        <ServerList rows={movers} step="takeover" teamId={teamId} hubServerId={v.hub?.serverId ?? null} />
       </StepCard>
       <StepCard step="cleanup" progress={cleaned} current={cur === "cleanup"}>
-        <ServerList rows={movers} step="cleanup" />
+        <ServerList rows={movers} step="cleanup" teamId={teamId} hubServerId={v.hub?.serverId ?? null} />
       </StepCard>
       <StepCard step="consolidate" progress={stepOf(v, "consolidate")} current={false}>
         <p style={dim}>{v.projectMoves.total === 0 ? t("coolifyMove.consolidate.none") : t("coolifyMove.consolidate.counts", { total: v.projectMoves.total, completed: v.projectMoves.completed, active: v.projectMoves.active, failed: v.projectMoves.failed })}</p>
@@ -172,20 +174,61 @@ export function MoveOffBody({ v, teamId }: { v: MoveOffStatusView; teamId: strin
   );
 }
 
+/**
+ * Several Coolify teams map to several of your teams: one line per team with how far its servers are, so a team that is behind is seen
+ * at a glance. Shown only when two or more teams have Coolify in them; "Show this team" picks the team the steps below are for.
+ */
+export function TeamsOverview({ teams, statuses, current, onPick }: { teams: Array<{ id: string; name: string }>; statuses: Record<string, MoveOffStatusView | undefined>; current: string; onPick: (id: string) => void }) {
+  const t = useT();
+  const lines = teams.flatMap((tm) => {
+    const v = statuses[tm.id];
+    return v && hasCoolifyMove(v) ? [{ team: tm, p: teamProgress(v) }] : [];
+  });
+  if (lines.length < 2) return null;
+  const sum = lines.reduce((a, l) => ({ taken: a.taken + l.p.taken, cleaned: a.cleaned + l.p.cleaned, total: a.total + l.p.total }), { taken: 0, cleaned: 0, total: 0 });
+  return (
+    <SectionCard title={t("coolifyMove.overview.title")} desc={t("coolifyMove.overview.desc")}>
+      <ul style={{ listStyle: "none", margin: 0, padding: 0 }} data-testid="teams-overview">
+        {lines.map(({ team, p }) => (
+          <li key={team.id} style={li} data-testid={`team-${team.id}`} data-current={team.id === current ? "true" : "false"}>
+            <span style={{ fontWeight: 600, flex: "1 1 140px", minWidth: 0, overflowWrap: "anywhere" }}>{team.name}</span>
+            <Badge tone={p.total === 0 ? "muted" : p.cleaned === p.total ? "ok" : "lapis"}>
+              {p.total === 0 ? t("coolifyMove.overview.hubOnly") : t("coolifyMove.overview.progress", { taken: p.taken, total: p.total, cleaned: p.cleaned })}
+            </Badge>
+            {team.id === current ? (
+              <span style={{ fontSize: 12, color: "var(--c-tx3)" }}>{t("coolifyMove.overview.shown")}</span>
+            ) : (
+              <button type="button" className="tg-link" onClick={() => onPick(team.id)} style={{ background: "none", border: "none", padding: 0, fontFamily: "inherit", fontSize: 12.5, minHeight: 44, cursor: "pointer" }}>
+                {t("coolifyMove.overview.show")}
+              </button>
+            )}
+          </li>
+        ))}
+      </ul>
+      <p data-testid="teams-overview-total" style={{ ...dim, marginTop: 8 }}>{t("coolifyMove.overview.total", sum)}</p>
+    </SectionCard>
+  );
+}
+
 /** `/import/move-off-coolify`: walk the move A to D with every server's progress, read from one status route. */
 export function CoolifyMoveChecklist() {
   const t = useT();
   const { teams } = useTeamContext();
-  const { teamId: scope } = useTeamScope();
+  const { teamId: scope, setTeamId } = useTeamScope();
   const eligible = teams.filter((tm) => tm.role === "OWNER" || tm.role === "ADMIN");
   const teamId = eligible.find((tm) => tm.id === scope)?.id ?? eligible[0]?.id ?? "";
   const q = useQuery({ queryKey: ["coolify-move", teamId], queryFn: () => api.coolifyMoveStatus(teamId), enabled: !!teamId, refetchInterval: 10_000 });
+  // The same status per team (same cache keys), for the per-team overview; a team that cannot be read is simply left out of it.
+  const all = useQueries({ queries: eligible.map((tm) => ({ queryKey: ["coolify-move", tm.id], queryFn: () => api.coolifyMoveStatus(tm.id), enabled: eligible.length > 1, refetchInterval: 10_000, retry: false })) });
+  const statuses: Record<string, MoveOffStatusView | undefined> = {};
+  eligible.forEach((tm, i) => { statuses[tm.id] = all[i]?.data; });
   const forbidden = q.error instanceof ApiError && q.error.status === 403;
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
       {eligible.length > 1 && (
         <TeamPick teams={eligible} value={teamId} />
       )}
+      {eligible.length > 1 && <TeamsOverview teams={eligible} statuses={statuses} current={teamId} onPick={setTeamId} />}
       {teams.length > 0 && eligible.length === 0 && <p role="alert" style={{ ...dim, color: "var(--c-r)" }}>{t("coolifyMove.error.forbidden")}</p>}
       {q.isLoading && !!teamId && <Spinner />}
       {q.isError && <p role="alert" style={{ ...dim, color: "var(--c-r)" }}>{forbidden ? t("coolifyMove.error.forbidden") : t("coolifyMove.error.generic")}</p>}

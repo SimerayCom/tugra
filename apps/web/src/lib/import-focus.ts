@@ -1,5 +1,5 @@
 import type { ImportPlan } from "./types";
-import { type ScopeSelection, emptySelection, sourceHostRows, sourceProjectRows } from "./import-scope";
+import { type ScopeSelection, emptySelection, hostTugra, inPlaceBlock, sourceHostRows, sourceProjectRows } from "./import-scope";
 
 /**
  * What a page that sends the user to the import knows already: which source (Coolify or Dokploy), where it lives, and optionally a
@@ -18,6 +18,12 @@ export interface ImportFocus {
   targetTeamId?: string;
   /** A source project (its uuid) to start with. */
   sourceProjectUuid?: string;
+  /**
+   * "Take over in place" on one Tugra server: the import session is already made through the agent path (its id only, never a
+   * credential), and the first step opens with the Coolify server that is this Tugra server ticked and placed on it.
+   */
+  agentSessionId?: string;
+  inPlaceServerId?: string;
   /** The one app, database or service the user clicked Move on (shown as a note: what was ticked for it, and why). */
   fromItemName?: string;
 }
@@ -27,6 +33,7 @@ export const IMPORT_FOCUS_KEY = "tugra.import.focus";
 export const lastImportUrlKey = (kind: "coolify" | "dokploy"): string => `tugra.import.lastUrl.${kind}`;
 
 const URL_RE = /^https?:\/\/\S+$/i;
+const SESSION_ID_RE = /^[A-Za-z0-9_-]{8,64}$/;
 const short = (v: unknown, max = 120): string | undefined => (typeof v === "string" && v.length > 0 && v.length <= max ? v : undefined);
 
 /** Keep only well-formed fields of a stored focus (storage is same-origin, but treat it as input all the same). */
@@ -55,6 +62,9 @@ export function parseImportFocus(raw: string | null): ImportFocus | null {
   if (sourceProjectUuid) out.sourceProjectUuid = sourceProjectUuid;
   const fromItemName = short(o.fromItemName);
   if (fromItemName) out.fromItemName = fromItemName;
+  if (typeof o.agentSessionId === "string" && SESSION_ID_RE.test(o.agentSessionId)) out.agentSessionId = o.agentSessionId;
+  const inPlaceServerId = short(o.inPlaceServerId, 80);
+  if (inPlaceServerId) out.inPlaceServerId = inPlaceServerId;
   return Object.keys(out).length > 0 ? out : null;
 }
 
@@ -111,6 +121,13 @@ export function focusSelection(plan: ImportPlan, focus: ImportFocus | null, writ
   if (!focus) return null;
   const target = focus.targetServerId ? writable.find((s) => s.id === focus.targetServerId) : undefined;
   const team = target ? { teamId: target.teamId } : {};
+  if (focus.inPlaceServerId) {
+    // The Coolify server the hub found to be this Tugra server. Never a guess: no match, the Coolify host itself, or a server the user
+    // cannot write to gives no selection, and the step asks. The placement is explicit so the step shows it (and "same machine") to confirm.
+    const wanted = writable.find((s) => s.id === focus.inPlaceServerId);
+    const row = wanted ? sourceHostRows(plan).find((r) => hostTugra(plan, r.ref)?.serverId === wanted.id && !inPlaceBlock(plan, r.ref)) : undefined;
+    return row && wanted ? { ...emptySelection(), mode: "servers", hosts: new Set([row.ref]), placement: { [row.ref]: wanted.id }, teamId: wanted.teamId } : null;
+  }
   if (focus.sourceServerUuid) {
     const row = sourceHostRows(plan).find((r) => r.ref === focus.sourceServerUuid);
     if (row) {

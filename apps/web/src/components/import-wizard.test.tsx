@@ -698,6 +698,76 @@ describe("ImportWizard", () => {
       expect(screen.queryByText("Match servers")).toBeNull();
     });
 
+    describe("Take over in place from the checklist (a session made already)", () => {
+      const inPlacePlan = (): ImportPlan => ({
+        ...plan,
+        items: [
+          { itemRef: "app:edge:web", kind: "app", name: "web-app", proposed: {}, risks: [], dependsOn: [] },
+          { itemRef: "app:local:hub-app", kind: "app", name: "hub-app", proposed: {}, risks: [], dependsOn: [] },
+        ],
+        mapping: { features: ["mapping-v1"] },
+        preflight: {
+          databases: [],
+          services: [],
+          agentRead: READ,
+          hosts: [
+            { ref: "local", name: "localhost", controlPlane: true, tugra: { serverId: "srv1", name: "Server A", teamId: "t1", via: "public-ip", confidence: "certain" }, match: { status: "certain", linkedBy: "auto", evidence: [{ kind: "machine_id", equal: true }] }, agentOnline: true },
+            { ref: "edge", name: "edge", tugra: { serverId: "srv2", name: "Server B", teamId: "t1", via: "public-ip", confidence: "certain" }, match: { status: "certain", linkedBy: "auto", evidence: [{ kind: "machine_id", equal: true }] }, agentOnline: true },
+          ],
+        },
+      }) as unknown as ImportPlan;
+      beforeEach(() => {
+        vi.spyOn(api, "listServers").mockResolvedValue([
+          { id: "srv1", name: "Server A", teamId: "t1", status: "ONLINE", clusterId: null, tags: [], canWrite: true },
+          { id: "srv2", name: "Server B", teamId: "t1", status: "ONLINE", clusterId: null, tags: [], canWrite: true },
+        ] as never);
+      });
+      const open = async (focus: Record<string, unknown>) => {
+        window.sessionStorage.setItem("tugra.import.focus", JSON.stringify({ kind: "coolify", agentSessionId: "sess-inplace1", fromServerName: "Server B", ...focus }));
+        wrap(<ImportWizard />);
+        await screen.findByText("Match servers");
+        fireEvent.click(screen.getByRole("button", { name: /^Continue/ }));
+        await screen.findByText("What are you moving?");
+      };
+
+      it("reads the plan of that session (no connect, no token form) and opens with the server ticked and placed on itself, to confirm", async () => {
+        const planSpy = vi.spyOn(api, "importPlan").mockResolvedValue(inPlacePlan());
+        const connect = vi.spyOn(api, "importConnectAgent");
+        await open({ inPlaceServerId: "srv2" });
+        expect(planSpy).toHaveBeenCalledWith({ sourceKind: "coolify", sessionId: "sess-inplace1" });
+        expect(connect).not.toHaveBeenCalled();
+        expect(screen.queryByLabelText("Coolify URL")).toBeNull();
+        expect((screen.getByRole("checkbox", { name: /edge/ }) as HTMLInputElement).checked).toBe(true);
+        expect((screen.getByRole("checkbox", { name: /localhost/ }) as HTMLInputElement).checked).toBe(false);
+        expect((screen.getByLabelText(/edge moves to/) as HTMLSelectElement).value).toBe("srv2");
+        expect(screen.getByTestId("scope-note").textContent).toBe("Taking edge over in place. Check where it goes below, then continue.");
+        expect(window.sessionStorage.getItem("tugra.import.focus")).toBeNull(); // read once
+      });
+
+      it("for the Coolify host itself it picks nothing for the owner and says so: no same-machine swap is offered for it", async () => {
+        vi.spyOn(api, "importPlan").mockResolvedValue(inPlacePlan());
+        await open({ inPlaceServerId: "srv1", fromServerName: "Server A" });
+        expect(screen.getByTestId("scope-note").textContent).toBe("Could not tell which of Coolify's servers is Server A. Pick what to move below.");
+      });
+
+      it("a servers list that cannot be read does not hold the plan back: it is read and the step asks", async () => {
+        vi.spyOn(api, "listServers").mockRejectedValue(new ApiError(500, "x"));
+        const planSpy = vi.spyOn(api, "importPlan").mockResolvedValue(inPlacePlan());
+        window.sessionStorage.setItem("tugra.import.focus", JSON.stringify({ kind: "coolify", agentSessionId: "sess-inplace1", inPlaceServerId: "srv2" }));
+        wrap(<ImportWizard />);
+        await screen.findByText("Match servers");
+        expect(planSpy).toHaveBeenCalledTimes(1);
+      });
+
+      it("an ended session (it lives an hour) goes back to the connect form with a note, and nothing is guessed", async () => {
+        vi.spyOn(api, "importPlan").mockRejectedValue(new ApiError(404, "gone"));
+        window.sessionStorage.setItem("tugra.import.focus", JSON.stringify({ kind: "coolify", agentSessionId: "sess-inplace1", inPlaceServerId: "srv2" }));
+        wrap(<ImportWizard />);
+        await screen.findByText(/session ended|expired/i);
+        expect(screen.queryByText("Match servers")).toBeNull();
+      });
+    });
+
     describe("the consent for secret values where the apply is", () => {
       const noMatchPlan = (consent: boolean): ImportPlan => {
         const p = agentPlan();

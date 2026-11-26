@@ -1,11 +1,14 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
-import { render, screen, cleanup, waitFor, fireEvent } from "@testing-library/react";
+import { render, screen, cleanup, waitFor, fireEvent, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import React from "react";
 import type { MoveOffHub, MoveOffServerRow, MoveOffStatusView } from "@tugra/shared";
 import { I18nProvider } from "../i18n/provider";
 import { api } from "../lib/api";
 import { CoolifyHostCard } from "./coolify-host-card";
+
+const nav = vi.hoisted(() => ({ push: vi.fn() }));
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push: nav.push, replace: vi.fn() }), usePathname: () => "/", useSearchParams: () => new URLSearchParams() }));
 
 afterEach(cleanup);
 
@@ -75,11 +78,24 @@ describe("CoolifyHostCard", () => {
     expect(screen.getByTestId("line-next").textContent).toMatch(/Check and clean up Coolify's leftovers/);
   });
 
-  it("a takeover not started sends the owner to Import, not to an empty screen", async () => {
+  it("a takeover not started has a Take over in place button that starts the flow itself, not a link to an empty screen", async () => {
     vi.spyOn(api, "coolifyMoveStatus").mockResolvedValue(view([row({ stage: "takeover" })], hub({ serverId: "hubid" })));
+    vi.spyOn(api, "listMigrationRuns").mockResolvedValue([]);
+    const connect = vi.spyOn(api, "importConnectAgent").mockResolvedValue({ sessionId: "sess-1234abcd", expiresAt: "x", read: {} } as never);
     show();
     await screen.findByTestId("coolify-host-card");
-    expect(screen.getByTestId("line-takeover").querySelector("a")?.getAttribute("href")).toBe("/import");
+    expect(screen.getByTestId("line-takeover").querySelector("a")).toBeNull();
+    fireEvent.click(within(screen.getByTestId("line-takeover")).getByRole("button", { name: "Take over in place" }));
+    await waitFor(() => expect(nav.push).toHaveBeenCalledWith("/import"));
+    expect(connect).toHaveBeenCalledWith({ teamId: "t1", serverId: "hubid" });
+  });
+
+  it("a takeover that is already started keeps opening it; a server that is not ready has no button", async () => {
+    vi.spyOn(api, "coolifyMoveStatus").mockResolvedValue(view([row({ stage: "cleanup", takeover: "VERIFIED" })], hub({ serverId: "hubid" })));
+    show();
+    await screen.findByTestId("coolify-host-card");
+    expect(within(screen.getByTestId("line-takeover")).queryByRole("button")).toBeNull();
+    expect(screen.getByTestId("line-takeover").querySelector("a")?.getAttribute("href")).toBe("/import/inplace?serverId=s1");
   });
 
   it("an offline agent is shown as such", async () => {

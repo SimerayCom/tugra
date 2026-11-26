@@ -8,19 +8,21 @@ import { api } from "../lib/api";
 import { useT } from "../i18n/provider";
 import { formatDateTime } from "../lib/format-time";
 import { relativeTime } from "../lib/fleet";
-import { GRANT_TONE, MOVE_OFF_HREF, STAGE_TONE, connectHref, takeoverHref, type Tone } from "../lib/coolify-move";
+import { GRANT_TONE, MOVE_OFF_HREF, STAGE_TONE, connectHref, startsTakeoverFlow, takeoverHref, type Tone } from "../lib/coolify-move";
 import { Badge, Btn, LinkBtn, SectionCard } from "./ui";
 import { CoolifySecretsConsent } from "./coolify-secrets-consent";
+import { CoolifyTakeOverButton } from "./coolify-take-over-button";
 
 const li: React.CSSProperties = { borderTop: "1px solid var(--c-bd)", padding: "8px 0", display: "flex", gap: "4px 10px", flexWrap: "wrap", alignItems: "center", minWidth: 0, fontSize: 13 };
 const label: React.CSSProperties = { fontWeight: 600, flex: "1 1 150px", minWidth: 0 };
 
-function Line({ name, tone, children, link, testId }: { name: string; tone?: Tone; children: ReactNode; link?: { href: string; text: string }; testId: string }) {
+function Line({ name, tone, children, link, action, testId }: { name: string; tone?: Tone; children: ReactNode; link?: { href: string; text: string }; action?: ReactNode; testId: string }) {
   return (
     <li style={li} data-testid={testId}>
       <span style={label}>{name}</span>
       {tone ? <Badge tone={tone}>{children}</Badge> : <span style={{ fontSize: 12.5, color: "var(--c-tx2)", overflowWrap: "anywhere" }}>{children}</span>}
-      {link && (
+      {action}
+      {!action && link && (
         <Link href={link.href} className="tg-link" style={{ fontSize: 12.5, minHeight: 44, display: "inline-flex", alignItems: "center" }}>
           {link.text}
         </Link>
@@ -62,7 +64,7 @@ function HubLines({ hub, serverId, serverName, teamId, isOwner }: { hub: MoveOff
   );
 }
 
-function ManagedLines({ row }: { row: MoveOffServerRow }) {
+function ManagedLines({ row, teamId, hubServerId }: { row: MoveOffServerRow; teamId: string; hubServerId: string | null }) {
   const t = useT();
   return (
     <>
@@ -74,6 +76,7 @@ function ManagedLines({ row }: { row: MoveOffServerRow }) {
         name={t("coolifyMove.line.takeover.label")}
         tone={row.takeover === "none" ? "muted" : row.takeover === "FAILED" ? "danger" : row.takeover === "VERIFIED" ? "ok" : "lapis"}
         link={row.takeover === "none" ? { href: "/import", text: t("coolifyMove.rowAction.takeoverStart") } : { href: takeoverHref(row.serverId), text: t("coolifyMove.line.takeover.open") }}
+        action={startsTakeoverFlow(row) ? <CoolifyTakeOverButton row={row} teamId={teamId} hubServerId={hubServerId} /> : undefined}
       >
         {row.takeover === "none" ? t("coolifyMove.line.takeover.none") : t(`coolifyInPlace.status.${row.takeover}`)}
       </Line>
@@ -111,7 +114,7 @@ export function CoolifyHostCard({ serverId, serverName, teamId, role }: { server
             </Line>
           )
         ) : (
-          <ManagedLines row={row} />
+          <ManagedLines row={row} teamId={teamId} hubServerId={q.data.hub?.serverId ?? null} />
         )}
       </ul>
     </SectionCard>
