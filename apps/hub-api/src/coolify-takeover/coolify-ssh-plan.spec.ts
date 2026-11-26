@@ -1,6 +1,6 @@
 import { ForbiddenException } from "@nestjs/common";
 import { AgentCommandTimeoutException, AgentDisconnectedException, AgentOfflineException } from "../agent-gateway/agent-offline.exception";
-import { checkEnrolled, clampPerHost, codeOfError, decideProbe, isActiveState, Semaphore, useSudoFor } from "./coolify-ssh-plan";
+import { checkEnrolled, clampPerHost, codeOfError, decideProbe, decideVerify, isActiveState, Semaphore, useSudoFor } from "./coolify-ssh-plan";
 
 describe("decideProbe", () => {
   it("leaves a server that already runs an agent alone", () => {
@@ -107,5 +107,17 @@ describe("Semaphore", () => {
     const r2 = await sem.acquire();
     expect(sem.inFlight).toBe(1);
     r2();
+  });
+});
+
+describe("decideVerify", () => {
+  it("is VERIFIED whenever the probe kept something to compare, whatever the install verdict was", () => {
+    expect(decideVerify({ ok: true, code: "ok_installed" }, true)).toEqual({ state: "VERIFIED", code: null });
+    expect(decideVerify({ ok: true, code: "skipped_present" }, true)).toEqual({ state: "VERIFIED", code: null });
+    expect(decideVerify({ ok: false, code: "docker_missing" }, true)).toEqual({ state: "VERIFIED", code: null });
+  });
+  it("fails with the agent's own code when there is nothing to compare, and a generic one when the agent said fine", () => {
+    expect(decideVerify({ ok: false, code: "auth_failed" }, false)).toEqual({ state: "FAILED", code: "auth_failed" });
+    expect(decideVerify({ ok: true, code: "ok_installed" }, false)).toEqual({ state: "FAILED", code: "installer_failed" });
   });
 });

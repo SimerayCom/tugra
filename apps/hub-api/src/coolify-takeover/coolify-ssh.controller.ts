@@ -8,7 +8,7 @@ import { RequireScopes } from "../api-tokens/require-scopes.decorator";
 import { AuthUser } from "../auth/strategies/jwt.strategy";
 import { ApiZodBody } from "../openapi/openapi";
 import { CoolifySshInstallService } from "./coolify-ssh-install.service";
-import { SshConfirmSchema, SshStartSchema, type SshConfirmInput, type SshStartInput } from "./dto";
+import { SshConfirmSchema, SshStartSchema, SshVerifySchema, type SshConfirmInput, type SshStartInput, type SshVerifyInput } from "./dto";
 
 /**
  * Install the Tugra agent on the servers a Coolify knows, over Coolify's own SSH keys, through the agent on the Coolify host (the keys never
@@ -40,6 +40,19 @@ export class CoolifySshController {
   @ApiZodBody(SshStartSchema)
   start(@CurrentUser() user: AuthUser, @Param("serverId") serverId: string, @Body(new ZodValidationPipe(SshStartSchema)) body: SshStartInput) {
     return this.ssh.startRun(user.userId, serverId, body);
+  }
+
+  /**
+   * Check which machines these are: the same read-only probe, nothing installed, no token. Needs the same consent as the install (`confirm` is
+   * the typed number of servers; without it the answer is 409 `consent_required`). The facts it finds turn "probably the same" into "same
+   * machine" in the match step.
+   */
+  @Post("verify")
+  @HttpCode(200)
+  @RequireScopes("write", "read:secrets")
+  @ApiZodBody(SshVerifySchema)
+  verify(@CurrentUser() user: AuthUser, @Param("serverId") serverId: string, @Body(new ZodValidationPipe(SshVerifySchema)) body: SshVerifyInput) {
+    return this.ssh.startVerify(user.userId, serverId, body);
   }
 
   /** Install the agent on the servers of the run that the probe found ready. */

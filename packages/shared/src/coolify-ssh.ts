@@ -19,10 +19,12 @@ export type CoolifySshResultCode = (typeof COOLIFY_SSH_RESULT_CODES)[number];
 
 export const COOLIFY_SSH_TARGET_STATES = [
   "PLANNED", "PROBING", "SKIPPED_PRESENT", "SKIPPED_FOREIGN", "READY", "FAILED", "TOKEN_MINTED", "INSTALLING", "WAIT_ENROLL", "ONLINE", "UNINSTALLING", "REMOVED",
+  // A probe-only identity check (nothing installed) that reached the machine and kept what it saw.
+  "VERIFIED",
 ] as const;
 export type CoolifySshTargetState = (typeof COOLIFY_SSH_TARGET_STATES)[number];
 /** States a target does not leave on its own. */
-export const COOLIFY_SSH_TERMINAL_STATES: readonly CoolifySshTargetState[] = ["SKIPPED_PRESENT", "SKIPPED_FOREIGN", "FAILED", "ONLINE", "REMOVED"];
+export const COOLIFY_SSH_TERMINAL_STATES: readonly CoolifySshTargetState[] = ["SKIPPED_PRESENT", "SKIPPED_FOREIGN", "FAILED", "ONLINE", "REMOVED", "VERIFIED"];
 
 /** What a probe found about an existing Tugra agent on the target. */
 export type CoolifySshAgentPresence = "none" | "ours" | "foreign_hub" | "stopped";
@@ -175,6 +177,12 @@ export interface CoolifySshRunView {
   /** No target is waiting for the hub any more. */
   finished: boolean;
   targets: CoolifySshTargetView[];
+}
+
+/** Owner-only body of "check these machines": a read-only probe of the identity facts, nothing installed. `confirm` is the typed number of servers. */
+export interface CoolifySshVerifyRequest {
+  coolifyServerUuids: string[];
+  confirm?: string;
 }
 
 /** Owner-only body of "install the agent on these N servers": `confirm` is the typed count. */

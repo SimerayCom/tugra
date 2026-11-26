@@ -2,7 +2,7 @@ import "reflect-metadata";
 import { REQUIRE_SCOPES } from "../api-tokens/require-scopes.decorator";
 import { CoolifySshController } from "./coolify-ssh.controller";
 import { CoolifyTakeoverModule } from "./coolify-takeover.module";
-import { SshConfirmSchema, SshStartSchema } from "./dto";
+import { SshConfirmSchema, SshStartSchema, SshVerifySchema } from "./dto";
 
 const scopesOf = (name: keyof CoolifySshController) => Reflect.getMetadata(REQUIRE_SCOPES, CoolifySshController.prototype[name]) as string[] | undefined;
 
@@ -12,6 +12,7 @@ describe("CoolifySshController", () => {
     expect(scopesOf("install")).toEqual(["write", "read:secrets"]);
     expect(scopesOf("uninstall")).toEqual(["write", "read:secrets"]);
     expect(scopesOf("cancel")).toEqual(["write"]);
+    expect(scopesOf("verify")).toEqual(["write", "read:secrets"]);
   });
 
   it("is mounted under the Coolify host, so the host is always named", () => {
@@ -23,17 +24,19 @@ describe("CoolifySshController", () => {
   });
 
   it("hands the caller's id and the path ids to the service", async () => {
-    const ssh = { startRun: jest.fn().mockResolvedValue("S"), startInstall: jest.fn().mockResolvedValue("I"), startUninstall: jest.fn().mockResolvedValue("U"), cancelRun: jest.fn().mockResolvedValue("C"), getRun: jest.fn().mockResolvedValue("G"), latestRun: jest.fn().mockResolvedValue("L") } as any;
+    const ssh = { startRun: jest.fn().mockResolvedValue("S"), startVerify: jest.fn().mockResolvedValue("V"), startInstall: jest.fn().mockResolvedValue("I"), startUninstall: jest.fn().mockResolvedValue("U"), cancelRun: jest.fn().mockResolvedValue("C"), getRun: jest.fn().mockResolvedValue("G"), latestRun: jest.fn().mockResolvedValue("L") } as any;
     const c = new CoolifySshController(ssh);
     const user = { userId: "u1" } as any;
     const body = { coolifyServerUuids: ["abc123def456"], teamId: "t", confirm: "1" };
     await c.start(user, "HOST", body);
+    await c.verify(user, "HOST", { coolifyServerUuids: ["abc123def456"] });
     await c.install(user, "HOST", "run1", { confirm: "1" });
     await c.uninstall(user, "HOST", "run1", { confirm: "1" });
     await c.cancel(user, "HOST", "run1");
     await c.get(user, "HOST", "run1");
     await c.latest(user, "HOST");
     expect(ssh.startRun).toHaveBeenCalledWith("u1", "HOST", body);
+    expect(ssh.startVerify).toHaveBeenCalledWith("u1", "HOST", { coolifyServerUuids: ["abc123def456"] });
     expect(ssh.startInstall).toHaveBeenCalledWith("u1", "HOST", "run1", { confirm: "1" });
     expect(ssh.startUninstall).toHaveBeenCalledWith("u1", "HOST", "run1", { confirm: "1" });
     expect(ssh.cancelRun).toHaveBeenCalledWith("u1", "HOST", "run1");
@@ -64,5 +67,18 @@ describe("SSH install bodies", () => {
     expect(parsed).not.toHaveProperty("token");
     expect(parsed).not.toHaveProperty("privateKey");
     expect(parsed).not.toHaveProperty("ip");
+  });
+});
+
+describe("SSH verify body", () => {
+  it("takes the uuids, and the typed count when the owner already gave it (the hub asks for it otherwise)", () => {
+    expect(SshVerifySchema.safeParse({ coolifyServerUuids: ["abc123def456"] }).success).toBe(true);
+    expect(SshVerifySchema.safeParse({ coolifyServerUuids: ["abc123def456"], confirm: "1" }).success).toBe(true);
+  });
+  it("refuses an option-like uuid, none, too many, and an empty confirm", () => {
+    for (const bad of [["-oProxyCommand=x"], [], Array.from({ length: 101 }, (_, i) => `srv${String(i).padStart(9, "0")}`)]) {
+      expect(SshVerifySchema.safeParse({ coolifyServerUuids: bad }).success).toBe(false);
+    }
+    expect(SshVerifySchema.safeParse({ coolifyServerUuids: ["abc123def456"], confirm: "" }).success).toBe(false);
   });
 });

@@ -44,6 +44,17 @@ export const SshStartSchema = z.object({
 });
 export type SshStartInput = z.infer<typeof SshStartSchema>;
 
+/**
+ * "Check these machines": a read-only probe of the identity facts (sshd host key, machine id, Docker engine id) over Coolify's own SSH,
+ * nothing installed or written on the target. It needs the same consent as the install: `confirm` is the typed number of servers; without
+ * it the hub answers `consent_required`.
+ */
+export const SshVerifySchema = z.object({
+  coolifyServerUuids: z.array(SshUuidSchema).min(1).max(100),
+  confirm: z.string().min(1).max(4).optional(),
+});
+export type SshVerifyInput = z.infer<typeof SshVerifySchema>;
+
 export const SshConfirmSchema = z.object({
   confirm: z.string().min(1).max(4),
   coolifyServerUuids: z.array(SshUuidSchema).min(1).max(100).optional(),

@@ -1251,7 +1251,7 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "coolify_ssh_install_status",
     description:
-      "Status of installing the Tugra agent on the servers Coolify knows, over Coolify's own SSH keys: for the newest run (or runId) every server with its state (planned, probing, ready, installing, online, failed, skipped, ...), the fixed failure code, whether a manual install command is offered and whether the agent can be removed again. No key, token, command or address. Args: serverId (the Coolify host's Tugra server), runId (optional). Team owner or admin. Read-only.",
+      "Status of installing the Tugra agent on the servers Coolify knows, over Coolify's own SSH keys: for the newest run (or runId) every server with its state (planned, probing, ready, installing, online, failed, skipped, verified, ...; a probe-only identity check ends in verified, nothing installed), the fixed failure code, whether a manual install command is offered and whether the agent can be removed again. No key, token, command or address. Args: serverId (the Coolify host's Tugra server), runId (optional; the newest INSTALL run when omitted, an identity check is read by its runId). Team owner or admin. Read-only.",
     scope: "read",
     inputSchema: { type: "object", properties: { serverId: { type: "string" }, runId: { type: "string" } }, required: ["serverId"] },
     execute: async (d, userId, a) => d.coolifyMove.sshInstallStatus(userId, reqId(a, "serverId"), a.runId === undefined ? undefined : reqId(a, "runId")),

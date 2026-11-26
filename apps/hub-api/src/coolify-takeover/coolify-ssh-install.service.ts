@@ -24,6 +24,7 @@ import { AgentWsServer } from "../agent-gateway/agent-ws.server";
 import { ServersService } from "../servers/servers.service";
 import type { CoolifyInventoryData, InvServer } from "./coolify-inventory";
 import { findHostMatch } from "./coolify-install-plan";
+import { probeIdentity } from "./host-match.service";
 import { COOLIFY_SSH_PROBE_SHA256, COOLIFY_SSH_UNINSTALL_SHA256, renderCoolifySshInstallScript } from "./coolify-ssh-scripts";
 import {
   COOLIFY_HOST_IDENTITY,
@@ -32,6 +33,7 @@ import {
   clampPerHost,
   codeOfError,
   decideProbe,
+  decideVerify,
   isActiveState,
   useSudoFor,
   COOLIFY_SSH_ACTIVE_STATES,
@@ -56,6 +58,8 @@ const MIGRATION_TERMINAL = ["ABORTED", "ROLLED_BACK", "REVERSED", "COMPLETED", "
 const OUTCOME_UNKNOWN: readonly CoolifySshResultCode[] = ["timeout", "unreachable", "installer_failed"];
 /** Marker kept in the grant's `classes` when THIS run turned the capability on (it is dropped again only then). */
 const CAP_ADDED = "cap_added";
+/** Marker kept in the grant's `classes` of a probe-only identity check: nothing is installed, and the run never shows as the install run. */
+const VERIFY = "verify";
 const EMPTY_SHA256 = createHash("sha256").update("").digest("hex");
 
 export interface Clock {
@@ -72,6 +76,12 @@ const realClock: Clock = {
     }),
   random: () => Math.random(),
 };
+
+export interface StartVerifyInput {
+  coolifyServerUuids: string[];
+  /** The typed number of servers: the owner's consent for exactly that many. Missing = the hub asks for it (`consent_required`). */
+  confirm?: string;
+}
 
 export interface StartRunInput {
   coolifyServerUuids: string[];
@@ -182,7 +192,9 @@ export class CoolifySshInstallService implements OnModuleInit, OnModuleDestroy {
   async latestRun(userId: string, serverId: string): Promise<CoolifySshRunView | null> {
     const inv = await this.requireInventory(serverId);
     await this.access.requireRole(userId, inv.teamId, READ_ROLES);
-    const last = await this.prisma.coolifyHostGrant.findFirst({ where: { serverId, kind: "ssh", runId: { not: null } }, orderBy: { createdAt: "desc" } });
+    // A probe-only identity check is not the install run: the install card never picks it up.
+    const grants = await this.prisma.coolifyHostGrant.findMany({ where: { serverId, kind: "ssh", runId: { not: null } }, orderBy: { createdAt: "desc" } });
+    const last = grants.find((g: { classes: string[] }) => !g.classes.includes(VERIFY));
     if (!last?.runId) return null;
     return this.buildView(serverId, last.runId);
   }
@@ -255,6 +267,69 @@ export class CoolifySshInstallService implements OnModuleInit, OnModuleDestroy {
     for (const r of rows) if (r.state === "PLANNED") this.track(this.probeOne(runId, r.coolifyServerUuid, userId));
     this.track(this.finalize(runId));
     return this.buildView(serverId, runId);
+  }
+
+  // ---- verify (probe only) -----------------------------------------------------------------------------------------------------
+
+  /**
+   * "Check these machines automatically": the same read-only SSH probe as the install's first step, and nothing more. It reads the sshd host
+   * key the Coolify host's agent saw on the wire, the machine id hash and the Docker engine id, and stores them like an install probe does,
+   * so the host match can turn "probably the same" into "same machine" by comparing them with what the Tugra agent reports about itself.
+   * Nothing is installed, no enroll token is minted, nothing is written on the target. It needs the same consent as the install (the typed
+   * number of servers, a time-limited `ssh` grant that also turns the `coolify_ssh` capability on, and off again when the probes are done),
+   * and the same limits (4 at a time per host, 8 per hub, timeouts). A server that already has an agent is probed too: that is the point.
+   */
+  async startVerify(userId: string, serverId: string, input: StartVerifyInput): Promise<CoolifySshRunView> {
+    const inv = await this.requireInventory(serverId);
+    await this.access.requireRole(userId, inv.teamId, OWNER_ONLY);
+    const uuids = [...new Set(input.coolifyServerUuids)];
+    if (uuids.length === 0 || uuids.length > MAX_TARGETS_PER_RUN || uuids.some((u) => !COOLIFY_SSH_UUID_RE.test(u))) {
+      throw new BadRequestException({ code: "bad_request", message: "choose between 1 and 100 Coolify servers" });
+    }
+    // Names (and "not the Coolify host itself") come from the stored read when there is one; the agent resolves the address itself either way.
+    const known = isInventory(inv.snapshot) ? new Map(inv.snapshot.servers.map((s) => [s.uuid, s])) : null;
+    const chosen: Array<{ uuid: string; name: string }> = [];
+    for (const u of uuids) {
+      const s = known?.get(u);
+      if (known && (!s || s.isLocal)) throw new BadRequestException({ code: "unknown_server", message: "That server is not in this inventory, or is the Coolify host itself" });
+      chosen.push({ uuid: u, name: s?.name ?? u });
+    }
+    if (!input.confirm) throw new ConflictException({ code: "consent_required", message: "Confirm the check: type the number of servers" });
+    if (input.confirm !== String(uuids.length)) throw new BadRequestException({ code: "confirm_mismatch", message: "type the number of servers to confirm" });
+    this.assertAgentReady(serverId);
+
+    // Single flight: one working row per (Coolify host, Coolify server). The same servers asked again while their check runs get that run.
+    const working = await this.prisma.coolifySshTarget.findMany({
+      where: { serverId, coolifyServerUuid: { in: uuids }, state: { in: [...COOLIFY_SSH_ACTIVE_STATES] } },
+      select: { runId: true, coolifyServerUuid: true, grantId: true },
+    });
+    if (working.length > 0) {
+      const runs = new Set(working.map((a) => a.runId));
+      if (runs.size === 1 && working.length === uuids.length && (await this.isVerify(working[0].grantId))) return this.buildView(serverId, [...runs][0]);
+      throw new ConflictException({ code: "run_in_progress", message: "Some of these servers are already being checked or installed" });
+    }
+
+    const runId = randomUUID();
+    const hours = COOLIFY_SSH_GRANT_DEFAULT_HOURS;
+    const capAdded = await this.servers.setRunCapability(serverId, "coolify_ssh", true);
+    const grant = await this.prisma.coolifyHostGrant.create({
+      data: { teamId: inv.teamId, serverId, kind: "ssh", classes: capAdded ? [VERIFY, CAP_ADDED] : [VERIFY], grantedById: userId, runId, expiresAt: new Date(this.clock.now() + hours * 3_600_000) },
+    });
+    await this.audit.log({ actor: userId, action: "coolify.ssh.grant", target: serverId, meta: { runId, count: uuids.length, hours, verify: true } });
+    await this.prisma.coolifySshTarget.createMany({
+      data: chosen.map((c) => ({ teamId: inv.teamId, serverId, runId, grantId: grant.id, coolifyServerUuid: c.uuid, name: c.name.slice(0, 100), state: "PLANNED" })),
+    });
+    this.hostSem(serverId).setMax(clampPerHost(undefined));
+    for (const c of chosen) this.track(this.probeOne(runId, c.uuid, userId));
+    this.track(this.finalize(runId));
+    return this.buildView(serverId, runId);
+  }
+
+  /** True when the grant belongs to a probe-only identity check (a run that never installs). */
+  private async isVerify(grantId: string | null): Promise<boolean> {
+    if (!grantId) return false;
+    const g = (await this.prisma.coolifyHostGrant.findUnique({ where: { id: grantId }, select: { classes: true } })) as { classes: string[] } | null;
+    return !!g?.classes.includes(VERIFY);
   }
 
   // ---- install (after the probe) -----------------------------------------------------------------------------------------------
@@ -375,11 +450,12 @@ export class CoolifySshInstallService implements OnModuleInit, OnModuleDestroy {
         await this.fail(t.id, ["PROBING"], code);
         return void (await this.auditStep(userId, "probe", t, runId, { code, durationMs: this.clock.now() - started }));
       }
-      const d = decideProbe(res);
+      const verify = await this.isVerify(t.grantId);
+      const d = verify ? decideVerify(res, probeIdentity(res.probe ?? null, res.probe?.sshHostKeyFp ?? null) !== null) : decideProbe(res);
       const fp = res.probe?.sshHostKeyFp ?? null;
       const done = d.state === "READY" ? {} : { finishedAt: new Date(this.clock.now()) };
       await this.move(t.id, ["PROBING"], d.state, { code: d.code, probe: (res.probe ?? null) as Prisma.InputJsonValue, hostKeyFp: fp, ...done });
-      await this.auditStep(userId, "probe", t, runId, { code: d.code ?? "ok", hostKeyFp: fp ?? undefined, durationMs: res.durationMs ?? this.clock.now() - started });
+      await this.auditStep(userId, "probe", t, runId, { code: d.code ?? "ok", hostKeyFp: fp ?? undefined, durationMs: res.durationMs ?? this.clock.now() - started, ...(verify ? { verify: true } : {}) });
     } catch (e) {
       await this.fail(t.id, ["PROBING"], codeOfError(e));
       this.logger.warn(`ssh probe step failed: ${e instanceof Error ? e.constructor.name : "error"}`);
@@ -719,7 +795,7 @@ export class CoolifySshInstallService implements OnModuleInit, OnModuleDestroy {
     if (!this.agentWs.agentSupports(serverId, "coolify_ssh_v1")) throw new ConflictException({ code: "agent_too_old", message: "Update the agent on the Coolify server first" });
   }
 
-  private async auditStep(actor: string, step: "probe" | "install" | "uninstall", t: TargetRow, runId: string, extra: { code: string; hostKeyFp?: string; crossCheck?: string; tugraServerId?: string | null; durationMs: number }): Promise<void> {
+  private async auditStep(actor: string, step: "probe" | "install" | "uninstall", t: TargetRow, runId: string, extra: { code: string; hostKeyFp?: string; crossCheck?: string; tugraServerId?: string | null; durationMs: number; verify?: boolean }): Promise<void> {
     const f = await this.factOf(t);
     await this.audit.log({
       actor,
@@ -728,7 +804,7 @@ export class CoolifySshInstallService implements OnModuleInit, OnModuleDestroy {
       meta: {
         runId, coolifyServerUuid: t.coolifyServerUuid, ...(f ? { ip: f.ip, port: f.port, user: f.user, keyName: f.keyName } : {}),
         code: extra.code, ...(extra.hostKeyFp ? { hostKeyFp: extra.hostKeyFp } : {}), ...(extra.crossCheck ? { crossCheck: extra.crossCheck } : {}),
-        ...(extra.tugraServerId ? { tugraServerId: extra.tugraServerId } : {}), durationMs: Math.max(0, Math.round(extra.durationMs)),
+        ...(extra.tugraServerId ? { tugraServerId: extra.tugraServerId } : {}), ...(extra.verify ? { verify: true } : {}), durationMs: Math.max(0, Math.round(extra.durationMs)),
       },
     });
   }

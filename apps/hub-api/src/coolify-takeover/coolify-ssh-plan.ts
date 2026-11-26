@@ -40,6 +40,16 @@ export function decideProbe(res: Pick<CoolifySshResultMsg, "ok" | "code" | "prob
   return { state: "FAILED", code: res.code };
 }
 
+/**
+ * What a probe result means for a probe-ONLY target (an identity check, nothing will be installed). The install verdict (docker access,
+ * sudo, hub reachability) does not matter here: what counts is whether the probe reached the machine and kept something to compare. A
+ * result without any identity fact is a failure with the agent's own code (or the generic one when the agent said it was fine).
+ */
+export function decideVerify(res: Pick<CoolifySshResultMsg, "ok" | "code">, hasIdentity: boolean): { state: CoolifySshTargetState; code: CoolifySshResultCode | null } {
+  if (hasIdentity) return { state: "VERIFIED", code: null };
+  return { state: "FAILED", code: res.ok ? "installer_failed" : res.code };
+}
+
 /** Install under `sudo -n` when the user is not root and has no Docker access of its own. Unknown facts mean "not root": sudo is tried. */
 export function useSudoFor(facts: CoolifyProbeFacts | null | undefined): boolean {
   if (!facts) return false;

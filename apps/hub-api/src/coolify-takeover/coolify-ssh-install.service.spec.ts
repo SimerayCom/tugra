@@ -888,3 +888,169 @@ describe("CoolifySshInstallService: removing an agent from a server that works",
     await expect(w.svc.startUninstall("u1", "HOST", runId, { confirm: "1" })).rejects.toBeInstanceOf(ForbiddenException);
   });
 });
+
+// ---- verify: a probe-only identity check ------------------------------------------------------------------------------------------
+
+const MID = "0123456789abcdef".repeat(4);
+const verify = (w: ReturnType<typeof world>, uuids = w.uuids, confirm: string | null = String(uuids.length)) => w.svc.startVerify("u1", "HOST", { coolifyServerUuids: uuids, ...(confirm === null ? {} : { confirm }) });
+
+describe("CoolifySshInstallService: verify (probe only)", () => {
+  it("never installs: it probes with the signed probe script, mints no token, and writes no install request", async () => {
+    const w = world({ probe: () => readyProbe({ machineIdHash: MID, dockerEngineId: "ENGINE-1234" }) });
+    const view = await verify(w);
+    await w.svc.idle();
+    expect(w.sent).toHaveLength(2);
+    for (const s of w.sent) {
+      expect(s.req).toMatchObject({ op: "probe", scriptSha256: COOLIFY_SSH_PROBE_SHA256, useSudo: false, expectedHostKeyFp: "" });
+      expect(s.req.script).toBeUndefined();
+      expect(s.req.payload).toBeUndefined();
+    }
+    expect(w.sent.some((s) => s.req.op === "install" || s.req.op === "uninstall")).toBe(false);
+    expect(w.serversSvc.createServersBulk).not.toHaveBeenCalled();
+    expect(w.minted).toHaveLength(0);
+    const done = await w.svc.getRun("u1", "HOST", view.runId);
+    expect(done.targets.every((t) => t.state === "VERIFIED" && t.code === null && t.probe?.sshHostKeyFp === FP)).toBe(true);
+    expect(done.finished).toBe(true); // nothing is waiting for an install
+    // the facts are stored the way an install run stores them, for HostMatchService to read
+    expect(w.targets.rows.every((r) => r.hostKeyFp === FP && r.probe.machineIdHash === MID)).toBe(true);
+  });
+
+  it("cannot be turned into an install: no READY target, so startInstall refuses it", async () => {
+    const w = world();
+    const view = await verify(w);
+    await w.svc.idle();
+    await expect(w.svc.startInstall("u1", "HOST", view.runId, { confirm: "2" })).rejects.toMatchObject({ response: { code: "nothing_ready" } });
+    expect(w.sent.every((s) => s.req.op === "probe")).toBe(true);
+  });
+
+  it("needs the consent: without the typed count the API says consent_required, with a wrong one confirm_mismatch, and nothing is recorded", async () => {
+    const w = world();
+    await expect(verify(w, w.uuids, null)).rejects.toMatchObject({ response: { code: "consent_required" } });
+    await expect(verify(w, w.uuids, "7")).rejects.toMatchObject({ response: { code: "confirm_mismatch" } });
+    expect(w.sent).toHaveLength(0);
+    expect(w.grants.rows).toHaveLength(0);
+    expect(w.targets.rows).toHaveLength(0);
+    expect(w.serversSvc.setRunCapability).not.toHaveBeenCalled();
+  });
+
+  it("is owner only, and refuses unknown servers, the Coolify host itself and option-like uuids", async () => {
+    const w = world();
+    w.setRole("admin");
+    await expect(verify(w)).rejects.toBeInstanceOf(ForbiddenException);
+    w.setRole("other");
+    await expect(verify(w)).rejects.toBeInstanceOf(ForbiddenException);
+    w.setRole("owner");
+    await expect(verify(w, ["nopenopenope1"])).rejects.toMatchObject({ response: { code: "unknown_server" } });
+    await expect(verify(w, ["localuuid0001"])).rejects.toMatchObject({ response: { code: "unknown_server" } });
+    await expect(verify(w, ["-oProxyCommand=id"])).rejects.toBeInstanceOf(BadRequestException);
+    expect(w.sent).toHaveLength(0);
+    expect(w.grants.rows).toHaveLength(0);
+  });
+
+  it("refuses when the agent is offline or too old, before any consent is recorded", async () => {
+    const off = world({ online: false });
+    await expect(verify(off)).rejects.toMatchObject({ response: { code: "agent_offline" } });
+    const old = world({ features: false });
+    await expect(verify(old)).rejects.toMatchObject({ response: { code: "agent_too_old" } });
+    expect(off.grants.rows).toHaveLength(0);
+    expect(old.grants.rows).toHaveLength(0);
+  });
+
+  it("opens the ssh consent (capability on) and ends it, capability off, when the probes are done", async () => {
+    const w = world();
+    const view = await verify(w);
+    expect(w.caps()).toContain("coolify_ssh");
+    await w.svc.idle();
+    expect(w.grants.rows[0]).toMatchObject({ kind: "ssh", serverId: "HOST", grantedById: "u1" });
+    expect(w.grants.rows[0].classes).toEqual(expect.arrayContaining(["verify", "cap_added"]));
+    expect(w.grants.rows[0].revokedAt).toBeTruthy();
+    expect(w.caps()).not.toContain("coolify_ssh");
+    expect(w.auditLog.find((a) => a.action === "coolify.ssh.grant")).toMatchObject({ meta: { runId: view.runId, count: 2, verify: true } });
+    expect(w.auditLog.filter((a) => a.action === "coolify.ssh.probe").every((a) => a.meta.verify === true)).toBe(true);
+  });
+
+  it("probes a server that already runs an agent too (that is the point) and keeps its facts", async () => {
+    const w = world({ probe: () => ({ type: "coolify_ssh_result", reqId: "r", ok: true, code: "skipped_present", probe: { agent: "ours", sshHostKeyFp: FP, machineIdHash: MID } } as any) });
+    await verify(w);
+    await w.svc.idle();
+    expect(states(w)).toEqual({ srvaaa111111: "VERIFIED", srvbbb222222: "VERIFIED" });
+    expect(w.targets.rows[0].probe.machineIdHash).toBe(MID);
+  });
+
+  it("a server that is already in Tugra by address is still probed (the install's address shortcut does not apply)", async () => {
+    const w = world({ knownServers: [{ id: "EXIST", teamId: "T_NEW", status: "ONLINE", publicIp: "198.51.100.10", publicIpv6: null, hostname: null, reportedIps: [] }] });
+    await verify(w);
+    await w.svc.idle();
+    expect(w.sent.map((s) => s.req.coolifyServerUuid).sort()).toEqual(["srvaaa111111", "srvbbb222222"]);
+  });
+
+  it("keeps the facts when the install verdict would have failed (no docker, no root): it only asks who the machine is", async () => {
+    const w = world({ probe: () => fail("docker_missing", { agent: "none", uid: 1, sshHostKeyFp: FP, machineIdHash: MID }) });
+    await verify(w);
+    await w.svc.idle();
+    expect(states(w)).toEqual({ srvaaa111111: "VERIFIED", srvbbb222222: "VERIFIED" });
+  });
+
+  it("an unreachable machine is a FAILED row with the agent's fixed code, never an error message", async () => {
+    const w = world({ probe: (u) => (u === "srvaaa111111" ? new AgentCommandTimeoutException("secret detail") : fail("auth_failed", {})) });
+    const view = await verify(w);
+    await w.svc.idle();
+    const run = await w.svc.getRun("u1", "HOST", view.runId);
+    expect(run.targets.map((t) => [t.state, t.code]).sort()).toEqual([["FAILED", "auth_failed"], ["FAILED", "timeout"]]);
+    expect(JSON.stringify(run) + JSON.stringify(w.auditLog)).not.toContain("secret detail");
+    expect(run.finished).toBe(true);
+  });
+
+  it("keeps the 4-per-host limit", async () => {
+    const uuids = Array.from({ length: 9 }, (_, i) => `srv${String(i).padStart(9, "0")}`);
+    const w = world({ uuids });
+    await verify(w, uuids);
+    await w.svc.idle();
+    expect(w.sent).toHaveLength(9);
+    expect(w.peak()).toBeLessThanOrEqual(4);
+  });
+
+  it("the same servers asked again while their check runs get that run (one consent, one set of probes)", async () => {
+    const w = world();
+    const first = await verify(w);
+    const again = await verify(w);
+    expect(again.runId).toBe(first.runId);
+    await w.svc.idle();
+    expect(w.sent).toHaveLength(2);
+    expect(w.grants.rows).toHaveLength(1);
+  });
+
+  it("is not the install run: the install card's latest run ignores it", async () => {
+    const w = world();
+    await verify(w);
+    await w.svc.idle();
+    await expect(w.svc.latestRun("u1", "HOST")).resolves.toBeNull();
+    const real = await start(w);
+    await w.svc.idle();
+    expect((await w.svc.latestRun("u1", "HOST"))?.runId).toBe(real.runId);
+  });
+
+  it("works without a stored read: the name falls back to the uuid and the agent resolves the address", async () => {
+    const w = world();
+    w.prisma.coolifyInventory.rows[0].snapshot = null;
+    const view = await verify(w, ["srvzzz999999"], "1");
+    await w.svc.idle();
+    const run = await w.svc.getRun("u1", "HOST", view.runId);
+    expect(run.targets[0]).toMatchObject({ name: "srvzzz999999", state: "VERIFIED" });
+  });
+
+  it("a restart resumes a check that was probing as another probe, still probe-only", async () => {
+    const w = world();
+    const view = await verify(w);
+    await w.svc.idle();
+    // pretend the hub went down mid-probe
+    for (const r of w.targets.rows) Object.assign(r, { state: "PROBING", finishedAt: null, probe: null, hostKeyFp: null });
+    for (const g of w.grants.rows) Object.assign(g, { revokedAt: null });
+    w.sent.length = 0;
+    await w.svc.recover();
+    await w.svc.idle();
+    expect(w.sent.every((s) => s.req.op === "probe")).toBe(true);
+    expect(states(w)).toEqual({ srvaaa111111: "VERIFIED", srvbbb222222: "VERIFIED" });
+    expect(view.runId).toBeTruthy();
+  });
+});

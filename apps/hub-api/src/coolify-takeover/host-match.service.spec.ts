@@ -106,6 +106,15 @@ describe("HostMatchService: the SSH probe's identity facts reach the ladder", ()
     expect(v).toMatchObject({ status: "certain", tugraServerId: "a" });
   });
 
+  it("the same address alone is only 'probable'; the stored probe of a probe-only check then makes it 'certain' (the owner's own agents)", async () => {
+    const rows = [row("a", { publicIp: "203.0.113.1" })];
+    const identity = { a: { sshHostKeyFp: FP, sshHostKeyFps: [FP] } };
+    const before = makeWithProbes([], rows, identity);
+    expect((await before.svc.verdicts("u1", [{ uuid: "c1", address: "203.0.113.1" }], { localServerId: "agent" }))[0]).toMatchObject({ status: "probable", tugraServerId: "a" });
+    const after = makeWithProbes([{ coolifyServerUuid: "c1", probe: { agent: "ours", sshHostKeyFp: FP }, hostKeyFp: FP }], rows, identity);
+    expect((await after.svc.verdicts("u1", [{ uuid: "c1", address: "203.0.113.1" }], { localServerId: "agent" }))[0]).toMatchObject({ status: "certain", tugraServerId: "a" });
+  });
+
   it("a probed identity that differs is a conflict: the shared address no longer makes it probable", async () => {
     const { svc } = makeWithProbes([{ coolifyServerUuid: "c1", probe: { machineIdHash: "f".repeat(64) }, hostKeyFp: null }], [row("a", { publicIp: "203.0.113.5" })], { a: { machineIdHash: HEX } });
     const [v] = await svc.verdicts("u1", [{ uuid: "c1", address: "203.0.113.5" }], { localServerId: "agent" });
