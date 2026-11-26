@@ -118,6 +118,7 @@ export function AgentConnectPanel({
     );
   }
 
+  // Nothing is read or opted in on a server until its agent has found Coolify there.
   return (
     <div style={{ display: "grid", gap: 12 }}>
       <p style={{ margin: 0, fontSize: 13, color: "var(--c-tx2)", lineHeight: 1.5 }}>{t("coolifyAgent.subtitle")}</p>
@@ -154,7 +155,7 @@ export function AgentConnectPanel({
       )}
 
       <div style={{ display: "grid", gap: 6 }}>
-        <Btn onClick={() => connect.mutate(needsOptIn)} disabled={!serverId || busy} loading={connect.isPending}>
+        <Btn onClick={() => connect.mutate(needsOptIn)} disabled={!serverId || busy || detect?.found !== true} loading={connect.isPending}>
           {connect.isPending ? t("coolifyAgent.read.reading") : needsOptIn ? t("coolifyAgent.connect.optInButton") : t("coolifyAgent.read.button")}
         </Btn>
         <p style={{ margin: 0, fontSize: 12, color: "var(--c-tx3)" }}>{t("coolifyAgent.read.nothingChanged")}</p>

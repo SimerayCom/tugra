@@ -13,7 +13,7 @@ vi.mock("next/navigation", () => ({ useRouter: () => ({ push: nav.push, replace:
 afterEach(cleanup);
 
 const row = (o: Partial<MoveOffServerRow>): MoveOffServerRow => ({ serverId: "s1", name: "box", agentOnline: true, coolify: true, isCoolifyHub: false, takeover: "none", cleanup: "none", stage: "takeover", ...o });
-const hub = (o: Partial<MoveOffHub> = {}): MoveOffHub => ({ serverId: "s1", name: "box", readAt: new Date(Date.now() - 5 * 60_000).toISOString(), knownServers: 27, unlinkedServers: 0, secrets: "none", secretsExpiresAt: null, ssh: null, ...o });
+const hub = (o: Partial<MoveOffHub> = {}): MoveOffHub => ({ serverId: "s1", teamId: "t1", name: "box", readAt: new Date(Date.now() - 5 * 60_000).toISOString(), knownServers: 27, unlinkedServers: 0, secrets: "none", secretsExpiresAt: null, ssh: null, ...o });
 const view = (servers: MoveOffServerRow[], h: MoveOffHub | null = null): MoveOffStatusView => ({
   teamId: "t1",
   hub: h,

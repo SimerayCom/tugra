@@ -21,7 +21,7 @@ beforeEach(() => {
 const row = (o: Partial<MoveOffServerRow>): MoveOffServerRow => ({ serverId: "s1", name: "box", agentOnline: true, coolify: true, isCoolifyHub: false, takeover: "none", cleanup: "none", stage: "takeover", ...o });
 const view = (o: Partial<MoveOffStatusView> = {}): MoveOffStatusView => ({
   teamId: "t1",
-  hub: { serverId: "hub", name: "coolify-hub", readAt: new Date(Date.now() - 60_000).toISOString(), knownServers: 4, unlinkedServers: 0, secrets: "active", secretsExpiresAt: new Date(Date.now() + 3_600_000).toISOString(), ssh: { runId: "r", finished: true, online: 2, failed: 0, skipped: 0, pending: 0, total: 2 } },
+  hub: { serverId: "hub", teamId: "t1", name: "coolify-hub", readAt: new Date(Date.now() - 60_000).toISOString(), knownServers: 4, unlinkedServers: 0, secrets: "active", secretsExpiresAt: new Date(Date.now() + 3_600_000).toISOString(), ssh: { runId: "r", finished: true, online: 2, failed: 0, skipped: 0, pending: 0, total: 2 } },
   servers: [
     row({ serverId: "a", name: "alpha", stage: "done", takeover: "VERIFIED", cleanup: "CLEANED" }),
     row({ serverId: "b", name: "bravo", stage: "cleanup", takeover: "VERIFIED" }),

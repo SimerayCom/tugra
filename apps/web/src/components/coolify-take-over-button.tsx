@@ -19,7 +19,7 @@ import { AgentTeamPick } from "./import/agent-team-pick";
  * the owner to check and continue. Nothing is changed by the click: the session is a read, and the wizard asks before anything runs.
  * Several Coolify teams: the owner picks the team first (no default).
  */
-export function CoolifyTakeOverButton({ row, teamId, hubServerId }: { row: Pick<MoveOffServerRow, "serverId" | "name" | "takeover">; teamId: string; hubServerId: string | null }) {
+export function CoolifyTakeOverButton({ row, teamId, hubServerId, hubTeamId }: { row: Pick<MoveOffServerRow, "serverId" | "name" | "takeover">; teamId: string; hubServerId: string | null; hubTeamId?: string | null }) {
   const t = useT();
   const router = useRouter();
   const [busy, setBusy] = useState(false);
@@ -36,6 +36,7 @@ export function CoolifyTakeOverButton({ row, teamId, hubServerId }: { row: Pick<
     setBusy(false);
   };
 
+  // The import session is made in the Coolify host's own team, which is often not the team of the server being taken over.
   const press = async () => {
     setError(null);
     setBusy(true);
@@ -53,7 +54,7 @@ export function CoolifyTakeOverButton({ row, teamId, hubServerId }: { row: Pick<
         setBusy(false);
         return;
       }
-      const s = await api.importConnectAgent({ teamId, serverId: hubServerId });
+      const s = await api.importConnectAgent({ teamId: hubTeamId ?? teamId, serverId: hubServerId });
       if (needsTeamChoice(s.teams)) {
         setSession(s);
         setBusy(false);
@@ -71,7 +72,7 @@ export function CoolifyTakeOverButton({ row, teamId, hubServerId }: { row: Pick<
     setError(null);
     setBusy(true);
     try {
-      const next = await api.importConnectAgent({ teamId, serverId: hubServerId, sourceTeamRef: teamRef });
+      const next = await api.importConnectAgent({ teamId: hubTeamId ?? teamId, serverId: hubServerId, sourceTeamRef: teamRef });
       api.importRevoke(session.sessionId).catch(() => undefined);
       open(next);
     } catch (e) {

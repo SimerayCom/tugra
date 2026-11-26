@@ -680,6 +680,7 @@ describe("ImportWizard", () => {
       await waitFor(() => expect(qc.getQueryData(["teams"])).toBeTruthy());
       fireEvent.click(screen.getByRole("button", { name: "Connect through the agent (recommended)" }));
       fireEvent.change(await screen.findByLabelText("Tugra server where Coolify runs"), { target: { value: "srv1" } });
+      await waitFor(() => expect((screen.getByRole("button", { name: "Read Coolify" }) as HTMLButtonElement).disabled).toBe(false));
       fireEvent.click(screen.getByRole("button", { name: "Read Coolify" }));
       await screen.findByText("Found in Coolify");
       expect(connect).toHaveBeenCalledWith({ teamId: "t1", serverId: "srv1" });
@@ -779,6 +780,7 @@ describe("ImportWizard", () => {
         await waitFor(() => expect(qc.getQueryData(["teams"])).toBeTruthy());
         fireEvent.click(screen.getByRole("button", { name: "Connect through the agent (recommended)" }));
         fireEvent.change(await screen.findByLabelText("Tugra server where Coolify runs"), { target: { value: "srv1" } });
+        await waitFor(() => expect((screen.getByRole("button", { name: "Read Coolify" }) as HTMLButtonElement).disabled).toBe(false));
         fireEvent.click(screen.getByRole("button", { name: "Read Coolify" }));
         await screen.findByText("Found in Coolify");
         fireEvent.click(screen.getByRole("button", { name: "Continue" }));

@@ -64,7 +64,7 @@ function HubLines({ hub, serverId, serverName, teamId, isOwner }: { hub: MoveOff
   );
 }
 
-function ManagedLines({ row, teamId, hubServerId }: { row: MoveOffServerRow; teamId: string; hubServerId: string | null }) {
+function ManagedLines({ row, teamId, hubServerId, hubTeamId }: { row: MoveOffServerRow; teamId: string; hubServerId: string | null; hubTeamId: string | null }) {
   const t = useT();
   return (
     <>
@@ -76,7 +76,7 @@ function ManagedLines({ row, teamId, hubServerId }: { row: MoveOffServerRow; tea
         name={t("coolifyMove.line.takeover.label")}
         tone={row.takeover === "none" ? "muted" : row.takeover === "FAILED" ? "danger" : row.takeover === "VERIFIED" ? "ok" : "lapis"}
         link={row.takeover === "none" ? { href: "/import", text: t("coolifyMove.rowAction.takeoverStart") } : { href: takeoverHref(row.serverId), text: t("coolifyMove.line.takeover.open") }}
-        action={startsTakeoverFlow(row) ? <CoolifyTakeOverButton row={row} teamId={teamId} hubServerId={hubServerId} /> : undefined}
+        action={startsTakeoverFlow(row) ? <CoolifyTakeOverButton row={row} teamId={teamId} hubServerId={hubServerId} hubTeamId={hubTeamId} /> : undefined}
       >
         {row.takeover === "none" ? t("coolifyMove.line.takeover.none") : t(`coolifyInPlace.status.${row.takeover}`)}
       </Line>
@@ -114,7 +114,7 @@ export function CoolifyHostCard({ serverId, serverName, teamId, role }: { server
             </Line>
           )
         ) : (
-          <ManagedLines row={row} teamId={teamId} hubServerId={q.data.hub?.serverId ?? null} />
+          <ManagedLines row={row} teamId={teamId} hubServerId={q.data.hub?.serverId ?? null} hubTeamId={q.data.hub?.teamId ?? null} />
         )}
       </ul>
     </SectionCard>

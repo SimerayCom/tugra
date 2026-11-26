@@ -37,6 +37,15 @@ describe("CoolifyTakeOverButton", () => {
     expect(focus()).toEqual({ kind: "coolify", agentSessionId: "sess-1234abcd", inPlaceServerId: "s1", fromServerName: "box" });
   });
 
+  it("the session is made in the Coolify host's own team when the server being taken over is in another team", async () => {
+    const connect = vi.spyOn(api, "importConnectAgent").mockResolvedValue({ sessionId: "sess-5678abcd", expiresAt: "x", read: {} } as never);
+    show({ teamId: "olgu", hubTeamId: "simeray" });
+    fireEvent.click(screen.getByRole("button", { name: "Take over in place" }));
+    await waitFor(() => expect(nav.push).toHaveBeenCalledWith("/import"));
+    expect(connect).toHaveBeenCalledWith({ teamId: "simeray", serverId: "hub" });
+    expect(focus()).toMatchObject({ agentSessionId: "sess-5678abcd", inPlaceServerId: "s1" });
+  });
+
   it("a guided run that already has its import opens the takeover on it and makes no session", async () => {
     vi.spyOn(api, "listMigrationRuns").mockResolvedValue([{ id: "r1", targetServerId: "s1", topology: "swap-proxy", dryRun: false, status: "RUNNING", createdAt: "2026-11-25T00:00:00Z" }] as never);
     vi.spyOn(api, "getMigrationRun").mockResolvedValue({ opId: "op1" } as never);

@@ -71,12 +71,28 @@ function linkedServerIds(links: unknown, teamId: string): string[] {
   return out;
 }
 
-/** Coolify server ids that carry a stored link into this team. */
-function linkedCoolifyIds(links: unknown, teamId: string): string[] {
+/** Coolify server ids that carry a stored link into this team (null: into any team). */
+function linkedCoolifyIds(links: unknown, teamId: string | null): string[] {
   if (!links || typeof links !== "object" || Array.isArray(links)) return [];
   return Object.entries(links as Record<string, unknown>)
-    .filter(([, l]) => (l as { teamId?: unknown } | null)?.teamId === teamId && typeof (l as { serverId?: unknown }).serverId === "string")
+    .filter(([, l]) => (teamId === null || (l as { teamId?: unknown } | null)?.teamId === teamId) && typeof (l as { serverId?: unknown } | null)?.serverId === "string")
     .map(([k]) => k);
+}
+
+type HubInventory = { serverId: string; teamId: string; readAt: Date | null; counts: unknown; serverLinks: unknown; snapshot: unknown; server?: { name: string } | null };
+
+/**
+ * The Coolify host this team's move goes through: its own host that was read first, else the newest read of another team that knows
+ * servers here, else its own host that was only opted in. The newest read wins within each kind.
+ */
+export function pickHub(inventories: readonly HubInventory[], teamId: string, knownBy: ReadonlyMap<string, readonly string[]>): HubInventory | null {
+  const newest = (list: HubInventory[]) => [...list].sort((a, b) => (b.readAt?.getTime() ?? 0) - (a.readAt?.getTime() ?? 0))[0] ?? null;
+  const own = inventories.filter((i) => i.teamId === teamId);
+  return (
+    newest(own.filter((i) => i.readAt !== null)) ??
+    newest(inventories.filter((i) => i.teamId !== teamId && i.readAt !== null && (knownBy.get(i.serverId)?.length ?? 0) > 0)) ??
+    newest(own)
+  );
 }
 
 function grantState(g: { revokedAt: Date | null; expiresAt: Date } | undefined, now: Date): MoveOffGrantState {
@@ -117,23 +133,30 @@ export class CoolifyMoveService {
     await this.access.requireRole(userId, teamId, READ_ROLES);
     const [servers, inventories, takeovers, cleanups, campaignRows, moveRows] = await Promise.all([
       this.prisma.server.findMany({ where: { teamId }, select: { id: true, name: true, status: true }, orderBy: { name: "asc" } }),
-      this.prisma.coolifyInventory.findMany({ where: { teamId }, select: { serverId: true, readAt: true, counts: true, serverLinks: true, snapshot: true }, orderBy: { createdAt: "asc" } }),
+      this.readableInventories(userId),
       this.prisma.coolifyTakeover.findMany({ where: { teamId }, select: { serverId: true, status: true }, orderBy: { createdAt: "desc" }, distinct: ["serverId"] }),
       this.prisma.coolifyCleanup.findMany({ where: { teamId }, select: { serverId: true, status: true }, orderBy: { createdAt: "desc" }, distinct: ["serverId"] }),
       this.prisma.migrationCampaign.findMany({ where: { teamId }, select: { id: true, label: true, status: true, plan: true, createdAt: true }, orderBy: { createdAt: "desc" }, take: CAMPAIGN_SCAN }),
       this.prisma.projectMove.findMany({ where: { teamId }, select: { phase: true }, orderBy: { createdAt: "desc" }, take: MOVE_SCAN }),
     ]);
 
-    const hubIds = new Set(inventories.map((i) => i.serverId));
-    const known = new Set<string>([...hubIds, ...takeovers.map((t) => t.serverId), ...cleanups.map((c) => c.serverId)]);
-    for (const inv of inventories) for (const id of linkedServerIds(inv.serverLinks, teamId)) known.add(id);
-    // Servers added by hand were never linked by the checklist: match the Coolify servers to them by address, read-only (nothing is stored).
+    // A Coolify host often sits in another team than the servers it manages (one Coolify, many teams here). Every read the user may
+    // see counts: its links and matches into THIS team make those servers known here. A host row is only ever its own team's.
+    const knownBy = new Map<string, string[]>();
     const unlinked = new Map<string, number | null>();
     for (const inv of inventories) {
+      const ids = new Set(linkedServerIds(inv.serverLinks, teamId));
+      // Servers added by hand were never linked by the checklist: match the Coolify servers to them by address, read-only (nothing is stored).
       const m = await this.matchInventory(userId, teamId, inv);
-      for (const id of m.matched) known.add(id);
+      for (const id of m.matched) ids.add(id);
+      knownBy.set(inv.serverId, [...ids]);
       unlinked.set(inv.serverId, m.unlinked);
     }
+    const hubInv = pickHub(inventories, teamId, knownBy);
+    // Own hosts that were read, and the chosen one; an opt-in on a server with no Coolify that was never read is not a host.
+    const hubIds = new Set(inventories.filter((i) => i.teamId === teamId && (i.readAt !== null || i.serverId === hubInv?.serverId)).map((i) => i.serverId));
+    const known = new Set<string>([...hubIds, ...takeovers.map((t) => t.serverId), ...cleanups.map((c) => c.serverId)]);
+    for (const ids of knownBy.values()) for (const id of ids) known.add(id);
     const takeoverOf = new Map(takeovers.map((t) => [t.serverId, t.status]));
     const cleanupOf = new Map(cleanups.map((c) => [c.serverId, c.status]));
 
@@ -166,7 +189,7 @@ export class CoolifyMoveService {
       createdAt: c.createdAt.toISOString(),
     }));
 
-    const hub = await this.hubOf(teamId, inventories, rows, unlinked, now);
+    const hub = hubInv ? await this.hubOf(hubInv, rows, unlinked, now) : null;
     return { teamId, hub, servers: rows, campaigns: campaignsOut, projectMoves, steps: moveOffSteps(rows, projectMoves, hub?.readAt ?? null) };
   }
 
@@ -182,7 +205,8 @@ export class CoolifyMoveService {
   ): Promise<{ matched: string[]; unlinked: number | null }> {
     const snap = inv.snapshot as { v?: unknown; servers?: unknown } | null;
     if (!snap || snap.v !== 1 || !Array.isArray(snap.servers)) return { matched: [], unlinked: null };
-    const linked = new Set(linkedCoolifyIds(inv.serverLinks, teamId));
+    // A server linked into any team is not "unlinked": the host's servers spread over many teams here.
+    const linked = new Set(linkedCoolifyIds(inv.serverLinks, null));
     const open = (snap.servers as Array<{ id?: unknown; ip?: unknown; isLocal?: unknown }>).filter((s) => typeof s.id === "string" && s.isLocal !== true && !linked.has(s.id));
     if (open.length === 0) return { matched: [], unlinked: 0 };
     const verdicts = await this.hostMatch.verdicts(
@@ -191,24 +215,31 @@ export class CoolifyMoveService {
       { localServerId: inv.serverId },
     );
     const matched: string[] = [];
+    let anywhere = 0;
     for (const v of verdicts) {
       const l = linkOf(v);
-      if (l && l.teamId === teamId) matched.push(l.serverId);
+      if (!l) continue;
+      anywhere++;
+      if (l.teamId === teamId) matched.push(l.serverId);
     }
-    return { matched, unlinked: open.length - matched.length };
+    return { matched, unlinked: open.length - anywhere };
   }
 
-  private async hubOf(
-    teamId: string,
-    inventories: Array<{ serverId: string; readAt: Date | null; counts: unknown }>,
-    rows: MoveOffServerRow[],
-    unlinked: ReadonlyMap<string, number | null>,
-    now: Date,
-  ): Promise<MoveOffHub | null> {
-    // The newest read wins when a team connected more than one Coolify host.
-    const inv = [...inventories].sort((a, b) => (b.readAt?.getTime() ?? 0) - (a.readAt?.getTime() ?? 0))[0];
-    if (!inv) return null;
-    const name = rows.find((r) => r.serverId === inv.serverId)?.name ?? "";
+  /** Every Coolify read in a team where the user is an owner or admin (the role the move needs), oldest first. */
+  private async readableInventories(userId: string): Promise<HubInventory[]> {
+    const roles = await this.access.roleByTeam(userId);
+    const teamIds = [...roles].filter(([, r]) => READ_ROLES.includes(r)).map(([id]) => id);
+    if (teamIds.length === 0) return [];
+    return this.prisma.coolifyInventory.findMany({
+      where: { teamId: { in: teamIds } },
+      select: { serverId: true, teamId: true, readAt: true, counts: true, serverLinks: true, snapshot: true, server: { select: { name: true } } },
+      orderBy: { createdAt: "asc" },
+    });
+  }
+
+  private async hubOf(inv: HubInventory, rows: MoveOffServerRow[], unlinked: ReadonlyMap<string, number | null>, now: Date): Promise<MoveOffHub> {
+    const teamId = inv.teamId;
+    const name = rows.find((r) => r.serverId === inv.serverId)?.name ?? inv.server?.name ?? "";
     const counts = inv.counts as { servers?: unknown } | null;
     const [grant, lastSsh] = await Promise.all([
       this.prisma.coolifyHostGrant.findFirst({ where: { teamId, serverId: inv.serverId, kind: "secrets" }, orderBy: { createdAt: "desc" }, select: { revokedAt: true, expiresAt: true } }),
@@ -222,6 +253,7 @@ export class CoolifyMoveService {
     }
     return {
       serverId: inv.serverId,
+      teamId,
       name,
       readAt: inv.readAt ? inv.readAt.toISOString() : null,
       knownServers: typeof counts?.servers === "number" ? counts.servers : null,

@@ -29,6 +29,8 @@ export type MoveOffGrantState = "none" | "active" | "expired" | "revoked";
 
 export interface MoveOffHub {
   serverId: string;
+  /** The team the Coolify host itself is in (often not the team being shown): the import session is made there. */
+  teamId: string;
   name: string;
   /** When the Coolify database was last read, null before the first read. */
   readAt: string | null;

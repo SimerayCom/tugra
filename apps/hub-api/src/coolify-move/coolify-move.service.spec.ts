@@ -9,7 +9,9 @@ const earlier = new Date("2026-11-20T12:00:00Z");
 
 interface Fx {
   servers?: Array<{ id: string; name: string; status: string }>;
-  inventories?: Array<{ serverId: string; readAt: Date | null; counts: unknown; serverLinks: unknown; snapshot?: unknown }>;
+  inventories?: Array<{ serverId: string; teamId?: string; readAt: Date | null; counts: unknown; serverLinks: unknown; snapshot?: unknown; server?: { name: string } }>;
+  /** Teams the user is an owner or admin of besides t1 (where another team's Coolify host may sit). */
+  otherTeams?: string[];
   takeovers?: Array<{ serverId: string; status: string }>;
   cleanups?: Array<{ serverId: string; status: string }>;
   campaigns?: Array<{ id: string; label: string; status: string; plan: unknown; createdAt: Date }>;
@@ -24,7 +26,7 @@ interface Fx {
 function make(fx: Fx = {}) {
   const prisma = {
     server: { findMany: jest.fn().mockResolvedValue(fx.servers ?? []), findUnique: jest.fn() },
-    coolifyInventory: { findMany: jest.fn().mockResolvedValue(fx.inventories ?? []) },
+    coolifyInventory: { findMany: jest.fn().mockResolvedValue((fx.inventories ?? []).map((i) => ({ teamId: "t1", ...i }))) },
     coolifyTakeover: { findMany: jest.fn().mockResolvedValue(fx.takeovers ?? []) },
     coolifyCleanup: { findMany: jest.fn().mockResolvedValue(fx.cleanups ?? []) },
     migrationCampaign: { findMany: jest.fn().mockResolvedValue(fx.campaigns ?? []) },
@@ -35,6 +37,7 @@ function make(fx: Fx = {}) {
     coolifySshTarget: { findMany: jest.fn().mockResolvedValue(fx.sshTargets ?? []) },
   };
   const access = {
+    roleByTeam: jest.fn().mockResolvedValue(new Map([["t1", "OWNER"], ...(fx.otherTeams ?? []).map((t) => [t, "OWNER"] as [string, string]), ["viewer-team", "VIEWER"]])),
     requireRole: jest.fn().mockImplementation(async () => {
       if (fx.role === null) throw new ForbiddenException("insufficient role for this team");
     }),
@@ -85,9 +88,11 @@ describe("CoolifyMoveService.status", () => {
   it("scopes every query to the team and takes only the newest takeover and cleanup per server", async () => {
     const m = make();
     await m.svc.status("u1", "t1", NOW);
-    for (const t of ["server", "coolifyInventory", "coolifyTakeover", "coolifyCleanup", "migrationCampaign", "projectMove"] as const) {
+    for (const t of ["server", "coolifyTakeover", "coolifyCleanup", "migrationCampaign", "projectMove"] as const) {
       expect(m.prisma[t].findMany.mock.calls[0][0].where).toEqual({ teamId: "t1" });
     }
+    // Coolify reads: every team the user owns or admins (a host often sits in another team), never one they only view.
+    expect(m.prisma.coolifyInventory.findMany.mock.calls[0][0].where).toEqual({ teamId: { in: ["t1"] } });
     expect(m.prisma.coolifyTakeover.findMany.mock.calls[0][0]).toMatchObject({ orderBy: { createdAt: "desc" }, distinct: ["serverId"] });
     expect(m.prisma.coolifyCleanup.findMany.mock.calls[0][0]).toMatchObject({ orderBy: { createdAt: "desc" }, distinct: ["serverId"] });
   });
@@ -150,10 +155,16 @@ describe("CoolifyMoveService.status", () => {
       expect(sent[2]).toEqual({ localServerId: "hub" });
     });
 
-    it("does not adopt a match into another team, and counts it as not matched", async () => {
+    it("does not adopt a match into another team, but does not call it unmatched either (it is that team's server)", async () => {
       const m = make({ servers, inventories: inv(), verdicts: [verdict("2", "a", "OTHER"), verdict("3", "b", "t1"), verdict("4", "z", "OTHER")] });
       const v = await m.svc.status("u1", "t1", NOW);
       expect(v.servers.find((s) => s.serverId === "a")?.stage).toBe("not_coolify");
+      expect(v.hub?.unlinkedServers).toBe(0);
+    });
+
+    it("counts only the servers matched to no team as unmatched", async () => {
+      const m = make({ servers, inventories: inv(), verdicts: [verdict("3", "b", "t1")] });
+      const v = await m.svc.status("u1", "t1", NOW);
       expect(v.hub?.unlinkedServers).toBe(2);
     });
 
@@ -193,7 +204,7 @@ describe("CoolifyMoveService.status", () => {
     expect(JSON.stringify(v)).not.toContain(CANARY);
     const selected = (fn: jest.Mock) => Object.keys(fn.mock.calls[0][0].select);
     expect(selected(m.prisma.server.findMany)).toEqual(["id", "name", "status"]);
-    expect(selected(m.prisma.coolifyInventory.findMany)).toEqual(["serverId", "readAt", "counts", "serverLinks", "snapshot"]);
+    expect(selected(m.prisma.coolifyInventory.findMany)).toEqual(["serverId", "teamId", "readAt", "counts", "serverLinks", "snapshot", "server"]);
     expect(selected(m.prisma.coolifyTakeover.findMany)).toEqual(["serverId", "status"]);
     expect(selected(m.prisma.coolifyCleanup.findMany)).toEqual(["serverId", "status"]);
     expect(selected(m.prisma.coolifySshTarget.findMany)).toEqual(["state"]);
@@ -202,6 +213,41 @@ describe("CoolifyMoveService.status", () => {
       expect(sel).not.toContain("recipientKeyEnc");
       expect(sel).not.toContain("recipientPublicKey");
     }
+  });
+});
+
+describe("CoolifyMoveService.status with the Coolify host in another team", () => {
+  const servers = [
+    { id: "olgu1", name: "olgu-1", status: "ONLINE" },
+    { id: "olgu2", name: "olgu-2", status: "ONLINE" },
+  ];
+  const hostRead = (links: Record<string, unknown>) => ({ serverId: "hub", teamId: "simeray", readAt: earlier, counts: { servers: 24 }, serverLinks: links, server: { name: "Coolify Hub" } });
+
+  it("knows this team's servers through the other team's read, and names the host with its own team", async () => {
+    const m = make({ servers, otherTeams: ["simeray"], inventories: [hostRead({ c1: { teamId: "t1", serverId: "olgu1" }, c9: { teamId: "simeray", serverId: "x" } })] });
+    const v = await m.svc.status("u1", "t1", NOW);
+    expect(Object.fromEntries(v.servers.map((s) => [s.serverId, s.stage]))).toEqual({ olgu1: "takeover", olgu2: "not_coolify" });
+    expect(v.hub).toMatchObject({ serverId: "hub", teamId: "simeray", name: "Coolify Hub", knownServers: 24 });
+    expect(v.servers.some((s) => s.isCoolifyHub)).toBe(false);
+    // the consent and the SSH install belong to the host's team
+    for (const c of m.prisma.coolifyHostGrant.findFirst.mock.calls) expect(c[0].where).toMatchObject({ teamId: "simeray", serverId: "hub" });
+  });
+
+  it("an opt-in here that was never read (no Coolify on it) does not hide the real host", async () => {
+    const m = make({
+      servers,
+      otherTeams: ["simeray"],
+      inventories: [{ serverId: "olgu1", teamId: "t1", readAt: null, counts: null, serverLinks: {} }, hostRead({ c1: { teamId: "t1", serverId: "olgu1" } })],
+    });
+    const v = await m.svc.status("u1", "t1", NOW);
+    expect(v.hub?.serverId).toBe("hub");
+    expect(v.servers.find((s) => s.serverId === "olgu1")).toMatchObject({ isCoolifyHub: false, stage: "takeover" });
+  });
+
+  it("a read of another team that knows no server here is not this team's host", async () => {
+    const m = make({ servers, otherTeams: ["simeray"], inventories: [hostRead({ c9: { teamId: "simeray", serverId: "x" } })] });
+    const v = await m.svc.status("u1", "t1", NOW);
+    expect(v.hub).toBeNull();
   });
 });
 

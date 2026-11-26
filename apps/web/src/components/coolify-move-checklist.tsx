@@ -42,11 +42,11 @@ function StepCard({ step, progress, current, children }: { step: MoveOffStep; pr
   );
 }
 
-function RowAction({ row, step, t, teamId, hubServerId }: { row: MoveOffServerRow; step: "takeover" | "cleanup"; t: T; teamId: string; hubServerId: string | null }) {
+function RowAction({ row, step, t, teamId, hubServerId, hubTeamId }: { row: MoveOffServerRow; step: "takeover" | "cleanup"; t: T; teamId: string; hubServerId: string | null; hubTeamId: string | null }) {
   // Step B only starts once a server is taken over; before that its action is step A's.
   if (step === "cleanup" && (row.stage === "agent" || row.stage === "takeover")) return <span style={{ fontSize: 12, color: "var(--c-tx3)" }}>{t("coolifyMove.step.takeover.title")}</span>;
   if (step === "takeover" && (row.stage === "cleanup" || row.stage === "done")) return <Badge tone="ok">{t("coolifyMove.step.complete")}</Badge>;
-  if (step === "takeover" && startsTakeoverFlow(row)) return <CoolifyTakeOverButton row={row} teamId={teamId} hubServerId={hubServerId} />;
+  if (step === "takeover" && startsTakeoverFlow(row)) return <CoolifyTakeOverButton row={row} teamId={teamId} hubServerId={hubServerId} hubTeamId={hubTeamId} />;
   const a = rowAction(row);
   if (!a) return null;
   return (
@@ -56,7 +56,7 @@ function RowAction({ row, step, t, teamId, hubServerId }: { row: MoveOffServerRo
   );
 }
 
-function ServerList({ rows, step, teamId, hubServerId }: { rows: MoveOffServerRow[]; step: "takeover" | "cleanup"; teamId: string; hubServerId: string | null }) {
+function ServerList({ rows, step, teamId, hubServerId, hubTeamId }: { rows: MoveOffServerRow[]; step: "takeover" | "cleanup"; teamId: string; hubServerId: string | null; hubTeamId: string | null }) {
   const t = useT();
   if (rows.length === 0) return <p style={dim}>{t("coolifyMove.noServers")}</p>;
   return (
@@ -77,7 +77,7 @@ function ServerList({ rows, step, teamId, hubServerId }: { rows: MoveOffServerRo
             </Badge>
           )}
           <span style={{ fontSize: 12, color: "var(--c-tx3)", flexBasis: "100%" }}>{t(`coolifyMove.stage.${r.stage}`)}</span>
-          <RowAction row={r} step={step} t={t} teamId={teamId} hubServerId={hubServerId} />
+          <RowAction row={r} step={step} t={t} teamId={teamId} hubServerId={hubServerId} hubTeamId={hubTeamId} />
         </li>
       ))}
     </ul>
@@ -149,10 +149,10 @@ export function MoveOffBody({ v, teamId }: { v: MoveOffStatusView; teamId: strin
       <Prelude v={v} />
       {movers.length === 0 && <p style={dim}>{t("coolifyMove.noServers")}</p>}
       <StepCard step="takeover" progress={stepOf(v, "takeover")} current={cur === "takeover"}>
-        <ServerList rows={movers} step="takeover" teamId={teamId} hubServerId={v.hub?.serverId ?? null} />
+        <ServerList rows={movers} step="takeover" teamId={teamId} hubServerId={v.hub?.serverId ?? null} hubTeamId={v.hub?.teamId ?? null} />
       </StepCard>
       <StepCard step="cleanup" progress={cleaned} current={cur === "cleanup"}>
-        <ServerList rows={movers} step="cleanup" teamId={teamId} hubServerId={v.hub?.serverId ?? null} />
+        <ServerList rows={movers} step="cleanup" teamId={teamId} hubServerId={v.hub?.serverId ?? null} hubTeamId={v.hub?.teamId ?? null} />
       </StepCard>
       <StepCard step="consolidate" progress={stepOf(v, "consolidate")} current={false}>
         <p style={dim}>{v.projectMoves.total === 0 ? t("coolifyMove.consolidate.none") : t("coolifyMove.consolidate.counts", { total: v.projectMoves.total, completed: v.projectMoves.completed, active: v.projectMoves.active, failed: v.projectMoves.failed })}</p>

@@ -63,6 +63,7 @@ describe("AgentConnectPanel", () => {
     const connect = vi.spyOn(api, "importConnectAgent").mockResolvedValue(SESSION);
     mount();
     pick("s1");
+    await waitFor(() => expect((screen.getByRole("button", { name: "Read Coolify" }) as HTMLButtonElement).disabled).toBe(false));
     fireEvent.click(screen.getByRole("button", { name: "Read Coolify" }));
     await screen.findByText("Found in Coolify");
     expect(connect).toHaveBeenCalledWith({ teamId: "t1", serverId: "s1" });
@@ -76,6 +77,7 @@ describe("AgentConnectPanel", () => {
     const enable = vi.spyOn(api, "coolifyEnable").mockResolvedValue({} as never);
     mount();
     pick("s1");
+    await waitFor(() => expect((screen.getByRole("button", { name: "Read Coolify" }) as HTMLButtonElement).disabled).toBe(false));
     fireEvent.click(screen.getByRole("button", { name: "Read Coolify" }));
     await screen.findByText("Allow reading this Coolify");
     expect(enable).not.toHaveBeenCalled(); // asking is not allowing
@@ -91,12 +93,14 @@ describe("AgentConnectPanel", () => {
     mount();
     pick("s1");
     await screen.findByText("Coolify's database is not running on this server.");
+    expect((screen.getByRole("button", { name: "Read Coolify" }) as HTMLButtonElement).disabled).toBe(true); // nothing is opted in or read there
   });
 
   it("explains a failed read in the user's words", async () => {
     vi.spyOn(api, "importConnectAgent").mockRejectedValue(new ApiError(409, "x", "agent_offline"));
     mount();
     pick("s1");
+    await waitFor(() => expect((screen.getByRole("button", { name: "Read Coolify" }) as HTMLButtonElement).disabled).toBe(false));
     fireEvent.click(screen.getByRole("button", { name: "Read Coolify" }));
     await screen.findByText(/agent is offline/);
     expect(screen.queryByText("Found in Coolify")).toBeNull();
@@ -107,6 +111,7 @@ describe("AgentConnectPanel", () => {
     const grant = vi.spyOn(api, "coolifySecretsGrant").mockResolvedValue({ id: "g1", kind: "secrets", serverId: "s1", classes: ["env"], status: "active", grantedById: "u", expiresAt: "2026-11-27T10:00:00Z", revokedAt: null, createdAt: "2026-11-26T10:00:00Z" } as never);
     const { onConnected } = mount();
     pick("s1");
+    await waitFor(() => expect((screen.getByRole("button", { name: "Read Coolify" }) as HTMLButtonElement).disabled).toBe(false));
     fireEvent.click(screen.getByRole("button", { name: "Read Coolify" }));
     await screen.findByText("Allow reading secret values");
     expect(screen.getByText("1240 found")).toBeTruthy();
@@ -121,6 +126,7 @@ describe("AgentConnectPanel", () => {
     vi.spyOn(api, "importConnectAgent").mockResolvedValue(SESSION);
     const { onConnected, setBusy } = mount();
     pick("s1");
+    await waitFor(() => expect((screen.getByRole("button", { name: "Read Coolify" }) as HTMLButtonElement).disabled).toBe(false));
     fireEvent.click(screen.getByRole("button", { name: "Read Coolify" }));
     await screen.findByText("Found in Coolify");
     expect((screen.getByRole("button", { name: "Continue" }) as HTMLButtonElement).disabled).toBe(false);
@@ -134,6 +140,7 @@ describe("AgentConnectPanel", () => {
     const PICKED: ImportAgentSession = { ...MULTI, sessionId: "sess-2" };
     const read = async () => {
       pick("s1");
+      await waitFor(() => expect((screen.getByRole("button", { name: "Read Coolify" }) as HTMLButtonElement).disabled).toBe(false));
       fireEvent.click(screen.getByRole("button", { name: "Read Coolify" }));
       await screen.findByText("Found in Coolify");
     };

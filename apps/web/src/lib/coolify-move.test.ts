@@ -87,7 +87,7 @@ describe("hasCoolifyMove", () => {
     expect(hasCoolifyMove(view({ servers: [row({ coolify: false, stage: "not_coolify" })] }))).toBe(false);
     expect(hasCoolifyMove(view({ servers: [row({})] }))).toBe(true);
     expect(hasCoolifyMove(view({ servers: [row({ coolify: false, isCoolifyHub: true, stage: "hub" })] }))).toBe(true);
-    expect(hasCoolifyMove(view({ hub: { serverId: "h", name: "h", readAt: null, knownServers: null, unlinkedServers: null, secrets: "none", secretsExpiresAt: null, ssh: null } }))).toBe(true);
+    expect(hasCoolifyMove(view({ hub: { serverId: "h", teamId: "t1", name: "h", readAt: null, knownServers: null, unlinkedServers: null, secrets: "none", secretsExpiresAt: null, ssh: null } }))).toBe(true);
   });
 });
 

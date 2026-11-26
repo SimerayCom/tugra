@@ -238,7 +238,7 @@ export function CoolifyInventoryBody({ inv }: { inv: CoolifyInventoryView }) {
   const open: Open = (key, team, w) => {
     setBusy(key);
     const focus = focusFor(w);
-    agentSession(inv, team, w.connected?.teamId ?? inv.teamId)
+    agentSession(inv, team, inv.teamId)
       .then((sid) => rememberImportFocus(sid ? { ...focus, agentSessionId: sid } : focus))
       .catch(() => rememberImportFocus(focus))
       .finally(() => router.push("/import"));
