@@ -3474,6 +3474,8 @@ export interface MigrationRunSummary {
   targetServerId: string;
   targetServerName: string | null;
   targetServerCount: number;
+  /** Every target server of the run (default first): the servers a live run holds. */
+  targetServerIds?: string[];
   sourceKind: ImportRemoteKind;
   sourceHost: string | null;
   sourceVersion: string | null;

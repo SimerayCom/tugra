@@ -56,6 +56,14 @@ describe("busyServers", () => {
     ]);
     expect([...m.entries()]).toEqual([["A", "r1"], ["D", "r4"]]);
   });
+  it("a run holds every server it places something on, not only its main target", () => {
+    const m = busyServers([
+      { id: "r1", targetServerId: "A", targetServerIds: ["A", "B", "C"], status: "RUNNING", dryRun: false },
+      { id: "r2", targetServerId: "D", targetServerIds: ["D", "E"], status: "RUNNING", dryRun: true },
+      { id: "r3", targetServerId: "F", targetServerIds: ["F", "B"], status: "QUEUED", dryRun: false },
+    ]);
+    expect([...m.entries()]).toEqual([["A", "r1"], ["B", "r1"], ["C", "r1"], ["F", "r3"]]);
+  });
   it("is empty while the runs are not loaded", () => {
     expect(busyServers(undefined).size).toBe(0);
   });

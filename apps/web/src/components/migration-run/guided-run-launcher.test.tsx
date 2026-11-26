@@ -692,6 +692,13 @@ describe("GuidedRunLauncher guards: nothing is offered that fails after the clic
     expect(d.queryByTestId("busy-block")).toBeNull(); // a dry run holds nothing, so srv1 stays usable
   });
 
+  it("a server a live run only places a part on is marked busy too", async () => {
+    vi.spyOn(api, "listMigrationRuns").mockResolvedValue([{ ...mkRun({ id: "live2" }), targetServerId: "srv9", targetServerIds: ["srv9", "srv2"], targetServerCount: 2, status: "RUNNING", dryRun: false }] as never);
+    mount();
+    const d = await openDialog();
+    await waitFor(() => expect(within(d.getByLabelText("Target server")).getByRole("option", { name: "Server B (busy)" })).toBeTruthy());
+  });
+
   it("a busy target of the run is explained with a link to the run that holds it, and cannot be submitted", async () => {
     vi.spyOn(api, "listMigrationRuns").mockResolvedValue([{ ...mkRun({ id: "live1" }), targetServerId: "srv1", status: "WAITING", dryRun: false }] as never);
     mount();

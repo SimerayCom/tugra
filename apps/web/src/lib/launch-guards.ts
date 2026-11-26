@@ -47,10 +47,16 @@ export function copyOntoSourceHost(input: { plan: ImportPlan; targetId: string; 
 /** Statuses the hub holds a server lock for (a real run that has not settled). A dry run holds none. */
 const LIVE: ReadonlySet<string> = new Set(["QUEUED", "RUNNING", "WAITING", "PAUSED", "ABORTING", "ROLLING_BACK", "REVERSING", "FAILED"]);
 
-/** Server id to the live real run that holds it. A second run on the same server is refused (`server-has-live-run`). */
-export function busyServers(runs: readonly Pick<MigrationRunSummary, "id" | "targetServerId" | "status" | "dryRun">[] | undefined): Map<string, string> {
+/**
+ * Server id to the live real run that holds it. A second run on the same server is refused (`server-has-live-run`), and a run holds every
+ * server it places something on (the default target and each placement target), not only its main one.
+ */
+export function busyServers(runs: readonly Pick<MigrationRunSummary, "id" | "targetServerId" | "targetServerIds" | "status" | "dryRun">[] | undefined): Map<string, string> {
   const out = new Map<string, string>();
-  for (const r of runs ?? []) if (!r.dryRun && LIVE.has(r.status) && !out.has(r.targetServerId)) out.set(r.targetServerId, r.id);
+  for (const r of runs ?? []) {
+    if (r.dryRun || !LIVE.has(r.status)) continue;
+    for (const id of r.targetServerIds && r.targetServerIds.length > 0 ? r.targetServerIds : [r.targetServerId]) if (!out.has(id)) out.set(id, r.id);
+  }
   return out;
 }
 
