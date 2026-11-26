@@ -2,7 +2,9 @@
 
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { COOLIFY_SECRETS_GRANT_DEFAULT_HOURS, COOLIFY_SECRETS_GRANT_MAX_HOURS, COOLIFY_SECRET_CLASSES, COOLIFY_SECRET_TIER, type CoolifySecretClass } from "@tugra/shared";
+// Browser-safe subpaths: the package index also carries Node-only helpers (node:net) that must not reach the web bundle.
+import { COOLIFY_SECRETS_GRANT_DEFAULT_HOURS, COOLIFY_SECRETS_GRANT_MAX_HOURS, COOLIFY_SECRET_CLASSES, COOLIFY_SECRET_TIER } from "@tugra/shared/dist/coolify-secrets";
+import type { CoolifySecretClass } from "@tugra/shared";
 import { api, ApiError } from "../lib/api";
 import { useT } from "../i18n/provider";
 import { formatDateTime } from "../lib/format-time";

@@ -1,6 +1,9 @@
 // The agent path of the import wizard (Coolify hub takeover): the owner's consent for reading secret values, and the match of each
 // Coolify server to a Tugra server. Pure helpers and the shapes of the hub's answers; nothing here holds a secret, an address or a key.
-import { COOLIFY_SECRET_CLASSES, COOLIFY_SECRET_TIER, COOLIFY_SECRETS_GRANT_DEFAULT_HOURS, HOST_EVIDENCE_STRENGTH, type CoolifyHostGrantView, type CoolifySecretClass, type HostEvidence, type HostEvidenceStrength } from "@tugra/shared";
+// Browser-safe subpaths: the package index also carries Node-only helpers (node:net) that must not reach the web bundle.
+import { COOLIFY_SECRET_CLASSES, COOLIFY_SECRET_TIER, COOLIFY_SECRETS_GRANT_DEFAULT_HOURS } from "@tugra/shared/dist/coolify-secrets";
+import { HOST_EVIDENCE_STRENGTH } from "@tugra/shared/dist/coolify-match";
+import type { CoolifyHostGrantView, CoolifySecretClass, HostEvidence, HostEvidenceStrength } from "@tugra/shared";
 import type { ImportPlan, ServerView } from "./types";
 
 export type { CoolifyHostGrantView, CoolifySecretClass } from "@tugra/shared";
