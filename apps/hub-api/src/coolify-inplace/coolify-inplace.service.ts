@@ -775,6 +775,12 @@ export class CoolifyInPlaceService implements InPlaceRunPort {
       try {
         await this.world.setComposeNetworks(userId, item.appId, item.networksWanted);
       } catch {
+        // a refusal that changed nothing leaves nothing to put back (what the app has now is what it had)
+        const now = (await this.world.service(item.appId).catch(() => null))?.networks;
+        if (now && sameNetworkRows(now, item.networksBefore ?? [])) {
+          item.networksBefore = undefined;
+          await this.saveItems(row.id, items);
+        }
         return "exclusive_start_failed";
       }
     }
@@ -1158,7 +1164,8 @@ export class CoolifyInPlaceService implements InPlaceRunPort {
         for (const i of ex.filter((x) => x.exclusive)) await (i.kind === "database" ? this.world.stopDatabase(userId, i.appId) : this.world.stopApp(userId, i.appId));
         // the compose apps' network attachments go back to what they were (the takeover added Coolify's)
         for (const i of ex.filter((x) => x.kind === "service" && x.networksBefore !== undefined)) {
-          await this.world.setComposeNetworks(userId, i.appId, i.networksBefore ?? []);
+          const now = (await this.world.service(i.appId).catch(() => null))?.networks;
+          if (!now || !sameNetworkRows(now, i.networksBefore ?? [])) await this.world.setComposeNetworks(userId, i.appId, i.networksBefore ?? []);
           i.networksBefore = undefined;
           await this.saveItems(rowId, items);
         }

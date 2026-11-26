@@ -383,7 +383,7 @@ export class Box implements InPlaceWorld {
     if (s.includes("TUGRA_IP_PROBE")) return this.probeOut(s);
     if (s.includes("TUGRA_IP_FALLBACK_REMOVED")) {
       for (const m of s.matchAll(/tls-fb-([a-z0-9-]+)\.yml/g)) {
-        const host = this.apps.find((a) => a.host.replace(/[^a-z0-9]/g, "-") === m[1])?.host;
+        const host = [...this.apps.map((a) => a.host), ...this.services.flatMap((v) => v.hosts)].find((h) => h.replace(/[^a-z0-9]/g, "-") === m[1]);
         if (host) {
           this.fallback.delete(host);
           if (this.leWorks) this.pendingLe.add(host);
