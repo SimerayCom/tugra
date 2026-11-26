@@ -1,6 +1,7 @@
 "use client";
 
 import { useT } from "../../i18n/provider";
+import type { CampaignRunPlan } from "@tugra/shared";
 import type { CampaignPreview } from "../../lib/api";
 import { placementFailureKey, rebuildChoicesOf, runsByWave, sourcesOfRun } from "../../lib/campaign";
 import { toggleChoice } from "../../lib/inplace";
@@ -22,6 +23,7 @@ export function CampaignPreviewCard({
   rebuild = [],
   onRebuild,
   disabled = false,
+  teams = [],
 }: {
   preview: CampaignPreview | null;
   loading: boolean;
@@ -35,6 +37,8 @@ export function CampaignPreviewCard({
   rebuild?: readonly string[];
   onRebuild?: (next: string[]) => void;
   disabled?: boolean;
+  /** Team names, so a campaign per team is headed by the team it belongs to. */
+  teams?: ReadonlyArray<{ id: string; name: string }>;
 }) {
   const t = useT();
   const nameOfSource = (ref: string): string => {
@@ -42,6 +46,22 @@ export function CampaignPreviewCard({
     return ref === UNKNOWN_SOURCE_HOST ? t("migrationRun.launch.placement.unknownHost") : (r?.name ?? ref);
   };
   const nameOfServer = (id: string): string => servers.find((s) => s.id === id)?.name ?? id;
+  const renderRuns = (runs: CampaignRunPlan[]) => (
+    <ol style={{ margin: 0, paddingLeft: 18, display: "flex", flexDirection: "column", gap: 6, fontSize: 12, lineHeight: 1.5 }}>
+      {runsByWave(runs).flatMap((w) =>
+        w.runs.map((r) => (
+          <li key={`${w.wave}:${r.sourceServerRef}`}>
+            <strong>{t("placement.campaign.wave", { n: w.wave + 1 })}</strong>
+            {": "}
+            {r.kind === "in-place" ? t("placement.campaign.runInPlace", { source: sourcesOfRun(r).map(nameOfSource).join(", ") }) : t("placement.campaign.runOther", { source: sourcesOfRun(r).map(nameOfSource).join(", "), target: nameOfServer(r.targetServerId) })}
+            {r.kind === "in-place" && onRebuild && (
+              <RebuildPicker choices={rebuildChoicesOf(r, items, inScope)} chosen={rebuild} onChange={onRebuild} disabled={disabled} serverName={sourcesOfRun(r).map(nameOfSource).join(", ")} />
+            )}
+          </li>
+        )),
+      )}
+    </ol>
+  );
   return (
     <fieldset data-testid="campaign-preview" style={{ border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: 12, margin: 0, display: "flex", flexDirection: "column", gap: 8, minWidth: 0 }}>
       <legend style={{ fontSize: 12, fontWeight: 700, color: "var(--c-tx2)", padding: "0 6px" }}>{t("placement.campaign.title")}</legend>
@@ -55,21 +75,18 @@ export function CampaignPreviewCard({
           {preview.failure.reason ? ` ${t(`placement.lock.${preview.failure.reason}`)}` : ""}
         </p>
       )}
-      {preview?.runs && (
-        <ol style={{ margin: 0, paddingLeft: 18, display: "flex", flexDirection: "column", gap: 6, fontSize: 12, lineHeight: 1.5 }}>
-          {runsByWave(preview.runs).flatMap((w) =>
-            w.runs.map((r) => (
-              <li key={`${w.wave}:${r.sourceServerRef}`}>
-                <strong>{t("placement.campaign.wave", { n: w.wave + 1 })}</strong>
-                {": "}
-                {r.kind === "in-place" ? t("placement.campaign.runInPlace", { source: sourcesOfRun(r).map(nameOfSource).join(", ") }) : t("placement.campaign.runOther", { source: sourcesOfRun(r).map(nameOfSource).join(", "), target: nameOfServer(r.targetServerId) })}
-                {r.kind === "in-place" && onRebuild && (
-                  <RebuildPicker choices={rebuildChoicesOf(r, items, inScope)} chosen={rebuild} onChange={onRebuild} disabled={disabled} serverName={sourcesOfRun(r).map(nameOfSource).join(", ")} />
-                )}
-              </li>
-            )),
-          )}
-        </ol>
+      {preview?.runs && preview.teams && preview.teams.length > 1 ? (
+        <>
+          <p role="note" data-testid="campaign-teams-note" style={{ margin: 0, fontSize: 12, color: "var(--c-tx2)", lineHeight: 1.5 }}>{t("placement.campaign.teamsNote", { count: preview.teams.length })}</p>
+          {preview.teams.map((tp, i) => (
+            <div key={tp.teamId} data-testid="campaign-team" style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              <strong style={{ fontSize: 12 }}>{t("placement.campaign.team", { name: teams.find((x) => x.id === tp.teamId)?.name ?? t("placement.campaign.teamN", { n: i + 1 }), count: tp.servers })}</strong>
+              {renderRuns(tp.runs)}
+            </div>
+          ))}
+        </>
+      ) : (
+        preview?.runs && renderRuns(preview.runs)
       )}
     </fieldset>
   );

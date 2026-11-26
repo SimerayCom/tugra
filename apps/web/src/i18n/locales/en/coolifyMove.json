@@ -143,7 +143,8 @@
     "none": "No campaign yet.",
     "runs": "{count} runs",
     "open": "Open report",
-    "error": "Could not load the campaigns."
+    "error": "Could not load the campaigns.",
+    "teams": "{count} teams"
   },
   "consent": {
     "open": "Allow or stop reading secret values",

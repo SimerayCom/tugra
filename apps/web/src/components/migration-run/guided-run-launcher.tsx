@@ -30,7 +30,7 @@ import { PlacementFields } from "./launch-placement";
 import { AgentGapNotice } from "./agent-gap-notice";
 import { sourceAgentGapsOf } from "../../lib/coolify-ssh";
 import { CampaignPreviewCard } from "./launch-campaign";
-import { campaignBody, needsCampaign, placementsOf, pruneRebuild } from "../../lib/campaign";
+import { campaignBody, campaignOpenHref, campaignsOf, needsCampaign, placementsOf, pruneRebuild } from "../../lib/campaign";
 import { HelpLink } from "../help-link";
 import { scopePayload, type ImportScope, overallPlacement, involvedHosts } from "../../lib/import-scope";
 import type { ImportApplyExtras, ImportPlan, ImportRemoteKind, MigrationRunMode, MigrationRunServerMap, MigrationRunTopology } from "../../lib/types";
@@ -47,6 +47,8 @@ interface Props {
   kind: ImportRemoteKind;
   sessionId: string;
   servers: LaunchServer[];
+  /** Team names, so a campaign per team is headed by its team (absent = the preview numbers them). */
+  teams?: ReadonlyArray<{ id: string; name: string }>;
   extras: ImportApplyExtras;
   /** The import's first step: when it narrowed the move, the run carries it, so it moves exactly what was chosen. */
   scope?: ImportScope | null;
@@ -71,7 +73,7 @@ export function GuidedRunLauncher(props: Props) {
   );
 }
 
-function LaunchDialog({ plan, kind, sessionId, servers, extras, scope, onChangeScope, onClose }: Props & { onClose: () => void }) {
+function LaunchDialog({ plan, kind, sessionId, servers, teams, extras, scope, onChangeScope, onClose }: Props & { onClose: () => void }) {
   const t = useT();
   const toast = useToast();
   const router = useRouter();
@@ -116,8 +118,11 @@ function LaunchDialog({ plan, kind, sessionId, servers, extras, scope, onChangeS
     const b = blockOf(s);
     return { id: s.id, name: b ? `${s.name} (${blockTag(t, b)})` : s.name };
   });
-  // every server the run would use must be able to take it
-  const used = [...new Set([targetServerId, ...Object.values(placement ?? {})].filter(Boolean))];
+  // Same-machine and copied moves together, several same-machine servers, or servers of several teams: the hub makes a campaign of runs (one per team, then
+  // one per same-machine server and one for the rest), so the target, the topology and the placement are its to decide and are not asked here.
+  const campaign = kind === "coolify" && needsCampaign(scope);
+  // every server the run would use must be able to take it (a campaign uses the servers the first step placed)
+  const used = [...new Set((campaign ? Object.values(scope?.placed ?? {}) : [targetServerId, ...Object.values(placement ?? {})]).filter(Boolean))];
   const blockedUsed = used.flatMap((id) => {
     const b = blockOf(servers.find((s) => s.id === id));
     return b ? [{ id, name: servers.find((s) => s.id === id)?.name ?? id, block: b }] : [];
@@ -151,10 +156,7 @@ function LaunchDialog({ plan, kind, sessionId, servers, extras, scope, onChangeS
     sessionId, sourceKind: kind, targetServerId, planHash: plan.planHash, extras, mode, topology, dryRun, acmeEmail, allowBind, allowLiveShapeProbe: probe, sourceController: controller, observeMinutes: observe,
     placement, scope: scopePayload(scope), campaign: adv.campaign, sourceRunner: adv.sourceRunner, hostLoop: adv.hostLoop, deployWaves: adv.deployWaves, deployConcurrency: adv.deployConcurrency, largeDbMode: adv.largeDbMode, serviceStart: adv.serviceStart, stopSource: adv.stopSource, policies: adv.policies,
   };
-  const issues = launchIssues(form);
-  // Same-machine and copied moves together, or several same-machine servers: the hub makes a campaign of runs (one per same-machine server,
-  // one for the rest), so the topology and the placement are its to decide and are not asked here.
-  const campaign = kind === "coolify" && needsCampaign(scope);
+  const issues = launchIssues(form).filter((i) => !(campaign && i === "target"));
   const placements = useMemo(() => (scope ? placementsOf(scope) : []), [scope]);
   const preview = useQuery({
     queryKey: ["campaign-plan", sessionId, plan.planHash, placements],
@@ -168,16 +170,18 @@ function LaunchDialog({ plan, kind, sessionId, servers, extras, scope, onChangeS
   const rebuild = useMemo(() => (campaign ? pruneRebuild(rebuildChoice, preview.data?.runs, plan.items, scope?.inScope) : []), [campaign, rebuildChoice, preview.data?.runs, plan.items, scope?.inScope]);
   const campaignRefused = campaign && (preview.isLoading || preview.isError || !!preview.data?.failure || !preview.data?.runs);
   const create = useMutation({
-    mutationFn: async (): Promise<{ href: string }> => {
+    mutationFn: async (): Promise<{ href: string; campaigns: number }> => {
       const input = buildLaunchInput(form);
       if (campaign) {
         const c = await api.createCampaign(campaignBody(input, placements, rebuild));
-        return { href: `/import/runs/campaign?c=${encodeURIComponent(c.label)}` };
+        // one campaign per team, all under one label: the report of the label holds the runs of every one of them
+        return { href: campaignOpenHref(c), campaigns: campaignsOf(c).length };
       }
       const run = await api.createMigrationRun(input);
-      return { href: `/import/runs/${run.id}` };
+      return { href: `/import/runs/${run.id}`, campaigns: 0 };
     },
-    onSuccess: ({ href }) => {
+    onSuccess: ({ href, campaigns }) => {
+      if (campaigns > 1) toast(t("placement.campaign.createdMany", { count: campaigns }), "success");
       void qc.invalidateQueries({ queryKey: ["migration-runs"] });
       void qc.invalidateQueries({ queryKey: ["migration-campaigns"] });
       router.push(href);
@@ -214,9 +218,12 @@ function LaunchDialog({ plan, kind, sessionId, servers, extras, scope, onChangeS
           </div>
         )}
 
-        <Field label={t("migrationRun.launch.target")} hint={t("migrationRun.launch.targetHint")} error={issues.includes("target") ? t("migrationRun.launch.targetMissing") : undefined}>
-          <Select value={targetServerId} onChange={changeTarget} options={targetOptions} style={{ minHeight: 44 }} />
-        </Field>
+        {/* a campaign takes the servers the first step placed: nothing to choose here a second time */}
+        {!campaign && (
+          <Field label={t("migrationRun.launch.target")} hint={t("migrationRun.launch.targetHint")} error={issues.includes("target") ? t("migrationRun.launch.targetMissing") : undefined}>
+            <Select value={targetServerId} onChange={changeTarget} options={targetOptions} style={{ minHeight: 44 }} />
+          </Field>
+        )}
         {blockedUsed.map((b) => (
           <p key={b.id} style={{ margin: 0 }}>
             <strong style={{ fontSize: 12 }}>{b.name}: </strong>
@@ -227,7 +234,7 @@ function LaunchDialog({ plan, kind, sessionId, servers, extras, scope, onChangeS
         <AgentGapNotice gaps={agentGaps} dryRun={dryRun} />
 
         {campaign ? (
-          <CampaignPreviewCard preview={preview.data ?? null} loading={preview.isLoading} failed={preview.isError} rows={sourceRows} servers={servers} items={plan.items} inScope={scope?.inScope} rebuild={rebuild} onRebuild={setRebuild} disabled={create.isPending} />
+          <CampaignPreviewCard preview={preview.data ?? null} loading={preview.isLoading} failed={preview.isError} rows={sourceRows} servers={servers} items={plan.items} inScope={scope?.inScope} rebuild={rebuild} onRebuild={setRebuild} disabled={create.isPending} teams={teams} />
         ) : (
           <PlacementFields rows={sourceRows} servers={placeableOptions} defaultId={targetServerId} value={placement} onChange={setPlacement} invalid={issues.includes("placement")} />
         )}

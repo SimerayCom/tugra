@@ -168,7 +168,7 @@ export function MoveOffBody({ v, teamId }: { v: MoveOffStatusView; teamId: strin
           </div>
         )}
       </StepCard>
-      <CampaignReportList teamId={teamId} />
+      <CampaignReportList teamId={teamId} extraTeamIds={v.campaigns.flatMap((c) => (c.teamId && c.teamId !== teamId ? [c.teamId] : []))} />
       {others.length > 0 && <p style={{ ...dim, color: "var(--c-tx3)" }}>{t("coolifyMove.others", { count: others.length })}</p>}
     </div>
   );

@@ -6,8 +6,8 @@ import type { CoolifyChecklist, CoolifyDetect, CoolifyInventoryView } from "./co
 import type { CoolifySshRunView } from "./coolify-ssh";
 import { HUB_UNREACHABLE_CODE, hubUnreachableMessage, isHubDownStatus, isNetworkFailure, reportHubDown } from "./hub-connection";
 import { observeServerDate } from "./clock-skew";
-import type { CampaignRunPlan, CampaignView, RunInPlaceView, SourceServerPlacementView, TakeoverView } from "@tugra/shared";
-import type { CampaignCreateBody } from "./campaign";
+import type { CampaignRunPlan, CampaignTeamPlan, CampaignView, RunInPlaceView, SourceServerPlacementView, TakeoverView } from "@tugra/shared";
+import type { CampaignCreateBody, CampaignCreated } from "./campaign";
 import type { AdviceReport, CostsReport, CostSyncResult, RescaleView } from "./costs";
 import type {
   BulkCapabilityResult,
@@ -2911,7 +2911,7 @@ export const api = {
     return apiFetch<CampaignPreview>("/migration-campaigns/plan", { method: "POST", body: JSON.stringify(body) });
   },
   createCampaign(body: CampaignCreateBody) {
-    return apiFetch<CampaignView>("/migration-campaigns", { method: "POST", body: JSON.stringify(body) });
+    return apiFetch<CampaignCreated>("/migration-campaigns", { method: "POST", body: JSON.stringify(body) });
   },
   listCampaigns(teamId: string) {
     return apiFetch<CampaignView[]>(`/migration-campaigns?teamId=${encodeURIComponent(teamId)}`);
@@ -3066,5 +3066,7 @@ export interface CampaignPreview {
   planHash: string;
   views: SourceServerPlacementView[];
   runs: CampaignRunPlan[] | null;
+  /** The same runs per Tugra team (one campaign each). Absent from an older hub. */
+  teams?: CampaignTeamPlan[] | null;
   failure: { code: string; ref?: string; reason?: string } | null;
 }

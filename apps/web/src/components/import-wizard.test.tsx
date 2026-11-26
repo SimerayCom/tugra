@@ -993,10 +993,9 @@ describe("ImportWizard — editable mapping", () => {
   });
   afterEach(() => vi.restoreAllMocks());
 
-  /** The first step asks for the team and a target for each source server (nothing is chosen for the user): pick them. */
-  const chooseTarget = async (host: string, team = "t1", server = "srv1") => {
-    fireEvent.change(await screen.findByLabelText("Team"), { target: { value: team } });
-    fireEvent.change(screen.getByLabelText(`${host} moves to`), { target: { value: server } });
+  /** The first step asks for a target for each source server (nothing is chosen for the user, and the team is not asked: servers of every team are offered): pick it. */
+  const chooseTarget = async (host: string, server = "srv1") => {
+    fireEvent.change(await screen.findByLabelText(`${host} moves to`), { target: { value: server } });
   };
 
   const withMapping: ImportPlan = { ...plan, mapping: { features: ["mapping-v1"], stored: null, storedVersion: null, scopeKey: "team-3" } };
@@ -1107,6 +1106,39 @@ describe("ImportWizard — editable mapping", () => {
     fireEvent.click(screen.getByRole("button", { name: "Change" }));
     await screen.findByText("What are you moving?");
     expect((screen.getByRole("checkbox", { name: /Box Two/ }) as HTMLInputElement).checked).toBe(true);
+  });
+
+  it("servers of two teams: the first step goes on, and the preview offers only the guided run (one campaign per team), never a one-team apply that would fail", async () => {
+    const multi: ImportPlan = {
+      ...plan,
+      totals: { apps: 2, databases: 0, volumes: 0, blockers: 0 },
+      items: [
+        { itemRef: "app:s1:web", kind: "app", name: "web-app", proposed: {}, risks: [], dependsOn: [] },
+        { itemRef: "app:s2:api", kind: "app", name: "api-app", proposed: {}, risks: [], dependsOn: [] },
+      ],
+      preflight: { databases: [], services: [], appsWithVolumeData: 0, hosts: [{ ref: "s1", name: "Box One" }, { ref: "s2", name: "Box Two" }] },
+      mapping: { features: ["mapping-v1"], stored: null, storedVersion: null, scopeKey: "team-3" },
+    };
+    vi.spyOn(api, "importConnect").mockResolvedValue({ sessionId: "s1", expiresAt: "2026-01-01T00:00:00.000Z" });
+    vi.spyOn(api, "importPlan").mockResolvedValue(multi);
+    wrap(<ImportWizard />);
+    await screen.findByLabelText("Coolify URL");
+    await waitFor(() => expect(qc.getQueryData(["teams"])).toBeTruthy());
+    fireEvent.change(screen.getByLabelText("Coolify URL"), { target: { value: "https://c.example.com" } });
+    fireEvent.change(screen.getByLabelText("API token"), { target: { value: "tok" } });
+    fireEvent.click(screen.getByRole("button", { name: "Connect & preview" }));
+    await screen.findByText("What are you moving?");
+    fireEvent.click(screen.getByRole("checkbox", { name: /Box One/ }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /Box Two/ }));
+    await chooseTarget("Box One", "srv1");
+    await chooseTarget("Box Two", "srv2");
+    expect(screen.getByTestId("multi-team-note").textContent).toContain("2 teams");
+    expect((screen.getByRole("button", { name: "Continue" }) as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await screen.findByText("Import preview");
+    expect(screen.getByTestId("multi-team-guided")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Review & rename" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Run guided migration" })).toBeTruthy();
   });
 
   describe("a refresh resumes the first step", () => {

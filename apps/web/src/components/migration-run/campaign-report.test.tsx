@@ -9,7 +9,7 @@ import { mkSummary } from "./test-fixtures";
 import type { MigrationRunReport, MigrationRunSummary } from "../../lib/types";
 
 vi.mock("next/link", () => ({ default: ({ href, children, ...rest }: { href: string; children: React.ReactNode }) => <a href={href} {...rest}>{children}</a> }));
-vi.mock("../team-scope", () => ({ useTeamScope: () => ({ teamId: null }) }));
+vi.mock("../team-scope", () => ({ useTeamContext: () => ({ teams: [{ id: "t-a", name: "Team A" }, { id: "t-b", name: "Team B" }] }) }));
 
 afterEach(() => {
   cleanup();
@@ -91,5 +91,22 @@ describe("CampaignReport", () => {
     await screen.findByText(/3 runs:/);
     await waitFor(() => expect(vi.mocked(api.getMigrationRunReport)).toHaveBeenCalledTimes(3));
     expect(vi.mocked(api.getMigrationRunReport).mock.calls.map((c) => c[0]).sort()).toEqual(["run-aaaa1111", "run-bbbb2222", "run-cccc3333"]);
+  });
+  it("a campaign made in several teams is one report: every run, each marked with its team, whatever team is in view", async () => {
+    vi.mocked(api.listMigrationRuns).mockResolvedValue([
+      mkSummary({ id: "run-aaaa1111", teamId: "t-a", campaign: "wave-1", sourceHost: "src-a.example.test", status: "COMPLETED", currentStep: null, createdAt: "2026-11-24T09:00:00.000Z" }),
+      mkSummary({ id: "run-bbbb2222", teamId: "t-b", campaign: "wave-1", sourceHost: "src-b.example.test", status: "COMPLETED", currentStep: null, createdAt: "2026-11-24T10:00:00.000Z" }),
+    ]);
+    wrap();
+    await screen.findByText(/2 runs: 2 completed/);
+    expect(screen.getByText("Teams: Team A, Team B")).toBeTruthy();
+    expect(screen.getAllByText("Team A").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("Team B").length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("one team: no team marks", async () => {
+    wrap();
+    await screen.findByText(/3 runs/);
+    expect(screen.queryByText(/^Teams:/)).toBeNull();
   });
 });

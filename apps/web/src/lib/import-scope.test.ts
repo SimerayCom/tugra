@@ -138,6 +138,14 @@ describe("scopeIssue", () => {
     expect(scopeIssue(plan(), buildScope(plan(), all({ s1: "t1", s2: "t3" })), teamOf)).toBe("teams");
     expect(scopeIssue(plan(), buildScope(plan(), all({ s1: "t1", s2: "t2" })), teamOf)).toBeNull();
   });
+  it("targets in two teams are fine where a campaign carries the move (Coolify): one campaign per team", () => {
+    expect(scopeIssue(plan(), buildScope(plan(), all({ s1: "t1", s2: "t3" })), teamOf, undefined, { multiTeamOk: true })).toBeNull();
+  });
+  it("the scope says when its placed servers sit in several teams, and not otherwise", () => {
+    expect(buildScope(plan(), all({ s1: "t1", s2: "t3" }), undefined, teamOf).multiTeam).toBe(true);
+    expect(buildScope(plan(), all({ s1: "t1", s2: "t2" }), undefined, teamOf).multiTeam).toBeUndefined();
+    expect(buildScope(plan(), all({ s1: "t1", s2: "t3" })).multiTeam).toBeUndefined();
+  });
   it("a source server without a target blocks, even when the others have one", () => {
     expect(scopeIssue(plan(), buildScope(plan(), sel({})), teamOf)).toBe("target");
     expect(scopeIssue(plan(), buildScope(plan(), all({ s1: "t1" })), teamOf)).toBe("target");

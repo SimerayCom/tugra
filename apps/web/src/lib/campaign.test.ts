@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { campaignBody, needsCampaign, placementFailureKey, placementsOf, pruneRebuild, rebuildChoicesOf, runsByWave, sourcesOfRun } from "./campaign";
+import { campaignBody, campaignOpenHref, campaignsOf, groupCampaigns, needsCampaign, placementFailureKey, placementsOf, pruneRebuild, rebuildChoicesOf, runsByWave, sourcesOfRun } from "./campaign";
 import type { MigrationRunCreateInput } from "./types";
 
 describe("placementsOf", () => {
@@ -23,6 +23,42 @@ describe("needsCampaign", () => {
     expect(needsCampaign({ placementKind: { a: "other-server", b: "other-server" } })).toBe(false);
     expect(needsCampaign({ placementKind: {} })).toBe(false);
     expect(needsCampaign(null)).toBe(false);
+  });
+  it("servers of several teams need one even when every server is copied: a run belongs to one team", () => {
+    expect(needsCampaign({ placementKind: { a: "other-server", b: "other-server" }, multiTeam: true })).toBe(true);
+    expect(needsCampaign({ placementKind: { a: "other-server" }, multiTeam: false })).toBe(false);
+  });
+});
+
+describe("several campaigns from one create", () => {
+  const view = (o: Record<string, unknown> = {}) => ({ id: "c1", teamId: "t1", label: "wave 1", sessionId: null, status: "draft" as const, plan: [], runIds: ["r1"], createdAt: "2026-11-26T10:00:00Z", ...o });
+  it("lists every campaign made, or the one an older hub answers with", () => {
+    const a = view();
+    const b = view({ id: "c2", teamId: "t2" });
+    expect(campaignsOf({ ...a, campaigns: [a, b] }).map((c) => c.id)).toEqual(["c1", "c2"]);
+    expect(campaignsOf(a).map((c) => c.id)).toEqual(["c1"]);
+    expect(campaignsOf({ ...a, campaigns: [] }).map((c) => c.id)).toEqual(["c1"]);
+  });
+  it("opens the report of the label (it holds the runs of every campaign under it)", () => {
+    expect(campaignOpenHref(view({ label: "a&b" }))).toBe("/import/runs/campaign?c=a%26b");
+  });
+  it("groups the campaigns of one label into one line: runs added, teams counted, the state that needs the owner first, newest first", () => {
+    const rows = groupCampaigns([
+      view({ id: "c1", teamId: "t1", status: "done", runIds: ["r1"], createdAt: "2026-11-26T10:00:00Z" }),
+      view({ id: "c2", teamId: "t2", status: "paused", runIds: ["r2", "r3"], createdAt: "2026-11-26T10:00:01Z" }),
+      view({ id: "c3", teamId: "t3", label: "other", status: "cancelled", runIds: [], createdAt: "2026-11-27T10:00:00Z" }),
+    ]);
+    expect(rows.map((r) => r.label)).toEqual(["other", "wave 1"]);
+    expect(rows[1]).toMatchObject({ status: "paused", runs: 3, teams: 2, createdAt: "2026-11-26T10:00:01Z", ids: ["c1", "c2"] });
+    expect(rows[0]).toMatchObject({ status: "cancelled", runs: 0, teams: 1 });
+  });
+  it("rolls the states up in the order paused, running, draft, done, cancelled", () => {
+    const st = (...s: Array<"draft" | "running" | "paused" | "done" | "cancelled">) => groupCampaigns(s.map((status, i) => view({ id: `c${i}`, teamId: `t${i}`, status })))[0].status;
+    expect(st("done", "running", "draft")).toBe("running");
+    expect(st("done", "draft")).toBe("draft");
+    expect(st("done", "cancelled")).toBe("done");
+    expect(st("cancelled", "cancelled")).toBe("cancelled");
+    expect(st("running", "paused")).toBe("paused");
   });
 });
 
@@ -85,6 +121,8 @@ describe("runs and failures", () => {
   it("a known refusal has its own line and an unknown one a generic line", () => {
     expect(placementFailureKey("placement_target_not_ready")).toBe("placement.failure.placement_target_not_ready");
     expect(placementFailureKey("something_new")).toBe("placement.failure.unknown");
+    // a move onto servers of several teams is no longer refused: the old code reads as an unknown refusal
+    expect(placementFailureKey("placement_teams_differ")).toBe("placement.failure.unknown");
   });
 });
 

@@ -1449,7 +1449,8 @@
       "not-cut-over": "Not cut over"
     },
     "open": "Campaign report",
-    "runFailed": "The run failed"
+    "runFailed": "The run failed",
+    "teams": "Teams: {teams}"
   },
   "decision": {
     "title": "Dry run result",

@@ -838,7 +838,9 @@
     "startedFromItem": "You opened {item}. Its whole project, {project}, is ticked. Untick what you do not want to move.",
     "startedFromItemNone": "You opened {item}. Nothing is ticked yet, so pick what to move.",
     "startedInPlace": "Taking {name} over in place. Check where it goes below, then continue.",
-    "inPlaceNotFound": "Could not tell which of Coolify's servers is {server}. Pick what to move below."
+    "inPlaceNotFound": "Could not tell which of Coolify's servers is {server}. Pick what to move below.",
+    "multiTeamNote": "These servers are in {count} teams. Tugra makes one campaign per team and creates them together.",
+    "multiTeamGuided": "Servers of several teams move through the guided run below, which makes one campaign per team."
   },
   "settings": {
     "title": "Settings",

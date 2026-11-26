@@ -748,7 +748,10 @@ function PlanView({
         )}
 
         <div style={{ borderTop: "1px solid var(--c-bd)", margin: "16px 0 14px" }} />
-        {mappingSupported ? (
+        {scope?.multiTeam ? (
+          // one apply (and its mapping review) belongs to one team: servers of several teams move through the guided run, one campaign per team
+          <p role="note" data-testid="multi-team-guided" style={{ fontSize: 12, color: "var(--c-tx2)", margin: "0 0 8px", lineHeight: 1.5 }}>{t("import.scope.multiTeamGuided")}</p>
+        ) : mappingSupported ? (
           <>
             {missingTargets > 0 && <p role="alert" style={{ fontSize: 12, color: "var(--c-am)", margin: "0 0 8px" }}>{t("import.services.needsTarget")}</p>}
             <Btn onClick={() => setReviewing(true)} disabled={replanning || consentMissing || runnable === 0 || unackedCount > 0 || missingTargets > 0}>{t("import.review.continue")}</Btn>
@@ -772,7 +775,7 @@ function PlanView({
         </Btn>
         </>
         )}
-        <GuidedRunLauncher plan={plan} kind={kind} sessionId={sessionId} servers={writableServers} extras={applyExtras} scope={scope} onChangeScope={onChangeScope} disabled={replanning || consentMissing || runnable === 0 || unackedCount > 0 || missingTargets > 0} />
+        <GuidedRunLauncher plan={plan} kind={kind} sessionId={sessionId} servers={writableServers} teams={teams} extras={applyExtras} scope={scope} onChangeScope={onChangeScope} disabled={replanning || consentMissing || runnable === 0 || unackedCount > 0 || missingTargets > 0} />
       </SectionCard>
 
       <EnvBlockers plan={plan} acked={acked} onChange={setAcked} />

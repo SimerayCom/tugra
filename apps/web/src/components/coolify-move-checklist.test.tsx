@@ -52,6 +52,14 @@ beforeEach(() => {
 const wrap = (ui: React.ReactNode) => render(<QueryClientProvider client={qc}><I18nProvider><TeamScopeProvider>{ui}</TeamScopeProvider></I18nProvider></QueryClientProvider>);
 
 describe("CoolifyMoveChecklist", () => {
+  it("the campaign list also reads the other teams the move made a campaign in (one campaign per team)", async () => {
+    vi.spyOn(api, "coolifyMoveStatus").mockResolvedValue(view({ campaigns: [{ id: "c1", teamId: "t1", label: "move", status: "running", runs: 1, createdAt: "2026-11-26T10:00:00Z" }, { id: "c2", teamId: "t2", label: "move", status: "draft", runs: 2, createdAt: "2026-11-26T10:00:00Z" }] }));
+    const spy = vi.spyOn(api, "listCampaigns").mockResolvedValue([]);
+    wrap(<CoolifyMoveChecklist />);
+    await screen.findByTestId("step-takeover");
+    await waitFor(() => expect(spy.mock.calls.map((c) => c[0]).sort()).toEqual(["t1", "t2"]));
+  });
+
   it("walks the four steps A to D with a count for each and marks the one to work on", async () => {
     vi.spyOn(api, "coolifyMoveStatus").mockResolvedValue(view());
     wrap(<CoolifyMoveChecklist />);
@@ -270,6 +278,31 @@ describe("CampaignReportList", () => {
     expect(within(items[1]).getByRole("link", { name: "Open report" }).getAttribute("href")).toBe("/import/runs/campaign?c=a%26b");
   });
 
+  it("the campaigns of several teams under one label are one line: runs added up, the teams counted, the state that needs the owner first", async () => {
+    const spy = vi.spyOn(api, "listCampaigns").mockImplementation(async (team: string) =>
+      team === "t1" ? [campaign({ id: "c1", teamId: "t1", label: "move", status: "done", runIds: ["r1"] })] : [campaign({ id: "c2", teamId: "t2", label: "move", status: "paused", runIds: ["r2", "r3"] })],
+    );
+    wrap(<CampaignReportList teamId="t1" extraTeamIds={["t2", "t1"]} />);
+    const list = await screen.findByTestId("campaign-list");
+    const items = within(list).getAllByRole("listitem");
+    expect(items).toHaveLength(1);
+    expect(spy.mock.calls.map((c) => c[0]).sort()).toEqual(["t1", "t2"]);
+    expect(within(items[0]).getByText("Paused")).toBeTruthy();
+    expect(within(items[0]).getByText("3 runs")).toBeTruthy();
+    expect(within(items[0]).getByText("2 teams")).toBeTruthy();
+    expect(within(items[0]).getByRole("link", { name: "Open report" }).getAttribute("href")).toBe("/import/runs/campaign?c=move");
+  });
+
+  it("a team that refuses the list adds nothing; the page team's own failure is the error", async () => {
+    vi.spyOn(api, "listCampaigns").mockImplementation(async (team: string) => {
+      if (team === "t2") throw new ApiError(403, "x");
+      return [campaign()];
+    });
+    wrap(<CampaignReportList teamId="t1" extraTeamIds={["t2"]} />);
+    const list = await screen.findByTestId("campaign-list");
+    expect(within(list).getAllByRole("listitem")).toHaveLength(1);
+  });
+
   it("says so when there is no campaign and when the list cannot be read", async () => {
     wrap(<CampaignReportList teamId="t1" />);
     await screen.findByTestId("campaigns-none");
@@ -280,11 +313,12 @@ describe("CampaignReportList", () => {
     await screen.findByText("Could not load the campaigns.");
   });
 
-  it("TeamCampaignReportList asks for the first team the person owns or administers, and nothing for a member", async () => {
+  it("TeamCampaignReportList reads the teams the person owns or administers (all of them with no team picked), and nothing for a member", async () => {
     vi.spyOn(api, "listTeams").mockResolvedValue([{ id: "tv", name: "V", role: "VIEWER" }, { id: "ta", name: "A", role: "ADMIN" }]);
     const spy = vi.spyOn(api, "listCampaigns").mockResolvedValue([]);
     wrap(<TeamCampaignReportList />);
     await waitFor(() => expect(spy).toHaveBeenCalledWith("ta"));
+    expect(spy).not.toHaveBeenCalledWith("tv");
     cleanup();
     spy.mockClear();
     qc.clear();

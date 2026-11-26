@@ -1,7 +1,8 @@
 // Placement per source server and the campaign of runs a mixed placement becomes (Coolify hub takeover, lane E). Pure: no React, no network.
 // The hub decides the runs; this only turns the first step's choice into the request and groups the answer for display.
-import type { CampaignRunPlan, PlacementFailureCode, SourcePlacement } from "@tugra/shared";
+import type { CampaignRunPlan, CampaignStatus, CampaignView, PlacementFailureCode, SourcePlacement } from "@tugra/shared";
 import { hostOfItemRef, inPlaceCount, overallPlacement, type ImportScope } from "./import-scope";
+import { campaignReportHref } from "./migration-run";
 import type { ImportPlanItem, MigrationRunCreateInput } from "./types";
 
 /** The first step's choice as placements, in ref order (the same choice always sends the same body). A server with no target yet is left out. */
@@ -16,9 +17,10 @@ export function placementsOf(scope: Pick<ImportScope, "placed" | "placementKind"
 
 /**
  * The move goes through a campaign whenever any server stays on its own machine: only a campaign creates the in-place run (images reused,
- * no data copy, dark test, new certificates, give back). A lone same-machine server is a campaign of one run.
+ * no data copy, dark test, new certificates, give back). A lone same-machine server is a campaign of one run. So is a move onto servers of
+ * several Tugra teams: a run belongs to one team, so the hub makes one campaign per team (same label).
  */
-export const needsCampaign = (scope: Pick<ImportScope, "placementKind"> | null | undefined): boolean => !!scope && (overallPlacement(scope) === "mixed" || inPlaceCount(scope) >= 1);
+export const needsCampaign = (scope: Pick<ImportScope, "placementKind" | "multiTeam"> | null | undefined): boolean => !!scope && (overallPlacement(scope) === "mixed" || inPlaceCount(scope) >= 1 || scope.multiTeam === true);
 
 export interface CampaignCreateBody {
   sessionId: string;
@@ -105,7 +107,43 @@ const KNOWN_FAILURES: readonly PlacementFailureCode[] = [
   "placement_target_unknown",
   "placement_target_not_ready",
   "placement_other_is_source_host",
-  "placement_teams_differ",
   "placement_rebuild_not_in_place",
   "placement_rebuild_unknown_item",
 ];
+
+/** What creating a campaign returns: the first campaign (the shape of an older hub) plus every campaign made, one per team. */
+export type CampaignCreated = CampaignView & { campaigns?: CampaignView[] };
+
+/** Every campaign a create made (an older hub answers with the one). */
+export const campaignsOf = (created: CampaignCreated): CampaignView[] => (created.campaigns && created.campaigns.length > 0 ? created.campaigns : [created]);
+
+/** Where the owner lands after a create: the report of the label, which holds the runs of every campaign made under it. */
+export const campaignOpenHref = (created: CampaignCreated): string => campaignReportHref(created.label);
+
+/** The campaigns of one label (one per team) as one line: runs added up, the teams counted, the state that needs attention first. */
+export interface CampaignGroup {
+  label: string;
+  status: CampaignStatus;
+  runs: number;
+  teams: number;
+  createdAt: string;
+  ids: string[];
+}
+
+const STATUS_RANK: readonly CampaignStatus[] = ["paused", "running", "draft", "done", "cancelled"];
+
+/** One row per label, newest first. A label's status is the one that needs the owner soonest: paused, then running, draft, done, cancelled. */
+export function groupCampaigns(views: readonly CampaignView[]): CampaignGroup[] {
+  const by = new Map<string, CampaignView[]>();
+  for (const v of views) by.set(v.label, [...(by.get(v.label) ?? []), v]);
+  return [...by.entries()]
+    .map(([label, vs]) => ({
+      label,
+      status: STATUS_RANK.find((s) => vs.some((v) => v.status === s)) as CampaignStatus,
+      runs: vs.reduce((n, v) => n + v.runIds.length, 0),
+      teams: new Set(vs.map((v) => v.teamId ?? v.id)).size,
+      createdAt: vs.map((v) => v.createdAt).sort().at(-1) as string,
+      ids: vs.map((v) => v.id),
+    }))
+    .sort((a, b) => (a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : 0));
+}

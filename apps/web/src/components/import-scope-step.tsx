@@ -82,20 +82,26 @@ export function ImportScopeStep({
     onSelectionChange?.(sel);
   }, [sel, onSelectionChange]);
 
+  // A Coolify move may land on servers of several teams (one Coolify, many teams here): the hub makes one campaign per team, so the team is
+  // not asked and every server the person can write to is a target. Any other source is one run, and a run belongs to one team.
+  const multiTeamOk = plan.sourceKind === "coolify";
   // derived at render so a servers list that arrives late still yields a team; "" = the user has to pick one
-  const teamId = sel.teamId && teamIds.includes(sel.teamId)
-    ? sel.teamId
-    : servers.find((s) => s.id === Object.values(sel.placement)[0])?.teamId ?? defaultTeamId(plan, servers, teams);
-  const teamServers = useMemo(() => servers.filter((s) => s.teamId === teamId), [servers, teamId]);
+  const teamId = multiTeamOk
+    ? teamIds.length === 1 ? teamIds[0] : ""
+    : sel.teamId && teamIds.includes(sel.teamId)
+      ? sel.teamId
+      : servers.find((s) => s.id === Object.values(sel.placement)[0])?.teamId ?? defaultTeamId(plan, servers, teams);
+  const teamServers = useMemo(() => (multiTeamOk ? servers : servers.filter((s) => s.teamId === teamId)), [servers, teamId, multiTeamOk]);
   const allowed = useMemo(() => new Set(teamServers.map((s) => s.id)), [teamServers]);
 
   const inScope = useMemo(() => inScopeRefs(plan, sel), [plan, sel]);
   const involved = useMemo(() => involvedHosts(plan, inScope), [plan, inScope]);
   const missing = useMemo(() => missingDependencies(plan, inScope), [plan, inScope]);
-  const scope = useMemo(() => buildScope(plan, sel, allowed), [plan, sel, allowed]);
   const serverById = useMemo(() => new Map(servers.map((s) => [s.id, s] as const)), [servers]);
-  const needsTeam = involved.length > 0 && teamId === "";
-  const issue = servers.length === 0 ? "noServers" : needsTeam ? "team" : scopeIssue(plan, scope, (id) => serverById.get(id)?.teamId, (id) => serverReadiness(serverById.get(id)));
+  const scope = useMemo(() => buildScope(plan, sel, allowed, (id) => serverById.get(id)?.teamId), [plan, sel, allowed, serverById]);
+  const needsTeam = !multiTeamOk && involved.length > 0 && teamId === "";
+  const issue = servers.length === 0 ? "noServers" : needsTeam ? "team" : scopeIssue(plan, scope, (id) => serverById.get(id)?.teamId, (id) => serverReadiness(serverById.get(id)), { multiTeamOk });
+  const placedTeams = useMemo(() => new Set(Object.values(scope.placed).map((id) => serverById.get(id)?.teamId ?? id)).size, [scope.placed, serverById]);
   const counts = useMemo(() => {
     const c = { apps: 0, databases: 0, services: 0 };
     for (const it of plan.items) {
@@ -250,7 +256,7 @@ export function ImportScopeStep({
         ) : involved.length > 0 ? (
           <div style={{ margin: "0 0 16px" }}>
             <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 2 }}>{t("import.scope.placementTitle")}</div>
-            {(teamIds.length > 1 || teamId === "") && (
+            {!multiTeamOk && (teamIds.length > 1 || teamId === "") && (
               <div style={{ margin: "8px 0", maxWidth: 360 }}>
                 {sourceTeam && <p style={{ ...note, margin: "0 0 6px" }}>{t("import.scope.sourceTeam", { team: sourceTeam })}</p>}
                 <label htmlFor="imp-scope-team" style={label}>{t("import.scope.team")}</label>
@@ -261,7 +267,7 @@ export function ImportScopeStep({
             {teamId !== "" && teamIds.length <= 1 && teamName(teamId) && (
               <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "8px 0 0" }}>{t("import.scope.teamIs", { team: teamName(teamId) })}</p>
             )}
-            {teamId !== "" && (
+            {(multiTeamOk || teamId !== "") && (
               <div style={{ display: "grid", gap: 14, gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 260px), 1fr))", marginTop: 8 }}>
                 {involved.map((h) => {
                   const id = `imp-scope-to-${h.ref.replace(/[^A-Za-z0-9_-]/g, "_")}`;
@@ -277,13 +283,18 @@ export function ImportScopeStep({
                       <label htmlFor={id} style={label}>{t("import.scope.movesToLabel", { name })}</label>
                       <select id={id} style={field} value={target} onChange={(e) => place(h.ref, e.target.value)}>
                         {target === "" && <option value="" disabled>{t("import.scope.choose")}</option>}
-                        {teamServers.map((s) => {
-                          const sameMachine = m?.serverId === s.id;
-                          return (
-                            <option key={s.id} value={s.id} disabled={serverReadiness(s) !== "ready" || (sameMachine && block !== null)}>
-                              {stateText(s)}{sameMachine && block === null ? ` · ${t("import.scope.sameMachineTag")}` : ""}
-                            </option>
-                          );
+                        {(multiTeamOk && teamIds.length > 1 ? teamIds : [""]).map((tid) => {
+                          const group = tid === "" ? teamServers : teamServers.filter((s) => s.teamId === tid);
+                          const options = group.map((s) => {
+                            const sameMachine = m?.serverId === s.id;
+                            return (
+                              <option key={s.id} value={s.id} disabled={serverReadiness(s) !== "ready" || (sameMachine && block !== null)}>
+                                {stateText(s)}{sameMachine && block === null ? ` · ${t("import.scope.sameMachineTag")}` : ""}
+                              </option>
+                            );
+                          });
+                          // servers of several teams are told apart by the team they belong to
+                          return tid === "" ? options : <optgroup key={tid} label={teamName(tid) || tid}>{options}</optgroup>;
                         })}
                       </select>
                       {kind === "in-place" && <p style={{ ...note, color: "var(--c-tx2)" }}><strong>{t("import.scope.kind.inPlaceTitle")}</strong> {t("import.scope.kind.inPlace")}</p>}
@@ -312,6 +323,7 @@ export function ImportScopeStep({
             )}
             {inPlaceCount(scope) > 1 && <p style={{ ...note, marginTop: 10 }}>{t("import.scope.inPlaceNote", { count: inPlaceCount(scope) })}</p>}
             {needsCampaign(scope) && <p role="note" style={{ ...note, marginTop: 10 }}>{t("import.scope.campaignNote")}</p>}
+            {scope.multiTeam && <p role="note" data-testid="multi-team-note" style={{ ...note, marginTop: 6 }}>{t("import.scope.multiTeamNote", { count: placedTeams })}</p>}
             {onRecheck && (involved.some((h) => !hostTugra(plan, h.ref)) || (teamId !== "" && involved.some((h) => { const m = hostTugra(plan, h.ref); return m && serverReadiness(serverById.get(m.serverId)) !== "ready"; }))) && (
               <div style={{ marginTop: 10 }}>
                 <Btn variant="ghost" onClick={onRecheck} disabled={rechecking}>{t("import.scope.recheck")}</Btn>

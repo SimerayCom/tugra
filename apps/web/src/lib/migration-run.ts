@@ -901,6 +901,8 @@ export const CAMPAIGN_REPORT_RUN_CAP = 60;
 
 export interface CampaignRunRow {
   id: string;
+  /** The team the run belongs to (a move onto servers of several teams is one campaign per team under one label). */
+  teamId: string;
   status: MigrationRunStatus;
   currentStep: MigrationRunStepKey | null;
   mode: MigrationRunMode;
@@ -938,6 +940,8 @@ export interface CampaignReportData {
   /** Distinct source hosts and target servers across the runs. */
   sourceHosts: string[];
   targetServers: string[];
+  /** Distinct teams the runs belong to, sorted. */
+  teamIds: string[];
   /** Runs whose report is not loaded yet. */
   pendingReports: number;
 }
@@ -967,6 +971,7 @@ export function buildCampaignReport(
     const named = (rep?.targets ?? []).map((t) => t.serverName ?? t.serverId);
     return {
       id: r.id,
+      teamId: r.teamId,
       status: r.status,
       currentStep: r.currentStep,
       mode: r.mode,
@@ -1003,6 +1008,7 @@ export function buildCampaignReport(
     },
     sourceHosts: distinct(rows.map((r) => r.sourceHost)),
     targetServers: distinct(rows.flatMap((r) => r.targetNames)),
+    teamIds: distinct(rows.map((r) => r.teamId)),
     pendingReports: rows.filter((r) => reports.get(r.id) === undefined).length,
   };
 }

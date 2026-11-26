@@ -442,6 +442,70 @@ describe("a mixed placement is a campaign", () => {
     await waitFor(() => expect(push).toHaveBeenCalledWith("/import/runs/campaign?c=campaign-x"));
   });
 
+  describe("servers of several teams", () => {
+    const teamed = [{ id: "srv1", name: "Server A", teamId: "t1" }, { id: "srv2", name: "Server B", teamId: "t2" }];
+    const names = [{ id: "t1", name: "Team One" }, { id: "t2", name: "Team Two" }];
+    const spread: ImportScope = { ...mixed, placementKind: { s1: "other-server", s2: "other-server" }, multiTeam: true };
+    const perTeam = [
+      { teamId: "t1", servers: 1, runs: [{ sourceServerRef: "s1", kind: "other-server" as const, targetServerId: "srv1", topology: "two-box" as const, wave: 0 }] },
+      { teamId: "t2", servers: 1, runs: [{ sourceServerRef: "s2", kind: "other-server" as const, targetServerId: "srv2", topology: "two-box" as const, wave: 0 }] },
+    ];
+    const flat = perTeam.flatMap((x) => x.runs);
+    const one = { id: "c1", teamId: "t1", label: "campaign-x", sessionId: "s1", status: "draft" as const, plan: perTeam[0].runs, runIds: ["r1"], createdAt: "2026-11-26T10:00:00Z" };
+    const two = { ...one, id: "c2", teamId: "t2", plan: perTeam[1].runs, runIds: ["r2"] };
+
+    it("is a campaign even with no same-machine server: no target and no topology asked, a preview per team named by team", async () => {
+      vi.spyOn(api, "planCampaign").mockResolvedValue({ planHash: "a".repeat(32), views: [], runs: flat, teams: perTeam, failure: null });
+      mount({ plan: whole, scope: spread, servers: teamed, teams: names });
+      const dialog = await open();
+      expect(within(dialog).queryByLabelText("Target server")).toBeNull();
+      expect(within(dialog).queryByLabelText("Topology")).toBeNull();
+      const card = await within(dialog).findByTestId("campaign-preview");
+      await waitFor(() => expect(within(card).getAllByTestId("campaign-team")).toHaveLength(2));
+      expect(within(card).getByTestId("campaign-teams-note").textContent).toContain("2 teams");
+      const groups = within(card).getAllByTestId("campaign-team");
+      expect(groups[0].textContent).toContain("Team One (1)");
+      expect(groups[0].textContent).toContain("Alpha moves to Server A");
+      expect(groups[1].textContent).toContain("Team Two (1)");
+      expect(groups[1].textContent).toContain("Beta moves to Server B");
+      expect(within(dialog).getByRole("button", { name: "Create campaign (2 runs)" })).toBeTruthy();
+    });
+
+    it("creates one campaign per team in one request and opens the report of the label, which holds them all", async () => {
+      vi.spyOn(api, "planCampaign").mockResolvedValue({ planHash: "a".repeat(32), views: [], runs: flat, teams: perTeam, failure: null });
+      const createCampaign = vi.spyOn(api, "createCampaign").mockResolvedValue({ ...one, campaigns: [one, two] });
+      const createRun = vi.spyOn(api, "createMigrationRun");
+      mount({ plan: whole, scope: spread, servers: teamed, teams: names });
+      const dialog = await open();
+      await within(dialog).findByTestId("campaign-preview");
+      fireEvent.click(await within(dialog).findByRole("button", { name: "Create campaign (2 runs)" }));
+      await waitFor(() => expect(createCampaign).toHaveBeenCalledTimes(1));
+      expect(createCampaign.mock.calls[0][0]).toMatchObject({ confirm: 2, placements: [{ sourceServerRef: "s1", targetServerId: "srv1" }, { sourceServerRef: "s2", targetServerId: "srv2" }] });
+      expect(createRun).not.toHaveBeenCalled();
+      await waitFor(() => expect(push).toHaveBeenCalledTimes(1));
+      expect(push).toHaveBeenCalledWith("/import/runs/campaign?c=campaign-x");
+    });
+
+    it("a hub that still answers with one campaign opens it the same way", async () => {
+      vi.spyOn(api, "planCampaign").mockResolvedValue({ planHash: "a".repeat(32), views: [], runs: flat, failure: null });
+      const createCampaign = vi.spyOn(api, "createCampaign").mockResolvedValue(one);
+      mount({ plan: whole, scope: spread, servers: teamed, teams: names });
+      const dialog = await open();
+      expect((await within(dialog).findByTestId("campaign-preview")).querySelector("[data-testid=campaign-team]")).toBeNull();
+      fireEvent.click(await within(dialog).findByRole("button", { name: "Create campaign (2 runs)" }));
+      await waitFor(() => expect(createCampaign).toHaveBeenCalled());
+      await waitFor(() => expect(push).toHaveBeenCalledWith("/import/runs/campaign?c=campaign-x"));
+    });
+
+    it("a server that cannot take the move still blocks the button, in any team", async () => {
+      vi.spyOn(api, "planCampaign").mockResolvedValue({ planHash: "a".repeat(32), views: [], runs: flat, teams: perTeam, failure: null });
+      mount({ plan: whole, scope: spread, servers: [teamed[0], { ...teamed[1], status: "OFFLINE" as const, capabilities: ["deploy", "database"] }], teams: names });
+      const dialog = await open();
+      await within(dialog).findByTestId("campaign-preview");
+      expect((within(dialog).getByRole("button", { name: /Create campaign/ }) as HTMLButtonElement).disabled).toBe(true);
+    });
+  });
+
   describe("rebuild with Tugra and verify", () => {
     const whole2 = { ...whole, items: [...whole.items, item("app:s1:blog", "app"), item("database:s1:pg", "database"), item("app:s2:copyme", "app")] } as unknown as ImportPlan;
     const scope2: ImportScope = { ...mixed, inScope: new Set(["app:s1:web", "app:s1:blog", "database:s1:pg", "app:s2:api", "app:s2:copyme"]) };

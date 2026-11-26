@@ -35,7 +35,11 @@
       "option": "Rebuild {name} with Tugra and verify",
       "chosen": "{count} to rebuild, the rest reuse Coolify's image.",
       "default": "None chosen: every app reuses Coolify's image."
-    }
+    },
+    "teamsNote": "Your servers are in {count} teams. Tugra creates one campaign per team, all together. Each team's runs are listed below.",
+    "team": "{name} ({count})",
+    "teamN": "Team {n}",
+    "createdMany": "{count} campaigns created, one per team."
   },
   "failure": {
     "placement_empty": "Pick at least one source server.",
@@ -47,7 +51,6 @@
     "placement_target_unknown": "The chosen server was not found.",
     "placement_target_not_ready": "The chosen server is offline, has no agent connected or cannot deploy.",
     "placement_other_is_source_host": "That is the machine the source server already runs on. Choose \"same machine\" or another server.",
-    "placement_teams_differ": "All the servers must belong to one team.",
     "placement_rebuild_not_in_place": "An app chosen for a rebuild is on a server that is copied to another server. Only apps of servers that stay on their own machine can be rebuilt in place.",
     "placement_rebuild_unknown_item": "An app chosen for a rebuild is not in the plan any more. Read the source again.",
     "unknown": "This placement was refused."

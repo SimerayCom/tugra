@@ -50,6 +50,8 @@ export interface ImportScope {
   /** Per placed source server: "in-place" when the target is the machine it already runs on (proxy swap, data stays), else "other-server"
    *  (data copied, temporary address, DNS cutover). The guided run reads its topology from this. */
   placementKind: Readonly<Record<string, PlacementKind>>;
+  /** The placed servers sit in more than one Tugra team (Coolify only): the move is a campaign, one per team. Absent = one team. */
+  multiTeam?: boolean;
 }
 
 export type PlacementKind = "in-place" | "other-server";
@@ -250,9 +252,10 @@ export function autoSelection(plan: ImportPlan): ScopeSelection {
 /**
  * Turn a selection into what the later steps need. `placed` has a target for each involved source server that has one (the pick, else a
  * sure match); a server with neither stays out of it and {@link scopeIssue} says so. A serverMap exists only when every involved server
- * is placed and more than one Tugra server is used. `allowed` (the chosen team's server ids) drops targets outside the team.
+ * is placed and more than one Tugra server is used. `allowed` (the chosen team's server ids) drops targets outside the team. `teamOf` lets the
+ * scope say whether the targets sit in several teams.
  */
-export function buildScope(plan: ImportPlan, sel: ScopeSelection, allowed?: ReadonlySet<string>): ImportScope {
+export function buildScope(plan: ImportPlan, sel: ScopeSelection, allowed?: ReadonlySet<string>, teamOf?: (serverId: string) => string | undefined): ImportScope {
   const inScope = inScopeRefs(plan, sel);
   const hosts = involvedHosts(plan, inScope);
   const placed: Record<string, string> = {};
@@ -273,6 +276,7 @@ export function buildScope(plan: ImportPlan, sel: ScopeSelection, allowed?: Read
     serverMap: complete && targets.length > 1 ? placed : undefined,
     placed,
     placementKind,
+    ...(teamOf && new Set(targets.map((id) => teamOf(id) ?? id)).size > 1 ? { multiTeam: true } : {}),
   };
 }
 
@@ -281,20 +285,22 @@ export type ScopeIssue = "nothing" | "target" | "teams" | "blocked" | "unready" 
 /**
  * Why the selection cannot continue yet, or null: nothing picked, a source server without a target, targets in different teams, a
  * same-machine move that is not possible, a target that cannot take apps, or too many servers. Same-machine and copied moves in one go are fine: the
- * hub turns them into a campaign of runs (see lib/campaign.ts).
+ * hub turns them into a campaign of runs (see lib/campaign.ts). Targets in several teams are fine too where a campaign carries the move (`multiTeamOk`,
+ * Coolify): one campaign per team. Another source has one run, and a run belongs to one team.
  */
 export function scopeIssue(
   plan: ImportPlan,
   scope: ImportScope,
   teamOf: (serverId: string) => string | undefined,
   readinessOf?: (serverId: string) => ServerReadiness,
+  opts: { multiTeamOk?: boolean } = {},
 ): ScopeIssue | null {
   const apps = plan.items.filter((i) => isPlaceable(i) && scope.inScope.has(i.itemRef));
   if (apps.length === 0) return "nothing";
   const hosts = involvedHosts(plan, scope.inScope);
   if (hosts.some((h) => !scope.placed[h.ref])) return "target";
   const ids = hosts.map((h) => scope.placed[h.ref]);
-  if (new Set(ids.map((id) => teamOf(id) ?? id)).size > 1) return "teams";
+  if (!opts.multiTeamOk && new Set(ids.map((id) => teamOf(id) ?? id)).size > 1) return "teams";
   if (hosts.some((h) => hostTugra(plan, h.ref)?.serverId === scope.placed[h.ref] && inPlaceBlock(plan, h.ref))) return "blocked";
   if (readinessOf && ids.some((id) => readinessOf(id) !== "ready")) return "unready";
   if (hosts.length > SERVER_MAP_MAX) return "limit";

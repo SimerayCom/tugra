@@ -7,10 +7,9 @@ import { api } from "../../lib/api";
 import { useT } from "../../i18n/provider";
 import { formatDuration } from "../../lib/import";
 import { relativeTime } from "../../lib/fleet";
-import { scopeByTeam } from "../../lib/team-scope";
 import { CAMPAIGN_REPORT_RUN_CAP, CAMPAIGN_ROLLUP_LIMIT, NEXT_KIND_KEY, STEP_TITLE_KEY, buildCampaignReport, codeText, runListRefetchInterval, validCampaign, type CampaignRunRow } from "../../lib/migration-run";
 import type { MigrationRunReport, MigrationRunSummary } from "../../lib/types";
-import { useTeamScope } from "../team-scope";
+import { useTeamContext } from "../team-scope";
 import { ErrorState } from "../error-state";
 import { PageTitle } from "../page-header";
 import { SkeletonTable } from "../skeleton";
@@ -21,7 +20,7 @@ const OUTCOME_KEY = { failed: "migrationRun.campaign.outcome.failed", "not-cut-o
 const dash = "-";
 const secs = (n: number | null): string => (n === null ? dash : (formatDuration(n) ?? dash));
 
-function RunCard({ row }: { row: CampaignRunRow }) {
+function RunCard({ row, teamName }: { row: CampaignRunRow; teamName: string | null }) {
   const t = useT();
   const hosts = t("migrationRun.campaign.hosts", { source: row.sourceHost ?? dash, targets: row.targetNames.join(", ") });
   return (
@@ -34,6 +33,7 @@ function RunCard({ row }: { row: CampaignRunRow }) {
           <RunStatusPill status={row.status} />
         </div>
         <div style={{ marginTop: 6, display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+          {teamName && <Badge tone="muted">{teamName}</Badge>}
           <ModeBadges mode={row.mode} topology={row.topology} dryRun={row.dryRun} inPlace={row.inPlace} />
           <span style={{ fontSize: 12, color: "var(--c-tx3)" }}>{row.currentStep ? t(STEP_TITLE_KEY[row.currentStep]) : t(NEXT_KIND_KEY.none)} · {relativeTime(row.createdAt)}</span>
         </div>
@@ -51,7 +51,7 @@ function RunCard({ row }: { row: CampaignRunRow }) {
  *  from the run list of the label plus each run's own report; the page polls while any run is still live. */
 export function CampaignReport({ campaign }: { campaign: string }) {
   const t = useT();
-  const { teamId } = useTeamScope();
+  const { teams } = useTeamContext();
   const valid = validCampaign(campaign);
   const list = useQuery<MigrationRunSummary[]>({
     queryKey: ["migration-runs", "campaign", campaign],
@@ -59,7 +59,8 @@ export function CampaignReport({ campaign }: { campaign: string }) {
     enabled: valid,
     refetchInterval: (q) => runListRefetchInterval(q.state.data as MigrationRunSummary[] | undefined),
   });
-  const runs = useMemo(() => scopeByTeam(list.data ?? [], teamId).filter((r) => r.campaign === campaign), [list.data, teamId, campaign]);
+  // The label is the choice: a move onto servers of several teams is one campaign per team under one label, so the report does not narrow to the team in view.
+  const runs = useMemo(() => (list.data ?? []).filter((r) => r.campaign === campaign), [list.data, campaign]);
   const capped = runs.length > CAMPAIGN_REPORT_RUN_CAP;
   const read = runs.slice(0, CAMPAIGN_REPORT_RUN_CAP);
   const reports = useQueries({
@@ -71,6 +72,8 @@ export function CampaignReport({ campaign }: { campaign: string }) {
   });
   const byId = new Map<string, MigrationRunReport | null | undefined>(read.map((r, i) => [r.id, reports[i].isError ? null : reports[i].data]));
   const data = buildCampaignReport(campaign, read, byId);
+  const showTeams = data.teamIds.length > 1;
+  const teamNameOf = (id: string): string => teams.find((x) => x.id === id)?.name ?? id;
 
   return (
     <div style={{ padding: "var(--page-pad)", maxWidth: 1100, margin: "0 auto" }}>
@@ -88,6 +91,7 @@ export function CampaignReport({ campaign }: { campaign: string }) {
               <div>{data.pendingReports === read.length ? t("migrationRun.campaign.itemsNone") : t("migrationRun.campaign.items", data.totals)}</div>
               <div style={{ wordBreak: "break-word" }}>{t("migrationRun.campaign.sourceHosts", { hosts: data.sourceHosts.join(", ") || dash })}</div>
               <div style={{ wordBreak: "break-word" }}>{t("migrationRun.campaign.targetServers", { servers: data.targetServers.join(", ") || dash })}</div>
+              {showTeams && <div style={{ wordBreak: "break-word" }}>{t("migrationRun.campaign.teams", { teams: data.teamIds.map(teamNameOf).join(", ") })}</div>}
               {data.window.measuredTotalSec === null ? (
                 <div style={{ color: "var(--c-tx3)" }}>{t("migrationRun.campaign.windowNone")}</div>
               ) : (
@@ -104,7 +108,7 @@ export function CampaignReport({ campaign }: { campaign: string }) {
           <SectionCard title={t("migrationRun.campaign.runsTitle")} style={{ marginBottom: 0 }}>
             <ul style={{ margin: 0, padding: 0, listStyle: "none", display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 320px), 1fr))" }}>
               {data.runs.map((r) => (
-                <RunCard key={r.id} row={r} />
+                <RunCard key={r.id} row={r} teamName={showTeams ? teamNameOf(r.teamId) : null} />
               ))}
             </ul>
           </SectionCard>

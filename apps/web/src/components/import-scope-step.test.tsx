@@ -244,9 +244,56 @@ describe("ImportScopeStep", () => {
 
   const multi: Srv[] = [...servers, { id: "t3", name: "Target C", teamId: "team2", status: "ONLINE", capabilities: ["deploy"] }];
   const twoTeams = [{ id: "team1", name: "Team One" }, { id: "team2", name: "Team Two" }] as never;
+  /** Another source than Coolify is one run, and a run belongs to one team: its first step still asks for the team. */
+  const dokploy: ImportPlan = { ...plan, sourceKind: "dokploy" };
 
-  it("several teams and nothing to go by: the team is asked, never the first one, and Continue waits", () => {
-    mount({ servers: multi, teams: twoTeams });
+  describe("Coolify: servers of several teams", () => {
+    it("the team is not asked: every server of every team is offered, told apart by team", () => {
+      mount({ servers: multi, teams: twoTeams });
+      fireEvent.click(screen.getByRole("checkbox", { name: /Box One/ }));
+      expect(screen.queryByLabelText("Team")).toBeNull();
+      const select = screen.getByLabelText("Box One moves to") as HTMLSelectElement;
+      expect([...select.querySelectorAll("optgroup")].map((g) => [g.label, [...g.querySelectorAll("option")].map((o) => o.textContent)])).toEqual([
+        ["Team One", ["Target A", "Target B"]],
+        ["Team Two", ["Target C"]],
+      ]);
+    });
+
+    it("one team: the servers are a plain list and the team is named", () => {
+      mount();
+      fireEvent.click(screen.getByRole("checkbox", { name: /Box One/ }));
+      expect(screen.getByLabelText("Box One moves to").querySelector("optgroup")).toBeNull();
+      expect(screen.getByText("Team: Team One")).toBeTruthy();
+    });
+
+    it("servers in two teams continue, and the scope says the move is a campaign over several teams", () => {
+      const onContinue = vi.fn();
+      mount({ servers: multi, teams: twoTeams, onContinue, initial: { ...emptySel(), mode: "servers", hosts: new Set(["s1", "s2"]), placement: { s1: "t1", s2: "t3" } } });
+      expect(screen.getByTestId("multi-team-note").textContent).toContain("2 teams");
+      expect(screen.queryByText("Choose servers from one team.")).toBeNull();
+      expect(continueBtn().disabled).toBe(false);
+      fireEvent.click(continueBtn());
+      expect(onContinue.mock.calls[0][0]).toMatchObject({ multiTeam: true, placed: { s1: "t1", s2: "t3" } });
+    });
+
+    it("servers in one team are not a multi-team move", () => {
+      const onContinue = vi.fn();
+      mount({ servers: multi, teams: twoTeams, onContinue, initial: { ...emptySel(), mode: "servers", hosts: new Set(["s1", "s2"]), placement: { s1: "t1", s2: "t2" } } });
+      expect(screen.queryByTestId("multi-team-note")).toBeNull();
+      fireEvent.click(continueBtn());
+      expect(onContinue.mock.calls[0][0].multiTeam).toBeUndefined();
+    });
+
+    it("a source server the hub matched to a server of another team goes onto it as it is (the same machine)", () => {
+      const p = withMatches([{ ref: "s1", name: "Box One", tugra: hit("t3", "Target C", { teamId: "team2" }) }, { ref: "s2", name: "Box Two" }]);
+      mount({ servers: multi, teams: twoTeams, plan: p });
+      expect((screen.getByLabelText("Box One moves to") as HTMLSelectElement).value).toBe("t3");
+      expect(continueBtn().disabled).toBe(false);
+    });
+  });
+
+  it("another source: several teams and nothing to go by: the team is asked, never the first one, and Continue waits", () => {
+    mount({ servers: multi, teams: twoTeams, plan: dokploy });
     fireEvent.click(screen.getByRole("checkbox", { name: /Box One/ }));
     const team = screen.getByLabelText("Team") as HTMLSelectElement;
     expect(team.value).toBe("");
@@ -257,24 +304,22 @@ describe("ImportScopeStep", () => {
     expect(within(select).getAllByRole("option").map((o) => o.textContent)).toEqual(["Choose a server", "Target C"]);
   });
 
-  it("the team follows the servers the hub matched, and the source team's name is compared", () => {
-    const p = withMatches([{ ref: "s1", name: "Box One", tugra: hit("t3", "Target C", { teamId: "team2" }) }, { ref: "s2", name: "Box Two" }], { preflight: { sourceTeam: "Team One" } as never });
-    mount({ servers: multi, teams: twoTeams, plan: p });
-    expect((screen.getByLabelText("Team") as HTMLSelectElement).value).toBe("team2");
-    expect(screen.getByText("Source team: Team One")).toBeTruthy();
-    expect(screen.getByText(/different name than the source team/)).toBeTruthy();
-  });
-
-  it("the team named like the source team is the default", () => {
-    const p = withMatches([{ ref: "s1", name: "Box One" }, { ref: "s2", name: "Box Two" }], { preflight: { sourceTeam: "team two" } as never });
+  it("another source: the team named like the source team is the default", () => {
+    const p: ImportPlan = { ...withMatches([{ ref: "s1", name: "Box One" }, { ref: "s2", name: "Box Two" }], { preflight: { sourceTeam: "team two" } as never }), sourceKind: "dokploy" };
     mount({ servers: multi, teams: twoTeams, plan: p });
     fireEvent.click(screen.getByRole("checkbox", { name: /Box One/ }));
     expect((screen.getByLabelText("Team") as HTMLSelectElement).value).toBe("team2");
+    expect(screen.getByText("Source team: team two")).toBeTruthy();
   });
 
-  it("changing the team keeps a pick that is still valid and ignores one that is not", () => {
+  it("another source: servers in two teams are still refused", () => {
+    mount({ servers: multi, teams: twoTeams, plan: dokploy, initial: { ...emptySel(), mode: "servers", hosts: new Set(["s1", "s2"]), placement: { s1: "t1", s2: "t3" }, teamId: "team1" } });
+    expect(continueBtn().disabled).toBe(true);
+  });
+
+  it("another source: changing the team keeps a pick that is still valid and ignores one that is not", () => {
     const onContinue = vi.fn();
-    mount({ servers: multi, teams: twoTeams, onContinue, initial: { ...emptySel(), mode: "servers", hosts: new Set(["s1"]), placement: { s1: "t1" }, teamId: "team1" } });
+    mount({ servers: multi, teams: twoTeams, plan: dokploy, onContinue, initial: { ...emptySel(), mode: "servers", hosts: new Set(["s1"]), placement: { s1: "t1" }, teamId: "team1" } });
     expect((screen.getByLabelText("Box One moves to") as HTMLSelectElement).value).toBe("t1");
     fireEvent.change(screen.getByLabelText("Team"), { target: { value: "team2" } });
     expect((screen.getByLabelText("Box One moves to") as HTMLSelectElement).value).toBe("");
@@ -282,16 +327,16 @@ describe("ImportScopeStep", () => {
     expect((screen.getByLabelText("Box One moves to") as HTMLSelectElement).value).toBe("t1");
   });
 
-  it("reopening the step restores the picked team", () => {
+  it("another source: reopening the step restores the picked team", () => {
     let got: ImportScope | undefined;
-    const first = mount({ servers: multi, teams: twoTeams, onContinue: (s) => (got = s) });
+    const first = mount({ servers: multi, teams: twoTeams, plan: dokploy, onContinue: (s) => (got = s) });
     fireEvent.click(screen.getByRole("checkbox", { name: /Box One/ }));
     fireEvent.change(screen.getByLabelText("Team"), { target: { value: "team2" } });
     fireEvent.change(screen.getByLabelText("Box One moves to"), { target: { value: "t3" } });
     fireEvent.click(continueBtn());
     expect(got?.selection.teamId).toBe("team2");
     first.unmount();
-    mount({ servers: multi, teams: twoTeams, initial: got!.selection });
+    mount({ servers: multi, teams: twoTeams, plan: dokploy, initial: got!.selection });
     expect((screen.getByLabelText("Team") as HTMLSelectElement).value).toBe("team2");
   });
 
