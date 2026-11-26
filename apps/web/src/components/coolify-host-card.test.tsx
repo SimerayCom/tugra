@@ -74,7 +74,14 @@ describe("CoolifyHostCard", () => {
     const line = screen.getByTestId("line-cleanup");
     expect(line.textContent).toMatch(/Read the Coolify first/);
     expect(line.textContent).not.toMatch(/Failed/);
-    expect(line.querySelector("a")?.getAttribute("href")).toBe("/import/coolify-host");
+    expect(line.querySelector("a")?.getAttribute("href")).toBe("/import/coolify-host?server=hubid");
+  });
+
+  it("the read link stays the plain page when no Coolify host is known yet", async () => {
+    vi.spyOn(api, "coolifyMoveStatus").mockResolvedValue(view([row({ cleanup: "FAILED", cleanupFailure: "no_coolify_link", stage: "takeover" })], null));
+    show();
+    await screen.findByTestId("coolify-host-card");
+    expect(screen.getByTestId("line-cleanup").querySelector("a")?.getAttribute("href")).toBe("/import/coolify-host");
   });
 
   it("a cleanup that really failed still says Failed", async () => {

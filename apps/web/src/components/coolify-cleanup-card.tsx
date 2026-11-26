@@ -5,7 +5,7 @@ import type { CleanupRemnant, CompletenessRow } from "@tugra/shared";
 import { api, ApiError } from "../lib/api";
 import { useT } from "../i18n/provider";
 import { cleanupGuard } from "../lib/launch-guards";
-import { MOVE_OFF_HREF, connectHref } from "../lib/coolify-move";
+import { MOVE_OFF_HREF, connectHref, readFirstHref } from "../lib/coolify-move";
 import Link from "next/link";
 import { canOfferConfirm, cleanupErrorKey, cleanupNeedsRead, cleanupFailureKey, rowNeedsAttention, sizeText, splitRemnants } from "../lib/coolify-cleanup";
 import { Badge, Btn, SectionCard } from "./ui";
@@ -117,13 +117,13 @@ export function CoolifyCleanupCard({ serverId, serverName, online, teamId }: { s
       {errNeedsRead && !needsRead && (
         <p role="note" data-testid="cleanup-needs-read" style={{ color: "var(--c-tx2)", fontSize: 12.5, margin: "10px 0 0", display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
           <span>{t(cleanupErrorKey(err))}</span>
-          <Link href="/import/coolify-host" className="tg-link" style={{ minHeight: 44, display: "inline-flex", alignItems: "center" }}>{t("coolifyCleanup.needsReadLink")}</Link>
+          <Link href={readFirstHref(move.data?.hub?.serverId)} className="tg-link" style={{ minHeight: 44, display: "inline-flex", alignItems: "center" }}>{t("coolifyCleanup.needsReadLink")}</Link>
         </p>
       )}
       {v?.failureCode && needsRead && (
         <p role="note" data-testid="cleanup-needs-read" style={{ color: "var(--c-tx2)", fontSize: 12.5, margin: "10px 0 0", display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
           <span>{t(cleanupFailureKey(v.failureCode) ?? "coolifyCleanup.failure.conflict")}</span>
-          <Link href="/import/coolify-host" className="tg-link" style={{ minHeight: 44, display: "inline-flex", alignItems: "center" }}>{t("coolifyCleanup.needsReadLink")}</Link>
+          <Link href={readFirstHref(move.data?.hub?.serverId)} className="tg-link" style={{ minHeight: 44, display: "inline-flex", alignItems: "center" }}>{t("coolifyCleanup.needsReadLink")}</Link>
         </p>
       )}
       {v?.failureCode && !needsRead && <p role="alert" style={{ color: "var(--c-r)", fontSize: 12.5, margin: "10px 0 0" }}>{t(cleanupFailureKey(v.failureCode) ?? "coolifyCleanup.failure.conflict")}</p>}

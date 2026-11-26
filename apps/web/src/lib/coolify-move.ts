@@ -10,6 +10,8 @@ export const STAGE_TONE: Record<MoveOffServerStage, Tone> = { agent: "danger", t
 
 /** `servers.id` of the page that connects and reads a Coolify host. */
 export const connectHref = (serverId: string): string => `/import/coolify-host?server=${encodeURIComponent(serverId)}`;
+/** "Read the Coolify first": the connect page of the Coolify host when its server id is known, else the page itself (it asks which server). */
+export const readFirstHref = (hubServerId: string | null | undefined): string => (hubServerId ? connectHref(hubServerId) : "/import/coolify-host");
 /** The takeover screen of one server (it shows the newest takeover; planning a new one starts from a run). */
 export const takeoverHref = (serverId: string, opId?: string): string => `/import/inplace?serverId=${encodeURIComponent(serverId)}${opId ? `&opId=${encodeURIComponent(opId)}` : ""}`;
 export const MOVE_OFF_HREF = "/import/move-off-coolify";

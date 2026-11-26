@@ -9,7 +9,7 @@ import { useT } from "../i18n/provider";
 import { formatDateTime } from "../lib/format-time";
 import { relativeTime } from "../lib/fleet";
 import { cleanupNeedsRead } from "../lib/coolify-cleanup";
-import { GRANT_TONE, MOVE_OFF_HREF, STAGE_TONE, connectHref, startsTakeoverFlow, takeoverHref, type Tone } from "../lib/coolify-move";
+import { GRANT_TONE, MOVE_OFF_HREF, STAGE_TONE, connectHref, readFirstHref, startsTakeoverFlow, takeoverHref, type Tone } from "../lib/coolify-move";
 import { Badge, Btn, LinkBtn, SectionCard } from "./ui";
 import { CoolifySecretsConsent } from "./coolify-secrets-consent";
 import { CoolifyTakeOverButton } from "./coolify-take-over-button";
@@ -83,7 +83,7 @@ function ManagedLines({ row, teamId, hubServerId, hubTeamId }: { row: MoveOffSer
       </Line>
       {row.cleanup === "FAILED" && cleanupNeedsRead(row.cleanupFailure) ? (
         // Not a failure: no Coolify read knows this server yet. Say so calmly and point at the read.
-        <Line testId="line-cleanup" name={t("coolifyMove.line.cleanup.label")} tone="muted" link={{ href: "/import/coolify-host", text: t("coolifyCleanup.needsReadLink") }}>
+        <Line testId="line-cleanup" name={t("coolifyMove.line.cleanup.label")} tone="muted" link={{ href: readFirstHref(hubServerId), text: t("coolifyCleanup.needsReadLink") }}>
           {t("coolifyCleanup.needsRead")}
         </Line>
       ) : (

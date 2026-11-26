@@ -149,6 +149,14 @@ describe("CoolifyCleanupCard", () => {
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
+  it("the read link names the Coolify host when the move-off status knows it", async () => {
+    vi.spyOn(api, "coolifyMoveStatus").mockResolvedValue({ teamId: "t1", hub: { serverId: "hub1", teamId: "t1", name: "Coolify host", readAt: new Date().toISOString() }, servers: [{ serverId: "s1", name: "olgu-box", agentOnline: true, coolify: true, isCoolifyHub: false, takeover: "none", cleanup: "none", stage: "takeover" }], campaigns: [], projectMoves: {}, steps: [] } as never);
+    vi.spyOn(api, "coolifyCleanupLatest").mockResolvedValue(view({ status: "FAILED", failureCode: "no_coolify_link", completeness: [], remnants: [], listHash: null, complete: false }));
+    show({ teamId: "t1" });
+    const note = await screen.findByTestId("cleanup-needs-read");
+    expect(within(note).getByRole("link", { name: "Read this Coolify" }).getAttribute("href")).toBe("/import/coolify-host?server=hub1");
+  });
+
   it("a check refused with no_coolify_link answers with the read, not a red error", async () => {
     vi.spyOn(api, "coolifyCleanupLatest").mockResolvedValue(null);
     vi.spyOn(api, "coolifyCleanupCheck").mockRejectedValue(new ApiError(409, "x", "no_coolify_link"));
