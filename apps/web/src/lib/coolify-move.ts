@@ -11,8 +11,14 @@ export const STAGE_TONE: Record<MoveOffServerStage, Tone> = { agent: "danger", t
 /** `servers.id` of the page that connects and reads a Coolify host. */
 export const connectHref = (serverId: string): string => `/import/coolify-host?server=${encodeURIComponent(serverId)}`;
 /** The takeover screen of one server (it shows the newest takeover; planning a new one starts from a run). */
-export const takeoverHref = (serverId: string): string => `/import/inplace?serverId=${encodeURIComponent(serverId)}`;
+export const takeoverHref = (serverId: string, opId?: string): string => `/import/inplace?serverId=${encodeURIComponent(serverId)}${opId ? `&opId=${encodeURIComponent(opId)}` : ""}`;
 export const MOVE_OFF_HREF = "/import/move-off-coolify";
+
+/**
+ * Rows whose step-A action is the "Take over in place" button, which starts the right flow itself (see lib/coolify-take-over.ts): the
+ * server's agent is online and it is not taken over yet. Every other row keeps its link.
+ */
+export const startsTakeoverFlow = (r: Pick<MoveOffServerRow, "stage">): boolean => r.stage === "takeover";
 
 /** Where a row's action leads, and which label key it carries. Null = nothing to do here. */
 export function rowAction(r: MoveOffServerRow): { href: string; labelKey: string } | null {
@@ -52,5 +58,38 @@ export function readyToShutDown(v: MoveOffStatusView): boolean {
 
 export const GRANT_TONE: Record<MoveOffGrantState, Tone> = { none: "muted", active: "ok", expired: "warn", revoked: "muted" };
 
+/** The team has Coolify in it: a connected Coolify host, or a server Coolify manages / the host itself. Drives the sidebar entry and its ⌘K entry. */
+export const hasCoolifyMove = (v: Pick<MoveOffStatusView, "hub" | "servers">): boolean => v.hub !== null || v.servers.some((s) => s.coolify || s.isCoolifyHub);
+
+/** One team's progress in the move, for the per-team overview: servers taken over and cleaned of those Coolify manages. */
+export interface TeamProgress {
+  taken: number;
+  cleaned: number;
+  total: number;
+  hub: boolean;
+}
+export function teamProgress(v: Pick<MoveOffStatusView, "hub" | "servers">): TeamProgress {
+  const movers = coolifyRows(v.servers);
+  return {
+    taken: movers.filter((r) => r.stage === "cleanup" || r.stage === "done").length,
+    cleaned: movers.filter((r) => r.stage === "done").length,
+    total: movers.length,
+    hub: v.hub !== null || v.servers.some((s) => s.isCoolifyHub),
+  };
+}
+
 /** Servers of a row list that are Coolify's (the ones the steps count). */
 export const coolifyRows = (rows: readonly MoveOffServerRow[]): MoveOffServerRow[] => rows.filter((r) => r.coolify && !r.isCoolifyHub);
+
+/** Teams whose owner or admin may read the move's status (the hub's route is theirs), narrowed to the team scope when one is picked. */
+export function moveOffTeamIds(teams: ReadonlyArray<{ id: string; role: string }>, scope: string | null): string[] {
+  const eligible = teams.filter((tm) => tm.role === "OWNER" || tm.role === "ADMIN");
+  const picked = scope ? eligible.filter((tm) => tm.id === scope) : eligible;
+  return picked.map((tm) => tm.id);
+}
+
+/** "Move off Coolify" is in the sidebar and ⌘K only where it applies: any of the teams in view has Coolify in it. */
+export async function anyTeamHasCoolify(teamIds: readonly string[], status: (teamId: string) => Promise<Pick<MoveOffStatusView, "hub" | "servers">>): Promise<boolean> {
+  const found = await Promise.all(teamIds.map((id) => status(id).then(hasCoolifyMove, () => false)));
+  return found.some(Boolean);
+}

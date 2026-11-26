@@ -13,6 +13,8 @@ import { navForMode, uiMode, isHomeAllowed } from "../lib/ui-mode";
 import { hasClientTeam, isPortalOnly } from "../lib/portal";
 import { useT } from "../i18n/provider";
 import { useIsMobile } from "../hooks/useIsMobile";
+import { useMoveOffVisible } from "../hooks/useMoveOffVisible";
+import { MOVE_OFF_HREF } from "../lib/coolify-move";
 import { nextThemeChoice, resolveThemeChoice, useAppearance, type ThemeChoice } from "../lib/appearance";
 import { Spinner, ActivitySpinner, Btn } from "./ui";
 import { useToast } from "./toast";
@@ -21,6 +23,7 @@ import { TeamScopeSelect } from "./team-scope";
 import { BrandMark } from "./branding";
 import {
   Activity,
+  ArrowRightLeft,
   ArrowUpCircle,
   BarChart3,
   Bell,
@@ -94,6 +97,8 @@ export const NAV: { group: string; items: NavItem[] }[] = [
       { key: "appStore", href: "/app-store", icon: Store, home: true },
       { key: "import", href: "/import", icon: DownloadCloud },
       { key: "importRuns", href: "/import/runs", icon: Route },
+      // Only where the team has Coolify in it (see useMoveOffVisible); the page itself stays reachable by its link.
+      { key: "moveOffCoolify", href: MOVE_OFF_HREF, icon: ArrowRightLeft },
       { key: "sources", href: "/sources", icon: GitBranch },
       { key: "registries", href: "/registries", icon: Package },
     ],
@@ -133,11 +138,12 @@ export const NAV: { group: string; items: NavItem[] }[] = [
 
 /** A nav item is active for its own path and anything below it, unless a MORE specific nav item also matches
  *  (so /import/runs highlights "Guided migrations" only, not "Import" as well). */
-export function navItemActive(pathname: string, href: string): boolean {
+export function navItemActive(pathname: string, href: string, hidden: readonly string[] = []): boolean {
   const base = href.split("?")[0];
   const hit = (b: string) => pathname === b || pathname.startsWith(`${b}/`);
   if (!hit(base)) return false;
   return !NAV.some((g) => g.items.some((o) => {
+    if (hidden.includes(o.href)) return false; // an entry that is not shown cannot take the highlight
     const ob = o.href.split("?")[0];
     return ob !== base && ob.length > base.length && ob.startsWith(`${base}/`) && hit(ob);
   }));
@@ -153,6 +159,14 @@ export const DESTS: CommandDest[] = NAV.flatMap((g) =>
   { labelKey: "nav.statusPage", href: "/monitors/status" },
   { labelKey: "nav.portal", href: "/portal" },
 ]);
+
+/** Entries that appear only when the team has Coolify in it (the sidebar and ⌘K both hide them otherwise). */
+export const COOLIFY_ONLY_HREFS: readonly string[] = [MOVE_OFF_HREF];
+
+/** What ⌘K offers: Home mode only the Home routes, and an entry for Coolify only where the team has Coolify (same rule as the sidebar). */
+export function paletteDests(dests: readonly CommandDest[], home: boolean, moveOff: boolean): CommandDest[] {
+  return dests.filter((d) => (!home || isHomeAllowed(d.href)) && (moveOff || !COOLIFY_ONLY_HREFS.includes(d.href)));
+}
 
 /** The customer portal entry (not in NAV: only an account that is a Client of a team ever sees it). */
 const PORTAL_ITEM: NavItem = { key: "portal", href: "/portal", icon: LifeBuoy };
@@ -195,6 +209,7 @@ export function Sidebar({ openPalette, mobile = false, open = false, onNavigate 
   const router = useRouter();
   const t = useT();
   const { data: teams = [] } = useQuery({ queryKey: ["teams"], queryFn: () => api.listTeams(), enabled: !!user, staleTime: 60_000 });
+  const moveOff = useMoveOffVisible();
   // A customer account (Client of a team, nothing of its own) gets the portal and its settings only; anyone who also
   // runs a team keeps the full sidebar plus a portal entry.
   const settingsItem = NAV.flatMap((g) => g.items).find((i) => i.key === "settings")!;
@@ -203,6 +218,8 @@ export function Sidebar({ openPalette, mobile = false, open = false, onNavigate 
     : hasClientTeam(teams)
       ? navForMode(NAV, mode).map((g, i) => (i === 0 ? { ...g, items: [...g.items, PORTAL_ITEM] } : g))
       : navForMode(NAV, mode);
+  const hiddenHrefs = moveOff ? [] : COOLIFY_ONLY_HREFS;
+  const visibleNav = nav.map((g) => ({ ...g, items: g.items.filter((it) => moveOff || !COOLIFY_ONLY_HREFS.includes(it.href)) }));
   const [collapsed, setCollapsed] = useState(false);
   useEffect(() => {
     setCollapsed(localStorage.getItem("tugra.sidebar") === "1");
@@ -289,9 +306,9 @@ export function Sidebar({ openPalette, mobile = false, open = false, onNavigate 
       </div>
 
       <nav style={{ flex: 1, overflowY: "auto", padding: 8 }}>
-        {nav.map((g) => {
+        {visibleNav.map((g) => {
           // Icon-collapsed mode has no headers, so per-group collapse never hides items there.
-          const groupHasActive = g.items.some((it) => navItemActive(pathname, it.href));
+          const groupHasActive = g.items.some((it) => navItemActive(pathname, it.href, hiddenHrefs));
           const groupClosed = !col && !!closedGroups[g.group];
           const panelId = `tg-navgroup-${g.group}${mobile ? "-m" : ""}`;
           return (
@@ -311,7 +328,7 @@ export function Sidebar({ openPalette, mobile = false, open = false, onNavigate 
             )}
             <div id={panelId} hidden={groupClosed}>
             {g.items.map((it) => {
-              const active = navItemActive(pathname, it.href);
+              const active = navItemActive(pathname, it.href, hiddenHrefs);
               const Icon = it.icon;
               const badge = mode !== "home" && it.key === "servers" && offline > 0 ? offline : 0;
               return (
@@ -794,6 +811,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const isMobile = useIsMobile();
   const { user } = useAuth();
   const isHome = uiMode(user?.uiMode) === "home";
+  const moveOff = useMoveOffVisible();
   useEffect(() => {
     const h = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === "k") {
@@ -825,7 +843,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         <main className="tg-main" style={{ flex: 1, overflowY: "auto" }}>{children}</main>
       </div>
       {/* In Home mode, ⌘K only offers Home-allowed destinations (a fleet route would just bounce to /home). */}
-      {palette && <CommandPalette dests={isHome ? DESTS.filter((d) => isHomeAllowed(d.href)) : DESTS} fleet={!isHome} onClose={() => setPalette(false)} />}
+      {palette && <CommandPalette dests={paletteDests(DESTS, isHome, moveOff)} fleet={!isHome} onClose={() => setPalette(false)} />}
     </div>
   );
 }

@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type { MoveOffServerRow, MoveOffStatusView } from "@tugra/shared";
-import { currentStep, readyToShutDown, rowAction, sortRows, stepOf, coolifyRows, takeoverHref, connectHref } from "./coolify-move";
+import { anyTeamHasCoolify, currentStep, hasCoolifyMove, moveOffTeamIds, readyToShutDown, rowAction, sortRows, startsTakeoverFlow, stepOf, coolifyRows, takeoverHref, teamProgress, connectHref } from "./coolify-move";
 
 const row = (o: Partial<MoveOffServerRow>): MoveOffServerRow => ({ serverId: "s1", name: "a", agentOnline: true, coolify: true, isCoolifyHub: false, takeover: "none", cleanup: "none", stage: "takeover", ...o });
 const view = (o: Partial<MoveOffStatusView> = {}): MoveOffStatusView => ({
@@ -66,5 +66,52 @@ describe("steps", () => {
   it("coolifyRows leaves out the hub and servers Coolify does not know", () => {
     const rows = [row({ serverId: "a" }), row({ serverId: "h", isCoolifyHub: true }), row({ serverId: "n", coolify: false })];
     expect(coolifyRows(rows).map((r) => r.serverId)).toEqual(["a"]);
+  });
+});
+
+describe("the takeover button", () => {
+  it("belongs to servers waiting for takeover (agent online); an offline, taken over or finished server keeps its link", () => {
+    expect(startsTakeoverFlow(row({ stage: "takeover" }))).toBe(true);
+    expect(startsTakeoverFlow(row({ stage: "takeover", takeover: "FAILED" }))).toBe(true);
+    for (const stage of ["agent", "cleanup", "done", "hub", "not_coolify"] as const) expect(startsTakeoverFlow(row({ stage }))).toBe(false);
+  });
+  it("takeoverHref carries the operation only when there is one", () => {
+    expect(takeoverHref("s1", "o 1")).toBe("/import/inplace?serverId=s1&opId=o%201");
+    expect(takeoverHref("s1", "")).toBe("/import/inplace?serverId=s1");
+  });
+});
+
+describe("hasCoolifyMove", () => {
+  it("is true with a connected Coolify host or a server Coolify manages or hosts, false for neither", () => {
+    expect(hasCoolifyMove(view())).toBe(false);
+    expect(hasCoolifyMove(view({ servers: [row({ coolify: false, stage: "not_coolify" })] }))).toBe(false);
+    expect(hasCoolifyMove(view({ servers: [row({})] }))).toBe(true);
+    expect(hasCoolifyMove(view({ servers: [row({ coolify: false, isCoolifyHub: true, stage: "hub" })] }))).toBe(true);
+    expect(hasCoolifyMove(view({ hub: { serverId: "h", name: "h", readAt: null, knownServers: null, unlinkedServers: null, secrets: "none", secretsExpiresAt: null, ssh: null } }))).toBe(true);
+  });
+});
+
+describe("teamProgress", () => {
+  it("counts taken over (cleanup or done) and cleaned (done) of the servers Coolify manages, not the host or others", () => {
+    const p = teamProgress(view({ servers: [row({ stage: "done" }), row({ stage: "cleanup" }), row({ stage: "takeover" }), row({ stage: "agent" }), row({ stage: "hub", isCoolifyHub: true }), row({ stage: "not_coolify", coolify: false })] }));
+    expect(p).toEqual({ taken: 2, cleaned: 1, total: 4, hub: true });
+  });
+});
+
+describe("sidebar visibility", () => {
+  const teams = [{ id: "a", role: "OWNER" }, { id: "b", role: "ADMIN" }, { id: "c", role: "MEMBER" }, { id: "d", role: "VIEWER" }];
+  it("only teams the person owns or administers are asked, narrowed to the team in view", () => {
+    expect(moveOffTeamIds(teams, null)).toEqual(["a", "b"]);
+    expect(moveOffTeamIds(teams, "b")).toEqual(["b"]);
+    expect(moveOffTeamIds(teams, "c")).toEqual([]); // a team the person only belongs to is never asked
+    expect(moveOffTeamIds(teams, "gone")).toEqual([]);
+  });
+  it("is true when any team has Coolify, false when none does, and a team that cannot be read counts as none", async () => {
+    const withCoolify = view({ servers: [row({})] });
+    expect(await anyTeamHasCoolify(["a", "b"], async (id) => (id === "b" ? withCoolify : view()))).toBe(true);
+    expect(await anyTeamHasCoolify(["a", "b"], async () => view())).toBe(false);
+    expect(await anyTeamHasCoolify(["a", "b"], async (id) => { if (id === "a") throw new Error("403"); return view(); })).toBe(false);
+    expect(await anyTeamHasCoolify(["a", "b"], async (id) => { if (id === "a") throw new Error("403"); return withCoolify; })).toBe(true);
+    expect(await anyTeamHasCoolify([], async () => withCoolify)).toBe(false);
   });
 });

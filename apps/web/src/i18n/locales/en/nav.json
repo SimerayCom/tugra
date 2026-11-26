@@ -27,6 +27,7 @@
   "rollouts": "Rollouts",
   "import": "Import",
   "importRuns": "Guided migrations",
+  "moveOffCoolify": "Move off Coolify",
   "sources": "Git Sources",
   "registries": "Container Registries",
   "cloudCredentials": "Cloud Providers",

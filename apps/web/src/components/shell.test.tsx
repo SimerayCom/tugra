@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, screen, cleanup, fireEvent } from "@testing-library/react";
-import { NAV, DESTS, navItemActive, noticeVisible, noticeMessage, Sidebar, UpdateBadge, nextTheme, resolveTheme } from "./shell";
+import { NAV, DESTS, COOLIFY_ONLY_HREFS, paletteDests, navItemActive, noticeVisible, noticeMessage, Sidebar, UpdateBadge, nextTheme, resolveTheme } from "./shell";
 import type { InstanceUpdateNotice } from "../lib/types";
 import { navForMode, isHomeAllowed } from "../lib/ui-mode";
 import { translate } from "../i18n/translate";
@@ -210,7 +210,7 @@ describe("notice banner visibility", () => {
 describe("grouped, collapsible sidebar nav", () => {
   const GROUPS = {
     monitor: ["home", "dashboard", "fleet", "traffic", "uptime"],
-    build: ["projects", "appStore", "import", "importRuns", "sources", "registries"],
+    build: ["projects", "appStore", "import", "importRuns", "moveOffCoolify", "sources", "registries"],
     infrastructure: ["servers", "clusters", "costs", "rollouts", "terminal", "destinations", "domains"],
     integrations: ["cloudCredentials", "secretProviders", "sharedVars"],
     account: ["notifications", "audit", "teams", "settings"],
@@ -237,6 +237,60 @@ describe("grouped, collapsible sidebar nav", () => {
     expect(navItemActive("/import/runs/abc", "/import")).toBe(false);
     expect(navItemActive("/servers/abc", "/servers")).toBe(true);
     expect(navItemActive("/serversx", "/servers")).toBe(false);
+  });
+
+  describe("the Move off Coolify entry", () => {
+    afterEach(() => mocks.useQuery.mockReturnValue({ data: [] }));
+    const withCoolify = (present: unknown) =>
+      mocks.useQuery.mockImplementation((opts: unknown) => ((opts as { queryKey: unknown[] }).queryKey[0] === "coolify-move-present" ? { data: present } : { data: [] }));
+    const hrefs = () => screen.getAllByRole("link").map((a) => a.getAttribute("href"));
+
+    it("is in the sidebar, in Build next to Guided migrations, when the team has Coolify", () => {
+      withCoolify(true);
+      renderSb();
+      const list = hrefs();
+      expect(list).toContain("/import/move-off-coolify");
+      expect(list.indexOf("/import/move-off-coolify")).toBe(list.indexOf("/import/runs") + 1);
+      expect(screen.getByRole("link", { name: "Move off Coolify" })).toBeTruthy();
+    });
+
+    it("is not shown while unknown, when the team has no Coolify, or when the answer is not a plain yes", () => {
+      for (const present of [undefined, false, [], "yes"]) {
+        withCoolify(present);
+        renderSb();
+        expect(hrefs()).not.toContain("/import/move-off-coolify");
+        cleanup();
+      }
+    });
+
+    it("is a ⌘K destination that the palette hides together with the sidebar entry", () => {
+      expect(DESTS.some((d) => d.href === "/import/move-off-coolify" && d.labelKey === "nav.moveOffCoolify")).toBe(true);
+      expect(COOLIFY_ONLY_HREFS).toEqual(["/import/move-off-coolify"]);
+      expect(translate(en, "nav.moveOffCoolify")).toBe("Move off Coolify");
+      expect(paletteDests(DESTS, false, true).some((d) => d.href === "/import/move-off-coolify")).toBe(true);
+      expect(paletteDests(DESTS, false, false).some((d) => d.href === "/import/move-off-coolify")).toBe(false);
+      expect(paletteDests(DESTS, false, false).length).toBe(DESTS.length - 1);
+      // Home mode never offers a fleet route, Coolify or not
+      expect(paletteDests(DESTS, true, true).some((d) => d.href === "/import/move-off-coolify")).toBe(false);
+      expect(paletteDests(DESTS, true, true).every((d) => isHomeAllowed(d.href))).toBe(true);
+    });
+
+    it("keeps Import lit on the page while the entry is hidden, and lights only the entry when it is shown", () => {
+      mockPath = "/import/move-off-coolify";
+      withCoolify(false);
+      renderSb();
+      expect(screen.getAllByRole("link").filter((a) => a.getAttribute("aria-current") === "page").map((a) => a.getAttribute("href"))).toEqual(["/import"]);
+      cleanup();
+      withCoolify(true);
+      renderSb();
+      expect(screen.getAllByRole("link").filter((a) => a.getAttribute("aria-current") === "page").map((a) => a.getAttribute("href"))).toEqual(["/import/move-off-coolify"]);
+    });
+  });
+
+  it("highlights Move off Coolify on its own page, and Import there only while the entry is hidden", () => {
+    expect(navItemActive("/import/move-off-coolify", "/import/move-off-coolify")).toBe(true);
+    expect(navItemActive("/import/move-off-coolify", "/import")).toBe(false);
+    expect(navItemActive("/import/move-off-coolify", "/import", ["/import/move-off-coolify"])).toBe(true);
   });
 
   it("keeps every item reachable via DESTS", () => {
