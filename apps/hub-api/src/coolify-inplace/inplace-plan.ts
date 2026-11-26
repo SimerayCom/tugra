@@ -303,6 +303,7 @@ export function toItemView(i: TakeoverItem): TakeoverItemView {
     buildMode: i.buildMode,
     ...(i.state === "skipped" ? { skipped: true } : {}),
     ...(i.exclusive ? { exclusive: true } : {}),
+    ...(i.rebuildDeclined ? { rebuildDeclined: true } : {}),
     ...(i.afterSwitch ? { afterSwitch: true } : {}),
     ...(i.issues.length ? { issues: i.issues } : {}),
     domains: i.domains.map((d) => ({ host: d.host, tempCheck: d.tempCheck, finalCheck: d.finalCheck, cert: d.cert })),

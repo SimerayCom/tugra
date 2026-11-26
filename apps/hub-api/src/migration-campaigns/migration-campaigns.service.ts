@@ -7,7 +7,7 @@ import { TeamAccessService } from "../common/team-access.service";
 import { MIGRATION_RUNS_FACADE, type MigrationRunsFacade, type RunActor } from "../migration-runs/core/run-contract";
 import type { CreateMigrationRunInput } from "../migration-runs/core/dto";
 import { CampaignFactsService } from "./campaign-facts.service";
-import { checkPlacements, deriveCampaignStatus, newCampaignLabel, placementViews, planCampaign, refsOfRun, serverMapOfRun, type PlacementCheck } from "./campaign-plan";
+import { checkPlacements, deriveCampaignStatus, newCampaignLabel, placementViews, planCampaign, refsOfRun, serverMapOfRun, withRebuild, type PlacementCheck } from "./campaign-plan";
 import type { CampaignCreateInput, CampaignPlanInput } from "./dto";
 
 const OWNER_ONLY: Role[] = [Role.OWNER];
@@ -44,7 +44,9 @@ export class MigrationCampaignsService {
     const check = checkPlacements(placements, facts.hosts, facts.targets);
     const views = placementViews(facts.hosts);
     if (!check.ok) return { planHash: facts.planHash, views, runs: null, failure: failureOf(check) };
-    return { planHash: facts.planHash, views, runs: planCampaign(check.placements), failure: null };
+    const planned = withRebuild(planCampaign(check.placements), input.rebuild ?? [], facts.appRefs);
+    if (!planned.ok) return { planHash: facts.planHash, views, runs: null, failure: { code: planned.code, ref: planned.ref } };
+    return { planHash: facts.planHash, views, runs: planned.runs, failure: null };
   }
 
   /** The placement screen's rows for a session, with no choice made yet. */
@@ -62,7 +64,11 @@ export class MigrationCampaignsService {
     // owner of the team the servers belong to: a campaign moves whole servers, so a lesser role is refused before anything is written
     await this.access.requireRole(actor.userId, check.teamId, OWNER_ONLY);
 
-    const plan = planCampaign(check.placements);
+    // the owner's rebuild choices go to the in-place run of their own server; one that belongs nowhere is refused before anything is written
+    if (input.options.rebuild !== undefined) throw new BadRequestException("rebuild-not-in-options");
+    const planned = withRebuild(planCampaign(check.placements), input.rebuild ?? [], facts.appRefs);
+    if (!planned.ok) throw new UnprocessableEntityException({ statusCode: 422, message: planned.code, code: planned.code, ref: planned.ref });
+    const plan = planned.runs;
     const label = input.label ?? newCampaignLabel(new Date());
     let row;
     try {
@@ -71,7 +77,7 @@ export class MigrationCampaignsService {
       if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") throw new ConflictException("campaign-label-taken");
       throw e;
     }
-    await this.audit.log({ actor: actor.userId, action: "migration.campaign.create", target: row.id, meta: { teamId: check.teamId, label, runs: plan.length, servers: placements.length, inPlace: plan.filter((r) => r.kind === "in-place").length } });
+    await this.audit.log({ actor: actor.userId, action: "migration.campaign.create", target: row.id, meta: { teamId: check.teamId, label, runs: plan.length, servers: placements.length, inPlace: plan.filter((r) => r.kind === "in-place").length, rebuild: plan.reduce((n, r) => n + (r.rebuild?.length ?? 0), 0) } });
 
     const created: string[] = [];
     try {
@@ -178,7 +184,8 @@ export function runBody(input: CampaignCreateInput, run: CampaignRunPlan, placem
     mode: input.mode,
     topology: run.topology,
     dryRun: input.dryRun,
-    options: input.options,
+    // the options are shared by the whole campaign; the rebuild list is the run's own (only an in-place run builds anything)
+    options: run.rebuild && run.rebuild.length > 0 ? { ...input.options, rebuild: run.rebuild } : input.options,
     inputs: input.inputs,
     ...(serverMap ? { serverMap } : {}),
     campaign: label,

@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { PLACEMENT_KINDS } from "@tugra/shared";
-import { CampaignSchema, OwnerInputsRequestSchema, RunModeSchema, RunOptionsSchema, applyFields } from "../migration-runs/core/dto";
+import { CampaignSchema, OwnerInputsRequestSchema, RebuildListSchema, RunModeSchema, RunOptionsSchema, applyFields } from "../migration-runs/core/dto";
 import { SERVER_MAP_MAX } from "../migration-runs/core/run-contract";
 
 const Ref = z
@@ -30,6 +30,8 @@ export const CampaignPlanSchema = z
     sourceKind: z.literal("coolify").default("coolify"),
     planHash: runFields.planHash,
     placements: z.array(SourcePlacementSchema).min(1).max(SERVER_MAP_MAX),
+    /** Apps (plan item refs) of the in-place servers to build with Tugra and verify; each goes to the run of its own source server. Absent = every app reuses Coolify's image. */
+    rebuild: RebuildListSchema.optional(),
   })
   .strict();
 export type CampaignPlanInput = z.infer<typeof CampaignPlanSchema>;

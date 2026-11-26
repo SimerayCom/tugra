@@ -68,6 +68,8 @@ export const PLACEMENT_FAILURE_CODES = [
   "placement_target_not_ready",
   "placement_other_is_source_host",
   "placement_teams_differ",
+  "placement_rebuild_not_in_place",
+  "placement_rebuild_unknown_item",
 ] as const;
 export type PlacementFailureCode = (typeof PLACEMENT_FAILURE_CODES)[number];
 
@@ -102,6 +104,8 @@ export interface CampaignRunPlan {
   topology: "swap-proxy" | "two-box";
   /** Waves run in order; the runs of one wave may run together. */
   wave: number;
+  /** In-place runs only: the apps (plan item refs) of this run that are built with Tugra and verified instead of reusing Coolify's image. Absent = none. */
+  rebuild?: string[];
 }
 
 export const CAMPAIGN_STATUSES = ["draft", "running", "paused", "done", "cancelled"] as const;
@@ -195,6 +199,8 @@ export interface TakeoverItemView {
   skipped?: boolean;
   /** The app shares writable data with Coolify's copy, so it is switched rather than tested alongside. */
   exclusive?: boolean;
+  /** A rebuild was asked for (a guided run's choice) but this app shares writable data with Coolify's copy, so it reuses the image instead. */
+  rebuildDeclined?: boolean;
   /** The app talks to a database that is taken over with it: it starts after the database at the switch and is checked right after. */
   afterSwitch?: boolean;
   issues?: TakeoverIssueCode[];
@@ -213,6 +219,22 @@ export interface TakeoverView {
   failureCode?: TakeoverFailureCode | null;
   createdAt: string;
   finishedAt: string | null;
+}
+
+/**
+ * What a guided run shows of the takeover that carries it (the in-place card): the takeover's state and, per app, whether Coolify's image was
+ * reused or the app was rebuilt with Tugra and verified. Secret-free: names, refs, states and codes only. `null` from the API when the run has
+ * no takeover planned yet.
+ */
+export interface RunInPlaceView {
+  id: string;
+  status: TakeoverStatus;
+  failureCode: TakeoverFailureCode | null;
+  /** Apps still being prepared (a rebuild that has not finished). */
+  pending: number;
+  /** Every domain works through Tugra's proxy and holds a new certificate. */
+  verified: boolean;
+  items: TakeoverItemView[];
 }
 
 // ── cleanup and completeness (lane G) ──────────────────────────────────────────────────────────────

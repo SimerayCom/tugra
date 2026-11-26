@@ -9,6 +9,8 @@ export interface CampaignFacts {
   planHash: string;
   hosts: PlacementHostFact[];
   targets: Map<string, PlacementTarget>;
+  /** The app item refs of the plan (what a rebuild choice is checked against). */
+  appRefs: ReadonlySet<string>;
 }
 
 /** One source server of the plan as a placement fact. The verdict comes from the host match when the plan has one, else from the older address verdict. */
@@ -47,6 +49,6 @@ export class CampaignFactsService {
     const online = new Set(rows.filter((r) => r.status === "ONLINE").map((r) => r.id));
     const targets = new Map<string, PlacementTarget>();
     for (const r of rows) targets.set(r.id, { id: r.id, teamId: r.teamId, ready: r.status === "ONLINE" && r.capabilities.includes("deploy") });
-    return { planHash: plan.planHash, hosts: (plan.preflight?.hosts ?? []).map((h) => hostFactOf(h, online)), targets };
+    return { planHash: plan.planHash, hosts: (plan.preflight?.hosts ?? []).map((h) => hostFactOf(h, online)), targets, appRefs: new Set(plan.items.filter((i) => i.kind === "app").map((i) => i.itemRef)) };
   }
 }

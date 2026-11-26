@@ -25,6 +25,12 @@ export class CoolifyInPlaceController {
     return this.inplace.list(user.userId, q.serverId);
   }
 
+  /** The takeover a guided run carries (404 until the run planned one): per app, the image was reused or the app was rebuilt and verified. */
+  @Get("run/:runId")
+  forRun(@CurrentUser() user: AuthUser, @Param("runId") runId: string) {
+    return this.inplace.runView(user.userId, runId);
+  }
+
   @Get(":id")
   get(@CurrentUser() user: AuthUser, @Param("id") id: string) {
     return this.inplace.get(user.userId, id);

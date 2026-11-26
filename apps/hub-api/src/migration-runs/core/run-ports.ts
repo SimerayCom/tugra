@@ -110,6 +110,11 @@ export interface RunImportPort {
    * (the create-time swap checks are then skipped and CUTOVER's own identity check stays the guard).
    */
   sourceHosts?(userId: string, input: { sessionId: string; sourceKind: RemoteSourceKind; scope?: RunScope }): Promise<Array<{ ref: string; controlPlane: boolean; tugraServerId: string | null }>>;
+  /**
+   * OPTIONAL: the app item refs a run with this scope would move (every app of the plan when there is no scope). Read-only. A missing method
+   * means the port cannot tell (a rebuild choice is then checked for shape only; the takeover's own plan refuses an app it does not know).
+   */
+  appRefs?(userId: string, input: { sessionId: string; sourceKind: RemoteSourceKind; scope?: RunScope }): Promise<string[]>;
   /** The coverage ledger of an import op for the final report (secret-free; empty when the op is unknown). */
   opItems(userId: string, opId: string): Promise<RunReport["items"]>;
   /**

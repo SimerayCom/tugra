@@ -538,6 +538,9 @@ export class ScriptedImportPort implements ImportStepsPort {
     const { mapping, serviceChoices } = applyScope(this.plan_, r.inScope, { ...(i.serviceChoices ? { serviceChoices: i.serviceChoices } : {}) });
     return { ok: true, mapping, mappingHash: "f".repeat(32), ...(serviceChoices ? { serviceChoices } : {}), kept: r.kept, excluded: r.excluded };
   }
+  /** Opt-in: a spec sets it to answer the create-time rebuild check; unset = the port cannot tell (shape only). */
+  appRefs?: RunImportPort["appRefs"];
+
   /** What the source-agent check answers (default: every source server has an online agent). */
   agentGaps: { gaps: Array<{ ref: string; name: string; state: "no_agent" | "offline" }>; unverified: boolean } = { gaps: [], unverified: false };
   agentGapCalls: Array<Parameters<NonNullable<RunImportPort["sourceAgentGaps"]>>[1]> = [];

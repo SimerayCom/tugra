@@ -164,6 +164,9 @@ export class MigrationRunsService implements MigrationRunsFacade {
     const inPlace = internal.inPlace === true;
     // an in-place takeover is a swap of ONE machine's ingress: any other topology has nothing to take over in place
     if (inPlace && body.topology !== "swap-proxy") throw bad("in-place-needs-swap-proxy");
+    // building with Tugra instead of reusing Coolify's image is an in-place choice: any other run copies and builds anyway
+    const rebuild = body.options.rebuild ?? [];
+    if (rebuild.length > 0 && !inPlace) throw unprocessable("rebuild-needs-in-place");
     const server = await this.env.server(body.targetServerId);
     if (!server) throw new NotFoundException("server-not-found");
     const st = await this.env.standing(actor.userId, server.teamId);
@@ -180,6 +183,7 @@ export class MigrationRunsService implements MigrationRunsFacade {
     await this.assertPlanFresh(actor, session, base);
     const scoped = body.scope ? await this.scopedApply(actor, session, body, base, serverMap) : null;
     const applyInput = scoped?.applyInput ?? base;
+    if (rebuild.length > 0) await this.assertRebuildApps(actor, session, body, rebuild);
     // an in-place run copies nothing, so no source-side runner is needed
     if (!body.dryRun && !inPlace) await this.assertSourceAgents(actor, session, applyInput);
     const sourceVersion = await this.captureSourceVersion(actor, session);
@@ -204,9 +208,9 @@ export class MigrationRunsService implements MigrationRunsFacade {
       inputs: stampInputs(body.inputs, actor.userId, this.engine.clock.now()),
     });
     const scopeParams = scoped ? { scoped: true, kept: scoped.kept, excluded: scoped.excluded } : {};
-    await this.event(run.id, actor, "run.created", "info", null, { dryRun: run.dryRun, mode: run.mode, topology: run.topology, targets: this.targetIds(run).length, ...(inPlace ? { inPlace: true } : {}), ...scopeParams });
+    await this.event(run.id, actor, "run.created", "info", null, { dryRun: run.dryRun, mode: run.mode, topology: run.topology, targets: this.targetIds(run).length, ...(inPlace ? { inPlace: true } : {}), ...(rebuild.length > 0 ? { rebuild: rebuild.length } : {}), ...scopeParams });
     await this.sourceVersionEvent(run, actor);
-    await this.audit(actor, "create", run.id, { dryRun: run.dryRun, mode: run.mode, topology: run.topology, serverId: server.id, serverIds: this.targetIds(run), planHash: body.planHash, ...(run.campaign ? { campaign: run.campaign } : {}), ...scopeParams });
+    await this.audit(actor, "create", run.id, { dryRun: run.dryRun, mode: run.mode, topology: run.topology, serverId: server.id, serverIds: this.targetIds(run), planHash: body.planHash, ...(run.campaign ? { campaign: run.campaign } : {}), ...(rebuild.length > 0 ? { rebuild: rebuild.length } : {}), ...scopeParams });
     if (run.dryRun) this.engine.kick(run.id, "enter");
     return this.view(run);
   }
@@ -238,6 +242,14 @@ export class MigrationRunsService implements MigrationRunsFacade {
       kept: r.kept,
       excluded: r.excluded,
     };
+  }
+
+  /** Every app chosen for a rebuild must be an app of this run's scope; one that is not is a 422 naming it (never dropped quietly). */
+  private async assertRebuildApps(actor: RunActor, session: RunSessionInfo, body: CreateMigrationRunInput, rebuild: readonly string[]): Promise<void> {
+    if (!this.imp.appRefs) return;
+    const refs = new Set(await this.imp.appRefs(actor.userId, { sessionId: session.id, sourceKind: session.sourceKind, ...(body.scope ? { scope: body.scope } : {}) }));
+    const unknown = rebuild.find((r) => !refs.has(r));
+    if (unknown !== undefined) throw unprocessable("rebuild-unknown-item", { itemRef: unknown });
   }
 
   /**

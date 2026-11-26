@@ -8,13 +8,15 @@ import type { RunActor } from "../migration-runs/core/run-contract";
 
 const actor: RunActor = { userId: "u1", scopes: ["*"], channel: "session" } as RunActor;
 const HASH = "a".repeat(32);
+/** The apps of the plan the specs rebuild: two on the in-place server `a`, one on `b`. */
+const APPS = ["app:a:one", "app:a:two", "app:b:three"];
 
 const host = (ref: string, o: Partial<PlacementHostFact> = {}): PlacementHostFact => ({ ref, name: ref, controlPlane: false, matchStatus: "certain", linkedBy: "auto", evidence: [], matchedServerId: `srv-${ref}`, agentOnline: true, ...o });
 function factsOf(hosts: PlacementHostFact[], extra: string[] = ["new1"]): CampaignFacts {
   const targets = new Map<string, { id: string; teamId: string; ready: boolean }>();
   for (const h of hosts) if (h.matchedServerId) targets.set(h.matchedServerId, { id: h.matchedServerId, teamId: "t1", ready: true });
   for (const e of extra) targets.set(e, { id: e, teamId: "t1", ready: true });
-  return { planHash: HASH, hosts, targets };
+  return { planHash: HASH, hosts, targets, appRefs: new Set(APPS) };
 }
 
 function build(o: { hosts?: PlacementHostFact[]; role?: Role | null; createFails?: number; labelTaken?: boolean } = {}) {
@@ -89,6 +91,34 @@ describe("MigrationCampaignsService.create", () => {
     expect(calls[1][2]).toEqual({ inPlace: true });
     expect(calls.every((c) => !("inPlace" in c[1]))).toBe(true);
   });
+  it("rebuild choices go to the in-place run of their own server only; the copied run and a campaign without choices carry none", async () => {
+    const t = build();
+    await t.svc.create(actor, input({ rebuild: ["app:a:two", "app:a:one"] }));
+    const bodies = t.runs.create.mock.calls.map((c) => c[1] as { options: Record<string, unknown> });
+    expect(bodies[0].options).not.toHaveProperty("rebuild");
+    expect(bodies[1].options.rebuild).toEqual(["app:a:two", "app:a:one"]);
+    const plain = build();
+    await plain.svc.create(actor, input());
+    expect((plain.runs.create.mock.calls as unknown as Array<[unknown, { options: Record<string, unknown> }]>).every((c) => !("rebuild" in c[1].options))).toBe(true);
+    expect((t.audit.log.mock.calls[0][0] as { meta: Record<string, unknown> }).meta.rebuild).toBe(2);
+    expect(JSON.stringify(t.audit.log.mock.calls[0][0])).not.toContain("app:a:");
+  });
+  it("a rebuild choice on a server that is copied is a 422 and nothing is written", async () => {
+    const t = build();
+    await expect(t.svc.create(actor, input({ rebuild: ["app:a:one", "app:b:three"] }))).rejects.toMatchObject({ response: { code: "placement_rebuild_not_in_place", ref: "app:b:three" } });
+    expect(t.prisma.migrationCampaign.create).not.toHaveBeenCalled();
+    expect(t.runs.create).not.toHaveBeenCalled();
+  });
+  it("a rebuild choice the plan has no app for is a 422 and nothing is written", async () => {
+    const t = build();
+    await expect(t.svc.create(actor, input({ rebuild: ["app:a:ghost"] }))).rejects.toMatchObject({ response: { code: "placement_rebuild_unknown_item" } });
+    expect(t.runs.create).not.toHaveBeenCalled();
+  });
+  it("the list is a field of the campaign, not of the shared options", async () => {
+    const t = build();
+    await expect(t.svc.create(actor, input({ options: { rebuild: ["app:a:one"] } }))).rejects.toBeInstanceOf(BadRequestException);
+    expect(t.prisma.migrationCampaign.create).not.toHaveBeenCalled();
+  });
   it("checks owner on the team of the targets and audits the creation with counts only", async () => {
     const t = build();
     await t.svc.create(actor, input());
@@ -144,6 +174,15 @@ describe("MigrationCampaignsService.preview and views", () => {
     expect(r.views.map((v) => v.suggested)).toEqual(["in-place", "in-place"]);
     expect(t.prisma.migrationCampaign.create).not.toHaveBeenCalled();
   });
+  it("shows the rebuild choice on the in-place run it belongs to, and a refusal for one that belongs nowhere", async () => {
+    const t = build();
+    const ok = await t.svc.preview("u1", CampaignPlanSchema.parse({ sessionId: "s1", planHash: HASH, placements: [{ sourceServerRef: "a", kind: "in-place" }, { sourceServerRef: "b", kind: "other-server", targetServerId: "new1" }], rebuild: ["app:a:one"] }));
+    expect(ok.runs?.map((r) => r.rebuild)).toEqual([undefined, ["app:a:one"]]);
+    const bad = await t.svc.preview("u1", CampaignPlanSchema.parse({ sessionId: "s1", planHash: HASH, placements: [{ sourceServerRef: "a", kind: "in-place" }], rebuild: ["app:b:three"] }));
+    expect(bad.runs).toBeNull();
+    expect(bad.failure).toEqual({ code: "placement_rebuild_not_in_place", ref: "app:b:three" });
+    expect(t.prisma.migrationCampaign.create).not.toHaveBeenCalled();
+  });
   it("reports the failure code instead of throwing", async () => {
     const t = build({ hosts: [host("a", { matchStatus: "ambiguous", matchedServerId: null, agentOnline: false })] });
     const r = await t.svc.preview("u1", CampaignPlanSchema.parse({ sessionId: "s1", planHash: HASH, placements: [{ sourceServerRef: "a", kind: "in-place" }] }));
@@ -185,6 +224,20 @@ describe("runBody and the DTOs", () => {
     const run = { sourceServerRef: "a", sourceServerRefs: ["a", "b"], kind: "other-server" as const, targetServerId: "n1", topology: "two-box" as const, wave: 0 };
     expect(runBody(input(), run, placements, "l")).toMatchObject({ serverMap: { a: "n1", b: "n2" }, scope: { sourceServers: ["a", "b"] } });
     expect(runBody(input(), { ...run, sourceServerRefs: undefined }, placements.slice(0, 1), "l")).not.toHaveProperty("serverMap");
+  });
+  it("a run body carries the run's own rebuild list in its options and leaves the campaign's options alone", () => {
+    const run = { sourceServerRef: "a", kind: "in-place" as const, targetServerId: "srv-a", topology: "swap-proxy" as const, wave: 0, rebuild: ["app:a:one"] };
+    const shared = input();
+    const body = runBody(shared, run, [{ sourceServerRef: "a", kind: "in-place", targetServerId: "srv-a" }], "l");
+    expect(body.options.rebuild).toEqual(["app:a:one"]);
+    expect(shared.options).not.toHaveProperty("rebuild");
+    expect(runBody(shared, { ...run, rebuild: undefined }, [], "l").options).not.toHaveProperty("rebuild");
+  });
+  it("the rebuild list refuses a service, an empty or spaced ref, a non-array and more than 500", () => {
+    const base = { sessionId: "s", planHash: HASH, placements: [{ sourceServerRef: "a", kind: "in-place" }] };
+    expect(CampaignPlanSchema.parse({ ...base, rebuild: ["app:a:x"] }).rebuild).toEqual(["app:a:x"]);
+    expect(CampaignPlanSchema.parse(base)).not.toHaveProperty("rebuild");
+    for (const bad of [["service:a:x"], [""], ["app:a: x"], "app:a:x", Array.from({ length: 501 }, (_, i) => `app:a:${i}`)]) expect(() => CampaignPlanSchema.parse({ ...base, rebuild: bad })).toThrow();
   });
   it("the DTO refuses an unknown field, a reserved ref and an unknown kind", () => {
     expect(() => CampaignPlanSchema.parse({ sessionId: "s", planHash: HASH, placements: [{ sourceServerRef: "a", kind: "in-place" }], mapping: {} })).toThrow();

@@ -127,6 +127,13 @@ export class ImportPortService implements ImportStepsPort {
     return (plan.preflight?.hosts ?? []).filter((h) => used.has(h.ref)).map((h) => ({ ref: h.ref, controlPlane: h.controlPlane === true, tugraServerId: h.tugra?.serverId ?? null }));
   }
 
+  async appRefs(userId: string, i: { sessionId: string; sourceKind: RemoteSourceKind; scope?: RunScope }): Promise<string[]> {
+    const plan = await this.importer.plan(userId, { sourceKind: i.sourceKind, sessionId: i.sessionId });
+    const resolved = i.scope ? resolveScope(plan, i.scope) : null;
+    const inScope = resolved && !("fail" in resolved) ? resolved.inScope : null;
+    return plan.items.filter((it) => it.kind === "app" && (!inScope || inScope.has(it.itemRef))).map((it) => it.itemRef);
+  }
+
   /** Health of every source resource right now, or null when the source offers no such read. Writes nothing. */
   async sourceHealth(userId: string, i: { sessionId: string; sourceKind: RemoteSourceKind }): Promise<SourceHealthRow[] | null> {
     const { source } = await this.importer.openSession(userId, i.sessionId, i.sourceKind);

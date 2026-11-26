@@ -5,6 +5,7 @@
  * talks to on another source server stay in one run), and every in-place server gets its own swap-proxy run, one after the other.
  * Names, refs and ids only; a source address never enters here.
  */
+import { hostOfItemRef } from "../migration-runs/core/run-scope";
 import type {
   CampaignRunPlan,
   CampaignStatus,
@@ -141,6 +142,24 @@ export function planCampaign(placements: readonly SourcePlacement[]): CampaignRu
     wave += 1;
   }
   return runs;
+}
+
+/**
+ * Hand each in-place run the apps of its own source server that the owner chose to rebuild with Tugra. A ref the plan has no app for is
+ * `placement_rebuild_unknown_item`; one on a source server that is not placed in place (its data is copied and built anyway) is
+ * `placement_rebuild_not_in_place`. The input order is kept inside a run and duplicates are dropped; a run with none carries no list.
+ * Pure: `appRefs` is the set of app item refs of the plan the owner reviewed.
+ */
+export function withRebuild(runs: readonly CampaignRunPlan[], rebuild: readonly string[], appRefs: ReadonlySet<string>): { ok: true; runs: CampaignRunPlan[] } | { ok: false; code: PlacementFailureCode; ref: string } {
+  const byRun = new Map<CampaignRunPlan, string[]>();
+  for (const ref of new Set(rebuild)) {
+    if (!appRefs.has(ref)) return { ok: false, code: "placement_rebuild_unknown_item", ref };
+    const host = hostOfItemRef(ref);
+    const run = runs.find((r) => r.kind === "in-place" && refsOfRun(r).includes(host));
+    if (!run) return { ok: false, code: "placement_rebuild_not_in_place", ref };
+    byRun.set(run, [...(byRun.get(run) ?? []), ref]);
+  }
+  return { ok: true, runs: runs.map((r) => (byRun.has(r) ? { ...r, rebuild: byRun.get(r) as string[] } : r)) };
 }
 
 /** The source servers a run of the plan carries. */

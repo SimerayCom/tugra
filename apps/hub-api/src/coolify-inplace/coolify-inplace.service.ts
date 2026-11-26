@@ -1,6 +1,6 @@
 import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, NotFoundException, UnprocessableEntityException } from "@nestjs/common";
 import { Prisma, Role } from "@prisma/client";
-import type { TakeoverCertState, TakeoverFailureCode, TakeoverStatus, TakeoverView } from "@tugra/shared";
+import type { RunInPlaceView, TakeoverCertState, TakeoverFailureCode, TakeoverStatus, TakeoverView } from "@tugra/shared";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { TeamAccessService } from "../common/team-access.service";
@@ -194,7 +194,9 @@ export class CoolifyInPlaceService implements InPlaceRunPort {
     const tugraProxy = await this.world.proxyStatus(userId, server.id).catch(() => "unknown" as const);
     if (server.proxyBind !== "none" && (tugraProxy === "running" || tugraProxy === "unknown")) throw unprocessable("takeover_tugra_proxy_in_use");
 
-    const items = await this.readItems(server.teamId, server.id, opApps, new Set(input.rebuild), opDbs, opSvcs);
+    // a guided run carries the owner's rebuild choice from its start: an app that shares writable data with Coolify's copy cannot be built beside it,
+    // so there the run keeps Coolify's image (marked, never silent) instead of failing after the owner already pressed start
+    const items = await this.readItems(server.teamId, server.id, opApps, new Set(input.rebuild), opDbs, opSvcs, link.runId !== undefined);
     const doc: PlanDoc = { opId: input.opId, serverName: server.name, proxy: proxy.snapshot };
     const row = await this.prisma.coolifyTakeover.create({
       data: {
@@ -214,7 +216,7 @@ export class CoolifyInPlaceService implements InPlaceRunPort {
   }
 
   /** What Coolify runs for each app of the op, mapped to the Tugra app. Read-only on the host. Apps that cannot be taken over are kept, marked skipped, with the reasons. */
-  private async readItems(teamId: string, serverId: string, apps: ReadonlyArray<{ appId: string; itemRef: string; containerPrefix?: string; commitSha?: string | null }>, rebuild: ReadonlySet<string>, dbs: ReadonlyArray<{ databaseId: string; itemRef: string }> = [], svcs: readonly OpService[] = []): Promise<TakeoverItem[]> {
+  private async readItems(teamId: string, serverId: string, apps: ReadonlyArray<{ appId: string; itemRef: string; containerPrefix?: string; commitSha?: string | null }>, rebuild: ReadonlySet<string>, dbs: ReadonlyArray<{ databaseId: string; itemRef: string }> = [], svcs: readonly OpService[] = [], declineExclusive = false): Promise<TakeoverItem[]> {
     const withRef = [...apps.map((a) => ({ itemRef: a.itemRef, containerPrefix: a.containerPrefix })), ...dbs.map((d) => ({ itemRef: d.itemRef, containerPrefix: undefined })), ...svcs.map((x) => ({ itemRef: x.itemRef, containerPrefix: undefined }))].filter((a) => coolifyRefOf(a.itemRef));
     let found: ReturnType<typeof parseSourceInspect> = [];
     if (withRef.length > 0) {
@@ -287,8 +289,12 @@ export class CoolifyInPlaceService implements InPlaceRunPort {
         skip(...m.issues);
         continue;
       }
-      if (rebuild.has(a.itemRef) && m.exclusive) throw unprocessable("takeover_rebuild_needs_side_by_side", { itemRef: a.itemRef });
-      items.push({ ...base, container: { id: list[0].id, name: list[0].name, image: list[0].image, restart: d.restart, imageId: d.imageId }, volumes: m.volumes, binds: m.binds, exclusive: m.exclusive });
+      let declined = false;
+      if (rebuild.has(a.itemRef) && m.exclusive) {
+        if (!declineExclusive) throw unprocessable("takeover_rebuild_needs_side_by_side", { itemRef: a.itemRef });
+        declined = true;
+      }
+      items.push({ ...base, ...(declined ? { buildMode: "reuse-image" as const, rebuildDeclined: true } : {}), container: { id: list[0].id, name: list[0].name, image: list[0].image, restart: d.restart, imageId: d.imageId }, volumes: m.volumes, binds: m.binds, exclusive: m.exclusive });
     }
     const dbItems = await this.readDbItems(teamId, serverId, dbs, byRef, detail);
     items.push(...dbItems);
@@ -1279,12 +1285,12 @@ export class CoolifyInPlaceService implements InPlaceRunPort {
     return this.stateOf(row);
   }
 
-  async runPrepare(userId: string, input: { runId: string; serverId: string; opId: string }): Promise<RunTakeoverState> {
+  async runPrepare(userId: string, input: { runId: string; serverId: string; opId: string; rebuild?: readonly string[] }): Promise<RunTakeoverState> {
     let row = await this.rowOfRun(input.runId);
     // a reversed takeover (given back, or one the swap itself put back) is never tested again: the run plans a new one
     const spent = !row || row.status === "GIVEN_BACK" || (row.status === "FAILED" && this.itemsOf(row).some((i) => i.state === "given-back"));
     if (spent) {
-      const v = await this.plan(userId, { serverId: input.serverId, opId: input.opId, rebuild: [] }, { runId: input.runId });
+      const v = await this.plan(userId, { serverId: input.serverId, opId: input.opId, rebuild: [...(input.rebuild ?? [])] }, { runId: input.runId });
       row = await this.rowOf(v.id);
     }
     const r = row as Row;
@@ -1317,6 +1323,17 @@ export class CoolifyInPlaceService implements InPlaceRunPort {
       await this.doGiveBack(userId, r);
     });
     return this.stateOf(await this.rowOf(row.id));
+  }
+
+  /**
+   * What the run view shows of the takeover that carries the run: its state and, per app, whether Coolify's image was reused or the app was
+   * rebuilt with Tugra and verified. Team owner or admin (the run's own readers); secret-free. A run with no takeover yet is a 404.
+   */
+  async runView(userId: string, runId: string): Promise<RunInPlaceView> {
+    const row = await this.requireRunRow(runId);
+    await this.requireMember(userId, row.teamId);
+    const st = this.stateOf(row);
+    return { id: st.id, status: st.status, failureCode: st.failureCode, pending: st.pending, verified: st.verified, items: st.items };
   }
 
   /** The newest takeover the run carries. */

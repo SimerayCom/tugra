@@ -276,6 +276,12 @@ export type HostLoopOptions = z.infer<typeof HostLoopOptionsSchema>;
 // ───────────────────────────── run options and owner inputs ─────────────────────────────
 
 /**
+ * The apps of an in-place run that are built with Tugra and verified instead of reusing the image Coolify built (plan item refs, one
+ * `app:<source server>:<ref>` each). Absent or empty = every app reuses its image (the default, nothing is built).
+ */
+export const RebuildListSchema = z.array(z.string().regex(/^app:[\x21-\x7e]{1,280}$/, "invalid item ref")).max(500);
+
+/**
  * Run options (`MigrationRun.options`). Everything has a safe default, so `RunOptionsSchema.parse({})` is the default
  * run: copy-mode friendly, nothing automatic beyond the hub's own side, operator-run data.
  */
@@ -327,6 +333,8 @@ export const RunOptionsSchema = z
       .optional(),
     /** DB logical-parity cost mode. */
     rowCountMode: z.enum(ROW_COUNT_MODES).default("estimate"),
+    /** In-place runs only: the apps to build with Tugra and verify (see {@link RebuildListSchema}); a run that is not in place refuses a list. */
+    rebuild: RebuildListSchema.optional(),
     /** Minimum run age before DECOMMISSION can be armed (takeover only). */
     decommissionMinAgeHours: z.number().int().min(0).max(24 * 90).default(DEFAULT_DECOMMISSION_MIN_AGE_HOURS),
     /** Notify when a step waits for an operator longer than this (watchdog). */
@@ -713,6 +721,8 @@ export const MigrationRunViewSchema = z.object({
   mode: RunModeSchema,
   topology: RunTopologySchema,
   dryRun: z.boolean(),
+  /** An in-place takeover (same machine, Coolify's images reused or rebuilt with Tugra, no data copy): set by a campaign, never by a request body. */
+  inPlace: z.boolean(),
   promotedFromId: Id.nullable(),
   status: RunStatusSchema,
   currentStep: StepKeySchema.nullable(),
@@ -755,6 +765,7 @@ export const MigrationRunSummarySchema = z.object({
   mode: RunModeSchema,
   topology: RunTopologySchema,
   dryRun: z.boolean(),
+  inPlace: z.boolean(),
   status: RunStatusSchema,
   currentStep: StepKeySchema.nullable(),
   ponrAt: Iso.nullable(),

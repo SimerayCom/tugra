@@ -1,5 +1,5 @@
 import type { SourcePlacement } from "@tugra/shared";
-import { checkPlacements, deriveCampaignStatus, inPlaceLock, newCampaignLabel, placementViews, planCampaign, refsOfRun, serverMapOfRun, suggestedPlacement, type PlacementHostFact, type PlacementTarget } from "./campaign-plan";
+import { checkPlacements, deriveCampaignStatus, inPlaceLock, newCampaignLabel, placementViews, planCampaign, refsOfRun, serverMapOfRun, suggestedPlacement, withRebuild, type PlacementHostFact, type PlacementTarget } from "./campaign-plan";
 
 const fact = (o: Partial<PlacementHostFact> & { ref: string }): PlacementHostFact => ({
   name: o.ref,
@@ -160,6 +160,38 @@ describe("planCampaign", () => {
       { sourceServerRef: "b", kind: "other-server", targetServerId: "n1" },
     ];
     expect(serverMapOfRun(planCampaign(same)[0], same)).toBeUndefined();
+  });
+});
+
+describe("withRebuild", () => {
+  const mixed = planCampaign([
+    { sourceServerRef: "a", kind: "in-place", targetServerId: "srv-a" },
+    { sourceServerRef: "b", kind: "in-place", targetServerId: "srv-b" },
+    { sourceServerRef: "o", kind: "other-server", targetServerId: "n1" },
+  ]);
+  const apps = new Set(["app:a:one", "app:a:two", "app:b:three", "app:o:four"]);
+  it("hands each in-place run the apps of its own server, in the order given, once each", () => {
+    const r = withRebuild(mixed, ["app:b:three", "app:a:two", "app:a:one", "app:a:two"], apps);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.runs.find((x) => x.sourceServerRef === "a")?.rebuild).toEqual(["app:a:two", "app:a:one"]);
+    expect(r.runs.find((x) => x.sourceServerRef === "b")?.rebuild).toEqual(["app:b:three"]);
+  });
+  it("a run with no chosen app carries no list at all (and no choice leaves the plan as it was)", () => {
+    const r = withRebuild(mixed, ["app:a:one"], apps);
+    expect(r.ok && r.runs.find((x) => x.sourceServerRef === "b")).not.toHaveProperty("rebuild");
+    expect(withRebuild(mixed, [], apps)).toEqual({ ok: true, runs: mixed });
+  });
+  it("an app the plan does not have is refused, naming it", () => {
+    expect(withRebuild(mixed, ["app:a:ghost"], apps)).toEqual({ ok: false, code: "placement_rebuild_unknown_item", ref: "app:a:ghost" });
+  });
+  it("an app on a server that is copied to another server is refused (it is built there anyway)", () => {
+    expect(withRebuild(mixed, ["app:o:four"], apps)).toEqual({ ok: false, code: "placement_rebuild_not_in_place", ref: "app:o:four" });
+  });
+  it("does not change the plan it was given", () => {
+    const copy = JSON.parse(JSON.stringify(mixed));
+    withRebuild(mixed, ["app:a:one"], apps);
+    expect(mixed).toEqual(copy);
   });
 });
 

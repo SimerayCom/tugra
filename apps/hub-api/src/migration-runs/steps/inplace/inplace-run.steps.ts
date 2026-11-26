@@ -65,7 +65,7 @@ export class InPlaceRunSteps {
     await ctx.assertLease();
     let state: RunTakeoverState;
     try {
-      state = await this.port.runPrepare(ctx.actor.userId, { runId: run.id, serverId: run.targetServerId, opId: run.opId });
+      state = await this.port.runPrepare(ctx.actor.userId, { runId: run.id, serverId: run.targetServerId, opId: run.opId, rebuild: run.options.rebuild ?? [] });
     } catch (e) {
       if (e instanceof RunLeaseLostError) throw e;
       const r = refusalOf("deploy-dark", e);

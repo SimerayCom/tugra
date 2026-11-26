@@ -32,8 +32,8 @@ export interface RunTakeoverState {
 export interface InPlaceRunPort {
   /** The latest takeover of the run, or null when none was planned yet. */
   runState(userId: string, runId: string): Promise<RunTakeoverState | null>;
-  /** Plan (when there is no live takeover for the run) and test: idempotent, safe to call again after a fix. */
-  runPrepare(userId: string, input: { runId: string; serverId: string; opId: string }): Promise<RunTakeoverState>;
+  /** Plan (when there is no live takeover for the run) and test: idempotent, safe to call again after a fix. `rebuild` = the apps the owner chose to build with Tugra and verify. */
+  runPrepare(userId: string, input: { runId: string; serverId: string; opId: string; rebuild?: readonly string[] }): Promise<RunTakeoverState>;
   /** Take the ports. The takeover must be tested; the run's approval has already been given. */
   runSwap(userId: string, runId: string): Promise<RunTakeoverState>;
   /** One pass of re-check and new certificates (a few domains per call). */
