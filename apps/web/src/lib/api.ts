@@ -1569,6 +1569,10 @@ export const api = {
   coolifySshStart(serverId: string, body: { coolifyServerUuids: string[]; teamId: string; confirm: string }) {
     return apiFetch<CoolifySshRunView>(`/coolify-takeover/servers/${serverId}/ssh/runs`, { method: "POST", body: JSON.stringify(body) });
   },
+  // Check which machines these are (read-only probe, nothing installed). Without `confirm` the hub answers 409 `consent_required`.
+  coolifySshVerify(serverId: string, body: { coolifyServerUuids: string[]; confirm?: string }) {
+    return apiFetch<CoolifySshRunView>(`/coolify-takeover/servers/${serverId}/ssh/verify`, { method: "POST", body: JSON.stringify(body) });
+  },
   coolifySshInstall(serverId: string, runId: string, body: { confirm: string; coolifyServerUuids?: string[] }) {
     return apiFetch<CoolifySshRunView>(`/coolify-takeover/servers/${serverId}/ssh/runs/${runId}/install`, { method: "POST", body: JSON.stringify(body) });
   },

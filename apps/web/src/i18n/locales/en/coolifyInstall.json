@@ -56,7 +56,8 @@
     "WAIT_ENROLL": "Waiting for the agent",
     "ONLINE": "Online",
     "UNINSTALLING": "Removing",
-    "REMOVED": "Removed"
+    "REMOVED": "Removed",
+    "VERIFIED": "Checked"
   },
   "what": {
     "keys": "Tugra uses the SSH keys Coolify already has. The keys stay on the Coolify server. They are never copied, shown or sent to Tugra.",

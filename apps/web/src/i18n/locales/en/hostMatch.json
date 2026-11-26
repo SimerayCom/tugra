@@ -48,6 +48,24 @@
     "hostname": "Different host name",
     "cloud_instance_id": "Different cloud instance"
   },
+  "verify": {
+    "action": "Check these machines automatically",
+    "summary": "Matched only by address: {n}. Tugra can ask each machine who it is, through Coolify's own SSH access. Nothing is installed or changed on them.",
+    "consentTitle": "Check {n} machines",
+    "consentBody": "Tugra reads each machine's SSH host key, machine id and Docker engine id through Coolify's own SSH access, and compares them with what its Tugra agent reports. The keys stay on the Coolify server. Nothing is installed or changed on the machines. The permission ends when the check is done.",
+    "consentLabel": "Check now",
+    "progress": "Checked {done} of {total}…",
+    "done": "Checked {ok} of {total}. Machines that proved to be the same now show as Same machine.",
+    "failedTitle": "Could not be checked",
+    "failedLine": "{name}: {reason}",
+    "error": {
+      "consent_required": "Confirm the check to continue.",
+      "forbidden": "Only a team owner can check machines this way.",
+      "not_enabled": "Read this Coolify first.",
+      "bad_request": "Choose between 1 and 100 machines.",
+      "generic": "Could not check the machines. Try again."
+    }
+  },
   "answer": {
     "pick": "Which Tugra server is it?",
     "same": "This is the same server",

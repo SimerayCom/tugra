@@ -67,6 +67,7 @@ const TONE: Record<CoolifySshTargetState, "muted" | "gold" | "lapis" | "danger" 
   ONLINE: "ok",
   UNINSTALLING: "lapis",
   REMOVED: "muted",
+  VERIFIED: "ok",
 };
 export const stateTone = (s: CoolifySshTargetState) => TONE[s];
 

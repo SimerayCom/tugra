@@ -53,7 +53,7 @@ describe("misc", () => {
     expect(confirmText(7)).toBe("7");
   });
   it("gives every state a tone", () => {
-    for (const s of ["PLANNED", "PROBING", "SKIPPED_PRESENT", "SKIPPED_FOREIGN", "READY", "FAILED", "TOKEN_MINTED", "INSTALLING", "WAIT_ENROLL", "ONLINE", "UNINSTALLING", "REMOVED"] as const) expect(stateTone(s)).toBeTruthy();
+    for (const s of ["PLANNED", "PROBING", "SKIPPED_PRESENT", "SKIPPED_FOREIGN", "READY", "FAILED", "TOKEN_MINTED", "INSTALLING", "WAIT_ENROLL", "ONLINE", "UNINSTALLING", "REMOVED", "VERIFIED"] as const) expect(stateTone(s)).toBeTruthy();
   });
 });
 

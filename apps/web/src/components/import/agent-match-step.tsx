@@ -14,6 +14,7 @@ import { useToast } from "../toast";
 import { useConfirm } from "../confirm";
 import { AgentConsentCard } from "./agent-consent";
 import { TeamFilterToggle } from "./team-filter-toggle";
+import { HostVerify } from "./host-verify";
 
 type T = ReturnType<typeof useT>;
 
@@ -214,6 +215,7 @@ export function AgentMatchStep({
     <div style={{ display: "grid", gap: 16, maxWidth: 720 }}>
       <SectionCard title={t("hostMatch.title")} desc={t("hostMatch.table.hint")}>
         <TeamFilterToggle scope={teamScope} showAll={showAllTeams} hidden={filter?.hiddenHosts ?? 0} onChange={(v) => onShowAllTeams?.(v)} />
+        <HostVerify serverId={coolifyServer?.id ?? null} rows={rows} onDone={onRecheck} />
         <p role="status" style={{ margin: "0 0 4px", fontSize: 12, color: unsure ? "var(--c-am)" : "var(--c-g)" }}>
           {unsure ? t("hostMatch.table.sureCount", { n: unsure }) : t("hostMatch.table.allSure")}
         </p>
