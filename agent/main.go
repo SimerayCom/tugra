@@ -43,6 +43,11 @@ func main() {
 		os.Exit(hostinfo.PrintHostIPs())
 	}
 
+	// `hostsshkey` is the same kind of helper with ONE sshd host public key mounted read-only: it prints that key's fingerprint.
+	if len(os.Args) > 1 && os.Args[1] == "hostsshkey" {
+		os.Exit(hostinfo.PrintSSHHostKeyFp("/hostkey.pub", os.Stdout))
+	}
+
 	// `hostmeta` is the same helper container asking the cloud metadata service for the instance's public IPs.
 	if len(os.Args) > 1 && os.Args[1] == "hostmeta" {
 		os.Exit(hostinfo.PrintCloudIPs(os.Stdout))
