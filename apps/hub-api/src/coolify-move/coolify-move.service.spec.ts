@@ -14,7 +14,8 @@ interface Fx {
   otherTeams?: string[];
   takeovers?: Array<{ serverId: string; status: string }>;
   cleanups?: Array<{ serverId: string; status: string }>;
-  campaigns?: Array<{ id: string; label: string; status: string; plan: unknown; createdAt: Date }>;
+  sessions?: Array<{ id: string }>;
+  campaigns?: Array<{ id: string; teamId?: string; label: string; status: string; plan: unknown; createdAt: Date }>;
   moves?: Array<{ phase: string }>;
   secretsGrant?: { revokedAt: Date | null; expiresAt: Date } | null;
   sshGrant?: { runId: string } | null;
@@ -30,6 +31,7 @@ function make(fx: Fx = {}) {
     coolifyTakeover: { findMany: jest.fn().mockResolvedValue(fx.takeovers ?? []) },
     coolifyCleanup: { findMany: jest.fn().mockResolvedValue(fx.cleanups ?? []) },
     migrationCampaign: { findMany: jest.fn().mockResolvedValue(fx.campaigns ?? []) },
+    importSession: { findMany: jest.fn().mockResolvedValue(fx.sessions ?? []) },
     projectMove: { findMany: jest.fn().mockResolvedValue(fx.moves ?? []) },
     coolifyHostGrant: {
       findFirst: jest.fn().mockImplementation(({ where }: { where: { kind: string } }) => Promise.resolve(where.kind === "secrets" ? (fx.secretsGrant ?? null) : (fx.sshGrant ?? null))),
@@ -132,6 +134,14 @@ describe("CoolifyMoveService.status", () => {
     const v = await m.svc.status("u1", "t1", NOW);
     expect(v.campaigns.map((c) => [c.label, c.runs])).toEqual([["wave-1", 3], ["x", 0]]);
     expect(v.projectMoves).toEqual({ total: 5, active: 1, completed: 2, failed: 2, latestPhase: "MOVING" });
+  });
+
+  it("a campaign the user made in another team from an import session of this team shows here too, with its own team", async () => {
+    const m = make({ sessions: [{ id: "s1" }], campaigns: [{ id: "c1", teamId: "t1", label: "move", status: "running", plan: [{}], createdAt: earlier }, { id: "c2", teamId: "t2", label: "move", status: "draft", plan: [{}, {}], createdAt: earlier }] });
+    const v = await m.svc.status("u1", "t1", NOW);
+    expect(m.prisma.migrationCampaign.findMany.mock.calls[0][0].where).toEqual({ OR: [{ teamId: "t1" }, { actorId: "u1", sessionId: { in: ["s1"] } }] });
+    expect(m.prisma.importSession.findMany.mock.calls[0][0].where).toEqual({ teamId: "t1", actorId: "u1" });
+    expect(v.campaigns.map((c) => [c.teamId, c.label, c.runs])).toEqual([["t1", "move", 1], ["t2", "move", 2]]);
   });
 
   describe("servers the owner added by hand (no stored link)", () => {

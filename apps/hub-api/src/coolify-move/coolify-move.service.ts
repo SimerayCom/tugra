@@ -34,6 +34,7 @@ const READ_ROLES: Role[] = [Role.OWNER, Role.ADMIN];
 /** How far back the rollups look. The team has a handful of Coolify hosts and a few hundred moves at most. */
 const MOVE_SCAN = 500;
 const CAMPAIGN_SCAN = 50;
+const SESSION_SCAN = 50;
 
 /** One target of an install run as a status tool shows it: names, states and fixed codes. The probe's host identifiers are left out. */
 export interface SshTargetStatus {
@@ -131,12 +132,14 @@ export class CoolifyMoveService {
   /** Where every server of the team stands on the four steps. Stored data only; nothing is run on any server. */
   async status(userId: string, teamId: string, now: Date = new Date()): Promise<MoveOffStatusView> {
     await this.access.requireRole(userId, teamId, READ_ROLES);
+    // A campaign over servers of several teams is one campaign per team: the ones the user made from an import session of THIS team show here too.
+    const ownSessions = await this.prisma.importSession.findMany({ where: { teamId, actorId: userId }, select: { id: true }, orderBy: { createdAt: "desc" }, take: SESSION_SCAN });
     const [servers, inventories, takeovers, cleanups, campaignRows, moveRows] = await Promise.all([
       this.prisma.server.findMany({ where: { teamId }, select: { id: true, name: true, status: true }, orderBy: { name: "asc" } }),
       this.readableInventories(userId),
       this.prisma.coolifyTakeover.findMany({ where: { teamId }, select: { serverId: true, status: true }, orderBy: { createdAt: "desc" }, distinct: ["serverId"] }),
       this.prisma.coolifyCleanup.findMany({ where: { teamId }, select: { serverId: true, status: true }, orderBy: { createdAt: "desc" }, distinct: ["serverId"] }),
-      this.prisma.migrationCampaign.findMany({ where: { teamId }, select: { id: true, label: true, status: true, plan: true, createdAt: true }, orderBy: { createdAt: "desc" }, take: CAMPAIGN_SCAN }),
+      this.prisma.migrationCampaign.findMany({ where: ownSessions.length > 0 ? { OR: [{ teamId }, { actorId: userId, sessionId: { in: ownSessions.map((x) => x.id) } }] } : { teamId }, select: { id: true, teamId: true, label: true, status: true, plan: true, createdAt: true }, orderBy: { createdAt: "desc" }, take: CAMPAIGN_SCAN }),
       this.prisma.projectMove.findMany({ where: { teamId }, select: { phase: true }, orderBy: { createdAt: "desc" }, take: MOVE_SCAN }),
     ]);
 
@@ -183,6 +186,7 @@ export class CoolifyMoveService {
     };
     const campaignsOut: MoveOffCampaignRow[] = campaignRows.map((c) => ({
       id: c.id,
+      teamId: c.teamId,
       label: c.label,
       status: c.status as MoveOffCampaignRow["status"],
       runs: Array.isArray(c.plan) ? c.plan.length : 0,

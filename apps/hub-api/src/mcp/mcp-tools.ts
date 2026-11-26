@@ -1235,7 +1235,7 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "migration_campaign_status",
     description:
-      "Status of the migration campaigns (a mixed placement becomes one guided run per source server, in waves): pass teamId to list them, or teamId and id for one (its runs and where each stands come from migration_run_list with campaign=<label>). Team owner or admin. Read-only.",
+      "Status of the migration campaigns (a mixed placement becomes one guided run per source server, in waves; servers in several teams make one campaign per team under the same label, and migration_run_list with that campaign label lists the runs of all of them): pass teamId to list them, or teamId and id for one (its runs and where each stands come from migration_run_list with campaign=<label>). Team owner or admin. Read-only.",
     scope: "read",
     inputSchema: { type: "object", properties: { teamId: { type: "string" }, id: { type: "string" } }, required: ["teamId"] },
     execute: async (d, userId, a) => d.coolifyMove.campaignStatus(userId, reqId(a, "teamId"), a.id === undefined ? undefined : reqId(a, "id")),

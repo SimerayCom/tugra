@@ -67,7 +67,8 @@ describe("checkPlacements", () => {
       facts,
       T,
     );
-    expect(r).toEqual({ ok: true, teamId: "t1", placements: [{ sourceServerRef: "a", kind: "in-place", targetServerId: "srv-a" }, { sourceServerRef: "cp", kind: "other-server", targetServerId: "new1" }] });
+    const placed = [{ sourceServerRef: "a", kind: "in-place", targetServerId: "srv-a" }, { sourceServerRef: "cp", kind: "other-server", targetServerId: "new1" }];
+    expect(r).toEqual({ ok: true, teamId: "t1", teams: [{ teamId: "t1", placements: placed }], placements: placed });
   });
   it("refuses an empty placement", () => {
     expect(checkPlacements([], facts, T)).toMatchObject({ ok: false, code: "placement_empty" });
@@ -111,13 +112,30 @@ describe("checkPlacements", () => {
     const t = new Map([target("srv-a", { ready: false })]);
     expect(checkPlacements([{ sourceServerRef: "a", kind: "in-place", targetServerId: null }], facts, t)).toMatchObject({ ok: false, code: "placement_target_not_ready" });
   });
-  it("targets in different teams are refused", () => {
+  it("targets in different teams are grouped by team, in ref order, and the placements stay whole", () => {
     const t = new Map([target("srv-a"), target("new1", { teamId: "t2" })]);
     const p: SourcePlacement[] = [
       { sourceServerRef: "a", kind: "in-place", targetServerId: null },
       { sourceServerRef: "b", kind: "other-server", targetServerId: "new1" },
     ];
-    expect(checkPlacements(p, facts, t)).toMatchObject({ ok: false, code: "placement_teams_differ" });
+    const r = checkPlacements(p, facts, t);
+    expect(r).toMatchObject({ ok: true, teamId: "t1" });
+    if (!r.ok) throw new Error("unreachable");
+    expect(r.teams).toEqual([
+      { teamId: "t1", placements: [{ sourceServerRef: "a", kind: "in-place", targetServerId: "srv-a" }] },
+      { teamId: "t2", placements: [{ sourceServerRef: "b", kind: "other-server", targetServerId: "new1" }] },
+    ]);
+    expect(r.placements).toHaveLength(2);
+  });
+  it("one team is one group; an error on any placement of a multi-team choice still wins", () => {
+    const one = checkPlacements([{ sourceServerRef: "a", kind: "in-place", targetServerId: null }], facts, new Map([target("srv-a")]));
+    expect(one).toMatchObject({ ok: true, teams: [{ teamId: "t1" }] });
+    const t = new Map([target("srv-a"), target("new1", { teamId: "t2", ready: false })]);
+    const p: SourcePlacement[] = [
+      { sourceServerRef: "a", kind: "in-place", targetServerId: null },
+      { sourceServerRef: "b", kind: "other-server", targetServerId: "new1" },
+    ];
+    expect(checkPlacements(p, facts, t)).toMatchObject({ ok: false, code: "placement_target_not_ready", ref: "b" });
   });
 });
 

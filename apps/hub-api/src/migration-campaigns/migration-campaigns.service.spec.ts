@@ -12,38 +12,51 @@ const HASH = "a".repeat(32);
 const APPS = ["app:a:one", "app:a:two", "app:b:three"];
 
 const host = (ref: string, o: Partial<PlacementHostFact> = {}): PlacementHostFact => ({ ref, name: ref, controlPlane: false, matchStatus: "certain", linkedBy: "auto", evidence: [], matchedServerId: `srv-${ref}`, agentOnline: true, ...o });
-function factsOf(hosts: PlacementHostFact[], extra: string[] = ["new1"]): CampaignFacts {
+function factsOf(hosts: PlacementHostFact[], extra: string[] = ["new1"], teams: Record<string, string> = {}): CampaignFacts {
   const targets = new Map<string, { id: string; teamId: string; ready: boolean }>();
-  for (const h of hosts) if (h.matchedServerId) targets.set(h.matchedServerId, { id: h.matchedServerId, teamId: "t1", ready: true });
-  for (const e of extra) targets.set(e, { id: e, teamId: "t1", ready: true });
+  for (const h of hosts) if (h.matchedServerId) targets.set(h.matchedServerId, { id: h.matchedServerId, teamId: teams[h.matchedServerId] ?? "t1", ready: true });
+  for (const e of extra) targets.set(e, { id: e, teamId: teams[e] ?? "t1", ready: true });
   return { planHash: HASH, hosts, targets, appRefs: new Set(APPS) };
 }
 
-function build(o: { hosts?: PlacementHostFact[]; role?: Role | null; createFails?: number; labelTaken?: boolean } = {}) {
+function build(o: { hosts?: PlacementHostFact[]; role?: Role | null; roles?: Record<string, Role>; createFails?: number; labelTaken?: boolean; labelTakenIn?: string; teams?: Record<string, string>; extra?: string[] } = {}) {
   const rows: Array<Record<string, unknown>> = [];
+  const self: { db?: unknown } = {};
   const prisma = {
+    // an interactive transaction: what it wrote is undone when it throws
+    $transaction: jest.fn(async (fn: (tx: unknown) => Promise<unknown>): Promise<unknown> => {
+      const before = rows.length;
+      try {
+        return await fn(self.db);
+      } catch (e) {
+        rows.length = before;
+        throw e;
+      }
+    }),
     migrationCampaign: {
       create: jest.fn(async ({ data }: { data: Record<string, unknown> }) => {
-        if (o.labelTaken) throw new Prisma.PrismaClientKnownRequestError("dup", { code: "P2002", clientVersion: "x" });
-        const r = { id: "camp1", createdAt: new Date("2026-11-26T10:00:00Z"), ...data };
+        if (o.labelTaken || (o.labelTakenIn && data.teamId === o.labelTakenIn)) throw new Prisma.PrismaClientKnownRequestError("dup", { code: "P2002", clientVersion: "x" });
+        const r = { id: `camp${rows.length + 1}`, createdAt: new Date("2026-11-26T10:00:00Z"), ...data };
         rows.push(r);
         return r;
       }),
-      update: jest.fn(async ({ data }: { data: Record<string, unknown> }) => ({ ...rows[0], ...data })),
+      update: jest.fn(async ({ data }: { where?: { id: string }; data: Record<string, unknown> }) => ({ ...rows[0], ...data })),
       findUnique: jest.fn(async () => rows[0] ?? null),
       findMany: jest.fn(async () => rows),
     },
     migrationRun: { findMany: jest.fn(async () => [{ id: "run1", status: "QUEUED" }, { id: "run2", status: "QUEUED" }]) },
   };
+  self.db = prisma;
   const access = {
-    requireRole: jest.fn(async (..._a: unknown[]) => {
-      if (o.role === undefined || o.role === Role.OWNER) return;
+    requireRole: jest.fn(async (_u: unknown, teamId: string) => {
+      const role = o.roles?.[teamId] ?? o.role;
+      if (role === undefined || role === Role.OWNER) return;
       throw new ForbiddenException("insufficient role for this team");
     }),
     teamRole: jest.fn(async () => (o.role === undefined ? Role.OWNER : o.role)),
   };
   const audit = { log: jest.fn(async (..._a: unknown[]) => undefined) };
-  const facts = { read: jest.fn(async (..._a: unknown[]) => factsOf(o.hosts ?? [host("a"), host("b")])) };
+  const facts = { read: jest.fn(async (..._a: unknown[]) => factsOf(o.hosts ?? [host("a"), host("b")], o.extra ?? ["new1"], o.teams ?? {})) };
   let n = 0;
   const runs = {
     create: jest.fn(async (..._a: unknown[]) => {
@@ -161,6 +174,137 @@ describe("MigrationCampaignsService.create", () => {
     const t = build();
     t.facts.read.mockRejectedValueOnce(new ConflictException("plan-changed"));
     await expect(t.svc.create(actor, input())).rejects.toBeInstanceOf(ConflictException);
+    expect(t.prisma.migrationCampaign.create).not.toHaveBeenCalled();
+  });
+});
+
+describe("MigrationCampaignsService across teams", () => {
+  /** `a` is taken over in place (server srv-a, team t1), `b` moves to new1 (team t2), `c` to new2 (team t3). */
+  const three = () => ({
+    hosts: [host("a"), host("b"), host("c")],
+    extra: ["new1", "new2"],
+    teams: { "srv-a": "t1", new1: "t2", new2: "t3" } as Record<string, string>,
+  });
+  const multi = (over: Record<string, unknown> = {}) =>
+    input({
+      confirm: 3,
+      placements: [
+        { sourceServerRef: "a", kind: "in-place" },
+        { sourceServerRef: "b", kind: "other-server", targetServerId: "new1" },
+        { sourceServerRef: "c", kind: "other-server", targetServerId: "new2" },
+      ],
+      ...over,
+    });
+
+  it("makes one campaign per team with the same label, the first one on top and all of them listed", async () => {
+    const t = build(three());
+    const v = await t.svc.create(actor, multi({ label: "move-1" }));
+    expect(t.rows.map((r) => [r.teamId, r.label])).toEqual([
+      ["t1", "move-1"],
+      ["t2", "move-1"],
+      ["t3", "move-1"],
+    ]);
+    expect(v.campaigns).toHaveLength(3);
+    expect(v.campaigns.map((c) => c.teamId)).toEqual(["t1", "t2", "t3"]);
+    expect(v.id).toBe(v.campaigns[0].id);
+    expect(v.runIds).toEqual(v.campaigns[0].runIds);
+    expect(v.campaigns.map((c) => c.runIds)).toEqual([["run1"], ["run2"], ["run3"]]);
+    expect(v.campaigns.every((c) => c.label === "move-1")).toBe(true);
+    // each run targets a server of its own team
+    const bodies = t.runs.create.mock.calls.map((c) => c[1] as Record<string, unknown>);
+    expect(bodies.map((b) => b.targetServerId)).toEqual(["srv-a", "new1", "new2"]);
+    expect(bodies.map((b) => b.topology)).toEqual(["swap-proxy", "two-box", "two-box"]);
+    expect(bodies.every((b) => b.campaign === "move-1")).toBe(true);
+  });
+  it("a generated label is shared by every team's campaign", async () => {
+    const t = build(three());
+    await t.svc.create(actor, multi());
+    expect(new Set(t.rows.map((r) => r.label)).size).toBe(1);
+    expect(String(t.rows[0].label)).toMatch(/^campaign-/);
+  });
+  it("owner is required in every team before anything is written (a lesser role in the last team refuses the lot)", async () => {
+    const t = build({ ...three(), roles: { t3: Role.ADMIN } });
+    await expect(t.svc.create(actor, multi())).rejects.toBeInstanceOf(ForbiddenException);
+    expect(t.access.requireRole.mock.calls.map((c) => c[1])).toEqual(["t1", "t2", "t3"]);
+    expect(t.prisma.$transaction).not.toHaveBeenCalled();
+    expect(t.rows).toHaveLength(0);
+    expect(t.runs.create).not.toHaveBeenCalled();
+  });
+  it("the rows are written in one transaction: a label taken in one team leaves nothing in the others", async () => {
+    const t = build({ ...three(), labelTakenIn: "t3" });
+    await expect(t.svc.create(actor, multi({ label: "x" }))).rejects.toBeInstanceOf(ConflictException);
+    expect(t.prisma.$transaction).toHaveBeenCalledTimes(1);
+    expect(t.rows).toHaveLength(0);
+    expect(t.runs.create).not.toHaveBeenCalled();
+  });
+  it("a run that fails in a later team aborts the runs of the earlier teams and cancels every campaign", async () => {
+    const t = build({ ...three(), createFails: 3 });
+    await expect(t.svc.create(actor, multi())).rejects.toBeInstanceOf(UnprocessableEntityException);
+    expect(t.runs.abort.mock.calls.map((c) => c[1])).toEqual(["run1", "run2"]);
+    expect(t.prisma.migrationCampaign.update.mock.calls.map((c) => (c[0] as { where?: { id: string } }).where?.id)).toEqual(["camp1", "camp2", "camp3"]);
+    expect(t.audit.log.mock.calls.filter((c) => (c[0] as { action: string }).action === "migration.campaign.cancel")).toHaveLength(3);
+  });
+  it("audits one creation per campaign with its own team and counts, and no server id", async () => {
+    const t = build(three());
+    await t.svc.create(actor, multi());
+    const creates = t.audit.log.mock.calls.map((c) => c[0] as { action: string; meta: Record<string, unknown> }).filter((c) => c.action === "migration.campaign.create");
+    expect(creates.map((c) => c.meta.teamId)).toEqual(["t1", "t2", "t3"]);
+    expect(creates.every((c) => c.meta.servers === 1 && c.meta.runs === 1 && c.meta.teams === 3)).toBe(true);
+    expect(JSON.stringify(creates)).not.toContain("srv-a");
+  });
+  it("the confirm count is the total number of servers across teams", async () => {
+    const t = build(three());
+    await expect(t.svc.create(actor, multi({ confirm: 1 }))).rejects.toBeInstanceOf(BadRequestException);
+    await expect(t.svc.create(actor, multi({ confirm: 3 }))).resolves.toBeDefined();
+  });
+  it("two servers moved to the same team stay one two-box run in one campaign", async () => {
+    const t = build({ ...three(), teams: { "srv-a": "t1", new1: "t2", new2: "t2" } });
+    const v = await t.svc.create(actor, multi());
+    expect(v.campaigns).toHaveLength(2);
+    expect(t.runs.create).toHaveBeenCalledTimes(2);
+    expect(t.runs.create.mock.calls[1][1]).toMatchObject({ topology: "two-box", scope: { sourceServers: ["b", "c"] }, serverMap: { b: "new1", c: "new2" } });
+  });
+  it("a single team gives a single campaign and the same shape as before", async () => {
+    const t = build();
+    const v = await t.svc.create(actor, input());
+    expect(v.campaigns).toHaveLength(1);
+    expect(v.campaigns[0].id).toBe(v.id);
+    expect((t.audit.log.mock.calls[0][0] as { meta: Record<string, unknown> }).meta).not.toHaveProperty("teams");
+  });
+  it("rebuild choices find the in-place run in whichever team it is", async () => {
+    const t = build(three());
+    await t.svc.create(actor, multi({ rebuild: ["app:a:one"] }));
+    const bodies = t.runs.create.mock.calls.map((c) => c[1] as { options: Record<string, unknown> });
+    expect(bodies[0].options.rebuild).toEqual(["app:a:one"]);
+    expect(bodies[1].options).not.toHaveProperty("rebuild");
+  });
+  it("a run carries only the service choices of its own servers when the campaign spans teams, and all of them with one team", async () => {
+    const choices = { "service:a:s1": { skip: true }, "service:b:s2": { skip: true } };
+    const t = build(three());
+    await t.svc.create(actor, multi({ serviceChoices: choices }));
+    const bodies = t.runs.create.mock.calls.map((c) => c[1] as { serviceChoices?: Record<string, unknown> });
+    expect(Object.keys(bodies[0].serviceChoices ?? {})).toEqual(["service:a:s1"]);
+    expect(Object.keys(bodies[1].serviceChoices ?? {})).toEqual(["service:b:s2"]);
+    expect(bodies[2]).not.toHaveProperty("serviceChoices");
+    const one = build();
+    await one.svc.create(actor, input({ serviceChoices: choices }));
+    expect(Object.keys((one.runs.create.mock.calls[0][1] as { serviceChoices: Record<string, unknown> }).serviceChoices)).toEqual(["service:a:s1", "service:b:s2"]);
+  });
+  it("one environment cannot stand for the servers of several teams", async () => {
+    const t = build(three());
+    await expect(t.svc.create(actor, multi({ environmentId: "env1" }))).rejects.toMatchObject({ response: { code: "environment-single-team-only" } });
+    expect(t.rows).toHaveLength(0);
+  });
+  it("preview accepts servers of several teams and returns the runs per team", async () => {
+    const t = build(three());
+    const r = await t.svc.preview("u1", CampaignPlanSchema.parse({ sessionId: "s1", planHash: HASH, placements: multi().placements }));
+    expect(r.failure).toBeNull();
+    expect(r.teams?.map((x) => [x.teamId, x.servers, x.runs.length])).toEqual([
+      ["t1", 1, 1],
+      ["t2", 1, 1],
+      ["t3", 1, 1],
+    ]);
+    expect(r.runs).toHaveLength(3);
     expect(t.prisma.migrationCampaign.create).not.toHaveBeenCalled();
   });
 });

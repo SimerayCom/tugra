@@ -67,7 +67,6 @@ export const PLACEMENT_FAILURE_CODES = [
   "placement_target_unknown",
   "placement_target_not_ready",
   "placement_other_is_source_host",
-  "placement_teams_differ",
   "placement_rebuild_not_in_place",
   "placement_rebuild_unknown_item",
 ] as const;
@@ -114,12 +113,30 @@ export type CampaignStatus = (typeof CAMPAIGN_STATUSES)[number];
 /** A campaign as the API returns it. The run ids are MigrationRun ids; `label` is the value of `MigrationRun.campaign`. */
 export interface CampaignView {
   id: string;
+  /** The Tugra team the campaign belongs to (the team of its target servers). */
+  teamId?: string;
   label: string;
   sessionId: string | null;
   status: CampaignStatus;
   plan: CampaignRunPlan[];
   runIds: string[];
   createdAt: string;
+}
+
+/**
+ * What creating a campaign returns. A placement over servers of several Tugra teams is one campaign per team (same label); the response is
+ * the first campaign (so a caller that knows one campaign keeps working) plus `campaigns`, every campaign made, first one included.
+ */
+export interface CampaignCreateResult extends CampaignView {
+  campaigns: CampaignView[];
+}
+
+/** The runs a placement becomes inside one Tugra team (a campaign each). */
+export interface CampaignTeamPlan {
+  teamId: string;
+  /** Source servers placed on this team's servers. */
+  servers: number;
+  runs: CampaignRunPlan[];
 }
 
 // ── takeover in place (lane F) ─────────────────────────────────────────────────────────────────────

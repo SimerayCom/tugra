@@ -9,6 +9,7 @@ import { hostOfItemRef } from "../migration-runs/core/run-scope";
 import type {
   CampaignRunPlan,
   CampaignStatus,
+  CampaignTeamPlan,
   HostEvidence,
   HostLinkedBy,
   HostMatchStatus,
@@ -75,20 +76,28 @@ export function placementViews(facts: readonly PlacementHostFact[]): SourceServe
 
 
 
-export type PlacementCheck = { ok: true; teamId: string; placements: SourcePlacement[] } | { ok: false; code: PlacementFailureCode; ref?: string; reason?: PlacementLockReason };
+/** The placements that land on the servers of one Tugra team: one campaign is made per team. */
+export interface TeamPlacements {
+  teamId: string;
+  placements: SourcePlacement[];
+}
+
+/** `teamId` is the first team (kept for a caller that has one team); `teams` is every team the targets sit in, in ref order of their first source server. */
+export type PlacementCheck = { ok: true; teamId: string; teams: TeamPlacements[]; placements: SourcePlacement[] } | { ok: false; code: PlacementFailureCode; ref?: string; reason?: PlacementLockReason };
 
 /**
  * Check the owner's choices against what the hub knows. In place is refused for a locked server and its target is always the matched
  * Tugra server (a different target named for an in-place choice is a mismatch, never silently replaced). Another server must exist, be
- * ready, and not be the machine the source runs on (a "copy" onto the same box would fight its own ports). Every target belongs to one
- * team. The returned placements are normalised: an in-place choice carries its matched server.
+ * ready, and not be the machine the source runs on (a "copy" onto the same box would fight its own ports). The targets may sit in several
+ * teams (a Coolify's servers are often spread over the teams of one owner): the result groups the placements by target team, one campaign
+ * each. The returned placements are normalised: an in-place choice carries its matched server.
  */
 export function checkPlacements(placements: readonly SourcePlacement[], facts: readonly PlacementHostFact[], targets: ReadonlyMap<string, PlacementTarget>): PlacementCheck {
   if (placements.length === 0) return { ok: false, code: "placement_empty" };
   const byRef = new Map(facts.map((f) => [f.ref, f] as const));
   const seen = new Set<string>();
   const out: SourcePlacement[] = [];
-  const teams = new Set<string>();
+  const teamOf = new Map<string, string>();
   for (const p of placements) {
     if (seen.has(p.sourceServerRef)) return { ok: false, code: "placement_duplicate", ref: p.sourceServerRef };
     seen.add(p.sourceServerRef);
@@ -108,11 +117,22 @@ export function checkPlacements(placements: readonly SourcePlacement[], facts: r
     const t = targets.get(targetId);
     if (!t) return { ok: false, code: "placement_target_unknown", ref: f.ref };
     if (!t.ready) return { ok: false, code: "placement_target_not_ready", ref: f.ref };
-    teams.add(t.teamId);
+    teamOf.set(f.ref, t.teamId);
     out.push({ sourceServerRef: f.ref, kind: p.kind, targetServerId: targetId });
   }
-  if (teams.size > 1) return { ok: false, code: "placement_teams_differ" };
-  return { ok: true, teamId: [...teams][0], placements: out };
+  const teams = groupByTeam(out, teamOf);
+  return { ok: true, teamId: teams[0].teamId, teams, placements: out };
+}
+
+/** The placements grouped by the team of their target. Deterministic: placements in source ref order inside a team, teams in the order of their first ref. */
+export function groupByTeam(placements: readonly SourcePlacement[], teamOf: ReadonlyMap<string, string>): TeamPlacements[] {
+  const sorted = [...placements].sort((a, b) => (a.sourceServerRef < b.sourceServerRef ? -1 : a.sourceServerRef > b.sourceServerRef ? 1 : 0));
+  const byTeam = new Map<string, SourcePlacement[]>();
+  for (const p of sorted) {
+    const teamId = teamOf.get(p.sourceServerRef) as string;
+    byTeam.set(teamId, [...(byTeam.get(teamId) ?? []), p]);
+  }
+  return [...byTeam.entries()].map(([teamId, ps]) => ({ teamId, placements: ps }));
 }
 
 /**
@@ -142,6 +162,34 @@ export function planCampaign(placements: readonly SourcePlacement[]): CampaignRu
     wave += 1;
   }
   return runs;
+}
+
+/**
+ * The runs of every team's campaign: each team's placements are planned on their own (waves count per team), then the owner's rebuild
+ * choices are handed to the in-place run of their own server wherever that run is. A rebuild ref that belongs to no in-place run of
+ * any team is refused as {@link withRebuild} refuses it.
+ */
+export function planTeams(teams: readonly TeamPlacements[], rebuild: readonly string[], appRefs: ReadonlySet<string>): { ok: true; teams: CampaignTeamPlan[] } | { ok: false; code: PlacementFailureCode; ref: string } {
+  const base = teams.map((t) => planCampaign(t.placements));
+  const withChoices = withRebuild(base.flat(), rebuild, appRefs);
+  if (!withChoices.ok) return withChoices;
+  let at = 0;
+  return {
+    ok: true,
+    teams: teams.map((t, i) => {
+      const runs = withChoices.runs.slice(at, at + base[i].length);
+      at += base[i].length;
+      return { teamId: t.teamId, servers: t.placements.length, runs };
+    }),
+  };
+}
+
+/** The service choices that belong to the source servers of one run (a choice for a service of another team's run is not this run's to carry). */
+export function serviceChoicesOfRun<T>(choices: Readonly<Record<string, T>> | undefined, run: CampaignRunPlan): Record<string, T> | undefined {
+  if (!choices) return undefined;
+  const mine = new Set(refsOfRun(run));
+  const kept = Object.entries(choices).filter(([itemRef]) => mine.has(hostOfItemRef(itemRef)));
+  return kept.length > 0 ? Object.fromEntries(kept) : undefined;
 }
 
 /**

@@ -47,6 +47,8 @@ export interface MoveOffHub {
 
 export interface MoveOffCampaignRow {
   id: string;
+  /** The team the campaign belongs to: another team than the page's when the move spans several. */
+  teamId?: string;
   label: string;
   status: CampaignStatus;
   runs: number;

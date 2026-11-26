@@ -319,7 +319,7 @@ export class MigrationRunsService implements MigrationRunsFacade {
 
   /**
    * The create body's options with `sourceHostServers` set by the hub, never by the caller: when the `agent` source runner is chosen on a
-   * run that is not a same-host swap, each source server in scope maps to the Tugra server the plan matched to it (same team). If any
+   * run that is not a same-host swap, each source server in scope maps to the Tugra server the plan matched to it (same team, or another team the actor may run migrations in). If any
    * of them has no such server the field stays absent, and the data steps say the agent runner has no source host. A caller's own value is dropped.
    */
   private async withSourceHosts(actor: RunActor, body: CreateMigrationRunInput, teamId: string): Promise<CreateMigrationRunInput["options"]> {
@@ -336,7 +336,12 @@ export class MigrationRunsService implements MigrationRunsFacade {
     const map: Record<string, string> = {};
     for (const h of hosts) {
       const s = await this.env.server(h.tugraServerId as string);
-      if (!s || s.teamId !== teamId) return options;
+      if (!s) return options;
+      // the Coolify host often sits in another of the owner's teams than the target: that is fine when the actor may run migrations there too
+      if (s.teamId !== teamId) {
+        const st = await this.env.standing(actor.userId, s.teamId);
+        if (!st.member || !st.appsConfig || !st.databases) return options;
+      }
       map[h.ref] = h.tugraServerId as string;
     }
     return { ...options, sourceHostServers: map };

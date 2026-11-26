@@ -44,11 +44,23 @@ describe("sourceHostServers is derived by the hub at create", () => {
     w.port.sourceHosts = async () => [{ ref: "srvA", controlPlane: false, tugraServerId: null }];
     expect(optionsOf(w, await create(w)).sourceHostServers).toBeUndefined();
   });
-  it("stays absent when the matched server belongs to another team", async () => {
+  it("stays absent when the matched server belongs to another team the actor has no standing in", async () => {
     const w = twoServers();
     w.env.serversById.set(SRC, { id: SRC, name: "source-box", teamId: "other-team" });
     w.port.sourceHosts = async () => [{ ref: "srvA", controlPlane: false, tugraServerId: SRC }];
     expect(optionsOf(w, await create(w)).sourceHostServers).toBeUndefined();
+  });
+  it("is recorded when the matched server sits in another team the actor may run migrations in (the Coolify host is often in a different team than the target)", async () => {
+    const w = twoServers();
+    w.env.serversById.set(SRC, { id: SRC, name: "source-box", teamId: "other-team" });
+    w.env.perms["u1|other-team"] = { member: true, appsConfig: true, databases: true };
+    w.port.sourceHosts = async () => [{ ref: "srvA", controlPlane: false, tugraServerId: SRC }];
+    expect(optionsOf(w, await create(w)).sourceHostServers).toEqual({ srvA: SRC });
+    const w2 = twoServers();
+    w2.env.serversById.set(SRC, { id: SRC, name: "source-box", teamId: "other-team" });
+    w2.env.perms["u1|other-team"] = { member: true, appsConfig: true, databases: false };
+    w2.port.sourceHosts = async () => [{ ref: "srvA", controlPlane: false, tugraServerId: SRC }];
+    expect(optionsOf(w2, await create(w2)).sourceHostServers).toBeUndefined();
   });
   it("stays absent when the source cannot be read (the run is still created; the data steps then say there is no source host)", async () => {
     const w = twoServers();
