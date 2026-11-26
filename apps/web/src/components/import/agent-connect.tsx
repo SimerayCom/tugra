@@ -5,15 +5,17 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { api, ApiError } from "../../lib/api";
 import { useT } from "../../i18n/provider";
 import { agentReadyServers } from "../../lib/coolify-agent-connect";
+import { needsTeamChoice } from "../../lib/coolify-take-over";
 import type { ImportAgentSession, ServerView } from "../../lib/types";
 import { Btn } from "../ui";
 import { Select } from "../form";
 import { useToast } from "../toast";
 import { AgentConsentCard } from "./agent-consent";
+import { AgentTeamPick } from "./agent-team-pick";
 
 type T = ReturnType<typeof useT>;
 
-function errorText(t: T, e: unknown): string {
+export function errorText(t: T, e: unknown): string {
   if (e instanceof ApiError) {
     const key = `coolifyAgent.error.${e.code ?? ""}`;
     const text = t(key);
@@ -46,6 +48,8 @@ export function AgentConnectPanel({
   const [serverId, setServerId] = useState("");
   const [needsOptIn, setNeedsOptIn] = useState(false);
   const [session, setSession] = useState<ImportAgentSession | null>(null);
+  // Several Coolify teams: the one whose settings the session reads. Empty until the owner picks; nothing is chosen for them.
+  const [teamRef, setTeamRef] = useState("");
   const server = candidates.find((s) => s.id === serverId) ?? null;
 
   const { data: detect } = useQuery({ queryKey: ["coolify-detect", serverId], queryFn: () => api.coolifyDetect(serverId), enabled: !!serverId && !session, retry: false, staleTime: 30_000 });
@@ -68,7 +72,22 @@ export function AgentConnectPanel({
     },
   });
 
+  // Picking a team makes a new session that carries it (the hub reads the settings of that team); the first one is ended.
+  const pickTeam = useMutation({
+    mutationFn: async (ref: string) => {
+      const next = await api.importConnectAgent({ teamId: server!.teamId, serverId, sourceTeamRef: ref });
+      if (session) api.importRevoke(session.sessionId).catch(() => undefined);
+      return { next, ref };
+    },
+    onSuccess: ({ next, ref }) => {
+      setSession(next);
+      setTeamRef(ref);
+    },
+    onError: (e) => toast(errorText(t, e), "error"),
+  });
+
   if (session && server) {
+    const teamOpen = needsTeamChoice(session.teams) && !teamRef;
     const counts = session.read.counts;
     const secretTotal = Object.values(session.read.secretCounts ?? {}).reduce((a, b) => a + b, 0);
     return (
@@ -85,11 +104,15 @@ export function AgentConnectPanel({
           <p style={{ margin: 0, fontSize: 12, color: "var(--c-tx3)" }}>{t("coolifyAgent.read.nothingChanged")}</p>
         </section>
 
-        <AgentConsentCard serverId={server.id} serverName={server.name} teamId={server.teamId} sessionId={session.sessionId} secretCounts={session.read.secretCounts} />
+        {needsTeamChoice(session.teams) && (
+          <AgentTeamPick teams={session.teams ?? []} value={teamRef} onChange={(ref) => pickTeam.mutate(ref)} disabled={pickTeam.isPending} />
+        )}
+
+        {!teamOpen && <AgentConsentCard serverId={server.id} serverName={server.name} teamId={server.teamId} sessionId={session.sessionId} secretCounts={session.read.secretCounts} />}
 
         <div style={{ display: "grid", gap: 6 }}>
-          <Btn onClick={() => onConnected(session, { id: server.id, name: server.name, teamId: server.teamId })} disabled={busy}>{t("coolifyAgent.connect.continue")}</Btn>
-          <p style={{ margin: 0, fontSize: 12, color: "var(--c-tx3)" }}>{t("coolifyAgent.connect.continueHint")}</p>
+          <Btn onClick={() => onConnected(session, { id: server.id, name: server.name, teamId: server.teamId })} disabled={busy || teamOpen || pickTeam.isPending}>{t("coolifyAgent.connect.continue")}</Btn>
+          <p style={{ margin: 0, fontSize: 12, color: "var(--c-tx3)" }}>{teamOpen ? t("coolifyAgent.team.pickFirst") : t("coolifyAgent.connect.continueHint")}</p>
         </div>
       </div>
     );

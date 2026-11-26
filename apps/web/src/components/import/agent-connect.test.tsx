@@ -128,4 +128,58 @@ describe("AgentConnectPanel", () => {
     expect((screen.getByRole("button", { name: "Continue" }) as HTMLButtonElement).disabled).toBe(true);
     expect(onConnected).not.toHaveBeenCalled();
   });
+
+  describe("a Coolify with several teams", () => {
+    const MULTI: ImportAgentSession = { ...SESSION, teams: [{ ref: "1", name: "Alpha" }, { ref: "2", name: "Beta" }] };
+    const PICKED: ImportAgentSession = { ...MULTI, sessionId: "sess-2" };
+    const read = async () => {
+      pick("s1");
+      fireEvent.click(screen.getByRole("button", { name: "Read Coolify" }));
+      await screen.findByText("Found in Coolify");
+    };
+
+    it("asks which team and picks none for the owner: Continue and the consent wait for the choice", async () => {
+      vi.spyOn(api, "importConnectAgent").mockResolvedValue(MULTI);
+      const { onConnected } = mount();
+      await read();
+      const select = screen.getByLabelText("Coolify team") as HTMLSelectElement;
+      expect(select.value).toBe("");
+      expect([...select.options].filter((o) => o.value).map((o) => o.textContent)).toEqual(["Alpha", "Beta"]);
+      expect((screen.getByRole("button", { name: "Continue" }) as HTMLButtonElement).disabled).toBe(true);
+      expect(screen.getByText("Pick a Coolify team to continue.")).toBeTruthy();
+      expect(screen.queryByText("Allow reading secret values")).toBeNull(); // the consent belongs to the session that carries the team
+      expect(onConnected).not.toHaveBeenCalled();
+    });
+
+    it("the choice reads again with that team (sourceTeamRef), ends the first session, and continues with the new one", async () => {
+      const connect = vi.spyOn(api, "importConnectAgent").mockResolvedValueOnce(MULTI).mockResolvedValueOnce(PICKED);
+      const revoke = vi.spyOn(api, "importRevoke").mockResolvedValue({ ok: true });
+      const { onConnected } = mount();
+      await read();
+      fireEvent.change(screen.getByLabelText("Coolify team"), { target: { value: "2" } });
+      await waitFor(() => expect(connect).toHaveBeenLastCalledWith({ teamId: "t1", serverId: "s1", sourceTeamRef: "2" }));
+      await waitFor(() => expect(revoke).toHaveBeenCalledWith("sess-1"));
+      await screen.findByText("Allow reading secret values");
+      await waitFor(() => expect((screen.getByRole("button", { name: "Continue" }) as HTMLButtonElement).disabled).toBe(false));
+      fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+      expect(onConnected).toHaveBeenCalledWith(PICKED, { id: "s1", name: "coolify-host", teamId: "t1" });
+    });
+
+    it("a failed re-read keeps the owner on the choice with the reason; one team or none shows no picker", async () => {
+      vi.spyOn(api, "importConnectAgent").mockResolvedValueOnce(MULTI).mockRejectedValueOnce(new ApiError(400, "x", "unknown_team"));
+      mount();
+      await read();
+      fireEvent.change(screen.getByLabelText("Coolify team"), { target: { value: "1" } });
+      await screen.findByText("That Coolify team has no projects.");
+      expect((screen.getByRole("button", { name: "Continue" }) as HTMLButtonElement).disabled).toBe(true);
+      cleanup();
+      vi.restoreAllMocks();
+      vi.spyOn(api, "coolifyDetect").mockResolvedValue({ found: true, image: null });
+      vi.spyOn(api, "importConnectAgent").mockResolvedValue({ ...SESSION, teams: [{ ref: "1", name: "Alpha" }] });
+      mount();
+      await read();
+      expect(screen.queryByLabelText("Coolify team")).toBeNull();
+      expect((screen.getByRole("button", { name: "Continue" }) as HTMLButtonElement).disabled).toBe(false);
+    });
+  });
 });

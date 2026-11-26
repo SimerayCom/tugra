@@ -48,5 +48,11 @@
     "secretsFound": "Secret values found, not read yet",
     "continue": "Continue",
     "continueHint": "Next: match Coolify's servers to your Tugra servers."
+  },
+  "team": {
+    "label": "Coolify team",
+    "placeholder": "Pick a team",
+    "hint": "This Coolify has several teams with projects. Pick the team whose settings (notifications, shared variables, tags, members) are read. The projects of every team are listed either way.",
+    "pickFirst": "Pick a Coolify team to continue."
   }
 }
