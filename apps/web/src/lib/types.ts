@@ -1531,7 +1531,7 @@ export interface ImportPreflight {
   /** Git hosts the apps clone from (host + app count). */
   git?: { hosts: Array<{ host: string; apps: number }> };
   /** The source servers by name (Coolify, Dokploy), so a host is shown by its name and not by its uuid. */
-  hosts?: Array<{ ref: string; name?: string; controlPlane?: true; unreachableCount?: number; os?: string; tugra?: ImportTugraMatch; match?: ImportHostMatch; /** The matched registered server's agent is online (a move needs an agent on both ends). */ agentOnline?: boolean }>;
+  hosts?: Array<{ ref: string; name?: string; controlPlane?: true; unreachableCount?: number; os?: string; /** The Coolify team the server belongs to (agent read only). */ team?: { ref: string; name: string }; tugra?: ImportTugraMatch; match?: ImportHostMatch; /** The matched registered server's agent is online (a move needs an agent on both ends). */ agentOnline?: boolean }>;
   /** Agent transport only: what the one agent read found, and the Coolify teams of the projects. */
   agentRead?: ImportAgentRead;
   teams?: Array<{ ref: string; name: string }>;
@@ -1543,6 +1543,8 @@ export interface ImportPreflight {
   panel?: { tugra: ImportTugraMatch };
   /** The source team's name (Coolify), to default the target team by name. */
   sourceTeam?: string;
+  /** The ref of the Coolify team picked for an agent session (several teams). */
+  sourceTeamRef?: string;
   /** The source projects with the plan items (apps, databases, services) in each, so the first import step can select whole projects. */
   projects?: ImportSourceProject[];
   /** Apps already failing at the source (exited, unhealthy, crash-looping): they migrate as they are. */

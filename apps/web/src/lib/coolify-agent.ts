@@ -126,3 +126,17 @@ export function needsMatchStep(plan: Pick<ImportPlan, "preflight"> | null | unde
 export function unsureCount(rows: readonly MatchRow[]): number {
   return rows.filter((r) => !r.controlPlane && (r.kind === "weak" || r.kind === "none" || r.kind === "probable") && !r.answeredByOwner).length;
 }
+
+/** What the owner just answered for one source server, applied to its row at once (before the hub's next plan confirms it). */
+export function applyAnswer(row: MatchRow, answer: { serverId: string | null; name: string | null; agentOnline?: boolean }): MatchRow {
+  if (answer.serverId === null) return { ...row, answeredByOwner: true, tugraServerId: null, tugraName: null, agentOnline: false, kind: "none", status: "none" };
+  return { ...row, answeredByOwner: true, tugraServerId: answer.serverId, tugraName: answer.name, agentOnline: answer.agentOnline === true, kind: "probable", status: "probable" };
+}
+
+/**
+ * The rows the "Confirm all suggested" action covers: the hub is "probably" sure, names exactly one Tugra server whose agent is online,
+ * nothing about the two machines differs, and the owner has not answered yet. The Coolify host is never one of them.
+ */
+export function suggestedRows(rows: readonly MatchRow[]): MatchRow[] {
+  return rows.filter((r) => canAnswer(r) && r.kind === "probable" && !r.answeredByOwner && !!r.tugraServerId && r.agentOnline && !r.identityConflict);
+}

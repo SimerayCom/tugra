@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { applyScopeToDoc, autoSelection, autoTargetOf, buildScope, defaultTeamId, inPlaceBlock, placementKindOf, restoreSelection, serializeSelection, serverReadiness, targetOf, scopePayload, emptySelection, hostOfItemRef, inScopeRefs, involvedHosts, missingDependencies, projectChoicesFor, scopedPlan, scopeIssue, scopeServiceSkips, sourceProjectRows, type ScopeSelection } from "./import-scope";
+import { applyScopeToDoc, autoSelection, ownerSaidNotSame, ownerTugra, autoTargetOf, buildScope, defaultTeamId, inPlaceBlock, placementKindOf, restoreSelection, serializeSelection, serverReadiness, targetOf, scopePayload, emptySelection, hostOfItemRef, inScopeRefs, involvedHosts, missingDependencies, projectChoicesFor, scopedPlan, scopeIssue, scopeServiceSkips, sourceProjectRows, type ScopeSelection } from "./import-scope";
 import { emptyDoc } from "./import-mapping";
 import type { ImportPlan, ImportPlanItem } from "./types";
 
@@ -351,5 +351,79 @@ describe("scopePayload", () => {
     expect(p).toEqual({ sourceServers: ["s2"] });
     expect(p).not.toHaveProperty("projects");
     expect(p).not.toHaveProperty("include");
+  });
+});
+
+describe("an owner's own answer is carried forward", () => {
+  const owner = (serverId: string, name: string) => ({ serverId, name, teamId: "team1", via: "owner" as const, confidence: "probable" as const });
+  const withHosts = (hosts: NonNullable<ImportPlan["preflight"]>["hosts"]): ImportPlan => ({ ...plan(), preflight: { ...plan().preflight!, hosts } });
+  const confirmed = withHosts([
+    { ref: "s1", name: "Box One", tugra: owner("t1", "Target A"), match: { status: "probable", linkedBy: "user", evidence: [] } },
+    { ref: "s2", name: "Box Two", tugra: { serverId: "t2", name: "Target B", teamId: "team1", via: "reported-ip", confidence: "probable" }, match: { status: "probable", linkedBy: "auto", evidence: [] } },
+  ]);
+
+  it("a machine the owner confirmed is the target by itself, a merely probable one stays unplaced", () => {
+    expect(ownerTugra(confirmed, "s1")?.serverId).toBe("t1");
+    expect(ownerTugra(confirmed, "s2")).toBeUndefined();
+    expect(autoTargetOf(confirmed, "s1")).toBe("t1");
+    expect(autoTargetOf(confirmed, "s2")).toBe("");
+    expect(targetOf(confirmed, emptySelection(), "s1")).toBe("t1");
+    expect(targetOf(confirmed, emptySelection(), "s2")).toBe("");
+  });
+
+  it("it is placed in place, and the owner can still pick another server", () => {
+    expect(placementKindOf(confirmed, "s1", "t1")).toBe("in-place");
+    const sel: ScopeSelection = { ...emptySelection(), mode: "servers", hosts: new Set(["s1"]), placement: { s1: "t2" } };
+    expect(targetOf(confirmed, sel, "s1")).toBe("t2");
+  });
+
+  it("the Coolify host itself is never placed on itself, even when answered", () => {
+    const cp = withHosts([{ ref: "s1", name: "Box One", controlPlane: true, tugra: owner("t1", "Target A"), match: { status: "probable", linkedBy: "user", evidence: [] } }]);
+    expect(autoTargetOf(cp, "s1")).toBe("");
+  });
+
+  it("the confirmed servers are ticked when the step opens; the others are not", () => {
+    const sel = autoSelection(confirmed);
+    expect([...sel.hosts]).toEqual(["s1"]);
+  });
+
+  it("'not the same' is remembered as an answer too", () => {
+    const no = withHosts([{ ref: "s1", name: "Box One", match: { status: "none", linkedBy: "user", evidence: [] } }, { ref: "s2", name: "Box Two" }]);
+    expect(ownerSaidNotSame(no, "s1")).toBe(true);
+    expect(ownerSaidNotSame(no, "s2")).toBe(false);
+    expect(ownerSaidNotSame(confirmed, "s1")).toBe(false);
+  });
+});
+
+describe("everything of one Coolify team", () => {
+  it("is the items of that team's projects only, with what they need pulled in on request", () => {
+    const sel: ScopeSelection = { ...emptySelection(), everythingOf: ["p-beta"] };
+    expect([...inScopeRefs(plan(), sel)].sort()).toEqual([API, API_DB]);
+    expect([...inScopeRefs(plan(), { ...sel, extra: new Set([DB]) })].sort()).toEqual([API, API_DB, DB].sort());
+  });
+
+  it("without a team it is still the whole source", () => {
+    expect(inScopeRefs(plan(), emptySelection()).size).toBe(plan().items.length);
+  });
+
+  it("is a narrowed scope sent to the hub as that team's projects, never as the whole source", () => {
+    const sel: ScopeSelection = { ...emptySelection(), everythingOf: ["p-beta", "p-acme"] };
+    const scope = buildScope(plan(), sel);
+    expect(scope.narrowed).toBe(false); // both projects hold every placeable item here
+    const one = buildScope(plan(), { ...emptySelection(), everythingOf: ["p-beta"] });
+    expect(one.narrowed).toBe(true);
+    expect(scopePayload(one)).toEqual({ projects: ["p-beta"] });
+    expect(scopePayload(buildScope(plan(), emptySelection()))).toBeUndefined();
+  });
+
+  it("a team's pulled-in dependencies travel as include", () => {
+    const sel: ScopeSelection = { ...emptySelection(), everythingOf: ["p-beta"], extra: new Set([DB]) };
+    expect(scopePayload(buildScope(plan(), sel))).toEqual({ projects: ["p-beta"], include: [DB] });
+  });
+
+  it("the step opens ticking only the shown servers that are connected", () => {
+    const p: ImportPlan = { ...plan(), preflight: { ...plan().preflight!, hosts: [{ ref: "s1", name: "Box One", tugra: { serverId: "t1", name: "A", teamId: "team1", via: "public-ip", confidence: "certain" } }, { ref: "s2", name: "Box Two", tugra: { serverId: "t2", name: "B", teamId: "team1", via: "public-ip", confidence: "certain" } }] } };
+    expect([...autoSelection(p).hosts].sort()).toEqual(["s1", "s2"]);
+    expect([...autoSelection(p, new Set(["s2"])).hosts]).toEqual([]); // one shown server is "everything", nothing ticked
   });
 });

@@ -765,7 +765,8 @@
       "projects": "Projects",
       "projectsHint": "Whole projects, wherever they run.",
       "everything": "Everything",
-      "everythingHint": "The whole source."
+      "everythingHint": "The whole source.",
+      "everythingTeamHint": "Everything of {team}. Show all teams to move the whole Coolify."
     },
     "serversLabel": "Source servers",
     "projectsLabel": "Projects to move",
@@ -799,7 +800,9 @@
     "match": {
       "connected": "Connected as {name}",
       "probable": "Probably {name}",
-      "none": "Not connected to Tugra yet"
+      "none": "Not connected to Tugra yet",
+      "confirmedByYou": "Confirmed by you: {name}",
+      "notSameByYou": "You said this is not a Tugra server"
     },
     "controlPlane": "Coolify control plane",
     "needsCount": "Needed by what you picked: {count} items.",
@@ -840,7 +843,8 @@
     "startedInPlace": "Taking {name} over in place. Check where it goes below, then continue.",
     "inPlaceNotFound": "Could not tell which of Coolify's servers is {server}. Pick what to move below.",
     "multiTeamNote": "These servers are in {count} teams. Tugra makes one campaign per team and creates them together.",
-    "multiTeamGuided": "Servers of several teams move through the guided run below, which makes one campaign per team."
+    "multiTeamGuided": "Servers of several teams move through the guided run below, which makes one campaign per team.",
+    "confirmedMachine": "You confirmed this machine. Change it if that is not right."
   },
   "settings": {
     "title": "Settings",
@@ -1041,5 +1045,16 @@
   "tokenPageDokploy": "Open the key page in Dokploy",
   "readFirst": "Coolify runs on a server you already added? You can read it first (preview only):",
   "fromServer": "Moving what runs on {server}. Pick it on the next step.",
-  "localDockerLink": "Open your servers"
+  "localDockerLink": "Open your servers",
+  "resume": {
+    "note": "Picked up where you left off. Start over to begin again.",
+    "dismiss": "Dismiss",
+    "dismissLabel": "Dismiss this note"
+  },
+  "teamFilter": {
+    "showing": "Showing the servers and projects of {team}.",
+    "showingAll": "Showing every Coolify team.",
+    "showAll": "Show all teams ({count} more)",
+    "onlyTeam": "Show only {team}"
+  }
 }

@@ -1,16 +1,19 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useMutation } from "@tanstack/react-query";
 import { api, ApiError } from "../../lib/api";
 import { useT } from "../../i18n/provider";
-import { canAnswer, candidateServers, matchRows, standingConsent, unsureCount, type MatchRow } from "../../lib/coolify-agent";
+import { applyAnswer, canAnswer, candidateServers, matchRows, standingConsent, suggestedRows, unsureCount, type MatchRow } from "../../lib/coolify-agent";
+import type { TeamScope } from "../../lib/import-team";
 import type { ImportPlan, ServerView } from "../../lib/types";
 import { Badge, Btn, SectionCard } from "../ui";
 import { Select } from "../form";
 import { useToast } from "../toast";
+import { useConfirm } from "../confirm";
 import { AgentConsentCard } from "./agent-consent";
+import { TeamFilterToggle } from "./team-filter-toggle";
 
 type T = ReturnType<typeof useT>;
 
@@ -28,15 +31,39 @@ function errorText(t: T, e: unknown): string {
 }
 
 /** One source server: how sure the hub is, why (plainly), and what the owner can say about it. */
-function HostCard({ row, servers, sessionId, onAnswered }: { row: MatchRow; servers: ServerView[]; sessionId: string; onAnswered: () => void }) {
+function HostCard({
+  row,
+  servers,
+  sessionId,
+  onAnswered,
+  onOptimistic,
+  onRollback,
+  disabled,
+}: {
+  row: MatchRow;
+  servers: ServerView[];
+  sessionId: string;
+  onAnswered: () => void;
+  /** The owner's answer shows on the row at once, before the hub's next plan says the same. */
+  onOptimistic: (ref: string, answer: { serverId: string | null; name: string | null }) => void;
+  /** The hub refused it: put the row back as it was. */
+  onRollback: (ref: string) => void;
+  disabled?: boolean;
+}) {
   const t = useT();
   const toast = useToast();
   const options = candidateServers(servers, row);
   const [pick, setPick] = useState(row.tugraServerId ?? "");
   const answer = useMutation({
     mutationFn: (v: { serverId: string | null; reset?: boolean }) => api.importHostLink(sessionId, { coolifyServerUuid: row.ref, serverId: v.serverId, ...(v.reset ? { reset: true } : {}) }),
+    onMutate: (v) => {
+      if (!v.reset) onOptimistic(row.ref, { serverId: v.serverId, name: v.serverId ? options.find((o) => o.id === v.serverId)?.name ?? null : null });
+    },
     onSuccess: onAnswered,
-    onError: (e) => toast(errorText(t, e), "error"),
+    onError: (e) => {
+      onRollback(row.ref);
+      toast(errorText(t, e), "error");
+    },
   });
   return (
     <li style={{ borderTop: "1px solid var(--c-bd)", padding: "12px 0", display: "grid", gap: 8 }} data-testid={`match-${row.ref}`}>
@@ -87,9 +114,9 @@ function HostCard({ row, servers, sessionId, onAnswered }: { row: MatchRow; serv
           />
           <p style={{ margin: 0, fontSize: 11, color: "var(--c-tx3)", lineHeight: 1.5 }}>{t("hostMatch.answer.sameHelp")}</p>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <Btn onClick={() => answer.mutate({ serverId: pick })} disabled={!pick || row.identityConflict} loading={answer.isPending}>{t("hostMatch.answer.same")}</Btn>
-            <Btn variant="ghost" onClick={() => answer.mutate({ serverId: null })} disabled={answer.isPending}>{t("hostMatch.answer.notSame")}</Btn>
-            {row.answeredByOwner && <Btn variant="ghost" onClick={() => answer.mutate({ serverId: null, reset: true })} disabled={answer.isPending}>{t("hostMatch.answer.undo")}</Btn>}
+            <Btn onClick={() => answer.mutate({ serverId: pick })} disabled={!pick || row.identityConflict || disabled} loading={answer.isPending}>{t("hostMatch.answer.same")}</Btn>
+            <Btn variant="ghost" onClick={() => answer.mutate({ serverId: null })} disabled={answer.isPending || disabled}>{t("hostMatch.answer.notSame")}</Btn>
+            {row.answeredByOwner && <Btn variant="ghost" onClick={() => answer.mutate({ serverId: null, reset: true })} disabled={answer.isPending || disabled}>{t("hostMatch.answer.undo")}</Btn>}
           </div>
         </div>
       )}
@@ -112,6 +139,9 @@ export function AgentMatchStep({
   onRecheck,
   onStartOver,
   rechecking,
+  teamScope = null,
+  showAllTeams = false,
+  onShowAllTeams,
 }: {
   plan: ImportPlan;
   sessionId: string;
@@ -123,21 +153,81 @@ export function AgentMatchStep({
   onRecheck: () => void;
   onStartOver: () => void;
   rechecking?: boolean;
+  /** The Coolify team the owner picked on the connect screen (several teams): its servers are listed, the rest sit behind a toggle. */
+  teamScope?: TeamScope | null;
+  showAllTeams?: boolean;
+  onShowAllTeams?: (showAll: boolean) => void;
 }) {
   const t = useT();
-  const rows = matchRows(plan);
+  const toast = useToast();
+  const confirm = useConfirm();
+  const [overrides, setOverrides] = useState<Record<string, { serverId: string | null; name: string | null }>>({});
+  const [bulkBusy, setBulkBusy] = useState(false);
+  // the next plan carries the owner's answers: from then on the rows come from it
+  useEffect(() => setOverrides({}), [plan]);
+  const filter = teamScope && !showAllTeams ? teamScope : null;
+  const rows = useMemo(
+    () =>
+      matchRows(plan)
+        .filter((r) => !filter || filter.hosts.has(r.ref))
+        .map((r) => {
+          const o = overrides[r.ref];
+          return o ? applyAnswer(r, { ...o, agentOnline: servers.find((s) => s.id === o.serverId)?.status === "ONLINE" }) : r;
+        }),
+    [plan, filter, overrides, servers],
+  );
   const unsure = unsureCount(rows);
+  const suggested = suggestedRows(rows);
+  const setOverride = (ref: string, a: { serverId: string | null; name: string | null }) => setOverrides((o) => ({ ...o, [ref]: a }));
+  const dropOverride = (ref: string) =>
+    setOverrides((o) => {
+      const { [ref]: _gone, ...rest } = o;
+      return rest;
+    });
+
+  // One answer at a time: the hub keeps the answers on the session as one record, so parallel writes could lose each other.
+  const confirmAll = async () => {
+    const batch = suggested;
+    const lines = batch.map((r) => t("hostMatch.bulk.line", { coolify: r.name, tugra: r.tugraName ?? "" }));
+    const ok = await confirm({ title: t("hostMatch.bulk.title", { count: batch.length }), body: `${t("hostMatch.bulk.body")}\n${lines.join("\n")}`, confirmLabel: t("hostMatch.bulk.confirm", { count: batch.length }) });
+    if (!ok) return;
+    setBulkBusy(true);
+    let failed = 0;
+    let lastError: unknown = null;
+    for (const r of batch) {
+      setOverride(r.ref, { serverId: r.tugraServerId, name: r.tugraName });
+      try {
+        await api.importHostLink(sessionId, { coolifyServerUuid: r.ref, serverId: r.tugraServerId });
+      } catch (e) {
+        failed += 1;
+        lastError = e;
+        dropOverride(r.ref);
+      }
+    }
+    setBulkBusy(false);
+    if (failed > 0) toast(`${t("hostMatch.bulk.failed", { failed, total: batch.length })} ${errorText(t, lastError)}`, "error");
+    if (failed < batch.length) onRecheck();
+  };
   const standing = standingConsent(plan);
   const [skippedConsent, setSkippedConsent] = useState(false);
   return (
     <div style={{ display: "grid", gap: 16, maxWidth: 720 }}>
       <SectionCard title={t("hostMatch.title")} desc={t("hostMatch.table.hint")}>
+        <TeamFilterToggle scope={teamScope} showAll={showAllTeams} hidden={filter?.hiddenHosts ?? 0} onChange={(v) => onShowAllTeams?.(v)} />
         <p role="status" style={{ margin: "0 0 4px", fontSize: 12, color: unsure ? "var(--c-am)" : "var(--c-g)" }}>
           {unsure ? t("hostMatch.table.sureCount", { n: unsure }) : t("hostMatch.table.allSure")}
         </p>
+        {suggested.length > 0 && (
+          <div style={{ display: "grid", gap: 4, margin: "8px 0" }}>
+            <div>
+              <Btn onClick={() => void confirmAll()} loading={bulkBusy} disabled={rechecking} style={{ minHeight: 44 }}>{t("hostMatch.bulk.button", { count: suggested.length })}</Btn>
+            </div>
+            <p style={{ margin: 0, fontSize: 11, color: "var(--c-tx3)", lineHeight: 1.5 }}>{t("hostMatch.bulk.hint")}</p>
+          </div>
+        )}
         <ul style={{ listStyle: "none", margin: 0, padding: 0 }} aria-label={t("hostMatch.table.title")}>
           {rows.map((r) => (
-            <HostCard key={r.ref} row={r} servers={servers} sessionId={sessionId} onAnswered={onRecheck} />
+            <HostCard key={r.ref} row={r} servers={servers} sessionId={sessionId} onAnswered={onRecheck} onOptimistic={setOverride} onRollback={dropOverride} disabled={bulkBusy} />
           ))}
         </ul>
         <p style={{ margin: "12px 0 0", fontSize: 12, color: "var(--c-tx3)", lineHeight: 1.5 }}>

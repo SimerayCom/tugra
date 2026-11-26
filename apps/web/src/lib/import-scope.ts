@@ -20,6 +20,11 @@ export interface ScopeSelection {
   placement: Readonly<Record<string, string>>;
   /** The target team picked when the writable servers belong to several teams (kept so reopening the step restores it). */
   teamId?: string;
+  /**
+   * "everything" of the picked Coolify team only: the source project refs that "everything" is limited to. Set by the step while a
+   * team filter is on (never stored), so the scope, the placement rows and the guided run's payload all cover that team and nothing else.
+   */
+  everythingOf?: readonly string[];
 }
 
 /** A Tugra server the user can write to, as the first step needs it (state included so a dead target is never offered as if it worked). */
@@ -66,10 +71,12 @@ export function scopePayload(scope: ImportScope | null | undefined): MigrationRu
   const sel = scope.selection;
   const sorted = (xs: ReadonlySet<string>): string[] => [...xs].sort();
   const sourceServers = sel.mode === "servers" ? sorted(sel.hosts) : [];
-  const projects = sel.mode === "projects" ? sorted(sel.projects) : [];
-  // an "everything" selection is never narrowed; the extras only mean something on top of a server or project pick
-  const include = sel.mode === "everything" ? [] : sorted(sel.extra);
-  if (sourceServers.length + projects.length + include.length === 0) return undefined;
+  const picked = sel.mode === "projects" ? sorted(sel.projects) : [];
+  // an "everything" selection is never narrowed, unless it is limited to one Coolify team: then that team's projects are the run's scope
+  const teamProjects = sel.mode === "everything" && sel.everythingOf?.length ? [...sel.everythingOf].sort() : [];
+  const include = sel.mode === "everything" && teamProjects.length === 0 ? [] : sorted(sel.extra);
+  if (sourceServers.length + picked.length + teamProjects.length + include.length === 0) return undefined;
+  const projects = [...picked, ...teamProjects];
   return { ...(sourceServers.length ? { sourceServers } : {}), ...(projects.length ? { projects } : {}), ...(include.length ? { include } : {}) };
 }
 
@@ -119,9 +126,11 @@ function projectItemRefs(plan: ImportPlan, picked: ReadonlySet<string>): Set<str
 
 /** The itemRefs in scope for a selection. "everything" is every item; volumes follow the apps that declare them. */
 export function inScopeRefs(plan: ImportPlan, sel: ScopeSelection): Set<string> {
-  if (sel.mode === "everything") return new Set(plan.items.map((i) => i.itemRef));
+  if (sel.mode === "everything" && !sel.everythingOf?.length) return new Set(plan.items.map((i) => i.itemRef));
   const base = new Set<string>();
-  if (sel.mode === "servers") {
+  if (sel.mode === "everything") {
+    for (const r of projectItemRefs(plan, new Set(sel.everythingOf))) base.add(r);
+  } else if (sel.mode === "servers") {
     for (const it of plan.items) if (isPlaceable(it) && sel.hosts.has(hostOfItemRef(it.itemRef))) base.add(it.itemRef);
   } else {
     for (const r of projectItemRefs(plan, sel.projects)) base.add(r);
@@ -172,6 +181,21 @@ export function hostTugra(plan: ImportPlan, ref: string): ImportTugraMatch | und
   return ref === UNKNOWN_SOURCE_HOST ? plan.preflight?.panel?.tugra : plan.preflight?.hosts?.find((h) => h.ref === ref)?.tugra;
 }
 
+/**
+ * The Tugra server the owner themselves named as the same machine (the match step's answer, kept on the hub session and carried in the
+ * plan). An explicit earlier answer, never a guess: later steps carry it forward instead of asking again.
+ */
+export function ownerTugra(plan: ImportPlan, ref: string): ImportTugraMatch | undefined {
+  const h = plan.preflight?.hosts?.find((x) => x.ref === ref);
+  return h?.match?.linkedBy === "user" && h.tugra ? h.tugra : undefined;
+}
+
+/** True when the owner answered "this is not the same server" for a source server (so nothing matches it and nothing asks again). */
+export function ownerSaidNotSame(plan: ImportPlan, ref: string): boolean {
+  const h = plan.preflight?.hosts?.find((x) => x.ref === ref);
+  return h?.match?.linkedBy === "user" && !h.tugra;
+}
+
 /** True for the box the source's own control plane runs on (Coolify: `is_coolify_host`). */
 export const isControlPlaneHost = (plan: ImportPlan, ref: string): boolean => !!plan.preflight?.hosts?.find((h) => h.ref === ref)?.controlPlane;
 
@@ -184,10 +208,14 @@ export function inPlaceBlock(plan: ImportPlan, ref: string): "control-plane" | "
   return isControlPlaneHost(plan, ref) ? "control-plane" : null;
 }
 
-/** The target a sure match gives a source server by itself (a public address matched and the same-machine move is possible), or "". */
+/**
+ * The target a source server gets by itself, or "": a sure match (a public address matched), or the machine the owner confirmed in the
+ * match step (their own earlier answer). Either way the same-machine move must be possible for it.
+ */
 export function autoTargetOf(plan: ImportPlan, ref: string): string {
   const m = hostTugra(plan, ref);
-  return m && m.confidence === "certain" && !inPlaceBlock(plan, ref) ? m.serverId : "";
+  if (!m || inPlaceBlock(plan, ref)) return "";
+  return m.confidence === "certain" || ownerTugra(plan, ref) ? m.serverId : "";
 }
 
 /**
@@ -242,8 +270,8 @@ export function defaultTeamId(plan: ImportPlan, servers: readonly ScopeServer[],
  * is ticked and goes onto that server (the same machine). Everything else stays unticked and unplaced; nothing is chosen for the user.
  * A source with one server (or none matched) opens on "everything" / "a server" with nothing placed.
  */
-export function autoSelection(plan: ImportPlan): ScopeSelection {
-  const rows = sourceHostRows(plan);
+export function autoSelection(plan: ImportPlan, shown?: ReadonlySet<string>): ScopeSelection {
+  const rows = sourceHostRows(plan).filter((r) => !shown || shown.has(r.ref));
   const connected = rows.filter((r) => autoTargetOf(plan, r.ref) !== "").map((r) => r.ref);
   if (rows.length > 1) return { ...emptySelection(), mode: "servers", hosts: new Set(connected) };
   return emptySelection();

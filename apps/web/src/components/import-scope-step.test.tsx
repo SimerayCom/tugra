@@ -4,6 +4,7 @@ import React from "react";
 import { I18nProvider } from "../i18n/provider";
 import { ImportScopeStep } from "./import-scope-step";
 import type { ImportScope, ScopeSelection } from "../lib/import-scope";
+import { teamScope, type TeamScope } from "../lib/import-team";
 import type { ImportPlan, ImportPlanItem, ImportTugraMatch } from "../lib/types";
 
 afterEach(cleanup);
@@ -42,10 +43,10 @@ const hit = (serverId: string, name: string, over: Partial<ImportTugraMatch> = {
 const withMatches = (hosts: Array<{ ref: string; name: string; tugra?: ImportTugraMatch; controlPlane?: true }>, over: Partial<ImportPlan> = {}): ImportPlan => ({ ...plan, ...over, preflight: { ...plan.preflight!, hosts, ...(over.preflight ?? {}) } });
 const teams = [{ id: "team1", name: "Team One", role: "OWNER" }] as never;
 
-const mount = (over: { servers?: Srv[]; teams?: never; onContinue?: (s: ImportScope) => void; plan?: ImportPlan; initial?: ScopeSelection; onRecheck?: () => void } = {}) =>
+const mount = (over: { servers?: Srv[]; teams?: never; onContinue?: (s: ImportScope) => void; plan?: ImportPlan; initial?: ScopeSelection; onRecheck?: () => void; teamScope?: TeamScope | null; showAllTeams?: boolean; onShowAllTeams?: (v: boolean) => void } = {}) =>
   render(
     <I18nProvider>
-      <ImportScopeStep initial={over.initial} plan={over.plan ?? plan} servers={over.servers ?? servers} teams={over.teams ?? teams} onContinue={over.onContinue ?? (() => undefined)} onStartOver={() => undefined} onRecheck={over.onRecheck} />
+      <ImportScopeStep initial={over.initial} plan={over.plan ?? plan} servers={over.servers ?? servers} teams={over.teams ?? teams} onContinue={over.onContinue ?? (() => undefined)} onStartOver={() => undefined} onRecheck={over.onRecheck} teamScope={over.teamScope} showAllTeams={over.showAllTeams} onShowAllTeams={over.onShowAllTeams} />
     </I18nProvider>,
   );
 const continueBtn = () => screen.getByRole("button", { name: "Continue" }) as HTMLButtonElement;
@@ -369,6 +370,150 @@ describe("ImportScopeStep", () => {
     );
     fireEvent.click(screen.getByRole("checkbox", { name: /Box One/ }));
     expect([...seen[seen.length - 1].hosts]).toEqual(["s1"]);
+  });
+
+  describe("what the owner said in the match step is not asked again", () => {
+    const ownerHit = (serverId: string, name: string) => hit(serverId, name, { via: "owner", confidence: "probable" });
+    const answered = (): ImportPlan => {
+      const p = withMatches([
+        { ref: "s1", name: "Box One", tugra: ownerHit("t1", "Target A") },
+        { ref: "s2", name: "Box Two", tugra: hit("t2", "Target B", { confidence: "probable", via: "reported-ip" }) },
+      ]);
+      (p.preflight!.hosts![0] as { match?: unknown }).match = { status: "probable", linkedBy: "user", evidence: [] };
+      (p.preflight!.hosts![1] as { match?: unknown }).match = { status: "probable", linkedBy: "auto", evidence: [] };
+      return p;
+    };
+
+    it("rows say 'Confirmed by you', the connected count includes them, and only a merely probable row says 'Probably'", () => {
+      mount({ plan: answered() });
+      expect(screen.getByText("1 of 2 source servers are already connected to Tugra.")).toBeTruthy();
+      expect(screen.getByText("Confirmed by you: Target A")).toBeTruthy();
+      expect(screen.getByText("Probably Target B")).toBeTruthy();
+      expect(screen.queryByText("Probably Target A")).toBeNull();
+    });
+
+    it("the confirmed machine is pre-picked as the same machine with a note and a Change; the unconfirmed one stays unpicked", () => {
+      const onContinue = vi.fn();
+      mount({ plan: answered(), onContinue });
+      expect((screen.getByRole("checkbox", { name: /Box One/ }) as HTMLInputElement).checked).toBe(true);
+      expect((screen.getByRole("checkbox", { name: /Box Two/ }) as HTMLInputElement).checked).toBe(false);
+      const select = screen.getByLabelText("Box One moves to") as HTMLSelectElement;
+      expect(select.value).toBe("t1");
+      expect(screen.getByText("You confirmed this machine. Change it if that is not right.")).toBeTruthy();
+      expect(screen.getByText("Same machine (in place).")).toBeTruthy();
+      expect(screen.queryByRole("button", { name: "Use it" })).toBeNull();
+      // still changeable
+      fireEvent.change(select, { target: { value: "t2" } });
+      expect(select.value).toBe("t2");
+      expect(screen.queryByText("You confirmed this machine. Change it if that is not right.")).toBeNull();
+      // the unconfirmed probable one is offered, never applied
+      fireEvent.click(screen.getByRole("checkbox", { name: /Box Two/ }));
+      expect((screen.getByLabelText("Box Two moves to") as HTMLSelectElement).value).toBe("");
+      expect(screen.getByRole("button", { name: "Use it" })).toBeTruthy();
+    });
+
+    it("'not the same' is shown as the owner's answer, not as an unknown server", () => {
+      const p = withMatches([{ ref: "s1", name: "Box One" }, { ref: "s2", name: "Box Two" }]);
+      (p.preflight!.hosts![0] as { match?: unknown }).match = { status: "none", linkedBy: "user", evidence: [] };
+      mount({ plan: p });
+      expect(screen.getByText("You said this is not a Tugra server")).toBeTruthy();
+      expect(screen.getByText("Not connected to Tugra yet")).toBeTruthy(); // Box Two, unanswered
+    });
+  });
+
+  describe("the picked Coolify team", () => {
+    const olgu = { ref: "1", name: "Olgu" };
+    const other = { ref: "2", name: "Other" };
+    const p3: ImportPlan = {
+      ...plan,
+      totals: { apps: 3, databases: 2, volumes: 0, blockers: 0 },
+      items: [...plan.items, item("app:s3:site", "app", "site"), item("app:s4:blog", "app", "blog")],
+      preflight: {
+        ...plan.preflight!,
+        sourceTeamRef: "1",
+        hosts: [{ ref: "s1", name: "Box One", team: olgu }, { ref: "s2", name: "Box Two", team: other }, { ref: "s3", name: "Box Three", team: other }, { ref: "s4", name: "Box Four", team: olgu }],
+        projects: [
+          { ref: "p-acme", name: "Acme", itemRefs: ["app:s1:web", "database:s1:db"], team: olgu },
+          { ref: "p-beta", name: "Beta", itemRefs: ["app:s2:api", "database:s2:apidb"], team: other },
+          { ref: "p-site", name: "Site", itemRefs: ["app:s3:site"], team: other },
+          { ref: "p-blog", name: "Blog", itemRefs: ["app:s4:blog"], team: olgu },
+        ],
+      },
+    };
+    const scopeOf = (p = p3) => teamScope(p);
+
+    it("lists only the team's servers and projects, with a toggle that says how many more there are", () => {
+      const onShowAllTeams = vi.fn();
+      mount({ plan: p3, teamScope: scopeOf(), onShowAllTeams });
+      expect(screen.getByRole("checkbox", { name: /Box One/ })).toBeTruthy();
+      expect(screen.queryByRole("checkbox", { name: /Box Two/ })).toBeNull();
+      expect(screen.queryByRole("checkbox", { name: /Box Three/ })).toBeNull();
+      expect(screen.getByText("Showing the servers and projects of Olgu.")).toBeTruthy();
+      fireEvent.click(screen.getByRole("button", { name: "Show all teams (2 more)" }));
+      expect(onShowAllTeams).toHaveBeenCalledWith(true);
+      fireEvent.click(screen.getByRole("radio", { name: /^Projects/ }));
+      expect(screen.getByRole("checkbox", { name: /Acme/ })).toBeTruthy();
+      expect(screen.queryByRole("checkbox", { name: /Beta/ })).toBeNull();
+    });
+
+    it("with every team shown it lists everything and offers to narrow again", () => {
+      mount({ plan: p3, teamScope: scopeOf(), showAllTeams: true });
+      expect(screen.getByRole("checkbox", { name: /Box Three/ })).toBeTruthy();
+      expect(screen.getByRole("button", { name: "Show only Olgu" })).toBeTruthy();
+    });
+
+    it("Everything is everything of the team, and is sent to the run as that team's projects", () => {
+      const onContinue = vi.fn();
+      mount({ plan: p3, teamScope: scopeOf(), onContinue });
+      fireEvent.click(screen.getByRole("radio", { name: /^Everything/ }));
+      expect(screen.getByText("Everything of Olgu. Show all teams to move the whole Coolify.")).toBeTruthy();
+      fireEvent.change(screen.getByLabelText("Box One moves to"), { target: { value: "t1" } });
+      fireEvent.change(screen.getByLabelText("Box Four moves to"), { target: { value: "t2" } });
+      expect(screen.getByText("2 apps, 1 databases and 0 services will move.")).toBeTruthy();
+      expect(screen.queryByLabelText("Box Two moves to")).toBeNull();
+      fireEvent.click(continueBtn());
+      const scope = onContinue.mock.calls[0][0] as ImportScope;
+      expect([...scope.inScope].sort()).toEqual(["app:s1:web", "app:s4:blog", "database:s1:db"]);
+      expect(scope.narrowed).toBe(true);
+      expect(scope.selection.everythingOf).toEqual(["p-acme", "p-blog"]);
+    });
+
+    it("Everything with every team shown is the whole Coolify again", () => {
+      const onContinue = vi.fn();
+      mount({ plan: p3, teamScope: scopeOf(), showAllTeams: true, onContinue });
+      fireEvent.click(screen.getByRole("radio", { name: /^Everything/ }));
+      for (const n of ["Box One", "Box Two", "Box Three", "Box Four"]) fireEvent.change(screen.getByLabelText(`${n} moves to`), { target: { value: "t1" } });
+      fireEvent.click(continueBtn());
+      const scope = onContinue.mock.calls[0][0] as ImportScope;
+      expect(scope.narrowed).toBe(false);
+      expect(scope.inScope.size).toBe(p3.items.length);
+    });
+
+    it("a server ticked earlier that is now hidden is not moved", () => {
+      const onContinue = vi.fn();
+      mount({ plan: p3, teamScope: scopeOf(), initial: { mode: "servers", hosts: new Set(["s1", "s2"]), projects: new Set(), extra: new Set(), placement: { s1: "t1", s2: "t2" } }, onContinue });
+      fireEvent.click(continueBtn());
+      const scope = onContinue.mock.calls[0][0] as ImportScope;
+      expect([...scope.inScope].sort()).toEqual(["app:s1:web", "database:s1:db"]);
+    });
+
+    it("the connected count and Select all follow the shown servers", () => {
+      const p = JSON.parse(JSON.stringify(p3)) as ImportPlan;
+      p.preflight!.hosts![0].tugra = hit("t1", "Target A");
+      p.preflight!.hosts![1].tugra = hit("t2", "Target B");
+      mount({ plan: p, teamScope: scopeOf(p) });
+      expect(screen.getByText("1 of 2 source servers are already connected to Tugra.")).toBeTruthy();
+      expect(screen.getByRole("button", { name: "Select all" })).toBeTruthy();
+      fireEvent.click(screen.getByRole("button", { name: "Select all" }));
+      expect((screen.getByRole("checkbox", { name: /Box Four/ }) as HTMLInputElement).checked).toBe(true);
+      expect(screen.queryByRole("checkbox", { name: /Box Two/ })).toBeNull();
+    });
+
+    it("no picked team: nothing changes and no toggle shows", () => {
+      mount({ plan: { ...p3, preflight: { ...p3.preflight!, sourceTeamRef: undefined } }, teamScope: null });
+      expect(screen.getByRole("checkbox", { name: /Box Three/ })).toBeTruthy();
+      expect(screen.queryByTestId("team-filter")).toBeNull();
+    });
   });
 });
 

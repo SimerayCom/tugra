@@ -5,6 +5,8 @@ import React from "react";
 import { I18nProvider } from "../../i18n/provider";
 import { api, ApiError } from "../../lib/api";
 import { ToastProvider } from "../toast";
+import { ConfirmProvider } from "../confirm";
+import { teamScope } from "../../lib/import-team";
 import type { ImportPlan } from "../../lib/types";
 import { AgentMatchStep } from "./agent-match-step";
 
@@ -40,7 +42,9 @@ function mount(over: Partial<React.ComponentProps<typeof AgentMatchStep>> = {}) 
     <QueryClientProvider client={qc}>
       <I18nProvider>
         <ToastProvider>
+          <ConfirmProvider>
           <AgentMatchStep plan={plan()} sessionId="sess-1" servers={SERVERS} teamId="t1" coolifyServer={{ id: "s0", name: "hub-box" }} {...fns} {...over} />
+          </ConfirmProvider>
         </ToastProvider>
       </I18nProvider>
     </QueryClientProvider>,
@@ -109,9 +113,9 @@ describe("AgentMatchStep", () => {
   it("'this is not the same server' sends null, and taking an answer back sends a reset (only shown for the owner's own answer)", async () => {
     const link = vi.spyOn(api, "importHostLink").mockResolvedValue({ hostLinks: {} });
     mount();
+    expect(within(card("maybe")).queryByRole("button", { name: "Take my answer back" })).toBeNull();
     fireEvent.click(within(card("maybe")).getByRole("button", { name: "This is not the same server" }));
     await waitFor(() => expect(link).toHaveBeenCalledWith("sess-1", { coolifyServerUuid: "maybe", serverId: null }));
-    expect(within(card("maybe")).queryByRole("button", { name: "Take my answer back" })).toBeNull();
     fireEvent.click(within(card("mine")).getByRole("button", { name: "Take my answer back" }));
     await waitFor(() => expect(link).toHaveBeenCalledWith("sess-1", { coolifyServerUuid: "mine", serverId: null, reset: true }));
     expect(within(card("mine")).getByText("Chosen by you")).toBeTruthy();
@@ -171,5 +175,134 @@ describe("AgentMatchStep", () => {
   it("does not ask for consent when the Coolify host is not one of the user's servers (nothing to type a name of)", () => {
     mount({ coolifyServer: null });
     expect(screen.queryByText("Allow reading secret values")).toBeNull();
+  });
+
+  describe("answers show at once", () => {
+    it("the row says 'Chosen by you' while the hub is still answering, and the count of unsure servers drops with it", async () => {
+      let release: (v: { hostLinks: Record<string, never> }) => void = () => undefined;
+      vi.spyOn(api, "importHostLink").mockReturnValue(new Promise((r) => { release = r; }));
+      mount();
+      const unsure = card("unsure");
+      fireEvent.change(within(unsure).getByLabelText("Which Tugra server is it?"), { target: { value: "t-other" } });
+      fireEvent.click(within(unsure).getByRole("button", { name: "This is the same server" }));
+      await waitFor(() => expect(within(card("unsure")).getByText("Chosen by you")).toBeTruthy());
+      expect(within(card("unsure")).getByText(/Same machine as other-box/)).toBeTruthy();
+      expect(screen.getByText("2 to check")).toBeTruthy();
+      release({ hostLinks: {} });
+    });
+
+    it("rolls the row back and says why when the hub refuses", async () => {
+      vi.spyOn(api, "importHostLink").mockRejectedValue(new ApiError(409, "x", "identity_conflict"));
+      mount();
+      fireEvent.change(within(card("unsure")).getByLabelText("Which Tugra server is it?"), { target: { value: "t-other" } });
+      fireEvent.click(within(card("unsure")).getByRole("button", { name: "This is the same server" }));
+      await screen.findAllByText(/machine identity of the two servers differs/);
+      await waitFor(() => expect(within(card("unsure")).queryByText("Chosen by you")).toBeNull());
+      expect(within(card("unsure")).getByText("No Tugra server matches yet")).toBeTruthy();
+      expect(screen.getByText("3 to check")).toBeTruthy();
+    });
+  });
+
+  describe("confirm all suggested", () => {
+    const hosts = [
+      HOSTS[0],
+      { ref: "p1", name: "alpha", tugra: { serverId: "t-edge", name: "edge-1", teamId: "t1", via: "reported-ip", confidence: "probable" }, match: { status: "probable", linkedBy: "auto", evidence: [{ kind: "ip", equal: true }] }, agentOnline: true },
+      { ref: "p2", name: "beta", tugra: { serverId: "t-other", name: "other-box", teamId: "t1", via: "reported-ip", confidence: "probable" }, match: { status: "probable", linkedBy: "auto", evidence: [{ kind: "ip", equal: true }] }, agentOnline: true },
+      HOSTS[2], // probable but its agent is offline: never in the batch
+      HOSTS[3], // not sure: never in the batch
+      HOSTS[5], // already answered by the owner
+    ];
+
+    it("offers the button only for probable rows with one suggested server and an online agent, and lists the names in the confirm dialog", async () => {
+      mount({ plan: plan({ hosts }) });
+      fireEvent.click(screen.getByRole("button", { name: "Confirm all suggested (2)" }));
+      const dialog = await screen.findByRole("dialog");
+      expect(dialog.textContent).toContain("alpha is edge-1");
+      expect(dialog.textContent).toContain("beta is other-box");
+      expect(dialog.textContent).not.toContain("maybe is");
+      expect(dialog.textContent).not.toContain("unsure is");
+    });
+
+    it("cancelling changes nothing", async () => {
+      const link = vi.spyOn(api, "importHostLink").mockResolvedValue({ hostLinks: {} });
+      const { onRecheck } = mount({ plan: plan({ hosts }) });
+      fireEvent.click(screen.getByRole("button", { name: "Confirm all suggested (2)" }));
+      fireEvent.click(await screen.findByRole("button", { name: "Cancel" }));
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+      expect(link).not.toHaveBeenCalled();
+      expect(onRecheck).not.toHaveBeenCalled();
+    });
+
+    it("confirms one server after the other (the answers share one record), shows them as chosen and reads the plan once", async () => {
+      const link = vi.spyOn(api, "importHostLink").mockResolvedValue({ hostLinks: {} });
+      const { onRecheck } = mount({ plan: plan({ hosts }) });
+      fireEvent.click(screen.getByRole("button", { name: "Confirm all suggested (2)" }));
+      fireEvent.click(await screen.findByRole("button", { name: "Confirm 2" }));
+      await waitFor(() => expect(onRecheck).toHaveBeenCalledTimes(1));
+      expect(link.mock.calls.map((c) => c[1])).toEqual([
+        { coolifyServerUuid: "p1", serverId: "t-edge" },
+        { coolifyServerUuid: "p2", serverId: "t-other" },
+      ]);
+      expect(within(card("p1")).getByText("Chosen by you")).toBeTruthy();
+      expect(screen.queryByRole("button", { name: /Confirm all suggested/ })).toBeNull();
+    });
+
+    it("a refused one is rolled back with the reason, the others stay confirmed", async () => {
+      const link = vi.spyOn(api, "importHostLink").mockImplementation(async (_s, b) => {
+        if (b.coolifyServerUuid === "p1") throw new ApiError(409, "x", "identity_conflict");
+        return { hostLinks: {} };
+      });
+      const { onRecheck } = mount({ plan: plan({ hosts }) });
+      fireEvent.click(screen.getByRole("button", { name: "Confirm all suggested (2)" }));
+      fireEvent.click(await screen.findByRole("button", { name: "Confirm 2" }));
+      await screen.findAllByText(/1 of 2 could not be confirmed/);
+      expect(link).toHaveBeenCalledTimes(2);
+      expect(within(card("p1")).queryByText("Chosen by you")).toBeNull();
+      expect(within(card("p2")).getByText("Chosen by you")).toBeTruthy();
+      expect(onRecheck).toHaveBeenCalledTimes(1);
+    });
+
+    it("covers only the rows shown: the other Coolify teams' servers are left out until they are revealed", async () => {
+      const teamHosts = [
+        { ...hosts[1], team: { ref: "1", name: "Olgu" } },
+        { ...hosts[2], team: { ref: "2", name: "Other" } },
+      ];
+      const p = plan({ hosts: teamHosts, sourceTeamRef: "1", projects: [{ ref: "pr1", name: "Web", itemRefs: [], team: { ref: "1", name: "Olgu" } }, { ref: "pr2", name: "Lab", itemRefs: [], team: { ref: "2", name: "Other" } }] });
+      mount({ plan: p, teamScope: teamScope(p) });
+      expect(screen.queryByTestId("match-p2")).toBeNull();
+      expect(screen.getByRole("button", { name: "Confirm all suggested (1)" })).toBeTruthy();
+    });
+  });
+
+  describe("the picked Coolify team", () => {
+    const teamHosts = [
+      { ref: "a", name: "alpha", team: { ref: "1", name: "Olgu" }, match: { status: "none", linkedBy: null, evidence: [] } },
+      { ref: "b", name: "beta", team: { ref: "2", name: "Other" }, match: { status: "none", linkedBy: null, evidence: [] } },
+      { ref: "c", name: "gamma", team: { ref: "2", name: "Other" }, match: { status: "none", linkedBy: null, evidence: [] } },
+    ];
+    const p = plan({ hosts: teamHosts, sourceTeamRef: "1", projects: [{ ref: "pr1", name: "Web", itemRefs: ["app:c:x"], team: { ref: "1", name: "Olgu" } }, { ref: "pr2", name: "Lab", itemRefs: ["app:b:y"], team: { ref: "2", name: "Other" } }] });
+
+    it("lists the team's servers and the servers its projects run on, and hides the rest behind a clear toggle", () => {
+      const onShowAllTeams = vi.fn();
+      mount({ plan: p, teamScope: teamScope(p), onShowAllTeams });
+      expect(screen.getByTestId("match-a")).toBeTruthy();
+      expect(screen.getByTestId("match-c")).toBeTruthy(); // runs a project of the picked team
+      expect(screen.queryByTestId("match-b")).toBeNull();
+      expect(screen.getByText("2 to check")).toBeTruthy();
+      fireEvent.click(screen.getByRole("button", { name: "Show all teams (1 more)" }));
+      expect(onShowAllTeams).toHaveBeenCalledWith(true);
+    });
+
+    it("shows every server when the owner asked for all teams, and offers to narrow again", () => {
+      mount({ plan: p, teamScope: teamScope(p), showAllTeams: true });
+      expect(screen.getByTestId("match-b")).toBeTruthy();
+      expect(screen.getByRole("button", { name: "Show only Olgu" })).toBeTruthy();
+    });
+
+    it("changes nothing without a picked team", () => {
+      mount({ plan: plan({ hosts: teamHosts }), teamScope: teamScope(plan({ hosts: teamHosts })) });
+      expect(screen.getByTestId("match-b")).toBeTruthy();
+      expect(screen.queryByTestId("team-filter")).toBeNull();
+    });
   });
 });

@@ -66,5 +66,14 @@
   },
   "installHint": "Servers without a Tugra agent can get one in one click on the Read this Coolify page.",
   "continue": "Continue",
-  "continueUnsure": "Continue with {n} to check"
+  "continueUnsure": "Continue with {n} to check",
+  "bulk": {
+    "button": "Confirm all suggested ({count})",
+    "hint": "Only servers the hub is fairly sure of, with a connected agent. You still see each one below.",
+    "title": "Confirm {count} servers as the same machine?",
+    "body": "You are saying each Coolify server below is the same machine as the Tugra server next to it:",
+    "line": "{coolify} is {tugra}",
+    "confirm": "Confirm {count}",
+    "failed": "{failed} of {total} could not be confirmed. The rest were."
+  }
 }

@@ -26,6 +26,8 @@ import { ImportSettingsPanel } from "./import/settings-panel";
 import { ImportServicesPanel } from "./import-services-panel";
 import { ConnectionStatus, useConnectionTest } from "./import/connection-test";
 import { AgentConnectPanel } from "./import/agent-connect";
+import { ResumeNote } from "./import/resume-note";
+import { teamScope } from "../lib/import-team";
 import { AgentMatchStep } from "./import/agent-match-step";
 import { isConsentRequired, needsConsent, needsMatchStep } from "../lib/coolify-agent";
 import { AgentConsentGate } from "./import/agent-consent-gate";
@@ -102,6 +104,10 @@ export function ImportWizard() {
   // The step's live selection (kept in sessionStorage so a refresh resumes at the first step), and why a resume did not work.
   const liveSelection = useRef<ScopeSelection | undefined>(undefined);
   const [resumeNote, setResumeNote] = useState<"expired" | null>(null);
+  // True while the step on screen is one a refresh brought back (a one-line note says why); gone once dismissed or the owner moves on.
+  const [resumedStep, setResumedStep] = useState(false);
+  // The picked Coolify team narrows the match, scope and placement lists; this opens them to every team.
+  const [showAllTeams, setShowAllTeams] = useState(false);
   // Where the user came from (a server's scan card, the Read-this-Coolify page): the source address, and a server or project to start with.
   const [focus, setFocus] = useState<ImportFocus | null>(null);
   const focusRef = useRef<ImportFocus | null>(null);
@@ -176,6 +182,9 @@ export function ImportWizard() {
     if (r.baseUrl) setBaseUrl(r.baseUrl);
     setSessionId(r.sessionId);
     setDbModes(r.dbModes);
+    setShowAllTeams(r.allTeams === true);
+    setMatchedHosts(r.matched === true);
+    setResumedStep(true);
     setLastSelection(r.selection);
     liveSelection.current = r.selection;
     planM.mutate({ sid: r.sessionId, kind: r.kind, modes: r.dbModes, resume: true });
@@ -187,8 +196,8 @@ export function ImportWizard() {
     if (opId) clearImportResume();
   }, [opId]);
   useEffect(() => {
-    if (sessionId && !opId) saveImportResume({ kind, baseUrl, sessionId, selection: liveSelection.current ?? lastSelection, dbModes });
-  }, [sessionId, opId, kind, baseUrl, dbModes, lastSelection, scope]);
+    if (sessionId && !opId) saveImportResume({ kind, baseUrl, sessionId, selection: liveSelection.current ?? lastSelection, dbModes, allTeams: showAllTeams, matched: matchedHosts });
+  }, [sessionId, opId, kind, baseUrl, dbModes, lastSelection, scope, showAllTeams, matchedHosts]);
 
   const inPlaceSession = useRef<string | null>(null);
   useEffect(() => {
@@ -282,6 +291,8 @@ export function ImportWizard() {
     clearImportResume();
     liveSelection.current = undefined;
     setResumeNote(null);
+    setResumedStep(false);
+    setShowAllTeams(false);
     setDbModes({});
     setPlan(null);
     setScope(null);
@@ -303,9 +314,9 @@ export function ImportWizard() {
   const onSelectionChange = useCallback(
     (sel: ScopeSelection) => {
       liveSelection.current = sel;
-      if (sessionId) saveImportResume({ kind, baseUrl, sessionId, selection: sel, dbModes });
+      if (sessionId) saveImportResume({ kind, baseUrl, sessionId, selection: sel, dbModes, allTeams: showAllTeams, matched: matchedHosts });
     },
-    [sessionId, kind, baseUrl, dbModes],
+    [sessionId, kind, baseUrl, dbModes, showAllTeams, matchedHosts],
   );
   // a server was just added or an agent came online: read the servers and the plan again so the matches are current
   const recheck = () => {
@@ -325,34 +336,46 @@ export function ImportWizard() {
     const hostId = plan.preflight?.agentRead?.agentServerId;
     const host = servers.find((s) => s.id === hostId);
     return (
-      <AgentMatchStep
-        plan={plan}
-        sessionId={sessionId}
-        servers={servers}
-        teamId={host?.teamId ?? effectiveTeam}
-        coolifyServer={host ? { id: host.id, name: host.name } : null}
-        onContinue={() => setMatchedHosts(true)}
-        onRecheck={recheck}
-        onStartOver={startOver}
-        rechecking={planM.isPending}
-      />
+      <div style={{ display: "grid", gap: 16 }}>
+        {resumedStep && <div style={{ maxWidth: 720 }}><ResumeNote onDismiss={() => setResumedStep(false)} /></div>}
+        <AgentMatchStep
+          plan={plan}
+          sessionId={sessionId}
+          servers={servers}
+          teamId={host?.teamId ?? effectiveTeam}
+          coolifyServer={host ? { id: host.id, name: host.name } : null}
+          onContinue={() => { setResumedStep(false); setMatchedHosts(true); }}
+          onRecheck={recheck}
+          onStartOver={startOver}
+          rechecking={planM.isPending}
+          teamScope={teamScope(plan)}
+          showAllTeams={showAllTeams}
+          onShowAllTeams={setShowAllTeams}
+        />
+      </div>
     );
   }
 
   if (plan && sessionId && !scope && plan.mapping?.features?.includes("mapping-v1")) {
     return (
+      <div style={{ display: "grid", gap: 16 }}>
+        {resumedStep && <div style={{ maxWidth: 720 }}><ResumeNote onDismiss={() => setResumedStep(false)} /></div>}
       <ImportScopeStep
         plan={plan}
         servers={writableServers.map((s) => ({ id: s.id, name: s.name, teamId: s.teamId, status: s.status, capabilities: s.capabilities, lastSeenAt: s.lastSeenAt }))}
         teams={teams}
         initial={lastSelection}
-        onContinue={(sc) => { focusRef.current = null; setScope(sc); setLastSelection(sc.selection); }}
+        onContinue={(sc) => { focusRef.current = null; setResumedStep(false); setScope(sc); setLastSelection(sc.selection); }}
         onStartOver={startOver}
         onSelectionChange={onSelectionChange}
         onRecheck={recheck}
         startNote={startNote || undefined}
         rechecking={planM.isPending}
+        teamScope={teamScope(plan)}
+        showAllTeams={showAllTeams}
+        onShowAllTeams={setShowAllTeams}
       />
+      </div>
     );
   }
 

@@ -17,6 +17,8 @@ import {
   involvedHosts,
   isControlPlaneHost,
   missingDependencies,
+  ownerSaidNotSame,
+  ownerTugra,
   placementKindOf,
   scopeIssue,
   serverReadiness,
@@ -29,6 +31,8 @@ import {
   type ScopeServer,
 } from "../lib/import-scope";
 import { needsCampaign } from "../lib/campaign";
+import type { TeamScope } from "../lib/import-team";
+import { TeamFilterToggle } from "./import/team-filter-toggle";
 import type { ImportPlan, Team } from "../lib/types";
 
 export type { ScopeServer };
@@ -57,6 +61,9 @@ export function ImportScopeStep({
   onRecheck,
   rechecking,
   startNote,
+  teamScope = null,
+  showAllTeams = false,
+  onShowAllTeams,
 }: {
   plan: ImportPlan;
   /** Servers the user can write to. */
@@ -72,15 +79,32 @@ export function ImportScopeStep({
   /** Why the step opened as it did (came from a server's scan, an item's Move): one plain line above the choices. */
   startNote?: string;
   rechecking?: boolean;
+  /** The Coolify team the owner picked on the connect screen (several teams): its servers and projects are listed first. */
+  teamScope?: TeamScope | null;
+  /** The owner asked to see every Coolify team: nothing is narrowed. */
+  showAllTeams?: boolean;
+  onShowAllTeams?: (showAll: boolean) => void;
 }) {
   const t = useT();
-  const hosts = useMemo(() => sourceHostRows(plan), [plan]);
-  const projects = useMemo(() => sourceProjectRows(plan), [plan]);
+  const filter = teamScope && !showAllTeams ? teamScope : null;
+  const hosts = useMemo(() => sourceHostRows(plan).filter((h) => !filter || filter.hosts.has(h.ref)), [plan, filter]);
+  const projects = useMemo(() => sourceProjectRows(plan).filter((p) => !filter || filter.projects.has(p.ref)), [plan, filter]);
   const teamIds = useMemo(() => [...new Set(servers.map((s) => s.teamId))], [servers]);
-  const [sel, setSel] = useState<ScopeSelection>(() => initial ?? autoSelection(plan));
+  const [rawSel, setSel] = useState<ScopeSelection>(() => initial ?? autoSelection(plan, filter?.hosts));
+  // While a team filter is on, only that team's servers and projects count, and "Everything" is everything of that team: the scope,
+  // the placement rows and the run all follow this selection, so a hidden row can never move by accident.
+  const sel = useMemo<ScopeSelection>(() => {
+    if (!filter) return rawSel.everythingOf ? { ...rawSel, everythingOf: undefined } : rawSel;
+    return {
+      ...rawSel,
+      hosts: new Set([...rawSel.hosts].filter((r) => filter.hosts.has(r))),
+      projects: new Set([...rawSel.projects].filter((r) => filter.projects.has(r))),
+      everythingOf: rawSel.mode === "everything" ? [...filter.projects] : undefined,
+    };
+  }, [rawSel, filter]);
   useEffect(() => {
-    onSelectionChange?.(sel);
-  }, [sel, onSelectionChange]);
+    onSelectionChange?.(rawSel);
+  }, [rawSel, onSelectionChange]);
 
   // A Coolify move may land on servers of several teams (one Coolify, many teams here): the hub makes one campaign per team, so the team is
   // not asked and every server the person can write to is a target. Any other source is one run, and a run belongs to one team.
@@ -90,7 +114,7 @@ export function ImportScopeStep({
     ? teamIds.length === 1 ? teamIds[0] : ""
     : sel.teamId && teamIds.includes(sel.teamId)
       ? sel.teamId
-      : servers.find((s) => s.id === Object.values(sel.placement)[0])?.teamId ?? defaultTeamId(plan, servers, teams);
+      : servers.find((s) => s.id === Object.values(sel.placement)[0])?.teamId ?? defaultTeamId(plan, servers, teams, filter?.hosts);
   const teamServers = useMemo(() => (multiTeamOk ? servers : servers.filter((s) => s.teamId === teamId)), [servers, teamId, multiTeamOk]);
   const allowed = useMemo(() => new Set(teamServers.map((s) => s.id)), [teamServers]);
 
@@ -136,6 +160,7 @@ export function ImportScopeStep({
   };
   const addServerHref = (name: string) => `/servers/new?name=${encodeURIComponent(name)}${teamId ? `&team=${encodeURIComponent(teamId)}` : ""}`;
 
+  const hiddenCount = filter ? (sel.mode === "servers" ? filter.hiddenHosts : filter.hiddenProjects) : 0;
   const MODES: Array<{ mode: ScopeMode; show: boolean }> = [
     { mode: "servers", show: hosts.length > 0 },
     { mode: "projects", show: projects.length > 0 },
@@ -166,6 +191,7 @@ export function ImportScopeStep({
         style={{ padding: 20, marginBottom: 0 }}
       >
         {startNote && <p data-testid="scope-note" role="note" style={{ fontSize: 12, color: "var(--c-tx2)", margin: "0 0 10px" }}>{startNote}</p>}
+        <TeamFilterToggle scope={teamScope} showAll={showAllTeams} hidden={hiddenCount} onChange={(v) => onShowAllTeams?.(v)} />
         <div role="radiogroup" aria-label={t("import.scope.title")} style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 16 }}>
           {MODES.filter((m) => m.show).map(({ mode }) => {
             const checked = sel.mode === mode;
@@ -179,7 +205,7 @@ export function ImportScopeStep({
                 style={{ flex: "1 1 180px", textAlign: "left", fontFamily: "inherit", minHeight: 44, padding: "10px 14px", borderRadius: "var(--r1)", cursor: "pointer", border: "1px solid var(--c-bd)", background: checked ? "var(--c-a)" : "var(--c-el)", color: checked ? "var(--c-on-a)" : "var(--c-tx)" }}
               >
                 <span style={{ display: "block", fontSize: 14, fontWeight: 600 }}>{t(`import.scope.mode.${mode}`)}</span>
-                <span style={{ display: "block", fontSize: 12, opacity: 0.85 }}>{t(`import.scope.mode.${mode}Hint`)}</span>
+                <span style={{ display: "block", fontSize: 12, opacity: 0.85 }}>{mode === "everything" && filter ? t("import.scope.mode.everythingTeamHint", { team: filter.teamName }) : t(`import.scope.mode.${mode}Hint`)}</span>
               </button>
             );
           })}
@@ -199,6 +225,7 @@ export function ImportScopeStep({
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
               {hosts.map((h) => {
                 const m = hostTugra(plan, h.ref);
+                const mine = ownerTugra(plan, h.ref);
                 const cp = isControlPlaneHost(plan, h.ref);
                 return (
                   <label key={h.ref} style={row}>
@@ -207,7 +234,7 @@ export function ImportScopeStep({
                       <span style={{ display: "block", fontSize: 14, fontWeight: 600, overflowWrap: "anywhere" }}>{hostLabel(h.ref, h.name)}</span>
                       <span style={{ display: "block", fontSize: 12, color: "var(--c-tx3)" }}>{countsText(h)}</span>
                       <span style={{ display: "block", fontSize: 12, color: m ? "var(--c-g)" : "var(--c-tx3)" }}>
-                        {m ? t(m.confidence === "certain" ? "import.scope.match.connected" : "import.scope.match.probable", { name: m.name }) : t("import.scope.match.none")}
+                        {m ? (mine ? t("import.scope.match.confirmedByYou", { name: m.name }) : t(m.confidence === "certain" ? "import.scope.match.connected" : "import.scope.match.probable", { name: m.name })) : ownerSaidNotSame(plan, h.ref) ? t("import.scope.match.notSameByYou") : t("import.scope.match.none")}
                         {cp ? ` · ${t("import.scope.controlPlane")}` : ""}
                       </span>
                     </span>
@@ -275,6 +302,7 @@ export function ImportScopeStep({
                   const block = inPlaceBlock(plan, h.ref);
                   const target = targetOf(plan, sel, h.ref, allowed);
                   const kind = target ? placementKindOf(plan, h.ref, target) : null;
+                  const confirmed = !!m && !!ownerTugra(plan, h.ref) && target === m.serverId;
                   const matched = m ? serverById.get(m.serverId) : undefined;
                   const matchedState = matched ? serverReadiness(matched) : "ready";
                   const name = hostLabel(h.ref, h.name);
@@ -297,6 +325,7 @@ export function ImportScopeStep({
                           return tid === "" ? options : <optgroup key={tid} label={teamName(tid) || tid}>{options}</optgroup>;
                         })}
                       </select>
+                      {confirmed && <p style={{ ...note, color: "var(--c-g)" }}>{t("import.scope.confirmedMachine")}</p>}
                       {kind === "in-place" && <p style={{ ...note, color: "var(--c-tx2)" }}><strong>{t("import.scope.kind.inPlaceTitle")}</strong> {t("import.scope.kind.inPlace")}</p>}
                       {kind === "other-server" && <p style={{ ...note, color: "var(--c-tx2)" }}><strong>{t("import.scope.kind.otherTitle")}</strong> {t("import.scope.kind.other")}</p>}
                       {block === "control-plane" && <p role="status" style={{ ...note, color: "var(--c-am)" }}>{t("import.scope.block.controlPlane")}</p>}
@@ -312,7 +341,7 @@ export function ImportScopeStep({
                       )}
                       {!m && (
                         <p style={note}>
-                          {t("import.scope.match.none")}{" · "}
+                          {ownerSaidNotSame(plan, h.ref) ? t("import.scope.match.notSameByYou") : t("import.scope.match.none")}{" · "}
                           <a href={addServerHref(name)} target="_blank" rel="noopener noreferrer" style={{ color: "var(--c-lapis)" }}>{t("import.scope.addServer")}</a>
                         </p>
                       )}

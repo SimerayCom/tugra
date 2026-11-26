@@ -36,4 +36,13 @@ describe("import resume", () => {
     clearImportResume();
     expect(loadImportResume()).toBeNull();
   });
+
+  it("keeps whether every Coolify team is shown and whether the match step was finished", () => {
+    saveImportResume({ kind: "coolify", baseUrl: "", sessionId: SID, dbModes: {}, allTeams: true, matched: true });
+    expect(loadImportResume()).toMatchObject({ allTeams: true, matched: true });
+    saveImportResume({ kind: "coolify", baseUrl: "", sessionId: SID, dbModes: {} });
+    const r = loadImportResume()!;
+    expect(r.allTeams).toBeUndefined();
+    expect(r.matched).toBeUndefined();
+  });
 });

@@ -12,6 +12,10 @@ export interface ImportResume {
   sessionId: string;
   selection?: ScopeSelection;
   dbModes: Record<string, "volume">;
+  /** The owner chose to see every Coolify team (a picked team otherwise narrows the lists). */
+  allTeams?: boolean;
+  /** The agent path's match step was finished: a refresh then resumes after it, so the owner is not asked the same question twice. */
+  matched?: boolean;
 }
 
 /** An address that is safe to keep: http(s), no credentials in it. */
@@ -23,7 +27,7 @@ export function saveImportResume(r: ImportResume, store: Pick<Storage, "setItem"
     if (!SESSION_ID_RE.test(r.sessionId)) return;
     store.setItem(
       IMPORT_RESUME_KEY,
-      JSON.stringify({ v: 1, kind: r.kind, baseUrl: keepableUrl(r.baseUrl) ? r.baseUrl : "", sessionId: r.sessionId, selection: r.selection ? serializeSelection(r.selection) : undefined, dbModes: r.dbModes }),
+      JSON.stringify({ v: 1, kind: r.kind, baseUrl: keepableUrl(r.baseUrl) ? r.baseUrl : "", sessionId: r.sessionId, selection: r.selection ? serializeSelection(r.selection) : undefined, dbModes: r.dbModes, ...(r.allTeams ? { allTeams: true } : {}), ...(r.matched ? { matched: true } : {}) }),
     );
   } catch {
     /* storage unavailable or full: the wizard just does not resume */
@@ -42,7 +46,7 @@ export function loadImportResume(store: Pick<Storage, "getItem"> = window.sessio
     }
     const baseUrl = typeof o.baseUrl === "string" && keepableUrl(o.baseUrl) ? o.baseUrl : "";
     const selection = typeof o.selection === "string" ? restoreSelection(o.selection) : undefined;
-    return { kind: o.kind, baseUrl, sessionId: o.sessionId, ...(selection ? { selection } : {}), dbModes: modes };
+    return { kind: o.kind, baseUrl, sessionId: o.sessionId, ...(selection ? { selection } : {}), dbModes: modes, ...(o.allTeams === true ? { allTeams: true } : {}), ...(o.matched === true ? { matched: true } : {}) };
   } catch {
     return null;
   }

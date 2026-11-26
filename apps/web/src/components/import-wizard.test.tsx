@@ -699,6 +699,93 @@ describe("ImportWizard", () => {
       expect(screen.queryByText("Match servers")).toBeNull();
     });
 
+    describe("a refresh on the agent path", () => {
+      const SID = "sess-0123456789";
+      const olgu = { ref: "1", name: "Olgu" };
+      const other = { ref: "2", name: "Other" };
+      const teamPlan = (): ImportPlan => ({
+        ...plan,
+        items: [
+          { itemRef: "app:edge:web", kind: "app", name: "web-app", proposed: {}, risks: [], dependsOn: [] },
+          { itemRef: "app:lab:api", kind: "app", name: "api-app", proposed: {}, risks: [], dependsOn: [] },
+        ],
+        preflight: {
+          databases: [],
+          services: [],
+          agentRead: READ,
+          sourceTeamRef: "1",
+          hosts: [
+            { ref: "local", name: "localhost", controlPlane: true, team: olgu, tugra: { serverId: "srv1", name: "Server A", teamId: "t1", via: "public-ip", confidence: "certain" }, match: { status: "certain", linkedBy: "auto", evidence: [{ kind: "machine_id", equal: true }] }, agentOnline: true },
+            { ref: "edge", name: "edge", team: olgu, match: { status: "ambiguous", linkedBy: null, evidence: [{ kind: "hostname", equal: true }] } },
+            { ref: "lab", name: "lab-box", team: other, match: { status: "ambiguous", linkedBy: null, evidence: [{ kind: "hostname", equal: true }] } },
+          ],
+          projects: [
+            { ref: "p1", name: "Web", itemRefs: ["app:edge:web"], team: olgu },
+            { ref: "p2", name: "Lab", itemRefs: ["app:lab:api"], team: other },
+          ],
+        },
+        mapping: { features: ["mapping-v1"], stored: null, storedVersion: null, scopeKey: "team-3" },
+      }) as unknown as ImportPlan;
+      const keep = (extra: Record<string, unknown> = {}) => window.sessionStorage.setItem("tugra.import.resume", JSON.stringify({ v: 1, kind: "coolify", baseUrl: "", sessionId: SID, dbModes: {}, ...extra }));
+
+      it("resumes on the match step with a one-line note that can be dismissed, and the note is gone after Start over", async () => {
+        keep();
+        vi.spyOn(api, "importPlan").mockResolvedValue(teamPlan());
+        vi.spyOn(api, "importRevoke").mockResolvedValue({ ok: true });
+        wrap(<ImportWizard />);
+        await screen.findByText("Match servers");
+        expect(screen.getByTestId("resume-note").textContent).toContain("Picked up where you left off. Start over to begin again.");
+        fireEvent.click(screen.getByRole("button", { name: "Dismiss this note" }));
+        expect(screen.queryByTestId("resume-note")).toBeNull();
+      });
+
+      it("a fresh connect shows no resume note", async () => {
+        vi.spyOn(api, "importConnectAgent").mockResolvedValue({ sessionId: SID, expiresAt: "2026-01-01T00:00:00.000Z", read: READ } as never);
+        vi.spyOn(api, "importPlan").mockResolvedValue(teamPlan());
+        wrap(<ImportWizard />);
+        await screen.findByLabelText("Coolify URL");
+        await waitFor(() => expect(qc.getQueryData(["teams"])).toBeTruthy());
+        fireEvent.click(screen.getByRole("button", { name: "Connect through the agent (recommended)" }));
+        fireEvent.change(await screen.findByLabelText("Tugra server where Coolify runs"), { target: { value: "srv1" } });
+        await waitFor(() => expect((screen.getByRole("button", { name: "Read Coolify" }) as HTMLButtonElement).disabled).toBe(false));
+        fireEvent.click(screen.getByRole("button", { name: "Read Coolify" }));
+        await screen.findByText("Found in Coolify");
+        fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+        await screen.findByText("Match servers");
+        expect(screen.queryByTestId("resume-note")).toBeNull();
+      });
+
+      it("a finished match step is not asked again: the refresh resumes on the first step, with the note", async () => {
+        keep({ matched: true });
+        vi.spyOn(api, "importPlan").mockResolvedValue(teamPlan());
+        wrap(<ImportWizard />);
+        await screen.findByText("What are you moving?");
+        expect(screen.queryByText("Match servers")).toBeNull();
+        expect(screen.getByTestId("resume-note")).toBeTruthy();
+      });
+
+      it("the picked Coolify team narrows the match step, the toggle opens every team, and that choice survives a refresh", async () => {
+        keep();
+        vi.spyOn(api, "importPlan").mockResolvedValue(teamPlan());
+        wrap(<ImportWizard />);
+        await screen.findByText("Match servers");
+        expect(screen.getByTestId("match-edge")).toBeTruthy();
+        expect(screen.queryByTestId("match-lab")).toBeNull();
+        fireEvent.click(screen.getByRole("button", { name: "Show all teams (1 more)" }));
+        expect(screen.getByTestId("match-lab")).toBeTruthy();
+        await waitFor(() => expect(JSON.parse(window.sessionStorage.getItem("tugra.import.resume")!).allTeams).toBe(true));
+      });
+
+      it("keeps the first step narrowed to the picked team after the match step", async () => {
+        keep({ matched: true });
+        vi.spyOn(api, "importPlan").mockResolvedValue(teamPlan());
+        wrap(<ImportWizard />);
+        await screen.findByText("What are you moving?");
+        expect(screen.getByText("Showing the servers and projects of Olgu.")).toBeTruthy();
+        expect(screen.queryByRole("checkbox", { name: /lab-box/ })).toBeNull();
+      });
+    });
+
     describe("Take over in place from the checklist (a session made already)", () => {
       const inPlacePlan = (): ImportPlan => ({
         ...plan,
