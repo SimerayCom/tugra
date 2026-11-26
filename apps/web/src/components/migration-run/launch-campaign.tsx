@@ -2,7 +2,9 @@
 
 import { useT } from "../../i18n/provider";
 import type { CampaignPreview } from "../../lib/api";
-import { placementFailureKey, runsByWave, sourcesOfRun } from "../../lib/campaign";
+import { placementFailureKey, rebuildChoicesOf, runsByWave, sourcesOfRun } from "../../lib/campaign";
+import { toggleChoice } from "../../lib/inplace";
+import type { ImportPlanItem } from "../../lib/types";
 import { UNKNOWN_SOURCE_HOST, type SourceServerRow } from "../../lib/migration-run";
 
 /**
@@ -15,12 +17,24 @@ export function CampaignPreviewCard({
   failed,
   rows,
   servers,
+  items = [],
+  inScope,
+  rebuild = [],
+  onRebuild,
+  disabled = false,
 }: {
   preview: CampaignPreview | null;
   loading: boolean;
   failed: boolean;
   rows: SourceServerRow[];
   servers: Array<{ id: string; name: string }>;
+  /** The plan's items: the apps of a same-machine run are offered for a rebuild (absent = no picker). */
+  items?: ReadonlyArray<Pick<ImportPlanItem, "itemRef" | "kind" | "name">>;
+  inScope?: ReadonlySet<string>;
+  /** The apps the owner chose to build with Tugra and verify (plan item refs). */
+  rebuild?: readonly string[];
+  onRebuild?: (next: string[]) => void;
+  disabled?: boolean;
 }) {
   const t = useT();
   const nameOfSource = (ref: string): string => {
@@ -49,11 +63,37 @@ export function CampaignPreviewCard({
                 <strong>{t("placement.campaign.wave", { n: w.wave + 1 })}</strong>
                 {": "}
                 {r.kind === "in-place" ? t("placement.campaign.runInPlace", { source: sourcesOfRun(r).map(nameOfSource).join(", ") }) : t("placement.campaign.runOther", { source: sourcesOfRun(r).map(nameOfSource).join(", "), target: nameOfServer(r.targetServerId) })}
+                {r.kind === "in-place" && onRebuild && (
+                  <RebuildPicker choices={rebuildChoicesOf(r, items, inScope)} chosen={rebuild} onChange={onRebuild} disabled={disabled} serverName={sourcesOfRun(r).map(nameOfSource).join(", ")} />
+                )}
               </li>
             )),
           )}
         </ol>
       )}
+    </fieldset>
+  );
+}
+
+/**
+ * The per-app choice of an in-place wave: by default every app reuses the image Coolify built and nothing is built; ticking an app builds it
+ * with Tugra and verifies it before the ports are taken. Large touch targets, one column on a phone.
+ */
+export function RebuildPicker({ choices, chosen, onChange, disabled, serverName }: { choices: ReadonlyArray<{ itemRef: string; name: string }>; chosen: readonly string[]; onChange: (next: string[]) => void; disabled: boolean; serverName: string }) {
+  const t = useT();
+  const mine = choices.filter((c) => chosen.includes(c.itemRef)).length;
+  return (
+    <fieldset data-testid="rebuild-picker" aria-label={`${t("placement.campaign.rebuild.title")}: ${serverName}`} style={{ border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: 10, margin: "6px 0 0", display: "flex", flexDirection: "column", gap: 4, minWidth: 0 }}>
+      <legend style={{ fontSize: 12, fontWeight: 600, padding: "0 6px" }}>{t("placement.campaign.rebuild.title")}</legend>
+      <p style={{ margin: 0, fontSize: 11, color: "var(--c-tx3)", lineHeight: 1.5 }}>{t("placement.campaign.rebuild.hint")}</p>
+      {choices.length === 0 && <p style={{ margin: 0, fontSize: 12, color: "var(--c-tx3)" }}>{t("placement.campaign.rebuild.none")}</p>}
+      {choices.map((c) => (
+        <label key={c.itemRef} style={{ display: "flex", gap: 10, alignItems: "center", minHeight: 44, fontSize: 13, overflowWrap: "anywhere" }}>
+          <input type="checkbox" checked={chosen.includes(c.itemRef)} onChange={() => onChange(toggleChoice(chosen, c.itemRef))} disabled={disabled} style={{ width: 20, height: 20, flexShrink: 0 }} />
+          <span>{t("placement.campaign.rebuild.option", { name: c.name })}</span>
+        </label>
+      ))}
+      {choices.length > 0 && <p data-testid="rebuild-summary" style={{ margin: 0, fontSize: 11, color: "var(--c-tx3)" }}>{mine > 0 ? t("placement.campaign.rebuild.chosen", { count: mine }) : t("placement.campaign.rebuild.default")}</p>}
     </fieldset>
   );
 }

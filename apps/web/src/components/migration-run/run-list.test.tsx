@@ -80,3 +80,12 @@ describe("RunList campaign roll-up", () => {
     await waitFor(() => expect(screen.getByText(/At least 200 runs/)).toBeTruthy());
   });
 });
+
+describe("RunList in-place badge", () => {
+  it("marks a run that takes a server over in place, and only that one", async () => {
+    vi.spyOn(api, "listMigrationRuns").mockResolvedValue([{ ...row("ip", "RUNNING", null), inPlace: true }, { ...row("cp", "RUNNING", null), inPlace: false }]);
+    wrap();
+    await waitFor(() => expect(screen.getAllByTestId("in-place-badge")).toHaveLength(1));
+    expect(screen.getByTestId("in-place-badge").textContent).toBe("In place");
+  });
+});

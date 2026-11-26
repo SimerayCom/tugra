@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
-import { api } from "./api";
+import { api, ApiError } from "./api";
 
 function jsonRes(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
@@ -62,5 +62,27 @@ describe("campaign and in-place takeover api client", () => {
     expect(calls[6].body).toEqual({ confirm: "olgu-box" });
     expect(calls[3].body).toBeUndefined();
     expect(calls[5].body).toBeUndefined();
+  });
+});
+
+describe("run in-place api client", () => {
+  afterEach(() => vi.unstubAllGlobals());
+  it("reads the takeover a run carries from its own route", async () => {
+    const seen: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => (seen.push(String(url)), jsonRes(200, { id: "tk1", status: "TESTING", items: [] }))));
+    expect(await api.getRunInPlace("run/1")).toMatchObject({ id: "tk1" });
+    expect(seen).toEqual(["/api/v1/coolify-inplace/run/run%2F1"]);
+  });
+  it("a run with no takeover yet is null, any other failure is still an error", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => jsonRes(404, { message: "takeover-not-found" })));
+    expect(await api.getRunInPlace("r1")).toBeNull();
+    vi.stubGlobal("fetch", vi.fn(async () => jsonRes(500, { message: "boom" })));
+    await expect(api.getRunInPlace("r1")).rejects.toBeInstanceOf(ApiError);
+  });
+  it("sends the rebuild list with the campaign plan", async () => {
+    const bodies: unknown[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (_u: string, init?: RequestInit) => (bodies.push(JSON.parse(String(init?.body))), jsonRes(200, {}))));
+    await api.planCampaign({ sessionId: "s1", planHash: "a".repeat(32), placements: [], rebuild: ["app:a:web"] });
+    expect(bodies[0]).toMatchObject({ rebuild: ["app:a:web"] });
   });
 });

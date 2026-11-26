@@ -34,7 +34,7 @@ function RunCard({ row }: { row: CampaignRunRow }) {
           <RunStatusPill status={row.status} />
         </div>
         <div style={{ marginTop: 6, display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
-          <ModeBadges mode={row.mode} topology={row.topology} dryRun={row.dryRun} />
+          <ModeBadges mode={row.mode} topology={row.topology} dryRun={row.dryRun} inPlace={row.inPlace} />
           <span style={{ fontSize: 12, color: "var(--c-tx3)" }}>{row.currentStep ? t(STEP_TITLE_KEY[row.currentStep]) : t(NEXT_KIND_KEY.none)} · {relativeTime(row.createdAt)}</span>
         </div>
         <div style={{ marginTop: 6, fontSize: 12, color: "var(--c-tx2)", lineHeight: 1.6 }}>

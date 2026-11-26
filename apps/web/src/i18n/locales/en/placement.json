@@ -27,7 +27,15 @@
     "unreadable": "The placement could not be checked. Try again.",
     "runInPlace": "{source} stays on its own machine. Nothing is copied or rebuilt: Tugra starts the images Coolify already built, checks every domain on a temporary address, then takes the ports and gets new certificates. Giving it back to Coolify is one click.",
     "runOther": "{source} moves to {target} (data is copied, then the address is switched).",
-    "create": "Create campaign ({count} runs)"
+    "create": "Create campaign ({count} runs)",
+    "rebuild": {
+      "title": "Rebuild with Tugra and verify (optional)",
+      "hint": "By default Tugra starts the image Coolify already built and nothing is built. Tick an app to build it with Tugra instead: the build must succeed and the app must answer like Coolify's copy before the ports are taken. An app that shares data with Coolify's copy keeps Coolify's image.",
+      "none": "This server has no apps to rebuild.",
+      "option": "Rebuild {name} with Tugra and verify",
+      "chosen": "{count} to rebuild, the rest reuse Coolify's image.",
+      "default": "None chosen: every app reuses Coolify's image."
+    }
   },
   "failure": {
     "placement_empty": "Pick at least one source server.",
@@ -40,6 +48,8 @@
     "placement_target_not_ready": "The chosen server is offline, has no agent connected or cannot deploy.",
     "placement_other_is_source_host": "That is the machine the source server already runs on. Choose \"same machine\" or another server.",
     "placement_teams_differ": "All the servers must belong to one team.",
+    "placement_rebuild_not_in_place": "An app chosen for a rebuild is on a server that is copied to another server. Only apps of servers that stay on their own machine can be rebuilt in place.",
+    "placement_rebuild_unknown_item": "An app chosen for a rebuild is not in the plan any more. Read the source again.",
     "unknown": "This placement was refused."
   }
 }

@@ -1,0 +1,54 @@
+{
+  "title": "Taken over in place",
+  "subtitle": "This run does not copy data. Tugra starts next to Coolify on the same machine, checks every site, then takes the ports.",
+  "badge": "In place",
+  "badgeHint": "Same machine, no data copy: Coolify stays on the server until you remove it, and giving it back is one click.",
+  "loading": "Reading the takeover...",
+  "none": "The takeover has not been planned yet. It is read from the server when the test step starts; nothing is changed before that.",
+  "unreadable": "The takeover could not be read. Try again.",
+  "stage": {
+    "planned": "Planned",
+    "tested": "Tested beside Coolify",
+    "handedOver": "Ports handed over",
+    "verified": "New certificates"
+  },
+  "stageState": {
+    "done": "done",
+    "current": "now",
+    "todo": "next",
+    "stopped": "stopped"
+  },
+  "rollup": "{apps} apps: {reused} reuse Coolify's image, {rebuilt} rebuilt with Tugra and verified, {rebuilding} still being built, {problems} with a problem, {declined} could not be rebuilt, {skipped} left out.",
+  "databases": "{count} databases are taken over on their own data.",
+  "appsTitle": "What happened to each app",
+  "outcome": {
+    "reused": "Reused the image Coolify built",
+    "rebuilding": "Rebuilding with Tugra, not verified yet",
+    "rebuilt_verified": "Rebuilt with Tugra and verified",
+    "rebuilt_check_failed": "Rebuilt with Tugra, but a domain does not answer like Coolify's copy",
+    "rebuild_failed": "The rebuild with Tugra failed, so the app is left out",
+    "rebuild_declined": "Rebuild asked for, but it shares data with Coolify's copy, so it reuses the image",
+    "skipped": "Left out of the takeover",
+    "database": "Database, taken over on its own data"
+  },
+  "domains": "{ok} of {total} domains answer like Coolify's copy",
+  "stepNote": {
+    "DEPLOY_DARK": {
+      "planned": "In place: the takeover is planned from what Coolify runs. Nothing was changed.",
+      "tested": "In place: Tugra's proxy runs with no public port and every site was checked on it.",
+      "done": "In place: the test beside Coolify passed.",
+      "gaveBack": "In place: Tugra stopped and Coolify serves the sites as before.",
+      "failed": "In place: the test did not finish. Coolify still serves the sites."
+    },
+    "VERIFY": {
+      "review": "In place: review the test, then approve to take the ports."
+    },
+    "CUTOVER": {
+      "swapping": "In place: handing the ports over. This takes a minute.",
+      "swapped": "In place: Tugra serves the sites. It is getting a new certificate for each domain.",
+      "verified": "In place: every site works and has a new certificate.",
+      "gaveBack": "In place: given back, Coolify serves the sites again.",
+      "failed": "In place: the switch did not finish and was put back."
+    }
+  }
+}

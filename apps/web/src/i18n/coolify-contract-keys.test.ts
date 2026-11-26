@@ -32,7 +32,7 @@ import { translate } from "./translate";
 const text = (key: string): unknown => translate(en as Record<string, unknown>, key);
 const present = (prefix: string, names: readonly string[]) => names.filter((n) => text(`${prefix}.${n}`) === `${prefix}.${n}`);
 
-const NAMESPACES = ["coolifyAgent", "coolifySecrets", "coolifyInstall", "hostMatch", "placement", "coolifyInPlace", "coolifyCleanup", "projectMove"] as const;
+const NAMESPACES = ["coolifyAgent", "coolifySecrets", "coolifyInstall", "hostMatch", "placement", "coolifyInPlace", "inPlaceRun", "coolifyCleanup", "projectMove"] as const;
 
 /** The strings each takeover lane's screens will use, for every code the hub and the agent can answer with. A new code without a line fails here. */
 describe("Coolify takeover i18n contract", () => {
@@ -62,6 +62,14 @@ describe("Coolify takeover i18n contract", () => {
     expect(present("coolifyInPlace.check", ["pending", "ok", "failed"])).toEqual([]);
     expect(present("coolifyInPlace.action", ["plan", "test", "swap", "verify", "giveBack"])).toEqual([]);
     expect(present("placement.failure", PLACEMENT_FAILURE_CODES)).toEqual([]);
+    // the in-place run view: every outcome, stage, stage state and step note the screen can show
+    expect(present("inPlaceRun.outcome", ["reused", "rebuilding", "rebuilt_verified", "rebuilt_check_failed", "rebuild_failed", "rebuild_declined", "skipped", "database"])).toEqual([]);
+    expect(present("inPlaceRun.stage", ["planned", "tested", "handedOver", "verified"])).toEqual([]);
+    expect(present("inPlaceRun.stageState", ["done", "current", "todo", "stopped"])).toEqual([]);
+    expect(present("inPlaceRun.stepNote.DEPLOY_DARK", ["planned", "tested", "done", "gaveBack", "failed"])).toEqual([]);
+    expect(present("inPlaceRun.stepNote.VERIFY", ["review"])).toEqual([]);
+    expect(present("inPlaceRun.stepNote.CUTOVER", ["swapping", "swapped", "verified", "gaveBack", "failed"])).toEqual([]);
+    expect(present("placement.campaign.rebuild", ["title", "hint", "none", "option", "chosen", "default"])).toEqual([]);
     expect(present("coolifyCleanup.status", CLEANUP_STATUSES)).toEqual([]);
     expect(present("coolifyCleanup.kind", COMPLETENESS_KINDS)).toEqual([]);
     expect(present("coolifyCleanup.remnant", REMNANT_KINDS)).toEqual([]);

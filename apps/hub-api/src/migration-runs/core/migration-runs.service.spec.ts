@@ -55,6 +55,11 @@ describe("create", () => {
     // a run without a choice stores no list: the default is "reuse the image, build nothing"
     const plain = await w.service.create(ACTOR, w.createBody({ topology: "swap-proxy", mode: "takeover", dryRun: true }), { inPlace: true });
     expect(w.store.row(plain.id).options).not.toHaveProperty("rebuild");
+    // the list marks the in-place run too, and a copy run is not marked
+    const copy = await w.service.create(ACTOR, w.createBody({ dryRun: true }));
+    const list = await w.service.list(ACTOR, { limit: 10 });
+    expect(Object.fromEntries(list.map((r) => [r.id, r.inPlace]))).toEqual({ [v.id]: true, [plain.id]: true, [copy.id]: false });
+    expect(copy.inPlace).toBe(false);
   });
 
   it("a rebuild choice on a run that is not in place is refused before anything is written", async () => {

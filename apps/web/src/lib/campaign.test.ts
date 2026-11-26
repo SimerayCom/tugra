@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { campaignBody, needsCampaign, placementFailureKey, placementsOf, runsByWave, sourcesOfRun } from "./campaign";
+import { campaignBody, needsCampaign, placementFailureKey, placementsOf, pruneRebuild, rebuildChoicesOf, runsByWave, sourcesOfRun } from "./campaign";
 import type { MigrationRunCreateInput } from "./types";
 
 describe("placementsOf", () => {
@@ -85,5 +85,41 @@ describe("runs and failures", () => {
   it("a known refusal has its own line and an unknown one a generic line", () => {
     expect(placementFailureKey("placement_target_not_ready")).toBe("placement.failure.placement_target_not_ready");
     expect(placementFailureKey("something_new")).toBe("placement.failure.unknown");
+  });
+});
+
+describe("rebuild choice", () => {
+  const items = [
+    { itemRef: "app:a:web", kind: "app" as const, name: "web" },
+    { itemRef: "app:a:blog", kind: "app" as const, name: "blog" },
+    { itemRef: "database:a:pg", kind: "database" as const, name: "pg" },
+    { itemRef: "service:a:stack", kind: "service" as const, name: "stack" },
+    { itemRef: "app:b:api", kind: "app" as const, name: "api" },
+  ];
+  const inPlace = { sourceServerRef: "a", kind: "in-place" as const, targetServerId: "t1", topology: "swap-proxy" as const, wave: 1 };
+  const other = { sourceServerRef: "b", kind: "other-server" as const, targetServerId: "t2", topology: "two-box" as const, wave: 0 };
+
+  it("offers the apps of the same-machine run only", () => {
+    expect(rebuildChoicesOf(inPlace, items)).toEqual([{ itemRef: "app:a:web", name: "web" }, { itemRef: "app:a:blog", name: "blog" }]);
+    expect(rebuildChoicesOf(other, items)).toEqual([]);
+  });
+  it("keeps to the apps in scope", () => {
+    expect(rebuildChoicesOf(inPlace, items, new Set(["app:a:blog"]))).toEqual([{ itemRef: "app:a:blog", name: "blog" }]);
+  });
+  it("prunes a choice no same-machine run offers any more (never sends one the hub would refuse)", () => {
+    expect(pruneRebuild(["app:a:web", "app:b:api", "app:a:ghost"], [other, inPlace], items)).toEqual(["app:a:web"]);
+    expect(pruneRebuild(["app:a:web"], null, items)).toEqual([]);
+    expect(pruneRebuild(["app:a:web"], [other], items)).toEqual([]);
+  });
+  it("the campaign body carries the choice once, and nothing when none", () => {
+    const run = { sessionId: "s1", planHash: "h".repeat(32), mode: "copy" } as never;
+    const pl = [{ sourceServerRef: "a", kind: "in-place" as const, targetServerId: "t1" }];
+    expect(campaignBody(run, pl, ["app:a:web", "app:a:web", "app:a:blog"]).rebuild).toEqual(["app:a:web", "app:a:blog"]);
+    expect(campaignBody(run, pl)).not.toHaveProperty("rebuild");
+    expect(campaignBody(run, pl, [])).not.toHaveProperty("rebuild");
+  });
+  it("the new refusals have a line of their own", () => {
+    expect(placementFailureKey("placement_rebuild_not_in_place")).toBe("placement.failure.placement_rebuild_not_in_place");
+    expect(placementFailureKey("placement_rebuild_unknown_item")).toBe("placement.failure.placement_rebuild_unknown_item");
   });
 });

@@ -439,6 +439,83 @@ describe("a mixed placement is a campaign", () => {
     await waitFor(() => expect(push).toHaveBeenCalledWith("/import/runs/campaign?c=campaign-x"));
   });
 
+  describe("rebuild with Tugra and verify", () => {
+    const whole2 = { ...whole, items: [...whole.items, item("app:s1:blog", "app"), item("database:s1:pg", "database"), item("app:s2:copyme", "app")] } as unknown as ImportPlan;
+    const scope2: ImportScope = { ...mixed, inScope: new Set(["app:s1:web", "app:s1:blog", "database:s1:pg", "app:s2:api", "app:s2:copyme"]) };
+    const planOk = () => vi.spyOn(api, "planCampaign").mockResolvedValue({ planHash: "a".repeat(32), views: [], runs, failure: null });
+    const created = { id: "c1", label: "campaign-x", sessionId: "s1", status: "draft" as const, plan: runs, runIds: ["r1", "r2"], createdAt: "2026-11-26T10:00:00Z" };
+
+    it("offers the apps of the same-machine wave only: nothing for the copied wave, no database, nothing ticked by default", async () => {
+      planOk();
+      mount({ plan: whole2, scope: scope2 });
+      const dialog = await open();
+      const picker = await within(dialog).findByTestId("rebuild-picker");
+      expect(within(dialog).getAllByTestId("rebuild-picker")).toHaveLength(1);
+      const boxes = within(picker).getAllByRole("checkbox") as HTMLInputElement[];
+      expect(boxes.map((b) => b.closest("label")?.textContent)).toEqual(["Rebuild app:s1:web with Tugra and verify", "Rebuild app:s1:blog with Tugra and verify"]);
+      expect(boxes.every((b) => !b.checked)).toBe(true);
+      expect(within(picker).getByTestId("rebuild-summary").textContent).toBe("None chosen: every app reuses Coolify's image.");
+    });
+
+    it("sends the chosen apps with the campaign, and nothing when none is chosen", async () => {
+      planOk();
+      const createCampaign = vi.spyOn(api, "createCampaign").mockResolvedValue(created);
+      mount({ plan: whole2, scope: scope2 });
+      let dialog = await open();
+      await within(dialog).findByTestId("rebuild-picker");
+      fireEvent.click(within(dialog).getByRole("button", { name: "Create campaign (2 runs)" }));
+      await waitFor(() => expect(createCampaign).toHaveBeenCalledTimes(1));
+      expect(createCampaign.mock.calls[0][0]).not.toHaveProperty("rebuild");
+      cleanup();
+      mount({ plan: whole2, scope: scope2 });
+      dialog = await open();
+      const picker = await within(dialog).findByTestId("rebuild-picker");
+      fireEvent.click(within(picker).getByRole("checkbox", { name: "Rebuild app:s1:blog with Tugra and verify" }));
+      expect(within(picker).getByTestId("rebuild-summary").textContent).toBe("1 to rebuild, the rest reuse Coolify's image.");
+      fireEvent.click(within(dialog).getByRole("button", { name: "Create campaign (2 runs)" }));
+      await waitFor(() => expect(createCampaign).toHaveBeenCalledTimes(2));
+      expect(createCampaign.mock.calls[1][0]).toMatchObject({ rebuild: ["app:s1:blog"] });
+    });
+
+    it("a choice can be taken back", async () => {
+      planOk();
+      const createCampaign = vi.spyOn(api, "createCampaign").mockResolvedValue(created);
+      mount({ plan: whole2, scope: scope2 });
+      const dialog = await open();
+      const box = await within(dialog).findByRole("checkbox", { name: "Rebuild app:s1:web with Tugra and verify" });
+      fireEvent.click(box);
+      fireEvent.click(box);
+      fireEvent.click(within(dialog).getByRole("button", { name: "Create campaign (2 runs)" }));
+      await waitFor(() => expect(createCampaign).toHaveBeenCalled());
+      expect(createCampaign.mock.calls[0][0]).not.toHaveProperty("rebuild");
+    });
+
+    it("keeps to the apps in scope, and a refused placement shows no picker", async () => {
+      planOk();
+      mount({ plan: whole2, scope: { ...scope2, inScope: new Set(["app:s1:web", "app:s2:api"]) } });
+      let dialog = await open();
+      const picker = await within(dialog).findByTestId("rebuild-picker");
+      expect(within(picker).getAllByRole("checkbox")).toHaveLength(1);
+      cleanup();
+      vi.restoreAllMocks();
+      vi.spyOn(api, "planCampaign").mockResolvedValue({ planHash: "a".repeat(32), views: [], runs: null, failure: { code: "placement_in_place_locked", ref: "s1", reason: "agent_offline" } });
+      mount({ plan: whole2, scope: scope2 });
+      dialog = await open();
+      await within(dialog).findByRole("alert");
+      expect(within(dialog).queryByTestId("rebuild-picker")).toBeNull();
+    });
+
+    it("a plain run (one same-machine server, other-server only, Dokploy) has no picker", async () => {
+      mount({ plan: whole2, scope: { ...mixed, placed: { s1: "srv1" }, placementKind: { s1: "in-place" } } });
+      let dialog = await open();
+      expect(within(dialog).queryByTestId("rebuild-picker")).toBeNull();
+      cleanup();
+      mount({ plan: whole2, scope: mixed, kind: "dokploy" });
+      dialog = await open();
+      expect(within(dialog).queryByTestId("rebuild-picker")).toBeNull();
+    });
+  });
+
   it("a refused placement says why and keeps the create button off", async () => {
     vi.spyOn(api, "planCampaign").mockResolvedValue({ planHash: "a".repeat(32), views: [], runs: null, failure: { code: "placement_in_place_locked", ref: "s1", reason: "agent_offline" } });
     const createCampaign = vi.spyOn(api, "createCampaign");

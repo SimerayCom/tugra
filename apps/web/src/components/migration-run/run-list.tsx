@@ -31,7 +31,7 @@ function RunRow({ r, index, onOpen }: { r: MigrationRunSummary; index: number; o
         <div style={{ flex: "1 1 220px", minWidth: 0 }}>
           <div style={{ fontWeight: 600, wordBreak: "break-word" }}>{source} → {target}{extraTargets > 0 ? ` +${extraTargets}` : ""}</div>
           <div style={{ marginTop: 4, display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
-            <ModeBadges mode={r.mode} topology={r.topology} dryRun={r.dryRun} />
+            <ModeBadges mode={r.mode} topology={r.topology} dryRun={r.dryRun} inPlace={r.inPlace} />
             {r.targetServerCount > 1 && <Badge tone="lapis">{t("migrationRun.list.servers", { count: r.targetServerCount })}</Badge>}
             {r.campaign && <Badge tone="gold">{r.campaign}</Badge>}
             {r.sourceVersion && <Badge>{t("migrationRun.list.version", { version: r.sourceVersion })}</Badge>}

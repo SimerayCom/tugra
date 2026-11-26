@@ -906,6 +906,8 @@ export interface CampaignRunRow {
   mode: MigrationRunMode;
   topology: MigrationRunTopology;
   dryRun: boolean;
+  /** An in-place takeover: the run row shows the badge. */
+  inPlace: boolean;
   sourceHost: string | null;
   /** The target servers' names (the run's report lists them all); the default server alone until the report is loaded. */
   targetNames: string[];
@@ -970,6 +972,7 @@ export function buildCampaignReport(
       mode: r.mode,
       topology: r.topology,
       dryRun: r.dryRun,
+      inPlace: r.inPlace,
       sourceHost: r.sourceHost,
       targetNames: named.length > 0 ? named : [r.targetServerName ?? r.targetServerId],
       targetCount: Math.max(r.targetServerCount, named.length),

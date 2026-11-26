@@ -15,6 +15,7 @@ import { ModeBadges } from "./badges";
 import { DryRunDecision } from "./dry-run-decision";
 import { EventLog } from "./event-log";
 import { HeldWorkersCard } from "./held-workers-card";
+import { InPlaceCard, useRunInPlace } from "./in-place-card";
 import { NextActionCard } from "./next-action-card";
 import { OwnerInputsCard } from "./owner-inputs-card";
 import { ReportCard } from "./report-card";
@@ -64,7 +65,7 @@ export function RunDetail({ id }: { id: string }) {
         status={{ label: t(RUN_STATUS_KEY[run.status]), color: runStatusColor(run.status) }}
         actions={<RunHeaderActions run={run} />}
       >
-        <ModeBadges mode={run.mode} topology={run.topology} dryRun={run.dryRun} />
+        <ModeBadges mode={run.mode} topology={run.topology} dryRun={run.dryRun} inPlace={run.inPlace} />
       </PageHeader>
       <RunBanners run={run} />
       <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
@@ -94,9 +95,11 @@ export function RunDetail({ id }: { id: string }) {
 
 /** The technical view of a run: steps, facts, placement, inputs, safety, recovery, events and the report. */
 function RunBody({ run, events, error, settled, safetyFocus }: { run: MigrationRunView; events: ReturnType<typeof useRunEvents>["events"]; error: ReturnType<typeof useRunEvents>["error"]; settled: boolean; safetyFocus?: number }) {
+  const inPlace = useRunInPlace(run);
   return (
     <div id="mr-run-details" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <StepTimeline run={run} />
+      <InPlaceCard run={run} state={inPlace} />
+      <StepTimeline run={run} inPlaceStatus={inPlace.data?.status ?? null} />
       <RunFacts run={run} />
       <PlacementCard run={run} />
       <HeldWorkersCard run={run} />

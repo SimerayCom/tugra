@@ -72,11 +72,22 @@ export function EvidenceBadge({ kind }: { kind: MigrationRunEvidenceKind }) {
   );
 }
 
-export function ModeBadges({ mode, topology, dryRun }: { mode: MigrationRunMode; topology: MigrationRunTopology; dryRun: boolean }) {
+/** The mark of a run that takes a server over in place (same machine, no data copy). Words, with the explanation as its tooltip. */
+export function InPlaceBadge() {
+  const t = useT();
+  return (
+    <span title={t("inPlaceRun.badgeHint")} data-testid="in-place-badge">
+      <Badge tone="ok">{t("inPlaceRun.badge")}</Badge>
+    </span>
+  );
+}
+
+export function ModeBadges({ mode, topology, dryRun, inPlace = false }: { mode: MigrationRunMode; topology: MigrationRunTopology; dryRun: boolean; inPlace?: boolean }) {
   const t = useT();
   return (
     <span style={{ display: "inline-flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
       {dryRun && <Badge tone="lapis">{t("migrationRun.dryRun")}</Badge>}
+      {inPlace && <InPlaceBadge />}
       <Badge tone={mode === "takeover" ? "warn" : "muted"}>{t(MODE_KEY[mode])}</Badge>
       <Badge>{t(TOPOLOGY_KEY[topology])}</Badge>
     </span>

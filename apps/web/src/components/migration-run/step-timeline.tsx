@@ -24,6 +24,8 @@ import {
 import type { MigrationRunStepView, MigrationRunView } from "../../lib/types";
 import { EvidenceBadge, StepStatusBadge, StepStatusMark } from "./badges";
 import { GateChecks } from "./gate-checks";
+import { stepNoteKey } from "../../lib/inplace-run";
+import type { TakeoverStatus } from "@tugra/shared";
 
 const DRY_COLOR = { block: "var(--c-r)", unknown: "var(--c-am)", warn: "var(--c-am)", info: "var(--c-tx3)" } as const;
 
@@ -35,7 +37,7 @@ function durationSec(s: MigrationRunStepView): number | null {
   return Number.isFinite(d) && d >= 0 ? d : null;
 }
 
-function StepBody({ step }: { step: MigrationRunStepView }) {
+function StepBody({ step, note }: { step: MigrationRunStepView; note: string | null }) {
   const t = useT();
   const pct = progressPct(step.progress);
   const checks = step.gate?.checks ?? [];
@@ -45,6 +47,7 @@ function StepBody({ step }: { step: MigrationRunStepView }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12, padding: "0 0 4px" }}>
       <p style={{ margin: 0, fontSize: 12, color: "var(--c-tx3)", lineHeight: 1.5 }}>{t(STEP_DESC_KEY[step.key])}</p>
+      {note && <p data-testid="in-place-step-note" style={{ margin: 0, fontSize: 12, color: "var(--c-tx2)", lineHeight: 1.5, fontWeight: 600 }}>{t(note)}</p>}
       {step.skippedCode && <div style={{ fontSize: 13 }}>{t("migrationRun.step.skipped", { why: codeText(t, step.skippedCode) })}</div>}
       {step.lastError && <div role="alert" style={{ fontSize: 13, color: "var(--c-r)", wordBreak: "break-word" }}>{codeText(t, step.lastError)}</div>}
       {step.progress && step.progress.total > 0 && (
@@ -109,7 +112,7 @@ function StepBody({ step }: { step: MigrationRunStepView }) {
   );
 }
 
-function StepRow({ step, index, current }: { step: MigrationRunStepView; index: number; current: boolean }) {
+function StepRow({ step, index, current, note }: { step: MigrationRunStepView; index: number; current: boolean; note: string | null }) {
   const t = useT();
   const [open, setOpen] = useState<boolean | null>(null);
   const expanded = open ?? (isAttention(step) || current);
@@ -137,7 +140,7 @@ function StepRow({ step, index, current }: { step: MigrationRunStepView; index: 
       </button>
       {expanded && (
         <div id={panelId} style={{ padding: "0 4px 14px 32px" }}>
-          <StepBody step={step} />
+          <StepBody step={step} note={note} />
         </div>
       )}
     </li>
@@ -146,7 +149,7 @@ function StepRow({ step, index, current }: { step: MigrationRunStepView; index: 
 
 /** The step timeline: every step with its state, gate, progress and dry-run projection. The point of no return is
  *  drawn as a divider before the step that crosses it, and turns solid once it was reached. */
-export function StepTimeline({ run }: { run: MigrationRunView }) {
+export function StepTimeline({ run, inPlaceStatus = null }: { run: MigrationRunView; inPlaceStatus?: TakeoverStatus | null }) {
   const t = useT();
   const steps = visibleSteps(run);
   return (
@@ -162,7 +165,7 @@ export function StepTimeline({ run }: { run: MigrationRunView }) {
                 <span style={{ flex: 1, borderTop: `1px ${run.ponrAt ? "solid" : "dashed"} currentColor`, height: 0 }} />
               </li>
             )}
-            <StepRow step={s} index={i} current={run.currentStep === s.key} />
+            <StepRow step={s} index={i} current={run.currentStep === s.key} note={run.inPlace ? stepNoteKey(s.key, inPlaceStatus) : null} />
           </Fragment>
         ))}
       </ol>

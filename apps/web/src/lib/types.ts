@@ -3396,6 +3396,8 @@ export interface MigrationRunOptions {
   rowCountMode: "exact" | "estimate";
   decommissionMinAgeHours: number;
   stuckOperatorMinutes: number;
+  /** In-place runs only: the apps (plan item refs) built with Tugra and verified instead of reusing Coolify's image. Absent = none. */
+  rebuild?: string[];
 }
 export interface MigrationRunWindowEstimate {
   freezeToFlipSec: number | null;
@@ -3429,6 +3431,8 @@ export interface MigrationRunView {
   mode: MigrationRunMode;
   topology: MigrationRunTopology;
   dryRun: boolean;
+  /** An in-place takeover (same machine, no data copy): set by a campaign. */
+  inPlace: boolean;
   promotedFromId: string | null;
   status: MigrationRunStatus;
   currentStep: MigrationRunStepKey | null;
@@ -3464,6 +3468,7 @@ export interface MigrationRunSummary {
   mode: MigrationRunMode;
   topology: MigrationRunTopology;
   dryRun: boolean;
+  inPlace: boolean;
   status: MigrationRunStatus;
   currentStep: MigrationRunStepKey | null;
   ponrAt: string | null;

@@ -6,7 +6,7 @@ import type { CoolifyChecklist, CoolifyDetect, CoolifyInventoryView } from "./co
 import type { CoolifySshRunView } from "./coolify-ssh";
 import { HUB_UNREACHABLE_CODE, hubUnreachableMessage, isHubDownStatus, isNetworkFailure, reportHubDown } from "./hub-connection";
 import { observeServerDate } from "./clock-skew";
-import type { CampaignRunPlan, CampaignView, SourceServerPlacementView, TakeoverView } from "@tugra/shared";
+import type { CampaignRunPlan, CampaignView, RunInPlaceView, SourceServerPlacementView, TakeoverView } from "@tugra/shared";
 import type { CampaignCreateBody } from "./campaign";
 import type { AdviceReport, CostsReport, CostSyncResult, RescaleView } from "./costs";
 import type {
@@ -2907,7 +2907,7 @@ export const api = {
     const q = new URLSearchParams({ sessionId, planHash });
     return apiFetch<{ planHash: string; views: SourceServerPlacementView[] }>(`/migration-campaigns/placement?${q.toString()}`);
   },
-  planCampaign(body: Pick<CampaignCreateBody, "sessionId" | "planHash" | "placements">) {
+  planCampaign(body: Pick<CampaignCreateBody, "sessionId" | "planHash" | "placements" | "rebuild">) {
     return apiFetch<CampaignPreview>("/migration-campaigns/plan", { method: "POST", body: JSON.stringify(body) });
   },
   createCampaign(body: CampaignCreateBody) {
@@ -2947,6 +2947,15 @@ export const api = {
   },
   giveBackInPlace(id: string, confirm: string) {
     return apiFetch<TakeoverView>(`/coolify-inplace/${encodeURIComponent(id)}/give-back`, { method: "POST", body: JSON.stringify({ confirm }) });
+  },
+  /** The takeover a guided run carries (null until the run planned one): per app, the image was reused or the app was rebuilt and verified. */
+  async getRunInPlace(runId: string): Promise<RunInPlaceView | null> {
+    try {
+      return await apiFetch<RunInPlaceView>(`/coolify-inplace/run/${encodeURIComponent(runId)}`);
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 404) return null;
+      throw e;
+    }
   },
   getMigrationRunVerification(id: string) {
     return apiFetch<VerificationView>(`/migration-runs/${encodeURIComponent(id)}/verification`);

@@ -30,7 +30,7 @@ import { PlacementFields } from "./launch-placement";
 import { AgentGapNotice } from "./agent-gap-notice";
 import { sourceAgentGapsOf } from "../../lib/coolify-ssh";
 import { CampaignPreviewCard } from "./launch-campaign";
-import { campaignBody, needsCampaign, placementsOf } from "../../lib/campaign";
+import { campaignBody, needsCampaign, placementsOf, pruneRebuild } from "../../lib/campaign";
 import { HelpLink } from "../help-link";
 import { scopePayload, type ImportScope, overallPlacement, involvedHosts } from "../../lib/import-scope";
 import type { ImportApplyExtras, ImportPlan, ImportRemoteKind, MigrationRunMode, MigrationRunServerMap, MigrationRunTopology } from "../../lib/types";
@@ -162,12 +162,16 @@ function LaunchDialog({ plan, kind, sessionId, servers, extras, scope, onChangeS
     enabled: campaign && placements.length > 0,
     retry: false,
   });
+  // The apps the owner chose to build with Tugra. Only a same-machine wave of the campaign builds anything; a choice for an app no such wave offers any more
+  // (the placement changed) is not sent, so the hub never refuses a stale one.
+  const [rebuildChoice, setRebuild] = useState<string[]>([]);
+  const rebuild = useMemo(() => (campaign ? pruneRebuild(rebuildChoice, preview.data?.runs, plan.items, scope?.inScope) : []), [campaign, rebuildChoice, preview.data?.runs, plan.items, scope?.inScope]);
   const campaignRefused = campaign && (preview.isLoading || preview.isError || !!preview.data?.failure || !preview.data?.runs);
   const create = useMutation({
     mutationFn: async (): Promise<{ href: string }> => {
       const input = buildLaunchInput(form);
       if (campaign) {
-        const c = await api.createCampaign(campaignBody(input, placements));
+        const c = await api.createCampaign(campaignBody(input, placements, rebuild));
         return { href: `/import/runs/campaign?c=${encodeURIComponent(c.label)}` };
       }
       const run = await api.createMigrationRun(input);
@@ -223,7 +227,7 @@ function LaunchDialog({ plan, kind, sessionId, servers, extras, scope, onChangeS
         <AgentGapNotice gaps={agentGaps} dryRun={dryRun} />
 
         {campaign ? (
-          <CampaignPreviewCard preview={preview.data ?? null} loading={preview.isLoading} failed={preview.isError} rows={sourceRows} servers={servers} />
+          <CampaignPreviewCard preview={preview.data ?? null} loading={preview.isLoading} failed={preview.isError} rows={sourceRows} servers={servers} items={plan.items} inScope={scope?.inScope} rebuild={rebuild} onRebuild={setRebuild} disabled={create.isPending} />
         ) : (
           <PlacementFields rows={sourceRows} servers={placeableOptions} defaultId={targetServerId} value={placement} onChange={setPlacement} invalid={issues.includes("placement")} />
         )}
