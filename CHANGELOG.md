@@ -7,6 +7,43 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.0-beta.32] - 2026-11-26
+
+- **Move off Coolify through its own server.** Connect the Tugra agent on the server Coolify runs on and Tugra reads
+  Coolify's whole database in one consistent snapshot: the same plan the API-token import builds (checked by a parity
+  test), plus notifications, shared variables, scheduled tasks, tags, members and service files. Secret values (env,
+  compose, Dockerfiles, labels, database settings) are decrypted on that server inside a short-lived helper with no
+  network and a read-only filesystem, sealed to a key that exists only for that read, and opened by the hub in memory
+  before they are stored encrypted. Reading them needs the team owner's consent (type the server's name), is
+  time-limited and audited. A value that cannot be opened holds back only its own item.
+- **Agents on every Coolify server in one go.** From the Coolify host card, install the Tugra agent on Coolify's other
+  servers over Coolify's own SSH keys (they never leave that server): at most four at a time, servers that already
+  have an agent are skipped, the host key is pinned and checked again after enrolment, and every step can be undone.
+  A real move does not start while a source server has no online agent.
+- **Servers are matched on evidence.** A Coolify server is "the same machine" only on proof (sshd host key, or both
+  machine id and Docker engine id); a public address alone is probable, a private address or a name is weak, and the
+  owner can confirm or reject a match (refused when the identity facts differ). No target is ever picked silently.
+- **Take a server over in place.** Apps, databases and compose services keep running on the same machine: Tugra starts
+  the images Coolify already built (no rebuild, or rebuild and verify per app if you choose), reuses their volumes
+  without copying, tests every domain behind its own proxy before taking the ports, issues new Let's Encrypt
+  certificates right after the swap (Coolify's certificate only covers the few minutes until each new one is
+  verified), checks databases against a before/after fingerprint and reverses itself on any failure. "Give back to
+  Coolify" restores the old containers and proxy in one click. Several servers, or a mix of in-place and moved
+  servers, run as a campaign of runs.
+- **Clean up and consolidate.** A completeness checklist compares every Coolify item with its Tugra counterpart
+  (apps, databases, services, domains and traffic, env keys, volumes, scheduled tasks, backups, notifications); only
+  when it is complete can the owner remove Coolify's leftovers on a server (containers, networks, images, its own
+  folders; never data volumes) after reviewing the exact list. Move a whole project, with its apps, databases,
+  services, volumes and domains, to another server with a verification report, a temporary address, the DNS step, a
+  7-day safety copy and an owner rollback.
+- **"Move off Coolify" page.** One page walks the owner through take over, clean up, consolidate and shut down, with
+  per-server progress; it is in the sidebar and ⌘K, and each server has a direct "Take over in place" button.
+  Read-only MCP tools and `tugra coolify` show the same status.
+- **Import picks nothing for you.** Source servers are matched to Tugra servers by address and host name; every row
+  says "Same machine (in place)" or "Another server", a server without a target blocks Continue with the reason,
+  offline or agentless targets cannot be chosen (the hub refuses them too), the team follows the matched servers,
+  choices survive a refresh, and every Move and Adopt button says what it needs first.
+
 ## [0.1.0-beta.31] - 2026-11-25
 
 - **In-app updates work again.** beta.30 sized Postgres and Redis through a `command:` on those services; the in-app
