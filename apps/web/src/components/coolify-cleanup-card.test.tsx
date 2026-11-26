@@ -138,6 +138,27 @@ describe("CoolifyCleanupCard", () => {
     expect(screen.getByText("Some of it could not be removed. Look at the list.")).toBeTruthy();
   });
 
+  it("a check stored as failed only because no Coolify read knows the server is not shown as Failed", async () => {
+    vi.spyOn(api, "coolifyCleanupLatest").mockResolvedValue(view({ status: "FAILED", failureCode: "no_coolify_link", completeness: [], remnants: [], listHash: null, complete: false }));
+    show();
+    const note = await screen.findByTestId("cleanup-needs-read");
+    expect(note.textContent).toContain("Read the Coolify first: no stored read knows this server.");
+    expect(within(note).getByRole("link", { name: "Read this Coolify" }).getAttribute("href")).toBe("/import/coolify-host");
+    expect(screen.getByText("Read the Coolify first")).toBeTruthy(); // the badge
+    expect(screen.queryByText("Failed")).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("a check refused with no_coolify_link answers with the read, not a red error", async () => {
+    vi.spyOn(api, "coolifyCleanupLatest").mockResolvedValue(null);
+    vi.spyOn(api, "coolifyCleanupCheck").mockRejectedValue(new ApiError(409, "x", "no_coolify_link"));
+    show();
+    fireEvent.click(await screen.findByRole("button", { name: "Check this server" }));
+    const note = await screen.findByTestId("cleanup-needs-read");
+    expect(within(note).getByRole("link", { name: "Read this Coolify" })).toBeTruthy();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
   it("a server that runs Coolify itself is refused with a plain line", async () => {
     vi.spyOn(api, "coolifyCleanupLatest").mockResolvedValue(null);
     vi.spyOn(api, "coolifyCleanupCheck").mockRejectedValue(new ApiError(409, "x", "control_plane"));

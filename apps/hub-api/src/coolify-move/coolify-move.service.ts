@@ -138,7 +138,7 @@ export class CoolifyMoveService {
       this.prisma.server.findMany({ where: { teamId }, select: { id: true, name: true, status: true }, orderBy: { name: "asc" } }),
       this.readableInventories(userId),
       this.prisma.coolifyTakeover.findMany({ where: { teamId }, select: { serverId: true, status: true }, orderBy: { createdAt: "desc" }, distinct: ["serverId"] }),
-      this.prisma.coolifyCleanup.findMany({ where: { teamId }, select: { serverId: true, status: true }, orderBy: { createdAt: "desc" }, distinct: ["serverId"] }),
+      this.prisma.coolifyCleanup.findMany({ where: { teamId }, select: { serverId: true, status: true, failureCode: true }, orderBy: { createdAt: "desc" }, distinct: ["serverId"] }),
       this.prisma.migrationCampaign.findMany({ where: ownSessions.length > 0 ? { OR: [{ teamId }, { actorId: userId, sessionId: { in: ownSessions.map((x) => x.id) } }] } : { teamId }, select: { id: true, teamId: true, label: true, status: true, plan: true, createdAt: true }, orderBy: { createdAt: "desc" }, take: CAMPAIGN_SCAN }),
       this.prisma.projectMove.findMany({ where: { teamId }, select: { phase: true }, orderBy: { createdAt: "desc" }, take: MOVE_SCAN }),
     ]);
@@ -162,6 +162,7 @@ export class CoolifyMoveService {
     for (const ids of knownBy.values()) for (const id of ids) known.add(id);
     const takeoverOf = new Map(takeovers.map((t) => [t.serverId, t.status]));
     const cleanupOf = new Map(cleanups.map((c) => [c.serverId, c.status]));
+    const cleanupFailureOf = new Map(cleanups.map((c) => [c.serverId, c.status === "FAILED" ? (c.failureCode ?? null) : null]));
 
     const rows: MoveOffServerRow[] = servers.map((s) => {
       const base = {
@@ -173,7 +174,7 @@ export class CoolifyMoveService {
         takeover: (takeoverOf.get(s.id) ?? "none") as MoveOffServerRow["takeover"],
         cleanup: (cleanupOf.get(s.id) ?? "none") as MoveOffServerRow["cleanup"],
       };
-      return { ...base, stage: moveOffStageOf(base) };
+      return { ...base, cleanupFailure: cleanupFailureOf.get(s.id) ?? null, stage: moveOffStageOf(base) };
     });
 
     const phases = moveRows.map((m) => m.phase);

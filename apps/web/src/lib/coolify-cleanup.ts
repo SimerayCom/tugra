@@ -12,6 +12,10 @@ export function cleanupErrorKey(e: unknown): string {
   return "coolifyCleanup.error.generic";
 }
 
+/** Failure codes that are not a fault but a missing first step: no stored Coolify read knows this server (or it is too old). The fix is to read the Coolify. */
+export const CLEANUP_NEEDS_READ: readonly string[] = ["no_coolify_link", "read_stale"];
+export const cleanupNeedsRead = (code: string | null | undefined): boolean => !!code && CLEANUP_NEEDS_READ.includes(code);
+
 /** The i18n key of a stored failure code. */
 export function cleanupFailureKey(code: string | null): string | null {
   if (!code) return null;

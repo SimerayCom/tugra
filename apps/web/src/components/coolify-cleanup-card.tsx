@@ -2,12 +2,12 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { CleanupRemnant, CompletenessRow } from "@tugra/shared";
-import { api } from "../lib/api";
+import { api, ApiError } from "../lib/api";
 import { useT } from "../i18n/provider";
 import { cleanupGuard } from "../lib/launch-guards";
 import { MOVE_OFF_HREF, connectHref } from "../lib/coolify-move";
 import Link from "next/link";
-import { canOfferConfirm, cleanupErrorKey, cleanupFailureKey, rowNeedsAttention, sizeText, splitRemnants } from "../lib/coolify-cleanup";
+import { canOfferConfirm, cleanupErrorKey, cleanupNeedsRead, cleanupFailureKey, rowNeedsAttention, sizeText, splitRemnants } from "../lib/coolify-cleanup";
 import { Badge, Btn, SectionCard } from "./ui";
 import { useConfirm } from "./confirm";
 
@@ -72,6 +72,9 @@ export function CoolifyCleanupCard({ serverId, serverName, online, teamId }: { s
   const v = latest.data ?? null;
   const { removable, kept } = splitRemnants(v?.remnants ?? []);
   const err = check.error ?? remove.error;
+  // A check that stopped only because no Coolify read knows this server is not a failure: say "read the Coolify first", calmly.
+  const needsRead = v?.status === "FAILED" && cleanupNeedsRead(v.failureCode);
+  const errNeedsRead = err instanceof ApiError && cleanupNeedsRead(err.code) ? err.code : null;
   const busy = check.isPending || remove.isPending || v?.status === "CHECKING" || v?.status === "CLEANING";
 
   const onRemove = async () => {
@@ -87,7 +90,7 @@ export function CoolifyCleanupCard({ serverId, serverName, online, teamId }: { s
   };
 
   return (
-    <SectionCard title={t("coolifyCleanup.title")} desc={t("coolifyCleanup.subtitle")} right={v ? <Badge tone={STATUS_TONE[v.status]}>{t(`coolifyCleanup.status.${v.status}`)}</Badge> : undefined}>
+    <SectionCard title={t("coolifyCleanup.title")} desc={t("coolifyCleanup.subtitle")} right={v ? needsRead ? <Badge tone="muted">{t("coolifyCleanup.needsRead")}</Badge> : <Badge tone={STATUS_TONE[v.status]}>{t(`coolifyCleanup.status.${v.status}`)}</Badge> : undefined}>
       <p style={{ ...dim, margin: "0 0 10px" }}>{t("coolifyCleanup.intro")}</p>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
         <Btn variant={v ? "ghost" : "primary"} disabled={!online || busy || !!guard} onClick={() => check.mutate()} style={{ minHeight: 44 }}>
@@ -110,8 +113,20 @@ export function CoolifyCleanupCard({ serverId, serverName, online, teamId }: { s
           )}
         </p>
       )}
-      {err && <p role="alert" style={{ color: "var(--c-r)", fontSize: 12.5, margin: "10px 0 0" }}>{t(cleanupErrorKey(err))}</p>}
-      {v?.failureCode && <p role="alert" style={{ color: "var(--c-r)", fontSize: 12.5, margin: "10px 0 0" }}>{t(cleanupFailureKey(v.failureCode) ?? "coolifyCleanup.failure.conflict")}</p>}
+      {err && !errNeedsRead && <p role="alert" style={{ color: "var(--c-r)", fontSize: 12.5, margin: "10px 0 0" }}>{t(cleanupErrorKey(err))}</p>}
+      {errNeedsRead && !needsRead && (
+        <p role="note" data-testid="cleanup-needs-read" style={{ color: "var(--c-tx2)", fontSize: 12.5, margin: "10px 0 0", display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          <span>{t(cleanupErrorKey(err))}</span>
+          <Link href="/import/coolify-host" className="tg-link" style={{ minHeight: 44, display: "inline-flex", alignItems: "center" }}>{t("coolifyCleanup.needsReadLink")}</Link>
+        </p>
+      )}
+      {v?.failureCode && needsRead && (
+        <p role="note" data-testid="cleanup-needs-read" style={{ color: "var(--c-tx2)", fontSize: 12.5, margin: "10px 0 0", display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          <span>{t(cleanupFailureKey(v.failureCode) ?? "coolifyCleanup.failure.conflict")}</span>
+          <Link href="/import/coolify-host" className="tg-link" style={{ minHeight: 44, display: "inline-flex", alignItems: "center" }}>{t("coolifyCleanup.needsReadLink")}</Link>
+        </p>
+      )}
+      {v?.failureCode && !needsRead && <p role="alert" style={{ color: "var(--c-r)", fontSize: 12.5, margin: "10px 0 0" }}>{t(cleanupFailureKey(v.failureCode) ?? "coolifyCleanup.failure.conflict")}</p>}
 
       {v && v.completeness.length > 0 && (
         <>

@@ -22,6 +22,8 @@ export interface MoveOffServerRow {
   takeover: TakeoverStatus | "none";
   /** Newest cleanup status, or "none". */
   cleanup: CleanupStatus | "none";
+  /** The stored failure code of that newest cleanup when it failed (a stable code, never a message); null otherwise. */
+  cleanupFailure?: string | null;
   stage: MoveOffServerStage;
 }
 

@@ -13,7 +13,7 @@ interface Fx {
   /** Teams the user is an owner or admin of besides t1 (where another team's Coolify host may sit). */
   otherTeams?: string[];
   takeovers?: Array<{ serverId: string; status: string }>;
-  cleanups?: Array<{ serverId: string; status: string }>;
+  cleanups?: Array<{ serverId: string; status: string; failureCode?: string | null }>;
   sessions?: Array<{ id: string }>;
   campaigns?: Array<{ id: string; teamId?: string; label: string; status: string; plan: unknown; createdAt: Date }>;
   moves?: Array<{ phase: string }>;
@@ -85,6 +85,23 @@ describe("CoolifyMoveService.status", () => {
     expect(stage).toEqual({ hub: "hub", a: "done", b: "takeover", c: "agent", d: "not_coolify", e: "not_coolify" });
     expect(v.steps.map((s) => [s.step, s.done, s.total])).toEqual([["takeover", 1, 3], ["cleanup", 1, 3], ["consolidate", 0, 0], ["shutdown", 0, 1]]);
     expect(v.hub).toMatchObject({ serverId: "hub", name: "coolify-hub", knownServers: 5, secrets: "none", secretsExpiresAt: null, ssh: null });
+  });
+
+  it("carries the stored failure code of a failed cleanup so the screen can tell 'read the Coolify first' from a real failure", async () => {
+    const m = make({
+      servers: [
+        { id: "a", name: "a", status: "ONLINE" },
+        { id: "b", name: "b", status: "ONLINE" },
+        { id: "c", name: "c", status: "ONLINE" },
+      ],
+      cleanups: [
+        { serverId: "a", status: "FAILED", failureCode: "no_coolify_link" },
+        { serverId: "b", status: "FAILED", failureCode: "partial" },
+        { serverId: "c", status: "READY", failureCode: null },
+      ],
+    });
+    const v = await m.svc.status("u1", "t1", NOW);
+    expect(Object.fromEntries(v.servers.map((s) => [s.serverId, s.cleanupFailure]))).toEqual({ a: "no_coolify_link", b: "partial", c: null });
   });
 
   it("scopes every query to the team and takes only the newest takeover and cleanup per server", async () => {
@@ -216,7 +233,7 @@ describe("CoolifyMoveService.status", () => {
     expect(selected(m.prisma.server.findMany)).toEqual(["id", "name", "status"]);
     expect(selected(m.prisma.coolifyInventory.findMany)).toEqual(["serverId", "teamId", "readAt", "counts", "serverLinks", "snapshot", "server"]);
     expect(selected(m.prisma.coolifyTakeover.findMany)).toEqual(["serverId", "status"]);
-    expect(selected(m.prisma.coolifyCleanup.findMany)).toEqual(["serverId", "status"]);
+    expect(selected(m.prisma.coolifyCleanup.findMany)).toEqual(["serverId", "status", "failureCode"]);
     expect(selected(m.prisma.coolifySshTarget.findMany)).toEqual(["state"]);
     for (const c of m.prisma.coolifyHostGrant.findFirst.mock.calls) {
       const sel = Object.keys(c[0].select);

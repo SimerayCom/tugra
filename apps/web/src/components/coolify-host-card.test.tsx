@@ -67,6 +67,23 @@ describe("CoolifyHostCard", () => {
     await screen.findByTestId("secrets-consent");
   });
 
+  it("a cleanup that failed only because no Coolify read knows the server is neutral, with a link to read the Coolify", async () => {
+    vi.spyOn(api, "coolifyMoveStatus").mockResolvedValue(view([row({ cleanup: "FAILED", cleanupFailure: "no_coolify_link", stage: "takeover" })], hub({ serverId: "hubid" })));
+    show();
+    await screen.findByTestId("coolify-host-card");
+    const line = screen.getByTestId("line-cleanup");
+    expect(line.textContent).toMatch(/Read the Coolify first/);
+    expect(line.textContent).not.toMatch(/Failed/);
+    expect(line.querySelector("a")?.getAttribute("href")).toBe("/import/coolify-host");
+  });
+
+  it("a cleanup that really failed still says Failed", async () => {
+    vi.spyOn(api, "coolifyMoveStatus").mockResolvedValue(view([row({ cleanup: "FAILED", cleanupFailure: "partial", stage: "cleanup", takeover: "VERIFIED" })], hub({ serverId: "hubid" })));
+    show();
+    await screen.findByTestId("coolify-host-card");
+    expect(screen.getByTestId("line-cleanup").textContent).toMatch(/Failed/);
+  });
+
   it("on a server Coolify manages: agent, takeover, cleanup and the next step", async () => {
     vi.spyOn(api, "coolifyMoveStatus").mockResolvedValue(view([row({ takeover: "VERIFIED", cleanup: "READY", stage: "cleanup" })], hub({ serverId: "hubid" })));
     show();

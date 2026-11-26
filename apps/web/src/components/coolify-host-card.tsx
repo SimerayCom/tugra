@@ -8,6 +8,7 @@ import { api } from "../lib/api";
 import { useT } from "../i18n/provider";
 import { formatDateTime } from "../lib/format-time";
 import { relativeTime } from "../lib/fleet";
+import { cleanupNeedsRead } from "../lib/coolify-cleanup";
 import { GRANT_TONE, MOVE_OFF_HREF, STAGE_TONE, connectHref, startsTakeoverFlow, takeoverHref, type Tone } from "../lib/coolify-move";
 import { Badge, Btn, LinkBtn, SectionCard } from "./ui";
 import { CoolifySecretsConsent } from "./coolify-secrets-consent";
@@ -80,9 +81,16 @@ function ManagedLines({ row, teamId, hubServerId, hubTeamId }: { row: MoveOffSer
       >
         {row.takeover === "none" ? t("coolifyMove.line.takeover.none") : t(`coolifyInPlace.status.${row.takeover}`)}
       </Line>
-      <Line testId="line-cleanup" name={t("coolifyMove.line.cleanup.label")} tone={row.cleanup === "none" ? "muted" : row.cleanup === "CLEANED" ? "ok" : row.cleanup === "FAILED" ? "danger" : "warn"}>
-        {row.cleanup === "none" ? t("coolifyMove.line.cleanup.none") : t(`coolifyCleanup.status.${row.cleanup}`)}
-      </Line>
+      {row.cleanup === "FAILED" && cleanupNeedsRead(row.cleanupFailure) ? (
+        // Not a failure: no Coolify read knows this server yet. Say so calmly and point at the read.
+        <Line testId="line-cleanup" name={t("coolifyMove.line.cleanup.label")} tone="muted" link={{ href: "/import/coolify-host", text: t("coolifyCleanup.needsReadLink") }}>
+          {t("coolifyCleanup.needsRead")}
+        </Line>
+      ) : (
+        <Line testId="line-cleanup" name={t("coolifyMove.line.cleanup.label")} tone={row.cleanup === "none" ? "muted" : row.cleanup === "CLEANED" ? "ok" : row.cleanup === "FAILED" ? "danger" : "warn"}>
+          {row.cleanup === "none" ? t("coolifyMove.line.cleanup.none") : t(`coolifyCleanup.status.${row.cleanup}`)}
+        </Line>
+      )}
       <Line testId="line-next" name={t("coolifyMove.line.next.label")} tone={STAGE_TONE[row.stage]}>
         {t(`coolifyMove.stage.${row.stage}`)}
       </Line>

@@ -31,6 +31,8 @@
     "title": "Remove these",
     "button": "Remove"
   },
+  "needsRead": "Read the Coolify first",
+  "needsReadLink": "Read this Coolify",
   "check": "Check this server",
   "recheck": "Check again",
   "checking": "Checking...",
