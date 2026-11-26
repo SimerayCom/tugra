@@ -164,6 +164,8 @@ export class InMemoryRunStore implements RunStore {
       sourceKind: run.sourceKind,
       sourceHost: run.sourceHost,
       sourceVersion: run.sourceVersion ?? null,
+      agentServerId: run.agentServerId ?? null,
+      sourceTeamRef: run.sourceTeamRef ?? null,
       sourceBaseline: null,
       campaign: run.campaign ?? null,
       sessionId: run.sessionId,

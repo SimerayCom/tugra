@@ -37,6 +37,10 @@ export interface NewRun {
   serverMap?: Record<string, string> | null;
   /** The source's version string when already known at create time. */
   sourceVersion?: string | null;
+  /** An agent-read source: the Tugra server whose agent reads it (null for a token session). */
+  agentServerId?: string | null;
+  /** An agent-read source: the source team the read is limited to (null: every team). */
+  sourceTeamRef?: string | null;
   /** Campaign label. */
   campaign?: string | null;
   /** An in-place takeover run (swap-proxy only). */

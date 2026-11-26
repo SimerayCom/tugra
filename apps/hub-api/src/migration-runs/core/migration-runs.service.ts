@@ -83,6 +83,12 @@ import { HOST_REPORT_PORT, HostCommandError, RUN_HOST_COMMANDS, type HostReportP
 import { ServerHasLiveRunError, type EventRow, type RunRow, type RunStore, type StepRow } from "./run-store";
 import { buildReport, reportToMarkdown, runFacts, stepFacts, toSummary, toView } from "./run-view";
 
+/** Where an agent-read session reads from, kept on the run so its view never has to guess it: the agent's Tugra server and the source team (both null for a token session). */
+const sessionSource = (s: Pick<RunSessionInfo, "baseUrl" | "sourceTeamRef">): { agentServerId: string | null; sourceTeamRef: string | null } => {
+  const viaAgent = isAgentSessionBaseUrl(s.baseUrl);
+  return { agentServerId: viaAgent ? s.baseUrl.slice(AGENT_SESSION_URL_PREFIX.length) : null, sourceTeamRef: viaAgent ? (s.sourceTeamRef ?? null) : null };
+};
+
 const conflict = (code: string): ConflictException => new ConflictException(code);
 const bad = (code: string): BadRequestException => new BadRequestException(code);
 const unprocessable = (code: string, extra: Record<string, unknown> = {}): UnprocessableEntityException => new UnprocessableEntityException({ statusCode: 422, message: code, code, ...extra });
@@ -139,8 +145,9 @@ export class MigrationRunsService implements MigrationRunsFacade {
 
   /**
    * What the promotion of a finished dry run has to work with: its source session (active, expired, or gone), and where an agent session
-   * reads from, so the screen can reconnect it. An import session lives an hour and a purged one leaves only the run's `sourceHost`
-   * (for an agent session that is the id of the Tugra server whose agent reads Coolify, lower-cased), so a server of that id names the agent.
+   * reads from, so the screen can reconnect it. An import session lives an hour and a purged one leaves nothing but the run itself: a run
+   * stores the agent server and the source team of its session at create, so those answer without a guess. Only a row written before those
+   * columns falls back to the old reading of `sourceHost` (for an agent session the lower-cased id of the Tugra server whose agent reads Coolify).
    */
   private async sourceSessionFact(run: RunRow): Promise<RunSourceSession> {
     const s = run.sessionId ? await this.env.session(run.actorId, run.sessionId).catch(() => null) : null;
@@ -151,12 +158,14 @@ export class MigrationRunsService implements MigrationRunsFacade {
         expiresAt: s.expiresAt.toISOString(),
         viaAgent,
         agentServerId: viaAgent ? s.baseUrl.slice(AGENT_SESSION_URL_PREFIX.length) : null,
-        sourceTeamRef: s.sourceTeamRef ?? null,
+        sourceTeamRef: s.sourceTeamRef ?? run.sourceTeamRef ?? null,
       };
     }
+    if (run.agentServerId) return { state: "missing", expiresAt: null, viaAgent: true, agentServerId: run.agentServerId, sourceTeamRef: run.sourceTeamRef ?? null };
+    // a row from before the columns: the guess from `sourceHost`
     const host = run.sourceHost ?? "";
     const server = host && !host.includes(".") && !host.includes(":") ? await this.env.server(host).catch(() => null) : null;
-    return { state: "missing", expiresAt: null, viaAgent: !!server, agentServerId: server?.id ?? null, sourceTeamRef: null };
+    return { state: "missing", expiresAt: null, viaAgent: !!server, agentServerId: server?.id ?? null, sourceTeamRef: run.sourceTeamRef ?? null };
   }
 
   /** Every target server id of a row (default first). */
@@ -218,6 +227,7 @@ export class MigrationRunsService implements MigrationRunsFacade {
       sourceKind: body.sourceKind,
       sourceHost: session.host,
       sourceVersion,
+      ...sessionSource(session),
       sessionId: session.id,
       targetServerId: server.id,
       serverMap,
@@ -397,6 +407,8 @@ export class MigrationRunsService implements MigrationRunsFacade {
       sourceKind: string;
       sourceHost: string | null;
       sourceVersion: string | null;
+      agentServerId: string | null;
+      sourceTeamRef: string | null;
       sessionId: string | null;
       targetServerId: string;
       serverMap: Record<string, string>;
@@ -477,6 +489,7 @@ export class MigrationRunsService implements MigrationRunsFacade {
       sourceKind: from.sourceKind,
       sourceHost: session.host,
       sourceVersion: (await this.captureSourceVersion(actor, session)) ?? from.sourceVersion,
+      ...sessionSource(session),
       sessionId: session.id,
       targetServerId: from.targetServerId,
       serverMap,

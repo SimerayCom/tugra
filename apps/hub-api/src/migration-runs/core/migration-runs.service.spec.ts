@@ -196,6 +196,38 @@ describe("what a finished dry-run says about its session and targets before the 
     expect((await w.service.get(ACTOR, d)).sourceSession).toMatchObject({ state: "missing", viaAgent: false, agentServerId: null });
   });
 
+  it("stores the agent server and the source team of an agent session at create, and answers from them once the session is gone", async () => {
+    const w = new RunWorld();
+    const s = w.env.sessions.get("s1")!;
+    s.baseUrl = "agent://srv-agent";
+    s.sourceTeamRef = "team-ref";
+    const d = await w.create({ dryRun: true });
+    expect(w.store.row(d)).toMatchObject({ agentServerId: "srv-agent", sourceTeamRef: "team-ref" });
+    await w.settle(d);
+    // the host string says nothing here (a dotted name the old guess would call a token session); the columns do
+    w.env.sessions.delete("s1");
+    w.store.force(d, { sourceHost: "coolify.example.com" });
+    expect((await w.service.get(ACTOR, d)).sourceSession).toMatchObject({ state: "missing", viaAgent: true, agentServerId: "srv-agent", sourceTeamRef: "team-ref" });
+  });
+
+  it("leaves both columns empty for a token session", async () => {
+    const w = new RunWorld();
+    const d = await w.create({ dryRun: true });
+    expect(w.store.row(d)).toMatchObject({ agentServerId: null, sourceTeamRef: null });
+  });
+
+  it("a promoted run keeps the agent of the session it was started with", async () => {
+    const w = new RunWorld();
+    const s = w.env.sessions.get("s1")!;
+    s.baseUrl = "agent://srv-agent";
+    s.sourceTeamRef = "team-ref";
+    const d = await w.create({ dryRun: true });
+    await w.settle(d);
+    await w.acceptWarnings(d);
+    const real = await w.service.start(ACTOR, d, {});
+    expect(w.store.row(real.id)).toMatchObject({ agentServerId: "srv-agent", sourceTeamRef: "team-ref" });
+  });
+
   it("carries the fact on a finished dry-run only", async () => {
     const w = new RunWorld();
     const id = await w.create();

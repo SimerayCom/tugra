@@ -2753,6 +2753,8 @@ model MigrationRun {
   sourceKind      String // coolify | dokploy
   sourceHost      String? // snapshot of the source instance host (typed confirmation + list display, no secret)
   sourceVersion   String? // the source's own version string (e.g. "4.1.2"), captured at create/preflight
+  agentServerId   String? // an agent-read source: the Tugra server whose agent reads the source, stored at create (null: a token session, or a row from before this column)
+  sourceTeamRef   String? // an agent-read source: the source team the read was limited to, stored at create (null: every team, or a row from before this column)
   sourceBaseline  Json? // source health baseline captured before anything changes (refs, health enum, restart counts; no secret)
   campaign        String? // free label grouping the runs of one migration campaign
   sessionId       String? // ImportSession (1 h TTL; refreshed via POST /:id/source-session)

@@ -67,6 +67,8 @@ export class PrismaRunStore implements RunStore {
           sourceKind: run.sourceKind,
           sourceHost: run.sourceHost,
           ...(run.sourceVersion ? { sourceVersion: run.sourceVersion } : {}),
+          ...(run.agentServerId ? { agentServerId: run.agentServerId } : {}),
+          ...(run.sourceTeamRef ? { sourceTeamRef: run.sourceTeamRef } : {}),
           ...(run.campaign ? { campaign: run.campaign } : {}),
           ...(run.inPlace ? { inPlace: true } : {}),
           sessionId: run.sessionId,
