@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -119,4 +120,16 @@ func HostSSHHostKeyFps(ctx context.Context, image string) []string {
 		}
 	}
 	return CleanSSHHostKeyFps(out)
+}
+
+// The host keys of a machine do not change while the agent runs, so the helper runs once per agent process (an empty answer included):
+// host_info is collected on every interval, and a host with no key file would otherwise start three helpers each time.
+var (
+	hostKeyOnce sync.Once
+	hostKeyFps  []string
+)
+
+func cachedHostSSHHostKeyFps(ctx context.Context, image string) []string {
+	hostKeyOnce.Do(func() { hostKeyFps = HostSSHHostKeyFps(ctx, image) })
+	return hostKeyFps
 }

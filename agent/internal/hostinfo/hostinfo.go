@@ -53,7 +53,7 @@ func Collect() (protocol.HostInfo, error) {
 	ctx := context.Background()
 	// The installer did not leave the sshd host keys (an older installer, or an agent installed by hand): read them through the helper.
 	if len(info.SSHHostKeyFps) == 0 {
-		if fps := HostSSHHostKeyFps(ctx, os.Getenv("TUGRA_AGENT_IMAGE")); len(fps) > 0 {
+		if fps := cachedHostSSHHostKeyFps(ctx, os.Getenv("TUGRA_AGENT_IMAGE")); len(fps) > 0 {
 			info.SSHHostKeyFps = fps
 			info.SSHHostKeyFp = fps[0]
 		}
