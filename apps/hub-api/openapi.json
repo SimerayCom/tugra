@@ -72912,6 +72912,15 @@
                         "type": "integer",
                         "minimum": 1
                       },
+                      "targetServerIds": {
+                        "minItems": 1,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 64
+                        }
+                      },
                       "sourceKind": {
                         "type": "string",
                         "enum": [
@@ -73078,6 +73087,7 @@
                       "targetServerId",
                       "targetServerName",
                       "targetServerCount",
+                      "targetServerIds",
                       "sourceKind",
                       "sourceHost",
                       "sourceVersion",
@@ -75388,6 +75398,131 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "import"
+        ]
+      }
+    },
+    "/api/v1/migration-runs/{id}/source-agents": {
+      "get": {
+        "operationId": "MigrationRunsController_sourceAgents",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "gaps": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "ref": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 200
+                          },
+                          "name": {
+                            "type": "string",
+                            "maxLength": 200
+                          },
+                          "state": {
+                            "type": "string",
+                            "enum": [
+                              "no_agent",
+                              "offline"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "ref",
+                          "name",
+                          "state"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "unverified": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "gaps",
+                    "unverified"
+                  ],
+                  "additionalProperties": false
                 }
               }
             }

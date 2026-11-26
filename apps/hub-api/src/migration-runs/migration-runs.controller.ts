@@ -24,6 +24,8 @@ import {
   RunReportQuerySchema, type RunReportQuery,
   RunReportSchema,
   SetRunInputsSchema, type SetRunInputsInput,
+  SourceAgentsQuerySchema, type SourceAgentsQuery,
+  SourceAgentsResultSchema,
   SourceSessionResultSchema,
   SourceSessionSchema, type SourceSessionInput,
   StartRunSchema, type StartRunInput,
@@ -236,6 +238,13 @@ export class MigrationRunsController {
   @ApiZodResponse(SourceSessionResultSchema)
   sourceSession(@CurrentUser() user: AuthUser, @Param("id") id: string, @Body(new ZodValidationPipe(SourceSessionSchema)) body: SourceSessionInput) {
     return this.runs.sourceSession(runActorFromAuth(user), id, body);
+  }
+
+  /** On a finished dry run: the source servers without an online agent, which a promotion refuses on. Read-only; names and states only. */
+  @Get(":id/source-agents")
+  @ApiZodResponse(SourceAgentsResultSchema)
+  sourceAgents(@CurrentUser() user: AuthUser, @Param("id") id: string, @Query(new ZodValidationPipe(SourceAgentsQuerySchema)) query: SourceAgentsQuery) {
+    return this.runs.sourceAgents(runActorFromAuth(user), id, query);
   }
 
   /** The final, secret-free report: JSON (default) or Markdown (`?format=md`, served as text/markdown). */

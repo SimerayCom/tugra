@@ -6836,6 +6836,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/migration-runs/{id}/source-agents": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["MigrationRunsController_sourceAgents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/migration-runs/{id}/report": {
         parameters: {
             query?: never;
@@ -49021,6 +49037,7 @@ export interface operations {
                         targetServerId: string;
                         targetServerName: string | null;
                         targetServerCount: number;
+                        targetServerIds: string[];
                         /** @enum {string} */
                         sourceKind: "coolify" | "dokploy";
                         sourceHost: string | null;
@@ -50683,6 +50700,80 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Authenticated but not permitted (scope or team permission). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate limit exceeded; see Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    MigrationRunsController_sourceAgents: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        gaps: {
+                            ref: string;
+                            name: string;
+                            /** @enum {string} */
+                            state: "no_agent" | "offline";
+                        }[];
+                        unverified: boolean;
+                    };
                 };
             };
             /** @description Missing or invalid authentication. */

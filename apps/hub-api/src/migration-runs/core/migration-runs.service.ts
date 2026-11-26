@@ -35,6 +35,8 @@ import {
   type RunCommandResult,
   type RunEventsPage,
   type RunEventsQuery,
+  type SourceAgentsQuery,
+  type SourceAgentsResult,
   type RunReport,
   type RunSourceSession,
   type SetRunInputsInput,
@@ -539,6 +541,28 @@ export class MigrationRunsService implements MigrationRunsFacade {
 
   async get(actor: RunActor, id: string): Promise<MigrationRunView> {
     return this.view(await this.load(actor, id));
+  }
+
+  /**
+   * What the promotion of a finished dry run would refuse on, asked before the click: the source servers it would move from that have no online
+   * agent. The same read the promotion makes (`assertSourceAgents`), on the session the promotion would use. It writes nothing. A session that
+   * ended or a source that cannot be read is `unverified`, never an empty list: the promotion refuses those too.
+   */
+  async sourceAgents(actor: RunActor, id: string, query: SourceAgentsQuery): Promise<SourceAgentsResult> {
+    const run = await this.load(actor, id);
+    if (run.status !== "DRY_RUN_DONE") throw conflict("not-a-finished-dry-run");
+    // an in-place run copies nothing, so no source-side runner is needed (the promotion does not ask either)
+    if (run.inPlace || !this.imp.sourceAgentGaps) return { gaps: [], unverified: false };
+    const sessionId = query.sessionId ?? run.sessionId;
+    const session = sessionId ? await this.env.session(actor.userId, sessionId).catch(() => null) : null;
+    if (!session || session.sourceKind !== run.sourceKind || session.state !== "active" || session.expiresAt.getTime() <= this.engine.clock.now().getTime()) return { gaps: [], unverified: true };
+    const apply = RunApplyInputSchema.parse(run.applyInput);
+    try {
+      const r = await this.imp.sourceAgentGaps(actor.userId, { sessionId: session.id, sourceKind: session.sourceKind, ...(apply.mapping ? { mapping: apply.mapping } : {}) });
+      return { gaps: r.gaps, unverified: r.unverified };
+    } catch {
+      return { gaps: [], unverified: true };
+    }
   }
 
   async events(actor: RunActor, id: string, query: RunEventsQuery): Promise<RunEventsPage> {

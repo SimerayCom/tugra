@@ -583,6 +583,21 @@ export const ListMigrationRunsQuerySchema = z.object({
 });
 export type ListMigrationRunsQuery = z.infer<typeof ListMigrationRunsQuerySchema>;
 
+/** `GET /:id/source-agents`: the session a promotion would use (the renewed one the screen made), else the run's own. */
+export const SourceAgentsQuerySchema = z.object({ sessionId: Id.optional() });
+export type SourceAgentsQuery = z.infer<typeof SourceAgentsQuerySchema>;
+
+/**
+ * `GET /:id/source-agents`: the source servers a real run from this finished dry run would move from that have no online Tugra agent, which is what
+ * the promotion refuses on (`source-agent-missing`). `unverified` is true while that cannot be told (the session ended, or the source could not be read):
+ * the promotion refuses then too (`source-agents-unverified`). Names and states only.
+ */
+export const SourceAgentsResultSchema = z.object({
+  gaps: z.array(z.object({ ref: z.string().min(1).max(200), name: z.string().max(200), state: z.enum(["no_agent", "offline"]) })),
+  unverified: z.boolean(),
+});
+export type SourceAgentsResult = z.infer<typeof SourceAgentsResultSchema>;
+
 /** `GET /:id/events`: `afterSeq` is the last seq the client has (0 = from the start). */
 export const RunEventsQuerySchema = z.object({
   afterSeq: z.coerce.number().int().min(0).default(0),

@@ -75,3 +75,39 @@ describe("a real run needs an agent on every source server it moves from", () =>
     expect(promoted.promotedFromId).toBe(d);
   });
 });
+
+describe("the same gap is said on a finished dry run before the promotion is tried", () => {
+  it("lists the source servers without an online agent, and nothing once they all have one", async () => {
+    const w = new RunWorld();
+    const d = await w.create({ dryRun: true });
+    await w.settle(d);
+    w.port.agentGaps = { gaps: [GAP, { ref: "src-b", name: "Edge B", state: "offline" }], unverified: false };
+    expect(await w.service.sourceAgents(ACTOR, d, {})).toEqual({ gaps: [GAP, { ref: "src-b", name: "Edge B", state: "offline" }], unverified: false });
+    w.port.agentGaps = { gaps: [], unverified: false };
+    expect(await w.service.sourceAgents(ACTOR, d, {})).toEqual({ gaps: [], unverified: false });
+  });
+
+  it("reads on the renewed session the screen made, and says unverified, not empty, when the session ended or the source cannot be read", async () => {
+    const w = new RunWorld();
+    const d = await w.create({ dryRun: true });
+    await w.settle(d);
+    w.env.sessions.get("s1")!.state = "expired";
+    expect(await w.service.sourceAgents(ACTOR, d, {})).toEqual({ gaps: [], unverified: true });
+    const renewed = await w.service.sourceSession(ACTOR, d, { token: "t" });
+    w.port.agentGaps = { gaps: [GAP], unverified: false };
+    expect((await w.service.sourceAgents(ACTOR, d, { sessionId: renewed.sessionId })).gaps).toEqual([GAP]);
+    expect(w.port.agentGapCalls.at(-1)?.sessionId).toBe(renewed.sessionId);
+    w.env.sessions.get("s1")!.state = "active";
+    w.port.agentGaps = { gaps: [], unverified: true };
+    expect(await w.service.sourceAgents(ACTOR, d, {})).toEqual({ gaps: [], unverified: true });
+    jest.spyOn(w.port, "sourceAgentGaps").mockRejectedValueOnce(new Error("down"));
+    expect(await w.service.sourceAgents(ACTOR, d, {})).toEqual({ gaps: [], unverified: true });
+  });
+
+  it("is only for a finished dry run, and only for its creator", async () => {
+    const w = new RunWorld();
+    const real = await w.create({ dryRun: false });
+    await expect(w.service.sourceAgents(ACTOR, real, {})).rejects.toThrow(/not-a-finished-dry-run/);
+    await expect(w.service.sourceAgents({ ...ACTOR, userId: "someone-else" }, real, {})).rejects.toThrow(/run-not-found/);
+  });
+});
