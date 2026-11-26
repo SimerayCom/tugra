@@ -1,7 +1,7 @@
 import { Logger } from "@nestjs/common";
 import { ACTOR, RunWorld, SERVER, TEAM, defaultPlan } from "./testing/run-world";
 import { confirmMatches } from "./migration-runs.service";
-import { CreateMigrationRunSchema, RunReportSchema, MigrationRunViewSchema, MigrationRunSummarySchema, RunEventsPageSchema } from "./dto";
+import { CreateMigrationRunSchema, RunOptionsSchema, RunReportSchema, MigrationRunViewSchema, MigrationRunSummarySchema, RunEventsPageSchema } from "./dto";
 import type { ApprovalBinding } from "./dto";
 
 // the specs drive a whole run through the engine on a fake clock; give a loaded CI machine room
@@ -40,6 +40,47 @@ describe("create", () => {
     expect(w.store.row(marked.id).inPlace).toBe(true);
     // not a swap: nothing to take over in place
     await expect(w.service.create(ACTOR, w.createBody({ topology: "two-box" }), { inPlace: true })).rejects.toThrow(/in-place-needs-swap-proxy/);
+  });
+
+  it("an app chosen for a rebuild is kept with the in-place run, shown in its view and counted (never named) in the audit", async () => {
+    const w = new RunWorld();
+    const body = w.createBody({ topology: "swap-proxy", mode: "takeover", dryRun: true });
+    const v = await w.service.create(ACTOR, { ...body, options: { ...body.options, rebuild: ["app:h1:one", "app:h1:two"] } }, { inPlace: true });
+    expect(w.store.row(v.id).options).toMatchObject({ rebuild: ["app:h1:one", "app:h1:two"] });
+    expect(v.inPlace).toBe(true);
+    expect(v.options.rebuild).toEqual(["app:h1:one", "app:h1:two"]);
+    const audit = w.sink.audits.find((a) => a.action === "migration.run.create");
+    expect(audit?.meta).toMatchObject({ rebuild: 2 });
+    expect(JSON.stringify(audit)).not.toContain("app:h1:");
+    // a run without a choice stores no list: the default is "reuse the image, build nothing"
+    const plain = await w.service.create(ACTOR, w.createBody({ topology: "swap-proxy", mode: "takeover", dryRun: true }), { inPlace: true });
+    expect(w.store.row(plain.id).options).not.toHaveProperty("rebuild");
+  });
+
+  it("a rebuild choice on a run that is not in place is refused before anything is written", async () => {
+    const w = new RunWorld();
+    const body = w.createBody({ topology: "swap-proxy", mode: "takeover" });
+    await expect(w.service.create(ACTOR, { ...body, options: { ...body.options, rebuild: ["app:h1:one"] } })).rejects.toMatchObject({ response: { code: "rebuild-needs-in-place" } });
+    const two = w.createBody({ topology: "two-box" });
+    await expect(w.service.create(ACTOR, { ...two, options: { ...two.options, rebuild: ["app:h1:one"] } })).rejects.toMatchObject({ response: { code: "rebuild-needs-in-place" } });
+    expect(await w.service.list(ACTOR, { limit: 10 })).toHaveLength(0);
+  });
+
+  it("when the importer can tell, a rebuild choice must be an app of the run's scope; otherwise only its shape is checked", async () => {
+    const w = new RunWorld();
+    const body = w.createBody({ topology: "swap-proxy", mode: "takeover", dryRun: true });
+    const opts = (rebuild: string[]) => ({ ...body, options: { ...body.options, rebuild } });
+    // the port cannot tell: the takeover's own plan refuses an app it does not know, later
+    await expect(w.service.create(ACTOR, opts(["app:h1:any"]), { inPlace: true })).resolves.toBeDefined();
+    w.port.appRefs = async () => ["app:h1:one"];
+    await expect(w.service.create(ACTOR, opts(["app:h1:one"]), { inPlace: true })).resolves.toBeDefined();
+    await expect(w.service.create(ACTOR, opts(["app:h1:one", "app:h1:ghost"]), { inPlace: true })).rejects.toMatchObject({ response: { code: "rebuild-unknown-item", itemRef: "app:h1:ghost" } });
+  });
+
+  it("the options schema takes only app refs, at most 500, and the default run has no list", () => {
+    expect(RunOptionsSchema.parse({})).not.toHaveProperty("rebuild");
+    expect(RunOptionsSchema.parse({ rebuild: ["app:a:b"] }).rebuild).toEqual(["app:a:b"]);
+    for (const bad of [["service:a:b"], ["app:"], ["app:a: b"], "app:a:b", Array.from({ length: 501 }, (_, i) => `app:a:${i}`)]) expect(() => RunOptionsSchema.parse({ rebuild: bad })).toThrow();
   });
 
   it("every view validates against the published response schemas", async () => {

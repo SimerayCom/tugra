@@ -43,6 +43,10 @@ function build(o: { role?: Role | null; apps?: BoxApp[]; dbs?: BoxDb[] } = {}) {
         const r = rows.get(where.id);
         return r ? { ...r, createdAt: new Date("2026-11-26T10:00:00Z"), finishedAt: r.finishedAt ? new Date(r.finishedAt as never) : null } : null;
       }),
+      findFirst: jest.fn(async ({ where }: { where: { runId: string } }) => {
+        const r = [...rows.values()].filter((x) => x.runId === where.runId).pop();
+        return r ? { ...r, createdAt: new Date("2026-11-26T10:00:00Z"), finishedAt: r.finishedAt ? new Date(r.finishedAt as never) : null } : null;
+      }),
       findMany: jest.fn(async () => [...rows.values()].map((r) => ({ ...r, createdAt: new Date("2026-11-26T10:00:00Z"), finishedAt: null }))),
       deleteMany: jest.fn(async ({ where }: { where: { serverId: string; status: string; runId: null } }) => {
         const hit = [...rows.values()].filter((r) => r.serverId === where.serverId && r.status === where.status && (r.runId ?? null) === where.runId);
@@ -789,3 +793,56 @@ describe("databases in the takeover", () => {
   });
 });
 
+
+describe("a guided run's rebuild choice", () => {
+  const prepare = (t: ReturnType<typeof build>, rebuild?: string[]) => t.svc.runPrepare(ACTOR, { runId: "run1", serverId: "srv1", opId: "op1", ...(rebuild ? { rebuild } : {}) });
+
+  it("the run's list decides which apps are built with Tugra and verified; the rest reuse Coolify's image", async () => {
+    const t = build();
+    const st = await prepare(t, ["app:s1:webuuid"]);
+    expect(st.items.map((i) => [i.itemRef, i.buildMode])).toEqual([
+      ["app:s1:webuuid", "rebuild-verify"],
+      ["app:s1:dbuuid", "reuse-image"],
+    ]);
+    expect(t.audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "coolify.takeover.plan", meta: expect.objectContaining({ runId: "run1", rebuild: 1 }) }));
+  });
+  it("no list (the default) builds nothing", async () => {
+    const t = build();
+    const st = await prepare(t);
+    expect(st.items.every((i) => i.buildMode === "reuse-image")).toBe(true);
+    expect(t.audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "coolify.takeover.plan", meta: expect.objectContaining({ rebuild: 0 }) }));
+  });
+  it("an app that shares writable data keeps Coolify's image in a run, marked, instead of failing the run; the standalone takeover still refuses it", async () => {
+    const t = build();
+    const st = await prepare(t, ["app:s1:dbuuid", "app:s1:webuuid"]);
+    const byRef = Object.fromEntries(st.items.map((i) => [i.itemRef, i]));
+    expect(byRef["app:s1:dbuuid"]).toMatchObject({ buildMode: "reuse-image", exclusive: true, rebuildDeclined: true });
+    expect(byRef["app:s1:webuuid"].buildMode).toBe("rebuild-verify");
+    expect(byRef["app:s1:webuuid"].rebuildDeclined).toBeUndefined();
+    await expect(plan(build(), ["app:s1:dbuuid"])).rejects.toMatchObject({ response: { code: "takeover_rebuild_needs_side_by_side" } });
+  });
+  it("an app the op does not have is still refused by name", async () => {
+    await expect(prepare(build(), ["app:s1:ghost"])).rejects.toMatchObject({ response: { code: "takeover_unknown_item" } });
+  });
+  it("the run view says, per app, what was chosen and what happened: names, refs, states and codes only", async () => {
+    const t = build();
+    await prepare(t, ["app:s1:webuuid", "app:s1:dbuuid"]);
+    const v = await t.svc.runView(ACTOR, "run1");
+    expect(v.status).toBe("TESTING");
+    expect(v.items.map((i) => [i.itemRef, i.buildMode, i.rebuildDeclined ?? false])).toEqual([
+      ["app:s1:webuuid", "rebuild-verify", false],
+      ["app:s1:dbuuid", "reuse-image", true],
+    ]);
+    expect(Object.keys(v).sort()).toEqual(["failureCode", "id", "items", "pending", "status", "verified"]);
+    expect(JSON.stringify(v)).not.toMatch(/sha256|tugra_app|[0-9a-f]{64}|"restart"|"image"|bindBefore|proxy/);
+  });
+  it("the run view is for the team's owner and admin; another team's member sees nothing, and a run with no takeover is a 404", async () => {
+    const t = build();
+    await prepare(t, []);
+    t.access.teamRole.mockResolvedValueOnce(Role.ADMIN);
+    await expect(t.svc.runView("u2", "run1")).resolves.toMatchObject({ status: "TESTING" });
+    t.access.teamRole.mockResolvedValueOnce(null);
+    await expect(t.svc.runView("u3", "run1")).rejects.toBeInstanceOf(NotFoundException);
+    await expect(t.svc.runView(ACTOR, "run-none")).rejects.toBeInstanceOf(NotFoundException);
+  });
+});

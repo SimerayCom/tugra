@@ -218,7 +218,7 @@ describe("view schemas", () => {
   const view = {
     id: "r1", teamId: "t1", actorId: "u1", targetServerId: "s1", targetServerName: "tugra-1", serverMap: {}, targetServers: [{ serverId: "s1", serverName: "tugra-1", primary: true }],
     sourceKind: "coolify", sourceHost: "coolify.example.com", sourceVersion: null, sourceVersionVerdict: "unknown", campaign: null, baselineAt: null,
-    opId: null, opHistory: [], planHash: H32, mode: "copy", topology: "two-box", dryRun: false, promotedFromId: null, status: "QUEUED", currentStep: null, ponrAt: null,
+    opId: null, opHistory: [], planHash: H32, mode: "copy", topology: "two-box", dryRun: false, inPlace: false, promotedFromId: null, status: "QUEUED", currentStep: null, ponrAt: null,
     pauseRequested: false, abortRequested: false, options: RunOptionsSchema.parse({}), inputs: {}, windowEstimate: null, freezeStartedAt: null, freezeEndedAt: null,
     measuredDowntimeSec: null, failure: null,
     nextAction: { kind: "none", stepKey: null, code: "run.queued", since: NOW },
@@ -228,6 +228,12 @@ describe("view schemas", () => {
   it("a fresh run view parses", () => {
     expect(MigrationRunViewSchema.safeParse(view).success).toBe(true);
     expect(MigrationRunStepViewSchema.safeParse(stepView("FREEZE")).success).toBe(true);
+  });
+  it("the view says whether the run is an in-place takeover, and a view without the flag does not parse", () => {
+    expect(MigrationRunViewSchema.safeParse({ ...view, inPlace: true }).success).toBe(true);
+    const { inPlace: _omit, ...without } = view as typeof view & { inPlace: boolean };
+    void _omit;
+    expect(MigrationRunViewSchema.safeParse(without).success).toBe(false);
   });
   it("the step view never carries the typed confirmation name", () => {
     const withName = { ...stepView("CUTOVER"), approval: { byUserId: "u1", at: NOW, boundHash: H64, acks: [], acceptDataRisk: true, expiresAt: null, confirmedName: "srv" } };

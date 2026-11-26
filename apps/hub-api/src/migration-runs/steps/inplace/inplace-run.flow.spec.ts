@@ -79,7 +79,7 @@ function ctxOf(over: { run?: Partial<RunSnapshot>; step?: Partial<StepSnapshot>;
   const patches: Array<Record<string, unknown>> = [];
   const events: string[] = [];
   const clock = { now: over.now ?? new Date("2026-11-26T10:00:00Z") };
-  const run = { id: RUN, teamId: "team1", actorId: "u1", targetServerId: "srv1", serverMap: {}, topology: "swap-proxy", inPlace: true, mode: "copy", opId: "op1", freezeStartedAt: null, freezeEndedAt: null, ponrAt: null, ...over.run } as unknown as RunSnapshot;
+  const run = { id: RUN, teamId: "team1", actorId: "u1", targetServerId: "srv1", serverMap: {}, topology: "swap-proxy", inPlace: true, mode: "copy", opId: "op1", options: {}, freezeStartedAt: null, freezeEndedAt: null, ponrAt: null, ...over.run } as unknown as RunSnapshot;
   const ctx = {
     run,
     step: step({ ...over.step, compensation: comp }),
@@ -136,6 +136,22 @@ describe("DEPLOY_DARK of an in-place run", () => {
     expect(r.box.proxyBinds).toEqual(["none"]);
     expect(r.box.scripts.some((x) => /docker (rm|rmi|volume rm|system prune|cp)\b/.test(x))).toBe(false);
     expect(s.dark.postGate(await s.dark.state(c.ctx)).passed).toBe(true);
+  });
+  it("carries the owner's rebuild choice into the takeover: those apps are built with Tugra and verified, the others reuse Coolify's image", async () => {
+    const r = rig();
+    const s = steps(r);
+    const c = ctxOf({ run: { options: { rebuild: ["app:s1:webuuid"] } as never } });
+    expect(await prepare(s, c)).toMatchObject({ outcome: expect.stringMatching(/done|continue/) });
+    const st = await s.dark.state(c.ctx);
+    expect(st?.items.map((i) => [i.itemRef, i.buildMode])).toEqual(expect.arrayContaining([["app:s1:webuuid", "rebuild-verify"]]));
+    expect(st?.items.filter((i) => i.buildMode === "reuse-image").length).toBe((st?.items.length ?? 0) - 1);
+  });
+  it("without a choice nothing is built", async () => {
+    const r = rig();
+    const s = steps(r);
+    const c = ctxOf();
+    await prepare(s, c);
+    expect((await s.dark.state(c.ctx))?.items.every((i) => i.buildMode === "reuse-image")).toBe(true);
   });
   it("the run's own hold on the server does not make the server busy, another holder does", async () => {
     const r = rig();

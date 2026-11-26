@@ -395,3 +395,26 @@ describe("ImportPortService.sourceHosts", () => {
     expect(importer.plan).not.toHaveBeenCalled();
   });
 });
+
+describe("ImportPortService.appRefs", () => {
+  const plan = {
+    planHash: "h",
+    items: [
+      { itemRef: "app:a:web", kind: "app", name: "web", dependsOn: [] },
+      { itemRef: "app:b:api", kind: "app", name: "api", dependsOn: [] },
+      { itemRef: "database:a:db", kind: "database", name: "db", dependsOn: [] },
+      { itemRef: "service:a:stack", kind: "service", name: "stack", dependsOn: [] },
+    ],
+    preflight: { hosts: [{ ref: "a" }, { ref: "b" }] },
+  };
+  it("lists the plan's apps only (a database or a service stack is not an app to rebuild)", async () => {
+    const { svc, importer } = make();
+    importer.plan.mockResolvedValueOnce(plan);
+    expect(await svc.appRefs("u1", { sessionId: "s1", sourceKind: "coolify" })).toEqual(["app:a:web", "app:b:api"]);
+  });
+  it("narrows to the apps a scope keeps", async () => {
+    const { svc, importer } = make();
+    importer.plan.mockResolvedValueOnce(plan);
+    expect(await svc.appRefs("u1", { sessionId: "s1", sourceKind: "coolify", scope: { sourceServers: ["a"] } })).toEqual(["app:a:web"]);
+  });
+});
