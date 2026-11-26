@@ -30,6 +30,8 @@ import {
   PROJECT_MOVE_PHASES,
   REMNANT_KINDS,
   TAKEOVER_CERT_STATES,
+  TAKEOVER_FAILURE_CODES,
+  TAKEOVER_ISSUES,
   TAKEOVER_STATUSES,
   agentSessionBaseUrl,
   isAgentSessionBaseUrl,
@@ -169,6 +171,15 @@ describe("coolify takeover contract: placement, campaign, takeover, cleanup, pro
     expect(TAKEOVER_CERT_STATES).toEqual(["pending", "fallback", "issued", "failed"]);
     expect(PROJECT_MOVE_PHASES[0]).toBe("QUEUED");
     expect(PROJECT_MOVE_PHASES).toContain("ROLLED_BACK");
+  });
+
+  it("the takeover knows compose services: a code for every reason a service is left out or fails, each once", () => {
+    expect(unique(TAKEOVER_ISSUES)).toBe(true);
+    expect(unique(TAKEOVER_FAILURE_CODES)).toBe(true);
+    for (const c of ["service_member_unmapped", "service_member_absent", "service_member_ambiguous", "service_image_differs", "service_image_moved", "service_networks_unmapped", "service_compose_unsupported"]) expect(TAKEOVER_ISSUES).toContain(c);
+    for (const c of ["service_not_ready", "service_verify_failed"]) expect(TAKEOVER_FAILURE_CODES).toContain(c);
+    // the codes the older kinds already used are still there (a screen string exists for each)
+    for (const c of ["db_verify_failed", "container_absent", "volume_unmapped"]) expect(TAKEOVER_ISSUES).toContain(c);
   });
 
   it("compares the ten things the checklist names (traffic: the domain answers from Tugra)", () => {

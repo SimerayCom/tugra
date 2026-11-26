@@ -47,10 +47,10 @@ export function rollup(v: Pick<TakeoverView, "items">): TakeoverRollup {
   for (const i of v.items) {
     if (i.kind === "database") continue; // counted by dbRollup
     if (i.skipped) {
-      r.skipped += 1;
+      if (i.kind !== "service") r.skipped += 1; // a service left out is counted by serviceRollup
       continue;
     }
-    r.apps += 1;
+    if (i.kind !== "service") r.apps += 1; // a service's domains count here, the service itself in serviceRollup
     for (const d of i.domains) {
       r.domains += 1;
       if (d.tempCheck === "ok") r.tested += 1;
@@ -64,7 +64,8 @@ export function rollup(v: Pick<TakeoverView, "items">): TakeoverRollup {
 }
 
 /** True while another press of "verify" has work to do: a domain still on the fallback, pending or failed with attempts left is for the hub to say; the screen keeps offering it until verified. */
-export const verifyHasWork = (v: Pick<TakeoverView, "status" | "items">): boolean => v.status === "SWAPPED" && v.items.some((i) => !i.skipped && i.domains.some((d) => d.cert !== "issued"));
+export const verifyHasWork = (v: Pick<TakeoverView, "status" | "items">): boolean =>
+  v.status === "SWAPPED" && v.items.some((i) => !i.skipped && (i.domains.some((d) => d.cert !== "issued") || (i.members ?? []).some((m) => m.ready !== "ok")));
 
 /** Polling interval for the screen: only while something may change without a click (never when settled). */
 export const pollMs = (v: Pick<TakeoverView, "status"> | null | undefined): number | false => (v && (v.status === "TESTING" || v.status === "SWAPPING" || v.status === "GIVING_BACK") ? 4000 : false);
@@ -104,4 +105,14 @@ export function dbRollup(v: Pick<TakeoverView, "items">): { total: number; ok: n
   const dbs = v.items.filter((i) => i.kind === "database");
   const active = dbs.filter((i) => !i.skipped);
   return { total: active.length, ok: active.filter((i) => i.verify?.state === "ok").length, failed: active.filter((i) => i.verify?.state === "failed").length, skipped: dbs.length - active.length };
+}
+
+/** The compose services of a takeover: how many take part, how many are done (every container up, every database-like container answered the same) and how many are left out. */
+export function serviceRollup(v: Pick<TakeoverView, "items">): { total: number; ok: number; failed: number; skipped: number } {
+  const svcs = v.items.filter((i) => i.kind === "service");
+  const active = svcs.filter((i) => !i.skipped);
+  const members = (i: TakeoverItemView) => i.members ?? [];
+  const done = (i: TakeoverItemView): boolean => members(i).length > 0 && members(i).every((m) => m.ready === "ok" && (!m.verify || m.verify.state === "ok"));
+  const bad = (i: TakeoverItemView): boolean => members(i).some((m) => m.ready === "failed" || m.verify?.state === "failed");
+  return { total: active.length, ok: active.filter(done).length, failed: active.filter(bad).length, skipped: svcs.length - active.length };
 }

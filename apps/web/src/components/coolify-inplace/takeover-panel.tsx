@@ -6,7 +6,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { TakeoverCertState, TakeoverItemView, TakeoverView } from "@tugra/shared";
 import { api, ApiError } from "../../lib/api";
 import { useT } from "../../i18n/provider";
-import { actionsFor, confirmMatches, dbRollup, pollMs, rebuildCandidates, rebuildOf, rollup, toggleChoice, verifyHasWork, type TakeoverAction } from "../../lib/inplace";
+import { actionsFor, confirmMatches, dbRollup, pollMs, rebuildCandidates, rebuildOf, rollup, serviceRollup, toggleChoice, verifyHasWork, type TakeoverAction } from "../../lib/inplace";
 import { Badge, Btn, SectionCard, Spinner } from "../ui";
 import { Modal } from "../modal";
 import { Field, TextInput } from "../form";
@@ -77,6 +77,7 @@ export function TakeoverPanel({ serverId, serverName, opId }: { serverId: string
   const actions = actionsFor(view).filter((a) => a !== "plan" || !!opId);
   const r = view ? rollup(view) : null;
   const dbr = view ? dbRollup(view) : null;
+  const svr = view ? serviceRollup(view) : null;
 
   const press = (a: TakeoverAction) => {
     if (a === "plan") plan.mutate();
@@ -111,6 +112,11 @@ export function TakeoverPanel({ serverId, serverName, opId }: { serverId: string
           {dbr && dbr.total + dbr.skipped > 0 && (
             <p data-testid="takeover-db-rollup" style={{ margin: 0, fontSize: 12, color: "var(--c-tx2)", lineHeight: 1.5 }}>
               {t("coolifyInPlace.database.rollup", { count: dbr.total, ok: dbr.ok, skipped: dbr.skipped })}
+            </p>
+          )}
+          {svr && svr.total + svr.skipped > 0 && (
+            <p data-testid="takeover-service-rollup" style={{ margin: 0, fontSize: 12, color: "var(--c-tx2)", lineHeight: 1.5 }}>
+              {t("coolifyInPlace.service.rollup", { count: svr.total, ok: svr.ok, skipped: svr.skipped })}
             </p>
           )}
           <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "flex", flexDirection: "column", gap: 10 }}>
@@ -185,7 +191,7 @@ function ItemRow({ item, t }: { item: TakeoverItemView; t: T }) {
     <li data-testid="takeover-item" style={{ border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: 10, display: "flex", flexDirection: "column", gap: 6, minWidth: 0 }}>
       <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
         <strong style={{ fontSize: 13, overflowWrap: "anywhere" }}>{item.name}</strong>
-        {item.kind === "database" ? <Badge tone="lapis">{t("coolifyInPlace.database.badge")}</Badge> : <Badge>{t(`coolifyInPlace.build.${item.buildMode}`)}</Badge>}
+        {item.kind === "database" ? <Badge tone="lapis">{t("coolifyInPlace.database.badge")}</Badge> : item.kind === "service" ? <Badge tone="lapis">{t("coolifyInPlace.service.badge")}</Badge> : <Badge>{t(`coolifyInPlace.build.${item.buildMode}`)}</Badge>}
         {item.exclusive && <Badge tone="warn">{t("coolifyInPlace.exclusive")}</Badge>}
         {item.afterSwitch && <Badge tone="warn">{t("coolifyInPlace.afterSwitch")}</Badge>}
         {item.kind === "database" && item.verify && !item.skipped && <Badge tone={item.verify.state === "ok" ? "ok" : item.verify.state === "failed" ? "danger" : "muted"}>{t(`coolifyInPlace.database.verify.${item.verify.state}`)} ({t(`coolifyInPlace.database.level.${item.verify.level}`)})</Badge>}
@@ -194,6 +200,22 @@ function ItemRow({ item, t }: { item: TakeoverItemView; t: T }) {
       {item.issues?.map((c) => (
         <p key={c} role="note" style={{ margin: 0, fontSize: 12, color: "var(--c-am)", lineHeight: 1.5 }}>{t(`coolifyInPlace.issue.${c}`)}</p>
       ))}
+      {!item.skipped && item.kind === "service" && item.members && item.members.length > 0 && (
+        <div data-testid="takeover-members" style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          <span style={{ fontSize: 11, color: "var(--c-tx3)" }}>{t("coolifyInPlace.service.members")}</span>
+          {item.members.map((m) => (
+            <div key={m.name} data-testid="takeover-member" style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", fontSize: 12 }}>
+              <span className="mono" style={{ overflowWrap: "anywhere", flex: "1 1 120px" }}>{m.name}</span>
+              <Badge tone={m.ready === "ok" ? "ok" : m.ready === "failed" ? "danger" : "muted"}>{t(`coolifyInPlace.service.member.ready.${m.ready}`)}</Badge>
+              {m.verify && (
+                <Badge tone={m.verify.state === "ok" ? "ok" : m.verify.state === "failed" ? "danger" : "muted"}>
+                  {t(`coolifyInPlace.database.verify.${m.verify.state}`)} ({t(`coolifyInPlace.database.level.${m.verify.level}`)})
+                </Badge>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
       {!item.skipped &&
         item.domains.map((d) => (
           <div key={d.host} style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", fontSize: 12 }}>

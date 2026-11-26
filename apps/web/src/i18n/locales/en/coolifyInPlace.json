@@ -76,7 +76,14 @@
     "db_engine_unsupported": "This database engine cannot be taken over in place.",
     "db_volume_unmapped": "This database keeps data in a volume Tugra's copy of it does not declare. Add the volume to the database first.",
     "db_start_failed": "Tugra's container for this database did not start on its data.",
-    "db_verify_failed": "This database did not look the same through Tugra."
+    "db_verify_failed": "This database did not look the same through Tugra.",
+    "service_member_unmapped": "Coolify runs a container for this service that Tugra's copy of the service has no part for. Add the part to the service first.",
+    "service_member_absent": "Tugra's copy of this service has a part Coolify runs no container for. A service is taken over whole or not at all.",
+    "service_member_ambiguous": "Coolify runs more than one container for a part of this service.",
+    "service_image_differs": "Tugra's copy of this service builds an image or sets it with a variable, so Coolify's image cannot be reused. Set a fixed image first.",
+    "service_image_moved": "The image tag of Tugra's copy now points at another image than the one Coolify's container runs. Plan again after pulling nothing, or pin the image.",
+    "service_networks_unmapped": "A network or name of this service cannot be carried to Tugra's copy (unsupported characters, or more than 8 networks or 4 names).",
+    "service_compose_unsupported": "Tugra's copy of this service is not a stored compose file Tugra can run in place (a compose from git, an adopted project or a cluster app)."
   },
   "failure": {
     "probe_unavailable": "The server could not run the checks (curl is missing or the proxy is not up).",
@@ -89,7 +96,9 @@
     "fallback_overdue": "Coolify's certificate has been served for longer than a few minutes and no new certificate came. Check the domain's DNS and port 80, or give the server back.",
     "cert_check_unavailable": "The server cannot check certificates (openssl is missing), so Coolify's certificate stays. Install openssl on the server, or give the server back.",
     "database_start_failed": "A database would not start on its data under Tugra. Everything was put back.",
-    "database_verify_failed": "A database did not look the same after Tugra took it over. Everything was put back."
+    "database_verify_failed": "A database did not look the same after Tugra took it over. Everything was put back.",
+    "service_not_ready": "A service's containers did not come up ready under Tugra. If this shows after the switch, one container stopped or is not healthy. Give the server back, or check the service.",
+    "service_verify_failed": "A database inside a service did not look the same after Tugra took it over. Everything was put back."
   },
   "error": {
     "generic": "That did not work. Try again.",
@@ -134,6 +143,18 @@
   "back": "Back to Move off Coolify",
   "missing": "Open this from a server page or the Move off Coolify checklist: it needs a server.",
   "link": "Take over this server in place",
+  "service": {
+    "badge": "Service",
+    "rollup": "{count} services take part ({skipped} left out). Every container up and checked: {ok}.",
+    "members": "Containers, in start order",
+    "member": {
+      "ready": {
+        "pending": "Checked after the switch",
+        "ok": "Up",
+        "failed": "Not ready"
+      }
+    }
+  },
   "database": {
     "badge": "Database",
     "rollup": "{count} databases take part ({skipped} left out). Checked the same after the switch: {ok}.",

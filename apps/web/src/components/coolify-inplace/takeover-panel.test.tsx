@@ -237,4 +237,49 @@ describe("TakeoverPanel", () => {
     mount();
     expect(await screen.findByRole("button", { name: "Take over the ports" })).toBeTruthy();
   });
+
+  it("shows a service as a service: its containers in start order with whether each is up, a database among them, and the roll-up; a left-out service says why", async () => {
+    vi.spyOn(api, "listInPlace").mockResolvedValue([
+      view("SWAPPED", [
+        item({
+          itemRef: "service:s:blog",
+          name: "blog",
+          kind: "service",
+          exclusive: true,
+          members: [
+            { name: "db", ready: "ok", verify: { level: "counts", state: "ok" } },
+            { name: "ghost", ready: "failed" },
+          ],
+          domains: [dom({ host: "blog.example.com", tempCheck: "pending", finalCheck: "ok", cert: "issued" })],
+        }),
+        item({ itemRef: "service:s:old", name: "old", kind: "service", skipped: true, issues: ["service_member_unmapped", "service_image_moved"], domains: [] }),
+      ], { failureCode: "service_not_ready" }),
+    ]);
+    mount();
+    const rows = await screen.findAllByTestId("takeover-item");
+    expect(within(rows[0]).getByText("Service")).toBeTruthy();
+    expect(within(rows[0]).getByText("Switched, not tested alongside")).toBeTruthy();
+    const members = within(rows[0]).getAllByTestId("takeover-member");
+    expect(members.map((m) => m.textContent)).toEqual(["dbUpSame as before (row counts)", "ghostNot ready"]);
+    expect(within(rows[0]).getByText("blog.example.com")).toBeTruthy();
+    expect(within(rows[1]).getByText("Left out")).toBeTruthy();
+    expect(within(rows[1]).getByText(/has no part for/)).toBeTruthy();
+    expect(within(rows[1]).getByText(/now points at another image/)).toBeTruthy();
+    expect(within(rows[1]).queryByTestId("takeover-member")).toBeNull();
+    expect(screen.getByTestId("takeover-service-rollup").textContent).toBe("1 services take part (1 left out). Every container up and checked: 0.");
+    // services are not counted as apps, their domain is counted with the rest
+    expect(screen.getByTestId("takeover-rollup").textContent).toBe("0 apps (0 left out), 1 domains. Tested: 0. Checked after the switch: 1. New certificates: 1.");
+    expect(screen.getByRole("alert").textContent).toMatch(/containers did not come up ready/);
+  });
+  it("a service that shares data and serves nothing publicly does not block taking the ports", async () => {
+    vi.spyOn(api, "listInPlace").mockResolvedValue([view("TESTING", [item({ itemRef: "service:s:q", name: "queue", kind: "service", exclusive: true, domains: [], members: [{ name: "q", ready: "pending" }] })])]);
+    mount();
+    expect(await screen.findByRole("button", { name: "Take over the ports" })).toBeTruthy();
+  });
+  it("a service's containers are laid out in a wrapping row so a narrow screen never scrolls sideways", async () => {
+    vi.spyOn(api, "listInPlace").mockResolvedValue([view("PLANNED", [item({ itemRef: "service:s:q", name: "queue", kind: "service", exclusive: true, domains: [], members: [{ name: "q", ready: "pending" }] })])]);
+    mount();
+    const member = await screen.findByTestId("takeover-member");
+    expect(member.style.flexWrap).toBe("wrap");
+  });
 });

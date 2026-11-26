@@ -1344,7 +1344,7 @@
     "cutover_inplace-reversed": "The takeover was already given back to Coolify.",
     "cutover_inplace-database-start-failed": "A database's container would not start on its data. Everything was put back.",
     "cutover_inplace-database-verify-failed": "A database did not look the same after Tugra took it over. Everything was put back.",
-    "cutover_inplace-service-not-ready": "A service's containers did not come up ready under Tugra. Everything was put back.",
+    "cutover_inplace-service-not-ready": "A service's containers did not come up ready under Tugra. If the switch had not finished, everything was put back; otherwise a container stopped or is not healthy: check the service or give the server back.",
     "cutover_inplace-service-verify-failed": "A database inside a service did not look the same after Tugra took it over. Everything was put back.",
     "verify_inplace-after-switch": "{app} talks to a database that is taken over, so it starts after the database at the switch and is checked right after. Giving back is one click.",
     "verify_inplace-service": "Service {app}: its {members} containers are switched together onto the same images and the same data. After the switch every container is checked to be up and healthy, and a database among them to answer the same; if not, everything is put back.",

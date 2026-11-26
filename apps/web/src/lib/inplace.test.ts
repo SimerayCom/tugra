@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type { TakeoverItemView, TakeoverStatus, TakeoverView } from "@tugra/shared";
-import { actionsFor, canSwap, confirmMatches, dbRollup, pollMs, rebuildCandidates, rebuildOf, rollup, toggleChoice, verifyHasWork } from "./inplace";
+import { actionsFor, canSwap, confirmMatches, dbRollup, pollMs, rebuildCandidates, rebuildOf, rollup, serviceRollup, toggleChoice, verifyHasWork } from "./inplace";
 
 type D = TakeoverItemView["domains"][number];
 const dom = (o: Partial<D> = {}): D => ({ host: "a.example.com", tempCheck: "ok", finalCheck: "pending", cert: "pending", ...o });
@@ -106,5 +106,43 @@ describe("databases in the rules", () => {
   it("the ports may be taken with a database and an app that starts after it, neither tested", () => {
     expect(canSwap(view("TESTING", [dbi(), item({ afterSwitch: true, domains: [dom({ tempCheck: "pending" })] })]))).toBe(true);
     expect(canSwap(view("TESTING", [dbi(), item({ domains: [dom({ tempCheck: "pending" })] })]))).toBe(false);
+  });
+});
+
+describe("compose services in the rules", () => {
+  type M = NonNullable<TakeoverItemView["members"]>[number];
+  const mem = (o: Partial<M> = {}): M => ({ name: "web", ready: "pending", ...o });
+  const svc = (o: Partial<TakeoverItemView> = {}): TakeoverItemView => item({ itemRef: "service:s:x", name: "blog", kind: "service", exclusive: true, members: [mem({ name: "db", verify: { level: "counts", state: "pending" } }), mem()], ...o });
+  it("a service is counted apart from apps, its domains still count with the rest", () => {
+    const v = view("SWAPPED", [item(), svc({ domains: [dom({ host: "blog.example.com", finalCheck: "ok", cert: "issued" })] }), svc({ itemRef: "service:s:y", skipped: true })]);
+    const r = rollup(v);
+    expect(r.apps).toBe(1);
+    expect(r.skipped).toBe(0); // the left-out service is counted by serviceRollup
+    expect(r.domains).toBe(2);
+    expect(r.certs.issued).toBe(1);
+  });
+  it("counts the services that take part, the ones whose every container is up and every database answered the same, the failures and the ones left out", () => {
+    const ok = svc({ members: [mem({ name: "db", ready: "ok", verify: { level: "counts", state: "ok" } }), mem({ ready: "ok" })] });
+    const down = svc({ itemRef: "service:s:d", members: [mem({ ready: "failed" }), mem({ name: "db", ready: "ok", verify: { level: "alive", state: "ok" } })] });
+    const differs = svc({ itemRef: "service:s:e", members: [mem({ ready: "ok", verify: { level: "counts", state: "failed" } })] });
+    const waiting = svc({ itemRef: "service:s:f" });
+    const out = svc({ itemRef: "service:s:g", skipped: true, issues: ["service_member_unmapped"] });
+    expect(serviceRollup(view("SWAPPED", [item(), ok, down, differs, waiting, out]))).toEqual({ total: 4, ok: 1, failed: 2, skipped: 1 });
+    expect(serviceRollup(view("PLANNED", [item()]))).toEqual({ total: 0, ok: 0, failed: 0, skipped: 0 });
+    // a service with no member list is never "done"
+    expect(serviceRollup(view("SWAPPED", [svc({ members: [] })])).ok).toBe(0);
+  });
+  it("a service that shares data and has no domain does not hold up the swap; one that runs alongside still needs its domains tested", () => {
+    expect(canSwap(view("TESTING", [svc({ domains: [] })]))).toBe(true);
+    expect(canSwap(view("TESTING", [svc({ exclusive: false, domains: [dom({ tempCheck: "pending" })] })]))).toBe(false);
+    expect(canSwap(view("TESTING", [svc({ exclusive: false, domains: [dom({ tempCheck: "ok" })] })]))).toBe(true);
+    expect(canSwap(view("TESTING", [svc({ skipped: true, domains: [] })]))).toBe(false);
+  });
+  it("verify keeps being offered while a container of a service is not up, even with every certificate issued", () => {
+    const done = dom({ finalCheck: "ok", cert: "issued" });
+    expect(verifyHasWork(view("SWAPPED", [svc({ domains: [done], members: [mem({ ready: "failed" })] })]))).toBe(true);
+    expect(verifyHasWork(view("SWAPPED", [svc({ domains: [done], members: [mem({ ready: "ok" })] })]))).toBe(false);
+    expect(verifyHasWork(view("SWAPPED", [svc({ domains: [], members: [mem({ ready: "pending" })] })]))).toBe(true);
+    expect(verifyHasWork(view("SWAPPED", [svc({ skipped: true, domains: [done], members: [mem({ ready: "failed" })] })]))).toBe(false);
   });
 });
