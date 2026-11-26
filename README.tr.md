@@ -108,7 +108,7 @@ Tuğra; uygulamaları ve veritabanlarını kendi sunucularınızda deploy etmek,
 | Audit log | ✅ | ✅ | ✅ | ~⁷ | — | — |
 | MCP / ajan kontrolü | ✅ 82 tools⁵ | ✅ | ✅ | ~⁷ | — | ~² |
 | **Güven ve lisans** | | | | | | |
-| Telemetri | Anonim, opt-out (yalnızca sayılar) | n/a | n/a | n/a | n/a | n/a |
+| Kullanım istatistikleri | Anonim, opt-out (yalnızca sayılar) | n/a | n/a | n/a | n/a | n/a |
 | Migrasyon (Coolify'dan import) | ✅⁹ | — | — | — | — | — |
 | Çekirdek lisans | AGPL-3.0 | Apache-2.0 | Apache-2.0³ | zlib + BE⁷ | Apache-2.0 + ek şartlar⁴ | MIT |
 

@@ -108,7 +108,7 @@ Una comparación directa con las herramientas PaaS autoalojables que la gente ev
 | Log de auditoría | ✅ | ✅ | ✅ | ~⁷ | — | — |
 | MCP / control por agentes | ✅ 82 tools⁵ | ✅ | ✅ | ~⁷ | — | ~² |
 | **Confianza y licencia** | | | | | | |
-| Telemetría | Anónima, opt-out (solo conteos) | n/a | n/a | n/a | n/a | n/a |
+| Estadísticas de uso | Anónima, opt-out (solo conteos) | n/a | n/a | n/a | n/a | n/a |
 | Migrar a Tugra (importar desde Coolify) | ✅⁹ | — | — | — | — | — |
 | Licencia del núcleo | AGPL-3.0 | Apache-2.0 | Apache-2.0³ | zlib + BE⁷ | Apache-2.0 + condiciones⁴ | MIT |
 

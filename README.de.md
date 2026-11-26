@@ -108,7 +108,7 @@ Ein direkter Vergleich mit den selbst hostbaren PaaS-Tools, die tatsächlich eva
 | Audit-Log | ✅ | ✅ | ✅ | ~⁷ | — | — |
 | MCP / Agentensteuerung | ✅ 82 tools⁵ | ✅ | ✅ | ~⁷ | — | ~² |
 | **Vertrauen & Lizenz** | | | | | | |
-| Telemetrie | Anonym, Opt-out (nur Zähler) | n/a | n/a | n/a | n/a | n/a |
+| Nutzungsstatistik | Anonym, Opt-out (nur Zähler) | n/a | n/a | n/a | n/a | n/a |
 | Migration zu Tugra (Import aus Coolify) | ✅⁹ | — | — | — | — | — |
 | Kernlizenz | AGPL-3.0 | Apache-2.0 | Apache-2.0³ | zlib + BE⁷ | Apache-2.0 + Bedingungen⁴ | MIT |
 

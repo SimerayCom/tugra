@@ -31,7 +31,7 @@ shared/client packages, deployed as a Docker Compose stack.
 ## Data plane
 
 - **PostgreSQL** (via Prisma) — the system of record.
-- **Redis / BullMQ** — background jobs (backups, notification delivery with retries, monitor checks) and the self-update queue. The rare periodic ticks (metrics rollup, retention, cleanup sweep, digests, update/telemetry checks, container health, …) share one `scheduler` queue and one worker, and every queue shares a single Redis connection, so the hub holds about ten Redis sockets instead of dozens. The rollout engine ticks every 5 s only while a rollout is live.
+- **Redis / BullMQ** — background jobs (backups, notification delivery with retries, monitor checks) and the self-update queue. The rare periodic ticks (metrics rollup, retention, cleanup sweep, digests, update and usage-stats checks, container health, …) share one `scheduler` queue and one worker, and every queue shares a single Redis connection, so the hub holds about ten Redis sockets instead of dozens. The rollout engine ticks every 5 s only while a rollout is live.
 
 ## Networking & routing
 

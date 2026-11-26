@@ -108,7 +108,7 @@ Uma comparação lado a lado com as ferramentas de PaaS auto-hospedáveis que as
 | Log de auditoria | ✅ | ✅ | ✅ | ~⁷ | — | — |
 | MCP / controle por agentes | ✅ 82 tools⁵ | ✅ | ✅ | ~⁷ | — | ~² |
 | **Confiança e licença** | | | | | | |
-| Telemetria | Anônima, opt-out (somente contagens) | n/a | n/a | n/a | n/a | n/a |
+| Estatísticas de uso | Anônima, opt-out (somente contagens) | n/a | n/a | n/a | n/a | n/a |
 | Migrar para cá (importar do Coolify) | ✅⁹ | — | — | — | — | — |
 | Licença do núcleo | AGPL-3.0 | Apache-2.0 | Apache-2.0³ | zlib + BE⁷ | Apache-2.0 + termos⁴ | MIT |
 

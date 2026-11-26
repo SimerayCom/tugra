@@ -96,7 +96,7 @@ secrets, server names, IPs or personal data unless noted.
 | AI deploy-log analysis → Anthropic | Off — opt-in | `ANTHROPIC_API_KEY` | `deploy/` |
 | Notifications / registries / git / monitors | Only what you configure; SSRF-guarded | per-resource; `NOTIFY_ALLOW_PRIVATE_TARGETS` for LAN | `notifications/`, `registries/`, `git-sources/`, `monitors/` |
 
-The telemetry payload is exactly: a random, stable instance id; the hub version, channel, edition and
+The usage stats payload is exactly: a random, stable instance id; the hub version, channel, edition and
 OS/arch; and aggregate counts (servers, apps, databases, deploys, teams, users, clusters, monitors,
 containers). No IP, hostname, domain, email, app or server name is included, and the receiver does not
 store the sender's IP. The owner can preview the exact payload, send on demand, rotate the id, or opt out

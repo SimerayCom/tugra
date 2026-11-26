@@ -108,7 +108,7 @@ A side-by-side with the self-hostable PaaS tools people actually evaluate (compe
 | Audit log | ✅ | ✅ | ✅ | ~⁷ | — | — |
 | MCP / agent control | ✅ 82 tools⁵ | ✅ | ✅ | ~⁷ | — | ~² |
 | **Trust & license** | | | | | | |
-| Telemetry | Anonymous, opt-out (counts only) | n/a | n/a | n/a | n/a | n/a |
+| Usage stats | Anonymous, opt-out (counts only) | n/a | n/a | n/a | n/a | n/a |
 | Migrate in (import from Coolify) | ✅⁹ | — | — | — | — | — |
 | Core license | AGPL-3.0 | Apache-2.0 | Apache-2.0³ | zlib + BE⁷ | Apache-2.0 + terms⁴ | MIT |
 
