@@ -41,4 +41,4 @@ Nothing outside the server Tugra runs on. The installer adds Docker (if missing)
 
 **Can I add a server that has SSH locked down?** Yes: see [Add a server](add-a-server.md), which covers jump hosts, Tailscale, provider consoles and cloud-init.
 
-**Where do I report a problem?** Use the feedback button in the panel, or open an issue on GitHub. Include the logs described in [Testing the beta](beta-testing.md).
+**Where do I report a problem?** Use the feedback button in the panel, or open an issue on GitHub. Include the logs described in [Testing Tugra](beta-testing.md).

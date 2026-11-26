@@ -18,7 +18,7 @@ Short, in-order guides with the steps, what each one changes, how to undo it and
 ## Getting started
 
 - [Install](install.md) — prerequisites, the one-line installer, and a production TLS setup.
-- [Testing the beta](beta-testing.md) — a ten-minute first pass, what to try, known limitations, and how to report a bug with logs.
+- [Testing Tugra](beta-testing.md) — a ten-minute first pass, what to try, known limits, and how to report a bug with logs.
 - [Upgrade](upgrade.md) — in-app updates, manual upgrades, and how the signed update flow works.
 - [Email](email.md) — optional SMTP for password reset, verification and invites (Resend/any SMTP) and what happens without it.
 - [Disaster recovery](disaster-recovery.md) — backing up + restoring the Tugra hub's own state (control plane).

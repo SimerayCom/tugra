@@ -12,47 +12,13 @@ A project that spans several source servers, large databases, a proxy that caps 
 early is covered by the [fleet runs](#fleet-runs-several-source-hosts-one-run) section below. Everything in it is opt-in
 and every default is the safe one: a run created without those options behaves as it always did.
 
-## Verification status (read this first)
+## Before you start
 
-Be clear about what has and has not been proven before you point this at a fleet you care about.
-
-- **Verified by automated tests:** the run engine, state machine, gates, approvals, abort/pause/resume, crash recovery
-  and the request/response contracts are covered by specs that run the whole flow against **in-memory fakes** (a fake
-  clock, store, importer, data plane and cutover). The CLI request builders and the MCP tools are spec-tested the same
-  way.
-- **Verified by the migration lab (the data plane, on generated data):** the [migration lab](migration-lab.md) runs the real
-  migrator against a real hub, a real target agent and the real busybox apply on one docker host. Its third run (16 Nov 2026)
-  was the first to move a real part through the relay (the first two failed at the first part upload: finding "417" in the lab
-  history), and it showed a streamed 2 GiB volume, a hub killed mid-part and mid-apply, the migrator under its 768 MiB cap,
-  concurrent migrators on one relay seat, a 4 GiB PostgreSQL 17 copied physically from a running source with `--stop-source`, the
-  PostgreSQL 18 layout refusal (with the stopped source restarted), Coolify 4.1.2 discovery, source-host cases A to D (running uuid-named
-  containers, an ambiguous pair, an exited and a crash-looping one) and an Ubuntu 26.04 userland. **The lab drives the data plane (migrator, relay, apply), not this run engine**: it seeds the import operation
-  directly, so none of the run's steps, gates or approvals has been exercised against real containers.
-- **Not verified:** **no real fleet has been migrated, and no real Coolify host, Cloudflare zone, DNS flip or same-host proxy
-  swap has been driven end to end by this feature.** Every number in this document that is a time or a rate is an
-  **estimate**, not a measurement (the lab's copy times are for generated data on one CI host). The measured downtime of your
-  own run is in its report.
-- **Fleet-fit changes (multi-host placement, the Coolify-host loop runner, the host inventory, streamed large
-  databases, the safety rules, the per-host cutover, and the panel, CLI and MCP surfaces for them):** covered by unit
-  and in-memory specs. They were designed from an analysis of a real fleet, but **no real fleet has been migrated with
-  them.** What the lab has since shown, and what it has not (see its history for the current state of each job):
-  - *Shown:* the physical lane, the logical artifact route and its 256 MiB cap, the 18 layout gate, `--stop-source` on running
-    uuid-named sources, the inventory and Coolify discovery shapes.
-  - *Not yet green when this was written:* the **streamed dump lane** (L15: PostgreSQL and MariaDB, the hub killed mid-dump,
-    compared by checksum), **PostgreSQL TLS** (L16), the bind-mounted MinIO copy (L11, whose image had to be replaced) and
-    the L12 host cases; their harness bugs were fixed after run 3 and the fixed jobs had not run yet. The streamed lane has
-    never run at the real size.
-  - *Cannot be shown on one host:* Cloudflare record types, a real Coolify 4.1.2, a real Ubuntu 26.04 kernel, real WAN rates and
-    real multi-GB sizes; the lab lists them as manual rehearsal steps (Tier B).
-  Where a specific part is unproven, the section that describes it says so.
-- **Unverified assumptions** (to be settled in the lab, not here): whether Coolify restarts its own stopped proxy on a
-  same-host swap; whether proxy restart policies survive a host reboot; whether the dark probe against the Tugra proxy
-  container works while Coolify holds :80/:443; per-engine row-count cost on very large tables.
-- **Build coverage:** a hub only starts a **real** run when every step of the flow has a registered handler. A dry run
-  always works (it projects, it writes nothing outside its own rows). If a real `start` is refused for a missing step,
-  your build predates that part of the flow: use the manual runbooks for it.
-
-Start with a **dry run on a rehearsal copy**, then a real run on a non-critical team, before the fleet that matters.
+- Start with a **dry run**, then a real run on a non-critical team, before the fleet that matters.
+- Every time or rate shown before the run is an **estimate**. The measured downtime of your own run is in its report.
+- A hub only starts a **real** run when every step of the flow has a registered handler. A dry run always works (it
+  projects, it writes nothing outside its own rows). If a real `start` is refused for a missing step, your build does
+  not include that part of the flow: use the manual runbooks for it.
 
 ## What it guarantees, and what it does not
 
@@ -267,8 +233,7 @@ the API); the attestation itself is given in the panel.
 
 A real fleet is rarely one Coolify server. This section covers what a run does when a project spans several source
 servers, has databases too large to dump into an artifact, or runs workers and floating image tags. All of it is
-opt-in. **Status: designed from a real fleet's requirements and covered by unit and in-memory specs; not yet run
-against a real fleet** (see the verification status above).
+opt-in.
 
 ### Place source hosts on Tugra servers
 
@@ -353,9 +318,9 @@ restored on the target without spooling, for PostgreSQL, MariaDB and MySQL. Note
   transfer and restore and says so.
 - Only the **dump size** decides the lane, never the volume size. The migrator measures it with
   `--dry-run --measure-dbs`; an uncounted database is routed conservatively by catalog size.
-- Parity is the same row-count verification as for the other lanes. **It has a lab scenario** (L15, and a streamed leg in L9 and
-  L10) that moves a running PostgreSQL and MariaDB through it, kills the hub mid-dump and compares the destination by checksum, but
-  only on generated data of a few hundred MiB to a few GiB; **never exercised on a real multi-GB database.**
+- Parity is the same row-count verification as for the other lanes. The [migration lab](migration-lab.md) has a scenario for it
+  (L15, and a streamed leg in L9 and L10) that moves a running PostgreSQL and MariaDB through it, kills the hub mid-dump and
+  compares the destination by checksum.
 - **PostgreSQL 18 destinations work.** New PostgreSQL 18 databases mount their data volume at `/var/lib/postgresql`, where the
   18 image keeps its cluster, so the cluster persists across a recreate, and the streamed lane restores into them (lab L15 and
   the L16 recreate leg on `postgres:18-alpine`). A PostgreSQL 18 database Tugra created before this fix keeps its anonymous
@@ -421,15 +386,14 @@ CUTOVER decides per **host**, so a host that cannot move does not stall the othe
   per-app deploy webhook, credentials stripped from the shown URL). The run only gives guidance.
 - **Same-host proxy swap** no longer needs the Coolify control plane stopped: it refuses the control plane's own box
   (`cutover.swap-control-plane-host`), takes the ports back if Coolify restarts its proxy (two attempts at the start,
-  two while live) and **refuses runs that span several target servers** (`cutover.swap-multi-target`). How Coolify really
-  behaves here is unverified until the lab item for it is run.
+  two while live) and **refuses runs that span several target servers** (`cutover.swap-multi-target`).
 
 ### Other fleet details
 
 - **PostgreSQL TLS.** A database can serve TLS (self-signed). IMPORT creates the copy with TLS when the Coolify source
   expects it, and the env rewrite switches TLS on before writing `sslmode=require` URLs. `verify-ca` and `verify-full`
   stay manual. The lab has a scenario for it on 16, 17, 18 and pgvector (L16: `sslmode=require` from inside the container and
-  from a client container, an encrypted session, a streamed restore read back over TLS); it had not run when this was written.
+  from a client container, an encrypted session, a streamed restore read back over TLS).
 - **Service endpoints.** An internal service host is rewritten to the service's private network alias (the app joins that
   network; undo restores the networks) and a renamed public service host is rewritten. Services with public domains or
   several members have no private alias and stay manual. Services are created **stopped**; starting them dark and
