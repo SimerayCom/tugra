@@ -38,6 +38,8 @@ export interface CoolifyServer {
   unreachable_count?: number | null;
   /** Specs Coolify collected; only its OS text is read, and only when it is there. */
   server_metadata?: { os?: unknown; os_release?: unknown; os_version?: unknown } | null;
+  /** The Coolify team the server belongs to (the agent read names it; the REST API does not). */
+  team?: { id?: unknown; name?: unknown } | null;
 }
 
 /** The OS text of a Coolify server row: a short printable string, or undefined (never a guess). */
@@ -60,12 +62,15 @@ export function withServerDetail(listed: CoolifyServer, detail: CoolifyServer | 
     ...(detail.is_coolify_host !== undefined && detail.is_coolify_host !== null ? { is_coolify_host: detail.is_coolify_host } : {}),
     ...(detail.unreachable_count !== undefined && detail.unreachable_count !== null ? { unreachable_count: detail.unreachable_count } : {}),
     ...(detail.server_metadata ? { server_metadata: detail.server_metadata } : {}),
+    ...(detail.team ? { team: detail.team } : {}),
   };
 }
 
 /** A discovered server with the facts PREFLIGHT classifies it by; a fact the API did not report is left out. */
 function foreignServerOf(s: CoolifyServer): ForeignFleet["servers"][number] {
   const os = coolifyServerOs(s);
+  const teamId = s.team && (typeof s.team.id === "string" || typeof s.team.id === "number") ? String(s.team.id) : "";
+  const team = teamId && typeof s.team?.name === "string" && s.team.name ? { ref: teamId, name: s.team.name.slice(0, 120) } : undefined;
   return {
     ref: s.uuid,
     name: s.name ?? undefined,
@@ -73,6 +78,7 @@ function foreignServerOf(s: CoolifyServer): ForeignFleet["servers"][number] {
     ...(s.is_coolify_host === true ? { controlPlane: true } : {}),
     ...(typeof s.unreachable_count === "number" && Number.isFinite(s.unreachable_count) && s.unreachable_count >= 0 ? { unreachableCount: Math.floor(s.unreachable_count) } : {}),
     ...(os ? { os } : {}),
+    ...(team ? { team } : {}),
   };
 }
 export interface CoolifyApp {

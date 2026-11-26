@@ -241,6 +241,7 @@ export function buildPreflight(fleet: ForeignFleet, options: ImportOptions, inve
     ...(s.controlPlane ? { controlPlane: true as const } : {}),
     ...(s.unreachableCount !== undefined ? { unreachableCount: s.unreachableCount } : {}),
     ...(s.os ? { os: s.os } : {}),
+    ...(s.team ? { team: s.team } : {}),
   }));
 
   const projects = carried ? [] : sourceProjectsOf(fleet);

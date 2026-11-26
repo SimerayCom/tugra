@@ -295,6 +295,8 @@ export interface ForeignServer {
   unreachableCount?: number;
   /** The operating system as the source reports it (a short printable string); judged by the run's PREFLIGHT, never shown as code text. */
   os?: string;
+  /** The Coolify team the server belongs to (agent read only: one pass sees every team). Not part of any plan item. */
+  team?: PlanTeam;
 }
 
 export interface ForeignFleet {
@@ -435,6 +437,8 @@ export interface PreflightHost {
   controlPlane?: true;
   unreachableCount?: number;
   os?: string;
+  /** The Coolify team the server belongs to (agent read: one pass sees every team). Additive; NOT part of planHash. */
+  team?: PlanTeam;
   /** The registered Tugra server that is the same machine (matched by address, then host name), as a verdict only: no source address. Added by the plan route, outside planHash. */
   tugra?: { serverId: string; name: string; teamId: string; via: "public-ip" | "reported-ip" | "hostname" | "owner"; confidence: "certain" | "probable" };
   /** Coolify hub takeover (lane D): the evidence behind the verdict, how it was linked, and the status of an unlinked candidate set. Verdict data only, no address. Additive; NOT part of planHash. */

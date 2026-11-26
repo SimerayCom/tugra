@@ -121,6 +121,8 @@ export function buildAgentView(read: AgentRead, agentServerId: string, opts: Age
   const servers = rows("servers");
   const serverUuid = new Map<string, string>();
   for (const s of servers) if (typeof s.uuid === "string") serverUuid.set(key(s.id), s.uuid);
+  // set once the teams are read (a few lines below); serverRow only runs later, from the routes
+  let teamOfRow: (id: unknown) => { id: string; name: string } | undefined = () => undefined;
   const serverRow = (s: Row): Record<string, unknown> => {
     const meta = osMeta(s.server_metadata);
     return {
@@ -134,6 +136,8 @@ export function buildAgentView(read: AgentRead, agentServerId: string, opts: Age
       is_coolify_host: key(s.id) === "0",
       ...(typeof s.unreachable_count === "number" ? { unreachable_count: s.unreachable_count } : {}),
       ...(meta ? { server_metadata: meta } : {}),
+      // The Coolify team the server belongs to (this read sees every team): lets the wizard show only the picked team's servers.
+      ...(teamOfRow(s.team_id) ? { team: teamOfRow(s.team_id) } : {}),
     };
   };
 
@@ -208,6 +212,10 @@ export function buildAgentView(read: AgentRead, agentServerId: string, opts: Age
   const teamRows = rows("teams");
   const teamName = new Map<string, string>();
   for (const t of teamRows) teamName.set(key(t.id), str(t.name) ?? `Team ${key(t.id)}`);
+  teamOfRow = (id) => {
+    const tid = key(id);
+    return tid && teamName.has(tid) ? { id: tid, name: teamName.get(tid)! } : undefined;
+  };
   const projects = rows("projects");
   const envsByProject = new Map<string, Row[]>();
   for (const e of rows("environments")) envsByProject.set(key(e.project_id), [...(envsByProject.get(key(e.project_id)) ?? []), e]);

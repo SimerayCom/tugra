@@ -28,13 +28,13 @@ const preflight = (fleet: ForeignFleet): ImportPreflight => {
   return { ...buildPreflight(fleet, { sourceKind: "coolify" }), ...(coverage ? { coverage } : {}) };
 };
 
-/** What only the agent read knows: the Coolify team of a project. Everything else must be equal. */
+/** What only the agent read knows: the Coolify team of a project and of a server. Everything else must be equal. */
 function withoutAgentOnly(f: ForeignFleet): ForeignFleet {
-  return { ...f, projects: f.projects?.map(({ team: _team, ...p }) => p) };
+  return { ...f, projects: f.projects?.map(({ team: _team, ...p }) => p), servers: f.servers.map(({ team: _team, ...s }) => s) };
 }
 function preflightWithoutAgentOnly(p: ImportPreflight): ImportPreflight {
   const { agentRead: _a, teams: _t, unreadable: _u, ...rest } = p;
-  return { ...rest, projects: rest.projects?.map(({ team: _team, ...x }) => x) };
+  return { ...rest, projects: rest.projects?.map(({ team: _team, ...x }) => x), hosts: rest.hosts?.map(({ team: _team, ...h }) => h) };
 }
 
 describe("agent read vs API read of the same Coolify (acceptance: same plan shape)", () => {
@@ -48,7 +48,7 @@ describe("agent read vs API read of the same Coolify (acceptance: same plan shap
     expect(preflightWithoutAgentOnly(preflight(agent))).toEqual(preflight(api));
   });
 
-  it("builds the same fleet apart from the Coolify team of each project", async () => {
+  it("builds the same fleet apart from the Coolify team of each project and server", async () => {
     const { api, agent } = await readBothWays();
     expect(withoutAgentOnly(agent)).toEqual({ ...api, warnings: agent.warnings });
   });

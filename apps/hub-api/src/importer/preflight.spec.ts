@@ -310,6 +310,11 @@ describe("buildPreflight: source hosts", () => {
     expect(pf.hosts).toEqual([{ ref: "s1", name: "host-1", controlPlane: true, unreachableCount: 7, os: "Ubuntu 24.04" }, { ref: "s2" }]);
     expect(JSON.stringify(pf.hosts)).not.toContain("10.0.0.1");
   });
+  it("carries the Coolify team of a server (name and ref only) so the wizard can show one team", () => {
+    const f = fleet({ servers: [{ ref: "s1", name: "a", ip: "10.0.0.1", team: { ref: "3", name: "Acme" } }, { ref: "s2", name: "b" }] });
+    const pf = buildPreflight(f, { sourceKind: "coolify" } as ImportOptions);
+    expect(pf.hosts).toEqual([{ ref: "s1", name: "a", team: { ref: "3", name: "Acme" } }, { ref: "s2", name: "b" }]);
+  });
   it("a source with no servers has no host list", () => {
     expect(buildPreflight(fleet({ servers: [] }), { sourceKind: "coolify" } as ImportOptions).hosts).toBeUndefined();
   });

@@ -74,6 +74,14 @@ describe("agent read to API shape", () => {
     expect(view().teams).toEqual([{ ref: "1", name: "Acme" }, { ref: "2", name: "Beta Labs" }]);
   });
 
+  it("names the Coolify team of each server when the read has its team row, and leaves it out when it does not", () => {
+    expect(get("/servers/srv-edge").team).toEqual({ id: "1", name: "Acme" });
+    expect(get("/servers").find((x: any) => x.uuid === "srv-build").team).toEqual({ id: "1", name: "Acme" });
+    const read = fixtureRead();
+    read.sections.set("servers", [{ id: 9, uuid: "srv-x", name: "x", ip: "198.51.100.9", team_id: 77 }]);
+    expect(buildAgentView(read, "s").route("/servers/srv-x")).not.toHaveProperty("team");
+  });
+
   it("a service's members come with the detail only (as on the API), minus none the compose dropped is kept flagged", () => {
     expect(get("/services")[0]).not.toHaveProperty("applications");
     const detail = get("/services/svc-analytics");
