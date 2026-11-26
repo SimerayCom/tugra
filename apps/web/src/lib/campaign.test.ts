@@ -19,7 +19,7 @@ describe("needsCampaign", () => {
   it("mixed placements and several same-machine servers need one; a single kind and one same-machine server do not", () => {
     expect(needsCampaign({ placementKind: { a: "in-place", b: "other-server" } })).toBe(true);
     expect(needsCampaign({ placementKind: { a: "in-place", b: "in-place" } })).toBe(true);
-    expect(needsCampaign({ placementKind: { a: "in-place" } })).toBe(false);
+    expect(needsCampaign({ placementKind: { a: "in-place" } })).toBe(true); // a lone same-machine server is a campaign of one in-place run
     expect(needsCampaign({ placementKind: { a: "other-server", b: "other-server" } })).toBe(false);
     expect(needsCampaign({ placementKind: {} })).toBe(false);
     expect(needsCampaign(null)).toBe(false);

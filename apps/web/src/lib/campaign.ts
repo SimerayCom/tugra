@@ -14,8 +14,11 @@ export function placementsOf(scope: Pick<ImportScope, "placed" | "placementKind"
     });
 }
 
-/** More than one run is needed: same-machine and copied moves together, or several same-machine servers (each is its own swap). */
-export const needsCampaign = (scope: Pick<ImportScope, "placementKind"> | null | undefined): boolean => !!scope && (overallPlacement(scope) === "mixed" || inPlaceCount(scope) > 1);
+/**
+ * The move goes through a campaign whenever any server stays on its own machine: only a campaign creates the in-place run (images reused,
+ * no data copy, dark test, new certificates, give back). A lone same-machine server is a campaign of one run.
+ */
+export const needsCampaign = (scope: Pick<ImportScope, "placementKind"> | null | undefined): boolean => !!scope && (overallPlacement(scope) === "mixed" || inPlaceCount(scope) >= 1);
 
 export interface CampaignCreateBody {
   sessionId: string;

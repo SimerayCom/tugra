@@ -304,11 +304,14 @@ describe("GuidedRunLauncher", () => {
       expect(options).not.toContain("Other team box");
     });
 
-    it("an in-place choice starts on the proxy swap for Coolify, never for Dokploy", async () => {
+    it("an in-place choice is an in-place campaign run for Coolify (no topology to pick), never for Dokploy", async () => {
+      const planCampaign = vi.spyOn(api, "planCampaign").mockResolvedValue({ planHash: "a".repeat(32), views: [], runs: [], failure: null });
       mount({ plan: whole, scope: everything({ placed: { s1: "srv2" }, placementKind: { s1: "in-place" } }) });
       let dialog = await open();
-      expect((within(dialog).getByLabelText("Topology") as HTMLSelectElement).value).toBe("swap-proxy");
+      await waitFor(() => expect(planCampaign).toHaveBeenCalled());
+      expect(within(dialog).queryByLabelText("Topology")).toBeNull();
       expect(within(dialog).getByTestId("launch-summary").textContent).toContain("Same machine");
+      planCampaign.mockRestore();
       cleanup();
       mount({ plan: whole, scope: everything({ placed: { s1: "srv2" }, placementKind: { s1: "in-place" } }), kind: "dokploy" });
       dialog = await open();
@@ -539,7 +542,7 @@ describe("a mixed placement is a campaign", () => {
     expect((within(dialog).getByRole("button", { name: /Create campaign/ }) as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it("several same-machine servers are a campaign too; one is a plain run", async () => {
+  it("several same-machine servers are a campaign, and so is one (its run is in place, never a data copy)", async () => {
     const planCampaign = vi.spyOn(api, "planCampaign").mockResolvedValue({ planHash: "a".repeat(32), views: [], runs, failure: null });
     mount({ plan: whole, scope: { ...mixed, placementKind: { s1: "in-place", s2: "in-place" } } });
     await open();
@@ -548,8 +551,8 @@ describe("a mixed placement is a campaign", () => {
     planCampaign.mockClear();
     mount({ plan: whole, scope: { ...mixed, placed: { s1: "srv1" }, placementKind: { s1: "in-place" } } });
     const dialog = await open();
-    expect(within(dialog).getByLabelText("Topology")).toBeTruthy();
-    expect(planCampaign).not.toHaveBeenCalled();
+    await waitFor(() => expect(planCampaign).toHaveBeenCalled());
+    expect(within(dialog).queryByLabelText("Topology")).toBeNull();
   });
 
   it("a Dokploy source never makes a campaign", async () => {
