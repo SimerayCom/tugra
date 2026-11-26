@@ -52,7 +52,7 @@ curl -s https://your-tugra-host/api/v1/mcp \
   -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"list_applications","arguments":{}}}'
 ```
 
-C'est le même endpoint `POST /api/v1/mcp`, avec la même authentification par personal access token, les mêmes scopes et la même liste d'adresses IP autorisées que l'API REST sous-jacente : aucun identifiant supplémentaire à gérer, et aucune valeur secrète déchiffrée n'est jamais renvoyée au modèle. Le catalogue compte **56 outils** : 33 en lecture seule (dont des vues de synthèse de toute la flotte — état, santé, liste des applications — en un seul appel, ainsi qu'un explorateur de fichiers de volumes sandboxé), et 23 outils d'écriture et d'exploitation soumis aux scopes du PAT (déployer · annuler un déploiement en file d'attente · redémarrer · mettre à l'échelle à chaud · faire un rollback · définir des variables d'environnement · créer/étendre un Swarm · actions à l'échelle de la flotte sur un cluster · configuration DNS d'un domaine en un clic). Chaque outil d'écriture réutilise exactement les mêmes contrôles de permissions d'équipe et la même piste d'audit que l'API REST, et les outils irréversibles (dissoudre un Swarm, supprimer une application) exigent une confirmation explicite du nom. OAuth pour les clients tiers figure toujours sur la feuille de route.
+C'est le même endpoint `POST /api/v1/mcp`, la même authentification par jeton d'accès personnel, les mêmes scopes et la même liste d'IP autorisées que l'API REST sous-jacente : aucun identifiant distinct à gérer, et aucune valeur de secret déchiffrée n'est jamais renvoyée au modèle. Le catalogue compte **82 outils** : 45 en lecture seule (dont des synthèses d'état, de santé et de liste d'applications de toute la flotte en un seul appel, et un explorateur de fichiers de volumes en bac à sable), plus 37 outils de mutation/exploitation limités par scope PAT (deploy · annuler un deploy en file d'attente · redémarrer · mise à l'échelle à chaud · rollback · définir une variable d'env · redémarrer un serveur (confirmation saisie, vérifié ensuite) · allumer ou éteindre un serveur cloud chez le fournisseur, même agent hors ligne (confirmation saisie) · former/étendre un swarm · actions à l'échelle de la flotte sur un cluster · configuration DNS d'un domaine en un clic · l'exécution de migration guidée, en dry-run par défaut). Chaque outil de mutation réutilise exactement les mêmes contrôles de permissions d'équipe et le même audit trail que l'API REST, et les outils irréversibles (dissoudre un swarm, supprimer une application) exigent une confirmation explicite par le nom. OAuth pour les clients tiers reste sur la feuille de route.
 
 ## Qu'est-ce que Tugra ?
 
@@ -61,7 +61,7 @@ Tugra est un plan de contrôle open-core et auto-hébergeable pour déployer, su
 ## Pourquoi Tugra
 
 - **Pensé pour la flotte, pas pour une machine isolée** — regroupez vos serveurs en clusters, formez un véritable Docker Swarm entre eux et exécutez une commande sur toute votre flotte en un seul appel d'opérations en masse, au lieu de vous connecter en SSH à chaque machine.
-- **Natif pour les agents, aussi** — un serveur MCP intégré expose 56 outils (lecture + écriture/opérations de flotte soumises aux scopes du PAT) via `POST /api/v1/mcp`, avec les mêmes personal access tokens et les mêmes scopes que l'API REST.
+- **Natif pour les agents, aussi** — un serveur MCP intégré expose 82 outils (lecture + écriture/opérations de flotte soumises aux scopes du PAT) via `POST /api/v1/mcp`, avec les mêmes personal access tokens et les mêmes scopes que l'API REST.
 - **9 moteurs de bases de données, un seul workflow** — PostgreSQL, MySQL, MariaDB, MongoDB, Redis, KeyDB, Dragonfly, ClickHouse et LibSQL, tous provisionnés de la même manière ; huit disposent de sauvegardes logiques (dump et restauration) intégrées (LibSQL, qui n'a pas d'outil de dump, n'est couvert que par les sauvegardes de volumes au niveau fichier — arrêtez d'abord l'application pour obtenir une copie cohérente).
 - **Du vrai TLS, de vrais certificats wildcard** — Let's Encrypt automatique pour chaque application via Traefik, plus des certificats wildcard DNS-01 (`*.yourdomain.com`) pour l'ingress en cluster/Swarm — et pas seulement du HTTP-01 pour un domaine unique.
 - **Des sauvegardes hors site** — des dumps planifiés vers le disque local ou un stockage compatible S3 (S3/R2/MinIO), éventuellement chiffrés (gpg AES-256), avec restauration en un clic ; des **exercices de restore-verify** planifiés prouvent qu'une sauvegarde se restaure réellement, et PostgreSQL bénéficie de la **restauration à un instant donné** (envoi des WAL + sauvegardes de base, restauration à la seconde près depuis le panneau).
@@ -106,7 +106,7 @@ Une comparaison côte à côte avec les outils PaaS auto-hébergeables que l'on 
 | Équipes / RBAC | ✅ | ✅ | ✅ | ~⁷ | — | — |
 | SSO / OIDC | ✅ (Pro)⁸ | ✅ | ✅ | ~⁷ | — | — |
 | Journal d'audit | ✅ | ✅ | ✅ | ~⁷ | — | — |
-| MCP / pilotage par agent | ✅ 76 tools⁵ | ✅ | ✅ | ~⁷ | — | ~² |
+| MCP / pilotage par agent | ✅ 82 tools⁵ | ✅ | ✅ | ~⁷ | — | ~² |
 | **Confiance et licence** | | | | | | |
 | Télémétrie | Anonyme, opt-out (compteurs uniquement) | n/a | n/a | n/a | n/a | n/a |
 | Migration vers Tugra (import depuis Coolify) | ✅⁹ | — | — | — | — | — |
@@ -116,10 +116,16 @@ Une comparaison côte à côte avec les outils PaaS auto-hébergeables que l'on 
 
 ## Démarrage rapide
 
-Sur un hôte Linux vierge, **une seule commande** installe les prérequis (git, Docker), clone le dépôt et démarre la stack :
+Sur un hôte Linux vierge, **une seule commande** installe les prérequis (git, Docker), clone le dépôt et démarre la stack. Pas de domaine, pas de jeton Cloudflare, aucune autre configuration : le panneau est disponible sur `http://<server-ip>/` (port 80, servi par le proxy propre de Tugra, donc seuls les ports 80/443 doivent être ouverts) :
 
 ```bash
 curl -fsSL https://tugra.io/install | sh
+```
+
+Ouvrez ensuite l'URL affichée, créez le compte owner et, quand vous avez un domaine, renseignez-le dans **Settings → Instance → Panel domain** (HTTPS gratuit via Let's Encrypt, sans jeton, fonctionne derrière le nuage orange de Cloudflare). Si vous voulez le domaine dès la première minute, faites pointer son DNS vers le serveur et ajoutez-le à la même commande :
+
+```bash
+curl -fsSL https://tugra.io/install | sh -s -- --domain panel.example.com
 ```
 
 <p align="center"><img src="docs/assets/install.png" alt="Installation de Tugra en une commande sur un hôte Ubuntu vierge : prérequis installés, configuration écrite, stack démarrée et en bonne santé, et code de configuration du propriétaire" width="840" /></p>
@@ -133,14 +139,14 @@ less scripts/install.sh   # review it first
 ./scripts/install.sh
 ```
 
-Le script d'installation génère des secrets robustes dans un `.env` local (une nouvelle exécution les conserve), puis démarre le hub, l'interface web, PostgreSQL et Redis avec `docker compose`. Une fois terminé, ouvrez l'URL **Web UI** affichée (`http://<host-ip>:3001` ; l'URL de base du hub/de l'API est `http://<host-ip>:3000`) et créez le premier compte — il devient le **propriétaire** (owner) de l'instance. Lors d'une nouvelle installation, le script affiche aussi un **code de configuration** à usage unique à saisir lors de la création de ce compte (retrouvez-le avec `grep SETUP_CODE .env`). Suivez ensuite l'assistant de prise en main pour connecter votre premier serveur.
+Le script d'installation génère des secrets robustes dans un `.env` local (une nouvelle exécution les conserve), puis démarre le hub, l'interface web, PostgreSQL et Redis avec `docker compose`. Une fois terminé, ouvrez l'URL **Web UI** affichée (`http://<host-ip>/`, ou `https://<your-domain>` avec `--domain`) et créez le premier compte — il devient le **propriétaire** (owner) de l'instance. Lors d'une nouvelle installation, le script affiche aussi un **code de configuration** à usage unique à saisir lors de la création de ce compte (retrouvez-le avec `grep SETUP_CODE .env`). Suivez ensuite l'assistant de prise en main pour connecter votre premier serveur.
 
 Relancer `./scripts/install.sh` (par exemple après un `git pull`) est sans danger — il conserve vos secrets et ne met à jour que la configuration, ce qui en fait aussi la procédure de mise à jour.
 
-**Production (TLS + un domaine).** La stack expose du HTTP en clair sur les ports de cet hôte pour un démarrage rapide ; placez-la derrière votre propre reverse proxy qui termine le TLS, puis relancez le script avec votre domaine :
+**Production (TLS + domaine).** `--domain` fait servir le panneau en HTTPS par le proxy propre de Tugra, avec un certificat Let's Encrypt automatique (HTTP-01 ; ni e-mail ni jeton Cloudflare requis). Faites d'abord pointer le DNS du domaine vers le serveur. Ou bien omettez l'option et définissez le domaine plus tard dans **Settings → Instance → Panel domain** : l'ancienne adresse continue de fonctionner jusqu'à l'émission du certificat, et le changement est annulé s'il échoue. Pour placer Tugra derrière **votre propre** reverse proxy, utilisez `--no-auto-tls` (choisi aussi automatiquement quand un autre service occupe déjà :80/:443) et routez comme indiqué ci-dessous :
 
 ```bash
-./scripts/install.sh --domain tugra.example.com
+./scripts/install.sh --domain tugra.example.com --no-auto-tls
 ```
 
 Dirigez la majeure partie du trafic vers le **service web** (`:3001`) — il relaie lui-même l'API REST et le démarrage OAuth vers le hub — et n'envoyez au **hub** (`:3000`) que les chemins que le service web ne sait pas gérer :
@@ -152,7 +158,8 @@ Dirigez la majeure partie du trafic vers le **service web** (`:3001`) — il rel
 
 Remarques :
 
-- **TLS :** apportez votre propre reverse proxy (Caddy, Traefik, nginx, …) ou ajoutez `--auto-tls --acme-email you@domain` pour que Tugra provisionne le HTTPS du panneau (Traefik intégré + Let's Encrypt). `--domain` définit `COOKIE_SECURE=true` + `HUB_TRUSTED_PROXY=true`.
+- **TLS :** automatique par défaut avec `--domain` (Traefik intégré + Let's Encrypt ; `--acme-email you@domain` est un contact facultatif pour les avis d'expiration), ou apportez votre propre reverse proxy (Caddy, Traefik, nginx, …) avec `--no-auto-tls`. Derrière le nuage orange de Cloudflare, cela fonctionne sans jeton ; si le premier certificat n'est pas émis, réglez le mode SSL/TLS sur **Full** et désactivez **Always Use HTTPS** jusqu'à l'émission (un jeton DNS-01 via `--acme-dns-cloudflare-file` est une alternative facultative). `--domain` définit `COOKIE_SECURE=true` + `HUB_TRUSTED_PROXY=true`.
+- **Démarrage rapide classique à deux ports.** `--raw-ports` conserve l'ancienne disposition (pas de proxy ; web `:3001`, hub `:3000`) ; c'est aussi ce que garde une installation faite avant ce changement, et ce que reçoit un hôte dont le port 80 est déjà pris.
 - **Verrouillez les ports bruts.** Avec `HUB_TRUSTED_PROXY=true`, le hub prend en compte `X-Forwarded-For` (uniquement depuis des pairs privés, loopback ou Docker, ou depuis `HUB_TRUSTED_PROXY_CIDRS`), et les ports bruts `:3000`/`:3001` ne devraient être joignables **que** par le proxy. Une nouvelle installation avec `--domain` les lie à `127.0.0.1` (proxy sur le même hôte), et une installation existante qui passe en https y est également déplacée (`--keep-raw-ports` permet de s'y soustraire). Si le proxy tourne sur un autre hôte, définissez `HUB_BIND`/`WEB_BIND` sur l'IP de l'interface privée de cette machine et filtrez les ports avec un pare-feu — les ports publiés par Docker contournent `ufw`.
 - **« Sign in with GitHub »** ne fonctionne que dans ce déploiement à origine unique derrière un proxy (le hub et le service web partagent une origine publique afin que le cookie de session soit visible par la SPA) ; il n'est pas disponible dans le démarrage rapide simple à deux ports.
 
@@ -193,7 +200,7 @@ Les logs en direct, les métriques et le terminal sont diffusés en streaming vi
 - [x] Métriques en direct, logs de build et terminal web (flux WebSocket ; le terminal est protégé par capability et désactivé par défaut)
 - [x] Bases de données (9 moteurs) avec sauvegardes et restauration (local + hors site S3/R2)
 - [x] Clusters multi-serveurs + création de Docker Swarm, opérations en masse sur toute la flotte
-- [x] Serveur MCP natif — 73 outils (lecture + écriture/opérations de flotte soumises aux scopes du PAT) + prompts guidés
+- [x] Serveur MCP natif — 82 outils (lecture + écriture/opérations de flotte soumises aux scopes du PAT) + prompts guidés
 - [x] App Store — plus de 280 modèles en un clic + lanceur en mode Home
 - [x] Gestionnaire de fichiers pour les volumes d'applications — parcourir, télécharger, téléverser, modifier, renommer, changer les permissions et supprimer (l'écriture est une capability serveur optionnelle ; interface web, plus MCP `list_files` en lecture)
 - [x] Déploiements de preview (une app par pull request)
@@ -210,7 +217,7 @@ Les logs en direct, les métriques et le terminal sont diffusés en streaming vi
 - [x] Déploiements progressifs avec health gate + soak après bascule en opt-in et annulation automatique · rollouts de flotte (canary → vagues → health gate → arrêt/reprise/rollback)
 - [x] Les déploiements survivent à un redémarrage du hub (journal de commandes de l'agent + reprise du résultat) · page de détail par déploiement (chronologie · log en direct · diff de configuration)
 - [x] Build secrets via `--secret` de BuildKit (builds Dockerfile) · rotation de la clé maître (job de rechiffrement reprenable, rien à ressaisir, applications intactes ; le hub redémarre deux fois) · mises à jour automatiques signées et épinglées par digest, avec un point de restauration avant mise à jour
-- [x] Provisionnement de serveurs cloud (Hetzner · DigitalOcean · Vultr) · Cloudflare Tunnel · analytique de trafic intégrée (GeoIP local, sans phone-home) · log drains · registries privés · fournisseur de secrets Vault (Pro)
+- [x] Provisionnement de serveurs cloud (Hetzner · DigitalOcean · Vultr) · Cloudflare Tunnel · analytique de trafic intégrée (GeoIP local, sans phone-home) · [log drains](docs/log-drains.md) · registries privés · fournisseur de secrets Vault (Pro)
 
 **Prochaines étapes**
 

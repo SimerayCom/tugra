@@ -52,7 +52,7 @@ curl -s https://your-tugra-host/api/v1/mcp \
   -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"list_applications","arguments":{}}}'
 ```
 
-Bu, altta yatan REST API ile aynı `POST /api/v1/mcp` endpoint'idir; aynı kişisel erişim token'ıyla kimlik doğrulama, aynı scope'lar ve aynı IP allowlist geçerlidir — yönetmeniz gereken ayrı bir kimlik bilgisi yoktur ve şifresi çözülmüş hiçbir secret değeri modele döndürülmez. Katalogda **56 tool** vardır: 33'ü salt okunurdur (tek çağrıda fleet durumu / sağlık / uygulama listesi özetleri ve sandbox içinde çalışan bir volume dosya tarayıcısı dahil), 23'ü ise PAT scope'lu, değişiklik yapan (mutate/ops) tool'lardır (deploy · kuyruktaki deploy'u iptal etme · yeniden başlatma · canlı ölçekleme · rollback · env ayarlama · Swarm kurma/büyütme · bir cluster genelinde fleet çapında eylemler · tek tıkla alan adı DNS kurulumu). Değişiklik yapan her tool, REST API'nin ekip izin kontrollerini ve audit trail'ini birebir yeniden kullanır; geri alınamayan işlemler (Swarm'ı sonlandırma, uygulamayı silme) ise adı yazarak açık onay vermeyi gerektirir. Üçüncü taraf client'lar için OAuth henüz yol haritasındadır.
+Bu, altta yatan REST API ile aynı `POST /api/v1/mcp` endpoint'idir; aynı kişisel erişim token'ıyla kimlik doğrulama, aynı scope'lar ve aynı IP allowlist geçerlidir — yönetmeniz gereken ayrı bir kimlik bilgisi yoktur ve şifresi çözülmüş hiçbir secret değeri modele döndürülmez. Katalogda **82 tool** vardır: 45'i salt okunurdur (tek çağrıda fleet durumu / sağlık / uygulama listesi özetleri ve sandbox içinde çalışan bir volume dosya tarayıcısı dahil), 37'si ise PAT scope'lu, değişiklik yapan (mutate/ops) tool'lardır (deploy · kuyruktaki deploy'u iptal etme · yeniden başlatma · canlı ölçekleme · rollback · env ayarlama · sunucuyu yeniden başlatma (yazarak onay, ardından doğrulama) · cloud sunucusunu sağlayıcı tarafında açıp kapatma, agent çevrimdışı olsa bile (yazarak onay) · Swarm kurma/büyütme · bir cluster genelinde fleet çapında eylemler · tek tıkla alan adı DNS kurulumu · guided-migration çalıştırması, varsayılan olarak dry-run). Değişiklik yapan her tool, REST API'nin ekip izin kontrollerini ve audit trail'ini birebir yeniden kullanır; geri alınamayan işlemler (Swarm'ı sonlandırma, uygulamayı silme) ise adı yazarak açık onay vermeyi gerektirir. Üçüncü taraf client'lar için OAuth henüz yol haritasındadır.
 
 ## Tuğra nedir?
 
@@ -61,7 +61,7 @@ Tuğra; uygulamaları ve veritabanlarını kendi sunucularınızda deploy etmek,
 ## Neden Tuğra
 
 - **Tek sunucu değil, fleet öncelikli** — sunucuları cluster'lar halinde gruplayın, aralarında gerçek bir Docker Swarm kurun ve her sunucuya tek tek SSH ile bağlanmak yerine tüm fleet'inizde tek bir toplu işlem çağrısıyla aynı komutu çalıştırın.
-- **Yapay zekâ ajanlarına da yerel destek** — yerleşik MCP sunucusu, `POST /api/v1/mcp` üzerinden 56 tool (okuma + PAT scope'lu değişiklik yapan/fleet operasyonları) sunar; erişim REST API ile aynı kişisel erişim token'larıyla scope'lanır.
+- **Yapay zekâ ajanlarına da yerel destek** — yerleşik MCP sunucusu, `POST /api/v1/mcp` üzerinden 82 tool (okuma + PAT scope'lu değişiklik yapan/fleet operasyonları) sunar; erişim REST API ile aynı kişisel erişim token'larıyla scope'lanır.
 - **9 veritabanı motoru, tek iş akışı** — PostgreSQL, MySQL, MariaDB, MongoDB, Redis, KeyDB, Dragonfly, ClickHouse ve LibSQL; hepsi aynı şekilde kurulur. Sekizinde yerleşik mantıksal dump/restore backup'ı vardır (dump aracı olmayan LibSQL yalnızca dosya düzeyindeki volume backup'larıyla kapsanır — tutarlı bir kopya için önce uygulamayı durdurun).
 - **Gerçek TLS, gerçek wildcard'lar** — Traefik üzerinden uygulama başına otomatik Let's Encrypt ve cluster'lı/Swarm ingress için DNS-01 wildcard sertifikaları (`*.yourdomain.com`) — yalnızca tek alan adlı HTTP-01 değil.
 - **Sunucu dışı (off-site) backup'lar** — yerel diske ya da S3 uyumlu depolamaya (S3/R2/MinIO) zamanlanmış, isteğe bağlı olarak şifreli (gpg AES-256) dump'lar ve tek tıkla restore; zamanlanmış **restore-verify tatbikatları** bir backup'ın gerçekten geri yüklendiğini kanıtlar, PostgreSQL ise **belirli bir ana geri dönüş (point-in-time recovery)** sunar (WAL shipping + base backup'lar, panelden istediğiniz saniyeye restore).
@@ -106,7 +106,7 @@ Tuğra; uygulamaları ve veritabanlarını kendi sunucularınızda deploy etmek,
 | Ekipler / RBAC | ✅ | ✅ | ✅ | ~⁷ | — | — |
 | SSO / OIDC | ✅ (Pro)⁸ | ✅ | ✅ | ~⁷ | — | — |
 | Audit log | ✅ | ✅ | ✅ | ~⁷ | — | — |
-| MCP / ajan kontrolü | ✅ 76 tools⁵ | ✅ | ✅ | ~⁷ | — | ~² |
+| MCP / ajan kontrolü | ✅ 82 tools⁵ | ✅ | ✅ | ~⁷ | — | ~² |
 | **Güven ve lisans** | | | | | | |
 | Telemetri | Anonim, opt-out (yalnızca sayılar) | n/a | n/a | n/a | n/a | n/a |
 | Migrasyon (Coolify'dan import) | ✅⁹ | — | — | — | — | — |
@@ -116,10 +116,16 @@ Tuğra; uygulamaları ve veritabanlarını kendi sunucularınızda deploy etmek,
 
 ## Hızlı başlangıç
 
-Yeni bir Linux host'unda **tek bir komut** ön koşulları (git, Docker) kurar, repoyu klonlar ve stack'i ayağa kaldırır:
+Yeni bir Linux host'unda **tek bir komut** ön koşulları (git, Docker) kurar, repoyu klonlar ve stack'i ayağa kaldırır. Alan adı, Cloudflare token'ı ya da başka bir kurulum gerekmez; panel `http://<server-ip>/` adresinde açılır (80 numaralı portta, Tugra'nın kendi proxy'si üzerinden; yani yalnızca 80/443 portlarının açık olması yeterli):
 
 ```bash
 curl -fsSL https://tugra.io/install | sh
+```
+
+Sonra yazdırılan URL'yi açın, owner hesabını oluşturun ve alan adınız varsa **Settings → Instance → Panel domain** altından girin (Let's Encrypt ile ücretsiz HTTPS, token gerekmez, Cloudflare'in turuncu bulutunun arkasında da çalışır). Alan adını ilk dakikadan kullanmak istiyorsanız DNS kaydını sunucuya yönlendirin ve aynı komuta ekleyin:
+
+```bash
+curl -fsSL https://tugra.io/install | sh -s -- --domain panel.example.com
 ```
 
 <p align="center"><img src="docs/assets/install.png" alt="Yeni bir Ubuntu host'ta Tuğra'nın tek komutla kurulumu: ön koşullar kuruldu, yapılandırma yazıldı, stack sağlıklı biçimde ayağa kalkıyor ve owner kurulum kodu görünüyor" width="840" /></p>
@@ -133,14 +139,14 @@ less scripts/install.sh   # review it first
 ./scripts/install.sh
 ```
 
-Kurulum script'i güçlü secret'ları yerel bir `.env` dosyasına üretir (yeniden çalıştırıldığında korunurlar), ardından `docker compose` ile hub'ı, Web UI'ı, PostgreSQL'i ve Redis'i ayağa kaldırır. İş bittiğinde yazdırılan **Web UI** URL'sini (`http://<host-ip>:3001`; hub/API base URL'i `http://<host-ip>:3000`) açın ve ilk hesabı oluşturun — bu hesap instance'ın **owner**'ı olur. Yeni bir kurulumda script ayrıca, o hesabı oluştururken girmeniz gereken tek seferlik bir **setup code** yazdırır (`grep SETUP_CODE .env` ile tekrar bulabilirsiniz). Ardından ilk sunucunuzu bağlamak için onboarding sihirbazını izleyin.
+Kurulum script'i güçlü secret'ları yerel bir `.env` dosyasına üretir (yeniden çalıştırıldığında korunurlar), ardından `docker compose` ile hub'ı, Web UI'ı, PostgreSQL'i ve Redis'i ayağa kaldırır. İş bittiğinde yazdırılan **Web UI** URL'sini (`http://<host-ip>/`; `--domain` ile `https://<your-domain>`) açın ve ilk hesabı oluşturun — bu hesap instance'ın **owner**'ı olur. Yeni bir kurulumda script ayrıca, o hesabı oluştururken girmeniz gereken tek seferlik bir **setup code** yazdırır (`grep SETUP_CODE .env` ile tekrar bulabilirsiniz). Ardından ilk sunucunuzu bağlamak için onboarding sihirbazını izleyin.
 
 `./scripts/install.sh` dosyasını yeniden çalıştırmak (ör. `git pull` sonrasında) güvenlidir — secret'larınızı korur, yalnızca yapılandırmayı günceller; dolayısıyla aynı zamanda upgrade yolu görevi görür.
 
-**Production (TLS + alan adı).** Stack, hızlı başlangıç için bu host'un portlarında düz HTTP sunar; onu TLS'i sonlandıran kendi reverse proxy'nizin arkasına koyun ve alan adınızla yeniden çalıştırın:
+**Production (TLS + alan adı).** `--domain`, paneli Tugra'nın kendi proxy'si üzerinden HTTPS ile sunar ve Let's Encrypt sertifikasını otomatik alır (HTTP-01; e-posta ya da Cloudflare token'ı gerekmez). Önce alan adının DNS kaydını sunucuya yönlendirin. İsterseniz bayrağı hiç kullanmayıp alan adını sonradan **Settings → Instance → Panel domain** altında da ayarlayabilirsiniz: sertifika verilene kadar eski adres çalışmaya devam eder, sertifika alınamazsa değişiklik geri alınır. Tugra'nın önüne **kendi** reverse proxy'nizi koymak için `--no-auto-tls` kullanın (:80/:443'ü başka bir servis zaten tutuyorsa bu da otomatik seçilir) ve trafiği aşağıdaki gibi yönlendirin:
 
 ```bash
-./scripts/install.sh --domain tugra.example.com
+./scripts/install.sh --domain tugra.example.com --no-auto-tls
 ```
 
 Trafiğin çoğunu **web**'e (`:3001`) yönlendirin — REST API'yi ve OAuth başlatma isteğini sizin yerinize hub'a proxy'ler — ve yalnızca web'in işleyemediği yolları **hub**'a (`:3000`) iletin:
@@ -152,7 +158,8 @@ Trafiğin çoğunu **web**'e (`:3001`) yönlendirin — REST API'yi ve OAuth ba�
 
 Notlar:
 
-- **TLS:** kendi reverse proxy'nizi getirin (Caddy, Traefik, nginx, …) ya da panelin HTTPS'ini Tugra'nın kurmasını sağlamak için `--auto-tls --acme-email you@domain` ekleyin (yerleşik Traefik + Let's Encrypt). `--domain`, `COOKIE_SECURE=true` + `HUB_TRUSTED_PROXY=true` ayarlar.
+- **TLS:** `--domain` ile varsayılan olarak otomatiktir (yerleşik Traefik + Let's Encrypt; `--acme-email you@domain` süre bitimi bildirimleri için isteğe bağlı bir iletişim adresidir) ya da `--no-auto-tls` ile kendi reverse proxy'nizi (Caddy, Traefik, nginx, …) getirin. Cloudflare'in turuncu bulutunun arkasında token olmadan çalışır; ilk sertifika alınamazsa SSL/TLS modunu **Full** yapın ve alınana kadar **Always Use HTTPS**'i kapatın (`--acme-dns-cloudflare-file` ile DNS-01 token'ı isteğe bağlı bir alternatiftir). `--domain`, `COOKIE_SECURE=true` + `HUB_TRUSTED_PROXY=true` ayarlar.
+- **Klasik iki portlu hızlı başlangıç.** `--raw-ports` eski düzeni korur (proxy yok; web `:3001`, hub `:3000`). Bu değişiklikten önce yapılmış bir kurulum da bunu korur, 80 numaralı portu zaten dolu olan bir host da bunu alır.
 - **Ham portları kilitleyin.** `HUB_TRUSTED_PROXY=true` iken hub `X-Forwarded-For` başlığına güvenir (yalnızca private/loopback/docker eşlerinden veya `HUB_TRUSTED_PROXY_CIDRS` ile belirtilenlerden) ve ham `:3000`/`:3001` portlarına **yalnızca** proxy erişebilmelidir. Yeni bir `--domain` kurulumu bunları `127.0.0.1`'e bağlar (aynı host'taki proxy için); https'e geçen mevcut bir kurulum da buraya taşınır (`--keep-raw-ports` bunu devre dışı bırakır). Proxy başka bir host'ta çalışıyorsa `HUB_BIND`/`WEB_BIND` değerini bu makinenin private arayüz IP'sine ayarlayın ve portları firewall ile koruyun — Docker'ın publish ettiği portlar `ufw`'yi atlar.
 - **"Sign in with GitHub"** yalnızca bu single-origin proxy kurulumunda çalışır (session cookie'sinin SPA tarafından görülebilmesi için hub ve web ortak bir public origin'i paylaşır); düz iki portlu hızlı başlangıçta kullanılamaz.
 
@@ -193,7 +200,7 @@ Canlı log'lar, metrikler ve terminal WebSocket'ler üzerinden akar. Tüm ayrın
 - [x] Canlı metrikler, build log'ları ve web terminal (WebSocket akışları; terminal capability ile korunur ve varsayılan olarak kapalıdır)
 - [x] Backup ve restore destekli veritabanları (9 motor; yerel + S3/R2 off-site)
 - [x] Multi-server cluster'lar + Docker Swarm kurulumu, fleet genelinde toplu işlemler
-- [x] Yerleşik MCP sunucusu — 73 tool (okuma + PAT scope'lu değişiklik yapan/fleet operasyonları) + yönlendirmeli prompt'lar
+- [x] Yerleşik MCP sunucusu — 82 tool (okuma + PAT scope'lu değişiklik yapan/fleet operasyonları) + yönlendirmeli prompt'lar
 - [x] App store — 280+ tek tıkla şablon + Home modu launcher'ı
 - [x] Uygulama volume'ları için dosya yöneticisi — gezme, indirme, yükleme, düzenleme, yeniden adlandırma, izin değiştirme ve silme (yazma, isteğe bağlı bir sunucu capability'sidir; Web UI, okuma için ayrıca MCP `list_files`)
 - [x] Preview deploy'lar (pull request başına)
@@ -210,7 +217,7 @@ Canlı log'lar, metrikler ve terminal WebSocket'ler üzerinden akar. Tüm ayrın
 - [x] Health gate'li rolling deploy'lar + opt-in cutover sonrası soak ve otomatik geri alma · fleet rollout'ları (canary → dalgalar → health gate → durdur/devam et/rollback)
 - [x] Deploy'lar hub yeniden başlatmasından sağ çıkar (agent command journal + sonuç devralma) · deploy başına ayrıntı sayfası (zaman çizelgesi · canlı log · config diff)
 - [x] BuildKit `--secret` ile build secret'ları (Dockerfile build'leri) · master-key rotation (devam ettirilebilir yeniden şifreleme işi, hiçbir şey yeniden girilmez, uygulamalara dokunulmaz; hub iki kez yeniden başlar) · digest'e sabitlenmiş, imzalı self-update'ler ve güncelleme öncesi restore noktası
-- [x] Cloud sunucu provizyonu (Hetzner · DigitalOcean · Vultr) · Cloudflare Tunnel · yerleşik trafik analitiği (yerel GeoIP, phone-home yok) · log drain'leri · özel registry'ler · Vault secret sağlayıcısı (Pro)
+- [x] Cloud sunucu provizyonu (Hetzner · DigitalOcean · Vultr) · Cloudflare Tunnel · yerleşik trafik analitiği (yerel GeoIP, phone-home yok) · [log drain'leri](docs/log-drains.md) · özel registry'ler · Vault secret sağlayıcısı (Pro)
 
 **Sırada**
 

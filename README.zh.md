@@ -52,7 +52,7 @@ curl -s https://your-tugra-host/api/v1/mcp \
   -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"list_applications","arguments":{}}}'
 ```
 
-其底层使用的是同一个 `POST /api/v1/mcp` 端点，以及与 REST API 相同的个人访问令牌（PAT）认证、权限范围和 IP 白名单——无需另外管理凭据，解密后的密钥值也绝不会返回给模型。工具目录共 **56 个工具**：33 个只读工具（包括一次调用即可获取机群状态 / 健康状况 / 应用列表汇总的工具，以及沙盒化的卷文件浏览器），外加 23 个受 PAT 权限范围约束的变更 / 运维工具（部署 · 取消排队中的部署 · 重启 · 实时扩缩容 · 回滚 · 设置环境变量 · 组建 / 扩展 Swarm · 对整个机群执行批量操作 · 一键配置域名 DNS）。所有变更类工具都复用 REST API 完全相同的团队权限检查和审计记录，而不可逆的操作（解散 Swarm、删除应用）需要显式输入名称加以确认。面向第三方客户端的 OAuth 支持仍在路线图中。
+这与底层 REST API 是同一个 `POST /api/v1/mcp` 端点，使用相同的个人访问令牌认证、scope 和 IP 白名单——无需管理单独的凭据，解密后的密钥值也绝不会返回给模型。目录共有 **82 个工具**：45 个只读工具（包括一次调用即可返回全机群状态、健康度、应用列表的汇总，以及沙箱化的卷文件浏览器），另有 37 个受 PAT scope 约束的变更/运维工具（部署 · 取消排队中的部署 · 重启 · 在线扩缩容 · 回滚 · 设置 env · 重启服务器（需输入确认，事后验证）· 在云服务商侧开关云服务器，即使其 agent 离线也可操作（需输入确认）· 组建/扩展 swarm · 针对整个集群的全机群操作 · 一键配置域名 DNS · 有引导的迁移运行，默认 dry-run）。每个变更工具都复用 REST API 完全相同的团队权限检查和审计记录，不可逆操作（解散 swarm、删除应用）还需要明确输入名称确认。面向第三方客户端的 OAuth 仍在路线图上。
 
 ## 什么是 Tugra？
 
@@ -61,7 +61,7 @@ Tugra 是一个可自托管的开源核心（open-core）控制平面，用于�
 ## 为什么选择 Tugra
 
 - **机群优先，而非单机**——把服务器编组成集群，在其上组建真正的 Docker Swarm，只需一次批量操作调用就能对整个机群执行命令，不必再逐台 SSH 登录。
-- **同样原生支持智能体**——内置 MCP 服务器通过 `POST /api/v1/mcp` 提供 56 个工具（只读 + 受 PAT 权限范围约束的变更 / 机群运维操作），权限范围由与 REST API 相同的个人访问令牌控制。
+- **同样原生支持智能体**——内置 MCP 服务器通过 `POST /api/v1/mcp` 提供 82 个工具（只读 + 受 PAT 权限范围约束的变更 / 机群运维操作），权限范围由与 REST API 相同的个人访问令牌控制。
 - **9 种数据库引擎，同一套工作流**——PostgreSQL、MySQL、MariaDB、MongoDB、Redis、KeyDB、Dragonfly、ClickHouse 和 LibSQL，创建方式完全一致；其中八种内置基于逻辑 dump 的备份与恢复（LibSQL 没有 dump 工具，仅由文件级卷备份覆盖——为获得一致的副本，请先停止应用）。
 - **真正的 TLS，真正的通配符**——通过 Traefik 为每个应用自动签发 Let's Encrypt 证书，并为集群 / Swarm ingress 提供 DNS-01 通配符证书（`*.yourdomain.com`），而不只是单域名的 HTTP-01。
 - **异地备份**——定时 dump 到本地磁盘或兼容 S3 的存储（S3/R2/MinIO），可选加密（gpg AES-256）保存，一键恢复；定时的**恢复验证演练**可证明备份确实能够恢复，PostgreSQL 还支持**时间点恢复**（WAL 传输 + 基础备份，可在面板中恢复到任意一秒）。
@@ -106,7 +106,7 @@ Tugra 是一个可自托管的开源核心（open-core）控制平面，用于�
 | 团队 / RBAC | ✅ | ✅ | ✅ | ~⁷ | — | — |
 | SSO / OIDC | ✅ (Pro)⁸ | ✅ | ✅ | ~⁷ | — | — |
 | 审计日志 | ✅ | ✅ | ✅ | ~⁷ | — | — |
-| MCP / 智能体控制 | ✅ 76 tools⁵ | ✅ | ✅ | ~⁷ | — | ~² |
+| MCP / 智能体控制 | ✅ 82 tools⁵ | ✅ | ✅ | ~⁷ | — | ~² |
 | **信任与许可证** | | | | | | |
 | 遥测 | 匿名，可关闭（仅计数） | n/a | n/a | n/a | n/a | n/a |
 | 迁入（从 Coolify 导入） | ✅⁹ | — | — | — | — | — |
@@ -116,10 +116,16 @@ Tugra 是一个可自托管的开源核心（open-core）控制平面，用于�
 
 ## 快速开始
 
-在一台全新的 Linux 主机上，**一条命令**即可安装前置依赖（git、Docker）、克隆仓库并启动整套服务：
+在全新的 Linux 主机上，**一条命令**即可安装前置依赖（git、Docker）、克隆仓库并启动整套服务。不需要域名，不需要 Cloudflare 令牌，也不需要其他配置——面板会出现在 `http://<server-ip>/`（80 端口，由 Tugra 自带的代理提供服务，因此只需开放 80/443 端口）：
 
 ```bash
 curl -fsSL https://tugra.io/install | sh
+```
+
+然后打开打印出的 URL，创建 owner 账号；有域名后，在 **Settings → Instance → Panel domain** 中设置（Let's Encrypt 免费 HTTPS，无需令牌，在 Cloudflare 橙色云后面也能用）。想从第一分钟就用上域名，就先把域名的 DNS 指向服务器，再把它加到同一条命令里：
+
+```bash
+curl -fsSL https://tugra.io/install | sh -s -- --domain panel.example.com
 ```
 
 <p align="center"><img src="docs/assets/install.png" alt="在全新的 Ubuntu 主机上一条命令安装 Tugra：安装前置依赖、写入配置、整套服务健康启动，并显示所有者设置码" width="840" /></p>
@@ -133,14 +139,14 @@ less scripts/install.sh   # review it first
 ./scripts/install.sh
 ```
 
-安装脚本会生成高强度的密钥并写入本地 `.env`（重复运行会保留这些密钥），然后通过 `docker compose` 启动 hub、Web UI、PostgreSQL 和 Redis。完成后，打开终端输出的 **Web UI** 地址（`http://<host-ip>:3001`；hub/API 的基础地址为 `http://<host-ip>:3000`），创建第一个账号——它将成为该实例的**所有者**。全新安装时，安装脚本还会输出一个一次性的**设置码**，创建该账号时需要输入（可通过 `grep SETUP_CODE .env` 找回）。接着按照引导向导连接您的第一台服务器。
+安装脚本会生成高强度的密钥并写入本地 `.env`（重复运行会保留这些密钥），然后通过 `docker compose` 启动 hub、Web UI、PostgreSQL 和 Redis。完成后，打开终端输出的 **Web UI** 地址（`http://<host-ip>/`，使用 `--domain` 时为 `https://<your-domain>`），创建第一个账号——它将成为该实例的**所有者**。全新安装时，安装脚本还会输出一个一次性的**设置码**，创建该账号时需要输入（可通过 `grep SETUP_CODE .env` 找回）。接着按照引导向导连接您的第一台服务器。
 
 重新运行 `./scripts/install.sh`（例如在 `git pull` 之后）是安全的——它会保留您的密钥，只更新配置，因此也可以直接当作升级方式。
 
-**生产环境（TLS + 域名）。** 为了方便快速上手，整套服务默认通过本机端口提供纯 HTTP；请把它放在您自己的、负责终结 TLS 的反向代理之后，并带上您的域名重新运行：
+**生产环境（TLS + 域名）。** `--domain` 会让 Tugra 自带的代理通过 HTTPS 提供面板，并自动申请 Let's Encrypt 证书（HTTP-01；不需要邮箱，也不需要 Cloudflare 令牌）。请先把域名的 DNS 指向服务器。也可以不加这个参数，之后在 **Settings → Instance → Panel domain** 中设置域名：证书签发前旧地址继续可用，签发失败则自动回滚。如果想让 Tugra 放在你**自己的**反向代理后面，请使用 `--no-auto-tls`（当 :80/:443 已被其他服务占用时也会自动选用），并按下面的方式路由：
 
 ```bash
-./scripts/install.sh --domain tugra.example.com
+./scripts/install.sh --domain tugra.example.com --no-auto-tls
 ```
 
 把绝大部分流量路由到 **web**（`:3001`）——它会替您把 REST API 和 OAuth 起始请求代理给 hub——只将 web 处理不了的路径转发到 **hub**（`:3000`）：
@@ -152,7 +158,8 @@ less scripts/install.sh   # review it first
 
 注意事项：
 
-- **TLS：**请自备反向代理（Caddy、Traefik、nginx 等），或添加 `--auto-tls --acme-email you@domain`，让 Tugra 为面板配置 HTTPS（内置 Traefik + Let's Encrypt）。`--domain` 会设置 `COOKIE_SECURE=true` + `HUB_TRUSTED_PROXY=true`。
+- **TLS：** 使用 `--domain` 时默认自动签发（内置 Traefik + Let's Encrypt；`--acme-email you@domain` 是用于接收到期通知的可选联系邮箱），也可以用 `--no-auto-tls` 接入自己的反向代理（Caddy、Traefik、nginx 等）。在 Cloudflare 橙色云后面无需令牌即可工作；如果第一张证书没有签发，把 SSL/TLS 模式设为 **Full**，并先关闭 **Always Use HTTPS**，直到签发成功（通过 `--acme-dns-cloudflare-file` 使用 DNS-01 令牌是可选的替代方案）。`--domain` 会设置 `COOKIE_SECURE=true` + `HUB_TRUSTED_PROXY=true`。
+- **经典双端口快速开始。** `--raw-ports` 保留旧布局（没有代理；web `:3001`，hub `:3000`）；在这次改动之前完成的安装会继续沿用它，80 端口已被占用的主机也会得到这种布局。
 - **锁定原始端口。** 当 `HUB_TRUSTED_PROXY=true` 时，hub 会信任 `X-Forwarded-For`（仅限来自私有 / 回环 / docker 对端，或 `HUB_TRUSTED_PROXY_CIDRS` 所列地址），原始的 `:3000`/`:3001` 端口应当**只**对代理开放。全新的 `--domain` 安装会把它们绑定到 `127.0.0.1`（同主机代理），已有安装在切换为 https 时也会被迁移到这种绑定（`--keep-raw-ports` 可选择不迁移）。如果代理运行在另一台主机上，请把 `HUB_BIND`/`WEB_BIND` 设置为本机内网网卡的 IP，并用防火墙限制这些端口——Docker 映射的端口会绕过 `ufw`。
 - **“Sign in with GitHub”** 仅在这种单一 origin 的代理部署下可用（hub 与 web 共用同一个公网 origin，会话 cookie 才能被 SPA 读取）；在普通的双端口快速开始模式下不可用。
 
@@ -193,7 +200,7 @@ Pro 和 Cloud 版本（SSO、审计日志导出、白标、托管控制平面）
 - [x] 实时指标、构建日志与 Web 终端（WebSocket 流；终端受 capability 控制，默认关闭）
 - [x] 数据库（9 种引擎），支持备份与恢复（本地 + S3/R2 异地）
 - [x] 多服务器集群 + Docker Swarm 组建，跨整个机群批量操作
-- [x] 原生 MCP 服务器——73 个工具（只读 + 受 PAT 权限范围约束的变更 / 机群运维操作）+ 引导式提示词
+- [x] 原生 MCP 服务器——82 个工具（只读 + 受 PAT 权限范围约束的变更 / 机群运维操作）+ 引导式提示词
 - [x] 应用商店——280+ 个一键模板 + Home 模式启动器
 - [x] 应用卷的文件管理器——浏览、下载、上传、编辑、重命名、修改权限和删除（写入是可选启用的服务器 capability；Web UI，读取另可用 MCP `list_files`）
 - [x] 预览部署（每个 pull request 一个）
@@ -210,7 +217,7 @@ Pro 和 Cloud 版本（SSO、审计日志导出、白标、托管控制平面）
 - [x] 带健康检查关卡的滚动部署 + 可选启用的切换后 soak 观察与自动回退 · 机群滚动发布（金丝雀 → 分批 → 健康检查关卡 → 暂停/恢复/回滚）
 - [x] 部署可在 hub 重启后继续完成（agent 命令日志 + 结果接管）· 单次部署详情页（时间线 · 实时日志 · 配置对比）
 - [x] 通过 BuildKit `--secret` 传递构建密钥（Dockerfile 构建） · 主密钥轮换（可恢复的重新加密任务，无需重新输入任何内容，应用不受影响；hub 会重启两次） · 固定到 digest 的签名自更新，并在更新前创建恢复点
-- [x] 云服务器供应（Hetzner · DigitalOcean · Vultr）· Cloudflare Tunnel · 内置流量分析（本地 GeoIP，不回传数据）· 日志转发（log drains）· 私有 registry · Vault 密钥提供方（Pro）
+- [x] 云服务器供应（Hetzner · DigitalOcean · Vultr）· Cloudflare Tunnel · 内置流量分析（本地 GeoIP，不回传数据）· [日志转发（log drains）](docs/log-drains.md)· 私有 registry · Vault 密钥提供方（Pro）
 
 **下一步**
 
