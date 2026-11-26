@@ -8,6 +8,9 @@ import type { ChecklistRow, CoolifyChecklist, CoolifyInventoryView } from "../li
 import { ConfirmProvider } from "./confirm";
 import { CoolifyTakeover } from "./coolify-takeover";
 
+const push = vi.fn();
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push }) }));
+
 const INV: CoolifyInventoryView = {
   serverId: "s1",
   serverName: "host-1",
@@ -119,27 +122,45 @@ describe("CoolifyTakeover", () => {
     expect(opt("plain-box").textContent).toBe("plain-box (capability off)");
   });
 
-  it("an item opens the import on its project, never the whole server, and names what was clicked", async () => {
+  it("an item opens the import through the agent on its project, never the whole server, and names what was clicked", async () => {
     vi.spyOn(api, "coolifyInventory").mockResolvedValue(INV);
     vi.spyOn(api, "coolifyServers").mockResolvedValue({ ...CHECKLIST, rows: [CHECKLIST.rows[0], row({ state: "already_added", tugraServerId: "s2", teamId: "t1" })] });
+    const connect = vi.spyOn(api, "importConnectAgent").mockResolvedValue({ sessionId: "sess_agent_1", teams: [{ ref: "1", name: "Acme" }] } as never);
     await pickServer();
     await screen.findByText("Acme Coolify");
     await screen.findAllByText("Connected as edge-box");
+    expect(screen.queryByText(/needs the Coolify API token/)).toBeNull();
     fireEvent.click(screen.getByRole("link", { name: "Open web in the import" }));
-    expect(JSON.parse(window.sessionStorage.getItem("tugra.import.focus") ?? "{}")).toEqual({ kind: "coolify", address: "https://coolify.example.com", sourceProjectUuid: "p1", fromItemName: "web", targetServerId: "s2", targetTeamId: "t1" });
-    expect(screen.getAllByText(/Open in import needs the Coolify API token/).length).toBeGreaterThan(0);
+    await waitFor(() => expect(JSON.parse(window.sessionStorage.getItem("tugra.import.focus") ?? "{}")).toEqual({ kind: "coolify", sourceProjectUuid: "p1", fromItemName: "web", targetServerId: "s2", targetTeamId: "t1", agentSessionId: "sess_agent_1" }));
+    expect(connect).toHaveBeenCalledWith({ teamId: "t1", serverId: "s1" });
   });
 
-  it("shows the inventory per team with a Move link per item into the existing import", async () => {
+  it("with several Coolify teams the session reads the row's own team", async () => {
     vi.spyOn(api, "coolifyInventory").mockResolvedValue(INV);
     vi.spyOn(api, "coolifyServers").mockResolvedValue(CHECKLIST);
+    const revoke = vi.spyOn(api, "importRevoke").mockResolvedValue(undefined as never);
+    const connect = vi
+      .spyOn(api, "importConnectAgent")
+      .mockResolvedValueOnce({ sessionId: "sess_first_1", teams: [{ ref: "1", name: "Acme" }, { ref: "2", name: "Other" }] } as never)
+      .mockResolvedValueOnce({ sessionId: "sess_team_1", teams: [{ ref: "1", name: "Acme" }, { ref: "2", name: "Other" }] } as never);
     await pickServer();
     await screen.findByText("Acme Coolify");
-    expect(screen.getByText("Read-only copy")).toBeTruthy();
+    fireEvent.click(screen.getByRole("link", { name: "Open edge in the import" }));
+    await waitFor(() => expect(JSON.parse(window.sessionStorage.getItem("tugra.import.focus") ?? "{}").agentSessionId).toBe("sess_team_1"));
+    expect(connect).toHaveBeenLastCalledWith({ teamId: "t1", serverId: "s1", sourceTeamRef: "1" });
+    expect(revoke).toHaveBeenCalledWith("sess_first_1");
+  });
+
+  it("falls back to the import's own choice when no agent session can be made", async () => {
+    vi.spyOn(api, "coolifyInventory").mockResolvedValue(INV);
+    vi.spyOn(api, "coolifyServers").mockResolvedValue(CHECKLIST);
+    vi.spyOn(api, "importConnectAgent").mockRejectedValue(new ApiError(403, "no", "forbidden"));
+    await pickServer();
+    await screen.findByText("Read-only copy");
     const move = screen.getByRole("link", { name: "Open web in the import" }) as HTMLAnchorElement;
     expect(move.getAttribute("href")).toBe("/import");
     fireEvent.click(move);
-    expect(window.sessionStorage.getItem("tugra.import.prefillUrl")).toBe("https://coolify.example.com");
+    await waitFor(() => expect(JSON.parse(window.sessionStorage.getItem("tugra.import.focus") ?? "{}")).toEqual({ kind: "coolify", sourceProjectUuid: "p1", fromItemName: "web" }));
   });
 
   it("lists the Coolify servers as a checklist: team per server, then copyable commands; nothing is run", async () => {

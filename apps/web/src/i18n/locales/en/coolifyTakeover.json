@@ -79,14 +79,13 @@
     "application": "App",
     "database": "Database",
     "service": "Service",
-    "move": "Open in import",
     "moveLabel": "Open {name} in the import",
-    "moveHint": "Preview only. Nothing moves from here. To move, open the import. It needs the Coolify address and an API token (read and read:sensitive).",
+    "moveHint": "Preview only. Nothing moves from here. Open in import starts the import through this server's agent, with no Coolify API token.",
     "on": "on {server}",
     "env": "{n} variables",
     "open": "Open in import",
     "openServerLabel": "Open {name} in the import",
-    "tokenNeeded": "Open in import needs the Coolify API token. Nothing moves from this page."
+    "opening": "Opening…"
   },
   "server": {
     "local": "This server",

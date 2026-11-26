@@ -11,7 +11,14 @@ export const metadata: Metadata = {
   title: "Tugra",
   description: "Your seal on every server.",
   // The manifest itself is app/manifest.ts (Next links it automatically); these cover iOS home-screen installs.
-  icons: { apple: "/pwa/apple-touch-icon.png" },
+  // Listing icons here replaces the app/icon.* file links, so the tab icon is named too.
+  icons: {
+    icon: [
+      { url: "/icon.svg", type: "image/svg+xml" },
+      { url: "/icon.png", type: "image/png", sizes: "256x256" },
+    ],
+    apple: "/pwa/apple-touch-icon.png",
+  },
   appleWebApp: { capable: true, title: "Tugra", statusBarStyle: "default" },
 };
 
