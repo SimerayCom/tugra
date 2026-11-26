@@ -149,21 +149,37 @@ export const TAKEOVER_ISSUES = [
   "db_volume_unmapped",
   "db_start_failed",
   "db_verify_failed",
+  // services (every container of a Coolify compose service is mapped to a Tugra container on the same image, data reused in place)
+  "service_member_unmapped",
+  "service_member_absent",
+  "service_member_ambiguous",
+  "service_image_differs",
+  "service_image_moved",
+  "service_networks_unmapped",
+  "service_compose_unsupported",
 ] as const;
 export type TakeoverIssueCode = (typeof TAKEOVER_ISSUES)[number];
 
 /** Why a takeover step failed (the takeover itself, not one app). */
-export const TAKEOVER_FAILURE_CODES = ["probe_unavailable", "exclusive_policy_failed", "exclusive_stop_failed", "exclusive_start_failed", "swap_stop_failed", "swap_start_failed", "give_back_failed", "fallback_overdue", "cert_check_unavailable", "database_start_failed", "database_verify_failed"] as const;
+export const TAKEOVER_FAILURE_CODES = ["probe_unavailable", "exclusive_policy_failed", "exclusive_stop_failed", "exclusive_start_failed", "swap_stop_failed", "swap_start_failed", "give_back_failed", "fallback_overdue", "cert_check_unavailable", "database_start_failed", "database_verify_failed", "service_not_ready", "service_verify_failed"] as const;
 export type TakeoverFailureCode = (typeof TAKEOVER_FAILURE_CODES)[number];
 
-/** What an item of a takeover is: an app (default), or a database whose data volume is reused in place. */
-export type TakeoverItemKind = "app" | "database";
+/** What an item of a takeover is: an app (default), a database whose data volume is reused in place, or a compose service (one-click service or docker-compose app) with several containers. */
+export type TakeoverItemKind = "app" | "database" | "service";
 /**
  * How a database is checked after Tugra's container took over its data: `counts` = the same tables with the same exact row counts as
  * Coolify's container had before (a hash of both, no names or values), `alive` = the engine answers (engines whose rows cannot be read with
  * the container's own environment: the redis family, mongo).
  */
 export type TakeoverDbVerifyLevel = "counts" | "alive";
+
+/** One container of a service. `ready` is judged after the switch (running, healthy where it has a health check); `verify` only for a database-like container. */
+export interface TakeoverMemberView {
+  /** The compose service name. */
+  name: string;
+  ready: "pending" | "ok" | "failed";
+  verify?: { level: TakeoverDbVerifyLevel; state: "pending" | "ok" | "failed" };
+}
 
 export interface TakeoverItemView {
   itemRef: string;
@@ -172,6 +188,8 @@ export interface TakeoverItemView {
   kind?: TakeoverItemKind;
   /** Databases only: how it is checked and whether it passed after the switch. */
   verify?: { level: TakeoverDbVerifyLevel; state: "pending" | "ok" | "failed" };
+  /** Services only: every container of the service, in start order (dependencies first), with whether it came up ready and, for a database-like one, whether it answered the same. */
+  members?: TakeoverMemberView[];
   buildMode: TakeoverBuildMode;
   /** Left out of the takeover; `issues` says why. Absent = takes part. */
   skipped?: boolean;

@@ -18,6 +18,9 @@ import {
   canGiveBack,
   canTakeoverTransition,
   cleanCommit,
+  ctrsOf,
+  hasCtrs,
+  stopCtrs,
   domainsOf,
   certWorkLeft,
   isVerified,
@@ -59,7 +62,9 @@ import {
   type ProbeVia,
   type RecordedCtr,
 } from "./inplace-scripts";
-import { INPLACE_WORLD, type InPlaceWorld } from "./inplace-world";
+import { INPLACE_WORLD, type InPlaceWorld, type OpService } from "./inplace-world";
+import { buildImageIdsScript, buildServiceDetailScript, buildServiceReadyScript, buildServiceVolumeScript, parseImageIds, parseServiceDetail, parseServiceReady, type ServiceVolumeAlias } from "./inplace-service-scripts";
+import { engineOfImage, judgeReady, mapNetworks, mapServiceMounts, memberLevel, memberSame, parseServiceCompose, sameNetworkRows, startOrder, type MemberProbe, type ServiceCtrFacts, type ServiceMemberRecord } from "./inplace-service";
 import type { GiveBackInput, PlanInput, SwapInput } from "./dto";
 import type { InPlaceRunPort, RunTakeoverState } from "./inplace-run";
 
@@ -68,6 +73,9 @@ const HOST_T = 60_000;
 /** Time for one batch of probes: each host is fetched up to twice at 10 s, plus slack. */
 const probeTimeout = (n: number): number => Math.min(600_000, 15_000 + n * 2 * 10_000);
 const PROBE_CHUNK = 10;
+/** How long a service's containers are waited for to be ready (polls of 5 s, two minutes). */
+const READY_POLLS = 24;
+const READY_POLL_MS = 5_000;
 /** How long a new certificate is waited for per domain (polls of 5 s). */
 const CERT_POLLS = 12;
 const CERT_POLL_MS = 5_000;
@@ -173,7 +181,8 @@ export class CoolifyInPlaceService implements InPlaceRunPort {
     const opApps = await this.world.opApps(input.opId, server.teamId, server.id);
     if (!opApps) throw new NotFoundException("op-not-found");
     const opDbs = (await this.world.opDatabases(input.opId, server.teamId, server.id)) ?? [];
-    if (opApps.length === 0 && opDbs.length === 0) throw unprocessable("takeover_no_apps");
+    const opSvcs = (await this.world.opServices(input.opId, server.teamId, server.id)) ?? [];
+    if (opApps.length === 0 && opDbs.length === 0 && opSvcs.length === 0) throw unprocessable("takeover_no_apps");
     const known = new Set(opApps.map((a) => a.itemRef));
     for (const r of input.rebuild) if (!known.has(r)) throw unprocessable("takeover_unknown_item", { itemRef: r });
 
@@ -185,7 +194,7 @@ export class CoolifyInPlaceService implements InPlaceRunPort {
     const tugraProxy = await this.world.proxyStatus(userId, server.id).catch(() => "unknown" as const);
     if (server.proxyBind !== "none" && (tugraProxy === "running" || tugraProxy === "unknown")) throw unprocessable("takeover_tugra_proxy_in_use");
 
-    const items = await this.readItems(server.teamId, server.id, opApps, new Set(input.rebuild), opDbs);
+    const items = await this.readItems(server.teamId, server.id, opApps, new Set(input.rebuild), opDbs, opSvcs);
     const doc: PlanDoc = { opId: input.opId, serverName: server.name, proxy: proxy.snapshot };
     const row = await this.prisma.coolifyTakeover.create({
       data: {
@@ -200,13 +209,13 @@ export class CoolifyInPlaceService implements InPlaceRunPort {
         giveBackAvailable: true,
       },
     });
-    await this.audit.log({ actor: userId, action: "coolify.takeover.plan", target: row.id, meta: { serverId: server.id, ...(link.runId ? { runId: link.runId } : {}), apps: items.filter((i) => i.kind !== "database").length, databases: items.filter((i) => i.kind === "database").length, skipped: items.filter((i) => i.state === "skipped").length, rebuild: items.filter((i) => i.buildMode === "rebuild-verify").length } });
+    await this.audit.log({ actor: userId, action: "coolify.takeover.plan", target: row.id, meta: { serverId: server.id, ...(link.runId ? { runId: link.runId } : {}), apps: items.filter((i) => i.kind !== "database" && i.kind !== "service").length, databases: items.filter((i) => i.kind === "database").length, services: items.filter((i) => i.kind === "service").length, skipped: items.filter((i) => i.state === "skipped").length, rebuild: items.filter((i) => i.buildMode === "rebuild-verify").length } });
     return this.view(row as Row);
   }
 
   /** What Coolify runs for each app of the op, mapped to the Tugra app. Read-only on the host. Apps that cannot be taken over are kept, marked skipped, with the reasons. */
-  private async readItems(teamId: string, serverId: string, apps: ReadonlyArray<{ appId: string; itemRef: string; containerPrefix?: string; commitSha?: string | null }>, rebuild: ReadonlySet<string>, dbs: ReadonlyArray<{ databaseId: string; itemRef: string }> = []): Promise<TakeoverItem[]> {
-    const withRef = [...apps.map((a) => ({ itemRef: a.itemRef, containerPrefix: a.containerPrefix })), ...dbs.map((d) => ({ itemRef: d.itemRef, containerPrefix: undefined }))].filter((a) => coolifyRefOf(a.itemRef));
+  private async readItems(teamId: string, serverId: string, apps: ReadonlyArray<{ appId: string; itemRef: string; containerPrefix?: string; commitSha?: string | null }>, rebuild: ReadonlySet<string>, dbs: ReadonlyArray<{ databaseId: string; itemRef: string }> = [], svcs: readonly OpService[] = []): Promise<TakeoverItem[]> {
+    const withRef = [...apps.map((a) => ({ itemRef: a.itemRef, containerPrefix: a.containerPrefix })), ...dbs.map((d) => ({ itemRef: d.itemRef, containerPrefix: undefined })), ...svcs.map((x) => ({ itemRef: x.itemRef, containerPrefix: undefined }))].filter((a) => coolifyRefOf(a.itemRef));
     let found: ReturnType<typeof parseSourceInspect> = [];
     if (withRef.length > 0) {
       try {
@@ -219,7 +228,8 @@ export class CoolifyInPlaceService implements InPlaceRunPort {
     }
     const byRef = new Map<string, typeof found>();
     for (const c of found) byRef.set(c.itemRef, [...(byRef.get(c.itemRef) ?? []), c]);
-    const single = [...byRef.values()].flatMap((l) => (l.length === 1 ? [l[0]] : []));
+    const svcRefs = new Set(svcs.map((x) => x.itemRef));
+    const single = [...byRef.entries()].flatMap(([ref, l]) => (l.length === 1 && !svcRefs.has(ref) ? [l[0]] : []));
     let detail = new Map<string, CtrDetail>();
     if (single.length > 0) {
       const r = await this.world.exec(serverId, buildContainerDetailScript(single.map((c) => ({ id: c.id, name: c.name, image: c.image }))), HOST_T);
@@ -282,6 +292,7 @@ export class CoolifyInPlaceService implements InPlaceRunPort {
     }
     const dbItems = await this.readDbItems(teamId, serverId, dbs, byRef, detail);
     items.push(...dbItems);
+    items.push(...(await this.readServiceItems(teamId, serverId, svcs, byRef)));
     await this.markAfterSwitch(items);
     return items;
   }
@@ -351,6 +362,127 @@ export class CoolifyInPlaceService implements InPlaceRunPort {
   }
 
   /**
+   * The compose services the import created on the box, mapped to the containers Coolify runs for them. Every container of the service
+   * becomes a member: a Tugra container of the compose app on the same image (checked by the image's id, not its tag), on the same data
+   * (volumes and host folders aliased, no copy) and on the same network names. A service whose containers do not map one to one is left out
+   * whole, with the reasons: switching half a stack would be worse than switching none. Read-only on the host.
+   */
+  private async readServiceItems(teamId: string, serverId: string, svcs: readonly OpService[], byRef: ReadonlyMap<string, Array<{ id: string; name: string; image: string }>>): Promise<TakeoverItem[]> {
+    const out: TakeoverItem[] = [];
+    for (const s of svcs) {
+      const svc = await this.world.service(s.appId);
+      if (!svc || svc.teamId !== teamId || svc.serverId !== serverId) continue;
+      const hosts = [...new Set(svc.hosts.map((h) => h.trim().toLowerCase()).filter((h) => CUTOVER_HOSTNAME_RE.test(h)))];
+      const base: TakeoverItem = {
+        itemRef: s.itemRef,
+        name: svc.name,
+        kind: "service",
+        buildMode: "reuse-image",
+        domains: hosts.map((host) => ({ host, tempCheck: "pending" as const, finalCheck: "pending" as const, cert: "pending" as const })),
+        appId: svc.id,
+        uuid: coolifyRefOf(s.itemRef)?.uuid ?? "",
+        commitSha: null,
+        container: null,
+        volumes: [],
+        binds: 0,
+        exclusive: false,
+        members: [],
+        project: svc.project,
+        adoptDeploymentId: null,
+        adoptTag: null,
+        rebuildDeploymentId: null,
+        state: "planned",
+        issues: [],
+        baseline: {},
+        fallbackSerial: {},
+        fallbackAt: {},
+        certAttempts: {},
+      };
+      const skip = (...issues: TakeoverItem["issues"]): void => {
+        out.push({ ...base, state: "skipped", issues });
+      };
+      const compose = svc.usable ? parseServiceCompose(svc.composeFile) : null;
+      if (!compose) {
+        skip("service_compose_unsupported");
+        continue;
+      }
+      const list = byRef.get(s.itemRef) ?? [];
+      if (list.length === 0) {
+        skip("container_absent");
+        continue;
+      }
+      let facts: ReturnType<typeof parseServiceDetail> = null;
+      try {
+        facts = parseServiceDetail((await this.world.exec(serverId, buildServiceDetailScript(list.map((c) => ({ id: c.id, name: c.name, image: c.image }))), HOST_T)).output, list);
+      } catch {
+        facts = null;
+      }
+      if (!facts) throw unprocessable("takeover_host_unreadable");
+      if (list.some((c) => !facts?.has(c.id))) {
+        skip("container_changed");
+        continue;
+      }
+      // every container maps to a compose service of the Tugra app, once, and every compose service has its container
+      const issues = new Set<TakeoverItem["issues"][number]>();
+      const byService = new Map<string, ServiceCtrFacts[]>();
+      for (const f of facts.values()) {
+        if (!f.service || !(f.service in compose)) issues.add("service_member_unmapped");
+        else byService.set(f.service, [...(byService.get(f.service) ?? []), f]);
+      }
+      for (const l of byService.values()) if (l.length > 1) issues.add("service_member_ambiguous");
+      for (const k of Object.keys(compose)) if (!byService.has(k)) issues.add("service_member_absent");
+      if (issues.size > 0) {
+        skip(...issues);
+        continue;
+      }
+      const order = startOrder(compose);
+      // the same image: the one the compose runs the service on must be, by id, the one Coolify's container runs
+      const images = order.map((k) => compose[k].image);
+      if (images.some((i) => i === null || !/^[A-Za-z0-9][A-Za-z0-9._/:@-]{0,254}$/.test(i))) {
+        skip("service_image_differs");
+        continue;
+      }
+      const refs = [...new Set(images as string[])];
+      const ids = await this.run(serverId, buildImageIdsScript(refs), (o) => parseImageIds(o, refs));
+      if (!ids) throw unprocessable("takeover_host_unreadable");
+      if (refs.some((r) => ids.get(r) === "missing")) {
+        skip("image_missing");
+        continue;
+      }
+      if (order.some((k) => ids.get(compose[k].image as string) !== (byService.get(k) as ServiceCtrFacts[])[0].imageId)) {
+        skip("service_image_moved");
+        continue;
+      }
+      let exclusive = false;
+      const members: ServiceMemberRecord[] = [];
+      for (const k of order) {
+        const f = (byService.get(k) as ServiceCtrFacts[])[0];
+        const m = mapServiceMounts(f.mounts, compose[k], svc.composeVolumes);
+        for (const i of m.issues) issues.add(i);
+        if (m.exclusive || f.published > 0) exclusive = true; // shared writable data, or a host port the two copies would fight for
+        const engine = engineOfImage(f.image);
+        members.push({
+          service: k,
+          container: { id: f.id, name: f.name, image: f.image, restart: f.restart, imageId: f.imageId },
+          composeImage: compose[k].image as string,
+          volumes: m.volumes,
+          binds: m.binds,
+          ...(engine ? { engine } : {}),
+          ready: "pending",
+        });
+      }
+      const nets = mapNetworks(members.map((m) => ({ service: m.service, container: m.container, networks: (byService.get(m.service) as ServiceCtrFacts[])[0].networks })), svc.networks, base.uuid);
+      for (const i of nets.issues) issues.add(i);
+      if (issues.size > 0) {
+        skip(...issues);
+        continue;
+      }
+      out.push({ ...base, members, exclusive, ...(sameNetworkRows(nets.rows, svc.networks) ? {} : { networksWanted: nets.rows }) });
+    }
+    return out;
+  }
+
+  /**
    * An app that talks to a database that is taken over cannot be tested alongside: the database is not there for Tugra's copy until the
    * switch. Judged from the app's environment (names only, never values kept); an environment that cannot be read counts as talking to it.
    */
@@ -415,6 +547,7 @@ export class CoolifyInPlaceService implements InPlaceRunPort {
     };
 
     if (item.kind === "database") return this.prepareDb(row, items, item);
+    if (item.kind === "service") return this.prepareService(userId, row, items, item);
 
     if (item.buildMode === "rebuild-verify") {
       if (!item.rebuildDeploymentId) {
@@ -498,6 +631,176 @@ export class CoolifyInPlaceService implements InPlaceRunPort {
     await save();
   }
 
+  /**
+   * A service: the images are checked to still be the ones Coolify's containers run (by id), the volumes and host folders of every container
+   * become the compose app's volumes (no copy), what a database-like container shows is read once as the yardstick, and the compose stack is
+   * adopted as a deployment so the rollback path can run it. A service that shares no writable data and publishes no host port runs alongside
+   * Coolify's and is checked to be up; one that does is started at the switch. A failure marks the service skipped with its reason.
+   */
+  private async prepareService(userId: string, row: Row, items: TakeoverItem[], item: TakeoverItem): Promise<void> {
+    const serverId = row.serverId;
+    const members = item.members ?? [];
+    const save = () => this.saveItems(row.id, items);
+    const skip = async (issue: TakeoverItem["issues"][number]): Promise<void> => {
+      item.state = "skipped";
+      item.issues = [...new Set([...item.issues, issue])];
+      await save();
+    };
+    if (members.length === 0 || !item.project) return skip("container_absent");
+
+    // 1. the same images as the containers run, by id (a tag may have moved since the plan)
+    const refs = [...new Set(members.map((m) => m.composeImage))];
+    const ids = await this.run(serverId, buildImageIdsScript(refs), (o) => parseImageIds(o, refs));
+    if (!ids) return skip("prepare_failed");
+    if (refs.some((r) => ids.get(r) === "missing")) return skip("image_missing");
+    if (members.some((m) => ids.get(m.composeImage) !== m.container.imageId)) return skip("service_image_moved");
+
+    // 2. the data: every volume and folder of every container, aliased
+    const byTarget = new Map<string, ServiceVolumeAlias>();
+    for (const m of members) {
+      for (const v of m.volumes) byTarget.set(v.to, { kind: "volume", from: v.from, to: v.to, project: item.project, key: v.key });
+      for (const b of m.binds) byTarget.set(b.to, { kind: "bind", from: b.from, to: b.to, project: item.project, key: b.key });
+    }
+    if (byTarget.size > 0) {
+      const targets = [...byTarget.keys()];
+      const res = await this.run(serverId, buildServiceVolumeScript([...byTarget.values()]), (o) => parseAlias(o, targets));
+      if (!res) return skip("volume_alias_failed");
+      for (const t of targets) {
+        const r = res.get(t);
+        if (r === "foreign") return skip("volume_alias_foreign");
+        if (r !== "created" && r !== "present") return skip("volume_alias_failed");
+      }
+    }
+
+    // 3. the yardstick of every database-like container, read once before anything changes
+    const dbm = members.filter((m) => m.engine && !m.dbBefore);
+    if (dbm.length > 0) {
+      const fps = await this.fingerprint(serverId, dbm.map((m) => ({ engine: m.engine as DbTarget["engine"], ref: { kind: "recorded" as const, ctr: { id: m.container.id, name: m.container.name, image: m.container.image } } })));
+      for (const m of dbm) {
+        const fp = fps?.get(m.container.id);
+        if (!fp || fp.state !== "ok") return skip("db_verify_failed");
+        m.dbBefore = fp;
+        m.dbVerify = { level: memberLevel(m), state: "pending" };
+      }
+    }
+
+    // 4. the compose stack adopted as a deployment, and (when nothing is shared) started next to Coolify's
+    if (!item.adoptDeploymentId) {
+      try {
+        item.adoptDeploymentId = await this.world.createAdoptComposeDeployment(item.appId);
+      } catch {
+        return skip("adopt_failed");
+      }
+      await save();
+    }
+    if (!item.exclusive && !item.afterSwitch) {
+      const stop = (): Promise<void> => this.world.stopApp(userId, item.appId).catch(() => undefined);
+      const r = await this.world.runAdopted(userId, item.appId, item.adoptDeploymentId);
+      if (!r.ok) {
+        await stop();
+        return skip("prepare_failed");
+      }
+      const rd = await this.waitReady(serverId, item);
+      await save();
+      if (!rd.ok) {
+        await stop();
+        return skip("prepare_failed");
+      }
+    }
+    item.state = "prepared";
+    await save();
+  }
+
+  /**
+   * Wait for every container of Tugra's compose project to be up: running, healthy where it has a health check, and the same on two polls (a
+   * container that crash-loops is "running" for an instant). Judged in start order. Marks each member `ok` or `failed`. A container that
+   * exited ends the wait at once; otherwise it is waited for up to two minutes.
+   */
+  private async waitReady(serverId: string, item: TakeoverItem): Promise<{ ok: boolean; notReady: string[] }> {
+    const members = item.members ?? [];
+    const order = members.map((m) => m.service);
+    let prev: MemberProbe[] | null = null;
+    let verdict: { ready: boolean; notReady: string[]; dead: string[] } = { ready: false, notReady: order, dead: [] };
+    for (let n = 0; n < READY_POLLS; n++) {
+      const probes = await this.run(serverId, buildServiceReadyScript(item.project as string), parseServiceReady);
+      if (probes) {
+        verdict = judgeReady(prev, probes, order);
+        prev = probes;
+        if (verdict.ready || verdict.dead.length > 0) break;
+      }
+      await this.world.sleep(READY_POLL_MS);
+    }
+    for (const m of members) m.ready = verdict.notReady.includes(m.service) ? "failed" : "ok";
+    return { ok: verdict.ready, notReady: verdict.notReady };
+  }
+
+  /** After the switch: did every database-like container answer the same through Tugra's container as Coolify's did before? Marks each. */
+  private async verifyMemberDbs(serverId: string, item: TakeoverItem): Promise<boolean> {
+    const dbm = (item.members ?? []).filter((m) => m.engine);
+    if (dbm.length === 0) return true;
+    const probes = await this.run(serverId, buildServiceReadyScript(item.project as string), parseServiceReady);
+    const nameOf = (m: ServiceMemberRecord): string | undefined => probes?.find((p) => p.service === m.service)?.name;
+    const targets: DbTarget[] = dbm.flatMap((m) => {
+      const name = nameOf(m);
+      return name ? [{ engine: m.engine as DbTarget["engine"], ref: { kind: "name" as const, name } }] : [];
+    });
+    const after = targets.length > 0 ? await this.fingerprint(serverId, targets) : null;
+    let ok = true;
+    for (const m of dbm) {
+      const name = nameOf(m);
+      const same = !!name && memberSame(m, after?.get(name));
+      m.dbVerify = { level: memberLevel(m), state: same ? "ok" : "failed" };
+      if (!same) ok = false;
+    }
+    return ok;
+  }
+
+  /**
+   * Start Tugra's copy of an item at the switch (Coolify's containers are stopped). An app starts through its adopted deployment. A service
+   * first takes on the network attachments of Coolify's containers (so the names inside it, and the names other containers on Coolify's
+   * network use, still resolve), then starts through its compose stack, is waited for member by member and has its databases checked. The
+   * failure code, or null.
+   */
+  private async startItem(userId: string, row: Row, items: TakeoverItem[], serverId: string, item: TakeoverItem): Promise<TakeoverFailureCode | null> {
+    if (item.kind !== "service") {
+      const r = await this.world.runAdopted(userId, item.appId, item.adoptDeploymentId as string);
+      return r.ok ? null : "exclusive_start_failed";
+    }
+    if (item.networksWanted) {
+      // what the app had is recorded BEFORE the change: a crash must still leave the way back
+      if (item.networksBefore === undefined) {
+        item.networksBefore = (await this.world.service(item.appId))?.networks ?? [];
+        await this.saveItems(row.id, items);
+      }
+      try {
+        await this.world.setComposeNetworks(userId, item.appId, item.networksWanted);
+      } catch {
+        return "exclusive_start_failed";
+      }
+    }
+    const r = await this.world.runAdopted(userId, item.appId, item.adoptDeploymentId as string);
+    if (!r.ok) return "exclusive_start_failed";
+    const rd = await this.waitReady(serverId, item);
+    await this.saveItems(row.id, items);
+    if (!rd.ok) return "service_not_ready";
+    const same = await this.verifyMemberDbs(serverId, item);
+    await this.saveItems(row.id, items);
+    return same ? null : "service_verify_failed";
+  }
+
+  /** One look at the containers of every switched service: up and healthy, or not. Never waits, never changes anything. */
+  private async checkMembers(serverId: string, items: TakeoverItem[]): Promise<void> {
+    for (const i of items) {
+      if (i.kind !== "service" || i.state !== "switched" || !i.project) continue;
+      const probes = await this.run(serverId, buildServiceReadyScript(i.project), parseServiceReady);
+      if (!probes) continue; // a look that could not be made says nothing
+      for (const m of i.members ?? []) {
+        const p = probes.filter((x) => x.service === m.service);
+        m.ready = p.length > 0 && p.every((x) => x.state === "running" && (x.health === "healthy" || x.health === "none")) ? "ok" : "failed";
+      }
+    }
+  }
+
   /** Read databases through the container's own environment (see {@link buildDbFingerprintScript}). `null` when the host could not be read. */
   private async fingerprint(serverId: string, targets: readonly DbTarget[]): Promise<Map<string, DbFingerprint> | null> {
     const refs = targets.map((t) => (t.ref.kind === "recorded" ? t.ref.ctr.id : t.ref.name));
@@ -552,31 +855,38 @@ export class CoolifyInPlaceService implements InPlaceRunPort {
     const rb = this.rollbackOf(row);
     await this.setStatus(row, "SWAPPING", null);
     const active = items.filter((i) => i.state === "prepared");
-    const ex = active.filter((i) => i.exclusive && i.container);
+    const ex = active.filter((i) => i.exclusive && hasCtrs(i));
 
     // 1. apps that share data with Coolify's copy: its restart policy first, then stop it, then start Tugra's on the same data. The apps that
     // write to a switched database go quiet FIRST, and the yardstick of each database is read again once they are quiet and before the
-    // database itself stops: what the test read days ago is stale (the apps kept writing, the owner took time to approve).
+    // database itself stops: what the test read days ago is stale (the apps kept writing, the owner took time to approve). A service is
+    // switched as a whole: its containers stop dependents first and its database-like containers last, and start through the compose app.
     if (ex.length > 0) {
       const dbs = ex.filter((i) => i.kind === "database");
-      const quiet = active.filter((i) => i.afterSwitch && !i.exclusive && i.container);
-      const first = [...ex.filter((i) => i.kind !== "database"), ...quiet];
+      const svcs = ex.filter((i) => i.kind === "service");
+      const quiet = active.filter((i) => i.afterSwitch && !i.exclusive && hasCtrs(i));
+      const first = [...ex.filter((i) => i.kind !== "database" && i.kind !== "service").flatMap((i) => stopCtrs(i)), ...quiet.flatMap((i) => stopCtrs(i)), ...svcs.flatMap((i) => stopCtrs(i, "rest"))];
+      const last = [...dbs.flatMap((i) => stopCtrs(i)), ...svcs.flatMap((i) => stopCtrs(i, "db"))];
       // written BEFORE the first policy change: a partial failure below must still give every recorded policy back
       rb.exclusiveStopped = true;
       await this.saveRollback(row.id, rb);
-      const halt = async (set: TakeoverItem[], policyCode: TakeoverFailureCode, stopCode: TakeoverFailureCode): Promise<TakeoverFailureCode | null> => {
-        if (set.length === 0) return null;
-        const ids = set.map((i) => (i.container as NonNullable<TakeoverItem["container"]>).id);
-        const pol = parsePolicy((await this.world.exec(server.id, buildRestartPolicyScript(set.map((i) => ({ ...recorded(i), policy: "no" as const }))), HOST_T)).output, ids);
+      const halt = async (list: ReturnType<typeof stopCtrs>, policyCode: TakeoverFailureCode, stopCode: TakeoverFailureCode): Promise<TakeoverFailureCode | null> => {
+        if (list.length === 0) return null;
+        const ids = list.map((c) => c.id);
+        const pol = parsePolicy((await this.world.exec(server.id, buildRestartPolicyScript(list.map((c) => ({ id: c.id, name: c.name, image: c.image, policy: "no" as const }))), HOST_T)).output, ids);
         if (ids.some((x) => pol.get(x) !== "ok")) return policyCode;
-        const stop = parseStopOutput((await this.world.exec(server.id, buildSourceStopScript(set.map((i) => recordedFull(i))), 150_000)).output, ids);
+        const stop = parseStopOutput((await this.world.exec(server.id, buildSourceStopScript(list), 150_000)).output, ids);
         if (ids.some((x) => stop.get(x) !== "stopped" && stop.get(x) !== "gone")) return stopCode;
         return null;
       };
       const quietFail = await halt(first, "exclusive_policy_failed", "exclusive_stop_failed");
       if (quietFail) return this.abandon(userId, row, items, quietFail);
-      if (dbs.length > 0) {
-        const fresh = await this.fingerprint(server.id, dbs.map((i) => ({ engine: i.engine as DbTarget["engine"], ref: { kind: "recorded" as const, ctr: recorded(i) } })));
+      const svcDbs = svcs.flatMap((i) => (i.members ?? []).filter((m) => m.engine).map((m) => ({ i, m })));
+      if (dbs.length > 0 || svcDbs.length > 0) {
+        const fresh = await this.fingerprint(server.id, [
+          ...dbs.map((i) => ({ engine: i.engine as DbTarget["engine"], ref: { kind: "recorded" as const, ctr: recorded(i) } })),
+          ...svcDbs.map(({ m }) => ({ engine: m.engine as DbTarget["engine"], ref: { kind: "recorded" as const, ctr: { id: m.container.id, name: m.container.name, image: m.container.image } } })),
+        ]);
         for (const i of dbs) {
           const fp = fresh?.get((i.container as NonNullable<TakeoverItem["container"]>).id);
           if (!fp || fp.state !== "ok") {
@@ -586,11 +896,20 @@ export class CoolifyInPlaceService implements InPlaceRunPort {
           }
           i.dbBefore = fp;
         }
+        for (const { m } of svcDbs) {
+          const fp = fresh?.get(m.container.id);
+          if (!fp || fp.state !== "ok") {
+            m.dbVerify = { level: memberLevel(m), state: "failed" };
+            await this.saveItems(row.id, items);
+            return this.abandon(userId, row, items, "service_verify_failed");
+          }
+          m.dbBefore = fp;
+        }
         await this.saveItems(row.id, items);
       }
-      const dbFail = await halt(dbs, "exclusive_policy_failed", "exclusive_stop_failed");
+      const dbFail = await halt(last, "exclusive_policy_failed", "exclusive_stop_failed");
       if (dbFail) return this.abandon(userId, row, items, dbFail);
-      // databases first (what the apps need), each checked against what Coolify's container showed; then the apps that share data
+      // databases first (what the apps need), each checked against what Coolify's container showed; then the apps and services that share data
       for (const i of dbs) {
         const r = await this.world.runDatabase(userId, i.appId);
         if (!r.ok) return this.abandon(userId, row, items, "database_start_failed");
@@ -608,14 +927,14 @@ export class CoolifyInPlaceService implements InPlaceRunPort {
         if (bad) return this.abandon(userId, row, items, "database_verify_failed");
       }
       for (const i of ex.filter((x) => x.kind !== "database")) {
-        const r = await this.world.runAdopted(userId, i.appId, i.adoptDeploymentId as string);
-        if (!r.ok) return this.abandon(userId, row, items, "exclusive_start_failed");
+        const code = await this.startItem(userId, row, items, server.id, i);
+        if (code) return this.abandon(userId, row, items, code);
       }
     }
-    // apps that talk to a switched database run once it does
+    // apps and services that talk to a switched database run once it does
     for (const i of active.filter((x) => x.afterSwitch && !x.exclusive)) {
-      const r = await this.world.runAdopted(userId, i.appId, i.adoptDeploymentId as string);
-      if (!r.ok) return this.abandon(userId, row, items, "exclusive_start_failed");
+      const code = await this.startItem(userId, row, items, server.id, i);
+      if (code) return this.abandon(userId, row, items, code);
     }
 
     // 2. Coolify's certificates as the fallback, before Tugra's proxy takes the ports
@@ -721,6 +1040,7 @@ export class CoolifyInPlaceService implements InPlaceRunPort {
     if (row.status !== "SWAPPED" && row.status !== "VERIFIED") throw new ConflictException("takeover_not_swapped");
     const items = this.itemsOf(row);
     await this.checkFinal(server.id, items);
+    await this.checkMembers(server.id, items);
     const queue = items
       .filter((i) => i.state === "switched")
       .flatMap((i) => i.domains.filter((d) => d.cert !== "issued" && d.finalCheck === "ok" && (i.certAttempts[d.host] ?? 0) < CERT_MAX_ATTEMPTS).map((d) => ({ i, d })))
@@ -731,7 +1051,8 @@ export class CoolifyInPlaceService implements InPlaceRunPort {
     await this.saveItems(row.id, items);
     const verified = isVerified(items);
     // a check the box cannot make, or Coolify's certificate still served past the limit, is a failure the owner sees, never a quiet stop
-    const failure: TakeoverFailureCode | null = verified ? null : blind ? "cert_check_unavailable" : overdueFallbacks(items, this.world.now()).length > 0 ? "fallback_overdue" : null;
+    const svcBad = items.some((i) => i.kind === "service" && i.state === "switched" && (i.members ?? []).some((m) => m.ready === "failed"));
+    const failure: TakeoverFailureCode | null = verified ? null : svcBad ? "service_not_ready" : blind ? "cert_check_unavailable" : overdueFallbacks(items, this.world.now()).length > 0 ? "fallback_overdue" : null;
     await this.setStatus(row, verified ? "VERIFIED" : "SWAPPED", failure);
     const all = items.flatMap((i) => i.domains);
     await this.audit.log({
@@ -830,14 +1151,22 @@ export class CoolifyInPlaceService implements InPlaceRunPort {
     const rb = this.rollbackOf(row);
     const serverId = row.serverId;
     try {
-      // 1. switched apps: Tugra's copy stops (frees the data), Coolify's container gets its policy back and starts
-      const ex = items.filter((i) => (i.exclusive || i.afterSwitch) && i.container && i.state !== "skipped");
+      // 1. switched apps and services: Tugra's copy stops (frees the data), Coolify's containers get their policy back and start (databases
+      // first, a service's containers dependencies first)
+      const ex = items.filter((i) => (i.exclusive || i.afterSwitch) && hasCtrs(i) && i.state !== "skipped");
       if (rb.exclusiveStopped && ex.length > 0) {
         for (const i of ex.filter((x) => x.exclusive)) await (i.kind === "database" ? this.world.stopDatabase(userId, i.appId) : this.world.stopApp(userId, i.appId));
-        const ids = ex.map((i) => (i.container as NonNullable<TakeoverItem["container"]>).id);
-        const pol = parsePolicy((await this.world.exec(serverId, buildRestartPolicyScript(ex.map((i) => ({ ...recorded(i), policy: (i.container as NonNullable<TakeoverItem["container"]>).restart }))), HOST_T)).output, ids);
+        // the compose apps' network attachments go back to what they were (the takeover added Coolify's)
+        for (const i of ex.filter((x) => x.kind === "service" && x.networksBefore !== undefined)) {
+          await this.world.setComposeNetworks(userId, i.appId, i.networksBefore ?? []);
+          i.networksBefore = undefined;
+          await this.saveItems(rowId, items);
+        }
+        const list = [...ex.filter((i) => i.kind === "database"), ...ex.filter((i) => i.kind !== "database")].flatMap((i) => ctrsOf(i));
+        const ids = list.map((c) => c.id);
+        const pol = parsePolicy((await this.world.exec(serverId, buildRestartPolicyScript(list.map((c) => ({ id: c.id, name: c.name, image: c.image, policy: c.restart }))), HOST_T)).output, ids);
         if (ids.some((x) => pol.get(x) !== "ok")) return { ok: false, step: "coolify_policy" };
-        const start = parseStartOutput((await this.world.exec(serverId, buildSourceStartScript(ex.map((i) => recordedFull(i))), HOST_T)).output, ids);
+        const start = parseStartOutput((await this.world.exec(serverId, buildSourceStartScript(list), HOST_T)).output, ids);
         if (ids.some((x) => start.get(x) !== "started")) return { ok: false, step: "coolify_containers" };
         rb.exclusiveStopped = false;
         await this.saveRollback(rowId, rb);
@@ -868,6 +1197,10 @@ export class CoolifyInPlaceService implements InPlaceRunPort {
       for (const i of items) {
         if (i.state === "skipped") continue;
         i.state = "given-back";
+        for (const m of i.members ?? []) {
+          m.ready = "pending";
+          if (m.dbVerify) m.dbVerify = { level: m.dbVerify.level, state: "pending" };
+        }
         for (const d of i.domains) {
           d.cert = "pending";
           d.finalCheck = "pending";

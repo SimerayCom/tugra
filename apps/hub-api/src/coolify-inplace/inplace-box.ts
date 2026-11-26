@@ -6,7 +6,8 @@
 import { createHash } from "node:crypto";
 import { buildProxyStopScript } from "../deploy/deploy-script";
 import { dbContainerName } from "../databases/database-script";
-import type { DeployState, InPlaceWorld, OpApp, OpDatabase, WorldApp, WorldDatabase, WorldServer } from "./inplace-world";
+import type { ComposeNetworkRow } from "../deploy/deploy-script";
+import type { DeployState, InPlaceWorld, OpApp, OpDatabase, OpService, WorldApp, WorldDatabase, WorldServer, WorldService } from "./inplace-world";
 
 export const H = (c: string): string => c.repeat(64);
 const sha = (s: string): string => createHash("sha256").update(s).digest("hex");
@@ -46,12 +47,47 @@ export interface BoxDb {
   restart?: string;
 }
 
+/** One container of a Coolify service on the box. */
+export interface BoxSvcMember {
+  service: string;
+  ctrId: string;
+  ctrName: string;
+  /** The image reference Coolify's container runs. */
+  image: string;
+  /** The image id behind it (default: the same for every image). */
+  imageId?: string;
+  mounts?: NonNullable<BoxApp["mounts"]>;
+  networks?: Array<{ name: string; aliases: string[] }>;
+  /** Host ports the container publishes. */
+  published?: number;
+  restart?: string;
+  /** The compose service label is missing from Coolify's container. */
+  noLabel?: boolean;
+}
+
+export interface BoxService {
+  appId: string;
+  itemRef: string;
+  name: string;
+  hosts: string[];
+  /** The compose project Tugra runs it under. */
+  project: string;
+  /** The compose service names with their image and `depends_on`, as the Tugra app's stored compose has them. */
+  compose: Array<{ service: string; image: string | null; dependsOn?: string[]; named?: Array<{ source: string; target: string }>; binds?: Array<{ source: string; target: string }>; anonymous?: string[] }>;
+  composeVolumes?: Array<{ key: string; dockerName: string; external: boolean }>;
+  /** The network attachments the Tugra app has before the takeover. */
+  networks?: ComposeNetworkRow[];
+  members: BoxSvcMember[];
+  usable?: boolean;
+}
+
 interface Ctr {
   name: string;
   image: string;
   running: boolean;
   restart: string;
   mounts: NonNullable<BoxApp["mounts"]>;
+  svc?: { itemRef: string; service: string; imageId: string; networks: Array<{ name: string; aliases: string[] }>; published: number; appId: string; noLabel: boolean };
 }
 
 export class Box implements InPlaceWorld {
@@ -65,6 +101,23 @@ export class Box implements InPlaceWorld {
   controlPlane = "";
   apps: BoxApp[] = [];
   dbs: BoxDb[] = [];
+  services: BoxService[] = [];
+  /** Tugra's compose apps that run (by app id), with the network attachments they were started with. */
+  tugraSvcRunning = new Map<string, ComposeNetworkRow[]>();
+  /** The network attachments the Tugra compose apps have now (by app id). */
+  netRows = new Map<string, ComposeNetworkRow[]>();
+  /** compose services of Tugra's stack that do not come up (container exits), that keep restarting, or whose health says unhealthy */
+  svcExits = new Set<string>();
+  svcUnhealthy = new Set<string>();
+  svcCrashLoop = new Set<string>();
+  /** image reference -> id the host has for it (default: one id for every image); `missing` refs are absent */
+  imageIds = new Map<string, string>();
+  missingImages = new Set<string>();
+  /** volume aliases made for services: volume -> {kind, from, labels} */
+  svcAliases = new Map<string, { kind: string; from: string; project: string; key: string }>();
+  hostDirs = new Set<string>();
+  failComposeNetworks = false;
+  readyRestarts = new Map<string, number>();
   tugraDbRunning = new Set<string>();
   /** databases whose Tugra container will not start, and whose rows differ once Tugra runs them */
   failDbStart = new Set<string>();
@@ -127,12 +180,46 @@ export class Box implements InPlaceWorld {
     return this;
   }
 
+  addService(v: BoxService): this {
+    this.services.push(v);
+    for (const m of v.members) {
+      const mounts = m.mounts ?? [];
+      this.ctrs.set(m.ctrId, {
+        name: m.ctrName,
+        image: m.image,
+        running: true,
+        restart: m.restart ?? "unless-stopped",
+        mounts,
+        svc: { itemRef: v.itemRef, service: m.service, imageId: m.imageId ?? `sha256:${H("e")}`, networks: m.networks ?? [], published: m.published ?? 0, appId: v.appId, noLabel: !!m.noLabel },
+      });
+      this.images.add(m.image);
+      for (const x of mounts) {
+        if (x.type === "volume") this.volumes.add(x.source);
+        else this.hostDirs.add(x.source);
+      }
+    }
+    for (const h of v.hosts) this.acme.add(h);
+    this.netRows.set(v.appId, v.networks ?? []);
+    return this;
+  }
+
+  /** The Tugra container name docker compose gives a service of a project. */
+  tugraSvcName(v: BoxService, service: string): string {
+    return `${v.project}-${service}-1`;
+  }
+
   // ───────────── who owns :443 and what they answer ─────────────
 
   private tugraOwnsPorts(): boolean {
     return this.tugraProxy.state === "running" && this.tugraProxy.published;
   }
   private page(host: string, via: "coolify" | "tugra"): { status: number; content: string } {
+    const svc = this.services.find((v) => v.hosts.includes(host));
+    if (svc) {
+      if (via === "coolify") return svc.members.some((m) => this.ctrs.get(m.ctrId)?.running) ? { status: 200, content: `page ${host}` } : { status: 502, content: "bad gateway" };
+      if (!this.tugraSvcRunning.has(svc.appId)) return { status: 404, content: "404 page not found" };
+      return { status: 200, content: this.differs.has(host) ? `other ${host}` : `page ${host}` };
+    }
     const app = this.apps.find((a) => a.host === host);
     if (!app) return { status: 404, content: "404 page not found" };
     if (via === "coolify") return app.ctrId && this.ctrs.get(app.ctrId)?.running ? { status: 200, content: `page ${host}` } : { status: 502, content: "bad gateway" };
@@ -182,7 +269,42 @@ export class Box implements InPlaceWorld {
       return "";
     }
     if (s.includes("TUGRA_CTR")) {
-      return [...this.apps.map((a) => ({ ref: a.itemRef, id: a.ctrId, name: a.ctrName, image: a.image })), ...this.dbs.map((d) => ({ ref: d.itemRef, id: d.ctrId, name: d.ctrName, image: d.image }))].map((a) => ["TUGRA_CTR", a.ref, a.id, a.name, a.image, "", this.ctrs.get(a.id)?.running ? "running" : "exited"].join("\t")).join("\n");
+      return [...this.apps.map((a) => ({ ref: a.itemRef, id: a.ctrId, name: a.ctrName, image: a.image })), ...this.dbs.map((d) => ({ ref: d.itemRef, id: d.ctrId, name: d.ctrName, image: d.image })), ...this.services.flatMap((v) => v.members.map((m) => ({ ref: v.itemRef, id: m.ctrId, name: m.ctrName, image: m.image })))].map((a) => ["TUGRA_CTR", a.ref, a.id, a.name, a.image, "", this.ctrs.get(a.id)?.running ? "running" : "exited"].join("\t")).join("\n");
+    }
+    if (s.includes("TUGRA_IP_SVCCTR")) {
+      const out: string[] = [];
+      for (const id of this.hostsIn(s, /^detail '([0-9a-f]{64})'/gm)) {
+        const c = this.ctrs.get(id);
+        if (!c?.svc) continue;
+        out.push(`TUGRA_IP_RESTART|${id}|${c.restart}`, `TUGRA_IP_IMAGE|${id}|${c.svc.imageId}`);
+        for (const m of c.mounts) out.push(`TUGRA_IP_MOUNT|${id}|${m.type}|${m.type === "volume" ? m.source : ""}|${m.type === "volume" ? `/var/lib/docker/volumes/${m.source}/_data` : m.source}|${m.dest}|${m.rw}`);
+        out.push(`TUGRA_IP_SVCCTR|${id}|${c.svc.noLabel ? "" : c.svc.service}|${c.svc.published}`);
+        for (const n of c.svc.networks) out.push(`TUGRA_IP_NET|${id}|${n.name}|${n.aliases.map((a) => `${a},`).join("")}`);
+      }
+      out.push("TUGRA_IP_DETAIL_END");
+      return out.join("\n");
+    }
+    if (s.includes("TUGRA_IP_IMGID_END")) {
+      const out = this.hostsIn(s, /^one '([^']+)'/gm).map((ref) => `TUGRA_IP_IMGID|${ref}|${this.missingImages.has(ref) || !this.images.has(ref) ? "missing" : (this.imageIds.get(ref) ?? `sha256:${H("e")}`)}`);
+      out.push("TUGRA_IP_IMGID_END");
+      return out.join("\n");
+    }
+    if (s.includes("TUGRA_IP_SVC_END")) return this.readyOut(s);
+    if (s.includes("TUGRA_IP_ALIAS") && s.includes("com.docker.compose.volume")) {
+      const out: string[] = [];
+      for (const m of s.matchAll(/^alias_one '([a-z]+)' '([^']+)' '([^']+)' '([^']+)' '([^']+)'/gm)) {
+        const [, kind, from, to, project, key] = m;
+        const exists = kind === "bind" ? this.hostDirs.has(from) : this.volumes.has(from);
+        if (!exists) out.push(`TUGRA_IP_ALIAS|${to}|nosource`);
+        else if (this.svcAliases.has(to)) out.push(`TUGRA_IP_ALIAS|${to}|${this.svcAliases.get(to)!.from === from ? "present" : "foreign"}`);
+        else if (this.volumes.has(to)) out.push(`TUGRA_IP_ALIAS|${to}|foreign`);
+        else {
+          this.svcAliases.set(to, { kind, from, project, key });
+          this.events.push(`svc-alias:${to}`);
+          out.push(`TUGRA_IP_ALIAS|${to}|created`);
+        }
+      }
+      return out.join("\n");
     }
     if (s.includes("TUGRA_IP_DETAIL_END")) {
       const out: string[] = [];
@@ -299,6 +421,32 @@ export class Box implements InPlaceWorld {
     return "";
   }
 
+  private svcMemberOf(ctrId: string): { v: BoxService; m: BoxSvcMember } | null {
+    for (const v of this.services) {
+      const m = v.members.find((x) => x.ctrId === ctrId);
+      if (m) return { v, m };
+    }
+    return null;
+  }
+
+  /** Every container of Tugra's compose project as the box shows it: a started service shows its members running unless a spec made one exit, restart or turn unhealthy. */
+  private readyOut(s: string): string {
+    const project = /^P='([^']+)'/m.exec(s)?.[1] ?? "";
+    const v = this.services.find((x) => x.project === project);
+    const out: string[] = [];
+    if (v && this.tugraSvcRunning.has(v.appId)) {
+      for (const m of v.members) {
+        const key = `${v.appId}:${m.service}`;
+        const state = this.svcExits.has(key) ? "exited" : "running";
+        const health = this.svcUnhealthy.has(key) ? "unhealthy" : "none";
+        const restarts = this.svcCrashLoop.has(key) ? (this.readyRestarts.set(key, (this.readyRestarts.get(key) ?? 0) + 1), this.readyRestarts.get(key)!) : 0;
+        out.push(`TUGRA_IP_SVC|${m.service}|/${this.tugraSvcName(v, m.service)}|${state}|${health}|${restarts}`);
+      }
+    }
+    out.push("TUGRA_IP_SVC_END");
+    return out.join("\n");
+  }
+
   /** Coolify's container shows `rows`; Tugra's shows the same unless `dbDiffers` says it lost or gained some. Nothing readable from a stopped container. */
   private dbfpOut(s: string): string {
     const out: string[] = [];
@@ -309,11 +457,24 @@ export class Box implements InPlaceWorld {
       out.push(level === "counts" ? `TUGRA_IP_DBFP|${ref}|counts|ok|1|${rows}|${sha(`t|${rows}`)}` : `TUGRA_IP_DBFP|${ref}|alive|ok|-|-|-`);
     };
     for (const m of s.matchAll(/^one_recorded '([0-9a-f]{64})' '[^']+' '[^']+' '([A-Z]+)'/gm)) {
+      const sm = this.svcMemberOf(m[1]);
+      if (sm) {
+        const as: BoxDb = { dbId: sm.v.appId, itemRef: sm.v.itemRef, name: sm.m.service, engine: m[2], ctrId: m[1], ctrName: sm.m.ctrName, image: sm.m.image };
+        line(m[1], as, !!this.ctrs.get(m[1])?.running && !this.dbReadFails.has(m[1]), 0);
+        continue;
+      }
       const db = this.dbs.find((d) => d.ctrId === m[1]);
       if (!db) out.push(`TUGRA_IP_DBFP|${m[1]}|-|absent|-|-|-`);
       else line(m[1], db, !!this.ctrs.get(db.ctrId)?.running && !this.dbReadFails.has(db.dbId), 0);
     }
     for (const m of s.matchAll(/^one_named '([^']+)' '([A-Z]+)'/gm)) {
+      const tv = this.services.find((v) => v.members.some((x) => this.tugraSvcName(v, x.service) === m[1]));
+      if (tv) {
+        const tm = tv.members.find((x) => this.tugraSvcName(tv, x.service) === m[1])!;
+        const as: BoxDb = { dbId: tv.appId, itemRef: tv.itemRef, name: tm.service, engine: m[2], ctrId: tm.ctrId, ctrName: m[1], image: tm.image };
+        line(m[1], as, this.tugraSvcRunning.has(tv.appId) && !this.svcExits.has(`${tv.appId}:${tm.service}`), this.dbDiffers.has(`${tv.appId}:${tm.service}`) ? 1 : 0);
+        continue;
+      }
       const db = this.dbs.find((d) => dbContainerName({ id: d.dbId }) === m[1]);
       if (!db) out.push(`TUGRA_IP_DBFP|${m[1]}|-|absent|-|-|-`);
       else line(m[1], db, this.tugraDbRunning.has(db.dbId), this.dbDiffers.has(db.dbId) ? 1 : 0);
@@ -348,6 +509,52 @@ export class Box implements InPlaceWorld {
   }
   async opDatabases(opId: string): Promise<OpDatabase[] | null> {
     return opId === "op1" ? this.dbs.map((d) => ({ databaseId: d.dbId, itemRef: d.itemRef })) : null;
+  }
+  async opServices(opId: string): Promise<OpService[] | null> {
+    return opId === "op1" ? this.services.map((v) => ({ appId: v.appId, itemRef: v.itemRef })) : null;
+  }
+  async service(appId: string): Promise<WorldService | null> {
+    const v = this.services.find((x) => x.appId === appId);
+    if (!v) return null;
+    return {
+      id: appId,
+      teamId: this.teamId,
+      serverId: this.serverId,
+      name: v.name,
+      hosts: v.hosts,
+      volumes: [],
+      hostMounts: [],
+      project: v.project,
+      composeFile: this.composeText(v),
+      composeVolumes: v.composeVolumes ?? [],
+      networks: this.netRows.get(appId) ?? [],
+      usable: v.usable ?? true,
+    };
+  }
+  /** The stored compose of the Tugra app, as YAML. */
+  composeText(v: BoxService): string {
+    const lines = ["services:"];
+    for (const c of v.compose) {
+      lines.push(`  ${c.service}:`);
+      if (c.image) lines.push(`    image: ${c.image}`);
+      if (c.dependsOn?.length) lines.push("    depends_on:", ...c.dependsOn.map((d) => `      - ${d}`));
+      const vols = [...(c.named ?? []).map((n) => `${n.source}:${n.target}`), ...(c.binds ?? []).map((b) => `${b.source}:${b.target}`), ...(c.anonymous ?? [])];
+      if (vols.length) lines.push("    volumes:", ...vols.map((x) => `      - ${x}`));
+    }
+    const keys = [...new Set((v.composeVolumes ?? []).map((x) => x.key))];
+    if (keys.length) lines.push("volumes:", ...keys.map((k) => `  ${k}: {}`));
+    return lines.join("\n");
+  }
+  async setComposeNetworks(_u: string, appId: string, rows: ComposeNetworkRow[]): Promise<void> {
+    if (this.failComposeNetworks) throw new Error("compose networks refused");
+    this.netRows.set(appId, rows.map((r) => ({ ...r, aliases: [...r.aliases] })));
+    this.events.push(`networks:${appId}:${rows.length}`);
+  }
+  async createAdoptComposeDeployment(appId: string): Promise<string> {
+    const id = `cdep${(this.deploymentSeq += 1)}`;
+    this.adopted.set(id, appId);
+    this.events.push(`compose-adopt:${appId}`);
+    return id;
   }
   async database(id: string): Promise<WorldDatabase | null> {
     const d = this.dbs.find((x) => x.dbId === id);
@@ -403,6 +610,18 @@ export class Box implements InPlaceWorld {
   }
   async runAdopted(_u: string, appId: string, deploymentId: string): Promise<{ ok: boolean }> {
     if (this.failAdopted.has(appId)) return { ok: false };
+    const sv = this.services.find((x) => x.appId === appId);
+    if (sv) {
+      if (this.adopted.get(deploymentId) !== appId) return { ok: false };
+      // a Tugra container and a Coolify container never run on the same writable data
+      for (const m of sv.members) {
+        const c = this.ctrs.get(m.ctrId)!;
+        if (c.running && c.mounts.some((x) => x.rw)) throw new Error("two containers would share writable data");
+      }
+      this.tugraSvcRunning.set(appId, (this.netRows.get(appId) ?? []).map((r) => ({ ...r, aliases: [...r.aliases] })));
+      this.events.push(`tugra-svc:start:${appId}`);
+      return { ok: true };
+    }
     const tag = `tugra_${appId}:${deploymentId}`;
     if (!this.tags.has(tag)) return { ok: false };
     // two containers on one data directory are never allowed to run at once
@@ -424,6 +643,7 @@ export class Box implements InPlaceWorld {
   }
   async stopApp(_u: string, appId: string): Promise<void> {
     this.tugraRunning.delete(appId);
+    this.tugraSvcRunning.delete(appId);
     this.stoppedApps.push(appId);
     this.events.push(`tugra-app:stop:${appId}`);
   }

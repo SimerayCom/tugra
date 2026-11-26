@@ -6,8 +6,10 @@ import { runTag } from "../deploy/deploy-script";
 import { ProxyOpsService } from "../server-ops/proxy-ops.service";
 import { CryptoService } from "../crypto/crypto.service";
 import { DatabasesService } from "../databases/databases.service";
+import { composeProject, composeVolumes } from "../deploy/compose-script";
 import { dataMountFor, dbContainerName, pgDataLayout, resolveImage, type DbEngine } from "../databases/database-script";
-import type { DeployState, InPlaceWorld, OpApp, OpDatabase, WorldApp, WorldDatabase, WorldServer } from "./inplace-world";
+import type { ComposeNetworkRow } from "../deploy/deploy-script";
+import type { DeployState, InPlaceWorld, OpApp, OpDatabase, OpService, WorldApp, WorldDatabase, WorldServer, WorldService } from "./inplace-world";
 
 /** Statuses of a guided run that holds its target server. */
 const LIVE_RUN = ["RUNNING", "WAITING", "PAUSED", "ABORTING", "ROLLING_BACK", "REVERSING"] as const;
@@ -76,6 +78,57 @@ export class InPlaceWorldService implements InPlaceWorld {
     const rows = await this.prisma.database.findMany({ where: { id: { in: ids }, teamId, serverId }, select: { id: true } });
     const ok = new Set(rows.map((r) => r.id));
     return tasks.flatMap((t) => (t.resourceId && t.itemRef && ok.has(t.resourceId) ? [{ databaseId: t.resourceId, itemRef: t.itemRef }] : []));
+  }
+
+  async opServices(opId: string, teamId: string, serverId: string): Promise<OpService[] | null> {
+    const op = await this.prisma.bulkOperation.findUnique({ where: { id: opId }, select: { id: true } });
+    if (!op) return null;
+    const tasks = await this.prisma.bulkTask.findMany({ where: { opId, kind: "service", status: "DONE", resourceType: "application" }, select: { itemRef: true, resourceId: true } });
+    const ids = tasks.map((t) => t.resourceId).filter((x): x is string => !!x);
+    const rows = await this.prisma.application.findMany({ where: { id: { in: ids }, teamId, serverId }, select: { id: true } });
+    const ok = new Set(rows.map((r) => r.id));
+    return tasks.flatMap((t) => (t.resourceId && t.itemRef && ok.has(t.resourceId) ? [{ appId: t.resourceId, itemRef: t.itemRef }] : []));
+  }
+
+  async service(appId: string): Promise<WorldService | null> {
+    const base = await this.app(appId);
+    if (!base) return null;
+    const a = await this.prisma.application.findUnique({ where: { id: appId }, select: { source: true, composeFile: true, composePath: true, gitUrl: true, composeAdopt: true, clusterId: true, composeNetworks: true } });
+    if (!a) return null;
+    const row = { id: appId, composeFile: a.composeFile, composeAdopt: a.composeAdopt };
+    return {
+      ...base,
+      project: composeProject(row),
+      composeFile: a.composeFile ?? null,
+      composeVolumes: composeVolumes(row).map((v) => ({ key: v.key, dockerName: v.dockerName, external: v.external })),
+      networks: asList(a.composeNetworks, (x) => (typeof x.network === "string" && typeof x.service === "string" && Array.isArray(x.aliases) ? { network: x.network, service: x.service, aliases: x.aliases.filter((y): y is string => typeof y === "string") } : null)),
+      usable: a.source === "COMPOSE" && !!a.composeFile && !a.composePath && !a.gitUrl && !a.composeAdopt && !a.clusterId,
+    };
+  }
+
+  async setComposeNetworks(userId: string, appId: string, rows: ComposeNetworkRow[]): Promise<void> {
+    await this.apps.setComposeNetworks(userId, appId, rows);
+  }
+
+  async createAdoptComposeDeployment(appId: string): Promise<string> {
+    const a = await this.prisma.application.findUnique({ where: { id: appId }, select: { composeFile: true } });
+    if (!a?.composeFile) throw new Error("compose app has no stored compose file");
+    const now = new Date();
+    const dep = await this.prisma.deployment.create({
+      data: {
+        appId,
+        status: "SUCCESS",
+        kind: "DEPLOY",
+        trigger: "takeover",
+        requestedBy: "takeover",
+        startedAt: now,
+        durationMs: 0,
+        exitCode: 0,
+        logs: "service adopted from Coolify (no build)",
+        configSnapshot: { snapV: 2, source: "COMPOSE", composeFile: a.composeFile } as object,
+      },
+    });
+    return dep.id;
   }
 
   async database(databaseId: string): Promise<WorldDatabase | null> {

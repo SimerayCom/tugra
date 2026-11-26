@@ -7,12 +7,14 @@
 import type { TakeoverBuildMode, TakeoverCertState, TakeoverIssueCode, TakeoverItemView, TakeoverStatus } from "@tugra/shared";
 import { appVolumeName } from "../deploy/deploy-script";
 import { dbExtraVolumeName, dbVolumeName } from "../databases/database-script";
-import type { CtrDetail, DbFingerprint, InPlaceRestartPolicy, ProbeResult } from "./inplace-scripts";
+import type { ComposeNetworkRow } from "../deploy/deploy-script";
+import type { CtrDetail, DbFingerprint, InPlaceRestartPolicy, ProbeResult, RecordedCtr } from "./inplace-scripts";
+import { memberViews, type ServiceMemberRecord } from "./inplace-service";
 
 // ───────────────────────────── the item ─────────────────────────────
 
 /** What the takeover keeps per app, beyond the view: the container recorded before anything is touched, and the Tugra side it maps to. */
-export interface TakeoverItem extends TakeoverItemView {
+export interface TakeoverItem extends Omit<TakeoverItemView, "members"> {
   appId: string;
   /** Coolify's uuid of the app (the container-name prefix). */
   uuid: string;
@@ -30,6 +32,17 @@ export interface TakeoverItem extends TakeoverItemView {
    * Tugra's copy until the switch, so the copy cannot be tested alongside: it is started after the databases and checked after the switch.
    */
   afterSwitch?: boolean;
+  /**
+   * Services only: every container of the Coolify service mapped to the compose service of the Tugra app, in start order (dependencies first).
+   * `container` stays null for a service: its containers are the members.
+   */
+  members?: ServiceMemberRecord[];
+  /** Services only: the compose project Tugra runs the service under (its containers' project label). */
+  project?: string;
+  /** Services only: the network attachments the Tugra compose app had before the takeover added Coolify's (null = none), kept to put back. Absent until the takeover changed them. */
+  networksBefore?: ComposeNetworkRow[] | null;
+  /** Services only: the attachments the takeover applies at the switch (the app's own plus Coolify's networks under their aliases). */
+  networksWanted?: ComposeNetworkRow[];
   /** Databases only: the engine, and what Coolify's container showed before anything changed (the yardstick of the check after the switch). */
   engine?: string;
   dbBefore?: DbFingerprint | null;
@@ -251,8 +264,34 @@ export function domainsOf(items: readonly TakeoverItem[]): Array<{ itemRef: stri
 /** Done when every domain passed its check after the swap and holds a new certificate. */
 export function isVerified(items: readonly TakeoverItem[]): boolean {
   const active = items.filter((i) => i.state !== "skipped");
-  return active.length > 0 && active.every((i) => (i.kind === "database" ? i.verify?.state === "ok" : i.domains.every((d) => d.finalCheck === "ok" && d.cert === "issued")));
+  const domainsDone = (i: TakeoverItem): boolean => i.domains.every((d) => d.finalCheck === "ok" && d.cert === "issued");
+  return active.length > 0 && active.every((i) => (i.kind === "database" ? i.verify?.state === "ok" : i.kind === "service" ? membersVerified(i) && domainsDone(i) : domainsDone(i)));
 }
+
+/** The containers an item of the takeover stands for on the Coolify side, in the order they are STARTED (a service: dependencies first; stop is the reverse). */
+export function ctrsOf(i: Pick<TakeoverItem, "container" | "members" | "itemRef">): Array<RecordedCtr & { restart: InPlaceRestartPolicy; ports: string; itemRef: string }> {
+  const one = (c: { id: string; name: string; image: string; restart: InPlaceRestartPolicy }) => ({ id: c.id, name: c.name, image: c.image, restart: c.restart, ports: "", itemRef: i.itemRef });
+  if (i.members && i.members.length > 0) return i.members.map((m) => one(m.container));
+  return i.container ? [one(i.container)] : [];
+}
+
+/**
+ * The containers to STOP for an item, in stop order (a service: dependents first, so what writes goes quiet before what it writes to; the
+ * reverse of the start order). `rest` and `db` split a service's members into the database-like ones (stopped last, after their yardstick was
+ * read again) and the others; `all` is every one.
+ */
+export function stopCtrs(i: Pick<TakeoverItem, "container" | "members" | "itemRef">, part: "all" | "rest" | "db" = "all"): ReturnType<typeof ctrsOf> {
+  const rev = [...ctrsOf(i)].reverse();
+  if (part === "all" || !i.members || i.members.length === 0) return part === "db" ? [] : rev;
+  const dbIds = new Set(i.members.filter((m) => m.engine).map((m) => m.container.id));
+  return rev.filter((c) => (part === "db") === dbIds.has(c.id));
+}
+
+/** Does the item have Coolify containers to switch (an app or database with its container, a service with its members)? */
+export const hasCtrs = (i: Pick<TakeoverItem, "container" | "members">): boolean => !!i.container || (i.members?.length ?? 0) > 0;
+
+/** A service is done when every member came up ready and every database-like member answered the same, besides its domains. */
+export const membersVerified = (i: Pick<TakeoverItem, "members">): boolean => (i.members ?? []).length > 0 && (i.members ?? []).every((m) => m.ready === "ok" && (!m.engine || m.dbVerify?.state === "ok"));
 
 /** What the screen is shown: no uuid, no container id, no tag, no baseline. */
 export function toItemView(i: TakeoverItem): TakeoverItemView {
@@ -260,6 +299,7 @@ export function toItemView(i: TakeoverItem): TakeoverItemView {
     itemRef: i.itemRef,
     name: i.name,
     ...(i.kind === "database" ? { kind: i.kind, ...(i.verify ? { verify: i.verify } : {}) } : {}),
+    ...(i.kind === "service" ? { kind: i.kind, members: memberViews(i.members ?? []) } : {}),
     buildMode: i.buildMode,
     ...(i.state === "skipped" ? { skipped: true } : {}),
     ...(i.exclusive ? { exclusive: true } : {}),

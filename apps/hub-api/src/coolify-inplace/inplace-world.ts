@@ -3,6 +3,8 @@
  * the Tugra apps (adopt an image, start, stop, rebuild) and the import op's app list. The service never imports the real services;
  * the specs bind this to an in-memory fake and the module binds it to `InPlaceWorldService`.
  */
+import type { ComposeNetworkRow } from "../deploy/deploy-script";
+
 export const INPLACE_WORLD = Symbol("INPLACE_WORLD");
 
 export interface WorldServer {
@@ -41,6 +43,29 @@ export interface WorldDatabase {
   volumes: Array<{ name: string; path: string }>;
 }
 
+/**
+ * A compose service the import created on the server (a Coolify one-click service or docker-compose app, a stopped COMPOSE app in Tugra): the
+ * app as the takeover knows every app, plus what it needs to map the Coolify containers to the compose services.
+ */
+export interface WorldService extends WorldApp {
+  /** The compose project Tugra runs it under (its containers carry this as their project label). */
+  project: string;
+  /** The stored compose file; null when the app has none (a git compose, an adopted project: not for this takeover). */
+  composeFile: string | null;
+  /** The compose app's named volumes: the key, the docker volume it stands for and whether it is external. */
+  composeVolumes: Array<{ key: string; dockerName: string; external: boolean }>;
+  /** The network attachments the compose app has (hub-owned: the import's private network, say). */
+  networks: ComposeNetworkRow[];
+  /** A stored-compose app the takeover can drive: no git compose, no adopted project, no swarm cluster. */
+  usable: boolean;
+}
+
+/** One service the import op created on the server, with the source item it came from. */
+export interface OpService {
+  appId: string;
+  itemRef: string;
+}
+
 /** One database the import op created on the server, with the source item it came from. */
 export interface OpDatabase {
   databaseId: string;
@@ -66,6 +91,14 @@ export interface InPlaceWorld {
   app(appId: string): Promise<WorldApp | null>;
   /** The databases the op created (team-checked by the caller) whose row sits on `serverId`. */
   opDatabases(opId: string, teamId: string, serverId: string): Promise<OpDatabase[] | null>;
+  /** The compose services the op created (team-checked by the caller) whose app row sits on `serverId`. */
+  opServices(opId: string, teamId: string, serverId: string): Promise<OpService[] | null>;
+  /** A compose service app as the takeover needs it. */
+  service(appId: string): Promise<WorldService | null>;
+  /** Replace the network attachments of the compose app's services (the whole list; empty clears). */
+  setComposeNetworks(userId: string, appId: string, rows: ComposeNetworkRow[]): Promise<void>;
+  /** A successful deployment row that carries the app's current compose file, so the rollback path can run the stack. Returns its id. */
+  createAdoptComposeDeployment(appId: string): Promise<string>;
   database(databaseId: string): Promise<WorldDatabase | null>;
   /** Start Tugra's container for the database on its (aliased) data volume: the database's own provision. */
   runDatabase(userId: string, databaseId: string): Promise<{ ok: boolean }>;
