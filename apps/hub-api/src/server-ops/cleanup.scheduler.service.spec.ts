@@ -185,7 +185,8 @@ describe("threshold run that frees nothing backs off", () => {
 
 describe("worker handler (processJob) and sweep registration", () => {
   it("a sweep job reaches sweep(); a per-server job reaches runCleanup as the scheduler actor", async () => {
-    const { svc, runCleanup } = make({ servers: [srv("a")] });
+    // processJob sweeps at the real clock, so the hot sample must be fresh against it (a fixed date goes stale)
+    const { svc, runCleanup } = make({ servers: [srv("a")], metric: { ...hot, ts: new Date(Date.now() - 30_000) } });
     const sweep = jest.spyOn(svc, "sweep");
     await svc.processJob({ name: "cleanup-threshold-sweep", data: {} });
     expect(sweep).toHaveBeenCalledTimes(1);
