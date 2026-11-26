@@ -20,7 +20,7 @@ From a fresh install to your first running app, in about ten minutes.
 8. **Launch your first workload.** Deploy from a Git repository, or install an app from the app store in one click. For a private repository, [connect GitHub](connect-github.md) first.
 9. **Review.** The last step shows what you set up. Everything on it can be changed later in **Settings**.
 
-Moving from Coolify? Do steps 1 to 7, then follow [Move from Coolify](move-from-coolify.md).
+Moving from Coolify? Do steps 1 to 7, then follow [Move off Coolify](move-off-coolify.md).
 
 ## Does it affect the source?
 

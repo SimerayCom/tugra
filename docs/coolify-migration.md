@@ -1,21 +1,22 @@
 # Migrating from Coolify to Tugra
 
-> New to this? Follow the step-by-step guides first: [Move from Coolify](move-from-coolify.md) (to a new server) or [on the same server](move-from-coolify-same-server.md). This page is the full reference.
+> The main guide is [Move off Coolify](move-off-coolify.md): read Coolify through the Tugra agent, match servers, take each server over in place, clean up and shut Coolify down, with no API token. For copying to a new server see [Move from Coolify](move-from-coolify.md), and for the proxy swap on one server see [Move from Coolify on the same server](move-from-coolify-same-server.md). This page is the reference for the API-token path and the tools underneath: database and volume copy, the manual runbook, object migration.
 
-Two paths, used **together**:
+Two tools, used **together**:
 
-- **One-click data migrator** (first section) — moves the **database contents** of eight engines
+- **One-click data migrator** (first section): moves the **database contents** of eight engines
   (Postgres, MySQL, MariaDB, MongoDB, ClickHouse, Redis, KeyDB, Dragonfly) from your Coolify host into the Tugra databases an
   import created, with **one pasted command** on the Coolify server. No SSH, no manual dump files.
-- **Manual runbook** (second section) — recreate apps, move volume data, rewrite `DATABASE_URL`, cut over
+- **Manual runbook** (second section): recreate apps, move volume data, rewrite `DATABASE_URL`, cut over
   DNS, and move the databases the one-click path does not: **LibSQL** (a volume copy) and sources whose
   password isn't in the container env (rotated / `*_FILE` / trust-auth).
 
-> **Golden rule:** Tugra never changes your Coolify configuration and deletes nothing on it. The one-click
-> migrator only *reads* source databases via `docker exec` dumps — though Redis/KeyDB `SAVE` does refresh the
-> source container's own `dump.rdb`. Keep Coolify running until you have verified the Tugra copy and switched
-> DNS. Rollback is "point DNS back at Coolify" — **but only works cleanly if you did the cutover window
-> below**, because once Tugra starts taking writes, the two databases diverge.
+> **Golden rule:** Tugra never changes your Coolify configuration and deletes nothing on it, until you press
+> **Clean up Coolify** on a server you took over. The one-click migrator only *reads* source databases via
+> `docker exec` dumps, though Redis/KeyDB `SAVE` does refresh the source container's own `dump.rdb`. When you
+> copy to another server, keep Coolify running until you have verified the Tugra copy and switched DNS.
+> Rollback is "point DNS back at Coolify", and it only works cleanly if you did the cutover window
+> below, because once Tugra starts taking writes, the two databases diverge.
 
 ## Guided migration run (one flow for all of it)
 
@@ -27,10 +28,7 @@ Start it from the import wizard ("Run guided migration"), the panel's `/import/r
 Always start with `--dry-run`: it projects every step and writes nothing outside its own run rows.
 
 - Full procedure, step table, guarantees and troubleshooting: **[guided migration runbook](runbooks/guided-migration.md)**.
-- **Status, stated plainly:** the run's engine and contracts are tested against in-memory fakes. **No live lab run has
-  been done yet** (no real Coolify host, Cloudflare zone, migrator run or DNS flip). The manual path on this page is the
-  one exercised on real hosts so far; treat the guided run as the way to *rehearse and orchestrate* it, and rehearse
-  before using it on a fleet that matters.
+- Do a **dry run** first, then a real run on something that does not matter much, before the apps that matter.
 - The golden rule is unchanged: the run **never deletes anything on Coolify**. Before the point of no return an abort
   restarts the source containers the run stopped; after it, the only way back is a lossy reverse.
 - Not zero downtime for stateful apps, and not a replacement for the checks below: read the verification evidence
@@ -39,7 +37,7 @@ Always start with `--dry-run`: it projects every step and writes nothing outside
 - **A fleet.** A project that spans several source servers is one run with a placement map (each source server mapped to a
   Tugra server), the migrator can be started on every source host by one script on the Coolify host
   (`coolify-host-loop`), a host inventory compares `docker ps` with what the source API lists, and a database too large
-  for a dump artifact can stream. These are opt-in, designed from a real fleet, and **not yet run against one**; see
+  for a dump artifact can stream. These are opt-in; see
   [fleet runs](runbooks/guided-migration.md#fleet-runs-several-source-hosts-one-run). The manual path on this page needs
   none of it: run the migrator on each source host yourself.
 
@@ -171,7 +169,7 @@ live replication — so the cutover discipline at the end of this page still app
 
 ### Step 1 — mint a one-time migration token
 
-There is **no web-UI button for this yet**; use the API (or the `tugra api` CLI passthrough). `<opId>` is the
+There is no web-UI button for this; use the API (or the `tugra api` CLI passthrough). `<opId>` is the
 import operation id from `apply`:
 
 ```bash
@@ -285,7 +283,7 @@ fresh dump).
   migrator cross-checks), resolves every destination from the operation, re-authorizes the actor on every
   request, and serves the staged artifact to the target agent only over a signed, sha256-bound, short-lived
   URL on a trusted origin.
-- **Honest caveats.** This is still `curl … | sh`, and the container mounts the Docker socket, which is
+- **Caveats.** This is still `curl … | sh`, and the container mounts the Docker socket, which is
   **root-equivalent on the source host** — so only run the command from a hub you trust. The one-liner and
   its token land in your shell history unless you prefix it with a space. If you override `AGENT_IMAGE` to a
   mirror, it must be an image that ships the `migrate` subcommand (an older image would exit 0 without
@@ -420,13 +418,13 @@ route now; the by-hand MongoDB steps below stay for sources the migrator cannot 
   endpoint). **App volume data** has an automated path: the [streamed volume copy](#streamed-volume-copy).
 - **Prefer the one-click migrator** for Postgres, MySQL, MariaDB, Redis, KeyDB and Dragonfly data; the manual
   Redis/KeyDB `BGSAVE`/`dump.rdb` dance below is only needed when the one-click path can't be used.
-- **Not covered by either path yet:** LibSQL data (it has no logical dump — copy its volume); adopting Coolify's running (compose-managed) containers in
-  place; Bitbucket sources; Caddy/Nginx custom proxy; per-DB SSL/init-scripts.
+- **Not covered by either path:** LibSQL data (it has no logical dump; copy its volume); Bitbucket sources; Caddy/Nginx custom proxy; per-DB SSL/init-scripts. Taking over Coolify's running (compose-managed) containers in place is a separate flow: see [Move off Coolify](move-off-coolify.md).
 
 ## Before you start
 
-1. **Run Tugra on a fresh server** if you can. Coolify's proxy owns ports 80/443 on its host; same-box means
-   a port conflict — use a separate server, or stop Coolify's proxy only at the final cutover.
+1. **Run Tugra on a fresh server** for this manual path. Coolify's proxy owns ports 80/443 on its host, so the same box means
+   a port conflict: use a separate server, or stop Coolify's proxy only at the final cutover. To keep a server where it
+   is, use [Take over in place](move-off-coolify.md#a-take-over-in-place) instead.
 2. Enrol that server in Tugra (install the agent).
 3. Create a **personal access token with the `write`, `deploy` and `read:secrets` scopes** (or just `admin`).
    You need `write` to create apps/DBs and edit env, `deploy` to provision/import/set-domains, and
@@ -616,7 +614,7 @@ a Gitea / Forgejo / Codeberg token on the same host). The old "exactly one insta
 **public** (clones without a source), **needs a source** (connect a GitHub App installed on it, then Re-check), **ambiguous**
 (several sources see it; pick one after import), **SSH deploy key** and **unsupported host**. An SSH GitHub URL that a
 connected App covers is created as its https twin; other SSH repositories keep a generated deploy key and the timeline shows
-its public key. GitLab and Bitbucket are not supported yet: those repositories are created unlinked and the preflight
+its public key. GitLab and Bitbucket are not supported: those repositories are created unlinked and the preflight
 `git.hosts` list tells you which hosts your fleet uses. After import, "Link now"
 (`POST /import/operations/:opId/git-links/relink`) links every created app that a source now covers.
 

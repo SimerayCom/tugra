@@ -11,9 +11,9 @@ Short, in-order guides with the steps, what each one changes, how to undo it and
 - [Add a server](add-a-server.md) — the install command, and how to run it over SSH, a jump host or Tailscale, a provider console or cloud-init.
 - [Connect GitHub](connect-github.md) — a GitHub App for private repositories and deploy on push.
 - [Domains and Cloudflare](domains-and-cloudflare.md) — the panel's domain, app domains, one-click DNS and the Cloudflare settings that matter.
-- [Move from Coolify](move-from-coolify.md) — to a new server, with a dry run, a freeze and a switch you can undo.
-- [Move from Coolify on the same server](move-from-coolify-same-server.md) — swap the proxy in place.
-- [Move off Coolify](move-off-coolify.md) — the whole move in four steps: take over in place, clean up, consolidate projects, shut Coolify down.
+- [Move off Coolify](move-off-coolify.md) — the main guide: read Coolify through the Tugra agent, match servers, take each over in place, clean up, consolidate projects, shut Coolify down.
+- [Move from Coolify](move-from-coolify.md) — copy to a new server, with a dry run, a freeze and a switch you can undo.
+- [Move from Coolify on the same server](move-from-coolify-same-server.md) — the proxy swap, in place or with a data copy.
 
 ## Getting started
 
@@ -31,7 +31,7 @@ Short, in-order guides with the steps, what each one changes, how to undo it and
 - [Log drains](log-drains.md) — ship container logs to HTTP, Loki, Datadog, syslog, GELF or fluentd, per server or per app; filters, egress policy, delivery status and guarantees.
 - [Traffic Analytics geo](traffic-analytics.md) — built-in country geolocation (DB-IP Lite), optional city database, and how to refresh it.
 - [Importing from Uptime Kuma](uptime-kuma-import.md) — bring monitors and alert links over from a Kuma backup file or straight from its database; preview first.
-- [Migrating from Coolify](coolify-migration.md) — the full reference (start with [Move from Coolify](move-from-coolify.md)): one-command database-data migration (Postgres/MySQL/MariaDB/Redis/KeyDB/Dragonfly) plus the manual runbook for apps, volumes and the other engines.
+- [Migrating from Coolify](coolify-migration.md) — the reference (start with [Move off Coolify](move-off-coolify.md)): the API token, one-command database-data migration (Postgres/MySQL/MariaDB/MongoDB/ClickHouse/Redis/KeyDB/Dragonfly) plus the manual runbook for apps, volumes and the other engines.
 
 ## Understanding Tugra
 
