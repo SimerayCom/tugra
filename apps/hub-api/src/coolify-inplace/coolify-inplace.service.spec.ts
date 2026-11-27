@@ -462,6 +462,23 @@ describe("verify: new certificates", () => {
     expect(v.items[0].domains[0].cert).toBe("issued");
     expect(t.box.events.filter((e) => e === "fallback:remove:web.example.com").length).toBe(4); // only the one that goes once the new certificate stands
   });
+  it("a certificate that arrives late is recognised by the timer even when the takeover already shows a failure (fallback_overdue)", async () => {
+    const t = build({ apps: [web] });
+    t.box.leWorks = false;
+    const id = await swapRun(t);
+    for (let i = 0; i < 4; i++) await t.svc.runVerify(ACTOR, "run1"); // attempts used
+    t.box.clock = new Date(t.box.clock.getTime() + 11 * 60_000);
+    await t.svc.sweepFallbacks();
+    const stuck = await t.svc.get(ACTOR, id);
+    expect(stuck.status).toBe("SWAPPED");
+    expect(stuck.failureCode).toBe("fallback_overdue");
+    t.box.leIssued.add("web.example.com"); // the proxy got one by itself, late
+    expect(await t.svc.sweepFallbacks()).toBe(1);
+    const v = await t.svc.get(ACTOR, id);
+    expect(v.status).toBe("VERIFIED");
+    expect(v.failureCode ?? null).toBeNull();
+    expect(v.items[0].domains[0].cert).toBe("issued");
+  });
   it("handles a few domains per call", async () => {
     const many = Array.from({ length: 7 }, (_, i) => ({ ...web, appId: `app${i}`, itemRef: `app:s1:u${i}`, host: `h${i}.example.com`, ctrId: H(String(i)), ctrName: `u${i}-20261125T101010`, image: `u${i}:1` }));
     const t = build({ apps: many });
