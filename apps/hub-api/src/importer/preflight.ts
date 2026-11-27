@@ -75,6 +75,7 @@ function buildVolumeRows(apps: ForeignApp[], inventory: ReadonlyMap<string, numb
   for (const app of apps) {
     if ((app.volumes ?? []).length === 0) continue;
     const mapped = foreignAppToVolumes(app);
+    const itemRef = ns("app", app.serverRef, app.sourceRef); // the app that owns the row: a scoped preview keeps the rows of the apps it keeps
     for (const v of mapped.volumes) {
       const isBind = (app.volumes ?? []).some((fv) => fv.type === "bind" && canonMount(fv.mountPath) === v.path);
       const type: "named" | "bind" = isBind ? "bind" : "named";
@@ -83,14 +84,14 @@ function buildVolumeRows(apps: ForeignApp[], inventory: ReadonlyMap<string, numb
       let dataPlane: VolumeDataPlane;
       let reason: string;
       if (manualOnly) {
-        rows.push({ app: app.name, mountPath: v.path, type, dataPlane: "manual", reason: CAPROVER_DATA_NOTE + ownerNote });
+        rows.push({ app: app.name, itemRef, mountPath: v.path, type, dataPlane: "manual", reason: CAPROVER_DATA_NOTE + ownerNote });
         continue;
       }
       if (vx) {
         // Streamed copy: declared volumes of any size move through the hub's memory relay (no hub disk, no cap).
         dataPlane = "stream";
         reason = vxVolumeReason(size) + (isBind ? ` ${VX_BIND_NOTE}` : "");
-        rows.push({ app: app.name, mountPath: v.path, type, dataPlane, reason, fidelity: VX_FIDELITY });
+        rows.push({ app: app.name, itemRef, mountPath: v.path, type, dataPlane, reason, fidelity: VX_FIDELITY });
         continue;
       }
       if (size === undefined) {
@@ -103,10 +104,10 @@ function buildVolumeRows(apps: ForeignApp[], inventory: ReadonlyMap<string, numb
         dataPlane = "manual-large";
         reason = `~${Math.round(size / (1024 * 1024))} MiB exceeds the ~${capMiB} MiB cap — copy it manually (tar + rsync/scp); do not raise the cap`;
       }
-      rows.push({ app: app.name, mountPath: v.path, type, dataPlane, reason });
+      rows.push({ app: app.name, itemRef, mountPath: v.path, type, dataPlane, reason });
     }
     for (const s of mapped.skipped) {
-      rows.push({ app: app.name, mountPath: s.mountPath, dataPlane: "manual", reason: `${s.reason} — recreate/copy it manually if needed` });
+      rows.push({ app: app.name, itemRef, mountPath: s.mountPath, dataPlane: "manual", reason: `${s.reason} — recreate/copy it manually if needed` });
     }
   }
   return rows;
@@ -192,17 +193,17 @@ export function buildPreflight(fleet: ForeignFleet, options: ImportOptions, inve
 
   const databases = fleet.databases.map((d) => {
     const c = classifyDbDataPlane(d.engine);
-    if (manualData && c.dataPlane !== "blocked") return { name: d.name, engine: d.engine, dataPlane: "manual" as DbDataPlane, reason: "config imports; dump the data on the CapRover server and restore it into the new database (see the Move from CapRover guide)" };
     const ref = `database:${d.serverRef ?? "_"}:${d.sourceRef}`;
+    if (manualData && c.dataPlane !== "blocked") return { name: d.name, itemRef: ref, engine: d.engine, dataPlane: "manual" as DbDataPlane, reason: "config imports; dump the data on the CapRover server and restore it into the new database (see the Move from CapRover guide)" };
     if (c.dataPlane === "one-click" && options.dbDataModes?.[ref] === "volume") {
       if (d.engine === "POSTGRES") {
-        return { name: d.name, engine: d.engine, dataPlane: "volume" as DbDataPlane, reason: VX_DB_VOLUME_REASON };
+        return { name: d.name, itemRef: ref, engine: d.engine, dataPlane: "volume" as DbDataPlane, reason: VX_DB_VOLUME_REASON };
       }
-      return { name: d.name, engine: d.engine, dataPlane: "blocked" as DbDataPlane, reason: `volume copy is only offered for PostgreSQL, not ${d.engine}; the plan blocks this choice (use the logical dump)` };
+      return { name: d.name, itemRef: ref, engine: d.engine, dataPlane: "blocked" as DbDataPlane, reason: `volume copy is only offered for PostgreSQL, not ${d.engine}; the plan blocks this choice (use the logical dump)` };
     }
     // Volume copy is a Postgres-only choice; say WHY for the others instead of staying silent.
     const volumeNote = vx && c.dataPlane === "one-click" ? ` ${volumeCopyNote(d.engine)}` : "";
-    return { name: d.name, engine: d.engine, dataPlane: c.dataPlane, reason: c.reason + volumeNote + backupNote(d.backupSchedule), ...(d.backupSchedule ? { backup: d.backupSchedule } : {}) };
+    return { name: d.name, itemRef: ref, engine: d.engine, dataPlane: c.dataPlane, reason: c.reason + volumeNote + backupNote(d.backupSchedule), ...(d.backupSchedule ? { backup: d.backupSchedule } : {}) };
   });
 
   const services = fleet.services.map((s) => {
@@ -216,7 +217,8 @@ export function buildPreflight(fleet: ForeignFleet, options: ImportOptions, inve
     });
     return {
       name: s.name,
-      ...(floating.length ? { itemRef: ns("service", s.serverRef, s.sourceRef), floating } : {}),
+      itemRef: ns("service", s.serverRef, s.sourceRef),
+      ...(floating.length ? { floating } : {}),
       members: s.memberApps.length + s.memberDbs.length,
       note: isMinioService(s) ? MINIO_SERVICE_NOTE : serviceNote(a),
       // Only a MinIO service carries the flag (the key is ABSENT otherwise).

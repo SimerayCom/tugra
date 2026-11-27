@@ -404,7 +404,7 @@ export interface ImportCoverage {
 
 /** `AgentPlanAdditions` (agentRead, teams, unreadable) are filled by the agent read only (Coolify hub takeover, lane A); an API-path plan leaves them out. */
 export interface ImportPreflight extends AgentPlanAdditions {
-  databases: Array<{ name: string; engine: string; dataPlane: DbDataPlane; reason: string; /** The source's scheduled backups of this database (Coolify): not carried, recreate them in Tugra after the import. */ backup?: NonNullable<ForeignDb["backupSchedule"]> }>;
+  databases: Array<{ name: string; /** The plan itemRef of the database (additive, outside planHash): a scoped preview keeps the rows of the items it keeps, whatever their names. */ itemRef?: string; engine: string; dataPlane: DbDataPlane; reason: string; /** The source's scheduled backups of this database (Coolify): not carried, recreate them in Tugra after the import. */ backup?: NonNullable<ForeignDb["backupSchedule"]> }>;
   /** Services (compose / one-click stacks) are discovered but NOT imported yet — surfaced here so they are
    *  never a silent drop on the review screen. */
   services: Array<{ name: string; /** The plan itemRef of the stack (additive, outside planHash). */ itemRef?: string; /** The stack's members still on a floating tag, with the image the source writes and the concrete version the source's own member record shows for it (when it differs). Additive, outside planHash. */ floating?: Array<{ member: string; image: string; seen?: string }>; members: number; note: string; /** A MinIO object store: its data moves through Object migration. */ objectStore?: true; verdict?: "importable" | "partial" | "skipped"; hold?: boolean; volumes?: Array<{ key: string; dataPlane: string; /** Present for a host-path bind (it needs the bind-mount acknowledgement like an app's). */ origin?: "host-bind" }> }>;
@@ -414,7 +414,7 @@ export interface ImportPreflight extends AgentPlanAdditions {
   /** Per declared/skipped app volume: how its DATA will move. Additive; NOT part of planHash. A size is only
    *  known when an inventory was supplied (the Go `--inventory` producer is deferred), so at plan time an
    *  eligible mount is `hub-staged` and size-unmeasured, never silently assumed small. */
-  volumes?: Array<{ app: string; mountPath: string; type?: "named" | "bind"; dataPlane: VolumeDataPlane; reason: string; fidelity?: string }>;
+  volumes?: Array<{ app: string; /** The plan itemRef of the app that owns the volume (additive, outside planHash). */ itemRef?: string; mountPath: string; type?: "named" | "bind"; dataPlane: VolumeDataPlane; reason: string; fidelity?: string }>;
   /** Per-app "what is not carried over". Additive; NOT part of planHash (preflight never is). */
   coverage?: ImportCoverage;
   /** Coolify only: how many apps' variables are unreadable because the API token lacks read:sensitive. */

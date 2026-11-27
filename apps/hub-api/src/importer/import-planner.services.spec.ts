@@ -187,7 +187,7 @@ describe("buildPreflight — floating service members for the dry-run pin", () =
     expect(row.itemRef).toBe(`service:${alpha.serverRef}:${alpha.sourceRef}`);
     expect(row.floating).toEqual([{ member: "meilisearch", image: "getmeili/meilisearch:latest" }]);
     const pinned = rows().find((r) => r.name === "delta-meilisearch")!;
-    expect(pinned).not.toHaveProperty("itemRef");
+    expect(pinned.itemRef).toBe("service:srv00004:svc00010abcdefgh"); // every row names the item it belongs to (a scoped preview keeps the rows of the items it keeps)
     expect(pinned).not.toHaveProperty("floating");
   });
   it("shows the version the source's own member record carries when it is a pin of the same repository", () => {

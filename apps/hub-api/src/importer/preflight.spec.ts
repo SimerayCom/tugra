@@ -63,15 +63,27 @@ describe("buildPreflight (streamed copy OFF: today's hub-staged text, byte-ident
     });
     const pf = buildPreflight(f, opts);
     expect(pf.databases).toEqual([
-      { name: "pg", engine: "POSTGRES", dataPlane: "one-click", reason: expect.any(String) },
-      { name: "ch", engine: "CLICKHOUSE", dataPlane: "one-click", reason: expect.any(String) },
+      { name: "pg", itemRef: "database:_:d1", engine: "POSTGRES", dataPlane: "one-click", reason: expect.any(String) },
+      { name: "ch", itemRef: "database:_:d2", engine: "CLICKHOUSE", dataPlane: "one-click", reason: expect.any(String) },
     ]);
-    expect(pf.services).toEqual([{ name: "signoz", members: 2, note: expect.stringMatching(/not imported/i), verdict: "skipped" }]);
+    expect(pf.services).toEqual([{ name: "signoz", itemRef: "service:_:svc1", members: 2, note: expect.stringMatching(/not imported/i), verdict: "skipped" }]);
     expect(pf.appsWithVolumeData).toBe(1);
     expect(pf.volumeDataNote).toMatch(/upload their DATA to the hub/i); // v1: manual upload before first deploy
     expect(pf.volumeDataNote).not.toMatch(/the migrator copies/i); // never claim an automated migrator volume step (not shipped)
     expect(pf.volumeDataNote).toMatch(/empty/i); // the mounts are still declared empty; the data is uploaded
     expect(pf.volumes).toEqual([expect.objectContaining({ app: "web", mountPath: "/data", type: "named", dataPlane: "hub-staged" })]);
+  });
+
+  it("every row names the item it belongs to, so same-named items of two servers are told apart", () => {
+    const f = fleet({
+      databases: [{ sourceRef: "d1", name: "postgres", engine: "POSTGRES", serverRef: "s1" }, { sourceRef: "d2", name: "postgres", engine: "POSTGRES", serverRef: "s2" }],
+      apps: [{ sourceRef: "a1", name: "api", kind: "git", buildPack: "dockerfile", serverRef: "s1", volumes: [{ mountPath: "/data", type: "named", name: "v" }] }, { sourceRef: "a2", name: "api", kind: "git", buildPack: "dockerfile", serverRef: "s2", volumes: [{ mountPath: "/data", type: "named", name: "v" }] }],
+      services: [{ sourceRef: "svc1", name: "stack", memberApps: [], memberDbs: [], serverRef: "s2" }],
+    });
+    const pf = buildPreflight(f, opts);
+    expect(pf.databases.map((d) => d.itemRef)).toEqual(["database:s1:d1", "database:s2:d2"]);
+    expect(pf.volumes?.map((v) => v.itemRef)).toEqual(["app:s1:a1", "app:s2:a2"]);
+    expect(pf.services.map((v) => v.itemRef)).toEqual(["service:s2:svc1"]);
   });
 
   it("does not claim volumes are declared for a compose-only fleet; its volume is a manual row", () => {
