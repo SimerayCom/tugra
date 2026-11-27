@@ -7,6 +7,26 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **Updates wait for running work.** The hub updates itself only when nothing is running: no migration, takeover,
+  cutover, deployment, backup, restore, rollout, swarm change or patch. Agents wait per server. Settings shows what an
+  update is waiting for, and an owner can still update anyway.
+- **Coolify moves, checked end to end.** The whole path from reading Coolify to shutting it down was mapped and every
+  scenario traced through the code. 49 issues were fixed, among them:
+  - A read through the agent with secret values allowed no longer shows an API-token blocker on every app.
+  - The secret-values consent lasts for every run of a campaign and ends with its import session.
+  - A campaign moves only what you picked, with the data modes you chose.
+  - Databases on pgvector or timescaledb keep their image and version.
+  - Give back is refused on the hub once Coolify is cleaned up, and a takeover interrupted by a hub restart can be
+    given back.
+  - Certificates that could not be issued are tried again when you ask, and a short agent outage at cutover can be
+    retried.
+- **Clearer import wizard.** Nothing is pre-selected on the scope step, servers that stay on their own machine say
+  their data stays where it is, notes follow your selection, you can go back to matching, and a changed Coolify is
+  read again with your choices kept.
+- **Every button shows progress.** Buttons and selects that call the hub now show that they are working and what
+  happened.
+- MCP and OAuth responses escape U+2028 and U+2029, which some clients treat as line breaks.
+
 ## [0.1.0-beta.35] - 2026-11-27
 
 - **Coolify teams land in the right Tugra teams.** After the Coolify read, each Coolify team is matched to the Tugra
