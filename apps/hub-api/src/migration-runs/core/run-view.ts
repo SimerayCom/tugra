@@ -42,6 +42,7 @@ export function runFacts(r: RunRow): RunFacts {
     status: r.status as RunStatus,
     mode: r.mode as RunMode,
     dryRun: r.dryRun,
+    inPlace: r.inPlace === true,
     ponrAt: r.ponrAt,
     pauseRequested: r.pauseRequested,
     opId: r.opId,

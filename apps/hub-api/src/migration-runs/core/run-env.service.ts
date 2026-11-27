@@ -63,6 +63,10 @@ export class RunEnvService implements RunEnvPort {
   objectMigration(id: string): Promise<{ id: string; teamId: string; createdById: string } | null> {
     return this.prisma.objectMigration.findUnique({ where: { id }, select: { id: true, teamId: true, createdById: true } });
   }
+
+  async campaignCancelled(teamId: string, label: string): Promise<boolean> {
+    return (await this.prisma.migrationCampaign.count({ where: { teamId, label, status: "cancelled" } })) > 0;
+  }
 }
 
 /**

@@ -481,6 +481,8 @@ export class MigrationRunsService implements MigrationRunsFacade {
   async start(actor: RunActor, id: string, body: StartRunInput): Promise<MigrationRunView> {
     this.scope(actor, "deploy");
     const run = await this.loadActing(actor, id);
+    // a campaign the owner cancelled has nothing left to start: its finished dry runs are not promoted into real runs
+    if (run.campaign && this.env.campaignCancelled && (await this.env.campaignCancelled(run.teamId, run.campaign))) throw conflict("campaign-cancelled");
     if (run.status === "DRY_RUN_DONE") return this.promote(actor, run, body);
     if (run.status !== "QUEUED" || run.dryRun) throw conflict("run-not-startable");
     this.assertHandlers(run.mode as RunMode);
@@ -953,7 +955,8 @@ export class MigrationRunsService implements MigrationRunsFacade {
     this.scope(actor, "admin");
     if (actor.channel === "mcp") throw new ForbiddenException("human-confirmation-required");
     const run = await this.loadActing(actor, id);
-    if (run.mode !== "takeover" || run.status !== "COMPLETED") throw conflict("run-not-decommissionable");
+    // an in-place takeover leaves Coolify on the box (it is given back or cleaned up from the takeover): there is no source to retire
+    if (run.mode !== "takeover" || run.status !== "COMPLETED" || run.inPlace) throw conflict("run-not-decommissionable");
     if (!run.sourceHost || body.confirmName !== run.sourceHost) throw bad("bad-confirmation");
     const rows = await this.store.steps(run.id);
     const step = this.stepOf(rows, "DECOMMISSION");

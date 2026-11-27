@@ -154,6 +154,20 @@ describe("start and pause rules", () => {
     await expect(w.service.start(ACTOR, d, {})).rejects.toThrow(/run-not-startable/); // a dry-run is promoted only once it is DONE
   });
 
+  it("a finished dry run of a cancelled campaign is not promoted into a real run", async () => {
+    const w = new RunWorld();
+    const d = await w.create({ dryRun: true, campaign: "campaign-1" });
+    await w.settle(d);
+    await w.acceptWarnings(d);
+    w.env.cancelledCampaigns.add("campaign-1");
+    await expect(w.service.start(ACTOR, d, {})).rejects.toThrow(/campaign-cancelled/);
+    // a run of any other campaign (or none) is not touched by it
+    const other = await w.create({ dryRun: true, campaign: "campaign-2" });
+    await w.settle(other);
+    await w.acceptWarnings(other);
+    await expect(w.service.start(ACTOR, other, {})).resolves.toBeDefined();
+  });
+
   it("promoting needs a live session and a plan that still matches", async () => {
     const w = new RunWorld();
     const d = await w.create({ dryRun: true });
@@ -443,6 +457,20 @@ describe("decommission (takeover only, armed by its own route)", () => {
     expect(w.status(id)).toBe("COMPLETED"); // the run itself stays settled
     expect(w.store.row(id).ownerId).toBeNull();
     await expect(w.service.decommission(ACTOR, id, { confirmName: "coolify.example.com" })).rejects.toThrow(/run-not-decommissionable/);
+  });
+
+  it("an in-place run has nothing to decommission: no button, and the route says so instead of marking the step skipped", async () => {
+    const w = new RunWorld();
+    const plain = await w.run({ mode: "takeover" });
+    expect((await w.view(plain)).allowed.decommission).toBe(true);
+    const id = (await w.service.create(ACTOR, w.createBody({ mode: "takeover", topology: "swap-proxy" }), { inPlace: true })).id;
+    await w.start(id);
+    await w.settle(id);
+    expect(w.status(id)).toBe("COMPLETED");
+    expect(w.store.row(id).inPlace).toBe(true);
+    expect((await w.view(id)).allowed.decommission).toBe(false);
+    await expect(w.service.decommission(ACTOR, id, { confirmName: "coolify.example.com" })).rejects.toThrow(/run-not-decommissionable/);
+    expect(w.stepStatus(id, "DECOMMISSION")).toBe("PENDING");
   });
 
   it("a copy run cannot be decommissioned; a failed decommission can be retried", async () => {

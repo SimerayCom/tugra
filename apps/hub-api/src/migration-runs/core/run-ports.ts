@@ -46,6 +46,8 @@ export interface RunEnvPort {
   connectSession(userId: string, input: { teamId: string; sourceKind: RemoteSourceKind; baseUrl: string; token: string; scopeLabel?: string }): Promise<{ sessionId: string; expiresAt: Date }>;
   /** An object migration the operator wants to attach to a step. */
   objectMigration(id: string): Promise<{ id: string; teamId: string; createdById: string } | null>;
+  /** OPTIONAL: the campaign of this label on the team was cancelled (a finished dry run of it must not be promoted any more). A port that cannot tell never blocks. */
+  campaignCancelled?(teamId: string, label: string): Promise<boolean>;
 }
 
 /** What the run reports to the outside world: an audit trail and a (best effort) team notification. */

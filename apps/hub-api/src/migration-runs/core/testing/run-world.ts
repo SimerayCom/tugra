@@ -375,6 +375,8 @@ export class FakeEnv implements RunEnvPort {
   sessions = new Map<string, RunSessionInfo>();
   objectMigrations = new Map<string, { id: string; teamId: string; createdById: string }>();
   connects: Array<{ baseUrl: string; teamId: string }> = [];
+  /** Labels of the campaigns the owner cancelled (a finished dry run of one is not promoted). */
+  cancelledCampaigns = new Set<string>();
   private n = 0;
   constructor(private readonly clock: TestClock) {
     this.sessions.set("s1", this.session0("s1"));
@@ -408,6 +410,9 @@ export class FakeEnv implements RunEnvPort {
   }
   async objectMigration(id: string) {
     return this.objectMigrations.get(id) ?? null;
+  }
+  async campaignCancelled(_teamId: string, label: string) {
+    return this.cancelledCampaigns.has(label);
   }
 }
 

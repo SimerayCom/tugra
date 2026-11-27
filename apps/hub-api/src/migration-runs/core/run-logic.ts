@@ -208,6 +208,8 @@ export interface RunFacts {
   status: RunStatus;
   mode: RunMode;
   dryRun: boolean;
+  /** An in-place takeover (a campaign wave on the machine the source runs on): Coolify stays on the box, so there is nothing to decommission. Absent = false. */
+  inPlace?: boolean;
   ponrAt: Date | null;
   pauseRequested: boolean;
   opId: string | null;
@@ -269,7 +271,7 @@ export function deriveRunAllowed(run: RunFacts, steps: ReadonlyMap<StepKey, Step
     abort: open && run.ponrAt === null && !run.dryRun,
     cleanup: run.status === "ABORTED" && !run.dryRun && (run.opId !== null || run.opHistory.length > 0),
     reverse: open && run.ponrAt !== null && run.status !== "QUEUED" && !run.dryRun,
-    decommission: run.mode === "takeover" && run.status === "COMPLETED" && !!decom && (decom.status === "PENDING" || decom.status === "FAILED"),
+    decommission: run.mode === "takeover" && run.inPlace !== true && run.status === "COMPLETED" && !!decom && (decom.status === "PENDING" || decom.status === "FAILED"),
     setInputs: open,
     sourceSession: open && !run.dryRun,
   };
