@@ -87,6 +87,15 @@ describe("IMPORT", () => {
     expect(w4.store.step(id4, "IMPORT").compensation).toMatchObject({ applyStartedAt: expect.any(String) });
   });
 
+  it("the apply refusing for want of the owner's consent (it ended between the check and the apply) is a failure the owner can retry after allowing it again, not a dead end", async () => {
+    const w = new RunWorld();
+    w.port.failApplyWith = new ForbiddenException({ statusCode: 403, code: "consent_required", message: "allow reading secret values for this import first" });
+    const id = await w.run();
+    expect(w.store.row(id).failureCode).toBe("import.apply.consent-required");
+    expect((await importStep(w, id)).allowed.retry).toBe(true);
+    expect(w.store.step(id, "IMPORT").compensation).toMatchObject({ applyStartedAt: null }); // nothing was created
+  });
+
   it("a git app that still needs a source is a warning, not a failure", async () => {
     const w = new RunWorld();
     w.port.gitStatus.set("app:_:web", "needs_source");
