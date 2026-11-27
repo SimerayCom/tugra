@@ -19,7 +19,9 @@ export function canSwap(v: Pick<TakeoverView, "status" | "items">): boolean {
 
 /** The buttons worth showing for a takeover (or none yet: only "plan"). In the order the owner should press them. */
 export function actionsFor(v: TakeoverView | null | undefined): TakeoverAction[] {
-  if (!v || v.status === "GIVEN_BACK") return ["plan"];
+  if (!v || isReversed(v)) return ["plan"];
+  // a guided run drives this takeover: nothing here moves it (the hub refuses it), the screen links to the run
+  if (v.runId) return [];
   const out: TakeoverAction[] = [];
   if (v.status === "PLANNED" || v.status === "TESTING" || (v.status === "FAILED" && !hasSwapped(v))) out.push("test");
   if (canSwap(v)) out.push("swap");
@@ -27,6 +29,9 @@ export function actionsFor(v: TakeoverView | null | undefined): TakeoverAction[]
   if (v.giveBackAvailable && GIVE_BACK_FROM.includes(v.status)) out.push("giveBack");
   return out;
 }
+
+/** Everything was put back: given back, or a swap that failed and reversed itself. It is never tested again; a new takeover is planned. */
+export const isReversed = (v: Pick<TakeoverView, "status" | "reversed">): boolean => v.status === "GIVEN_BACK" || (v.status === "FAILED" && v.reversed === true);
 
 /** A failed takeover that never took the ports (it can be tested again). A failed give-back is not tested again, it is given back again. */
 const hasSwapped = (v: TakeoverView): boolean => v.items.some((i) => i.domains.some((d) => d.cert !== "pending" || d.finalCheck !== "pending"));

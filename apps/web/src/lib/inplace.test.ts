@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type { TakeoverItemView, TakeoverStatus, TakeoverView } from "@tugra/shared";
-import { actionsFor, canSwap, confirmMatches, dbRollup, pollMs, rebuildCandidates, rebuildOf, rollup, serviceRollup, toggleChoice, verifyHasWork } from "./inplace";
+import { actionsFor, isReversed, canSwap, confirmMatches, dbRollup, pollMs, rebuildCandidates, rebuildOf, rollup, serviceRollup, toggleChoice, verifyHasWork } from "./inplace";
 
 type D = TakeoverItemView["domains"][number];
 const dom = (o: Partial<D> = {}): D => ({ host: "a.example.com", tempCheck: "ok", finalCheck: "pending", cert: "pending", ...o });
@@ -38,6 +38,18 @@ describe("actionsFor", () => {
   it("failed before the ports changed can be tested again; failed after is only given back", () => {
     expect(actionsFor(view("FAILED"))).toEqual(["test", "giveBack"]);
     expect(actionsFor(view("FAILED", [item({ domains: [dom({ finalCheck: "ok", cert: "fallback" })] })]))).toEqual(["giveBack"]);
+  });
+  it("a swap that failed and put everything back is over: no Test (the hub refuses it), only plan", () => {
+    const back = view("FAILED", [item({ domains: [dom({ tempCheck: "ok", finalCheck: "pending", cert: "pending" })] })], { reversed: true });
+    expect(isReversed(back)).toBe(true);
+    expect(actionsFor(back)).toEqual(["plan"]);
+    expect(isReversed(view("FAILED"))).toBe(false);
+    expect(isReversed(view("SWAPPED", [item()], { reversed: true }))).toBe(false);
+  });
+  it("a takeover a live guided run drives offers no button here (the hub refuses them)", () => {
+    for (const s of ["PLANNED", "TESTING", "SWAPPED", "VERIFIED", "FAILED"] as const) expect(actionsFor(view(s, [item()], { runId: "run1" }))).toEqual([]);
+    // the run is over (the hub no longer sends its id): the screen is the owner's again
+    expect(actionsFor(view("VERIFIED", [item()], { runId: null }))).toEqual(["verify", "giveBack"]);
   });
   it("a takeover that is being undone offers nothing", () => {
     expect(actionsFor(view("GIVING_BACK"))).toEqual([]);

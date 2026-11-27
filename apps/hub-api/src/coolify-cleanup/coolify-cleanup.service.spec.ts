@@ -46,6 +46,10 @@ interface Opts {
   /** When the stored Coolify read was taken (default: now). null = no time recorded. */
   readAt?: Date | null;
   dbs?: Array<Record<string, unknown>>;
+  /** Guided runs that hold the server (MigrationRunServerLock rows). Default none. */
+  locks?: number;
+  /** Status of the server's newest takeover. Default: none. */
+  takeover?: string | null;
 }
 
 function make(o: Opts = {}) {
@@ -67,7 +71,8 @@ function make(o: Opts = {}) {
     notificationChannel: { findMany: jest.fn(async () => []) },
     scheduledTask: { findMany: jest.fn(async () => []) },
     bulkTask: { findMany: jest.fn(async () => []) },
-    coolifyTakeover: { updateMany: jest.fn(async () => ({ count: 1 })) },
+    coolifyTakeover: { updateMany: jest.fn(async () => ({ count: 1 })), findFirst: jest.fn(async () => (o.takeover ? { status: o.takeover } : null)) },
+    migrationRunServerLock: { count: jest.fn(async () => o.locks ?? 0) },
     coolifyCleanup: {
       create: jest.fn(async ({ data }: { data: Record<string, unknown> }) => {
         const row = { id: `c${++seq}`, completeness: [], remnants: [], results: [], failureCode: null, confirmedAt: null, cleanedAt: null, confirmedById: null, createdAt: new Date(), updatedAt: new Date(), ...data };
@@ -313,6 +318,39 @@ describe("CoolifyCleanupService.check", () => {
   });
 });
 
+describe("CoolifyCleanupService: a server a takeover or a run still holds", () => {
+  it("check is refused while a guided run holds the server (it may still undo or give back), before anything is created or read", async () => {
+    const t = make({ locks: 1, takeover: "VERIFIED" });
+    await expect(t.svc.check("u1", "s1")).rejects.toMatchObject({ response: expect.objectContaining({ code: "server_busy" }) });
+    expect(t.prisma.coolifyCleanup.create).not.toHaveBeenCalled();
+    expect(t.agentWs.sendCommand).not.toHaveBeenCalled();
+  });
+  it("check is refused unless the newest takeover is VERIFIED: planned, tested, swapped, being given back and failed ones still need Coolify", async () => {
+    for (const status of ["PLANNED", "TESTING", "SWAPPING", "SWAPPED", "GIVING_BACK", "FAILED"]) {
+      const t = make({ takeover: status });
+      await expect(t.svc.check("u1", "s1")).rejects.toMatchObject({ response: expect.objectContaining({ code: "takeover_not_verified" }) });
+      expect(t.agentWs.sendCommand).not.toHaveBeenCalled();
+    }
+  });
+  it("no takeover (a copied server), a VERIFIED one and one that was given back (it holds nothing) may be checked", async () => {
+    for (const takeover of [null, "VERIFIED", "GIVEN_BACK"]) {
+      const t = make({ takeover });
+      await expect(t.svc.check("u1", "s1")).resolves.toMatchObject({ status: "READY" });
+    }
+  });
+  it("confirm looks again: a run or takeover that started after the check stops the removal before anything is removed", async () => {
+    const t = make();
+    const v = await t.svc.check("u1", "s1");
+    t.sent.length = 0;
+    t.prisma.migrationRunServerLock.count.mockResolvedValueOnce(1);
+    await expect(t.svc.confirm("u1", v.id, { confirm: "edge-box", listHash: v.listHash! })).rejects.toMatchObject({ response: expect.objectContaining({ code: "server_busy" }) });
+    t.prisma.coolifyTakeover.findFirst.mockResolvedValueOnce({ status: "SWAPPED" });
+    await expect(t.svc.confirm("u1", v.id, { confirm: "edge-box", listHash: v.listHash! })).rejects.toMatchObject({ response: expect.objectContaining({ code: "takeover_not_verified" }) });
+    expect(t.sent).toEqual([]);
+    expect(t.rows.get(v.id)).toMatchObject({ status: "READY" });
+  });
+});
+
 describe("CoolifyCleanupService.confirm", () => {
   async function ready(o: Opts = {}) {
     const t = make(o);
@@ -385,7 +423,8 @@ describe("CoolifyCleanupService.confirm", () => {
     expect(done).toMatchObject({ status: "CLEANED", failureCode: null });
     expect(done.results).toEqual([{ kind: "container", name: "coolify-proxy", code: "ok" }, { kind: "network", name: "coolify", code: "ok" }]);
     expect(done.cleanedAt).not.toBeNull();
-    expect(t.prisma.coolifyTakeover.updateMany).toHaveBeenCalledWith({ where: { serverId: "s1", giveBackAvailable: true }, data: { giveBackAvailable: false } });
+    // only the finished takeover is closed: one that started on the server while this ran is not
+    expect(t.prisma.coolifyTakeover.updateMany).toHaveBeenCalledWith({ where: { serverId: "s1", giveBackAvailable: true, status: "VERIFIED" }, data: { giveBackAvailable: false } });
     const removal = t.sent.find((s) => isRemoval(s.script))!;
     expect(removal.capability).toBe("coolify_cleanup");
     expect(removal.script).toContain("'coolify-proxy'");

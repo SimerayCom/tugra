@@ -183,7 +183,7 @@ export const TAKEOVER_ISSUES = [
 export type TakeoverIssueCode = (typeof TAKEOVER_ISSUES)[number];
 
 /** Why a takeover step failed (the takeover itself, not one app). */
-export const TAKEOVER_FAILURE_CODES = ["probe_unavailable", "exclusive_policy_failed", "exclusive_stop_failed", "exclusive_start_failed", "swap_stop_failed", "swap_start_failed", "give_back_failed", "fallback_overdue", "cert_check_unavailable", "database_start_failed", "database_verify_failed", "service_not_ready", "service_verify_failed"] as const;
+export const TAKEOVER_FAILURE_CODES = ["probe_unavailable", "exclusive_policy_failed", "exclusive_stop_failed", "exclusive_start_failed", "swap_stop_failed", "swap_start_failed", "give_back_failed", "fallback_overdue", "cert_check_unavailable", "database_start_failed", "database_verify_failed", "service_not_ready", "service_verify_failed", "swap_error", "swap_interrupted", "swap_lost"] as const;
 export type TakeoverFailureCode = (typeof TAKEOVER_FAILURE_CODES)[number];
 
 /** What an item of a takeover is: an app (default), a database whose data volume is reused in place, or a compose service (one-click service or docker-compose app) with several containers. */
@@ -235,6 +235,10 @@ export interface TakeoverView {
   giveBackAvailable: boolean;
   /** Set when the last step failed. */
   failureCode?: TakeoverFailureCode | null;
+  /** The guided run that drives this takeover while it is still running (it is then driven by the run only); null or absent when none does. */
+  runId?: string | null;
+  /** Everything the takeover did was put back (a swap that failed and reversed itself, or a give-back): it is never tested again, a new one is planned. */
+  reversed?: boolean;
   createdAt: string;
   finishedAt: string | null;
 }

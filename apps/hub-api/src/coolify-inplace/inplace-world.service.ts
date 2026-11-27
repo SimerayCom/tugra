@@ -8,6 +8,7 @@ import { CryptoService } from "../crypto/crypto.service";
 import { DatabasesService } from "../databases/databases.service";
 import { composeProject, composeVolumes } from "../deploy/compose-script";
 import { dataMountFor, dbContainerName, pgDataLayout, resolveImage, type DbEngine } from "../databases/database-script";
+import { isLiveRunStatus } from "../migration-runs/core/run-contract";
 import type { ComposeNetworkRow } from "../deploy/deploy-script";
 import type { DeployState, InPlaceWorld, OpApp, OpDatabase, OpService, WorldApp, WorldDatabase, WorldServer, WorldService } from "./inplace-world";
 
@@ -201,6 +202,11 @@ export class InPlaceWorldService implements InPlaceWorld {
       this.prisma.migrationRun.count({ where: { targetServerId: serverId, status: { in: [...LIVE_RUN] }, ...(exceptRunId ? { id: { not: exceptRunId } } : {}) } }),
     ]);
     return takeovers + runs > 0;
+  }
+
+  async runLive(runId: string): Promise<boolean> {
+    const run = await this.prisma.migrationRun.findUnique({ where: { id: runId }, select: { status: true } });
+    return !!run && isLiveRunStatus(run.status);
   }
 
   async createAdoptDeployment(appId: string, commitSha: string | null): Promise<string> {

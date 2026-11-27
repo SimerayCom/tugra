@@ -54,6 +54,33 @@ describe("TakeoverPanel without a guided run (opened from a server page or the c
   });
 });
 
+describe("TakeoverPanel when a guided run drives the takeover", () => {
+  it("shows it read-only with a link to the run and none of the buttons that would bypass the run's approval", async () => {
+    vi.spyOn(api, "listInPlace").mockResolvedValue([view("TESTING", [item()], { runId: "run/1" })]);
+    mount("op1");
+    const note = await screen.findByTestId("takeover-owned-by-run");
+    expect(within(note).getByRole("link", { name: "Open the run" }).getAttribute("href")).toBe("/import/runs/run%2F1");
+    expect(screen.queryByRole("button", { name: "Take over the ports" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Test on a temporary address" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Give back to Coolify" })).toBeNull();
+  });
+});
+
+describe("TakeoverPanel after everything was put back", () => {
+  it("a swap that reversed itself says so, offers no Test and points to the way to start again", async () => {
+    vi.spyOn(api, "listInPlace").mockResolvedValue([view("FAILED", [item()], { reversed: true, failureCode: "swap_start_failed" })]);
+    mount(null);
+    expect((await screen.findByText(/Everything was put back, Coolify serves the sites again/)).textContent).not.toMatch(/Test again/);
+    expect(screen.queryByRole("button", { name: "Test on a temporary address" })).toBeNull();
+    expect(screen.getByTestId("takeover-needs-run")).toBeTruthy();
+  });
+  it("with a run's operation it offers to plan the takeover again", async () => {
+    vi.spyOn(api, "listInPlace").mockResolvedValue([view("FAILED", [item()], { reversed: true })]);
+    mount("op1");
+    expect(await screen.findByRole("button", { name: "Plan the takeover" })).toBeTruthy();
+  });
+});
+
 describe("TakeoverPanel", () => {
   it("with no takeover it explains that planning changes nothing and offers only to plan", async () => {
     vi.spyOn(api, "listInPlace").mockResolvedValue([]);

@@ -86,6 +86,8 @@
     "list_changed": "The list changed. Look at it again.",
     "not_ready": "This check is not ready to confirm.",
     "cleanup_active": "A cleanup is already running on this server.",
+    "server_busy": "A guided run still holds this server. Finish or abort it first.",
+    "takeover_not_verified": "The takeover of this server is not verified yet. Finish it first.",
     "control_plane": "This server runs Coolify itself. It is retired separately.",
     "no_coolify_link": "Read the Coolify first.",
     "read_stale": "The stored Coolify read is too old. Read the Coolify again first.",

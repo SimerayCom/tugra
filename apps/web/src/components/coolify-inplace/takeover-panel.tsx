@@ -6,7 +6,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { TakeoverCertState, TakeoverItemView, TakeoverView } from "@tugra/shared";
 import { api, ApiError } from "../../lib/api";
 import { useT } from "../../i18n/provider";
-import { actionsFor, confirmMatches, dbRollup, pollMs, exclusiveApps, rebuildCandidates, rebuildOf, rollup, serviceRollup, toggleChoice, verifyHasWork, type TakeoverAction } from "../../lib/inplace";
+import { actionsFor, confirmMatches, dbRollup, isReversed, pollMs, exclusiveApps, rebuildCandidates, rebuildOf, rollup, serviceRollup, toggleChoice, verifyHasWork, type TakeoverAction } from "../../lib/inplace";
 import { Badge, Btn, SectionCard, Spinner, Working } from "../ui";
 import { Modal } from "../modal";
 import { TypedConfirmField } from "../typed-confirm-field";
@@ -54,7 +54,7 @@ export function TakeoverPanel({ serverId, serverName, opId }: { serverId: string
   const exclusive = exclusiveApps(view, refused);
   const selected = (chosen ?? rebuildOf(view?.status === "PLANNED" ? view : null)).filter((x) => !exclusive.has(x));
   // Only before anything is changed on the box: a plan changes nothing, so it can be redone with another choice
-  const picking = q.isSuccess && (!view || view.status === "GIVEN_BACK" || view.status === "PLANNED");
+  const picking = q.isSuccess && (!view || isReversed(view) || (view.status === "PLANNED" && !view.runId));
   const op = useQuery({ queryKey: ["import-op-takeover", opId], queryFn: () => api.getImportOperation(opId ?? ""), enabled: picking && !!opId, staleTime: 60_000 });
   const candidates = rebuildCandidates(op.data);
   const done = (v: TakeoverView) => {
@@ -99,7 +99,7 @@ export function TakeoverPanel({ serverId, serverName, opId }: { serverId: string
       {q.isLoading && <Spinner />}
       {q.isError && <p role="alert" style={{ color: "var(--c-r)", fontSize: 13 }}>{t("coolifyInPlace.error.generic")}</p>}
       {!q.isLoading && !view && <p style={{ fontSize: 13, color: "var(--c-tx2)", lineHeight: 1.5 }}>{t("coolifyInPlace.none", { server: serverName })}</p>}
-      {!q.isLoading && !view && !opId && (
+      {!q.isLoading && (!view || isReversed(view)) && !opId && (
         <p data-testid="takeover-needs-run" style={{ fontSize: 13, color: "var(--c-tx2)", lineHeight: 1.5 }}>
           {t("coolifyInPlace.needsRun")} <Link href="/import">{t("coolifyInPlace.needsRunLink")}</Link>
         </p>
@@ -110,7 +110,15 @@ export function TakeoverPanel({ serverId, serverName, opId }: { serverId: string
             <Badge tone={view.status === "FAILED" ? "danger" : view.status === "VERIFIED" || view.status === "GIVEN_BACK" ? "ok" : "lapis"}>{t(`coolifyInPlace.status.${view.status}`)}</Badge>
             {view.failureCode && <span role="alert" style={{ fontSize: 12, color: "var(--c-r)" }}>{t(`coolifyInPlace.failure.${view.failureCode}`)}</span>}
           </div>
-          <p style={{ margin: 0, fontSize: 12, color: "var(--c-tx3)", lineHeight: 1.5 }}>{t(`coolifyInPlace.hint.${view.status}`)}</p>
+          <p style={{ margin: 0, fontSize: 12, color: "var(--c-tx3)", lineHeight: 1.5 }}>{t(`coolifyInPlace.hint.${view.status === "FAILED" && view.reversed ? "FAILED_REVERSED" : view.status}`)}</p>
+          {view.runId && (
+            <p data-testid="takeover-owned-by-run" role="note" style={{ margin: 0, fontSize: 13, color: "var(--c-tx2)", lineHeight: 1.5 }}>
+              {t("coolifyInPlace.ownedByRun")}{" "}
+              <Link href={`/import/runs/${encodeURIComponent(view.runId)}`} className="tg-link" style={{ minHeight: 44, display: "inline-flex", alignItems: "center" }}>
+                {t("coolifyInPlace.openRun")}
+              </Link>
+            </p>
+          )}
           {r && (
             <p data-testid="takeover-rollup" style={{ margin: 0, fontSize: 12, color: "var(--c-tx2)", lineHeight: 1.5 }}>
               {t("coolifyInPlace.rollup", { apps: r.apps, skipped: r.skipped, domains: r.domains, tested: r.tested, checked: r.checked, issued: r.certs.issued })}
@@ -153,7 +161,7 @@ export function TakeoverPanel({ serverId, serverName, opId }: { serverId: string
         </fieldset>
       )}
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 14 }}>
-        {view?.status === "PLANNED" && (
+        {view?.status === "PLANNED" && !view.runId && (
           <Btn variant="ghost" onClick={() => plan.mutate()} disabled={busy} loading={plan.isPending} style={{ minHeight: 44 }}>
             {t("coolifyInPlace.action.replan")}
           </Btn>

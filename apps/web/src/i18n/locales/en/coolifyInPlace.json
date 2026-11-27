@@ -37,6 +37,8 @@
     "option": "Rebuild {name} with Tugra and verify",
     "exclusive": "{name} shares data with Coolify's copy, so it cannot be built next to it. It keeps Coolify's image."
   },
+  "ownedByRun": "A guided run drives this takeover, so it is continued from the run.",
+  "openRun": "Open the run",
   "none": "No takeover yet for {server}. Planning only reads what Coolify runs on it; nothing is changed.",
   "action": {
     "plan": "Plan the takeover",
@@ -54,7 +56,8 @@
     "VERIFIED": "Every domain works and has a new certificate. Coolify is still on the server until you remove it.",
     "GIVING_BACK": "Putting Coolify back. This takes a minute.",
     "GIVEN_BACK": "Coolify serves the sites again, as before.",
-    "FAILED": "The last step did not finish. Test again, or give the server back to Coolify."
+    "FAILED": "The last step did not finish. Test again, or give the server back to Coolify.",
+    "FAILED_REVERSED": "Everything was put back, Coolify serves the sites again. Plan the takeover again when you are ready."
   },
   "rollup": "{apps} apps ({skipped} left out), {domains} domains. Tested: {tested}. Checked after the switch: {checked}. New certificates: {issued}.",
   "exclusive": "Switched, not tested alongside",
@@ -100,7 +103,10 @@
     "database_start_failed": "A database would not start on its data under Tugra. Everything was put back.",
     "database_verify_failed": "A database did not look the same after Tugra took it over. Everything was put back.",
     "service_not_ready": "A service's containers did not come up ready under Tugra. If this shows after the switch, one container stopped or is not healthy. Give the server back, or check the service.",
-    "service_verify_failed": "A database inside a service did not look the same after Tugra took it over. Everything was put back."
+    "service_verify_failed": "A database inside a service did not look the same after Tugra took it over. Everything was put back.",
+    "swap_error": "Something went wrong inside the switch. Everything was put back.",
+    "swap_interrupted": "The hub restarted while the ports were being handed over. Give the server back to Coolify to put everything as it was.",
+    "swap_lost": "Tugra's proxy no longer holds ports 80 and 443, or Coolify's proxy runs again. Give the server back to Coolify, or stop Coolify's proxy and check again."
   },
   "error": {
     "generic": "That did not work. Try again.",
@@ -124,6 +130,8 @@
     "takeover_no_items": "Nothing is left to take over.",
     "takeover_not_swapped": "The ports have not been handed over yet.",
     "takeover_not_giveable": "There is nothing to give back.",
+    "takeover_cleaned": "Coolify's leftovers were cleaned up, so the server can no longer be given back.",
+    "takeover_owned_by_run": "A guided run drives this takeover. Continue it from the run.",
     "takeover_busy": "Another step is running. Wait for it.",
     "takeover_already_swapped": "The ports are already Tugra's. Check again or give back.",
     "takeover_plan_again": "This takeover was given back. Plan a new one.",

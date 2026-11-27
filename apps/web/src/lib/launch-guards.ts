@@ -124,19 +124,21 @@ export function promoteBlocks(run: Pick<MigrationRunView, "targetServers" | "sou
 
 // ───────────── Coolify cleanup of one server ─────────────
 
-export type CleanupGuard = "control_plane" | "no_coolify_link" | "read_stale";
+export type CleanupGuard = "control_plane" | "no_coolify_link" | "read_stale" | "takeover_not_verified";
 
 /** The stored Coolify read a cleanup checks against may be at most this old (the hub's own limit). */
 export const CLEANUP_READ_MAX_MS = 30 * 60_000;
 
 /**
  * Why checking this server for a cleanup cannot work yet, from the "Move off Coolify" status the page already loads: it is the Coolify host
- * itself (retired separately), no stored read knows it, or the read is too old. Null when it can go ahead or the status is not known.
+ * itself (retired separately), no stored read knows it, the read is too old, or its takeover is not verified yet. Null when it can go ahead or the status is not known.
  */
-export function cleanupGuard(row: Pick<MoveOffServerRow, "coolify" | "isCoolifyHub"> | undefined, hub: Pick<MoveOffHub, "readAt"> | null | undefined, now: number): CleanupGuard | null {
+export function cleanupGuard(row: (Pick<MoveOffServerRow, "coolify" | "isCoolifyHub"> & Partial<Pick<MoveOffServerRow, "takeover">>) | undefined, hub: Pick<MoveOffHub, "readAt"> | null | undefined, now: number): CleanupGuard | null {
   if (!row) return null;
   if (row.isCoolifyHub) return "control_plane";
   if (!row.coolify || !hub) return "no_coolify_link";
   if (!hub.readAt || now - Date.parse(hub.readAt) > CLEANUP_READ_MAX_MS) return "read_stale";
+  // only a verified takeover (or none, or one that was given back) lets Coolify's leftovers go: the hub refuses the rest
+  if (row.takeover && row.takeover !== "none" && row.takeover !== "VERIFIED" && row.takeover !== "GIVEN_BACK") return "takeover_not_verified";
   return null;
 }

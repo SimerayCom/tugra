@@ -72,7 +72,7 @@ describe("state machines", () => {
   it("every status is reachable on the way up and a give-back is possible from every started one", () => {
     const path: TakeoverStatus[] = ["PLANNED", "TESTING", "SWAPPING", "SWAPPED", "VERIFIED"];
     for (let i = 0; i < path.length - 1; i++) expect(canTakeoverTransition(path[i], path[i + 1])).toBe(true);
-    for (const s of TAKEOVER_STATUSES) expect(canGiveBack(s)).toBe(s !== "GIVEN_BACK" && s !== "GIVING_BACK");
+    for (const s of TAKEOVER_STATUSES) expect(canGiveBack(s)).toBe(s !== "GIVEN_BACK");
   });
   it("cannot skip the test, cannot leave a given-back takeover and cannot go from planned straight to swapped", () => {
     expect(canTakeoverTransition("PLANNED", "SWAPPING")).toBe(false);

@@ -594,6 +594,11 @@ export class Box implements InPlaceWorld {
   async proxyStatus(): Promise<"running" | "stopped" | "absent"> {
     return this.tugraProxy.state === "absent" ? "absent" : this.tugraProxy.state === "running" ? "running" : "stopped";
   }
+  /** Guided runs that are still going (a takeover they carry is theirs to drive). */
+  liveRuns = new Set<string>();
+  async runLive(runId: string): Promise<boolean> {
+    return this.liveRuns.has(runId);
+  }
   busyExcept: Array<string | undefined> = [];
   async serverBusy(_s?: string, exceptRunId?: string): Promise<boolean> {
     this.busyExcept.push(exceptRunId);

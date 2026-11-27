@@ -67,6 +67,9 @@ export const INPLACE_RUN_CODES = [
   "cutover.inplace-service-not-ready",
   "cutover.inplace-service-verify-failed",
   "cutover.inplace-reversed",
+  "cutover.inplace-swap-error",
+  "cutover.inplace-swap-interrupted-restart",
+  "cutover.inplace-swap-lost",
 ] as const;
 export type InPlaceRunCode = (typeof INPLACE_RUN_CODES)[number];
 
@@ -85,6 +88,9 @@ export const CUTOVER_FAILURE: Readonly<Record<TakeoverFailureCode, InPlaceRunCod
   database_verify_failed: "cutover.inplace-database-verify-failed",
   service_not_ready: "cutover.inplace-service-not-ready",
   service_verify_failed: "cutover.inplace-service-verify-failed",
+  swap_error: "cutover.inplace-swap-error",
+  swap_interrupted: "cutover.inplace-swap-interrupted-restart",
+  swap_lost: "cutover.inplace-swap-lost",
 };
 
 type Step = "deploy-dark" | "cutover";

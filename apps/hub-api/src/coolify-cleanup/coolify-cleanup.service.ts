@@ -88,6 +88,7 @@ export class CoolifyCleanupService {
     await this.requireOwner(userId, server.teamId);
     if (!this.agentWs.isOnline(serverId)) throw new AgentOfflineException();
     await this.assertNoActive(serverId);
+    await this.assertServerFree(serverId);
 
     const row = await this.prisma.coolifyCleanup.create({ data: { teamId: server.teamId, serverId, actorId: userId, status: "CHECKING" } });
     await this.audit.log({ actor: userId, action: "coolify.cleanup.check", target: serverId, meta: { cleanupId: row.id } });
@@ -144,6 +145,8 @@ export class CoolifyCleanupService {
     if (input.confirm !== server.name) throw new BadRequestException({ statusCode: 400, message: "type the server's exact name to confirm", code: "confirm_name_mismatch" });
     if (input.listHash !== listHash(remnantsOf(row))) throw conflict("list_changed", "the list changed: look at it again");
     if (!this.agentWs.isOnline(row.serverId)) throw new AgentOfflineException();
+    // time has passed since the check: a takeover or a run may have started on the server in between
+    await this.assertServerFree(row.serverId);
 
     // A fresh look: the checklist must still be complete and the list the very one the owner confirmed.
     const found = await this.resolveCoolify(userId, server);
@@ -213,12 +216,23 @@ export class CoolifyCleanupService {
         cleanedAt: done ? new Date() : null,
       },
     });
-    // Coolify's leftovers are gone: "give back to Coolify" cannot work any more.
-    if (done) await this.prisma.coolifyTakeover.updateMany({ where: { serverId, giveBackAvailable: true }, data: { giveBackAvailable: false } });
+    // Coolify's leftovers are gone: "give back to Coolify" cannot work any more (the hub refuses it, not only the button). Only the takeover
+    // that finished is closed here: one that started on the server while this ran is not touched.
+    if (done) await this.prisma.coolifyTakeover.updateMany({ where: { serverId, giveBackAvailable: true, status: "VERIFIED" }, data: { giveBackAvailable: false } });
     await this.audit.log({ actor: userId, action: "coolify.cleanup.done", target: serverId, meta: { cleanupId: id, ok: done, code: failureCode } });
   }
 
   // ───────────────────────────── internals ─────────────────────────────
+
+  /**
+   * Nothing may be removed from Coolify while something can still need it: a guided run that holds the server (it may still undo or give
+   * back), or a takeover that is not finished (only a VERIFIED one, or one that was given back and holds nothing, lets Coolify's leftovers go).
+   */
+  private async assertServerFree(serverId: string): Promise<void> {
+    if ((await this.prisma.migrationRunServerLock.count({ where: { serverId } })) > 0) throw conflict("server_busy", "a guided run still holds this server: finish or abort it first");
+    const takeover = await this.prisma.coolifyTakeover.findFirst({ where: { serverId }, orderBy: { createdAt: "desc" }, select: { status: true } });
+    if (takeover && takeover.status !== "VERIFIED" && takeover.status !== "GIVEN_BACK") throw conflict("takeover_not_verified", "the takeover of this server is not verified yet: finish it first");
+  }
 
   private async assertNoActive(serverId: string): Promise<void> {
     const since = new Date(Date.now() - STALE_MS);

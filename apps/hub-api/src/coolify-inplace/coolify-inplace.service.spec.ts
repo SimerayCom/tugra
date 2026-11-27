@@ -47,7 +47,21 @@ function build(o: { role?: Role | null; apps?: BoxApp[]; dbs?: BoxDb[] } = {}) {
         const r = [...rows.values()].filter((x) => x.runId === where.runId).pop();
         return r ? { ...r, createdAt: new Date("2026-11-26T10:00:00Z"), finishedAt: r.finishedAt ? new Date(r.finishedAt as never) : null } : null;
       }),
-      findMany: jest.fn(async () => [...rows.values()].map((r) => ({ ...r, createdAt: new Date("2026-11-26T10:00:00Z"), finishedAt: null }))),
+      findMany: jest.fn(async (q?: { where?: { status?: string | { in: string[] }; giveBackAvailable?: boolean } }) =>
+        [...rows.values()]
+          .filter((r) => {
+            const st = q?.where?.status;
+            if (st !== undefined && !(typeof st === "string" ? r.status === st : st.in.includes(r.status as string))) return false;
+            return q?.where?.giveBackAvailable === undefined || r.giveBackAvailable === q.where.giveBackAvailable;
+          })
+          .map((r) => ({ ...r, createdAt: new Date("2026-11-26T10:00:00Z"), finishedAt: null })),
+      ),
+      updateMany: jest.fn(async ({ where, data: d }: { where: { id: string; status: string }; data: Record<string, unknown> }) => {
+        const r = rows.get(where.id);
+        if (!r || r.status !== where.status) return { count: 0 };
+        Object.assign(r, d);
+        return { count: 1 };
+      }),
       deleteMany: jest.fn(async ({ where }: { where: { serverId: string; status: string; runId: null } }) => {
         const hit = [...rows.values()].filter((r) => r.serverId === where.serverId && r.status === where.status && (r.runId ?? null) === where.runId);
         for (const r of hit) rows.delete(r.id as string);
@@ -844,5 +858,202 @@ describe("a guided run's rebuild choice", () => {
     t.access.teamRole.mockResolvedValueOnce(null);
     await expect(t.svc.runView("u3", "run1")).rejects.toBeInstanceOf(NotFoundException);
     await expect(t.svc.runView(ACTOR, "run-none")).rejects.toBeInstanceOf(NotFoundException);
+  });
+});
+
+
+// ───────────────────────────── lifecycle: give back after cleanup, interruption, run ownership, port watch ─────────────────────────────
+
+describe("give back after Coolify's leftovers were cleaned up", () => {
+  it("the hub refuses it with a clear code before anything is stopped, and a run's undo is refused the same way", async () => {
+    const t = build();
+    const v = await swapOk(t);
+    t.rows.get(v.id)!.giveBackAvailable = false; // what the cleanup writes
+    const before = t.box.events.length;
+    await expect(t.svc.giveBack(ACTOR, v.id, { confirm: "edge-box" })).rejects.toMatchObject({ response: { code: "takeover_cleaned" } });
+    expect(t.box.events.slice(before)).toEqual([]); // Tugra's copies are still running, nothing was stopped
+    expect(t.box.stoppedApps).toEqual([]);
+    expect(t.rows.get(v.id)!.status).toBe("SWAPPED");
+    t.rows.get(v.id)!.runId = "run1";
+    await expect(t.svc.runGiveBack(ACTOR, "run1")).rejects.toMatchObject({ response: { code: "takeover_cleaned" } });
+    expect(t.box.stoppedApps).toEqual([]);
+  });
+  it("Coolify's containers are checked to still exist BEFORE Tugra's copies are stopped: if they are gone Tugra keeps serving", async () => {
+    const t = build();
+    const v = await swapOk(t);
+    t.box.ctrs.delete(data.ctrId); // removed behind the hub's back (a manual prune)
+    const r = await t.svc.giveBack(ACTOR, v.id, { confirm: "edge-box" });
+    expect(r.status).toBe("FAILED");
+    expect(r.failureCode).toBe("give_back_failed");
+    expect(t.box.stoppedApps).toEqual([]); // Tugra's copy of the app that shares data was not stopped
+    expect(t.box.tugraRunning.has(data.appId)).toBe(true);
+  });
+});
+
+describe("an interrupted swap or give-back", () => {
+  it("an error inside the swap reverses by itself: FAILED swap_error with Coolify running again, not SWAPPING with Coolify stopped", async () => {
+    const t = build();
+    const p = await plan(t);
+    await t.svc.test(ACTOR, p.id);
+    // the agent drops after Coolify's database-owning app was stopped and Tugra's copy started
+    const real = t.box.startProxy.bind(t.box);
+    let boom = true;
+    t.box.runAdopted = async (...a: Parameters<Box["runAdopted"]>) => {
+      if (boom && a[1] === data.appId) {
+        boom = false;
+        throw new Error("agent disconnected");
+      }
+      return Box.prototype.runAdopted.apply(t.box, a);
+    };
+    void real;
+    const r = await t.svc.swap(ACTOR, p.id, { confirm: "edge-box" });
+    expect(r.status).toBe("FAILED");
+    expect(r.failureCode).toBe("swap_error");
+    expect(t.box.ctrs.get(data.ctrId)!.running).toBe(true); // Coolify's container runs again
+    expect(t.box.coolifyProxy.running).toBe(true);
+  });
+  it("a refusal before anything changed (the gate) is still thrown as it was and leaves the takeover TESTING", async () => {
+    const t = build();
+    const p = await plan(t);
+    await t.svc.test(ACTOR, p.id);
+    await expect(t.svc.swap(ACTOR, p.id, { confirm: "wrong" })).rejects.toBeInstanceOf(BadRequestException);
+    expect(t.rows.get(p.id)!.status).toBe("TESTING");
+  });
+  it("a give-back the hub restarted in the middle of can be pressed again (GIVING_BACK, nothing running in this process)", async () => {
+    const t = build();
+    const v = await swapOk(t);
+    t.rows.get(v.id)!.status = "GIVING_BACK";
+    const r = await t.svc.giveBack(ACTOR, v.id, { confirm: "edge-box" });
+    expect(r.status).toBe("GIVEN_BACK");
+    expect(t.box.coolifyProxy.running).toBe(true);
+  });
+  it("a give-back that is really running is still refused as busy: it never runs twice", async () => {
+    const t = build();
+    const v = await swapOk(t);
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((r) => (release = r));
+    const stop = t.box.stopApp.bind(t.box);
+    t.box.stopApp = async (...a: Parameters<Box["stopApp"]>) => {
+      await gate;
+      return stop(...a);
+    };
+    const first = t.svc.giveBack(ACTOR, v.id, { confirm: "edge-box" });
+    await new Promise((r) => setImmediate(r));
+    await expect(t.svc.giveBack(ACTOR, v.id, { confirm: "edge-box" })).rejects.toMatchObject({ message: "takeover_busy" });
+    release();
+    await expect(first).resolves.toMatchObject({ status: "GIVEN_BACK" });
+  });
+  it("an error that escapes the give-back does not leave GIVING_BACK behind: it ends FAILED so it can be pressed again", async () => {
+    const t = build();
+    const v = await swapOk(t);
+    const orig = t.prisma.coolifyTakeover.findUnique.getMockImplementation()!;
+    let n = 0;
+    // the first read is the action's own; the second is the undo's, which the database refuses once
+    t.prisma.coolifyTakeover.findUnique.mockImplementation(async (a: { where: { id: string } }) => {
+      n += 1;
+      if (n === 2) throw new Error("db hiccup");
+      return orig(a);
+    });
+    const r = await t.svc.giveBack(ACTOR, v.id, { confirm: "edge-box" });
+    expect(r).toMatchObject({ status: "FAILED", failureCode: "give_back_failed" });
+    t.prisma.coolifyTakeover.findUnique.mockImplementation(orig);
+    await expect(t.svc.giveBack(ACTOR, v.id, { confirm: "edge-box" })).resolves.toMatchObject({ status: "GIVEN_BACK" });
+  });
+  it("at boot, a row left in SWAPPING or GIVING_BACK by a process that is gone ends FAILED so it can be given back; other rows are left alone", async () => {
+    const t = build();
+    const a = await swapOk(t);
+    t.rows.get(a.id)!.status = "SWAPPING";
+    const b = build();
+    const bv = await swapOk(b);
+    b.rows.get(bv.id)!.status = "GIVING_BACK";
+    expect(await t.svc.recoverInterrupted()).toBe(1);
+    expect(t.rows.get(a.id)).toMatchObject({ status: "FAILED", failureCode: "swap_interrupted" });
+    expect(await b.svc.recoverInterrupted()).toBe(1);
+    expect(b.rows.get(bv.id)).toMatchObject({ status: "FAILED", failureCode: "give_back_failed" });
+    expect(t.audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "coolify.takeover.recover", meta: { from: "SWAPPING", failure: "swap_interrupted" } }));
+    // and from FAILED the owner can give back: Coolify runs again
+    const r = await t.svc.giveBack(ACTOR, a.id, { confirm: "edge-box" });
+    expect(r.status).toBe("GIVEN_BACK");
+    expect(t.box.coolifyProxy.running).toBe(true);
+    // nothing in a healthy state is touched
+    const c = build();
+    await swapOk(c);
+    expect(await c.svc.recoverInterrupted()).toBe(0);
+  });
+});
+
+describe("a takeover a live guided run drives", () => {
+  it("the standalone test, swap, verify and give-back refuse it (409 takeover_owned_by_run); the run's own calls still work", async () => {
+    const t = build();
+    t.box.liveRuns.add("run1");
+    const st = await t.svc.runPrepare(ACTOR, { runId: "run1", serverId: "srv1", opId: "op1" });
+    expect(st.status).toBe("TESTING");
+    for (const call of [() => t.svc.test(ACTOR, st.id), () => t.svc.swap(ACTOR, st.id, { confirm: "edge-box" }), () => t.svc.verify(ACTOR, st.id), () => t.svc.giveBack(ACTOR, st.id, { confirm: "edge-box" })]) {
+      await expect(call()).rejects.toMatchObject({ response: { code: "takeover_owned_by_run", runId: "run1" } });
+    }
+    expect(t.rows.get(st.id)!.status).toBe("TESTING");
+    expect(t.box.events.filter((e) => e.startsWith("coolify-proxy"))).toEqual([]);
+    expect((await t.svc.runSwap(ACTOR, "run1")).status).toBe("SWAPPED");
+  });
+  it("the view says which run drives it while the run is live, and nothing once the run ended: then the standalone screen is the owner's", async () => {
+    const t = build();
+    t.box.liveRuns.add("run1");
+    const st = await t.svc.runPrepare(ACTOR, { runId: "run1", serverId: "srv1", opId: "op1" });
+    expect((await t.svc.list(ACTOR, "srv1"))[0].runId).toBe("run1");
+    t.box.liveRuns.delete("run1");
+    expect((await t.svc.list(ACTOR, "srv1"))[0].runId).toBeNull();
+    // an ended run's takeover can be given back standalone
+    await t.svc.runSwap(ACTOR, "run1");
+    const r = await t.svc.giveBack(ACTOR, st.id, { confirm: "edge-box" });
+    expect(r.status).toBe("GIVEN_BACK");
+  });
+});
+
+describe("the ports are watched after the swap", () => {
+  it("verify says swap_lost (and the takeover is not VERIFIED) when Coolify's proxy runs again; once it is stopped again the next pass passes", async () => {
+    const t = build();
+    const v = await swapOk(t);
+    await t.svc.verify(ACTOR, v.id); // certificates are issued
+    expect(t.rows.get(v.id)!.status).toBe("VERIFIED");
+    t.box.coolifyProxy.running = true; // Coolify (or someone) started its proxy again
+    const lost = await t.svc.verify(ACTOR, v.id);
+    expect(lost.status).toBe("SWAPPED");
+    expect(lost.failureCode).toBe("swap_lost");
+    expect(t.audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "coolify.takeover.verify", meta: expect.objectContaining({ failure: "swap_lost", coolifyProxyRunning: true }) }));
+    t.box.coolifyProxy.running = false;
+    const back = await t.svc.verify(ACTOR, v.id);
+    expect(back.status).toBe("VERIFIED");
+    expect(back.failureCode).toBeNull();
+  });
+  it("also when Tugra's proxy lost the ports", async () => {
+    const t = build();
+    const v = await swapOk(t);
+    t.box.tugraProxy = { state: "running", published: false };
+    expect((await t.svc.verify(ACTOR, v.id)).failureCode).toBe("swap_lost");
+  });
+  it("the timer watches a VERIFIED takeover that can still be given back, and stays quiet while the ports are Tugra's", async () => {
+    const t = build();
+    const v = await swapOk(t);
+    await t.svc.verify(ACTOR, v.id);
+    await t.svc.sweepFallbacks();
+    expect(t.rows.get(v.id)!.status).toBe("VERIFIED");
+    t.box.coolifyProxy.running = true;
+    await t.svc.sweepFallbacks();
+    expect(t.rows.get(v.id)).toMatchObject({ status: "SWAPPED", failureCode: "swap_lost" });
+    expect(t.audit.log).toHaveBeenCalledWith(expect.objectContaining({ meta: expect.objectContaining({ failure: "swap_lost", auto: true }) }));
+  });
+});
+
+describe("what the view says after a put-back", () => {
+  it("a swap that failed and reversed itself is reversed: the screen never offers a Test the hub refuses", async () => {
+    const t = build();
+    t.box.failProxyStop = true;
+    const p = await plan(t);
+    await t.svc.test(ACTOR, p.id);
+    const r = await t.svc.swap(ACTOR, p.id, { confirm: "edge-box" });
+    expect(r.status).toBe("FAILED");
+    expect(r.reversed).toBe(true);
+    await expect(t.svc.test(ACTOR, p.id)).rejects.toMatchObject({ message: "takeover_plan_again" });
+    expect((await plan(t)).reversed).toBe(false);
   });
 });

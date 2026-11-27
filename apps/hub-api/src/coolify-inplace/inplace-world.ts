@@ -117,6 +117,8 @@ export interface InPlaceWorld {
   proxyStatus(userId: string, serverId: string): Promise<"running" | "stopped" | "absent">;
   /** Another takeover or a guided run that holds this server. The guided run `exceptRunId` (the one that carries the takeover) does not count. */
   serverBusy(serverId: string, exceptRunId?: string): Promise<boolean>;
+  /** Is this guided run still going (it may still act on its takeover)? A run that ended, or does not exist any more, is not live. */
+  runLive(runId: string): Promise<boolean>;
   /** A successful deployment row that stands for the image Coolify built, so the rollback path can run it. Returns its id. */
   createAdoptDeployment(appId: string, commitSha: string | null): Promise<string>;
   dropAdoptDeployment(deploymentId: string): Promise<void>;

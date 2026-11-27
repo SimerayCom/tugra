@@ -193,8 +193,12 @@ const TRANSITIONS: Readonly<Record<TakeoverStatus, readonly TakeoverStatus[]>> =
 };
 export const canTakeoverTransition = (from: TakeoverStatus, to: TakeoverStatus): boolean => from === to || TRANSITIONS[from].includes(to);
 
-/** From where the owner may give the server back to Coolify: anything that has started and not yet been given back. */
-export const canGiveBack = (s: TakeoverStatus): boolean => s !== "GIVEN_BACK" && s !== "GIVING_BACK";
+/**
+ * From where the owner may give the server back to Coolify: anything not yet given back. GIVING_BACK is included: a give-back that the hub
+ * restarted in the middle of (or that died on an error) is pressed again. A give-back that is really running holds the takeover's in-process
+ * lock, so a second press during it is refused as busy and never runs twice.
+ */
+export const canGiveBack = (s: TakeoverStatus): boolean => s !== "GIVEN_BACK";
 /** Tugra's proxy may own the box's ports from here on, so only the give-back undoes it. */
 export const portsMayBeTugras = (s: TakeoverStatus): boolean => s === "SWAPPING" || s === "SWAPPED" || s === "VERIFIED" || s === "GIVING_BACK" || s === "FAILED";
 

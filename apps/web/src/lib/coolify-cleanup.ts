@@ -4,7 +4,7 @@ import { ApiError } from "./api";
 /** The i18n key of a failed cleanup call: the hub's stable code when it has a line, else a status-based one. */
 export function cleanupErrorKey(e: unknown): string {
   if (e instanceof ApiError) {
-    const known = ["incomplete", "list_changed", "not_ready", "cleanup_active", "control_plane", "no_coolify_link", "read_stale", "confirm_name_mismatch"];
+    const known = ["incomplete", "list_changed", "not_ready", "cleanup_active", "server_busy", "takeover_not_verified", "control_plane", "no_coolify_link", "read_stale", "confirm_name_mismatch"];
     if (e.code && known.includes(e.code)) return `coolifyCleanup.error.${e.code}`;
     if (e.status === 403) return "coolifyCleanup.error.forbidden";
     if (e.status === 503) return "coolifyCleanup.error.offline";

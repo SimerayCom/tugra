@@ -49,7 +49,7 @@ function RemnantRow({ r }: { r: CleanupRemnant }) {
  * "Clean up Coolify" for one server (owner only; the hub enforces it). Checking changes nothing. Removal is offered only for a complete checklist,
  * and only after the owner types the server's name; the request quotes the fingerprint of the list shown, so a changed list is refused.
  */
-const GUARD_KEY = { control_plane: "coolifyCleanup.error.control_plane", no_coolify_link: "coolifyCleanup.error.no_coolify_link", read_stale: "coolifyCleanup.error.read_stale" } as const;
+const GUARD_KEY = { control_plane: "coolifyCleanup.error.control_plane", no_coolify_link: "coolifyCleanup.error.no_coolify_link", read_stale: "coolifyCleanup.error.read_stale", takeover_not_verified: "coolifyCleanup.error.takeover_not_verified" } as const;
 
 export function CoolifyCleanupCard({ serverId, serverName, online, teamId }: { serverId: string; serverName: string; online: boolean; teamId?: string }) {
   const t = useT();

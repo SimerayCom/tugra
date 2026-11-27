@@ -47,7 +47,7 @@ Both stacks run side by side while the data is copied, then the proxy is swapped
 
 - **Until the freeze:** no. Reading and copying only read.
 - **At the freeze:** the app containers on the stop list stop.
-- **At the swap:** Coolify's proxy stops and its restart policy is set to `no`, so a reboot does not bring it back before Tugra's. Nothing is deleted. If Coolify restarts its proxy on its own, Tugra takes the ports back.
+- **At the swap:** Coolify's proxy stops and its restart policy is set to `no`, so a reboot does not bring it back before Tugra's. Nothing is deleted. If Coolify restarts its proxy on its own, a guided run that copies to this server takes the ports back. An in-place takeover shows that the ports were lost and stops counting as verified; you can give the server back, or stop Coolify's proxy and check again.
 - **While running:** Coolify still shows its apps, but they are no longer the ones serving traffic. Do not redeploy from Coolify during the observe window.
 
 ### Roll back

@@ -17,8 +17,18 @@ export class CoolifyInPlaceSchedulerService implements OnApplicationBootstrap, O
 
   onApplicationBootstrap(): void {
     if (process.env.NODE_ENV === "test") return;
+    // swaps and give-backs this process did not start (the hub restarted in the middle) are ended FAILED so they can be given back
+    void this.recover();
     this.timer = setInterval(() => void this.tick(), TICK_MS);
     this.timer.unref();
+  }
+
+  async recover(): Promise<void> {
+    try {
+      await this.inplace.recoverInterrupted();
+    } catch (e) {
+      this.logger.warn(`in-place recovery failed: ${e instanceof Error ? e.message : e}`);
+    }
   }
 
   async tick(): Promise<void> {

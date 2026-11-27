@@ -1381,6 +1381,9 @@
     "cutover_inplace-database-verify-failed": "A database did not look the same after Tugra took it over. Everything was put back.",
     "cutover_inplace-service-not-ready": "A service's containers did not come up ready under Tugra. If the switch had not finished, everything was put back; otherwise a container stopped or is not healthy: check the service or give the server back.",
     "cutover_inplace-service-verify-failed": "A database inside a service did not look the same after Tugra took it over. Everything was put back.",
+    "cutover_inplace-swap-error": "Something went wrong inside the switch. Everything was put back.",
+    "cutover_inplace-swap-interrupted-restart": "The hub restarted while the ports were being handed over. Undo to put Coolify back, then run the takeover again.",
+    "cutover_inplace-swap-lost": "Tugra's proxy no longer holds ports 80 and 443, or Coolify's proxy runs again. Undo to put Coolify back, or stop Coolify's proxy and retry.",
     "verify_inplace-after-switch": "{app} talks to a database that is taken over, so it starts after the database at the switch and is checked right after. Giving back is one click.",
     "verify_inplace-service": "Service {app}: its {members} containers are switched together onto the same images and the same data. After the switch every container is checked to be up and healthy, and a database among them to answer the same; if not, everything is put back.",
     "verify_inplace-database": "Database {app}: Tugra's container runs on the same data, the same image. After the switch it is checked ({level}: counts compare every table's rows, alive means the engine answers); if it differs, everything is put back."

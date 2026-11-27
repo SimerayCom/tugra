@@ -125,6 +125,8 @@ describe("cleanupGuard", () => {
   });
   it("goes ahead on a recent read, and says nothing while the status is unknown", () => {
     expect(cleanupGuard({ coolify: true, isCoolifyHub: false }, fresh, now)).toBeNull();
+    for (const takeover of ["PLANNED", "TESTING", "SWAPPING", "SWAPPED", "GIVING_BACK", "FAILED"] as const) expect(cleanupGuard({ coolify: true, isCoolifyHub: false, takeover }, fresh, now)).toBe("takeover_not_verified");
+    for (const takeover of ["none", "VERIFIED", "GIVEN_BACK"] as const) expect(cleanupGuard({ coolify: true, isCoolifyHub: false, takeover }, fresh, now)).toBeNull();
     expect(cleanupGuard(undefined, fresh, now)).toBeNull();
   });
 });
