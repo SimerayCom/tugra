@@ -19,7 +19,7 @@ const valueOf = (c: TeamChoice): string => (c.kind === "use" ? c.teamId : c.kind
  * names a place); a Coolify team with no match starts undecided, because creating a team writes something. The owner can pick another
  * team, create one in place, or leave a Coolify team out. Continue saves the mapping on the import session, so a refresh keeps it.
  */
-export function TeamMapStep({ plan, sessionId, teams, onDone, onStartOver }: { plan: ImportPlan; sessionId: string; teams: Team[]; onDone: (teamMap: Record<string, string | null>) => void; onStartOver: () => void }) {
+export function TeamMapStep({ plan, sessionId, teams, onDone, onStartOver, onCancel }: { plan: ImportPlan; sessionId: string; teams: Team[]; onDone: (teamMap: Record<string, string | null>) => void; onStartOver: () => void; /** Leave without saving (only where a mapping is already saved): what was saved stays. */ onCancel?: () => void }) {
   const t = useT();
   const qc = useQueryClient();
   const coolify = useMemo(() => coolifyTeams(plan), [plan]);
@@ -75,7 +75,12 @@ export function TeamMapStep({ plan, sessionId, teams, onDone, onStartOver }: { p
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16, maxWidth: 720 }} data-testid="team-map-step">
-      <SectionCard title={t("import.teamMap.title")} desc={t("import.teamMap.subtitle")} right={<Btn variant="ghost" onClick={onStartOver}>{t("import.startOver")}</Btn>} style={{ padding: 20, marginBottom: 0 }}>
+      <SectionCard title={t("import.teamMap.title")} desc={t("import.teamMap.subtitle")} right={
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {onCancel && <Btn variant="ghost" onClick={onCancel} disabled={busy}>{t("import.teamMap.back")}</Btn>}
+          <Btn variant="ghost" onClick={onStartOver} disabled={busy}>{t("import.startOver")}</Btn>
+        </div>
+      } style={{ padding: 20, marginBottom: 0 }}>
         <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("import.teamMap.ownersOnly")}</p>
         <div style={{ display: "grid", gap: 14, margin: "0 0 16px" }}>
           {coolify.map((ct) => {

@@ -150,10 +150,15 @@ describe("the step and the servers to pick", () => {
 
   it("reads Coolify from any server the user can write to (the host may sit in any team), online ones first", () => {
     const servers = [
-      { id: "a", name: "off", canWrite: true, status: "OFFLINE", teamId: "t1" },
-      { id: "b", name: "on", canWrite: true, status: "ONLINE", teamId: "t2" },
-      { id: "c", name: "ro", canWrite: false, status: "ONLINE", teamId: "t1" },
+      { id: "a", name: "off", canWrite: true, status: "OFFLINE", teamId: "t1", capabilities: ["database"] },
+      { id: "b", name: "on", canWrite: true, status: "ONLINE", teamId: "t2", capabilities: ["database"] },
+      { id: "c", name: "ro", canWrite: false, status: "ONLINE", teamId: "t1", capabilities: ["database"] },
+      { id: "d", name: "nodb", canWrite: true, status: "ONLINE", teamId: "t1", capabilities: ["deploy"] },
     ] as never[];
-    expect(agentReadyServers(servers)).toEqual([{ id: "b", name: "on", teamId: "t2", online: true }, { id: "a", name: "off", teamId: "t1", online: false }]);
+    expect(agentReadyServers(servers)).toEqual([
+      { id: "d", name: "nodb", teamId: "t1", online: true, block: { code: "capability", missing: ["database"] } },
+      { id: "b", name: "on", teamId: "t2", online: true, block: null },
+      { id: "a", name: "off", teamId: "t1", online: false, block: { code: "offline", missing: [] } },
+    ]);
   });
 });

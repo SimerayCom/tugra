@@ -43,10 +43,10 @@ const hit = (serverId: string, name: string, over: Partial<ImportTugraMatch> = {
 const withMatches = (hosts: Array<{ ref: string; name: string; tugra?: ImportTugraMatch; controlPlane?: true }>, over: Partial<ImportPlan> = {}): ImportPlan => ({ ...plan, ...over, preflight: { ...plan.preflight!, hosts, ...(over.preflight ?? {}) } });
 const teams = [{ id: "team1", name: "Team One", role: "OWNER" }] as never;
 
-const mount = (over: { servers?: Srv[]; teams?: never; onContinue?: (s: ImportScope) => void; plan?: ImportPlan; initial?: ScopeSelection; onRecheck?: () => void; teamScope?: TeamScope | null; showAllTeams?: boolean; onShowAllTeams?: (v: boolean) => void } = {}) =>
+const mount = (over: { servers?: Srv[]; teams?: never; onContinue?: (s: ImportScope) => void; plan?: ImportPlan; initial?: ScopeSelection; onRecheck?: () => void; teamScope?: TeamScope | null; showAllTeams?: boolean; onShowAllTeams?: (v: boolean) => void; onChangeMatch?: () => void } = {}) =>
   render(
     <I18nProvider>
-      <ImportScopeStep initial={over.initial} plan={over.plan ?? plan} servers={over.servers ?? servers} teams={over.teams ?? teams} onContinue={over.onContinue ?? (() => undefined)} onStartOver={() => undefined} onRecheck={over.onRecheck} teamScope={over.teamScope} showAllTeams={over.showAllTeams} onShowAllTeams={over.onShowAllTeams} />
+      <ImportScopeStep initial={over.initial} plan={over.plan ?? plan} servers={over.servers ?? servers} teams={over.teams ?? teams} onContinue={over.onContinue ?? (() => undefined)} onStartOver={() => undefined} onRecheck={over.onRecheck} teamScope={over.teamScope} showAllTeams={over.showAllTeams} onShowAllTeams={over.onShowAllTeams} onChangeMatch={over.onChangeMatch} />
     </I18nProvider>,
   );
 const continueBtn = () => screen.getByRole("button", { name: "Continue" }) as HTMLButtonElement;
@@ -636,6 +636,91 @@ describe("ImportScopeStep with a Coolify to Tugra team mapping", () => {
     mount({ plan: p, servers: tServers, teams: tTeams, initial: everything, teamScope: teamScope(p) });
     expect(screen.getByText(/is the same machine, but it sits in another Tugra team than Northwind/)).toBeTruthy();
     expect((screen.getByLabelText("Box One moves to") as HTMLSelectElement).value).toBe("");
+  });
+});
+
+describe("ImportScopeStep: going back to the match step", () => {
+  it("offers 'Back to matching' only where the match step exists, and it calls back", () => {
+    const onChangeMatch = vi.fn();
+    mount({ onChangeMatch });
+    fireEvent.click(screen.getByRole("button", { name: "Back to matching" }));
+    expect(onChangeMatch).toHaveBeenCalledTimes(1);
+    cleanup();
+    mount();
+    expect(screen.queryByRole("button", { name: "Back to matching" })).toBeNull();
+  });
+});
+
+describe("ImportScopeStep: a matched server that sits outside the mapped team", () => {
+  const T1 = { ref: "1", name: "Northwind" };
+  const base: ImportPlan = {
+    ...plan,
+    preflight: {
+      ...plan.preflight!,
+      teamMap: { "1": "team-northwind" },
+      hosts: [
+        { ref: "s1", name: "Box One", team: T1, tugra: hit("t1", "Target A", { teamId: "team1" }) },
+        { ref: "s2", name: "Box Two", team: T1, tugra: hit("o1", "Northwind Server", { teamId: "team-northwind" }) },
+      ],
+      projects: [{ ref: "p-acme", name: "Acme", itemRefs: ["app:s1:web", "database:s1:db", "app:s2:api", "database:s2:apidb"], team: T1 }],
+    },
+  };
+  const sv: Srv[] = [
+    { id: "o1", name: "Northwind Server", teamId: "team-northwind", status: "ONLINE", capabilities: ["deploy"] },
+    { id: "t1", name: "Target A", teamId: "team1", status: "ONLINE", capabilities: ["deploy"] },
+  ];
+  const tm = [{ id: "team1", name: "Team One", role: "OWNER" }, { id: "team-northwind", name: "Northwind", role: "OWNER" }] as never;
+  const everything: ScopeSelection = { mode: "everything", hosts: new Set(), projects: new Set(), extra: new Set(), placement: {} };
+
+  it("is not offered as a target: no 'Use it' that does nothing, not counted as connected, and the note links to moving that server and offers Check again", () => {
+    const onRecheck = vi.fn();
+    mount({ plan: base, servers: sv, teams: tm, initial: { ...everything, mode: "servers" }, teamScope: teamScope(base), onRecheck });
+    fireEvent.click(screen.getByRole("checkbox", { name: /Box One/ }));
+    expect(screen.queryByRole("button", { name: "Use it" })).toBeNull();
+    expect(screen.getByText("1 of 2 source servers are already connected to Tugra.")).toBeTruthy(); // Box Two only: Box One's machine is in the wrong team
+    const link = screen.getByRole("link", { name: "Move that server to Northwind" }) as HTMLAnchorElement;
+    expect(link.getAttribute("href")).toBe("/servers/t1?tab=maintenance");
+    fireEvent.click(screen.getByRole("button", { name: "Check again" }));
+    expect(onRecheck).toHaveBeenCalledTimes(1);
+  });
+
+  it("a probable match in another team gets no 'Use it' either (it would pick a server the step then drops)", () => {
+    const probable: ImportPlan = { ...base, preflight: { ...base.preflight!, hosts: base.preflight!.hosts!.map((h) => (h.ref === "s1" ? { ...h, tugra: hit("t1", "Target A", { teamId: "team1", confidence: "probable" }) } : h)) } };
+    mount({ plan: probable, servers: sv, teams: tm, initial: { ...everything, mode: "servers" }, teamScope: teamScope(probable) });
+    fireEvent.click(screen.getByRole("checkbox", { name: /Box One/ }));
+    expect(screen.queryByRole("button", { name: "Use it" })).toBeNull();
+    expect(screen.getByText(/is the same machine, but it sits in another Tugra team than Northwind/)).toBeTruthy();
+  });
+
+  it("'Select connected' ticks only the servers that can really be used", () => {
+    mount({ plan: base, servers: sv, teams: tm, initial: { ...everything, mode: "servers" }, teamScope: teamScope(base) });
+    fireEvent.click(screen.getByRole("button", { name: /^Select connected/ }));
+    expect((screen.getByRole("checkbox", { name: /Box One/ }) as HTMLInputElement).checked).toBe(false);
+    expect((screen.getByRole("checkbox", { name: /Box Two/ }) as HTMLInputElement).checked).toBe(true);
+  });
+});
+
+describe("ImportScopeStep: a Coolify team left out of the mapping", () => {
+  it("'Show all teams' does not open it: with a mapping the lists are the mapped teams', and no toggle is offered", () => {
+    const T1 = { ref: "1", name: "Northwind" };
+    const T2 = { ref: "2", name: "Beta" };
+    const p: ImportPlan = {
+      ...plan,
+      preflight: {
+        ...plan.preflight!,
+        teamMap: { "1": "team1", "2": null },
+        hosts: [{ ref: "s1", name: "Box One", team: T1 }, { ref: "s2", name: "Box Two", team: T2 }],
+        projects: [
+          { ref: "p-acme", name: "Acme", itemRefs: ["app:s1:web", "database:s1:db"], team: T1 },
+          { ref: "p-beta", name: "Beta", itemRefs: ["app:s2:api", "database:s2:apidb"], team: T2 },
+        ],
+      },
+    };
+    mount({ plan: p, teamScope: teamScope(p), showAllTeams: true, initial: { mode: "everything", hosts: new Set(), projects: new Set(), extra: new Set(), placement: {} } });
+    expect(screen.queryByRole("button", { name: /Show all teams/ })).toBeNull();
+    expect(screen.queryByLabelText("Box Two moves to")).toBeNull();
+    expect(screen.getByLabelText("Box One moves to")).toBeTruthy();
+    expect(screen.getByText("Northwind team: 2 of 4")).toBeTruthy();
   });
 });
 

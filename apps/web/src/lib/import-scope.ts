@@ -124,8 +124,59 @@ function projectItemRefs(plan: ImportPlan, picked: ReadonlySet<string>): Set<str
   return out;
 }
 
-/** The itemRefs in scope for a selection. "everything" is every item; volumes follow the apps that declare them. */
+/** The Coolify team an item belongs to: its project's team, else the team of the server it runs on. Undefined when the read does not tell. */
+export function itemTeamRef(plan: ImportPlan, itemRef: string): string | undefined {
+  for (const p of plan.preflight?.projects ?? []) if (p.team && p.itemRefs.includes(itemRef)) return p.team.ref;
+  return plan.preflight?.hosts?.find((h) => h.ref === hostOfItemRef(itemRef))?.team?.ref;
+}
+
+/** The items of a Coolify team the owner left out of the team mapping ("Nothing of this Coolify team is moved"): never in scope, whatever a list shows. */
+export function leftOutItemRefs(plan: ImportPlan): ReadonlySet<string> {
+  const map = plan.preflight?.teamMap;
+  const out = new Set<string>();
+  if (!map) return out;
+  for (const it of plan.items) {
+    if (!isPlaceable(it)) continue;
+    const team = itemTeamRef(plan, it.itemRef);
+    if (team && map[team] === null) out.add(it.itemRef);
+  }
+  return out;
+}
+
+/** True when this source server's own Coolify team was left out of the team mapping. */
+export const hostLeftOut = (plan: ImportPlan, hostRef: string): boolean => {
+  const team = plan.preflight?.hosts?.find((h) => h.ref === hostRef)?.team?.ref;
+  return !!team && plan.preflight?.teamMap?.[team] === null;
+};
+
+/** The Tugra teams the in-scope items must land in (each item's Coolify team, mapped). Empty without a mapping. */
+export function mappedTeamsOf(plan: ImportPlan, inScope: ReadonlySet<string>): string[] {
+  const map = plan.preflight?.teamMap;
+  if (!map) return [];
+  const out = new Set<string>();
+  for (const it of plan.items) {
+    if (!isPlaceable(it) || !inScope.has(it.itemRef)) continue;
+    const team = itemTeamRef(plan, it.itemRef);
+    const id = team ? map[team] : undefined;
+    if (id) out.add(id);
+  }
+  return [...out];
+}
+
+/** The itemRefs in scope for a selection. "everything" is every item; volumes follow the apps that declare them. A left-out Coolify team's items never are. */
 export function inScopeRefs(plan: ImportPlan, sel: ScopeSelection): Set<string> {
+  const out = rawInScope(plan, sel);
+  const left = leftOutItemRefs(plan);
+  if (left.size === 0) return out;
+  for (const r of left) out.delete(r);
+  // a volume rides with an in-scope item: one only left-out items declared goes with them
+  const kept = new Set<string>();
+  for (const it of plan.items) if (out.has(it.itemRef)) for (const d of it.dependsOn) if (d.startsWith("volume:")) kept.add(d);
+  for (const it of plan.items) if (left.has(it.itemRef)) for (const d of it.dependsOn) if (d.startsWith("volume:") && !kept.has(d)) out.delete(d);
+  return out;
+}
+
+function rawInScope(plan: ImportPlan, sel: ScopeSelection): Set<string> {
   if (sel.mode === "everything" && !sel.everythingOf?.length) return new Set(plan.items.map((i) => i.itemRef));
   const base = new Set<string>();
   if (sel.mode === "everything") {
@@ -453,6 +504,8 @@ export function scopedNotes(plan: ImportPlan, inScope: ReadonlySet<string>): str
 export function scopedPlan(plan: ImportPlan, inScope: ReadonlySet<string>): ImportPlan {
   if (plan.items.every((i) => inScope.has(i.itemRef))) return plan;
   const items = plan.items.filter((i) => inScope.has(i.itemRef));
+  // A row follows the item it belongs to (its itemRef): two servers with an app "api" or a database "postgres" are told apart. A hub that
+  // sends no itemRef on a row is matched by name, as before.
   const names = (kind: ImportPlanItem["kind"]) => new Set(items.filter((i) => i.kind === kind).map((i) => i.name));
   const dbNames = names("database");
   const svcNames = names("service");
@@ -461,9 +514,9 @@ export function scopedPlan(plan: ImportPlan, inScope: ReadonlySet<string>): Impo
   const preflight = pf
     ? {
         ...pf,
-        databases: pf.databases.filter((d) => dbNames.has(d.name)),
-        services: pf.services.filter((s) => svcNames.has(s.name)),
-        volumes: pf.volumes?.filter((v) => appNames.has(v.app)),
+        databases: pf.databases.filter((d) => (d.itemRef ? inScope.has(d.itemRef) : dbNames.has(d.name))),
+        services: pf.services.filter((s) => (s.itemRef ? inScope.has(s.itemRef) : svcNames.has(s.name))),
+        volumes: pf.volumes?.filter((v) => (v.itemRef ? inScope.has(v.itemRef) : appNames.has(v.app))),
         sourceHealth: pf.sourceHealth?.filter((h) => inScope.has(h.itemRef)),
         coverage: pf.coverage ? { ...pf.coverage, apps: pf.coverage.apps.filter((a) => inScope.has(a.itemRef)), env: pf.coverage.env ? { apps: pf.coverage.env.apps.filter((a) => inScope.has(a.itemRef)) } : undefined } : undefined,
       }

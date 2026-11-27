@@ -119,3 +119,14 @@ export function hostTugraTeam(plan: ImportPlan | null | undefined, hostRef: stri
   const id = m && ref ? m[ref] : undefined;
   return id || undefined;
 }
+
+/**
+ * Where the settings of the picked Coolify team go (notification channels, shared variables, storages, tags, member invitations): the Tugra team
+ * that Coolify team was mapped to. `undefined` = no mapping says (the older rule applies); `null` = that Coolify team was left out, so its settings go nowhere.
+ */
+export function settingsTeamOf(plan: ImportPlan | null | undefined): string | null | undefined {
+  const pf = plan?.preflight;
+  if (!pf?.teamMap || !pf.sourceTeamRef) return undefined;
+  const v = pf.teamMap[pf.sourceTeamRef];
+  return v === undefined ? undefined : v;
+}

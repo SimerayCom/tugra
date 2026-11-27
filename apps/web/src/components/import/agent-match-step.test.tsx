@@ -121,6 +121,18 @@ describe("AgentMatchStep", () => {
     expect(within(card("mine")).getByText("Chosen by you")).toBeTruthy();
   });
 
+  it("a server the machine's own identity proves (same host key) cannot be answered 'not the same': the button is not offered there, and the hub's refusal is explained", async () => {
+    mount();
+    // edge is "Same machine" by its SSH host key: its own answer to "same" stays possible, "not the same" is not
+    expect(within(card("edge")).queryByRole("button", { name: "This is not the same server" })).toBeNull();
+    expect(within(card("edge")).getByRole("button", { name: "This is the same server" })).toBeTruthy();
+    cleanup();
+    vi.spyOn(api, "importHostLink").mockRejectedValue(new ApiError(409, "x", "identity_match"));
+    mount();
+    fireEvent.click(within(card("maybe")).getByRole("button", { name: "This is not the same server" }));
+    await screen.findAllByText(/own identity says they are the same server/);
+  });
+
   it("a server whose machine identity differs cannot be called the same machine from here", () => {
     mount();
     const clash = card("clash");
@@ -169,7 +181,7 @@ describe("AgentMatchStep", () => {
     mount({ plan: plan({ hosts: [HOSTS[0], HOSTS[1]] }) });
     expect(screen.getByText("Every server is matched.")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Continue" })).toBeTruthy();
-    expect(screen.getByRole("link", { name: "Read this Coolify" }).getAttribute("href")).toBe("/import/coolify-host");
+    expect(screen.getByRole("link", { name: "Read this Coolify" }).getAttribute("href")).toBe("/import/coolify-host?session=sess-1");
   });
 
   it("does not ask for consent when the Coolify host is not one of the user's servers (nothing to type a name of)", () => {

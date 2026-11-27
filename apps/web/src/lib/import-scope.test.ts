@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { applyScopeToDoc, autoSelection, ownerSaidNotSame, ownerTugra, autoTargetOf, buildScope, defaultTeamId, inPlaceBlock, placementKindOf, restoreSelection, serializeSelection, serverReadiness, targetOf, scopePayload, emptySelection, hostOfItemRef, inScopeRefs, involvedHosts, missingDependencies, projectChoicesFor, scopedPlan, scopedNotes, scopeIssue, scopeServiceSkips, sourceProjectRows, sharedTargetHosts, partialInPlaceHosts, isControlPlaneHost, type ScopeSelection } from "./import-scope";
+import { applyScopeToDoc, autoSelection, hostLeftOut, itemTeamRef, leftOutItemRefs, mappedTeamsOf, ownerSaidNotSame, ownerTugra, autoTargetOf, buildScope, defaultTeamId, inPlaceBlock, placementKindOf, restoreSelection, serializeSelection, serverReadiness, targetOf, scopePayload, emptySelection, hostOfItemRef, inScopeRefs, involvedHosts, missingDependencies, projectChoicesFor, scopedPlan, scopedNotes, scopeIssue, scopeServiceSkips, sourceProjectRows, sharedTargetHosts, partialInPlaceHosts, isControlPlaneHost, type ScopeSelection } from "./import-scope";
 import { emptyDoc } from "./import-mapping";
 import type { ImportPlan, ImportPlanItem } from "./types";
 
@@ -344,6 +344,112 @@ describe("applyScopeToDoc / scopeServiceSkips / scopedPlan", () => {
   it("is the very same plan object when nothing is left out", () => {
     const p = plan();
     expect(scopedPlan(p, inScopeRefs(p, emptySelection()))).toBe(p);
+  });
+});
+
+describe("scopedPlan follows the item that owns a row, not its name", () => {
+  // the same names on two servers (dev and prod): an app "api", a database "postgres", a stack "stack"
+  const A_API = "app:s1:api";
+  const B_API = "app:s2:api";
+  const A_PG = "database:s1:pg";
+  const B_PG = "database:s2:pg";
+  const A_STACK = "service:s1:stack";
+  const B_STACK = "service:s2:stack";
+  const twin = (): ImportPlan =>
+    plan({
+      items: [item(A_API, "app", "api"), item(B_API, "app", "api"), item(A_PG, "database", "postgres"), item(B_PG, "database", "postgres"), item(A_STACK, "service", "stack"), item(B_STACK, "service", "stack")],
+      preflight: {
+        databases: [
+          { name: "postgres", itemRef: A_PG, engine: "POSTGRES", dataPlane: "one-click", reason: "A" },
+          { name: "postgres", itemRef: B_PG, engine: "POSTGRES", dataPlane: "manual", reason: "B" },
+        ],
+        services: [
+          { name: "stack", itemRef: A_STACK, members: 1, note: "A" },
+          { name: "stack", itemRef: B_STACK, members: 2, note: "B" },
+        ],
+        appsWithVolumeData: 2,
+        volumes: [
+          { app: "api", itemRef: A_API, mountPath: "/a", dataPlane: "stream", reason: "A" },
+          { app: "api", itemRef: B_API, mountPath: "/b", dataPlane: "stream", reason: "B" },
+        ],
+        hosts: [{ ref: "s1", name: "Box One" }, { ref: "s2", name: "Box Two" }],
+      },
+    });
+
+  it("a scope of one server keeps only that server's rows when two servers share names", () => {
+    const p = twin();
+    const sp = scopedPlan(p, inScopeRefs(p, sel({ mode: "servers", hosts: new Set(["s1"]) })));
+    expect(sp.preflight?.databases.map((d) => d.reason)).toEqual(["A"]);
+    expect(sp.preflight?.services.map((d) => d.note)).toEqual(["A"]);
+    expect(sp.preflight?.volumes?.map((v) => v.reason)).toEqual(["A"]);
+  });
+
+  it("the in-place split gives each part only its own server's rows", () => {
+    const p = twin();
+    const moved = scopedPlan(p, new Set([B_API, B_PG, B_STACK]));
+    expect(moved.preflight?.databases.map((d) => d.reason)).toEqual(["B"]);
+    expect(moved.preflight?.volumes?.map((v) => v.reason)).toEqual(["B"]);
+  });
+
+  it("rows with no itemRef (an older hub) are still matched by name", () => {
+    const p = twin();
+    const old = { ...p, preflight: { ...p.preflight!, databases: p.preflight!.databases.map(({ itemRef: _r, ...d }) => d) } } as ImportPlan;
+    const sp = scopedPlan(old, inScopeRefs(old, sel({ mode: "servers", hosts: new Set(["s1"]) })));
+    expect(sp.preflight?.databases).toHaveLength(2); // both named "postgres": name is all there is to go by
+  });
+});
+
+describe("a Coolify team the owner left out of the mapping is never in scope", () => {
+  const T1 = { ref: "1", name: "Acme" };
+  const T2 = { ref: "2", name: "Beta" };
+  const teamed = (teamMap: Record<string, string | null> | undefined): ImportPlan => {
+    const p = plan();
+    return {
+      ...p,
+      preflight: {
+        ...p.preflight!,
+        ...(teamMap ? { teamMap } : {}),
+        hosts: [{ ref: "s1", name: "Box One", team: T1 }, { ref: "s2", name: "Box Two", team: T2 }],
+        projects: [
+          { ref: "p-acme", name: "Acme", itemRefs: [WEB, DB, SVC], team: T1 },
+          { ref: "p-beta", name: "Beta", itemRefs: [API, API_DB], team: T2 },
+        ],
+      },
+    } as ImportPlan;
+  };
+
+  it("an item's team is its project's, else its server's", () => {
+    const p = teamed({ "1": "t1", "2": null });
+    expect(itemTeamRef(p, WEB)).toBe("1");
+    expect(itemTeamRef(p, API)).toBe("2");
+    expect(itemTeamRef(p, "app:s2:loose")).toBe("2"); // no project: its server's team
+  });
+
+  it("'everything' leaves the items of a left-out team out, volumes included, and so does every other mode", () => {
+    const p = teamed({ "1": "t1", "2": null });
+    expect([...leftOutItemRefs(p)].sort()).toEqual([API, API_DB]);
+    const all = inScopeRefs(p, emptySelection());
+    expect(all.has(API)).toBe(false);
+    expect(all.has(API_DB)).toBe(false);
+    expect(all.has(WEB)).toBe(true);
+    expect(all.has(VOL)).toBe(true); // web's volume stays with web
+    expect(inScopeRefs(p, sel({ mode: "servers", hosts: new Set(["s1", "s2"]) })).has(API)).toBe(false);
+    expect(inScopeRefs(p, sel({ mode: "projects", projects: new Set(["p-beta"]) })).size).toBe(0);
+    expect(inScopeRefs(p, sel({ mode: "servers", hosts: new Set(["s2"]), extra: new Set([API]) })).has(API)).toBe(false); // not even pulled in as a dependency
+  });
+
+  it("without a mapping, or with every team mapped, nothing is left out", () => {
+    expect(leftOutItemRefs(teamed(undefined)).size).toBe(0);
+    expect(leftOutItemRefs(teamed({ "1": "t1", "2": "t2" })).size).toBe(0);
+    expect(inScopeRefs(teamed(undefined), emptySelection()).size).toBe(plan().items.length);
+  });
+
+  it("a server of a left-out team says so, and the Tugra teams of what is in scope come from the mapping", () => {
+    const p = teamed({ "1": "t1", "2": null });
+    expect(hostLeftOut(p, "s2")).toBe(true);
+    expect(hostLeftOut(p, "s1")).toBe(false);
+    expect(mappedTeamsOf(p, inScopeRefs(p, emptySelection()))).toEqual(["t1"]);
+    expect(mappedTeamsOf(teamed(undefined), new Set([WEB]))).toEqual([]);
   });
 });
 

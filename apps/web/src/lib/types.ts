@@ -1556,11 +1556,11 @@ export interface ImportTugraMatch {
   confidence: "certain" | "probable";
 }
 export interface ImportPreflight {
-  databases: Array<{ name: string; engine: string; dataPlane: DbDataPlane; reason: string; backup?: { schedules?: number; s3?: boolean; interval?: string; targets?: string[] } }>;
-  services: Array<{ name: string; members: number; note: string; objectStore?: true; verdict?: ImportServiceVerdict; hold?: boolean; volumes?: Array<{ key: string; dataPlane: string; origin?: "host-bind" }> }>;
+  databases: Array<{ name: string; /** The plan itemRef of the database: a scoped preview keeps the rows of the items it keeps, whatever their names. */ itemRef?: string; engine: string; dataPlane: DbDataPlane; reason: string; backup?: { schedules?: number; s3?: boolean; interval?: string; targets?: string[] } }>;
+  services: Array<{ name: string; /** The plan itemRef of the stack. */ itemRef?: string; members: number; note: string; objectStore?: true; verdict?: ImportServiceVerdict; hold?: boolean; volumes?: Array<{ key: string; dataPlane: string; origin?: "host-bind" }> }>;
   appsWithVolumeData: number;
   volumeDataNote?: string;
-  volumes?: Array<{ app: string; mountPath: string; type?: "named" | "bind"; dataPlane: "hub-staged" | "manual-large" | "manual" | "unknown-size" | "stream"; reason: string; fidelity?: string }>;
+  volumes?: Array<{ app: string; /** The plan itemRef of the app that owns the volume. */ itemRef?: string; mountPath: string; type?: "named" | "bind"; dataPlane: "hub-staged" | "manual-large" | "manual" | "unknown-size" | "stream"; reason: string; fidelity?: string }>;
   /** Per-app "what is not carried over" (advisory; presence-only). */
   coverage?: ImportCoverage;
   /** Coolify: apps whose variables are unreadable because the API token lacks read:sensitive. */

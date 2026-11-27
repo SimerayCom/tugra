@@ -14,6 +14,7 @@ import {
   inPlaceBlock,
   inPlaceCount,
   inScopeRefs,
+  hostLeftOut,
   involvedHosts,
   isControlPlaneHost,
   partialInPlaceHosts,
@@ -70,6 +71,7 @@ export function ImportScopeStep({
   teamView = null,
   onTeamView,
   onChangeTeamMap,
+  onChangeMatch,
 }: {
   plan: ImportPlan;
   /** Servers the user can write to. */
@@ -94,9 +96,13 @@ export function ImportScopeStep({
   teamView?: string | null;
   onTeamView?: (ref: string | null) => void;
   onChangeTeamMap?: () => void;
+  /** Back to the match step (agent read): the owner's answers about which Coolify server is which Tugra server can be corrected there. */
+  onChangeMatch?: () => void;
 }) {
   const t = useT();
-  const filter = teamScope && !showAllTeams ? teamScope : null;
+  // With a saved team mapping the lists are always the mapped teams': "show all teams" never opens a team that was left out.
+  const mapped = plan.preflight?.teamMap !== undefined;
+  const filter = teamScope && (!showAllTeams || mapped) ? teamScope : null;
   const hosts = useMemo(() => sourceHostRows(plan).filter((h) => !filter || filter.hosts.has(h.ref)), [plan, filter]);
   const projects = useMemo(() => sourceProjectRows(plan).filter((p) => !filter || filter.projects.has(p.ref)), [plan, filter]);
   const teamIds = useMemo(() => [...new Set(servers.map((s) => s.teamId))], [servers]);
@@ -135,6 +141,8 @@ export function ImportScopeStep({
   // Each source server of a mapped Coolify team lands in that team's Tugra team only: its targets are that team's servers.
   const allowedFor = useCallback(
     (ref: string): ReadonlySet<string> => {
+      // a server of a Coolify team that was left out goes nowhere
+      if (hostLeftOut(plan, ref)) return new Set<string>();
       const mapped = hostTugraTeam(plan, ref);
       return mapped ? new Set(servers.filter((s) => s.teamId === mapped).map((s) => s.id)) : allowed;
     },
@@ -154,7 +162,8 @@ export function ImportScopeStep({
     }
     return c;
   }, [plan, inScope]);
-  const connected = useMemo(() => hosts.filter((h) => autoTargetOf(plan, h.ref) !== "").map((h) => h.ref), [hosts, plan]);
+  // "Connected" = goes onto its own machine once ticked: a sure match that sits where this server may go (its mapped team's servers).
+  const connected = useMemo(() => hosts.filter((h) => { const id = autoTargetOf(plan, h.ref); return id !== "" && allowedFor(h.ref).has(id); }).map((h) => h.ref), [hosts, plan, allowedFor]);
 
   const setMode = (mode: ScopeMode) => setSel((s) => ({ ...s, mode, extra: new Set() }));
   const toggle = (key: "hosts" | "projects", ref: string) =>
@@ -207,11 +216,16 @@ export function ImportScopeStep({
       <SectionCard
         title={t("import.scope.title")}
         desc={t("import.scope.subtitle")}
-        right={<Btn variant="ghost" onClick={onStartOver}>{t("import.startOver")}</Btn>}
+        right={
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {onChangeMatch && <Btn variant="ghost" onClick={onChangeMatch}>{t("import.scope.changeMatch")}</Btn>}
+            <Btn variant="ghost" onClick={onStartOver}>{t("import.startOver")}</Btn>
+          </div>
+        }
         style={{ padding: 20, marginBottom: 0 }}
       >
         {startNote && <p data-testid="scope-note" role="note" style={{ fontSize: 12, color: "var(--c-tx2)", margin: "0 0 10px" }}>{startNote}</p>}
-        <TeamFilterToggle scope={teamScope} showAll={showAllTeams} hidden={hiddenCount} onChange={(v) => onShowAllTeams?.(v)} view={teamView} onView={onTeamView} onChangeMap={onChangeTeamMap} />
+        <TeamFilterToggle scope={teamScope} showAll={showAllTeams && !mapped} hidden={mapped ? 0 : hiddenCount} onChange={(v) => onShowAllTeams?.(v)} view={teamView} onView={onTeamView} onChangeMap={onChangeTeamMap} />
         <div role="radiogroup" aria-label={t("import.scope.title")} style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 16 }}>
           {MODES.filter((m) => m.show).map(({ mode }) => {
             const checked = sel.mode === mode;
@@ -325,6 +339,8 @@ export function ImportScopeStep({
                   const kind = target ? placementKindOf(plan, h.ref, target) : null;
                   const confirmed = !!m && !!ownerTugra(plan, h.ref) && target === m.serverId;
                   const matched = m ? serverById.get(m.serverId) : undefined;
+                  // a match whose server sits outside this server's allowed set (another team than the mapped one) cannot be used as a target
+                  const usable = !!m && allowedFor(h.ref).has(m.serverId);
                   const matchedState = matched ? serverReadiness(matched) : "ready";
                   const name = hostLabel(h.ref, h.name);
                   return (
@@ -354,14 +370,17 @@ export function ImportScopeStep({
                         </p>
                       )}
                       {mappedTeam && m && matched && matched.teamId !== mappedTeam && (
-                        <p role="status" style={{ ...note, color: "var(--c-am)" }}>{t("import.teamMap.matchedElsewhere", { server: m.name, team: teamName(mappedTeam) })}</p>
+                        <p role="status" style={{ ...note, color: "var(--c-am)" }}>
+                          {t("import.teamMap.matchedElsewhere", { server: m.name, team: teamName(mappedTeam) })}{" "}
+                          <a href={`/servers/${encodeURIComponent(m.serverId)}?tab=maintenance`} target="_blank" rel="noopener noreferrer" style={{ color: "var(--c-lapis)" }}>{t("import.teamMap.moveServer", { team: teamName(mappedTeam) })}</a>
+                        </p>
                       )}
                       {confirmed && <p style={{ ...note, color: "var(--c-g)" }}>{t("import.scope.confirmedMachine")}</p>}
                       {kind === "in-place" && <p style={{ ...note, color: "var(--c-tx2)" }}><strong>{t("import.scope.kind.inPlaceTitle")}</strong> {t("import.scope.kind.inPlace")}</p>}
                       {kind === "other-server" && <p style={{ ...note, color: "var(--c-tx2)" }}><strong>{t("import.scope.kind.otherTitle")}</strong> {t("import.scope.kind.other")}</p>}
                       {block === "control-plane" && <p role="status" style={{ ...note, color: "var(--c-am)" }}>{t("import.scope.block.controlPlane")}</p>}
                       {block === "unsupported-source" && m && <p style={note}>{t("import.scope.block.unsupported")}</p>}
-                      {m && m.confidence === "probable" && block === null && !target && (
+                      {m && usable && m.confidence === "probable" && block === null && !target && (
                         <p style={note}>
                           {t("import.scope.match.probable", { name: m.name })}{" "}
                           <Btn variant="ghost" onClick={() => place(h.ref, m.serverId)}>{t("import.scope.useIt")}</Btn>
@@ -384,7 +403,7 @@ export function ImportScopeStep({
             {inPlaceCount(scope) > 1 && <p style={{ ...note, marginTop: 10 }}>{t("import.scope.inPlaceNote", { count: inPlaceCount(scope) })}</p>}
             {needsCampaign(scope) && <p role="note" style={{ ...note, marginTop: 10 }}>{t("import.scope.campaignNote")}</p>}
             {scope.multiTeam && <p role="note" data-testid="multi-team-note" style={{ ...note, marginTop: 6 }}>{t("import.scope.multiTeamNote", { count: placedTeams })}</p>}
-            {onRecheck && (involved.some((h) => !hostTugra(plan, h.ref)) || (teamId !== "" && involved.some((h) => { const m = hostTugra(plan, h.ref); return m && serverReadiness(serverById.get(m.serverId)) !== "ready"; }))) && (
+            {onRecheck && (involved.some((h) => !hostTugra(plan, h.ref)) || involved.some((h) => { const m = hostTugra(plan, h.ref); return !!m && !allowedFor(h.ref).has(m.serverId); }) || (teamId !== "" && involved.some((h) => { const m = hostTugra(plan, h.ref); return m && serverReadiness(serverById.get(m.serverId)) !== "ready"; }))) && (
               <div style={{ marginTop: 10 }}>
                 <Btn variant="ghost" onClick={onRecheck} disabled={rechecking}>{t("import.scope.recheck")}</Btn>
                 <span style={{ ...note, marginLeft: 8 }}>{t("import.scope.recheckHint")}</span>

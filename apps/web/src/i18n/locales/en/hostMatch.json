@@ -81,7 +81,8 @@
     "local_row": "The Coolify host itself is always this server.",
     "forbidden": "You cannot manage that Tugra server.",
     "expired": "This import session has ended. Connect again.",
-    "generic": "Could not save your answer."
+    "generic": "Could not save your answer.",
+    "identity_match": "The machines' own identity says they are the same server, so it cannot be answered as not the same."
   },
   "installHint": "Servers without a Tugra agent can get one in one click on the Read this Coolify page.",
   "continue": "Continue",

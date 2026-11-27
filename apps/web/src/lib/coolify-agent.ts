@@ -128,6 +128,14 @@ export function canAnswer(row: Pick<MatchRow, "controlPlane">): boolean {
   return !row.controlPlane;
 }
 
+/**
+ * "This is not the same server" may be said where the evidence does not prove the machine. A row the machine's own identity proves
+ * (certain: same host key, machine id or engine id) is the same server, and the hub refuses the answer; the button is not offered there.
+ */
+export function canSayNotSame(row: Pick<MatchRow, "controlPlane" | "kind">): boolean {
+  return canAnswer(row) && row.kind !== "certain";
+}
+
 /** Whether the step has anything to show: an agent read, with at least one source server. */
 export function needsMatchStep(plan: Pick<ImportPlan, "preflight"> | null | undefined): boolean {
   return !!plan?.preflight?.agentRead && (plan.preflight.hosts?.length ?? 0) > 0;

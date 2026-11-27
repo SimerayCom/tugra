@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useMutation } from "@tanstack/react-query";
 import { api, ApiError } from "../../lib/api";
 import { useT } from "../../i18n/provider";
-import { applyAnswer, canAnswer, candidateServers, matchRows, standingConsent, suggestedRows, unsureCount, type MatchRow } from "../../lib/coolify-agent";
+import { applyAnswer, canAnswer, canSayNotSame, candidateServers, matchRows, standingConsent, suggestedRows, unsureCount, type MatchRow } from "../../lib/coolify-agent";
 import type { TeamScope } from "../../lib/import-team";
 import type { ImportPlan, ServerView } from "../../lib/types";
 import { Badge, Btn, SectionCard } from "../ui";
@@ -118,7 +118,7 @@ function HostCard({
           <p style={{ margin: 0, fontSize: 11, color: "var(--c-tx3)", lineHeight: 1.5 }}>{t("hostMatch.answer.sameHelp")}</p>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <Btn onClick={() => answer.mutate({ serverId: pick })} disabled={!pick || row.identityConflict || disabled} loading={answer.isPending}>{t("hostMatch.answer.same")}</Btn>
-            <Btn variant="ghost" onClick={() => answer.mutate({ serverId: null })} disabled={answer.isPending || disabled}>{t("hostMatch.answer.notSame")}</Btn>
+            {canSayNotSame(row) && <Btn variant="ghost" onClick={() => answer.mutate({ serverId: null })} disabled={answer.isPending || disabled}>{t("hostMatch.answer.notSame")}</Btn>}
             {row.answeredByOwner && <Btn variant="ghost" onClick={() => answer.mutate({ serverId: null, reset: true })} disabled={answer.isPending || disabled}>{t("hostMatch.answer.undo")}</Btn>}
           </div>
         </div>
@@ -175,7 +175,9 @@ export function AgentMatchStep({
   const [bulkBusy, setBulkBusy] = useState(false);
   // the next plan carries the owner's answers: from then on the rows come from it
   useEffect(() => setOverrides({}), [plan]);
-  const filter = teamScope && !showAllTeams ? teamScope : null;
+  // with a saved team mapping the rows are always the mapped teams': "show all teams" never opens a team that was left out
+  const mapped = plan.preflight?.teamMap !== undefined;
+  const filter = teamScope && (!showAllTeams || mapped) ? teamScope : null;
   const rows = useMemo(
     () =>
       matchRows(plan)
@@ -223,7 +225,7 @@ export function AgentMatchStep({
   return (
     <div style={{ display: "grid", gap: 16, maxWidth: 720 }}>
       <SectionCard title={t("hostMatch.title")} desc={t("hostMatch.table.hint")}>
-        <TeamFilterToggle scope={teamScope} showAll={showAllTeams} hidden={filter?.hiddenHosts ?? 0} onChange={(v) => onShowAllTeams?.(v)} view={teamView} onView={onTeamView} onChangeMap={onChangeTeamMap} />
+        <TeamFilterToggle scope={teamScope} showAll={showAllTeams && !mapped} hidden={mapped ? 0 : filter?.hiddenHosts ?? 0} onChange={(v) => onShowAllTeams?.(v)} view={teamView} onView={onTeamView} onChangeMap={onChangeTeamMap} />
         <HostVerify serverId={coolifyServer?.id ?? null} rows={rows} onDone={onRecheck} />
         <p role="status" style={{ margin: "0 0 4px", fontSize: 12, color: unsure ? "var(--c-am)" : "var(--c-g)" }}>
           {unsure ? t("hostMatch.table.sureCount", { n: unsure }) : t("hostMatch.table.allSure")}
@@ -243,7 +245,8 @@ export function AgentMatchStep({
         </ul>
         <p style={{ margin: "12px 0 0", fontSize: 12, color: "var(--c-tx3)", lineHeight: 1.5 }}>
           {t("hostMatch.installHint")}{" "}
-          <Link href="/import/coolify-host" style={{ color: "var(--c-lapis)" }}>{t("coolifyTakeover.title")}</Link>
+          {/* a new tab, so the wizard (its session, team mapping and answers) stays where it is; the page installs per the session's team mapping */}
+          <Link href={`/import/coolify-host?session=${encodeURIComponent(sessionId)}`} target="_blank" rel="noopener noreferrer" style={{ color: "var(--c-lapis)" }}>{t("coolifyTakeover.title")}</Link>
         </p>
       </SectionCard>
 
