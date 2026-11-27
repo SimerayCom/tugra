@@ -341,7 +341,7 @@ describe("CoolifySource", () => {
       const hidden = await new CoolifySource(new FakeClient(routes)).discover();
       const w = hidden.warnings.find((x) => /read:sensitive/.test(x) && /not be carried|NOT be carried/.test(x));
       expect(w).toBeDefined();
-      expect(w).toMatch(/1 application\(s\)/);
+      expect(w).toMatch(/some applications/);
       expect(w).toMatch(/start commands/);
       expect(w).toMatch(/team admin or owner/);
       const visible = await new CoolifySource(new FakeClient({ ...routes, "/applications": [{ ...row475, build_pack: "dockerfile", install_command: null, build_command: null, start_command: null }] })).discover();

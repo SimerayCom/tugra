@@ -74,7 +74,7 @@ export function planImport(fleet: ForeignFleet, options: ImportOptions): ImportP
     ? { ...options, dbDataModes: Object.fromEntries(Object.entries(options.dbDataModes).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) }
     : options;
   const planHash = createHash("sha256").update(JSON.stringify({ items: sorted, options: hashedOptions })).digest("hex").slice(0, 32);
-  return { sourceKind: options.sourceKind, mode: options.mode ?? "copy", items, totals, warnings: fleet.warnings, planHash };
+  return { sourceKind: options.sourceKind, mode: options.mode ?? "copy", items, totals, warnings: fleet.warnings, ...(fleet.scopedWarnings?.length ? { scopedWarnings: fleet.scopedWarnings } : {}), planHash };
 }
 
 /**

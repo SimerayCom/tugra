@@ -50,6 +50,7 @@
   "volumes": "Volumes",
   "blockers": "Blockers",
   "warnings": "Notes",
+  "warningsMore": "+{n} more notes",
   "preflightTitle": "What will migrate",
   "inPlaceData": {
     "title": "Same machine: the data stays where it is.",

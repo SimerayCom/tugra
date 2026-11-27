@@ -1593,6 +1593,8 @@ export interface ImportPlan {
   items: ImportPlanItem[];
   totals: { apps: number; databases: number; volumes: number; blockers: number; services?: number };
   warnings: string[];
+  /** The notes of `warnings` that are about specific items, with the itemRefs they are about (additive, outside planHash). Absent on an older hub. */
+  scopedWarnings?: Array<{ text: string; itemRefs: string[] }>;
   planHash: string;
   preflight?: ImportPreflight;
   /** Additive, outside planHash. Absent on a hub that predates editable mappings (the review step is then hidden). */

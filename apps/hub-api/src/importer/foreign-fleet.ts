@@ -314,6 +314,9 @@ export interface ForeignFleet {
    *  local-docker) omit it and every resource lands in the single `input.environmentId`. */
   projects?: ForeignProject[];
   warnings: string[];
+  /** The `warnings` that are about specific items (an unhealthy app, a database's S3 backup), with the plan itemRefs they are about. Every text here is
+   *  ALSO in `warnings`; a review narrowed to some servers keeps only the ones of the items it moves. Optional: a source without it has no scoped notes. */
+  scopedWarnings?: Array<{ text: string; itemRefs: string[] }>;
 }
 
 // ── Plan (dry-run output) ──────────────────────────────────────────────────────────────────────────────
@@ -359,6 +362,8 @@ export interface ImportPlan {
   /** Source-level notices that are NOT per-item (e.g. "N compose-managed containers skipped"). Carried
    *  through from the discovered fleet so the review UI can show what the plan does NOT cover. */
   warnings: string[];
+  /** The notes of `warnings` that are about specific items, with the itemRefs they are about (additive; the review scopes the notes like the items). */
+  scopedWarnings?: Array<{ text: string; itemRefs: string[] }>;
   /** Deterministic hash of (items + options) — the executor requires it (confirmToken forge/stale guard).
    *  Advisory `warnings` are deliberately NOT hashed: they must not change the executor's idempotency key. */
   planHash: string;

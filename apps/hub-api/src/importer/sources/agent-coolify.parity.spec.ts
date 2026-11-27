@@ -16,10 +16,18 @@ class ApiClient implements CoolifyClient {
 }
 
 async function readBothWays(): Promise<{ api: ForeignFleet; agent: ForeignFleet; agentSource: AgentCoolifySource }> {
-  const api = await new CoolifySource(new ApiClient(apiRoutes())).discover();
+  const api = asAgentEnv(await new CoolifySource(new ApiClient(apiRoutes())).discover());
   const agentSource = new AgentCoolifySource(new AgentCoolifyClient({ read: async () => fixtureRead() }, "srv-agent"));
   const agent = await agentSource.discover();
   return { api, agent, agentSource };
+}
+
+/**
+ * The one difference in the env report, by design: the API path has no values because its TOKEN cannot read them (`tokenReadOnly`); the agent
+ * path has no token, and its plan says the consent is what is missing (`awaitingConsent`), or carries nothing blocking when it stands.
+ */
+function asAgentEnv(f: ForeignFleet): ForeignFleet {
+  return { ...f, apps: f.apps.map((a) => (a.envReport?.tokenReadOnly ? { ...a, envReport: { ...a.envReport, tokenReadOnly: false, awaitingConsent: true } } : a)) };
 }
 
 const plan = (fleet: ForeignFleet): ImportPlan => planImport(fleet, { sourceKind: "coolify" });
@@ -50,7 +58,7 @@ describe("agent read vs API read of the same Coolify (acceptance: same plan shap
 
   it("builds the same fleet apart from the Coolify team of each project and server", async () => {
     const { api, agent } = await readBothWays();
-    expect(withoutAgentOnly(agent)).toEqual({ ...api, warnings: agent.warnings });
+    expect(withoutAgentOnly(agent)).toEqual({ ...api, warnings: agent.warnings, scopedWarnings: agent.scopedWarnings });
   });
 
   it("the fleet is not trivially empty: the fixture exercises apps, databases, a service, volumes, domains and placement", async () => {
@@ -92,7 +100,7 @@ describe("agent read vs API read of the same Coolify (acceptance: same plan shap
     const read2 = fixtureRead();
     read2.sections.set("volumes", []);
     const noVol = await new AgentCoolifySource(new AgentCoolifyClient({ read: async () => read2 }, "srv-agent")).discover();
-    expect(withoutAgentOnly(noVol)).not.toEqual({ ...api, warnings: noVol.warnings });
+    expect(withoutAgentOnly(noVol)).not.toEqual({ ...api, warnings: noVol.warnings, scopedWarnings: noVol.scopedWarnings });
   });
 
   it("is not read-sensitive to row order (a shuffled read gives the same plan hash)", async () => {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { applyScopeToDoc, autoSelection, ownerSaidNotSame, ownerTugra, autoTargetOf, buildScope, defaultTeamId, inPlaceBlock, placementKindOf, restoreSelection, serializeSelection, serverReadiness, targetOf, scopePayload, emptySelection, hostOfItemRef, inScopeRefs, involvedHosts, missingDependencies, projectChoicesFor, scopedPlan, scopeIssue, scopeServiceSkips, sourceProjectRows, type ScopeSelection } from "./import-scope";
+import { applyScopeToDoc, autoSelection, ownerSaidNotSame, ownerTugra, autoTargetOf, buildScope, defaultTeamId, inPlaceBlock, placementKindOf, restoreSelection, serializeSelection, serverReadiness, targetOf, scopePayload, emptySelection, hostOfItemRef, inScopeRefs, involvedHosts, missingDependencies, projectChoicesFor, scopedPlan, scopedNotes, scopeIssue, scopeServiceSkips, sourceProjectRows, type ScopeSelection } from "./import-scope";
 import { emptyDoc } from "./import-mapping";
 import type { ImportPlan, ImportPlanItem } from "./types";
 
@@ -326,6 +326,20 @@ describe("applyScopeToDoc / scopeServiceSkips / scopedPlan", () => {
     expect(sp.totals).toEqual({ apps: 1, databases: 1, volumes: 1, blockers: 0, services: 1 });
     expect(sp.preflight?.databases.map((d) => d.name)).toEqual(["db"]);
     expect(sp.items.map((i) => i.itemRef).sort()).toEqual([DB, SVC, VOL, WEB].sort());
+  });
+  it("scopes the notes like the items: an unhealthy app or an S3 backup of a left-out server is not this move's note", () => {
+    const p = plan({
+      warnings: ["source note", "app web is not healthy", "app api is not healthy", "database db has S3", "S3 explanation"],
+      scopedWarnings: [
+        { text: "app web is not healthy", itemRefs: [WEB] },
+        { text: "app api is not healthy", itemRefs: [API] },
+        { text: "database db has S3", itemRefs: [DB] },
+        { text: "S3 explanation", itemRefs: [DB, "database:s2:other"] },
+      ],
+    });
+    const only = inScopeRefs(p, sel({ mode: "servers", hosts: new Set(["s1"]) }));
+    expect(scopedPlan(p, only).warnings).toEqual(["source note", "app web is not healthy", "database db has S3", "S3 explanation"]);
+    expect(scopedNotes(p, new Set([API]))).toEqual(["source note", "app api is not healthy"]);
   });
   it("is the very same plan object when nothing is left out", () => {
     const p = plan();

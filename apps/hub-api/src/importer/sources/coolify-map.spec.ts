@@ -247,7 +247,7 @@ describe("buildCoolifyFleet", () => {
 
   it("warns about SQLite (no equivalent) and the service needing a sensitive token", () => {
     expect(fleet.warnings.some((w) => /no Tugra equivalent/.test(w))).toBe(true);
-    expect(fleet.warnings.some((w) => /service\(s\) need a read:sensitive/.test(w))).toBe(true);
+    expect(fleet.warnings.some((w) => /^service .* needs a read:sensitive/.test(w))).toBe(true);
   });
 
   it("is secret-free — no password/value material anywhere", () => {
@@ -419,7 +419,8 @@ describe("mapService — members, domains, placement (G4-C)", () => {
 
   it("the need-read:sensitive warning stays only for a service WITHOUT a raw compose", () => {
     const fleet = buildCoolifyFleet({ servers: [], resourcesByServer: {}, apps: [], databases: [], services: [row, { uuid: "svc2", name: "x" }], envsByResource: {}, volumesByResource: {} });
-    expect(fleet.warnings.filter((w) => /service\(s\) need a read:sensitive/.test(w))).toEqual(["1 service(s) need a read:sensitive token to fetch their compose file before import"]);
+    expect(fleet.warnings.filter((w) => /needs a read:sensitive/.test(w))).toEqual(["service x needs a read:sensitive token to fetch its compose file before import"]);
+    expect(fleet.scopedWarnings).toEqual([{ text: "service x needs a read:sensitive token to fetch its compose file before import", itemRefs: ["service:_:svc2"] }]);
   });
 });
 
@@ -593,7 +594,7 @@ describe("scheduled database backups (B1): reported as not carried, never a secr
 
   it("reaches the plan as a warn risk and the fleet warns once about the S3 targets", () => {
     const fleet = buildCoolifyFleet({ servers: [], resourcesByServer: {}, apps: [], databases: [pg], services: [], envsByResource: {}, volumesByResource: {}, backupsByResource: { d1: [{ enabled: true, save_s3: true, frequency: "daily", s3_storage_id: 7 }] }, s3Storages: s3 });
-    expect(fleet.warnings.filter((w) => /uploads to S3/.test(w))).toEqual([expect.stringMatching(/1 database\(s\) have a scheduled backup that uploads to S3 \(db-bucket\)/)]);
+    expect(fleet.warnings.filter((w) => /uploads to S3/.test(w))).toEqual(["database orders has a scheduled backup that uploads to S3 (db-bucket)"]);
     const plan = planImport(fleet, { sourceKind: "coolify" });
     expect(plan.items[0].risks).toContainEqual(expect.objectContaining({ level: "warn", code: "db.notCarried.backupSchedule" }));
   });
@@ -741,14 +742,19 @@ describe("sensitive fields hidden by the token (R5)", () => {
 
   const input = (apps: CoolifyFleetInput["apps"], databases: CoolifyFleetInput["databases"] = []): CoolifyFleetInput => ({ servers: [], resourcesByServer: {}, apps, databases, services: [], envsByResource: {}, volumesByResource: {} });
 
-  it("the fleet gets ONE warning counting the apps and databases read without the gated fields, naming the fix", () => {
+  it("the fleet gets ONE warning for the applications and ONE for the databases read without the gated fields, each naming the fix and the items it is about", () => {
     const fleet = buildCoolifyFleet(input([{ uuid: "a" }, { uuid: "b", start_command: null }, { uuid: "c" }], [{ uuid: "d", database_type: "standalone-redis" }]));
     const warns = fleet.warnings.filter((w) => /sensitive fields/.test(w));
-    expect(warns).toHaveLength(1);
-    expect(warns[0]).toMatch(/2 application\(s\)/);
-    expect(warns[0]).toMatch(/1 database\(s\)/);
-    expect(warns[0]).toMatch(/NOT be carried/);
-    expect(warns[0]).toMatch(/read:sensitive ability as a team admin or owner/);
+    expect(warns).toHaveLength(2);
+    expect(warns[0]).toMatch(/some applications/);
+    expect(warns[1]).toMatch(/some databases/);
+    for (const w of warns) {
+      expect(w).toMatch(/NOT be carried/);
+      expect(w).toMatch(/read:sensitive ability as a team admin or owner/);
+    }
+    // the apps a and c (not b, which carries a gated key) and the database d: a review that moves only some of them shows only their note
+    expect(fleet.scopedWarnings!.find((w) => /some applications/.test(w.text))!.itemRefs).toEqual(["app:_:a", "app:_:c"]);
+    expect(fleet.scopedWarnings!.find((w) => /some databases/.test(w.text))!.itemRefs).toEqual(["database:_:d"]);
   });
 
   it("no warning for rows that carry the keys (4.1.2 to 4.6, or a read:sensitive 4.7 token) or for an empty fleet", () => {

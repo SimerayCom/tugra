@@ -388,6 +388,16 @@ export function scopeServiceSkips(plan: ImportPlan, inScope: ReadonlySet<string>
   return out;
 }
 
+/** The notes of the plan: the ones about specific items only when one of those items is in scope (an unhealthy app of another team is not this move's note); every other note stays. */
+export function scopedNotes(plan: ImportPlan, inScope: ReadonlySet<string>): string[] {
+  const about = new Map<string, string[]>();
+  for (const w of plan.scopedWarnings ?? []) about.set(w.text, [...(about.get(w.text) ?? []), ...w.itemRefs]);
+  return plan.warnings.filter((w) => {
+    const refs = about.get(w);
+    return !refs || refs.some((r) => inScope.has(r));
+  });
+}
+
 /** The plan as the later steps show it: only what is in scope (counts, blockers, coverage and the named preflight lists follow).
  *  planHash is kept, because the hub re-plans the whole source and the apply is bound to that hash. */
 export function scopedPlan(plan: ImportPlan, inScope: ReadonlySet<string>): ImportPlan {
@@ -411,6 +421,7 @@ export function scopedPlan(plan: ImportPlan, inScope: ReadonlySet<string>): Impo
   const count = (k: ImportPlanItem["kind"]) => items.filter((i) => i.kind === k).length;
   return {
     ...plan,
+    warnings: scopedNotes(plan, inScope),
     items,
     totals: {
       apps: count("app"),

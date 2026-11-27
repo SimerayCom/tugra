@@ -71,6 +71,9 @@ export function tokenPageUrl(kind: ImportRemoteKind, baseUrl: string): string | 
 }
 const NEEDS_KEY = { coolify: "import.needsCoolify", dokploy: "import.needsDokploy", caprover: "import.needsCaprover" } as const;
 const SOURCE_KINDS: readonly ImportRemoteKind[] = ["coolify", "dokploy", "caprover"];
+/** The notes the plan card lists; the rest is a count (an owner with many unhealthy apps does not get a wall of text). */
+const WARNINGS_SHOWN = 12;
+
 /** An operation's source kind (a string from the hub) narrowed to a wizard source; anything unknown reads as Coolify. */
 const asRemoteKind = (k: string | null | undefined): ImportRemoteKind => (k === "dokploy" || k === "caprover" ? k : "coolify");
 
@@ -749,9 +752,10 @@ function PlanView({
           <div style={{ marginTop: 14 }}>
             <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("import.warnings")}</div>
             <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12, color: "var(--c-am)" }}>
-              {plan.warnings.map((w, i) => (
+              {plan.warnings.slice(0, WARNINGS_SHOWN).map((w, i) => (
                 <li key={i}>{w}</li>
               ))}
+              {plan.warnings.length > WARNINGS_SHOWN && <li style={{ color: "var(--c-tx3)" }}>{t("import.warningsMore", { n: plan.warnings.length - WARNINGS_SHOWN })}</li>}
             </ul>
           </div>
         )}

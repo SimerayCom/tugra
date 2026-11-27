@@ -64,7 +64,12 @@ export class AgentCoolifySource extends CoolifySource {
     // The compose text of apps and services is part of what the plan needs: read when the owner consented (otherwise the plan says so).
     await this.ensure(["service_compose"]);
     const [fleet, view, valuesAllowed] = await Promise.all([super.discover(), this.agentClient.agentView(), this.envValuesAllowed()]);
-    return { ...fleet, apps: fleet.apps.map((a) => withAgentEnvReport(a, valuesAllowed)), warnings: [...fleet.warnings.map(agentWarning), ...view.warnings] };
+    return {
+      ...fleet,
+      apps: fleet.apps.map((a) => withAgentEnvReport(a, valuesAllowed)),
+      warnings: [...fleet.warnings.map(agentWarning), ...view.warnings],
+      ...(fleet.scopedWarnings ? { scopedWarnings: fleet.scopedWarnings.map((w) => ({ ...w, text: agentWarning(w.text) })) } : {}),
+    };
   }
 
   /** Does the owner's consent for THIS import session cover the variable values? A cheap grant lookup, nothing is read. */
@@ -175,5 +180,5 @@ function consentRequired(): ForbiddenException {
 
 /** A token path tells the user to use a `read:sensitive` token; on the agent path the same text is read by the sealed secret step. */
 function agentWarning(w: string): string {
-  return w.replace(/need a read:sensitive token to fetch their compose file before import/, "have their compose file read by the sealed secret step (not read yet)");
+  return w.replace(/needs a read:sensitive token to fetch its compose file before import/, "has its compose file read by the sealed secret step (not read yet)");
 }

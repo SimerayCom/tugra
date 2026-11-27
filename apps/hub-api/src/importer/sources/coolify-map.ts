@@ -1,4 +1,5 @@
 import { why } from "../reason";
+import { ns } from "../import-planner";
 import { isSensitiveVisible } from "./coolify-sensitive";
 import { coolifyHealth, coolifyRestartCount } from "./coolify-health";
 import { isDegradedHealth } from "../import-source";
@@ -855,8 +856,6 @@ export function mapService(svc: CoolifyService, ctx: { serverRef?: string; serve
   };
 }
 
-const MAX_HEALTH_WARNINGS = 10;
-
 /** The one-line plan warning for an app that is not healthy at the source. */
 export function sourceHealthWarning(name: string, h: NonNullable<ForeignApp["sourceHealth"]>): string {
   const bits = [h.status ?? h.health, ...(h.restartCount ? [`${h.restartCount} restarts`] : [])];
@@ -896,38 +895,40 @@ export function buildCoolifyFleet(input: CoolifyFleetInput): ForeignFleet {
   });
 
   const warnings: string[] = [...(input.warnings ?? [])];
-  const composeNeedingSecret = apps.filter((a) => a.kind === "compose" && !a.composeFile).length;
-  if (composeNeedingSecret > 0) {
-    warnings.push(`${composeNeedingSecret} docker-compose app(s) need a read:sensitive token to fetch their compose file before import`);
+  // A note about specific items carries the refs of those items, so a review narrowed to some servers shows only the notes of what it moves.
+  const scopedWarnings: NonNullable<ForeignFleet["scopedWarnings"]> = [];
+  const note = (text: string, itemRefs: string[]): void => {
+    warnings.push(text);
+    scopedWarnings.push({ text, itemRefs });
+  };
+  const refOf = (kind: "app" | "database" | "service", x: { serverRef?: string; sourceRef: string }): string => ns(kind, x.serverRef, x.sourceRef);
+  for (const a of apps.filter((x) => x.kind === "compose" && !x.composeFile)) note(`app ${a.name} needs a read:sensitive token to fetch its compose file before import`, [refOf("app", a)]);
+  for (const sv of services.filter((x) => !x.composeFile)) note(`service ${sv.name} needs a read:sensitive token to fetch its compose file before import`, [refOf("service", sv)]);
+  const hiddenApps = input.apps.filter((a) => !isSensitiveVisible(a, "application"));
+  const hiddenDbs = input.databases.filter((d) => !isSensitiveVisible(d, "database"));
+  const hiddenTail =
+    "they will NOT be carried and must be re-entered after the import. To carry them, create the Coolify token with the read:sensitive ability as a team admin or owner (Coolify ignores the ability for other members), then reconnect";
+  const appRefOfUuid = new Map(apps.map((a) => [a.sourceRef, refOf("app", a)]));
+  const dbRefOfUuid = new Map(databases.map((d) => [d.sourceRef, refOf("database", d)]));
+  const refsOf = (rows: Array<{ uuid: string }>, by: Map<string, string>): string[] => rows.flatMap((r) => (by.has(r.uuid) ? [by.get(r.uuid)!] : []));
+  if (hiddenApps.length > 0) {
+    note(`the API token cannot read the sensitive fields of some applications (install/build/start commands, deploy hooks, health-check commands, custom Docker options, container labels and inline Dockerfile) - ${hiddenTail}`, refsOf(hiddenApps, appRefOfUuid));
   }
-  const servicesNeedingSecret = services.filter((s) => !s.composeFile).length;
-  if (servicesNeedingSecret > 0) {
-    warnings.push(`${servicesNeedingSecret} service(s) need a read:sensitive token to fetch their compose file before import`);
+  if (hiddenDbs.length > 0) {
+    note(`the API token cannot read the sensitive fields of some databases (custom config files and Docker options) - ${hiddenTail}`, refsOf(hiddenDbs, dbRefOfUuid));
   }
-  const hiddenApps = input.apps.filter((a) => !isSensitiveVisible(a, "application")).length;
-  const hiddenDbs = input.databases.filter((d) => !isSensitiveVisible(d, "database")).length;
-  if (hiddenApps > 0 || hiddenDbs > 0) {
-    const what = [
-      hiddenApps > 0 ? `${hiddenApps} application(s): install/build/start commands, deploy hooks, health-check commands, custom Docker options, container labels and inline Dockerfile` : "",
-      hiddenDbs > 0 ? `${hiddenDbs} database(s): custom config files and Docker options` : "",
-    ].filter(Boolean);
-    warnings.push(
-      `the API token cannot read the sensitive fields of ${what.join("; ")} — they will NOT be carried and must be re-entered after the import. To carry them, create the Coolify token with the read:sensitive ability as a team admin or owner (Coolify ignores the ability for other members), then reconnect`,
-    );
-  }
-  // Apps already failing at the source (exited, unhealthy, crash-looping): migrated as they are, so the plan names them.
-  const degraded = apps.filter((a) => a.sourceHealth && isDegradedHealth(a.sourceHealth.health, a.sourceHealth.restartCount));
-  for (const a of degraded.slice(0, MAX_HEALTH_WARNINGS)) warnings.push(sourceHealthWarning(a.name, a.sourceHealth!));
-  if (degraded.length > MAX_HEALTH_WARNINGS) warnings.push(`${degraded.length - MAX_HEALTH_WARNINGS} more app(s) are not healthy at the source (see the preflight)`);
   const s3Dbs = databases.filter((d) => d.backupSchedule?.s3);
-  if (s3Dbs.length > 0) {
-    const targets = [...new Set(s3Dbs.flatMap((d) => d.backupSchedule?.targets ?? []))].sort();
-    warnings.push(
-      `${s3Dbs.length} database(s) have a scheduled backup that uploads to S3${targets.length ? ` (${targets.join(", ")})` : ""}: Tugra does not carry the schedules or the S3 destinations (their credentials are never read) — add the destination in Tugra's Backups and recreate each schedule after the import`,
-    );
+  for (const d of s3Dbs) {
+    const targets = d.backupSchedule?.targets ?? [];
+    note(`database ${d.name} has a scheduled backup that uploads to S3${targets.length ? ` (${targets.join(", ")})` : ""}`, [refOf("database", d)]);
   }
-  const unknownDbs = databases.filter((d) => d.engine === "UNKNOWN").length;
-  if (unknownDbs > 0) warnings.push(`${unknownDbs} database(s) have an engine with no Tugra equivalent (e.g. SQLite) and cannot be imported`);
+  if (s3Dbs.length > 0) {
+    note("Tugra does not carry the backup schedules or the S3 destinations (their credentials are never read): add the destination in Tugra's Backups and recreate each schedule after the import", s3Dbs.map((d) => refOf("database", d)));
+  }
+  for (const d of databases.filter((x) => x.engine === "UNKNOWN")) note(`database ${d.name} has an engine with no Tugra equivalent (e.g. SQLite) and cannot be imported`, [refOf("database", d)]);
+  // Apps already failing at the source (exited, unhealthy, crash-looping): migrated as they are, so the plan names them. One line per app: the
+  // review shows the ones of the apps it moves (and caps the list itself).
+  for (const a of apps.filter((x) => x.sourceHealth && isDegradedHealth(x.sourceHealth.health, x.sourceHealth.restartCount))) note(sourceHealthWarning(a.name, a.sourceHealth!), [refOf("app", a)]);
 
   return {
     servers: input.servers.map(foreignServerOf),
@@ -937,5 +938,6 @@ export function buildCoolifyFleet(input: CoolifyFleetInput): ForeignFleet {
     volumes: [], // Coolify volumes are always resource-owned (attached above); no standalone volumes
     sharedEnv: [], // team/project shared vars are resolved at apply time (read:sensitive); not in discover
     warnings,
+    ...(scopedWarnings.length ? { scopedWarnings } : {}),
   };
 }
