@@ -2,6 +2,8 @@
  * Settings carried by an import (mirrors the hub's `importer/settings/settings-types.ts`; secret-free by construction:
  * the preview never holds a token, a webhook URL, a key or a variable value). Pure helpers for the review panel.
  */
+import type { ImportRemoteKind } from "./types";
+
 export const SETTINGS_SECTIONS = ["notifications", "sharedVariables", "storages", "scheduledTasks", "serverSettings", "tags", "members"] as const;
 export type SettingsSection = (typeof SETTINGS_SECTIONS)[number];
 export type UnavailableReason = "not_exposed" | "forbidden" | "error";
@@ -54,7 +56,7 @@ export interface SettingsApplyResult {
 
 export interface SettingsApplyBody {
   sessionId: string;
-  sourceKind?: "coolify" | "dokploy";
+  sourceKind?: ImportRemoteKind;
   opId?: string;
   teamId?: string;
   select: string[];
@@ -120,7 +122,7 @@ export function readySelection(p: SettingsPreview, inp: SettingsInputs): Setting
 export const needsInviteConfirmation = (p: SettingsPreview, inp: SettingsInputs): boolean => allEntries(p).some((e) => e.section === "members" && e.selectable && inp.selected.has(e.id));
 
 /** The request body. Only what the ticked entries need is sent (no stray keys, no keys of an unticked storage). */
-export function buildApplyBody(p: SettingsPreview, inp: SettingsInputs, ctx: { sessionId: string; sourceKind: "coolify" | "dokploy"; opId?: string; teamId?: string }): SettingsApplyBody {
+export function buildApplyBody(p: SettingsPreview, inp: SettingsInputs, ctx: { sessionId: string; sourceKind: ImportRemoteKind; opId?: string; teamId?: string }): SettingsApplyBody {
   const ready = readySelection(p, inp);
   const body: SettingsApplyBody = { sessionId: ctx.sessionId, sourceKind: ctx.sourceKind, select: ready.map((e) => e.id) };
   if (ctx.opId) body.opId = ctx.opId;

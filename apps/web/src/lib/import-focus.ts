@@ -1,13 +1,13 @@
-import type { ImportPlan } from "./types";
+import type { ImportPlan, ImportRemoteKind } from "./types";
 import { type ScopeSelection, emptySelection, hostTugra, inPlaceBlock, sourceHostRows, sourceProjectRows } from "./import-scope";
 
 /**
- * What a page that sends the user to the import knows already: which source (Coolify or Dokploy), where it lives, and optionally a
+ * What a page that sends the user to the import knows already: which source (Coolify, Dokploy or CapRover), where it lives, and optionally a
  * source server or project to start from. It travels through same-tab storage, never the URL, so a crafted link cannot aim the
  * import at someone else's host. It never holds a token.
  */
 export interface ImportFocus {
-  kind?: "coolify" | "dokploy";
+  kind?: ImportRemoteKind;
   /** The source panel's address (http or https). */
   address?: string | null;
   /** The Tugra server the user came from (shown as a note; the scope step does the matching). */
@@ -30,7 +30,7 @@ export interface ImportFocus {
 
 export const IMPORT_FOCUS_KEY = "tugra.import.focus";
 /** The last source address a connection was made to, per source kind. An address only, never a token. */
-export const lastImportUrlKey = (kind: "coolify" | "dokploy"): string => `tugra.import.lastUrl.${kind}`;
+export const lastImportUrlKey = (kind: ImportRemoteKind): string => `tugra.import.lastUrl.${kind}`;
 
 const URL_RE = /^https?:\/\/\S+$/i;
 const SESSION_ID_RE = /^[A-Za-z0-9_-]{8,64}$/;
@@ -48,7 +48,7 @@ export function parseImportFocus(raw: string | null): ImportFocus | null {
   if (!v || typeof v !== "object") return null;
   const o = v as Record<string, unknown>;
   const out: ImportFocus = {};
-  if (o.kind === "coolify" || o.kind === "dokploy") out.kind = o.kind;
+  if (o.kind === "coolify" || o.kind === "dokploy" || o.kind === "caprover") out.kind = o.kind;
   if (typeof o.address === "string" && URL_RE.test(o.address) && o.address.length <= 300) out.address = o.address;
   const fromServerName = short(o.fromServerName);
   if (fromServerName) out.fromServerName = fromServerName;
@@ -88,7 +88,7 @@ export function takeImportFocus(): ImportFocus | null {
   }
 }
 
-export function rememberLastImportUrl(kind: "coolify" | "dokploy", address: string): void {
+export function rememberLastImportUrl(kind: ImportRemoteKind, address: string): void {
   try {
     if (URL_RE.test(address)) window.localStorage.setItem(lastImportUrlKey(kind), address);
   } catch {
@@ -96,7 +96,7 @@ export function rememberLastImportUrl(kind: "coolify" | "dokploy", address: stri
   }
 }
 
-export function lastImportUrl(kind: "coolify" | "dokploy"): string | null {
+export function lastImportUrl(kind: ImportRemoteKind): string | null {
   try {
     const v = window.localStorage.getItem(lastImportUrlKey(kind));
     return v && URL_RE.test(v) ? v : null;

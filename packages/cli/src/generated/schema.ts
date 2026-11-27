@@ -35403,7 +35403,7 @@ export interface operations {
             content: {
                 "application/json": {
                     /** @enum {string} */
-                    sourceKind: "coolify" | "dokploy";
+                    sourceKind: "coolify" | "dokploy" | "caprover";
                     teamId: string;
                     /** Format: uri */
                     baseUrl: string;
@@ -35550,7 +35550,7 @@ export interface operations {
             content: {
                 "application/json": {
                     /** @enum {string} */
-                    sourceKind: "coolify" | "dokploy";
+                    sourceKind: "coolify" | "dokploy" | "caprover";
                     teamId: string;
                     /** Format: uri */
                     baseUrl: string;
@@ -35639,6 +35639,13 @@ export interface operations {
                     dbDataModes?: {
                         [key: string]: "volume";
                     };
+                } | {
+                    /** @enum {string} */
+                    sourceKind: "caprover";
+                    sessionId: string;
+                    dbDataModes?: {
+                        [key: string]: "volume";
+                    };
                 };
             };
         };
@@ -35708,7 +35715,7 @@ export interface operations {
                 "application/json": {
                     sessionId: string;
                     /** @enum {string} */
-                    sourceKind?: "coolify" | "dokploy";
+                    sourceKind?: "coolify" | "dokploy" | "caprover";
                     choices?: {
                         [key: string]: {
                             skip?: boolean;
@@ -35811,7 +35818,7 @@ export interface operations {
                 "application/json": {
                     sessionId: string;
                     /** @enum {string} */
-                    sourceKind?: "coolify" | "dokploy";
+                    sourceKind?: "coolify" | "dokploy" | "caprover";
                     opId?: string;
                     teamId?: string;
                 };
@@ -35883,7 +35890,7 @@ export interface operations {
                 "application/json": {
                     sessionId: string;
                     /** @enum {string} */
-                    sourceKind?: "coolify" | "dokploy";
+                    sourceKind?: "coolify" | "dokploy" | "caprover";
                     opId?: string;
                     teamId?: string;
                     select: string[];
@@ -36021,7 +36028,7 @@ export interface operations {
                         version: 1;
                         scope?: {
                             /** @enum {string} */
-                            sourceKind: "coolify" | "dokploy";
+                            sourceKind: "coolify" | "dokploy" | "caprover";
                             scopeKey?: string;
                         };
                         /** @default {} */
@@ -36113,7 +36120,99 @@ export interface operations {
                         version: 1;
                         scope?: {
                             /** @enum {string} */
-                            sourceKind: "coolify" | "dokploy";
+                            sourceKind: "coolify" | "dokploy" | "caprover";
+                            scopeKey?: string;
+                        };
+                        /** @default {} */
+                        items?: {
+                            [key: string]: {
+                                include?: boolean;
+                                name?: string;
+                                project?: string;
+                                environment?: string;
+                                containerAlias?: string | null;
+                                dbIdentifier?: string;
+                            };
+                        };
+                        /** @default {} */
+                        projects?: {
+                            [key: string]: {
+                                name?: string;
+                                environments?: {
+                                    [key: string]: string;
+                                };
+                            };
+                        };
+                        /** @default {} */
+                        gitSources?: {
+                            [key: string]: {
+                                name: string;
+                            };
+                        };
+                        /** @default [] */
+                        acks?: string[];
+                    };
+                    mappingHash?: string;
+                    reconcile?: boolean;
+                    ignoreStoredMapping?: boolean;
+                    saveMapping?: boolean;
+                    dbDataModes?: {
+                        [key: string]: "volume";
+                    };
+                    serverMap?: {
+                        [key: string]: string;
+                    };
+                } | {
+                    /** @enum {string} */
+                    sourceKind: "caprover";
+                    sessionId: string;
+                    targetServerId: string;
+                    environmentId?: string;
+                    planHash: string;
+                    acks?: {
+                        /** @enum {string} */
+                        code: "app.env.unresolved" | "app.env.key.invalid";
+                        itemRef?: string;
+                    }[];
+                    serviceChoices?: {
+                        [key: string]: {
+                            skip?: boolean;
+                            name?: string;
+                            environmentId?: string;
+                            targetServerId?: string;
+                            serviceDomains?: {
+                                service: string;
+                                hostname: string;
+                                port: number;
+                            }[];
+                            hostnameMap?: {
+                                [key: string]: string;
+                            };
+                            volumes?: {
+                                [key: string]: {
+                                    /** @enum {string} */
+                                    policy: "copy" | "empty" | "skip";
+                                    owner?: {
+                                        uid: number;
+                                        gid: number;
+                                    };
+                                };
+                            };
+                            dropMembers?: string[];
+                            pinImages?: boolean;
+                            pins?: {
+                                [key: string]: string;
+                            };
+                            privateNetwork?: boolean;
+                            hold?: boolean;
+                        };
+                    };
+                    mapping?: {
+                        /** @enum {number} */
+                        version: 1;
+                        scope?: {
+                            /** @enum {string} */
+                            sourceKind: "coolify" | "dokploy" | "caprover";
                             scopeKey?: string;
                         };
                         /** @default {} */
@@ -36374,7 +36473,7 @@ export interface operations {
                 "application/json": {
                     sessionId: string;
                     /** @enum {string} */
-                    sourceKind: "coolify" | "dokploy";
+                    sourceKind: "coolify" | "dokploy" | "caprover";
                     planHash: string;
                     targetServerId: string;
                     environmentId?: string;
@@ -36395,7 +36494,7 @@ export interface operations {
                         version: 1;
                         scope?: {
                             /** @enum {string} */
-                            sourceKind: "coolify" | "dokploy";
+                            sourceKind: "coolify" | "dokploy" | "caprover";
                             scopeKey?: string;
                         };
                         /** @default {} */
@@ -36710,7 +36809,7 @@ export interface operations {
                         version: 1;
                         scope?: {
                             /** @enum {string} */
-                            sourceKind: "coolify" | "dokploy";
+                            sourceKind: "coolify" | "dokploy" | "caprover";
                             scopeKey?: string;
                         };
                         /** @default {} */
@@ -49166,7 +49265,7 @@ export interface operations {
                         version: 1;
                         scope?: {
                             /** @enum {string} */
-                            sourceKind: "coolify" | "dokploy";
+                            sourceKind: "coolify" | "dokploy" | "caprover";
                             scopeKey?: string;
                         };
                         /** @default {} */

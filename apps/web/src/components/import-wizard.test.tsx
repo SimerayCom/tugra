@@ -614,6 +614,56 @@ describe("ImportWizard", () => {
     expect(screen.getByText(/instead of the old Dokploy one/)).toBeTruthy();
   });
 
+  // ── CapRover source: dashboard password, no token page, no guided run, manual data note ─────────────────
+  const connectCaprover = async () => {
+    await screen.findByRole("radio", { name: "CapRover" });
+    await waitFor(() => expect(qc.getQueryData(["teams"])).toBeTruthy());
+    fireEvent.click(screen.getByRole("radio", { name: "CapRover" }));
+    fireEvent.change(screen.getByLabelText("CapRover URL"), { target: { value: "https://captain.example.com" } });
+    fireEvent.change(screen.getByLabelText("Dashboard password"), { target: { value: "dash-pw" } });
+    fireEvent.click(screen.getByRole("button", { name: "Connect & preview" }));
+  };
+
+  it("CapRover: URL + password in a password field, no token page link, no agent path", async () => {
+    wrap(<ImportWizard />);
+    await screen.findByRole("radio", { name: "CapRover" });
+    fireEvent.click(screen.getByRole("radio", { name: "CapRover" }));
+    expect(screen.getByRole("radio", { name: "CapRover" }).getAttribute("aria-checked")).toBe("true");
+    expect((screen.getByLabelText("Dashboard password") as HTMLInputElement).type).toBe("password");
+    expect(screen.getByTestId("import-needs").textContent).toMatch(/CapRover dashboard address and its password/);
+    expect(screen.getByText("Enter the dashboard password to see what will move.")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Connect through the agent (recommended)" })).toBeNull();
+    expect(screen.queryByText(/Open the key page/)).toBeNull();
+  });
+
+  it("CapRover: connect, plan and apply carry the kind; the password is cleared once the session exists; data copy is a note, not the migrator", async () => {
+    const connectSpy = vi.spyOn(api, "importConnect").mockResolvedValue({ sessionId: "s3", expiresAt: "2026-01-01T00:00:00.000Z" });
+    const planSpy = vi.spyOn(api, "importPlan").mockResolvedValue({ ...plan, sourceKind: "caprover" });
+    const applySpy = vi.spyOn(api, "importApply").mockResolvedValue({ opId: "op1" });
+    vi.spyOn(api, "getImportOperation").mockResolvedValue({ ...settledOp, sourceKind: "caprover" });
+    wrap(<ImportWizard />);
+    await connectCaprover();
+    await screen.findByText("Import preview");
+    expect(connectSpy).toHaveBeenCalledWith({ sourceKind: "caprover", teamId: "t1", baseUrl: "https://captain.example.com", token: "dash-pw" });
+    expect(planSpy).toHaveBeenCalledWith({ sourceKind: "caprover", sessionId: "s3" });
+    await screen.findByRole("option", { name: "Server A" });
+    expect(screen.queryByRole("button", { name: /guided/i })).toBeNull(); // guided runs are Coolify and Dokploy only
+    fireEvent.click(screen.getByRole("button", { name: "Import to Tugra" }));
+    await screen.findByText("DONE");
+    expect(applySpy).toHaveBeenCalledWith({ sourceKind: "caprover", sessionId: "s3", targetServerId: "srv1", planHash: "a".repeat(32) });
+    expect(screen.getByText("Copy database and volume data")).toBeTruthy();
+    expect(screen.queryByText(/run it on your source/)).toBeNull();
+    expect(screen.getByText(/instead of the old CapRover one/)).toBeTruthy();
+  });
+
+  it("CapRover: a wrong password shows the hub's refusal and leaves the form to retry", async () => {
+    vi.spyOn(api, "importConnect").mockRejectedValue(new Error("could not reach CapRover: CapRover API error 401 (check the dashboard password)"));
+    wrap(<ImportWizard />);
+    await connectCaprover();
+    await waitFor(() => expect(screen.getAllByText(/CapRover API error 401/).length).toBeGreaterThan(0));
+    expect((screen.getByLabelText("Dashboard password") as HTMLInputElement).value).toBe("dash-pw");
+  });
+
   it("Coolify post-import copy is unchanged", async () => {
     vi.spyOn(api, "importConnect").mockResolvedValue({ sessionId: "s1", expiresAt: "2026-01-01T00:00:00.000Z" });
     vi.spyOn(api, "importPlan").mockResolvedValue(plan);

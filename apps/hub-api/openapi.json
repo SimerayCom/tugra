@@ -48422,7 +48422,8 @@
                     "type": "string",
                     "enum": [
                       "coolify",
-                      "dokploy"
+                      "dokploy",
+                      "caprover"
                     ]
                   },
                   "teamId": {
@@ -48644,7 +48645,8 @@
                     "type": "string",
                     "enum": [
                       "coolify",
-                      "dokploy"
+                      "dokploy",
+                      "caprover"
                     ]
                   },
                   "teamId": {
@@ -48825,6 +48827,35 @@
                       "sessionId"
                     ],
                     "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "sourceKind": {
+                        "type": "string",
+                        "enum": [
+                          "caprover"
+                        ]
+                      },
+                      "sessionId": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "dbDataModes": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "type": "string",
+                          "enum": [
+                            "volume"
+                          ]
+                        }
+                      }
+                    },
+                    "required": [
+                      "sourceKind",
+                      "sessionId"
+                    ],
+                    "additionalProperties": false
                   }
                 ]
               }
@@ -48915,7 +48946,8 @@
                     "type": "string",
                     "enum": [
                       "coolify",
-                      "dokploy"
+                      "dokploy",
+                      "caprover"
                     ]
                   },
                   "choices": {
@@ -49136,7 +49168,8 @@
                     "type": "string",
                     "enum": [
                       "coolify",
-                      "dokploy"
+                      "dokploy",
+                      "caprover"
                     ]
                   },
                   "opId": {
@@ -49241,7 +49274,8 @@
                     "type": "string",
                     "enum": [
                       "coolify",
-                      "dokploy"
+                      "dokploy",
+                      "caprover"
                     ]
                   },
                   "opId": {
@@ -49608,7 +49642,8 @@
                                 "type": "string",
                                 "enum": [
                                   "coolify",
-                                  "dokploy"
+                                  "dokploy",
+                                  "caprover"
                                 ]
                               },
                               "scopeKey": {
@@ -49938,7 +49973,339 @@
                                 "type": "string",
                                 "enum": [
                                   "coolify",
-                                  "dokploy"
+                                  "dokploy",
+                                  "caprover"
+                                ]
+                              },
+                              "scopeKey": {
+                                "type": "string",
+                                "maxLength": 64
+                              }
+                            },
+                            "required": [
+                              "sourceKind"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "items": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "type": "object",
+                              "properties": {
+                                "include": {
+                                  "type": "boolean"
+                                },
+                                "name": {
+                                  "type": "string",
+                                  "maxLength": 400
+                                },
+                                "project": {
+                                  "type": "string",
+                                  "maxLength": 400
+                                },
+                                "environment": {
+                                  "type": "string",
+                                  "maxLength": 400
+                                },
+                                "containerAlias": {
+                                  "nullable": true,
+                                  "type": "string",
+                                  "maxLength": 64
+                                },
+                                "dbIdentifier": {
+                                  "type": "string",
+                                  "maxLength": 63
+                                }
+                              },
+                              "additionalProperties": false
+                            },
+                            "default": {}
+                          },
+                          "projects": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "type": "object",
+                              "properties": {
+                                "name": {
+                                  "type": "string",
+                                  "maxLength": 400
+                                },
+                                "environments": {
+                                  "type": "object",
+                                  "additionalProperties": {
+                                    "type": "string",
+                                    "maxLength": 400
+                                  }
+                                }
+                              },
+                              "additionalProperties": false
+                            },
+                            "default": {}
+                          },
+                          "gitSources": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "type": "object",
+                              "properties": {
+                                "name": {
+                                  "type": "string",
+                                  "maxLength": 400
+                                }
+                              },
+                              "required": [
+                                "name"
+                              ],
+                              "additionalProperties": false
+                            },
+                            "default": {}
+                          },
+                          "acks": {
+                            "default": [],
+                            "maxItems": 5000,
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "maxLength": 340
+                            }
+                          }
+                        },
+                        "required": [
+                          "version"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "mappingHash": {
+                        "type": "string",
+                        "pattern": "^[a-f0-9]{32}$"
+                      },
+                      "reconcile": {
+                        "type": "boolean"
+                      },
+                      "ignoreStoredMapping": {
+                        "type": "boolean"
+                      },
+                      "saveMapping": {
+                        "type": "boolean"
+                      },
+                      "dbDataModes": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "type": "string",
+                          "enum": [
+                            "volume"
+                          ]
+                        }
+                      },
+                      "serverMap": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 64
+                        }
+                      }
+                    },
+                    "required": [
+                      "sourceKind",
+                      "sessionId",
+                      "targetServerId",
+                      "planHash"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "sourceKind": {
+                        "type": "string",
+                        "enum": [
+                          "caprover"
+                        ]
+                      },
+                      "sessionId": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "targetServerId": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "environmentId": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "planHash": {
+                        "type": "string",
+                        "pattern": "^[a-f0-9]{32}$"
+                      },
+                      "acks": {
+                        "maxItems": 2000,
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "code": {
+                              "type": "string",
+                              "enum": [
+                                "app.env.unresolved",
+                                "app.env.key.invalid"
+                              ]
+                            },
+                            "itemRef": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 300
+                            }
+                          },
+                          "required": [
+                            "code"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "serviceChoices": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "type": "object",
+                          "properties": {
+                            "skip": {
+                              "type": "boolean"
+                            },
+                            "name": {
+                              "type": "string",
+                              "pattern": "^[A-Za-z0-9][A-Za-z0-9 ._-]{0,62}$"
+                            },
+                            "environmentId": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "targetServerId": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "serviceDomains": {
+                              "maxItems": 20,
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "service": {
+                                    "type": "string",
+                                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$"
+                                  },
+                                  "hostname": {
+                                    "type": "string",
+                                    "maxLength": 253,
+                                    "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$"
+                                  },
+                                  "port": {
+                                    "type": "integer",
+                                    "minimum": 1,
+                                    "maximum": 65535
+                                  }
+                                },
+                                "required": [
+                                  "service",
+                                  "hostname",
+                                  "port"
+                                ],
+                                "additionalProperties": false
+                              }
+                            },
+                            "hostnameMap": {
+                              "type": "object",
+                              "additionalProperties": {
+                                "type": "string",
+                                "maxLength": 253,
+                                "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$"
+                              }
+                            },
+                            "volumes": {
+                              "type": "object",
+                              "additionalProperties": {
+                                "type": "object",
+                                "properties": {
+                                  "policy": {
+                                    "type": "string",
+                                    "enum": [
+                                      "copy",
+                                      "empty",
+                                      "skip"
+                                    ]
+                                  },
+                                  "owner": {
+                                    "type": "object",
+                                    "properties": {
+                                      "uid": {
+                                        "type": "integer",
+                                        "minimum": 0,
+                                        "maximum": 65535
+                                      },
+                                      "gid": {
+                                        "type": "integer",
+                                        "minimum": 0,
+                                        "maximum": 65535
+                                      }
+                                    },
+                                    "required": [
+                                      "uid",
+                                      "gid"
+                                    ],
+                                    "additionalProperties": false
+                                  }
+                                },
+                                "required": [
+                                  "policy"
+                                ],
+                                "additionalProperties": false
+                              }
+                            },
+                            "dropMembers": {
+                              "maxItems": 32,
+                              "type": "array",
+                              "items": {
+                                "type": "string",
+                                "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$"
+                              }
+                            },
+                            "pinImages": {
+                              "type": "boolean"
+                            },
+                            "pins": {
+                              "type": "object",
+                              "additionalProperties": {
+                                "type": "string",
+                                "pattern": "^[A-Za-z0-9][A-Za-z0-9._/-]{0,200}(:[A-Za-z0-9_][A-Za-z0-9._-]{0,127})?(@sha256:[a-f0-9]{64})?$"
+                              }
+                            },
+                            "privateNetwork": {
+                              "type": "boolean"
+                            },
+                            "hold": {
+                              "type": "boolean"
+                            }
+                          },
+                          "additionalProperties": false
+                        }
+                      },
+                      "mapping": {
+                        "type": "object",
+                        "properties": {
+                          "version": {
+                            "type": "number",
+                            "enum": [
+                              1
+                            ]
+                          },
+                          "scope": {
+                            "type": "object",
+                            "properties": {
+                              "sourceKind": {
+                                "type": "string",
+                                "enum": [
+                                  "coolify",
+                                  "dokploy",
+                                  "caprover"
                                 ]
                               },
                               "scopeKey": {
@@ -50369,7 +50736,8 @@
                     "type": "string",
                     "enum": [
                       "coolify",
-                      "dokploy"
+                      "dokploy",
+                      "caprover"
                     ]
                   },
                   "planHash": {
@@ -50445,7 +50813,8 @@
                             "type": "string",
                             "enum": [
                               "coolify",
-                              "dokploy"
+                              "dokploy",
+                              "caprover"
                             ]
                           },
                           "scopeKey": {
@@ -50931,7 +51300,8 @@
                             "type": "string",
                             "enum": [
                               "coolify",
-                              "dokploy"
+                              "dokploy",
+                              "caprover"
                             ]
                           },
                           "scopeKey": {
@@ -72273,7 +72643,8 @@
                             "type": "string",
                             "enum": [
                               "coolify",
-                              "dokploy"
+                              "dokploy",
+                              "caprover"
                             ]
                           },
                           "scopeKey": {
