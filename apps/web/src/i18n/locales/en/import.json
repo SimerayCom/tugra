@@ -3,6 +3,7 @@
   "subtitle": "Bring your apps, domains and settings into Tugra. Nothing on the source changes.",
   "sourceCoolify": "Coolify",
   "sourceCoolifyHint": "Paste an API token to see what will move.",
+  "sourceCoolifyAgentHint": "See what will move before anything changes.",
   "sourcePicker": "Source",
   "sourceCoolifyOption": "Coolify",
   "sourceDokployOption": "Dokploy",

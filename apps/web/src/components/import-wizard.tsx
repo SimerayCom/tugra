@@ -81,7 +81,7 @@ export function ImportWizard() {
 
   const [kind, setKind] = useState<ImportRemoteKind>("coolify");
   // Coolify can be read two ways: with an API token, or through the Tugra agent on the Coolify server (no token).
-  const [connectMode, setConnectMode] = useState<"token" | "agent">("token");
+  const [connectMode, setConnectMode] = useState<"token" | "agent">("agent");
   // The agent path: the match of the Coolify servers to Tugra servers is checked once per session before the first step.
   const [matchedHosts, setMatchedHosts] = useState(false);
   const [baseUrl, setBaseUrl] = useState("");
@@ -150,6 +150,8 @@ export function ImportWizard() {
     // The address handed over wins, then the one used for the last connection (an address only, never a token).
     const start = f?.address ?? (address && /^https?:\/\/\S+$/i.test(address) ? address : null) ?? lastImportUrl(k);
     if (start) setBaseUrl((cur) => cur || start);
+    // Coolify opens on the agent (no token to make) unless an address was handed over or used last time.
+    if (k !== "coolify" || start) setConnectMode("token");
   }, []);
   useEffect(() => {
     const url = new URL(window.location.href);
@@ -179,7 +181,10 @@ export function ImportWizard() {
     const r = loadImportResume();
     if (!r) return;
     setKind(r.kind);
-    if (r.baseUrl) setBaseUrl(r.baseUrl);
+    if (r.baseUrl) {
+      setBaseUrl(r.baseUrl);
+      setConnectMode("token"); // a session made with an address was a token session: the form it falls back to is the token one
+    }
     setSessionId(r.sessionId);
     setDbModes(r.dbModes);
     setShowAllTeams(r.allTeams === true);
@@ -277,7 +282,7 @@ export function ImportWizard() {
   const pickKind = (next: ImportRemoteKind) => {
     if (next === kind) return;
     setKind(next);
-    setConnectMode("token");
+    setConnectMode(next === "coolify" ? "agent" : "token");
     setBaseUrl("");
     setUrlConfirmed(false);
     setToken("");
@@ -409,7 +414,7 @@ export function ImportWizard() {
   }
 
   return (
-    <SectionCard title={t(src.title)} desc={t(src.hint)} style={{ padding: 20, maxWidth: 560, marginBottom: 0 }}>
+    <SectionCard title={t(src.title)} desc={t(kind === "coolify" && connectMode === "agent" ? "import.sourceCoolifyAgentHint" : src.hint)} style={{ padding: 20, maxWidth: 560, marginBottom: 0 }}>
       {resumeNote === "expired" && <p role="status" style={{ fontSize: 12, color: "var(--c-am)", margin: "0 0 12px" }}>{t("import.resumeExpired")}</p>}
       {focus?.fromServerName && <p role="note" style={{ fontSize: 12, color: "var(--c-tx2)", margin: "0 0 10px" }}>{t("import.fromServer", { server: focus.fromServerName })}</p>}
       {!(kind === "coolify" && connectMode === "agent") && (
@@ -467,7 +472,7 @@ export function ImportWizard() {
         <>
           <div id="imp-mode-label" style={label}>{t("coolifyAgent.choice.title")}</div>
           <div role="group" aria-labelledby="imp-mode-label" style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 16 }}>
-            {(["token", "agent"] as const).map((m) => {
+            {(["agent", "token"] as const).map((m) => {
               const checked = m === connectMode;
               return (
                 <button

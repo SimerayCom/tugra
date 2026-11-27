@@ -18,6 +18,13 @@ const plan = (hosts: Array<{ host: string; apps: number }> = [{ host: "github.co
   items: [{ itemRef: "app:s:a1", kind: "app", name: "app-1", proposed: {}, risks: [], dependsOn: [] }],
   preflight: { databases: [], services: [], appsWithVolumeData: 0, git: { hosts } },
 });
+// Coolify opens on the agent path by default; these tests drive the token form, one click away.
+const openToken = async () => {
+  const btn = await screen.findByRole("button", { name: "Connect with an API token" });
+  if (btn.getAttribute("aria-pressed") !== "true") fireEvent.click(btn);
+  return screen.findByLabelText("Coolify URL");
+};
+
 const wrap = (ui: React.ReactNode) => render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><I18nProvider><ToastProvider><ConfirmProvider>{ui}</ConfirmProvider></ToastProvider></I18nProvider></QueryClientProvider>);
 
 describe("bucketGitLinks", () => {
@@ -109,7 +116,7 @@ describe("ImportWizard — git panel gating and timeline", () => {
   });
   afterEach(() => vi.restoreAllMocks());
   const connect = async () => {
-    await screen.findByLabelText("Coolify URL");
+    await openToken();
     fireEvent.change(screen.getByLabelText("Coolify URL"), { target: { value: "https://coolify.example.com" } });
     fireEvent.change(screen.getByLabelText("API token"), { target: { value: "tok" } });
     await waitFor(() => expect((screen.getByRole("button", { name: "Connect & preview" }) as HTMLButtonElement).disabled).toBe(false)); // the connection team has loaded

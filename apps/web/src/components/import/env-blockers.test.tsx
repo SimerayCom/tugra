@@ -43,6 +43,13 @@ function Harness({ p = plan, onAcked }: { p?: ImportPlan; onAcked?: (s: Readonly
   onAcked?.(acked);
   return <EnvBlockers plan={p} acked={acked} onChange={setAcked} />;
 }
+// Coolify opens on the agent path by default; these tests drive the token form, one click away.
+const openToken = async () => {
+  const btn = await screen.findByRole("button", { name: "Connect with an API token" });
+  if (btn.getAttribute("aria-pressed") !== "true") fireEvent.click(btn);
+  return screen.findByLabelText("Coolify URL");
+};
+
 const wrap = (ui: React.ReactNode) => render(<QueryClientProvider client={new QueryClient()}><I18nProvider><ConfirmProvider>{ui}</ConfirmProvider></I18nProvider></QueryClientProvider>);
 
 describe("EnvBlockers", () => {
@@ -108,7 +115,7 @@ describe("ImportWizard — strict env gating", () => {
     const applySpy = vi.spyOn(api, "importApply").mockResolvedValue({ opId: "op1" });
     vi.spyOn(api, "getImportOperation").mockResolvedValue({ id: "op1", sourceKind: "coolify", serverId: "srv1", planHash: "a".repeat(32), status: "RUNNING", cancelRequested: false, createdAt: "2026-10-18T00:00:00.000Z", totals: { total: 1, done: 0, failed: 0, skipped: 0, running: 1, pending: 0, cancelled: 0, rolledBack: 0 }, tasks: [] });
     wrap(<ImportWizard />);
-    await screen.findByLabelText("Coolify URL");
+    await openToken();
     fireEvent.change(screen.getByLabelText("Coolify URL"), { target: { value: "https://coolify.example.com" } });
     fireEvent.change(screen.getByLabelText("API token"), { target: { value: "tok" } });
     await waitFor(() => expect((screen.getByRole("button", { name: "Connect & preview" }) as HTMLButtonElement).disabled).toBe(false)); // the connection team has loaded
@@ -141,7 +148,7 @@ describe("ImportWizard — strict env gating", () => {
     });
     vi.spyOn(api, "getMigrateCommand").mockResolvedValue({ opId: "op1", active: false, expiresAt: null, commandTemplate: "x" });
     wrap(<ImportWizard />);
-    await screen.findByLabelText("Coolify URL");
+    await openToken();
     fireEvent.change(screen.getByLabelText("Coolify URL"), { target: { value: "https://coolify.example.com" } });
     fireEvent.change(screen.getByLabelText("API token"), { target: { value: "tok" } });
     await waitFor(() => expect((screen.getByRole("button", { name: "Connect & preview" }) as HTMLButtonElement).disabled).toBe(false)); // the connection team has loaded

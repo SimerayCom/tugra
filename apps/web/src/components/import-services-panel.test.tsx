@@ -16,6 +16,13 @@ import type { ImportPlan, ImportServiceChoice, ImportServicePreview, ImportCheck
 afterEach(cleanup);
 
 let qc: QueryClient;
+// Coolify opens on the agent path by default; these tests drive the token form, one click away.
+const openToken = async () => {
+  const btn = await screen.findByRole("button", { name: "Connect with an API token" });
+  if (btn.getAttribute("aria-pressed") !== "true") fireEvent.click(btn);
+  return screen.findByLabelText("Coolify URL");
+};
+
 const wrap = (ui: React.ReactNode) =>
   render(
     <QueryClientProvider client={qc}>
@@ -222,7 +229,7 @@ describe("ImportWizard — services", () => {
 
   async function toPlan() {
     wrap(<ImportWizard />);
-    await screen.findByLabelText("Coolify URL");
+    await openToken();
     await waitFor(() => expect(qc.getQueryData(["teams"])).toBeTruthy());
     fireEvent.change(screen.getByLabelText("Coolify URL"), { target: { value: "https://coolify.example.com" } });
     fireEvent.change(screen.getByLabelText("API token"), { target: { value: "tok" } });
