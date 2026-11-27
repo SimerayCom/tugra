@@ -1,3 +1,4 @@
+import { InFlightRegistry } from "../in-flight/in-flight.registry";
 import { BadRequestException, ConflictException, NotFoundException, ServiceUnavailableException } from "@nestjs/common";
 import { SwarmService } from "./swarm.service";
 import { PrismaService } from "../prisma/prisma.service";
@@ -119,7 +120,7 @@ function make(opts: {
     ensure: jest.fn().mockResolvedValue(undefined),
     ingressInfo: jest.fn().mockResolvedValue({ replicas: 1, nodes: [{ id: "mgr", name: "mgr", ip: "1.1.1.1" }] }),
   } as unknown as import("./swarm-proxy.service").SwarmProxyService;
-  const svc = new SwarmService(prisma, access, audit, agent, swarmProxy);
+  const svc = new SwarmService(prisma, access, audit, agent, swarmProxy, new InFlightRegistry());
   return { svc, prisma, access, audit, agent, swarmProxy, clusterUpdate, clusterUpdateMany, serverUpdate, serverUpdateMany, appUpdate };
 }
 

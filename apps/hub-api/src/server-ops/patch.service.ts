@@ -1,3 +1,4 @@
+import { InFlightRegistry } from "../in-flight/in-flight.registry";
 import { randomBytes } from "node:crypto";
 import { ConflictException, Injectable, NotFoundException, ServiceUnavailableException } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
@@ -131,6 +132,7 @@ export class PatchService {
     private readonly audit: AuditService,
     private readonly agentWs: AgentWsServer,
     private readonly deployLogs: DeployLogHub,
+    private readonly inFlight: InFlightRegistry,
   ) {}
 
   async checkUpdates(userId: string, serverId: string): Promise<PatchInfo> {
@@ -247,6 +249,17 @@ export class PatchService {
    * goes live to DeployLogHub when `stream` is set. Resolves with the package manager's own exit code.
    */
   private async runApply(
+    serverId: string,
+    inner: string,
+    guard: PatchGuard,
+    unitSec: number,
+    stream: boolean,
+  ): Promise<{ output: string; exitCode: number }> {
+    // Registered so a hub or agent update waits for it (the host-side unit survives a restart, the hub's attach and live log do not).
+    return this.inFlight.track({ kind: "patch", label: serverId, serverIds: [serverId] }, () => this.runApplyNow(serverId, inner, guard, unitSec, stream));
+  }
+
+  private async runApplyNow(
     serverId: string,
     inner: string,
     guard: PatchGuard,

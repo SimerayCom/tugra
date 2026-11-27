@@ -1,3 +1,4 @@
+import { InFlightRegistry } from "../in-flight/in-flight.registry";
 import { BadRequestException, ServiceUnavailableException } from "@nestjs/common";
 import { SwarmProxyService } from "./swarm-proxy.service";
 import { PrismaService } from "../prisma/prisma.service";
@@ -87,7 +88,7 @@ function make(opts: {
     }),
   } as unknown as import("../crypto/crypto.service").CryptoService;
   const settings = { acmeEmailFor: async (e?: string) => e } as unknown as import("../instance/instance-settings.service").InstanceSettingsService;
-  return { svc: new SwarmProxyService(prisma, agent, config, crypto, settings), send };
+  return { svc: new SwarmProxyService(prisma, agent, config, crypto, settings, new InFlightRegistry()), send };
 }
 
 /** Extract the tugra.proxy.confighash value from the ensure script the service dispatched. */

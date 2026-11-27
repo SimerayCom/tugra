@@ -1,3 +1,4 @@
+import { InFlightRegistry } from "../in-flight/in-flight.registry";
 import { ConflictException, ForbiddenException, ServiceUnavailableException } from "@nestjs/common";
 import { AgentDisconnectedException, AgentOfflineException } from "../agent-gateway/agent-offline.exception";
 import { PatchService, patchTiming } from "./patch.service";
@@ -19,7 +20,7 @@ function make(
   agentWs: Partial<AgentWsServer>,
   logs: DeployLogHub = makeLogs(),
 ) {
-  return new PatchService(prisma as PrismaService, access as TeamAccessService, audit, agentWs as AgentWsServer, logs);
+  return new PatchService(prisma as PrismaService, access as TeamAccessService, audit, agentWs as AgentWsServer, logs, new InFlightRegistry());
 }
 
 const server = { id: "s1", teamId: "t1" };

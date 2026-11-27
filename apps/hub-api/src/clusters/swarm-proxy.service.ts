@@ -1,3 +1,4 @@
+import { InFlightRegistry } from "../in-flight/in-flight.registry";
 import { BadRequestException, Injectable, ServiceUnavailableException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { createHash } from "node:crypto";
@@ -52,6 +53,7 @@ export class SwarmProxyService {
     private readonly config: ConfigService,
     private readonly crypto: CryptoService,
     private readonly settings: InstanceSettingsService,
+    private readonly inFlight: InFlightRegistry,
   ) {}
 
   /** Resolve the cluster's PRIMARY manager (id + status + swarm node id + its cert/DNS config). Unlike the old
@@ -152,6 +154,11 @@ export class SwarmProxyService {
    *  collide on :80/:443 anywhere in the swarm. Pins + labels every pool node, publishes on the routing mesh
    *  (mode=ingress), gates 2+ replicas on DNS-01, and verifies the service converged to <poolSize>/<poolSize>. */
   async ensure(clusterId: string): Promise<void> {
+    const ids = (await this.prisma.server.findMany({ where: { clusterId }, select: { id: true } })).map((s) => s.id);
+    return this.inFlight.track({ kind: "swarm", label: clusterId, serverIds: ids }, () => this.ensureNow(clusterId));
+  }
+
+  private async ensureNow(clusterId: string): Promise<void> {
     const { mgr, pool } = await this.resolveIngressPool(clusterId);
     // The primary must be ONLINE: it is where we dispatch the signed `docker service create`, and it is always
     // the first pool node. (Other pool members only need to be schedulable task hosts.)

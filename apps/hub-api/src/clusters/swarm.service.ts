@@ -1,3 +1,4 @@
+import { InFlightRegistry } from "../in-flight/in-flight.registry";
 import {
   BadRequestException,
   ConflictException,
@@ -158,7 +159,14 @@ export class SwarmService {
     private readonly audit: AuditService,
     private readonly agentWs: AgentWsServer,
     private readonly swarmProxy: SwarmProxyService,
+    private readonly inFlight: InFlightRegistry,
   ) {}
+
+  /** Work that only lives in this process (a promote, a demote, an ingress change) is registered so an update waits for it. */
+  private async tracked<T>(id: string, serverIds: string[] | null, fn: () => Promise<T>): Promise<T> {
+    const ids = serverIds ?? (await this.prisma.server.findMany({ where: { clusterId: id }, select: { id: true } })).map((s) => s.id);
+    return this.inFlight.track({ kind: "swarm", label: id, serverIds: ids }, fn);
+  }
 
   /** Form a swarm: init `managerServerId`, join every other ONLINE member as a worker. Idempotent — safe to
    *  re-run on a DEGRADED cluster to reconcile the members that haven't joined yet. */
@@ -329,6 +337,10 @@ export class SwarmService {
    *  ingress didn't actually converge to (which would hand the operator misleading DNS-pointing IPs). On a
    *  not-yet-formed swarm there is no live ingress to reconcile, so the value is simply saved as desired state. */
   async setIngressReplicas(userId: string, id: string, replicas: number) {
+    return this.tracked(id, null, () => this.setIngressReplicasNow(userId, id, replicas));
+  }
+
+  private async setIngressReplicasNow(userId: string, id: string, replicas: number) {
     const cluster = await this.requireWrite(userId, id);
     const n = Math.max(1, Math.min(3, Math.floor(replicas)));
     const prev = cluster.ingressReplicas;
@@ -502,6 +514,10 @@ export class SwarmService {
    *  Two admins racing this on the SAME server is accepted as a rare, low-blast-radius risk, backstopped by
    *  Docker's own idempotent `node promote` / `swarm join` semantics. */
   async addManager(userId: string, id: string, dto: { serverId: string; acknowledgeEvenQuorum?: boolean }): Promise<SwarmView> {
+    return this.tracked(id, [dto.serverId], () => this.addManagerNow(userId, id, dto));
+  }
+
+  private async addManagerNow(userId: string, id: string, dto: { serverId: string; acknowledgeEvenQuorum?: boolean }): Promise<SwarmView> {
     const cluster = await this.requireWrite(userId, id);
     if (cluster.swarmStatus !== "ACTIVE" && cluster.swarmStatus !== "DEGRADED") {
       throw new BadRequestException("form the swarm before adding a manager");
@@ -579,6 +595,10 @@ export class SwarmService {
    *  remaining manager. Idempotent (a non-MANAGER target is a no-op). Same no-cluster-wide-CAS rationale as
    *  addManager. */
   async removeManager(userId: string, id: string, dto: { serverId: string; acknowledgeEvenQuorum?: boolean }): Promise<SwarmView> {
+    return this.tracked(id, [dto.serverId], () => this.removeManagerNow(userId, id, dto));
+  }
+
+  private async removeManagerNow(userId: string, id: string, dto: { serverId: string; acknowledgeEvenQuorum?: boolean }): Promise<SwarmView> {
     const cluster = await this.requireWrite(userId, id);
     if (cluster.swarmStatus !== "ACTIVE" && cluster.swarmStatus !== "DEGRADED") {
       throw new BadRequestException("the swarm must be formed before demoting a manager");
