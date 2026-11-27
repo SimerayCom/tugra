@@ -8,10 +8,8 @@ import { RequireScopes } from "../api-tokens/require-scopes.decorator";
 import { AuthUser } from "../auth/strategies/jwt.strategy";
 import { runActorFromAuth } from "../migration-runs/core/run-contract";
 import { MigrationCampaignsService } from "./migration-campaigns.service";
-import { CampaignCreateSchema, CampaignListQuerySchema, CampaignPlanSchema, type CampaignCreateInput, type CampaignListQuery, type CampaignPlanInput } from "./dto";
+import { CampaignCreateSchema, CampaignListQuerySchema, CampaignPlanSchema, CampaignViewsQuerySchema, type CampaignViewsQuery, type CampaignCreateInput, type CampaignListQuery, type CampaignPlanInput } from "./dto";
 import { z } from "zod";
-
-const ViewsQuery = z.object({ sessionId: z.string().min(1).max(64), planHash: z.string().regex(/^[a-f0-9]{32}$/) }).strict();
 
 /**
  * Placement per source server and the campaign of guided runs a mixed placement becomes. Team OWNER only for the actions that create
@@ -27,7 +25,7 @@ export class MigrationCampaignsController {
   /** What each source server of a session offers (in place or another server, and why not), with no choice made. */
   @Get("placement")
   @RequireScopes("deploy")
-  views(@CurrentUser() user: AuthUser, @Query(new ZodValidationPipe(ViewsQuery)) q: z.infer<typeof ViewsQuery>) {
+  views(@CurrentUser() user: AuthUser, @Query(new ZodValidationPipe(CampaignViewsQuerySchema)) q: CampaignViewsQuery) {
     return this.campaigns.views(user.userId, q);
   }
 

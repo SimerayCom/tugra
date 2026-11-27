@@ -1,7 +1,7 @@
 import { BadRequestException, ConflictException, ForbiddenException, NotFoundException, UnprocessableEntityException } from "@nestjs/common";
 import { Prisma, Role } from "@prisma/client";
 import { MigrationCampaignsService, runBody } from "./migration-campaigns.service";
-import { CampaignCreateSchema, CampaignPlanSchema } from "./dto";
+import { CampaignCreateSchema, CampaignPlanSchema, CampaignViewsQuerySchema } from "./dto";
 import type { CampaignFacts } from "./campaign-facts.service";
 import type { PlacementHostFact } from "./campaign-plan";
 import type { RunActor } from "../migration-runs/core/run-contract";
@@ -332,6 +332,16 @@ describe("MigrationCampaignsService.preview and views", () => {
     expect(bad.runs).toBeNull();
     expect(bad.failure).toEqual({ code: "placement_rebuild_not_in_place", ref: "app:b:three" });
     expect(t.prisma.migrationCampaign.create).not.toHaveBeenCalled();
+  });
+  it("the placement rows are read with the data modes the plan was reviewed with (its hash depends on them)", async () => {
+    const t = build();
+    await t.svc.views("u1", { sessionId: "s1", planHash: HASH, dbDataModes: { "database:b:pg": "volume" } });
+    expect(t.facts.read.mock.calls[0][1]).toMatchObject({ dbDataModes: { "database:b:pg": "volume" } });
+    // the route takes them as a JSON string of the query and checks them like the body's
+    expect(CampaignViewsQuerySchema.parse({ sessionId: "s1", planHash: HASH, dbDataModes: JSON.stringify({ "database:b:pg": "volume" }) }).dbDataModes).toEqual({ "database:b:pg": "volume" });
+    expect(CampaignViewsQuerySchema.safeParse({ sessionId: "s1", planHash: HASH, dbDataModes: JSON.stringify({ x: "bind" }) }).success).toBe(false);
+    expect(CampaignViewsQuerySchema.safeParse({ sessionId: "s1", planHash: HASH, dbDataModes: "{" }).success).toBe(false);
+    expect(CampaignViewsQuerySchema.parse({ sessionId: "s1", planHash: HASH }).dbDataModes).toBeUndefined();
   });
   it("reports the failure code instead of throwing", async () => {
     const t = build({ hosts: [host("a", { matchStatus: "ambiguous", matchedServerId: null, agentOnline: false })] });

@@ -512,4 +512,13 @@ describe("a second row for the machine Coolify runs on", () => {
     expect(isControlPlaneHost(p, "s2")).toBe(false);
     expect(isControlPlaneHost(matched(), "s1")).toBe(false);
   });
+  it("an uncertain match to the agent's server is not the control plane (the hub uses only sure and probable matches)", () => {
+    const p = matched();
+    p.preflight!.agentRead = { transport: "agent", agentServerId: "t1", schemaVersion: null, coolifyImage: null, readAt: "", counts: { teams: 1, projects: 1, servers: 2, applications: 1, databases: 0, services: 0 } } as never;
+    const h = p.preflight!.hosts!.find((x) => x.ref === "s1")!;
+    h.match = { status: "ambiguous", linkedBy: null, evidence: [] } as never;
+    expect(isControlPlaneHost(p, "s1")).toBe(false);
+    h.match = { status: "probable", linkedBy: null, evidence: [] } as never;
+    expect(isControlPlaneHost(p, "s1")).toBe(true);
+  });
 });

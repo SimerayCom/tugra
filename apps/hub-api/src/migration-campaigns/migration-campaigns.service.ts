@@ -69,8 +69,8 @@ export class MigrationCampaignsService {
   }
 
   /** The placement screen's rows for a session, with no choice made yet. */
-  async views(userId: string, input: { sessionId: string; planHash: string }): Promise<{ planHash: string; views: SourceServerPlacementView[] }> {
-    const facts = await this.facts.read(userId, { sessionId: input.sessionId, planHash: input.planHash, serverIds: [] });
+  async views(userId: string, input: { sessionId: string; planHash: string; dbDataModes?: Record<string, "volume"> }): Promise<{ planHash: string; views: SourceServerPlacementView[] }> {
+    const facts = await this.facts.read(userId, { sessionId: input.sessionId, planHash: input.planHash, serverIds: [], ...(input.dbDataModes ? { dbDataModes: input.dbDataModes } : {}) });
     return { planHash: facts.planHash, views: placementViews(facts.hosts) };
   }
 

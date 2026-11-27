@@ -204,7 +204,10 @@ export const isControlPlaneHost = (plan: ImportPlan, ref: string): boolean => {
   const h = plan.preflight?.hosts?.find((x) => x.ref === ref);
   if (!h) return false;
   const panelServer = plan.preflight?.agentRead?.agentServerId;
-  return !!h.controlPlane || (!!panelServer && h.tugra?.serverId === panelServer);
+  // the same rule as the hub's (`hostFactOf`): only a sure or probable match counts as "this machine", an uncertain or user-rejected one does not
+  const status = h.match?.status ?? (h.tugra ? (h.tugra.confidence === "certain" ? "certain" : "probable") : "none");
+  const matched = (status === "certain" || status === "probable") && !!h.tugra;
+  return !!h.controlPlane || (!!panelServer && matched && h.tugra?.serverId === panelServer);
 };
 
 /**

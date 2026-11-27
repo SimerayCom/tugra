@@ -63,3 +63,28 @@ export type CampaignCreateInput = z.infer<typeof CampaignCreateSchema>;
 
 export const CampaignListQuerySchema = z.object({ teamId: z.string().min(1).max(64) }).strict();
 export type CampaignListQuery = z.infer<typeof CampaignListQuerySchema>;
+
+/**
+ * `GET /migration-campaigns/placement`: the screen's rows for a session. The data modes the plan was reviewed with are part of its hash, so they are
+ * sent back the same way (a query has no objects: a JSON string of at most a few thousand characters, parsed and checked like the body's).
+ */
+export const CampaignViewsQuerySchema = z
+  .object({
+    sessionId: z.string().min(1).max(64),
+    planHash: z.string().regex(/^[a-f0-9]{32}$/),
+    dbDataModes: z
+      .string()
+      .max(60_000)
+      .transform((v, ctx) => {
+        try {
+          return JSON.parse(v) as unknown;
+        } catch {
+          ctx.addIssue({ code: "custom", message: "dbDataModes must be JSON" });
+          return z.NEVER;
+        }
+      })
+      .pipe(runFields.dbDataModes.unwrap())
+      .optional(),
+  })
+  .strict();
+export type CampaignViewsQuery = z.infer<typeof CampaignViewsQuerySchema>;

@@ -23,6 +23,7 @@ describe("campaign and in-place takeover api client", () => {
   it("campaign routes", async () => {
     stub();
     await api.campaignPlacement("s/1", "h".repeat(32));
+    await api.campaignPlacement("s1", "h".repeat(32), { "database:a:pg": "volume" });
     await api.planCampaign({ sessionId: "s1", planHash: "a".repeat(32), placements: [{ sourceServerRef: "a", kind: "in-place", targetServerId: null }] });
     await api.createCampaign({ sessionId: "s1", planHash: "a".repeat(32), placements: [], confirm: 0 });
     await api.listCampaigns("t 1");
@@ -30,13 +31,14 @@ describe("campaign and in-place takeover api client", () => {
     await api.cancelCampaign("c1");
     expect(calls.map((c) => [c.method, c.url])).toEqual([
       ["GET", `/api/v1/migration-campaigns/placement?sessionId=s%2F1&planHash=${"h".repeat(32)}`],
+      ["GET", `/api/v1/migration-campaigns/placement?sessionId=s1&planHash=${"h".repeat(32)}&dbDataModes=${encodeURIComponent('{"database:a:pg":"volume"}')}`],
       ["POST", "/api/v1/migration-campaigns/plan"],
       ["POST", "/api/v1/migration-campaigns"],
       ["GET", "/api/v1/migration-campaigns?teamId=t%201"],
       ["GET", "/api/v1/migration-campaigns/c%2F1"],
       ["POST", "/api/v1/migration-campaigns/c1/cancel"],
     ]);
-    expect(calls[1].body).toEqual({ sessionId: "s1", planHash: "a".repeat(32), placements: [{ sourceServerRef: "a", kind: "in-place", targetServerId: null }] });
+    expect(calls[2].body).toEqual({ sessionId: "s1", planHash: "a".repeat(32), placements: [{ sourceServerRef: "a", kind: "in-place", targetServerId: null }] });
   });
 
   it("in-place routes: the typed name travels only to swap and give back", async () => {

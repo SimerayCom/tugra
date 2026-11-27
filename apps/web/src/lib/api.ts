@@ -2958,8 +2958,8 @@ export const api = {
     return apiFetch<MigrationRunView>("/migration-runs", { method: "POST", body: JSON.stringify(input) });
   },
   // ── Coolify hub takeover: placement per source server and the campaign of runs it becomes (lane E) ──
-  campaignPlacement(sessionId: string, planHash: string) {
-    const q = new URLSearchParams({ sessionId, planHash });
+  campaignPlacement(sessionId: string, planHash: string, dbDataModes?: Record<string, "volume">) {
+    const q = new URLSearchParams({ sessionId, planHash, ...(dbDataModes && Object.keys(dbDataModes).length ? { dbDataModes: JSON.stringify(dbDataModes) } : {}) });
     return apiFetch<{ planHash: string; views: SourceServerPlacementView[] }>(`/migration-campaigns/placement?${q.toString()}`);
   },
   planCampaign(body: Pick<CampaignCreateBody, "sessionId" | "planHash" | "placements" | "rebuild" | "dbDataModes" | "scope">) {
