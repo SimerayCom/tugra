@@ -66,7 +66,8 @@ if [ "$MAJOR" -ge 18 ]; then
   lab_check "no transfer was started" test "$(lab_transfer | awk '{print $1}')" = NONE
   # the lane the gate leaves under the default policy is the logical dump, capped at the hub's artifact size (256 MiB compressed)
   lab_seed op --name "lab-logical-$(date +%s)" --source "$SRC" --kind db --image "$IMAGE" --version "$MAJOR" --engine POSTGRES --data-mode dump >"$LAB_DIR/op.logical.env"
-  LAB_OP=logical lab_run logical --arms databases
+  # --no-stream-large keeps the artifact route (fcefbb8c: a plain run would stream it instead)
+  LAB_OP=logical lab_run logical --arms databases --no-stream-large
   if [ "$MIB" -ge 1024 ]; then
     (lab_op_load logical; lab_expect_item logical failed dump-too-big)
     echo "L9_LOGICAL=dump-too-big (the artifact route under the default refuse policy; the streamed lane below carries it)" >>"$LAB_DIR/l9.summary"
