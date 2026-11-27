@@ -70,6 +70,7 @@ export default function RegistriesPage() {
               imagePrefix={r.imagePrefix}
               canWrite={r.canWrite}
               onDelete={async () => { if (await confirm({ body: t("common.deleteNamedConfirm", { name: r.name }), danger: true })) del.mutate(r.id); }}
+              deleting={del.isPending && del.variables === r.id}
             />
           ))}
         </div>
@@ -101,8 +102,8 @@ export default function RegistriesPage() {
 }
 
 function RegistryRow({
-  id, name, type, url, username, imagePrefix, canWrite, onDelete,
-}: { id: string; name: string; type: string; url: string | null; username: string; imagePrefix: string | null; canWrite: boolean; onDelete: () => void }) {
+  id, name, type, url, username, imagePrefix, canWrite, onDelete, deleting,
+}: { id: string; name: string; type: string; url: string | null; username: string; imagePrefix: string | null; canWrite: boolean; onDelete: () => void; deleting?: boolean }) {
   const t = useT();
   const qc = useQueryClient();
   const test = useMutation({ mutationFn: () => api.testRegistry(id) });
@@ -142,7 +143,7 @@ function RegistryRow({
           <>
             <Btn variant="ghost" onClick={() => test.mutate()} disabled={test.isPending}>{test.isPending ? "…" : t("registries.test")}</Btn>
             <IconBtn label={t("registries.edit")} onClick={() => (editing ? setEditing(false) : openEdit())}><Pencil size={15} /></IconBtn>
-            <IconBtn label={t("registries.delete")} danger onClick={onDelete}><Trash2 size={15} /></IconBtn>
+            <IconBtn label={t("registries.delete")} danger loading={deleting} onClick={onDelete}><Trash2 size={15} /></IconBtn>
           </>
         )}
       </div>

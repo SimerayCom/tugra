@@ -6,7 +6,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Route } from "lucide-react";
 import { api } from "../../lib/api";
 import { useT } from "../../i18n/provider";
-import { Btn } from "../ui";
+import { Btn, Working } from "../ui";
 import { Modal } from "../modal";
 import { BlockedNote } from "../cta-parts";
 import { blockTag, serverBlock, type CtaBlock } from "../../lib/cta-readiness";
@@ -273,6 +273,8 @@ function LaunchDialog({ plan, kind, sessionId, servers, teams, extras, scope, on
         ))}
         {takeoverNote && <TakeoverStartNote block={takeoverNote} serverId={targetServerId} />}
         {freshness && <FreshnessNote freshness={freshness} onRead={() => { onClose(); onRecheck?.(); }} onConnect={() => { clearImportResume(); window.location.reload(); }} />}
+
+        {((!!teamId && live.isFetching && !live.data) || (!campaign && reread.isFetching && !reread.data)) && <Working text={t("migrationRun.launch.checking")} />}
 
         <AgentGapNotice gaps={agentGaps} dryRun={dryRun} />
 

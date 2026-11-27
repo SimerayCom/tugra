@@ -101,6 +101,16 @@ export function Btn({
   );
 }
 
+/** A one-line "working on it" status with a small spinner, announced to screen readers. */
+export function Working({ text }: { text: string }) {
+  return (
+    <p role="status" aria-live="polite" style={{ margin: 0, display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "var(--c-tx2)", lineHeight: 1.5 }}>
+      <span aria-hidden style={{ width: 12, height: 12, flexShrink: 0, border: "2px solid currentColor", borderTopColor: "transparent", borderRadius: "50%", animation: "spin 0.7s linear infinite", opacity: 0.8 }} />
+      {text}
+    </p>
+  );
+}
+
 /** A real <a> (next/link) with Btn chrome — for "New X" calls to action that navigate. */
 export function LinkBtn({
   href,

@@ -88,13 +88,19 @@ export function CutoverPanel({ opId }: { opId: string }) {
     mutationFn: (hostnames: string[]) => api.cutoverTtl(opId, { hostnames }),
     onSuccess: (r) => { setGuidance(r.guidance); setView(r.view); toast(t("cutover.done.ttl", { count: r.guidance.length }), "success"); },
   });
-  const cancel = useMutation({ mutationFn: () => api.cutoverCancel(opId), onSuccess: setView });
+  const cancel = useMutation({ mutationFn: () => api.cutoverCancel(opId), onSuccess: (v) => { setView(v); toast(t("cutover.done.cancel"), "success"); } });
   const finalize = useMutation({
     mutationFn: (hostnames: string[]) => api.cutoverFinalize(opId, { hostnames }),
     onSuccess: (v, hostnames) => { setView(v); toast(t("cutover.done.finalize", { count: hostnames.length }), "success"); },
   });
-  const exclude = useMutation({ mutationFn: (v: { hostnames: string[]; excluded: boolean }) => api.cutoverExclude(opId, v), onSuccess: setView });
-  const fix = useMutation({ mutationFn: (v: { applicationId: string; direction: "root" | "www" }) => api.cutoverFixCounterpart(opId, v), onSuccess: setView });
+  const exclude = useMutation({
+    mutationFn: (v: { hostnames: string[]; excluded: boolean }) => api.cutoverExclude(opId, v),
+    onSuccess: (view, v) => { setView(view); toast(t(v.excluded ? "cutover.done.exclude" : "cutover.done.include", { count: v.hostnames.length }), "success"); },
+  });
+  const fix = useMutation({
+    mutationFn: (v: { applicationId: string; direction: "root" | "www" }) => api.cutoverFixCounterpart(opId, v),
+    onSuccess: (view, v) => { setView(view); toast(t("cutover.done.fix", { host: entries.find((e) => e.applicationId === v.applicationId)?.hostname ?? "" }), "success"); },
+  });
   const seed = useMutation({
     mutationFn: () => api.cutoverSeedCerts(opId, { acknowledgeProxyRestart: true }),
     onSuccess: (r) => { setView(r.view); toast(t("cutover.seed.done", { count: r.applied }), "success"); },
@@ -198,12 +204,12 @@ export function CutoverPanel({ opId }: { opId: string }) {
             {probeVia === "agent" && <p style={{ fontSize: 11, color: "var(--c-tx3)", margin: 0 }}>{t("cutover.probe.agentNote")}</p>}
             <div style={bar}>
               <Btn onClick={() => setFlipHosts(flippable)} disabled={busy || running || flippable.length === 0}>{t("cutover.action.planFlip")}</Btn>
-              {running && <Btn variant="danger" onClick={() => cancel.mutate()} disabled={cancel.isPending}>{t("cutover.action.cancel")}</Btn>}
+              {running && <Btn variant="danger" onClick={() => cancel.mutate()} loading={cancel.isPending}>{t("cutover.action.cancel")}</Btn>}
               <Btn variant="ghost" onClick={() => finalize.mutate(finalizable)} loading={finalize.isPending} disabled={busy || running || finalizable.length === 0}>{t("cutover.action.finalize")}</Btn>
               <Btn variant="dangerGhost" onClick={() => setRevertHosts(revertible)} disabled={busy || running || revertible.length === 0}>{t("cutover.action.revert")}</Btn>
-              <Btn variant="ghost" onClick={() => exclude.mutate({ hostnames: excludable, excluded: true })} disabled={busy || running || excludable.length === 0}>{t("cutover.action.exclude")}</Btn>
-              <Btn variant="ghost" onClick={() => exclude.mutate({ hostnames: includable, excluded: false })} disabled={busy || running || includable.length === 0}>{t("cutover.action.include")}</Btn>
-              {stagedLeft > 0 && <Btn variant="ghost" onClick={onSeed} disabled={busy || running}>{t("cutover.action.seedCerts")} ({stagedLeft})</Btn>}
+              <Btn variant="ghost" onClick={() => exclude.mutate({ hostnames: excludable, excluded: true })} loading={exclude.isPending && exclude.variables?.excluded === true} disabled={busy || running || excludable.length === 0}>{t("cutover.action.exclude")}</Btn>
+              <Btn variant="ghost" onClick={() => exclude.mutate({ hostnames: includable, excluded: false })} loading={exclude.isPending && exclude.variables?.excluded === false} disabled={busy || running || includable.length === 0}>{t("cutover.action.include")}</Btn>
+              {stagedLeft > 0 && <Btn variant="ghost" onClick={onSeed} loading={seed.isPending} disabled={busy || running}>{t("cutover.action.seedCerts")} ({stagedLeft})</Btn>}
             </div>
           </div>
 
@@ -236,6 +242,8 @@ export function CutoverPanel({ opId }: { opId: string }) {
                     checked={selected.has(e.hostname)}
                     onToggle={() => toggle(e.hostname)}
                     busy={busy || running}
+                    fixing={fix.isPending && fix.variables?.applicationId === e.applicationId ? fix.variables.direction : null}
+                    excluding={exclude.isPending && exclude.variables?.hostnames.includes(e.hostname) ? exclude.variables.excluded : null}
                     onFix={(direction) => fix.mutate({ applicationId: e.applicationId, direction })}
                     onExclude={(excluded) => exclude.mutate({ hostnames: [e.hostname], excluded })}
                     onRevert={() => setRevertHosts([e.hostname])}
@@ -287,8 +295,10 @@ function ServerStrip({ server: s }: { server: CutoverServerView }) {
   );
 }
 
-function Row({ e, checked, onToggle, busy, onFix, onExclude, onRevert }: {
+function Row({ e, checked, onToggle, busy, fixing, excluding, onFix, onExclude, onRevert }: {
   e: CutoverEntryView; checked: boolean; onToggle: () => void; busy: boolean;
+  /** The counterpart fix running for this row's app (which direction), or the exclude/include call running for this host (true = excluding). */
+  fixing: "root" | "www" | null; excluding: boolean | null;
   onFix: (d: "root" | "www") => void; onExclude: (excluded: boolean) => void; onRevert: () => void;
 }) {
   const t = useT();
@@ -330,16 +340,16 @@ function Row({ e, checked, onToggle, busy, onFix, onExclude, onRevert }: {
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
           {needsCounterpartFix(e) && (
             <>
-              <Btn variant="ghost" onClick={() => onFix("root")} disabled={busy} aria-label={t("cutover.action.fixRootFor", { host: e.hostname })}>{t("cutover.action.fixRoot")}</Btn>
-              <Btn variant="ghost" onClick={() => onFix("www")} disabled={busy} aria-label={t("cutover.action.fixWwwFor", { host: e.hostname })}>{t("cutover.action.fixWww")}</Btn>
+              <Btn variant="ghost" onClick={() => onFix("root")} disabled={busy} loading={fixing === "root"} aria-label={t("cutover.action.fixRootFor", { host: e.hostname })}>{t("cutover.action.fixRoot")}</Btn>
+              <Btn variant="ghost" onClick={() => onFix("www")} disabled={busy} loading={fixing === "www"} aria-label={t("cutover.action.fixWwwFor", { host: e.hostname })}>{t("cutover.action.fixWww")}</Btn>
             </>
           )}
           {e.needsDeploy && <Link href={`/apps/${e.applicationId}`} style={{ fontSize: 12, color: "var(--c-lapis)", alignSelf: "center" }}>{t("cutover.action.deploy")}</Link>}
           {isRevertible(e) && <Btn variant="dangerGhost" onClick={onRevert} disabled={busy}>{t("cutover.action.revert")}</Btn>}
           {isExcluded(e) ? (
-            <Btn variant="ghost" onClick={() => onExclude(false)} disabled={busy}>{t("cutover.action.include")}</Btn>
+            <Btn variant="ghost" onClick={() => onExclude(false)} disabled={busy} loading={excluding === false}>{t("cutover.action.include")}</Btn>
           ) : canExclude(e) ? (
-            <Btn variant="ghost" onClick={() => onExclude(true)} disabled={busy}>{t("cutover.action.exclude")}</Btn>
+            <Btn variant="ghost" onClick={() => onExclude(true)} disabled={busy} loading={excluding === true}>{t("cutover.action.exclude")}</Btn>
           ) : null}
         </div>
       </td>

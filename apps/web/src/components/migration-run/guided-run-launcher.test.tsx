@@ -47,6 +47,20 @@ describe("GuidedRunLauncher", () => {
     await waitFor(() => expect(push).toHaveBeenCalledWith("/import/runs/newrun"));
   });
 
+  it("says it is checking the plan and the target server until both answers are in", async () => {
+    let finishRuns: (v: never) => void = () => undefined;
+    let finishPlan: (v: never) => void = () => undefined;
+    vi.spyOn(api, "listMigrationRuns").mockImplementation(() => new Promise((r) => { finishRuns = r as never; }));
+    vi.spyOn(api, "importPlan").mockImplementation(() => new Promise((r) => { finishPlan = r as never; }));
+    mount();
+    fireEvent.click(screen.getByRole("button", { name: "Run guided migration" }));
+    const dialog = await screen.findByRole("dialog");
+    await within(dialog).findByText("Checking the plan and the target server…");
+    finishRuns([] as never);
+    finishPlan({ planHash: "a".repeat(32) } as never);
+    await waitFor(() => expect(within(dialog).queryByText("Checking the plan and the target server…")).toBeNull());
+  });
+
   it("a real run needs the dry-run box cleared; takeover and swap-proxy are explained", async () => {
     const create = vi.spyOn(api, "createMigrationRun").mockResolvedValue(mkRun({ id: "real" }));
     mount();

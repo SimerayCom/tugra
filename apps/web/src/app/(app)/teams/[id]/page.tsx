@@ -9,7 +9,7 @@ import type { ClientAccess, Role, TeamMember, Project, TeamRole } from "../../..
 import { TEAM_PERMISSIONS } from "../../../../lib/types";
 import { useT } from "../../../../i18n/provider";
 import { useToast } from "../../../../components/toast";
-import { Badge, Btn, Card, EmptyState, Spinner } from "../../../../components/ui";
+import { Badge, Btn, Card, EmptyState, Spinner, Working, ActivitySpinner } from "../../../../components/ui";
 import { PageHeader } from "../../../../components/page-header";
 import { IconBtn } from "../../../../components/icon-btn";
 import { useConfirm } from "../../../../components/confirm";
@@ -79,6 +79,7 @@ export default function TeamDetailPage() {
     mutationFn: ({ userId, assignment }: { userId: string; assignment: { role: Role } | { teamRoleId: string } }) =>
       api.setTeamMemberRole(id, userId, assignment),
     onSuccess: refetch,
+    meta: { successMessage: t("teams.roleUpdated") },
   });
   // Make a member a Client: make sure the team has the preset, then assign it like any custom role.
   const makeClient = useMutation({
@@ -87,9 +88,16 @@ export default function TeamDetailPage() {
       return api.setTeamMemberRole(id, userId, { teamRoleId: role.id });
     },
     onSuccess: refetch,
+    meta: { successMessage: t("teams.roleUpdated") },
   });
-  const removeMember = useMutation({ mutationFn: (userId: string) => api.removeTeamMember(id, userId), onSuccess: refetch });
-  const revoke = useMutation({ mutationFn: (invId: string) => api.revokeTeamInvitation(id, invId), onSuccess: refetch });
+  const removeMember = useMutation({
+    mutationFn: (userId: string) => api.removeTeamMember(id, userId),
+    onSuccess: (_r, userId) => { refetch(); toast(t("common.removedNamed", { name: members.find((m) => m.userId === userId)?.email ?? "" }), "success"); },
+  });
+  const revoke = useMutation({
+    mutationFn: (invId: string) => api.revokeTeamInvitation(id, invId),
+    onSuccess: (_r, invId) => { refetch(); toast(t("teams.invitationRevoked", { email: invitations.find((i) => i.id === invId)?.email ?? "" }), "success"); },
+  });
   const del = useMutation({
     mutationFn: () => api.deleteTeam(id),
     onSuccess: () => { router.replace("/teams"); toast(t("common.deletedNamed", { name: team?.name ?? "" }), "success"); },
@@ -161,6 +169,10 @@ export default function TeamDetailPage() {
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           {members.map((m) => {
             const lastOwner = m.role === "OWNER" && ownerCount <= 1;
+            // The role call for this member is running: the select keeps what was picked (not the old role) and locks until it lands.
+            const pickedClient = makeClient.isPending && makeClient.variables?.userId === m.userId ? `client:${makeClient.variables.access}` : null;
+            const pickedRole = setRole.isPending && setRole.variables?.userId === m.userId ? ("role" in setRole.variables.assignment ? setRole.variables.assignment.role : setRole.variables.assignment.teamRoleId) : null;
+            const rolePicked = pickedClient ?? pickedRole;
             return (
               <div key={m.userId} style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -173,7 +185,9 @@ export default function TeamDetailPage() {
                     <select
                       style={field}
                       aria-label={m.email}
-                      value={m.clientAccess ? `client:${m.clientAccess}` : m.teamRoleId ?? m.role}
+                      disabled={rolePicked !== null}
+                      aria-busy={rolePicked !== null || undefined}
+                      value={rolePicked ?? (m.clientAccess ? `client:${m.clientAccess}` : m.teamRoleId ?? m.role)}
                       onChange={(e) => {
                         const v = e.target.value;
                         if (v === "client:view" || v === "client:deploy") {
@@ -204,8 +218,9 @@ export default function TeamDetailPage() {
                   ) : (
                     <span style={{ fontSize: 12, color: "var(--c-tx3)" }}>{m.roleName ?? m.role}</span>
                   )}
+                  {rolePicked !== null && <Working text={t("teams.roleSaving")} />}
                   {canManage && !lastOwner && (
-                    <IconBtn label={t("common.remove")} danger onClick={async () => { if (await confirm({ body: t("common.deleteConfirm"), danger: true })) removeMember.mutate(m.userId); }}>×</IconBtn>
+                    <IconBtn label={t("common.remove")} danger loading={removeMember.isPending && removeMember.variables === m.userId} onClick={async () => { if (await confirm({ body: t("common.deleteConfirm"), danger: true })) removeMember.mutate(m.userId); }}>×</IconBtn>
                   )}
                 </div>
                 {canManage && m.role === "VIEWER" && !m.teamRoleId && (
@@ -249,7 +264,7 @@ export default function TeamDetailPage() {
                 <div key={inv.id} style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
                   <span style={{ flex: 1, fontSize: 13 }}>{inv.email}</span>
                   <span style={{ fontSize: 11, color: "var(--c-tx3)" }}>{inv.clientAccess ? t("teams.clientBadge") : inv.role}</span>
-                  <button onClick={async () => { if (await confirm({ body: t("common.deleteConfirm"), danger: true })) revoke.mutate(inv.id); }} style={{ background: "transparent", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", color: "var(--c-tx3)", fontSize: 11, cursor: "pointer", padding: "2px 8px", fontFamily: "inherit" }}>{t("teams.revoke")}</button>
+                  <button disabled={revoke.isPending && revoke.variables === inv.id} aria-busy={(revoke.isPending && revoke.variables === inv.id) || undefined} onClick={async () => { if (await confirm({ body: t("common.deleteConfirm"), danger: true })) revoke.mutate(inv.id); }} style={{ background: "transparent", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", color: "var(--c-tx3)", fontSize: 11, cursor: "pointer", padding: "2px 8px", fontFamily: "inherit", display: "inline-flex", alignItems: "center", gap: 6 }}>{revoke.isPending && revoke.variables === inv.id && <ActivitySpinner size={10} />}{t("teams.revoke")}</button>
                 </div>
               ))}
             </div>

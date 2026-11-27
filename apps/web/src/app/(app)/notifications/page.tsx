@@ -194,7 +194,10 @@ export default function NotificationsPage() {
     mutationFn: (id: string) => api.testChannel(id),
     onSuccess: (_r, id) => toast(t("notifications.testSentTo", { name: channels.find((c) => c.id === id)?.name ?? "" }), "success"),
   });
-  const del = useMutation({ mutationFn: (id: string) => api.deleteChannel(id), onSuccess: invalidate });
+  const del = useMutation({
+    mutationFn: (id: string) => api.deleteChannel(id),
+    onSuccess: (_r, id) => { invalidate(); toast(t("common.deletedNamed", { name: channels.find((c) => c.id === id)?.name ?? "" }), "success"); },
+  });
   const toggle = useMutation({
     mutationFn: (c: { id: string; enabled: boolean }) => api.updateChannel(c.id, { enabled: c.enabled }),
     onSuccess: invalidate,
@@ -300,7 +303,7 @@ export default function NotificationsPage() {
                   )}
                   <IconBtn label={t("notifications.rules")} pressed={policyId === c.id} onClick={() => setPolicyId(policyId === c.id ? null : c.id)}><Moon size={15} /></IconBtn>
                   <IconBtn label={t("notifications.editName")} onClick={() => { setRName(c.name); setRenamingId(renamingId === c.id ? null : c.id); }}><Pencil size={15} /></IconBtn>
-                  <IconBtn label={t("notifications.delete")} danger onClick={async () => { if (await confirm({ body: t("common.deleteConfirm"), danger: true })) del.mutate(c.id); }}><Trash2 size={15} /></IconBtn>
+                  <IconBtn label={t("notifications.delete")} danger loading={del.isPending && del.variables === c.id} onClick={async () => { if (await confirm({ body: t("common.deleteConfirm"), danger: true })) del.mutate(c.id); }}><Trash2 size={15} /></IconBtn>
                 </>
               )}
               {policyId === c.id && <ChannelPolicyPanel key={`p-${c.id}`} channel={c} onClose={() => setPolicyId(null)} />}

@@ -75,6 +75,7 @@ export default function ServerDetailPage() {
   const tags = useMutation({
     mutationFn: (next: string[]) => api.setServerTags(id, next),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["server", id] }),
+    meta: { successMessage: t("common.saved") },
   });
   // Monitoring range: "live" = last-60 + SSE append; 1h/6h/24h/7d = server-side history (raw ≤2h,
   // 1-minute rollups beyond) with no live append.
@@ -331,7 +332,7 @@ export default function ServerDetailPage() {
 
       {tab === "maintenance" && (
         <>
-          <TagsCard tags={server.tags} canWrite={server.canWrite} onSave={(next) => tags.mutate(next)} />
+          <TagsCard tags={server.tags} canWrite={server.canWrite} onSave={(next) => tags.mutate(next)} saving={tags.isPending} />
           <ServerRebootCard id={id} serverName={server.name} canWrite={server.canWrite} />
           <ServerOobCard id={id} serverName={server.name} />
           <ProxyCard id={id} canWrite={server.canWrite} />

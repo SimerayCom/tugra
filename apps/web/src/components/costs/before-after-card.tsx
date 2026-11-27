@@ -99,7 +99,7 @@ export function BeforeAfterCard({ team }: { team: TeamCost }) {
               </Btn>
             )}
             {team.canManage && (
-              <IconBtn label={t("costs.compare.delete")} danger onClick={() => del.mutate(latest.id)}>
+              <IconBtn label={t("costs.compare.delete")} danger loading={del.isPending} onClick={() => del.mutate(latest.id)}>
                 <Trash2 size={15} />
               </IconBtn>
             )}

@@ -112,7 +112,7 @@ export function BeszelImport() {
   const { data: saved = [], refetch: refetchSaved } = useQuery({ queryKey: ["beszel-sessions"], queryFn: () => api.beszelSessions(), retry: false });
   const forgetSavedM = useMutation({
     mutationFn: (sid: string) => api.beszelDisconnect(sid),
-    onSuccess: () => void refetchSaved(),
+    onSuccess: (_r, sid) => { void refetchSaved(); toast(t("beszelImport.saved.forgotten", { host: saved.find((c) => c.sessionId === sid)?.host ?? "" }), "success"); },
     onError: (e) => toast((e as Error).message, "error"),
   });
 
@@ -199,8 +199,8 @@ export function BeszelImport() {
         <SectionCard title={t("beszelImport.saved.title")} desc={t("beszelImport.saved.desc")} style={{ maxWidth: 560 }}>
           {saved.map((c) => (
             <div key={c.sessionId} style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-              <Btn loading={busy} onClick={() => reuse(c.sessionId)}>{t("beszelImport.saved.use", { host: c.host })}</Btn>
-              <Btn variant="ghost" onClick={() => forgetSavedM.mutate(c.sessionId)}>{t("beszelImport.saved.forget", { host: c.host })}</Btn>
+              <Btn loading={busy} disabled={forgetSavedM.isPending && forgetSavedM.variables === c.sessionId} onClick={() => reuse(c.sessionId)}>{t("beszelImport.saved.use", { host: c.host })}</Btn>
+              <Btn variant="ghost" loading={forgetSavedM.isPending && forgetSavedM.variables === c.sessionId} disabled={busy} onClick={() => forgetSavedM.mutate(c.sessionId)}>{t("beszelImport.saved.forget", { host: c.host })}</Btn>
             </div>
           ))}
         </SectionCard>

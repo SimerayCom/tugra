@@ -43,8 +43,8 @@ function Chooser({ view, run, onDone }: { view: SnapshotView; run: MigrationRunV
       </Field>
       {choice === LOCAL && <Warn>{t("migrationRun.snapshot.localWarn")}</Warn>}
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-        <Btn onClick={() => plan.mutate(false)} disabled={plan.isPending}>{t("migrationRun.snapshot.start")}</Btn>
-        <Btn variant="ghost" onClick={() => plan.mutate(true)} disabled={plan.isPending}>{t("migrationRun.snapshot.skip")}</Btn>
+        <Btn onClick={() => plan.mutate(false)} disabled={plan.isPending} loading={plan.isPending && plan.variables === false}>{t("migrationRun.snapshot.start")}</Btn>
+        <Btn variant="ghost" onClick={() => plan.mutate(true)} disabled={plan.isPending} loading={plan.isPending && plan.variables === true}>{t("migrationRun.snapshot.skip")}</Btn>
         <Link href="/destinations" style={{ color: "var(--c-ac)", fontSize: 13, minHeight: 44, display: "inline-flex", alignItems: "center" }}>{t("migrationRun.snapshot.addDestination")}</Link>
       </div>
     </div>
@@ -75,7 +75,7 @@ function Items({ run, snap, onDone }: { run: MigrationRunView; snap: SnapshotInf
               <div role="alertdialog" aria-label={t("migrationRun.snapshot.goBack")} style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 <Warn>{t("migrationRun.snapshot.goBackWarn", { name: i.name ?? "" })}</Warn>
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  <Btn variant="danger" onClick={() => restore.mutate(i.id as string)} disabled={restore.isPending}>{t("migrationRun.snapshot.goBackConfirm")}</Btn>
+                  <Btn variant="danger" onClick={() => restore.mutate(i.id as string)} loading={restore.isPending}>{t("migrationRun.snapshot.goBackConfirm")}</Btn>
                   <Btn variant="ghost" onClick={() => setArmed(null)}>{t("migrationRun.snapshot.cancel")}</Btn>
                 </div>
               </div>
@@ -132,8 +132,8 @@ export function SnapshotCard({ run }: { run: MigrationRunView }) {
             {snap.destinationType === "LOCAL" && snap.status !== "SKIPPED" && snap.status !== "EXPIRED" && <Warn>{t("migrationRun.snapshot.localWarn")}</Warn>}
             {snap.items.length > 0 && <Items run={run} snap={snap} onDone={adopt} />}
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              {snap.status === "PLANNED" && <Btn onClick={() => now.mutate()} disabled={now.isPending}>{t("migrationRun.snapshot.now")}</Btn>}
-              {(snap.status === "PARTIAL" || snap.status === "FAILED") && <Btn onClick={() => now.mutate()} disabled={now.isPending}>{t("migrationRun.snapshot.retry")}</Btn>}
+              {snap.status === "PLANNED" && <Btn onClick={() => now.mutate()} loading={now.isPending}>{t("migrationRun.snapshot.now")}</Btn>}
+              {(snap.status === "PARTIAL" || snap.status === "FAILED") && <Btn onClick={() => now.mutate()} loading={now.isPending}>{t("migrationRun.snapshot.retry")}</Btn>}
               {snap.status === "SKIPPED" && !over && <Btn variant="ghost" onClick={() => setChanging(true)}>{t("migrationRun.snapshot.makeOne")}</Btn>}
               {snap.status === "PLANNED" && !over && <Btn variant="ghost" onClick={() => setChanging(true)}>{t("migrationRun.snapshot.change")}</Btn>}
             </div>

@@ -12,7 +12,7 @@ import { RenameModal } from "../../../../components/rename-modal";
 import { ResourceGroup } from "./resource-group";
 import type { Environment, ProjectResource } from "../../../../lib/types";
 import { useT } from "../../../../i18n/provider";
-import { Badge, Btn, Card } from "../../../../components/ui";
+import { ActivitySpinner, Badge, Btn, Card } from "../../../../components/ui";
 import { Skeleton, SkeletonCard } from "../../../../components/skeleton";
 import { PageHeader } from "../../../../components/page-header";
 import { IdentityCard } from "../../../../components/identity-card";
@@ -104,7 +104,7 @@ export default function ProjectDetailPage() {
                 <Btn variant="ghost" onClick={() => { setMoving(true); setRenaming(false); setMoveTeam(targets[0].id); }}>{t("projects.moveToTeam")}</Btn>
               )}
               {empty && (
-                <Btn variant="danger" onClick={async () => { if (await confirm({ title: t("projects.deleteProject"), body: t("projects.deleteConfirm"), danger: true, confirmText: project.name })) del.mutate(); }}>{t("projects.deleteProject")}</Btn>
+                <Btn variant="danger" loading={del.isPending} onClick={async () => { if (await confirm({ title: t("projects.deleteProject"), body: t("projects.deleteConfirm"), danger: true, confirmText: project.name })) del.mutate(); }}>{t("projects.deleteProject")}</Btn>
               )}
             </div>
           ) : undefined
@@ -249,7 +249,7 @@ function EnvironmentBlock({ env, projectId, canWrite, onChange }: { env: Environ
   const apps = all.filter((r) => r.kind === "app" && r.source !== "COMPOSE" && match(r));
   const services = all.filter((r) => r.kind === "app" && r.source === "COMPOSE" && match(r));
   const dbs = all.filter((r) => r.kind === "database" && match(r));
-  const remove = useMutation({ mutationFn: () => api.deleteEnvironment(env.id), onSuccess: onChange });
+  const remove = useMutation({ mutationFn: () => api.deleteEnvironment(env.id), onSuccess: () => { onChange(); toast(t("projects.envDeleted", { name: env.name }), "success"); } });
   const [renaming, setRenaming] = useState(false);
   const rename = useMutation({ mutationFn: (name: string) => api.renameEnvironment(env.id, name), onSuccess: () => { onChange(); setRenaming(false); } });
   const [cloning, setCloning] = useState(false);
@@ -288,10 +288,12 @@ function EnvironmentBlock({ env, projectId, canWrite, onChange }: { env: Environ
         {canWrite && empty && (
           <button
             onClick={() => remove.mutate()}
+            disabled={remove.isPending}
+            aria-busy={remove.isPending || undefined}
             title={t("projects.deleteProject")}
-            style={{ background: "transparent", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", color: "var(--c-tx3)", fontSize: 11, cursor: "pointer", padding: "2px 8px", fontFamily: "inherit" }}
+            style={{ background: "transparent", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", color: "var(--c-tx3)", fontSize: 11, cursor: remove.isPending ? "default" : "pointer", padding: "2px 8px", fontFamily: "inherit", display: "inline-flex", alignItems: "center" }}
           >
-            ×
+            {remove.isPending ? <ActivitySpinner /> : "×"}
           </button>
         )}
       </div>

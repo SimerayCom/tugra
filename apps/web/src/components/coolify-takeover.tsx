@@ -7,7 +7,7 @@ import { api, ApiError } from "../lib/api";
 import { useT } from "../i18n/provider";
 import { relativeTime } from "../lib/fleet";
 import { coolifyVersion, type CoolifyDetect } from "../lib/coolify-takeover";
-import { Badge, Btn, Card, SectionCard } from "./ui";
+import { Badge, Btn, Card, SectionCard, Working } from "./ui";
 import { Field, Select } from "./form";
 import { useConfirm } from "./confirm";
 import { CoolifyInventoryBody } from "./coolify-inventory-view";
@@ -40,7 +40,7 @@ export function CoolifyTakeover() {
   }, []);
   const [detect, setDetect] = useState<CoolifyDetect | null>(null);
 
-  const { data: servers = [] } = useQuery({ queryKey: ["servers", "all"], queryFn: () => api.listServers() });
+  const { data: servers = [], isLoading: loadingServers } = useQuery({ queryKey: ["servers", "all"], queryFn: () => api.listServers() });
   const invKey = ["coolify-inventory", serverId];
   const inv = useQuery({
     queryKey: invKey,
@@ -57,6 +57,7 @@ export function CoolifyTakeover() {
       qc.setQueryData(invKey, v);
       qc.invalidateQueries({ queryKey: ["coolify-servers", serverId] });
     },
+    meta: { successMessage: t("coolifyTakeover.read.done") },
   });
   const allow = useMutation({
     mutationFn: async () => {
@@ -67,6 +68,7 @@ export function CoolifyTakeover() {
       qc.setQueryData(invKey, v);
       setDetect(null);
     },
+    meta: { successMessage: t("coolifyTakeover.read.done") },
     // The opt-in is kept even when the first read fails: the page then offers "Read now".
     onError: () => qc.invalidateQueries({ queryKey: invKey }),
   });
@@ -78,6 +80,7 @@ export function CoolifyTakeover() {
       setDetect(null);
       inv.refetch();
     },
+    meta: { successMessage: t("coolifyTakeover.stop.done") },
   });
 
   const pick = (id: string) => {
@@ -110,7 +113,7 @@ export function CoolifyTakeover() {
   return (
     <div style={{ display: "grid", gap: 16 }}>
       <Card style={{ padding: 16 }}>
-        <Field label={t("coolifyTakeover.pick.label")} hint={servers.length === 0 ? t("coolifyTakeover.pick.none") : t("coolifyTakeover.pick.hint")}>
+        <Field label={t("coolifyTakeover.pick.label")} hint={servers.length === 0 && !loadingServers ? t("coolifyTakeover.pick.none") : t("coolifyTakeover.pick.hint")}>
           <Select
             value={serverId}
             onChange={pick}
@@ -126,6 +129,8 @@ export function CoolifyTakeover() {
           <Link href="/servers/new" style={{ color: "var(--c-lapis)" }}>{t("servers.cta.addServer")}</Link>
         </p>
       </Card>
+
+      {serverId && inv.isFetching && !inv.data && <Working text={t("coolifyTakeover.pick.loading", { name: picked?.name ?? "" })} />}
 
       {failure && (
         <p role="alert" style={{ margin: 0, fontSize: 13, color: "var(--c-r)" }}>
@@ -166,11 +171,11 @@ export function CoolifyTakeover() {
       {serverId && inv.data && !inv.data.data && (
         <SectionCard title={t("coolifyTakeover.title")} desc={t("coolifyTakeover.read.empty")}>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <Btn loading={read.isPending} onClick={() => read.mutate()}>
+            <Btn loading={read.isPending} disabled={stop.isPending} onClick={() => read.mutate()}>
               {read.isPending ? t("coolifyTakeover.read.reading") : t("coolifyTakeover.read.now")}
             </Btn>
-            <Btn variant="ghost" onClick={onStop}>
-              {t("coolifyTakeover.stop.button")}
+            <Btn variant="ghost" loading={stop.isPending} disabled={read.isPending} onClick={onStop}>
+              {stop.isPending ? t("coolifyTakeover.stop.stopping") : t("coolifyTakeover.stop.button")}
             </Btn>
           </div>
         </SectionCard>
@@ -179,11 +184,11 @@ export function CoolifyTakeover() {
       {serverId && inv.data?.data && (
         <>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-            <Btn variant="ghost" loading={read.isPending} onClick={() => read.mutate()}>
+            <Btn variant="ghost" loading={read.isPending} disabled={stop.isPending} onClick={() => read.mutate()}>
               {read.isPending ? t("coolifyTakeover.read.reading") : t("coolifyTakeover.read.again")}
             </Btn>
-            <Btn variant="dangerGhost" onClick={onStop}>
-              {t("coolifyTakeover.stop.button")}
+            <Btn variant="dangerGhost" loading={stop.isPending} disabled={read.isPending} onClick={onStop}>
+              {stop.isPending ? t("coolifyTakeover.stop.stopping") : t("coolifyTakeover.stop.button")}
             </Btn>
             {inv.data.readAt && <Badge>{t("coolifyTakeover.read.readAt", { when: relativeTime(inv.data.readAt) })}</Badge>}
           </div>

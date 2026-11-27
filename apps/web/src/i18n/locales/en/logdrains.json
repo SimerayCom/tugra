@@ -57,6 +57,8 @@
   "delivery_disabled": "Disabled",
   "delivery_error": "Delivery failing",
   "delivery_invalid": "Invalid configuration",
+  "enabledNamed": "{name} turned on",
+  "disabledNamed": "{name} turned off",
   "status_line": "{sent} lines sent, {dropped} dropped",
   "lastDelivery": "last delivery {time}",
   "truncatedLines": "{n} cut to the size limit",

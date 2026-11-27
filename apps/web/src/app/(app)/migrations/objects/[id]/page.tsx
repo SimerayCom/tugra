@@ -63,7 +63,7 @@ export default function ObjectMigrationPage() {
         breadcrumb={[{ label: t("objectMigration.back"), href: "/migrations/objects" }, { label: m.name }]}
         title={m.name}
         status={{ label: t(statusLabelKey(m.status)), color: m.status === "FAILED" ? "var(--c-r)" : m.status === "DONE" ? "var(--c-g)" : "var(--c-am)" }}
-        actions={m.canWrite ? <Btn variant="ghost" onClick={onDelete} disabled={isLive(m) || remove.isPending}>{t("objectMigration.delete")}</Btn> : undefined}
+        actions={m.canWrite ? <Btn variant="ghost" onClick={onDelete} disabled={isLive(m)} loading={remove.isPending}>{t("objectMigration.delete")}</Btn> : undefined}
       >
         <div className="mono" style={{ fontSize: 11, color: "var(--c-tx3)", wordBreak: "break-all" }}>{m.srcEndpoint} {"->"} {m.dstEndpoint}</div>
       </PageHeader>
@@ -80,7 +80,7 @@ export default function ObjectMigrationPage() {
             ))}
           </ul>
         )}
-        <Btn onClick={() => preflight.mutate()} disabled={!act.preflight || busy}>{preflight.isPending ? t("objectMigration.preflight.running") : t("objectMigration.preflight.run")}</Btn>
+        <Btn onClick={() => preflight.mutate()} disabled={!act.preflight || busy} loading={preflight.isPending}>{preflight.isPending ? t("objectMigration.preflight.running") : t("objectMigration.preflight.run")}</Btn>
       </SectionCard>
 
       {m.status !== "DRAFT" && (
@@ -99,6 +99,7 @@ export default function ObjectMigrationPage() {
             onMergeAck: setMergeAck,
             needsMergeAck: needsMergeAck(m),
             busy,
+            running: start.isPending && start.variables?.phase === "seed" ? "seed" : verify.isPending ? "verify" : cancel.isPending ? "cancel" : null,
           }}
         />
       )}

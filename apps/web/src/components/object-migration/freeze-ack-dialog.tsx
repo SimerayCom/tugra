@@ -30,7 +30,7 @@ export function FreezeAckDialog({ busy, onCancel, onConfirm }: { busy: boolean; 
         {remove && <p role="alert" style={{ fontSize: 12, color: "var(--c-r)", margin: "6px 0 0 24px" }}>{t("objectMigration.freeze.removeWarning")}</p>}
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 18 }}>
           <Btn variant="ghost" onClick={onCancel} disabled={busy}>{t("objectMigration.phase.cancel")}</Btn>
-          <Btn onClick={() => onConfirm({ removeExtraneous: remove })} disabled={!frozen || busy}>{t("objectMigration.freeze.start")}</Btn>
+          <Btn onClick={() => onConfirm({ removeExtraneous: remove })} disabled={!frozen} loading={busy}>{t("objectMigration.freeze.start")}</Btn>
         </div>
       </div>
     </Modal>

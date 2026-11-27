@@ -167,6 +167,17 @@ describe("TakeoverPanel", () => {
       expect(plan.mock.calls[0][0]).not.toHaveProperty("rebuild");
       expect(await screen.findByRole("button", { name: "Plan again with this choice" })).toBeTruthy();
     });
+    it("says it is looking up the apps while the import's list loads, then shows the picker", async () => {
+      vi.spyOn(api, "listInPlace").mockResolvedValue([]);
+      let finish: (v: never) => void = () => undefined;
+      vi.spyOn(api, "getImportOperation").mockImplementation(() => new Promise((r) => { finish = r as never; }));
+      mount();
+      await screen.findByText("Looking up which apps can be rebuilt…");
+      expect(screen.queryByTestId("rebuild-picker")).toBeNull();
+      finish(op([task({})]) as never);
+      await screen.findByTestId("rebuild-picker");
+      expect(screen.queryByText("Looking up which apps can be rebuilt…")).toBeNull();
+    });
     it("a ticked app is sent as the rebuild list, and a planned takeover can be planned again with another choice", async () => {
       vi.spyOn(api, "listInPlace").mockResolvedValue([]);
       vi.spyOn(api, "getImportOperation").mockResolvedValue(op([task({}), task({ itemRef: "app:s:api", name: "api" })]));

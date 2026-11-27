@@ -7,7 +7,7 @@ import { api, ApiError } from "../lib/api";
 import { useT } from "../i18n/provider";
 import { defaultChannelSelection, defaultMonitorSelection } from "../lib/monitors";
 import type { KumaApplyResult, KumaContainer, KumaPlan, KumaSource, KumaWarning } from "../lib/types";
-import { Btn, Card } from "./ui";
+import { Btn, Card, Working } from "./ui";
 import { Checkbox, Field, Select } from "./form";
 
 const MAX_FILE_CHARS = 3_500_000; // the hub accepts a little under 4 MB of JSON per request
@@ -71,7 +71,7 @@ export function KumaImport() {
   const [channelSel, setChannelSel] = useState<Set<string>>(new Set());
   const [result, setResult] = useState<KumaApplyResult | null>(null);
 
-  const { data: servers = [] } = useQuery({
+  const { data: servers = [], isFetching: loadingServers } = useQuery({
     queryKey: ["servers", teamId],
     queryFn: () => api.listServers({ teamId }),
     enabled: !!teamId && kind === "server",
@@ -349,8 +349,9 @@ export function KumaImport() {
           <div style={{ display: "grid", gap: 12 }}>
             <Field label={t("monitors.kuma.server")} htmlFor="kuma-server" hint={t("monitors.kuma.readOnly")}>
               <Select id="kuma-server" value={serverId} onChange={(v) => { setServerId(v); setContainers(null); setContainer(""); }}
-                placeholder={servers.length === 0 ? t("monitors.kuma.noServers") : t("common.select")}
+                placeholder={loadingServers && servers.length === 0 ? t("common.loading") : servers.length === 0 ? t("monitors.kuma.noServers") : t("common.select")}
                 options={servers.map((s) => ({ value: s.id, label: s.name }))} />
+              {loadingServers && servers.length === 0 && <Working text={t("monitors.kuma.loadingServers")} />}
             </Field>
             <div>
               <Btn variant="ghost" onClick={() => detect.mutate()} disabled={!serverId || detect.isPending} loading={detect.isPending}>

@@ -155,7 +155,11 @@
     "prepare": "Certificates prepared: {ready} ready, {blocked} blocked",
     "check": "Check complete: {ready} ready, {blocked} blocked",
     "ttl": "TTL lowered for {count} host(s)",
-    "finalize": "{count} host(s) finalized"
+    "finalize": "{count} host(s) finalized",
+    "exclude": "{count} host(s) left out of the move",
+    "include": "{count} host(s) back in the move",
+    "fix": "{host} will now also be served on its counterpart name",
+    "cancel": "The flip run was asked to stop"
   },
   "seed": {
     "title": "Apply staged certificates",

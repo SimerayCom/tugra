@@ -93,7 +93,7 @@ export function SourceDestinationForm({ busy, onSubmit }: { busy: boolean; onSub
       </SectionCard>
 
       <div>
-        <Btn type="submit" disabled={busy || !ready}>{busy ? t("objectMigration.creating") : t("objectMigration.create")}</Btn>
+        <Btn type="submit" disabled={!ready} loading={busy}>{busy ? t("objectMigration.creating") : t("objectMigration.create")}</Btn>
       </div>
     </form>
     </>

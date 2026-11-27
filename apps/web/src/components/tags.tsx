@@ -118,10 +118,13 @@ export function TagsCard({
   tags,
   canWrite,
   onSave,
+  saving = false,
 }: {
   tags: string[];
   canWrite: boolean;
   onSave: (tags: string[]) => void;
+  /** The save call is running: Save shows progress and the editor is locked so a second click can't double submit. */
+  saving?: boolean;
 }) {
   const t = useT();
   const [value, setValue] = useState<string[]>(tags);
@@ -151,6 +154,7 @@ export function TagsCard({
             {canWrite && (
               <button
                 onClick={() => setValue(value.filter((x) => x !== tag))}
+                disabled={saving}
                 style={{ background: "transparent", border: "none", color: "var(--c-tx3)", cursor: "pointer", padding: 0, fontFamily: "inherit", fontSize: 13 }}
                 aria-label={`remove ${tag}`}
               >
@@ -179,8 +183,8 @@ export function TagsCard({
               color: "var(--c-tx)",
             }}
           />
-          <Btn variant="ghost" onClick={add} disabled={!clean(input)}>{t("tags.add")}</Btn>
-          <Btn onClick={() => onSave(value)} disabled={!dirty}>{t("tags.save")}</Btn>
+          <Btn variant="ghost" onClick={add} disabled={!clean(input) || saving}>{t("tags.add")}</Btn>
+          <Btn onClick={() => onSave(value)} disabled={!dirty} loading={saving}>{saving ? t("common.saving") : t("tags.save")}</Btn>
         </div>
       )}
     </SectionCard>

@@ -29,7 +29,9 @@
   },
   "confirm": {
     "title": "Remove these",
-    "button": "Remove"
+    "button": "Remove",
+    "removing": "Removing…",
+    "done": "Coolify leftovers removed from {server}."
   },
   "needsRead": "Read the Coolify first",
   "needsReadLink": "Read this Coolify",

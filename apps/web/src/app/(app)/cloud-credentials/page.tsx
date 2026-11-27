@@ -60,6 +60,7 @@ export default function CloudCredentialsPage() {
               provider={c.provider}
               canWrite={c.canWrite}
               onDelete={async () => { if (await confirm({ body: t("common.deleteNamedConfirm", { name: c.name }), danger: true })) del.mutate(c.id); }}
+              deleting={del.isPending && del.variables === c.id}
             />
           ))}
         </div>
@@ -88,8 +89,8 @@ export default function CloudCredentialsPage() {
 }
 
 function CredentialRow({
-  id, name, provider, canWrite, onDelete,
-}: { id: string; name: string; provider: string; canWrite: boolean; onDelete: () => void }) {
+  id, name, provider, canWrite, onDelete, deleting,
+}: { id: string; name: string; provider: string; canWrite: boolean; onDelete: () => void; deleting?: boolean }) {
   const t = useT();
   const qc = useQueryClient();
   const test = useMutation({ mutationFn: () => api.testCloudCredential(id) });
@@ -115,7 +116,7 @@ function CredentialRow({
           <>
             <Btn variant="ghost" onClick={() => test.mutate()} disabled={test.isPending}>{test.isPending ? "…" : t("cloudCredentials.test")}</Btn>
             <IconBtn label={t("cloudCredentials.edit")} onClick={() => (editing ? setEditing(false) : openEdit())}><Pencil size={15} /></IconBtn>
-            <IconBtn label={t("cloudCredentials.delete")} danger onClick={onDelete}><Trash2 size={15} /></IconBtn>
+            <IconBtn label={t("cloudCredentials.delete")} danger loading={deleting} onClick={onDelete}><Trash2 size={15} /></IconBtn>
           </>
         )}
       </div>

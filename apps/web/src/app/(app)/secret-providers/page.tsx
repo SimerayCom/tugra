@@ -112,7 +112,7 @@ function SecretProviderRow({ provider, proReady, isPro }: { provider: SecretProv
     mutationFn: () => api.updateSecretProvider(provider.id, { name: eName, address: eAddr, ...(eToken ? { token: eToken } : {}) }),
     onSuccess: () => { setEditing(false); setEToken(""); invalidate(); },
   });
-  const del = useMutation({ mutationFn: () => api.deleteSecretProvider(provider.id), onSuccess: invalidate });
+  const del = useMutation({ mutationFn: () => api.deleteSecretProvider(provider.id), onSuccess: invalidate, meta: { successMessage: t("common.deletedNamed", { name: provider.name }) } });
 
   const openEdit = () => { setEName(provider.name); setEAddr(provider.address); setEToken(""); setEditErr(""); setEditing(true); };
   const submitEdit = () => {
@@ -145,7 +145,7 @@ function SecretProviderRow({ provider, proReady, isPro }: { provider: SecretProv
           <>
             <Btn variant="ghost" onClick={() => test.mutate()} disabled={gate || test.isPending} title={gate ? t("secretProviders.proRequired") : undefined}>{test.isPending ? "…" : t("secretProviders.test")}</Btn>
             <IconBtn label={t("secretProviders.edit")} onClick={() => (editing ? setEditing(false) : openEdit())} disabled={gate}><Pencil size={15} /></IconBtn>
-            <IconBtn label={provider.refCount > 0 ? t("secretProviders.deleteBlockedInUse") : t("secretProviders.delete")} danger onClick={onDelete} disabled={provider.refCount > 0}><Trash2 size={15} /></IconBtn>
+            <IconBtn label={provider.refCount > 0 ? t("secretProviders.deleteBlockedInUse") : t("secretProviders.delete")} danger loading={del.isPending} onClick={onDelete} disabled={provider.refCount > 0}><Trash2 size={15} /></IconBtn>
           </>
         )}
       </div>

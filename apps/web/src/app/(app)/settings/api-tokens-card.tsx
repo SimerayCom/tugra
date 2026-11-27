@@ -8,7 +8,7 @@ import { useAuth } from "../../../lib/auth";
 import { relativeTime } from "../../../lib/fleet";
 import { useT } from "../../../i18n/provider";
 import { useToast } from "../../../components/toast";
-import { Badge, Btn, Card, EmptyState } from "../../../components/ui";
+import { ActivitySpinner, Badge, Btn, Card, EmptyState } from "../../../components/ui";
 import { tokenExpiry } from "../../../lib/api-token-expiry";
 import type { ApiToken } from "../../../lib/types";
 import { useConfirm } from "../../../components/confirm";
@@ -212,7 +212,8 @@ export function ApiTokensCard() {
                               {t("settings.tokenRotate")}
                             </button>
                           )}
-                          <button type="button" className="tok-act" onClick={async () => { if (await confirm({ body: t("common.deleteNamedConfirm", { name: tk.name }), danger: true })) revoke.mutate(tk.id); }} style={{ ...linkBtn, color: "var(--c-r)" }}>
+                          <button type="button" className="tok-act" disabled={revoke.isPending && revoke.variables === tk.id} aria-busy={(revoke.isPending && revoke.variables === tk.id) || undefined} onClick={async () => { if (await confirm({ body: t("common.deleteNamedConfirm", { name: tk.name }), danger: true })) revoke.mutate(tk.id); }} style={{ ...linkBtn, color: "var(--c-r)", display: "inline-flex", alignItems: "center", gap: 6 }}>
+                            {revoke.isPending && revoke.variables === tk.id && <ActivitySpinner />}
                             {t("settings.revoke")}
                           </button>
                         </span>

@@ -20,7 +20,7 @@ import { resourceBreadcrumb } from "../../../../lib/breadcrumb";
 import { useTabState } from "../../../../hooks/useTabState";
 import { CopyRow } from "../../../../components/copy-row";
 import { useT } from "../../../../i18n/provider";
-import { Btn, Card, EmptyState, SectionCard, Spinner } from "../../../../components/ui";
+import { ActivitySpinner, Btn, Card, EmptyState, SectionCard, Spinner } from "../../../../components/ui";
 import { IconKeyPicker } from "../../../../components/icon-key-picker";
 import { ResourceIcon } from "../../../../components/resource-icon";
 import { ENGINE_LOGO } from "../../../../lib/template-icons";
@@ -148,7 +148,7 @@ export default function DatabaseDetailPage() {
     onError: () => toast(t("databases.restoreFailed"), "error"),
     onSettled: invalidateRestores,
   });
-  const delBackup = useMutation({ mutationFn: (bid: string) => api.deleteBackup(id, bid), onSuccess: invalidateBackups });
+  const delBackup = useMutation({ mutationFn: (bid: string) => api.deleteBackup(id, bid), onSuccess: invalidateBackups, meta: { successMessage: t("common.deleted") } });
   // Migrator export: a presigned migration URL for an S3 DB backup (feed it to import-from-URL elsewhere).
   const [exported, setExported] = useState<{ id: string; url: string } | null>(null);
   const exportUrl = useMutation({
@@ -168,7 +168,7 @@ export default function DatabaseDetailPage() {
     onError: () => toast(t("databases.restoreFailed"), "error"),
     onSettled: invalidateRestores,
   });
-  const tags = useMutation({ mutationFn: (next: string[]) => api.setDatabaseTags(id, next), onSuccess: invalidate });
+  const tags = useMutation({ mutationFn: (next: string[]) => api.setDatabaseTags(id, next), onSuccess: invalidate, meta: { successMessage: t("common.saved") } });
 
   const [schedEnabled, setSchedEnabled] = useState(false);
   const [schedule, setSchedule] = useState<ScheduleValue>(scheduleFromFields(null, null));
@@ -419,7 +419,7 @@ export default function DatabaseDetailPage() {
             <DbPublicPortCard id={id} hostPort={db.hostPort} />
           </div>
           <div style={{ marginTop: 16 }}>
-            <TagsCard tags={db.tags} canWrite={db.canWrite} onSave={(next) => tags.mutate(next)} />
+            <TagsCard tags={db.tags} canWrite={db.canWrite} onSave={(next) => tags.mutate(next)} saving={tags.isPending} />
           </div>
           <div style={{ marginTop: 16 }}>
             <SectionCard title={t("databases.dangerDeleteTitle")} desc={t("databases.dangerDeleteDesc")} style={{ marginBottom: 0, borderColor: "var(--c-r)" }}>
@@ -516,7 +516,7 @@ export default function DatabaseDetailPage() {
                   {b.status === "SUCCESS" && db.canWrite && compatibleRestoreTargets(allDatabases, db).length > 0 && (
                     <button onClick={() => { setRestoreTarget(""); setRestoreToBackup(b.id); }} style={linkBtn}>{t("databases.restoreTo")}</button>
                   )}
-                  <button aria-label={t("common.delete")} onClick={async () => { if (await confirm({ body: t("common.deleteNamedConfirm", { name: b.filename }), danger: true })) delBackup.mutate(b.id); }} style={{ ...linkBtn, color: "var(--c-r)", display: "inline-flex", alignItems: "center" }}><Trash2 size={14} /></button>
+                  <button aria-label={t("common.delete")} onClick={async () => { if (await confirm({ body: t("common.deleteNamedConfirm", { name: b.filename }), danger: true })) delBackup.mutate(b.id); }} disabled={delBackup.isPending && delBackup.variables === b.id} aria-busy={(delBackup.isPending && delBackup.variables === b.id) || undefined} style={{ ...linkBtn, color: "var(--c-r)", display: "inline-flex", alignItems: "center" }}>{delBackup.isPending && delBackup.variables === b.id ? <ActivitySpinner /> : <Trash2 size={14} />}</button>
                 </div>
                 {b.status === "FAILED" && (
                   // A failed row must say WHY (not look empty): the last line of the scrubbed output, full text in the modal.

@@ -20,7 +20,8 @@
     "title": "Saved connections",
     "desc": "You chose to keep these.",
     "use": "Use {host}",
-    "forget": "Forget {host}"
+    "forget": "Forget {host}",
+    "forgotten": "{host} forgotten. Its saved connection was deleted."
   },
   "err": {
     "badCredentials": "Beszel did not accept that email and password.",

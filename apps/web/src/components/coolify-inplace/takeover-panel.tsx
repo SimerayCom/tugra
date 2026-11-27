@@ -7,7 +7,7 @@ import type { TakeoverCertState, TakeoverItemView, TakeoverView } from "@tugra/s
 import { api, ApiError } from "../../lib/api";
 import { useT } from "../../i18n/provider";
 import { actionsFor, confirmMatches, dbRollup, pollMs, exclusiveApps, rebuildCandidates, rebuildOf, rollup, serviceRollup, toggleChoice, verifyHasWork, type TakeoverAction } from "../../lib/inplace";
-import { Badge, Btn, SectionCard, Spinner } from "../ui";
+import { Badge, Btn, SectionCard, Spinner, Working } from "../ui";
 import { Modal } from "../modal";
 import { TypedConfirmField } from "../typed-confirm-field";
 import { useToast } from "../toast";
@@ -134,6 +134,7 @@ export function TakeoverPanel({ serverId, serverName, opId }: { serverId: string
           {verifyHasWork(view) && <p style={{ margin: 0, fontSize: 12, color: "var(--c-tx3)" }}>{t("coolifyInPlace.verifyAgain")}</p>}
         </div>
       )}
+      {picking && !!opId && op.isFetching && !op.data && <Working text={t("coolifyInPlace.rebuild.loading")} />}
       {picking && candidates.length > 0 && (
         <fieldset data-testid="rebuild-picker" style={{ border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: 12, margin: "14px 0 0", display: "flex", flexDirection: "column", gap: 8, minWidth: 0 }}>
           <legend style={{ fontSize: 13, fontWeight: 600, padding: "0 6px" }}>{t("coolifyInPlace.rebuild.title")}</legend>

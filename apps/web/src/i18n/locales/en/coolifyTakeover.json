@@ -7,7 +7,8 @@
     "label": "Server",
     "placeholder": "Choose the server that runs Coolify",
     "hint": "It needs a connected Tugra agent.",
-    "none": "Add a server first. Its agent reads the Coolify on it."
+    "none": "Add a server first. Its agent reads the Coolify on it.",
+    "loading": "Looking up what is saved for {name}…"
   },
   "optIn": {
     "title": "Let Tugra read this Coolify",
@@ -29,11 +30,14 @@
     "now": "Read now",
     "again": "Read again",
     "reading": "Reading…",
+    "done": "Coolify read. Nothing in it was changed.",
     "empty": "Nothing read yet.",
     "readAt": "Read {when}"
   },
   "stop": {
     "button": "Stop and delete",
+    "stopping": "Deleting the copy…",
+    "done": "Stopped. The copy was deleted.",
     "title": "Stop reading this Coolify?",
     "body": "The copy Tugra keeps is deleted. Coolify itself is not touched.",
     "confirm": "Stop and delete"

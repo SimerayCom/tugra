@@ -1214,6 +1214,7 @@
   "moveClusteredDisabled": "Swarm/cluster apps can't be moved with this tool.",
   "movePickTarget": "Target server",
   "moveNoTargets": "There is no other server in this team to move the app to.",
+  "moveLoadingTargets": "Loading the servers of this team…",
   "moveServerCurrent": "(current)",
   "moveServerOffline": "offline",
   "movePreflightRunning": "Checking both servers…",

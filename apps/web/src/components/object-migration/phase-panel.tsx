@@ -42,6 +42,8 @@ export interface PhaseHandlers {
   onMergeAck: (v: boolean) => void;
   needsMergeAck: boolean;
   busy: boolean;
+  /** The call that is running now (so its button shows progress); other buttons stay locked through `busy`. */
+  running?: "seed" | "verify" | "cancel" | null;
 }
 
 /** Seed / final / verify / cancel buttons + per-bucket progress bars, status, the verify result and the last classified error. */
@@ -60,10 +62,10 @@ export function PhasePanel({ m, h }: { m: ObjectMigrationView; h: PhaseHandlers 
         </label>
       )}
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 6 }}>
-        <Btn onClick={h.onSeed} disabled={!act.seed || h.busy || (h.needsMergeAck && !h.mergeAck)}>{m.status === "FAILED" || m.status === "SEEDED" ? t("objectMigration.phase.resume") : t("objectMigration.phase.seed")}</Btn>
+        <Btn onClick={h.onSeed} disabled={!act.seed || h.busy || (h.needsMergeAck && !h.mergeAck)} loading={h.running === "seed"}>{m.status === "FAILED" || m.status === "SEEDED" ? t("objectMigration.phase.resume") : t("objectMigration.phase.seed")}</Btn>
         <Btn variant="ghost" onClick={h.onFinal} disabled={!act.final || h.busy}>{t("objectMigration.phase.final")}</Btn>
-        <Btn variant="ghost" onClick={h.onVerify} disabled={!act.verify || h.busy}>{t("objectMigration.phase.verify")}</Btn>
-        {act.cancel && <Btn variant="ghost" onClick={h.onCancel} disabled={h.busy}>{t("objectMigration.phase.cancel")}</Btn>}
+        <Btn variant="ghost" onClick={h.onVerify} disabled={!act.verify || h.busy} loading={h.running === "verify"}>{t("objectMigration.phase.verify")}</Btn>
+        {act.cancel && <Btn variant="ghost" onClick={h.onCancel} disabled={h.busy} loading={h.running === "cancel"}>{t("objectMigration.phase.cancel")}</Btn>}
       </div>
       <p style={{ fontSize: 11, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("objectMigration.phase.seedHint")} {t("objectMigration.phase.finalHint")}</p>
       {total !== null && (

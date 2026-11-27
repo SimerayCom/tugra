@@ -598,7 +598,7 @@ export function ImportWizard() {
         <p id="imp-scope-hint" style={{ fontSize: 12, color: "var(--c-tx3)", margin: "-6px 0 0" }}>{t("import.review.scopeLabelHelp")}</p>
       </MoreInfo>
 
-      <Btn onClick={() => connect.mutate()} disabled={busy || !connectTeam || !baseUrl.trim() || !token.trim()}>
+      <Btn onClick={() => connect.mutate()} loading={busy} disabled={!connectTeam || !baseUrl.trim() || !token.trim()}>
         {connect.isPending ? t("import.connecting") : planM.isPending ? t("import.planning") : t("import.connect")}
       </Btn>
       </>
@@ -844,7 +844,7 @@ function PlanView({
         )}
         <p style={{ fontSize: 11, color: "var(--c-tx3)", margin: "-4px 0 12px" }}>{t("import.targetHint")}</p>
         {missingTargets > 0 && <p role="alert" style={{ fontSize: 12, color: "var(--c-am)", margin: "0 0 8px" }}>{t("import.services.needsTarget")}</p>}
-        <Btn onClick={() => apply.mutate()} disabled={apply.isPending || replanning || consentMissing || !target || runnable === 0 || unackedCount > 0 || missingTargets > 0}>
+        <Btn onClick={() => apply.mutate()} loading={apply.isPending} disabled={replanning || consentMissing || !target || runnable === 0 || unackedCount > 0 || missingTargets > 0}>
           {apply.isPending ? t("import.applying") : t("import.apply")}
         </Btn>
         </>
@@ -910,12 +910,12 @@ function Timeline({ opId, onReset, settings }: { opId: string; onReset: () => vo
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
         <div style={{ fontWeight: 600, flex: 1 }}>{t("import.timelineTitle")} <span style={{ color: "var(--c-tx3)", fontWeight: 400 }}>· {op.status}</span></div>
         {!prog.settled && (
-          <Btn variant="ghost" onClick={() => cancel.mutate()} disabled={cancel.isPending || op.cancelRequested}>
+          <Btn variant="ghost" onClick={() => cancel.mutate()} loading={cancel.isPending || op.cancelRequested} disabled={op.cancelRequested}>
             {cancel.isPending || op.cancelRequested ? t("import.cancelling") : t("import.cancel")}
           </Btn>
         )}
         {canRollback && (
-          <Btn variant="ghost" onClick={onRollback} disabled={rollback.isPending}>
+          <Btn variant="ghost" onClick={onRollback} loading={rollback.isPending}>
             {rollback.isPending ? t("import.rollingBack") : t("import.rollback")}
           </Btn>
         )}
@@ -1046,8 +1046,8 @@ function MigrateDataCard({ opId, sourceKind = "coolify" }: { opId: string; sourc
           {active && <div style={{ fontSize: 12, color: "var(--c-g)", marginBottom: 8 }}>{t("import.migrateActive", { date: state?.expiresAt ? new Date(state.expiresAt).toLocaleString() : "" })}</div>}
           {!shown && state?.commandTemplate && <CommandBox cmd={state.commandTemplate} muted />}
           <div style={{ marginTop: 10 }}>
-            <Btn onClick={() => mint.mutate(active)} disabled={mint.isPending}>
-              {mint.isPending ? "…" : active ? t("import.migrateReissue") : t("import.migrateGenerate")}
+            <Btn onClick={() => mint.mutate(active)} loading={mint.isPending}>
+              {mint.isPending ? t("import.migrateMinting") : active ? t("import.migrateReissue") : t("import.migrateGenerate")}
             </Btn>
           </div>
         </>
@@ -1143,7 +1143,7 @@ function RemapEnvCard({ opId, sourceKind = "coolify" }: { opId: string; sourceKi
     <SectionCard title={t("import.remapTitle")} desc={t("import.remapDesc", { source: t(SRC[sourceKind].name) })} style={{ padding: 20, maxWidth: 720, marginTop: 16, marginBottom: 0 }}>
 
       {!plan && !result && (
-        <Btn onClick={() => preview.mutate()} disabled={preview.isPending}>{preview.isPending ? "…" : t("import.remapPreview")}</Btn>
+        <Btn onClick={() => preview.mutate()} loading={preview.isPending}>{preview.isPending ? t("import.remapPreviewing") : t("import.remapPreview")}</Btn>
       )}
 
       {plan && !result && (
@@ -1173,7 +1173,7 @@ function RemapEnvCard({ opId, sourceKind = "coolify" }: { opId: string; sourceKi
             ))}
           </div>
           <div style={{ display: "flex", gap: 8 }}>
-            <Btn onClick={onApply} disabled={apply.isPending || changeCount === 0}>{apply.isPending ? t("import.applying") : t("import.remapApply")}</Btn>
+            <Btn onClick={onApply} loading={apply.isPending} disabled={changeCount === 0}>{apply.isPending ? t("import.applying") : t("import.remapApply")}</Btn>
             <Btn variant="ghost" onClick={() => setPlan(null)} disabled={apply.isPending}>{t("import.remapDiscard")}</Btn>
           </div>
         </>
@@ -1186,7 +1186,7 @@ function RemapEnvCard({ opId, sourceKind = "coolify" }: { opId: string; sourceKi
             {t("import.remapResult", { n: result.apps.length })}{result.failed.length > 0 ? ` · ${t("import.remapResultFailed", { n: result.failed.length })}` : ""}
           </div>
           {result.applied && (
-            <Btn variant="ghost" onClick={() => undo.mutate()} disabled={undo.isPending}>{undo.isPending ? "…" : t("import.remapUndo")}</Btn>
+            <Btn variant="ghost" onClick={() => undo.mutate()} loading={undo.isPending}>{undo.isPending ? t("import.remapUndoing") : t("import.remapUndo")}</Btn>
           )}
         </>
       )}

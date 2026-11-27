@@ -16,7 +16,7 @@ import { AccountAvatar, ProviderIcon } from "./provider-icon";
 
 /** One connected Git host: provider icon, who it is installed for, status, repository count and a searchable
  *  repository list. Actions (install, add account, share, delete) only appear for people who may use them. */
-export function GitSourceCard({ source, teamName, isOwner, onDelete }: { source: GitSource; teamName: string; isOwner: boolean; onDelete: () => void }) {
+export function GitSourceCard({ source, teamName, isOwner, onDelete, deleting }: { source: GitSource; teamName: string; isOwner: boolean; onDelete: () => void; deleting?: boolean }) {
   const t = useT();
   const toast = useToast();
   const qc = useQueryClient();
@@ -70,7 +70,7 @@ export function GitSourceCard({ source, teamName, isOwner, onDelete }: { source:
           <div style={{ fontWeight: 600, fontSize: 14, overflowWrap: "anywhere" }}>{name}</div>
           <div style={{ fontSize: 12, color: "var(--c-tx3)" }}>{sourceKindLabel(kind, t)}{detail ? ` · ${detail}` : ""}</div>
         </div>
-        {canWrite && <IconBtn label={t("sources.delete")} danger onClick={onDelete}><Trash2 size={15} /></IconBtn>}
+        {canWrite && <IconBtn label={t("sources.delete")} danger loading={deleting} onClick={onDelete}><Trash2 size={15} /></IconBtn>}
       </div>
 
       <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6 }}>

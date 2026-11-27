@@ -36,6 +36,17 @@ describe("TagsCard", () => {
     expect(onSave).toHaveBeenCalledWith(["prod", "new-api"]);
   });
 
+  it("while the save runs, Save shows progress and the editor cannot be used twice", () => {
+    const onSave = vi.fn();
+    wrap(<TagsCard tags={["prod"]} canWrite onSave={onSave} saving />);
+    const save = screen.getByRole("button", { name: "Saving…" });
+    expect(save.getAttribute("aria-busy")).toBe("true");
+    expect((save as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "remove prod" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(save);
+    expect(onSave).not.toHaveBeenCalled();
+  });
+
   it("hides the editor for read-only members", () => {
     wrap(<TagsCard tags={["prod"]} canWrite={false} onSave={vi.fn()} />);
     expect(screen.queryByPlaceholderText(/add a tag/i)).toBeNull();

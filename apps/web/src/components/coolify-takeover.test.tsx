@@ -206,4 +206,31 @@ describe("CoolifyTakeover", () => {
     await pickServer();
     await screen.findByText("Only a team owner or admin can do this.");
   });
+
+  it("after a server is picked, says it is looking up what is saved until the answer lands", async () => {
+    let finish: (v: CoolifyInventoryView) => void = () => undefined;
+    vi.spyOn(api, "coolifyInventory").mockImplementation(() => new Promise((r) => { finish = r; }));
+    vi.spyOn(api, "coolifyServers").mockResolvedValue(CHECKLIST);
+    await pickServer();
+    await screen.findByText("Looking up what is saved for host-1…");
+    finish(INV);
+    await screen.findByText("Acme Coolify");
+    expect(screen.queryByText("Looking up what is saved for host-1…")).toBeNull();
+  });
+
+  it("while the copy is deleted the stop button shows progress and the other buttons wait", async () => {
+    vi.spyOn(api, "coolifyInventory").mockResolvedValue(INV);
+    vi.spyOn(api, "coolifyServers").mockResolvedValue(CHECKLIST);
+    let finish: (v: { ok: true }) => void = () => undefined;
+    vi.spyOn(api, "coolifyDisable").mockImplementation(() => new Promise((r) => { finish = r; }));
+    await pickServer();
+    fireEvent.click(await screen.findByRole("button", { name: "Stop and delete" }));
+    await screen.findByText("Stop reading this Coolify?");
+    fireEvent.click(screen.getAllByRole("button", { name: "Stop and delete" }).at(-1)!);
+    const busy = await screen.findByRole("button", { name: "Deleting the copy…" });
+    expect(busy.getAttribute("aria-busy")).toBe("true");
+    expect((screen.getByRole("button", { name: "Read again" }) as HTMLButtonElement).disabled).toBe(true);
+    finish({ ok: true as const });
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Deleting the copy…" })).toBeNull());
+  });
 });

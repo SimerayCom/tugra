@@ -10,6 +10,7 @@ import Link from "next/link";
 import { canOfferConfirm, cleanupErrorKey, cleanupNeedsRead, cleanupFailureKey, rowNeedsAttention, sizeText, splitRemnants } from "../lib/coolify-cleanup";
 import { Badge, Btn, SectionCard } from "./ui";
 import { useConfirm } from "./confirm";
+import { useToast } from "./toast";
 
 const STATUS_TONE = { CHECKING: "muted", INCOMPLETE: "warn", READY: "ok", CLEANING: "lapis", CLEANED: "ok", FAILED: "danger" } as const;
 const RESULT_TONE = { ok: "ok", absent: "muted", in_use: "warn", running: "warn", mounted: "warn", refused: "muted", failed: "danger" } as const;
@@ -54,6 +55,7 @@ export function CoolifyCleanupCard({ serverId, serverName, online, teamId }: { s
   const t = useT();
   const qc = useQueryClient();
   const confirm = useConfirm();
+  const toast = useToast();
   const key = ["coolify-cleanup", serverId];
   // the move-off status the page already loads says, before the click, what the hub would refuse: the Coolify host, an unknown server, an old read
   const move = useQuery({ queryKey: ["coolify-move", teamId], queryFn: () => api.coolifyMoveStatus(teamId as string), enabled: !!teamId, staleTime: 15_000, retry: false });
@@ -66,7 +68,7 @@ export function CoolifyCleanupCard({ serverId, serverName, online, teamId }: { s
   const check = useMutation({ mutationFn: () => api.coolifyCleanupCheck(serverId), onSuccess: (v) => qc.setQueryData(key, v) });
   const remove = useMutation({
     mutationFn: (body: { id: string; listHash: string }) => api.coolifyCleanupConfirm(body.id, { confirm: serverName, listHash: body.listHash }),
-    onSuccess: (v) => qc.setQueryData(key, v),
+    onSuccess: (v) => { qc.setQueryData(key, v); if (v.status === "CLEANED") toast(t("coolifyCleanup.confirm.done", { server: serverName }), "success"); },
     onError: () => qc.invalidateQueries({ queryKey: key }),
   });
   const v = latest.data ?? null;
@@ -93,12 +95,12 @@ export function CoolifyCleanupCard({ serverId, serverName, online, teamId }: { s
     <SectionCard title={t("coolifyCleanup.title")} desc={t("coolifyCleanup.subtitle")} right={v ? needsRead ? <Badge tone="muted">{t("coolifyCleanup.needsRead")}</Badge> : <Badge tone={STATUS_TONE[v.status]}>{t(`coolifyCleanup.status.${v.status}`)}</Badge> : undefined}>
       <p style={{ ...dim, margin: "0 0 10px" }}>{t("coolifyCleanup.intro")}</p>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-        <Btn variant={v ? "ghost" : "primary"} disabled={!online || busy || !!guard} onClick={() => check.mutate()} style={{ minHeight: 44 }}>
+        <Btn variant={v ? "ghost" : "primary"} disabled={!online || busy || !!guard} loading={check.isPending} onClick={() => check.mutate()} style={{ minHeight: 44 }}>
           {check.isPending ? t("coolifyCleanup.checking") : v ? t("coolifyCleanup.recheck") : t("coolifyCleanup.check")}
         </Btn>
         {canOfferConfirm(v) && (
-          <Btn variant="danger" disabled={busy} onClick={onRemove} style={{ minHeight: 44 }}>
-            {t("coolifyCleanup.confirm.button")}
+          <Btn variant="danger" disabled={busy} loading={remove.isPending} onClick={onRemove} style={{ minHeight: 44 }}>
+            {remove.isPending ? t("coolifyCleanup.confirm.removing") : t("coolifyCleanup.confirm.button")}
           </Btn>
         )}
       </div>

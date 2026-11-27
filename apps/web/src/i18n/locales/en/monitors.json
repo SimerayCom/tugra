@@ -74,6 +74,7 @@
     "fileTooLarge": "This file is too large to import.",
     "server": "Server",
     "noServers": "This team has no servers yet.",
+    "loadingServers": "Loading the servers of this team…",
     "find": "Find Kuma",
     "finding": "Looking…",
     "noKuma": "No Uptime Kuma found on this server.",

@@ -118,4 +118,22 @@ describe("team detail page", () => {
     await waitFor(() => expect(ensure).toHaveBeenCalledWith("t1", "view"));
     await waitFor(() => expect(assign).toHaveBeenCalledWith("t1", "u2", { teamRoleId: "r1" }));
   });
+
+  it("while a role change runs the select keeps the picked role, is locked, and a status line says what is happening", async () => {
+    setup(team(), [
+      { userId: "u1", email: "o@example.com", name: null, role: "OWNER", teamRoleId: null, roleName: null, restrictedAccess: false, accessedProjects: [] },
+      { userId: "u2", email: "v@example.com", name: null, role: "VIEWER", teamRoleId: null, roleName: null, restrictedAccess: false, accessedProjects: [] },
+    ]);
+    let finish: (v: { ok: true }) => void = () => undefined;
+    const assign = vi.spyOn(api, "setTeamMemberRole").mockImplementation(() => new Promise((r) => { finish = r; }));
+    const select = (await screen.findByRole("combobox", { name: "v@example.com" })) as HTMLSelectElement;
+    fireEvent.change(select, { target: { value: "ADMIN" } });
+    await screen.findByText("Changing the role…");
+    expect(assign).toHaveBeenCalledWith("t1", "u2", { role: "ADMIN" });
+    const busy = screen.getByRole("combobox", { name: "v@example.com" }) as HTMLSelectElement;
+    expect(busy.value).toBe("ADMIN");
+    expect(busy.disabled).toBe(true);
+    finish({ ok: true as const });
+    await waitFor(() => expect(screen.queryByText("Changing the role…")).toBeNull());
+  });
 });

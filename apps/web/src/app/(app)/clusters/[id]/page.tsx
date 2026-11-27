@@ -75,7 +75,7 @@ export default function ClusterDetailPage() {
   const [removingIds, setRemovingIds] = useState<Set<string>>(new Set());
   const leaveNode = useMutation({
     mutationFn: (sid: string) => api.leaveSwarmNode(id, sid),
-    onSuccess: invalidateSwarm,
+    onSuccess: (_r, sid) => { invalidateSwarm(); toast(t("clusters.removeNodeDone", { name: swarm?.nodes.find((x) => x.serverId === sid)?.name ?? "" }), "success"); },
     onError: (e) => toast(e instanceof Error ? e.message : t("clusters.removeNodeFailed"), "error"),
   });
 
@@ -85,7 +85,7 @@ export default function ClusterDetailPage() {
   const demote = useMutation({
     mutationFn: (v: { serverId: string; ack?: boolean }) =>
       v.ack ? api.removeManager(id, v.serverId, { acknowledgeEvenQuorum: true }) : api.removeManager(id, v.serverId),
-    onSuccess: invalidateSwarm,
+    onSuccess: (_r, v) => { invalidateSwarm(); toast(t("clusters.demoteDone", { name: swarm?.nodes.find((x) => x.serverId === v.serverId)?.name ?? "" }), "success"); },
     onError: async (e, v) => {
       const msg = e instanceof Error ? e.message : "";
       // Even-quorum guard (e.g. demoting 3→2 managers): offer an acknowledge-and-retry, same affordance as the
@@ -280,6 +280,7 @@ export default function ClusterDetailPage() {
                       variant="ghost"
                       style={{ fontSize: 11, padding: "4px 8px" }}
                       disabled={demotingIds.has(n.serverId)}
+                      loading={demotingIds.has(n.serverId)}
                       onClick={async () => {
                         if (await confirm({ body: t("clusters.demoteConfirm", { name: n.name }) })) {
                           setDemotingIds((prev) => new Set(prev).add(n.serverId));
@@ -289,7 +290,7 @@ export default function ClusterDetailPage() {
                         }
                       }}
                     >
-                      {demotingIds.has(n.serverId) ? "…" : t("clusters.demoteManager")}
+                      {demotingIds.has(n.serverId) ? t("clusters.demotingManager") : t("clusters.demoteManager")}
                     </Btn>
                   )}
                   {cluster.canWrite && n.swarmRole === "WORKER" && (
@@ -297,6 +298,7 @@ export default function ClusterDetailPage() {
                       variant="danger"
                       style={{ fontSize: 11, padding: "4px 8px" }}
                       disabled={removingIds.has(n.serverId)}
+                      loading={removingIds.has(n.serverId)}
                       onClick={async () => {
                         if (await confirm({ body: t("clusters.removeNodeConfirm", { name: n.name }), danger: true })) {
                           setRemovingIds((prev) => new Set(prev).add(n.serverId));
@@ -306,7 +308,7 @@ export default function ClusterDetailPage() {
                         }
                       }}
                     >
-                      {removingIds.has(n.serverId) ? "…" : t("clusters.removeNode")}
+                      {removingIds.has(n.serverId) ? t("clusters.removingNode") : t("clusters.removeNode")}
                     </Btn>
                   )}
                   {cluster.canWrite && liveNode && <NodeLabelsEditor clusterId={id} nodeId={liveNode.id} labels={liveNode.labels} />}

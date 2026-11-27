@@ -546,6 +546,7 @@
       "largeDbHintStream": "Its whole copy counts as downtime. A dry run shows how long it takes."
     },
     "summary": "From your choice: {apps} apps, {databases} databases and {services} services, moving to {targets}.",
+    "checking": "Checking the plan and the target server…",
     "sameMachine": "Same machine: the proxy is swapped, with a few minutes of downtime.",
     "otherServer": "Another server: data is copied, then the address is switched.",
     "guard": {

@@ -25,7 +25,7 @@ export function ConfigCarry({ buckets, canCarry, busy, onCarry }: { buckets: Obj
         </ul>
       )}
       {rows.length > 0 && (
-        <Btn onClick={onCarry} disabled={!canCarry || busy}>{busy ? t("objectMigration.config.carrying") : t("objectMigration.config.carry")}</Btn>
+        <Btn onClick={onCarry} disabled={!canCarry} loading={busy}>{busy ? t("objectMigration.config.carrying") : t("objectMigration.config.carry")}</Btn>
       )}
     </SectionCard>
   );

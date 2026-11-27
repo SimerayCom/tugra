@@ -130,6 +130,19 @@ describe("KumaImport — read from a server", () => {
     await waitFor(() => expect(preview).toHaveBeenCalledWith({ teamId: "t1", source: { kind: "server", serverId: "s1", container: "uptime-kuma" } }));
   });
 
+  it("after choosing to read from a server, says the team's servers are loading until the list arrives", async () => {
+    let finish: (s: never) => void = () => undefined;
+    vi.spyOn(api, "listServers").mockImplementation(() => new Promise((r) => { finish = r as never; }));
+    show();
+    await waitFor(() => expect((document.getElementById("kuma-team") as HTMLSelectElement).value).toBe("t1"));
+    fireEvent.click(await screen.findByLabelText(/A server/));
+    await screen.findByText("Loading the servers of this team…");
+    expect(screen.queryByText("This team has no servers yet.")).toBeNull();
+    finish([{ id: "s1", name: "app-1", teamId: "t1" }] as never);
+    await waitFor(() => expect(screen.getByRole("option", { name: "app-1" })).toBeTruthy());
+    expect(screen.queryByText("Loading the servers of this team…")).toBeNull();
+  });
+
   it("says so when the server has no Kuma", async () => {
     vi.spyOn(api, "kumaDetect").mockResolvedValue({ containers: [] });
     show();

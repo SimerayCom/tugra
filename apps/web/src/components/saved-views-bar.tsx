@@ -8,7 +8,7 @@ import { teamLabel } from "../lib/fleet";
 import { useT } from "../i18n/provider";
 import { useToast } from "../components/toast";
 import type { SavedView, ServerStatus } from "../lib/types";
-import { Btn } from "./ui";
+import { ActivitySpinner, Btn } from "./ui";
 
 /** Named fleet filters: save current status+tags (personal or shared with a team), re-apply, delete. */
 export function SavedViewsBar({
@@ -48,7 +48,7 @@ export function SavedViewsBar({
           {v.teamId && <Users size={11} color="var(--c-tx3)" aria-label={teamLabel(teams, v.teamId)} />}
           <button type="button" onClick={() => onApply(v)} title={v.teamId ? teamLabel(teams, v.teamId) : undefined} style={{ background: "transparent", border: "none", color: "var(--c-tx2)", fontSize: 12, cursor: "pointer", fontFamily: "inherit", padding: 0 }}>{v.name}</button>
           {v.canDelete && (
-            <button type="button" aria-label={t("common.delete")} onClick={() => del.mutate(v.id)} style={{ background: "transparent", border: "none", color: "var(--c-tx3)", cursor: "pointer", lineHeight: 1, padding: "0 4px", fontSize: 14 }}>×</button>
+            <button type="button" aria-label={t("common.delete")} disabled={del.isPending && del.variables === v.id} aria-busy={(del.isPending && del.variables === v.id) || undefined} onClick={() => del.mutate(v.id)} style={{ background: "transparent", border: "none", color: "var(--c-tx3)", cursor: "pointer", lineHeight: 1, padding: "0 4px", fontSize: 14, display: "inline-flex", alignItems: "center" }}>{del.isPending && del.variables === v.id ? <ActivitySpinner size={10} /> : "×"}</button>
           )}
         </span>
       ))}

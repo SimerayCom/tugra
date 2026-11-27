@@ -144,6 +144,34 @@ describe("ProjectMovePanel: a move in progress and after it", () => {
     await waitFor(() => expect(cancel).toHaveBeenCalledWith("m1"));
   });
 
+  it("opening the move says the team's servers are loading until they arrive", async () => {
+    let finish: (s: ServerView[]) => void = () => undefined;
+    vi.spyOn(api, "listServers").mockImplementation(() => new Promise((r) => { finish = r; }));
+    show();
+    fireEvent.click(await screen.findByRole("button", { name: "Move to another server" }));
+    await screen.findByText("Loading the servers of this team…");
+    finish(servers);
+    await waitFor(() => expect(screen.queryByText("Loading the servers of this team…")).toBeNull());
+  });
+
+  it("while the cancel call runs the button shows progress and cannot be pressed again", async () => {
+    vi.spyOn(api, "projectMoveList").mockResolvedValue([move()]);
+    let finish: (v: { ok: true }) => void = () => undefined;
+    const cancel = vi.spyOn(api, "projectMoveCancel").mockImplementation(() => new Promise((r) => { finish = r; }));
+    show();
+    fireEvent.click(await screen.findByRole("button", { name: "Cancel the move" }));
+    const busy = await waitFor(() => {
+      const b = screen.getByRole("button", { name: "Cancel the move" });
+      expect(b.getAttribute("aria-busy")).toBe("true");
+      return b as HTMLButtonElement;
+    });
+    expect(busy.disabled).toBe(true);
+    fireEvent.click(busy);
+    expect(cancel).toHaveBeenCalledTimes(1);
+    finish({ ok: true as const });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Cancel the move" }).getAttribute("aria-busy")).toBeNull());
+  });
+
   it("no cancel once verifying", async () => {
     vi.spyOn(api, "projectMoveList").mockResolvedValue([move({ phase: "VERIFYING" })]);
     show();

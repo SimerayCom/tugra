@@ -25,11 +25,18 @@ function VolumeRow({ opId, v }: { opId: string; v: VolumeTransferView }) {
   const qc = useQueryClient();
   const refresh = () => qc.invalidateQueries({ queryKey: ["import-vx", opId] });
   const fail = (e: unknown) => toast((e as Error).message, "error");
-  const abort = useMutation({ mutationFn: () => api.abortOpVolume(opId, v.itemRef), onSuccess: refresh, onError: fail });
-  const reset = useMutation({ mutationFn: () => api.resetOpVolume(opId, v.itemRef), onSuccess: refresh, onError: fail });
-  const exclude = useMutation({ mutationFn: () => api.excludeOpVolume(opId, v.itemRef), onSuccess: refresh, onError: fail });
-  const include = useMutation({ mutationFn: () => api.includeOpVolume(opId, v.itemRef), onSuccess: refresh, onError: fail });
-  const check = useMutation({ mutationFn: () => api.diskCheckOpVolume(opId, v.itemRef), onSuccess: refresh, onError: fail });
+  const name = v.resourceName ?? v.itemRef;
+  const done = (key: "abort" | "reset" | "exclude" | "include" | "check") => () => {
+    void refresh();
+    toast(t(`import.vx.done.${key}`, { name }), "success");
+  };
+  const abort = useMutation({ mutationFn: () => api.abortOpVolume(opId, v.itemRef), onSuccess: done("abort"), onError: fail });
+  const reset = useMutation({ mutationFn: () => api.resetOpVolume(opId, v.itemRef), onSuccess: done("reset"), onError: fail });
+  const exclude = useMutation({ mutationFn: () => api.excludeOpVolume(opId, v.itemRef), onSuccess: done("exclude"), onError: fail });
+  const include = useMutation({ mutationFn: () => api.includeOpVolume(opId, v.itemRef), onSuccess: done("include"), onError: fail });
+  const check = useMutation({ mutationFn: () => api.diskCheckOpVolume(opId, v.itemRef), onSuccess: done("check"), onError: fail });
+  // One call at a time per volume: a second button cannot start while another one is still running.
+  const working = abort.isPending || reset.isPending || exclude.isPending || include.isPending || check.isPending;
 
   const pct = volumeProgressPct(v);
   const tone = transferTone(v.state);
@@ -37,7 +44,6 @@ function VolumeRow({ opId, v }: { opId: string; v: VolumeTransferView }) {
   const eta = v.state === "COPYING" ? formatDuration(v.etaSec) : null;
   const phaseKey = v.phase ? PHASE_KEY[v.phase] : undefined;
   const ek = errorKey(v.error);
-  const name = v.resourceName ?? v.itemRef;
   const canExclude = !v.excluded && (v.state === "NONE" || v.state === "PENDING" || v.state === "FAILED" || v.state === "ABORTED");
 
   const onAbort = async () => {
@@ -96,11 +102,11 @@ function VolumeRow({ opId, v }: { opId: string; v: VolumeTransferView }) {
       )}
 
       <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 10 }}>
-        {v.canAbort && <Btn variant="ghost" onClick={onAbort} disabled={abort.isPending}>{t("import.vx.action.abort")}</Btn>}
-        {v.canReset && <Btn variant="ghost" onClick={onReset} disabled={reset.isPending}>{v.state === "FAILED" ? t("import.vx.action.retry") : t("import.vx.action.reset")}</Btn>}
-        {v.state === "NONE" && v.inventory?.found && <Btn variant="ghost" onClick={() => check.mutate()} disabled={check.isPending}>{t("import.vx.action.check")}</Btn>}
-        {canExclude && <Btn variant="ghost" onClick={onExclude} disabled={exclude.isPending}>{t("import.vx.action.exclude")}</Btn>}
-        {v.state === "EXCLUDED" && <Btn variant="ghost" onClick={() => include.mutate()} disabled={include.isPending}>{t("import.vx.action.include")}</Btn>}
+        {v.canAbort && <Btn variant="ghost" onClick={onAbort} disabled={working} loading={abort.isPending}>{t("import.vx.action.abort")}</Btn>}
+        {v.canReset && <Btn variant="ghost" onClick={onReset} disabled={working} loading={reset.isPending}>{v.state === "FAILED" ? t("import.vx.action.retry") : t("import.vx.action.reset")}</Btn>}
+        {v.state === "NONE" && v.inventory?.found && <Btn variant="ghost" onClick={() => check.mutate()} disabled={working} loading={check.isPending}>{t("import.vx.action.check")}</Btn>}
+        {canExclude && <Btn variant="ghost" onClick={onExclude} disabled={working} loading={exclude.isPending}>{t("import.vx.action.exclude")}</Btn>}
+        {v.state === "EXCLUDED" && <Btn variant="ghost" onClick={() => include.mutate()} disabled={working} loading={include.isPending}>{t("import.vx.action.include")}</Btn>}
       </div>
     </Card>
   );

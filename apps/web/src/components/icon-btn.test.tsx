@@ -19,4 +19,15 @@ describe("IconBtn", () => {
     fireEvent.click(screen.getByRole("button", { name: "Delete" }));
     expect(onClick).not.toHaveBeenCalled();
   });
+
+  it("while loading it shows a spinner instead of the icon, is busy and disabled, and ignores clicks", () => {
+    const onClick = vi.fn();
+    render(<IconBtn label="Delete" onClick={onClick} loading><span data-testid="icon">x</span></IconBtn>);
+    const btn = screen.getByRole("button", { name: "Delete" }) as HTMLButtonElement;
+    expect(btn.getAttribute("aria-busy")).toBe("true");
+    expect(btn.disabled).toBe(true);
+    expect(screen.queryByTestId("icon")).toBeNull();
+    fireEvent.click(btn);
+    expect(onClick).not.toHaveBeenCalled();
+  });
 });

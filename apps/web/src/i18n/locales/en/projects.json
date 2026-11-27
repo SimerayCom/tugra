@@ -29,6 +29,7 @@
   "databases": "Databases",
   "searchResources": "Search resources…",
   "deleteProject": "Delete project",
+  "envDeleted": "Environment {name} deleted",
   "deleteConfirm": "Delete this empty project? This cannot be undone.",
   "rename": "Rename",
   "iconHint": "A square PNG (32–512px). Shown next to this project across the panel.",

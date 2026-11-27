@@ -252,6 +252,39 @@ describe("CutoverPanel", () => {
     fireEvent.click(screen.getByRole("button", { name: "Serve the root domain of www.example.com too" }));
     await waitFor(() => expect(fix).toHaveBeenCalledWith("op1", { applicationId: "app1", direction: "root" }));
   });
+
+  it("fix-counterpart shows progress on the clicked button only, then a toast names the host", async () => {
+    vi.spyOn(api, "getCutover").mockResolvedValue(view([entry({ hostname: "www.example.com", state: "BLOCKED", blockReason: "counterpart-not-served" })]));
+    let resolve!: (v: CutoverView) => void;
+    vi.spyOn(api, "cutoverFixCounterpart").mockReturnValue(new Promise((r) => { resolve = r; }));
+    const toasts: string[] = [];
+    const off = subscribeToast((x) => toasts.push(x.message));
+    wrap(<CutoverPanel opId="op1" />);
+    await screen.findByText("www.example.com");
+    fireEvent.click(screen.getByRole("button", { name: "Serve the root domain of www.example.com too" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Serve the root domain of www.example.com too" }).getAttribute("aria-busy")).toBe("true"));
+    expect(screen.getByRole("button", { name: "Serve the www domain of www.example.com too" }).getAttribute("aria-busy")).toBeNull();
+    resolve(view([entry({ hostname: "www.example.com", state: "PLANNED" })]));
+    await waitFor(() => expect(toasts).toContain("www.example.com will now also be served on its counterpart name"));
+    off();
+  });
+
+  it("Exclude shows progress on its row button and says how many hosts were left out", async () => {
+    vi.spyOn(api, "getCutover").mockResolvedValue(view([entry({ hostname: "a.example.com", state: "PLANNED" })]));
+    let resolve!: (v: CutoverView) => void;
+    const exclude = vi.spyOn(api, "cutoverExclude").mockReturnValue(new Promise((r) => { resolve = r; }));
+    const toasts: string[] = [];
+    const off = subscribeToast((x) => toasts.push(x.message));
+    wrap(<CutoverPanel opId="op1" />);
+    await screen.findByText("a.example.com");
+    const rowBtn = within(screen.getByRole("table")).getByRole("button", { name: "Exclude" });
+    fireEvent.click(rowBtn);
+    await waitFor(() => expect(within(screen.getByRole("table")).getByRole("button", { name: "Exclude" }).getAttribute("aria-busy")).toBe("true"));
+    expect(exclude).toHaveBeenCalledWith("op1", { hostnames: ["a.example.com"], excluded: true });
+    resolve(view([entry({ hostname: "a.example.com", state: "EXCLUDED" })]));
+    await waitFor(() => expect(toasts).toContain("1 host(s) left out of the move"));
+    off();
+  });
 });
 
 describe("cutover view helpers", () => {

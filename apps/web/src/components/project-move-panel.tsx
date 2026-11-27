@@ -8,7 +8,7 @@ import { api, type ProjectMovePreviewView } from "../lib/api";
 import { useT } from "../i18n/provider";
 import { blockersOf, moveCanCancel, moveCanRollback, moveErrorKey, moveHasSafetyCopy, moveIsActive, parseWarning, targetServers } from "../lib/project-server-move";
 import { formatDateTime } from "../lib/format-time";
-import { Badge, Btn, SectionCard } from "./ui";
+import { Badge, Btn, SectionCard, Working } from "./ui";
 import { Checkbox, Select } from "./form";
 import { useConfirm } from "./confirm";
 
@@ -120,7 +120,7 @@ export function ProjectMovePanel({ projectId, projectName, teamId, excludeServer
     },
     onError: (e) => setStartBlockers(blockersOf(e)),
   });
-  const cancel = useMutation({ mutationFn: (id: string) => api.projectMoveCancel(id), onSuccess: () => qc.invalidateQueries({ queryKey: ["project-moves", projectId] }) });
+  const cancel = useMutation({ mutationFn: (id: string) => api.projectMoveCancel(id), onSuccess: () => qc.invalidateQueries({ queryKey: ["project-moves", projectId] }), meta: { successMessage: t("projectMove.cancelled") } });
   const rollback = useMutation({ mutationFn: (id: string) => api.projectMoveRollback(id, projectName), onSuccess: () => qc.invalidateQueries({ queryKey: ["project-moves", projectId] }) });
   const purge = useMutation({ mutationFn: (id: string) => api.projectMovePurge(id), onSuccess: () => qc.invalidateQueries({ queryKey: ["project-moves", projectId] }) });
 
@@ -155,18 +155,18 @@ export function ProjectMovePanel({ projectId, projectName, teamId, excludeServer
       {last && <Progress move={last} />}
       {last && moveCanCancel(last) && (
         <div style={{ marginTop: 10 }}>
-          <Btn variant="ghost" disabled={cancel.isPending} onClick={() => cancel.mutate(last.id)} style={{ minHeight: 44 }}>{t("projectMove.cancel")}</Btn>
+          <Btn variant="ghost" loading={cancel.isPending} onClick={() => cancel.mutate(last.id)} style={{ minHeight: 44 }}>{t("projectMove.cancel")}</Btn>
         </div>
       )}
       {last && moveCanRollback(last) && (
         <div style={{ marginTop: 10 }}>
-          <Btn variant="danger" disabled={rollback.isPending} loading={rollback.isPending} onClick={() => void onRollback(last.id)} style={{ minHeight: 44 }}>{t("projectMove.rollback")}</Btn>
+          <Btn variant="danger" loading={rollback.isPending} onClick={() => void onRollback(last.id)} style={{ minHeight: 44 }}>{t("projectMove.rollback")}</Btn>
           <p style={note("var(--c-tx3)")}>{t("projectMove.rollbackHint")}</p>
         </div>
       )}
       {last && moveHasSafetyCopy(last) && (
         <div style={{ marginTop: 10 }}>
-          <Btn variant="ghost" disabled={purge.isPending} onClick={() => void onPurge(last.id)} style={{ minHeight: 44 }}>{t("projectMove.purge")}</Btn>
+          <Btn variant="ghost" loading={purge.isPending} onClick={() => void onPurge(last.id)} style={{ minHeight: 44 }}>{t("projectMove.purge")}</Btn>
           {purge.data && <span style={{ ...dim, marginLeft: 8 }}>{t("projectMove.purged", { removed: purge.data.removed, kept: purge.data.kept })}</span>}
         </div>
       )}
@@ -183,7 +183,8 @@ export function ProjectMovePanel({ projectId, projectName, teamId, excludeServer
             <span>{t("projectMove.target")}</span>
             <Select value={target} onChange={(v) => { setTarget(v); preview.reset(); setStartBlockers(null); }} ariaLabel={t("projectMove.target")} placeholder={t("projectMove.pickTarget")} options={options.map((s) => ({ value: s.id, label: s.name }))} />
           </label>
-          <Btn variant="ghost" disabled={!target || preview.isPending} onClick={() => preview.mutate()} style={{ minHeight: 44 }}>
+          {servers.isFetching && !servers.data && <Working text={t("projectMove.loadingServers")} />}
+          <Btn variant="ghost" disabled={!target} loading={preview.isPending} onClick={() => preview.mutate()} style={{ minHeight: 44 }}>
             {preview.isPending ? t("projectMove.previewing") : t("projectMove.preview")}
           </Btn>
 
@@ -217,7 +218,7 @@ export function ProjectMovePanel({ projectId, projectName, teamId, excludeServer
                   <span>{t("projectMove.retain.label")}</span>
                   <input type="number" min={0} max={90} value={retainDays} onChange={(e) => setRetainDays(Math.min(90, Math.max(0, Math.trunc(Number(e.target.value) || 0))))} style={{ width: 80, minHeight: 44, boxSizing: "border-box" }} />
                 </label>
-                <Btn variant="danger" disabled={blockers.length > 0 || start.isPending} onClick={() => void onStart()} style={{ minHeight: 44 }}>
+                <Btn variant="danger" disabled={blockers.length > 0} loading={start.isPending} onClick={() => void onStart()} style={{ minHeight: 44 }}>
                   {start.isPending ? t("projectMove.starting") : t("projectMove.start")}
                 </Btn>
               </div>

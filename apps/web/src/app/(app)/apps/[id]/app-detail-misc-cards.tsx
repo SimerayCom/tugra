@@ -406,7 +406,7 @@ export function TaskRow({ appId, task }: { appId: string; task: ScheduledTask })
   const [command, setCommand] = useState(task.command);
   const [timeoutStr, setTimeoutStr] = useState(task.timeoutSec != null ? String(task.timeoutSec) : "");
   const toggle = useMutation({ mutationFn: (enabled: boolean) => api.updateAppTask(appId, task.id, { enabled }), onSuccess: invalidate });
-  const del = useMutation({ mutationFn: () => api.deleteAppTask(appId, task.id), onSuccess: invalidate });
+  const del = useMutation({ mutationFn: () => api.deleteAppTask(appId, task.id), onSuccess: () => { invalidate(); toast(t("common.deletedNamed", { name: task.name }), "success"); } });
   const run = useMutation({
     mutationFn: () => api.runAppTask(appId, task.id),
     onSuccess: () => {
@@ -439,7 +439,7 @@ export function TaskRow({ appId, task }: { appId: string; task: ScheduledTask })
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
       <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-        <input type="checkbox" aria-label={t("apps.taskEnabled")} checked={task.enabled} onChange={(e) => toggle.mutate(e.target.checked)} />
+        <input type="checkbox" aria-label={t("apps.taskEnabled")} checked={task.enabled} disabled={toggle.isPending} onChange={(e) => toggle.mutate(e.target.checked)} />
         <span style={{ fontSize: 13, width: 120, overflow: "hidden", textOverflow: "ellipsis" }}>{task.name}</span>
         {!task.enabled && <Badge>{t("common.disabled")}</Badge>}
         <span className="mono" style={{ fontSize: 11, color: "var(--c-tx3)", width: 110 }}>{task.schedule}</span>
@@ -449,7 +449,7 @@ export function TaskRow({ appId, task }: { appId: string; task: ScheduledTask })
         <IconBtn label={t("apps.taskRunNow")} onClick={() => run.mutate()} disabled={run.isPending}><Play size={14} /></IconBtn>
         <IconBtn label={t("apps.taskHistory")} onClick={() => setShowHistory((v) => !v)}><History size={14} /></IconBtn>
         <IconBtn label={t("common.edit")} onClick={startEdit}><Pencil size={14} /></IconBtn>
-        <IconBtn label={t("common.delete")} danger onClick={async () => { if (await confirm({ body: t("common.deleteConfirm"), danger: true })) del.mutate(); }}><X size={14} /></IconBtn>
+        <IconBtn label={t("common.delete")} danger loading={del.isPending} onClick={async () => { if (await confirm({ body: t("common.deleteConfirm"), danger: true })) del.mutate(); }}><X size={14} /></IconBtn>
       </div>
       {showHistory && <TaskRunHistory appId={appId} taskId={task.id} />}
     </div>
@@ -515,6 +515,7 @@ export function PreviewCard({ id, previewEnabled, domain, excludeKeys, limit }: 
   const del = useMutation({
     mutationFn: (previewId: string) => api.deletePreview(id, previewId),
     onSuccess: invalidate,
+    meta: { successMessage: t("common.deleted") },
   });
 
   return (
@@ -574,7 +575,7 @@ export function PreviewCard({ id, previewEnabled, domain, excludeKeys, limit }: 
                       {p.url} {t("apps.open")}
                     </a>
                   )}
-                  <IconBtn label={t("common.delete")} danger onClick={async () => { if (await confirm({ body: t("common.deleteConfirm"), danger: true })) del.mutate(p.id); }}><X size={14} /></IconBtn>
+                  <IconBtn label={t("common.delete")} danger loading={del.isPending && del.variables === p.id} onClick={async () => { if (await confirm({ body: t("common.deleteConfirm"), danger: true })) del.mutate(p.id); }}><X size={14} /></IconBtn>
                 </div>
               ))}
             </div>

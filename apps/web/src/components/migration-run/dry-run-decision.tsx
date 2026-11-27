@@ -199,7 +199,7 @@ export function DryRunDecision({ run, onOpenSafety }: { run: MigrationRunView; o
             <div style={{ display: "flex", gap: 8, alignItems: "center", justifyContent: "space-between", flexWrap: "wrap" }}>
               <div style={heading}>{t("migrationRun.decision.warningsTitle")}</div>
               {acceptable.length > 1 && (
-                <Btn variant="ghost" disabled={save.isPending} onClick={() => save.mutate(acceptable.map((w) => ({ key: w.key, accepted: true })))}>
+                <Btn variant="ghost" loading={save.isPending} onClick={() => save.mutate(acceptable.map((w) => ({ key: w.key, accepted: true })))}>
                   {t("migrationRun.decision.acceptAll")}
                 </Btn>
               )}

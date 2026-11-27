@@ -7,7 +7,7 @@ import { useT } from "../../i18n/provider";
 import { agentReadyServers } from "../../lib/coolify-agent-connect";
 import { needsTeamChoice } from "../../lib/coolify-take-over";
 import type { ImportAgentSession, ServerView } from "../../lib/types";
-import { Btn } from "../ui";
+import { Btn, Working } from "../ui";
 import { Select } from "../form";
 import { useToast } from "../toast";
 import { AgentConsentCard } from "./agent-consent";
@@ -166,15 +166,5 @@ export function AgentConnectPanel({
         <p style={{ margin: 0, fontSize: 12, color: "var(--c-tx3)" }}>{t("coolifyAgent.read.nothingChanged")}</p>
       </div>
     </div>
-  );
-}
-
-/** A one-line "working on it" status with a small spinner, announced to screen readers. */
-function Working({ text }: { text: string }) {
-  return (
-    <p role="status" aria-live="polite" style={{ margin: 0, display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "var(--c-tx2)", lineHeight: 1.5 }}>
-      <span aria-hidden style={{ width: 12, height: 12, flexShrink: 0, border: "2px solid currentColor", borderTopColor: "transparent", borderRadius: "50%", animation: "spin 0.7s linear infinite", opacity: 0.8 }} />
-      {text}
-    </p>
   );
 }

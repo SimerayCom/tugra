@@ -154,6 +154,7 @@ export function ImportReviewStep({
       setBannerShown(false);
       setStoredVersion(null);
       edit(inScopeDoc(emptyDoc(scope)));
+      toast(t("import.review.profileDiscarded"), "success");
     },
     onError: (e) => toast(errText(e, t), "error"),
   });
@@ -218,7 +219,7 @@ export function ImportReviewStep({
                 ? t("import.review.profileLoaded", { version: storedVersion ?? stored.version ?? 1, date: new Date(stored.lastAppliedAt).toLocaleString() })
                 : t("import.review.profileLoadedNever", { version: storedVersion ?? 1 })}
             </span>
-            <Btn variant="ghost" onClick={() => discard.mutate()} disabled={discard.isPending}>{t("import.review.profileDiscard")}</Btn>
+            <Btn variant="ghost" onClick={() => discard.mutate()} loading={discard.isPending}>{t("import.review.profileDiscard")}</Btn>
             <label style={{ display: "flex", alignItems: "center", gap: 8, minHeight: 32, cursor: "pointer" }}>
               {/* the scope the user chose lives in the mapping: ignoring the saved one would widen a narrowed move to everything */}
               <input type="checkbox" checked={ignoreSaved && !importScope?.narrowed} disabled={!!importScope?.narrowed} onChange={(e) => setIgnoreSaved(e.target.checked)} />
@@ -284,7 +285,7 @@ export function ImportReviewStep({
                   edit(applyBulk(doc, items.map((i) => ({ itemRef: i.itemRef, sourceName: i.name, name: doc.items[i.itemRef]?.name ?? i.name, environment: resolved?.effective.find((e) => e.itemRef === i.itemRef)?.environment ?? null })), op))
                 }
               />
-              <Btn variant="ghost" icon={Save} onClick={() => save.mutate()} disabled={save.isPending}>{t("import.review.saveProfile")}</Btn>
+              <Btn variant="ghost" icon={Save} onClick={() => save.mutate()} loading={save.isPending}>{t("import.review.saveProfile")}</Btn>
             </div>
             <ImportMappingIo doc={doc} template={template} kind={kind} scopeKey={scopeKey} onLoad={(d) => edit({ ...d, scope })} />
 
@@ -341,7 +342,7 @@ export function ImportReviewStep({
         )}
 
         <div style={{ marginTop: 14, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-          <Btn onClick={onApply} disabled={!gateOk || apply.isPending} style={{ minHeight: 44 }}>
+          <Btn onClick={onApply} disabled={!gateOk} loading={apply.isPending} style={{ minHeight: 44 }}>
             {apply.isPending ? t("import.review.applying") : applyLabel}
           </Btn>
           {!gateOk && !ignoreSaved && !rs.pending && <span style={{ fontSize: 12, color: "var(--c-tx3)" }}>{t("import.review.applyBlocked")}</span>}

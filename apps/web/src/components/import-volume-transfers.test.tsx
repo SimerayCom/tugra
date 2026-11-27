@@ -6,6 +6,7 @@ import { I18nProvider } from "../i18n/provider";
 import { ConfirmProvider } from "./confirm";
 import { ImportVolumeTransfers } from "./import-volume-transfers";
 import { api } from "../lib/api";
+import { subscribeToast } from "../lib/toast-bus";
 import type { OpVolumes, VolumeTransferView } from "../lib/types";
 
 afterEach(() => {
@@ -134,6 +135,22 @@ describe("ImportVolumeTransfers", () => {
     expect(screen.getByText("58 GB ClickHouse")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Migrate again" }));
     await waitFor(() => expect(include).toHaveBeenCalledWith("op1", REF));
+  });
+
+  it("while a volume action runs its button shows progress and the others wait; a toast names the volume when it is done", async () => {
+    vi.spyOn(api, "getOpVolumes").mockResolvedValue(data([vol({ state: "NONE", inventory: inv })]));
+    let resolve!: (v: { itemRef: string; excluded: boolean }) => void;
+    vi.spyOn(api, "includeOpVolume").mockResolvedValue({ itemRef: REF, excluded: false });
+    vi.spyOn(api, "diskCheckOpVolume").mockReturnValue(new Promise((r) => { resolve = r as never; }));
+    const toasts: string[] = [];
+    const off = subscribeToast((x) => toasts.push(x.message));
+    wrap(<ImportVolumeTransfers opId="op1" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Check disk space" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Check disk space" }).getAttribute("aria-busy")).toBe("true"));
+    expect((screen.getByRole("button", { name: "Do not migrate" }) as HTMLButtonElement).disabled).toBe(true);
+    resolve({ itemRef: REF, excluded: false });
+    await waitFor(() => expect(toasts).toContain("web: disk space checked"));
+    off();
   });
 
   it("renders nothing when the hub has the streamed copy off, and an empty note when there is no volume", async () => {

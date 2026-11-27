@@ -86,6 +86,7 @@
   "migrateTitle": "Migrate database data",
   "migrateDesc": "Your databases were recreated empty. Generate a one-time command and run it on your source ({source}) host to copy their data. It works once and expires.",
   "migrateGenerate": "Generate migration command",
+  "migrateMinting": "Generating…",
   "migrateReissue": "Reissue command",
   "migrateTokenOnce": "Copy this now — the token is shown only once.",
   "migrateActive": "A migration command is active until {date}.",
@@ -93,6 +94,7 @@
   "remapTitle": "Point apps at their new databases",
   "remapDesc": "Point each migrated app at its new Tugra database instead of the old {source} one. Preview the changes (secrets masked), then apply. They take effect on the next deploy and can be undone.",
   "remapPreview": "Preview env changes",
+  "remapPreviewing": "Reading the env changes…",
   "remapSummary": "{apps} app(s) · {changes} change(s)",
   "remapManual": "{n} need manual review",
   "remapWillLink": "Will join the database network",
@@ -106,6 +108,7 @@
   "remapResult": "{n} app(s) updated",
   "remapResultFailed": "{n} failed",
   "remapUndo": "Undo changes",
+  "remapUndoing": "Undoing…",
   "reason_label_invalid_key": "invalid label key",
   "reason_label_reserved_traefik": "in the reserved traefik.* namespace (owned by Tugra's ingress routing and would hijack shared proxy routes)",
   "reason_label_reserved_tugra": "in the reserved tugra.* namespace (Tugra's own bookkeeping labels)",
@@ -432,6 +435,7 @@
     "uploadFailedShape": "That file is not an import mapping (version 1).",
     "saveProfile": "Save profile",
     "profileSaved": "Mapping saved (version {version}).",
+    "profileDiscarded": "Saved mapping discarded.",
     "profileLoaded": "Saved mapping loaded (v{version}, last applied {date})",
     "profileLoadedNever": "Saved mapping loaded (v{version}, never applied)",
     "profileDiscard": "Discard",
@@ -670,6 +674,13 @@
       "include": "Migrate again",
       "check": "Check disk space",
       "refresh": "Refresh"
+    },
+    "done": {
+      "abort": "{name}: copy aborted",
+      "reset": "{name}: reset, it can start again",
+      "exclude": "{name}: left out of the move",
+      "include": "{name}: back in the move",
+      "check": "{name}: disk space checked"
     },
     "confirm": {
       "abort": {

@@ -28,6 +28,8 @@
   "start": "Start the move",
   "starting": "Starting...",
   "cancel": "Cancel the move",
+  "cancelled": "The move was asked to stop.",
+  "loadingServers": "Loading the servers of this team…",
   "purge": "Remove the old copy now",
   "rollback": "Undo this move",
   "rollbackBody": "This stops the apps that moved, brings the databases back up to date on the old server, moves the apps back, links them to the old databases again and starts them. Then the copies on the new server are removed. You can press it again if a step fails.",

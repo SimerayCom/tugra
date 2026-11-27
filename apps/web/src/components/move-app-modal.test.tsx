@@ -86,6 +86,17 @@ describe("MoveAppModal", () => {
     expect(screen.getByRole("button", { name: "Continue" })).toHaveProperty("disabled", true); // no target yet
   });
 
+  it("says the team's servers are loading instead of claiming there is no other server", async () => {
+    let finish: (s: ServerView[]) => void = () => undefined;
+    vi.spyOn(api, "listServers").mockImplementation(() => new Promise((r) => { finish = r; }));
+    show();
+    await screen.findByText("Loading the servers of this team…");
+    expect(screen.queryByText(/There is no other server in this team/)).toBeNull();
+    finish(SERVERS);
+    await screen.findByLabelText("Target server");
+    expect(screen.queryByText("Loading the servers of this team…")).toBeNull();
+  });
+
   it("runs the read-only preflight for the chosen target and moves to the review step", async () => {
     show();
     await pickTargetAndContinue();

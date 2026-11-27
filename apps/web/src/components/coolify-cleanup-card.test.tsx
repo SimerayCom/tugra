@@ -5,6 +5,7 @@ import React from "react";
 import type { CleanupView } from "@tugra/shared";
 import { I18nProvider } from "../i18n/provider";
 import { api, ApiError } from "../lib/api";
+import { subscribeToast } from "../lib/toast-bus";
 import { ConfirmProvider } from "./confirm";
 import { CoolifyCleanupCard } from "./coolify-cleanup-card";
 
@@ -105,6 +106,24 @@ describe("CoolifyCleanupCard", () => {
     expect(go.disabled).toBe(false);
     fireEvent.click(go);
     await waitFor(() => expect(confirm).toHaveBeenCalledWith("c1", { confirm: "edge-box", listHash: HASH }));
+  });
+
+  it("while the removal call runs the Remove button shows progress and a toast says when the server is clean", async () => {
+    vi.spyOn(api, "coolifyCleanupLatest").mockResolvedValue(view());
+    let finish: (v: CleanupView) => void = () => undefined;
+    vi.spyOn(api, "coolifyCleanupConfirm").mockImplementation(() => new Promise((r) => { finish = r; }));
+    const toasts: string[] = [];
+    const off = subscribeToast((x) => toasts.push(x.message));
+    show();
+    fireEvent.click(await screen.findByRole("button", { name: "Remove" }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.change(within(dialog).getByRole("textbox"), { target: { value: "edge-box" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Remove from edge-box" }));
+    const busy = await screen.findByRole("button", { name: "Removing…" });
+    expect(busy.getAttribute("aria-busy")).toBe("true");
+    finish(view({ status: "CLEANED" }));
+    await waitFor(() => expect(toasts).toContain("Coolify leftovers removed from edge-box."));
+    off();
   });
 
   it("cancelling the dialog sends nothing", async () => {

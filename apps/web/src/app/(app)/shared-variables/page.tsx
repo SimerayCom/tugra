@@ -7,7 +7,7 @@ import { Variable } from "lucide-react";
 import { api } from "../../../lib/api";
 import { useT } from "../../../i18n/provider";
 import { useToast } from "../../../components/toast";
-import { Btn, Card, EmptyState, Spinner } from "../../../components/ui";
+import { ActivitySpinner, Btn, Card, EmptyState, Spinner } from "../../../components/ui";
 import { ErrorState } from "../../../components/error-state";
 import { useConfirm } from "../../../components/confirm";
 
@@ -88,7 +88,7 @@ export default function SharedVariablesPage() {
                 {reveal ? (v.value ?? "—") : "••••••••"}
               </code>
               {v.canWrite && (
-                <button onClick={async () => { if (await confirm({ body: t("common.deleteConfirm"), danger: true })) del.mutate(v.id); }} style={{ background: "transparent", border: "none", color: "var(--c-r)", fontSize: 12, cursor: "pointer" }}>{t("shared.delete")}</button>
+                <button disabled={del.isPending && del.variables === v.id} aria-busy={(del.isPending && del.variables === v.id) || undefined} onClick={async () => { if (await confirm({ body: t("common.deleteConfirm"), danger: true })) del.mutate(v.id); }} style={{ background: "transparent", border: "none", color: "var(--c-r)", fontSize: 12, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6, opacity: del.isPending && del.variables === v.id ? 0.6 : 1 }}>{del.isPending && del.variables === v.id && <ActivitySpinner />}{t("shared.delete")}</button>
               )}
             </div>
           ))}

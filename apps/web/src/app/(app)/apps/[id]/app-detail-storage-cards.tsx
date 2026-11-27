@@ -11,7 +11,7 @@ import { VolumePolicyTable } from "../../../../components/backups/volume-policy-
 import { scheduleFromFields, scheduleToFields, type ScheduleValue } from "../../../../components/backups/schedule-field";
 import { retentionFromFields, retentionToFields, type RetentionValue } from "../../../../components/backups/retention-fields";
 import { CopyRow } from "../../../../components/copy-row";
-import { Btn, SectionCard } from "../../../../components/ui";
+import { ActivitySpinner, Btn, SectionCard } from "../../../../components/ui";
 import { useT } from "../../../../i18n/provider";
 import { api } from "../../../../lib/api";
 import { backupColor, formatSize, lastErrorLine } from "../../../../lib/backups";
@@ -159,7 +159,7 @@ export function VolumeBackupsCard({ id, volumes }: { id: string; volumes: AppVol
     if (restore.isPending) return; // a second confirm may have resolved while the first restore was already running
     restore.mutate(bid);
   };
-  const del = useMutation({ mutationFn: (bid: string) => api.deleteVolumeBackup(id, bid), onSuccess: invalidate });
+  const del = useMutation({ mutationFn: (bid: string) => api.deleteVolumeBackup(id, bid), onSuccess: invalidate, meta: { successMessage: t("common.deleted") } });
   // Migrator export: a presigned migration URL for an S3 backup (feed it to import-from-URL elsewhere).
   const [exported, setExported] = useState<{ id: string; url: string } | null>(null);
   const exportUrl = useMutation({
@@ -294,7 +294,7 @@ export function VolumeBackupsCard({ id, volumes }: { id: string; volumes: AppVol
               >
                 {restore.isPending && restore.variables === b.id ? t("apps.volRestoring") : t("databases.restore")}
               </button>
-              <button aria-label={t("common.delete")} onClick={async () => { if (await confirm({ body: t("common.deleteNamedConfirm", { name: new Date(b.createdAt).toLocaleString() }), danger: true })) del.mutate(b.id); }} style={{ background: "transparent", border: "none", color: "var(--c-r)", cursor: "pointer", fontFamily: "inherit", display: "inline-flex", alignItems: "center" }}><X size={14} /></button>
+              <button aria-label={t("common.delete")} aria-busy={(del.isPending && del.variables === b.id) || undefined} disabled={del.isPending && del.variables === b.id} onClick={async () => { if (await confirm({ body: t("common.deleteNamedConfirm", { name: new Date(b.createdAt).toLocaleString() }), danger: true })) del.mutate(b.id); }} style={{ background: "transparent", border: "none", color: "var(--c-r)", cursor: "pointer", fontFamily: "inherit", display: "inline-flex", alignItems: "center", opacity: del.isPending && del.variables === b.id ? 0.5 : 1 }}>{del.isPending && del.variables === b.id ? <ActivitySpinner /> : <X size={14} />}</button>
             </div>
             {b.status === "FAILED" && (
               // A failed row must say WHY (not look empty): the last line of the scrubbed output, full text in the modal.

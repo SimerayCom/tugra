@@ -6,6 +6,7 @@ import { useMutation } from "@tanstack/react-query";
 import { api } from "../../lib/api";
 import { useT } from "../../i18n/provider";
 import { useConfirm } from "../confirm";
+import { useToast } from "../toast";
 import { IconBtn } from "../icon-btn";
 import { Badge, Btn } from "../ui";
 import type { DrainDelivery, LogDrain } from "../../lib/types";
@@ -61,6 +62,7 @@ export function drainApi(scope: DrainScope) {
 export function DrainRow({ scope, drain, onChanged }: { scope: DrainScope; drain: LogDrain; onChanged: () => void }) {
   const t = useT();
   const confirm = useConfirm();
+  const toast = useToast();
   const calls = drainApi(scope);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<DrainDraft>(() => draftFromDrain(drain));
@@ -77,8 +79,14 @@ export function DrainRow({ scope, drain, onChanged }: { scope: DrainScope; drain
       onChanged();
     },
   });
-  const toggle = useMutation({ mutationFn: (enabled: boolean) => calls.update(drain.id, { enabled }), onSuccess: onChanged });
-  const del = useMutation({ mutationFn: () => calls.remove(drain.id), onSuccess: onChanged });
+  const toggle = useMutation({
+    mutationFn: (enabled: boolean) => calls.update(drain.id, { enabled }),
+    onSuccess: (_r, enabled) => { onChanged(); toast(t(enabled ? "logdrains.enabledNamed" : "logdrains.disabledNamed", { name: drain.name }), "success"); },
+  });
+  const del = useMutation({
+    mutationFn: () => calls.remove(drain.id),
+    onSuccess: () => { onChanged(); toast(t("common.deletedNamed", { name: drain.name }), "success"); },
+  });
   const submit = () => {
     const problem = validateDraft(draft, scopeKind(scope));
     setInvalid(problem);
@@ -90,7 +98,7 @@ export function DrainRow({ scope, drain, onChanged }: { scope: DrainScope; drain
       <div style={{ display: "flex", flexDirection: "column", gap: 8, padding: "10px 0", borderTop: "1px solid var(--c-bd)" }}>
         <DrainForm scope={scope} draft={draft} onChange={setDraft} hasToken={drain.hasToken} originalType={drain.type} mode="edit" />
         <div style={{ display: "flex", gap: 8 }}>
-          <Btn onClick={submit} disabled={save.isPending}>{t("common.save")}</Btn>
+          <Btn onClick={submit} loading={save.isPending}>{save.isPending ? t("common.saving") : t("common.save")}</Btn>
           <Btn variant="ghost" onClick={reset} disabled={save.isPending}>{t("common.cancel")}</Btn>
         </div>
         {invalid && <div role="alert" style={{ color: "var(--c-r)", fontSize: 12 }}>{t(invalid)}</div>}
@@ -101,12 +109,12 @@ export function DrainRow({ scope, drain, onChanged }: { scope: DrainScope; drain
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 13, flexWrap: "wrap" }}>
-        <input type="checkbox" checked={drain.enabled} onChange={(e) => toggle.mutate(e.target.checked)} aria-label={drain.name} />
+        <input type="checkbox" checked={toggle.isPending ? (toggle.variables ?? drain.enabled) : drain.enabled} disabled={toggle.isPending} aria-busy={toggle.isPending || undefined} onChange={(e) => toggle.mutate(e.target.checked)} aria-label={drain.name} />
         <span style={{ fontWeight: 600, minWidth: 100, maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis" }}>{drain.name}</span>
         <span className="mono" style={{ fontSize: 11, color: "var(--c-tx3)", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: "1px 5px" }}>{t(`logdrains.type_${drain.type.toLowerCase()}`)}</span>
         <span className="mono" style={{ fontSize: 11, color: "var(--c-tx3)", flex: 1, minWidth: 120, overflow: "hidden", textOverflow: "ellipsis" }}>{drain.endpoint}</span>
         <IconBtn label={t("common.edit")} onClick={() => setEditing(true)}><Pencil size={14} /></IconBtn>
-        <IconBtn label={t("common.delete")} danger onClick={async () => { if (await confirm({ body: t("common.deleteConfirm"), danger: true })) del.mutate(); }}>×</IconBtn>
+        <IconBtn label={t("common.delete")} danger loading={del.isPending} onClick={async () => { if (await confirm({ body: t("common.deleteConfirm"), danger: true })) del.mutate(); }}>×</IconBtn>
       </div>
       <div style={{ paddingLeft: 26 }}>
         <DeliveryInfo delivery={drain.delivery} status={drain.status} />

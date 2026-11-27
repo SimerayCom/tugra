@@ -53,6 +53,7 @@ export default function SourcesPage() {
               teamName={teamName(s.teamId)}
               isOwner={isOwner}
               onDelete={async () => { if (await confirm({ body: t("common.deleteNamedConfirm", { name: s.name }), danger: true })) del.mutate(s.id); }}
+              deleting={del.isPending && del.variables === s.id}
             />
           ))}
         </div>
