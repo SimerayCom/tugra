@@ -89,7 +89,9 @@ export function ImportServicesPanel({
     placeholderData: (prev) => prev,
     staleTime: 0,
   });
-  const cards = data?.services ?? [];
+  // The hub answers for every service of the source; only the stacks of this (scoped) plan are shown, counted, and able to hold the apply back.
+  const inPlan = new Set(items.map((i) => i.itemRef));
+  const cards = (data?.services ?? []).filter((c) => inPlan.has(c.itemRef));
   const missing = cards.filter((c) => needsExplicitTarget(c, choices[c.itemRef])).length;
   useEffect(() => {
     onMissingTargets?.(missing);

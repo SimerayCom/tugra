@@ -87,6 +87,34 @@ describe("CoolifySshInstall", () => {
     await waitFor(() => expect(start).toHaveBeenCalledWith("s1", { coolifyServerUuids: ["edgeuuid0001", "builduuid001"], teamId: "t1", confirm: "2" }));
   });
 
+  it("opened from the import wizard, the run carries the import session so each server follows the team mapping, and no one team is asked for", async () => {
+    window.history.replaceState(null, "", "/import/coolify-host?session=imp-7");
+    try {
+      vi.spyOn(api, "coolifySshLatest").mockResolvedValue(null);
+      const start = vi.spyOn(api, "coolifySshStart").mockResolvedValue(RUN([tv("edgeuuid0001", "edge", "PROBING"), tv("builduuid001", "builder", "PROBING")]));
+      const two = { ...TEAMS[0] };
+      render(
+        <QueryClientProvider client={qc}>
+          <I18nProvider>
+            <ToastProvider>
+              <ConfirmProvider>
+                <CoolifySshInstall serverId="s1" rows={ROWS} teams={[two, { id: "t2", name: "Other" }]} ownerOfInventory />
+              </ConfirmProvider>
+            </ToastProvider>
+          </I18nProvider>
+        </QueryClientProvider>,
+      );
+      await screen.findByText(/Each server goes into the Tugra team its Coolify team was mapped to/);
+      expect(screen.queryByLabelText("Team")).toBeNull();
+      fireEvent.click(await screen.findByRole("button", { name: "Install on 2 servers" }));
+      typeConfirm(2);
+      fireEvent.click(screen.getByRole("button", { name: "Check 2 servers" }));
+      await waitFor(() => expect(start).toHaveBeenCalledWith("s1", { coolifyServerUuids: ["edgeuuid0001", "builduuid001"], teamId: "t1", confirm: "2", importSessionId: "imp-7" }));
+    } finally {
+      window.history.replaceState(null, "", "/");
+    }
+  });
+
   it("can leave a server out of the run", async () => {
     vi.spyOn(api, "coolifySshLatest").mockResolvedValue(null);
     const start = vi.spyOn(api, "coolifySshStart").mockResolvedValue(RUN([tv("edgeuuid0001", "edge", "PROBING")]));

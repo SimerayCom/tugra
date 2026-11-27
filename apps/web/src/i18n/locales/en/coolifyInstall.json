@@ -12,7 +12,8 @@
     "none": "Every server here already has an agent, or none can be installed this way.",
     "team": "Add the new servers to",
     "ownerOnly": "Only a team owner can install agents this way. Ask an owner, or use the install command of a server in the list.",
-    "pick": "Servers to check"
+    "pick": "Servers to check",
+    "followsMapping": "Each server goes into the Tugra team its Coolify team was mapped to in your import. A Coolify team you left out gets no agent."
   },
   "probe": {
     "title": "Checking first. Nothing is changed yet.",

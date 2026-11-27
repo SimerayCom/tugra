@@ -124,6 +124,17 @@ describe("ImportServicesPanel", () => {
     expect(screen.getByText("Not imported: every member needs something Tugra never carries.")).toBeTruthy();
   });
 
+  it("shows, counts and gates on only the services of the plan it is given: a localhost stack outside the scope never holds the apply back", async () => {
+    const onMissing = vi.fn();
+    // the hub answers for every service of the source (REF_PART sits on localhost and needs a target), the scoped plan holds only REF_OK
+    wrap(<ImportServicesPanel sessionId="s1" kind="coolify" plan={{ ...plan, items: plan.items.filter((i) => i.itemRef === REF_OK) }} servers={[{ id: "srv-a", name: "Server A" }]} choices={{}} onChoice={vi.fn()} onMissingTargets={onMissing} />);
+    await screen.findByText("1 ready · 0 partial · 0 not imported");
+    expect(screen.queryByText("observability")).toBeNull();
+    expect(screen.getByText("search")).toBeTruthy();
+    expect(onMissing).toHaveBeenLastCalledWith(0);
+    expect(onMissing).not.toHaveBeenCalledWith(1);
+  });
+
   it("a service with no domain says it stays private; a mapped domain row is editable", async () => {
     const { onChoice } = renderPanel();
     await screen.findByText("1 ready · 1 partial · 1 not imported");

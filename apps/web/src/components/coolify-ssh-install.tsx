@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError } from "../lib/api";
 import { useT } from "../i18n/provider";
@@ -61,6 +61,12 @@ export function CoolifySshInstall({ serverId, rows, teams, ownerOfInventory }: {
   const candidates = useMemo(() => sshCandidates(rows), [rows]);
   const [off, setOff] = useState<Set<string>>(new Set());
   const [teamId, setTeamId] = useState("");
+  // Opened from the import wizard (?session=<import session>): each server then goes into the Tugra team its Coolify team was mapped to.
+  const [importSessionId, setImportSessionId] = useState<string | undefined>(undefined);
+  useEffect(() => {
+    const sid = new URLSearchParams(window.location.search).get("session");
+    if (sid) setImportSessionId(sid);
+  }, []);
 
   const { data: run } = useQuery({
     queryKey: key,
@@ -77,7 +83,7 @@ export function CoolifySshInstall({ serverId, rows, teams, ownerOfInventory }: {
 
   const onError = (e: unknown) => toast(errorText(t, e), "error");
   const set = (r: CoolifySshRunView) => qc.setQueryData(key, r);
-  const start = useMutation({ mutationFn: (uuids: string[]) => api.coolifySshStart(serverId, { coolifyServerUuids: uuids, teamId: team, confirm: confirmText(uuids.length) }), onSuccess: set, onError });
+  const start = useMutation({ mutationFn: (uuids: string[]) => api.coolifySshStart(serverId, { coolifyServerUuids: uuids, teamId: team, confirm: confirmText(uuids.length), ...(importSessionId ? { importSessionId } : {}) }), onSuccess: set, onError });
   const install = useMutation({ mutationFn: (r: CoolifySshRunView) => api.coolifySshInstall(serverId, r.runId, { confirm: confirmText(counts.ready) }), onSuccess: set, onError });
   const uninstall = useMutation({ mutationFn: (r: CoolifySshRunView) => api.coolifySshUninstall(serverId, r.runId, { confirm: confirmText(counts.removable) }), onSuccess: set, onError });
   const cancel = useMutation({ mutationFn: (r: CoolifySshRunView) => api.coolifySshCancel(serverId, r.runId), onSuccess: set, onError });
@@ -139,7 +145,8 @@ export function CoolifySshInstall({ serverId, rows, teams, ownerOfInventory }: {
               }
             />
           ))}
-          {teams.length > 1 && (
+          {importSessionId && <p role="note" style={{ margin: 0, fontSize: 12, color: "var(--c-tx2)", lineHeight: 1.5 }}>{t("coolifyInstall.card.followsMapping")}</p>}
+          {teams.length > 1 && !importSessionId && (
             <Select value={team} onChange={setTeamId} options={teams.map((x) => ({ value: x.id, label: x.name }))} ariaLabel={t("coolifyInstall.card.team")} style={{ maxWidth: 260 }} />
           )}
         </div>

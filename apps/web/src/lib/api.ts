@@ -1592,7 +1592,7 @@ export const api = {
   coolifySshRun(serverId: string, runId: string) {
     return apiFetch<CoolifySshRunView>(`/coolify-takeover/servers/${serverId}/ssh/runs/${runId}`);
   },
-  coolifySshStart(serverId: string, body: { coolifyServerUuids: string[]; teamId: string; confirm: string }) {
+  coolifySshStart(serverId: string, body: { coolifyServerUuids: string[]; teamId: string; confirm: string; importSessionId?: string }) {
     return apiFetch<CoolifySshRunView>(`/coolify-takeover/servers/${serverId}/ssh/runs`, { method: "POST", body: JSON.stringify(body) });
   },
   // Check which machines these are (read-only probe, nothing installed). Without `confirm` the hub answers 409 `consent_required`.
