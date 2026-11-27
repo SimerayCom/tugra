@@ -43,7 +43,8 @@
 #   --env-file <path>   Write the env file here (default: <repo>/.env). Used by tests.
 #   --home              Start the owner account in the simple Home launcher (CasaOS-style) instead of the
 #                       full Fleet control plane. Owner can still choose/switch in onboarding or Settings.
-#   --no-telemetry      Opt OUT of the on-by-default anonymous usage stats (also: TUGRA_TELEMETRY=0).
+#   --no-stats          Opt OUT of the on-by-default anonymous usage stats (also: TUGRA_STATS=0).
+#   --enable-stats      Turn the usage stats back on after --no-stats (also: TUGRA_STATS=1).
 #   --no-update-checks  Opt OUT of the signed self-update checks, on by default (also: TUGRA_UPDATE_CHECKS=0).
 #   --enable-update-checks  Re-enable update checks after --no-update-checks (they are on by default; also: TUGRA_ENABLE_UPDATE_CHECKS=1).
 #   --detect-public-ip  Best-effort auto-detect this host's public IP (off by default, for privacy).
@@ -100,8 +101,8 @@ NO_UPDATE_CHECKS="${TUGRA_NO_UPDATE_CHECKS:-0}"         # explicit opt-out of th
 [ "${TUGRA_UPDATE_CHECKS:-}" = "0" ] && NO_UPDATE_CHECKS=1 # the same variable the hub reads
 DETECT_PUBLIC_IP="${TUGRA_DETECT_PUBLIC_IP:-0}"
 MANUAL_PUBLIC_IP="${TUGRA_PUBLIC_IP:-}"
-ENABLE_TELEMETRY="${TUGRA_ENABLE_TELEMETRY:-0}" # explicit opt-in (skips the confirm prompt)
-NO_TELEMETRY="${TUGRA_NO_TELEMETRY:-0}"         # explicit opt-out of the default-on anonymous usage stats
+ENABLE_STATS="${TUGRA_ENABLE_STATS:-${TUGRA_ENABLE_TELEMETRY:-0}}" # explicit opt-in (skips the confirm prompt)
+NO_STATS="${TUGRA_NO_STATS:-${TUGRA_NO_TELEMETRY:-0}}"             # explicit opt-out of the default-on anonymous usage stats
 NO_SWAP="${TUGRA_NO_SWAP:-0}"                   # --no-swap: never add the safety-net swapfile on a small host (lib/swap.sh)
 ENABLE_SWAP=0                                   # --enable-swap: forget an earlier --no-swap
 PROFILE_ARG="${TUGRA_PROFILE_ARG:-}"           # --profile=<tiny|small|standard|auto>: RAM profile (lib/profile.sh); "" = keep / detect
@@ -182,8 +183,8 @@ while [ $# -gt 0 ]; do
     --prune-images) PRUNE_IMAGES=1; shift ;;
     --no-update-checks)     NO_UPDATE_CHECKS=1; shift ;;
     --enable-update-checks) ENABLE_UPDATE_CHECKS=1; shift ;;
-    --enable-telemetry)     ENABLE_TELEMETRY=1; shift ;;
-    --no-telemetry)         NO_TELEMETRY=1; shift ;;
+    --enable-stats|--enable-telemetry) ENABLE_STATS=1; shift ;;
+    --no-stats|--no-telemetry)         NO_STATS=1; shift ;;
     --no-swap)              NO_SWAP=1; shift ;;
     --enable-swap)          ENABLE_SWAP=1; shift ;;
     --profile=*)            PROFILE_ARG="${1#--profile=}"; shift ;;
@@ -600,27 +601,28 @@ if [ "$DRY_RUN" -eq 0 ]; then
   preflight
 fi
 
-# Anonymous usage stats are ON by default, opt-out. COUNTS ONLY (servers, apps, databases, deploys) plus
-# version/edition/OS with a random id — never names, IPs, domains or secrets — changeable anytime in
-# Settings. An EXPLICIT choice on THIS run (--no-telemetry / --enable-telemetry, or TUGRA_TELEMETRY=0|1)
-# always wins and OVERRIDES a value already in .env — so `install.sh --no-telemetry` on an existing box
-# truly turns it off (TELEMETRY_OVERRIDE → set_env below). With no explicit choice we decide once on a
-# fresh install (interactive [Y/n], default yes; headless keeps it on with a notice) and KEEP a prior
-# choice already in .env (TELEMETRY_DECISION → ensure_env below).
-if [ "$NO_TELEMETRY" = "1" ] || [ "${TUGRA_TELEMETRY:-}" = "0" ]; then
-  TELEMETRY_OVERRIDE="0"
-elif [ "$ENABLE_TELEMETRY" = "1" ] || [ "${TUGRA_TELEMETRY:-}" = "1" ]; then
-  TELEMETRY_OVERRIDE="1"
-elif ! env_has TUGRA_TELEMETRY; then
+# Anonymous usage stats are ON by default, opt-out. Counts (servers, apps, databases, services, teams,
+# users) plus version/edition/OS, signed with a per-hub key — never names, IPs, domains or secrets —
+# changeable anytime in Settings. An EXPLICIT choice on THIS run (--no-stats / --enable-stats, or
+# TUGRA_STATS=0|1) always wins and OVERRIDES a value already in .env — so `install.sh --no-stats` on an
+# existing box truly turns it off (STATS_OVERRIDE → set_env below). With no explicit choice we decide once
+# on a fresh install (interactive [Y/n], default yes; headless keeps it on with a notice) and KEEP a prior
+# choice already in .env (STATS_DECISION → ensure_env below). The older TUGRA_TELEMETRY name is still
+# honoured as an input and kept in sync when it is already in .env.
+if [ "$NO_STATS" = "1" ] || [ "${TUGRA_STATS:-}" = "0" ] || [ "${TUGRA_TELEMETRY:-}" = "0" ]; then
+  STATS_OVERRIDE="0"
+elif [ "$ENABLE_STATS" = "1" ] || [ "${TUGRA_STATS:-}" = "1" ] || [ "${TUGRA_TELEMETRY:-}" = "1" ]; then
+  STATS_OVERRIDE="1"
+elif ! env_has TUGRA_STATS && ! env_has TUGRA_TELEMETRY; then
   if [ "$DRY_RUN" -eq 0 ] && [ -r /dev/tty ]; then
-    printf '\n  Help improve Tugra with anonymous usage stats? Counts only (servers, apps, deploys), no\n  names, IPs or secrets, and you can turn it off anytime in Settings.\n'
+    printf '\n  Help improve Tugra with anonymous usage stats? Counts only (servers, apps, databases, teams,\n  users), no names, IPs or secrets, and you can turn it off anytime in Settings.\n'
     printf '  Share stats? [Y/n] '
-    IFS= read -r _tel_ans </dev/tty || _tel_ans=""
-    case "$_tel_ans" in [Nn] | [Nn][Oo]) TELEMETRY_DECISION="0" ;; *) TELEMETRY_DECISION="1" ;; esac
+    IFS= read -r _stats_ans </dev/tty || _stats_ans=""
+    case "$_stats_ans" in [Nn] | [Nn][Oo]) STATS_DECISION="0" ;; *) STATS_DECISION="1" ;; esac
     printf '\n'
   else
-    TELEMETRY_DECISION="1"
-    [ "$DRY_RUN" -eq 0 ] && note "Anonymous usage stats are ON by default (counts only, no identifiers). Turn off with --no-telemetry or TUGRA_TELEMETRY=0, or in Settings."
+    STATS_DECISION="1"
+    [ "$DRY_RUN" -eq 0 ] && note "Anonymous usage stats are ON by default (counts only, no names or IPs). Turn off with --no-stats or TUGRA_STATS=0, or in Settings."
   fi
 fi
 
@@ -858,12 +860,16 @@ if [ "$FORCE_BUILD" -eq 1 ]; then drop_digest_pins; fi
 # An operator's own UPDATE_MANIFEST_URL/UPDATE_PUBLISHER_KEY pair in .env still wins over the built-in defaults.
 if [ "$NO_UPDATE_CHECKS" = "1" ]; then set_env TUGRA_UPDATE_CHECKS "0"
 elif [ "$ENABLE_UPDATE_CHECKS" = "1" ]; then set_env TUGRA_UPDATE_CHECKS "1"; fi
-# Persist the telemetry choice decided above. The hub sends a once-a-day anonymous ping of COUNTS only
-# (servers, apps, databases, deploys) + version/edition/OS with a random instance id when
-# TUGRA_TELEMETRY != "0". An EXPLICIT choice on this run upserts (set_env) so it OVERRIDES a stored value;
-# the implicit fresh-install default is only-if-unset (ensure_env) so an unrelated re-run keeps it.
-[ -n "${TELEMETRY_OVERRIDE:-}" ] && set_env TUGRA_TELEMETRY "$TELEMETRY_OVERRIDE"
-[ -n "${TELEMETRY_DECISION:-}" ] && ensure_env TUGRA_TELEMETRY "$TELEMETRY_DECISION"
+# Persist the usage-stats choice decided above. The hub sends a once-a-day anonymous report of counts
+# (servers, apps, databases, services, teams, users) + version/edition/OS, signed with its own key, when
+# TUGRA_STATS != "0". An EXPLICIT choice on this run upserts (set_env) so it OVERRIDES a stored value; the
+# implicit fresh-install default is only-if-unset (ensure_env) so an unrelated re-run keeps it. A stored
+# TUGRA_TELEMETRY (older name) is rewritten too, so it can never contradict the new choice.
+if [ -n "${STATS_OVERRIDE:-}" ]; then
+  set_env TUGRA_STATS "$STATS_OVERRIDE"
+  env_has TUGRA_TELEMETRY && set_env TUGRA_TELEMETRY "$STATS_OVERRIDE"
+fi
+[ -n "${STATS_DECISION:-}" ] && ensure_env TUGRA_STATS "$STATS_DECISION"
 # --home: start the owner account in the simple Home launcher instead of the full Fleet control plane. The
 # owner can still pick/switch during onboarding (the welcome wizard) or later in Settings. only-if-unset.
 [ "$HOME_MODE" = "1" ] && ensure_env DEFAULT_UI_MODE home
@@ -1375,10 +1381,10 @@ _mail_host="$( { env_get MAIL_HOST || true; } | tr -d "\"' " )"
 if [ -z "$_mail_host" ]; then
   printf '  \033[2mEmail: not configured — set MAIL_* in %s to enable password reset / invites (see tugra.io/docs/email).\033[0m\n' "$ENV_FILE"
 fi
-if [ "$(env_get TUGRA_TELEMETRY)" = "0" ]; then
+if [ "$(env_get TUGRA_STATS)" = "0" ] || [ "$(env_get TUGRA_TELEMETRY)" = "0" ]; then
   printf '  \033[2mAnonymous usage stats are OFF.\033[0m\n'
 else
-  printf '  \033[2mAnonymous usage stats are ON (counts only: servers, apps, deploys — no names, IPs or secrets). Turn off anytime with --no-telemetry or in Settings.\033[0m\n'
+  printf '  \033[2mAnonymous usage stats are ON (counts only: servers, apps, databases, teams, users — no names, IPs or secrets). Turn off anytime with --no-stats or in Settings.\033[0m\n'
 fi
 if [ "$FRESH_SETUP_CODE" -eq 1 ]; then
   _code="$(env_get SETUP_CODE)"

@@ -347,32 +347,50 @@ describe("scripts/install.sh", () => {
       expect(env.WEB_BIND).toBe("127.0.0.1");
     });
 
-    it("anonymous telemetry is ON by default and turns off with --no-telemetry", () => {
-      const onPath = join(dir, "tel-on.env");
+    it("anonymous usage stats are ON by default and turn off with --no-stats", () => {
+      const onPath = join(dir, "stats-on.env");
       run([], onPath); // headless (no TTY): keeps the default on
-      expect(parseEnv(readFileSync(onPath, "utf8")).TUGRA_TELEMETRY).toBe("1");
-      const offPath = join(dir, "tel-off.env");
-      run(["--no-telemetry"], offPath);
-      expect(parseEnv(readFileSync(offPath, "utf8")).TUGRA_TELEMETRY).toBe("0");
+      expect(parseEnv(readFileSync(onPath, "utf8")).TUGRA_STATS).toBe("1");
+      const offPath = join(dir, "stats-off.env");
+      run(["--no-stats"], offPath);
+      expect(parseEnv(readFileSync(offPath, "utf8")).TUGRA_STATS).toBe("0");
     });
 
-    it("an explicit --no-telemetry on a RE-RUN overrides a stored TUGRA_TELEMETRY=1 (the advertised anytime off-switch)", () => {
-      const p = join(dir, "tel-rerun.env");
+    it("the older --no-telemetry flag still opts out (writes TUGRA_STATS=0)", () => {
+      const p = join(dir, "stats-legacy-flag.env");
+      run(["--no-stats"], p);
+      expect(parseEnv(readFileSync(p, "utf8")).TUGRA_STATS).toBe("0");
+    });
+
+    it("an explicit --no-stats on a RE-RUN overrides a stored TUGRA_STATS=1 (the advertised anytime off-switch)", () => {
+      const p = join(dir, "stats-rerun.env");
       run([], p); // first run leaves it ON
-      expect(parseEnv(readFileSync(p, "utf8")).TUGRA_TELEMETRY).toBe("1");
-      run(["--no-telemetry"], p); // re-run with the explicit opt-out MUST flip it off
+      expect(parseEnv(readFileSync(p, "utf8")).TUGRA_STATS).toBe("1");
+      run(["--no-stats"], p); // re-run with the explicit opt-out MUST flip it off
       const after = parseEnv(readFileSync(p, "utf8"));
-      expect(after.TUGRA_TELEMETRY).toBe("0");
+      expect(after.TUGRA_STATS).toBe("0");
       // and exactly one line survives (set_env upserts, never duplicates)
-      expect(readFileSync(p, "utf8").match(/^TUGRA_TELEMETRY=/gm)?.length).toBe(1);
+      expect(readFileSync(p, "utf8").match(/^TUGRA_STATS=/gm)?.length).toBe(1);
     });
 
-    it("a flag-less re-run PRESERVES a stored telemetry opt-out (does not silently re-enable)", () => {
-      const p = join(dir, "tel-keep.env");
-      run(["--no-telemetry"], p); // opted out
+    it("a stored older TUGRA_TELEMETRY=0 is kept as the opt-out, and --enable-stats rewrites both names", () => {
+      const p = join(dir, "stats-older-name.env");
+      writeFileSync(p, "TUGRA_TELEMETRY=0\n");
+      run([], p); // flag-less re-run must not add a conflicting TUGRA_STATS=1
+      expect(readFileSync(p, "utf8")).not.toMatch(/^TUGRA_STATS=/m);
       expect(parseEnv(readFileSync(p, "utf8")).TUGRA_TELEMETRY).toBe("0");
+      run(["--enable-stats"], p); // explicit opt-in: the old hard-off cannot linger
+      const after = parseEnv(readFileSync(p, "utf8"));
+      expect(after.TUGRA_STATS).toBe("1");
+      expect(after.TUGRA_TELEMETRY).toBe("1");
+    });
+
+    it("a flag-less re-run PRESERVES a stored usage-stats opt-out (does not silently re-enable)", () => {
+      const p = join(dir, "stats-keep.env");
+      run(["--no-stats"], p); // opted out
+      expect(parseEnv(readFileSync(p, "utf8")).TUGRA_STATS).toBe("0");
       run([], p); // plain re-run must keep the opt-out
-      expect(parseEnv(readFileSync(p, "utf8")).TUGRA_TELEMETRY).toBe("0");
+      expect(parseEnv(readFileSync(p, "utf8")).TUGRA_STATS).toBe("0");
     });
 
     describe("signed self-update checks are ON by default (opt-out)", () => {
@@ -554,7 +572,7 @@ describe("scripts/install.sh", () => {
         const p = join(dir, "perm.env");
         run(HTTP, p);
         chmodSync(p, 0o644);
-        run(["--no-telemetry"], p);
+        run(["--no-stats"], p);
         expect(statSync(p).mode & 0o777).toBe(0o600);
         expect(readdirSync(dir).filter((f) => /^perm\.env\./.test(f))).toEqual([]); // no stray temp files
       });
@@ -618,7 +636,7 @@ describe("scripts/install.sh", () => {
 
     it("--help prints EVERY flag (it used to cut off after --env-file)", () => {
       const help = execFileSync("bash", [INSTALL_SH, "--help"], { stdio: "pipe", env: cleanEnv }).toString();
-      for (const f of ["--raw-ports", "--restore-from", "--public-ip", "--detect-public-ip", "--no-telemetry", "--no-update-checks", "--enable-update-checks", "--home", "--dry-run", "--keep-raw-ports", "--acme-dns-cloudflare-file"]) {
+      for (const f of ["--raw-ports", "--restore-from", "--public-ip", "--detect-public-ip", "--no-stats", "--enable-stats", "--no-update-checks", "--enable-update-checks", "--home", "--dry-run", "--keep-raw-ports", "--acme-dns-cloudflare-file"]) {
         expect(help).toContain(f);
       }
       expect(help).not.toContain("set -euo pipefail");
@@ -826,11 +844,11 @@ exec ${REAL_CP} "$@"
       // TUGRA_CHECKOUT_SYNC=0: the repo these runs execute from may be a developer's dirty tree; never let a spec fetch or move git.
       const base = { PATH: `${opts.noCurl ? noCurl : shims}:${process.env.PATH}`, SHIM_LOG: LOG, TUGRA_HEALTH_TRIES: "1", TUGRA_HEALTH_INTERVAL: "0", TMPDIR: work, TUGRA_CHECKOUT_SYNC: "0" };
       const env = { ...base, ...(opts.noCurl ? { PATH: noCurl } : {}), ...(opts.env ?? {}) } as NodeJS.ProcessEnv;
-      const r = spawnSync(BASH, [opts.script ?? INSTALL_SH, "--env-file", envPath, "--no-telemetry", ...args], { env, encoding: "utf8" });
+      const r = spawnSync(BASH, [opts.script ?? INSTALL_SH, "--env-file", envPath, "--no-stats", ...args], { env, encoding: "utf8" });
       return { code: r.status ?? -1, out: `${r.stdout}${r.stderr}` };
     };
     const dry = (envPath: string, args: string[], extra: Record<string, string> = {}): void => {
-      execFileSync(BASH, [INSTALL_SH, "--dry-run", "--env-file", envPath, "--no-telemetry", ...args], {
+      execFileSync(BASH, [INSTALL_SH, "--dry-run", "--env-file", envPath, "--no-stats", ...args], {
         stdio: "pipe",
         env: { PATH: process.env.PATH, ...extra } as NodeJS.ProcessEnv,
       });
@@ -1227,7 +1245,7 @@ exec ${REAL_CP} "$@"
       it("appending a new key goes through the same atomic write: other lines, their order and the file mode survive", () => {
         const p = join(work, "env-append.env");
         writeFileSync(p, "A=1\nB=two", { mode: 0o640 }); // no trailing newline, and a mode the installer must keep
-        execFileSync(BASH, [INSTALL_SH, "--dry-run", "--env-file", p, "--no-telemetry", ...HTTP], { stdio: "pipe", env: { PATH: process.env.PATH } as NodeJS.ProcessEnv });
+        execFileSync(BASH, [INSTALL_SH, "--dry-run", "--env-file", p, "--no-stats", ...HTTP], { stdio: "pipe", env: { PATH: process.env.PATH } as NodeJS.ProcessEnv });
         const text = readFileSync(p, "utf8");
         expect(text.startsWith("A=1\nB=two\n")).toBe(true);
         expect(readEnv(p).JWT_ACCESS_SECRET).toBeTruthy();
@@ -1435,7 +1453,7 @@ exec ${REAL_CP} "$@"
       it("a hand-quoted HUB_PORT=\"3500\" / WEB_PORT with CRLF in .env does not trip the numeric guard on a re-run", () => {
         const p = join(work, "quoted.env"); dry(p, HTTP);
         writeFileSync(p, readFileSync(p, "utf8").replace(/^HUB_PORT=.*$/m, 'HUB_PORT="3500"').replace(/^WEB_PORT=.*$/m, "WEB_PORT=3501\r"));
-        execFileSync(BASH, [INSTALL_SH, "--dry-run", "--env-file", p, "--no-telemetry"], { stdio: "pipe", env: { PATH: process.env.PATH } as NodeJS.ProcessEnv });
+        execFileSync(BASH, [INSTALL_SH, "--dry-run", "--env-file", p, "--no-stats"], { stdio: "pipe", env: { PATH: process.env.PATH } as NodeJS.ProcessEnv });
         expect(readEnv(p).HUB_PORT).toBe("3500");
         expect(readEnv(p).WEB_PORT).toBe("3501");
       });
