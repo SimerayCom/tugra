@@ -17,6 +17,7 @@ import { ApplicationsController } from "./applications.controller";
 import { ApplicationsService } from "./applications.service";
 import { AppDatabaseLinksService } from "./app-database-links.service";
 import { AppSecretRefsService } from "./app-secret-refs.service";
+import { FaviconService } from "./favicon.service";
 import { DeploymentReconcileService } from "./deployment-reconcile.service";
 import { DeployLeaseService } from "./deploy-lease.service";
 import { DeployRecoveryService } from "./deploy-recovery.service";
@@ -42,6 +43,7 @@ import { AGENT_ENDPOINTS_SERVICE, APPLICATIONS_SERVICE, PROXY_SERVICE } from "./
     ApplicationsService,
     AppDatabaseLinksService,
     AppSecretRefsService,
+    FaviconService,
     DeploymentReconcileService,
     DeployLeaseService,
     DeployRecoveryService,

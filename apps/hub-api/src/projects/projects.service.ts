@@ -42,6 +42,9 @@ export const ProjectResourceSchema = z.object({
   iconUpdatedAt: z.date().nullable(),
   templateSlug: z.string().nullable(),
   templateLogo: z.string().nullable(), // catalog logo filename resolved from templateSlug (null for databases)
+  iconKey: z.string().nullable(), // brand icon the user picked from the shared set
+  image: z.string().nullable(), // container image, for the automatic brand icon
+  hasDomain: z.boolean(), // an app with its own domain gets its site's favicon
 });
 export type ProjectResource = z.infer<typeof ProjectResourceSchema>;
 
@@ -159,11 +162,11 @@ export class ProjectsService {
     const [apps, dbs] = await Promise.all([
       this.prisma.application.findMany({
         where: { environmentId: { in: envIds } },
-        select: { id: true, name: true, status: true, environmentId: true, source: true, domain: true, https: true, hostPort: true, tags: true, serverId: true, iconUpdatedAt: true, templateSlug: true },
+        select: { id: true, name: true, status: true, environmentId: true, source: true, domain: true, https: true, hostPort: true, tags: true, serverId: true, iconUpdatedAt: true, iconKey: true, image: true, templateSlug: true },
       }),
       this.prisma.database.findMany({
         where: { environmentId: { in: envIds } },
-        select: { id: true, name: true, status: true, environmentId: true, engine: true, tags: true, serverId: true },
+        select: { id: true, name: true, status: true, environmentId: true, engine: true, tags: true, serverId: true, iconUpdatedAt: true, iconKey: true, image: true },
       }),
     ]);
     // Resolve server names for the "Server: <name>" labels, and public IPs so a
@@ -193,6 +196,9 @@ export class ProjectsService {
             tags: a.tags,
             engine: null,
             iconUpdatedAt: a.iconUpdatedAt,
+            iconKey: a.iconKey,
+            image: a.image,
+            hasDomain: !!a.domain,
             templateSlug: a.templateSlug,
             // Resolve the catalog logo exactly like applications.service, so the icon matches the app view.
             templateLogo: a.templateSlug ? (this.catalog.get(a.templateSlug)?.logo ?? a.templateSlug) : null,
@@ -203,7 +209,10 @@ export class ProjectsService {
             serverName: serverName.get(d.serverId) ?? null,
             tags: d.tags,
             engine: d.engine,
-            iconUpdatedAt: null,
+            iconUpdatedAt: d.iconUpdatedAt,
+            iconKey: d.iconKey,
+            image: d.image,
+            hasDomain: false,
             templateSlug: null,
             templateLogo: null,
           })),

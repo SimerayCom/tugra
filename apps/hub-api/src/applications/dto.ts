@@ -204,6 +204,10 @@ export const SetIconSchema = z.object({
 });
 export type SetIconInput = z.infer<typeof SetIconSchema>;
 
+// Pick a brand icon from the shared set; null clears the pick. The service checks the key against the set.
+export const SetIconKeySchema = z.object({ iconKey: z.string().min(1).max(64).nullable() }).strict();
+export type SetIconKeyInput = z.infer<typeof SetIconKeySchema>;
+
 export const SetDockerOptionsSchema = z.object({
   dockerOptions: z.string().max(2000).nullable(),
 });

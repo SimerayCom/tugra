@@ -4925,7 +4925,33 @@ describe("ApplicationsService - custom icon", () => {
     const { prisma, upsert, update } = iconPrisma();
     await make(prisma, iconAccess, {} as AgentWsServer).setIcon("u1", "app1", b64(pngHeader(128, 128)));
     expect(upsert).toHaveBeenCalledWith(expect.objectContaining({ where: { appId: "app1" }, create: expect.objectContaining({ mime: "image/png" }) }));
-    expect(update).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "app1" }, data: { iconUpdatedAt: expect.any(Date) } }));
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "app1" }, data: { iconUpdatedAt: expect.any(Date), iconKey: null } }));
+  });
+
+  it("setIconKey stores a known key, drops an uploaded icon and clears its marker", async () => {
+    const { prisma, update, deleteMany } = iconPrisma();
+    await make(prisma, iconAccess, {} as AgentWsServer).setIconKey("u1", "app1", "postgresql");
+    expect(deleteMany).toHaveBeenCalledWith({ where: { appId: "app1" } });
+    expect(update).toHaveBeenCalledWith({ where: { id: "app1" }, data: { iconKey: "postgresql", iconUpdatedAt: null } });
+  });
+
+  it("setIconKey with null clears only the pick", async () => {
+    const { prisma, update, deleteMany } = iconPrisma();
+    await make(prisma, iconAccess, {} as AgentWsServer).setIconKey("u1", "app1", null);
+    expect(deleteMany).not.toHaveBeenCalled();
+    expect(update).toHaveBeenCalledWith({ where: { id: "app1" }, data: { iconKey: null } });
+  });
+
+  it("setIconKey rejects a key that is not in the set", async () => {
+    const { prisma, update } = iconPrisma();
+    await expect(make(prisma, iconAccess, {} as AgentWsServer).setIconKey("u1", "app1", "../../etc/passwd")).rejects.toBeInstanceOf(BadRequestException);
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("faviconTarget returns only the app's own configured hostnames", async () => {
+    const { prisma } = iconPrisma();
+    (prisma.application.findUnique as jest.Mock).mockResolvedValue({ ...app, domain: "shop.example.com", extraDomains: ["www.shop.example.com"] });
+    await expect(make(prisma, iconAccess, {} as AgentWsServer).faviconTarget("u1", "app1")).resolves.toEqual({ id: "app1", domain: "shop.example.com", extraDomains: ["www.shop.example.com"] });
   });
 
   it("rejects a non-PNG payload (e.g. an SVG)", async () => {

@@ -29,7 +29,7 @@ function isBlockedV4Bytes(o: number[]): boolean {
 }
 
 /** Expand any IPv6 text form (incl. an embedded dotted IPv4) to 16 bytes, or null if unparseable. */
-function ipv6ToBytes(addr: string): number[] | null {
+export function ipv6ToBytes(addr: string): number[] | null {
   let a = addr.toLowerCase().replace(/^\[|\]$/g, "");
   const zone = a.indexOf("%");
   if (zone >= 0) a = a.slice(0, zone); // strip scope id

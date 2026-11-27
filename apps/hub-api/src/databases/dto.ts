@@ -92,6 +92,10 @@ export const SetIconSchema = z.object({
 });
 export type SetIconInput = z.infer<typeof SetIconSchema>;
 
+// Pick a brand icon from the shared set; null clears the pick. The service checks the key against the set.
+export const SetIconKeySchema = z.object({ iconKey: z.string().min(1).max(64).nullable() }).strict();
+export type SetIconKeyInput = z.infer<typeof SetIconKeySchema>;
+
 // A database's custom config file: the full text, or null/blank to clear it. Size and NUL checks live in the service.
 export const SetDatabaseConfigFileSchema = z.object({ content: z.string().max(70_000).nullable() });
 export type SetDatabaseConfigFileInput = z.infer<typeof SetDatabaseConfigFileSchema>;

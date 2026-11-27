@@ -16,6 +16,7 @@ import { TeamAccessService, canAccessResource, resolvePermissions } from "../com
 import { loadProjectCtx, loadProjectCtxMany, type ResourceProjectCtx } from "../common/resource-project";
 import { filterByQuery } from "../common/query-filter";
 import { validatePngIcon } from "../common/png-icon";
+import { isResourceIconKey } from "@tugra/shared";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
 import { LogStreamService, type LogStreamEvent } from "../agent-gateway/log-stream.service";
 import { ContainerMetricsService, type AppContainerMetrics } from "../metrics/container-metrics.service";
@@ -108,6 +109,8 @@ export const DatabaseViewSchema = z.object({
   role: z.nativeEnum(Role),
   canWrite: z.boolean(),
   iconUpdatedAt: z.date().nullable(), // set when a custom icon was uploaded (list-view cache-bust marker)
+  iconKey: z.string().nullable(), // brand icon picked from the shared set; null = automatic
+  image: z.string(), // the container image (the panel derives the automatic icon from it)
   createdAt: z.date(),
 });
 export type DatabaseView = z.infer<typeof DatabaseViewSchema>;
@@ -1090,9 +1093,24 @@ export class DatabasesService {
         create: { databaseId: id, mime: "image/png", data: buf, sizeBytes: buf.length },
         update: { mime: "image/png", data: buf, sizeBytes: buf.length },
       }),
-      this.prisma.database.update({ where: { id }, data: { iconUpdatedAt: new Date() } }),
+      this.prisma.database.update({ where: { id }, data: { iconUpdatedAt: new Date(), iconKey: null } }),
     ]);
     await this.audit.log({ actor: userId, action: "database.icon.set", target: db.id, meta: { sizeBytes: buf.length } });
+  }
+
+  /** Pick a brand icon from the shared set (or clear the pick with null). A pick replaces an uploaded icon. Write-authorized. */
+  async setIconKey(userId: string, id: string, iconKey: string | null): Promise<void> {
+    const db = await this.requireWrite(userId, id);
+    if (iconKey !== null && !isResourceIconKey(iconKey)) throw new BadRequestException("unknown icon");
+    if (iconKey === null) {
+      await this.prisma.database.update({ where: { id }, data: { iconKey: null } });
+    } else {
+      await this.prisma.$transaction([
+        this.prisma.databaseIcon.deleteMany({ where: { databaseId: id } }),
+        this.prisma.database.update({ where: { id }, data: { iconKey, iconUpdatedAt: null } }),
+      ]);
+    }
+    await this.audit.log({ actor: userId, action: "database.icon.key", target: db.id, meta: { iconKey } });
   }
 
   /** Remove the database's custom icon (idempotent — a no-op when none is set). Write-authorized. */
@@ -1170,6 +1188,8 @@ export class DatabasesService {
       role,
       canWrite,
       iconUpdatedAt: db.iconUpdatedAt,
+      iconKey: db.iconKey,
+      image: db.image,
       createdAt: db.createdAt,
     };
   }
