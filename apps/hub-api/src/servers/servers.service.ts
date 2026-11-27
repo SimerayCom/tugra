@@ -49,6 +49,7 @@ import type { ProxyService } from "../applications/proxy.service";
 import type { NetworkSettingsInput } from "./dto/servers.schemas";
 import { MAX_BULK_SERVERS } from "./dto/servers.schemas";
 import { cleanCloudHint } from "../costs/cost-size";
+import { teamHiddenByConfinement } from "../common/team-confinement";
 
 const ENROLL_TTL_MS = 60 * 60 * 1000; // 1 hour
 // The capabilities a NEW server is granted by default — everything except `terminal`
@@ -384,7 +385,7 @@ export class ServersService implements OnModuleInit, OnModuleDestroy {
       where: { userId },
       include: { team: true },
     });
-    return memberships.map((m) => ({
+    return memberships.filter((m) => !teamHiddenByConfinement(m.teamId)).map((m) => ({
       id: m.team.id,
       name: m.team.name,
       role: m.role,

@@ -7,6 +7,7 @@ import { SiGithub } from "@icons-pack/react-simple-icons";
 import { KeyRound } from "lucide-react";
 import { api, ApiError } from "../../../lib/api";
 import { useAuth } from "../../../lib/auth";
+import { safeNextPath } from "../../../lib/safe-next";
 import { useT } from "../../../i18n/provider";
 import { Btn, Card } from "../../../components/ui";
 
@@ -33,6 +34,8 @@ export default function LoginPage() {
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
   const [invite, setInvite] = useState("");
+  // Where to go after signing in (e.g. back to an MCP client's consent screen). Same-origin paths only.
+  const [next, setNext] = useState<string | null>(null);
   const [ssoEnabled, setSsoEnabled] = useState(false);
   const [githubEnabled, setGithubEnabled] = useState(false);
 
@@ -46,6 +49,7 @@ export default function LoginPage() {
     else if (e === "sso_unconfigured") setErr(t("auth.ssoUnconfigured"));
     else if (e) setErr(t("auth.oauthError"));
     setInvite(params.get("invite") ?? "");
+    setNext(safeNextPath(params.get("next")));
   }, [t]);
 
   // Only offer the SSO / GitHub buttons when the instance has it enabled + configured (Pro). Fail-soft: a status
@@ -79,7 +83,7 @@ export default function LoginPage() {
           await api.acceptInvitation(invite).catch(() => undefined);
           router.replace("/teams");
         } else {
-          router.replace("/dashboard");
+          router.replace(next ?? "/dashboard");
         }
       }
     } catch (e) {

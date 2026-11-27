@@ -1,6 +1,7 @@
 import { McpController, type McpHttpResponse } from "./mcp.controller";
 import type { McpService } from "./mcp.service";
 import type { RedisService } from "../redis/redis.service";
+import { teamHiddenByConfinement } from "../common/team-confinement";
 import type { AuthUser } from "../auth/strategies/jwt.strategy";
 
 function res() {
@@ -31,6 +32,18 @@ describe("McpController", () => {
 
   it("POST handler defaults to HTTP 200 (not Nest's 201)", () => {
     expect(Reflect.getMetadata("__httpCode__", McpController.prototype.handle)).toBe(200);
+  });
+
+  it("an OAuth grant runs confined to its one team; a PAT runs unconfined", async () => {
+    const seen: boolean[] = [];
+    const handle = jest.fn(async () => {
+      seen.push(teamHiddenByConfinement("other-team"));
+      return { jsonrpc: "2.0", id: 1, result: {} };
+    });
+    const { ctrl } = make({ handle });
+    await ctrl.handle({ userId: "u1", scopes: ["read"], tokenId: "oauth:g1", oauthTeamId: "team1" }, { jsonrpc: "2.0", id: 1, method: "ping" }, res());
+    await ctrl.handle(user, { jsonrpc: "2.0", id: 2, method: "ping" }, res());
+    expect(seen).toEqual([true, false]);
   });
 
   it("POST delegates to McpService.handle with the token-resolved ctx (never client-supplied)", async () => {

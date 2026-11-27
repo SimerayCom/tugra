@@ -16,6 +16,8 @@ export interface AuthUser {
   scopes: string[];
   /** Present only for PAT-authenticated requests (the token's id); absent for a session. */
   tokenId?: string;
+  /** Present only for an MCP OAuth token: the one team the owner granted it to (see common/team-confinement). */
+  oauthTeamId?: string;
 }
 
 /** Minimal request shape we read — avoids a hard @types/express dependency. */

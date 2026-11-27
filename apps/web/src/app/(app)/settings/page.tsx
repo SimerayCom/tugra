@@ -8,6 +8,7 @@ import { Home, Server, User, ShieldCheck, SlidersHorizontal, Mail, DatabaseBacku
 import { api } from "../../../lib/api";
 import { useAuth } from "../../../lib/auth";
 import { ApiTokensCard } from "./api-tokens-card";
+import { OAuthClientsCard } from "./oauth-clients-card";
 import { InstanceApiAccessCard } from "./instance-api-access-card";
 import { Require2faCard } from "./require-2fa-card";
 import { SecretsKeyCard } from "./secrets-key-card";
@@ -150,6 +151,7 @@ export default function SettingsPage() {
           <SessionsCard />
           {!isHome && <ChannelsCard />}
           <Wide><ApiTokensCard /></Wide>
+          <Wide><OAuthClientsCard /></Wide>
         </SettingsGrid>
       )}
 

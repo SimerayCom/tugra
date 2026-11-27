@@ -36,7 +36,7 @@
 
 ## Agent-native by default
 
-Tugra ships a native [MCP](https://modelcontextprotocol.io) server — point Claude, Cursor or your own agent at your infrastructure to inspect, deploy, scale and operate it, using the same personal-access tokens, scopes and audit trail as the REST API. No separate integration package, no secret values ever returned to the model.
+Tugra ships a native [MCP](https://modelcontextprotocol.io) server — point Claude, Cursor or your own agent at your infrastructure to inspect, deploy, scale and operate it, using the same scopes and audit trail as the REST API, with a personal-access token or an OAuth sign-in. No separate integration package, no secret values ever returned to the model.
 
 ```bash
 # List every tool the server exposes

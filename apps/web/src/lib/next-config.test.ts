@@ -12,7 +12,29 @@ describe("next.config rewrites", () => {
     for (const bucket of ["beforeFiles", "afterFiles"]) {
       expect((r[bucket] ?? []).map((x) => x.source)).not.toContain("/api/v1/:path*");
     }
-    expect(r.afterFiles.map((x) => x.source)).toEqual(["/api/auth/oauth/:path*", "/api/auth/oidc/:path*", "/api/auth/oidc"]);
+    expect(r.afterFiles.map((x) => x.source)).toEqual([
+      "/api/auth/oauth/:path*",
+      "/api/auth/oidc/:path*",
+      "/api/auth/oidc",
+      "/.well-known/oauth-protected-resource",
+      "/.well-known/oauth-protected-resource/api/v1/mcp",
+      "/.well-known/oauth-authorization-server",
+    ]);
+  });
+
+  // MCP clients discover the authorization server at the origin root (RFC 8414 / RFC 9728), so the web port forwards
+  // exactly these documents to the hub's un-prefixed routes.
+  it("proxies the MCP OAuth discovery documents to the hub", async () => {
+    const prev = process.env.HUB_INTERNAL_URL;
+    process.env.HUB_INTERNAL_URL = "http://hub-api:3000";
+    try {
+      const r = (await nextConfig.rewrites!()) as unknown as Record<string, { source: string; destination: string }[]>;
+      const rule = r.afterFiles.find((x) => x.source === "/.well-known/oauth-authorization-server")!;
+      expect(rule.destination).toBe("http://hub-api:3000/.well-known/oauth-authorization-server");
+    } finally {
+      if (prev === undefined) delete process.env.HUB_INTERNAL_URL;
+      else process.env.HUB_INTERNAL_URL = prev;
+    }
   });
 
   // "Sign in with GitHub" on the raw two-port install registers `<web origin>/api/auth/oauth/github/callback` with

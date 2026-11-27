@@ -3,6 +3,7 @@ import { Role } from "@prisma/client";
 import { TEAM_PERMISSIONS, type TeamPermission } from "@tugra/shared";
 import { PrismaService } from "../prisma/prisma.service";
 import { portalMembershipsHidden } from "./portal-surface";
+import { teamHiddenByConfinement } from "./team-confinement";
 
 /** Roles that bypass per-resource scoping entirely — they manage the whole team. */
 const BYPASS_ROLES: Role[] = [Role.OWNER, Role.ADMIN];
@@ -61,7 +62,8 @@ export function canAccessResource(
 
 /** A customer-portal (Client) membership is invisible outside the portal surface (see portal-surface.ts): every
  *  membership read below goes through this, so any route off the surface answers as "not a member". */
-function visible(m: { teamRole?: { portal: boolean } | null } | null | undefined): boolean {
+function visible(m: { teamId?: string; teamRole?: { portal: boolean } | null } | null | undefined): boolean {
+  if (m?.teamId && teamHiddenByConfinement(m.teamId)) return false; // a team-confined OAuth grant sees one team only
   return !(portalMembershipsHidden() && m?.teamRole?.portal);
 }
 
@@ -85,6 +87,7 @@ export class TeamAccessService {
   }
 
   async teamRole(userId: string, teamId: string): Promise<Role | null> {
+    if (teamHiddenByConfinement(teamId)) return null;
     const m = await this.prisma.membership.findUnique({
       where: { userId_teamId: { userId, teamId } },
       select: { role: true, ...PORTAL_FLAG },
@@ -107,6 +110,7 @@ export class TeamAccessService {
 
   /** Enforce a resource permission; throws 403 if the member's effective set lacks it. */
   async requirePermission(userId: string, teamId: string, permission: TeamPermission): Promise<void> {
+    if (teamHiddenByConfinement(teamId)) throw new ForbiddenException("insufficient permission for this team");
     const m = await this.prisma.membership.findUnique({
       where: { userId_teamId: { userId, teamId } },
       select: { role: true, teamRole: { select: { permissions: true, portal: true } } },
@@ -118,6 +122,7 @@ export class TeamAccessService {
 
   /** The member's effective permissions for ONE team (single lookup), or null if not a member. */
   async membershipPermissions(userId: string, teamId: string): Promise<Set<TeamPermission> | null> {
+    if (teamHiddenByConfinement(teamId)) return null;
     const m = await this.prisma.membership.findUnique({
       where: { userId_teamId: { userId, teamId } },
       select: { role: true, teamRole: { select: { permissions: true, portal: true } } },
@@ -148,6 +153,7 @@ export class TeamAccessService {
 
   /** The member's role + scoping for one team (null if not a member). */
   async membershipAccess(userId: string, teamId: string): Promise<MembershipAccess | null> {
+    if (teamHiddenByConfinement(teamId)) return null;
     const m = await this.prisma.membership.findUnique({
       where: { userId_teamId: { userId, teamId } },
       select: { role: true, teamRoleId: true, restrictedAccess: true, accessedProjects: true, accessedResources: true, ...PORTAL_FLAG },

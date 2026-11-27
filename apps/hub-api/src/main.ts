@@ -62,6 +62,7 @@ async function bootstrap() {
       "X-RateLimit-Remaining",
       "X-RateLimit-Reset",
       "Retry-After",
+      "WWW-Authenticate", // MCP OAuth discovery challenge
       "X-Tugra-Audit-Truncated", // the Pro audit export flags a capped result here (readable cross-origin)
     ],
   });
