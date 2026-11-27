@@ -1045,3 +1045,4 @@ export type HubMessage =
   | HubEndpointsMsg
   | CoolifySecretsReqMsg
   | CoolifySshReqMsg;
+export * from "./resource-icons";

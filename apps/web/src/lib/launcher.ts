@@ -18,6 +18,8 @@ export interface LauncherTile {
   templateSlug: string | null; // catalog slug → brand logo, when installed from a template
   templateLogo: string | null;
   iconUpdatedAt: string | null; // set when a custom icon was uploaded → overrides the template/source logo
+  iconKey?: string | null; // brand icon picked from the shared set
+  image?: string | null; // container image, for the automatic brand icon
   exposeMode: string; // current exposure — seeds the Expose modal so it reflects reality
   domain: string | null;
   tunnelExposed: boolean; // reachable via Cloudflare tunnel (secure, no open port)
@@ -100,6 +102,8 @@ export function launcherTiles(apps: Application[]): LauncherTile[] {
       templateSlug: a.templateSlug,
       templateLogo: a.templateLogo,
       iconUpdatedAt: a.iconUpdatedAt,
+      iconKey: a.iconKey ?? null,
+      image: a.image,
       exposeMode: a.exposeMode,
       domain: a.domain,
       tunnelExposed: a.tunnelExposed,

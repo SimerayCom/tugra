@@ -17,7 +17,7 @@ import { ModuleRef } from "@nestjs/core";
 import { z } from "zod";
 import { Application, AppStatus, Deployment, Prisma, Role } from "@prisma/client";
 import type { FsEntry, TeamPermission } from "@tugra/shared";
-import { AGENT_FEATURE_CMD_JOURNAL } from "@tugra/shared";
+import { AGENT_FEATURE_CMD_JOURNAL, isResourceIconKey } from "@tugra/shared";
 import { APP_MOVE_TERMINAL, assertNoActiveMove, findActiveMove } from "../common/app-move-guard";
 import { AgentDisconnectedException, AgentOfflineException } from "../agent-gateway/agent-offline.exception";
 import { DeployLeaseService } from "./deploy-lease.service";
@@ -387,6 +387,8 @@ export const AppViewSchema = z.object({
   // Set when the app has a user-uploaded custom icon; also cache-busts the GET /apps/:id/icon URL. Null
   // means "no custom icon" (fall back to the template/source logo). Bytes are never carried in this view.
   iconUpdatedAt: z.date().nullable(),
+  // A brand icon the user picked from the shared set (RESOURCE_ICON_KEYS); null = automatic.
+  iconKey: z.string().nullable(),
   createdAt: z.date(),
 });
 export type AppView = z.infer<typeof AppViewSchema>;
@@ -6118,9 +6120,30 @@ export class ApplicationsService {
         create: { appId: id, mime: "image/png", data: buf, sizeBytes: buf.length },
         update: { mime: "image/png", data: buf, sizeBytes: buf.length },
       }),
-      this.prisma.application.update({ where: { id }, data: { iconUpdatedAt: new Date() } }),
+      this.prisma.application.update({ where: { id }, data: { iconUpdatedAt: new Date(), iconKey: null } }),
     ]);
     await this.audit.log({ actor: userId, action: "app.icon.set", target: app.id, meta: { sizeBytes: buf.length } });
+  }
+
+  /** Target of the favicon endpoint: read-authorized, and only the app's own configured hostnames (never request input). */
+  async faviconTarget(userId: string, id: string): Promise<{ id: string; domain: string | null; extraDomains: string[] }> {
+    const app = await this.require(userId, id);
+    return { id: app.id, domain: app.domain, extraDomains: app.extraDomains };
+  }
+
+  /** Pick a brand icon from the shared set (or clear the pick with null). A pick replaces an uploaded icon. Write-authorized. */
+  async setIconKey(userId: string, id: string, iconKey: string | null): Promise<void> {
+    const app = await this.requireWrite(userId, id);
+    if (iconKey !== null && !isResourceIconKey(iconKey)) throw new BadRequestException("unknown icon");
+    if (iconKey === null) {
+      await this.prisma.application.update({ where: { id }, data: { iconKey: null } });
+    } else {
+      await this.prisma.$transaction([
+        this.prisma.appIcon.deleteMany({ where: { appId: id } }),
+        this.prisma.application.update({ where: { id }, data: { iconKey, iconUpdatedAt: null } }),
+      ]);
+    }
+    await this.audit.log({ actor: userId, action: "app.icon.key", target: app.id, meta: { iconKey } });
   }
 
   /** Remove the app's custom icon (idempotent — a no-op when none is set). Write-authorized. */
@@ -6438,6 +6461,7 @@ export class ApplicationsService {
       templateSlug: app.templateSlug,
       templateLogo: app.templateSlug ? (this.catalog.get(app.templateSlug)?.logo ?? app.templateSlug) : null,
       iconUpdatedAt: app.iconUpdatedAt,
+      iconKey: app.iconKey,
       environmentId: app.environmentId,
       projectId: ctx?.projectId ?? null,
       projectName: ctx?.projectName ?? null,

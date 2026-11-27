@@ -13,5 +13,18 @@
   "team": {
     "select": "Choose a team",
     "label": "Team"
+  },
+  "icon": {
+    "title": "Icon",
+    "search": "Search icons",
+    "automatic": "Automatic",
+    "automaticHint": "From the image, or the site's favicon when the app has a domain.",
+    "empty": "No icon matches.",
+    "use": "Use {name}",
+    "replacesUpload": "Picking an icon replaces an uploaded one.",
+    "saved": "Icon saved.",
+    "failed": "Couldn't save the icon.",
+    "choose": "Choose from the icon set",
+    "hide": "Hide the icon set"
   }
 }

@@ -229,6 +229,12 @@ export function appIconUrl(id: string, iconUpdatedAt: string | null): string | n
   return `${API_BASE}/apps/${id}/icon?v=${encodeURIComponent(iconUpdatedAt)}`;
 }
 
+/** Same-origin URL of an app's site favicon, fetched and cached by the hub. `domain` is only a cache-buster: a changed domain re-fetches. */
+export function appFaviconUrl(id: string, domain: string | null | undefined): string | null {
+  if (!domain) return null;
+  return `${API_BASE}/apps/${id}/favicon?v=${encodeURIComponent(domain)}`;
+}
+
 export function projectIconUrl(id: string, iconUpdatedAt: string | null): string | null {
   if (!iconUpdatedAt) return null;
   return `${API_BASE}/projects/${id}/icon?v=${encodeURIComponent(iconUpdatedAt)}`;
@@ -2057,6 +2063,10 @@ export const api = {
   setAppIcon(id: string, data: string) {
     return apiFetch<{ ok: true }>(`/apps/${id}/icon`, { method: "PUT", body: JSON.stringify({ data }) });
   },
+  // Pick a brand icon from the shared set (null clears the pick). A pick replaces an uploaded icon.
+  setAppIconKey(id: string, iconKey: string | null) {
+    return apiFetch<{ ok: true }>(`/apps/${id}/icon-key`, { method: "PUT", body: JSON.stringify({ iconKey }) });
+  },
   deleteAppIcon(id: string) {
     return apiFetch<{ ok: true }>(`/apps/${id}/icon`, { method: "DELETE" });
   },
@@ -2080,6 +2090,9 @@ export const api = {
   },
   setDatabaseIcon(id: string, data: string) {
     return apiFetch<{ ok: true }>(`/databases/${id}/icon`, { method: "PUT", body: JSON.stringify({ data }) });
+  },
+  setDatabaseIconKey(id: string, iconKey: string | null) {
+    return apiFetch<{ ok: true }>(`/databases/${id}/icon-key`, { method: "PUT", body: JSON.stringify({ iconKey }) });
   },
   deleteDatabaseIcon(id: string) {
     return apiFetch<{ ok: true }>(`/databases/${id}/icon`, { method: "DELETE" });

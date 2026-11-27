@@ -5,7 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Box, SearchX } from "lucide-react";
 import Link from "next/link";
 import { useGuardedPush } from "../../../hooks/useUnsavedChanges";
-import { api, appIconUrl } from "../../../lib/api";
+import { api } from "../../../lib/api";
 import { appStatusDisplay, appSourceSummary } from "../../../lib/apps";
 import { ImageUpdateBadge } from "./[id]/image-update-card";
 import { useT } from "../../../i18n/provider";
@@ -15,6 +15,7 @@ import { PageTitle } from "../../../components/page-header";
 import { SkeletonTable } from "../../../components/skeleton";
 import { statusLabel } from "../../../lib/status";
 import { AppLogo } from "../../../components/app-logo";
+import { appLogoProps } from "../../../lib/app-icon";
 import { TextInput } from "../../../components/form";
 import { ErrorState } from "../../../components/error-state";
 import { TagChips, TagFilter } from "../../../components/tags";
@@ -86,7 +87,7 @@ export default function AppsPage() {
                   // Whole row navigates on click; the name link is the keyboard path, so the tag chips (real buttons) can live inside.
                   <ListRow key={a.id} index={i} onClick={() => push(`/apps/${a.id}`)} tabbable={false}>
                     <span style={{ width: 36, height: 36, borderRadius: 8, background: "var(--c-tile)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                      <AppLogo iconUrl={appIconUrl(a.id, a.iconUpdatedAt)} templateSlug={a.templateSlug} templateLogo={a.templateLogo} source={a.source} name={a.name} size={18} />
+                      <AppLogo {...appLogoProps(a)} size={18} />
                     </span>
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontWeight: 600, fontSize: 14, display: "flex", alignItems: "center", gap: 8 }}>

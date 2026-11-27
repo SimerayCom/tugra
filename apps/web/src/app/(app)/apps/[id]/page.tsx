@@ -3,7 +3,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useParams, usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, appIconUrl } from "../../../../lib/api";
+import { api } from "../../../../lib/api";
 import { appStatusDisplay, appSourceSummary, deleteCleanupOptions, quickRollbackTarget, webhookUrl } from "../../../../lib/apps";
 import { statusLabel } from "../../../../lib/status";
 import { linkServices } from "../../../../lib/log-container";
@@ -38,6 +38,7 @@ import { PageHeader } from "../../../../components/page-header";
 import { useProjectColor } from "../../../../components/project-dot";
 import { ScopedTeamBadge, useTeamContext } from "../../../../components/team-scope";
 import { AppLogo } from "../../../../components/app-logo";
+import { appLogoProps } from "../../../../lib/app-icon";
 import { ErrorState } from "../../../../components/error-state";
 import { ExtraPortsCard } from "../../../../components/extra-ports-card";
 import { LimitsCard } from "../../../../components/limits-card";
@@ -394,7 +395,7 @@ export default function AppDetailPage() {
       <PageHeader
         breadcrumb={resourceBreadcrumb({ projectId: appData.projectId, projectName: appData.projectName, projectColor, team: teamCrumbFor(appData.teamId), environmentId: appData.environmentId, environmentName: appData.environmentName, name: appData.name, projectsLabel: t("nav.projects"), fallbackLabel: t("nav.apps"), fallbackHref: "/apps" })}
         title={appData.name}
-        icon={<AppLogo iconUrl={appIconUrl(appData.id, appData.iconUpdatedAt)} templateSlug={appData.templateSlug} templateLogo={appData.templateLogo} source={appData.source} name={appData.name} size={20} />}
+        icon={<AppLogo {...appLogoProps(appData)} size={20} />}
         status={headerStatus}
         badge={<>{appData.isPreview && <PreviewBadge provider={appData.prProvider} n={appData.prNumber} />}<ScopedTeamBadge teamId={appData.teamId} /></>}
         actions={

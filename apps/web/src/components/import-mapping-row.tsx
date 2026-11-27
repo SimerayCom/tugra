@@ -5,6 +5,8 @@ import { Box, CircleAlert, Database, RotateCcw, TriangleAlert } from "lucide-rea
 import { useT } from "../i18n/provider";
 import { checkAlias, isValidDbIdentifier, validateName, type ItemField } from "../lib/import-mapping";
 import type { ImportConflict, ImportEffectiveItem, ImportMappingItem, ImportPlanItem } from "../lib/types";
+import { ResourceIcon } from "./resource-icon";
+import { importItemIcon } from "../lib/import-icon";
 import { ProjectPicker, type ProjectChoice } from "./project-picker";
 
 const cellInput: React.CSSProperties = { width: "100%", minHeight: 44, padding: "8px 10px", fontSize: 14, background: "var(--c-el)", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", color: "var(--c-tx)", fontFamily: "inherit", boxSizing: "border-box" };
@@ -145,6 +147,7 @@ export function ImportMappingRow({
   const included = entry?.include !== false;
   const nameVal = entry?.name ?? item.name;
   const KindIcon = kind === "database" ? Database : Box;
+  const brand = importItemIcon(item);
 
   const nameChk = (v: string) => {
     const r = validateName(kind, v);
@@ -182,7 +185,9 @@ export function ImportMappingRow({
       <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
         <label style={{ display: "inline-flex", alignItems: "center", gap: 8, minHeight: 44, cursor: "pointer" }}>
           <input type="checkbox" checked={included} onChange={(e) => onEdit("include", e.target.checked)} aria-label={t("import.review.includeFor", { name: item.name })} style={{ width: 20, height: 20 }} />
-          <KindIcon size={14} aria-hidden style={{ color: "var(--c-tx3)" }} />
+          <span aria-hidden style={{ width: 20, height: 20, display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+            <ResourceIcon image={brand.image} brand={brand.brand} name={item.name} size={20} fallback={<KindIcon size={14} style={{ color: "var(--c-tx3)" }} />} />
+          </span>
           <span className="sr-only" style={{ position: "absolute", width: 1, height: 1, overflow: "hidden", clip: "rect(0 0 0 0)" }}>{kind === "database" ? t("import.review.kindDatabase") : t("import.review.kindApp")}</span>
         </label>
         <span className="mono" style={{ fontSize: 12, color: "var(--c-tx3)", wordBreak: "break-all", flex: 1, minWidth: 120 }}>{item.name}</span>

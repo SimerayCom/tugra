@@ -48,6 +48,8 @@ import {
   RenameSchema,
   SetIconInput,
   SetIconSchema,
+  SetIconKeyInput,
+  SetIconKeySchema,
   SetDatabaseLimitsInput,
   SetDatabaseLimitsSchema,
   SetDatabasePortInput,
@@ -338,6 +340,18 @@ export class DatabasesController {
     @Body(new ZodValidationPipe(SetIconSchema)) body: SetIconInput,
   ) {
     await this.databases.setIcon(user.userId, id, body.data);
+    return { ok: true };
+  }
+
+  @Put(":id/icon-key")
+  @HttpCode(200)
+  @ApiZodBody(SetIconKeySchema)
+  async setIconKey(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(SetIconKeySchema)) body: SetIconKeyInput,
+  ) {
+    await this.databases.setIconKey(user.userId, id, body.iconKey);
     return { ok: true };
   }
 

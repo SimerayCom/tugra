@@ -485,7 +485,29 @@ describe("DatabasesService - custom icon", () => {
     } as unknown as PrismaService;
     await make(prisma, okAccess).setIcon("u1", "db1", pngB64());
     expect(upsert).toHaveBeenCalled();
-    expect(update).toHaveBeenCalledWith(expect.objectContaining({ data: { iconUpdatedAt: expect.any(Date) } }));
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({ data: { iconUpdatedAt: expect.any(Date), iconKey: null } }));
+  });
+
+  it("setIconKey stores a known key and drops an uploaded icon", async () => {
+    const deleteMany = jest.fn().mockResolvedValue({ count: 1 });
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = {
+      database: { findUnique: jest.fn().mockResolvedValue(dbRow), update },
+      databaseIcon: { deleteMany },
+      $transaction: jest.fn().mockImplementation((ops: Promise<unknown>[]) => Promise.all(ops)),
+    } as unknown as PrismaService;
+    await make(prisma, okAccess).setIconKey("u1", "db1", "valkey");
+    expect(deleteMany).toHaveBeenCalledWith({ where: { databaseId: "db1" } });
+    expect(update).toHaveBeenCalledWith({ where: { id: "db1" }, data: { iconKey: "valkey", iconUpdatedAt: null } });
+  });
+
+  it("setIconKey rejects an unknown key and clears with null", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = { database: { findUnique: jest.fn().mockResolvedValue(dbRow), update } } as unknown as PrismaService;
+    await expect(make(prisma, okAccess).setIconKey("u1", "db1", "nope")).rejects.toThrow(/unknown icon/);
+    expect(update).not.toHaveBeenCalled();
+    await make(prisma, okAccess).setIconKey("u1", "db1", null);
+    expect(update).toHaveBeenCalledWith({ where: { id: "db1" }, data: { iconKey: null } });
   });
 
   it("setIcon rejects a non-PNG payload", async () => {

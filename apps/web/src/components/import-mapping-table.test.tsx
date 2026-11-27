@@ -69,3 +69,26 @@ describe("ImportMappingTable drag and drop", () => {
     expect(onEdit).not.toHaveBeenCalled();
   });
 });
+
+describe("ImportMappingRow icons", () => {
+  const itemPlan = (items: unknown[]) => ({ ...plan, items }) as unknown as ImportPlan;
+  const row = (items: unknown[]) => {
+    const r = { ...resolved, effective: [] } as unknown as ImportResolved;
+    render(
+      <I18nProvider>
+        <ImportMappingTable plan={itemPlan(items)} doc={emptyDoc({ sourceKind: "coolify", scopeKey: "team-1" })} resolved={r} search="" filter="all" projects={[]} onEdit={vi.fn()} onResetItem={vi.fn()} onBulk={vi.fn()} onMoveGroup={vi.fn()} />
+      </I18nProvider>,
+    );
+  };
+  it("shows the brand of the image on an app row and the engine logo on a database row", () => {
+    row([
+      { itemRef: "app:s:n8n", kind: "app", name: "automation", proposed: { image: "n8nio/n8n:latest" }, risks: [], dependsOn: [] },
+      { itemRef: "db:s:pg", kind: "database", name: "ledger", proposed: { engine: "POSTGRES", image: null }, risks: [], dependsOn: [] },
+      { itemRef: "app:s:own", kind: "app", name: "billing", proposed: { image: "ghcr.io/acme/billing:1" }, risks: [], dependsOn: [] },
+    ]);
+    const group = (ref: string) => document.querySelector(`[data-itemref="${ref}"]`) as HTMLElement;
+    expect(group("app:s:n8n").querySelector("img")?.getAttribute("src")).toBe("/icons/n8n.svg");
+    expect(group("db:s:pg").querySelector("img")?.getAttribute("src")).toBe("/icons/postgresql.svg");
+    expect(group("app:s:own").querySelector("img")).toBeNull();
+  });
+});

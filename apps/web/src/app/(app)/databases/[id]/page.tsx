@@ -21,6 +21,9 @@ import { useTabState } from "../../../../hooks/useTabState";
 import { CopyRow } from "../../../../components/copy-row";
 import { useT } from "../../../../i18n/provider";
 import { Btn, Card, EmptyState, SectionCard, Spinner } from "../../../../components/ui";
+import { IconKeyPicker } from "../../../../components/icon-key-picker";
+import { ResourceIcon } from "../../../../components/resource-icon";
+import { ENGINE_LOGO } from "../../../../lib/template-icons";
 import { PageHeader } from "../../../../components/page-header";
 import { useProjectColor } from "../../../../components/project-dot";
 import { ScopedTeamBadge, useTeamContext } from "../../../../components/team-scope";
@@ -281,7 +284,7 @@ export default function DatabaseDetailPage() {
         </Card>
       )}
 
-      <DatabaseIconCard id={id} iconUpdatedAt={db.iconUpdatedAt} canWrite={db.canWrite} onChanged={invalidate} />
+      <DatabaseIconCard id={id} iconUpdatedAt={db.iconUpdatedAt} iconKey={db.iconKey ?? null} image={db.image} engine={db.engine} canWrite={db.canWrite} onChanged={invalidate} />
 
       {renameOpen && (
         <RenameModal
@@ -1074,7 +1077,7 @@ function DbServerCard({ id, teamId, serverId, status, provisioning }: { id: stri
 
 /** A database's custom icon: a square PNG (write-gated), shown with a database fallback. Mirrors the app/
  *  project/team icon cards — the browser center-crops to a small PNG before upload to fit the 64KB cap. */
-function DatabaseIconCard({ id, iconUpdatedAt, canWrite, onChanged }: { id: string; iconUpdatedAt: string | null; canWrite: boolean; onChanged: () => void }) {
+function DatabaseIconCard({ id, iconUpdatedAt, iconKey, image, engine, canWrite, onChanged }: { id: string; iconUpdatedAt: string | null; iconKey: string | null; image?: string; engine: string; canWrite: boolean; onChanged: () => void }) {
   const t = useT();
   const toast = useToast();
   const fileRef = useRef<HTMLInputElement>(null);
@@ -1085,6 +1088,11 @@ function DatabaseIconCard({ id, iconUpdatedAt, canWrite, onChanged }: { id: stri
     mutationFn: (data: string) => api.setDatabaseIcon(id, data),
     onSuccess: () => { onChanged(); toast(t("databases.iconUploaded"), "success"); },
     onError: (e) => toast(e instanceof Error && e.message ? e.message : t("databases.iconFailed"), "error"),
+  });
+  const pick = useMutation({
+    mutationFn: (key: string | null) => api.setDatabaseIconKey(id, key),
+    onSuccess: () => { onChanged(); toast(t("pickers.icon.saved"), "success"); },
+    onError: (e) => toast(e instanceof Error && e.message ? e.message : t("pickers.icon.failed"), "error"),
   });
   const remove = useMutation({
     mutationFn: () => api.deleteDatabaseIcon(id),
@@ -1111,12 +1119,20 @@ function DatabaseIconCard({ id, iconUpdatedAt, canWrite, onChanged }: { id: stri
 
   if (!canWrite && !url) return null; // nothing to show a read-only member with no icon
 
-  const busy = processing || save.isPending || remove.isPending;
+  const busy = processing || save.isPending || remove.isPending || pick.isPending;
   return (
     <Card style={{ padding: 16, marginBottom: 16 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
         <span style={{ width: 48, height: 48, borderRadius: 12, background: "var(--c-el)", border: "1px solid var(--c-bd)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, overflow: "hidden" }}>
-          {url ? <img src={url} alt="" width={48} height={48} style={{ objectFit: "cover" }} /> : <DatabaseIcon size={22} color="var(--c-tx3)" />}
+          <ResourceIcon
+            iconUrl={url}
+            iconKey={iconKey}
+            image={image}
+            brand={ENGINE_LOGO[engine] ? { logo: ENGINE_LOGO[engine], slug: engine } : null}
+            name={engine}
+            size={32}
+            fallback={<DatabaseIcon size={22} color="var(--c-tx3)" />}
+          />
         </span>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontWeight: 600, fontSize: 14 }}>{t("databases.iconTitle")}</div>
@@ -1131,6 +1147,11 @@ function DatabaseIconCard({ id, iconUpdatedAt, canWrite, onChanged }: { id: stri
           </div>
         )}
       </div>
+      {canWrite && (
+        <div style={{ marginTop: 16 }}>
+          <IconKeyPicker value={iconKey} onChange={(k) => pick.mutate(k)} disabled={busy} hasUpload={!!url} />
+        </div>
+      )}
       <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp" style={{ display: "none" }}
         onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) void onPick(f); }} />
     </Card>

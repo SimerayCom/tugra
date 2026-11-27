@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowLeft, ArrowRight, Boxes, ExternalLink, MoreVertical, SlidersHorizontal, Star } from "lucide-react";
-import { api, appIconUrl } from "../../../lib/api";
+import { api } from "../../../lib/api";
 import { useAuth } from "../../../lib/auth";
 import { uiMode } from "../../../lib/ui-mode";
 import { launcherTiles, type LauncherTile } from "../../../lib/launcher";
@@ -20,6 +20,7 @@ import { TileActionsSheet } from "../../../components/tile-actions-sheet";
 import { RemoteAccessCard } from "../../../components/remote-access-card";
 import { LiveGauges } from "../../../components/live-gauges";
 import { AppLogo } from "../../../components/app-logo";
+import { appLogoProps } from "../../../lib/app-icon";
 import { GaugeServerPicker, HomeWidgets } from "../../../components/home-widgets";
 import { HomeCustomizePanel } from "../../../components/home-customize";
 import { useUiModeSwitch } from "../../../hooks/useUiModeSwitch";
@@ -285,7 +286,7 @@ function Tile({ tile, t, pinned, editing, onManage, onExpose }: { tile: Launcher
     <>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <span style={{ width: 48, height: 48, borderRadius: 12, background: "color-mix(in srgb, var(--c-tx) 8%, transparent)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <AppLogo iconUrl={appIconUrl(tile.id, tile.iconUpdatedAt)} templateSlug={tile.templateSlug} templateLogo={tile.templateLogo} source={tile.source} name={tile.name} size={26} />
+          <AppLogo {...appLogoProps(tile)} size={26} />
         </span>
         <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
           {pinned && <Star size={13} color="var(--c-a)" fill="var(--c-a)" role="img" aria-label={t("home.pinned")} />}

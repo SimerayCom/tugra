@@ -4,6 +4,7 @@ import {
   Delete,
   Get,
   Header,
+  NotFoundException,
   Headers,
   HttpCode,
   type MessageEvent,
@@ -17,6 +18,7 @@ import {
   UseInterceptors,
 } from "@nestjs/common";
 import { concat, EMPTY, from, map, mergeMap, type Observable } from "rxjs";
+import { SkipThrottle } from "@nestjs/throttler";
 import { ApiTags, ApiSecurity, ApiHeader, ApiQuery } from "@nestjs/swagger";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
 import { Paginated } from "../common/pagination.decorator";
@@ -36,6 +38,7 @@ import { ImageUpdateCheckResultSchema } from "./image-update";
 import { ComposePreviewResultSchema } from "../deploy/compose-preview";
 import { AppDatabaseLinksService } from "./app-database-links.service";
 import { AppSecretRefsService } from "./app-secret-refs.service";
+import { FaviconService } from "./favicon.service";
 import { CreateSecretRefInput, CreateSecretRefSchema } from "../secret-providers/dto";
 import { RequireEdition, RequireEditionGuard } from "../common/edition";
 import { ContainerLogStreamGuard } from "./log-stream.guard";
@@ -56,6 +59,8 @@ import {
   SetDescriptionSchema,
   SetIconInput,
   SetIconSchema,
+  SetIconKeyInput,
+  SetIconKeySchema,
   SetBuildArgsInput,
   SetBuildArgsSchema,
   SetBuildSecretsInput,
@@ -151,6 +156,7 @@ export class ApplicationsController {
     private readonly apps: ApplicationsService,
     private readonly dbLinks: AppDatabaseLinksService,
     private readonly secretRefs: AppSecretRefsService,
+    private readonly favicons: FaviconService,
   ) {}
 
   @Get()
@@ -508,6 +514,34 @@ export class ApplicationsController {
   async getIcon(@CurrentUser() user: AuthUser, @Param("id") id: string): Promise<StreamableFile> {
     const icon = await this.apps.getIcon(user.userId, id);
     return new StreamableFile(icon.data, { type: icon.mime });
+  }
+
+  /**
+   * The favicon of the app's own domain, fetched and cached by the hub (the browser never contacts the site).
+   * 404 when the app has no domain or its site has no usable icon; the client then falls back to another icon.
+   */
+  @Get(":id/favicon")
+  @SkipThrottle() // one <img> per app on a list; a miss is not browser-cached, so the global limit would starve real API calls
+  @Header("X-Content-Type-Options", "nosniff")
+  @Header("Content-Security-Policy", "default-src 'none'; sandbox")
+  @Header("Cache-Control", "private, max-age=86400")
+  async getFavicon(@CurrentUser() user: AuthUser, @Param("id") id: string): Promise<StreamableFile> {
+    const target = await this.apps.faviconTarget(user.userId, id);
+    const icon = await this.favicons.get(target);
+    if (!icon) throw new NotFoundException("no favicon");
+    return new StreamableFile(icon.data, { type: icon.mime });
+  }
+
+  @Put(":id/icon-key")
+  @HttpCode(200)
+  @ApiZodBody(SetIconKeySchema)
+  async setIconKey(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(SetIconKeySchema)) body: SetIconKeyInput,
+  ) {
+    await this.apps.setIconKey(user.userId, id, body.iconKey);
+    return { ok: true };
   }
 
   @Put(":id/icon")
