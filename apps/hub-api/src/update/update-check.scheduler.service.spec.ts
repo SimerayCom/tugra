@@ -27,7 +27,7 @@ describe("UpdateCheckSchedulerService", () => {
 
   function make(check: CheckResult, autoUpdate: boolean) {
     const upd = { checkRemote: jest.fn().mockResolvedValue(check) } as unknown as UpdateService;
-    const updater = { requestUpdate: jest.fn().mockResolvedValue({ status: "started", targetVersion: null }) } as unknown as UpdaterService;
+    const updater = { requestUpdate: jest.fn().mockResolvedValue({ status: "started", targetVersion: null }), recordHold: jest.fn().mockResolvedValue(undefined), clearHold: jest.fn().mockResolvedValue(undefined) } as unknown as UpdaterService;
     const settings = { get: jest.fn().mockResolvedValue({ autoUpdate }) } as unknown as InstanceSettingsService;
     return { svc: new UpdateCheckSchedulerService(config("https://x/v.json"), new FakeTicks().asService(), upd, updater, settings), updater };
   }
@@ -129,6 +129,28 @@ describe("UpdateCheckSchedulerService", () => {
     it("does NOT auto-apply a minor/major bump (notify-only)", async () => {
       const { svc, updater } = make({ status: "ok", channel: "stable", current: "1.2.3", latest: "1.3.0", updateAvailable: true }, true);
       await svc.runScheduledCheck();
+      expect(updater.requestUpdate).not.toHaveBeenCalled();
+    });
+
+    it("a tick with work in flight is held: logged, recorded for the status, never a failure; the next tick tries again", async () => {
+      const item = { kind: "migration-run", id: "run1", label: "coolify.example.com", serverIds: ["s1"], teamId: "t1", since: "2026-11-27T10:00:00.000Z" };
+      const { svc, updater } = make({ status: "ok", channel: "stable", current: "1.2.3", latest: "1.2.4", updateAvailable: true }, true);
+      (updater.requestUpdate as jest.Mock).mockResolvedValueOnce({ status: "held", targetVersion: "1.2.4", inFlight: [item] });
+      const log = jest.spyOn((svc as unknown as { logger: { log: () => void } }).logger, "log").mockImplementation(() => undefined);
+      await expect(svc.runScheduledCheck()).resolves.toBeUndefined();
+      expect(updater.recordHold).toHaveBeenCalledWith([item]);
+      expect(updater.clearHold).not.toHaveBeenCalled();
+      expect(log).toHaveBeenCalledWith(expect.stringContaining("held, 1 in flight (migration-run:run1)"));
+      // the next tick: nothing in flight any more, the update goes out and the hold is cleared
+      await svc.runScheduledCheck();
+      expect(updater.requestUpdate).toHaveBeenCalledTimes(2);
+      expect(updater.clearHold).toHaveBeenCalledTimes(1);
+    });
+
+    it("clears a recorded hold when there is nothing left to apply (updated by hand)", async () => {
+      const { svc, updater } = make({ status: "ok", channel: "stable", current: "1.2.4", latest: "1.2.4", updateAvailable: false }, true);
+      await svc.runScheduledCheck();
+      expect(updater.clearHold).toHaveBeenCalled();
       expect(updater.requestUpdate).not.toHaveBeenCalled();
     });
 

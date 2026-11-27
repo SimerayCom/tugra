@@ -33,15 +33,28 @@ export class UpdateCheckSchedulerService implements OnApplicationBootstrap {
    */
   async runScheduledCheck(): Promise<void> {
     const result = await this.update.checkRemote();
-    if (result.status !== "ok" || !result.updateAvailable) return;
+    if (result.status !== "ok") return;
+    if (!result.updateAvailable) {
+      await this.updater.clearHold(); // nothing to apply any more (updated by hand, or the release was pulled)
+      return;
+    }
     let autoUpdate = false;
     try {
       autoUpdate = (await this.settings.get()).autoUpdate;
     } catch {
       return; // a transient DB error just skips this round's auto-apply
     }
+    if (!autoUpdate) await this.updater.clearHold();
     if (autoUpdate && isAutoApplicable(result.latest, result.current)) {
       const applied = await this.updater.requestUpdate({ actor: "auto-update", auto: true });
+      if (applied.status === "held") {
+        // Work is in flight: skip this tick, say why in the update status, and look again on the next one. Never a failure.
+        const items = applied.inFlight ?? [];
+        this.logger.log(`auto-update ${result.current} → ${result.latest}: held, ${items.length} in flight (${items.map((i) => `${i.kind}:${i.id}`).join(", ")}); trying again next tick`);
+        await this.updater.recordHold(items);
+        return;
+      }
+      await this.updater.clearHold();
       this.logger.log(`auto-update ${result.current} → ${result.latest}: ${applied.status}`);
     }
   }

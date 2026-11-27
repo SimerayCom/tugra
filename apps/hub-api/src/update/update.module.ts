@@ -4,6 +4,7 @@ import { UpdateService } from "./update.service";
 import { UpdaterService } from "./updater.service";
 import { UpdateCheckSchedulerService } from "./update-check.scheduler.service";
 import { StackConvergeService } from "./stack-converge.service";
+import { InFlightModule } from "../in-flight/in-flight.module";
 
 /**
  * Self-update. UpdateService (CHECK) + UpdaterService (APPLY) depend only on @Global providers
@@ -13,8 +14,8 @@ import { StackConvergeService } from "./stack-converge.service";
  * and the bundled agent onto the hub's release through the local agent (AgentWsServer), hence AgentGatewayModule.
  */
 @Module({
-  imports: [AgentGatewayModule],
+  imports: [AgentGatewayModule, InFlightModule],
   providers: [UpdateService, UpdaterService, UpdateCheckSchedulerService, StackConvergeService],
-  exports: [UpdateService, UpdaterService, StackConvergeService],
+  exports: [UpdateService, UpdaterService, StackConvergeService, InFlightModule],
 })
 export class UpdateModule {}

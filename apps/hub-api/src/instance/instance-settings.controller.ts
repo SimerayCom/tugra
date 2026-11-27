@@ -39,7 +39,7 @@ import { MailService } from "../mail/mail.service";
 import { UpdateService } from "../update/update.service";
 import { UpdaterService, isTerminalPhase } from "../update/updater.service";
 import { StackConvergeService } from "../update/stack-converge.service";
-import { OwnerUpdateStatusViewSchema, UpdateApplyResultSchema } from "../update/dto";
+import { ApplyUpdateInputSchema, OwnerUpdateStatusViewSchema, UpdateApplyResultSchema, type ApplyUpdateInput } from "../update/dto";
 import { TelemetryService } from "../telemetry/telemetry.service";
 import { ConfigService } from "@nestjs/config";
 import { AuthService } from "../auth/auth.service";
@@ -76,7 +76,11 @@ export class InstanceSettingsController {
 
   /** The update status plus the update helper's own version (read from Redis, never from docker). */
   private async updateView() {
-    return { ...(await this.update.getStatus()), updater: await this.converge.view(), halfUpdate: await this.updater.getHalfUpdate() };
+    const status = await this.update.getStatus();
+    const [updater, halfUpdate, inFlight, recorded] = await Promise.all([this.converge.view(), this.updater.getHalfUpdate(), this.updater.listInFlight().catch(() => []), this.updater.getHold()]);
+    // A recorded hold only counts while it still holds: an update is waiting, and something is still running.
+    const hold = recorded && status.updateAvailable && inFlight.length > 0 ? { ...recorded, items: inFlight } : null;
+    return { ...status, updater, halfUpdate, inFlight, hold };
   }
 
   /**
@@ -186,15 +190,24 @@ export class InstanceSettingsController {
    * Apply the available update now. Re-verifies the signed manifest, refuses any downgrade/channel-skip,
    * then queues the job for the `tugra-updater` sidecar (the hub can't recreate its own container). Returns
    * a typed status; 409 if an update is already running. Progress streams from GET update/stream.
+   * While a migration, takeover, cutover, move, transfer or cleanup is running the answer is 409 `migration-active` with the list
+   * (`inFlight`); `force: true` updates anyway (this route is instance-owner only) and the override is audited with that list.
    */
   @Post("update")
   @HttpCode(200)
+  @ApiZodBody(ApplyUpdateInputSchema, { required: false })
   @ApiZodResponse(UpdateApplyResultSchema)
-  async applyUpdate(@CurrentUser() user: AuthUser) {
-    const res = await this.updater.requestUpdate({ actor: user.userId, auto: false });
+  async applyUpdate(@CurrentUser() user: AuthUser, @Body(new ZodValidationPipe(ApplyUpdateInputSchema)) body: ApplyUpdateInput) {
+    const res = await this.updater.requestUpdate({ actor: user.userId, auto: false, force: body.force === true });
     if (res.status === "in-progress") throw new ConflictException("an update is already in progress");
+    if (res.status === "held") {
+      throw new ConflictException({ statusCode: 409, message: "work is in flight: a migration, takeover, cutover, move or transfer is running", code: "migration-active", inFlight: res.inFlight ?? [] });
+    }
     if (res.status === "started") {
       await this.audit.log({ actor: user.userId, action: "instance_update.apply", target: "singleton" });
+      if (res.overridden?.length) {
+        await this.audit.log({ actor: user.userId, action: "instance_update.force", target: "singleton", meta: { to: res.targetVersion, inFlight: res.overridden.slice(0, 20).map(({ kind, id, label }) => ({ kind, id, label })), count: res.overridden.length } });
+      }
     }
     return res;
   }

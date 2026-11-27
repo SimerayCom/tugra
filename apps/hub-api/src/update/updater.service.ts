@@ -2,8 +2,10 @@ import { Injectable, Logger } from "@nestjs/common";
 import { appVersion, isAutoApplicable, isNewer, parseVersion } from "@tugra/shared";
 import { RedisService } from "../redis/redis.service";
 import { UpdateService } from "./update.service";
+import { InFlightService } from "../in-flight/in-flight.service";
+import type { InFlightItem } from "../in-flight/in-flight.dto";
 import { SHA256_HEX } from "./update-manifest";
-import type { HalfUpdateView, UpdateApplyResult, UpdateProgress } from "./dto";
+import type { HalfUpdateView, UpdateApplyResult, UpdateHoldView, UpdateProgress } from "./dto";
 
 // The hub cannot recreate its own container, so it never runs docker. Instead it takes a cross-process
 // lock and LPUSHes a job onto a Redis queue that the `tugra-updater` sidecar (docker.sock) drains; the
@@ -17,6 +19,9 @@ export const UPDATE_QUEUE_KEY = "instance:update:queue";
 const QUEUE_KEY = UPDATE_QUEUE_KEY;
 /** Written by the sidecar (no TTL) when .env names a release newer than the one the containers run; see HalfUpdateView. */
 export const UPDATE_HALF_STATE_KEY = "instance:update:half_state";
+/** Written by the scheduler while an automatic update is held back by work in flight (see UpdateHoldView). The TTL is only a backstop: the first tick that finds nothing in flight clears it. */
+export const UPDATE_HOLD_KEY = "instance:update:hold";
+const HOLD_TTL_S = 6 * 3600;
 const LOCK_TTL_S = 900; // 15-min backstop; the sidecar releases the lock on any terminal status
 const STATUS_TTL_S = 3600; // must outlive the recreate so a reconnecting client can read the final state
 
@@ -118,9 +123,14 @@ export class UpdaterService {
   constructor(
     private readonly redis: RedisService,
     private readonly update: UpdateService,
+    private readonly inFlight: InFlightService,
   ) {}
 
-  async requestUpdate({ actor, auto }: { actor: string; auto: boolean }): Promise<UpdateApplyResult> {
+  /**
+   * `force` updates through work in flight (the caller must already be an instance owner; the controller audits it). Without it, a
+   * hub update never starts while a migration, takeover, cutover, move, transfer or cleanup is running: the answer is `held` with the list.
+   */
+  async requestUpdate({ actor, auto, force = false }: { actor: string; auto: boolean; force?: boolean }): Promise<UpdateApplyResult> {
     // Re-verify the signed manifest at apply time — never trust a possibly-stale cache.
     const verified = await this.update.verifyLatestEntry();
     if (verified.status !== "ok") return { status: verified.status, targetVersion: null };
@@ -141,6 +151,18 @@ export class UpdaterService {
     // prerelease → stable are notify-only (never silently applied).
     if (auto && !isAutoApplicable(latest, current)) return { status: "notify-only", targetVersion: latest };
 
+    // Nothing may be cut off mid-run. Checked after every "nothing to do" answer (an up-to-date hub is never "held"), before the lock.
+    let running: InFlightItem[];
+    try {
+      running = await this.inFlight.list();
+    } catch (e) {
+      // Cannot tell what is running: do not update blind. (A forced update goes on: the owner already chose to.)
+      this.logger.warn(`could not read what is in flight: ${String((e as Error)?.message ?? e)}`);
+      if (!force) return { status: "error", targetVersion: latest };
+      running = [];
+    }
+    if (running.length > 0 && !force) return { status: "held", targetVersion: latest, inFlight: running };
+
     // Take the lock LAST so a rejected request never leaves one behind. The TTL is a backstop if the sidecar dies.
     const acquired = await this.redis.firstInWindow(LOCK_KEY, LOCK_TTL_S);
     if (!acquired) return { status: "in-progress", targetVersion: latest };
@@ -152,7 +174,46 @@ export class UpdaterService {
     );
     await this.redis.client.lpush(QUEUE_KEY, JSON.stringify(buildUpdateJob(latest, verified.entry.imageDigests, verified.entry.hostFilesDigest, verified.entry.agentSha256)));
     this.logger.log(`update requested by ${actor} (auto=${auto}): ${current} → ${latest}`);
-    return { status: "started", targetVersion: latest };
+    return { status: "started", targetVersion: latest, ...(running.length > 0 ? { overridden: running } : {}) };
+  }
+
+  /** The scheduler holds an automatic update back: remember since when and by what (never throws: this is bookkeeping). */
+  async recordHold(items: InFlightItem[]): Promise<void> {
+    try {
+      const prev = await this.getHold();
+      const now = new Date().toISOString();
+      const hold: UpdateHoldView = { since: prev?.since ?? now, checkedAt: now, items };
+      await this.redis.set(UPDATE_HOLD_KEY, JSON.stringify(hold), HOLD_TTL_S);
+    } catch (e) {
+      this.logger.warn(`could not record the update hold: ${String((e as Error)?.message ?? e)}`);
+    }
+  }
+
+  /** The hold ended (nothing in flight any more, or the update started). */
+  async clearHold(): Promise<void> {
+    try {
+      await this.redis.del(UPDATE_HOLD_KEY);
+    } catch {
+      /* bookkeeping only */
+    }
+  }
+
+  /** The recorded hold, or null. */
+  async getHold(): Promise<UpdateHoldView | null> {
+    try {
+      const raw = await this.redis.get(UPDATE_HOLD_KEY);
+      if (!raw) return null;
+      const p = JSON.parse(raw) as Partial<UpdateHoldView>;
+      if (typeof p.since !== "string" || typeof p.checkedAt !== "string" || !Array.isArray(p.items)) return null;
+      return { since: p.since, checkedAt: p.checkedAt, items: p.items };
+    } catch {
+      return null;
+    }
+  }
+
+  /** What is running on the hub right now (live read). */
+  listInFlight(): Promise<InFlightItem[]> {
+    return this.inFlight.list();
   }
 
   /** The half-finished update the sidecar reported (null = none). The running version is this hub's own, not the stored one. */

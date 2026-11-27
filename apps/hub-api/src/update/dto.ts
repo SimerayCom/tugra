@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { InFlightItemSchema } from "../in-flight/in-flight.dto";
 
 /**
  * The owner-facing update status returned by GET /instance/update. `latest`/`changelogUrl` are null until
@@ -58,7 +59,21 @@ export const HalfUpdateViewSchema = z.object({ envVersion: z.string(), runningVe
 export type HalfUpdateView = z.infer<typeof HalfUpdateViewSchema>;
 
 /** GET/PATCH /instance/update + POST /instance/update/check: the status plus the update helper's own version. */
-export const OwnerUpdateStatusViewSchema = UpdateStatusViewSchema.extend({ updater: UpdaterViewSchema, halfUpdate: HalfUpdateViewSchema.nullable() });
+/**
+ * Why an automatic update did not start: work that an update would cut off is in flight. `since` is when the hub first held it
+ * (ISO); `items` is what it saw on the latest tick. Cleared by the first tick that finds nothing in flight.
+ */
+export const UpdateHoldViewSchema = z.object({ since: z.string(), checkedAt: z.string(), items: z.array(InFlightItemSchema) });
+export type UpdateHoldView = z.infer<typeof UpdateHoldViewSchema>;
+
+export const OwnerUpdateStatusViewSchema = UpdateStatusViewSchema.extend({
+  updater: UpdaterViewSchema,
+  halfUpdate: HalfUpdateViewSchema.nullable(),
+  /** What is running on the hub right now that an update would interrupt (live, every read). Empty when nothing is. */
+  inFlight: z.array(InFlightItemSchema),
+  /** Set while an automatic update is being held back by `inFlight`; null otherwise. */
+  hold: UpdateHoldViewSchema.nullable(),
+});
 export type OwnerUpdateStatusView = z.infer<typeof OwnerUpdateStatusViewSchema>;
 
 /**
@@ -72,11 +87,23 @@ export type MemberVersionView = z.infer<typeof MemberVersionViewSchema>;
 /**
  * Result of POST /instance/update (starting the updater). `started` = the update was queued for the sidecar;
  * the terminal states report why nothing was started (never a downgrade, nothing newer, an update already
- * running, the check unconfigured/failed, or an auto-check declining a non-patch bump).
+ * running, the check unconfigured/failed, an auto-check declining a non-patch bump, or `held`: a migration, takeover, cutover,
+ * move or transfer is running and `force` was not given).
  */
+/**
+ * Body of POST /instance/update. `force` updates even while a migration, takeover, cutover, move or transfer is running (the run may then
+ * need to be resumed or rolled back). The route is instance-owner only; the override is audited with the list it went over.
+ */
+export const ApplyUpdateInputSchema = z.object({ force: z.boolean().optional() });
+export type ApplyUpdateInput = z.infer<typeof ApplyUpdateInputSchema>;
+
 export const UpdateApplyResultSchema = z.object({
-  status: z.enum(["started", "up-to-date", "in-progress", "unconfigured", "error", "notify-only", "needs-intermediate"]),
+  status: z.enum(["started", "up-to-date", "in-progress", "unconfigured", "error", "notify-only", "needs-intermediate", "held"]),
   targetVersion: z.string().nullable(),
+  /** `held`: the work that is in flight (the manual route answers 409 `migration-active` with it). */
+  inFlight: z.array(InFlightItemSchema).optional(),
+  /** `started` with `force`: the in-flight work the owner chose to update through. */
+  overridden: z.array(InFlightItemSchema).optional(),
 });
 export type UpdateApplyResult = z.infer<typeof UpdateApplyResultSchema>;
 

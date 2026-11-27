@@ -85,6 +85,8 @@ function make(current: CurrentSettings, opts: { env?: Record<string, string>; ow
     requestUpdate: jest.fn().mockResolvedValue({ status: "started", targetVersion: "0.2.0" }),
     getProgress: jest.fn().mockResolvedValue({ phase: "idle", targetVersion: null, error: null, code: null, needBytes: null, haveBytes: null, path: null }),
     getHalfUpdate: jest.fn().mockResolvedValue(null),
+    listInFlight: jest.fn().mockResolvedValue([]),
+    getHold: jest.fn().mockResolvedValue(null),
   } as unknown as UpdaterService;
   const converge = {
     view: jest.fn().mockResolvedValue({ version: "0.1.0-beta.17", behind: true, state: "behind", checkedAt: "2026-11-17T08:00:00.000Z" }),
@@ -267,8 +269,8 @@ describe("InstanceSettingsController", () => {
 
   it("applyUpdate delegates to the updater, audits on start, and returns the result", async () => {
     const { ctrl, updater, audit } = make({ apiEnabled: true, apiAllowedIps: [] });
-    const out = await ctrl.applyUpdate(OWNER);
-    expect(updater.requestUpdate).toHaveBeenCalledWith({ actor: "owner1", auto: false });
+    const out = await ctrl.applyUpdate(OWNER, {});
+    expect(updater.requestUpdate).toHaveBeenCalledWith({ actor: "owner1", auto: false, force: false });
     expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "instance_update.apply", actor: "owner1" }));
     expect(out).toEqual({ status: "started", targetVersion: "0.2.0" });
   });
@@ -276,14 +278,48 @@ describe("InstanceSettingsController", () => {
   it("applyUpdate maps an already-running update to a 409 (and does not audit)", async () => {
     const { ctrl, updater, audit } = make({ apiEnabled: true, apiAllowedIps: [] });
     (updater.requestUpdate as jest.Mock).mockResolvedValue({ status: "in-progress", targetVersion: "0.2.0" });
-    await expect(ctrl.applyUpdate(OWNER)).rejects.toThrow(/already in progress/);
+    await expect(ctrl.applyUpdate(OWNER, {})).rejects.toThrow(/already in progress/);
     expect(audit.log).not.toHaveBeenCalledWith(expect.objectContaining({ action: "instance_update.apply" }));
+  });
+
+  it("applyUpdate answers 409 migration-active with the list while work is in flight (and does not audit)", async () => {
+    const { ctrl, updater, audit } = make({ apiEnabled: true, apiAllowedIps: [] });
+    const item = { kind: "migration-run", id: "run1", label: "coolify.example.com", serverIds: ["s1"], teamId: "t1", since: "2026-11-27T10:00:00.000Z" };
+    (updater.requestUpdate as jest.Mock).mockResolvedValue({ status: "held", targetVersion: "0.2.0", inFlight: [item] });
+    const err = await ctrl.applyUpdate(OWNER, {}).catch((e) => e);
+    expect(err.getStatus()).toBe(409);
+    expect(err.getResponse()).toMatchObject({ code: "migration-active", inFlight: [item] });
+    expect(audit.log).not.toHaveBeenCalled();
+  });
+
+  it("applyUpdate with force passes it on and audits the override with the list", async () => {
+    const { ctrl, updater, audit } = make({ apiEnabled: true, apiAllowedIps: [] });
+    const item = { kind: "migration-run", id: "run1", label: "coolify.example.com", serverIds: ["s1"], teamId: "t1", since: "2026-11-27T10:00:00.000Z" };
+    (updater.requestUpdate as jest.Mock).mockResolvedValue({ status: "started", targetVersion: "0.2.0", overridden: [item] });
+    await ctrl.applyUpdate(OWNER, { force: true });
+    expect(updater.requestUpdate).toHaveBeenCalledWith({ actor: "owner1", auto: false, force: true });
+    expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "instance_update.apply" }));
+    expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "instance_update.force", actor: "owner1", meta: { to: "0.2.0", inFlight: [{ kind: "migration-run", id: "run1", label: "coolify.example.com" }], count: 1 } }));
+  });
+
+  it("the update status carries the live in-flight list and the recorded hold only while it still holds", async () => {
+    const { ctrl, update, updater } = make({ apiEnabled: true, apiAllowedIps: [] });
+    const item = { kind: "cutover", id: "c1", label: "op1", serverIds: ["s1"], teamId: "t1", since: "2026-11-27T10:00:00.000Z" };
+    (updater.listInFlight as jest.Mock).mockResolvedValue([item]);
+    (updater.getHold as jest.Mock).mockResolvedValue({ since: "2026-11-27T09:00:00.000Z", checkedAt: "2026-11-27T10:00:00.000Z", items: [] });
+    // no update waiting: the old hold is stale
+    expect(await ctrl.getUpdate()).toMatchObject({ inFlight: [item], hold: null });
+    (update.getStatus as jest.Mock).mockResolvedValue({ current: "0.1.0", latest: "0.1.1", channel: "stable", channelSource: "auto", updateAvailable: true, changelogUrl: null, autoUpdate: true, lastCheckedAt: null });
+    expect(await ctrl.getUpdate()).toMatchObject({ inFlight: [item], hold: { since: "2026-11-27T09:00:00.000Z", items: [item] } });
+    // the work ended: no hold shown even though a record exists
+    (updater.listInFlight as jest.Mock).mockResolvedValue([]);
+    expect(await ctrl.getUpdate()).toMatchObject({ inFlight: [], hold: null });
   });
 
   it("applyUpdate does not audit a no-op (up-to-date)", async () => {
     const { ctrl, updater, audit } = make({ apiEnabled: true, apiAllowedIps: [] });
     (updater.requestUpdate as jest.Mock).mockResolvedValue({ status: "up-to-date", targetVersion: "0.1.0" });
-    const out = await ctrl.applyUpdate(OWNER);
+    const out = await ctrl.applyUpdate(OWNER, {});
     expect(out).toEqual({ status: "up-to-date", targetVersion: "0.1.0" });
     expect(audit.log).not.toHaveBeenCalledWith(expect.objectContaining({ action: "instance_update.apply" }));
   });
