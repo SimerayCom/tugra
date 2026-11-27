@@ -812,6 +812,146 @@
                         "runningVersion"
                       ],
                       "additionalProperties": false
+                    },
+                    "inFlight": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "migration-run",
+                              "takeover",
+                              "cutover",
+                              "project-move",
+                              "app-move",
+                              "volume-transfer",
+                              "object-migration",
+                              "cleanup",
+                              "import",
+                              "deployment",
+                              "backup",
+                              "restore",
+                              "pitr-restore",
+                              "restore-verify",
+                              "rollout",
+                              "agent-update",
+                              "swarm",
+                              "patch",
+                              "reboot",
+                              "bulk-command"
+                            ]
+                          },
+                          "id": {
+                            "type": "string"
+                          },
+                          "label": {
+                            "type": "string"
+                          },
+                          "serverIds": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "teamId": {
+                            "nullable": true,
+                            "type": "string"
+                          },
+                          "since": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "id",
+                          "label",
+                          "serverIds",
+                          "teamId",
+                          "since"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "hold": {
+                      "nullable": true,
+                      "type": "object",
+                      "properties": {
+                        "since": {
+                          "type": "string"
+                        },
+                        "checkedAt": {
+                          "type": "string"
+                        },
+                        "items": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "migration-run",
+                                  "takeover",
+                                  "cutover",
+                                  "project-move",
+                                  "app-move",
+                                  "volume-transfer",
+                                  "object-migration",
+                                  "cleanup",
+                                  "import",
+                                  "deployment",
+                                  "backup",
+                                  "restore",
+                                  "pitr-restore",
+                                  "restore-verify",
+                                  "rollout",
+                                  "agent-update",
+                                  "swarm",
+                                  "patch",
+                                  "reboot",
+                                  "bulk-command"
+                                ]
+                              },
+                              "id": {
+                                "type": "string"
+                              },
+                              "label": {
+                                "type": "string"
+                              },
+                              "serverIds": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              },
+                              "teamId": {
+                                "nullable": true,
+                                "type": "string"
+                              },
+                              "since": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "id",
+                              "label",
+                              "serverIds",
+                              "teamId",
+                              "since"
+                            ],
+                            "additionalProperties": false
+                          }
+                        }
+                      },
+                      "required": [
+                        "since",
+                        "checkedAt",
+                        "items"
+                      ],
+                      "additionalProperties": false
                     }
                   },
                   "required": [
@@ -828,7 +968,9 @@
                     "lastCheckedAt",
                     "lastCheckError",
                     "updater",
-                    "halfUpdate"
+                    "halfUpdate",
+                    "inFlight",
+                    "hold"
                   ],
                   "additionalProperties": false
                 }
@@ -1043,6 +1185,146 @@
                         "runningVersion"
                       ],
                       "additionalProperties": false
+                    },
+                    "inFlight": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "migration-run",
+                              "takeover",
+                              "cutover",
+                              "project-move",
+                              "app-move",
+                              "volume-transfer",
+                              "object-migration",
+                              "cleanup",
+                              "import",
+                              "deployment",
+                              "backup",
+                              "restore",
+                              "pitr-restore",
+                              "restore-verify",
+                              "rollout",
+                              "agent-update",
+                              "swarm",
+                              "patch",
+                              "reboot",
+                              "bulk-command"
+                            ]
+                          },
+                          "id": {
+                            "type": "string"
+                          },
+                          "label": {
+                            "type": "string"
+                          },
+                          "serverIds": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "teamId": {
+                            "nullable": true,
+                            "type": "string"
+                          },
+                          "since": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "id",
+                          "label",
+                          "serverIds",
+                          "teamId",
+                          "since"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "hold": {
+                      "nullable": true,
+                      "type": "object",
+                      "properties": {
+                        "since": {
+                          "type": "string"
+                        },
+                        "checkedAt": {
+                          "type": "string"
+                        },
+                        "items": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "migration-run",
+                                  "takeover",
+                                  "cutover",
+                                  "project-move",
+                                  "app-move",
+                                  "volume-transfer",
+                                  "object-migration",
+                                  "cleanup",
+                                  "import",
+                                  "deployment",
+                                  "backup",
+                                  "restore",
+                                  "pitr-restore",
+                                  "restore-verify",
+                                  "rollout",
+                                  "agent-update",
+                                  "swarm",
+                                  "patch",
+                                  "reboot",
+                                  "bulk-command"
+                                ]
+                              },
+                              "id": {
+                                "type": "string"
+                              },
+                              "label": {
+                                "type": "string"
+                              },
+                              "serverIds": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              },
+                              "teamId": {
+                                "nullable": true,
+                                "type": "string"
+                              },
+                              "since": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "id",
+                              "label",
+                              "serverIds",
+                              "teamId",
+                              "since"
+                            ],
+                            "additionalProperties": false
+                          }
+                        }
+                      },
+                      "required": [
+                        "since",
+                        "checkedAt",
+                        "items"
+                      ],
+                      "additionalProperties": false
                     }
                   },
                   "required": [
@@ -1059,7 +1341,9 @@
                     "lastCheckedAt",
                     "lastCheckError",
                     "updater",
-                    "halfUpdate"
+                    "halfUpdate",
+                    "inFlight",
+                    "hold"
                   ],
                   "additionalProperties": false
                 }
@@ -1129,6 +1413,22 @@
       "post": {
         "operationId": "InstanceSettingsController_applyUpdate",
         "parameters": [],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "force": {
+                    "type": "boolean"
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "",
@@ -1146,12 +1446,135 @@
                         "unconfigured",
                         "error",
                         "notify-only",
-                        "needs-intermediate"
+                        "needs-intermediate",
+                        "held"
                       ]
                     },
                     "targetVersion": {
                       "nullable": true,
                       "type": "string"
+                    },
+                    "inFlight": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "migration-run",
+                              "takeover",
+                              "cutover",
+                              "project-move",
+                              "app-move",
+                              "volume-transfer",
+                              "object-migration",
+                              "cleanup",
+                              "import",
+                              "deployment",
+                              "backup",
+                              "restore",
+                              "pitr-restore",
+                              "restore-verify",
+                              "rollout",
+                              "agent-update",
+                              "swarm",
+                              "patch",
+                              "reboot",
+                              "bulk-command"
+                            ]
+                          },
+                          "id": {
+                            "type": "string"
+                          },
+                          "label": {
+                            "type": "string"
+                          },
+                          "serverIds": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "teamId": {
+                            "nullable": true,
+                            "type": "string"
+                          },
+                          "since": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "id",
+                          "label",
+                          "serverIds",
+                          "teamId",
+                          "since"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "overridden": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "migration-run",
+                              "takeover",
+                              "cutover",
+                              "project-move",
+                              "app-move",
+                              "volume-transfer",
+                              "object-migration",
+                              "cleanup",
+                              "import",
+                              "deployment",
+                              "backup",
+                              "restore",
+                              "pitr-restore",
+                              "restore-verify",
+                              "rollout",
+                              "agent-update",
+                              "swarm",
+                              "patch",
+                              "reboot",
+                              "bulk-command"
+                            ]
+                          },
+                          "id": {
+                            "type": "string"
+                          },
+                          "label": {
+                            "type": "string"
+                          },
+                          "serverIds": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "teamId": {
+                            "nullable": true,
+                            "type": "string"
+                          },
+                          "since": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "id",
+                          "label",
+                          "serverIds",
+                          "teamId",
+                          "since"
+                        ],
+                        "additionalProperties": false
+                      }
                     }
                   },
                   "required": [
@@ -1159,6 +1582,16 @@
                     "targetVersion"
                   ],
                   "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid or malformed request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             }
@@ -1349,6 +1782,146 @@
                         "runningVersion"
                       ],
                       "additionalProperties": false
+                    },
+                    "inFlight": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "migration-run",
+                              "takeover",
+                              "cutover",
+                              "project-move",
+                              "app-move",
+                              "volume-transfer",
+                              "object-migration",
+                              "cleanup",
+                              "import",
+                              "deployment",
+                              "backup",
+                              "restore",
+                              "pitr-restore",
+                              "restore-verify",
+                              "rollout",
+                              "agent-update",
+                              "swarm",
+                              "patch",
+                              "reboot",
+                              "bulk-command"
+                            ]
+                          },
+                          "id": {
+                            "type": "string"
+                          },
+                          "label": {
+                            "type": "string"
+                          },
+                          "serverIds": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "teamId": {
+                            "nullable": true,
+                            "type": "string"
+                          },
+                          "since": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "id",
+                          "label",
+                          "serverIds",
+                          "teamId",
+                          "since"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "hold": {
+                      "nullable": true,
+                      "type": "object",
+                      "properties": {
+                        "since": {
+                          "type": "string"
+                        },
+                        "checkedAt": {
+                          "type": "string"
+                        },
+                        "items": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "migration-run",
+                                  "takeover",
+                                  "cutover",
+                                  "project-move",
+                                  "app-move",
+                                  "volume-transfer",
+                                  "object-migration",
+                                  "cleanup",
+                                  "import",
+                                  "deployment",
+                                  "backup",
+                                  "restore",
+                                  "pitr-restore",
+                                  "restore-verify",
+                                  "rollout",
+                                  "agent-update",
+                                  "swarm",
+                                  "patch",
+                                  "reboot",
+                                  "bulk-command"
+                                ]
+                              },
+                              "id": {
+                                "type": "string"
+                              },
+                              "label": {
+                                "type": "string"
+                              },
+                              "serverIds": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              },
+                              "teamId": {
+                                "nullable": true,
+                                "type": "string"
+                              },
+                              "since": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "id",
+                              "label",
+                              "serverIds",
+                              "teamId",
+                              "since"
+                            ],
+                            "additionalProperties": false
+                          }
+                        }
+                      },
+                      "required": [
+                        "since",
+                        "checkedAt",
+                        "items"
+                      ],
+                      "additionalProperties": false
                     }
                   },
                   "required": [
@@ -1365,7 +1938,9 @@
                     "lastCheckedAt",
                     "lastCheckError",
                     "updater",
-                    "halfUpdate"
+                    "halfUpdate",
+                    "inFlight",
+                    "hold"
                   ],
                   "additionalProperties": false
                 }
@@ -84466,6 +85041,22 @@
             }
           }
         ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "force": {
+                    "type": "boolean"
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "",
@@ -84495,6 +85086,9 @@
                     "skipped": {
                       "type": "number"
                     },
+                    "held": {
+                      "type": "number"
+                    },
                     "results": {
                       "type": "array",
                       "items": {
@@ -84508,11 +85102,73 @@
                             "enum": [
                               "sent",
                               "offline",
-                              "skipped"
+                              "skipped",
+                              "held"
                             ]
                           },
                           "reason": {
                             "type": "string"
+                          },
+                          "inFlight": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "migration-run",
+                                    "takeover",
+                                    "cutover",
+                                    "project-move",
+                                    "app-move",
+                                    "volume-transfer",
+                                    "object-migration",
+                                    "cleanup",
+                                    "import",
+                                    "deployment",
+                                    "backup",
+                                    "restore",
+                                    "pitr-restore",
+                                    "restore-verify",
+                                    "rollout",
+                                    "agent-update",
+                                    "swarm",
+                                    "patch",
+                                    "reboot",
+                                    "bulk-command"
+                                  ]
+                                },
+                                "id": {
+                                  "type": "string"
+                                },
+                                "label": {
+                                  "type": "string"
+                                },
+                                "serverIds": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "string"
+                                  }
+                                },
+                                "teamId": {
+                                  "nullable": true,
+                                  "type": "string"
+                                },
+                                "since": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "id",
+                                "label",
+                                "serverIds",
+                                "teamId",
+                                "since"
+                              ],
+                              "additionalProperties": false
+                            }
                           }
                         },
                         "required": [
@@ -84529,9 +85185,20 @@
                     "sent",
                     "offline",
                     "skipped",
+                    "held",
                     "results"
                   ],
                   "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid or malformed request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             }
@@ -84626,6 +85293,86 @@
                     },
                     "autoUpdate": {
                       "type": "boolean"
+                    },
+                    "held": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "serverId": {
+                            "type": "string"
+                          },
+                          "inFlight": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "migration-run",
+                                    "takeover",
+                                    "cutover",
+                                    "project-move",
+                                    "app-move",
+                                    "volume-transfer",
+                                    "object-migration",
+                                    "cleanup",
+                                    "import",
+                                    "deployment",
+                                    "backup",
+                                    "restore",
+                                    "pitr-restore",
+                                    "restore-verify",
+                                    "rollout",
+                                    "agent-update",
+                                    "swarm",
+                                    "patch",
+                                    "reboot",
+                                    "bulk-command"
+                                  ]
+                                },
+                                "id": {
+                                  "type": "string"
+                                },
+                                "label": {
+                                  "type": "string"
+                                },
+                                "serverIds": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "string"
+                                  }
+                                },
+                                "teamId": {
+                                  "nullable": true,
+                                  "type": "string"
+                                },
+                                "since": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "id",
+                                "label",
+                                "serverIds",
+                                "teamId",
+                                "since"
+                              ],
+                              "additionalProperties": false
+                            }
+                          }
+                        },
+                        "required": [
+                          "serverId",
+                          "inFlight"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "hubBehind": {
+                      "type": "boolean"
                     }
                   },
                   "required": [
@@ -84633,7 +85380,9 @@
                     "total",
                     "outdated",
                     "outdatedServerIds",
-                    "autoUpdate"
+                    "autoUpdate",
+                    "held",
+                    "hubBehind"
                   ],
                   "additionalProperties": false
                 }
@@ -84695,6 +85444,22 @@
       "post": {
         "operationId": "AgentUpdateController_updateOutdated",
         "parameters": [],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "force": {
+                    "type": "boolean"
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "",
@@ -84724,6 +85489,9 @@
                     "skipped": {
                       "type": "number"
                     },
+                    "held": {
+                      "type": "number"
+                    },
                     "results": {
                       "type": "array",
                       "items": {
@@ -84737,11 +85505,73 @@
                             "enum": [
                               "sent",
                               "offline",
-                              "skipped"
+                              "skipped",
+                              "held"
                             ]
                           },
                           "reason": {
                             "type": "string"
+                          },
+                          "inFlight": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "migration-run",
+                                    "takeover",
+                                    "cutover",
+                                    "project-move",
+                                    "app-move",
+                                    "volume-transfer",
+                                    "object-migration",
+                                    "cleanup",
+                                    "import",
+                                    "deployment",
+                                    "backup",
+                                    "restore",
+                                    "pitr-restore",
+                                    "restore-verify",
+                                    "rollout",
+                                    "agent-update",
+                                    "swarm",
+                                    "patch",
+                                    "reboot",
+                                    "bulk-command"
+                                  ]
+                                },
+                                "id": {
+                                  "type": "string"
+                                },
+                                "label": {
+                                  "type": "string"
+                                },
+                                "serverIds": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "string"
+                                  }
+                                },
+                                "teamId": {
+                                  "nullable": true,
+                                  "type": "string"
+                                },
+                                "since": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "id",
+                                "label",
+                                "serverIds",
+                                "teamId",
+                                "since"
+                              ],
+                              "additionalProperties": false
+                            }
                           }
                         },
                         "required": [
@@ -84758,9 +85588,20 @@
                     "sent",
                     "offline",
                     "skipped",
+                    "held",
                     "results"
                   ],
                   "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid or malformed request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             }
@@ -84833,6 +85674,9 @@
                     "items": {
                       "type": "string"
                     }
+                  },
+                  "force": {
+                    "type": "boolean"
                   }
                 },
                 "required": [
@@ -84872,6 +85716,9 @@
                     "skipped": {
                       "type": "number"
                     },
+                    "held": {
+                      "type": "number"
+                    },
                     "results": {
                       "type": "array",
                       "items": {
@@ -84885,11 +85732,73 @@
                             "enum": [
                               "sent",
                               "offline",
-                              "skipped"
+                              "skipped",
+                              "held"
                             ]
                           },
                           "reason": {
                             "type": "string"
+                          },
+                          "inFlight": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "migration-run",
+                                    "takeover",
+                                    "cutover",
+                                    "project-move",
+                                    "app-move",
+                                    "volume-transfer",
+                                    "object-migration",
+                                    "cleanup",
+                                    "import",
+                                    "deployment",
+                                    "backup",
+                                    "restore",
+                                    "pitr-restore",
+                                    "restore-verify",
+                                    "rollout",
+                                    "agent-update",
+                                    "swarm",
+                                    "patch",
+                                    "reboot",
+                                    "bulk-command"
+                                  ]
+                                },
+                                "id": {
+                                  "type": "string"
+                                },
+                                "label": {
+                                  "type": "string"
+                                },
+                                "serverIds": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "string"
+                                  }
+                                },
+                                "teamId": {
+                                  "nullable": true,
+                                  "type": "string"
+                                },
+                                "since": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "id",
+                                "label",
+                                "serverIds",
+                                "teamId",
+                                "since"
+                              ],
+                              "additionalProperties": false
+                            }
                           }
                         },
                         "required": [
@@ -84906,6 +85815,7 @@
                     "sent",
                     "offline",
                     "skipped",
+                    "held",
                     "results"
                   ],
                   "additionalProperties": false

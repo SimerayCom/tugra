@@ -9851,6 +9851,28 @@ export interface operations {
                             envVersion: string;
                             runningVersion: string;
                         } | null;
+                        inFlight: {
+                            /** @enum {string} */
+                            kind: "migration-run" | "takeover" | "cutover" | "project-move" | "app-move" | "volume-transfer" | "object-migration" | "cleanup" | "import" | "deployment" | "backup" | "restore" | "pitr-restore" | "restore-verify" | "rollout" | "agent-update" | "swarm" | "patch" | "reboot" | "bulk-command";
+                            id: string;
+                            label: string;
+                            serverIds: string[];
+                            teamId: string | null;
+                            since: string;
+                        }[];
+                        hold: {
+                            since: string;
+                            checkedAt: string;
+                            items: {
+                                /** @enum {string} */
+                                kind: "migration-run" | "takeover" | "cutover" | "project-move" | "app-move" | "volume-transfer" | "object-migration" | "cleanup" | "import" | "deployment" | "backup" | "restore" | "pitr-restore" | "restore-verify" | "rollout" | "agent-update" | "swarm" | "patch" | "reboot" | "bulk-command";
+                                id: string;
+                                label: string;
+                                serverIds: string[];
+                                teamId: string | null;
+                                since: string;
+                            }[];
+                        } | null;
                     };
                 };
             };
@@ -9899,7 +9921,13 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": {
+                    force?: boolean;
+                };
+            };
+        };
         responses: {
             200: {
                 headers: {
@@ -9908,9 +9936,36 @@ export interface operations {
                 content: {
                     "application/json": {
                         /** @enum {string} */
-                        status: "started" | "up-to-date" | "in-progress" | "unconfigured" | "error" | "notify-only" | "needs-intermediate";
+                        status: "started" | "up-to-date" | "in-progress" | "unconfigured" | "error" | "notify-only" | "needs-intermediate" | "held";
                         targetVersion: string | null;
+                        inFlight?: {
+                            /** @enum {string} */
+                            kind: "migration-run" | "takeover" | "cutover" | "project-move" | "app-move" | "volume-transfer" | "object-migration" | "cleanup" | "import" | "deployment" | "backup" | "restore" | "pitr-restore" | "restore-verify" | "rollout" | "agent-update" | "swarm" | "patch" | "reboot" | "bulk-command";
+                            id: string;
+                            label: string;
+                            serverIds: string[];
+                            teamId: string | null;
+                            since: string;
+                        }[];
+                        overridden?: {
+                            /** @enum {string} */
+                            kind: "migration-run" | "takeover" | "cutover" | "project-move" | "app-move" | "volume-transfer" | "object-migration" | "cleanup" | "import" | "deployment" | "backup" | "restore" | "pitr-restore" | "restore-verify" | "rollout" | "agent-update" | "swarm" | "patch" | "reboot" | "bulk-command";
+                            id: string;
+                            label: string;
+                            serverIds: string[];
+                            teamId: string | null;
+                            since: string;
+                        }[];
                     };
+                };
+            };
+            /** @description Invalid or malformed request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
                 };
             };
             /** @description Missing or invalid authentication. */
@@ -10003,6 +10058,28 @@ export interface operations {
                         halfUpdate: {
                             envVersion: string;
                             runningVersion: string;
+                        } | null;
+                        inFlight: {
+                            /** @enum {string} */
+                            kind: "migration-run" | "takeover" | "cutover" | "project-move" | "app-move" | "volume-transfer" | "object-migration" | "cleanup" | "import" | "deployment" | "backup" | "restore" | "pitr-restore" | "restore-verify" | "rollout" | "agent-update" | "swarm" | "patch" | "reboot" | "bulk-command";
+                            id: string;
+                            label: string;
+                            serverIds: string[];
+                            teamId: string | null;
+                            since: string;
+                        }[];
+                        hold: {
+                            since: string;
+                            checkedAt: string;
+                            items: {
+                                /** @enum {string} */
+                                kind: "migration-run" | "takeover" | "cutover" | "project-move" | "app-move" | "volume-transfer" | "object-migration" | "cleanup" | "import" | "deployment" | "backup" | "restore" | "pitr-restore" | "restore-verify" | "rollout" | "agent-update" | "swarm" | "patch" | "reboot" | "bulk-command";
+                                id: string;
+                                label: string;
+                                serverIds: string[];
+                                teamId: string | null;
+                                since: string;
+                            }[];
                         } | null;
                     };
                 };
@@ -10098,6 +10175,28 @@ export interface operations {
                         halfUpdate: {
                             envVersion: string;
                             runningVersion: string;
+                        } | null;
+                        inFlight: {
+                            /** @enum {string} */
+                            kind: "migration-run" | "takeover" | "cutover" | "project-move" | "app-move" | "volume-transfer" | "object-migration" | "cleanup" | "import" | "deployment" | "backup" | "restore" | "pitr-restore" | "restore-verify" | "rollout" | "agent-update" | "swarm" | "patch" | "reboot" | "bulk-command";
+                            id: string;
+                            label: string;
+                            serverIds: string[];
+                            teamId: string | null;
+                            since: string;
+                        }[];
+                        hold: {
+                            since: string;
+                            checkedAt: string;
+                            items: {
+                                /** @enum {string} */
+                                kind: "migration-run" | "takeover" | "cutover" | "project-move" | "app-move" | "volume-transfer" | "object-migration" | "cleanup" | "import" | "deployment" | "backup" | "restore" | "pitr-restore" | "restore-verify" | "rollout" | "agent-update" | "swarm" | "patch" | "reboot" | "bulk-command";
+                                id: string;
+                                label: string;
+                                serverIds: string[];
+                                teamId: string | null;
+                                since: string;
+                            }[];
                         } | null;
                     };
                 };
@@ -55584,7 +55683,13 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": {
+                    force?: boolean;
+                };
+            };
+        };
         responses: {
             200: {
                 headers: {
@@ -55598,13 +55703,32 @@ export interface operations {
                         sent: number;
                         offline: number;
                         skipped: number;
+                        held: number;
                         results: {
                             serverId: string;
                             /** @enum {string} */
-                            status: "sent" | "offline" | "skipped";
+                            status: "sent" | "offline" | "skipped" | "held";
                             reason?: string;
+                            inFlight?: {
+                                /** @enum {string} */
+                                kind: "migration-run" | "takeover" | "cutover" | "project-move" | "app-move" | "volume-transfer" | "object-migration" | "cleanup" | "import" | "deployment" | "backup" | "restore" | "pitr-restore" | "restore-verify" | "rollout" | "agent-update" | "swarm" | "patch" | "reboot" | "bulk-command";
+                                id: string;
+                                label: string;
+                                serverIds: string[];
+                                teamId: string | null;
+                                since: string;
+                            }[];
                         }[];
                     };
+                };
+            };
+            /** @description Invalid or malformed request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
                 };
             };
             /** @description Missing or invalid authentication. */
@@ -55674,6 +55798,19 @@ export interface operations {
                         outdated: number;
                         outdatedServerIds: string[];
                         autoUpdate: boolean;
+                        held: {
+                            serverId: string;
+                            inFlight: {
+                                /** @enum {string} */
+                                kind: "migration-run" | "takeover" | "cutover" | "project-move" | "app-move" | "volume-transfer" | "object-migration" | "cleanup" | "import" | "deployment" | "backup" | "restore" | "pitr-restore" | "restore-verify" | "rollout" | "agent-update" | "swarm" | "patch" | "reboot" | "bulk-command";
+                                id: string;
+                                label: string;
+                                serverIds: string[];
+                                teamId: string | null;
+                                since: string;
+                            }[];
+                        }[];
+                        hubBehind: boolean;
                     };
                 };
             };
@@ -55722,7 +55859,13 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": {
+                    force?: boolean;
+                };
+            };
+        };
         responses: {
             200: {
                 headers: {
@@ -55736,13 +55879,32 @@ export interface operations {
                         sent: number;
                         offline: number;
                         skipped: number;
+                        held: number;
                         results: {
                             serverId: string;
                             /** @enum {string} */
-                            status: "sent" | "offline" | "skipped";
+                            status: "sent" | "offline" | "skipped" | "held";
                             reason?: string;
+                            inFlight?: {
+                                /** @enum {string} */
+                                kind: "migration-run" | "takeover" | "cutover" | "project-move" | "app-move" | "volume-transfer" | "object-migration" | "cleanup" | "import" | "deployment" | "backup" | "restore" | "pitr-restore" | "restore-verify" | "rollout" | "agent-update" | "swarm" | "patch" | "reboot" | "bulk-command";
+                                id: string;
+                                label: string;
+                                serverIds: string[];
+                                teamId: string | null;
+                                since: string;
+                            }[];
                         }[];
                     };
+                };
+            };
+            /** @description Invalid or malformed request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
                 };
             };
             /** @description Missing or invalid authentication. */
@@ -55794,6 +55956,7 @@ export interface operations {
             content: {
                 "application/json": {
                     serverIds: string[];
+                    force?: boolean;
                 };
             };
         };
@@ -55810,11 +55973,21 @@ export interface operations {
                         sent: number;
                         offline: number;
                         skipped: number;
+                        held: number;
                         results: {
                             serverId: string;
                             /** @enum {string} */
-                            status: "sent" | "offline" | "skipped";
+                            status: "sent" | "offline" | "skipped" | "held";
                             reason?: string;
+                            inFlight?: {
+                                /** @enum {string} */
+                                kind: "migration-run" | "takeover" | "cutover" | "project-move" | "app-move" | "volume-transfer" | "object-migration" | "cleanup" | "import" | "deployment" | "backup" | "restore" | "pitr-restore" | "restore-verify" | "rollout" | "agent-update" | "swarm" | "patch" | "reboot" | "bulk-command";
+                                id: string;
+                                label: string;
+                                serverIds: string[];
+                                teamId: string | null;
+                                since: string;
+                            }[];
                         }[];
                     };
                 };
