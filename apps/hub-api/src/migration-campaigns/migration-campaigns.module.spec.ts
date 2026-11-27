@@ -5,6 +5,7 @@ import { ApiAuthGuard } from "../api-tokens/api-auth.guard";
 import { ScopesGuard } from "../api-tokens/scopes.guard";
 import { AuditService } from "../audit/audit.service";
 import { TeamAccessService } from "../common/team-access.service";
+import { CoolifyInPlaceService } from "../coolify-inplace/coolify-inplace.service";
 import { ImporterService } from "../importer/importer.service";
 import { MIGRATION_RUNS_FACADE } from "../migration-runs/core/run-contract";
 import { PrismaService } from "../prisma/prisma.service";
@@ -24,6 +25,7 @@ describe("MigrationCampaignsModule wiring", () => {
         { provide: AuditService, useValue: {} },
         { provide: ImporterService, useValue: {} },
         { provide: MIGRATION_RUNS_FACADE, useValue: {} },
+        { provide: CoolifyInPlaceService, useValue: {} },
       ],
     })
       .overrideGuard(ApiAuthGuard)

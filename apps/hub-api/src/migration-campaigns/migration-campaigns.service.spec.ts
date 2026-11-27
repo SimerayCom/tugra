@@ -16,10 +16,10 @@ function factsOf(hosts: PlacementHostFact[], extra: string[] = ["new1"], teams: 
   const targets = new Map<string, { id: string; teamId: string; ready: boolean }>();
   for (const h of hosts) if (h.matchedServerId) targets.set(h.matchedServerId, { id: h.matchedServerId, teamId: teams[h.matchedServerId] ?? "t1", ready: true });
   for (const e of extra) targets.set(e, { id: e, teamId: teams[e] ?? "t1", ready: true });
-  return { planHash: HASH, hosts, targets, appRefs: new Set(APPS) };
+  return { planHash: HASH, hosts, targets, appRefs: new Set(APPS), plan: { items: APPS.map((itemRef) => ({ itemRef, kind: "app", name: itemRef.split(":")[2] })) } };
 }
 
-function build(o: { hosts?: PlacementHostFact[]; role?: Role | null; roles?: Record<string, Role>; createFails?: number; labelTaken?: boolean; labelTakenIn?: string; teams?: Record<string, string>; extra?: string[] } = {}) {
+function build(o: { startRefusal?: Record<string, "takeover_server_busy" | "takeover_tugra_proxy_in_use">; items?: Array<{ itemRef: string; kind: string; name: string }>; hosts?: PlacementHostFact[]; role?: Role | null; roles?: Record<string, Role>; createFails?: number; labelTaken?: boolean; labelTakenIn?: string; teams?: Record<string, string>; extra?: string[] } = {}) {
   const rows: Array<Record<string, unknown>> = [];
   const self: { db?: unknown } = {};
   const prisma = {
@@ -56,7 +56,13 @@ function build(o: { hosts?: PlacementHostFact[]; role?: Role | null; roles?: Rec
     teamRole: jest.fn(async () => (o.role === undefined ? Role.OWNER : o.role)),
   };
   const audit = { log: jest.fn(async (..._a: unknown[]) => undefined) };
-  const facts = { read: jest.fn(async (..._a: unknown[]) => factsOf(o.hosts ?? [host("a"), host("b")], o.extra ?? ["new1"], o.teams ?? {})) };
+  const facts = {
+    read: jest.fn(async (..._a: unknown[]) => {
+      const f = factsOf(o.hosts ?? [host("a"), host("b")], o.extra ?? ["new1"], o.teams ?? {});
+      return o.items ? { ...f, plan: { items: o.items } } : f;
+    }),
+  };
+  const inplace = { startRefusal: jest.fn(async (_u: string, serverId: string) => o.startRefusal?.[serverId] ?? null) };
   let n = 0;
   const runs = {
     create: jest.fn(async (..._a: unknown[]) => {
@@ -66,8 +72,8 @@ function build(o: { hosts?: PlacementHostFact[]; role?: Role | null; roles?: Rec
     }),
     abort: jest.fn(async (..._a: unknown[]) => ({})),
   };
-  const svc = new MigrationCampaignsService(prisma as never, access as never, audit as never, facts as never, runs as never);
-  return { svc, prisma, access, audit, facts, runs, rows };
+  const svc = new MigrationCampaignsService(prisma as never, access as never, audit as never, facts as never, runs as never, inplace as never);
+  return { svc, prisma, access, audit, facts, runs, rows, inplace };
 }
 
 const input = (over: Record<string, unknown> = {}) =>
@@ -388,5 +394,86 @@ describe("runBody and the DTOs", () => {
     expect(() => CampaignPlanSchema.parse({ sessionId: "s", planHash: HASH, placements: [{ sourceServerRef: "__proto__", kind: "in-place" }] })).toThrow();
     expect(() => CampaignPlanSchema.parse({ sessionId: "s", planHash: HASH, placements: [{ sourceServerRef: "a", kind: "sideways" }] })).toThrow();
     expect(() => CampaignPlanSchema.parse({ sessionId: "s", planHash: HASH, placements: [] })).toThrow();
+  });
+});
+
+describe("MigrationCampaignsService: data modes, scope, shared targets and takeover checks", () => {
+  const plan = (over: Record<string, unknown> = {}) => CampaignPlanSchema.parse({ sessionId: "s1", planHash: HASH, placements: [{ sourceServerRef: "a", kind: "in-place" }, { sourceServerRef: "b", kind: "other-server", targetServerId: "new1" }], ...over });
+  const ITEMS = [
+    { itemRef: "app:a:one", kind: "app", name: "one" },
+    { itemRef: "app:a:two", kind: "app", name: "two" },
+    { itemRef: "app:b:three", kind: "app", name: "three" },
+    { itemRef: "database:b:pg", kind: "database", name: "pg" },
+  ];
+
+  it("reads the plan back with the data modes the owner reviewed, for the preview and for the create", async () => {
+    const t = build();
+    await t.svc.preview("u1", plan({ dbDataModes: { "database:b:pg": "volume" } }));
+    expect(t.facts.read.mock.calls[0][1]).toMatchObject({ dbDataModes: { "database:b:pg": "volume" } });
+    await t.svc.create(actor, input({ dbDataModes: { "database:b:pg": "volume" } }));
+    expect(t.facts.read.mock.calls[1][1]).toMatchObject({ dbDataModes: { "database:b:pg": "volume" } });
+  });
+
+  it("a campaign keeps to the first step's selection: a run carries only the items of its servers that were picked", async () => {
+    const t = build({ items: ITEMS });
+    // everything of `a` is picked and `b`'s pg only: the copied run leaves its app out
+    await t.svc.create(actor, input({ scope: { include: ["app:a:one", "app:a:two", "database:b:pg"] } }));
+    const bodies = t.runs.create.mock.calls.map((c) => c[1] as { scope: Record<string, unknown> });
+    expect(bodies[0].scope).toEqual({ sourceServers: ["b"], exclude: ["app:b:three"] });
+    expect(bodies[1].scope).toEqual({ sourceServers: ["a"] });
+  });
+
+  it("a same-machine server with only part of it picked is refused: the proxy swap takes the whole machine", async () => {
+    const t = build({ items: ITEMS });
+    await expect(t.svc.create(actor, input({ scope: { include: ["app:a:one", "app:b:three"] } }))).rejects.toMatchObject({ response: { code: "placement_in_place_partial", ref: "a" } });
+    expect(t.prisma.migrationCampaign.create).not.toHaveBeenCalled();
+    expect(t.runs.create).not.toHaveBeenCalled();
+    const p = await t.svc.preview("u1", plan({ scope: { include: ["app:a:one", "app:b:three"] } }));
+    expect(p.failure).toEqual({ code: "placement_in_place_partial", ref: "a" });
+  });
+
+  it("a placed server with nothing picked, or a selection the plan does not know, is refused before anything is written", async () => {
+    const t = build({ items: ITEMS });
+    await expect(t.svc.create(actor, input({ scope: { include: ["app:b:three"] } }))).rejects.toMatchObject({ response: { code: "placement_scope_empty", ref: "a" } });
+    await expect(t.svc.create(actor, input({ scope: { include: ["app:z:ghost"] } }))).rejects.toMatchObject({ response: { code: "placement_scope_invalid" } });
+    expect(t.runs.create).not.toHaveBeenCalled();
+  });
+
+  it("without a selection every run keeps the whole servers it carries (as before)", async () => {
+    const t = build({ items: ITEMS });
+    await t.svc.create(actor, input());
+    const bodies = t.runs.create.mock.calls.map((c) => c[1] as { scope: Record<string, unknown> });
+    expect(bodies.map((b) => b.scope)).toEqual([{ sourceServers: ["b"] }, { sourceServers: ["a"] }]);
+  });
+
+  it("two source servers on one Tugra machine are refused at the placement, naming both, not at the second run create", async () => {
+    const t = build({ hosts: [host("a", { matchedServerId: "srv-x" }), host("b", { matchedServerId: "srv-x" })], extra: ["srv-x"] });
+    const p = await t.svc.preview("u1", plan({ placements: [{ sourceServerRef: "a", kind: "in-place" }, { sourceServerRef: "b", kind: "in-place" }] }));
+    expect(p.failure).toEqual({ code: "placement_target_shared", ref: "b", withRef: "a" });
+    await expect(t.svc.create(actor, input({ placements: [{ sourceServerRef: "a", kind: "in-place" }, { sourceServerRef: "b", kind: "in-place" }] }))).rejects.toMatchObject({ response: { code: "placement_target_shared", ref: "b", withRef: "a" } });
+    expect(t.prisma.migrationCampaign.create).not.toHaveBeenCalled();
+  });
+
+  it("a takeover that would be refused at its start is refused at the placement: another holder, or Tugra's proxy already serving apps", async () => {
+    const busy = build({ items: ITEMS, startRefusal: { "srv-a": "takeover_server_busy" } });
+    expect((await busy.svc.preview("u1", plan())).failure).toEqual({ code: "placement_takeover_busy", ref: "a" });
+    await expect(busy.svc.create(actor, input())).rejects.toMatchObject({ response: { code: "placement_takeover_busy", ref: "a" } });
+    expect(busy.runs.create).not.toHaveBeenCalled();
+    expect(busy.prisma.migrationCampaign.create).not.toHaveBeenCalled();
+    const proxy = build({ items: ITEMS, startRefusal: { "srv-a": "takeover_tugra_proxy_in_use" } });
+    expect((await proxy.svc.preview("u1", plan())).failure).toEqual({ code: "placement_tugra_proxy_in_use", ref: "a" });
+    // a server that is copied to is not taken over: nothing to ask
+    expect(proxy.inplace.startRefusal).toHaveBeenCalledTimes(1);
+  });
+
+  it("cancel leaves a finished dry run alone (it has nothing to abort) and says how many dry runs it blocked", async () => {
+    const t = build();
+    t.rows.push({ id: "camp1", teamId: "t1", label: "l", sessionId: null, status: "draft", plan: [], createdAt: new Date() });
+    t.prisma.migrationRun.findMany.mockResolvedValueOnce([{ id: "r1", status: "DRY_RUN_DONE" }, { id: "r2", status: "QUEUED" }]);
+    const v = await t.svc.cancel(actor, "camp1");
+    expect(t.runs.abort).toHaveBeenCalledTimes(1);
+    expect(t.runs.abort).toHaveBeenCalledWith(actor, "r2", { confirmName: "r2" });
+    expect(v.status).toBe("cancelled");
+    expect((t.audit.log.mock.calls[0][0] as { meta: Record<string, number> }).meta).toMatchObject({ aborted: 1, dryRuns: 1 });
   });
 });

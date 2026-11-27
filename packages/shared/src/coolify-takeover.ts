@@ -70,6 +70,16 @@ export const PLACEMENT_FAILURE_CODES = [
   "placement_rebuild_not_in_place",
   "placement_rebuild_unknown_item",
   "placement_team_mismatch",
+  /** Two source servers would land on the same Tugra machine (two in place, or one in place and another copied onto it). */
+  "placement_target_shared",
+  /** A same-machine server would move only part of what runs on it, while the proxy swap takes the whole machine. */
+  "placement_in_place_partial",
+  /** The first step's selection holds nothing of this run's source servers, or names something the plan does not have. */
+  "placement_scope_empty",
+  "placement_scope_invalid",
+  /** The takeover of a same-machine server would be refused when it starts (another takeover or run holds the server, or Tugra's proxy already serves apps there). */
+  "placement_takeover_busy",
+  "placement_tugra_proxy_in_use",
 ] as const;
 export type PlacementFailureCode = (typeof PLACEMENT_FAILURE_CODES)[number];
 

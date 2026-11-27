@@ -1,5 +1,5 @@
 import type { SourcePlacement } from "@tugra/shared";
-import { checkPlacements, deriveCampaignStatus, inPlaceLock, newCampaignLabel, placementViews, planCampaign, refsOfRun, serverMapOfRun, suggestedPlacement, withRebuild, type PlacementHostFact, type PlacementTarget } from "./campaign-plan";
+import { checkPlacements, scopesOfRuns, deriveCampaignStatus, inPlaceLock, newCampaignLabel, placementViews, planCampaign, refsOfRun, serverMapOfRun, suggestedPlacement, withRebuild, type PlacementHostFact, type PlacementTarget } from "./campaign-plan";
 
 const fact = (o: Partial<PlacementHostFact> & { ref: string }): PlacementHostFact => ({
   name: o.ref,
@@ -245,5 +245,42 @@ describe("campaign label and status", () => {
   });
   it("no runs keeps the stored status", () => {
     expect(deriveCampaignStatus("draft", [])).toBe("draft");
+  });
+});
+
+describe("checkPlacements: one Tugra machine for two source servers", () => {
+  const T = targets("srv-a", "srv-b", "new1");
+  const sh = (id: string) => fact({ ref: id, matchedServerId: "srv-a" });
+  it("two source servers in place on the same machine are refused, naming both", () => {
+    const r = checkPlacements([{ sourceServerRef: "a", kind: "in-place", targetServerId: null }, { sourceServerRef: "b", kind: "in-place", targetServerId: null }], [sh("a"), sh("b")], T);
+    expect(r).toEqual({ ok: false, code: "placement_target_shared", ref: "b", withRef: "a" });
+  });
+  it("a copy onto the machine another source server stays on is refused, whichever comes first", () => {
+    const facts = [fact({ ref: "a" }), fact({ ref: "b" })];
+    const p = (ref: string, kind: "in-place" | "other-server", t: string | null): SourcePlacement => ({ sourceServerRef: ref, kind, targetServerId: t });
+    expect(checkPlacements([p("a", "other-server", "srv-b"), p("b", "in-place", null)], facts, T)).toEqual({ ok: false, code: "placement_target_shared", ref: "a", withRef: "b" });
+    expect(checkPlacements([p("a", "in-place", null), p("b", "other-server", "srv-a")], facts, T)).toEqual({ ok: false, code: "placement_target_shared", ref: "b", withRef: "a" });
+  });
+  it("several source servers copied to one other server are fine (they travel in one run)", () => {
+    const facts = [fact({ ref: "a" }), fact({ ref: "b" })];
+    const r = checkPlacements([{ sourceServerRef: "a", kind: "other-server", targetServerId: "new1" }, { sourceServerRef: "b", kind: "other-server", targetServerId: "new1" }], facts, T);
+    expect(r.ok).toBe(true);
+  });
+});
+
+describe("scopesOfRuns", () => {
+  const plan = { items: [{ itemRef: "app:a:one", kind: "app", name: "one" }, { itemRef: "app:a:two", kind: "app", name: "two" }, { itemRef: "app:b:x", kind: "app", name: "x" }, { itemRef: "database:b:y", kind: "database", name: "y" }] };
+  const runs = planCampaign([{ sourceServerRef: "a", kind: "in-place", targetServerId: "srv-a" }, { sourceServerRef: "b", kind: "other-server", targetServerId: "new1" }]);
+  it("no selection: the whole servers", () => {
+    const r = scopesOfRuns(runs, plan, null);
+    expect(r.ok && [...r.scopes.values()]).toEqual([{ sourceServers: ["b"] }, { sourceServers: ["a"] }]);
+  });
+  it("a partial selection narrows a copied run and refuses a same-machine one", () => {
+    const part = scopesOfRuns(runs, plan, new Set(["app:a:one", "app:a:two", "app:b:x"]));
+    expect(part.ok && [...part.scopes.values()][0]).toEqual({ sourceServers: ["b"], exclude: ["database:b:y"] });
+    expect(scopesOfRuns(runs, plan, new Set(["app:a:one", "app:b:x"]))).toEqual({ ok: false, code: "placement_in_place_partial", ref: "a" });
+  });
+  it("a run with nothing picked is refused with its server", () => {
+    expect(scopesOfRuns(runs, plan, new Set(["app:a:one", "app:a:two"]))).toEqual({ ok: false, code: "placement_scope_empty", ref: "b" });
   });
 });

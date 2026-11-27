@@ -5,7 +5,8 @@
  * talks to on another source server stay in one run), and every in-place server gets its own swap-proxy run, one after the other.
  * Names, refs and ids only; a source address never enters here.
  */
-import { hostOfItemRef } from "../migration-runs/core/run-scope";
+import { hostOfItemRef, type ScopePlan } from "../migration-runs/core/run-scope";
+import type { RunScope } from "../migration-runs/core/dto";
 import type {
   CampaignRunPlan,
   CampaignStatus,
@@ -85,14 +86,17 @@ export interface TeamPlacements {
 }
 
 /** `teamId` is the first team (kept for a caller that has one team); `teams` is every team the targets sit in, in ref order of their first source server. */
-export type PlacementCheck = { ok: true; teamId: string; teams: TeamPlacements[]; placements: SourcePlacement[] } | { ok: false; code: PlacementFailureCode; ref?: string; reason?: PlacementLockReason };
+export type PlacementCheck = { ok: true; teamId: string; teams: TeamPlacements[]; placements: SourcePlacement[] } | { ok: false; code: PlacementFailureCode; ref?: string; /** The other source server of a shared target. */ withRef?: string; reason?: PlacementLockReason };
 
 /**
  * Check the owner's choices against what the hub knows. In place is refused for a locked server and its target is always the matched
  * Tugra server (a different target named for an in-place choice is a mismatch, never silently replaced). Another server must exist, be
  * ready, and not be the machine the source runs on (a "copy" onto the same box would fight its own ports). The targets may sit in several
  * teams (a Coolify's servers are often spread over the teams of one owner): the result groups the placements by target team, one campaign
- * each. The returned placements are normalised: an in-place choice carries its matched server.
+ * each. The returned placements are normalised: an in-place choice carries its matched server. Two source servers never share one Tugra
+ * machine when one of them stays on it: two in place on the same server, or a copy onto the machine another source server stays on, would
+ * fight over the same proxy and ports (the run store would refuse the second run, after the first was made). Copies of several source
+ * servers onto one other server are fine: they travel together in one run.
  */
 export function checkPlacements(placements: readonly SourcePlacement[], facts: readonly PlacementHostFact[], targets: ReadonlyMap<string, PlacementTarget>): PlacementCheck {
   if (placements.length === 0) return { ok: false, code: "placement_empty" };
@@ -100,6 +104,7 @@ export function checkPlacements(placements: readonly SourcePlacement[], facts: r
   const seen = new Set<string>();
   const out: SourcePlacement[] = [];
   const teamOf = new Map<string, string>();
+  const inPlaceBy = new Map<string, string>();
   for (const p of placements) {
     if (seen.has(p.sourceServerRef)) return { ok: false, code: "placement_duplicate", ref: p.sourceServerRef };
     seen.add(p.sourceServerRef);
@@ -121,8 +126,18 @@ export function checkPlacements(placements: readonly SourcePlacement[], facts: r
     if (!t.ready) return { ok: false, code: "placement_target_not_ready", ref: f.ref };
     // a server of a mapped Coolify team lands in the Tugra team the owner chose for it, never in another one
     if (f.mappedTeamId && f.mappedTeamId !== t.teamId) return { ok: false, code: "placement_team_mismatch", ref: f.ref };
+    if (p.kind === "in-place") {
+      const first = inPlaceBy.get(targetId);
+      if (first) return { ok: false, code: "placement_target_shared", ref: f.ref, withRef: first };
+      inPlaceBy.set(targetId, f.ref);
+    }
     teamOf.set(f.ref, t.teamId);
     out.push({ sourceServerRef: f.ref, kind: p.kind, targetServerId: targetId });
+  }
+  // a copy onto the machine another source server stays on (the dropdown lists every server, the in-place one too)
+  for (const p of out) {
+    const holder = p.kind === "other-server" ? inPlaceBy.get(p.targetServerId as string) : undefined;
+    if (holder) return { ok: false, code: "placement_target_shared", ref: p.sourceServerRef, withRef: holder };
   }
   const teams = groupByTeam(out, teamOf);
   return { ok: true, teamId: teams[0].teamId, teams, placements: out };
@@ -226,6 +241,47 @@ export function serverMapOfRun(r: CampaignRunPlan, placements: readonly SourcePl
     if (p?.targetServerId) map[ref] = p.targetServerId;
   }
   return new Set(Object.values(map)).size > 1 ? map : undefined;
+}
+
+/** The placeable items (apps, databases, services) of a plan on the given source servers, as `{ all, kept }` against what the owner kept. */
+function itemsOnHosts(plan: ScopePlan, hosts: ReadonlySet<string>, inScope: ReadonlySet<string>): { all: string[]; kept: string[] } {
+  const all: string[] = [];
+  const kept: string[] = [];
+  for (const i of plan.items) {
+    if (i.kind !== "app" && i.kind !== "database" && i.kind !== "service") continue;
+    if (!hosts.has(hostOfItemRef(i.itemRef))) continue;
+    all.push(i.itemRef);
+    if (inScope.has(i.itemRef)) kept.push(i.itemRef);
+  }
+  return { all, kept };
+}
+
+/**
+ * The scope each run of the plan carries: its own source servers, narrowed to what the owner kept in the first step (`inScope` null = the
+ * whole servers). A server that stays on its own machine moves whole or not at all: the proxy swap takes the machine's ingress, so an app
+ * of it left out of the selection would lose its address (`placement_in_place_partial`). A run with nothing kept is refused
+ * (`placement_scope_empty`) instead of failing at create with an empty scope. Pure.
+ */
+export function scopesOfRuns(runs: readonly CampaignRunPlan[], plan: ScopePlan, inScope: ReadonlySet<string> | null): { ok: true; scopes: Map<CampaignRunPlan, RunScope> } | { ok: false; code: PlacementFailureCode; ref: string } {
+  const scopes = new Map<CampaignRunPlan, RunScope>();
+  for (const run of runs) {
+    const refs = refsOfRun(run);
+    if (!inScope) {
+      scopes.set(run, { sourceServers: refs });
+      continue;
+    }
+    const { all, kept } = itemsOnHosts(plan, new Set(refs), inScope);
+    if (kept.length === 0) return { ok: false, code: "placement_scope_empty", ref: run.sourceServerRef };
+    if (kept.length === all.length) scopes.set(run, { sourceServers: refs });
+    else if (run.kind === "in-place") return { ok: false, code: "placement_in_place_partial", ref: run.sourceServerRef };
+    else {
+      const left = new Set(kept);
+      const out = all.filter((r) => !left.has(r));
+      // the shorter list is the one sent (both are capped by the run's scope schema)
+      scopes.set(run, out.length <= kept.length ? { sourceServers: refs, exclude: out } : { include: kept });
+    }
+  }
+  return { ok: true, scopes };
 }
 
 /** A campaign label that is unique enough per team and readable: `campaign-20261126-1432-ab12`. */

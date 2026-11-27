@@ -390,6 +390,14 @@ describe("ImportPortService.sourceHosts", () => {
     importer.plan.mockResolvedValueOnce(plan);
     expect(await svc.sourceHosts("u1", { sessionId: "s1", sourceKind: "coolify", scope: { sourceServers: ["a"] } })).toEqual([{ ref: "a", controlPlane: false, tugraServerId: "t1" }]);
   });
+  it("a second row matched to the machine the panel's agent runs on is the control plane box too (the swap is refused at create, not at the swap)", async () => {
+    const { svc, importer } = make();
+    importer.plan.mockResolvedValueOnce({ ...plan, preflight: { hosts, agentRead: { agentServerId: "t1" } } });
+    expect(await svc.sourceHosts("u1", { sessionId: "s1", sourceKind: "coolify" })).toEqual([
+      { ref: "a", controlPlane: true, tugraServerId: "t1" },
+      { ref: "b", controlPlane: false, tugraServerId: null },
+    ]);
+  });
   it("a source that is not Coolify has no swap and reports nothing", async () => {
     const { svc, importer } = make();
     expect(await svc.sourceHosts("u1", { sessionId: "s1", sourceKind: "dokploy" })).toEqual([]);

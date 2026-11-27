@@ -137,7 +137,9 @@ export class ImportPortService implements ImportStepsPort {
     const inScope = resolved && !("fail" in resolved) ? resolved.inScope : null;
     const used = new Set<string>();
     for (const it of plan.items) if ((it.kind === "app" || it.kind === "database" || it.kind === "service") && (!inScope || inScope.has(it.itemRef))) used.add(hostOfItemRef(it.itemRef));
-    return (plan.preflight?.hosts ?? []).filter((h) => used.has(h.ref)).map((h) => ({ ref: h.ref, controlPlane: h.controlPlane === true, tugraServerId: h.tugra?.serverId ?? null }));
+    // a second row for the machine Coolify itself runs on (matched to the server of the agent that read the plan) is the control plane box too
+    const panelServerId = plan.preflight?.agentRead?.agentServerId ?? null;
+    return (plan.preflight?.hosts ?? []).filter((h) => used.has(h.ref)).map((h) => ({ ref: h.ref, controlPlane: h.controlPlane === true || (!!panelServerId && h.tugra?.serverId === panelServerId), tugraServerId: h.tugra?.serverId ?? null }));
   }
 
   async appRefs(userId: string, i: { sessionId: string; sourceKind: RemoteSourceKind; scope?: RunScope }): Promise<string[]> {
