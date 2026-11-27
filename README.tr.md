@@ -163,7 +163,7 @@ Notlar:
 - **Ham portları kilitleyin.** `HUB_TRUSTED_PROXY=true` iken hub `X-Forwarded-For` başlığına güvenir (yalnızca private/loopback/docker eşlerinden veya `HUB_TRUSTED_PROXY_CIDRS` ile belirtilenlerden) ve ham `:3000`/`:3001` portlarına **yalnızca** proxy erişebilmelidir. Yeni bir `--domain` kurulumu bunları `127.0.0.1`'e bağlar (aynı host'taki proxy için); https'e geçen mevcut bir kurulum da buraya taşınır (`--keep-raw-ports` bunu devre dışı bırakır). Proxy başka bir host'ta çalışıyorsa `HUB_BIND`/`WEB_BIND` değerini bu makinenin private arayüz IP'sine ayarlayın ve portları firewall ile koruyun — Docker'ın publish ettiği portlar `ufw`'yi atlar.
 - **"Sign in with GitHub"** yalnızca bu single-origin proxy kurulumunda çalışır (session cookie'sinin SPA tarafından görülebilmesi için hub ve web ortak bir public origin'i paylaşır); düz iki portlu hızlı başlangıçta kullanılamaz.
 
-> Yayımlanmış image'lar (`ghcr.io/simeraycom/tugra-*`) otomatik olarak çekilir; mimarisi için yayımlanmış image bulunmayan bir host'ta (bugün arm64) kurulum script'i checkout'unuzdan build eder — aynı komut, hiçbir değişiklik gerekmez. Her sürüm digest'e sabitlenir ve imzalı provenance ile gelir; bkz. [docs/upgrade.md](docs/upgrade.md).
+> Yayımlanmış image'lar (`ghcr.io/simeraycom/tugra-*`) otomatik olarak çekilir; mimarisi için yayımlanmış image bulunmayan bir host'ta kurulum script'i checkout'unuzdan build eder — aynı komut, hiçbir değişiklik gerekmez. Her sürüm digest'e sabitlenir ve imzalı provenance ile gelir; bkz. [docs/upgrade.md](docs/upgrade.md).
 
 **MCP hızlı başlangıç.** Tuğra ayağa kalktıktan sonra bir kişisel erişim token'ı oluşturun (**Settings → API tokens**) ve herhangi bir MCP client'ını ona yönlendirin:
 
