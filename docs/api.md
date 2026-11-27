@@ -233,11 +233,38 @@ returns `405` with `Allow: POST`.
   guided-migration tools: dry-run by default, and a human approves the point of no return, see
   [guided migration](runbooks/guided-migration.md)). The server also
   exposes **guided prompts** (`prompts/list` + `prompts/get`: diagnose a failing deploy, fleet rollout, fleet
-  health review, guided migration) — inert recipes that steer the agent through the scoped tools. OAuth for third-party clients
-  (dynamic client registration, `/authorize`, `/token`, PKCE) is still planned; today a PAT is the only credential.
-- **Auth:** the same PAT/session + scope model as the REST API above — a PAT works out of the box, and the
-  `apiEnabled` kill-switch and IP allowlist apply here too. The caller's identity always comes from the
+  health review, guided migration) — inert recipes that steer the agent through the scoped tools.
+- **Auth:** a personal access token (PAT) or an OAuth access token, with the same scope model as the REST API above.
+  The `apiEnabled` kill-switch and IP allowlist apply to both. The caller's identity always comes from the
   resolved token, never anything the client asserts, so a client can't widen its own team scope.
+- **Connect with OAuth:** clients that speak the MCP authorization flow (Claude Code, Claude, Cursor, MCP Inspector and
+  others) need no token. Add the URL `https://<your-hub>/api/v1/mcp` as a remote server; for Claude Code that is
+  `claude mcp add --transport http tugra https://<your-hub>/api/v1/mcp`, then run `/mcp` and choose Authenticate.
+  The client registers itself, opens your browser on the hub's consent screen, and you sign in if needed, then:
+  1. check the client name and the host it returns to;
+  2. pick **one team**: the connection can only see and change that team;
+  3. pick the access to grant. `read` is always on; `write`, `deploy`, `read:secrets` and `admin` start unticked, and a
+     scope your role in that team does not allow is greyed out.
+
+  Under the hood this is OAuth 2.1 with the MCP authorization spec's pieces: protected resource metadata
+  (`/.well-known/oauth-protected-resource`), authorization server metadata (`/.well-known/oauth-authorization-server`),
+  dynamic client registration (`POST /api/v1/oauth/register`, RFC 7591; public clients only, redirect URIs must be
+  `https`, or `http` on `localhost` / `127.0.0.1`, and are matched exactly), authorization code with **PKCE S256 only**,
+  `POST /api/v1/oauth/token` and `POST /api/v1/oauth/revoke` (RFC 7009). A request without a valid token gets `401` with
+  `WWW-Authenticate: Bearer resource_metadata="…"`, which is how clients find all of this. The authorization endpoint
+  is the panel page `/oauth/authorize`.
+  - **Lifetimes:** authorization code 10 minutes and single-use; access token 1 hour; refresh token 30 days and rotated on every
+    use. Presenting a refresh token a second time revokes the whole connection. All tokens are stored as sha256 hashes.
+  - **Never more than your role:** the granted scopes are limited to what your role in the chosen team allows, and are
+    re-checked on every call, so a demotion takes effect at once and leaving the team ends the connection. `write` needs a
+    configuration permission, `deploy` needs `apps:deploy`, `read:secrets` and `admin` need the full owner/admin permission set.
+  - **MCP only:** an OAuth token is accepted on `/api/v1/mcp` and nowhere else in the REST API.
+  - **Connected clients:** Settings, Security, "Connected MCP clients" lists each connection (client, team, access, last used)
+    and revokes it immediately. `GET /api/v1/oauth/grants` and `DELETE /api/v1/oauth/grants/:id` do the same (session only).
+  - **Limits:** registration allows 10 requests a minute per address and the token endpoint 30, on top of the global throttle.
+  - **Behind a proxy:** the discovery documents are served at the origin root, so a reverse proxy in front of the hub must
+    forward `/.well-known/oauth-protected-resource`, `/.well-known/oauth-protected-resource/api/v1/mcp` and
+    `/.well-known/oauth-authorization-server` along with `/api/v1`. The panel's own proxy already does.
 - **Connect Claude Code:** in the panel, Settings, API Tokens, "Token for MCP" creates a read-only token and shows the
   ready command: `claude mcp add --transport http tugra https://<your-hub>/api/v1/mcp --header "Authorization: Bearer <token>"`.
   Each token keeps a bounded history of its last 50 calls (time, IP, user agent, tool) at `GET /api/v1/api-tokens/:id/usage`
