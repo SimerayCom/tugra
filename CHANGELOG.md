@@ -7,6 +7,26 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.0-beta.35] - 2026-11-27
+
+- **Coolify teams land in the right Tugra teams.** After the Coolify read, each Coolify team is matched to the Tugra
+  team of the same name, or you pick one, or create it in place. Matching, scope and placement then stay inside the
+  mapped team, and the team filter says what it shows ("Olgu Bey team: 7 of 28").
+- **Icons on every resource.** Apps, databases and services show a brand icon from their image, or the site's own
+  favicon, fetched by the hub and cached. Pick a different icon from the set on the resource's settings page.
+- **Move from CapRover.** CapRover joins Coolify and Dokploy as an import source: apps, images, env, volumes, ports,
+  domains and databases are read with your dashboard password, which is never stored.
+- **MCP clients sign in with OAuth.** MCP clients can connect with OAuth 2.1 (PKCE, short-lived tokens, rotating
+  refresh tokens) next to personal access tokens. You pick the team and scopes on a consent screen, scopes never
+  exceed your role, and Settings lists connected clients with revoke.
+- **arm64 images.** Hub, web and updater images now ship for linux/arm64 next to amd64, so arm64 servers install from
+  the published images.
+- **366 one-click templates.** 82 new templates, among them Plausible, Prometheus, Loki, Ollama, LibreChat, Firefly
+  III, Ghostfolio, Baserow, Planka and ONLYOFFICE.
+- **Signed usage stats.** The anonymous usage stats go to api.tugra.io, signed with an ed25519 key your hub
+  generates, and are tied to a hub ID made from that key. Settings lists every field sent. `--no-stats` and
+  `TUGRA_STATS=0` turn them off; the older names still work.
+
 ## [0.1.0-beta.34] - 2026-11-27
 
 - **Coolify opens on the agent.** The import starts on "Connect through the agent", the recommended way that needs no
