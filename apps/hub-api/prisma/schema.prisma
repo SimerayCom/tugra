@@ -132,16 +132,16 @@ model SavedView {
 }
 
 model ApiToken {
-  id         String    @id @default(cuid())
-  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id         String        @id @default(cuid())
+  user       User          @relation(fields: [userId], references: [id], onDelete: Cascade)
   userId     String
   name       String
-  tokenHash  String    @unique
+  tokenHash  String        @unique
   prefix     String
-  scopes     String[]  @default(["read"]) // read | write | deploy | admin | read:secrets
+  scopes     String[]      @default(["read"]) // read | write | deploy | admin | read:secrets
   expiresAt  DateTime?
   lastUsedAt DateTime?
-  createdAt  DateTime  @default(now())
+  createdAt  DateTime      @default(now())
   uses       ApiTokenUse[]
 
   @@index([userId])
@@ -266,35 +266,35 @@ model Team {
 // @tugra/shared). Assigned to a member via Membership.teamRoleId; grants ONLY resource permissions
 // — member/role/team administration stays reserved for the built-in OWNER/ADMIN roles.
 model TeamRole {
-  id          String       @id @default(cuid())
-  team        Team         @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  id          String           @id @default(cuid())
+  team        Team             @relation(fields: [teamId], references: [id], onDelete: Cascade)
   teamId      String
   name        String
-  permissions String[]     @default([])
+  permissions String[]         @default([])
   // Customer-portal preset ("Client"): a member with this role only reaches the portal surface (their team's apps,
   // uptime and backups, plus deploy when granted) - every other route answers as if they were not a member.
-  portal      Boolean      @default(false)
+  portal      Boolean          @default(false)
   memberships Membership[]
   invitations TeamInvitation[]
-  createdAt   DateTime     @default(now())
+  createdAt   DateTime         @default(now())
 
   @@unique([teamId, name])
   @@index([teamId])
 }
 
 model TeamInvitation {
-  id        String   @id @default(cuid())
-  team      Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
-  teamId    String
-  email     String
-  role      Role     @default(VIEWER)
+  id         String    @id @default(cuid())
+  team       Team      @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  teamId     String
+  email      String
+  role       Role      @default(VIEWER)
   // Invite straight into a custom role (the Client portal presets); a deleted role revokes the pending invite.
   teamRole   TeamRole? @relation(fields: [teamRoleId], references: [id], onDelete: Cascade)
   teamRoleId String?
-  token     String   @unique
-  invitedBy String
-  expiresAt DateTime
-  createdAt DateTime @default(now())
+  token      String    @unique
+  invitedBy  String
+  expiresAt  DateTime
+  createdAt  DateTime  @default(now())
 
   @@unique([teamId, email])
   @@index([email])
@@ -398,134 +398,134 @@ model Membership {
 }
 
 model Server {
-  id                     String                  @id @default(cuid())
-  name                   String
+  id                       String                    @id @default(cuid())
+  name                     String
   // The server seal ("Tugra"): the server's unique signed identity, set at enrollment.
-  seal                   String?                 @unique
-  status                 ServerStatus            @default(PENDING)
-  enrollToken            String                  @unique
-  enrollTokenExpiresAt   DateTime?
+  seal                     String?                   @unique
+  status                   ServerStatus              @default(PENDING)
+  enrollToken              String                    @unique
+  enrollTokenExpiresAt     DateTime?
   // ed25519 public key the agent generated on-box (private key never leaves it).
-  agentPublicKey         String?
-  agentVersion           String?
-  hostname               String?
-  publicIp               String? // observed reachable IPv4 (or manual override)
-  publicIpv6             String? // observed reachable IPv6
-  ipSource               String                  @default("observed") // where publicIp came from: manual | reported (network interface) | metadata (cloud) | observed (hub saw it)
-  ipv6Source             String                  @default("observed") // same, for publicIpv6 (families are reconciled separately)
-  nameAuto               Boolean                 @default(false) // name was left blank at "Add server": adopt the agent's real hostname when it connects
-  reportedIps            String[]                @default([]) // agent-reported candidate interface IPs (reconcile)
-  wildcardDomain         String? // per-server magic-domain root (e.g. apps.example.com); blank → sslip.io
-  magicSuffix            String? // override the global magic suffix ("sslip.io" | "nip.io")
-  certMode               String                  @default("http") // "http" | "le-dns" | "custom" — wildcard cert policy
-  dnsProvider            String? // lego/Traefik DNS provider for DNS-01 (cloudflare, route53, ...)
-  dnsCredsEnc            String? // encrypted JSON of provider env vars ({ CF_DNS_API_TOKEN: "..." })
-  customCertResolver     String? // Traefik resolver name when certMode = "custom"
-  dnsCredentialId        String? // the team DnsCredential whose token was copied into dnsCredsEnc (coverage checks); SetNull on delete
-  dnsCredential          DnsCredential?          @relation(fields: [dnsCredentialId], references: [id], onDelete: SetNull)
-  os                     String?
-  osVersion              String?
-  arch                   String?
-  kernel                 String?
-  cpuCores               Int?
-  memTotalBytes          BigInt?
-  bootTime               DateTime?
-  gpuInventory           Json? // sanitized GPU probe snapshot (GpuInventory, server-ops/gpu-inventory.ts). NULL = never probed = UNKNOWN, never "no GPU"
-  gpuCheckedAt           DateTime? // when gpuInventory was last written
-  scanReport             Json? // sanitized server scan ("What runs on this server", server-ops/server-scan.ts). NULL = never scanned. Holds no env values or secrets.
-  scannedAt              DateTime? // when scanReport was last written
+  agentPublicKey           String?
+  agentVersion             String?
+  hostname                 String?
+  publicIp                 String? // observed reachable IPv4 (or manual override)
+  publicIpv6               String? // observed reachable IPv6
+  ipSource                 String                    @default("observed") // where publicIp came from: manual | reported (network interface) | metadata (cloud) | observed (hub saw it)
+  ipv6Source               String                    @default("observed") // same, for publicIpv6 (families are reconciled separately)
+  nameAuto                 Boolean                   @default(false) // name was left blank at "Add server": adopt the agent's real hostname when it connects
+  reportedIps              String[]                  @default([]) // agent-reported candidate interface IPs (reconcile)
+  wildcardDomain           String? // per-server magic-domain root (e.g. apps.example.com); blank → sslip.io
+  magicSuffix              String? // override the global magic suffix ("sslip.io" | "nip.io")
+  certMode                 String                    @default("http") // "http" | "le-dns" | "custom" — wildcard cert policy
+  dnsProvider              String? // lego/Traefik DNS provider for DNS-01 (cloudflare, route53, ...)
+  dnsCredsEnc              String? // encrypted JSON of provider env vars ({ CF_DNS_API_TOKEN: "..." })
+  customCertResolver       String? // Traefik resolver name when certMode = "custom"
+  dnsCredentialId          String? // the team DnsCredential whose token was copied into dnsCredsEnc (coverage checks); SetNull on delete
+  dnsCredential            DnsCredential?            @relation(fields: [dnsCredentialId], references: [id], onDelete: SetNull)
+  os                       String?
+  osVersion                String?
+  arch                     String?
+  kernel                   String?
+  cpuCores                 Int?
+  memTotalBytes            BigInt?
+  bootTime                 DateTime?
+  gpuInventory             Json? // sanitized GPU probe snapshot (GpuInventory, server-ops/gpu-inventory.ts). NULL = never probed = UNKNOWN, never "no GPU"
+  gpuCheckedAt             DateTime? // when gpuInventory was last written
+  scanReport               Json? // sanitized server scan ("What runs on this server", server-ops/server-scan.ts). NULL = never scanned. Holds no env values or secrets.
+  scannedAt                DateTime? // when scanReport was last written
   // Exposed-service count of the latest scan (null = host half not checked). Kept beside the JSON so server lists, which
   // never load scanReport, can show the fleet-wide warning cheaply.
-  scanExposedCount       Int?
-  cleanupEnabled         Boolean                 @default(false)
-  cleanupIntervalHours   Int?
-  cleanupCron            String? // optional 5-field cron; when set, overrides cleanupIntervalHours
-  cleanupThresholdPct    Int? // disk usage % at/above which a cleanup ALSO runs (extra trigger on top of the schedule, at most hourly)
-  cleanupExplicit        Boolean                 @default(false) // true once an operator saved a cleanup config (UI/API/bulk): the default-on backfill never overrides an explicit choice
-  description            String? // free-text operator note shown on the server page
-  timezone               String? // IANA tz (e.g. Europe/Istanbul); applied to the cleanup cron schedule
-  cleanupVolumes         Boolean                 @default(false)
-  lastCleanupAt          DateTime?
-  lastSeenAt             DateTime?
+  scanExposedCount         Int?
+  cleanupEnabled           Boolean                   @default(false)
+  cleanupIntervalHours     Int?
+  cleanupCron              String? // optional 5-field cron; when set, overrides cleanupIntervalHours
+  cleanupThresholdPct      Int? // disk usage % at/above which a cleanup ALSO runs (extra trigger on top of the schedule, at most hourly)
+  cleanupExplicit          Boolean                   @default(false) // true once an operator saved a cleanup config (UI/API/bulk): the default-on backfill never overrides an explicit choice
+  description              String? // free-text operator note shown on the server page
+  timezone                 String? // IANA tz (e.g. Europe/Istanbul); applied to the cleanup cron schedule
+  cleanupVolumes           Boolean                   @default(false)
+  lastCleanupAt            DateTime?
+  lastSeenAt               DateTime?
   // Hub endpoint list (agents advertising hub_endpoints_v1): what the agent last reported. `hubEndpointActive` is the URL
   // its session is on right now, `hubEndpointPrimary` the primary of the list it holds, `hubEndpointRev` that list's
   // revision, `hubEndpointError` why it refused the last pushed list (null = accepted). "Moved" = active == the hub's
   // current primary for the instance. Null = an older agent that never reports (it stays on its single install URL).
-  hubEndpointActive      String?
-  hubEndpointPrimary     String?
-  hubEndpointRev         BigInt?
-  hubEndpointError       String?
-  hubEndpointAt          DateTime?
-  team                   Team                    @relation(fields: [teamId], references: [id], onDelete: Cascade)
-  teamId                 String
+  hubEndpointActive        String?
+  hubEndpointPrimary       String?
+  hubEndpointRev           BigInt?
+  hubEndpointError         String?
+  hubEndpointAt            DateTime?
+  team                     Team                      @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  teamId                   String
   // Optional membership in a Cluster (a named group of this team's servers). SetNull: deleting the
   // cluster frees its servers rather than removing them. A server belongs to at most one cluster.
-  cluster                Cluster?                @relation(fields: [clusterId], references: [id], onDelete: SetNull)
-  clusterId              String?
+  cluster                  Cluster?                  @relation(fields: [clusterId], references: [id], onDelete: SetNull)
+  clusterId                String?
   // Docker Swarm formation. Role in the cluster's swarm (null = not joined); the docker node id
   // (for promote/demote/rm); the last sanitized join/leave error for this node (NEVER raw command output).
   // multiple MANAGER rows per cluster are now expected (multi-manager Raft HA) — the manager SET is
   // derived live from every swarmRole=MANAGER row, NOT just Cluster.swarmManagerId (which is only the PRIMARY).
-  swarmRole              SwarmRole?
-  swarmNodeId            String?
-  swarmError             String?
-  tags                   String[]                @default([])
+  swarmRole                SwarmRole?
+  swarmNodeId              String?
+  swarmError               String?
+  tags                     String[]                  @default([])
   // Granted agent capabilities the hub will sign commands for. Enforced verbatim; empty = none
   // (fail-safe). Legacy servers are backfilled to the full set by migration; new servers default
   // to all-except-terminal (least privilege — the interactive shell is opt-in).
-  capabilities           String[]                @default([])
+  capabilities             String[]                  @default([])
   // True for the box the hub itself runs on, auto-provisioned at first-owner registration on a turnkey
   // single-box install so the user never pastes an agent command. Drives home-mode
   // reachability heuristics. Manually-enrolled servers are false.
-  isLocal                Boolean                 @default(false)
+  isLocal                  Boolean                   @default(false)
   // How the server's reverse proxy publishes :80/:443: "public" (default, all interfaces)
   // | "loopback" (127.0.0.1 only, behind a front proxy) | "none" (no host port — tunnel-only, coexists with
   // another web server on the box). Applied when the proxy is (re)started.
-  proxyBind              String                  @default("public")
+  proxyBind                String                    @default("public")
   // Traffic Analytics (default ON for new servers — self-hosted: the operator's own visitor data on their
   // own server and hub; per-server toggle to turn off). When true the server's Traefik writes a field-minimal
   // JSON access log to a host file the agent can read; applied whenever the proxy is (re)created.
-  trafficAnalytics       Boolean                 @default(true)
+  trafficAnalytics         Boolean                   @default(true)
   // Cloud-provisioned servers only (null for manually-enrolled): the provider that created the VM,
   // its provider-side server id (needed to destroy it), and the credential used (SetNull so deleting
   // the credential leaves the server intact but drops its destroy-VM ability).
-  provider               String?
-  providerServerId       String?
-  cloudCredential        CloudCredential?        @relation(fields: [cloudCredentialId], references: [id], onDelete: SetNull)
-  cloudCredentialId      String?
+  provider                 String?
+  providerServerId         String?
+  cloudCredential          CloudCredential?          @relation(fields: [cloudCredentialId], references: [id], onDelete: SetNull)
+  cloudCredentialId        String?
   // True when an operator linked an EXISTING VM to a provider credential by hand (out-of-band power/rescue/
   // console). Tugra did not create that VM, so deleting the server record must never destroy it. False for a
   // VM Tugra provisioned itself (the link is written at provision time and enables destroy-VM on delete).
-  providerManualLink     Boolean                 @default(false)
-  metrics                Metric[]
-  containerMetrics       ContainerMetric[]
-  containerStates        ContainerState[]
-  containerLabels        ContainerLabel[]
-  containerEvents        ContainerEvent[]
-  metricRollups          MetricRollup[]
-  containerMetricRollups ContainerMetricRollup[]
-  metricRollups5m        MetricRollup5m[]
+  providerManualLink       Boolean                   @default(false)
+  metrics                  Metric[]
+  containerMetrics         ContainerMetric[]
+  containerStates          ContainerState[]
+  containerLabels          ContainerLabel[]
+  containerEvents          ContainerEvent[]
+  metricRollups            MetricRollup[]
+  containerMetricRollups   ContainerMetricRollup[]
+  metricRollups5m          MetricRollup5m[]
   containerMetricRollups5m ContainerMetricRollup5m[]
-  trafficMetrics         TrafficMetric[]
-  trafficPaths           TrafficPath[]
-  trafficCountries       TrafficCountry[]
-  trafficBreakdowns      TrafficBreakdown[]
-  trafficLatencies       TrafficLatency[]
-  trafficUniques         TrafficUnique[]
-  trafficUniqueHours     TrafficUniqueHour[]
-  logDrains              LogDrain[]
-  proxyDynamicConfigs    ProxyDynamicConfig[]
-  reboots                ServerReboot[]
-  coolifyInventory       CoolifyInventory?
-  coolifyHostGrants      CoolifyHostGrant[]
-  coolifySshTargets      CoolifySshTarget[]
-  tunnel                 ServerTunnel?
-  cost                   ServerCost?
-  rescales               ServerRescale[]
+  trafficMetrics           TrafficMetric[]
+  trafficPaths             TrafficPath[]
+  trafficCountries         TrafficCountry[]
+  trafficBreakdowns        TrafficBreakdown[]
+  trafficLatencies         TrafficLatency[]
+  trafficUniques           TrafficUnique[]
+  trafficUniqueHours       TrafficUniqueHour[]
+  logDrains                LogDrain[]
+  proxyDynamicConfigs      ProxyDynamicConfig[]
+  reboots                  ServerReboot[]
+  coolifyInventory         CoolifyInventory?
+  coolifyHostGrants        CoolifyHostGrant[]
+  coolifySshTargets        CoolifySshTarget[]
+  tunnel                   ServerTunnel?
+  cost                     ServerCost?
+  rescales                 ServerRescale[]
   // Cloud provider the host's own metadata service / DMI vendor says it runs on (agent-reported, allow-listed slug).
   // A hint for price estimates only; `provider` (above) is the provider an operator linked or Tugra provisioned.
-  cloudHint              String?
-  createdAt              DateTime                @default(now())
+  cloudHint                String?
+  createdAt                DateTime                  @default(now())
 
   @@index([clusterId])
   @@index([dnsCredentialId])
@@ -1004,44 +1004,44 @@ enum MonitorStatus {
 }
 
 model Monitor {
-  id           String           @id @default(cuid())
-  team         Team             @relation(fields: [teamId], references: [id], onDelete: Cascade)
-  teamId       String
-  name         String
-  type         MonitorType
-  target       String // url (HTTP) or host:port (TCP); a label for METRIC
-  serverId     String? // METRIC: which server's metrics to watch
-  metric       String? // METRIC: DISK | CPU | MEM | LOAD1 | LOAD5 | LOAD15 | TEMP | NET
-  thresholdPct Int? // METRIC (DISK/CPU/MEM): alarm when usage >= this %
+  id             String              @id @default(cuid())
+  team           Team                @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  teamId         String
+  name           String
+  type           MonitorType
+  target         String // url (HTTP) or host:port (TCP); a label for METRIC
+  serverId       String? // METRIC: which server's metrics to watch
+  metric         String? // METRIC: DISK | CPU | MEM | LOAD1 | LOAD5 | LOAD15 | TEMP | NET
+  thresholdPct   Int? // METRIC (DISK/CPU/MEM): alarm when usage >= this %
   thresholdValue Float? // METRIC (LOAD*, TEMP in °C, NET in MB/s): alarm when the reading >= this
-  intervalSec  Int              @default(30)
-  retries      Int              @default(1)
-  timeoutMs    Int              @default(10000)
-  resendEvery  Int              @default(0) // re-notify every N consecutive down beats (0 = off)
-  status       MonitorStatus    @default(PENDING)
-  failCount    Int              @default(0) // consecutive failures (for retry → DOWN)
-  downCount    Int              @default(0) // consecutive down beats (for resend)
-  enabled      Boolean          @default(true)
+  intervalSec    Int                 @default(30)
+  retries        Int                 @default(1)
+  timeoutMs      Int                 @default(10000)
+  resendEvery    Int                 @default(0) // re-notify every N consecutive down beats (0 = off)
+  status         MonitorStatus       @default(PENDING)
+  failCount      Int                 @default(0) // consecutive failures (for retry → DOWN)
+  downCount      Int                 @default(0) // consecutive down beats (for resend)
+  enabled        Boolean             @default(true)
   // Auto-created uptime monitor for an app's domain (auto=true, appId set).
-  appId        String?
-  auto         Boolean          @default(false)
+  appId          String?
+  auto           Boolean             @default(false)
   // HTTP / KEYWORD options (all optional; null/empty = the previous plain GET behaviour).
   method         String? // GET | HEAD | POST | PUT | PATCH | DELETE | OPTIONS
   keyword        String? // KEYWORD: text the response body must contain (case-sensitive)
-  keywordInvert  Boolean  @default(false) // KEYWORD: DOWN when the keyword IS present
-  acceptedStatus String[] @default([]) // e.g. ["200-299","401"]; empty = 200-399
+  keywordInvert  Boolean             @default(false) // KEYWORD: DOWN when the keyword IS present
+  acceptedStatus String[]            @default([]) // e.g. ["200-299","401"]; empty = 200-399
   httpOptionsEnc String? // encrypted JSON {headers?, basicAuth?, body?} (secrets never stored plaintext)
-  ignoreTls      Boolean  @default(false)
-  maxRedirects   Int      @default(10)
-  upsideDown     Boolean  @default(false) // UP when the check FAILS (and vice versa)
+  ignoreTls      Boolean             @default(false)
+  maxRedirects   Int                 @default(10)
+  upsideDown     Boolean             @default(false) // UP when the check FAILS (and vice versa)
   // DNS options.
   dnsRecordType  String? // A | AAAA | CNAME | MX | NS | TXT | SRV | CAA | PTR
   dnsServer      String? // resolver address; null = the hub's system resolver
   dnsExpect      String? // optional: an answer must contain this value
-  heartbeats   Heartbeat[]
-  channels     MonitorChannel[]
-  statusPages  StatusPageMonitor[]
-  createdAt    DateTime         @default(now())
+  heartbeats     Heartbeat[]
+  channels       MonitorChannel[]
+  statusPages    StatusPageMonitor[]
+  createdAt      DateTime            @default(now())
 
   @@index([appId])
 }
@@ -1141,11 +1141,11 @@ model MonitorChannel {
 /// still holds because Postgres treats NULLs as distinct (any number of token sources per team, one row per
 /// GitHub App). tokenEnc is encrypted at rest and NEVER returned in any view.
 model GitSource {
-  id               String        @id @default(cuid())
-  team             Team          @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  id               String                  @id @default(cuid())
+  team             Team                    @relation(fields: [teamId], references: [id], onDelete: Cascade)
   teamId           String
   name             String
-  provider         String        @default("github") // github | gitea | forgejo | codeberg
+  provider         String                  @default("github") // github | gitea | forgejo | codeberg
   appId            String?
   appSlug          String?
   clientId         String?
@@ -1157,11 +1157,11 @@ model GitSource {
   apiUrl           String? // token providers: the instance base URL (https, no trailing slash), e.g. https://codeberg.org
   tokenEnc         String? // token providers: the encrypted personal access token
   /// Instance-owner switch: every team may use this source (import linking, app create/link, repo/branch lists).
-  sharedAllTeams   Boolean       @default(false)
+  sharedAllTeams   Boolean                 @default(false)
   applications     Application[]
   /// GitHub App: every account / organization the App is installed on (the legacy `installationId` stays the primary).
   installations    GitSourceInstallation[]
-  createdAt        DateTime      @default(now())
+  createdAt        DateTime                @default(now())
 
   @@unique([teamId, appId])
   @@index([teamId])
@@ -1401,20 +1401,20 @@ model BulkTask {
 /// A short-lived, encrypted connection to an external source PaaS (e.g. Coolify) for the importer. The API
 /// token is stored encrypted-at-rest (CryptoService); baseUrl is non-secret. Scoped to a team + its creator.
 model ImportSession {
-  id         String    @id @default(cuid())
-  teamId     String
-  actorId    String
-  sourceKind String // "coolify" (future: dokploy | caprover | dokku)
-  baseUrl    String // the external instance base URL (non-secret)
-  tokenEnc   String // CryptoService-encrypted API token — never returned by any endpoint
-  status     String    @default("active") // active | revoked
-  scopeKey   String    @default("") // user label of the source team/token (Coolify tokens are team-scoped) — keys the mapping profile
-  expiresAt  DateTime
-  createdAt  DateTime  @default(now())
-  lastUsedAt DateTime?
+  id            String    @id @default(cuid())
+  teamId        String
+  actorId       String
+  sourceKind    String // "coolify" (future: dokploy | caprover | dokku)
+  baseUrl       String // the external instance base URL (non-secret)
+  tokenEnc      String // CryptoService-encrypted API token — never returned by any endpoint
+  status        String    @default("active") // active | revoked
+  scopeKey      String    @default("") // user label of the source team/token (Coolify tokens are team-scoped) — keys the mapping profile
+  expiresAt     DateTime
+  createdAt     DateTime  @default(now())
+  lastUsedAt    DateTime?
   // Coolify hub takeover (lane A). `transport` "api" = the token path above; "agent" = read through the agent on the Coolify host:
   // baseUrl is then the synthetic `agent://<serverId>` and tokenEnc stays "" (the rotation skips an empty value).
-  transport     String  @default("api") // api | agent
+  transport     String    @default("api") // api | agent
   agentServerId String? // the Tugra server whose agent reads Coolify (agent transport only)
   snapshotEnc   String? // CryptoService-encrypted snapshot of the last agent read (secret-free plan source); never returned by any endpoint
   sessionKeyEnc String? // CryptoService-encrypted per-session X25519 private key of the sealed pipeline; never returned by any endpoint
@@ -2199,20 +2199,20 @@ model Backup {
 // destinationId is a soft ref to BackupDestination (null => LOCAL /etc/tugra/backups/hub); no FK, like
 // Database.backupDestinationId. Kept out of InstanceSettings (already a grab-bag) for an isolated migration.
 model HubBackupConfig {
-  id            String   @id @default("singleton")
-  enabled       Boolean  @default(false)
-  intervalHours Int      @default(24)
-  retention     Int      @default(7)
-  destinationId String?
+  id                 String   @id @default("singleton")
+  enabled            Boolean  @default(false)
+  intervalHours      Int      @default(24)
+  retention          Int      @default(7)
+  destinationId      String?
   // Optional 5-field cron (wins over intervalHours) + age / total-size (GiB) retention. All nullable.
-  cron          String?
-  retentionDays Int?
-  maxSizeGb     Int?
+  cron               String?
+  retentionDays      Int?
+  maxSizeGb          Int?
   // Optional third copy: every run also writes to this destination (null = none). Soft ref like destinationId.
   extraDestinationId String?
   // Monthly restore drill into a throwaway container (on unless switched off).
-  drillEnabled  Boolean  @default(true)
-  updatedAt     DateTime @updatedAt
+  drillEnabled       Boolean  @default(true)
+  updatedAt          DateTime @updatedAt
 }
 
 // One restore drill of the hub's own backup: the latest dump is restored into a throwaway Postgres container and
@@ -2342,60 +2342,60 @@ model CatalogSnapshot {
 // registration gating, edition, self-update and API gating. Consumed by later features; created on
 // first access via InstanceSettingsService (get-or-create).
 model InstanceSettings {
-  id                  String    @id @default("singleton")
-  initializedAt       DateTime? // set when the first user registers (bootstrap complete)
-  allowRegistration   Boolean   @default(false) // closed after the first user; owner re-opens or invites
-  edition             String    @default("community") // community | pro | cloud
-  publicUrl           String?
-  acmeEmail           String?
+  id                   String    @id @default("singleton")
+  initializedAt        DateTime? // set when the first user registers (bootstrap complete)
+  allowRegistration    Boolean   @default(false) // closed after the first user; owner re-opens or invites
+  edition              String    @default("community") // community | pro | cloud
+  publicUrl            String?
+  acmeEmail            String?
   // Panel-TLS (DİLİM 1): the control panel's own HTTPS hostname (opt-in). When set (install.sh --auto-tls
   // or env PANEL_DOMAIN), the hub provisions a Traefik file-provider router for the panel. env PANEL_TLS=1 +
   // PANEL_DOMAIN win over this (synced to DB at bootstrap). Null = bring-your-own-proxy (unchanged).
-  panelDomain         String?
+  panelDomain          String?
   // IP-mode transport (http://<ip>/ install): the self-signed leaf certificate the proxy serves on :443 for the host-less
   // routes, generated once and persisted so its fingerprint (the agent pin) never changes. PEM + encrypted PEM key.
-  ipTlsCertPem        String?
-  ipTlsKeyEnc         String?
+  ipTlsCertPem         String?
+  ipTlsKeyEnc          String?
   // Fingerprint (sha256:<hex>) of the certificate the LOCAL proxy was last successfully configured to serve; the agent
   // install command only switches to wss://<ip> once this equals the persisted certificate (a path that is really up).
-  ipTlsServedFp       String?
+  ipTlsServedFp        String?
   // Agent address grace after the panel address moved: the old hosts / the IP route stay routable for `/agent` until every
   // agent reports the new endpoint, the owner confirms, or `expiresAt`. Shape: AgentEndpointGrace (agent-endpoints/grace.ts).
-  agentEndpointGrace  Json?
+  agentEndpointGrace   Json?
   // On for new installs: the hub applies patch-level updates and rolls agents out one by one. Existing rows keep
   // the owner's choice (the migration only changes the column default).
-  autoUpdate          Boolean   @default(true)
+  autoUpdate           Boolean   @default(true)
   // Release channel to track. "auto" (the default) = automatic: a prerelease build (0.1.0-beta.N) tracks "beta",
   // a release build tracks "stable" (see @tugra/shared autoUpdateChannel); "stable" / "beta" are explicit owner
   // pins. A sentinel rather than NULL so the PREVIOUS hub image (required-string client) can still read the row
   // after a rollback of the upgrade that introduced it.
-  updateChannel       String    @default("auto")
-  cachedLatestVersion String?
+  updateChannel        String    @default("auto")
+  cachedLatestVersion  String?
   // The channel `cachedLatestVersion` was read from; a cache from another channel is ignored after a pin change.
-  cachedLatestChannel String?
-  cachedNotice        Json? // signed top-level operator notice from the update manifest, or null
+  cachedLatestChannel  String?
+  cachedNotice         Json? // signed top-level operator notice from the update manifest, or null
   // Last SUCCESSFUL signed manifest check (set even when the tracked channel has no entry — the check itself
   // worked). Drives "Last checked" in the Updates card and the panel-load stale refresh.
-  updateLastCheckedAt DateTime?
+  updateLastCheckedAt  DateTime?
   // Machine reason of the most recent FAILED attempt (fetch / bad signature / settings / persist …); NULL when
   // the most recent attempt succeeded. Owner-visible so "why no update?" has an answer.
   updateLastCheckError String?
-  apiEnabled          Boolean   @default(true)
-  apiAllowedIps       String[]  @default([])
+  apiEnabled           Boolean   @default(true)
+  apiAllowedIps        String[]  @default([])
   // Owner-set policy: owners/admins must have two-factor authentication on. Enforced by TwoFactorRequiredGuard
   // (a user without 2FA is limited to the account self-service routes until they enrol).
-  require2faForAdmins Boolean   @default(false)
+  require2faForAdmins  Boolean   @default(false)
   // OIDC single sign-on (Pro edition). Owner-configured IdP; the client secret is stored encrypted
   // (CryptoService) and never surfaced in any view. Empty allowedDomains = no JIT domain restriction.
-  oidcEnabled         Boolean   @default(false)
-  oidcIssuer          String?
-  oidcClientId        String?
-  oidcClientSecretEnc String? // libsodium-encrypted; decrypted only at token exchange
-  oidcAllowedDomains  String[]  @default([]) // JIT provisioning is limited to these email domains when non-empty
+  oidcEnabled          Boolean   @default(false)
+  oidcIssuer           String?
+  oidcClientId         String?
+  oidcClientSecretEnc  String? // libsodium-encrypted; decrypted only at token exchange
+  oidcAllowedDomains   String[]  @default([]) // JIT provisioning is limited to these email domains when non-empty
   // A signed license (EdDSA JWT, issued by Tugra's proprietary billing service) that unlocks the Pro/Cloud
   // edition. Safe to store: it is signature-protected, so a DB write can't forge an entitlement — the hub
   // verifies it against TUGRA_LICENSE_PUBLISHER_KEY on every load. Null = no license (env/community edition).
-  licenseToken        String?
+  licenseToken         String?
   // Anonymous usage stats (ON by default, opt-out). `telemetryEnabled` is the owner-UI off-switch; the
   // env var TUGRA_STATS=0 (legacy name TUGRA_TELEMETRY=0) is a deployment-level HARD off that overrides it
   // (install --no-stats / headless CI). The hub identity is an ed25519 key pair generated once: the public
@@ -2403,36 +2403,38 @@ model InstanceSettings {
   // chars of sha256(public key) — the ONLY identifier ever sent; no IP, hostname, domain, email, app name or
   // user data leaves the box. `telemetryLastSentAt` is the last successful send (drives the UI + avoids
   // double-sends).
-  telemetryEnabled    Boolean   @default(true)
-  hubPublicKey        String?
-  hubPrivateKeyEnc    String?
-  telemetryLastSentAt DateTime?
+  telemetryEnabled     Boolean   @default(true)
+  /// Unused since the signed hub identity; kept so an older image still reads this table after a rollback.
+  telemetryInstanceId  String?
+  hubPublicKey         String?
+  hubPrivateKeyEnc     String?
+  telemetryLastSentAt  DateTime?
   // Web Push (VAPID, RFC 8292): the hub's P-256 application-server key pair, generated once on first use. The public key
   // (uncompressed point, base64url) is handed to browsers as applicationServerKey; the private key (PKCS8 PEM) is encrypted.
-  vapidPublicKey      String?
-  vapidPrivateKeyEnc  String?
+  vapidPublicKey       String?
+  vapidPrivateKeyEnc   String?
   // White-label (Pro edition). Owner-set branding that replaces the Tugra name/logo/favicon/accent and can
   // hide the "Powered by Tugra" footer. Read publicly (the login page themes before auth) BUT only applied
   // while the instance is Pro+ — a Community or lapsed-license instance always shows the Tugra defaults, so
   // these can't become a free rebrand. URLs are http(s), accent is a #rrggbb hex (validated in the DTO).
-  brandName           String?
-  brandLogoUrl        String?
-  brandFaviconUrl     String?
-  brandAccentColor    String?
-  brandHidePoweredBy  Boolean   @default(false)
+  brandName            String?
+  brandLogoUrl         String?
+  brandFaviconUrl      String?
+  brandAccentColor     String?
+  brandHidePoweredBy   Boolean   @default(false)
   // Outbound mail (in-panel Email settings). mailProvider: "none" (default → fall back to the MAIL_* env) |
   // "smtp" | "resend". The SMTP password and the Resend API key are stored ENCRYPTED (CryptoService) and are
   // never surfaced in any view — write-only. Resend is a preset SMTP transport (smtp.resend.com:465) so it
   // needs only the key + from. When the provider is "none" the env config (MAIL_*) is used unchanged.
-  mailProvider        String    @default("none")
-  mailHost            String?
-  mailPort            Int?
-  mailSecure          Boolean   @default(false)
-  mailUser            String?
-  mailPassEnc         String? // libsodium-encrypted SMTP password
-  mailFrom            String?
-  mailResendKeyEnc    String? // libsodium-encrypted Resend API key
-  updatedAt           DateTime  @updatedAt
+  mailProvider         String    @default("none")
+  mailHost             String?
+  mailPort             Int?
+  mailSecure           Boolean   @default(false)
+  mailUser             String?
+  mailPassEnc          String? // libsodium-encrypted SMTP password
+  mailFrom             String?
+  mailResendKeyEnc     String? // libsodium-encrypted Resend API key
+  updatedAt            DateTime  @updatedAt
 }
 
 // ── Fleet rollouts (canary → waves → health gate → halt/resume) ─────────────────────────────────────────────
@@ -3073,11 +3075,14 @@ model StatusSubscriber {
   email       String
   confirmedAt DateTime?
   createdAt   DateTime   @default(now())
-  /** When the confirmation email last went out (resends are throttled). */
+  /**
+   * When the confirmation email last went out (resends are throttled).
+   */
   mailedAt    DateTime   @default(now())
 
   @@unique([pageId, email])
 }
+
 // The monthly price of one server. Only a price the hub READ from the provider ("provider") or an operator TYPED
 // ("manual") is stored; an estimate from the bundled public price snapshot is computed on read and never persisted.
 // Money is integer minor units (cents) in `currency`, excluding VAT. No secret lives here.
