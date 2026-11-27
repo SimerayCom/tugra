@@ -252,7 +252,7 @@ export class CoolifySource implements ImportSource {
     // Read the project tree before the fleet is built so an unreadable /projects lands in the plan's warnings.
     // Services carry `environment_id` too (on the list row and on the detail read, either may be the one that has it).
     const tree = await this.readProjectTree([...listedApps, ...databases, ...serviceList, ...services], tryGet);
-    const fleet = buildCoolifyFleet({ servers, resourcesByServer, apps, databases, services, envsByResource, envReportByResource, volumesByResource, backupsByResource, s3Storages, warnings });
+    const fleet = buildCoolifyFleet({ servers, resourcesByServer, apps, databases, services, envsByResource, envReportByResource, volumesByResource, backupsByResource, s3Storages, warnings, ...(tree ? { locByUuid: tree.locByUuid } : {}) });
     return tree ? placeInTree(fleet, tree) : fleet;
   }
 

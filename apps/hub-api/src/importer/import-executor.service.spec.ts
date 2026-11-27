@@ -986,8 +986,31 @@ describe("ImportExecutorService — DB credential carry (L4)", () => {
     });
   });
 
+  it("a custom image (pgvector) is kept when the credentials are not carried: created through createForImport with the image and a fresh password", async () => {
+    const f = dbFleet({ version: "16", image: "pgvector/pgvector:0.8.0-pg16", externalPort: undefined });
+    const h = harness({ fleet: f }); // coolify-style source: method absent
+    await run(h, f);
+    expect(h.dbs.create).not.toHaveBeenCalled();
+    expect(h.dbs.createForImport).toHaveBeenCalledTimes(1);
+    const input = h.dbs.createForImport.mock.calls[0][1];
+    expect(input).toMatchObject({ name: "orders", engine: "POSTGRES", version: "16", image: "pgvector/pgvector:0.8.0-pg16", username: "tugra", database: "orders" });
+    expect(input.password).toMatch(/^[A-Za-z0-9_-]{32}$/);
+    const upd = dbTaskUpdate(h);
+    expect(upd.status).toBe("DONE");
+    expect(upd.result).toEqual({ name: "orders", databaseId: "db-new", credentialsCarried: false, imageCarried: true });
+    expect(upd.output).toMatch(/fresh password minted/);
+    expect(JSON.stringify(upd)).not.toContain(input.password);
+  });
+
+  it("a custom image kept without credentials still follows the TLS expectation and the mapped database identifier", async () => {
+    const f = dbFleet({ version: "16", image: "timescale/timescaledb:2.17.2-pg16", externalPort: undefined, tls: { enabled: true } });
+    const h = harness({ fleet: f });
+    await run(h, f);
+    expect(h.dbs.createForImport).toHaveBeenCalledWith("user-1", expect.objectContaining({ image: "timescale/timescaledb:2.17.2-pg16", ssl: true }));
+  });
+
   it("falls back to fresh credentials + a warning when the source has no fetchDbCredentials", async () => {
-    const f = dbFleet();
+    const f = dbFleet({ image: "postgres:16" });
     const h = harness({ fleet: f }); // coolify-style source: method absent
     await run(h, f);
     expect(h.dbs.createForImport).not.toHaveBeenCalled();
@@ -1002,7 +1025,7 @@ describe("ImportExecutorService — DB credential carry (L4)", () => {
     ["returns undefined", () => undefined],
     ["returns no password", () => ({ user: "u", rootPassword: ROOT_PW })],
   ])("falls back to fresh credentials when fetchDbCredentials %s", async (_n, dbCreds) => {
-    const f = dbFleet();
+    const f = dbFleet({ image: "postgres:16" });
     const h = harness({ fleet: f, dbCreds: dbCreds as never });
     await run(h, f);
     expect(h.dbs.createForImport).not.toHaveBeenCalled();

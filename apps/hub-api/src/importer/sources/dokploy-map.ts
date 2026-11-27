@@ -646,7 +646,7 @@ export function mapDatabase(db: DokployDatabase, engine: TugraDbEngine, serverRe
     sourceRef: db.appName,
     name: db.name ?? db.appName,
     engine,
-    version: versionFromImage(db.dockerImage),
+    version: versionFromImage(db.dockerImage, engine),
     image: db.dockerImage ?? undefined,
     credentials: {
       username: db.databaseUser ?? (engine === "REDIS" || engine === "KEYDB" || engine === "DRAGONFLY" ? "default" : undefined),

@@ -327,7 +327,7 @@ export function mapDatabase(app: CaproverAppDefinition, engine: TugraDbEngine): 
     sourceRef: app.appName,
     name: app.appName,
     engine,
-    version: versionFromImage(image),
+    version: versionFromImage(image, engine),
     image,
     credentials: { ...(username ? { username } : {}), ...(database ? { database } : {}), secretRef: app.appName },
     hostInternal: caproverHost(app.appName),

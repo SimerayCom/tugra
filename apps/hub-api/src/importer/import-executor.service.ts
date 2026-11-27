@@ -32,7 +32,7 @@ import { buildServiceChecklist, type ChecklistItem } from "./service-checklist";
 import { validateServiceChoices } from "./service-choices";
 import { generatedOnlyTemplate } from "../templates/catalog";
 import { composeProject } from "../deploy/compose-script";
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { remapEnv, credsFromUrlForHost, type DbRemapTarget, type AppRemapTarget, type ServiceRemapTarget } from "./env-rewrite";
 import { tokenizeDockerOptions } from "../deploy/deploy-script";
 import type { DatabaseView } from "../databases/databases.service";
@@ -45,6 +45,7 @@ import { hasServerMap, placementFor, serverRefOfItemRef, unplacedRefs } from "./
 import { assertPlacementTargetReady } from "./placement-target";
 import type { EffectiveItem, ResolvedMapping } from "./import-mapping";
 import { slug as dbSlug } from "../databases/databases.service";
+import { resolveImage } from "../databases/database-script";
 import { VX_DATA_PREFIX, isVxDataTask, vxEnabled } from "./volume-stream/vx-constants";
 import { VxApplyService } from "./volume-stream/vx-apply.service";
 
@@ -1208,12 +1209,29 @@ export class ImportExecutorService {
         const input: CreateDatabaseInput = { name: eff?.name ?? db.name, serverId: targetServerId, engine, version: db.version, environmentId };
         // Under a mapping the internal identifier is PINNED to what the un-renamed import would have produced
         // (slug of the SOURCE name) or the mapped override — a display rename never changes it.
-        created = eff
-          ? await this.dbs.createPinned(userId, input, { database: eff.dbIdentifier ?? dbSlug(db.name).slice(0, 63) })
-          : await this.dbs.create(userId, input); // re-checks `databases` on the TARGET team; no deploy
-        flags = { credentialsCarried: false };
+        const identifier = eff ? eff.dbIdentifier ?? dbSlug(db.name).slice(0, 63) : dbSlug(db.name).slice(0, 63);
+        // A custom image (pgvector, timescaledb, a Valkey tag) is the database the app was built for: a stock image would start without its
+        // extension and a restore that needs it would fail. It is kept even when the credentials are not carried, with a fresh password.
+        const customImage = !!db.image && db.image !== resolveImage(engine, db.version);
+        if (customImage) {
+          created = await this.dbs.createForImport(userId, {
+            name: input.name,
+            serverId: targetServerId,
+            engine,
+            version: db.version,
+            image: db.image,
+            username: "tugra",
+            password: randomBytes(24).toString("base64url"),
+            database: identifier,
+            environmentId,
+            ...(wantsTls ? { ssl: true } : {}),
+          });
+        } else {
+          created = eff ? await this.dbs.createPinned(userId, input, { database: identifier }) : await this.dbs.create(userId, input); // re-checks `databases` on the TARGET team; no deploy
+        }
+        flags = { credentialsCarried: false, ...(customImage ? { imageCarried: true } : {}) };
         notes.push("DB credentials not carried — fresh password minted; rewire the app DB_PASSWORD");
-        if (wantsTls) {
+        if (wantsTls && !customImage) {
           try {
             await this.dbs.setSsl(userId, created.id, true); // a NEW database: the flag is read at its first provision
           } catch {

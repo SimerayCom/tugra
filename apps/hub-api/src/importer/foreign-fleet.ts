@@ -65,12 +65,12 @@ export interface ForeignDomain {
   primary?: boolean;
 }
 
-/** A link from an app to a resource it depends on (a database, or another app it talks to by internal DNS).
+/** A link from an app to a resource it depends on (a database, a service stack, or another app it talks to by internal DNS).
  *  Drives the executor's ordering AND the env host-rewrite (e.g. Coolify uuid host, CapRover srv-captain--x). */
 export interface ForeignLink {
-  kind: "database" | "app";
+  kind: "database" | "app" | "service";
   ref: string; // the sourceRef of the linked resource
-  envKey?: string; // the env var that carries its URL/host (to rewrite)
+  envKey?: string; // the env var that carries its URL/host (to rewrite); absent when the link is only inferred from the shared environment
   internalHost?: string; // the source-side internal hostname to replace
 }
 

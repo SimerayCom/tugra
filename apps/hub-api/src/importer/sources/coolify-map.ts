@@ -11,6 +11,7 @@ import type {
   ForeignDomain,
   ForeignEnv,
   ForeignFleet,
+  ForeignLink,
   ForeignService,
   ForeignServiceMember,
   ForeignVolume,
@@ -239,6 +240,9 @@ export interface CoolifyFleetInput {
   s3Storages?: CoolifyS3Storage[];
   /** Non-fatal fetch warnings accumulated by the adapter (a partial 403/404 during enumeration). */
   warnings?: string[];
+  /** resourceUuid → the source project/environment it lives in (the project tree). Lets an app whose variables cannot be read be linked
+   *  to the databases and services of its own environment. Absent = no tree. */
+  locByUuid?: ReadonlyMap<string, { projectRef: string; environmentRef: string }>;
 }
 
 const DB_ENGINE: Record<string, TugraDbEngine | "UNKNOWN"> = {
@@ -468,13 +472,29 @@ export function parsePorts(s: string | null | undefined): number[] {
     .filter((n) => Number.isInteger(n) && n > 0 && n <= 65535);
 }
 
-/** First version-looking token of an image TAG: "postgres:17-alpine" → "17". Robust against a registry
- *  host:port ("registry:5000/postgres:16" → "16") and digest-pinned images ("repo@sha256:…" → undefined). */
-export function versionFromImage(image: string | null | undefined): string | undefined {
+/** The repository names whose tag IS the PostgreSQL version (`postgres:17-alpine`, `bitnami/postgresql:16.2.0`, `postgis/postgis:16-3.4`). */
+const STOCK_POSTGRES_REPOS = new Set(["postgres", "postgresql", "postgis"]);
+
+/**
+ * The version of an image TAG: "postgres:17-alpine" → "17". Robust against a registry host:port ("registry:5000/postgres:16" →
+ * "16") and digest-pinned images ("repo@sha256:…" → undefined).
+ *
+ * For PostgreSQL the number that matters is the server major, and an extension image puts ITS OWN version first
+ * (`pgvector/pgvector:0.8.0-pg16`, `timescale/timescaledb:2.17.2-pg16`): the `pgNN` part of the tag wins; a stock Postgres repository
+ * keeps its leading number; any other Postgres image with no `pgNN` part has no readable major, so no version is claimed (the plan
+ * then asks for one) instead of the extension's version being taken for it.
+ */
+export function versionFromImage(image: string | null | undefined, engine?: string): string | undefined {
   if (!image || image.includes("@")) return undefined; // digest-pinned → no version tag
   const lastSegment = image.split("/").pop() ?? ""; // drop registry host[:port] + path
   if (!lastSegment.includes(":")) return undefined;
-  const tag = lastSegment.split(":").pop();
+  const [repo, ...rest] = lastSegment.split(":");
+  const tag = rest.pop();
+  if (engine === "POSTGRES") {
+    const major = tag?.match(/(?:^|[^a-z0-9])pg(\d{1,2})(?!\d)/i)?.[1];
+    if (major) return major;
+    if (!STOCK_POSTGRES_REPOS.has(repo.toLowerCase())) return undefined;
+  }
   return tag?.match(/\d+(\.\d+)*/)?.[0];
 }
 
@@ -768,7 +788,7 @@ export function mapDatabase(
     sourceRef: db.uuid,
     name: db.name ?? db.uuid,
     engine,
-    version: valkey ? undefined : versionFromImage(db.image),
+    version: valkey ? undefined : versionFromImage(db.image, engine),
     image: db.image ?? undefined,
     credentials: { username: username ?? undefined, database: database ?? undefined, secretRef: db.uuid },
     hostInternal: db.uuid,
@@ -870,6 +890,37 @@ export function appSourceHealth(a: Pick<CoolifyApp, "status" | "restart_count">)
   return { health: coolifyHealth(status), ...(status ? { status } : {}), restartCount };
 }
 
+/** A Coolify uuid is 24 characters; a shorter token is too likely to occur by chance inside another word. */
+const MIN_LINK_TOKEN = 12;
+
+/**
+ * Pure: the databases and services one app's variables point at. A Coolify resource is reached by its uuid (a database's container is
+ * named `<uuid>`, a service member's `<member>-<uuid>`), so a value that contains the uuid names it. Values are only READ here (never
+ * carried or kept). `unreadable` is true when at least one variable has no readable value (a read-only token, no consent yet, a locked
+ * variable, a failed read): then the variables cannot rule a dependency out. Sorted so the derived `dependsOn` (hence the plan hash) does
+ * not depend on the order of the rows.
+ */
+export function coolifyLinksFromEnv(envs: CoolifyEnv[] | undefined, targets: ReadonlyArray<{ kind: "database" | "service"; ref: string }>): { links: ForeignLink[]; unreadable: boolean } {
+  if (!envs) return { links: [], unreadable: true };
+  const links = new Map<string, ForeignLink>();
+  let unreadable = false;
+  for (const e of envs) {
+    const value = e.real_value ?? e.value;
+    if (typeof value !== "string") {
+      unreadable = true;
+      continue;
+    }
+    // A shared-variable reference the source did not expand ({{project.DB_URL}}) hides the host it stands for.
+    if (e.real_value === undefined && (e.is_shared === true || value.includes("{{"))) unreadable = true;
+    const text = value.toLowerCase();
+    for (const t of targets) {
+      const token = t.ref.toLowerCase();
+      if (token.length >= MIN_LINK_TOKEN && !links.has(t.ref) && text.includes(token)) links.set(t.ref, { kind: t.kind, ref: t.ref, envKey: e.key, internalHost: t.ref });
+    }
+  }
+  return { links: [...links.values()].sort((a, b) => a.ref.localeCompare(b.ref)), unreadable };
+}
+
 /** Assemble a full {@link ForeignFleet} from the Coolify resources discover already fetched. */
 export function buildCoolifyFleet(input: CoolifyFleetInput): ForeignFleet {
   const serverOf = new Map<string, string>();
@@ -892,6 +943,18 @@ export function buildCoolifyFleet(input: CoolifyFleetInput): ForeignFleet {
   const services = input.services.map((s) => {
     const serverRef = serverOf.get(s.uuid);
     return mapService(s, { serverRef, serverName: serverRef ? serverNameOf.get(serverRef) : undefined });
+  });
+
+  // What each app needs: the databases and services its variables name; where they cannot be read, the ones of its own environment (an app and
+  // its database rarely live apart in one Coolify environment). The plan turns the links into `dependsOn`, which the scope step reads to offer
+  // "Add them" when an app is picked without them.
+  const linkTargets = [...databases.map((d) => ({ kind: "database" as const, ref: d.sourceRef })), ...services.map((s) => ({ kind: "service" as const, ref: s.sourceRef }))];
+  const linkedApps = apps.map((a) => {
+    const { links, unreadable } = coolifyLinksFromEnv(input.envsByResource[a.sourceRef], linkTargets);
+    const env = unreadable ? input.locByUuid?.get(a.sourceRef)?.environmentRef : undefined;
+    const sameEnv = env ? linkTargets.filter((t) => !links.some((l) => l.ref === t.ref) && input.locByUuid?.get(t.ref)?.environmentRef === env).map((t): ForeignLink => ({ kind: t.kind, ref: t.ref })) : [];
+    const all = [...links, ...sameEnv].sort((x, y) => x.ref.localeCompare(y.ref));
+    return all.length ? { ...a, links: all } : a;
   });
 
   const warnings: string[] = [...(input.warnings ?? [])];
@@ -932,7 +995,7 @@ export function buildCoolifyFleet(input: CoolifyFleetInput): ForeignFleet {
 
   return {
     servers: input.servers.map(foreignServerOf),
-    apps,
+    apps: linkedApps,
     databases,
     services,
     volumes: [], // Coolify volumes are always resource-owned (attached above); no standalone volumes
