@@ -5,6 +5,7 @@ import { RequireScopes } from "../api-tokens/require-scopes.decorator";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import type { AuthUser } from "../auth/strategies/jwt.strategy";
 import { RedisService } from "../redis/redis.service";
+import { teamConfinement } from "../common/team-confinement";
 import { McpService } from "./mcp.service";
 
 const BURST_WINDOW_SEC = 10;
@@ -39,6 +40,18 @@ export class McpController {
   @HttpCode(200)
   async handle(@CurrentUser() user: AuthUser, @Body() body: unknown, @Res({ passthrough: true }) res: McpHttpResponse) {
     const ctx = { userId: user.userId, scopes: user.scopes, tokenId: user.tokenId };
+    // An OAuth grant is bound to the one team picked on the consent screen: every membership read below sees only
+    // that team. PATs and sessions carry no team and run unconfined, exactly as before.
+    if (user.oauthTeamId) return teamConfinement.run({ teamId: user.oauthTeamId }, () => this.dispatch(ctx, user, body, res));
+    return this.dispatch(ctx, user, body, res);
+  }
+
+  private async dispatch(
+    ctx: { userId: string; scopes: string[]; tokenId?: string },
+    user: AuthUser,
+    body: unknown,
+    res: McpHttpResponse,
+  ) {
 
     // Reject an oversized batch outright — bounds how many actions one POST can fan out (esp. mutate tools).
     if (Array.isArray(body) && body.length > MAX_BATCH) {

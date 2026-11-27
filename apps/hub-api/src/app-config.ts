@@ -25,6 +25,10 @@ export function configureApp(app: INestApplication): void {
       { path: "webhooks/github/:sourceId", method: RequestMethod.POST },
       { path: "auth/oauth/github", method: RequestMethod.GET }, // OAuth start
       { path: "auth/oauth/github/callback", method: RequestMethod.GET },
+      // MCP OAuth discovery documents live at the origin root (RFC 8414 / RFC 9728).
+      { path: ".well-known/oauth-protected-resource", method: RequestMethod.GET },
+      { path: ".well-known/oauth-protected-resource/api/v1/mcp", method: RequestMethod.GET },
+      { path: ".well-known/oauth-authorization-server", method: RequestMethod.GET },
     ],
   });
 }

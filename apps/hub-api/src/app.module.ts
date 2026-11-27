@@ -84,6 +84,7 @@ import { ClustersModule } from "./clusters/clusters.module";
 import { CoalesceModule } from "./common/coalesce.module";
 import { HubHealthModule } from "./hub-health/hub-health.module";
 import { McpModule } from "./mcp/mcp.module";
+import { McpOAuthModule } from "./mcp-oauth/mcp-oauth.module";
 import { ApiRateLimitInterceptor } from "./api-tokens/api-rate-limit.interceptor";
 import { AuditContextInterceptor } from "./audit/audit-context.interceptor";
 import { PortalSurfaceInterceptor } from "./common/portal-surface.interceptor";
@@ -173,6 +174,7 @@ import { ApiExceptionFilter } from "./common/api-exception.filter";
     ClustersModule, // team-scoped server groups (fleet organization + health rollup)
     HubHealthModule, // owner-only hub self-health (heap, event loop, restarts, Postgres, Redis, queues)
     CoalesceModule, // short single-flight cache for the polled panel reads (+ write invalidation)
+    McpOAuthModule, // OAuth 2.1 (dynamic registration, authorization code + PKCE, refresh rotation) for MCP clients
     McpModule, // read-only MCP server — AI-agent management over the same team-scoped services
   ],
   controllers: [HealthController, VersionController, InstanceController, InstanceSettingsController, InstallController],

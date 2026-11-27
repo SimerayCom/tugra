@@ -48,6 +48,7 @@ import {
 import { normalizeSince, normalizeSearch, clampTail } from "../common/log-filters";
 import { normalizeTags } from "../common/tags";
 import type { CreateDatabaseInput, SetDatabaseLimitsInput } from "./dto";
+import { teamHiddenByConfinement } from "../common/team-confinement";
 
 const PROVISION_TIMEOUT_MS = 300_000; // image pull can be slow
 
@@ -1107,6 +1108,7 @@ export class DatabasesService {
 
   /** Effective 'databases' write permission for a member in one team (single membership read). */
   private async canWriteDatabases(userId: string, teamId: string): Promise<boolean> {
+    if (teamHiddenByConfinement(teamId)) return false;
     const m = await this.prisma.membership.findUnique({
       where: { userId_teamId: { userId, teamId } },
       select: { role: true, teamRole: { select: { permissions: true } } },
