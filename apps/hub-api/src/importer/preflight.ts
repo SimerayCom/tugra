@@ -35,6 +35,9 @@ export { isMinioService };
 export const MINIO_SERVICE_NOTE =
   "object data is not copied by this import - use Object migration (keys, sizes, metadata, timestamps; not versions, IAM users, replication or notifications)";
 
+/** CapRover's API cannot read volumes or database contents, so the data is copied by hand (see the Move from CapRover guide). */
+const CAPROVER_DATA_NOTE = "CapRover does not expose this data through its API; copy it from the CapRover server before you start the app (see the Move from CapRover guide)";
+
 type VolumeRow = NonNullable<ImportPreflight["volumes"]>[number];
 
 const GiB = 1024 ** 3;
@@ -67,7 +70,7 @@ export function vxVolumeReason(rawBytes: number | undefined, targetFreeBytes?: n
  * `inventory` maps `"<appName>:<containerPath>"` → compressed bytes; it is omitted at plan time (the Go
  * `--inventory` producer is deferred), so an eligible mount is size-unmeasured, never assumed small.
  */
-function buildVolumeRows(apps: ForeignApp[], inventory: ReadonlyMap<string, number> | undefined, cap: number, capMiB: number, vx: boolean): VolumeRow[] {
+function buildVolumeRows(apps: ForeignApp[], inventory: ReadonlyMap<string, number> | undefined, cap: number, capMiB: number, vx: boolean, manualOnly = false): VolumeRow[] {
   const rows: VolumeRow[] = [];
   for (const app of apps) {
     if ((app.volumes ?? []).length === 0) continue;
@@ -79,6 +82,10 @@ function buildVolumeRows(apps: ForeignApp[], inventory: ReadonlyMap<string, numb
       const size = inventory?.get(`${app.name}:${v.path}`);
       let dataPlane: VolumeDataPlane;
       let reason: string;
+      if (manualOnly) {
+        rows.push({ app: app.name, mountPath: v.path, type, dataPlane: "manual", reason: CAPROVER_DATA_NOTE + ownerNote });
+        continue;
+      }
       if (vx) {
         // Streamed copy: declared volumes of any size move through the hub's memory relay (no hub disk, no cap).
         dataPlane = "stream";
@@ -181,8 +188,11 @@ export function buildPreflight(fleet: ForeignFleet, options: ImportOptions, inve
   const carried = options.sourceKind === "local-docker"; // adopts in place; volumes re-attach, data not copied
   const vx = vxEnabled(); // streamed volume copy: the declared volumes' data moves through the migrator, uncapped
 
+  const manualData = options.sourceKind === "caprover";
+
   const databases = fleet.databases.map((d) => {
     const c = classifyDbDataPlane(d.engine);
+    if (manualData && c.dataPlane !== "blocked") return { name: d.name, engine: d.engine, dataPlane: "manual" as DbDataPlane, reason: "config imports; dump the data on the CapRover server and restore it into the new database (see the Move from CapRover guide)" };
     const ref = `database:${d.serverRef ?? "_"}:${d.sourceRef}`;
     if (c.dataPlane === "one-click" && options.dbDataModes?.[ref] === "volume") {
       if (d.engine === "POSTGRES") {
@@ -224,7 +234,7 @@ export function buildPreflight(fleet: ForeignFleet, options: ImportOptions, inve
 
   const cap = maxVolumeBytes();
   const capMiB = Math.round(cap / (1024 * 1024));
-  const volumes = carried ? [] : buildVolumeRows(fleet.apps, inventory, cap, capMiB, vx);
+  const volumes = carried ? [] : buildVolumeRows(fleet.apps, inventory, cap, capMiB, vx, manualData);
 
   const envApps = fleet.apps.filter((a) => a.envReport);
   const gitHosts = new Map<string, number>();
@@ -261,6 +271,8 @@ export function buildPreflight(fleet: ForeignFleet, options: ImportOptions, inve
     volumeDataNote:
       appsWithVolumeData === 0
         ? undefined
+        : manualData
+        ? "empty volumes are declared on the new apps; copy their data from the CapRover server before you start them (see the Move from CapRover guide)"
         : appsDeclaringVolumes > 0 && vx
           ? "empty volumes are declared on the new apps; the migrator streams their DATA in resumable parts with owner, group and mode kept (stop each source container first, a live copy is refused). Run the migrator with --dry-run to measure every volume and check the target's free space before choosing a window. A volume you do not want copied must be excluded explicitly: it is then reported as not migrated, never skipped silently. Small volumes can still be uploaded by hand to the hub before the first deploy"
           : appsDeclaringVolumes > 0

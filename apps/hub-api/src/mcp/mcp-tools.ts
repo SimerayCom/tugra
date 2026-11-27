@@ -105,11 +105,11 @@ function optStr(args: Record<string, unknown>, key: string): string | undefined 
 }
 /** Shared description of the `dbDataModes` input (import_plan / import_apply / import_mapping_resolve). */
 const DB_DATA_MODES_DESC =
-  'Coolify/Dokploy/CapRover only: per-database data mode, keyed by the database plan itemRef ("database:<serverRef>:<sourceRef>") with the only value "volume" (a physical copy of a PostgreSQL data directory; any other engine is a plan blocker). Absent = the default logical dump. It is part of the planHash, so import_apply (and import_mapping_resolve) must send EXACTLY the dbDataModes the plan was made with, or the apply is refused with 409. Not accepted for local-docker.';
+  'Coolify/Dokploy only: per-database data mode, keyed by the database plan itemRef ("database:<serverRef>:<sourceRef>") with the only value "volume" (a physical copy of a PostgreSQL data directory; any other engine is a plan blocker). Absent = the default logical dump. It is part of the planHash, so import_apply (and import_mapping_resolve) must send EXACTLY the dbDataModes the plan was made with, or the apply is refused with 409. Not accepted for local-docker.';
 /** local-docker adopts in place (no data copy), so a data mode has nothing to act on: refuse it loudly rather than
  *  silently dropping a choice the caller believes is in effect. */
 function rejectLocalDockerDbDataModes(args: Record<string, unknown>): void {
-  if (args.dbDataModes !== undefined) throw new Error("dbDataModes is only for a Coolify/Dokploy/CapRover source; local-docker adopts containers in place and copies no data");
+  if (args.dbDataModes !== undefined) throw new Error("dbDataModes is only for a Coolify/Dokploy source; local-docker adopts containers in place and copies no data");
 }
 /** Parse tool input with a zod schema and surface the issues as a readable message (never a JSON dump). */
 function parseWith<T extends z.ZodTypeAny>(schema: T, value: unknown): z.output<T> {
