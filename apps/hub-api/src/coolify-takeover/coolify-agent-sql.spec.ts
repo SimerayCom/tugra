@@ -95,8 +95,15 @@ describe("agent read SQL: what is read", () => {
 
   it("caps every section: the cap is known so a read that hit it can be reported", () => {
     const limits = sectionLimits();
-    for (const s of AGENT_SECTIONS) expect(limits[s.name]).toBe(s.limit);
-    expect(limits[SCHEMA_SECTION]).toBe(1);
+    for (const s of AGENT_SECTIONS) expect(limits[s.name]).toBe(Math.min(50_000, s.limit)); // the query clamps at 50,000
+    // "the newest migration" is one row by design: it is not a cap a read can hit
+    expect(limits[SCHEMA_SECTION]).toBeUndefined();
+  });
+
+  it("every section query asks for one row more than its cap, so a full table is told apart from a cut one", () => {
+    const script = buildAgentReadSql();
+    for (const s of AGENT_SECTIONS) expect(script).toContain(`  limit ${Math.min(50_000, s.limit) + 1}\n`);
+    expect(buildSectionSql({ name: "x", table: "t", plain: ["id"], limit: 1 })).toContain("limit 1\n");
   });
 });
 

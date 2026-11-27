@@ -50,7 +50,11 @@ export function lit(v: string): string {
 }
 export const arr = (xs: string[]): string => `array[${xs.map((x) => lit(ident(x))).join(",")}]::text[]`;
 
-export function buildSectionSql(spec: SectionSpec): string {
+/**
+ * `probe`: ask for ONE row more than the cap. A section that comes back with more rows than its cap really was cut; one that comes back
+ * with exactly its cap (a one-row table at a cap of 1) is complete. The reader trims the probe row off.
+ */
+export function buildSectionSql(spec: SectionSpec, opts: { probe?: boolean } = {}): string {
   const plain = arr(spec.plain);
   const scrub = arr(spec.scrubUrl ?? []);
   const present = arr(spec.present ?? []);
@@ -61,7 +65,7 @@ export function buildSectionSql(spec: SectionSpec): string {
         .map(([k, v]) => `${lit(ident(k))}, ${lit(v)}`)
         .join(", ")})`
     : "";
-  const limit = Math.max(1, Math.min(50_000, Math.floor(spec.limit)));
+  const limit = Math.max(1, Math.min(50_000, Math.floor(spec.limit))) + (opts.probe ? 1 : 0);
   return [
     `select coalesce(jsonb_agg(r), '[]'::jsonb)::text from (`,
     `  select (`,

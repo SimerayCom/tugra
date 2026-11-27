@@ -59,11 +59,27 @@ describe("parseAgentRead", () => {
     expect(fail(`${CFY.stopped}\n`)).toBe("db_stopped");
   });
 
-  it("reports a section that came back at its cap as truncated, and not one that did not", () => {
+  it("reports a section that came back with more rows than its cap as truncated (and trims the probe row), and not one that did not", () => {
     const limit = sectionLimits().teams;
-    const rows = Array.from({ length: limit }, (_, i) => ({ id: i }));
+    const rows = Array.from({ length: limit + 1 }, (_, i) => ({ id: i }));
     const r = parseAgentRead(out(...head, ...section("teams", rows), ...section("servers", [{ id: 1 }]), CFY.done));
     expect(r.truncated).toEqual(["teams"]);
+    expect(r.sections.get("teams")).toHaveLength(limit);
+  });
+
+  it("does not call a section cut when it holds exactly its cap, or when it is a one-row table (instance, schema)", () => {
+    const limit = sectionLimits().teams;
+    const full = Array.from({ length: limit }, (_, i) => ({ id: i }));
+    const r = parseAgentRead(out(...head, ...section("teams", full), ...section("instance", [{ id: 0, instance_name: "x" }]), ...section("schema", [{ migration: "2025_01_01_000000_x", id: 9 }]), CFY.done));
+    expect(r.truncated).toEqual([]);
+    expect(r.schemaVersion).toBe("2025_01_01_000000_x");
+    expect(r.sections.get("instance")).toHaveLength(1);
+  });
+
+  it("a second instance row is a real cut (the cap of the instance section is one)", () => {
+    const r = parseAgentRead(out(...head, ...section("instance", [{ id: 0 }, { id: 1 }]), CFY.done));
+    expect(r.truncated).toEqual(["instance"]);
+    expect(r.sections.get("instance")).toEqual([{ id: 0 }]);
   });
 
   it("drops non-object rows and never throws on hostile row text", () => {

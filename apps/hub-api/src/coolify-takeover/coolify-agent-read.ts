@@ -24,7 +24,6 @@ export interface AgentRead {
 }
 
 const bound = (s: string, n: number): string => (s.length > n ? s.slice(0, n) : s);
-const MAX_ROWS_PER_SECTION = 200_000;
 
 export function parseAgentRead(output: string, now: Date = new Date()): AgentRead {
   if (output.includes(CFY.noDocker)) throw new CoolifyReadError("no_docker");
@@ -58,7 +57,16 @@ export function parseAgentRead(output: string, now: Date = new Date()): AgentRea
   }
 
   const limits = sectionLimits();
-  const truncated = [...sections.entries()].filter(([name, rows]) => rows.length >= (limits[name] ?? MAX_ROWS_PER_SECTION)).map(([name]) => name);
+  // The query asks for one row more than the cap: more rows than the cap = cut. Exactly the cap (a one-row table at a cap of 1) is complete.
+  const truncated: string[] = [];
+  for (const [name, rows] of sections) {
+    const cap = limits[name];
+    if (cap === undefined) continue;
+    if (rows.length > cap) {
+      truncated.push(name);
+      sections.set(name, rows.slice(0, cap));
+    }
+  }
   const migration = sections.get(SCHEMA_SECTION)?.[0]?.migration;
   return {
     image,

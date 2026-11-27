@@ -191,8 +191,11 @@ const SCHEMA_SQL = [
   ") r;",
 ].join("\n");
 
-/** Rows a section returned at its cap: the read is incomplete and the plan must say so. */
-export const sectionLimits = (): Record<string, number> => Object.fromEntries([...AGENT_SECTIONS.map((s) => [s.name, s.limit] as const), [SCHEMA_SECTION, 1]]);
+/**
+ * The row cap of each section. A section is cut only when it returns MORE rows than its cap (the query asks for one row more, see
+ * `probe`); the schema section is "the newest migration" by design (one row, never a cut) and has no cap here.
+ */
+export const sectionLimits = (): Record<string, number> => Object.fromEntries(AGENT_SECTIONS.map((s) => [s.name, Math.max(1, Math.min(50_000, Math.floor(s.limit)))] as const));
 
 const PREAMBLE = [
   "export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
@@ -222,7 +225,7 @@ function guarded(name: string, table: string, sql: string): string {
  * marker is then never printed, and the hub reads that as an unreadable result instead of a partial one.
  */
 export function buildAgentReadSql(): string {
-  const sections = AGENT_SECTIONS.map((s) => guarded(s.name, s.table, buildSectionSql(s)));
+  const sections = AGENT_SECTIONS.map((s) => guarded(s.name, s.table, buildSectionSql(s, { probe: true })));
   return [
     "\\set ON_ERROR_STOP on",
     "begin isolation level repeatable read read only;",
