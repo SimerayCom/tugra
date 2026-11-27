@@ -76,7 +76,8 @@ export class InFlightService {
     const p = this.prisma;
     const [runs, takeovers, cleanups, cutovers, projectMoves, appMoves, transfers, objects] = await Promise.all([
       p.migrationRun.findMany({
-        where: { dryRun: false, status: { notIn: [...TERMINAL_RUN_STATUSES] } },
+        // a FAILED run waits for the owner and runs nothing, so it does not hold an update (the fix may be in that update)
+        where: { dryRun: false, status: { notIn: [...TERMINAL_RUN_STATUSES, "FAILED"] } },
         select: {
           id: true,
           teamId: true,

@@ -65,6 +65,8 @@ describe("instance update status (e2e)", () => {
         lastCheckError: null,
         updater: { version: null, state: "unknown", behind: false, checkedAt: null }, // no updater has reported in test
         halfUpdate: null, // no half-finished update in test
+        inFlight: [], // nothing running in a fresh test hub
+        hold: null,
       });
 
       // a non-owner is forbidden

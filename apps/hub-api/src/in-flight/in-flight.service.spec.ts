@@ -97,7 +97,7 @@ describe("InFlightService.list", () => {
       expect(await svc.list()).toEqual([{ kind: "migration-run", id: "run1", label: "coolify.example.com", serverIds: ["s1", "s2", "s3", "s4"], teamId: "t1", since: T0.toISOString() }]);
     });
 
-    it.each(["RUNNING", "WAITING", "PAUSED", "ABORTING", "ROLLING_BACK", "REVERSING", "FAILED"])("counts a %s run", async (status) => {
+    it.each(["RUNNING", "WAITING", "PAUSED", "ABORTING", "ROLLING_BACK", "REVERSING"])("counts a %s run", async (status) => {
       expect(await make({ run: [run({ status })] }).svc.list()).toHaveLength(1);
     });
 
@@ -110,7 +110,7 @@ describe("InFlightService.list", () => {
       await svc.list();
       const where = prisma.migrationRun.findMany.mock.calls[0][0].where;
       expect(where.dryRun).toBe(false);
-      expect(where.status.notIn).toEqual([...TERMINAL_RUN_STATUSES]);
+      expect(where.status.notIn).toEqual([...TERMINAL_RUN_STATUSES, "FAILED"]);
     });
 
     it("never counts a dry run, whatever its status", async () => {
