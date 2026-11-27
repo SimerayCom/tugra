@@ -1,3 +1,4 @@
+import { ConflictException, ForbiddenException } from "@nestjs/common";
 import { AgentUpdateService, normalizeArch, agentImageRef, outdatedAgents } from "./agent-update.service";
 import type { PrismaService } from "../prisma/prisma.service";
 import type { AuditService } from "../audit/audit.service";
@@ -5,6 +6,9 @@ import type { TeamAccessService } from "../common/team-access.service";
 import type { AgentWsServer } from "../agent-gateway/agent-ws.server";
 import type { UpdateService } from "../update/update.service";
 import type { ConfigService } from "@nestjs/config";
+import { Role } from "@prisma/client";
+import { InFlightService } from "../in-flight/in-flight.service";
+import type { InFlightItem } from "../in-flight/in-flight.dto";
 
 const OK_ENTRY = {
   status: "ok" as const,
@@ -21,12 +25,16 @@ function make(over: {
   online?: boolean;
   agentImage?: string;
   hub?: { current: string; autoUpdate: boolean; updateAvailable?: boolean };
+  inFlight?: InFlightItem[];
+  roles?: Map<string, Role>;
 }) {
   const audit = { log: jest.fn().mockResolvedValue(undefined) } as unknown as AuditService;
   const requirePermission = jest.fn().mockResolvedValue(undefined);
   const access = {
     requirePermission,
     permissionsByTeam: jest.fn().mockResolvedValue(over.perms ?? new Map()),
+    roleByTeam: jest.fn().mockResolvedValue(over.roles ?? new Map()),
+    teamRole: jest.fn(async (_u: string, teamId: string) => (over.roles ?? new Map()).get(teamId) ?? null),
   } as unknown as TeamAccessService;
   const sendAgentUpdate = jest.fn().mockResolvedValue(over.sent ?? true);
   const agentWs = {
@@ -44,7 +52,9 @@ function make(over: {
     },
   } as unknown as PrismaService;
   const config = { get: jest.fn().mockReturnValue(over.agentImage) } as unknown as ConfigService;
-  const svc = new AgentUpdateService(prisma, access, audit, agentWs, update, config);
+  const list = jest.fn().mockResolvedValue(over.inFlight ?? []);
+  const inFlight = { list, listForServers: jest.fn(async (ids: string[]) => (over.inFlight ?? []).filter((i) => i.serverIds.some((x) => ids.includes(x)))) } as unknown as InFlightService;
+  const svc = new AgentUpdateService(prisma, access, audit, agentWs, update, config, inFlight);
   return { svc, audit, access, sendAgentUpdate, agentWs, update, requirePermission, prisma };
 }
 
@@ -84,7 +94,7 @@ describe("AgentUpdateService.updateOne", () => {
 
   it("propagates unconfigured/error from the manifest verify (no send)", async () => {
     const { svc, sendAgentUpdate } = make({ server, verified: { status: "unconfigured" } });
-    expect(await svc.updateOne("u1", "s1")).toEqual({ status: "unconfigured", total: 0, sent: 0, offline: 0, skipped: 0, results: [] });
+    expect(await svc.updateOne("u1", "s1")).toEqual({ status: "unconfigured", total: 0, sent: 0, offline: 0, skipped: 0, held: 0, results: [] });
     expect(sendAgentUpdate).not.toHaveBeenCalled();
   });
 
@@ -170,6 +180,7 @@ describe("AgentUpdateService.fleetStatus (the '3/24 agents' notice)", () => {
       outdated: 2,
       outdatedServerIds: ["s1", "s3"],
       autoUpdate: true,
+      held: [],
       hubBehind: false,
     });
   });
@@ -240,5 +251,92 @@ describe("AgentUpdateService.updateOutdated (one click: update all)", () => {
     const { svc, sendAgentUpdate } = make({ servers: rows, perms: new Map([["t1", new Set(["servers:read"])]]), sent: true });
     expect(await svc.updateOutdated("u1")).toMatchObject({ status: "ok", total: 0 });
     expect(sendAgentUpdate).not.toHaveBeenCalled();
+  });
+});
+
+const item = (id: string, serverIds: string[], kind: InFlightItem["kind"] = "migration-run"): InFlightItem => ({ kind, id, label: id, serverIds, teamId: "t1", since: "2026-11-27T10:00:00.000Z" });
+
+describe("agent update while work is in flight", () => {
+  const s1 = { id: "s1", teamId: "t1", arch: "x86_64", agentVersion: "0.1.0" };
+  const s2 = { id: "s2", teamId: "t1", arch: "x86_64", agentVersion: "0.1.0" };
+  const run = item("run1", ["s1"]);
+
+  it("single: answers 409 migration-active with the list and sends nothing", async () => {
+    const { svc, sendAgentUpdate, update } = make({ server: s1, inFlight: [run], sent: true });
+    const err = await svc.updateOne("u1", "s1").catch((e) => e);
+    expect(err).toBeInstanceOf(ConflictException);
+    expect(err.getStatus()).toBe(409);
+    expect(err.getResponse()).toMatchObject({ code: "migration-active", inFlight: [run] });
+    expect(sendAgentUpdate).not.toHaveBeenCalled();
+    expect(update.verifyLatestEntry).not.toHaveBeenCalled();
+  });
+
+  it("single: work on another server does not hold this one", async () => {
+    const { svc, sendAgentUpdate } = make({ server: s1, inFlight: [item("run2", ["s9"])], sent: true });
+    expect(await svc.updateOne("u1", "s1")).toMatchObject({ sent: 1 });
+    expect(sendAgentUpdate).toHaveBeenCalledTimes(1);
+  });
+
+  it("single: force by an owner or admin of the team goes ahead and audits the list", async () => {
+    const { svc, sendAgentUpdate, audit } = make({ server: s1, inFlight: [run], sent: true, roles: new Map([["t1", Role.ADMIN]]) });
+    expect(await svc.updateOne("u1", "s1", true)).toMatchObject({ sent: 1, results: [{ serverId: "s1", status: "sent" }] });
+    expect(sendAgentUpdate).toHaveBeenCalledTimes(1);
+    expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "agent.update.force", target: "s1", meta: { inFlight: [{ kind: "migration-run", id: "run1", label: "run1" }], count: 1 } }));
+  });
+
+  it("single: force by a member who is not owner or admin is a 403 and nothing is sent", async () => {
+    const { svc, sendAgentUpdate, audit } = make({ server: s1, inFlight: [run], sent: true, roles: new Map([["t1", Role.VIEWER]]) });
+    await expect(svc.updateOne("u1", "s1", true)).rejects.toBeInstanceOf(ForbiddenException);
+    expect(sendAgentUpdate).not.toHaveBeenCalled();
+    expect(audit.log).not.toHaveBeenCalledWith(expect.objectContaining({ action: "agent.update.force" }));
+  });
+
+  it("single: force with nothing in flight is a plain update (no force audit)", async () => {
+    const { svc, audit } = make({ server: s1, sent: true });
+    await svc.updateOne("u1", "s1", true);
+    expect(audit.log).not.toHaveBeenCalledWith(expect.objectContaining({ action: "agent.update.force" }));
+  });
+
+  it("bulk: updates the free servers and reports the held one with its list", async () => {
+    const perms = new Map([["t1", new Set(["servers:manage"])]]);
+    const { svc, sendAgentUpdate } = make({ servers: [s1, s2], perms, inFlight: [run], sent: true });
+    const res = await svc.updateFleet("u1", ["s1", "s2"]);
+    expect(res).toMatchObject({ status: "ok", total: 2, sent: 1, held: 1 });
+    expect(res.results).toContainEqual({ serverId: "s1", status: "held", reason: "migration-active", inFlight: [run] });
+    expect(res.results).toContainEqual({ serverId: "s2", status: "sent" });
+    expect(sendAgentUpdate).toHaveBeenCalledTimes(1);
+    expect(sendAgentUpdate.mock.calls[0][0]).toBe("s2");
+  });
+
+  it("bulk: force includes the held server where the caller is owner/admin, and keeps it held where they are not", async () => {
+    const t2 = { id: "s3", teamId: "t2", arch: "x86_64", agentVersion: "0.1.0" };
+    const perms = new Map([["t1", new Set(["servers:manage"])], ["t2", new Set(["servers:manage"])]]);
+    const roles = new Map([["t1", Role.OWNER], ["t2", Role.VIEWER]]);
+    const { svc, sendAgentUpdate, audit } = make({ servers: [s1, t2], perms, roles, inFlight: [run, item("run3", ["s3"])], sent: true });
+    const res = await svc.updateFleet("u1", ["s1", "s3"], true);
+    expect(res.results).toContainEqual({ serverId: "s1", status: "sent" });
+    expect(res.results).toContainEqual({ serverId: "s3", status: "held", reason: "force-not-permitted", inFlight: [expect.objectContaining({ id: "run3" })] });
+    expect(sendAgentUpdate).toHaveBeenCalledTimes(1);
+    expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "agent.update.force", target: "s1" }));
+    expect(audit.log).not.toHaveBeenCalledWith(expect.objectContaining({ action: "agent.update.force", target: "s3" }));
+  });
+
+  it("update-all: leaves the held server out and says so", async () => {
+    const perms = new Map([["t1", new Set(["servers:manage"])]]);
+    const { svc, sendAgentUpdate } = make({ servers: [s1, s2], perms, inFlight: [run], sent: true });
+    const res = await svc.updateOutdated("u1");
+    expect(res).toMatchObject({ sent: 1, held: 1 });
+    expect(res.results.find((r) => r.serverId === "s1")).toMatchObject({ status: "held", reason: "migration-active" });
+    expect(sendAgentUpdate).toHaveBeenCalledTimes(1);
+  });
+
+  it("fleet status lists the servers with work in flight and why", async () => {
+    const perms = new Map([["t1", new Set(["servers:manage"])]]);
+    const { svc } = make({ servers: [s1, s2], perms, inFlight: [run], hub: { current: "0.2.0", autoUpdate: true } });
+    expect(await svc.fleetStatus("u1")).toMatchObject({ held: [{ serverId: "s1", inFlight: [run] }] });
+  });
+
+  it("byServer only returns servers that have work", () => {
+    expect([...InFlightService.byServer([run], ["s1", "s2"]).keys()]).toEqual(["s1"]);
   });
 });

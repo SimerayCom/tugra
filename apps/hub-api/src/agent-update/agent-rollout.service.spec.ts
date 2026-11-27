@@ -3,6 +3,8 @@ import type { PrismaService } from "../prisma/prisma.service";
 import type { InstanceSettingsService } from "../instance/instance-settings.service";
 import type { UpdateService } from "../update/update.service";
 import type { AgentUpdateService } from "./agent-update.service";
+import { InFlightService } from "../in-flight/in-flight.service";
+import type { InFlightItem } from "../in-flight/in-flight.dto";
 
 const ENTRY = { status: "ok" as const, channel: "stable", entry: { version: "0.2.0", agentSha256: { amd64: "aaa" } } };
 
@@ -22,6 +24,8 @@ function make(opts: {
   applyStatus?: "sent" | "offline" | "skipped";
   hubBehind?: boolean;
   requests?: Req[];
+  inFlight?: InFlightItem[];
+  inFlightFails?: boolean;
 }) {
   const rows = opts.rows;
   const requests: Req[] = opts.requests ?? [];
@@ -46,7 +50,13 @@ function make(opts: {
     return { serverId: s.id, status };
   });
   const agentUpdate = { applyAuto } as unknown as AgentUpdateService;
-  const svc = new AgentRolloutService(prisma, update, agentUpdate, settings);
+  const inFlight = {
+    list: jest.fn(async () => {
+      if (opts.inFlightFails) throw new Error("db down");
+      return opts.inFlight ?? [];
+    }),
+  } as unknown as InFlightService;
+  const svc = new AgentRolloutService(prisma, update, agentUpdate, settings, inFlight);
   const tick = (t: number) => {
     clock.t = t;
     return svc.tick(t);
@@ -182,5 +192,41 @@ describe("AgentRolloutService", () => {
     await svc.tick();
     const where = (prisma.server.findMany as jest.Mock).mock.calls[0][0].where;
     expect(where).toEqual({ isLocal: false, status: { not: "PENDING" } });
+  });
+
+  describe("work in flight", () => {
+    const run: InFlightItem = { kind: "migration-run", id: "run1", label: "coolify.example.com", serverIds: ["a"], teamId: "t1", since: "2026-11-27T10:00:00.000Z" };
+
+    it("skips a server with a migration running and carries on with the others", async () => {
+      const { svc, applyAuto } = make({ rows: [row("a", "0.1.0"), row("b", "0.1.0")], inFlight: [run] });
+      expect(await svc.tick(1)).toEqual({ action: "sent", serverId: "b" });
+      expect(applyAuto.mock.calls.map((c) => (c[0] as { id: string }).id)).toEqual(["b"]);
+    });
+
+    it("says why when every server still behind is held, and updates none of them (no manifest fetch)", async () => {
+      const { svc, applyAuto, update } = make({ rows: [row("a", "0.1.0")], inFlight: [run] });
+      expect(await svc.tick(1)).toEqual({ action: "held", held: [{ serverId: "a", inFlight: [run] }] });
+      expect(applyAuto).not.toHaveBeenCalled();
+      expect(update.verifyLatestEntry).not.toHaveBeenCalled();
+    });
+
+    it("updates the held server on the pass after the work ended", async () => {
+      const { svc, applyAuto } = make({ rows: [row("a", "0.1.0")], inFlight: [run] });
+      expect((await svc.tick(1)).action).toBe("held");
+      (svc as unknown as { inFlightSvc: { list: jest.Mock } }).inFlightSvc.list.mockResolvedValue([]);
+      expect(await svc.tick(2)).toEqual({ action: "sent", serverId: "a" });
+      expect(applyAuto).toHaveBeenCalledTimes(1);
+    });
+
+    it("work on a server that is already current does not matter", async () => {
+      const { svc } = make({ rows: [row("a", "0.1.0"), row("b", "0.2.0")], inFlight: [{ ...run, serverIds: ["b"] }] });
+      expect(await svc.tick(1)).toEqual({ action: "sent", serverId: "a" });
+    });
+
+    it("does nobody blind when the work cannot be read", async () => {
+      const { svc, applyAuto } = make({ rows: [row("a", "0.1.0")], inFlightFails: true });
+      expect(await svc.tick(1)).toEqual({ action: "unavailable" });
+      expect(applyAuto).not.toHaveBeenCalled();
+    });
   });
 });

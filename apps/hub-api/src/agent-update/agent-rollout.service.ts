@@ -5,6 +5,8 @@ import { PrismaService } from "../prisma/prisma.service";
 import { InstanceSettingsService } from "../instance/instance-settings.service";
 import { UpdateService } from "../update/update.service";
 import { AgentUpdateService, outdatedAgents } from "./agent-update.service";
+import { InFlightService } from "../in-flight/in-flight.service";
+import type { InFlightItem } from "../in-flight/in-flight.dto";
 
 /** How often the rollout looks at the fleet. */
 const TICK_MS = 60_000;
@@ -24,6 +26,7 @@ export type RolloutOutcome =
   | { action: "idle" } // nothing is behind the hub, or nothing can be updated right now
   | { action: "waiting-hub" } // the published release is newer than this hub: the hub updates first
   | { action: "waiting-agent"; serverId: string } // the previous agent has not come back on the new version yet
+  | { action: "held"; held: { serverId: string; inFlight: InFlightItem[] }[] } // every server still to update has work in flight (migration, takeover, cutover, move, transfer)
   | { action: "sent"; serverId: string }
   | { action: "unavailable" }; // no verified manifest right now
 
@@ -34,12 +37,15 @@ export class AgentRolloutService implements OnApplicationBootstrap, OnModuleDest
   private running = false;
   /** serverId -> epoch ms before which the agent is not tried again (refused or went offline just now). */
   private readonly retryAfter = new Map<string, number>();
+  /** The held set last logged, so a long migration logs once and not every minute. */
+  private heldLogged = "";
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly update: UpdateService,
     private readonly agentUpdate: AgentUpdateService,
     private readonly settings: InstanceSettingsService,
+    private readonly inFlightSvc: InFlightService,
   ) {}
 
   onApplicationBootstrap(): void {
@@ -65,6 +71,13 @@ export class AgentRolloutService implements OnApplicationBootstrap, OnModuleDest
     }
   }
 
+  private logHeld(busy: Map<string, InFlightItem[]>): void {
+    const key = [...busy].map(([id, items]) => `${id}:${items.map((i) => i.id).sort().join("+")}`).sort().join(",");
+    if (key === this.heldLogged) return;
+    this.heldLogged = key;
+    if (key) this.logger.log(`agent rollout: skipping ${busy.size} server(s) with work in flight (${[...busy].map(([id, items]) => `${id}: ${items.map((i) => `${i.kind}:${i.id}`).join(" ")}`).join("; ")})`);
+  }
+
   /** One pass: at most one agent is started. Exposed for tests. */
   async tick(now: number = Date.now()): Promise<RolloutOutcome> {
     let autoUpdate = false;
@@ -81,6 +94,16 @@ export class AgentRolloutService implements OnApplicationBootstrap, OnModuleDest
     });
     const behind = outdatedAgents(servers, hub);
     if (behind.length === 0) return { action: "idle" };
+
+    // Never restart an agent in the middle of a migration, takeover, cutover, move or transfer on its server: those servers sit out
+    // (the fleet status lists them with the reason), the others carry on. If the work cannot be read, nobody is updated this pass.
+    let busy: Map<string, InFlightItem[]>;
+    try {
+      busy = InFlightService.byServer(await this.inFlightSvc.list(), behind.map((s) => s.id));
+    } catch {
+      return { action: "unavailable" };
+    }
+    this.logHeld(busy);
 
     // What was already sent, from the audit trail (survives a hub restart and also counts manual updates).
     const requests = await this.prisma.auditLog.findMany({
@@ -102,9 +125,13 @@ export class AgentRolloutService implements OnApplicationBootstrap, OnModuleDest
     const tries = (id: string) =>
       requests.filter((r) => r.target === id && (r.meta as { to?: string } | null)?.to === hub).length;
     const candidate = behind
-      .filter((s) => s.status === ServerStatus.ONLINE && tries(s.id) < MAX_ATTEMPTS && (this.retryAfter.get(s.id) ?? 0) <= now)
+      .filter((s) => !busy.has(s.id) && s.status === ServerStatus.ONLINE && tries(s.id) < MAX_ATTEMPTS && (this.retryAfter.get(s.id) ?? 0) <= now)
       .sort((x, y) => tries(x.id) - tries(y.id))[0];
-    if (!candidate) return { action: "idle" }; // nobody to update: the manifest is not fetched
+    if (!candidate) {
+      const held = [...busy].map(([serverId, inFlight]) => ({ serverId, inFlight }));
+      // Nobody to update now; when the only ones left are held, say so (the manifest is not fetched either way).
+      return held.length > 0 && !behind.some((s) => !busy.has(s.id) && s.status === ServerStatus.ONLINE && tries(s.id) < MAX_ATTEMPTS) ? { action: "held", held } : { action: "idle" };
+    }
 
     const verified = await this.update.verifyLatestEntry();
     if (verified.status !== "ok") return { action: "unavailable" };

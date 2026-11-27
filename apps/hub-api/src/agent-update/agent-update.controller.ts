@@ -9,14 +9,19 @@ import { RequireScopes } from "../api-tokens/require-scopes.decorator";
 import { AuthUser } from "../auth/strategies/jwt.strategy";
 import { ApiZodBody, ApiZodResponse } from "../openapi/openapi";
 import { AgentUpdateService } from "./agent-update.service";
+import { InFlightItemSchema } from "../in-flight/in-flight.dto";
 
-const FleetSchema = z.object({ serverIds: z.array(z.string()).min(1) });
+// `force` updates a server even while work is in flight on it (owner or admin of the team only; audited).
+const FleetSchema = z.object({ serverIds: z.array(z.string()).min(1), force: z.boolean().optional() });
 type FleetInput = z.infer<typeof FleetSchema>;
+const ForceSchema = z.object({ force: z.boolean().optional() });
+type ForceInput = z.infer<typeof ForceSchema>;
 
 const AgentUpdateItemSchema = z.object({
   serverId: z.string(),
-  status: z.enum(["sent", "offline", "skipped"]),
+  status: z.enum(["sent", "offline", "skipped", "held"]),
   reason: z.string().optional(),
+  inFlight: z.array(InFlightItemSchema).optional(),
 });
 const AgentUpdateResponseSchema = z.object({
   status: z.enum(["ok", "unconfigured", "error", "hub-behind"]),
@@ -24,6 +29,7 @@ const AgentUpdateResponseSchema = z.object({
   sent: z.number(),
   offline: z.number(),
   skipped: z.number(),
+  held: z.number(),
   results: z.array(AgentUpdateItemSchema),
 });
 
@@ -33,6 +39,8 @@ const AgentFleetStatusSchema = z.object({
   outdated: z.number(),
   outdatedServerIds: z.array(z.string()),
   autoUpdate: z.boolean(), // "Apply updates automatically" is on: the hub rolls agents out by itself
+  held: z.array(z.object({ serverId: z.string(), inFlight: z.array(InFlightItemSchema) })), // servers with work in flight: no update starts on them
+  hubBehind: z.boolean(),
 });
 
 // Triggers a signed, digest-pinned self-update of the Go agent(s). The target version + image + sha256
@@ -45,11 +53,14 @@ const AgentFleetStatusSchema = z.object({
 export class AgentUpdateController {
   constructor(private readonly agentUpdate: AgentUpdateService) {}
 
+  // 409 `migration-active` (with `inFlight`) while a migration, takeover, cutover, move or transfer is running on the server;
+  // `force: true` goes ahead for an owner or admin of the team and is audited.
   @Post("servers/:id/agent-update")
   @RequireScopes("deploy")
+  @ApiZodBody(ForceSchema, { required: false })
   @ApiZodResponse(AgentUpdateResponseSchema)
-  updateOne(@CurrentUser() user: AuthUser, @Param("id") id: string) {
-    return this.agentUpdate.updateOne(user.userId, id);
+  updateOne(@CurrentUser() user: AuthUser, @Param("id") id: string, @Body(new ZodValidationPipe(ForceSchema)) body: ForceInput) {
+    return this.agentUpdate.updateOne(user.userId, id, body.force === true);
   }
 
   // "3/24 agents are on an older version": counts only the remote agents of teams the caller manages (servers:manage),
@@ -64,9 +75,10 @@ export class AgentUpdateController {
   // One click: update every outdated agent the caller manages to the hub's release.
   @Post("fleet/agent-update/outdated")
   @RequireScopes("deploy")
+  @ApiZodBody(ForceSchema, { required: false })
   @ApiZodResponse(AgentUpdateResponseSchema)
-  updateOutdated(@CurrentUser() user: AuthUser) {
-    return this.agentUpdate.updateOutdated(user.userId);
+  updateOutdated(@CurrentUser() user: AuthUser, @Body(new ZodValidationPipe(ForceSchema)) body: ForceInput) {
+    return this.agentUpdate.updateOutdated(user.userId, body.force === true);
   }
 
   @Post("fleet/agent-update")
@@ -74,6 +86,6 @@ export class AgentUpdateController {
   @ApiZodBody(FleetSchema)
   @ApiZodResponse(AgentUpdateResponseSchema)
   updateFleet(@CurrentUser() user: AuthUser, @Body(new ZodValidationPipe(FleetSchema)) body: FleetInput) {
-    return this.agentUpdate.updateFleet(user.userId, body.serverIds);
+    return this.agentUpdate.updateFleet(user.userId, body.serverIds, body.force === true);
   }
 }
