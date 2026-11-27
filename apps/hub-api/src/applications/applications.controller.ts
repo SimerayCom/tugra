@@ -18,6 +18,7 @@ import {
   UseInterceptors,
 } from "@nestjs/common";
 import { concat, EMPTY, from, map, mergeMap, type Observable } from "rxjs";
+import { SkipThrottle } from "@nestjs/throttler";
 import { ApiTags, ApiSecurity, ApiHeader, ApiQuery } from "@nestjs/swagger";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
 import { Paginated } from "../common/pagination.decorator";
@@ -520,6 +521,7 @@ export class ApplicationsController {
    * 404 when the app has no domain or its site has no usable icon; the client then falls back to another icon.
    */
   @Get(":id/favicon")
+  @SkipThrottle() // one <img> per app on a list; a miss is not browser-cached, so the global limit would starve real API calls
   @Header("X-Content-Type-Options", "nosniff")
   @Header("Content-Security-Policy", "default-src 'none'; sandbox")
   @Header("Cache-Control", "private, max-age=86400")
