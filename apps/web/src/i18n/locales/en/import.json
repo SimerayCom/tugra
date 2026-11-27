@@ -1078,6 +1078,42 @@
     "showing": "Showing the servers and projects of {team}.",
     "showingAll": "Showing every Coolify team.",
     "showAll": "Show all teams ({count} more)",
-    "onlyTeam": "Show only {team}"
+    "onlyTeam": "Show only {team}",
+    "counts": "{team} team: {shown} of {total}",
+    "countsAll": "{count} mapped teams: {shown} of {total}",
+    "unit": "Apps, databases and services of the Coolify team, out of everything this Coolify holds. The lists below show only these.",
+    "switcherLabel": "Coolify team",
+    "allMapped": "All mapped teams ({count})",
+    "option": "{name} ({items})",
+    "changeMap": "Change team mapping",
+    "movesInto": "Moves into {team}.",
+    "onlyMapped": "Show only the mapped teams"
+  },
+  "teamMap": {
+    "title": "Which team does each Coolify team go into?",
+    "subtitle": "Pick a Tugra team for every Coolify team. Its servers, projects and apps are created in that team, and only that team's servers are offered as targets.",
+    "ownersOnly": "Only teams you own are listed: a move needs the owner of the team it lands in.",
+    "holds": "{items} apps, databases and services · {projects} projects · {servers} servers",
+    "movesInto": "Moves into",
+    "choose": "Choose a team",
+    "create": "Create team {name}",
+    "skip": "Leave this Coolify team out",
+    "sameName": "Same name as your Tugra team.",
+    "createNote": "Tugra creates this team when you continue, with you as its owner. It has no server yet: add one in the next step, then place the servers on it.",
+    "skipNote": "Nothing of this Coolify team is moved.",
+    "notOwned": "A Tugra team with this name exists, but you do not own it. Choose a team you own or create a new one.",
+    "issue": {
+      "undecided": "Choose a team for every Coolify team, or leave it out.",
+      "nothing": "Every Coolify team is left out, so nothing would move.",
+      "ready": "{count} Coolify teams will move."
+    },
+    "continue": "Continue",
+    "continueCreate": "Create the new teams and continue",
+    "saving": "Saving...",
+    "createFailed": "Could not create the team {name}: {reason}",
+    "saveFailed": "Could not save the team mapping: {reason}",
+    "noServers": "{team} has no server you can write to yet.",
+    "addServer": "Add a server to {team}",
+    "matchedElsewhere": "{server} is the same machine, but it sits in another Tugra team than {team}. Move that server into {team} first, or change the team mapping."
   }
 }

@@ -280,16 +280,16 @@ export function autoSelection(plan: ImportPlan, shown?: ReadonlySet<string>): Sc
 /**
  * Turn a selection into what the later steps need. `placed` has a target for each involved source server that has one (the pick, else a
  * sure match); a server with neither stays out of it and {@link scopeIssue} says so. A serverMap exists only when every involved server
- * is placed and more than one Tugra server is used. `allowed` (the chosen team's server ids) drops targets outside the team. `teamOf` lets the
+ * is placed and more than one Tugra server is used. `allowed` (the chosen team's server ids, or a function giving them per source server when each source server has its own team) drops targets outside the team. `teamOf` lets the
  * scope say whether the targets sit in several teams.
  */
-export function buildScope(plan: ImportPlan, sel: ScopeSelection, allowed?: ReadonlySet<string>, teamOf?: (serverId: string) => string | undefined): ImportScope {
+export function buildScope(plan: ImportPlan, sel: ScopeSelection, allowed?: ReadonlySet<string> | ((hostRef: string) => ReadonlySet<string> | undefined), teamOf?: (serverId: string) => string | undefined): ImportScope {
   const inScope = inScopeRefs(plan, sel);
   const hosts = involvedHosts(plan, inScope);
   const placed: Record<string, string> = {};
   const placementKind: Record<string, PlacementKind> = {};
   for (const h of hosts) {
-    const id = targetOf(plan, sel, h.ref, allowed);
+    const id = targetOf(plan, sel, h.ref, typeof allowed === "function" ? allowed(h.ref) : allowed);
     if (!id) continue;
     placed[h.ref] = id;
     placementKind[h.ref] = placementKindOf(plan, h.ref, id);

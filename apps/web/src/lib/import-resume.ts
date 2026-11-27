@@ -17,10 +17,13 @@ export interface ImportResume {
   allTeams?: boolean;
   /** The agent path's match step was finished: a refresh then resumes after it, so the owner is not asked the same question twice. */
   matched?: boolean;
+  /** The mapped Coolify team the lists were switched to (absent = all the mapped teams). */
+  view?: string;
 }
 
 /** An address that is safe to keep: http(s), no credentials in it. */
 const keepableUrl = (u: string): boolean => /^https?:\/\/[^@\s]{1,500}$/i.test(u);
+const REF_RE = /^[A-Za-z0-9_-]{1,40}$/;
 const SESSION_ID_RE = /^[A-Za-z0-9_-]{8,64}$/;
 
 export function saveImportResume(r: ImportResume, store: Pick<Storage, "setItem"> = window.sessionStorage): void {
@@ -28,7 +31,7 @@ export function saveImportResume(r: ImportResume, store: Pick<Storage, "setItem"
     if (!SESSION_ID_RE.test(r.sessionId)) return;
     store.setItem(
       IMPORT_RESUME_KEY,
-      JSON.stringify({ v: 1, kind: r.kind, baseUrl: keepableUrl(r.baseUrl) ? r.baseUrl : "", sessionId: r.sessionId, selection: r.selection ? serializeSelection(r.selection) : undefined, dbModes: r.dbModes, ...(r.allTeams ? { allTeams: true } : {}), ...(r.matched ? { matched: true } : {}) }),
+      JSON.stringify({ v: 1, kind: r.kind, baseUrl: keepableUrl(r.baseUrl) ? r.baseUrl : "", sessionId: r.sessionId, selection: r.selection ? serializeSelection(r.selection) : undefined, dbModes: r.dbModes, ...(r.allTeams ? { allTeams: true } : {}), ...(r.matched ? { matched: true } : {}), ...(r.view && REF_RE.test(r.view) ? { view: r.view } : {}) }),
     );
   } catch {
     /* storage unavailable or full: the wizard just does not resume */
@@ -47,7 +50,7 @@ export function loadImportResume(store: Pick<Storage, "getItem"> = window.sessio
     }
     const baseUrl = typeof o.baseUrl === "string" && keepableUrl(o.baseUrl) ? o.baseUrl : "";
     const selection = typeof o.selection === "string" ? restoreSelection(o.selection) : undefined;
-    return { kind: o.kind, baseUrl, sessionId: o.sessionId, ...(selection ? { selection } : {}), dbModes: modes, ...(o.allTeams === true ? { allTeams: true } : {}), ...(o.matched === true ? { matched: true } : {}) };
+    return { kind: o.kind, baseUrl, sessionId: o.sessionId, ...(selection ? { selection } : {}), dbModes: modes, ...(o.allTeams === true ? { allTeams: true } : {}), ...(o.matched === true ? { matched: true } : {}), ...(typeof o.view === "string" && REF_RE.test(o.view) ? { view: o.view } : {}) };
   } catch {
     return null;
   }

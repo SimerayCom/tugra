@@ -109,6 +109,7 @@ const KNOWN_FAILURES: readonly PlacementFailureCode[] = [
   "placement_other_is_source_host",
   "placement_rebuild_not_in_place",
   "placement_rebuild_unknown_item",
+  "placement_team_mismatch",
 ];
 
 /** What creating a campaign returns: the first campaign (the shape of an older hub) plus every campaign made, one per team. */

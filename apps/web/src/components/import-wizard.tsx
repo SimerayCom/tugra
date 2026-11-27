@@ -27,7 +27,8 @@ import { ImportServicesPanel } from "./import-services-panel";
 import { ConnectionStatus, useConnectionTest } from "./import/connection-test";
 import { AgentConnectPanel } from "./import/agent-connect";
 import { ResumeNote } from "./import/resume-note";
-import { teamScope } from "../lib/import-team";
+import { coolifyTeams, teamScope } from "../lib/import-team";
+import { TeamMapStep } from "./import/team-map-step";
 import { AgentMatchStep } from "./import/agent-match-step";
 import { isConsentRequired, needsConsent, needsMatchStep } from "../lib/coolify-agent";
 import { AgentConsentGate } from "./import/agent-consent-gate";
@@ -111,6 +112,9 @@ export function ImportWizard() {
   const [resumedStep, setResumedStep] = useState(false);
   // The picked Coolify team narrows the match, scope and placement lists; this opens them to every team.
   const [showAllTeams, setShowAllTeams] = useState(false);
+  // With a team mapping saved: the one mapped Coolify team in view (null = all the mapped ones), and whether the mapping step is open again.
+  const [teamView, setTeamView] = useState<string | null>(null);
+  const [editingTeamMap, setEditingTeamMap] = useState(false);
   // Where the user came from (a server's scan card, the Read-this-Coolify page): the source address, and a server or project to start with.
   const [focus, setFocus] = useState<ImportFocus | null>(null);
   const focusRef = useRef<ImportFocus | null>(null);
@@ -192,6 +196,7 @@ export function ImportWizard() {
     setDbModes(r.dbModes);
     setShowAllTeams(r.allTeams === true);
     setMatchedHosts(r.matched === true);
+    setTeamView(r.view ?? null);
     setResumedStep(true);
     setLastSelection(r.selection);
     liveSelection.current = r.selection;
@@ -204,8 +209,8 @@ export function ImportWizard() {
     if (opId) clearImportResume();
   }, [opId]);
   useEffect(() => {
-    if (sessionId && !opId) saveImportResume({ kind, baseUrl, sessionId, selection: liveSelection.current ?? lastSelection, dbModes, allTeams: showAllTeams, matched: matchedHosts });
-  }, [sessionId, opId, kind, baseUrl, dbModes, lastSelection, scope, showAllTeams, matchedHosts]);
+    if (sessionId && !opId) saveImportResume({ kind, baseUrl, sessionId, selection: liveSelection.current ?? lastSelection, dbModes, allTeams: showAllTeams, matched: matchedHosts, view: teamView ?? undefined });
+  }, [sessionId, opId, kind, baseUrl, dbModes, lastSelection, scope, showAllTeams, matchedHosts, teamView]);
 
   const inPlaceSession = useRef<string | null>(null);
   useEffect(() => {
@@ -302,6 +307,8 @@ export function ImportWizard() {
     setResumeNote(null);
     setResumedStep(false);
     setShowAllTeams(false);
+    setTeamView(null);
+    setEditingTeamMap(false);
     setDbModes({});
     setPlan(null);
     setScope(null);
@@ -323,9 +330,9 @@ export function ImportWizard() {
   const onSelectionChange = useCallback(
     (sel: ScopeSelection) => {
       liveSelection.current = sel;
-      if (sessionId) saveImportResume({ kind, baseUrl, sessionId, selection: sel, dbModes, allTeams: showAllTeams, matched: matchedHosts });
+      if (sessionId) saveImportResume({ kind, baseUrl, sessionId, selection: sel, dbModes, allTeams: showAllTeams, matched: matchedHosts, view: teamView ?? undefined });
     },
-    [sessionId, kind, baseUrl, dbModes, showAllTeams, matchedHosts],
+    [sessionId, kind, baseUrl, dbModes, showAllTeams, matchedHosts, teamView],
   );
   // a server was just added or an agent came online: read the servers and the plan again so the matches are current
   const recheck = () => {
@@ -338,6 +345,30 @@ export function ImportWizard() {
     // The settings step needs the live source session: after a reload (?op=) there is none, so it is simply not offered.
     const teamServers = servers.filter((sv) => sv.teamId === effectiveTeam).map((sv) => ({ id: sv.id, name: sv.name }));
     return <Timeline opId={opId} onReset={reset} settings={sessionId ? { sessionId, kind, servers: teamServers, teamId: effectiveTeam } : undefined} />;
+  }
+
+  // The agent path, a Coolify with several teams: which Tugra team each Coolify team goes into, decided before anything is matched or placed.
+  const tScope = teamScope(plan, teamView);
+  if (plan && sessionId && (editingTeamMap || (plan.preflight?.teamMap === undefined && coolifyTeams(plan).length >= 2))) {
+    return (
+      <div style={{ display: "grid", gap: 16 }}>
+        {resumedStep && <div style={{ maxWidth: 720 }}><ResumeNote onDismiss={() => setResumedStep(false)} /></div>}
+        <TeamMapStep
+          // the starting choices read the team list once: start again when the list first arrives
+          key={teams.length > 0 ? "teams" : "loading"}
+          plan={plan}
+          sessionId={sessionId}
+          teams={teams}
+          onDone={(teamMap) => {
+            setResumedStep(false);
+            setEditingTeamMap(false);
+            setTeamView(null);
+            setPlan((p) => (p ? { ...p, preflight: { ...p.preflight!, teamMap } } : p));
+          }}
+          onStartOver={startOver}
+        />
+      </div>
+    );
   }
 
   // The agent path: which Tugra server is each Coolify server, checked (and answered by the owner where unsure) before anything is placed.
@@ -357,9 +388,12 @@ export function ImportWizard() {
           onRecheck={recheck}
           onStartOver={startOver}
           rechecking={planM.isPending}
-          teamScope={teamScope(plan)}
+          teamScope={tScope}
           showAllTeams={showAllTeams}
           onShowAllTeams={setShowAllTeams}
+          teamView={teamView}
+          onTeamView={setTeamView}
+          onChangeTeamMap={() => setEditingTeamMap(true)}
         />
       </div>
     );
@@ -380,9 +414,12 @@ export function ImportWizard() {
         onRecheck={recheck}
         startNote={startNote || undefined}
         rechecking={planM.isPending}
-        teamScope={teamScope(plan)}
+        teamScope={tScope}
         showAllTeams={showAllTeams}
         onShowAllTeams={setShowAllTeams}
+        teamView={teamView}
+        onTeamView={setTeamView}
+        onChangeTeamMap={() => setEditingTeamMap(true)}
       />
       </div>
     );

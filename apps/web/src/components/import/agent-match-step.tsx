@@ -143,6 +143,9 @@ export function AgentMatchStep({
   teamScope = null,
   showAllTeams = false,
   onShowAllTeams,
+  teamView = null,
+  onTeamView,
+  onChangeTeamMap,
 }: {
   plan: ImportPlan;
   sessionId: string;
@@ -158,6 +161,10 @@ export function AgentMatchStep({
   teamScope?: TeamScope | null;
   showAllTeams?: boolean;
   onShowAllTeams?: (showAll: boolean) => void;
+  /** The one mapped Coolify team in view (null = all the mapped ones), and the way to change it or the mapping. */
+  teamView?: string | null;
+  onTeamView?: (ref: string | null) => void;
+  onChangeTeamMap?: () => void;
 }) {
   const t = useT();
   const toast = useToast();
@@ -214,7 +221,7 @@ export function AgentMatchStep({
   return (
     <div style={{ display: "grid", gap: 16, maxWidth: 720 }}>
       <SectionCard title={t("hostMatch.title")} desc={t("hostMatch.table.hint")}>
-        <TeamFilterToggle scope={teamScope} showAll={showAllTeams} hidden={filter?.hiddenHosts ?? 0} onChange={(v) => onShowAllTeams?.(v)} />
+        <TeamFilterToggle scope={teamScope} showAll={showAllTeams} hidden={filter?.hiddenHosts ?? 0} onChange={(v) => onShowAllTeams?.(v)} view={teamView} onView={onTeamView} onChangeMap={onChangeTeamMap} />
         <HostVerify serverId={coolifyServer?.id ?? null} rows={rows} onDone={onRecheck} />
         <p role="status" style={{ margin: "0 0 4px", fontSize: 12, color: unsure ? "var(--c-am)" : "var(--c-g)" }}>
           {unsure ? t("hostMatch.table.sureCount", { n: unsure }) : t("hostMatch.table.allSure")}

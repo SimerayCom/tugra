@@ -100,6 +100,15 @@ describe("involvedHosts / missingDependencies", () => {
 const all = (placement: Record<string, string>): ScopeSelection => sel({ placement });
 
 describe("buildScope", () => {
+  it("takes the allowed servers per source server: each one keeps only the targets of its own team, and two teams make a campaign", () => {
+    const teamOf = (id: string) => (id.startsWith("a") ? "team-a" : "team-b");
+    const allowed = (ref: string) => new Set(ref === "s1" ? ["a1"] : ["b1"]);
+    const s = buildScope(plan(), all({ s1: "b1", s2: "b1" }), allowed, teamOf);
+    expect(s.placed).toEqual({ s2: "b1" }); // s1's pick sits outside its team and is dropped
+    const ok = buildScope(plan(), all({ s1: "a1", s2: "b1" }), allowed, teamOf);
+    expect(ok.placed).toEqual({ s1: "a1", s2: "b1" });
+    expect(ok.multiTeam).toBe(true);
+  });
   it("everything on one server: no serverMap, the default is that server", () => {
     const s = buildScope(plan(), all({ s1: "t1", s2: "t1" }));
     expect(s.narrowed).toBe(false);

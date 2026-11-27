@@ -1354,6 +1354,7 @@ model ImportSession {
   sessionKeyEnc String? // CryptoService-encrypted per-session X25519 private key of the sealed pipeline; never returned by any endpoint
   sourceTeamRef String? // agent transport: the Coolify team whose settings (notifications, shared variables, tags, members) this session reads
   hostLinks     Json? // agent transport: the owner's own answers to "is this the same machine", { <coolify server uuid>: { serverId: string | null } }; ids only
+  teamMap       Json? // agent transport: the owner's Coolify team to Tugra team mapping, { <coolify team ref>: <tugra team id> | null (null = leave that team out) }; ids only
 
   @@index([teamId])
 }

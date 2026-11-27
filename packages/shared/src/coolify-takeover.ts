@@ -69,6 +69,7 @@ export const PLACEMENT_FAILURE_CODES = [
   "placement_other_is_source_host",
   "placement_rebuild_not_in_place",
   "placement_rebuild_unknown_item",
+  "placement_team_mismatch",
 ] as const;
 export type PlacementFailureCode = (typeof PLACEMENT_FAILURE_CODES)[number];
 

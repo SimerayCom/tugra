@@ -108,6 +108,19 @@ describe("checkPlacements", () => {
     const t = new Map([target("new1", { ready: false })]);
     expect(checkPlacements([{ sourceServerRef: "a", kind: "other-server", targetServerId: "new1" }], facts, t)).toMatchObject({ ok: false, code: "placement_target_not_ready" });
   });
+  it("a server of a mapped Coolify team must land in the Tugra team it was mapped to", () => {
+    const mapped = [fact({ ref: "a", mappedTeamId: "t2" })];
+    const t = new Map([target("new1", { teamId: "t1" }), target("new2", { teamId: "t2" })]);
+    expect(checkPlacements([{ sourceServerRef: "a", kind: "other-server", targetServerId: "new1" }], mapped, t)).toMatchObject({ ok: false, code: "placement_team_mismatch", ref: "a" });
+    expect(checkPlacements([{ sourceServerRef: "a", kind: "other-server", targetServerId: "new2" }], mapped, t)).toMatchObject({ ok: true, teamId: "t2" });
+    // a same-machine server matched in another team is refused the same way
+    const inPlace = new Map([target("srv-a", { teamId: "t1" })]);
+    expect(checkPlacements([{ sourceServerRef: "a", kind: "in-place", targetServerId: null }], mapped, inPlace)).toMatchObject({ ok: false, code: "placement_team_mismatch" });
+  });
+  it("without a mapping the team of the target is not checked against anything", () => {
+    const t = new Map([target("new1", { teamId: "t9" })]);
+    expect(checkPlacements([{ sourceServerRef: "a", kind: "other-server", targetServerId: "new1" }], [fact({ ref: "a" })], t)).toMatchObject({ ok: true, teamId: "t9" });
+  });
   it("an in-place server whose agent is not a ready target is refused", () => {
     const t = new Map([target("srv-a", { ready: false })]);
     expect(checkPlacements([{ sourceServerRef: "a", kind: "in-place", targetServerId: null }], facts, t)).toMatchObject({ ok: false, code: "placement_target_not_ready" });

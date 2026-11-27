@@ -251,6 +251,13 @@ describe("ImporterService: the agent session around connect and revoke", () => {
     expect(none.preflight).not.toHaveProperty("sourceTeamRef");
   });
 
+  it("the plan carries the owner's team mapping from the session (ids only), and none when none was saved", async () => {
+    const saved = await make({ session: { teamMap: { "1": "t1", "2": null, "bad ref": "x" } } }).svc.plan("u1", { sourceKind: "coolify", sessionId: "sess-a" });
+    expect(saved.preflight!.teamMap).toEqual({ "1": "t1", "2": null });
+    const none = await make().svc.plan("u1", { sourceKind: "coolify", sessionId: "sess-a" });
+    expect(none.preflight).not.toHaveProperty("teamMap");
+  });
+
   it("ending the session ends the consent of its run; an API session has none to end", async () => {
     const m = make();
     await m.svc.revokeSession("u1", "sess-a");

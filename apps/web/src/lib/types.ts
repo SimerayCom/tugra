@@ -1549,6 +1549,8 @@ export interface ImportPreflight {
   sourceTeam?: string;
   /** The ref of the Coolify team picked for an agent session (several teams). */
   sourceTeamRef?: string;
+  /** The owner's Coolify team to Tugra team mapping (agent session): Coolify team ref to Tugra team id, null = that team is left out. Absent until saved. */
+  teamMap?: Record<string, string | null>;
   /** The source projects with the plan items (apps, databases, services) in each, so the first import step can select whole projects. */
   projects?: ImportSourceProject[];
   /** Apps already failing at the source (exited, unhealthy, crash-looping): they migrate as they are. */
