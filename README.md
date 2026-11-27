@@ -163,7 +163,7 @@ Notes:
 - **Lock down the raw ports.** With `HUB_TRUSTED_PROXY=true` the hub honors `X-Forwarded-For` (only from private/loopback/docker peers, or `HUB_TRUSTED_PROXY_CIDRS`), and the raw `:3000`/`:3001` ports should reach **only** the proxy. A fresh `--domain` install binds them to `127.0.0.1` (same-host proxy), and an existing install turning https is moved there too (`--keep-raw-ports` opts out). If the proxy runs on another host, set `HUB_BIND`/`WEB_BIND` to this box's private-interface IP and firewall the ports — Docker-published ports bypass `ufw`.
 - **"Sign in with GitHub"** works only in this single-origin proxy deployment (the hub and web share a public origin so the session cookie is visible to the SPA); it isn't available in the plain two-port quick start.
 
-> Published images (`ghcr.io/simeraycom/tugra-*`) are pulled automatically; on a host without a published image for its architecture (arm64 today) the installer builds from your checkout — same command, no changes needed. Every release is digest-pinned and ships signed provenance; see [docs/upgrade.md](docs/upgrade.md).
+> Published images (`ghcr.io/simeraycom/tugra-*`) are pulled automatically; on a host without a published image for its architecture the installer builds from your checkout — same command, no changes needed. Every release is digest-pinned and ships signed provenance; see [docs/upgrade.md](docs/upgrade.md).
 
 **MCP quick start.** Once Tugra is up, mint a personal access token (**Settings → API tokens**) and point any MCP client at it:
 

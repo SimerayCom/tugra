@@ -46,7 +46,7 @@ Pick what matches how you would actually use it. Each item takes a couple of min
 
 ## 3. Known limits
 
-- Published hub/web images are **amd64**; an arm64 host builds from source (several minutes, ~2 GB RAM).
+- Published hub/web/updater images are **amd64 and arm64**. Older betas have amd64 only; an arm64 host builds those from source (several minutes, ~2 GB RAM).
 - Point-in-time recovery is **PostgreSQL only**; other engines have scheduled logical dumps + restore-verify.
 - Volume backups are **file-level copies**, not consistent snapshots — stop the app first for a database volume.
 - A hub restart no longer drops swarm (clustered) deploys: queued ones and ones still building are re-queued and run
