@@ -32,7 +32,9 @@
     "agent_unavailable": "The agent did not answer.",
     "agent_read_failed": "Coolify could not be read through the agent.",
     "forbidden": "Only an owner or admin of the team can connect Coolify through the agent, and only an owner can move from it.",
-    "unknown_team": "That Coolify team has no projects."
+    "unknown_team": "That Coolify team has no projects.",
+    "throttled": "Too many reads in a short time. Try again in a minute.",
+    "capability": "The agent on this server has not been given the database capability. Turn it on in the server's capabilities, then check again."
   },
   "connect": {
     "serverLabel": "Tugra server where Coolify runs",
@@ -50,7 +52,8 @@
     "continue": "Continue",
     "continueHint": "Next: match Coolify's servers to your Tugra servers.",
     "detecting": "Looking for Coolify on {name}…",
-    "detected": "Coolify found on {name}. Press Read Coolify to continue."
+    "detected": "Coolify found on {name}. Press Read Coolify to continue.",
+    "checkAgain": "Check again"
   },
   "team": {
     "label": "Coolify team",

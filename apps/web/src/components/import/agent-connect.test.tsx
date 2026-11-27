@@ -12,9 +12,9 @@ afterEach(cleanup);
 afterEach(() => vi.restoreAllMocks());
 
 const SERVERS = [
-  { id: "s1", name: "coolify-host", teamId: "t1", status: "ONLINE", canWrite: true },
-  { id: "s2", name: "build-box", teamId: "t2", status: "OFFLINE", canWrite: true },
-  { id: "s3", name: "read-only", teamId: "t1", status: "ONLINE", canWrite: false },
+  { id: "s1", name: "coolify-host", teamId: "t1", status: "ONLINE", canWrite: true, capabilities: ["database", "deploy"] },
+  { id: "s2", name: "build-box", teamId: "t2", status: "OFFLINE", canWrite: true, capabilities: ["database"] },
+  { id: "s3", name: "read-only", teamId: "t1", status: "ONLINE", canWrite: false, capabilities: ["database"] },
 ] as never[];
 
 const SESSION: ImportAgentSession = {
@@ -51,6 +51,58 @@ describe("AgentConnectPanel", () => {
     expect(opts.map((o) => [o.textContent, o.disabled])).toEqual([["coolify-host", false], ["build-box (agent offline)", true]]);
     expect((screen.getByRole("button", { name: "Read Coolify" }) as HTMLButtonElement).disabled).toBe(true); // nothing picked yet
     expect(screen.getByText("Nothing is changed or stopped.")).toBeTruthy();
+  });
+
+  it("a server whose agent has no database capability is tagged and cannot be picked, with the way to turn it on", () => {
+    const servers = [...SERVERS, { id: "s4", name: "no-db", teamId: "t1", status: "ONLINE", canWrite: true, capabilities: ["deploy"] }] as never[];
+    mount({ servers });
+    const opts = [...(screen.getByLabelText("Tugra server where Coolify runs") as HTMLSelectElement).options].filter((o) => o.value);
+    expect(opts.find((o) => o.value === "s4")).toMatchObject({ disabled: true });
+    expect(opts.find((o) => o.value === "s4")!.textContent).toContain("capability off");
+    expect(screen.getByRole("link", { name: "Turn it on" }).getAttribute("href")).toBe("/servers/s4?tab=maintenance");
+  });
+
+  it("a failed check says why and offers Check again (it is no longer a button that stays off in silence)", async () => {
+    const detect = vi.spyOn(api, "coolifyDetect").mockRejectedValueOnce(new ApiError(403, 'capability "database" is not granted for this server'));
+    mount();
+    pick("s1");
+    const note = await screen.findByTestId("detect-failed");
+    expect(note.textContent).toContain("has not been given the database capability");
+    expect((screen.getByRole("button", { name: "Read Coolify" }) as HTMLButtonElement).disabled).toBe(true);
+    detect.mockResolvedValue({ found: true, image: "ghcr.io/coollabsio/coolify:4.7.8" });
+    fireEvent.click(screen.getByRole("button", { name: "Check again" }));
+    await waitFor(() => expect((screen.getByRole("button", { name: "Read Coolify" }) as HTMLButtonElement).disabled).toBe(false));
+    expect(screen.queryByTestId("detect-failed")).toBeNull();
+  });
+
+  it("an offline agent or a throttled check each get their own line", async () => {
+    vi.spyOn(api, "coolifyDetect").mockRejectedValueOnce(new ApiError(503, "agent offline"));
+    mount();
+    pick("s1");
+    expect((await screen.findByTestId("detect-failed")).textContent).toContain("The agent is offline");
+    cleanup();
+    qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    vi.spyOn(api, "coolifyDetect").mockRejectedValueOnce(new ApiError(429, "Too Many Requests"));
+    mount();
+    pick("s1");
+    expect((await screen.findByTestId("detect-failed")).textContent).toContain("Try again in a minute");
+  });
+
+  it("the read's own reason reaches the screen: agent offline, not read-only, unreadable", async () => {
+    for (const [code, text] of [["agent_offline", "The agent is offline"], ["not_read_only", "safe, read-only way"], ["unreadable", "could not be read completely"]] as const) {
+      cleanup();
+      qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      vi.spyOn(api, "importConnectAgent").mockRejectedValueOnce(new ApiError(400, "x", code));
+      const toasts: string[] = [];
+      const { subscribeToast } = await import("../../lib/toast-bus");
+      const off = subscribeToast((m) => toasts.push(m.message));
+      mount();
+      pick("s1");
+      await waitFor(() => expect((screen.getByRole("button", { name: "Read Coolify" }) as HTMLButtonElement).disabled).toBe(false));
+      fireEvent.click(screen.getByRole("button", { name: "Read Coolify" }));
+      await waitFor(() => expect(toasts.some((m) => m.includes(text))).toBe(true));
+      off();
+    }
   });
 
   it("says so when no server has an agent yet", () => {

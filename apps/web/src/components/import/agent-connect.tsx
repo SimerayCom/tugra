@@ -8,6 +8,8 @@ import { agentReadyServers } from "../../lib/coolify-agent-connect";
 import { needsTeamChoice } from "../../lib/coolify-take-over";
 import type { ImportAgentSession, ServerView } from "../../lib/types";
 import { Btn, Working } from "../ui";
+import { BlockedNote } from "../cta-parts";
+import { blockTag } from "../../lib/cta-readiness";
 import { Select } from "../form";
 import { useToast } from "../toast";
 import { AgentConsentCard, useTeamRoles } from "./agent-consent";
@@ -20,8 +22,10 @@ export function errorText(t: T, e: unknown): string {
     const key = `coolifyAgent.error.${e.code ?? ""}`;
     const text = t(key);
     if (e.code && text !== key) return text;
-    if (e.status === 403) return t("coolifyAgent.error.forbidden");
-    if (e.status === 409) return t("coolifyAgent.error.agent_offline");
+    if (e.status === 403) return /capability/i.test(e.message) ? t("coolifyAgent.error.capability") : t("coolifyAgent.error.forbidden");
+    if (e.status === 409 || e.status === 503) return t("coolifyAgent.error.agent_offline");
+    if (e.status === 429) return t("coolifyAgent.error.throttled");
+    if (e.status === 504 || e.status === 408) return t("coolifyAgent.error.agent_unavailable");
   }
   return t("coolifyAgent.error.generic");
 }
@@ -70,7 +74,7 @@ export function AgentConnectPanel({
     [],
   );
 
-  const { data: detect, isFetching: detecting } = useQuery({ queryKey: ["coolify-detect", serverId], queryFn: () => api.coolifyDetect(serverId), enabled: !!serverId && !session, retry: false, staleTime: 30_000 });
+  const { data: detect, isFetching: detecting, error: detectError, refetch: detectAgain } = useQuery({ queryKey: ["coolify-detect", serverId], queryFn: () => api.coolifyDetect(serverId), enabled: !!serverId && !session, retry: false, staleTime: 30_000 });
 
   const connect = useMutation({
     mutationFn: async (optIn: boolean) => {
@@ -161,10 +165,15 @@ export function AgentConnectPanel({
               connect.reset();
             }}
             placeholder={t("coolifyAgent.connect.serverPlaceholder")}
-            options={candidates.map((s) => ({ value: s.id, label: s.online ? s.name : t("coolifyAgent.connect.serverOffline", { name: s.name }), disabled: !s.online }))}
+            options={candidates.map((s) => ({ value: s.id, label: s.block?.code === "capability" ? `${s.name} (${blockTag(t, s.block)})` : s.online ? s.name : t("coolifyAgent.connect.serverOffline", { name: s.name }), disabled: !s.online || s.block !== null }))}
             style={{ maxWidth: 420 }}
           />
           <p style={{ margin: 0, fontSize: 12, color: "var(--c-tx3)", lineHeight: 1.5 }}>{t("coolifyAgent.connect.serverHint")}</p>
+          {candidates.filter((s) => s.block?.code === "capability").map((s) => (
+            <p key={s.id} style={{ margin: 0, fontSize: 12, lineHeight: 1.5 }}>
+              <strong>{s.name}</strong>: <BlockedNote block={s.block!} serverId={s.id} />
+            </p>
+          ))}
         </div>
       )}
 
@@ -174,6 +183,12 @@ export function AgentConnectPanel({
         </p>
       )}
 
+      {serverId && detectError && !detecting && (
+        <div role="alert" data-testid="detect-failed" style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+          <span style={{ flex: "1 1 220px", fontSize: 12, color: "var(--c-r)", lineHeight: 1.5 }}>{errorText(t, detectError)}</span>
+          <Btn variant="ghost" onClick={() => void detectAgain()}>{t("coolifyAgent.connect.checkAgain")}</Btn>
+        </div>
+      )}
       {serverId && detecting && !detect && <Working text={t("coolifyAgent.connect.detecting", { name: server?.name ?? "" })} />}
       {serverId && detect?.found === true && !connect.isPending && (
         <p role="status" style={{ margin: 0, fontSize: 12, color: "var(--c-g)", lineHeight: 1.5 }}>{t("coolifyAgent.connect.detected", { name: server?.name ?? "" })}</p>
