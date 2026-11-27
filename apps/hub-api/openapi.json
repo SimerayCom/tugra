@@ -15439,6 +15439,10 @@
                         "type": "string",
                         "format": "date-time"
                       },
+                      "iconKey": {
+                        "nullable": true,
+                        "type": "string"
+                      },
                       "createdAt": {
                         "type": "string",
                         "format": "date-time"
@@ -15598,6 +15602,7 @@
                       "canWrite",
                       "canDeploy",
                       "iconUpdatedAt",
+                      "iconKey",
                       "createdAt"
                     ],
                     "additionalProperties": false
@@ -16944,6 +16949,10 @@
                       "type": "string",
                       "format": "date-time"
                     },
+                    "iconKey": {
+                      "nullable": true,
+                      "type": "string"
+                    },
                     "createdAt": {
                       "type": "string",
                       "format": "date-time"
@@ -17103,6 +17112,7 @@
                     "canWrite",
                     "canDeploy",
                     "iconUpdatedAt",
+                    "iconKey",
                     "createdAt"
                   ],
                   "additionalProperties": false
@@ -18495,6 +18505,10 @@
                       "type": "string",
                       "format": "date-time"
                     },
+                    "iconKey": {
+                      "nullable": true,
+                      "type": "string"
+                    },
                     "createdAt": {
                       "type": "string",
                       "format": "date-time"
@@ -18654,6 +18668,7 @@
                     "canWrite",
                     "canDeploy",
                     "iconUpdatedAt",
+                    "iconKey",
                     "createdAt"
                   ],
                   "additionalProperties": false
@@ -20051,6 +20066,10 @@
                       "type": "string",
                       "format": "date-time"
                     },
+                    "iconKey": {
+                      "nullable": true,
+                      "type": "string"
+                    },
                     "createdAt": {
                       "type": "string",
                       "format": "date-time"
@@ -20210,6 +20229,7 @@
                     "canWrite",
                     "canDeploy",
                     "iconUpdatedAt",
+                    "iconKey",
                     "createdAt"
                   ],
                   "additionalProperties": false
@@ -24029,6 +24049,194 @@
         "responses": {
           "200": {
             "description": ""
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "apps"
+        ]
+      }
+    },
+    "/api/v1/apps/{id}/favicon": {
+      "get": {
+        "operationId": "ApplicationsController_getFavicon",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "apps"
+        ]
+      }
+    },
+    "/api/v1/apps/{id}/icon-key": {
+      "put": {
+        "operationId": "ApplicationsController_setIconKey",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "iconKey": {
+                    "nullable": true,
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  }
+                },
+                "required": [
+                  "iconKey"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          },
+          "400": {
+            "description": "Invalid or malformed request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
           },
           "401": {
             "description": "Missing or invalid authentication.",
@@ -31254,6 +31462,10 @@
                           "type": "string",
                           "format": "date-time"
                         },
+                        "iconKey": {
+                          "nullable": true,
+                          "type": "string"
+                        },
                         "createdAt": {
                           "type": "string",
                           "format": "date-time"
@@ -31413,6 +31625,7 @@
                         "canWrite",
                         "canDeploy",
                         "iconUpdatedAt",
+                        "iconKey",
                         "createdAt"
                       ],
                       "additionalProperties": false
@@ -32668,6 +32881,10 @@
                       "type": "string",
                       "format": "date-time"
                     },
+                    "iconKey": {
+                      "nullable": true,
+                      "type": "string"
+                    },
                     "createdAt": {
                       "type": "string",
                       "format": "date-time"
@@ -32827,6 +33044,7 @@
                     "canWrite",
                     "canDeploy",
                     "iconUpdatedAt",
+                    "iconKey",
                     "createdAt"
                   ],
                   "additionalProperties": false
@@ -34152,6 +34370,10 @@
                         "type": "string",
                         "format": "date-time"
                       },
+                      "iconKey": {
+                        "nullable": true,
+                        "type": "string"
+                      },
                       "createdAt": {
                         "type": "string",
                         "format": "date-time"
@@ -34311,6 +34533,7 @@
                       "canWrite",
                       "canDeploy",
                       "iconUpdatedAt",
+                      "iconKey",
                       "createdAt"
                     ],
                     "additionalProperties": false
@@ -35721,6 +35944,10 @@
                       "type": "string",
                       "format": "date-time"
                     },
+                    "iconKey": {
+                      "nullable": true,
+                      "type": "string"
+                    },
                     "createdAt": {
                       "type": "string",
                       "format": "date-time"
@@ -35880,6 +36107,7 @@
                     "canWrite",
                     "canDeploy",
                     "iconUpdatedAt",
+                    "iconKey",
                     "createdAt"
                   ],
                   "additionalProperties": false
@@ -40180,6 +40408,10 @@
                       "type": "string",
                       "format": "date-time"
                     },
+                    "iconKey": {
+                      "nullable": true,
+                      "type": "string"
+                    },
                     "createdAt": {
                       "type": "string",
                       "format": "date-time"
@@ -40339,6 +40571,7 @@
                     "canWrite",
                     "canDeploy",
                     "iconUpdatedAt",
+                    "iconKey",
                     "createdAt"
                   ],
                   "additionalProperties": false
@@ -43473,6 +43706,13 @@
                         "type": "string",
                         "format": "date-time"
                       },
+                      "iconKey": {
+                        "nullable": true,
+                        "type": "string"
+                      },
+                      "image": {
+                        "type": "string"
+                      },
                       "createdAt": {
                         "type": "string",
                         "format": "date-time"
@@ -43526,6 +43766,8 @@
                       "role",
                       "canWrite",
                       "iconUpdatedAt",
+                      "iconKey",
+                      "image",
                       "createdAt"
                     ],
                     "additionalProperties": false
@@ -43868,6 +44110,13 @@
                       "type": "string",
                       "format": "date-time"
                     },
+                    "iconKey": {
+                      "nullable": true,
+                      "type": "string"
+                    },
+                    "image": {
+                      "type": "string"
+                    },
                     "createdAt": {
                       "type": "string",
                       "format": "date-time"
@@ -43921,6 +44170,8 @@
                     "role",
                     "canWrite",
                     "iconUpdatedAt",
+                    "iconKey",
+                    "image",
                     "createdAt"
                   ],
                   "additionalProperties": false
@@ -44230,6 +44481,13 @@
                       "type": "string",
                       "format": "date-time"
                     },
+                    "iconKey": {
+                      "nullable": true,
+                      "type": "string"
+                    },
+                    "image": {
+                      "type": "string"
+                    },
                     "createdAt": {
                       "type": "string",
                       "format": "date-time"
@@ -44283,6 +44541,8 @@
                     "role",
                     "canWrite",
                     "iconUpdatedAt",
+                    "iconKey",
+                    "image",
                     "createdAt"
                   ],
                   "additionalProperties": false
@@ -44786,6 +45046,13 @@
                       "type": "string",
                       "format": "date-time"
                     },
+                    "iconKey": {
+                      "nullable": true,
+                      "type": "string"
+                    },
+                    "image": {
+                      "type": "string"
+                    },
                     "createdAt": {
                       "type": "string",
                       "format": "date-time"
@@ -44839,6 +45106,8 @@
                     "role",
                     "canWrite",
                     "iconUpdatedAt",
+                    "iconKey",
+                    "image",
                     "createdAt"
                   ],
                   "additionalProperties": false
@@ -46627,6 +46896,13 @@
                       "type": "string",
                       "format": "date-time"
                     },
+                    "iconKey": {
+                      "nullable": true,
+                      "type": "string"
+                    },
+                    "image": {
+                      "type": "string"
+                    },
                     "createdAt": {
                       "type": "string",
                       "format": "date-time"
@@ -46686,6 +46962,8 @@
                     "role",
                     "canWrite",
                     "iconUpdatedAt",
+                    "iconKey",
+                    "image",
                     "createdAt",
                     "warnings"
                   ],
@@ -47074,6 +47352,116 @@
         "responses": {
           "200": {
             "description": ""
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "databases"
+        ]
+      }
+    },
+    "/api/v1/databases/{id}/icon-key": {
+      "put": {
+        "operationId": "DatabasesController_setIconKey",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "iconKey": {
+                    "nullable": true,
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  }
+                },
+                "required": [
+                  "iconKey"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          },
+          "400": {
+            "description": "Invalid or malformed request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
           },
           "401": {
             "description": "Missing or invalid authentication.",
@@ -57337,6 +57725,18 @@
                                   "templateLogo": {
                                     "nullable": true,
                                     "type": "string"
+                                  },
+                                  "iconKey": {
+                                    "nullable": true,
+                                    "type": "string"
+                                  },
+                                  "image": {
+                                    "nullable": true,
+                                    "type": "string"
+                                  },
+                                  "domain": {
+                                    "nullable": true,
+                                    "type": "string"
                                   }
                                 },
                                 "required": [
@@ -57351,7 +57751,10 @@
                                   "engine",
                                   "iconUpdatedAt",
                                   "templateSlug",
-                                  "templateLogo"
+                                  "templateLogo",
+                                  "iconKey",
+                                  "image",
+                                  "domain"
                                 ],
                                 "additionalProperties": false
                               }
@@ -57589,6 +57992,18 @@
                                 "templateLogo": {
                                   "nullable": true,
                                   "type": "string"
+                                },
+                                "iconKey": {
+                                  "nullable": true,
+                                  "type": "string"
+                                },
+                                "image": {
+                                  "nullable": true,
+                                  "type": "string"
+                                },
+                                "domain": {
+                                  "nullable": true,
+                                  "type": "string"
                                 }
                               },
                               "required": [
@@ -57603,7 +58018,10 @@
                                 "engine",
                                 "iconUpdatedAt",
                                 "templateSlug",
-                                "templateLogo"
+                                "templateLogo",
+                                "iconKey",
+                                "image",
+                                "domain"
                               ],
                               "additionalProperties": false
                             }
@@ -58227,6 +58645,18 @@
                                 "templateLogo": {
                                   "nullable": true,
                                   "type": "string"
+                                },
+                                "iconKey": {
+                                  "nullable": true,
+                                  "type": "string"
+                                },
+                                "image": {
+                                  "nullable": true,
+                                  "type": "string"
+                                },
+                                "domain": {
+                                  "nullable": true,
+                                  "type": "string"
                                 }
                               },
                               "required": [
@@ -58241,7 +58671,10 @@
                                 "engine",
                                 "iconUpdatedAt",
                                 "templateSlug",
-                                "templateLogo"
+                                "templateLogo",
+                                "iconKey",
+                                "image",
+                                "domain"
                               ],
                               "additionalProperties": false
                             }
@@ -58492,6 +58925,18 @@
                                 "templateLogo": {
                                   "nullable": true,
                                   "type": "string"
+                                },
+                                "iconKey": {
+                                  "nullable": true,
+                                  "type": "string"
+                                },
+                                "image": {
+                                  "nullable": true,
+                                  "type": "string"
+                                },
+                                "domain": {
+                                  "nullable": true,
+                                  "type": "string"
                                 }
                               },
                               "required": [
@@ -58506,7 +58951,10 @@
                                 "engine",
                                 "iconUpdatedAt",
                                 "templateSlug",
-                                "templateLogo"
+                                "templateLogo",
+                                "iconKey",
+                                "image",
+                                "domain"
                               ],
                               "additionalProperties": false
                             }
@@ -58844,6 +59292,18 @@
                                 "templateLogo": {
                                   "nullable": true,
                                   "type": "string"
+                                },
+                                "iconKey": {
+                                  "nullable": true,
+                                  "type": "string"
+                                },
+                                "image": {
+                                  "nullable": true,
+                                  "type": "string"
+                                },
+                                "domain": {
+                                  "nullable": true,
+                                  "type": "string"
                                 }
                               },
                               "required": [
@@ -58858,7 +59318,10 @@
                                 "engine",
                                 "iconUpdatedAt",
                                 "templateSlug",
-                                "templateLogo"
+                                "templateLogo",
+                                "iconKey",
+                                "image",
+                                "domain"
                               ],
                               "additionalProperties": false
                             }
@@ -59491,6 +59954,18 @@
                                 "templateLogo": {
                                   "nullable": true,
                                   "type": "string"
+                                },
+                                "iconKey": {
+                                  "nullable": true,
+                                  "type": "string"
+                                },
+                                "image": {
+                                  "nullable": true,
+                                  "type": "string"
+                                },
+                                "domain": {
+                                  "nullable": true,
+                                  "type": "string"
                                 }
                               },
                               "required": [
@@ -59505,7 +59980,10 @@
                                 "engine",
                                 "iconUpdatedAt",
                                 "templateSlug",
-                                "templateLogo"
+                                "templateLogo",
+                                "iconKey",
+                                "image",
+                                "domain"
                               ],
                               "additionalProperties": false
                             }
