@@ -789,8 +789,12 @@ test("L10: the dump size decides: a 32 MiB cap, the default cap, then the real s
   const s = read("l10-fleet-mariadb.sh");
   assert.match(s, /--kind db --engine MARIADB --version 11/);
   assert.match(s, /--max-gz-bytes 33554432/);
-  assert.match(s, /lab_expect_item capped failed dump-too-big/);
+  // a plain run no longer stops at the cap (fcefbb8c): the capped run is moved by the streamed lane and the destination compared by fingerprint
+  assert.match(s, /lab_expect_item capped restored streamed/);
+  assert.match(s, /lab_fingerprint_compare l10-capped/);
+  assert.match(s, /LAB_OP=capped lab_run capped --arms databases --max-gz-bytes 33554432/);
   assert.match(s, /lab_expect_item over failed dump-too-big/);
+  assert.match(s, /LAB_OP=over lab_run over --arms databases --no-stream-large/, "the artifact route's cap is asserted with the documented opt-out");
   assert.ok(s.indexOf("lab_run under") < s.indexOf("lab_run over"), "the small database first, then it grows to the real size");
   // the over-cap run is a FRESH op: the first one is restored, and a second run on it reports already-restored (lab run 3)
   assert.match(s, /lab_seed op --name "lab-over-[^\n]*--data-mode dump >"\$LAB_DIR\/op\.over\.env"/);

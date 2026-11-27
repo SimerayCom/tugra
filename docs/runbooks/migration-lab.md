@@ -310,10 +310,11 @@ to 30 on a runner with 120 GB of free docker disk.
 ### L10 MariaDB against the cap (`l10-fleet-mariadb.sh`, `L10_UNDER_MIB`, `L10_OVER_MIB`)
 MariaDB has no physical lane, so every MariaDB is the logical dump, capped at 256 MiB of gzip. A running, uuid-named `mariadb:11` on
 `--arms databases` (which never stops the source): a small database is planned by `--dry-run`; the same data with `--max-gz-bytes 32 MiB`
-is `dump-too-big`; with the default cap the dump and the upload go through and the hub restores into the database it starts, which is
+is over the cap, and a plain run moves it by the streamed lane (`restored`, reason `streamed`; the destination is compared by
+fingerprint); with the default cap the dump and the upload go through and the hub restores into the database it starts, which is
 compared by fingerprint (rows with a column checksum, AUTO_INCREMENT, charset and collation); then the database grows to the real 1.8 GB
-class and the default cap refuses it on a **fresh op** (`dump-too-big`, nothing uploaded, source untouched; the first op is restored, and a
-second run on it would answer `already-restored`). The point it pins: **the dump size decides, the volume size does not** (several real
+class and the artifact route's cap refuses it on a **fresh op** with `--no-stream-large` (`dump-too-big`, nothing uploaded, source untouched;
+the first op is restored, and a second run on it would answer `already-restored`). The point it pins: **the dump size decides, the volume size does not** (several real
 MariaDBs sit just under 256 MiB by volume size and have a smaller dump), and the 1.8 GB one has no automatic lane **under the default
 policy**. With `stream-logical` it has one: the same running database on the streamed lane (`--data-mode stream`) is dumped in parts,
 restored, and compared by fingerprint, the source never stopped (`L10_STREAM=0` skips the leg).
