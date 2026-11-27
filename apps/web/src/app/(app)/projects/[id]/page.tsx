@@ -4,22 +4,19 @@ import Link from "next/link";
 import { useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Box, Database, Layers, Plus, Pencil, Copy, FolderTree, type LucideIcon } from "lucide-react";
-import { api, appIconUrl, projectIconUrl } from "../../../../lib/api";
+import { Box, Database, Layers, Plus, Pencil, Copy, FolderTree } from "lucide-react";
+import { api, projectIconUrl } from "../../../../lib/api";
 import { useToast } from "../../../../components/toast";
 import { ErrorState } from "../../../../components/error-state";
 import { RenameModal } from "../../../../components/rename-modal";
-import { AppLogo } from "../../../../components/app-logo";
-import type { AppSource, AppStatus, DbStatus, Environment, ProjectResource } from "../../../../lib/types";
-import { appColor } from "../../../../lib/apps";
-import { dbColor } from "../../../../lib/databases";
-import { TemplateLogo, ENGINE_LOGO } from "../../../../lib/template-icons";
+import { ResourceGroup } from "./resource-group";
+import type { Environment, ProjectResource } from "../../../../lib/types";
 import { useT } from "../../../../i18n/provider";
-import { Badge, Btn, Card, StatusPill } from "../../../../components/ui";
+import { Badge, Btn, Card } from "../../../../components/ui";
 import { Skeleton, SkeletonCard } from "../../../../components/skeleton";
 import { PageHeader } from "../../../../components/page-header";
 import { IdentityCard } from "../../../../components/identity-card";
-import { TagChips, TagFilter } from "../../../../components/tags";
+import { TagFilter } from "../../../../components/tags";
 import { useConfirm } from "../../../../components/confirm";
 import { TeamPicker } from "../../../../components/team-picker";
 import { ScopedTeamBadge, useTeamContext } from "../../../../components/team-scope";
@@ -315,45 +312,3 @@ function EnvironmentBlock({ env, projectId, canWrite, onChange }: { env: Environ
   );
 }
 
-function ResourceGroup({ title, items, icon: Icon }: { title: string; items: ProjectResource[]; icon: LucideIcon }) {
-  if (!items.length) return null;
-  return (
-    <div style={{ marginBottom: 12 }}>
-      <div style={{ fontSize: 11, fontWeight: 700, color: "var(--c-tx3)", textTransform: "uppercase", letterSpacing: "0.05em", margin: "4px 0 6px" }}>{title}</div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 8 }}>
-        {items.map((r) => {
-          const color = r.kind === "app" ? appColor(r.status as AppStatus) : dbColor(r.status as DbStatus);
-          return (
-            <Link
-              key={`${r.kind}:${r.id}`}
-              href={r.kind === "app" ? `/apps/${r.id}` : `/databases/${r.id}`}
-              style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 13, color: "var(--c-tx)", textDecoration: "none", padding: "10px 12px", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", background: "var(--c-el)" }}
-            >
-              <span style={{ width: 36, height: 36, borderRadius: 8, background: "var(--c-tile)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                {r.kind === "app" ? (
-                  // Same icon as the app list/detail: custom upload → catalog brand logo → source icon.
-                  <AppLogo iconUrl={appIconUrl(r.id, r.iconUpdatedAt)} templateSlug={r.templateSlug} templateLogo={r.templateLogo} source={(r.source ?? "IMAGE") as AppSource} name={r.name} size={22} />
-                ) : r.engine && ENGINE_LOGO[r.engine] ? (
-                  <TemplateLogo logo={ENGINE_LOGO[r.engine]} slug={r.engine} name={r.engine} size={22} />
-                ) : (
-                  <Icon size={18} color="var(--c-a)" />
-                )}
-              </span>
-              <div style={{ minWidth: 0, flex: 1 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <span style={{ fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.name}</span>
-                  <TagChips tags={r.tags} />
-                </div>
-                <div className="mono" style={{ fontSize: 11, color: "var(--c-tx3)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {r.url ? r.url : r.engine ?? ""}
-                  {r.serverName ? ` · ${r.serverName}` : ""}
-                </div>
-              </div>
-              <StatusPill label={r.status} color={color} />
-            </Link>
-          );
-        })}
-      </div>
-    </div>
-  );
-}

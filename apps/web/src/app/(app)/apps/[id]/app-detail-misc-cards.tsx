@@ -4,14 +4,16 @@ import { type ReactNode, useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CloudUpload, ExternalLink, History, Pencil, Play, Trash2, X } from "lucide-react";
 import { AppLogo } from "../../../../components/app-logo";
+import { appLogoProps } from "../../../../lib/app-icon";
 import { useConfirm } from "../../../../components/confirm";
 import { IconBtn } from "../../../../components/icon-btn";
+import { IconKeyPicker } from "../../../../components/icon-key-picker";
 import { Modal } from "../../../../components/modal";
 import { useToast } from "../../../../components/toast";
 import { Badge, Btn, Card, SectionCard, Spinner } from "../../../../components/ui";
 import { useUnsavedChanges } from "../../../../hooks/useUnsavedChanges";
 import { useT } from "../../../../i18n/provider";
-import { api, ApiError, appIconUrl } from "../../../../lib/api";
+import { api, ApiError } from "../../../../lib/api";
 import { copyText } from "../../../../lib/clipboard";
 import { appStatusDisplay, appSourceSummary, deploymentColor, previewBadgeKey, previewRefLabelKey } from "../../../../lib/apps";
 import { statusLabel } from "../../../../lib/status";
@@ -106,6 +108,11 @@ export function AppIconCard({ app, onChanged }: { app: Application; onChanged: (
     onSuccess: () => { onChanged(); toast(t("apps.iconUploaded"), "success"); },
     onError: (e) => toast(e instanceof Error && e.message ? e.message : t("apps.actionFailed"), "error"),
   });
+  const pick = useMutation({
+    mutationFn: (key: string | null) => api.setAppIconKey(app.id, key),
+    onSuccess: () => { onChanged(); toast(t("pickers.icon.saved"), "success"); },
+    onError: (e) => toast(e instanceof Error && e.message ? e.message : t("pickers.icon.failed"), "error"),
+  });
   const remove = useMutation({
     mutationFn: () => api.deleteAppIcon(app.id),
     onSuccess: () => { onChanged(); toast(t("apps.iconRemoved"), "success"); },
@@ -130,12 +137,12 @@ export function AppIconCard({ app, onChanged }: { app: Application; onChanged: (
     }
   };
 
-  const busy = processing || save.isPending || remove.isPending;
+  const busy = processing || save.isPending || remove.isPending || pick.isPending;
   return (
     <SectionCard title={t("apps.iconTitle")} desc={t("apps.iconHint")}>
       <div style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
         <span style={{ width: 56, height: 56, borderRadius: 12, background: "var(--c-el)", border: "1px solid var(--c-bd)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-          <AppLogo iconUrl={appIconUrl(app.id, app.iconUpdatedAt)} templateSlug={app.templateSlug} templateLogo={app.templateLogo} source={app.source} name={app.name} size={36} />
+          <AppLogo {...appLogoProps(app)} size={36} />
         </span>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <Btn variant="ghost" icon={CloudUpload} onClick={() => fileRef.current?.click()} disabled={busy}>
@@ -145,6 +152,9 @@ export function AppIconCard({ app, onChanged }: { app: Application; onChanged: (
             <Btn variant="ghost" icon={Trash2} onClick={() => remove.mutate()} disabled={busy}>{t("apps.iconRemove")}</Btn>
           )}
         </div>
+      </div>
+      <div style={{ marginTop: 16 }}>
+        <IconKeyPicker value={app.iconKey ?? null} onChange={(k) => pick.mutate(k)} disabled={busy} hasUpload={hasIcon} />
       </div>
       <input
         ref={fileRef}

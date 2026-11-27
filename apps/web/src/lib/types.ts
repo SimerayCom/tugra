@@ -1939,6 +1939,10 @@ export interface ProjectResource {
   iconUpdatedAt: string | null;
   templateSlug: string | null;
   templateLogo: string | null;
+  /** Brand icon picked from the shared set; image drives the automatic one; a domain enables the site favicon. */
+  iconKey?: string | null;
+  image?: string | null;
+  domain?: string | null;
 }
 
 export interface Environment {
@@ -2091,6 +2095,8 @@ export interface Application {
   templateLogo: string | null;
   // ISO timestamp when a custom icon was last uploaded (null = no custom icon); cache-busts the icon URL.
   iconUpdatedAt: string | null;
+  /** Brand icon picked from the shared set (null = automatic). Optional so older fixtures type-check. */
+  iconKey?: string | null;
   source: AppSource;
   image: string | null;
   gitUrl: string | null;
@@ -2460,6 +2466,9 @@ export interface Database {
   role: Role;
   canWrite: boolean;
   iconUpdatedAt: string | null;
+  /** Brand icon picked from the shared set (null = automatic); image drives the automatic one. */
+  iconKey?: string | null;
+  image?: string;
   createdAt: string;
 }
 

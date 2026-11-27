@@ -11,7 +11,8 @@ import { Btn, EmptyState, Spinner } from "../../../components/ui";
 import { ErrorState } from "../../../components/error-state";
 import { TagChips, TagFilter } from "../../../components/tags";
 import { TextInput } from "../../../components/form";
-import { TemplateLogo, ENGINE_LOGO } from "../../../lib/template-icons";
+import { ENGINE_LOGO } from "../../../lib/template-icons";
+import { ResourceIcon } from "../../../components/resource-icon";
 import { scopeByTeam } from "../../../lib/team-scope";
 import { TeamBadge, useTeamContext, useTeamScope } from "../../../components/team-scope";
 import { TeamGroups } from "../../../components/team-groups";
@@ -93,11 +94,15 @@ export default function DatabasesPage() {
                       />
                       <Link href={`/databases/${d.id}`} style={{ display: "flex", alignItems: "center", gap: 12, flex: 1, minWidth: 0, textDecoration: "none", color: "var(--c-tx)" }}>
                         <span style={{ width: 9, height: 9, borderRadius: "50%", background: dbColor(d.status), flexShrink: 0 }} />
-                        {databaseIconUrl(d.id, d.iconUpdatedAt) ? (
-                          <img src={databaseIconUrl(d.id, d.iconUpdatedAt)!} alt="" width={22} height={22} style={{ borderRadius: 4, objectFit: "cover", flexShrink: 0 }} />
-                        ) : (
-                          <TemplateLogo logo={ENGINE_LOGO[d.engine]} slug={d.engine} name={engineLabel(d.engine)} size={22} />
-                        )}
+                        <ResourceIcon
+                          iconUrl={databaseIconUrl(d.id, d.iconUpdatedAt)}
+                          iconKey={d.iconKey}
+                          image={d.image}
+                          brand={{ logo: ENGINE_LOGO[d.engine], slug: d.engine }}
+                          name={engineLabel(d.engine)}
+                          size={22}
+                          fallback={null}
+                        />
                         <div style={{ flex: 1, minWidth: 0 }}>
                           <div style={{ fontWeight: 600, fontSize: 14, display: "flex", alignItems: "center", gap: 8 }}>
                             {d.name}

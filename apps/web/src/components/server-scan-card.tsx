@@ -7,7 +7,8 @@ import { relativeTime } from "../lib/fleet";
 import type { ExposedService, ScanContainer, ScanReport, ScanSite, ScanSoftware } from "../lib/types";
 import { useT } from "../i18n/provider";
 import { TemplateLogo } from "../lib/template-icons";
-import { TriangleAlert } from "lucide-react";
+import { Box, TriangleAlert } from "lucide-react";
+import { ResourceIcon } from "./resource-icon";
 import { useAuth } from "../lib/auth";
 import { serverBlock, type CtaBlock } from "../lib/cta-readiness";
 import { scanSteps } from "../lib/scan-steps";
@@ -365,6 +366,9 @@ function ScanResult({
           <div>
             {containers.map((c) => (
               <div key={c.name} style={rowStyle}>
+                <span aria-hidden style={{ width: 20, height: 20, display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                  <ResourceIcon image={c.image} brand={c.software ? { slug: c.software } : null} name={c.name} size={20} fallback={<Box size={14} style={{ color: "var(--c-tx3)" }} />} />
+                </span>
                 <span className="mono" style={nameStyle}>{c.name}</span>
                 <span className="mono" style={{ ...dim, fontSize: 12 }}>{c.image}</span>
                 <Badge tone={statusTone(c.state)}>{t(`servers.serverScan.status.${c.state}`)}</Badge>

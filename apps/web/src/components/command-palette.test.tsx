@@ -59,6 +59,21 @@ describe("CommandPalette", () => {
     expect(push).toHaveBeenCalledWith("/apps/a1");
   });
 
+  it("shows an icon on app and database rows: the site favicon for an app with a domain, the engine logo for a database", async () => {
+    vi.spyOn(api, "listApps").mockResolvedValue([{ id: "a1", name: "Shopfront", teamId: "t1", status: "RUNNING", domain: "shop.example.com", iconUpdatedAt: null, templateSlug: null, templateLogo: null, source: "GIT", projectName: null, environmentName: null }] as unknown as Application[]);
+    vi.spyOn(api, "listServers").mockResolvedValue([] as unknown as ServerView[]);
+    vi.spyOn(api, "listDatabases").mockResolvedValue([{ id: "d1", name: "ledger", teamId: "t1", status: "RUNNING", engine: "POSTGRES", version: "16", image: "postgres:16", iconUpdatedAt: null, projectName: null, environmentName: null }] as unknown as Database[]);
+    vi.spyOn(api, "listDomains").mockResolvedValue([] as unknown as DomainView[]);
+    wrap(<CommandPalette dests={dests} onClose={() => {}} />);
+    fireEvent.change(screen.getByRole("combobox"), { target: { value: "s" } });
+    const app = await waitFor(() => { const el = document.getElementById("cp-opt-app:a1"); if (!el) throw new Error("not yet"); return el; });
+    expect(app.querySelector("img")?.getAttribute("src")).toBe("/api/v1/apps/a1/favicon?v=shop.example.com");
+    fireEvent.change(screen.getByRole("combobox"), { target: { value: "ledger" } });
+    const db = await waitFor(() => { const el = document.getElementById("cp-opt-db:d1"); if (!el) throw new Error("not yet"); return el; });
+    expect(db.querySelector("img")?.getAttribute("src")).toBe("/icons/postgresql.svg");
+    expect(db.querySelector("img")?.getAttribute("loading")).toBe("lazy");
+  });
+
   it("Enter with no results does nothing", async () => {
     stubLists();
     wrap(<CommandPalette dests={dests} onClose={() => {}} />);

@@ -6,6 +6,7 @@
 import type { Application, ServerView, Database, DomainView } from "./types";
 import { scopeByTeam } from "./team-scope";
 import { engineLabel } from "./databases";
+import type { AppIconSource } from "./app-icon";
 
 export type PaletteGroup = "actions" | "navigate" | "apps" | "databases" | "servers" | "domains";
 export const GROUP_ORDER: PaletteGroup[] = ["actions", "navigate", "apps", "databases", "servers", "domains"];
@@ -17,7 +18,12 @@ export interface PaletteItem {
   secondary?: string; // searchable + shown muted (project·env, engine version, hostname·ip, owning app)
   href: string;
   status?: string;
+  /** What the row's icon is built from (apps and databases only); the palette renders it, this file stays pure data. */
+  icon?: PaletteIcon;
 }
+export type PaletteIcon =
+  | { type: "app"; app: AppIconSource }
+  | { type: "db"; db: { id: string; name: string; engine: string; iconUpdatedAt: string | null; iconKey?: string | null; image?: string } };
 export interface RankedItem { item: PaletteItem; score: number; labelIdx: number[] }
 export interface RankedGroup { group: PaletteGroup; items: RankedItem[]; total: number }
 
@@ -144,9 +150,11 @@ export function buildResourceItems(
   const join = (...xs: (string | null | undefined)[]) => xs.filter(Boolean).join(" · ");
   const apps = scopeByTeam(d.apps, teamId).map((a): PaletteItem => ({
     id: "app:" + a.id, group: "apps", label: a.name, secondary: join(a.domain, a.projectName, a.environmentName), href: `/apps/${a.id}`, status: a.status,
+    icon: { type: "app", app: a },
   }));
   const databases = scopeByTeam(d.databases, teamId).map((x): PaletteItem => ({
     id: "db:" + x.id, group: "databases", label: x.name, secondary: join(`${engineLabel(x.engine)} ${x.version}`, x.projectName, x.environmentName), href: `/databases/${x.id}`, status: x.status,
+    icon: { type: "db", db: x },
   }));
   const servers = scopeByTeam(d.servers, teamId).map((s): PaletteItem => ({
     id: "srv:" + s.id, group: "servers", label: s.name, secondary: join(s.hostname, s.publicIp, s.clusterName), href: `/servers/${s.id}`, status: s.status,

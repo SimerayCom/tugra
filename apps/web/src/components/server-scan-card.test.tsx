@@ -123,6 +123,24 @@ describe("ServerScanCard", () => {
     expect(chips[2].querySelector("[aria-hidden]")).toBeTruthy();
   });
 
+  it("puts the brand icon of the image on each container row, and a plain glyph when the image is unknown", async () => {
+    vi.spyOn(api, "getServerScan").mockResolvedValue({
+      report: report({ containers: [
+        { name: "cache-a", image: "redis:7", state: "running", project: null, service: null, software: "redis", managedBy: null, ports: [], adoptable: true },
+        { name: "db", image: "docker.io/library/postgres:16-alpine", state: "running", project: null, service: null, software: null, managedBy: null, ports: [], adoptable: false },
+        { name: "billing", image: "ghcr.io/acme/billing:1", state: "running", project: null, service: null, software: null, managedBy: null, ports: [], adoptable: false },
+      ] }),
+    });
+    show();
+    const row = async (name: string) => (await screen.findByText(name)).parentElement as HTMLElement;
+    expect((await row("cache-a")).querySelector("img")?.getAttribute("src")).toBe("/icons/redis.svg");
+    expect((await row("db")).querySelector("img")?.getAttribute("src")).toBe("/icons/postgresql.svg");
+    const plain = await row("billing");
+    expect(plain.querySelector("img")).toBeNull();
+    expect(plain.querySelector("svg")).not.toBeNull();
+    expect((await row("cache-a")).querySelector("img")?.getAttribute("width")).toBe("20");
+  });
+
   it("filters the lists to one software when its chip is clicked, and clears", async () => {
     vi.spyOn(api, "getServerScan").mockResolvedValue({ report: report() });
     show();

@@ -2,10 +2,13 @@
 
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { Layers } from "lucide-react";
 import { api } from "../lib/api";
 import { useT } from "../i18n/provider";
 import { Badge, Card, Spinner } from "./ui";
 import { needsExplicitTarget } from "../lib/import";
+import { importServiceIcon } from "../lib/import-icon";
+import { ResourceIcon } from "./resource-icon";
 import type { ImportPlan, ImportRemoteKind, ImportRiskLevel, ImportServiceChoice, ImportServicePreview, ImportServiceVerdict } from "../lib/types";
 
 type Choices = Record<string, ImportServiceChoice>;
@@ -140,6 +143,7 @@ function ServiceCard({
   const target = choice?.targetServerId ?? "";
   const needsTarget = needsExplicitTarget(card, choice);
   const keptMembers = card.members.filter((m) => m.status === "kept");
+  const svcIcon = importServiceIcon(card.name, card.members);
   const dropSet = new Set(choice?.dropMembers ?? []);
   const rows = choice?.serviceDomains ?? card.domains;
 
@@ -155,6 +159,9 @@ function ServiceCard({
   return (
     <div style={{ border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: 12, opacity: included ? 1 : 0.7 }}>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", marginBottom: 8 }}>
+        <span aria-hidden style={{ width: 20, height: 20, display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+          <ResourceIcon image={svcIcon.image} brand={svcIcon.brand} name={card.name} size={20} fallback={<Layers size={14} style={{ color: "var(--c-tx3)" }} />} />
+        </span>
         <span className="mono" style={{ fontWeight: 600, fontSize: 13, wordBreak: "break-all", flex: "1 1 160px" }}>{card.name}</span>
         <Badge tone={VERDICT_TONE[card.verdict]}>{t(VERDICT_KEY[card.verdict])}</Badge>
         {card.hold && <Badge tone="warn">{t("import.services.hold.label")}</Badge>}

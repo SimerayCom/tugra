@@ -92,6 +92,13 @@ describe("buildResourceItems", () => {
     expect(byId["dom:dm1"].href).toBe("/apps/a1"); // domain → its app
     expect(new Set(items.map((i) => i.id)).size).toBe(items.length);
   });
+  it("carries what the palette needs to draw an icon for apps and databases, and none for servers and domains", () => {
+    const byId = Object.fromEntries(buildResourceItems({ apps, servers, databases, domains }, null).map((i) => [i.id, i]));
+    expect(byId["app:a1"].icon).toMatchObject({ type: "app", app: { id: "a1", domain: "shop.io" } });
+    expect(byId["db:d1"].icon).toMatchObject({ type: "db", db: { id: "d1", engine: "POSTGRES" } });
+    expect(byId["srv:s1"].icon).toBeUndefined();
+    expect(byId["dom:dm1"].icon).toBeUndefined();
+  });
   it("honours team scope (null = all teams)", () => {
     expect(buildResourceItems({ apps, servers, databases, domains }, "t1").some((i) => i.id === "db:d1")).toBe(false); // d1 is team t2
     expect(buildResourceItems({ apps, servers, databases, domains }, null).some((i) => i.id === "db:d1")).toBe(true);

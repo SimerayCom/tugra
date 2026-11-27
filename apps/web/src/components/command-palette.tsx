@@ -3,17 +3,22 @@
 import { useGuardedPush } from "../hooks/useUnsavedChanges";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { api } from "../lib/api";
+import { api, databaseIconUrl } from "../lib/api";
 import { useT } from "../i18n/provider";
 import { useTeamScope } from "./team-scope";
 import { useIsMobile } from "../hooks/useIsMobile";
 import { Modal } from "./modal";
+import { AppLogo } from "./app-logo";
+import { ResourceIcon } from "./resource-icon";
+import { appLogoProps } from "../lib/app-icon";
+import { ENGINE_LOGO } from "../lib/template-icons";
 import {
   buildResourceItems,
   flatten,
   highlightParts,
   searchPalette,
   type PaletteGroup,
+  type PaletteIcon,
   type PaletteItem,
 } from "../lib/command-search";
 
@@ -152,6 +157,7 @@ export function CommandPalette({
                     onClick={() => go(r.item.href)}
                     style={{ display: "flex", alignItems: "center", gap: 10, minHeight: 40, padding: "7px 12px", borderRadius: "var(--r1)", cursor: "pointer", background: isActive ? "var(--c-el)" : "transparent", boxShadow: isActive ? "inset 2px 0 0 var(--c-lapis)" : "none" }}
                   >
+                    {r.item.icon && <PaletteIconView icon={r.item.icon} />}
                     {dot && <span aria-hidden style={{ width: 7, height: 7, borderRadius: "50%", background: dot, flexShrink: 0 }} />}
                     <span style={{ flex: 1, minWidth: 0, color: "var(--c-tx)", fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                       {highlightParts(r.item.label, r.labelIdx).map((p, i) => (p.hit ? <mark key={i} style={{ background: "transparent", color: "var(--c-tx)", fontWeight: 700 }}>{p.s}</mark> : <span key={i}>{p.s}</span>))}
@@ -168,5 +174,26 @@ export function CommandPalette({
       </div>
       {!isMobile && <div aria-hidden style={{ padding: "7px 14px", borderTop: "1px solid var(--c-bd)", color: "var(--c-tx3)", fontSize: 11 }}>{t("nav.paletteHint")}</div>}
     </Modal>
+  );
+}
+
+/** The 18px icon of an app or database row. Fixed size, so rows keep their height while icons load. */
+function PaletteIconView({ icon }: { icon: PaletteIcon }) {
+  return (
+    <span aria-hidden style={{ width: 18, height: 18, flexShrink: 0, display: "inline-flex", alignItems: "center", justifyContent: "center" }}>
+      {icon.type === "app" ? (
+        <AppLogo {...appLogoProps(icon.app)} size={18} />
+      ) : (
+        <ResourceIcon
+          iconUrl={databaseIconUrl(icon.db.id, icon.db.iconUpdatedAt)}
+          iconKey={icon.db.iconKey}
+          image={icon.db.image}
+          brand={ENGINE_LOGO[icon.db.engine] ? { logo: ENGINE_LOGO[icon.db.engine], slug: icon.db.engine } : null}
+          name={icon.db.name}
+          size={18}
+          fallback={null}
+        />
+      )}
+    </span>
   );
 }
