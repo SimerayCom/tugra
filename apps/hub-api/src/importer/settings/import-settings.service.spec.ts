@@ -5,9 +5,9 @@ import type { RawSettings } from "./settings-types";
 const unavailable = { ok: false, reason: "not_exposed" } as const;
 const raw = (over: Partial<RawSettings> = {}): RawSettings => ({ notifications: unavailable, sharedVariables: unavailable, storages: unavailable, scheduledTasks: unavailable, serverSettings: unavailable, tags: unavailable, members: unavailable, ...over });
 
-function make(settings: RawSettings, opts: { supported?: boolean; opTasks?: unknown[]; opActor?: string } = {}) {
+function make(settings: RawSettings, opts: { supported?: boolean; opTasks?: unknown[]; opActor?: string; session?: Record<string, unknown> } = {}) {
   const source = { readSettings: opts.supported === false ? undefined : jest.fn().mockResolvedValue(settings), close: jest.fn().mockResolvedValue(undefined) };
-  const importer = { openSession: jest.fn().mockResolvedValue({ source, session: { id: "sess", teamId: "team-1", sourceKind: "coolify" } }) };
+  const importer = { openSession: jest.fn().mockResolvedValue({ source, session: { id: "sess", teamId: "team-1", sourceKind: "coolify", ...(opts.session ?? {}) } }) };
   const prisma = {
     notificationChannel: { findMany: jest.fn().mockResolvedValue([]) },
     sharedVariable: { findMany: jest.fn().mockResolvedValue([]), findUnique: jest.fn().mockResolvedValue(null) },
@@ -64,6 +64,38 @@ describe("ImportSettingsService.preview", () => {
     const { svc, prisma } = make(raw());
     prisma.bulkOperation.findUnique.mockResolvedValue(null);
     await expect(svc.preview("u1", { sessionId: "sess", opId: "nope" })).rejects.toBeInstanceOf(NotFoundException);
+  });
+});
+
+describe("ImportSettingsService: the team the settings go to", () => {
+  const vars: RawSettings["sharedVariables"] = { ok: true, items: [{ scope: "team", key: "API_URL", value: "v", locked: false }] };
+
+  it("follows the team mapping of the Coolify team the settings were read from, not the team of the first placed server or the client's", async () => {
+    const { svc, sharedVars, access, prisma } = make(raw({ sharedVariables: vars }), { session: { sourceTeamRef: "7", teamMap: { "7": "team-mapped" } } });
+    await svc.apply("u1", { sessionId: "sess", teamId: "team-from-client", select: ["variable:team:API_URL"] });
+    expect(access.requirePermission).toHaveBeenCalledWith("u1", "team-mapped", "apps:config");
+    expect(prisma.sharedVariable.findMany).toHaveBeenCalledWith({ where: { teamId: "team-mapped" }, select: { key: true } });
+    expect(sharedVars.upsert).toHaveBeenCalledWith("u1", "team-mapped", "API_URL", "v");
+  });
+
+  it("a mapped team also wins over the team the import operation landed in", async () => {
+    const { svc, prisma } = make(raw({ sharedVariables: vars }), { session: { sourceTeamRef: "7", teamMap: { "7": "team-mapped" } } });
+    await svc.preview("u1", { sessionId: "sess", opId: "op-1" });
+    expect(prisma.sharedVariable.findMany).toHaveBeenCalledWith({ where: { teamId: "team-mapped" }, select: { key: true } });
+  });
+
+  it("a Coolify team that was left out has no settings to move: refused, nothing read or written", async () => {
+    const { svc, source, sharedVars } = make(raw({ sharedVariables: vars }), { session: { sourceTeamRef: "7", teamMap: { "7": null } } });
+    await expect(svc.preview("u1", { sessionId: "sess" })).rejects.toMatchObject({ response: { code: "team_left_out" } });
+    await expect(svc.apply("u1", { sessionId: "sess", select: ["variable:team:API_URL"] })).rejects.toMatchObject({ response: { code: "team_left_out" } });
+    expect(source.readSettings).not.toHaveBeenCalled();
+    expect(sharedVars.upsert).not.toHaveBeenCalled();
+  });
+
+  it("without a mapping the old rule stands (the operation's team, else the client's, else the session's)", async () => {
+    const { svc, prisma } = make(raw({ sharedVariables: vars }));
+    await svc.preview("u1", { sessionId: "sess", opId: "op-1" });
+    expect(prisma.sharedVariable.findMany).toHaveBeenCalledWith({ where: { teamId: "team-1" }, select: { key: true } });
   });
 });
 

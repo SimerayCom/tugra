@@ -122,10 +122,14 @@ export class ImportSettingsService {
     try {
       if (!source.readSettings) return { teamId: session.teamId };
       const imp = input.opId ? await this.importedResources(userId, input.opId) : undefined;
-      const teamId = imp?.teamId ?? input.teamId ?? session.teamId;
+      // The settings read belong to the Coolify team the owner picked at connect time: they go to the Tugra team that team was mapped
+      // to (the client's team and the team of the first placed server are only a fallback where no mapping says). A team left out has none.
+      const mapped = session.sourceTeamRef && session.teamMap ? session.teamMap[session.sourceTeamRef] : undefined;
+      if (mapped === null) throw new BadRequestException({ statusCode: 400, code: "team_left_out", message: "that Coolify team was left out of the move, so its settings go nowhere" });
+      const teamId = mapped ?? imp?.teamId ?? input.teamId ?? session.teamId;
       if (teamId !== session.teamId) await this.access.requirePermission(userId, teamId, "apps:config");
       const raw: RawSettings = await source.readSettings(only);
-      const ctx = await this.targetContext(userId, teamId, imp?.rows);
+      const ctx = await this.targetContext(userId, teamId, imp ? (imp.teamId === teamId ? imp.rows : []) : undefined);
       return { plan: buildSettingsPlan(raw, ctx), teamId };
     } finally {
       await source.close();
