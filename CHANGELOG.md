@@ -7,6 +7,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.0-beta.34] - 2026-11-27
+
+- **Coolify opens on the agent.** The import starts on "Connect through the agent", the recommended way that needs no
+  API token, and lists it first. The token form opens by itself only when you bring a Coolify address with you or
+  used one last time, and the page no longer asks for a token while the agent is chosen.
+- **Fewer surprises at the last step.** A takeover server that is busy with another run, or whose ports a proxy
+  already holds, is refused on the start screen. Servers a live run places a part on show as busy in the launcher,
+  and a run's summary lists every server it places something on. An app that shares its data with another one is
+  marked as not rebuildable before the plan, not after.
+- **Source agents are named before the switch.** A finished dry run lists the source servers that have no Tugra agent
+  yet, and the promote step shows them again, so you can connect them before the live run starts.
+- **Coolify checklist.** Matches made only by address are marked as such, "Read this Coolify first" links go straight
+  to the Coolify host, and the checklist checks the probable machines for you.
+- **Smaller fixes.** Screens say "usage stats" where they said "telemetry".
+
 ## [0.1.0-beta.33] - 2026-11-26
 
 - **One move across many teams.** One Coolify often manages servers that sit in different Tugra teams. Taking them

@@ -1,6 +1,6 @@
 {
   "name": "tugra",
-  "version": "0.1.0-beta.33",
+  "version": "0.1.0-beta.34",
   "private": true,
   "packageManager": "pnpm@10.34.9",
   "engines": {
