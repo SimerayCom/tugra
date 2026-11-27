@@ -350,6 +350,8 @@ export function ImportWizard() {
       <div style={{ display: "grid", gap: 16 }}>
         {resumedStep && <div style={{ maxWidth: 720 }}><ResumeNote onDismiss={() => setResumedStep(false)} /></div>}
         <TeamMapStep
+          // the starting choices read the team list once: start again when the list first arrives
+          key={teams.length > 0 ? "teams" : "loading"}
           plan={plan}
           sessionId={sessionId}
           teams={teams}

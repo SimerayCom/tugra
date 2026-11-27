@@ -846,6 +846,17 @@ describe("ImportWizard", () => {
           expect((within(screen.getByTestId("team-map-2")).getByRole("combobox") as HTMLSelectElement).value).toBe(""); // no match: undecided, nothing created for them
         });
 
+        it("suggests the team of the same name even when the team list arrives after the read", async () => {
+          keep();
+          let release: (v: never) => void = () => {};
+          vi.spyOn(api, "listTeams").mockReturnValue(new Promise((r) => { release = r as never; }) as never);
+          vi.spyOn(api, "importPlan").mockResolvedValue(teamPlan(null));
+          wrap(<ImportWizard />);
+          await screen.findByText("Which team does each Coolify team go into?");
+          release([{ id: "t1", name: "olgu", role: "OWNER" }] as never);
+          await waitFor(() => expect((within(screen.getByTestId("team-map-1")).getByRole("combobox") as HTMLSelectElement).value).toBe("t1"));
+        });
+
         it("saving it goes on to the match step, narrowed to the mapped teams, and the hub keeps the mapping (a refresh does not ask again)", async () => {
           keep();
           vi.spyOn(api, "importPlan").mockResolvedValue(teamPlan(null));
