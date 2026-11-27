@@ -76,7 +76,9 @@ function HostCard({
       </div>
 
       {row.controlPlane ? (
-        <p style={{ margin: 0, fontSize: 12, color: "var(--c-tx3)", lineHeight: 1.5 }}>{t("hostMatch.table.hostItself")}</p>
+        <p style={{ margin: 0, fontSize: 12, color: "var(--c-tx3)", lineHeight: 1.5 }}>
+          {row.tugraName ? t("hostMatch.table.hostItselfNamed", { name: row.tugraName }) : t("hostMatch.table.hostItself")}
+        </p>
       ) : (
         <p style={{ margin: 0, fontSize: 13, color: "var(--c-tx2)", lineHeight: 1.5 }}>
           {row.tugraName ? t("hostMatch.table.matchedTo", { name: row.tugraName }) : t("hostMatch.table.noneYet")}

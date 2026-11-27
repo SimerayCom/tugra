@@ -23,7 +23,7 @@
   "table": {
     "title": "Servers of this Coolify",
     "hint": "Tugra checks which of your servers is the same machine as each Coolify server. Check the unsure ones before anything moves.",
-    "coolifyHost": "Coolify host (this server)",
+    "coolifyHost": "Runs Coolify",
     "agent": "Tugra agent: {state}",
     "agentOnline": "online",
     "agentOffline": "offline",
@@ -31,9 +31,10 @@
     "noneYet": "No Tugra server matches yet",
     "sureCount": "{n} to check",
     "allSure": "Every server is matched.",
-    "hostItself": "This is the server Tugra reads Coolify from, so it is always the same machine.",
+    "hostItself": "The machine Coolify itself runs on. Tugra read Coolify here through this machine's agent, so it is the same machine. It is not your Tugra hub. Its apps are taken over last, because stopping its proxy cuts off the Coolify dashboard.",
     "evidenceTitle": "What the hub found",
-    "noEvidence": "Nothing in common was found."
+    "noEvidence": "Nothing in common was found.",
+    "hostItselfNamed": "The machine Coolify itself runs on: your Tugra server {name}. Tugra read Coolify here through its agent, so it is the same machine. It is not your Tugra hub. Its apps are taken over last, because stopping its proxy cuts off the Coolify dashboard."
   },
   "strength": {
     "identity": "Proves it",

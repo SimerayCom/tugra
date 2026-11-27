@@ -59,7 +59,7 @@ describe("AgentMatchStep", () => {
     expect(within(card("edge")).getByText("Same machine")).toBeTruthy();
     expect(within(card("maybe")).getByText("Probably the same")).toBeTruthy();
     expect(within(card("unsure")).getByText("Not sure")).toBeTruthy();
-    expect(within(card("local")).getByText("Coolify host (this server)")).toBeTruthy();
+    expect(within(card("local")).getByText("Runs Coolify")).toBeTruthy();
     expect(screen.getByText("3 to check")).toBeTruthy(); // maybe, unsure and clash; the host, the sure one and the owner's own answer do not count
   });
 
@@ -88,7 +88,7 @@ describe("AgentMatchStep", () => {
   it("the Coolify host itself cannot be answered for: it is always this server", () => {
     mount();
     expect(within(card("local")).queryByRole("button")).toBeNull();
-    expect(within(card("local")).getByText(/always the same machine/)).toBeTruthy();
+    expect(within(card("local")).getByText(/It is not your Tugra hub/)).toBeTruthy();
   });
 
   it("the owner names the Tugra server for a server the hub is unsure of (servers they cannot write to are not offered), then the plan is read again", async () => {
