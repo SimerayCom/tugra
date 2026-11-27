@@ -46,7 +46,8 @@ const NAMES_SHOWN = 3;
 /**
  * The first import step: "What are you moving?". A source server (or several), whole projects, or everything. What is picked decides
  * which items are in; each source server that has something in scope is given a Tugra server on the same screen. Nothing is chosen
- * for the user: a source server the hub found to be the same machine as a connected Tugra server goes onto it ("Same machine"), every
+ * for the user, nothing is ticked when it opens (only a visit for one named server or project ticks that one). A source server the hub
+ * found to be the same machine as a connected Tugra server goes onto it once ticked ("Same machine"), every
  * other one stays without a target until one is picked ("Another server"), and Continue says what is missing. The target team follows
  * the matched servers, else the source team's name, else it is asked.
  */

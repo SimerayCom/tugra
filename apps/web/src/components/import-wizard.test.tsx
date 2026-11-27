@@ -943,6 +943,25 @@ describe("ImportWizard", () => {
           expect(screen.getByText("Northwind team: 1 of 2")).toBeTruthy();
         });
 
+        it("the first step opens with nothing ticked after the mapping, and changing the mapping keeps the picks instead of ticking everything", async () => {
+          keep({ matched: true });
+          vi.spyOn(api, "importPlan").mockResolvedValue(teamPlan({ "1": "t1", "2": "t9" }));
+          vi.spyOn(api, "importTeamMap").mockResolvedValue({ teamMap: { "1": "t1", "2": "t9" } });
+          wrap(<ImportWizard />);
+          await screen.findByText("What are you moving?");
+          const ticked = () => screen.getAllByRole("checkbox").filter((b) => (b as HTMLInputElement).checked).length;
+          expect(screen.getAllByRole("checkbox").length).toBeGreaterThan(1);
+          expect(ticked()).toBe(0);
+          fireEvent.click(screen.getByRole("checkbox", { name: /edge/ }));
+          expect(ticked()).toBe(1);
+          fireEvent.click(screen.getByRole("button", { name: "Change team mapping" }));
+          await screen.findByText("Which team does each Coolify team go into?");
+          fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+          await screen.findByText("What are you moving?");
+          expect((screen.getByRole("checkbox", { name: /edge/ }) as HTMLInputElement).checked).toBe(true);
+          expect(ticked()).toBe(1);
+        });
+
         it("a plan that already carries the mapping skips the step, and 'Change team mapping' reopens it from what was saved", async () => {
           keep();
           vi.spyOn(api, "importPlan").mockResolvedValue(teamPlan({ "1": "t1", "2": "t9" }));

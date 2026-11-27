@@ -266,14 +266,15 @@ export function defaultTeamId(plan: ImportPlan, servers: readonly ScopeServer[],
 }
 
 /**
- * What the step opens with. A source server the hub matched to a registered Tugra server by a public address is already connected: it
- * is ticked and goes onto that server (the same machine). Everything else stays unticked and unplaced; nothing is chosen for the user.
- * A source with one server (or none matched) opens on "everything" / "a server" with nothing placed.
+ * What the step opens with: nothing picked. Not the servers the hub matched to a connected Tugra server (with a team mapping or after
+ * the match step that is most of them, and the owner has to untick them), not the first server. A matched server still goes onto
+ * its own machine as soon as the owner ticks it ({@link targetOf}); "Select connected" ticks them in one click. A source with several
+ * servers opens on "A server" with none ticked, a source with one (or none shown) on "everything". Only a visit for one named server
+ * or project ({@link focusSelection}) opens with that one ticked.
  */
 export function autoSelection(plan: ImportPlan, shown?: ReadonlySet<string>): ScopeSelection {
   const rows = sourceHostRows(plan).filter((r) => !shown || shown.has(r.ref));
-  const connected = rows.filter((r) => autoTargetOf(plan, r.ref) !== "").map((r) => r.ref);
-  if (rows.length > 1) return { ...emptySelection(), mode: "servers", hosts: new Set(connected) };
+  if (rows.length > 1) return { ...emptySelection(), mode: "servers" };
   return emptySelection();
 }
 

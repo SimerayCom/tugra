@@ -186,11 +186,12 @@ describe("matched servers", () => {
     expect(targetOf(matched(), sel({ placement: { s1: "t9" } }), "s1")).toBe("t9");
     expect(targetOf(matched(), sel({}), "s1", new Set(["t2"]))).toBe("");
   });
-  it("opens on the connected servers, ticked and on their own machine; the rest is unticked and unplaced", () => {
+  it("opens with nothing ticked; a connected server ticked by the owner goes onto its own machine", () => {
     const a = autoSelection(matched());
     expect(a.mode).toBe("servers");
-    expect([...a.hosts]).toEqual(["s1"]);
-    const s = buildScope(matched(), a);
+    expect([...a.hosts]).toEqual([]);
+    expect(buildScope(matched(), a).placed).toEqual({});
+    const s = buildScope(matched(), { ...a, hosts: new Set(["s1"]) });
     expect(s.placed).toEqual({ s1: "t1" });
     expect(s.placementKind).toEqual({ s1: "in-place" });
   });
@@ -391,9 +392,9 @@ describe("an owner's own answer is carried forward", () => {
     expect(autoTargetOf(cp, "s1")).toBe("");
   });
 
-  it("the confirmed servers are ticked when the step opens; the others are not", () => {
+  it("the confirmed servers are not ticked when the step opens either", () => {
     const sel = autoSelection(confirmed);
-    expect([...sel.hosts]).toEqual(["s1"]);
+    expect([...sel.hosts]).toEqual([]);
   });
 
   it("'not the same' is remembered as an answer too", () => {
@@ -430,9 +431,10 @@ describe("everything of one Coolify team", () => {
     expect(scopePayload(buildScope(plan(), sel))).toEqual({ projects: ["p-beta"], include: [DB] });
   });
 
-  it("the step opens ticking only the shown servers that are connected", () => {
+  it("the step opens ticking nothing, however many shown servers are connected", () => {
     const p: ImportPlan = { ...plan(), preflight: { ...plan().preflight!, hosts: [{ ref: "s1", name: "Box One", tugra: { serverId: "t1", name: "A", teamId: "team1", via: "public-ip", confidence: "certain" } }, { ref: "s2", name: "Box Two", tugra: { serverId: "t2", name: "B", teamId: "team1", via: "public-ip", confidence: "certain" } }] } };
-    expect([...autoSelection(p).hosts].sort()).toEqual(["s1", "s2"]);
+    expect([...autoSelection(p).hosts]).toEqual([]);
+    expect(autoSelection(p).mode).toBe("servers");
     expect([...autoSelection(p, new Set(["s2"])).hosts]).toEqual([]); // one shown server is "everything", nothing ticked
   });
 });

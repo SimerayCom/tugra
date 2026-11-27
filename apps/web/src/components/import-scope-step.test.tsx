@@ -63,6 +63,38 @@ describe("ImportScopeStep", () => {
     expect((screen.getByRole("checkbox", { name: /Box One/ }) as HTMLInputElement).checked).toBe(false);
   });
 
+  it("nothing is ticked when the step opens, even when every source server is already connected; Continue waits for a pick", () => {
+    const all = withMatches([{ ref: "s1", name: "Box One", tugra: hit("t1", "Target A") }, { ref: "s2", name: "Box Two", tugra: hit("t2", "Target B") }]);
+    mount({ plan: all });
+    expect(screen.getByRole("radio", { name: /^A server/ }).getAttribute("aria-checked")).toBe("true");
+    expect((screen.getByRole("checkbox", { name: /Box One/ }) as HTMLInputElement).checked).toBe(false);
+    expect((screen.getByRole("checkbox", { name: /Box Two/ }) as HTMLInputElement).checked).toBe(false);
+    expect(screen.queryByRole("button", { name: "Clear" })).toBeNull();
+    expect(screen.queryByText(/moves to/)).toBeNull();
+    expect(screen.getByText("Pick at least one to continue.")).toBeTruthy();
+    expect(continueBtn().disabled).toBe(true);
+  });
+
+  it("Projects opens with nothing ticked too, and Clear empties a Select all", () => {
+    const all = withMatches([{ ref: "s1", name: "Box One", tugra: hit("t1", "Target A") }, { ref: "s2", name: "Box Two", tugra: hit("t2", "Target B") }]);
+    mount({ plan: all });
+    fireEvent.click(screen.getByRole("radio", { name: /^Projects/ }));
+    for (const box of screen.getAllByRole("checkbox")) expect((box as HTMLInputElement).checked).toBe(false);
+    expect(continueBtn().disabled).toBe(true);
+    fireEvent.click(screen.getByRole("radio", { name: /^A server/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Select all" }));
+    expect(screen.getAllByRole("checkbox").every((b) => (b as HTMLInputElement).checked)).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Clear" }));
+    expect(screen.getAllByRole("checkbox").every((b) => !(b as HTMLInputElement).checked)).toBe(true);
+  });
+
+  it("opened for one server (initial selection of that server), only that one is ticked", () => {
+    const all = withMatches([{ ref: "s1", name: "Box One", tugra: hit("t1", "Target A") }, { ref: "s2", name: "Box Two", tugra: hit("t2", "Target B") }]);
+    mount({ plan: all, initial: { ...emptySel(), mode: "servers", hosts: new Set(["s2"]) } });
+    expect((screen.getByRole("checkbox", { name: /Box One/ }) as HTMLInputElement).checked).toBe(false);
+    expect((screen.getByRole("checkbox", { name: /Box Two/ }) as HTMLInputElement).checked).toBe(true);
+  });
+
   it("a picked source server has NO target until one is chosen: no first-server default, Continue says what is missing", () => {
     const onContinue = vi.fn();
     mount({ onContinue });
@@ -96,12 +128,14 @@ describe("ImportScopeStep", () => {
     expect((onContinue.mock.calls[0][0] as ImportScope).serverMap).toEqual({ s1: "t1", s2: "t2" });
   });
 
-  it("servers the hub matched by a public address are already ticked and go onto their own machine, labelled 'Same machine (in place)'", () => {
+  it("servers the hub matched by a public address are not ticked for the owner; ticked, they go onto their own machine, labelled 'Same machine (in place)'", () => {
     const onContinue = vi.fn();
     const p = withMatches([{ ref: "s1", name: "Box One", tugra: hit("t1", "Target A") }, { ref: "s2", name: "Box Two" }]);
     mount({ plan: p, onContinue });
     expect(screen.getByText("1 of 2 source servers are already connected to Tugra.")).toBeTruthy();
-    expect((screen.getByRole("checkbox", { name: /Box One/ }) as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByRole("checkbox", { name: /Box One/ }) as HTMLInputElement).checked).toBe(false);
+    expect(continueBtn().disabled).toBe(true);
+    fireEvent.click(screen.getByRole("checkbox", { name: /Box One/ }));
     expect((screen.getByRole("checkbox", { name: /Box Two/ }) as HTMLInputElement).checked).toBe(false);
     expect((screen.getByLabelText("Box One moves to") as HTMLSelectElement).value).toBe("t1");
     expect(screen.getByText("Same machine (in place).")).toBeTruthy();
@@ -115,6 +149,7 @@ describe("ImportScopeStep", () => {
   it("choosing another server for a matched one says 'Another server'; mixing it with a same-machine move is allowed and explained as a campaign", () => {
     const p = withMatches([{ ref: "s1", name: "Box One", tugra: hit("t1", "Target A") }, { ref: "s2", name: "Box Two", tugra: hit("t2", "Target B") }]);
     mount({ plan: p });
+    fireEvent.click(screen.getByRole("button", { name: "Select connected (2)" }));
     expect((screen.getByRole("checkbox", { name: /Box Two/ }) as HTMLInputElement).checked).toBe(true);
     expect(continueBtn().disabled).toBe(false);
     fireEvent.change(screen.getByLabelText("Box Two moves to"), { target: { value: "t1" } });
@@ -169,6 +204,7 @@ describe("ImportScopeStep", () => {
     const list: Srv[] = [{ ...servers[0], status: "OFFLINE" }, servers[1]];
     const p = withMatches([{ ref: "s1", name: "Box One", tugra: hit("t1", "Target A") }, { ref: "s2", name: "Box Two" }]);
     mount({ plan: p, servers: list });
+    fireEvent.click(screen.getByRole("checkbox", { name: /Box One/ }));
     expect(screen.getByText("Target A is offline.")).toBeTruthy();
     expect(continueBtn().disabled).toBe(true);
   });
@@ -234,7 +270,6 @@ describe("ImportScopeStep", () => {
   it("select all and select connected tick the server list in one click", () => {
     const p = withMatches([{ ref: "s1", name: "Box One", tugra: hit("t1", "Target A") }, { ref: "s2", name: "Box Two" }]);
     mount({ plan: p });
-    fireEvent.click(screen.getByRole("button", { name: "Clear" }));
     fireEvent.click(screen.getByRole("button", { name: "Select all" }));
     expect((screen.getByRole("checkbox", { name: /Box Two/ }) as HTMLInputElement).checked).toBe(true);
     fireEvent.click(screen.getByRole("button", { name: "Clear" }));
@@ -288,6 +323,7 @@ describe("ImportScopeStep", () => {
     it("a source server the hub matched to a server of another team goes onto it as it is (the same machine)", () => {
       const p = withMatches([{ ref: "s1", name: "Box One", tugra: hit("t3", "Target C", { teamId: "team2" }) }, { ref: "s2", name: "Box Two" }]);
       mount({ servers: multi, teams: twoTeams, plan: p });
+      fireEvent.click(screen.getByRole("checkbox", { name: /Box One/ }));
       expect((screen.getByLabelText("Box One moves to") as HTMLSelectElement).value).toBe("t3");
       expect(continueBtn().disabled).toBe(false);
     });
@@ -392,10 +428,11 @@ describe("ImportScopeStep", () => {
       expect(screen.queryByText("Probably Target A")).toBeNull();
     });
 
-    it("the confirmed machine is pre-picked as the same machine with a note and a Change; the unconfirmed one stays unpicked", () => {
+    it("the confirmed machine goes on as the same machine with a note and a Change once ticked; the unconfirmed one stays unpicked", () => {
       const onContinue = vi.fn();
       mount({ plan: answered(), onContinue });
-      expect((screen.getByRole("checkbox", { name: /Box One/ }) as HTMLInputElement).checked).toBe(true);
+      expect((screen.getByRole("checkbox", { name: /Box One/ }) as HTMLInputElement).checked).toBe(false);
+      fireEvent.click(screen.getByRole("checkbox", { name: /Box One/ }));
       expect((screen.getByRole("checkbox", { name: /Box Two/ }) as HTMLInputElement).checked).toBe(false);
       const select = screen.getByLabelText("Box One moves to") as HTMLSelectElement;
       expect(select.value).toBe("t1");

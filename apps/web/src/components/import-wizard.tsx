@@ -407,7 +407,7 @@ export function ImportWizard() {
         plan={plan}
         servers={writableServers.map((s) => ({ id: s.id, name: s.name, teamId: s.teamId, status: s.status, capabilities: s.capabilities, lastSeenAt: s.lastSeenAt }))}
         teams={teams}
-        initial={lastSelection}
+        initial={lastSelection ?? liveSelection.current}
         onContinue={(sc) => { focusRef.current = null; setResumedStep(false); setScope(sc); setLastSelection(sc.selection); }}
         onStartOver={startOver}
         onSelectionChange={onSelectionChange}
