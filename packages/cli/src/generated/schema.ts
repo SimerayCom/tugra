@@ -17864,6 +17864,7 @@ export interface operations {
                     teamId: string;
                     confirm: string;
                     concurrency?: number;
+                    importSessionId?: string;
                 };
             };
         };

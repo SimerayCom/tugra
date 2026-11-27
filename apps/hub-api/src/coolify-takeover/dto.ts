@@ -41,6 +41,8 @@ export const SshStartSchema = z.object({
   teamId: z.string().min(1),
   confirm: z.string().min(1).max(4),
   concurrency: z.number().int().min(1).max(8).optional(),
+  /** The import session whose Coolify team to Tugra team mapping decides the team of each server (the install then follows it per server). */
+  importSessionId: z.string().min(1).max(64).optional(),
 });
 export type SshStartInput = z.infer<typeof SshStartSchema>;
 

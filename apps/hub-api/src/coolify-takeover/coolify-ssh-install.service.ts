@@ -24,6 +24,7 @@ import { AgentWsServer } from "../agent-gateway/agent-ws.server";
 import { ServersService } from "../servers/servers.service";
 import type { CoolifyInventoryData, InvServer } from "./coolify-inventory";
 import { findHostMatch } from "./coolify-install-plan";
+import { parseTeamMap, type TeamMap } from "../importer/team-map-guard";
 import { probeIdentity } from "./host-match.service";
 import { COOLIFY_SSH_PROBE_SHA256, COOLIFY_SSH_UNINSTALL_SHA256, renderCoolifySshInstallScript } from "./coolify-ssh-scripts";
 import {
@@ -88,6 +89,8 @@ export interface StartRunInput {
   teamId: string;
   confirm: string;
   concurrency?: number;
+  /** The import session whose Coolify team to Tugra team mapping decides each server's team (`teamId` is then only the fallback). */
+  importSessionId?: string;
 }
 
 type TargetRow = {
@@ -214,6 +217,7 @@ export class CoolifySshInstallService implements OnModuleInit, OnModuleDestroy {
   async startRun(userId: string, serverId: string, input: StartRunInput): Promise<CoolifySshRunView> {
     const inv = await this.requireInventory(serverId);
     await this.requireInstaller(userId, inv.teamId, input.teamId);
+    const teamMap = input.importSessionId ? await this.importTeamMap(userId, serverId, input.importSessionId) : undefined;
     const uuids = [...new Set(input.coolifyServerUuids)];
     if (uuids.length === 0 || uuids.length > MAX_TARGETS_PER_RUN || uuids.some((u) => !COOLIFY_SSH_UUID_RE.test(u))) {
       throw new BadRequestException({ code: "bad_request", message: "choose between 1 and 100 Coolify servers" });
@@ -227,6 +231,10 @@ export class CoolifySshInstallService implements OnModuleInit, OnModuleDestroy {
       if (!s || s.isLocal) throw new BadRequestException({ code: "unknown_server", message: "That server is not in this inventory, or is the Coolify host itself" });
       chosen.push(s);
     }
+    // Each server goes into the Tugra team its Coolify team was mapped to; a left-out Coolify team gets no agent from this run.
+    const mappedTo = (s: InvServer): string | null | undefined => (teamMap && s.teamId ? teamMap[s.teamId] : undefined);
+    const targetTeamOf = (s: InvServer): string => mappedTo(s) ?? input.teamId;
+    for (const tid of new Set(chosen.filter((s) => mappedTo(s) !== null).map(targetTeamOf))) if (tid !== input.teamId) await this.requireInstaller(userId, inv.teamId, tid);
     this.assertAgentReady(serverId);
 
     // Single flight: one active row per (Coolify host, Coolify server).
@@ -254,10 +262,15 @@ export class CoolifySshInstallService implements OnModuleInit, OnModuleDestroy {
       select: { id: true, teamId: true, publicIp: true, publicIpv6: true, hostname: true, reportedIps: true },
     });
     const rows = chosen.map((s) => {
-      const hit = findHostMatch(s.ip, known).match;
+      const left = mappedTo(s) === null;
+      const target = targetTeamOf(s);
+      const hit = left ? null : findHostMatch(s.ip, known).match;
+      // An agent already there only settles it when it sits in the team the server is going into; in another team it is said so.
+      const elsewhere = !!hit && hit.teamId !== target;
       return {
-        teamId: inv.teamId, serverId, runId, grantId: grant.id, coolifyServerUuid: s.uuid, name: s.name.slice(0, 100), targetTeamId: input.teamId,
-        state: hit ? "SKIPPED_PRESENT" : "PLANNED", code: hit ? "skipped_present" : null, tugraServerId: hit ? hit.id : null, finishedAt: hit ? new Date(this.clock.now()) : null,
+        teamId: inv.teamId, serverId, runId, grantId: grant.id, coolifyServerUuid: s.uuid, name: s.name.slice(0, 100), targetTeamId: target,
+        state: left ? "FAILED" : hit ? "SKIPPED_PRESENT" : "PLANNED", code: left ? "team_left_out" : hit ? (elsewhere ? "skipped_other_team" : "skipped_present") : null, tugraServerId: hit ? hit.id : null,
+        finishedAt: left || hit ? new Date(this.clock.now()) : null,
       };
     });
     await this.prisma.coolifySshTarget.createMany({ data: rows });
@@ -339,7 +352,7 @@ export class CoolifySshInstallService implements OnModuleInit, OnModuleDestroy {
     const inv = await this.requireInventory(serverId);
     const ready = await this.prisma.coolifySshTarget.findMany({ where: { serverId, runId, state: "READY" } });
     if (ready.length === 0) throw new ConflictException({ code: "nothing_ready", message: "No server of this run is ready to install" });
-    await this.requireInstaller(userId, inv.teamId, ready[0].targetTeamId ?? inv.teamId);
+    for (const tid of new Set(ready.map((r) => r.targetTeamId ?? inv.teamId))) await this.requireInstaller(userId, inv.teamId, tid);
     const pick = input.coolifyServerUuids ? new Set(input.coolifyServerUuids) : null;
     const chosen = pick ? ready.filter((r) => pick.has(r.coolifyServerUuid)) : ready;
     if (chosen.length === 0) throw new BadRequestException({ code: "unknown_server", message: "None of those servers is ready" });
@@ -358,7 +371,7 @@ export class CoolifySshInstallService implements OnModuleInit, OnModuleDestroy {
     const inv = await this.requireInventory(serverId);
     const online = await this.prisma.coolifySshTarget.findMany({ where: { serverId, runId, state: "ONLINE", containerId: { not: null } } });
     if (online.length === 0) throw new ConflictException({ code: "nothing_to_remove", message: "No agent installed by this run can be removed" });
-    await this.requireInstaller(userId, inv.teamId, online[0].targetTeamId ?? inv.teamId);
+    for (const tid of new Set(online.map((r) => r.targetTeamId ?? inv.teamId))) await this.requireInstaller(userId, inv.teamId, tid);
     const pick = input.coolifyServerUuids ? new Set(input.coolifyServerUuids) : null;
     const chosen = pick ? online.filter((r) => pick.has(r.coolifyServerUuid)) : online;
     if (chosen.length === 0) throw new BadRequestException({ code: "unknown_server", message: "None of those servers can be removed" });
@@ -788,6 +801,14 @@ export class CoolifySshInstallService implements OnModuleInit, OnModuleDestroy {
     await this.access.requireRole(userId, hostTeamId, OWNER_ONLY);
     await this.access.requireRole(userId, targetTeamId, OWNER_ONLY);
     await this.access.requirePermission(userId, targetTeamId, "servers:manage");
+  }
+
+  /** The team mapping of the caller's own, still-active import session that reads this Coolify host. Ids only; nothing else of the session is read. */
+  private async importTeamMap(userId: string, hostServerId: string, sessionId: string): Promise<TeamMap | undefined> {
+    const row = await this.prisma.importSession.findUnique({ where: { id: sessionId }, select: { actorId: true, status: true, expiresAt: true, agentServerId: true, teamMap: true } });
+    if (!row || row.actorId !== userId || row.agentServerId !== hostServerId) throw new NotFoundException("import session not found");
+    if (row.status !== "active" || row.expiresAt.getTime() < this.clock.now()) throw new BadRequestException({ code: "session_ended", message: "import session expired or revoked - reconnect" });
+    return parseTeamMap(row.teamMap);
   }
 
   private assertAgentReady(serverId: string): void {

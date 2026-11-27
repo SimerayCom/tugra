@@ -100,6 +100,7 @@ interface Opts {
   enrolls?: boolean; // the new agent comes ONLINE after the install
   knownServers?: Row[];
   identity?: string | null;
+  importSessions?: Row[];
 }
 
 function world(o: Opts = {}) {
@@ -113,7 +114,8 @@ function world(o: Opts = {}) {
   const appMove = table([]);
   const migrationRun = table([]);
   const migrationRunServerLock = table([]);
-  const prisma = { coolifyInventory: inventory, coolifySshTarget: targets, coolifyHostGrant: grants, server: servers, application, database, appMove, migrationRun, migrationRunServerLock } as any;
+  const importSession = table([...(o.importSessions ?? [])]);
+  const prisma = { importSession, coolifyInventory: inventory, coolifySshTarget: targets, coolifyHostGrant: grants, server: servers, application, database, appMove, migrationRun, migrationRunServerLock } as any;
 
   let role = "owner";
   const access = {
@@ -268,6 +270,53 @@ describe("CoolifySshInstallService: consent and guards", () => {
     expect(g).toMatchObject({ kind: "ssh", serverId: "HOST", teamId: "T_HOST", grantedById: "u1", classes: ["cap_added"] });
     expect(g.expiresAt.getTime() - 1_800_000_000_000).toBe(2 * 3_600_000);
     expect(w.auditLog.find((a) => a.action === "coolify.ssh.grant")).toMatchObject({ actor: "u1", target: "HOST", meta: { runId: view.runId, count: 2, hours: 2 } });
+  });
+});
+
+describe("CoolifySshInstallService: the team of each server follows the import's team mapping", () => {
+  const session = (over: Row = {}): Row => ({ id: "IMP", actorId: "u1", agentServerId: "HOST", status: "active", expiresAt: new Date(1_800_000_000_000 + 3_600_000), teamMap: { "1": "T_HOST" }, ...over });
+  const startWith = (w: ReturnType<typeof world>, importSessionId: string | undefined, uuids = w.uuids) => w.svc.startRun("u1", "HOST", { coolifyServerUuids: uuids, teamId: "T_NEW", confirm: String(uuids.length), ...(importSessionId ? { importSessionId } : {}) });
+
+  it("each server goes into the Tugra team its Coolify team was mapped to, not the one team of the run", async () => {
+    const w = world({ importSessions: [session()] });
+    await startWith(w, "IMP");
+    await w.svc.idle();
+    expect(w.targets.rows.map((r) => r.targetTeamId)).toEqual(["T_HOST", "T_HOST"]);
+  });
+
+  it("a Coolify team that was left out gets no agent: its servers are marked, never probed", async () => {
+    const w = world({ importSessions: [session({ teamMap: { "1": null } })] });
+    await startWith(w, "IMP");
+    await w.svc.idle();
+    expect(states(w)).toEqual({ srvaaa111111: "FAILED", srvbbb222222: "FAILED" });
+    expect(w.targets.rows.map((r) => r.code)).toEqual(["team_left_out", "team_left_out"]);
+    expect(w.sent).toHaveLength(0);
+  });
+
+  it("needs OWNER of every team the servers are going into", async () => {
+    const w = world({ importSessions: [session({ teamMap: { "1": "T_ELSEWHERE" } })] });
+    await expect(startWith(w, "IMP")).rejects.toBeInstanceOf(ForbiddenException);
+    expect(w.grants.rows).toHaveLength(0);
+  });
+
+  it("uses only the caller's own live session that reads this Coolify host", async () => {
+    await expect(startWith(world({ importSessions: [session({ actorId: "someone" })] }), "IMP")).rejects.toThrow(/not found/);
+    await expect(startWith(world({ importSessions: [session({ agentServerId: "OTHER" })] }), "IMP")).rejects.toThrow(/not found/);
+    await expect(startWith(world({ importSessions: [session({ status: "revoked" })] }), "IMP")).rejects.toMatchObject({ response: { code: "session_ended" } });
+    await expect(startWith(world(), "NOPE")).rejects.toThrow(/not found/);
+  });
+
+  it("an agent already there in ANOTHER team than the server goes into is not reported as 'already here'", async () => {
+    const known = [{ id: "EXIST", teamId: "T_HOST", status: "ONLINE", publicIp: "198.51.100.10", publicIpv6: null, hostname: null, reportedIps: [] }];
+    const w = world({ knownServers: known });
+    await start(w); // the run's team is T_NEW
+    await w.svc.idle();
+    const row = w.targets.rows.find((r) => r.coolifyServerUuid === "srvaaa111111")!;
+    expect(row).toMatchObject({ state: "SKIPPED_PRESENT", code: "skipped_other_team", tugraServerId: "EXIST" });
+    const same = world({ knownServers: [{ ...known[0], teamId: "T_NEW" }] });
+    await start(same);
+    await same.svc.idle();
+    expect(same.targets.rows.find((r) => r.coolifyServerUuid === "srvaaa111111")).toMatchObject({ code: "skipped_present" });
   });
 });
 

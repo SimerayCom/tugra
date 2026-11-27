@@ -42,7 +42,9 @@
     "cancelled": "Cancelled.",
     "timeout": "Timed out.",
     "agent_left_behind": "The install did not finish, but an agent was found on this server. Remove the container named tugra-agent and the volume tugra-agent-data there.",
-    "install_unconfirmed": "The install did not finish and the server could not be checked afterwards. Look for a container named tugra-agent on it and remove it if it is there."
+    "install_unconfirmed": "The install did not finish and the server could not be checked afterwards. Look for a container named tugra-agent on it and remove it if it is there.",
+    "skipped_other_team": "A Tugra agent is already here, but in another Tugra team than this server goes into. Move that server to the right team, or change the team mapping.",
+    "team_left_out": "This server's Coolify team is left out of the move, so no agent is installed here."
   },
   "state": {
     "PLANNED": "Planned",

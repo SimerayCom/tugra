@@ -13729,6 +13729,11 @@
                     "type": "integer",
                     "minimum": 1,
                     "maximum": 8
+                  },
+                  "importSessionId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
                   }
                 },
                 "required": [
