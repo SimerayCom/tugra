@@ -2436,6 +2436,38 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/apps/{id}/favicon": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["ApplicationsController_getFavicon"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/apps/{id}/icon-key": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["ApplicationsController_setIconKey"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/apps/{id}/docker-options": {
         parameters: {
             query?: never;
@@ -4175,6 +4207,22 @@ export interface paths {
         put: operations["DatabasesController_setIcon"];
         post?: never;
         delete: operations["DatabasesController_deleteIcon"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/databases/{id}/icon-key": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["DatabasesController_setIconKey"];
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -8671,6 +8719,70 @@ export interface paths {
         put?: never;
         post?: never;
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/oauth/authorize/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["McpOAuthConsentController_preview"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/oauth/authorize/decision": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["McpOAuthConsentController_decide"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/oauth/grants": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["McpOAuthConsentController_grants"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/oauth/grants/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete: operations["McpOAuthConsentController_revokeGrant"];
         options?: never;
         head?: never;
         patch?: never;
@@ -18778,6 +18890,7 @@ export interface operations {
                         canDeploy: boolean;
                         /** Format: date-time */
                         iconUpdatedAt: string | null;
+                        iconKey: string | null;
                         /** Format: date-time */
                         createdAt: string;
                     }[];
@@ -19151,6 +19264,7 @@ export interface operations {
                         canDeploy: boolean;
                         /** Format: date-time */
                         iconUpdatedAt: string | null;
+                        iconKey: string | null;
                         /** Format: date-time */
                         createdAt: string;
                     };
@@ -19627,6 +19741,7 @@ export interface operations {
                         canDeploy: boolean;
                         /** Format: date-time */
                         iconUpdatedAt: string | null;
+                        iconKey: string | null;
                         /** Format: date-time */
                         createdAt: string;
                     };
@@ -20058,6 +20173,7 @@ export interface operations {
                         canDeploy: boolean;
                         /** Format: date-time */
                         iconUpdatedAt: string | null;
+                        iconKey: string | null;
                         /** Format: date-time */
                         createdAt: string;
                     };
@@ -22598,6 +22714,149 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Authenticated but not permitted (scope or team permission). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate limit exceeded; see Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    ApplicationsController_getFavicon: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Authenticated but not permitted (scope or team permission). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate limit exceeded; see Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    ApplicationsController_setIconKey: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    iconKey: string | null;
+                };
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Invalid or malformed request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
             };
             /** @description Missing or invalid authentication. */
             401: {
@@ -26777,6 +27036,7 @@ export interface operations {
                             canDeploy: boolean;
                             /** Format: date-time */
                             iconUpdatedAt: string | null;
+                            iconKey: string | null;
                             /** Format: date-time */
                             createdAt: string;
                         };
@@ -27137,6 +27397,7 @@ export interface operations {
                         canDeploy: boolean;
                         /** Format: date-time */
                         iconUpdatedAt: string | null;
+                        iconKey: string | null;
                         /** Format: date-time */
                         createdAt: string;
                     };
@@ -27566,6 +27827,7 @@ export interface operations {
                         canDeploy: boolean;
                         /** Format: date-time */
                         iconUpdatedAt: string | null;
+                        iconKey: string | null;
                         /** Format: date-time */
                         createdAt: string;
                     }[];
@@ -28053,6 +28315,7 @@ export interface operations {
                         canDeploy: boolean;
                         /** Format: date-time */
                         iconUpdatedAt: string | null;
+                        iconKey: string | null;
                         /** Format: date-time */
                         createdAt: string;
                     };
@@ -30234,6 +30497,7 @@ export interface operations {
                         canDeploy: boolean;
                         /** Format: date-time */
                         iconUpdatedAt: string | null;
+                        iconKey: string | null;
                         /** Format: date-time */
                         createdAt: string;
                     };
@@ -32342,6 +32606,8 @@ export interface operations {
                         canWrite: boolean;
                         /** Format: date-time */
                         iconUpdatedAt: string | null;
+                        iconKey: string | null;
+                        image: string;
                         /** Format: date-time */
                         createdAt: string;
                     }[];
@@ -32470,6 +32736,8 @@ export interface operations {
                         canWrite: boolean;
                         /** Format: date-time */
                         iconUpdatedAt: string | null;
+                        iconKey: string | null;
+                        image: string;
                         /** Format: date-time */
                         createdAt: string;
                     };
@@ -32597,6 +32865,8 @@ export interface operations {
                         canWrite: boolean;
                         /** Format: date-time */
                         iconUpdatedAt: string | null;
+                        iconKey: string | null;
+                        image: string;
                         /** Format: date-time */
                         createdAt: string;
                     };
@@ -32859,6 +33129,8 @@ export interface operations {
                         canWrite: boolean;
                         /** Format: date-time */
                         iconUpdatedAt: string | null;
+                        iconKey: string | null;
+                        image: string;
                         /** Format: date-time */
                         createdAt: string;
                     };
@@ -34035,6 +34307,8 @@ export interface operations {
                         canWrite: boolean;
                         /** Format: date-time */
                         iconUpdatedAt: string | null;
+                        iconKey: string | null;
+                        image: string;
                         /** Format: date-time */
                         createdAt: string;
                         warnings: string[];
@@ -34335,6 +34609,85 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Authenticated but not permitted (scope or team permission). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate limit exceeded; see Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    DatabasesController_setIconKey: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    iconKey: string | null;
+                };
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Invalid or malformed request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
             };
             /** @description Missing or invalid authentication. */
             401: {
@@ -40876,6 +41229,9 @@ export interface operations {
                                 iconUpdatedAt: string | null;
                                 templateSlug: string | null;
                                 templateLogo: string | null;
+                                iconKey: string | null;
+                                image: string | null;
+                                domain: string | null;
                             }[];
                             /** Format: date-time */
                             createdAt: string;
@@ -40976,6 +41332,9 @@ export interface operations {
                                 iconUpdatedAt: string | null;
                                 templateSlug: string | null;
                                 templateLogo: string | null;
+                                iconKey: string | null;
+                                image: string | null;
+                                domain: string | null;
                             }[];
                             /** Format: date-time */
                             createdAt: string;
@@ -41356,6 +41715,9 @@ export interface operations {
                                 iconUpdatedAt: string | null;
                                 templateSlug: string | null;
                                 templateLogo: string | null;
+                                iconKey: string | null;
+                                image: string | null;
+                                domain: string | null;
                             }[];
                             /** Format: date-time */
                             createdAt: string;
@@ -41466,6 +41828,9 @@ export interface operations {
                                 iconUpdatedAt: string | null;
                                 templateSlug: string | null;
                                 templateLogo: string | null;
+                                iconKey: string | null;
+                                image: string | null;
+                                domain: string | null;
                             }[];
                             /** Format: date-time */
                             createdAt: string;
@@ -41649,6 +42014,9 @@ export interface operations {
                                 iconUpdatedAt: string | null;
                                 templateSlug: string | null;
                                 templateLogo: string | null;
+                                iconKey: string | null;
+                                image: string | null;
+                                domain: string | null;
                             }[];
                             /** Format: date-time */
                             createdAt: string;
@@ -42054,6 +42422,9 @@ export interface operations {
                                 iconUpdatedAt: string | null;
                                 templateSlug: string | null;
                                 templateLogo: string | null;
+                                iconKey: string | null;
+                                image: string | null;
+                                domain: string | null;
                             }[];
                             /** Format: date-time */
                             createdAt: string;
@@ -62529,6 +62900,229 @@ export interface operations {
             };
             /** @description Authenticated but not permitted (scope or team permission). */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate limit exceeded; see Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    McpOAuthConsentController_preview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Authenticated but not permitted (scope or team permission). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate limit exceeded; see Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    McpOAuthConsentController_decide: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Authenticated but not permitted (scope or team permission). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate limit exceeded; see Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    McpOAuthConsentController_grants: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Authenticated but not permitted (scope or team permission). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate limit exceeded; see Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    McpOAuthConsentController_revokeGrant: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Authenticated but not permitted (scope or team permission). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
