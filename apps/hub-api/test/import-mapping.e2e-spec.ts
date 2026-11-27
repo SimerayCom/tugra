@@ -39,7 +39,7 @@ describe("Import mapping (e2e)", () => {
   beforeAll(async () => {
     const mod = await Test.createTestingModule({ imports: [AppModule] })
       .overrideProvider(ImportSourceFactory)
-      .useValue({ create: () => stubSource(), label: () => "Coolify" })
+      .useValue({ create: () => stubSource(), label: () => "Coolify", credential: async (_k: string, _u: string, s: string) => s })
       .compile();
     app = mod.createNestApplication();
     prisma = app.get(PrismaService);
