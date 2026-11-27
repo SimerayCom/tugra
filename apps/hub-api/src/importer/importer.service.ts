@@ -17,7 +17,7 @@ import type { ImportSource } from "./import-source";
 import { isRemoteSourceKind, type ImportConnectAgentInput, type ImportHostLinkInput, type ImportTeamMapInput, type ImportConnectInput, type ImportTestInput, type ImportMappingPutInput, type ImportMappingResolveInput, type ImportPlanRequestInput, type ImportServicesPreviewInput, type RemoteSourceKind } from "./dto";
 import { mapLimit } from "./sources/map-limit";
 import { validateServiceChoices } from "./service-choices";
-import { buildServicePreview, type ServicePreview } from "./service-preview";
+import { buildServicePreview, serviceNameClashes, type ServicePreview } from "./service-preview";
 import { ImportMappingService, type MappingSession } from "./import-mapping.service";
 import type { ResolvedMapping } from "./import-mapping";
 import { baseUrlHost, matchTugraServer, type MatchCandidate, type TugraMatch } from "./server-match";
@@ -492,6 +492,7 @@ export class ImporterService {
       const plan = planImport(fleet, { sourceKind: session.sourceKind });
       const choices = validateServiceChoices(fleet, plan.items, input.choices);
       const services = [...fleet.services].sort((a, b) => (ns("service", a.serverRef, a.sourceRef) < ns("service", b.serverRef, b.sourceRef) ? -1 : 1));
+      const clashes = await serviceNameClashes(this.prisma, { sessionTeamId: session.teamId, services, choices, importAppNames: fleet.apps.map((a) => a.name) });
       const cards = await mapLimit(services, 4, async (svc) => {
         let bundle;
         try {
@@ -499,7 +500,7 @@ export class ImporterService {
         } catch {
           bundle = undefined; // a FIXED degrade: the card shows secretsAvailable:false, never the error text
         }
-        return buildServicePreview(svc, choices[ns("service", svc.serverRef, svc.sourceRef)], bundle);
+        return buildServicePreview(svc, choices[ns("service", svc.serverRef, svc.sourceRef)], bundle, clashes.get(ns("service", svc.serverRef, svc.sourceRef)));
       });
       await this.prisma.importSession.update({ where: { id: session.id }, data: { lastUsedAt: new Date() } });
       return { services: cards };

@@ -32,7 +32,7 @@ const makeFakeClient = () => ({
   }),
 });
 
-function make(over: { session?: unknown; clientGet?: jest.Mock } = {}) {
+function make(over: { session?: unknown; clientGet?: jest.Mock; teamApps?: Array<{ teamId: string; name: string }> } = {}) {
   const migrator = { discover: jest.fn().mockResolvedValue({ containers: [localContainer] }) };
   const importSession = {
     create: jest.fn(async ({ data }: { data: Record<string, unknown> }) => ({ id: "sess-1", ...data })),
@@ -40,7 +40,7 @@ function make(over: { session?: unknown; clientGet?: jest.Mock } = {}) {
     update: jest.fn().mockResolvedValue({}),
     deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
   };
-  const prisma = { importSession } as never;
+  const prisma = { importSession, application: { findMany: jest.fn(async () => over.teamApps ?? []) }, server: { findMany: jest.fn(async () => []) } } as never;
   const crypto = { encrypt: jest.fn((s: string) => `enc(${s})`), decrypt: jest.fn((s: string) => s.replace(/^enc\(|\)$/g, "")) };
   const access = { requirePermission: jest.fn().mockResolvedValue(undefined) };
   const audit = { log: jest.fn() };
@@ -288,6 +288,13 @@ describe("ImporterService.previewServices", () => {
     expect(card.volumes).toEqual([{ key: "meilisearch-data", origin: "named", policy: "copy", dataPlane: "hub-staged", mounts: [{ service: "meilisearch", path: "/meili_data" }] }]);
     expect(card.domainHints).toEqual([{ service: "meilisearch", port: 7700 }]);
     expect(JSON.stringify(res)).not.toContain(SECRET);
+  });
+
+  it("a name the target team already has is flagged on the card, before the import starts", async () => {
+    const { svc } = make({ session: liveSession, clientGet: getFrom(routes([{ key: "SERVICE_PASSWORD_MEILISEARCH", value: SECRET }])), teamApps: [{ teamId: "t1", name: "search" }] });
+    expect((await svc.previewServices("u1", { sessionId: "sess-1" })).services[0].nameClash).toBe("team");
+    const free = make({ session: liveSession, clientGet: getFrom(routes([{ key: "SERVICE_PASSWORD_MEILISEARCH", value: SECRET }])) });
+    expect((await free.svc.previewServices("u1", { sessionId: "sess-1" })).services[0].nameClash).toBeUndefined();
   });
 
   it("when the token cannot read the variables the card says so and lists the NAMES it would need", async () => {

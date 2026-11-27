@@ -144,6 +144,19 @@ describe("ImportServicesPanel", () => {
     expect(onChoice).toHaveBeenCalledWith(REF_PART, { targetServerId: "srv-b" });
   });
 
+  it("a name the target team already has, or another item of the import uses, is flagged on the card before the apply", async () => {
+    vi.spyOn(api, "previewImportServices").mockResolvedValue({ services: [base({ nameClash: "team" }), base({ itemRef: REF_PART, name: "observability", sourceServer: "localhost", verdict: "partial", nameClash: "import" })] });
+    renderPanel();
+    await screen.findByText(/An app with this name already exists on the target team/);
+    expect(screen.getByText(/Another item of this import uses this name/)).toBeTruthy();
+  });
+
+  it("a card without a clash shows no name warning", async () => {
+    renderPanel();
+    await screen.findByText("1 ready · 1 partial · 1 not imported");
+    expect(screen.queryByText(/already exists on the target team/)).toBeNull();
+  });
+
   it("no missing target once the choice has one, or the service is skipped by the operator", async () => {
     const { onMissing } = renderPanel({ choices: { [REF_PART]: { targetServerId: "srv-b" } } });
     await screen.findByText("1 ready · 1 partial · 1 not imported");

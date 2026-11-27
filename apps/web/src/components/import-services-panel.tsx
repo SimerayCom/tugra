@@ -200,6 +200,7 @@ function ServiceCard({
           <div>
             <label style={lbl} htmlFor={`svc-name-${card.itemRef}`}>{t("import.services.rename")}</label>
             <input id={`svc-name-${card.itemRef}`} style={input} value={choice?.name ?? card.name} onChange={(e) => set({ name: e.target.value })} maxLength={63} autoComplete="off" spellCheck={false} />
+            {card.nameClash && <div role="alert" style={{ fontSize: 11, color: "var(--c-am)", marginTop: 2 }}>{t(card.nameClash === "team" ? "import.services.nameClash.team" : "import.services.nameClash.import")}</div>}
           </div>
           <div>
             <label style={lbl} htmlFor={`svc-target-${card.itemRef}`}>{t("import.services.targetServer")}</label>

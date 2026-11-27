@@ -16,7 +16,7 @@ import { ImportExecutorService, type RollbackOptions } from "../../../importer/i
 import { ImporterService, type ImportPlanResponse } from "../../../importer/importer.service";
 import { ns, planImport } from "../../../importer/import-planner";
 import { validateServiceChoices } from "../../../importer/service-choices";
-import { buildServicePreview } from "../../../importer/service-preview";
+import { buildServicePreview, serviceNameClashes } from "../../../importer/service-preview";
 import { buildPreflight } from "../../../importer/preflight";
 import { buildCoverage } from "../../../importer/coverage";
 import { sourceAgentGaps } from "../../../coolify-takeover/agent-coverage";
@@ -195,6 +195,7 @@ export class ImportPortService implements ImportStepsPort {
       const plan = planImport(fleet, { sourceKind: session.sourceKind });
       const choices = validateServiceChoices(fleet, plan.items, input.choices);
       const services = [...fleet.services].sort((a, b) => (ns("service", a.serverRef, a.sourceRef) < ns("service", b.serverRef, b.sourceRef) ? -1 : 1));
+      const clashes = await serviceNameClashes(this.prisma, { sessionTeamId: session.teamId, services, choices, importAppNames: fleet.apps.map((a) => a.name) });
       return await mapLimit(services, 4, async (svc) => {
         let bundle;
         try {
@@ -202,7 +203,7 @@ export class ImportPortService implements ImportStepsPort {
         } catch {
           bundle = undefined; // a fixed degrade: the card says secretsAvailable:false, never the error text
         }
-        return buildServicePreview(svc, choices[ns("service", svc.serverRef, svc.sourceRef)], bundle);
+        return buildServicePreview(svc, choices[ns("service", svc.serverRef, svc.sourceRef)], bundle, clashes.get(ns("service", svc.serverRef, svc.sourceRef)));
       });
     } finally {
       await source.close();

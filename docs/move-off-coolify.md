@@ -57,7 +57,7 @@ An answer you give here carries forward: a server you confirm is shown as confir
 
 ## 4. Choose what moves and where it goes
 
-**Scope.** Pick **A server** (everything running on the servers you choose), **Projects** (whole projects, wherever they run) or **Everything** (everything of the team you picked). If what you picked needs other items, the page names them and offers **Add them**.
+**Scope.** Pick **A server** (everything running on the servers you choose), **Projects** (whole projects, wherever they run) or **Everything** (everything of the team you picked). If what you picked needs other items, the page names them and offers **Add them**. An app needs the databases and services whose address appears in its variables. When Tugra cannot read an app's variables yet (no consent so far, or a token that cannot read them), it assumes the app needs the databases and services of its own Coolify environment.
 
 **Placement.** Each source server goes either:
 
@@ -66,7 +66,7 @@ An answer you give here carries forward: a server you confirm is shown as confir
 
 The server Coolify itself runs on cannot be taken over in place, because stopping its proxy would cut off the dashboard and every server it manages. Its apps go to another server, or you take them over last (step D). Offline servers, servers without a connected agent and servers without the `deploy` capability cannot be chosen, and the page says why.
 
-**Preview and apply.** Read the preview. Blockers must be fixed or acknowledged; notes are things Tugra cannot carry over. **Review & rename** changes names, projects and environments. Then apply.
+**Preview and apply.** Read the preview. Blockers must be fixed or acknowledged; notes are things Tugra cannot carry over. An app with several domains is imported with all of them; its note names the primary and any domain that cannot be carried. A database on a custom image (for example pgvector or timescaledb) keeps that image, also when its credentials are not carried, and its PostgreSQL version is read from the `pg16` part of the tag. A service whose name is already used by an app on the target team, or by another item of the import, is flagged on its card: rename it there. **Review & rename** changes names, projects and environments. Then apply.
 
 If the servers you chose sit in several Tugra teams, Tugra makes one campaign per team in one step, after checking that you are an owner in every one of them. If the placement mixes in-place and moved servers, the campaign has one run for everything that moves to another server and one run for each in-place server, one after the other. The **Campaign reports** list on the Import page and on the Move off Coolify page opens each report.
 

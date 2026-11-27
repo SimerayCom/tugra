@@ -299,6 +299,10 @@
     "targetDefault": "Same as the import target",
     "targetPick": "Choose a server",
     "needsTarget": "This service runs on the source's own host: choose its target server.",
+    "nameClash": {
+      "team": "An app with this name already exists on the target team, so this service would fail to import. Rename it here.",
+      "import": "Another item of this import uses this name. Rename one of them."
+    },
     "verdict": {
       "importable": "Ready",
       "partial": "Partial",

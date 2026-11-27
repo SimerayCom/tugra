@@ -1457,6 +1457,8 @@ export interface ImportServicePreview {
   floating: string[];
   pinned: string[];
   hold: boolean;
+  /** The name it would be created with is taken: an app of that name is on the target team, or another item of this import uses it. */
+  nameClash?: "team" | "import";
 }
 /** A post-import checklist row: i18n kind + short params only (no source free text). */
 export interface ImportChecklistItem {
