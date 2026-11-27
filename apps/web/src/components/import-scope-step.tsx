@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useT } from "../i18n/provider";
 import { SectionCard, Btn } from "./ui";
 import { TeamPicker } from "./team-picker";
@@ -31,7 +31,7 @@ import {
   type ScopeServer,
 } from "../lib/import-scope";
 import { needsCampaign } from "../lib/campaign";
-import type { TeamScope } from "../lib/import-team";
+import { hostTugraTeam, type TeamScope } from "../lib/import-team";
 import { TeamFilterToggle } from "./import/team-filter-toggle";
 import type { ImportPlan, Team } from "../lib/types";
 
@@ -64,6 +64,9 @@ export function ImportScopeStep({
   teamScope = null,
   showAllTeams = false,
   onShowAllTeams,
+  teamView = null,
+  onTeamView,
+  onChangeTeamMap,
 }: {
   plan: ImportPlan;
   /** Servers the user can write to. */
@@ -84,6 +87,10 @@ export function ImportScopeStep({
   /** The owner asked to see every Coolify team: nothing is narrowed. */
   showAllTeams?: boolean;
   onShowAllTeams?: (showAll: boolean) => void;
+  /** The one mapped Coolify team in view (null = all the mapped ones), and the way to change it or the mapping. */
+  teamView?: string | null;
+  onTeamView?: (ref: string | null) => void;
+  onChangeTeamMap?: () => void;
 }) {
   const t = useT();
   const filter = teamScope && !showAllTeams ? teamScope : null;
@@ -122,7 +129,15 @@ export function ImportScopeStep({
   const involved = useMemo(() => involvedHosts(plan, inScope), [plan, inScope]);
   const missing = useMemo(() => missingDependencies(plan, inScope), [plan, inScope]);
   const serverById = useMemo(() => new Map(servers.map((s) => [s.id, s] as const)), [servers]);
-  const scope = useMemo(() => buildScope(plan, sel, allowed, (id) => serverById.get(id)?.teamId), [plan, sel, allowed, serverById]);
+  // Each source server of a mapped Coolify team lands in that team's Tugra team only: its targets are that team's servers.
+  const allowedFor = useCallback(
+    (ref: string): ReadonlySet<string> => {
+      const mapped = hostTugraTeam(plan, ref);
+      return mapped ? new Set(servers.filter((s) => s.teamId === mapped).map((s) => s.id)) : allowed;
+    },
+    [plan, servers, allowed],
+  );
+  const scope = useMemo(() => buildScope(plan, sel, allowedFor, (id) => serverById.get(id)?.teamId), [plan, sel, allowedFor, serverById]);
   const needsTeam = !multiTeamOk && involved.length > 0 && teamId === "";
   const issue = servers.length === 0 ? "noServers" : needsTeam ? "team" : scopeIssue(plan, scope, (id) => serverById.get(id)?.teamId, (id) => serverReadiness(serverById.get(id)), { multiTeamOk });
   const placedTeams = useMemo(() => new Set(Object.values(scope.placed).map((id) => serverById.get(id)?.teamId ?? id)).size, [scope.placed, serverById]);
@@ -158,7 +173,7 @@ export function ImportScopeStep({
     const r = serverReadiness(s);
     return r === "ready" ? s.name : `${s.name} (${t(`import.scope.state.${r}`)})`;
   };
-  const addServerHref = (name: string) => `/servers/new?name=${encodeURIComponent(name)}${teamId ? `&team=${encodeURIComponent(teamId)}` : ""}`;
+  const addServerHref = (name: string, team = teamId) => `/servers/new?name=${encodeURIComponent(name)}${team ? `&team=${encodeURIComponent(team)}` : ""}`;
 
   const hiddenCount = filter ? (sel.mode === "servers" ? filter.hiddenHosts : filter.hiddenProjects) : 0;
   const MODES: Array<{ mode: ScopeMode; show: boolean }> = [
@@ -191,7 +206,7 @@ export function ImportScopeStep({
         style={{ padding: 20, marginBottom: 0 }}
       >
         {startNote && <p data-testid="scope-note" role="note" style={{ fontSize: 12, color: "var(--c-tx2)", margin: "0 0 10px" }}>{startNote}</p>}
-        <TeamFilterToggle scope={teamScope} showAll={showAllTeams} hidden={hiddenCount} onChange={(v) => onShowAllTeams?.(v)} />
+        <TeamFilterToggle scope={teamScope} showAll={showAllTeams} hidden={hiddenCount} onChange={(v) => onShowAllTeams?.(v)} view={teamView} onView={onTeamView} onChangeMap={onChangeTeamMap} />
         <div role="radiogroup" aria-label={t("import.scope.title")} style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 16 }}>
           {MODES.filter((m) => m.show).map(({ mode }) => {
             const checked = sel.mode === mode;
@@ -300,7 +315,8 @@ export function ImportScopeStep({
                   const id = `imp-scope-to-${h.ref.replace(/[^A-Za-z0-9_-]/g, "_")}`;
                   const m = hostTugra(plan, h.ref);
                   const block = inPlaceBlock(plan, h.ref);
-                  const target = targetOf(plan, sel, h.ref, allowed);
+                  const mappedTeam = hostTugraTeam(plan, h.ref);
+                  const target = targetOf(plan, sel, h.ref, allowedFor(h.ref));
                   const kind = target ? placementKindOf(plan, h.ref, target) : null;
                   const confirmed = !!m && !!ownerTugra(plan, h.ref) && target === m.serverId;
                   const matched = m ? serverById.get(m.serverId) : undefined;
@@ -311,7 +327,7 @@ export function ImportScopeStep({
                       <label htmlFor={id} style={label}>{t("import.scope.movesToLabel", { name })}</label>
                       <select id={id} style={field} value={target} onChange={(e) => place(h.ref, e.target.value)}>
                         {target === "" && <option value="" disabled>{t("import.scope.choose")}</option>}
-                        {(multiTeamOk && teamIds.length > 1 ? teamIds : [""]).map((tid) => {
+                        {(mappedTeam ? [mappedTeam] : multiTeamOk && teamIds.length > 1 ? teamIds : [""]).map((tid) => {
                           const group = tid === "" ? teamServers : teamServers.filter((s) => s.teamId === tid);
                           const options = group.map((s) => {
                             const sameMachine = m?.serverId === s.id;
@@ -325,6 +341,16 @@ export function ImportScopeStep({
                           return tid === "" ? options : <optgroup key={tid} label={teamName(tid) || tid}>{options}</optgroup>;
                         })}
                       </select>
+                      {mappedTeam && <p style={note}>{t("import.teamFilter.movesInto", { team: teamName(mappedTeam) })}</p>}
+                      {mappedTeam && !servers.some((s) => s.teamId === mappedTeam) && (
+                        <p role="status" style={{ ...note, color: "var(--c-am)" }}>
+                          {t("import.teamMap.noServers", { team: teamName(mappedTeam) })}{" "}
+                          <a href={addServerHref(name, mappedTeam)} target="_blank" rel="noopener noreferrer" style={{ color: "var(--c-lapis)" }}>{t("import.teamMap.addServer", { team: teamName(mappedTeam) })}</a>
+                        </p>
+                      )}
+                      {mappedTeam && m && matched && matched.teamId !== mappedTeam && (
+                        <p role="status" style={{ ...note, color: "var(--c-am)" }}>{t("import.teamMap.matchedElsewhere", { server: m.name, team: teamName(mappedTeam) })}</p>
+                      )}
                       {confirmed && <p style={{ ...note, color: "var(--c-g)" }}>{t("import.scope.confirmedMachine")}</p>}
                       {kind === "in-place" && <p style={{ ...note, color: "var(--c-tx2)" }}><strong>{t("import.scope.kind.inPlaceTitle")}</strong> {t("import.scope.kind.inPlace")}</p>}
                       {kind === "other-server" && <p style={{ ...note, color: "var(--c-tx2)" }}><strong>{t("import.scope.kind.otherTitle")}</strong> {t("import.scope.kind.other")}</p>}

@@ -749,7 +749,7 @@ describe("ImportWizard", () => {
       const SID = "sess-0123456789";
       const olgu = { ref: "1", name: "Olgu" };
       const other = { ref: "2", name: "Other" };
-      const teamPlan = (): ImportPlan => ({
+      const teamPlan = (teamMap: Record<string, string | null> | null = { "1": "t1", "2": null }): ImportPlan => ({
         ...plan,
         items: [
           { itemRef: "app:edge:web", kind: "app", name: "web-app", proposed: {}, risks: [], dependsOn: [] },
@@ -760,6 +760,7 @@ describe("ImportWizard", () => {
           services: [],
           agentRead: READ,
           sourceTeamRef: "1",
+          ...(teamMap ? { teamMap } : {}),
           hosts: [
             { ref: "local", name: "localhost", controlPlane: true, team: olgu, tugra: { serverId: "srv1", name: "Server A", teamId: "t1", via: "public-ip", confidence: "certain" }, match: { status: "certain", linkedBy: "auto", evidence: [{ kind: "machine_id", equal: true }] }, agentOnline: true },
             { ref: "edge", name: "edge", team: olgu, match: { status: "ambiguous", linkedBy: null, evidence: [{ kind: "hostname", equal: true }] } },
@@ -826,8 +827,50 @@ describe("ImportWizard", () => {
         vi.spyOn(api, "importPlan").mockResolvedValue(teamPlan());
         wrap(<ImportWizard />);
         await screen.findByText("What are you moving?");
-        expect(screen.getByText("Showing the servers and projects of Olgu.")).toBeTruthy();
+        expect(screen.getByText("Olgu team: 1 of 2")).toBeTruthy();
         expect(screen.queryByRole("checkbox", { name: /lab-box/ })).toBeNull();
+      });
+
+      describe("the team mapping step", () => {
+        beforeEach(() => {
+          vi.spyOn(api, "listTeams").mockResolvedValue([{ id: "t1", name: "olgu", role: "OWNER" }, { id: "t9", name: "Elsewhere", role: "OWNER" }] as never);
+        });
+
+        it("comes right after the read when the Coolify has several teams, before the servers are matched, and suggests the team of the same name", async () => {
+          keep();
+          vi.spyOn(api, "importPlan").mockResolvedValue(teamPlan(null));
+          wrap(<ImportWizard />);
+          await screen.findByText("Which team does each Coolify team go into?");
+          expect(screen.queryByText("Match servers")).toBeNull();
+          await waitFor(() => expect((within(screen.getByTestId("team-map-1")).getByRole("combobox") as HTMLSelectElement).value).toBe("t1"));
+          expect((within(screen.getByTestId("team-map-2")).getByRole("combobox") as HTMLSelectElement).value).toBe(""); // no match: undecided, nothing created for them
+        });
+
+        it("saving it goes on to the match step, narrowed to the mapped teams, and the hub keeps the mapping (a refresh does not ask again)", async () => {
+          keep();
+          vi.spyOn(api, "importPlan").mockResolvedValue(teamPlan(null));
+          const save = vi.spyOn(api, "importTeamMap").mockResolvedValue({ teamMap: { "1": "t1", "2": null } });
+          wrap(<ImportWizard />);
+          await screen.findByText("Which team does each Coolify team go into?");
+          await waitFor(() => expect((within(screen.getByTestId("team-map-1")).getByRole("combobox") as HTMLSelectElement).value).toBe("t1"));
+          fireEvent.change(within(screen.getByTestId("team-map-2")).getByRole("combobox"), { target: { value: "__skip" } });
+          fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+          await screen.findByText("Match servers");
+          expect(save).toHaveBeenCalledWith(SID, [{ sourceTeamRef: "1", teamId: "t1" }, { sourceTeamRef: "2", teamId: null }]);
+          expect(screen.getByTestId("match-edge")).toBeTruthy();
+          expect(screen.queryByTestId("match-lab")).toBeNull();
+          expect(screen.getByText("Olgu team: 1 of 2")).toBeTruthy();
+        });
+
+        it("a plan that already carries the mapping skips the step, and 'Change team mapping' reopens it from what was saved", async () => {
+          keep();
+          vi.spyOn(api, "importPlan").mockResolvedValue(teamPlan({ "1": "t1", "2": "t9" }));
+          wrap(<ImportWizard />);
+          await screen.findByText("Match servers");
+          fireEvent.click(screen.getByRole("button", { name: "Change team mapping" }));
+          await screen.findByText("Which team does each Coolify team go into?");
+          expect((within(screen.getByTestId("team-map-2")).getByRole("combobox") as HTMLSelectElement).value).toBe("t9");
+        });
       });
     });
 
