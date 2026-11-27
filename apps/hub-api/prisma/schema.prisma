@@ -1497,6 +1497,7 @@ model Application {
   // nullable marker is set to the upload time and cleared on removal: the app list reads it to know whether
   // an icon exists and to cache-bust the icon URL, without ever fetching the image bytes.
   iconUpdatedAt                DateTime?
+  iconKey                      String? // picked brand icon from the shared set (null = automatic)
   source                       AppSource            @default(IMAGE)
   image                        String?
   // Image-update check (IMAGE apps only; scheduled digest probe run by the app's own agent). Operational state,
@@ -1716,6 +1717,7 @@ model Application {
   databaseLinks                AppDatabaseLink[]
   secretRefs                   SecretRef[]
   icon                         AppIcon?
+  favicon                      AppFavicon?
   logDrains                    LogDrain[]
   createdAt                    DateTime             @default(now())
 
@@ -1737,6 +1739,17 @@ model AppIcon {
   data      Bytes
   sizeBytes Int
   updatedAt DateTime    @updatedAt
+}
+
+// Cached favicon of an app's own domain, fetched by the hub (never by the browser). One row per app;
+// `data` is null when the site has none (negative cache). Refreshed after 7 days or when the domain changes.
+model AppFavicon {
+  app       Application @relation(fields: [appId], references: [id], onDelete: Cascade)
+  appId     String      @id
+  domain    String // the host the icon was fetched for
+  mime      String?
+  data      Bytes?
+  fetchedAt DateTime    @default(now())
 }
 
 // Attach a managed Database to an Application so its connection URI is auto-injected into the app's
@@ -1951,6 +1964,7 @@ model Database {
   volumes                 Json?
   status                  DbStatus          @default(NEW)
   iconUpdatedAt           DateTime? // list-view marker so the database list never reads the icon bytes
+  iconKey                 String? // picked brand icon from the shared set (null = automatic)
   icon                    DatabaseIcon?
   healthCmd               String?
   memoryMb                Int?
