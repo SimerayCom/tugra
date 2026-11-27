@@ -11,7 +11,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - **Coolify teams land in the right Tugra teams.** After the Coolify read, each Coolify team is matched to the Tugra
   team of the same name, or you pick one, or create it in place. Matching, scope and placement then stay inside the
-  mapped team, and the team filter says what it shows ("Olgu Bey team: 7 of 28").
+  mapped team, and the team filter says what it shows ("Northwind team: 7 of 28").
 - **Icons on every resource.** Apps, databases and services show a brand icon from their image, or the site's own
   favicon, fetched by the hub and cached. Pick a different icon from the set on the resource's settings page.
 - **Move from CapRover.** CapRover joins Coolify and Dokploy as an import source: apps, images, env, volumes, ports,
@@ -222,7 +222,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - **A Coolify import keeps its projects, and the review selects by project in one click.** The import now reads Coolify's
   project → environment tree (`/projects`, `environment_id` on each app and database), so every resource is placed in a
-  Tugra project/environment named after its Coolify one (IsBulKibris / production) instead of the team default, exactly
+  Tugra project/environment named after its Coolify one (Shopfront / production) instead of the team default, exactly
   like a Dokploy import. The review screen shows **Include all / Exclude all** above the list and **Include / Exclude
   this project** on each project group, so taking one project out of a team is two clicks. An unreadable project list
   leaves resources in the team default and says so in the plan.

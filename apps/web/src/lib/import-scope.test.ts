@@ -259,7 +259,7 @@ describe("defaultTeamId", () => {
     { id: "t2", name: "B", teamId: "team2" },
     { id: "t3", name: "C", teamId: "team2" },
   ];
-  const teams = [{ id: "team1", name: "Simeray" }, { id: "team2", name: "Olgu Bey" }];
+  const teams = [{ id: "team1", name: "Simeray" }, { id: "team2", name: "Northwind" }];
   it("is the team that owns the most connected servers", () => {
     const p = matched();
     p.preflight!.hosts = [
@@ -271,7 +271,7 @@ describe("defaultTeamId", () => {
   it("else the team named like the source team; else the only team; else none (never the first)", () => {
     const p = plan();
     expect(defaultTeamId(p, servers, teams)).toBe("");
-    p.preflight!.sourceTeam = "olgu bey";
+    p.preflight!.sourceTeam = "northwind";
     expect(defaultTeamId(p, servers, teams)).toBe("team2");
     expect(defaultTeamId(plan(), servers.slice(0, 1), teams)).toBe("team1");
   });

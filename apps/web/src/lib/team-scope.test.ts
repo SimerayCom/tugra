@@ -34,12 +34,12 @@ describe("scopeByTeam", () => {
 });
 
 describe("scopeTeamName", () => {
-  const teams = [{ id: "t1", name: "Olgu Bey" }, { id: "t2", name: "Acme" }];
+  const teams = [{ id: "t1", name: "Northwind" }, { id: "t2", name: "Acme" }];
   it("is null with no team picked (all teams)", () => {
     expect(scopeTeamName(teams, null)).toBeNull();
   });
   it("names the picked team", () => {
-    expect(scopeTeamName(teams, "t1")).toBe("Olgu Bey");
+    expect(scopeTeamName(teams, "t1")).toBe("Northwind");
   });
   it("is null for a scope that is not in the list", () => {
     expect(scopeTeamName(teams, "gone")).toBeNull();

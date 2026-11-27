@@ -7,7 +7,7 @@ import type { ImportPlan, Team } from "./types";
 /** What the owner decided for one Coolify team. "none" = not decided yet (nothing is chosen for them where there is no match). */
 export type TeamChoice = { kind: "use"; teamId: string } | { kind: "create" } | { kind: "skip" } | { kind: "none" };
 
-/** A name for matching: no case, no accents, one space between words, Turkish dotted/dotless i folded ("Olgu Bey" = "olgu  BEY" = "ÖLGÜ Bey"). */
+/** A name for matching: no case, no accents, one space between words, Turkish dotted/dotless i folded ("Northwind" = "northwind" = "ÖLGÜ Bey"). */
 export function normTeamName(name: string): string {
   return name
     .normalize("NFD")
@@ -81,7 +81,7 @@ export function mapBody(choices: Readonly<Record<string, TeamChoice>>, created: 
 export const newTeamName = (coolifyName: string): string => coolifyName.trim().slice(0, 80);
 
 /**
- * The team mapping as a plain-name list for the one-line summary, in the order of the Coolify teams: "Olgu Bey → Olgu Bey".
+ * The team mapping as a plain-name list for the one-line summary, in the order of the Coolify teams: "Northwind → Northwind".
  * Teams left out are not listed.
  */
 export function mappingSummary(plan: ImportPlan, teams: readonly Team[]): Array<{ coolify: string; tugra: string }> {

@@ -33,7 +33,7 @@ describe("in-place takeover page", () => {
   });
   it("opens from the checklist with only the server: it shows the takeover and cannot plan a new one", async () => {
     search = "serverId=srv1";
-    vi.spyOn(api, "getServer").mockResolvedValue({ id: "srv1", name: "olgu-box" } as never);
+    vi.spyOn(api, "getServer").mockResolvedValue({ id: "srv1", name: "edge-box" } as never);
     vi.spyOn(api, "listInPlace").mockResolvedValue([]);
     mount();
     expect(await screen.findByTestId("takeover-needs-run")).toBeTruthy();
@@ -42,9 +42,9 @@ describe("in-place takeover page", () => {
   });
   it("shows the takeover of the server named in the address, with the server's own name to type", async () => {
     search = "serverId=srv1&opId=op1";
-    vi.spyOn(api, "getServer").mockResolvedValue({ id: "srv1", name: "olgu-box" } as never);
+    vi.spyOn(api, "getServer").mockResolvedValue({ id: "srv1", name: "edge-box" } as never);
     vi.spyOn(api, "listInPlace").mockResolvedValue([]);
     mount();
-    expect(await screen.findByText(/No takeover yet for olgu-box/)).toBeTruthy();
+    expect(await screen.findByText(/No takeover yet for edge-box/)).toBeTruthy();
   });
 });

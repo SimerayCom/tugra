@@ -31,24 +31,24 @@ describe("CoolifySource", () => {
         "/servers": [{ uuid: "srv-a", name: "box", ip: "1.2.3.4" }],
         "/servers/srv-a/resources": [{ uuid: "app-1" }, { uuid: "db-1" }, { uuid: "app-2" }],
         "/applications": [
-          { uuid: "app-1", name: "isbulkibris-api", build_pack: "dockerfile", ports_exposes: "3000", environment_id: 39 },
+          { uuid: "app-1", name: "shopfront-api", build_pack: "dockerfile", ports_exposes: "3000", environment_id: 39 },
           { uuid: "app-2", name: "loose", build_pack: "dockerfile", ports_exposes: "3000", environment_id: 999 },
         ],
-        "/databases": [{ uuid: "db-1", name: "isbulkibris-postgres", database_type: "standalone-postgresql", image: "postgres:16", environment_id: 39 }],
+        "/databases": [{ uuid: "db-1", name: "shopfront-postgres", database_type: "standalone-postgresql", image: "postgres:16", environment_id: 39 }],
         "/services": [],
-        "/projects": [{ uuid: "p-isbul", name: "IsBulKibris" }, { uuid: "p-onixi", name: "OnixiAI" }],
-        "/projects/p-isbul": { uuid: "p-isbul", name: "IsBulKibris", environments: [{ id: 40, name: "staging" }, { id: 39, name: "production" }] },
-        "/projects/p-onixi": { uuid: "p-onixi", name: "OnixiAI", environments: [{ id: 38, name: "production" }] },
+        "/projects": [{ uuid: "p-shop", name: "Shopfront" }, { uuid: "p-notely", name: "Notely" }],
+        "/projects/p-shop": { uuid: "p-shop", name: "Shopfront", environments: [{ id: 40, name: "staging" }, { id: 39, name: "production" }] },
+        "/projects/p-notely": { uuid: "p-notely", name: "Notely", environments: [{ id: 38, name: "production" }] },
       })).discover();
       expect(fleet.projects).toEqual([
-        { ref: "p-isbul", name: "IsBulKibris", description: undefined, tags: [], environments: [
-          { ref: "p-isbul#40", name: "staging", isDefault: false },
-          { ref: "p-isbul#39", name: "production", isDefault: true },
+        { ref: "p-shop", name: "Shopfront", description: undefined, tags: [], environments: [
+          { ref: "p-shop#40", name: "staging", isDefault: false },
+          { ref: "p-shop#39", name: "production", isDefault: true },
         ] },
-        { ref: "p-onixi", name: "OnixiAI", description: undefined, tags: [], environments: [{ ref: "p-onixi#38", name: "production", isDefault: true }] },
+        { ref: "p-notely", name: "Notely", description: undefined, tags: [], environments: [{ ref: "p-notely#38", name: "production", isDefault: true }] },
       ]);
-      expect(fleet.apps.find((a) => a.sourceRef === "app-1")).toMatchObject({ projectRef: "p-isbul", environmentRef: "p-isbul#39" });
-      expect(fleet.databases[0]).toMatchObject({ projectRef: "p-isbul", environmentRef: "p-isbul#39" });
+      expect(fleet.apps.find((a) => a.sourceRef === "app-1")).toMatchObject({ projectRef: "p-shop", environmentRef: "p-shop#39" });
+      expect(fleet.databases[0]).toMatchObject({ projectRef: "p-shop", environmentRef: "p-shop#39" });
       // an environment that is not in any readable project stays unplaced (team default), never guessed
       expect(fleet.apps.find((a) => a.sourceRef === "app-2")?.projectRef).toBeUndefined();
     });

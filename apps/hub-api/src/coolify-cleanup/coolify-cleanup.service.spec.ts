@@ -4,7 +4,7 @@ import { listHash } from "./remnant-scan";
 import type { CoolifyInventoryData } from "../coolify-takeover/coolify-inventory";
 
 const CANARY = "s3cr3t-canary-value-9f3a";
-const SERVER = { id: "s1", teamId: "t1", name: "olgu-box", publicIp: "203.0.113.10", publicIpv6: null, hostname: "box", reportedIps: [] as string[] };
+const SERVER = { id: "s1", teamId: "t1", name: "edge-box", publicIp: "203.0.113.10", publicIpv6: null, hostname: "box", reportedIps: [] as string[] };
 
 const inventory = (over: Partial<CoolifyInventoryData> = {}): CoolifyInventoryData => ({
   v: 1,
@@ -12,7 +12,7 @@ const inventory = (over: Partial<CoolifyInventoryData> = {}): CoolifyInventoryDa
   teams: [{ id: "1", name: "Team", description: null, personal: false, members: 1, notifications: [] }],
   servers: [
     { id: "0", uuid: "local", name: "localhost", description: null, ip: "10.0.0.1", port: 22, user: "root", teamId: "1", isLocal: true, reachable: true, usable: true, buildServer: false, swarm: false, keyName: null, apps: 0, databases: 0, services: 0 },
-    { id: "5", uuid: "srv5", name: "olgu", description: null, ip: "203.0.113.10", port: 22, user: "root", teamId: "1", isLocal: false, reachable: true, usable: true, buildServer: false, swarm: false, keyName: null, apps: 1, databases: 0, services: 0 },
+    { id: "5", uuid: "srv5", name: "northwind", description: null, ip: "203.0.113.10", port: 22, user: "root", teamId: "1", isLocal: false, reachable: true, usable: true, buildServer: false, swarm: false, keyName: null, apps: 1, databases: 0, services: 0 },
   ],
   projects: [],
   applications: [{ id: "9", uuid: "uuidapp1uuidapp1uuidapp1", name: "blog", fqdn: "https://blog.example.com", gitRepository: null, gitBranch: null, buildPack: null, image: null, status: "running:healthy", envCount: 2, previewEnvCount: 0, hasCompose: false, teamId: "1", projectId: null, environment: null, serverId: "5" }],
@@ -326,7 +326,7 @@ describe("CoolifyCleanupService.confirm", () => {
   it("a stranger, an admin and an unconfirmed name are refused and nothing is removed", async () => {
     const { t, v } = await ready();
     t.access.teamRole.mockResolvedValue("ADMIN");
-    await expect(t.svc.confirm("u1", v.id, { confirm: "olgu-box", listHash: v.listHash! })).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(t.svc.confirm("u1", v.id, { confirm: "edge-box", listHash: v.listHash! })).rejects.toBeInstanceOf(ForbiddenException);
     t.access.teamRole.mockResolvedValue("OWNER");
     await expect(t.svc.confirm("u1", v.id, { confirm: "wrong", listHash: v.listHash! })).rejects.toBeInstanceOf(BadRequestException);
     expect(t.sent).toHaveLength(0);
@@ -334,21 +334,21 @@ describe("CoolifyCleanupService.confirm", () => {
 
   it("a list hash that is not the one the owner saw is refused", async () => {
     const { t, v } = await ready();
-    await expect(t.svc.confirm("u1", v.id, { confirm: "olgu-box", listHash: "0".repeat(64) })).rejects.toMatchObject({ response: expect.objectContaining({ code: "list_changed" }) });
+    await expect(t.svc.confirm("u1", v.id, { confirm: "edge-box", listHash: "0".repeat(64) })).rejects.toMatchObject({ response: expect.objectContaining({ code: "list_changed" }) });
     expect(t.sent).toHaveLength(0);
   });
 
   it("an incomplete checklist can never be confirmed", async () => {
     const t = make({ apps: [] });
     const v = await t.svc.check("u1", "s1");
-    await expect(t.svc.confirm("u1", v.id, { confirm: "olgu-box", listHash: v.listHash ?? "0".repeat(64) })).rejects.toMatchObject({ response: expect.objectContaining({ code: "incomplete" }) });
+    await expect(t.svc.confirm("u1", v.id, { confirm: "edge-box", listHash: v.listHash ?? "0".repeat(64) })).rejects.toMatchObject({ response: expect.objectContaining({ code: "incomplete" }) });
     expect(t.sent.some((s) => isRemoval(s.script))).toBe(false);
   });
 
   it("goes incomplete between the check and the confirm: refused, nothing removed", async () => {
     const { t, v } = await ready();
     t.prisma.application.findMany.mockResolvedValue([]);
-    await expect(t.svc.confirm("u1", v.id, { confirm: "olgu-box", listHash: v.listHash! })).rejects.toMatchObject({ response: expect.objectContaining({ code: "incomplete" }) });
+    await expect(t.svc.confirm("u1", v.id, { confirm: "edge-box", listHash: v.listHash! })).rejects.toMatchObject({ response: expect.objectContaining({ code: "incomplete" }) });
     expect(t.sent.some((s) => isRemoval(s.script))).toBe(false);
     expect(t.rows.get(v.id)).toMatchObject({ status: "INCOMPLETE" });
   });
@@ -356,7 +356,7 @@ describe("CoolifyCleanupService.confirm", () => {
   it("the DNS check runs again at confirm: a domain moved back to Coolify since the check closes the checklist, nothing is removed", async () => {
     const { t, v } = await ready();
     t.dns.resolve4.mockResolvedValue(["198.51.100.7"]);
-    await expect(t.svc.confirm("u1", v.id, { confirm: "olgu-box", listHash: v.listHash! })).rejects.toMatchObject({ response: expect.objectContaining({ code: "incomplete" }) });
+    await expect(t.svc.confirm("u1", v.id, { confirm: "edge-box", listHash: v.listHash! })).rejects.toMatchObject({ response: expect.objectContaining({ code: "incomplete" }) });
     expect(t.sent.some((s) => isRemoval(s.script))).toBe(false);
     expect(t.rows.get(v.id)).toMatchObject({ status: "INCOMPLETE" });
   });
@@ -364,21 +364,21 @@ describe("CoolifyCleanupService.confirm", () => {
   it("a stored read that became too old between the check and the confirm is refused, nothing is removed", async () => {
     const { t, v } = await ready();
     t.prisma.coolifyInventory.findMany.mockResolvedValue([{ id: "i1", teamId: "t1", serverId: "hub", snapshot: inventory(), serverLinks: {}, readAt: new Date(Date.now() - 2 * 3600_000) }] as never);
-    await expect(t.svc.confirm("u1", v.id, { confirm: "olgu-box", listHash: v.listHash! })).rejects.toMatchObject({ response: expect.objectContaining({ code: "read_stale" }) });
+    await expect(t.svc.confirm("u1", v.id, { confirm: "edge-box", listHash: v.listHash! })).rejects.toMatchObject({ response: expect.objectContaining({ code: "read_stale" }) });
     expect(t.sent).toHaveLength(0);
   });
 
   it("the list changed on the host since the check: refused, the new list is stored for a second look", async () => {
     let calls = 0;
     const { t, v } = await ready({ scripts: () => ({ exitCode: 0, output: ++calls === 1 ? SCAN_OK() : SCAN_OK(["TUGRA_CU_C|coolify-sentinel|ghcr.io/coollabsio/sentinel:1|running|"]) }) });
-    await expect(t.svc.confirm("u1", v.id, { confirm: "olgu-box", listHash: v.listHash! })).rejects.toMatchObject({ response: expect.objectContaining({ code: "list_changed" }) });
+    await expect(t.svc.confirm("u1", v.id, { confirm: "edge-box", listHash: v.listHash! })).rejects.toMatchObject({ response: expect.objectContaining({ code: "list_changed" }) });
     expect(t.sent.some((s) => isRemoval(s.script))).toBe(false);
     expect(t.rows.get(v.id)).toMatchObject({ status: "READY" });
   });
 
   it("removes exactly the confirmed list, verifies by a rescan, ends CLEANED and closes 'give back to Coolify'", async () => {
     const { t, v } = await ready({ scripts: afterRemoval("TUGRA_CU_R|container|coolify-proxy|ok\nTUGRA_CU_R|network|coolify|ok\nTUGRA_CU_DONE\n", SCAN_CLEAN) });
-    const out = await t.svc.confirm("u1", v.id, { confirm: "olgu-box", listHash: v.listHash! });
+    const out = await t.svc.confirm("u1", v.id, { confirm: "edge-box", listHash: v.listHash! });
     expect(out.status).toBe("CLEANING");
     await t.svc.settled(v.id);
     const done = await t.svc.get("u1", v.id);
@@ -397,7 +397,7 @@ describe("CoolifyCleanupService.confirm", () => {
 
   it("a removal that did not finish for an item ends FAILED (partial) and keeps 'give back' open", async () => {
     const { t, v } = await ready({ scripts: afterRemoval("TUGRA_CU_R|container|coolify-proxy|ok\nTUGRA_CU_R|network|coolify|in_use\nTUGRA_CU_DONE\n", "TUGRA_CU_BEGIN\nTUGRA_CU_N|coolify|1\nTUGRA_CU_END\n") });
-    await t.svc.confirm("u1", v.id, { confirm: "olgu-box", listHash: v.listHash! });
+    await t.svc.confirm("u1", v.id, { confirm: "edge-box", listHash: v.listHash! });
     await t.svc.settled(v.id);
     expect(await t.svc.get("u1", v.id)).toMatchObject({ status: "FAILED", failureCode: "partial" });
     expect(t.prisma.coolifyTakeover.updateMany).not.toHaveBeenCalled();
@@ -410,7 +410,7 @@ describe("CoolifyCleanupService.confirm", () => {
     let removed = false;
     const { t, v } = await ready({ scripts: (script) => (isRemoval(script) ? ((removed = true), { exitCode: 0, output: `TUGRA_CU_R|container|${UA}-1|ok\nTUGRA_CU_R|container|coolify-proxy|ok\nTUGRA_CU_R|network|coolify|ok\nTUGRA_CU_DONE\n` }) : { exitCode: 0, output: removed ? afterRm : before }) });
     expect(v.remnants.find((r) => r.kind === "directory")).toMatchObject({ keep: true, reason: "in_use" });
-    await t.svc.confirm("u1", v.id, { confirm: "olgu-box", listHash: v.listHash! });
+    await t.svc.confirm("u1", v.id, { confirm: "edge-box", listHash: v.listHash! });
     await t.svc.settled(v.id);
     const removal = t.sent.find((x) => isRemoval(x.script))!;
     expect(removal.script).not.toContain(`applications/${UA}'`);
@@ -419,14 +419,14 @@ describe("CoolifyCleanupService.confirm", () => {
 
   it("something still removable after an all-ok removal is not CLEANED", async () => {
     const { t, v } = await ready({ scripts: afterRemoval("TUGRA_CU_R|container|coolify-proxy|ok\nTUGRA_CU_R|network|coolify|ok\nTUGRA_CU_DONE\n", SCAN_OK()) }); // the rescan still shows it
-    await t.svc.confirm("u1", v.id, { confirm: "olgu-box", listHash: v.listHash! });
+    await t.svc.confirm("u1", v.id, { confirm: "edge-box", listHash: v.listHash! });
     await t.svc.settled(v.id);
     expect(await t.svc.get("u1", v.id)).toMatchObject({ status: "FAILED", failureCode: "partial" });
   });
 
   it("an agent that drops during the removal ends FAILED with a fixed code and the capability is still revoked", async () => {
     const { t, v } = await ready({ scripts: (script) => (isRemoval(script) ? new Error("socket closed") : { exitCode: 0, output: SCAN_OK() }) });
-    await t.svc.confirm("u1", v.id, { confirm: "olgu-box", listHash: v.listHash! });
+    await t.svc.confirm("u1", v.id, { confirm: "edge-box", listHash: v.listHash! });
     await t.svc.settled(v.id);
     expect(await t.svc.get("u1", v.id)).toMatchObject({ status: "FAILED", failureCode: "agent_error" });
     expect(t.caps[t.caps.length - 1]).toBe(false);
@@ -435,14 +435,14 @@ describe("CoolifyCleanupService.confirm", () => {
   it("a second confirm of the same cleanup loses the claim (409) and sends nothing", async () => {
     const { t, v } = await ready({ scripts: (script) => (isRemoval(script) ? { exitCode: 0, output: "TUGRA_CU_R|container|coolify-proxy|ok\nTUGRA_CU_R|network|coolify|ok\nTUGRA_CU_DONE\n" } : { exitCode: 0, output: SCAN_CLEAN }) });
     t.prisma.coolifyCleanup.updateMany.mockResolvedValueOnce({ count: 0 });
-    await expect(t.svc.confirm("u1", v.id, { confirm: "olgu-box", listHash: v.listHash! })).rejects.toMatchObject({ response: expect.objectContaining({ code: "not_ready" }) });
+    await expect(t.svc.confirm("u1", v.id, { confirm: "edge-box", listHash: v.listHash! })).rejects.toMatchObject({ response: expect.objectContaining({ code: "not_ready" }) });
     expect(t.sent.some((s) => isRemoval(s.script))).toBe(false);
   });
 
   it("a cleanup that is not READY (still checking, or already cleaned) cannot be confirmed", async () => {
     const { t, v } = await ready();
     t.rows.get(v.id)!.status = "CLEANED";
-    await expect(t.svc.confirm("u1", v.id, { confirm: "olgu-box", listHash: v.listHash! })).rejects.toMatchObject({ response: expect.objectContaining({ code: "not_ready" }) });
+    await expect(t.svc.confirm("u1", v.id, { confirm: "edge-box", listHash: v.listHash! })).rejects.toMatchObject({ response: expect.objectContaining({ code: "not_ready" }) });
   });
 });
 
@@ -450,7 +450,7 @@ describe("no secret value is ever stored, audited or returned", () => {
   it("the variable values decrypted only to count names never reach a view, an audit row, a script or a stored row", async () => {
     const t = make({ scripts: afterRemoval("TUGRA_CU_R|container|coolify-proxy|ok\nTUGRA_CU_R|network|coolify|ok\nTUGRA_CU_DONE\n", SCAN_CLEAN) });
     const v = await t.svc.check("u1", "s1");
-    await t.svc.confirm("u1", v.id, { confirm: "olgu-box", listHash: v.listHash! });
+    await t.svc.confirm("u1", v.id, { confirm: "edge-box", listHash: v.listHash! });
     await t.svc.settled(v.id);
     expect(t.crypto.decrypt).toHaveBeenCalled();
     const everything = JSON.stringify([await t.svc.get("u1", v.id), t.audits, t.sent, [...t.rows.values()]]);

@@ -264,10 +264,10 @@ describe("AgentMatchStep", () => {
 
     it("covers only the rows shown: the other Coolify teams' servers are left out until they are revealed", async () => {
       const teamHosts = [
-        { ...hosts[1], team: { ref: "1", name: "Olgu" } },
+        { ...hosts[1], team: { ref: "1", name: "Northwind" } },
         { ...hosts[2], team: { ref: "2", name: "Other" } },
       ];
-      const p = plan({ hosts: teamHosts, sourceTeamRef: "1", projects: [{ ref: "pr1", name: "Web", itemRefs: [], team: { ref: "1", name: "Olgu" } }, { ref: "pr2", name: "Lab", itemRefs: [], team: { ref: "2", name: "Other" } }] });
+      const p = plan({ hosts: teamHosts, sourceTeamRef: "1", projects: [{ ref: "pr1", name: "Web", itemRefs: [], team: { ref: "1", name: "Northwind" } }, { ref: "pr2", name: "Lab", itemRefs: [], team: { ref: "2", name: "Other" } }] });
       mount({ plan: p, teamScope: teamScope(p) });
       expect(screen.queryByTestId("match-p2")).toBeNull();
       expect(screen.getByRole("button", { name: "Confirm all suggested (1)" })).toBeTruthy();
@@ -276,11 +276,11 @@ describe("AgentMatchStep", () => {
 
   describe("the picked Coolify team", () => {
     const teamHosts = [
-      { ref: "a", name: "alpha", team: { ref: "1", name: "Olgu" }, match: { status: "none", linkedBy: null, evidence: [] } },
+      { ref: "a", name: "alpha", team: { ref: "1", name: "Northwind" }, match: { status: "none", linkedBy: null, evidence: [] } },
       { ref: "b", name: "beta", team: { ref: "2", name: "Other" }, match: { status: "none", linkedBy: null, evidence: [] } },
       { ref: "c", name: "gamma", team: { ref: "2", name: "Other" }, match: { status: "none", linkedBy: null, evidence: [] } },
     ];
-    const p = plan({ hosts: teamHosts, sourceTeamRef: "1", projects: [{ ref: "pr1", name: "Web", itemRefs: ["app:c:x"], team: { ref: "1", name: "Olgu" } }, { ref: "pr2", name: "Lab", itemRefs: ["app:b:y"], team: { ref: "2", name: "Other" } }] });
+    const p = plan({ hosts: teamHosts, sourceTeamRef: "1", projects: [{ ref: "pr1", name: "Web", itemRefs: ["app:c:x"], team: { ref: "1", name: "Northwind" } }, { ref: "pr2", name: "Lab", itemRefs: ["app:b:y"], team: { ref: "2", name: "Other" } }] });
 
     it("lists the team's servers and the servers its projects run on, and hides the rest behind a clear toggle", () => {
       const onShowAllTeams = vi.fn();
@@ -296,7 +296,7 @@ describe("AgentMatchStep", () => {
     it("shows every server when the owner asked for all teams, and offers to narrow again", () => {
       mount({ plan: p, teamScope: teamScope(p), showAllTeams: true });
       expect(screen.getByTestId("match-b")).toBeTruthy();
-      expect(screen.getByRole("button", { name: "Show only Olgu" })).toBeTruthy();
+      expect(screen.getByRole("button", { name: "Show only Northwind" })).toBeTruthy();
     });
 
     it("changes nothing without a picked team", () => {

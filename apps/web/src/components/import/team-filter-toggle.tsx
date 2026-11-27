@@ -8,7 +8,7 @@ import { Btn } from "../ui";
 const ALL = "__all";
 
 /**
- * One block under a step's title when a Coolify team narrows the lists: what it filters in plain words with the counts ("Olgu Bey team:
+ * One block under a step's title when a Coolify team narrows the lists: what it filters in plain words with the counts ("Northwind team:
  * 7 of 28"), a switch between the mapped Coolify teams, and a clear button to reveal the rest. Renders nothing when no team narrows.
  */
 export function TeamFilterToggle({

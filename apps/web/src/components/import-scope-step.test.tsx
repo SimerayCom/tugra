@@ -422,7 +422,7 @@ describe("ImportScopeStep", () => {
   });
 
   describe("the picked Coolify team", () => {
-    const olgu = { ref: "1", name: "Olgu" };
+    const northwind = { ref: "1", name: "Northwind" };
     const other = { ref: "2", name: "Other" };
     const p3: ImportPlan = {
       ...plan,
@@ -431,12 +431,12 @@ describe("ImportScopeStep", () => {
       preflight: {
         ...plan.preflight!,
         sourceTeamRef: "1",
-        hosts: [{ ref: "s1", name: "Box One", team: olgu }, { ref: "s2", name: "Box Two", team: other }, { ref: "s3", name: "Box Three", team: other }, { ref: "s4", name: "Box Four", team: olgu }],
+        hosts: [{ ref: "s1", name: "Box One", team: northwind }, { ref: "s2", name: "Box Two", team: other }, { ref: "s3", name: "Box Three", team: other }, { ref: "s4", name: "Box Four", team: northwind }],
         projects: [
-          { ref: "p-acme", name: "Acme", itemRefs: ["app:s1:web", "database:s1:db"], team: olgu },
+          { ref: "p-acme", name: "Acme", itemRefs: ["app:s1:web", "database:s1:db"], team: northwind },
           { ref: "p-beta", name: "Beta", itemRefs: ["app:s2:api", "database:s2:apidb"], team: other },
           { ref: "p-site", name: "Site", itemRefs: ["app:s3:site"], team: other },
-          { ref: "p-blog", name: "Blog", itemRefs: ["app:s4:blog"], team: olgu },
+          { ref: "p-blog", name: "Blog", itemRefs: ["app:s4:blog"], team: northwind },
         ],
       },
     };
@@ -448,7 +448,7 @@ describe("ImportScopeStep", () => {
       expect(screen.getByRole("checkbox", { name: /Box One/ })).toBeTruthy();
       expect(screen.queryByRole("checkbox", { name: /Box Two/ })).toBeNull();
       expect(screen.queryByRole("checkbox", { name: /Box Three/ })).toBeNull();
-      expect(screen.getByText("Showing the servers and projects of Olgu.")).toBeTruthy();
+      expect(screen.getByText("Showing the servers and projects of Northwind.")).toBeTruthy();
       fireEvent.click(screen.getByRole("button", { name: "Show all teams (2 more)" }));
       expect(onShowAllTeams).toHaveBeenCalledWith(true);
       fireEvent.click(screen.getByRole("radio", { name: /^Projects/ }));
@@ -459,14 +459,14 @@ describe("ImportScopeStep", () => {
     it("with every team shown it lists everything and offers to narrow again", () => {
       mount({ plan: p3, teamScope: scopeOf(), showAllTeams: true });
       expect(screen.getByRole("checkbox", { name: /Box Three/ })).toBeTruthy();
-      expect(screen.getByRole("button", { name: "Show only Olgu" })).toBeTruthy();
+      expect(screen.getByRole("button", { name: "Show only Northwind" })).toBeTruthy();
     });
 
     it("Everything is everything of the team, and is sent to the run as that team's projects", () => {
       const onContinue = vi.fn();
       mount({ plan: p3, teamScope: scopeOf(), onContinue });
       fireEvent.click(screen.getByRole("radio", { name: /^Everything/ }));
-      expect(screen.getByText("Everything of Olgu. Show all teams to move the whole Coolify.")).toBeTruthy();
+      expect(screen.getByText("Everything of Northwind. Show all teams to move the whole Coolify.")).toBeTruthy();
       fireEvent.change(screen.getByLabelText("Box One moves to"), { target: { value: "t1" } });
       fireEvent.change(screen.getByLabelText("Box Four moves to"), { target: { value: "t2" } });
       expect(screen.getByText("2 apps, 1 databases and 0 services will move.")).toBeTruthy();
@@ -518,47 +518,47 @@ describe("ImportScopeStep", () => {
 });
 
 describe("ImportScopeStep with a Coolify to Tugra team mapping", () => {
-  const olgu = { ref: "1", name: "Olgu Bey" };
+  const northwind = { ref: "1", name: "Northwind" };
   const other = { ref: "2", name: "Other" };
   const mapped = (teamMap: Record<string, string | null>): ImportPlan => ({
     ...plan,
     preflight: {
       ...plan.preflight!,
       teamMap,
-      hosts: [{ ref: "s1", name: "Box One", team: olgu }, { ref: "s2", name: "Box Two", team: other }],
+      hosts: [{ ref: "s1", name: "Box One", team: northwind }, { ref: "s2", name: "Box Two", team: other }],
       projects: [
-        { ref: "p-acme", name: "Acme", itemRefs: ["app:s1:web", "database:s1:db"], team: olgu },
+        { ref: "p-acme", name: "Acme", itemRefs: ["app:s1:web", "database:s1:db"], team: northwind },
         { ref: "p-beta", name: "Beta", itemRefs: ["app:s2:api", "database:s2:apidb"], team: other },
       ],
     },
   });
   const tServers: Srv[] = [
-    { id: "o1", name: "Olgu Server", teamId: "team-olgu", status: "ONLINE", capabilities: ["deploy"] },
+    { id: "o1", name: "Northwind Server", teamId: "team-northwind", status: "ONLINE", capabilities: ["deploy"] },
     { id: "t1", name: "Target A", teamId: "team1", status: "ONLINE", capabilities: ["deploy"] },
     { id: "x1", name: "Other Server", teamId: "team-other", status: "ONLINE", capabilities: ["deploy"] },
   ];
-  const tTeams = [{ id: "team1", name: "Team One", role: "OWNER" }, { id: "team-olgu", name: "Olgu Bey", role: "OWNER" }, { id: "team-other", name: "Other", role: "OWNER" }] as never;
+  const tTeams = [{ id: "team1", name: "Team One", role: "OWNER" }, { id: "team-northwind", name: "Northwind", role: "OWNER" }, { id: "team-other", name: "Other", role: "OWNER" }] as never;
   const everything: ScopeSelection = { mode: "everything", hosts: new Set(), projects: new Set(), extra: new Set(), placement: {} };
   const optionsOf = (label: string) => within(screen.getByLabelText(label) as HTMLSelectElement).getAllByRole("option").map((o) => o.textContent);
 
   it("the placement of a source server offers only the servers of the Tugra team its Coolify team was mapped to, and says which team", () => {
-    const p = mapped({ "1": "team-olgu", "2": "team-other" });
+    const p = mapped({ "1": "team-northwind", "2": "team-other" });
     mount({ plan: p, servers: tServers, teams: tTeams, initial: everything, teamScope: teamScope(p) });
-    expect(optionsOf("Box One moves to")).toEqual(["Choose a server", "Olgu Server"]);
+    expect(optionsOf("Box One moves to")).toEqual(["Choose a server", "Northwind Server"]);
     expect(optionsOf("Box Two moves to")).toEqual(["Choose a server", "Other Server"]);
-    expect(screen.getByText("Moves into Olgu Bey.")).toBeTruthy();
+    expect(screen.getByText("Moves into Northwind.")).toBeTruthy();
   });
 
   it("the team filter states what it filters with counts, and the lists follow the chosen team", () => {
-    const p = mapped({ "1": "team-olgu", "2": null });
+    const p = mapped({ "1": "team-northwind", "2": null });
     mount({ plan: p, servers: tServers, teams: tTeams, initial: everything, teamScope: teamScope(p) });
-    expect(screen.getByText("Olgu Bey team: 2 of 4")).toBeTruthy();
+    expect(screen.getByText("Northwind team: 2 of 4")).toBeTruthy();
     expect(screen.queryByLabelText("Box Two moves to")).toBeNull();
     expect(screen.getByLabelText("Box One moves to")).toBeTruthy();
   });
 
   it("a server placed in the wrong team is never sent: its pick is dropped and Continue asks for a server of the mapped team", () => {
-    const p = mapped({ "1": "team-olgu", "2": "team-other" });
+    const p = mapped({ "1": "team-northwind", "2": "team-other" });
     const onContinue = vi.fn();
     mount({
       plan: p, servers: tServers, teams: tTeams, onContinue, teamScope: teamScope(p),
@@ -577,18 +577,18 @@ describe("ImportScopeStep with a Coolify to Tugra team mapping", () => {
 
   it("a mapped team with no server yet says so here, with a link to add one to that team", () => {
     const p = mapped({ "1": "team-new", "2": "team-other" });
-    const t = [...(tTeams as unknown as Array<{ id: string; name: string; role: string }>), { id: "team-new", name: "Olgu Bey", role: "OWNER" }] as never;
+    const t = [...(tTeams as unknown as Array<{ id: string; name: string; role: string }>), { id: "team-new", name: "Northwind", role: "OWNER" }] as never;
     mount({ plan: p, servers: tServers, teams: t, initial: everything, teamScope: teamScope(p) });
     expect(screen.getByText(/has no server you can write to yet/)).toBeTruthy();
-    const link = screen.getByRole("link", { name: "Add a server to Olgu Bey" }) as HTMLAnchorElement;
+    const link = screen.getByRole("link", { name: "Add a server to Northwind" }) as HTMLAnchorElement;
     expect(link.getAttribute("href")).toContain("team=team-new");
   });
 
   it("a same-machine match that sits in another team than the mapped one is explained, not silently used", () => {
-    const base = mapped({ "1": "team-olgu", "2": "team-other" });
+    const base = mapped({ "1": "team-northwind", "2": "team-other" });
     const p = { ...base, preflight: { ...base.preflight!, hosts: [{ ...base.preflight!.hosts![0], tugra: hit("t1", "Target A", { teamId: "team1" }) }, base.preflight!.hosts![1]] } } as ImportPlan;
     mount({ plan: p, servers: tServers, teams: tTeams, initial: everything, teamScope: teamScope(p) });
-    expect(screen.getByText(/is the same machine, but it sits in another Tugra team than Olgu Bey/)).toBeTruthy();
+    expect(screen.getByText(/is the same machine, but it sits in another Tugra team than Northwind/)).toBeTruthy();
     expect((screen.getByLabelText("Box One moves to") as HTMLSelectElement).value).toBe("");
   });
 });

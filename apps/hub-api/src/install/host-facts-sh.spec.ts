@@ -22,7 +22,7 @@ describe("host facts snippet", () => {
       const shim = (name: string, body: string) => {
         require("node:fs").writeFileSync(join(bin, name), `#!/bin/sh\n${body}\n`, { mode: 0o755 });
       };
-      shim("hostname", `case "$1" in -I) echo "10.0.0.9 172.17.0.1";; *) printf '%s\\n' 'olgu-omer-ortak-new"evil';; esac`);
+      shim("hostname", `case "$1" in -I) echo "10.0.0.9 172.17.0.1";; *) printf '%s\\n' 'edge-box-new"evil';; esac`);
       shim(
         "ip",
         [
@@ -43,7 +43,7 @@ describe("host facts snippet", () => {
       expect(r.status).toBe(0);
       const facts = JSON.parse(rf(join(out, "host-facts.json"), "utf8"));
       expect(facts.source).toBe("install");
-      expect(facts.hostname).toBe("olgu-omer-ortak-newevil"); // quote stripped, never breaks the JSON
+      expect(facts.hostname).toBe("edge-box-newevil"); // quote stripped, never breaks the JSON
       expect(facts.ips).toEqual(["2.29.218.211", "2a01:4f9:c014:8ecc::1", "100.85.166.104"]);
     } finally {
       rmSync(dir, { recursive: true, force: true });

@@ -66,7 +66,7 @@ describe("transformServiceCompose over the 19 real service shapes", () => {
     expect(off.pinned).toEqual([]);
     const already = fixtureByName("delta-meilisearch");
     const pinned = transformServiceCompose({ svc: already.svc, raw: already.raw.docker_compose_raw! });
-    expect(pinned.floating).toEqual([]); // venueplus-style: already on a version tag
+    expect(pinned.floating).toEqual([]); // bookings-style: already on a version tag
   });
 
   it("MinIO: strips container_name, rewrites a host bind into a named volume, carries the env references, no ports", () => {

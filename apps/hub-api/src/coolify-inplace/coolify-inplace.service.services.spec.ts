@@ -123,7 +123,7 @@ const plan = (t: T) => t.svc.plan(ACTOR, PlanSchema.parse({ serverId: "srv1", op
 const swapOk = async (t: T) => {
   const p = await plan(t);
   await t.svc.test(ACTOR, p.id);
-  return t.svc.swap(ACTOR, p.id, { confirm: "olgu-box" });
+  return t.svc.swap(ACTOR, p.id, { confirm: "edge-box" });
 };
 const itemsOf = (t: T): Array<Record<string, unknown>> => [...t.rows.values()][0].items as Array<Record<string, unknown>>;
 const at = (t: T, e: string): number => t.box.events.indexOf(e);
@@ -342,7 +342,7 @@ describe("test: data and images reused in place", () => {
     const p = await plan(t);
     const v = await t.svc.test(ACTOR, p.id);
     expect(v.items[0].domains[0].tempCheck).toBe("failed");
-    await expect(t.svc.swap(ACTOR, p.id, { confirm: "olgu-box" })).rejects.toMatchObject({ response: { code: "takeover_test_failed", host: "status.example.com" } });
+    await expect(t.svc.swap(ACTOR, p.id, { confirm: "edge-box" })).rejects.toMatchObject({ response: { code: "takeover_test_failed", host: "status.example.com" } });
     expect(t.box.coolifyProxy.running).toBe(true);
   });
   it("a stateless service whose container exits is left out and its stack is stopped again", async () => {
@@ -381,7 +381,7 @@ describe("swap: in dependency order, with readiness", () => {
     const p = await plan(t);
     await t.svc.test(ACTOR, p.id);
     t.box.events.length = 0;
-    const v = await t.svc.swap(ACTOR, p.id, { confirm: "olgu-box" });
+    const v = await t.svc.swap(ACTOR, p.id, { confirm: "edge-box" });
     expect(v.status).toBe("SWAPPED");
     expect(v.failureCode).toBeNull();
     // Coolify's side: the web container (the dependent) stops before the database, and the database's yardstick is read again before it stops
@@ -407,7 +407,7 @@ describe("swap: in dependency order, with readiness", () => {
     const p = await plan(t);
     await t.svc.test(ACTOR, p.id);
     t.box.events.length = 0;
-    await t.svc.swap(ACTOR, p.id, { confirm: "olgu-box" });
+    await t.svc.swap(ACTOR, p.id, { confirm: "edge-box" });
     expect(t.box.events.filter((e) => e === "dbfp")).toHaveLength(2); // once before it stops, once after Tugra's runs
   });
   it("a service that never ran next to Coolify's does not start twice: the box would refuse two containers on one writable volume", async () => {
@@ -426,7 +426,7 @@ describe("swap: in dependency order, with readiness", () => {
     await t.svc.test(ACTOR, p.id);
     expect(t.box.netRows.get("appstl")).toEqual([]); // beside Coolify's copy during the test it holds no Coolify names
     t.box.events.length = 0;
-    const v = await t.svc.swap(ACTOR, p.id, { confirm: "olgu-box" });
+    const v = await t.svc.swap(ACTOR, p.id, { confirm: "edge-box" });
     expect(v.status).toBe("SWAPPED");
     expect(t.box.netRows.get("appstl")).toHaveLength(1);
     expect(t.box.tugraSvcRunning.get("appstl")).toHaveLength(1); // the running stack was started with them
@@ -441,7 +441,7 @@ describe("swap: in dependency order, with readiness", () => {
     await t.svc.test(ACTOR, p.id);
     t.box.failComposeNetworks = true;
     t.box.events.length = 0;
-    const v = await t.svc.swap(ACTOR, p.id, { confirm: "olgu-box" });
+    const v = await t.svc.swap(ACTOR, p.id, { confirm: "edge-box" });
     expect(v.status).toBe("FAILED");
     expect(v.failureCode).toBe("exclusive_start_failed");
     expect(t.box.events).not.toContain("coolify-proxy:stop");
@@ -453,7 +453,7 @@ describe("swap: in dependency order, with readiness", () => {
     const p = await plan(t);
     await t.svc.test(ACTOR, p.id);
     t.box.svcExits.add("appstl:web");
-    const v = await t.svc.swap(ACTOR, p.id, { confirm: "olgu-box" });
+    const v = await t.svc.swap(ACTOR, p.id, { confirm: "edge-box" });
     expect(v.failureCode).toBe("service_not_ready");
     expect(t.box.netRows.get("appstl")).toEqual([]);
     expect(t.box.tugraSvcRunning.size).toBe(0);
@@ -463,7 +463,7 @@ describe("swap: in dependency order, with readiness", () => {
     const t = build({ services: [s] });
     const p = await swapOk(t);
     expect(t.box.netRows.get("appstl")!.length).toBeGreaterThan(1);
-    await t.svc.giveBack(ACTOR, p.id, { confirm: "olgu-box" });
+    await t.svc.giveBack(ACTOR, p.id, { confirm: "edge-box" });
     expect(t.box.netRows.get("appstl")).toEqual([{ network: "private-net", service: "web", aliases: ["w"] }]);
   });
   it("a stateless service with a database-like member is checked at the switch and reaches VERIFIED", async () => {
@@ -471,7 +471,7 @@ describe("swap: in dependency order, with readiness", () => {
     const p = await plan(t);
     await t.svc.test(ACTOR, p.id);
     t.box.events.length = 0;
-    const sw = await t.svc.swap(ACTOR, p.id, { confirm: "olgu-box" });
+    const sw = await t.svc.swap(ACTOR, p.id, { confirm: "edge-box" });
     expect(sw.status).toBe("SWAPPED");
     expect(t.box.events.filter((e) => e === "dbfp")).toHaveLength(2); // Coolify's now, Tugra's after
     expect(at(t, "dbfp")).toBeLessThan(at(t, "coolify-proxy:stop"));
@@ -487,7 +487,7 @@ describe("swap: in dependency order, with readiness", () => {
     const p = await plan(t);
     await t.svc.test(ACTOR, p.id);
     t.box.dbReadFails.add(H("9"));
-    const v = await t.svc.swap(ACTOR, p.id, { confirm: "olgu-box" });
+    const v = await t.svc.swap(ACTOR, p.id, { confirm: "edge-box" });
     expect(v.status).toBe("FAILED");
     expect(v.failureCode).toBe("service_verify_failed");
     expect(t.box.events).not.toContain("coolify-proxy:stop");
@@ -538,7 +538,7 @@ describe("swap: in dependency order, with readiness", () => {
     const p = await plan(t);
     await t.svc.test(ACTOR, p.id);
     t.box.dbReadFails.add(H("6"));
-    const v = await t.svc.swap(ACTOR, p.id, { confirm: "olgu-box" });
+    const v = await t.svc.swap(ACTOR, p.id, { confirm: "edge-box" });
     expect(v.status).toBe("FAILED");
     expect(v.failureCode).toBe("service_verify_failed");
     expect(t.box.events.some((e) => e.startsWith("coolify-ctr:stop"))).toBe(true); // the web container had stopped; it runs again
@@ -552,7 +552,7 @@ describe("swap: in dependency order, with readiness", () => {
     const p = await plan(t);
     await t.svc.test(ACTOR, p.id);
     t.box.failAdopted.add("appsvc");
-    const v = await t.svc.swap(ACTOR, p.id, { confirm: "olgu-box" });
+    const v = await t.svc.swap(ACTOR, p.id, { confirm: "edge-box" });
     expect(v.failureCode).toBe("exclusive_start_failed");
     expect(t.box.ctrs.get(H("6"))).toMatchObject({ running: true, restart: "always" });
     expect(t.box.netRows.get("appsvc")).toEqual([]);
@@ -562,7 +562,7 @@ describe("swap: in dependency order, with readiness", () => {
     const p = await plan(t);
     await t.svc.test(ACTOR, p.id);
     t.box.failComposeNetworks = true;
-    const v = await t.svc.swap(ACTOR, p.id, { confirm: "olgu-box" });
+    const v = await t.svc.swap(ACTOR, p.id, { confirm: "edge-box" });
     expect(v.failureCode).toBe("exclusive_start_failed");
     expect(t.box.events).not.toContain("tugra-svc:start:appsvc");
     expect(t.box.ctrs.get(H("5"))!.running).toBe(true);
@@ -573,7 +573,7 @@ describe("swap: in dependency order, with readiness", () => {
     const p = await plan(t);
     await t.svc.test(ACTOR, p.id);
     t.box.failStopCtr.add(H("6"));
-    const v = await t.svc.swap(ACTOR, p.id, { confirm: "olgu-box" });
+    const v = await t.svc.swap(ACTOR, p.id, { confirm: "edge-box" });
     expect(v.failureCode).toBe("exclusive_stop_failed");
     expect(t.box.ctrs.get(H("5"))).toMatchObject({ running: true, restart: "unless-stopped" });
     expect(t.box.ctrs.get(H("6"))).toMatchObject({ running: true, restart: "always" });
@@ -584,7 +584,7 @@ describe("swap: in dependency order, with readiness", () => {
     const p = await plan(t);
     await t.svc.test(ACTOR, p.id);
     t.box.failPolicyNo.add(H("5"));
-    const v = await t.svc.swap(ACTOR, p.id, { confirm: "olgu-box" });
+    const v = await t.svc.swap(ACTOR, p.id, { confirm: "edge-box" });
     expect(v.failureCode).toBe("exclusive_policy_failed");
     expect(t.box.events.some((e) => e.startsWith("coolify-ctr:stop"))).toBe(false);
     expect(t.box.ctrs.get(H("5"))!.running).toBe(true);
@@ -598,7 +598,7 @@ describe("swap: in dependency order, with readiness", () => {
     await t.svc.test(ACTOR, p.id);
     expect(t.box.tugraSvcRunning.size).toBe(0); // not started next to Coolify's: the database is not there for it yet
     t.box.events.length = 0;
-    const v = await t.svc.swap(ACTOR, p.id, { confirm: "olgu-box" });
+    const v = await t.svc.swap(ACTOR, p.id, { confirm: "edge-box" });
     expect(v.status).toBe("SWAPPED");
     expect(at(t, "coolify-ctr:stop:web-stluuid")).toBeLessThan(at(t, "coolify-ctr:stop:pguuid"));
     expect(at(t, "tugra-db:start:dbpg")).toBeLessThan(at(t, "tugra-svc:start:appstl"));
@@ -652,7 +652,7 @@ describe("verify and give back", () => {
     const t = build();
     const p = await swapOk(t);
     t.box.events.length = 0;
-    const v = await t.svc.giveBack(ACTOR, p.id, { confirm: "olgu-box" });
+    const v = await t.svc.giveBack(ACTOR, p.id, { confirm: "edge-box" });
     expect(v.status).toBe("GIVEN_BACK");
     expect(t.box.ctrs.get(H("5"))).toMatchObject({ running: true, restart: "unless-stopped" });
     expect(t.box.ctrs.get(H("6"))).toMatchObject({ running: true, restart: "always" });
@@ -669,14 +669,14 @@ describe("verify and give back", () => {
     const t = build({ services: [s] });
     const p = await swapOk(t);
     expect(t.box.netRows.get("appsvc")).toHaveLength(3);
-    await t.svc.giveBack(ACTOR, p.id, { confirm: "olgu-box" });
+    await t.svc.giveBack(ACTOR, p.id, { confirm: "edge-box" });
     expect(t.box.netRows.get("appsvc")).toEqual([{ network: "private-net", service: "db", aliases: ["pg"] }]);
   });
   it("works from a takeover that was only tested: an exclusive service was never started, so only the dark proxy goes", async () => {
     const t = build();
     const p = await plan(t);
     await t.svc.test(ACTOR, p.id);
-    const v = await t.svc.giveBack(ACTOR, p.id, { confirm: "olgu-box" });
+    const v = await t.svc.giveBack(ACTOR, p.id, { confirm: "edge-box" });
     expect(v.status).toBe("GIVEN_BACK");
     expect(t.box.events.some((e) => e.startsWith("coolify-ctr:"))).toBe(false);
     expect(t.box.ctrs.get(H("5"))!.running).toBe(true);
@@ -686,7 +686,7 @@ describe("verify and give back", () => {
     const p = await plan(t);
     await t.svc.test(ACTOR, p.id);
     expect(t.box.tugraSvcRunning.has("appstl")).toBe(true);
-    await t.svc.giveBack(ACTOR, p.id, { confirm: "olgu-box" });
+    await t.svc.giveBack(ACTOR, p.id, { confirm: "edge-box" });
     expect(t.box.tugraSvcRunning.size).toBe(0);
   });
   it("network rows the hub refuses to restore never keep Coolify's containers down: they run first, the refusal is reported and the rows stay recorded", async () => {
@@ -696,7 +696,7 @@ describe("verify and give back", () => {
     t.box.setComposeNetworks = async () => {
       throw new Error("hub busy");
     };
-    const v = await t.svc.giveBack(ACTOR, p.id, { confirm: "olgu-box" });
+    const v = await t.svc.giveBack(ACTOR, p.id, { confirm: "edge-box" });
     expect(v.status).toBe("GIVEN_BACK");
     expect(t.box.ctrs.get(H("5"))).toMatchObject({ running: true, restart: "unless-stopped" });
     expect(t.box.ctrs.get(H("6"))).toMatchObject({ running: true, restart: "always" });
@@ -728,11 +728,11 @@ describe("verify and give back", () => {
     const orig = t.box.exec.bind(t.box);
     let fail = true;
     t.box.exec = async (s: string, script: string) => (fail && script.includes("start_one") ? { exitCode: 1, output: "" } : orig(s, script));
-    const v1 = await t.svc.giveBack(ACTOR, p.id, { confirm: "olgu-box" });
+    const v1 = await t.svc.giveBack(ACTOR, p.id, { confirm: "edge-box" });
     expect(v1.status).toBe("FAILED");
     expect(v1.failureCode).toBe("give_back_failed");
     fail = false;
-    const v2 = await t.svc.giveBack(ACTOR, p.id, { confirm: "olgu-box" });
+    const v2 = await t.svc.giveBack(ACTOR, p.id, { confirm: "edge-box" });
     expect(v2.status).toBe("GIVEN_BACK");
     expect(t.box.netRows.get("appsvc")).toEqual([]);
     expect(t.box.ctrs.get(H("6"))!.running).toBe(true);
@@ -741,7 +741,7 @@ describe("verify and give back", () => {
     const t = build({ services: [blog(), stateless()] });
     const p = await swapOk(t);
     await t.svc.verify(ACTOR, p.id);
-    await t.svc.giveBack(ACTOR, p.id, { confirm: "olgu-box" });
+    await t.svc.giveBack(ACTOR, p.id, { confirm: "edge-box" });
     for (const s of t.box.scripts) {
       expect(s).not.toMatch(/docker\s+(rm|kill|prune|rmi|system|container\s+rm)\b/);
       expect(s).not.toMatch(/docker\s+volume\s+(rm|prune)/);

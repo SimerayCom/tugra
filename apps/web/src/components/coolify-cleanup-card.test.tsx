@@ -44,7 +44,7 @@ const show = (props: Partial<React.ComponentProps<typeof CoolifyCleanupCard>> = 
     <QueryClientProvider client={qc}>
       <I18nProvider>
         <ConfirmProvider>
-          <CoolifyCleanupCard serverId="s1" serverName="olgu-box" online {...props} />
+          <CoolifyCleanupCard serverId="s1" serverName="edge-box" online {...props} />
         </ConfirmProvider>
       </I18nProvider>
     </QueryClientProvider>,
@@ -98,13 +98,13 @@ describe("CoolifyCleanupCard", () => {
     show();
     fireEvent.click(await screen.findByRole("button", { name: "Remove" }));
     const dialog = await screen.findByRole("dialog");
-    const go = within(dialog).getByRole("button", { name: "Remove from olgu-box" }) as HTMLButtonElement;
+    const go = within(dialog).getByRole("button", { name: "Remove from edge-box" }) as HTMLButtonElement;
     expect(go.disabled).toBe(true);
     expect(within(dialog).getByText(/removes the 2 items listed/)).toBeTruthy();
-    fireEvent.change(within(dialog).getByRole("textbox"), { target: { value: "olgu-box" } });
+    fireEvent.change(within(dialog).getByRole("textbox"), { target: { value: "edge-box" } });
     expect(go.disabled).toBe(false);
     fireEvent.click(go);
-    await waitFor(() => expect(confirm).toHaveBeenCalledWith("c1", { confirm: "olgu-box", listHash: HASH }));
+    await waitFor(() => expect(confirm).toHaveBeenCalledWith("c1", { confirm: "edge-box", listHash: HASH }));
   });
 
   it("cancelling the dialog sends nothing", async () => {
@@ -123,8 +123,8 @@ describe("CoolifyCleanupCard", () => {
     show();
     fireEvent.click(await screen.findByRole("button", { name: "Remove" }));
     const dialog = await screen.findByRole("dialog");
-    fireEvent.change(within(dialog).getByRole("textbox"), { target: { value: "olgu-box" } });
-    fireEvent.click(within(dialog).getByRole("button", { name: "Remove from olgu-box" }));
+    fireEvent.change(within(dialog).getByRole("textbox"), { target: { value: "edge-box" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Remove from edge-box" }));
     expect((await screen.findByRole("alert")).textContent).toBe("The list changed. Look at it again.");
   });
 
@@ -150,7 +150,7 @@ describe("CoolifyCleanupCard", () => {
   });
 
   it("the read link names the Coolify host when the move-off status knows it", async () => {
-    vi.spyOn(api, "coolifyMoveStatus").mockResolvedValue({ teamId: "t1", hub: { serverId: "hub1", teamId: "t1", name: "Coolify host", readAt: new Date().toISOString() }, servers: [{ serverId: "s1", name: "olgu-box", agentOnline: true, coolify: true, isCoolifyHub: false, takeover: "none", cleanup: "none", stage: "takeover" }], campaigns: [], projectMoves: {}, steps: [] } as never);
+    vi.spyOn(api, "coolifyMoveStatus").mockResolvedValue({ teamId: "t1", hub: { serverId: "hub1", teamId: "t1", name: "Coolify host", readAt: new Date().toISOString() }, servers: [{ serverId: "s1", name: "edge-box", agentOnline: true, coolify: true, isCoolifyHub: false, takeover: "none", cleanup: "none", stage: "takeover" }], campaigns: [], projectMoves: {}, steps: [] } as never);
     vi.spyOn(api, "coolifyCleanupLatest").mockResolvedValue(view({ status: "FAILED", failureCode: "no_coolify_link", completeness: [], remnants: [], listHash: null, complete: false }));
     show({ teamId: "t1" });
     const note = await screen.findByTestId("cleanup-needs-read");
@@ -178,12 +178,12 @@ describe("CoolifyCleanupCard", () => {
 
 describe("what the hub would refuse is said before the check", () => {
   const status = (over: Record<string, unknown> = {}) =>
-    ({ teamId: "t1", hub: { serverId: "hub1", teamId: "t1", name: "Coolify host", readAt: new Date().toISOString() }, servers: [{ serverId: "s1", name: "olgu-box", agentOnline: true, coolify: true, isCoolifyHub: false, takeover: "none", cleanup: "none", stage: "takeover" }], campaigns: [], projectMoves: {}, steps: [], ...over }) as never;
+    ({ teamId: "t1", hub: { serverId: "hub1", teamId: "t1", name: "Coolify host", readAt: new Date().toISOString() }, servers: [{ serverId: "s1", name: "edge-box", agentOnline: true, coolify: true, isCoolifyHub: false, takeover: "none", cleanup: "none", stage: "takeover" }], campaigns: [], projectMoves: {}, steps: [], ...over }) as never;
   const checkBtn = () => screen.getByRole("button", { name: /Check/ }) as HTMLButtonElement;
 
   it("the Coolify host itself is retired separately: no check is offered", async () => {
     vi.spyOn(api, "coolifyCleanupLatest").mockResolvedValue(null as never);
-    vi.spyOn(api, "coolifyMoveStatus").mockResolvedValue(status({ servers: [{ serverId: "s1", name: "olgu-box", agentOnline: true, coolify: true, isCoolifyHub: true, takeover: "none", cleanup: "none", stage: "hub" }] }));
+    vi.spyOn(api, "coolifyMoveStatus").mockResolvedValue(status({ servers: [{ serverId: "s1", name: "edge-box", agentOnline: true, coolify: true, isCoolifyHub: true, takeover: "none", cleanup: "none", stage: "hub" }] }));
     show({ teamId: "t1" });
     expect((await screen.findByTestId("cleanup-guard")).textContent).toContain("runs Coolify itself");
     expect(checkBtn().disabled).toBe(true);
@@ -191,7 +191,7 @@ describe("what the hub would refuse is said before the check", () => {
 
   it("a server no Coolify read knows points at the move-off page", async () => {
     vi.spyOn(api, "coolifyCleanupLatest").mockResolvedValue(null as never);
-    vi.spyOn(api, "coolifyMoveStatus").mockResolvedValue(status({ servers: [{ serverId: "s1", name: "olgu-box", agentOnline: true, coolify: false, isCoolifyHub: false, takeover: "none", cleanup: "none", stage: "not_coolify" }] }));
+    vi.spyOn(api, "coolifyMoveStatus").mockResolvedValue(status({ servers: [{ serverId: "s1", name: "edge-box", agentOnline: true, coolify: false, isCoolifyHub: false, takeover: "none", cleanup: "none", stage: "not_coolify" }] }));
     show({ teamId: "t1" });
     const note = await screen.findByTestId("cleanup-guard");
     expect(within(note).getByRole("link", { name: "Open Move off Coolify" }).getAttribute("href")).toBe("/import/move-off-coolify");

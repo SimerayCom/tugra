@@ -92,7 +92,7 @@ function ctxOf(over: { run?: Partial<RunSnapshot>; step?: Partial<StepSnapshot>;
     targetServerIds: ["srv1"],
     now: () => clock.now,
     targetFor: () => "srv1",
-    stepState: (k: string) => (k === "VERIFY" ? step({ key: "VERIFY", status: "PASSED", approval: { at: "2026-11-26T09:59:00Z", expiresAt: "2026-11-26T10:29:00Z", byUserId: "u1", boundHash: "x", acks: [], acceptDataRisk: false, confirmName: "olgu-box" } as never, ...over.verify }) : step()),
+    stepState: (k: string) => (k === "VERIFY" ? step({ key: "VERIFY", status: "PASSED", approval: { at: "2026-11-26T09:59:00Z", expiresAt: "2026-11-26T10:29:00Z", byUserId: "u1", boundHash: "x", acks: [], acceptDataRisk: false, confirmName: "edge-box" } as never, ...over.verify }) : step()),
     assertLease: jest.fn(async () => undefined),
     emit: jest.fn(async (e: { code: string }) => void events.push(e.code)),
     setProgress: jest.fn(async () => undefined),
@@ -284,7 +284,7 @@ describe("CUTOVER of an in-place run", () => {
     await prepare(s, ctxOf());
     return { r, s };
   }
-  const obsOf = async (s: ReturnType<typeof steps>, c: ReturnType<typeof ctxOf>) => ({ opId: "op1", servers: [{ serverId: "srv1", name: "olgu-box", acmeEmailOk: true }], swap: (await s.world.getSwap(RUN, "srv1")) as never, inPlace: await s.cut.state(c.ctx) });
+  const obsOf = async (s: ReturnType<typeof steps>, c: ReturnType<typeof ctxOf>) => ({ opId: "op1", servers: [{ serverId: "srv1", name: "edge-box", acmeEmailOk: true }], swap: (await s.world.getSwap(RUN, "srv1")) as never, inPlace: await s.cut.state(c.ctx) });
 
   it("takes the ports after the approval, then waits for a new certificate per domain and ends VERIFIED; the swap record mirrors it", async () => {
     const { r, s } = await ready();
@@ -320,7 +320,7 @@ describe("CUTOVER of an in-place run", () => {
   it("needs the server's ACME email before Coolify's proxy is touched", async () => {
     const { s } = await ready();
     const c = ctxOf();
-    const obs = { ...(await obsOf(s, c)), servers: [{ serverId: "srv1", name: "olgu-box", acmeEmailOk: false }] };
+    const obs = { ...(await obsOf(s, c)), servers: [{ serverId: "srv1", name: "edge-box", acmeEmailOk: false }] };
     const g = s.cut.preGate(c.ctx, obs);
     expect(g.passed).toBe(false);
     expect(g.checks.find((x) => x.id === "cutover.acme-email")?.ownerInput).toBe("acmeEmail");
@@ -429,7 +429,7 @@ describe("an in-place wave of a campaign takes a compose service over with the a
     await prepare(s, ctxOf());
     return { r, s };
   }
-  const obsOf = async (s: ReturnType<typeof steps>, c: ReturnType<typeof ctxOf>) => ({ opId: "op1", servers: [{ serverId: "srv1", name: "olgu-box", acmeEmailOk: true }], swap: (await s.world.getSwap(RUN, "srv1")) as never, inPlace: await s.cut.state(c.ctx) });
+  const obsOf = async (s: ReturnType<typeof steps>, c: ReturnType<typeof ctxOf>) => ({ opId: "op1", servers: [{ serverId: "srv1", name: "edge-box", acmeEmailOk: true }], swap: (await s.world.getSwap(RUN, "srv1")) as never, inPlace: await s.cut.state(c.ctx) });
 
   it("DEPLOY_DARK plans the service with the app in the run's takeover and tests the app that can run alongside", async () => {
     const { r, s } = await ready();

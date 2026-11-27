@@ -45,9 +45,9 @@ describe("campaign and in-place takeover api client", () => {
     await api.listInPlace("srv 1");
     await api.getInPlace("tk1");
     await api.testInPlace("tk1");
-    await api.swapInPlace("tk1", "olgu-box");
+    await api.swapInPlace("tk1", "edge-box");
     await api.verifyInPlace("tk1");
-    await api.giveBackInPlace("tk1", "olgu-box");
+    await api.giveBackInPlace("tk1", "edge-box");
     expect(calls.map((c) => [c.method, c.url])).toEqual([
       ["POST", "/api/v1/coolify-inplace/plan"],
       ["GET", "/api/v1/coolify-inplace?serverId=srv%201"],
@@ -58,8 +58,8 @@ describe("campaign and in-place takeover api client", () => {
       ["POST", "/api/v1/coolify-inplace/tk1/give-back"],
     ]);
     expect(calls[0].body).toEqual({ serverId: "srv1", opId: "op1", rebuild: [] });
-    expect(calls[4].body).toEqual({ confirm: "olgu-box" });
-    expect(calls[6].body).toEqual({ confirm: "olgu-box" });
+    expect(calls[4].body).toEqual({ confirm: "edge-box" });
+    expect(calls[6].body).toEqual({ confirm: "edge-box" });
     expect(calls[3].body).toBeUndefined();
     expect(calls[5].body).toBeUndefined();
   });

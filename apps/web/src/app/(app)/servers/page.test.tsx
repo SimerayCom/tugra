@@ -24,7 +24,7 @@ beforeEach(() => {
   qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   vi.spyOn(api, "listServers").mockResolvedValue([srv("1", "t1"), srv("2", "t1"), srv("3", "t2"), srv("4", "t2"), srv("5", "t2")]);
   vi.spyOn(api, "listTeams").mockResolvedValue([
-    { id: "t1", name: "Olgu Bey", role: "OWNER" },
+    { id: "t1", name: "Northwind", role: "OWNER" },
     { id: "t2", name: "Acme", role: "OWNER" },
   ] as never);
   vi.spyOn(api, "getFleetTrend").mockResolvedValue([]);
@@ -53,7 +53,7 @@ describe("Servers page header and the team switcher", () => {
   it("with a team picked it says how many are in that team and how many in all teams", async () => {
     localStorage.setItem("tugra.teamScope", "t1");
     show();
-    expect(await screen.findByRole("button", { name: "2 in Olgu Bey · 5 in all teams" })).toBeTruthy();
+    expect(await screen.findByRole("button", { name: "2 in Northwind · 5 in all teams" })).toBeTruthy();
     await waitFor(() => expect(screen.queryByText(/2 total \(all teams\)/)).toBeNull());
   });
 });

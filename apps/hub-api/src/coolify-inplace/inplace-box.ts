@@ -94,7 +94,7 @@ export class Box implements InPlaceWorld {
   scripts: string[] = [];
   teamId = "team1";
   serverId = "srv1";
-  serverName = "olgu-box";
+  serverName = "edge-box";
   status = "ONLINE";
   capabilities = ["deploy"];
   bind = "public";

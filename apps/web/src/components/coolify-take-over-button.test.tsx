@@ -97,7 +97,7 @@ describe("CoolifyTakeOverButton", () => {
 
   it("the session is made in the Coolify host's own team when the server being taken over is in another team", async () => {
     const connect = vi.spyOn(api, "importConnectAgent").mockResolvedValue({ sessionId: "sess-5678abcd", expiresAt: "x", read: {} } as never);
-    show({ teamId: "olgu", hubTeamId: "simeray" });
+    show({ teamId: "northwind", hubTeamId: "simeray" });
     fireEvent.click(screen.getByRole("button", { name: "Take over in place" }));
     await waitFor(() => expect(nav.push).toHaveBeenCalledWith("/import"));
     expect(connect).toHaveBeenCalledWith({ teamId: "simeray", serverId: "hub" });

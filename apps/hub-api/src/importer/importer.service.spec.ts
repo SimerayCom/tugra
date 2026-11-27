@@ -145,7 +145,7 @@ describe("ImporterService.plan — which source servers are already in Tugra", (
     "/servers/srv-c/resources": [],
     "/applications": [{ uuid: "app-1", name: "web", build_pack: "nixpacks", git_repository: "o/r", destination: { server: { uuid: "srv-a" } } }],
     "/databases": [],
-    "/teams/current": { name: "Olgu Bey" },
+    "/teams/current": { name: "Northwind" },
   };
   const build = (registered: unknown[], perms: Map<string, Set<string>>) => {
     const base = make({ session: liveSession, clientGet: jest.fn(async (p: string) => { if (p in routes) return routes[p]; throw new Error(`404 ${p}`); }) });
@@ -163,7 +163,7 @@ describe("ImporterService.plan — which source servers are already in Tugra", (
     expect(hosts.find((h) => h.ref === "srv-a")?.tugra).toEqual({ serverId: "a", name: "tugra-a", teamId: "t1", via: "public-ip", confidence: "certain" });
     expect(hosts.find((h) => h.ref === "srv-b")?.tugra).toBeUndefined();
     expect(hosts.find((h) => h.ref === "srv-c")?.tugra).toMatchObject({ serverId: "c", via: "hostname", confidence: "probable" });
-    expect(plan.preflight?.sourceTeam).toBe("Olgu Bey");
+    expect(plan.preflight?.sourceTeam).toBe("Northwind");
     expect(JSON.stringify(plan.preflight)).not.toContain("203.0.113.7");
     // only the teams the caller can configure are searched
     expect((prisma as { server: { findMany: jest.Mock } }).server.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { teamId: { in: ["t1"] } } }));

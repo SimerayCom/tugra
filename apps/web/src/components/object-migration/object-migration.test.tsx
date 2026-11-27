@@ -25,12 +25,12 @@ const m = (over: Partial<ObjectMigrationView> = {}, buckets: ObjectBucketView[] 
 });
 
 describe("BucketTable", () => {
-  const buckets = [b({ idx: 0, srcBucket: "db-declareall", srcBytes: 3_900_000_000, srcObjects: 120 }), b({ idx: 1, srcBucket: "uploads", srcBytes: 4_600_000_000, srcObjects: 90_000, dstObjects: 12 }), b({ idx: 2, srcBucket: "tiny", srcBytes: 5, srcObjects: 1 })];
+  const buckets = [b({ idx: 0, srcBucket: "db-ledger", srcBytes: 3_900_000_000, srcObjects: 120 }), b({ idx: 1, srcBucket: "uploads", srcBytes: 4_600_000_000, srcObjects: 90_000, dstObjects: 12 }), b({ idx: 2, srcBucket: "tiny", srcBytes: 5, srcObjects: 1 })];
 
   it("sorts by size (largest first) and pre-selects NOTHING, with the explanatory hint", () => {
     wrap(<BucketTable buckets={buckets} canEdit saving={false} onSave={() => undefined} />);
-    const names = screen.getAllByText(/^(db-declareall|uploads|tiny)$/).map((e) => e.textContent);
-    expect(names).toEqual(["uploads", "db-declareall", "tiny"]);
+    const names = screen.getAllByText(/^(db-ledger|uploads|tiny)$/).map((e) => e.textContent);
+    expect(names).toEqual(["uploads", "db-ledger", "tiny"]);
     const boxes = screen.getAllByRole("checkbox") as HTMLInputElement[];
     expect(boxes).toHaveLength(3);
     expect(boxes.every((x) => !x.checked)).toBe(true);
@@ -48,7 +48,7 @@ describe("BucketTable", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save selection" }));
     const rows = onSave.mock.calls[0][0] as Array<{ srcBucket: string; dstBucket: string; selected: boolean; exclude: string[] }>;
     expect(rows.filter((r) => r.selected)).toEqual([{ srcBucket: "uploads", dstBucket: "uploads-new", selected: true, exclude: ["tmp/*", "*.log"] }]);
-    expect(rows.find((r) => r.srcBucket === "db-declareall")!.selected).toBe(false);
+    expect(rows.find((r) => r.srcBucket === "db-ledger")!.selected).toBe(false);
   });
 
   it("a viewer cannot edit; a running bucket's checkbox is locked; unknown sizes say so", () => {

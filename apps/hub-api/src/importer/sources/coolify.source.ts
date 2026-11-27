@@ -258,7 +258,7 @@ export class CoolifySource implements ImportSource {
 
   /**
    * Mirror Coolify's project → environment tree, like the Dokploy import does: the review then places every app,
-   * database and service in a Tugra project/environment named after its Coolify one (IsBulKibris / production) instead of the
+   * database and service in a Tugra project/environment named after its Coolify one (Shopfront / production) instead of the
    * team default. Coolify rows carry `environment_id`; `/projects/{uuid}` lists each project's environments by id.
    * Best effort: an unreadable project tree only leaves resources in the team default (and says so).
    */

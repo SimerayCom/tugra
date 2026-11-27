@@ -396,7 +396,7 @@ describe("DashboardPage subtitle and the team scope", () => {
   afterEach(() => vi.restoreAllMocks());
 
   it("says all your teams only while no team is picked", async () => {
-    mockApi({ teams: [{ id: "t1", name: "Olgu Bey", role: "OWNER" }, { id: "t2", name: "Acme", role: "OWNER" }] });
+    mockApi({ teams: [{ id: "t1", name: "Northwind", role: "OWNER" }, { id: "t2", name: "Acme", role: "OWNER" }] });
     wrap(<TeamScopeProvider><DashboardPage /></TeamScopeProvider>);
     await ready();
     expect(screen.getByText("All your teams' resources at a glance.")).toBeTruthy();
@@ -404,9 +404,9 @@ describe("DashboardPage subtitle and the team scope", () => {
 
   it("names the team once one is picked", async () => {
     localStorage.setItem("tugra.teamScope", "t1");
-    mockApi({ teams: [{ id: "t1", name: "Olgu Bey", role: "OWNER" }, { id: "t2", name: "Acme", role: "OWNER" }] });
+    mockApi({ teams: [{ id: "t1", name: "Northwind", role: "OWNER" }, { id: "t2", name: "Acme", role: "OWNER" }] });
     wrap(<TeamScopeProvider><DashboardPage /></TeamScopeProvider>);
-    await waitFor(() => expect(screen.getByText("Resources in Olgu Bey at a glance.")).toBeTruthy());
+    await waitFor(() => expect(screen.getByText("Resources in Northwind at a glance.")).toBeTruthy());
     expect(screen.queryByText("All your teams' resources at a glance.")).toBeNull();
   });
 });

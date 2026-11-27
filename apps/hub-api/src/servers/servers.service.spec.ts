@@ -643,8 +643,8 @@ describe("ServersService.saveHostInfo + uptime view", () => {
   it("stores the HOST hostname reported via the Docker daemon, ignoring an invalid one", async () => {
     const update = jest.fn().mockResolvedValue({});
     const prisma = { server: { findUnique: jest.fn().mockResolvedValue(null), update } } as unknown as PrismaService;
-    await svcWith(prisma).saveHostInfo("s1", hostInfo({ hostname: "olgu-omer-ortak-new" }));
-    expect(update.mock.calls[0][0].data.hostname).toBe("olgu-omer-ortak-new");
+    await svcWith(prisma).saveHostInfo("s1", hostInfo({ hostname: "edge-box-new" }));
+    expect(update.mock.calls[0][0].data.hostname).toBe("edge-box-new");
     await svcWith(prisma).saveHostInfo("s1", hostInfo({ hostname: "bad host;rm -rf" }));
     expect(update.mock.calls[1][0].data.hostname).toBeUndefined();
     await svcWith(prisma).saveHostInfo("s1", hostInfo());

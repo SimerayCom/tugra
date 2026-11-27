@@ -26,7 +26,7 @@ const mount = (opId: string | null = "op1") =>
     <QueryClientProvider client={qc}>
       <I18nProvider>
         <ToastProvider>
-          <TakeoverPanel serverId="srv1" serverName="olgu-box" opId={opId ?? undefined} />
+          <TakeoverPanel serverId="srv1" serverName="edge-box" opId={opId ?? undefined} />
         </ToastProvider>
       </I18nProvider>
     </QueryClientProvider>,
@@ -95,12 +95,12 @@ describe("TakeoverPanel", () => {
     const dialog = await screen.findByRole("dialog");
     const go = within(dialog).getByRole("button", { name: "Take over" }) as HTMLButtonElement;
     expect(go.disabled).toBe(true);
-    fireEvent.change(within(dialog).getByLabelText("Type olgu-box to confirm"), { target: { value: "wrong" } });
+    fireEvent.change(within(dialog).getByLabelText("Type edge-box to confirm"), { target: { value: "wrong" } });
     expect(go.disabled).toBe(true);
-    fireEvent.change(within(dialog).getByLabelText("Type olgu-box to confirm"), { target: { value: "olgu-box" } });
+    fireEvent.change(within(dialog).getByLabelText("Type edge-box to confirm"), { target: { value: "edge-box" } });
     expect(go.disabled).toBe(false);
     fireEvent.click(go);
-    await waitFor(() => expect(swap).toHaveBeenCalledWith("tk1", "olgu-box"));
+    await waitFor(() => expect(swap).toHaveBeenCalledWith("tk1", "edge-box"));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(await screen.findByText(/Tugra serves the sites now/)).toBeTruthy();
   });
@@ -119,9 +119,9 @@ describe("TakeoverPanel", () => {
     mount();
     fireEvent.click(await screen.findByRole("button", { name: "Give back to Coolify" }));
     const dialog = await screen.findByRole("dialog");
-    fireEvent.change(within(dialog).getByLabelText("Type olgu-box to confirm"), { target: { value: "olgu-box" } });
+    fireEvent.change(within(dialog).getByLabelText("Type edge-box to confirm"), { target: { value: "edge-box" } });
     fireEvent.click(within(dialog).getByRole("button", { name: "Give back" }));
-    await waitFor(() => expect(give).toHaveBeenCalledWith("tk1", "olgu-box"));
+    await waitFor(() => expect(give).toHaveBeenCalledWith("tk1", "edge-box"));
     expect(await screen.findByText("Given back to Coolify")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Give back to Coolify" })).toBeNull();
   });

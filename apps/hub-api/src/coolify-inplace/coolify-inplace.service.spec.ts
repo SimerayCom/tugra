@@ -65,7 +65,7 @@ const plan = (t: ReturnType<typeof build>, rebuild: string[] = []) => t.svc.plan
 const swapOk = async (t: ReturnType<typeof build>) => {
   const p = await plan(t);
   await t.svc.test(ACTOR, p.id);
-  return t.svc.swap(ACTOR, p.id, { confirm: "olgu-box" });
+  return t.svc.swap(ACTOR, p.id, { confirm: "edge-box" });
 };
 
 describe("plan", () => {
@@ -190,7 +190,7 @@ describe("test", () => {
     const p = await plan(t);
     const v = await t.svc.test(ACTOR, p.id);
     expect(v.items[0].domains[0].tempCheck).toBe("failed");
-    await expect(t.svc.swap(ACTOR, p.id, { confirm: "olgu-box" })).rejects.toMatchObject({ response: { code: "takeover_test_failed", host: "web.example.com" } });
+    await expect(t.svc.swap(ACTOR, p.id, { confirm: "edge-box" })).rejects.toMatchObject({ response: { code: "takeover_test_failed", host: "web.example.com" } });
     expect(t.box.coolifyProxy.running).toBe(true);
   });
   it("a page that changes on every request is judged by status only", async () => {
@@ -268,7 +268,7 @@ describe("swap", () => {
   it("needs a passed test, the typed server name and the owner", async () => {
     const t = build();
     const p = await plan(t);
-    await expect(t.svc.swap(ACTOR, p.id, { confirm: "olgu-box" })).rejects.toMatchObject({ response: expect.objectContaining({ message: "takeover_not_tested" }) });
+    await expect(t.svc.swap(ACTOR, p.id, { confirm: "edge-box" })).rejects.toMatchObject({ response: expect.objectContaining({ message: "takeover_not_tested" }) });
     await t.svc.test(ACTOR, p.id);
     await expect(t.svc.swap(ACTOR, p.id, { confirm: "wrong" })).rejects.toBeInstanceOf(BadRequestException);
     expect(t.box.coolifyProxy.running).toBe(true);
@@ -305,7 +305,7 @@ describe("swap", () => {
     const p = await plan(t);
     await t.svc.test(ACTOR, p.id);
     t.box.differs.add("api.example.com"); // the exclusive app answers differently once Tugra serves it
-    const v = await t.svc.swap(ACTOR, p.id, { confirm: "olgu-box" });
+    const v = await t.svc.swap(ACTOR, p.id, { confirm: "edge-box" });
     expect(v.status).toBe("SWAPPED");
     expect(v.items[1].domains[0].finalCheck).toBe("failed");
     expect(v.giveBackAvailable).toBe(true);
@@ -315,7 +315,7 @@ describe("swap", () => {
     const p = await plan(t);
     await t.svc.test(ACTOR, p.id);
     t.box.failProxyStop = true;
-    const v = await t.svc.swap(ACTOR, p.id, { confirm: "olgu-box" });
+    const v = await t.svc.swap(ACTOR, p.id, { confirm: "edge-box" });
     expect(v.status).toBe("FAILED");
     expect(v.failureCode).toBe("swap_stop_failed");
     expect(t.box.ctrs.get(H("b"))!.running).toBe(true); // Coolify's container is back
@@ -332,7 +332,7 @@ describe("swap", () => {
       if (t.box.bind === "public") throw new Error("boom");
       return orig();
     };
-    const v = await t.svc.swap(ACTOR, p.id, { confirm: "olgu-box" });
+    const v = await t.svc.swap(ACTOR, p.id, { confirm: "edge-box" });
     expect(v.status).toBe("FAILED");
     expect(v.failureCode).toBe("swap_start_failed");
     expect(t.box.coolifyProxy).toEqual({ running: true, restart: "unless-stopped" });
@@ -343,7 +343,7 @@ describe("swap", () => {
     const p = await plan(t);
     await t.svc.test(ACTOR, p.id);
     t.box.failStopCtr.add(H("b"));
-    const v = await t.svc.swap(ACTOR, p.id, { confirm: "olgu-box" });
+    const v = await t.svc.swap(ACTOR, p.id, { confirm: "edge-box" });
     expect(v.failureCode).toBe("exclusive_stop_failed");
     expect(t.box.coolifyProxy.running).toBe(true);
     expect(t.box.tugraProxy.published).toBe(false);
@@ -354,7 +354,7 @@ describe("swap", () => {
     const p = await plan(t);
     await t.svc.test(ACTOR, p.id);
     t.box.failPolicyNo.add(H("d"));
-    const v = await t.svc.swap(ACTOR, p.id, { confirm: "olgu-box" });
+    const v = await t.svc.swap(ACTOR, p.id, { confirm: "edge-box" });
     expect(v.status).toBe("FAILED");
     expect(v.failureCode).toBe("exclusive_policy_failed");
     // the first container did get policy "no" before the failure: it has its recorded policy back, and both still run
@@ -485,7 +485,7 @@ describe("give back", () => {
   it("one step puts Coolify back as it was found: containers with their policy, the proxy with its policy, Tugra's copies stopped, fallback gone, bind restored", async () => {
     const t = build();
     const p = await swapOk(t);
-    const v = await t.svc.giveBack(ACTOR, p.id, { confirm: "olgu-box" });
+    const v = await t.svc.giveBack(ACTOR, p.id, { confirm: "edge-box" });
     expect(v.status).toBe("GIVEN_BACK");
     expect(v.giveBackAvailable).toBe(false);
     expect(v.finishedAt).not.toBeNull();
@@ -502,7 +502,7 @@ describe("give back", () => {
     const t = build();
     const p = await swapOk(t);
     t.box.events.length = 0;
-    await t.svc.giveBack(ACTOR, p.id, { confirm: "olgu-box" });
+    await t.svc.giveBack(ACTOR, p.id, { confirm: "edge-box" });
     const at = (e: string) => t.box.events.indexOf(e);
     expect(at("tugra-app:stop:appdb")).toBeLessThan(at("coolify-ctr:start:dbuuid-20261125T101010"));
     expect(at("coolify-ctr:start:dbuuid-20261125T101010")).toBeLessThan(at("proxy:reverse"));
@@ -511,7 +511,7 @@ describe("give back", () => {
     const t = build();
     const p = await plan(t);
     await t.svc.test(ACTOR, p.id);
-    const v = await t.svc.giveBack(ACTOR, p.id, { confirm: "olgu-box" });
+    const v = await t.svc.giveBack(ACTOR, p.id, { confirm: "edge-box" });
     expect(v.status).toBe("GIVEN_BACK");
     expect(t.box.events).not.toContain("coolify-proxy:stop");
     expect(t.box.events).not.toContain("proxy:reverse");
@@ -522,7 +522,7 @@ describe("give back", () => {
   it("works from a takeover that was only planned: nothing on the box changes", async () => {
     const t = build();
     const p = await plan(t);
-    const v = await t.svc.giveBack(ACTOR, p.id, { confirm: "olgu-box" });
+    const v = await t.svc.giveBack(ACTOR, p.id, { confirm: "edge-box" });
     expect(v.status).toBe("GIVEN_BACK");
     expect(t.box.events.filter((e) => !e.startsWith("probe"))).toEqual([]);
   });
@@ -531,8 +531,8 @@ describe("give back", () => {
     const p = await swapOk(t);
     await expect(t.svc.giveBack(ACTOR, p.id, { confirm: "nope" })).rejects.toBeInstanceOf(BadRequestException);
     expect(t.box.coolifyProxy.running).toBe(false);
-    await t.svc.giveBack(ACTOR, p.id, { confirm: "olgu-box" });
-    await expect(t.svc.giveBack(ACTOR, p.id, { confirm: "olgu-box" })).rejects.toBeInstanceOf(ConflictException);
+    await t.svc.giveBack(ACTOR, p.id, { confirm: "edge-box" });
+    await expect(t.svc.giveBack(ACTOR, p.id, { confirm: "edge-box" })).rejects.toBeInstanceOf(ConflictException);
   });
   it("a step that fails ends FAILED and pressing it again finishes the job", async () => {
     const t = build();
@@ -547,11 +547,11 @@ describe("give back", () => {
       }
       return orig(s, script);
     };
-    const v1 = await t.svc.giveBack(ACTOR, p.id, { confirm: "olgu-box" });
+    const v1 = await t.svc.giveBack(ACTOR, p.id, { confirm: "edge-box" });
     expect(v1.status).toBe("FAILED");
     expect(v1.failureCode).toBe("give_back_failed");
     fail = false;
-    const v2 = await t.svc.giveBack(ACTOR, p.id, { confirm: "olgu-box" });
+    const v2 = await t.svc.giveBack(ACTOR, p.id, { confirm: "edge-box" });
     expect(v2.status).toBe("GIVEN_BACK");
     expect(t.box.ctrs.get(H("b"))!.running).toBe(true);
     expect(t.box.coolifyProxy.running).toBe(true);
@@ -559,7 +559,7 @@ describe("give back", () => {
   it("audits the give-back", async () => {
     const t = build();
     const p = await swapOk(t);
-    await t.svc.giveBack(ACTOR, p.id, { confirm: "olgu-box" });
+    await t.svc.giveBack(ACTOR, p.id, { confirm: "edge-box" });
     expect(t.audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "coolify.takeover.give-back", meta: expect.objectContaining({ ok: true }) }));
   });
 });
@@ -569,7 +569,7 @@ describe("safety across the whole flow", () => {
     const t = build();
     const p = await swapOk(t);
     await t.svc.verify(ACTOR, p.id);
-    await t.svc.giveBack(ACTOR, p.id, { confirm: "olgu-box" });
+    await t.svc.giveBack(ACTOR, p.id, { confirm: "edge-box" });
     expect(t.box.scripts.length).toBeGreaterThan(10);
     for (const s of t.box.scripts) {
       expect(s).not.toMatch(/docker\s+(rm|kill|prune|rmi|system)\b/);
@@ -590,7 +590,7 @@ describe("safety across the whole flow", () => {
     (t.access.teamRole as jest.Mock).mockResolvedValue(null);
     await expect(t.svc.get(ACTOR, p.id)).rejects.toBeInstanceOf(NotFoundException);
     await expect(t.svc.test(ACTOR, p.id)).rejects.toBeInstanceOf(NotFoundException);
-    await expect(t.svc.giveBack(ACTOR, p.id, { confirm: "olgu-box" })).rejects.toBeInstanceOf(NotFoundException);
+    await expect(t.svc.giveBack(ACTOR, p.id, { confirm: "edge-box" })).rejects.toBeInstanceOf(NotFoundException);
   });
   it("a swap run cannot be tested again once the ports are Tugra's", async () => {
     const t = build();
@@ -671,7 +671,7 @@ describe("databases in the takeover", () => {
     const p = await plan(t);
     await t.svc.test(ACTOR, p.id);
     expect(t.box.tugraRunning.has("appweb")).toBe(false); // not started before the switch
-    const v = await t.svc.swap(ACTOR, p.id, { confirm: "olgu-box" });
+    const v = await t.svc.swap(ACTOR, p.id, { confirm: "edge-box" });
     expect(v.status).toBe("SWAPPED");
     const at = (e: string) => t.box.events.indexOf(e);
     expect(at("coolify-ctr:stop:pguuid")).toBeGreaterThan(-1);
@@ -687,7 +687,7 @@ describe("databases in the takeover", () => {
     const p = await plan(t);
     await t.svc.test(ACTOR, p.id);
     t.box.dbs[0].rows = 57; // the apps kept writing while the owner took time to approve
-    const v = await t.svc.swap(ACTOR, p.id, { confirm: "olgu-box" });
+    const v = await t.svc.swap(ACTOR, p.id, { confirm: "edge-box" });
     expect(v.status).toBe("SWAPPED");
     expect(dbItem(v).verify).toEqual({ level: "counts", state: "ok" });
     const stored = (t.rows.get(p.id)!.items as Array<{ itemRef: string; dbBefore?: { rows: number } }>).find((i) => i.itemRef === pg.itemRef)!;
@@ -699,7 +699,7 @@ describe("databases in the takeover", () => {
     const p = await plan(t);
     await t.svc.test(ACTOR, p.id);
     t.box.events.length = 0;
-    await t.svc.swap(ACTOR, p.id, { confirm: "olgu-box" });
+    await t.svc.swap(ACTOR, p.id, { confirm: "edge-box" });
     const at = (e: string) => t.box.events.indexOf(e);
     expect(at("coolify-ctr:stop:webuuid-20261125T101010")).toBeGreaterThan(-1);
     expect(at("coolify-ctr:stop:webuuid-20261125T101010")).toBeLessThan(at("dbfp"));
@@ -711,7 +711,7 @@ describe("databases in the takeover", () => {
     const p = await plan(t);
     await t.svc.test(ACTOR, p.id);
     t.box.dbReadFails.add("db1");
-    const v = await t.svc.swap(ACTOR, p.id, { confirm: "olgu-box" });
+    const v = await t.svc.swap(ACTOR, p.id, { confirm: "edge-box" });
     expect(v.status).toBe("FAILED");
     expect(v.failureCode).toBe("database_verify_failed");
     expect(t.box.ctrs.get(pg.ctrId)!.running).toBe(true);
@@ -723,7 +723,7 @@ describe("databases in the takeover", () => {
     const t = withDb();
     const p = await plan(t);
     await t.svc.test(ACTOR, p.id);
-    await t.svc.swap(ACTOR, p.id, { confirm: "olgu-box" });
+    await t.svc.swap(ACTOR, p.id, { confirm: "edge-box" });
     const v = await t.svc.verify(ACTOR, p.id);
     expect(v.status).toBe("VERIFIED");
     // a database that did not pass keeps it from being verified even when the domains are fine
@@ -735,7 +735,7 @@ describe("databases in the takeover", () => {
     t.box.failDbStart.add("db1");
     const p = await plan(t);
     await t.svc.test(ACTOR, p.id);
-    const v = await t.svc.swap(ACTOR, p.id, { confirm: "olgu-box" });
+    const v = await t.svc.swap(ACTOR, p.id, { confirm: "edge-box" });
     expect(v.status).toBe("FAILED");
     expect(v.failureCode).toBe("database_start_failed");
     expect(t.box.ctrs.get(pg.ctrId)!.running).toBe(true);
@@ -748,7 +748,7 @@ describe("databases in the takeover", () => {
     t.box.dbDiffers.add("db1");
     const p = await plan(t);
     await t.svc.test(ACTOR, p.id);
-    const v = await t.svc.swap(ACTOR, p.id, { confirm: "olgu-box" });
+    const v = await t.svc.swap(ACTOR, p.id, { confirm: "edge-box" });
     expect(v.status).toBe("FAILED");
     expect(v.failureCode).toBe("database_verify_failed");
     expect(dbItem(v).verify).toEqual({ level: "counts", state: "failed" });
@@ -760,9 +760,9 @@ describe("databases in the takeover", () => {
     const t = withDb({ db: { restart: "always" } });
     const p = await plan(t);
     await t.svc.test(ACTOR, p.id);
-    await t.svc.swap(ACTOR, p.id, { confirm: "olgu-box" });
+    await t.svc.swap(ACTOR, p.id, { confirm: "edge-box" });
     expect(t.box.ctrs.get(pg.ctrId)).toMatchObject({ running: false, restart: "no" });
-    const v = await t.svc.giveBack(ACTOR, p.id, { confirm: "olgu-box" });
+    const v = await t.svc.giveBack(ACTOR, p.id, { confirm: "edge-box" });
     expect(v.status).toBe("GIVEN_BACK");
     expect(t.box.ctrs.get(pg.ctrId)).toMatchObject({ running: true, restart: "always" });
     expect(t.box.tugraDbRunning.size).toBe(0);
@@ -772,11 +772,11 @@ describe("databases in the takeover", () => {
     const t = withDb();
     const p = await plan(t);
     await t.svc.test(ACTOR, p.id);
-    await t.svc.swap(ACTOR, p.id, { confirm: "olgu-box" });
+    await t.svc.swap(ACTOR, p.id, { confirm: "edge-box" });
     t.box.stopDatabase = async () => {
       throw new Error("database still running");
     };
-    const v = await t.svc.giveBack(ACTOR, p.id, { confirm: "olgu-box" });
+    const v = await t.svc.giveBack(ACTOR, p.id, { confirm: "edge-box" });
     expect(v.status).toBe("FAILED");
     expect(v.failureCode).toBe("give_back_failed");
     expect(t.box.ctrs.get(pg.ctrId)!.running).toBe(false); // never two containers on one data directory
@@ -789,7 +789,7 @@ describe("databases in the takeover", () => {
     expect(v.failureCode).toBeNull();
     const web1 = v.items.find((i) => i.itemRef === web.itemRef)!;
     expect(web1.domains[0].tempCheck).toBe("pending"); // never tested alongside
-    await expect(t.svc.swap(ACTOR, p.id, { confirm: "olgu-box" })).resolves.toMatchObject({ status: "SWAPPED" });
+    await expect(t.svc.swap(ACTOR, p.id, { confirm: "edge-box" })).resolves.toMatchObject({ status: "SWAPPED" });
   });
 });
 

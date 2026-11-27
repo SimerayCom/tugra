@@ -56,12 +56,12 @@ func TestReadHostFacts(t *testing.T) {
 	if _, ok := ReadHostFacts(p); ok {
 		t.Fatal("missing file must be ok=false")
 	}
-	body := `{"source":"install","collectedAt":1795444438,"hostname":"olgu-omer-ortak-new","os":"ubuntu","osVersion":"26.04","osPretty":"Ubuntu 26.04.1 LTS","ips":["2.29.218.211","2a01:4f9:c014:8ecc::1","100.85.166.104"]}`
+	body := `{"source":"install","collectedAt":1795444438,"hostname":"edge-box-new","os":"ubuntu","osVersion":"26.04","osPretty":"Ubuntu 26.04.1 LTS","ips":["2.29.218.211","2a01:4f9:c014:8ecc::1","100.85.166.104"]}`
 	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	hf, ok := ReadHostFacts(p)
-	if !ok || hf.Hostname != "olgu-omer-ortak-new" || hf.OS != "ubuntu" || hf.OSVersion != "26.04" || len(hf.IPs) != 3 || hf.IPs[0] != "2.29.218.211" {
+	if !ok || hf.Hostname != "edge-box-new" || hf.OS != "ubuntu" || hf.OSVersion != "26.04" || len(hf.IPs) != 3 || hf.IPs[0] != "2.29.218.211" {
 		t.Fatalf("ReadHostFacts = %+v, %v", hf, ok)
 	}
 	if err := os.WriteFile(p, []byte("{not json"), 0o644); err != nil {

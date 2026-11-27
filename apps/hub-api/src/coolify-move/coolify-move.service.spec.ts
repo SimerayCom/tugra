@@ -245,15 +245,15 @@ describe("CoolifyMoveService.status", () => {
 
 describe("CoolifyMoveService.status with the Coolify host in another team", () => {
   const servers = [
-    { id: "olgu1", name: "olgu-1", status: "ONLINE" },
-    { id: "olgu2", name: "olgu-2", status: "ONLINE" },
+    { id: "northwind1", name: "northwind-1", status: "ONLINE" },
+    { id: "northwind2", name: "northwind-2", status: "ONLINE" },
   ];
   const hostRead = (links: Record<string, unknown>) => ({ serverId: "hub", teamId: "simeray", readAt: earlier, counts: { servers: 24 }, serverLinks: links, server: { name: "Coolify Hub" } });
 
   it("knows this team's servers through the other team's read, and names the host with its own team", async () => {
-    const m = make({ servers, otherTeams: ["simeray"], inventories: [hostRead({ c1: { teamId: "t1", serverId: "olgu1" }, c9: { teamId: "simeray", serverId: "x" } })] });
+    const m = make({ servers, otherTeams: ["simeray"], inventories: [hostRead({ c1: { teamId: "t1", serverId: "northwind1" }, c9: { teamId: "simeray", serverId: "x" } })] });
     const v = await m.svc.status("u1", "t1", NOW);
-    expect(Object.fromEntries(v.servers.map((s) => [s.serverId, s.stage]))).toEqual({ olgu1: "takeover", olgu2: "not_coolify" });
+    expect(Object.fromEntries(v.servers.map((s) => [s.serverId, s.stage]))).toEqual({ northwind1: "takeover", northwind2: "not_coolify" });
     expect(v.hub).toMatchObject({ serverId: "hub", teamId: "simeray", name: "Coolify Hub", knownServers: 24 });
     expect(v.servers.some((s) => s.isCoolifyHub)).toBe(false);
     // the consent and the SSH install belong to the host's team
@@ -264,11 +264,11 @@ describe("CoolifyMoveService.status with the Coolify host in another team", () =
     const m = make({
       servers,
       otherTeams: ["simeray"],
-      inventories: [{ serverId: "olgu1", teamId: "t1", readAt: null, counts: null, serverLinks: {} }, hostRead({ c1: { teamId: "t1", serverId: "olgu1" } })],
+      inventories: [{ serverId: "northwind1", teamId: "t1", readAt: null, counts: null, serverLinks: {} }, hostRead({ c1: { teamId: "t1", serverId: "northwind1" } })],
     });
     const v = await m.svc.status("u1", "t1", NOW);
     expect(v.hub?.serverId).toBe("hub");
-    expect(v.servers.find((s) => s.serverId === "olgu1")).toMatchObject({ isCoolifyHub: false, stage: "takeover" });
+    expect(v.servers.find((s) => s.serverId === "northwind1")).toMatchObject({ isCoolifyHub: false, stage: "takeover" });
   });
 
   it("a read of another team that knows no server here is not this team's host", async () => {

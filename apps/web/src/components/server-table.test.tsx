@@ -371,8 +371,8 @@ describe("ServerTable total chip and the team scope", () => {
   });
 
   it("with a team picked it names the team and the all-teams count", () => {
-    renderTable(fleet.slice(1), { scope: { teamName: "Olgu Bey", allCount: 28 } });
-    expect(screen.getByRole("button", { name: "2 in Olgu Bey · 28 in all teams" })).toBeTruthy();
+    renderTable(fleet.slice(1), { scope: { teamName: "Northwind", allCount: 28 } });
+    expect(screen.getByRole("button", { name: "2 in Northwind · 28 in all teams" })).toBeTruthy();
     expect(screen.queryByText(/total \(all teams\)/)).toBeNull();
   });
 });

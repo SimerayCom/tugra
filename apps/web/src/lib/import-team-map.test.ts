@@ -3,7 +3,7 @@ import { createCount, mapBody, mappingSummary, newTeamName, normTeamName, ownedT
 import type { ImportPlan, Team } from "./types";
 
 const team = (id: string, name: string, role: Team["role"] = "OWNER"): Team => ({ id, name, role });
-const OLGU = { ref: "1", name: "Olgu Bey" };
+const NORTHWIND = { ref: "1", name: "Northwind" };
 const ACME = { ref: "2", name: "Acme" };
 const LAB = { ref: "3", name: "Şirket Ğ" };
 const plan = (teamMap?: Record<string, string | null>): ImportPlan =>
@@ -18,16 +18,16 @@ const plan = (teamMap?: Record<string, string | null>): ImportPlan =>
       databases: [],
       services: [],
       appsWithVolumeData: 0,
-      hosts: [{ ref: "a", name: "a", team: OLGU }],
-      projects: [{ ref: "p1", name: "Web", itemRefs: ["app:a:x"], team: OLGU }, { ref: "p2", name: "Lab", itemRefs: [], team: ACME }, { ref: "p3", name: "L3", itemRefs: [], team: LAB }],
+      hosts: [{ ref: "a", name: "a", team: NORTHWIND }],
+      projects: [{ ref: "p1", name: "Web", itemRefs: ["app:a:x"], team: NORTHWIND }, { ref: "p2", name: "Lab", itemRefs: [], team: ACME }, { ref: "p3", name: "L3", itemRefs: [], team: LAB }],
       ...(teamMap ? { teamMap } : {}),
     },
   }) as unknown as ImportPlan;
 
 describe("normTeamName", () => {
   it("ignores case, accents, Turkish i and extra spaces", () => {
-    expect(normTeamName("Olgu Bey")).toBe(normTeamName("  olgu   BEY "));
-    expect(normTeamName("ÖLGÜ Bey")).toBe(normTeamName("olgu bey"));
+    expect(normTeamName("Northwind Labs")).toBe(normTeamName("  northwind   LABS "));
+    expect(normTeamName("ÜMİT Labs")).toBe(normTeamName("umit labs"));
     expect(normTeamName("Şirket Ğ")).toBe("sirket g");
     expect(normTeamName("IŞIK")).toBe(normTeamName("ışık"));
     expect(normTeamName("İstanbul")).toBe("istanbul");
@@ -35,9 +35,9 @@ describe("normTeamName", () => {
 });
 
 describe("suggestTeam", () => {
-  const teams = [team("t1", "olgu bey"), team("t2", "Other"), team("t3", "Acme", "ADMIN")];
+  const teams = [team("t1", "northwind"), team("t2", "Other"), team("t3", "Acme", "ADMIN")];
   it("matches by name among the teams the person owns", () => {
-    expect(suggestTeam("Olgu Bey", teams)).toEqual({ teamId: "t1", notOwned: false });
+    expect(suggestTeam("Northwind", teams)).toEqual({ teamId: "t1", notOwned: false });
   });
   it("a name only a team the person does not own has is no match, and says so", () => {
     expect(suggestTeam("Acme", teams)).toEqual({ teamId: "", notOwned: true });
@@ -52,7 +52,7 @@ describe("suggestTeam", () => {
 });
 
 describe("startingChoices", () => {
-  const teams = [team("t1", "Olgu Bey"), team("t2", "Other")];
+  const teams = [team("t1", "Northwind"), team("t2", "Other")];
   it("preselects the match by name and leaves a team without one undecided: creating is never preselected", () => {
     const c = startingChoices(plan(), teams);
     expect(c["1"]).toEqual({ kind: "use", teamId: "t1" });
@@ -91,14 +91,14 @@ describe("mapBody", () => {
     expect(mapBody({ "1": { kind: "create" }, "2": { kind: "none" } })).toEqual([]);
   });
   it("a made team is named like its Coolify team, cut to the allowed length", () => {
-    expect(newTeamName("  Olgu Bey ")).toBe("Olgu Bey");
+    expect(newTeamName("  Northwind ")).toBe("Northwind");
     expect(newTeamName("x".repeat(120))).toHaveLength(80);
   });
 });
 
 describe("mappingSummary", () => {
   it("names each mapped pair and skips the teams left out", () => {
-    expect(mappingSummary(plan({ "1": "t1", "2": null }), [team("t1", "Olgu Bey")])).toEqual([{ coolify: "Olgu Bey", tugra: "Olgu Bey" }]);
+    expect(mappingSummary(plan({ "1": "t1", "2": null }), [team("t1", "Northwind")])).toEqual([{ coolify: "Northwind", tugra: "Northwind" }]);
     expect(mappingSummary(plan(), [])).toEqual([]);
   });
 });

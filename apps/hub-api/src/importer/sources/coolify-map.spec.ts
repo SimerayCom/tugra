@@ -609,9 +609,9 @@ describe("source health of an app (B4)", () => {
 
   it("the fleet warns for an app that is dead or crash-looping, not for a healthy one", () => {
     const app = (uuid: string, name: string, status: string, restart_count: number) => ({ uuid, name, build_pack: "nixpacks", git_repository: "o/r", status, restart_count });
-    const fleet = buildCoolifyFleet({ servers: [], resourcesByServer: {}, apps: [app("a1", "shortframes-api", "exited:unhealthy", 126368), app("a2", "fine", "running:healthy", 0), app("a3", "flappy", "running:unknown", 40)], databases: [], services: [], envsByResource: {}, volumesByResource: {} });
+    const fleet = buildCoolifyFleet({ servers: [], resourcesByServer: {}, apps: [app("a1", "clips-api", "exited:unhealthy", 126368), app("a2", "fine", "running:healthy", 0), app("a3", "flappy", "running:unknown", 40)], databases: [], services: [], envsByResource: {}, volumesByResource: {} });
     expect(fleet.warnings.filter((w) => /not healthy at the source/.test(w))).toEqual([
-      "app shortframes-api is not healthy at the source (exited:unhealthy, 126368 restarts): it migrates as it is, so check it before migrating",
+      "app clips-api is not healthy at the source (exited:unhealthy, 126368 restarts): it migrates as it is, so check it before migrating",
       "app flappy is not healthy at the source (running:unknown, 40 restarts): it migrates as it is, so check it before migrating",
     ]);
     expect(fleet.apps.find((a) => a.name === "fine")!.sourceHealth).toMatchObject({ health: "healthy" });

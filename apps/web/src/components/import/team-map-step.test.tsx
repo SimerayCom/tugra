@@ -12,7 +12,7 @@ import { teamScope } from "../../lib/import-team";
 afterEach(cleanup);
 afterEach(() => vi.restoreAllMocks());
 
-const OLGU = { ref: "1", name: "Olgu Bey" };
+const NORTHWIND = { ref: "1", name: "Northwind" };
 const ACME = { ref: "2", name: "Acme" };
 const LAB = { ref: "3", name: "Lab" };
 const item = (itemRef: string) => ({ itemRef, kind: "app", name: itemRef, proposed: {}, risks: [], dependsOn: [] });
@@ -28,9 +28,9 @@ const plan = (teamMap?: Record<string, string | null>): ImportPlan =>
       databases: [],
       services: [],
       appsWithVolumeData: 0,
-      hosts: [{ ref: "a", name: "a", team: OLGU }, { ref: "b", name: "b", team: ACME }, { ref: "c", name: "c", team: LAB }],
+      hosts: [{ ref: "a", name: "a", team: NORTHWIND }, { ref: "b", name: "b", team: ACME }, { ref: "c", name: "c", team: LAB }],
       projects: [
-        { ref: "p1", name: "Web", itemRefs: ["app:a:x", "app:a:y"], team: OLGU },
+        { ref: "p1", name: "Web", itemRefs: ["app:a:x", "app:a:y"], team: NORTHWIND },
         { ref: "p2", name: "Acme web", itemRefs: ["app:b:z"], team: ACME },
         { ref: "p3", name: "Lab", itemRefs: ["app:c:w"], team: LAB },
       ],
@@ -38,7 +38,7 @@ const plan = (teamMap?: Record<string, string | null>): ImportPlan =>
     },
   }) as unknown as ImportPlan;
 const TEAMS: Team[] = [
-  { id: "t-olgu", name: "olgu BEY", role: "OWNER" },
+  { id: "t-northwind", name: "northwind", role: "OWNER" },
   { id: "t-other", name: "Other", role: "OWNER" },
   { id: "t-acme", name: "Acme", role: "ADMIN" },
 ];
@@ -65,12 +65,12 @@ beforeEach(() => {
 describe("TeamMapStep", () => {
   it("lists every Coolify team with what it holds and preselects the team of the same name, ignoring case", () => {
     mount();
-    expect(screen.getByText("Olgu Bey")).toBeTruthy();
+    expect(screen.getByText("Northwind")).toBeTruthy();
     expect(screen.getByText("2 apps, databases and services · 1 projects · 1 servers")).toBeTruthy();
-    expect(sel("1").value).toBe("t-olgu");
+    expect(sel("1").value).toBe("t-northwind");
     expect(screen.getByText("Same name as your Tugra team.")).toBeTruthy();
     // the matched team is listed first
-    expect(within(sel("1")).getAllByRole("option")[1].textContent).toBe("olgu BEY");
+    expect(within(sel("1")).getAllByRole("option")[1].textContent).toBe("northwind");
   });
 
   it("a team with no match starts undecided, 'Create team' is offered but never preselected, and Continue says what is missing", () => {
@@ -95,11 +95,11 @@ describe("TeamMapStep", () => {
     fireEvent.click(next());
     await waitFor(() => expect(onDone).toHaveBeenCalled());
     expect(api.importTeamMap).toHaveBeenCalledWith("sess-1", [
-      { sourceTeamRef: "1", teamId: "t-olgu" },
+      { sourceTeamRef: "1", teamId: "t-northwind" },
       { sourceTeamRef: "2", teamId: "t-other" },
       { sourceTeamRef: "3", teamId: null },
     ]);
-    expect(onDone).toHaveBeenCalledWith({ "1": "t-olgu", "2": "t-other", "3": null });
+    expect(onDone).toHaveBeenCalledWith({ "1": "t-northwind", "2": "t-other", "3": null });
   });
 
   it("create-team path: nothing is written until Continue, then the team is made through the teams API and its new id is what is saved", async () => {
@@ -142,10 +142,10 @@ describe("TeamMapStep", () => {
   });
 
   it("reopening it starts from the saved mapping", () => {
-    mount({ plan: plan({ "1": "t-other", "2": null, "3": "t-olgu" }) });
+    mount({ plan: plan({ "1": "t-other", "2": null, "3": "t-northwind" }) });
     expect(sel("1").value).toBe("t-other");
     expect(sel("2").value).toBe("__skip");
-    expect(sel("3").value).toBe("t-olgu");
+    expect(sel("3").value).toBe("t-northwind");
   });
 
   it("every team left out cannot continue", () => {
@@ -166,15 +166,15 @@ describe("TeamFilterToggle with a team mapping", () => {
     return onView;
   };
 
-  it("says what it filters, with the counts: 'Olgu Bey team: 2 of 4'", () => {
-    mounted({ "1": "t-olgu", "2": "t-other", "3": null }, "1");
-    expect(screen.getByText("Olgu Bey team: 2 of 4")).toBeTruthy();
+  it("says what it filters, with the counts: 'Northwind team: 2 of 4'", () => {
+    mounted({ "1": "t-northwind", "2": "t-other", "3": null }, "1");
+    expect(screen.getByText("Northwind team: 2 of 4")).toBeTruthy();
     expect(screen.getByText(/Apps, databases and services of the Coolify team/)).toBeTruthy();
     expect(screen.getByRole("button", { name: "Change team mapping" })).toBeTruthy();
   });
 
   it("with several mapped teams in view it counts them together and switches between them", () => {
-    const onView = mounted({ "1": "t-olgu", "2": "t-other", "3": null }, null);
+    const onView = mounted({ "1": "t-northwind", "2": "t-other", "3": null }, null);
     expect(screen.getByText("2 mapped teams: 3 of 4")).toBeTruthy();
     fireEvent.change(screen.getByLabelText("Coolify team"), { target: { value: "2" } });
     expect(onView).toHaveBeenCalledWith("2");

@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { activeTeamScope, coolifyTeams, hostTugraTeam, mappedTeamRefs, teamScope } from "./import-team";
 import type { ImportPlan } from "./types";
 
-const OLGU = { ref: "1", name: "Olgu" };
+const NORTHWIND = { ref: "1", name: "Northwind" };
 const OTHER = { ref: "2", name: "Other" };
 const plan = (pf: Record<string, unknown> = {}): ImportPlan =>
   ({
@@ -17,8 +17,8 @@ const plan = (pf: Record<string, unknown> = {}): ImportPlan =>
       services: [],
       appsWithVolumeData: 0,
       sourceTeamRef: "1",
-      hosts: [{ ref: "a", name: "a", team: OLGU }, { ref: "b", name: "b", team: OTHER }, { ref: "c", name: "c", team: OTHER }, { ref: "d", name: "d" }],
-      projects: [{ ref: "p1", name: "Web", itemRefs: ["app:c:x"], team: OLGU }, { ref: "p2", name: "Lab", itemRefs: ["app:b:y"], team: OTHER }],
+      hosts: [{ ref: "a", name: "a", team: NORTHWIND }, { ref: "b", name: "b", team: OTHER }, { ref: "c", name: "c", team: OTHER }, { ref: "d", name: "d" }],
+      projects: [{ ref: "p1", name: "Web", itemRefs: ["app:c:x"], team: NORTHWIND }, { ref: "p2", name: "Lab", itemRefs: ["app:b:y"], team: OTHER }],
       ...pf,
     },
   }) as unknown as ImportPlan;
@@ -26,7 +26,7 @@ const plan = (pf: Record<string, unknown> = {}): ImportPlan =>
 describe("teamScope", () => {
   it("is the team's own servers plus every server its projects run on, and its projects", () => {
     const s = teamScope(plan())!;
-    expect(s.teamName).toBe("Olgu");
+    expect(s.teamName).toBe("Northwind");
     expect([...s.hosts].sort()).toEqual(["a", "c"]);
     expect([...s.projects]).toEqual(["p1"]);
     expect(s).toMatchObject({ hiddenHosts: 2, hiddenProjects: 1, otherTeams: 1 });
@@ -35,7 +35,7 @@ describe("teamScope", () => {
   it("does nothing without a picked team, with a single team, or when the picked team is unknown", () => {
     expect(teamScope(plan({ sourceTeamRef: undefined }))).toBeNull();
     expect(teamScope(plan({ sourceTeamRef: "9" }))).toBeNull();
-    expect(teamScope(plan({ hosts: [{ ref: "a", team: OLGU }], projects: [{ ref: "p1", name: "Web", itemRefs: ["app:a:x"], team: OLGU }] }))).toBeNull();
+    expect(teamScope(plan({ hosts: [{ ref: "a", team: NORTHWIND }], projects: [{ ref: "p1", name: "Web", itemRefs: ["app:a:x"], team: NORTHWIND }] }))).toBeNull();
     expect(teamScope(null)).toBeNull();
   });
 
@@ -61,10 +61,10 @@ describe("with a saved team mapping", () => {
     const p = plan({ sourceTeamRef: undefined, teamMap, ...over });
     return { ...p, items: [item("app:c:x"), item("database:c:d", "database"), item("app:b:y"), item("app:z:q")] } as unknown as ImportPlan;
   };
-  const pf = { projects: [{ ref: "p1", name: "Web", itemRefs: ["app:c:x", "database:c:d"], team: OLGU }, { ref: "p2", name: "Lab", itemRefs: ["app:b:y"], team: OTHER }, { ref: "p3", name: "Misc", itemRefs: ["app:z:q"], team: { ref: "3", name: "Third" } }] };
+  const pf = { projects: [{ ref: "p1", name: "Web", itemRefs: ["app:c:x", "database:c:d"], team: NORTHWIND }, { ref: "p2", name: "Lab", itemRefs: ["app:b:y"], team: OTHER }, { ref: "p3", name: "Misc", itemRefs: ["app:z:q"], team: { ref: "3", name: "Third" } }] };
 
   it("lists every Coolify team with what it holds", () => {
-    expect(coolifyTeams(mapped({}, pf)).map((t) => [t.name, t.items, t.projects])).toEqual([["Olgu", 2, 1], ["Other", 1, 1], ["Third", 1, 1]]);
+    expect(coolifyTeams(mapped({}, pf)).map((t) => [t.name, t.items, t.projects])).toEqual([["Northwind", 2, 1], ["Other", 1, 1], ["Third", 1, 1]]);
   });
 
   it("narrows to the mapped teams, counts what is shown against everything, and drops a team left out", () => {
@@ -74,13 +74,13 @@ describe("with a saved team mapping", () => {
     expect(s.teamRefs).toEqual(["1", "2"]);
     expect(s).toMatchObject({ shownItems: 3, totalItems: 4, otherTeams: 1 });
     expect([...s.projects].sort()).toEqual(["p1", "p2"]);
-    expect(s.teams.map((t) => t.name)).toEqual(["Olgu", "Other"]);
+    expect(s.teams.map((t) => t.name)).toEqual(["Northwind", "Other"]);
   });
 
   it("the switch picks one mapped team: its own count, and its servers and projects only", () => {
     const p = mapped({ "1": "t1", "2": "t2" }, pf);
     const s = teamScope(p, "1")!;
-    expect(s).toMatchObject({ teamName: "Olgu", shownItems: 2, totalItems: 4 });
+    expect(s).toMatchObject({ teamName: "Northwind", shownItems: 2, totalItems: 4 });
     expect([...s.projects]).toEqual(["p1"]);
     expect(s.hosts.has("b")).toBe(false);
     // a team that is not mapped cannot be switched to: the mapped teams stay in view
