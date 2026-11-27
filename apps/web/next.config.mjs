@@ -57,6 +57,10 @@ const nextConfig = {
         // with the external IdP), so they get their own bare-path proxy.
         { source: "/api/auth/oidc/:path*", destination: `${hub}/auth/oidc/:path*` },
         { source: "/api/auth/oidc", destination: `${hub}/auth/oidc` },
+        // MCP OAuth discovery documents (RFC 8414 / 9728) sit at the origin root, outside the /api/v1 prefix.
+        { source: "/.well-known/oauth-protected-resource", destination: `${hub}/.well-known/oauth-protected-resource` },
+        { source: "/.well-known/oauth-protected-resource/api/v1/mcp", destination: `${hub}/.well-known/oauth-protected-resource/api/v1/mcp` },
+        { source: "/.well-known/oauth-authorization-server", destination: `${hub}/.well-known/oauth-authorization-server` },
       ],
       // The generic API proxy is a `fallback` rewrite so the dynamic route handlers under src/app/api/v1 (the streaming
       // file-upload and agent-transfer routes) take precedence over it: a rewrite buffers the request body in memory and

@@ -217,6 +217,23 @@ import type {
 // set, so every api.* method + SSE/download caller follows automatically.
 export const API_BASE = "/api/v1";
 
+export interface OAuthConsentPreview {
+  client: { id: string; name: string };
+  redirectUri: string;
+  redirectHost: string;
+  requestedScopes: string[];
+  teams: { id: string; name: string; allowedScopes: string[] }[];
+}
+export interface OAuthGrantView {
+  id: string;
+  clientName: string;
+  teamId: string;
+  teamName: string | null;
+  scopes: string[];
+  createdAt: string;
+  lastUsedAt: string | null;
+}
+
 /** Same-origin URL of a run's Markdown report (a plain download link; the session cookie rides along). */
 export function migrationRunReportMdUrl(id: string): string {
   return `${API_BASE}/migration-runs/${encodeURIComponent(id)}/report?format=md`;
@@ -2642,6 +2659,20 @@ export const api = {
   },
   deleteApiToken(id: string) {
     return apiFetch<{ ok: true }>(`/api-tokens/${id}`, { method: "DELETE" });
+  },
+
+  // ── MCP OAuth (consent screen + connected clients) ──
+  oauthPreview(query: string) {
+    return apiFetch<OAuthConsentPreview>(`/oauth/authorize/preview?${query}`);
+  },
+  oauthDecision(params: Record<string, string>, decision: { approve: boolean; teamId?: string; scopes?: string[] }) {
+    return apiFetch<{ redirectTo: string }>("/oauth/authorize/decision", { method: "POST", body: JSON.stringify({ ...params, ...decision }) });
+  },
+  listOAuthGrants() {
+    return apiFetch<OAuthGrantView[]>("/oauth/grants");
+  },
+  revokeOAuthGrant(id: string) {
+    return apiFetch<{ ok: true }>(`/oauth/grants/${encodeURIComponent(id)}`, { method: "DELETE" });
   },
 
   // ── fleet importer (Coolify / Dokploy / local-docker) ──
