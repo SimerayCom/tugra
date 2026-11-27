@@ -53,13 +53,13 @@ for s in migrator agent; do
   lab_log "ok: $s.sh parses under the $BASE_IMAGE sh"
 done
 
-# 2. the agent installer brings a real agent ONLINE
+# 2. the agent installer brings a real agent ONLINE (the lab hub is plain HTTP on the docker bridge, so --hub-insecure is the installer's explicit opt-in)
 lab_seed server --name lab-u2604 --prefix U >"$LAB_DIR/u.env"
 # shellcheck disable=SC1091
 . "$LAB_DIR/u.env"
 docker rm -f tugra-agent >/dev/null 2>&1 || true
 curl -fsSL "http://127.0.0.1:${LAB_HUB_PORT}/install/agent.sh" |
-  inside sh -s -- --hub "ws://${LAB_HOST}:${LAB_HUB_PORT}/agent" --token "$U_ENROLL_TOKEN" --image "$LAB_IMAGE" >"$LAB_DIR/u-agent-install.log" 2>&1 ||
+  inside sh -s -- --hub "ws://${LAB_HOST}:${LAB_HUB_PORT}/agent" --hub-insecure --token "$U_ENROLL_TOKEN" --image "$LAB_IMAGE" >"$LAB_DIR/u-agent-install.log" 2>&1 ||
   { cat "$LAB_DIR/u-agent-install.log" >&2; lab_die "the agent installer failed under the $BASE_IMAGE userland"; }
 lab_wait 90 "the agent installed from $BASE_IMAGE to go ONLINE" bash -c "[ \"\$(node $LAB_SELF_DIR/seed.mjs server-status $U_SERVER_ID)\" = ONLINE ]"
 lab_log "ok: the agent installed from the $BASE_IMAGE userland is ONLINE"
