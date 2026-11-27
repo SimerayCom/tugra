@@ -74,7 +74,7 @@ export type LicenseInput = z.infer<typeof LicenseSchema>;
 
 /**
  * Owner toggle for anonymous usage stats (on by default, opt-out). Only the owner-UI switch is settable
- * here; the deployment-level env hard-off (TUGRA_TELEMETRY=0) is NOT owner-settable and overrides this.
+ * here; the deployment-level env hard-off (TUGRA_STATS=0) is NOT owner-settable and overrides this.
  */
 export const UpdateTelemetrySchema = z.object({
   enabled: z.boolean(),

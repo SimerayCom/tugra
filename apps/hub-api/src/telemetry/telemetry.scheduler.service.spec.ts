@@ -23,7 +23,7 @@ describe("TelemetrySchedulerService", () => {
     expect(t.registered).toEqual([]);
   });
 
-  it("when TUGRA_TELEMETRY=0 (forced off), it schedules nothing, never sends, and drops a schedule an earlier boot left", async () => {
+  it("when TUGRA_STATS=0 (forced off), it schedules nothing, never sends, and drops a schedule an earlier boot left", async () => {
     process.env.NODE_ENV = "production"; // past the test guard
     const telemetry = {
       isForcedOff: jest.fn().mockReturnValue(true),

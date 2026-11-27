@@ -38,9 +38,9 @@ describe("outbound guard — no IP probe or unsigned outbound by default; update
     expect(applyUpdateCheckDefaults({ UPDATE_PUBLISHER_KEY: "custom" })).toEqual({ UPDATE_PUBLISHER_KEY: "custom" });
   });
 
-  // NB: anonymous usage stats (TUGRA_TELEMETRY) are intentionally ON by default (opt-out) — a product
+  // NB: anonymous usage stats (TUGRA_STATS) are intentionally ON by default (opt-out) — a product
   // decision, so they are NOT part of this opt-in outbound guard. Their off-switch
-  // (--no-telemetry / TUGRA_TELEMETRY=0) is covered by hub-install-script.spec.
+  // (--no-stats / TUGRA_STATS=0) is covered by hub-install-script.spec.
 
   it("install.sh runs the public-IP probe ONLY inside the --detect-public-ip opt-in", () => {
     // the ipify/ifconfig/icanhazip chain must appear AFTER (inside) the detect guard

@@ -72,7 +72,7 @@ const SEND_TIMEOUT_MS = 10_000;
  * Anonymous usage stats — ON by default, opt-out. Collects only coarse aggregate counts + build metadata
  * under a hub id derived from an ed25519 public key (see TelemetryPayload); every report is signed with the
  * matching private key. Two independent off-switches, both honoured here:
- *  - env TUGRA_STATS=0 (legacy TUGRA_TELEMETRY=0) → HARD off (deployment decision: install --no-telemetry / headless CI). The
+ *  - env TUGRA_STATS=0 (legacy TUGRA_TELEMETRY=0) → HARD off (deployment decision: install --no-stats / headless CI). The
  *    scheduler never even starts, so a forced-off box makes ZERO outbound calls.
  *  - owner-UI toggle (DB telemetryEnabled) → runtime off, flippable without a restart; each send re-checks.
  * The sender NEVER throws and never blocks anything — an unreachable endpoint silently skips the round.

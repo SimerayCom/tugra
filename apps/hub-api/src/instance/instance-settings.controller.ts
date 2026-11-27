@@ -383,7 +383,7 @@ export class InstanceSettingsController {
 
   /**
    * Anonymous usage stats (ON by default, opt-out). Owner-only (class guards). Returns the effective state,
-   * whether the env hard-off (TUGRA_TELEMETRY=0) is overriding the toggle, the anonymous instance id, the
+   * whether the env hard-off (TUGRA_STATS=0) is overriding the toggle, the hub id, the
    * last send time, the endpoint/interval AND a LIVE preview of the exact payload that would be sent — so
    * the owner can see, byte-for-byte, what leaves the box (there is no hidden field; no IP/host/domain/PII).
    */
@@ -392,7 +392,7 @@ export class InstanceSettingsController {
     return this.telemetry.status();
   }
 
-  /** Flip the owner-UI telemetry toggle. Has no effect while TUGRA_TELEMETRY=0 forces it off (env wins). */
+  /** Flip the owner-UI telemetry toggle. Has no effect while TUGRA_STATS=0 forces it off (env wins). */
   @Patch("telemetry")
   @ApiZodBody(UpdateTelemetrySchema)
   async setTelemetry(
@@ -413,7 +413,7 @@ export class InstanceSettingsController {
     return res;
   }
 
-  /** Rotate the anonymous instance id (owner "reset identity"). Returns the refreshed status. */
+  /** Rotate the hub id (owner "reset identity"). Returns the refreshed status. */
   @Post("telemetry/reset")
   @HttpCode(200)
   async resetTelemetry(@CurrentUser() user: AuthUser) {

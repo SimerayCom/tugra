@@ -36,8 +36,8 @@ curl -fsSL https://tugra.io/install | sh -s -- --domain panel.example.com
 git clone https://github.com/SimerayCom/tugra.git && cd tugra && ./scripts/install.sh [--domain panel.example.com]
 ```
 
-It prompts once to share anonymous usage stats (`[Y/n]`, default yes; opt out with `--no-telemetry`).
-Run `./scripts/install.sh --help` for all flags (`--domain`, `--raw-ports`, `--home`, `--no-telemetry`, `--public-ip`, …).
+It prompts once to share anonymous usage stats (`[Y/n]`, default yes; opt out with `--no-stats`).
+Run `./scripts/install.sh --help` for all flags (`--domain`, `--raw-ports`, `--home`, `--no-stats`, `--public-ip`, …).
 
 The installer:
 
@@ -228,7 +228,7 @@ the `Secure` flag on HTTPS installs.
 | `--pull` | Force pulling published images (no source fallback). |
 | `--env-file <path>` | Write the env file elsewhere (default `<repo>/.env`). |
 | `--home` | Start the owner in the simple Home launcher instead of the full Fleet control plane. |
-| `--no-telemetry` / `--enable-telemetry` | Opt out of / explicitly accept the anonymous usage stats (also `TUGRA_TELEMETRY=0\|1`). |
+| `--no-stats` / `--enable-stats` | Opt out of / explicitly accept the anonymous usage stats (also `TUGRA_STATS=0\|1`). |
 | `--no-update-checks` / `--enable-update-checks` | Opt out of (or re-enable) the signed self-update checks, which are on by default (also `TUGRA_UPDATE_CHECKS=0`). |
 | `--no-swap` / `--enable-swap` | On a host with 4 GB RAM or less and no swap the installer adds a 2 GB `/swapfile` (`fallocate`, mode `0600`, `/etc/fstab` entry, `vm.swappiness=10`) so a load spike slows the hub down instead of the kernel's OOM killer taking it out. It never touches a host that already has swap and never fails the install. `--no-swap` skips it and is remembered (`TUGRA_NO_SWAP=1` in `.env`); `--enable-swap` undoes that. `--doctor` reports the swap state. |
 | `--profile=<tiny\|small\|standard\|auto>` | Size the stack for this host's RAM (see [RAM profiles](#ram-profiles)): heap caps, Postgres, Redis, the database pool and, on small hosts, per-service memory ceilings. Detected from RAM on a first install and kept on re-runs; `--profile=<name>` forces one and `--profile=auto` detects again. `--doctor` shows the profile that fits this host. |

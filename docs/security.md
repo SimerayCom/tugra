@@ -89,18 +89,41 @@ secrets, server names, IPs or personal data unless noted.
 | Connection | Default | Off-switch / opt-in | Where in code |
 | --- | --- | --- | --- |
 | Agent ↔ hub (WSS, signed commands) | On (core function) | n/a — the product | `agent-gateway/`, `scripts/agent-bootstrap` |
-| **Anonymous usage stats** → `TUGRA_TELEMETRY_URL` (default `telemetry.tugra.io`) | **On (opt-out)** | `TUGRA_TELEMETRY=0` / `install.sh --no-telemetry` / Settings toggle | `telemetry/telemetry.service.ts` |
+| **Anonymous usage stats** → `TUGRA_STATS_URL` (default `api.tugra.io`) | **On (opt-out)** | `TUGRA_STATS=0` / `install.sh --no-stats` / Settings toggle | `telemetry/telemetry.service.ts` |
 | Signed update-manifest check → `UPDATE_MANIFEST_URL` (default `simeraycom.github.io/tugra/versions.json`) | **On (opt-out)** — hourly + on panel open; ~2 KB GET, no identifiers. Applying an update additionally GETs the release's signed `host/<version>/` compose/script files from the same origin (only on an actual update, no identifiers) | `TUGRA_UPDATE_CHECKS=0` / `install.sh --no-update-checks`; interval `UPDATE_CHECK_INTERVAL_MIN` | `update/update-check.scheduler.service.ts`, `update/update.service.ts`, `scripts/lib/hostfiles.sh` |
 | ACME / Let's Encrypt (issue TLS certs) | Only when you enable SSL for a domain | per-app/domain | `dns/`, `deploy/` |
 | Remote template catalog | Off — opt-in, signature-verified | `CATALOG_SOURCE_URL` + `CATALOG_PUBLISHER_KEY` | `catalog/` |
 | AI deploy-log analysis → Anthropic | Off — opt-in | `ANTHROPIC_API_KEY` | `deploy/` |
 | Notifications / registries / git / monitors | Only what you configure; SSRF-guarded | per-resource; `NOTIFY_ALLOW_PRIVATE_TARGETS` for LAN | `notifications/`, `registries/`, `git-sources/`, `monitors/` |
 
-The usage stats payload is exactly: a random, stable instance id; the hub version, channel, edition and
-OS/arch; and aggregate counts (servers, apps, databases, deploys, teams, users, clusters, monitors,
-containers). No IP, hostname, domain, email, app or server name is included, and the receiver does not
-store the sender's IP. The owner can preview the exact payload, send on demand, rotate the id, or opt out
-in **Settings → Anonymous usage stats**.
+### What the usage stats send
+
+One `POST https://api.tugra.io/v1/hubs/report` per day (the first about a minute after boot), JSON body:
+
+```json
+{
+  "v": 1,
+  "hubId": "<first 32 hex chars of sha256(public key)>",
+  "publicKey": "<base64url ed25519 public key, 32 bytes>",
+  "sentAt": "<ISO-8601 UTC time>",
+  "version": "<Tugra version>",
+  "counts": { "servers": 0, "applications": 0, "databases": 0, "services": 0, "teams": 0, "users": 0 },
+  "features": {
+    "channel": "stable", "edition": "community", "platform": "linux", "arch": "x64", "nodeMajor": 22,
+    "deployments": 0, "clusters": 0, "monitors": 0
+  }
+}
+```
+
+- `services` counts compose stacks; `applications` counts every other app.
+- The hub generates an ed25519 key pair once. The private key is stored encrypted with the hub's secrets
+  key and never leaves the hub. The header `X-Tugra-Signature` carries the base64url signature over the
+  exact request body, so the receiver can check that reports with the same `hubId` come from the same hub.
+- Nothing else is sent: no IP, hostname, domain, email, app, server or team name, and the receiver does not
+  store the sender's IP.
+- Turn it off with `TUGRA_STATS=0` (a hard off: the hub never starts the sender), `install.sh --no-stats`,
+  or the toggle in **Settings → Anonymous usage stats**, which also shows the exact report, can send it on
+  demand and can replace the hub identity.
 
 ## Self-update security
 
