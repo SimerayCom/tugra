@@ -14,6 +14,7 @@ Short, in-order guides with the steps, what each one changes, how to undo it and
 - [Move off Coolify](move-off-coolify.md) — the main guide: read Coolify through the Tugra agent, match servers, take each over in place, clean up, consolidate projects, shut Coolify down.
 - [Move from Coolify](move-from-coolify.md) — copy to a new server, with a dry run, a freeze and a switch you can undo.
 - [Move from Coolify on the same server](move-from-coolify-same-server.md) — the proxy swap, in place or with a data copy.
+- [Move from CapRover](move-from-caprover.md) — copy apps, one-click apps, databases and domains from a CapRover server; what maps, what does not, and how to copy the data.
 
 ## Getting started
 

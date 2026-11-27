@@ -23,6 +23,8 @@ The complete command list, configuration and token-security notes live in the pa
 
 ## Migrating from Coolify / Dokploy
 
+(CapRover imports run from the web wizard, MCP or the REST API: see [Move from CapRover](move-from-caprover.md).)
+
 Two groups under `tugra import` cover a migration (procedure:
 [guided migration runbook](runbooks/guided-migration.md), [Coolify migration](coolify-migration.md)):
 
