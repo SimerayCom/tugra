@@ -1,5 +1,5 @@
 import { COOLIFY_IMPORT_APPLY_CLASSES, type AgentPlanAdditions, type CoolifySecretClass } from "@tugra/shared";
-import { ForbiddenException } from "@nestjs/common";
+import { ForbiddenException, HttpException } from "@nestjs/common";
 import type { ForeignApp, ForeignFleet, ServiceBundle } from "../foreign-fleet";
 import type { FetchedSecrets, ImportSourceCapabilities, SourceAppExtras } from "../import-source";
 import type { RawSettings, SettingsSection } from "../settings/settings-types";
@@ -20,6 +20,14 @@ export const SETTINGS_CLASSES: Record<SettingsSection, readonly CoolifySecretCla
   members: [],
 };
 const PLAN_TEXT = new Set(["docker_compose_raw"]);
+
+/** The stable code the agent read put on its failure (agent_offline, not_read_only, unreadable, ...), so the connect screen can say which one it was. Only a plain code shape is passed on. */
+function failureCode(e: unknown): string | undefined {
+  if (!(e instanceof HttpException)) return undefined;
+  const body = e.getResponse();
+  const code = body && typeof body === "object" ? (body as { code?: unknown }).code : undefined;
+  return typeof code === "string" && /^[a-z][a-z_]{1,39}$/.test(code) ? code : undefined;
+}
 
 /**
  * The Coolify source read through the agent on the Coolify host. It is the API-token source with a different client, so the fleet,
@@ -50,13 +58,13 @@ export class AgentCoolifySource extends CoolifySource {
   }
 
   /** Reachable = the agent answered and the read confirmed a read-only, REPEATABLE READ session. */
-  override async verify(): Promise<{ ok: boolean; version?: string; detail?: string }> {
+  override async verify(): Promise<{ ok: boolean; version?: string; detail?: string; code?: string }> {
     try {
       const view = await this.agentClient.agentView();
       const version = view.versionText();
       return version ? { ok: true, version } : { ok: true };
     } catch (e) {
-      return { ok: false, detail: e instanceof Error ? e.message : "verification failed" };
+      return { ok: false, detail: e instanceof Error ? e.message : "verification failed", ...(failureCode(e) ? { code: failureCode(e) } : {}) };
     }
   }
 

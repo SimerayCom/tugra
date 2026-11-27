@@ -75,7 +75,7 @@ function harness(over: { fleet: ForeignFleet; bundle?: (ref: string) => ServiceB
     setConfigMountsForImport: over.setConfigMounts ?? jest.fn().mockResolvedValue(undefined),
     setComposeNetworks: over.setNetworks ?? jest.fn().mockResolvedValue(undefined),
   };
-  const svc = new ImportExecutorService(prisma as never, {} as never, access as never, audit as never, { openSession: jest.fn().mockResolvedValue({ source }) } as never, apps as never, {} as never, { issue: jest.fn(), reissue: jest.fn(), revoke: jest.fn(), validate: jest.fn() } as never, {} as never, { upsertForImport: jest.fn() } as never, { findOrCreateForImport: over.findOrCreateProject ?? jest.fn() } as never, { resolve: jest.fn().mockResolvedValue(new Map()) } as never);
+  const svc = new ImportExecutorService(prisma as never, {} as never, access as never, audit as never, { openSession: jest.fn().mockResolvedValue({ source, session: { id: "sess-1", teamId: "team-1" } }) } as never, apps as never, {} as never, { issue: jest.fn(), reissue: jest.fn(), revoke: jest.fn(), validate: jest.fn() } as never, {} as never, { upsertForImport: jest.fn() } as never, { findOrCreateForImport: over.findOrCreateProject ?? jest.fn() } as never, { resolve: jest.fn().mockResolvedValue(new Map()) } as never);
   return { svc, prisma, audit, apps, source, created, access };
 }
 

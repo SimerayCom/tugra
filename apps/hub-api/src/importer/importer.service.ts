@@ -10,6 +10,8 @@ import { LocalDockerSource } from "./sources/local-docker.source";
 import { ImportSourceFactory } from "./sources/import-source.factory";
 import { assertAllowedUrl } from "./sources/ssrf-guard";
 import { ns, planImport } from "./import-planner";
+import { planChanged, sessionEnded } from "./import-errors";
+import { parseTeamMap, type TeamMap } from "./team-map-guard";
 import { buildPreflight } from "./preflight";
 import { buildCoverage } from "./coverage";
 import type { ForeignFleet, ImportPlan, PreflightHost } from "./foreign-fleet";
@@ -53,18 +55,7 @@ function parseHostLinks(raw: unknown): HostLinks {
   return out;
 }
 
-/** The owner's Coolify team to Tugra team mapping on a session, read back defensively (ids only; anything malformed is dropped). */
-export type TeamMap = Record<string, string | null>;
-const MAX_TEAM_MAP = 100;
-function parseTeamMap(raw: unknown): TeamMap | undefined {
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
-  const out: TeamMap = {};
-  for (const [ref, v] of Object.entries(raw as Record<string, unknown>)) {
-    if (!/^[A-Za-z0-9_-]{1,40}$/.test(ref) || Object.keys(out).length >= MAX_TEAM_MAP) continue;
-    if (v === null || (typeof v === "string" && v.length > 0 && v.length <= 60)) out[ref] = v;
-  }
-  return Object.keys(out).length ? out : undefined;
-}
+export type { TeamMap };
 
 const SESSION_TTL_MS = 60 * 60_000; // 1h — long enough to review → apply, short enough to limit a stored token
 
@@ -180,7 +171,7 @@ export class ImporterService {
     try {
       const ok = await source.verify();
       if (!ok.ok) {
-        throw new BadRequestException({ statusCode: 400, message: `could not read Coolify through the agent: ${ok.detail ?? "verification failed"}`, code: "agent_read_failed" });
+        throw new BadRequestException({ statusCode: 400, message: `could not read Coolify through the agent: ${ok.detail ?? "verification failed"}`, code: ok.code ?? "agent_read_failed" });
       }
       read = (await source.agentPlan?.()) ?? {};
     } finally {
@@ -332,7 +323,9 @@ export class ImporterService {
         // A move needs an agent on both ends: a source server is "covered" only when it matches a registered server whose agent is online.
         const online = (id: string | undefined): boolean => (id ? rows.find((r) => r.id === id)?.status === "ONLINE" : false);
         const v = ladder?.get(h.ref);
-        const link = agentServerId && !h.controlPlane ? hostLinks[h.ref] : undefined;
+        // "Not the same server" does not outlive identity that now proves the machine (a freshly installed agent): the ladder decides again.
+        const said = agentServerId && !h.controlPlane ? hostLinks[h.ref] : undefined;
+        const link = said && said.serverId === null && v?.status === "certain" ? undefined : said;
         if (link) return ownerAnswer(h, link, rows, v, online, ownerIdentity.get(h.ref) ?? []);
         if (!v) return m ? { ...h, tugra: m, agentOnline: online(m.serverId) } : { ...h, agentOnline: false };
         const best = v.candidates.find((c) => c.serverId === v.tugraServerId);
@@ -374,7 +367,7 @@ export class ImporterService {
     const row = await this.prisma.importSession.findUnique({ where: { id: sessionId } });
     if (!row || row.transport !== "agent" || !row.agentServerId || row.sourceKind !== "coolify") throw new NotFoundException("import session not found");
     if (row.actorId !== userId) throw new ForbiddenException("not your import session");
-    if (row.status !== "active" || row.expiresAt.getTime() < Date.now()) throw new BadRequestException("import session expired or revoked — reconnect");
+    if (row.status !== "active" || row.expiresAt.getTime() < Date.now()) throw sessionEnded();
     await this.access.requireRole(userId, row.teamId, [Role.OWNER, Role.ADMIN]);
     await this.requireAgentConsent(row.agentServerId, row.teamId);
 
@@ -388,6 +381,10 @@ export class ImporterService {
       if (input.reset) {
         delete links[input.coolifyServerUuid];
       } else if (input.serverId === null) {
+        // The machine's own identity wins over "not the same" as well: where it proves the same machine, that answer is refused (the
+        // owner would otherwise be offered the Coolify server's own machine as "another server" to copy onto).
+        const proof = (await this.hostMatch?.verdicts(userId, listed.map((x) => ({ uuid: x.ref, address: x.address, isLocal: x.controlPlane })), { localServerId: row.agentServerId }))?.find((v) => v.coolifyServerUuid === input.coolifyServerUuid);
+        if (proof?.status === "certain") throw new ConflictException({ statusCode: 409, code: "identity_match", message: "the machine identity of the two servers is the same" });
         links[input.coolifyServerUuid] = { serverId: null };
       } else {
         const server = await this.prisma.server.findUnique({ where: { id: input.serverId }, select: { id: true, teamId: true } });
@@ -418,7 +415,7 @@ export class ImporterService {
     const row = await this.prisma.importSession.findUnique({ where: { id: sessionId } });
     if (!row || row.transport !== "agent" || row.sourceKind !== "coolify") throw new NotFoundException("import session not found");
     if (row.actorId !== userId) throw new ForbiddenException("not your import session");
-    if (row.status !== "active" || row.expiresAt.getTime() < Date.now()) throw new BadRequestException("import session expired or revoked — reconnect");
+    if (row.status !== "active" || row.expiresAt.getTime() < Date.now()) throw sessionEnded();
     const refs = new Set(input.teams.map((t) => t.sourceTeamRef));
     if (refs.size !== input.teams.length) throw new BadRequestException({ statusCode: 400, code: "duplicate_team", message: "a Coolify team is listed twice" });
     for (const id of new Set(input.teams.flatMap((t) => (t.teamId ? [t.teamId] : [])))) await this.access.requireRole(userId, id, [Role.OWNER]);
@@ -438,7 +435,7 @@ export class ImporterService {
       const fleet = await source.discover();
       const plan = planImport(fleet, { sourceKind: input.sourceKind, ...(input.dbDataModes && Object.keys(input.dbDataModes).length ? { dbDataModes: input.dbDataModes } : {}) });
       if (plan.planHash !== input.planHash) {
-        throw new ConflictException("the plan changed since it was previewed — re-run the plan and review again");
+        throw planChanged();
       }
       const server = await this.prisma.server.findUnique({ where: { id: input.targetServerId }, select: { id: true, teamId: true } });
       if (!server) throw new NotFoundException("target server not found");
@@ -508,7 +505,7 @@ export class ImporterService {
     }
     if (session.actorId !== userId) throw new ForbiddenException("not your import session");
     if (session.status !== "active" || session.expiresAt.getTime() < Date.now()) {
-      throw new BadRequestException("import session expired or revoked — reconnect");
+      throw sessionEnded();
     }
     await this.access.requirePermission(userId, session.teamId, "apps:config");
     return { id: session.id, teamId: session.teamId, sourceKind: kind, baseUrl: session.baseUrl, scopeKey: session.scopeKey ?? "" };
@@ -565,7 +562,7 @@ export class ImporterService {
     }
     if (session.actorId !== userId) throw new ForbiddenException("not your import session");
     if (session.status !== "active" || session.expiresAt.getTime() < Date.now()) {
-      throw new BadRequestException("import session expired or revoked — reconnect");
+      throw sessionEnded();
     }
     await this.access.requirePermission(userId, session.teamId, "apps:config");
     const info = { id: session.id, teamId: session.teamId, sourceKind: kind, baseUrl: session.baseUrl, scopeKey: session.scopeKey ?? "", agentServerId: null as string | null, hostLinks: {} as HostLinks };

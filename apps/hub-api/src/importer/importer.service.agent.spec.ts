@@ -158,6 +158,13 @@ describe("ImporterService.plan — agent session", () => {
     expect(reads.read).not.toHaveBeenCalled();
   });
 
+  it("an ended session answers with the stable code the wizard branches on, so an outage is never taken for it", async () => {
+    const { svc } = make({ session: agentSession({ status: "revoked" }) });
+    await expect(svc.plan("u1", { sourceKind: "coolify", sessionId: "sess-a" })).rejects.toMatchObject({ response: { code: "session_ended" } });
+    const gone = make({ session: agentSession({ expiresAt: new Date(Date.now() - 1) }) });
+    await expect(gone.svc.plan("u1", { sourceKind: "coolify", sessionId: "sess-a" })).rejects.toMatchObject({ response: { code: "session_ended" } });
+  });
+
   it("an API session keeps using the token path and its plan carries no agent block", async () => {
     const apiSession = { ...agentSession(), transport: "api", agentServerId: null, baseUrl: "https://coolify.example.com", tokenEnc: "enc(T)" };
     const { svc, sources, reads } = make({ session: apiSession });
@@ -166,6 +173,21 @@ describe("ImporterService.plan — agent session", () => {
     expect(sources.create).toHaveBeenCalledWith("coolify", "https://coolify.example.com", "T");
     expect(sources.createAgent).not.toHaveBeenCalled();
     expect(reads.read).not.toHaveBeenCalled();
+  });
+});
+
+describe("ImporterService.connectAgent: why a read failed reaches the screen", () => {
+  it("passes the agent read's own code (offline, not read-only, unreadable) instead of one generic code", async () => {
+    for (const code of ["agent_offline", "not_read_only", "unreadable", "agent_unavailable"]) {
+      const { svc, importSession } = make({ read: async () => { throw new ConflictException({ code, message: "x" }); } });
+      await expect(svc.connectAgent("u1", { sourceKind: "coolify", teamId: "t1", serverId: "srv-agent" })).rejects.toMatchObject({ response: { code } });
+      expect(importSession.create).not.toHaveBeenCalled();
+    }
+  });
+
+  it("a failure with no code of its own stays agent_read_failed", async () => {
+    const { svc } = make({ read: async () => { throw new Error("socket hang up"); } });
+    await expect(svc.connectAgent("u1", { sourceKind: "coolify", teamId: "t1", serverId: "srv-agent" })).rejects.toMatchObject({ response: { code: "agent_read_failed" } });
   });
 });
 

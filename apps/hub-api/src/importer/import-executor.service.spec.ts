@@ -1,4 +1,4 @@
-import { BadRequestException, Logger } from "@nestjs/common";
+import { BadRequestException, ConflictException, Logger } from "@nestjs/common";
 import { ImportExecutorService } from "./import-executor.service";
 import { planImport } from "./import-planner";
 import type { ForeignApp, ForeignFleet } from "./foreign-fleet";
@@ -23,7 +23,7 @@ function fleet(): ForeignFleet {
 
 const DB_ITEMREF = "database:srv-a:db-1";
 
-function harness(over: { dbConfigFile?: (ref: string) => Promise<string | undefined>; dbCreds?: (ref: string) => { user?: string; password?: string; rootPassword?: string; database?: string } | undefined | Promise<unknown>; takenHostPorts?: number[]; priorImported?: Array<{ itemRef: string; resourceId: string; resourceType: string }>; liveDbIds?: string[]; liveAppIds?: string[]; gitSources?: Array<{ id: string }>; fleet?: ForeignFleet; carriedSource?: { id: string } | null; clusterId?: string | null; upsert?: jest.Mock; secrets?: (ref: string) => { values: Record<string, string>; unresolved: [] }; findOrCreateProject?: jest.Mock; basicAuthCreds?: (ref: string) => Promise<Array<{ user: string; password: string }> | undefined>; appExtras?: (ref: string) => Promise<unknown>; gitLinkRows?: jest.Mock } = {}) {
+function harness(over: { session?: Record<string, unknown>; dbConfigFile?: (ref: string) => Promise<string | undefined>; dbCreds?: (ref: string) => { user?: string; password?: string; rootPassword?: string; database?: string } | undefined | Promise<unknown>; takenHostPorts?: number[]; priorImported?: Array<{ itemRef: string; resourceId: string; resourceType: string }>; liveDbIds?: string[]; liveAppIds?: string[]; gitSources?: Array<{ id: string }>; fleet?: ForeignFleet; carriedSource?: { id: string } | null; clusterId?: string | null; upsert?: jest.Mock; secrets?: (ref: string) => { values: Record<string, string>; unresolved: [] }; findOrCreateProject?: jest.Mock; basicAuthCreds?: (ref: string) => Promise<Array<{ user: string; password: string }> | undefined>; appExtras?: (ref: string) => Promise<unknown>; gitLinkRows?: jest.Mock } = {}) {
   let seq = 0;
   const created: Array<{ id: string; data: Record<string, unknown> }> = [];
   const prisma = {
@@ -62,7 +62,7 @@ function harness(over: { dbConfigFile?: (ref: string) => Promise<string | undefi
   };
   const access = { requirePermission: jest.fn().mockResolvedValue(undefined) };
   const audit = { log: jest.fn().mockResolvedValue(undefined) };
-  const importer = { openSession: jest.fn().mockResolvedValue({ source }) };
+  const importer = { openSession: jest.fn().mockResolvedValue({ source, session: { id: "sess-1", teamId: "team-1", ...(over.session ?? {}) } }) };
   const apps = { create: jest.fn().mockResolvedValue({ id: "app-new", name: "web" }), setVolumes: jest.fn().mockResolvedValue(undefined), setBuild: jest.fn().mockResolvedValue(undefined), setWatchPaths: jest.fn().mockResolvedValue(undefined), setAutoDeploy: jest.fn().mockResolvedValue(undefined), setLimits: jest.fn().mockResolvedValue(undefined), setContainerCommand: jest.fn().mockResolvedValue(undefined), setClusterConfig: jest.fn().mockResolvedValue(undefined), setExtraDomains: jest.fn().mockResolvedValue(undefined), setDomainOptions: jest.fn().mockResolvedValue(undefined), setContainerPort: jest.fn().mockResolvedValue(undefined), setExtraPorts: jest.fn().mockResolvedValue(undefined), setServiceDomains: jest.fn().mockResolvedValue(undefined), setRedirects: jest.fn().mockResolvedValue(undefined), setBasicAuth: jest.fn().mockResolvedValue(undefined), setCustomLabels: jest.fn().mockResolvedValue(undefined) };
   const gitSources = { upsertForImport: over.upsert ?? jest.fn().mockResolvedValue("gs-new") };
   // Visibility resolver: tests that exercise linking inject rows; default = nothing resolved (apps are created unlinked).
@@ -143,6 +143,43 @@ describe("ImportExecutorService.applyRemote — database provisioning (S1)", () 
     await svc.apply("user-1", input());
     await flush();
     expect(dbs.create).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("ImportExecutorService.applyRemote: the team mapping and the plan hash", () => {
+  const teamed = (): ForeignFleet => {
+    const f = fleet();
+    return { ...f, servers: [{ ...f.servers[0], team: { ref: "7", name: "Acme" } }] };
+  };
+
+  it("a stale plan hash is a 409 with the stable code the wizard reads the source again on", async () => {
+    const { svc } = harness();
+    await expect(svc.apply("user-1", { ...input(), planHash: "stale" })).rejects.toMatchObject({ response: { code: "plan_changed" } });
+    await expect(svc.apply("user-1", { ...input(), planHash: "stale" })).rejects.toBeInstanceOf(ConflictException);
+  });
+
+  it("refuses to create anything of a Coolify team the owner left out, whatever the screen offered", async () => {
+    const f = teamed();
+    const { svc, apps, dbs, prisma } = harness({ fleet: f, session: { teamMap: { "7": null } } });
+    await expect(svc.apply("user-1", input(f))).rejects.toMatchObject({ response: { code: "import.team_left_out" } });
+    expect(apps.create).not.toHaveBeenCalled();
+    expect(dbs.create).not.toHaveBeenCalled();
+    expect(prisma.bulkOperation.create).not.toHaveBeenCalled();
+  });
+
+  it("refuses a target server outside the Tugra team the Coolify team was mapped to", async () => {
+    const f = teamed();
+    const { svc, apps } = harness({ fleet: f, session: { teamMap: { "7": "team-other" } } });
+    await expect(svc.apply("user-1", input(f))).rejects.toMatchObject({ response: { code: "import.team_mismatch" } });
+    expect(apps.create).not.toHaveBeenCalled();
+  });
+
+  it("applies when the target server sits in the mapped team", async () => {
+    const f = teamed();
+    const { svc, apps } = harness({ fleet: f, session: { teamMap: { "7": "team-1" } } });
+    await expect(svc.apply("user-1", input(f))).resolves.toMatchObject({ opId: "op-1" });
+    await flush();
+    expect(apps.create).toHaveBeenCalledTimes(1);
   });
 });
 

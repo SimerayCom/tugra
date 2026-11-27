@@ -106,7 +106,7 @@ export interface SourceProbe {
 export interface ImportSource {
   readonly kind: ImportSourceKind;
   capabilities(): ImportSourceCapabilities;
-  verify(): Promise<{ ok: boolean; version?: string; detail?: string }>;
+  verify(): Promise<{ ok: boolean; version?: string; detail?: string; /** A stable code for why a read failed (the agent source), so the screen can say what to do. */ code?: string }>;
   discover(): Promise<ForeignFleet>;
   /** OPTIONAL cheap read-only summary for the connection test (team name, resource counts, `read:sensitive`). A source without it
    *  is only verified. A failure of the core reads MUST throw. */

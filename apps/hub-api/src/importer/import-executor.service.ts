@@ -43,6 +43,8 @@ import { REMOTE_SOURCE_KINDS, type ImportApplyInput, type RemoteSourceKind, type
 import { ImportMappingService } from "./import-mapping.service";
 import { hasServerMap, placementFor, serverRefOfItemRef, unplacedRefs } from "./server-map";
 import { assertPlacementTargetReady } from "./placement-target";
+import { planChanged } from "./import-errors";
+import { teamMapViolations } from "./team-map-guard";
 import type { EffectiveItem, ResolvedMapping } from "./import-mapping";
 import { slug as dbSlug } from "../databases/databases.service";
 import { resolveImage } from "../databases/database-script";
@@ -148,7 +150,7 @@ export class ImportExecutorService {
     const fleet = await source.discover(); // enforces apps:config + blanks env values
     const plan = planImport(fleet, { sourceKind: "local-docker", targetServerId: input.serverId });
     if (plan.planHash !== input.planHash) {
-      throw new ConflictException("the plan changed since it was previewed — re-run the plan and review again");
+      throw planChanged();
     }
     await this.assertNoInflight(input.serverId);
     const seeds = seedTasks(plan, fleet);
@@ -185,7 +187,7 @@ export class ImportExecutorService {
       const fleet = await source.discover();
       const plan = planImport(fleet, { sourceKind: input.sourceKind, ...(input.dbDataModes && Object.keys(input.dbDataModes).length ? { dbDataModes: input.dbDataModes } : {}) });
       if (plan.planHash !== input.planHash) {
-        throw new ConflictException("the plan changed since it was previewed — re-run the plan and review again");
+        throw planChanged();
       }
       // Per-service choices are validated against the FRESHLY re-planned service items: an unknown itemRef, volume key or
       // member name is a 400 BEFORE any op or task row is written (a choice can only narrow or rename, never add).
@@ -220,6 +222,15 @@ export class ImportExecutorService {
         : undefined;
       const effByRef = new Map((res?.effective ?? []).map((e) => [e.itemRef, e]));
       const gitNameByRef = res ? new Map(res.gitSources.map((g) => [g.ref, g.name])) : undefined;
+      // The owner's Coolify team to Tugra team mapping holds here too, not only on the screens: a left-out Coolify team is never moved and a
+      // mapped one only lands in its own Tugra team. Refused before anything is created (an excluded or skipped item places nothing).
+      const teamIssues = teamMapViolations(fleet, session.teamMap, server.teamId, (ref) => effByRef.get(ref)?.include !== false && !serviceChoices[ref]?.skip);
+      if (teamIssues.leftOut.length) {
+        throw new UnprocessableEntityException({ statusCode: 422, message: "some items belong to a Coolify team that was left out of the move", code: "import.team_left_out", count: teamIssues.leftOut.length });
+      }
+      if (teamIssues.wrongTeam.length) {
+        throw new UnprocessableEntityException({ statusCode: 422, message: "some items belong to a Coolify team that was mapped to another Tugra team than the target server's", code: "import.team_mismatch", count: teamIssues.wrongTeam.length });
+      }
 
       // Item lookups by itemRef (fleet-only, so they can be built before the op row exists).
       const svcByRef = new Map(fleet.services.map((sv) => [ns("service", sv.serverRef, sv.sourceRef), sv]));

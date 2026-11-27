@@ -124,6 +124,19 @@ describe("ImporterService.setHostLink", () => {
     await expect(make().svc.setHostLink("u1", "sess-a", link())).resolves.toBeDefined();
   });
 
+  it("refuses 'not the same server' where the machine's own identity proves it is the same (certain), and stores nothing", async () => {
+    const certain = verdict({ status: "certain", candidates: [{ serverId: "tugra-1", name: "edge-1", teamId: "t1", evidence: [{ kind: "machine_id", equal: true }] }] });
+    const m = make({ verdicts: [certain] });
+    await expect(m.svc.setHostLink("u1", "sess-a", link({ serverId: null }))).rejects.toMatchObject({ response: { code: "identity_match" } });
+    expect(m.importSession.update).not.toHaveBeenCalled();
+    expect(m.audit.log).not.toHaveBeenCalled();
+  });
+
+  it("'not the same server' is still accepted where the ladder only suggests (an address is not proof)", async () => {
+    const m = make({ verdicts: [verdict({ status: "probable" })] });
+    await expect(m.svc.setHostLink("u1", "sess-a", link({ serverId: null }))).resolves.toEqual({ hostLinks: { "srv-edge": { serverId: null } } });
+  });
+
   it("the Coolify host itself is always 'this server': no answer can be given for it", async () => {
     const m = make();
     await expect(m.svc.setHostLink("u1", "sess-a", link({ coolifyServerUuid: "srv-local" }))).rejects.toMatchObject({ response: { code: "local_row" } });
@@ -207,6 +220,14 @@ describe("ImporterService.plan: the owner's answer reaches the hosts", () => {
     expect(edge.tugra).toBeUndefined();
     expect(edge.match).toEqual({ status: "none", linkedBy: "user", evidence: [] });
     expect(edge.agentOnline).toBe(false);
+  });
+
+  it("an old 'not the same server' does not hide a machine the identity now proves (a freshly installed agent): the ladder decides again", async () => {
+    const certain = verdict({ status: "certain", candidates: [{ serverId: "tugra-1", name: "edge-1", teamId: "t1", evidence: [{ kind: "ssh_host_key", equal: true }] }] });
+    const { plan } = await planOf({ verdicts: [certain], session: { hostLinks: { "srv-edge": { serverId: null } } } });
+    const edge = plan.preflight!.hosts!.find((h) => h.ref === "srv-edge")!;
+    expect(edge.tugra).toMatchObject({ serverId: "tugra-1", confidence: "certain" });
+    expect(edge.match).toMatchObject({ status: "certain", linkedBy: "auto" });
   });
 
   it("an answer naming a server the caller can no longer see leaves no match (never a dangling id)", async () => {

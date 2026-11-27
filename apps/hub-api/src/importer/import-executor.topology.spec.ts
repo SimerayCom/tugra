@@ -101,7 +101,7 @@ function harness(over: { fleet?: ForeignFleet; inflightOn?: string[]; prior?: Ar
     {} as never,
     access as never,
     audit as never,
-    { openSession: jest.fn().mockResolvedValue({ source }) } as never,
+    { openSession: jest.fn().mockResolvedValue({ source, session: { id: "sess-1", teamId: "team-1" } }) } as never,
     apps as never,
     dbs as never,
     { issue: jest.fn(), reissue: jest.fn(), revoke: jest.fn(), validate: jest.fn() } as never,
