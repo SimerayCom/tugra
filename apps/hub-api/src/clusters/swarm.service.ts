@@ -165,7 +165,7 @@ export class SwarmService {
   /** Work that only lives in this process (a promote, a demote, an ingress change) is registered so an update waits for it. */
   private async tracked<T>(id: string, serverIds: string[] | null, fn: () => Promise<T>): Promise<T> {
     const ids = serverIds ?? (await this.prisma.server.findMany({ where: { clusterId: id }, select: { id: true } })).map((s) => s.id);
-    return this.inFlight.track({ kind: "swarm", label: id, serverIds: ids }, fn);
+    return this.inFlight.track({ kind: "swarm", id, label: id, serverIds: ids }, fn);
   }
 
   /** Form a swarm: init `managerServerId`, join every other ONLINE member as a worker. Idempotent — safe to

@@ -256,7 +256,7 @@ export class PatchService {
     stream: boolean,
   ): Promise<{ output: string; exitCode: number }> {
     // Registered so a hub or agent update waits for it (the host-side unit survives a restart, the hub's attach and live log do not).
-    return this.inFlight.track({ kind: "patch", label: serverId, serverIds: [serverId] }, () => this.runApplyNow(serverId, inner, guard, unitSec, stream));
+    return this.inFlight.track({ kind: "patch", id: serverId, label: serverId, serverIds: [serverId] }, () => this.runApplyNow(serverId, inner, guard, unitSec, stream));
   }
 
   private async runApplyNow(

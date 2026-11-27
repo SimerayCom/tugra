@@ -155,7 +155,7 @@ export class SwarmProxyService {
    *  (mode=ingress), gates 2+ replicas on DNS-01, and verifies the service converged to <poolSize>/<poolSize>. */
   async ensure(clusterId: string): Promise<void> {
     const ids = (await this.prisma.server.findMany({ where: { clusterId }, select: { id: true } })).map((s) => s.id);
-    return this.inFlight.track({ kind: "swarm", label: clusterId, serverIds: ids }, () => this.ensureNow(clusterId));
+    return this.inFlight.track({ kind: "swarm", id: clusterId, label: clusterId, serverIds: ids }, () => this.ensureNow(clusterId));
   }
 
   private async ensureNow(clusterId: string): Promise<void> {

@@ -408,6 +408,10 @@ describe("InFlightService: wider sources (the hub is idle only when none of thes
       const during = await svc.list();
       expect(during).toHaveLength(1);
       expect(during[0]).toMatchObject({ kind: "patch", serverIds: ["s1"] });
+      // concurrent calls on the same thing do not clobber each other
+      const second = registry.track({ kind: "patch", id: "s1", label: "s1", serverIds: ["s1"] }, async () => undefined);
+      await second;
+      expect(await svc.list()).toHaveLength(1);
       expect(await svc.listForServers(["s2"])).toEqual([]);
       release();
       await done;

@@ -11,13 +11,14 @@ import type { InFlightItem, InFlightKind } from "./in-flight.dto";
 export class InFlightRegistry {
   private readonly active = new Map<string, InFlightItem>();
 
-  async track<T>(spec: { kind: InFlightKind; label: string; serverIds: string[]; teamId?: string | null }, fn: () => Promise<T>): Promise<T> {
-    const id = randomBytes(6).toString("hex");
-    this.active.set(id, { kind: spec.kind, id, label: spec.label, serverIds: spec.serverIds, teamId: spec.teamId ?? null, since: new Date().toISOString() });
+  /** `id` is the thing the work is on (a cluster id, a server id) so the panel can link to it; it may repeat across concurrent calls. */
+  async track<T>(spec: { kind: InFlightKind; id?: string; label: string; serverIds: string[]; teamId?: string | null }, fn: () => Promise<T>): Promise<T> {
+    const key = randomBytes(6).toString("hex");
+    this.active.set(key, { kind: spec.kind, id: spec.id ?? key, label: spec.label, serverIds: spec.serverIds, teamId: spec.teamId ?? null, since: new Date().toISOString() });
     try {
       return await fn();
     } finally {
-      this.active.delete(id);
+      this.active.delete(key);
     }
   }
 
