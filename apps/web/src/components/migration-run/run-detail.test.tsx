@@ -8,7 +8,7 @@ import { api } from "../../lib/api";
 import { RunDetail } from "./run-detail";
 import { HASH, binding, mkRun, mkStep } from "./test-fixtures";
 import { MIGRATION_RUN_STEP_KEYS } from "../../lib/migration-run";
-import type { MigrationRunStepKey, MigrationRunStepStatus, MigrationRunStepView, MigrationRunView } from "../../lib/types";
+import type { MigrationRunSecretsConsent, MigrationRunStepKey, MigrationRunStepStatus, MigrationRunStepView, MigrationRunView } from "../../lib/types";
 
 vi.mock("next/link", () => ({ default: ({ href, children, ...rest }: { href: string; children: React.ReactNode }) => <a href={href} {...rest}>{children}</a> }));
 const push = vi.fn();
@@ -58,7 +58,7 @@ describe("RunDetail", () => {
   });
 
   describe("the consent for secret values, on the page of a run that needs it", () => {
-    const missing = { applies: true, standing: false, classes: [], sessionId: "s1", serverId: "host1" };
+    const missing: MigrationRunSecretsConsent = { applies: true, standing: false, classes: [], sessionId: "s1", serverId: "host1" };
     const waiting = (over: Partial<MigrationRunView> = {}) =>
       mkRun({ status: "WAITING", currentStep: "IMPORT", nextAction: { kind: "gate", stepKey: "IMPORT", code: "import.consent-required", since: "2026-11-16T10:00:00.000Z" }, ...over }, stepsWith({ PREFLIGHT: mkStep("PREFLIGHT", "PASSED") }));
 

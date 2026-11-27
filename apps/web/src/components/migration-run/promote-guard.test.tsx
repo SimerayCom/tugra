@@ -7,7 +7,7 @@ import { ConfirmProvider } from "../confirm";
 import { api } from "../../lib/api";
 import { DryRunDecision } from "./dry-run-decision";
 import { mkRun, mkStep } from "./test-fixtures";
-import type { MigrationRunView } from "../../lib/types";
+import type { MigrationRunSecretsConsent, MigrationRunView } from "../../lib/types";
 
 vi.mock("next/link", () => ({ default: ({ href, children, ...rest }: { href: string; children: React.ReactNode }) => <a href={href} {...rest}>{children}</a> }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
@@ -158,7 +158,7 @@ describe("the start of a finished dry run says what would stop it before the cli
 
 describe("the start of a finished dry run needs the owner's consent for secret values, asked on the session the promotion uses", () => {
   const agentActive = { state: "active" as const, expiresAt: "2099-01-01T00:00:00Z", viaAgent: true, agentServerId: "host1", sourceTeamRef: null };
-  const missing = { applies: true, standing: false, classes: [], sessionId: "s1", serverId: "host1" };
+  const missing: MigrationRunSecretsConsent = { applies: true, standing: false, classes: [], sessionId: "s1", serverId: "host1" };
   beforeEach(() => {
     vi.spyOn(api, "getMigrationRunSafetyHints").mockResolvedValue(hints);
     vi.spyOn(api, "getMigrationRunSourceAgents").mockResolvedValue({ gaps: [], unverified: false });
