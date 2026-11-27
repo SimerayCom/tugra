@@ -44,7 +44,7 @@ export const ProjectResourceSchema = z.object({
   templateLogo: z.string().nullable(), // catalog logo filename resolved from templateSlug (null for databases)
   iconKey: z.string().nullable(), // brand icon the user picked from the shared set
   image: z.string().nullable(), // container image, for the automatic brand icon
-  hasDomain: z.boolean(), // an app with its own domain gets its site's favicon
+  domain: z.string().nullable(), // the app's own domain: its site's favicon is shown (null for databases)
 });
 export type ProjectResource = z.infer<typeof ProjectResourceSchema>;
 
@@ -198,7 +198,7 @@ export class ProjectsService {
             iconUpdatedAt: a.iconUpdatedAt,
             iconKey: a.iconKey,
             image: a.image,
-            hasDomain: !!a.domain,
+            domain: a.domain,
             templateSlug: a.templateSlug,
             // Resolve the catalog logo exactly like applications.service, so the icon matches the app view.
             templateLogo: a.templateSlug ? (this.catalog.get(a.templateSlug)?.logo ?? a.templateSlug) : null,
@@ -212,7 +212,7 @@ export class ProjectsService {
             iconUpdatedAt: d.iconUpdatedAt,
             iconKey: d.iconKey,
             image: d.image,
-            hasDomain: false,
+            domain: null,
             templateSlug: null,
             templateLogo: null,
           })),
