@@ -8,11 +8,19 @@ import { useT } from "../../../i18n/provider";
 import { Badge, Btn, Card } from "../../../components/ui";
 import { useToast } from "../../../components/toast";
 
+const FIELD_KEYS = [
+  "settings.telemetryFieldHub",
+  "settings.telemetryFieldCounts",
+  "settings.telemetryFieldBuild",
+  "settings.telemetryFieldSystem",
+  "settings.telemetryFieldSigned",
+] as const;
+
 /**
  * Owner-only anonymous usage stats panel. On by default, opt-out. Shows the effective state, a live preview
  * of the EXACT payload that would be sent (so the owner can verify there's no IP/host/domain/PII), and lets
- * them flip the toggle, send now, or rotate the anonymous id. Returns null for non-owners (the hub enforces
- * the same guard). When TUGRA_TELEMETRY=0 is set in the environment, the toggle is shown inert with a note.
+ * them flip the toggle, send now, or replace the hub identity. Returns null for non-owners (the hub enforces
+ * the same guard). When TUGRA_STATS=0 is set in the environment, the toggle is shown inert with a note.
  */
 export function TelemetryCard() {
   const t = useT();
@@ -92,9 +100,16 @@ export function TelemetryCard() {
       <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 18px", fontSize: 12, color: "var(--c-tx3)", marginBottom: 14 }}>
         <span>{t("settings.telemetryLastSent")}: <span style={{ color: "var(--c-tx2)" }}>{lastSent}</span></span>
         <span>{t("settings.telemetryEvery", { hours })}</span>
-        {data?.instanceId && (
-          <span>{t("settings.telemetryInstanceId")}: <code style={{ fontSize: 11 }}>{data.instanceId.slice(0, 8)}…</code></span>
+        {data?.hubId && (
+          <span>{t("settings.telemetryHubId")}: <code style={{ fontSize: 11 }}>{data.hubId.slice(0, 8)}…</code></span>
         )}
+      </div>
+
+      <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 12, lineHeight: 1.5 }}>
+        <div style={{ fontWeight: 600, color: "var(--c-tx2)", marginBottom: 2 }}>{t("settings.telemetryFieldsTitle")}</div>
+        <ul style={{ margin: 0, paddingLeft: 18 }}>
+          {FIELD_KEYS.map((k) => <li key={k}>{t(k)}</li>)}
+        </ul>
       </div>
 
       <button

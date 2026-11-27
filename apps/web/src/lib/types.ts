@@ -344,28 +344,32 @@ export interface InstanceUpdateApply {
   targetVersion: string | null;
 }
 
-/** The exact anonymous payload sent to the telemetry endpoint — mirrored to the UI so what is shown is
- *  byte-for-byte what is sent. Only coarse aggregates + build metadata under a random id; no PII. */
+/** The exact anonymous report sent to the stats endpoint — mirrored to the UI so what is shown is
+ *  byte-for-byte what is sent. Only coarse aggregates + build metadata under a key-derived hub id; no PII. */
 export interface TelemetryPayload {
-  instanceId: string;
+  v: number;
+  hubId: string;
+  publicKey: string;
+  sentAt: string;
   version: string;
-  channel: string;
-  edition: string;
-  platform: string;
-  arch: string;
-  nodeMajor: number;
   counts: {
     servers: number;
     applications: number;
     databases: number;
-    deployments: number;
+    services: number;
     teams: number;
     users: number;
+  };
+  features: {
+    channel: string;
+    edition: string;
+    platform: string;
+    arch: string;
+    nodeMajor: number;
+    deployments: number;
     clusters: number;
     monitors: number;
-    containers: number;
   };
-  sentAt: string;
 }
 
 /** Public white-label branding (GET /instance/branding). All null + hidePoweredBy=false → the Tugra
@@ -446,12 +450,12 @@ export interface PanelDomainStatus {
 export interface TelemetryStatus {
   /** Effective state: on AND not env-forced-off. */
   enabled: boolean;
-  /** TUGRA_TELEMETRY=0 — a deployment hard-off; the owner toggle is then inert. */
+  /** TUGRA_STATS=0 — a deployment hard-off; the owner toggle is then inert. */
   forcedOff: boolean;
   /** The raw owner-UI toggle value (telemetryEnabled), shown even when forcedOff. */
   dbEnabled: boolean;
-  /** The anonymous instance id; null until first minted. */
-  instanceId: string | null;
+  /** The hub id (derived from the hub's public key); null until the key is first generated. */
+  hubId: string | null;
   /** Last successful send (ISO), or null. */
   lastSentAt: string | null;
   /** Send cadence in minutes. */

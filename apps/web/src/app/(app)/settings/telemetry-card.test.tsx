@@ -12,24 +12,23 @@ vi.mock("../../../lib/auth", () => ({ useAuth: () => ({ user: h.user }) }));
 
 import { TelemetryCard } from "./telemetry-card";
 
+const HUB_ID = "abcd1234abcd1234abcd1234abcd1234";
 const STATUS: TelemetryStatus = {
   enabled: true,
   forcedOff: false,
   dbEnabled: true,
-  instanceId: "abcd1234-0000-0000-0000-000000000000",
+  hubId: HUB_ID,
   lastSentAt: null,
   intervalMin: 1440,
-  endpoint: "https://telemetry.tugra.io/v1/ingest",
+  endpoint: "https://api.tugra.io/v1/hubs/report",
   payload: {
-    instanceId: "abcd1234-0000-0000-0000-000000000000",
-    version: "0.1.0",
-    channel: "stable",
-    edition: "community",
-    platform: "linux",
-    arch: "x64",
-    nodeMajor: 22,
-    counts: { servers: 2, applications: 5, databases: 1, deployments: 40, teams: 1, users: 1, clusters: 0, monitors: 3, containers: 6 },
+    v: 1,
+    hubId: HUB_ID,
+    publicKey: "A".repeat(43),
     sentAt: "2026-10-25T00:00:00.000Z",
+    version: "0.1.0",
+    counts: { servers: 2, applications: 5, databases: 1, services: 4, teams: 1, users: 1 },
+    features: { channel: "stable", edition: "community", platform: "linux", arch: "x64", nodeMajor: 22, deployments: 40, clusters: 0, monitors: 3 },
   },
 };
 
@@ -87,7 +86,17 @@ describe("TelemetryCard", () => {
     wrap();
     await screen.findByText("Anonymous usage stats");
     fireEvent.click(screen.getByRole("button", { name: "See exactly what's sent" }));
-    await waitFor(() => expect(screen.getByText(/"containers": 6/)).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(/"services": 4/)).toBeTruthy());
+  });
+
+  it("lists the fields that are sent and never uses the word telemetry", async () => {
+    h.user = { isInstanceOwner: true };
+    const { container } = wrap();
+    await screen.findByText("What is sent");
+    expect(screen.getByText(/Counts of servers, applications, databases, services, teams and users/)).toBeTruthy();
+    expect(screen.getByText(/Each report is signed/)).toBeTruthy();
+    await waitFor(() => expect(screen.getByText(/abcd1234/)).toBeTruthy());
+    expect(container.textContent?.toLowerCase()).not.toContain("telemetry");
   });
 
   it("send now calls the endpoint", async () => {

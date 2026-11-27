@@ -10,13 +10,13 @@ function strings(v: unknown, out: string[] = []): string[] {
   return out;
 }
 
-/** The product calls it "usage stats" everywhere a person reads it; the word survives only in the variable name. */
+/** The product calls it "usage stats" everywhere a person reads it; the word appears in no user-facing string. */
 describe("usage stats wording", () => {
-  it("no English UI string says telemetry, except as the TUGRA_TELEMETRY variable name", () => {
+  it("no English UI string says telemetry", () => {
     const bad: string[] = [];
     for (const f of readdirSync(dir).filter((n) => n.endsWith(".json"))) {
       for (const s of strings(JSON.parse(readFileSync(path.join(dir, f), "utf8")))) {
-        if (/telemetry/i.test(s.replace(/TUGRA_TELEMETRY(_[A-Z]+)*/g, ""))) bad.push(`${f}: ${s}`);
+        if (/telemetry/i.test(s)) bad.push(`${f}: ${s}`);
       }
     }
     expect(bad).toEqual([]);
@@ -24,6 +24,6 @@ describe("usage stats wording", () => {
 
   it("the forced-off note reads as asked", () => {
     const s = JSON.parse(readFileSync(path.join(dir, "settings.json"), "utf8")) as Record<string, string>;
-    expect(s.telemetryForcedOff).toBe("Usage stats are turned off by the server environment (TUGRA_TELEMETRY=0). Remove that variable to let this toggle take effect.");
+    expect(s.telemetryForcedOff).toBe("Usage stats are turned off by the server environment (TUGRA_STATS=0). Remove that variable to let this toggle take effect.");
   });
 });
