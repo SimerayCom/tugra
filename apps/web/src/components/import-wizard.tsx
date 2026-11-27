@@ -256,6 +256,7 @@ export function ImportWizard() {
         setSessionId(null);
         setPlan(null);
         setLastSelection(undefined);
+        liveSelection.current = undefined;
         setResumeNote("expired");
         return;
       }
@@ -270,6 +271,7 @@ export function ImportWizard() {
       setSessionId(s.sessionId);
       setScope(null);
       setLastSelection(undefined);
+      liveSelection.current = undefined;
       planM.mutate({ sid: s.sessionId });
     },
     onError: (e) => toast((e as Error).message || t(src.fail), "error"),
@@ -554,6 +556,7 @@ export function ImportWizard() {
             setSessionId(s.sessionId);
             setScope(null);
             setLastSelection(undefined);
+            liveSelection.current = undefined;
             setMatchedHosts(false);
             planM.mutate({ sid: s.sessionId });
           }}
