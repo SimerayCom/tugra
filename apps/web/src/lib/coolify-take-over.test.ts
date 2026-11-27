@@ -23,28 +23,26 @@ describe("guidedRunFor", () => {
 });
 
 describe("decideTakeOver", () => {
-  const calls = (runs: MigrationRunSummary[], opId: string | null = "op1") => ({ listRuns: vi.fn(async () => runs), opIdOf: vi.fn(async () => opId) });
+  const calls = (runs: MigrationRunSummary[]) => ({ listRuns: vi.fn(async () => runs) });
   it("no run and no takeover: start the agent-path session", async () => {
-    const c = calls([]);
-    expect(await decideTakeOver({ serverId: "s1", takeover: "none" }, c)).toEqual({ kind: "start" });
-    expect(c.opIdOf).not.toHaveBeenCalled();
+    expect(await decideTakeOver({ serverId: "s1", takeover: "none" }, calls([]))).toEqual({ kind: "start" });
   });
-  it("a guided run opens the takeover on its operation, with ids encoded", async () => {
-    expect(await decideTakeOver({ serverId: "s 1", takeover: "none" }, calls([run({ targetServerId: "s 1" })], "o&p"))).toEqual({ kind: "open", href: "/import/inplace?serverId=s%201&opId=o%26p" });
+  it("a guided run opens the run (it drives the takeover), with the id encoded, whatever the takeover says", async () => {
+    expect(await decideTakeOver({ serverId: "s1", takeover: "none" }, calls([run({ id: "r/9" })]))).toEqual({ kind: "open", href: "/import/runs/r%2F9" });
+    expect(await decideTakeOver({ serverId: "s1", takeover: "TESTING" }, calls([run({})]))).toEqual({ kind: "open", href: "/import/runs/r1" });
+    expect(await decideTakeOver({ serverId: "s1", takeover: "FAILED" }, calls([run({})]))).toEqual({ kind: "open", href: "/import/runs/r1" });
   });
-  it("a guided run whose import has not happened yet opens the run, not an empty takeover", async () => {
-    expect(await decideTakeOver({ serverId: "s1", takeover: "none" }, calls([run({ id: "r/9" })], null))).toEqual({ kind: "open", href: "/import/runs/r%2F9" });
-  });
-  it("a takeover on record opens it, with the run's operation when there is one and without otherwise", async () => {
-    expect(await decideTakeOver({ serverId: "s1", takeover: "FAILED" }, calls([run({})]))).toEqual({ kind: "open", href: "/import/inplace?serverId=s1&opId=op1" });
+  it("a takeover on record without a run opens its page", async () => {
     expect(await decideTakeOver({ serverId: "s1", takeover: "PLANNED" }, calls([]))).toEqual({ kind: "open", href: "/import/inplace?serverId=s1" });
+    expect(await decideTakeOver({ serverId: "s1", takeover: "VERIFIED" }, calls([]))).toEqual({ kind: "open", href: "/import/inplace?serverId=s1" });
   });
-  it("a runs list or run lookup that fails does not block: it falls back to start, or to the takeover on record", async () => {
-    const broken = { listRuns: vi.fn(async () => { throw new Error("x"); }), opIdOf: vi.fn(async () => "op1") };
+  it("a takeover that was given back holds nothing: the row starts a new one instead of opening a page that cannot", async () => {
+    expect(await decideTakeOver({ serverId: "s1", takeover: "GIVEN_BACK" }, calls([]))).toEqual({ kind: "start" });
+  });
+  it("a runs list that fails does not block: it falls back to start, or to the takeover on record", async () => {
+    const broken = { listRuns: vi.fn(async () => { throw new Error("x"); }) };
     expect(await decideTakeOver({ serverId: "s1", takeover: "none" }, broken)).toEqual({ kind: "start" });
-    expect(await decideTakeOver({ serverId: "s1", takeover: "GIVEN_BACK" }, broken)).toEqual({ kind: "open", href: "/import/inplace?serverId=s1" });
-    const noOp = { listRuns: vi.fn(async () => [run({})]), opIdOf: vi.fn(async () => { throw new Error("x"); }) };
-    expect(await decideTakeOver({ serverId: "s1", takeover: "none" }, noOp)).toEqual({ kind: "open", href: "/import/runs/r1" });
+    expect(await decideTakeOver({ serverId: "s1", takeover: "SWAPPED" }, broken)).toEqual({ kind: "open", href: "/import/inplace?serverId=s1" });
   });
 });
 

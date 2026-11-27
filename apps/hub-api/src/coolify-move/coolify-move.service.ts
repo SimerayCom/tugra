@@ -12,6 +12,7 @@ import {
   type MoveOffCampaignRow,
   type MoveOffGrantState,
   type MoveOffHub,
+  type MoveOffLeft,
   type MoveOffMoves,
   type MoveOffServerRow,
   type MoveOffStatusView,
@@ -195,7 +196,44 @@ export class CoolifyMoveService {
     }));
 
     const hub = hubInv ? await this.hubOf(hubInv, rows, unlinked, now) : null;
-    return { teamId, hub, servers: rows, campaigns: campaignsOut, projectMoves, steps: moveOffSteps(rows, projectMoves, hub?.readAt ?? null) };
+    const left: MoveOffLeft = { host: hubInv ? await this.hostLeft(hubInv) : null, runs: await this.runsLeft(campaignRows) };
+    return { teamId, hub, servers: rows, campaigns: campaignsOut, projectMoves, left, steps: moveOffSteps(rows, projectMoves, hub?.readAt ?? null, left) };
+  }
+
+  /**
+   * How many apps, databases and services of the Coolify host's OWN machine (the server Coolify marks local) have no Tugra counterpart on
+   * another server yet, from the last Coolify read and the importer's records of what it created. The host cannot be taken over in place, so
+   * these are copied to another server first (a campaign) and only then is Coolify shut down. Null when the read cannot be used: nobody can
+   * say none is left.
+   */
+  private async hostLeft(inv: HubInventory): Promise<number | null> {
+    const snap = inv.snapshot as { v?: unknown; servers?: unknown; applications?: unknown; databases?: unknown; services?: unknown } | null;
+    if (!snap || snap.v !== 1 || !Array.isArray(snap.servers) || !Array.isArray(snap.applications) || !Array.isArray(snap.databases) || !Array.isArray(snap.services)) return null;
+    const local = new Set((snap.servers as Array<{ id?: unknown; isLocal?: unknown }>).filter((s) => s.isLocal === true && typeof s.id === "string").map((s) => s.id as string));
+    const onHost = [...(snap.applications as Array<{ serverId?: unknown; uuid?: unknown }>), ...(snap.databases as Array<{ serverId?: unknown; uuid?: unknown }>), ...(snap.services as Array<{ serverId?: unknown; uuid?: unknown }>)].filter((x) => typeof x.serverId === "string" && local.has(x.serverId) && typeof x.uuid === "string") as Array<{ uuid: string }>;
+    if (onHost.length === 0) return 0;
+    const uuids = [...new Set(onHost.map((x) => x.uuid))];
+    // the importer records every Coolify resource it created a Tugra resource for as `<kind>:<server ref>:<uuid>`
+    const tasks = await this.prisma.bulkTask.findMany({
+      where: { status: "DONE", resourceId: { not: null }, OR: uuids.map((u) => ({ itemRef: { endsWith: `:${u}` } })) },
+      select: { itemRef: true, resourceId: true, resourceType: true },
+    });
+    const apps = await this.prisma.application.findMany({ where: { id: { in: tasks.filter((t) => t.resourceType === "application").map((t) => t.resourceId as string) } }, select: { id: true, serverId: true } });
+    const dbs = await this.prisma.database.findMany({ where: { id: { in: tasks.filter((t) => t.resourceType === "database").map((t) => t.resourceId as string) } }, select: { id: true, serverId: true } });
+    // a counterpart on the Coolify host's own machine is still on the machine that is shut down
+    const away = new Set([...apps, ...dbs].filter((r) => r.serverId !== inv.serverId).map((r) => r.id));
+    const moved = new Set(tasks.filter((t) => away.has(t.resourceId as string)).map((t) => (t.itemRef ?? "").split(":").slice(2).join(":")));
+    return uuids.filter((u) => !moved.has(u)).length;
+  }
+
+  /** Campaign runs that are not COMPLETED: planned runs that never started count too. A cancelled campaign no longer plans anything. */
+  private async runsLeft(campaigns: ReadonlyArray<{ teamId: string; label: string; status: string; plan: unknown }>): Promise<number> {
+    const open = campaigns.filter((c) => c.status !== "cancelled" && Array.isArray(c.plan) && c.plan.length > 0);
+    if (open.length === 0) return 0;
+    const done = await this.prisma.migrationRun.findMany({ where: { dryRun: false, status: "COMPLETED", OR: open.map((c) => ({ teamId: c.teamId, campaign: c.label })) }, select: { teamId: true, campaign: true } });
+    const completed = new Map<string, number>();
+    for (const r of done) completed.set(`${r.teamId}\u0000${r.campaign}`, (completed.get(`${r.teamId}\u0000${r.campaign}`) ?? 0) + 1);
+    return open.reduce((n, c) => n + Math.max((c.plan as unknown[]).length - (completed.get(`${c.teamId}\u0000${c.label}`) ?? 0), 0), 0);
   }
 
   /**

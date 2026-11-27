@@ -73,6 +73,16 @@ export interface MoveOffStepProgress {
   complete: boolean;
 }
 
+/**
+ * What can still depend on Coolify besides the servers it manages: the apps, databases and services that still run on the Coolify host's own
+ * machine (read from the last Coolify read; null = it could not be read, so nobody can say none is left), and the campaign runs that are not
+ * COMPLETED (a campaign that planned runs counts the ones that never started too).
+ */
+export interface MoveOffLeft {
+  host: number | null;
+  runs: number;
+}
+
 export interface MoveOffStatusView {
   teamId: string;
   /** Null until a Coolify host is connected. */
@@ -80,10 +90,13 @@ export interface MoveOffStatusView {
   servers: MoveOffServerRow[];
   campaigns: MoveOffCampaignRow[];
   projectMoves: MoveOffMoves;
+  /** What still depends on Coolify besides the managed servers. Shutting Coolify down is offered only when both are zero. */
+  left: MoveOffLeft;
   steps: MoveOffStepProgress[];
 }
 
-const TAKEN_OVER: readonly string[] = ["SWAPPED", "VERIFIED"];
+/** Only a VERIFIED takeover is far enough for the cleanup: the hub refuses one before (a swapped takeover may still need Coolify to give back to). */
+const TAKEN_OVER: readonly string[] = ["VERIFIED"];
 const MOVE_ACTIVE: readonly string[] = ["QUEUED", "PRECHECK", "MOVING", "VERIFYING", "CUTOVER", "ROLLING_BACK"];
 
 /** Where a server stands. Pure: the hub and the tests share it. */
@@ -97,11 +110,12 @@ export function moveOffStageOf(r: Pick<MoveOffServerRow, "agentOnline" | "coolif
 }
 
 /** Progress per step from the rows. Consolidating projects is optional, so it only counts as complete once a move ran and none is running or failed. */
-export function moveOffSteps(servers: readonly MoveOffServerRow[], moves: MoveOffMoves, hubReadAt: string | null): MoveOffStepProgress[] {
+export function moveOffSteps(servers: readonly MoveOffServerRow[], moves: MoveOffMoves, hubReadAt: string | null, left: MoveOffLeft = { host: null, runs: 0 }): MoveOffStepProgress[] {
   const movers = servers.filter((s) => s.coolify && !s.isCoolifyHub);
   const taken = movers.filter((s) => s.stage === "cleanup" || s.stage === "done").length;
   const cleaned = movers.filter((s) => s.stage === "done").length;
-  const settled = hubReadAt !== null && movers.length > 0 && cleaned === movers.length;
+  // A host-only Coolify (no managed server) has no row to clean: it settles once nothing is left on the host and no campaign run is open.
+  const settled = hubReadAt !== null && cleaned === movers.length && left.host === 0 && left.runs === 0;
   return [
     { step: "takeover", done: taken, total: movers.length, complete: movers.length > 0 && taken === movers.length },
     { step: "cleanup", done: cleaned, total: movers.length, complete: movers.length > 0 && cleaned === movers.length },

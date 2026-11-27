@@ -10,6 +10,7 @@
   },
   "overall": "{done} of {total} Coolify servers are cleaned off",
   "noServers": "No Coolify server is known yet. Connect your Coolify host first; Tugra then finds the servers it manages.",
+  "hostOnly": "Your Coolify host manages no other server. Its own apps and databases run on the host itself: copy them to another server with an import, then shut Coolify down in step D.",
   "prelude": {
     "title": "Before you start",
     "desc": "Connect the Coolify host so Tugra can read it. Nothing on it is changed.",
@@ -91,8 +92,9 @@
     },
     "shutdown": {
       "title": "D. Shut down Coolify",
-      "desc": "Last. When every server is cleaned, the Coolify host itself can be taken over or shut down."
+      "desc": "Last. When every server is cleaned and the host's own apps are moved to another server, Coolify can be shut down."
     },
+    "noRows": "No server to work on in this step.",
     "progress": "{done} of {total}",
     "complete": "Complete",
     "optional": "Optional",
@@ -137,8 +139,15 @@
     "campaigns": "Campaign reports"
   },
   "shutdown": {
-    "ready": "Every Coolify server is cleaned off. You can now shut Coolify down.",
-    "notReady": "Not yet. {count} servers still need work.",
+    "ready": "Every Coolify server is cleaned off, nothing runs on the Coolify host any more and every campaign run is complete. You can now shut Coolify down.",
+    "notReady": "Not yet. Still open:",
+    "blocker": {
+      "servers": "{count} servers still need work in steps A and B.",
+      "host": "{count} apps, databases or services still run on the Coolify host itself. Copy them to another server first.",
+      "hostUnread": "Read the Coolify again so Tugra can see what still runs on the host.",
+      "runs": "{count} campaign runs are not complete yet.",
+      "moves": "{count} project moves are still running."
+    },
     "noHub": "Connect the Coolify host first."
   },
   "campaigns": {

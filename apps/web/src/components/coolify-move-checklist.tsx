@@ -6,7 +6,7 @@ import type { MoveOffServerRow, MoveOffStatusView, MoveOffStep, MoveOffStepProgr
 import { api, ApiError } from "../lib/api";
 import { useT } from "../i18n/provider";
 import { useTeamContext, useTeamScope } from "./team-scope";
-import { GRANT_TONE, STAGE_TONE, STEP_LETTER, connectHref, coolifyRows, hasCoolifyMove, currentStep, readyToShutDown, rowAction, sortRows, startsTakeoverFlow, stepOf, teamProgress } from "../lib/coolify-move";
+import { GRANT_TONE, STAGE_TONE, STEP_LETTER, connectHref, coolifyRows, hasCoolifyMove, currentStep, hostOnly, readyToShutDown, rowAction, shutdownBlockers, sortRows, startsTakeoverFlow, stepOf, teamProgress } from "../lib/coolify-move";
 import { formatDateTime } from "../lib/format-time";
 import { relativeTime } from "../lib/fleet";
 import { Select } from "./form";
@@ -58,7 +58,7 @@ function RowAction({ row, step, t, teamId, hubServerId, hubTeamId }: { row: Move
 
 function ServerList({ rows, step, teamId, hubServerId, hubTeamId }: { rows: MoveOffServerRow[]; step: "takeover" | "cleanup"; teamId: string; hubServerId: string | null; hubTeamId: string | null }) {
   const t = useT();
-  if (rows.length === 0) return <p style={dim}>{t("coolifyMove.noServers")}</p>;
+  if (rows.length === 0) return <p style={dim}>{t("coolifyMove.step.noRows")}</p>;
   return (
     <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
       {rows.map((r) => (
@@ -142,12 +142,12 @@ export function MoveOffBody({ v, teamId }: { v: MoveOffStatusView; teamId: strin
   const cur = currentStep(v);
   const cleaned = stepOf(v, "cleanup");
   const ready = readyToShutDown(v);
-  const left = movers.filter((r) => r.stage !== "done").length;
+  const blockers = shutdownBlockers(v);
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       {cleaned.total > 0 && <p data-testid="overall" style={{ ...dim, fontSize: 13 }}>{t("coolifyMove.overall", { done: cleaned.done, total: cleaned.total })}</p>}
       <Prelude v={v} />
-      {movers.length === 0 && <p style={dim}>{t("coolifyMove.noServers")}</p>}
+      {movers.length === 0 && <p data-testid="no-movers" style={dim}>{hostOnly(v) ? t("coolifyMove.hostOnly") : t("coolifyMove.noServers")}</p>}
       <StepCard step="takeover" progress={stepOf(v, "takeover")} current={cur === "takeover"}>
         <ServerList rows={movers} step="takeover" teamId={teamId} hubServerId={v.hub?.serverId ?? null} hubTeamId={v.hub?.teamId ?? null} />
       </StepCard>
@@ -161,7 +161,20 @@ export function MoveOffBody({ v, teamId }: { v: MoveOffStatusView; teamId: strin
         </div>
       </StepCard>
       <StepCard step="shutdown" progress={stepOf(v, "shutdown")} current={cur === "shutdown"}>
-        <p data-testid="shutdown-state" style={dim}>{!v.hub ? t("coolifyMove.shutdown.noHub") : ready ? t("coolifyMove.shutdown.ready") : t("coolifyMove.shutdown.notReady", { count: left })}</p>
+        {!v.hub || ready ? (
+          <p data-testid="shutdown-state" style={dim}>{!v.hub ? t("coolifyMove.shutdown.noHub") : t("coolifyMove.shutdown.ready")}</p>
+        ) : (
+          <div data-testid="shutdown-state" style={{ display: "grid", gap: 4 }}>
+            <p style={dim}>{t("coolifyMove.shutdown.notReady")}</p>
+            <ul style={{ ...dim, margin: 0, paddingLeft: 18 }}>
+              {blockers.map((b) => (
+                <li key={b.kind} data-testid={`shutdown-blocker-${b.kind}`}>
+                  {t(`coolifyMove.shutdown.blocker.${b.kind}`, { count: "count" in b ? b.count : 0 })}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
         {v.hub && (
           <div style={{ marginTop: 10 }}>
             <LinkBtn href={`/servers/${encodeURIComponent(v.hub.serverId)}`} variant="ghost">{t("coolifyMove.prelude.openHost")}</LinkBtn>

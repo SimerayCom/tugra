@@ -30,7 +30,8 @@ export function rowAction(r: MoveOffServerRow): { href: string; labelKey: string
     case "done":
       return { href: `/servers/${encodeURIComponent(r.serverId)}`, labelKey: `coolifyMove.rowAction.${r.stage}` };
     case "takeover":
-      return r.takeover === "none" ? { href: "/import", labelKey: "coolifyMove.rowAction.takeoverStart" } : { href: takeoverHref(r.serverId), labelKey: "coolifyMove.rowAction.takeoverOpen" };
+      // a takeover that was given back holds nothing: the row starts a new one, like a server with none
+      return r.takeover === "none" || r.takeover === "GIVEN_BACK" ? { href: "/import", labelKey: "coolifyMove.rowAction.takeoverStart" } : { href: takeoverHref(r.serverId), labelKey: "coolifyMove.rowAction.takeoverOpen" };
     default:
       return null;
   }
@@ -53,10 +54,28 @@ export function currentStep(v: MoveOffStatusView): MoveOffStep {
   return "shutdown";
 }
 
-/** Shutting Coolify down is offered only when every Coolify server is cleaned (and none is left to take over). */
-export function readyToShutDown(v: MoveOffStatusView): boolean {
-  return stepOf(v, "takeover").complete && stepOf(v, "cleanup").complete && v.projectMoves.active === 0;
+/** What still stands between the owner and shutting Coolify down, in the order to deal with it. Empty = ready. Counts only, never names. */
+export type ShutdownBlocker = { kind: "servers"; count: number } | { kind: "host"; count: number } | { kind: "hostUnread" } | { kind: "runs"; count: number } | { kind: "moves"; count: number };
+
+export function shutdownBlockers(v: MoveOffStatusView): ShutdownBlocker[] {
+  const out: ShutdownBlocker[] = [];
+  const servers = coolifyRows(v.servers).filter((r) => r.stage !== "done").length;
+  if (servers > 0) out.push({ kind: "servers", count: servers });
+  // apps and databases on the Coolify host's own machine have no row above and no in-place takeover: they are copied to another server first
+  if (v.left.host === null) out.push({ kind: "hostUnread" });
+  else if (v.left.host > 0) out.push({ kind: "host", count: v.left.host });
+  if (v.left.runs > 0) out.push({ kind: "runs", count: v.left.runs });
+  if (v.projectMoves.active > 0) out.push({ kind: "moves", count: v.projectMoves.active });
+  return out;
 }
+
+/** Shutting Coolify down is offered only when every managed server is cleaned, nothing runs on the Coolify host any more and every campaign run is complete. */
+export function readyToShutDown(v: MoveOffStatusView): boolean {
+  return v.hub !== null && v.hub.readAt !== null && shutdownBlockers(v).length === 0;
+}
+
+/** The Coolify host is connected but it manages no other server: its own apps are the whole move. */
+export const hostOnly = (v: Pick<MoveOffStatusView, "hub" | "servers">): boolean => v.hub !== null && coolifyRows(v.servers).length === 0;
 
 export const GRANT_TONE: Record<MoveOffGrantState, Tone> = { none: "muted", active: "ok", expired: "warn", revoked: "muted" };
 

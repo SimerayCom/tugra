@@ -20,6 +20,7 @@ const view = (servers: MoveOffServerRow[], h: MoveOffHub | null = null): MoveOff
   servers,
   campaigns: [],
   projectMoves: { total: 0, active: 0, completed: 0, failed: 0, latestPhase: null },
+  left: { host: 0, runs: 0 },
   steps: [],
 });
 

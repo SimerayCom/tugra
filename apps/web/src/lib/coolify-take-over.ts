@@ -21,21 +21,20 @@ export type TakeOverStart =
 
 export interface TakeOverCalls {
   listRuns: () => Promise<MigrationRunSummary[]>;
-  /** The import operation of a run (null before its import step ran). */
-  opIdOf: (runId: string) => Promise<string | null>;
 }
 
 /**
- * What the button does for a row. A takeover already on record opens it (with the run's operation when there is one, so it can be planned
- * again); a guided run opens the takeover on that run's operation, or the run itself while its import has not happened; with neither, start.
+ * What the button does for a row. A guided run that takes the server over opens that run (it drives the takeover); else a takeover on record
+ * opens its page; with none, or one that was given back, the flow starts.
  */
 export async function decideTakeOver(row: Pick<MoveOffServerRow, "serverId" | "takeover">, calls: TakeOverCalls): Promise<TakeOverStart> {
   const runs = await calls.listRuns().catch(() => [] as MigrationRunSummary[]);
   const run = guidedRunFor(runs, row.serverId);
-  const opId = run ? await calls.opIdOf(run.id).catch(() => null) : null;
-  if (row.takeover !== "none") return { kind: "open", href: takeoverHref(row.serverId, opId ?? undefined) };
-  if (!run) return { kind: "start" };
-  return opId ? { kind: "open", href: takeoverHref(row.serverId, opId) } : { kind: "open", href: `/import/runs/${encodeURIComponent(run.id)}` };
+  // a guided run drives its takeover: the row opens the run, where the approvals and the typed confirmations are (the takeover page only shows it)
+  if (run) return { kind: "open", href: `/import/runs/${encodeURIComponent(run.id)}` };
+  // a takeover that was given back holds nothing: it starts again like a server with none
+  if (row.takeover !== "none" && row.takeover !== "GIVEN_BACK") return { kind: "open", href: takeoverHref(row.serverId) };
+  return { kind: "start" };
 }
 
 /** True when the Coolify read has more than one team with projects: the owner must say which team's settings the session reads. */

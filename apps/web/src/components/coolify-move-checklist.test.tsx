@@ -32,6 +32,7 @@ const view = (o: Partial<MoveOffStatusView> = {}): MoveOffStatusView => ({
   ],
   campaigns: [],
   projectMoves: { total: 0, active: 0, completed: 0, failed: 0, latestPhase: null },
+  left: { host: 0, runs: 0 },
   steps: [
     { step: "takeover", done: 2, total: 4, complete: false },
     { step: "cleanup", done: 1, total: 4, complete: false },
@@ -128,18 +129,39 @@ describe("CoolifyMoveChecklist", () => {
     expect(screen.getByTestId("shutdown-state").textContent).toBe("Connect the Coolify host first.");
   });
 
-  it("shutdown says how many servers still need work, and is ready only when all are cleaned", async () => {
+  it("shutdown says what is still open, and is ready only when all servers are cleaned, the host is empty and every campaign run is complete", async () => {
     vi.spyOn(api, "coolifyMoveStatus").mockResolvedValue(view());
     wrap(<CoolifyMoveChecklist />);
     await screen.findByTestId("step-shutdown");
-    expect(screen.getByTestId("shutdown-state").textContent).toBe("Not yet. 3 servers still need work.");
+    expect(screen.getByTestId("shutdown-state").textContent).toContain("Not yet. Still open:");
+    expect(screen.getByTestId("shutdown-blocker-servers").textContent).toBe("3 servers still need work in steps A and B.");
     cleanup();
     qc.clear();
-    const done = view({ servers: [row({ serverId: "a", name: "alpha", stage: "done", cleanup: "CLEANED", takeover: "VERIFIED" })], steps: view().steps.map((s) => (s.step === "takeover" || s.step === "cleanup" ? { ...s, done: 1, total: 1, complete: true } : s)) });
-    vi.spyOn(api, "coolifyMoveStatus").mockResolvedValue(done);
+    const cleaned = [row({ serverId: "a", name: "alpha", stage: "done", cleanup: "CLEANED", takeover: "VERIFIED" })];
+    const stepsDone = view().steps.map((s) => (s.step === "takeover" || s.step === "cleanup" ? { ...s, done: 1, total: 1, complete: true } : s));
+    // cleaned servers, but apps still run on the Coolify host and a campaign run is open: never "you can shut Coolify down"
+    vi.spyOn(api, "coolifyMoveStatus").mockResolvedValue(view({ servers: cleaned, steps: stepsDone, left: { host: 2, runs: 1 } }));
     wrap(<CoolifyMoveChecklist />);
-    await waitFor(() => expect(screen.getByTestId("shutdown-state").textContent).toBe("Every Coolify server is cleaned off. You can now shut Coolify down."));
+    await screen.findByTestId("shutdown-blocker-host");
+    expect(screen.getByTestId("shutdown-blocker-host").textContent).toBe("2 apps, databases or services still run on the Coolify host itself. Copy them to another server first.");
+    expect(screen.getByTestId("shutdown-blocker-runs").textContent).toBe("1 campaign runs are not complete yet.");
+    expect(screen.getByTestId("shutdown-state").textContent).not.toContain("You can now shut Coolify down");
+    cleanup();
+    qc.clear();
+    vi.spyOn(api, "coolifyMoveStatus").mockResolvedValue(view({ servers: cleaned, steps: stepsDone }));
+    wrap(<CoolifyMoveChecklist />);
+    await waitFor(() => expect(screen.getByTestId("shutdown-state").textContent).toContain("You can now shut Coolify down."));
     expect(screen.getByTestId("step-shutdown").getAttribute("data-current")).toBe("true");
+  });
+
+  it("a Coolify host that manages no other server gets its own explanation, not 'connect your host' and not 0 servers", async () => {
+    vi.spyOn(api, "coolifyMoveStatus").mockResolvedValue(view({ servers: [row({ serverId: "hub", name: "coolify-hub", stage: "hub", isCoolifyHub: true })], left: { host: 3, runs: 0 }, steps: view().steps.map((s) => ({ ...s, total: 0, done: 0 })) }));
+    wrap(<CoolifyMoveChecklist />);
+    await screen.findByTestId("step-shutdown");
+    expect(screen.getByTestId("no-movers").textContent).toContain("manages no other server");
+    expect(screen.queryByText(/Connect your Coolify host first/)).toBeNull();
+    expect(screen.getByTestId("shutdown-blocker-host").textContent).toContain("3 apps, databases or services still run on the Coolify host itself");
+    expect(screen.getByTestId("shutdown-state").textContent).not.toMatch(/0 servers/);
   });
 
   it("a running or failed project move keeps step C from completing and shows the counts", async () => {
@@ -163,15 +185,14 @@ describe("CoolifyMoveChecklist", () => {
       expect(JSON.parse(window.sessionStorage.getItem("tugra.import.focus") ?? "{}")).toEqual({ kind: "coolify", agentSessionId: "sess-1234abcd", inPlaceServerId: "c", fromServerName: "charlie" });
     });
 
-    it("with a guided run for that server it opens the takeover on the run's operation and makes no session", async () => {
+    it("with a guided run for that server the row opens the run (it drives the takeover) and makes no session", async () => {
       vi.spyOn(api, "coolifyMoveStatus").mockResolvedValue(view());
       vi.spyOn(api, "listMigrationRuns").mockResolvedValue([{ id: "r9", teamId: "t1", targetServerId: "c", topology: "swap-proxy", dryRun: false, status: "WAITING", createdAt: "2026-11-25T00:00:00Z" }] as never);
-      vi.spyOn(api, "getMigrationRun").mockResolvedValue({ id: "r9", opId: "op 7" } as never);
       const connect = vi.spyOn(api, "importConnectAgent");
       wrap(<CoolifyMoveChecklist />);
       await screen.findByTestId("step-takeover");
       fireEvent.click(within(screen.getByTestId("row-takeover-c")).getByRole("button", { name: "Take over in place" }));
-      await waitFor(() => expect(nav.push).toHaveBeenCalledWith("/import/inplace?serverId=c&opId=op%207"));
+      await waitFor(() => expect(nav.push).toHaveBeenCalledWith("/import/runs/r9"));
       expect(connect).not.toHaveBeenCalled();
     });
 

@@ -28,7 +28,7 @@ describe("moveOffStageOf", () => {
     expect(moveOffStageOf(row({}))).toBe("takeover");
     expect(moveOffStageOf(row({ takeover: "FAILED" }))).toBe("takeover");
     expect(moveOffStageOf(row({ takeover: "GIVEN_BACK" }))).toBe("takeover");
-    expect(moveOffStageOf(row({ takeover: "SWAPPED" }))).toBe("cleanup");
+    expect(moveOffStageOf(row({ takeover: "SWAPPED" }))).toBe("takeover");
     expect(moveOffStageOf(row({ takeover: "VERIFIED" }))).toBe("cleanup");
     expect(moveOffStageOf(row({ takeover: "VERIFIED", cleanup: "CLEANED" }))).toBe("done");
   });
@@ -57,11 +57,22 @@ describe("moveOffSteps", () => {
     expect(t.complete).toBe(false);
     expect(c.complete).toBe(false);
   });
-  it("shutdown is ready only once every server is cleaned and Coolify was read", () => {
+  it("shutdown is ready only once every server is cleaned, Coolify was read, nothing runs on the host and no campaign run is open", () => {
     const done = [row({ stage: "done" }), row({ stage: "done" })];
-    expect(moveOffSteps(done, noMoves, "2026-11-25T00:00:00Z")[3].done).toBe(1);
-    expect(moveOffSteps(done, noMoves, null)[3].done).toBe(0);
-    expect(moveOffSteps([...done, row({ stage: "cleanup" })], noMoves, "x")[3].done).toBe(0);
+    const none = { host: 0, runs: 0 };
+    expect(moveOffSteps(done, noMoves, "2026-11-25T00:00:00Z", none)[3].done).toBe(1);
+    expect(moveOffSteps(done, noMoves, null, none)[3].done).toBe(0);
+    expect(moveOffSteps([...done, row({ stage: "cleanup" })], noMoves, "x", none)[3].done).toBe(0);
+    // apps still on the Coolify host, a host that could not be read, a campaign run that is not complete
+    expect(moveOffSteps(done, noMoves, "x", { host: 2, runs: 0 })[3].done).toBe(0);
+    expect(moveOffSteps(done, noMoves, "x", { host: null, runs: 0 })[3].done).toBe(0);
+    expect(moveOffSteps(done, noMoves, "x", { host: 0, runs: 1 })[3].done).toBe(0);
+    expect(moveOffSteps(done, noMoves, "x")[3].done).toBe(0);
+  });
+  it("a Coolify host with no managed server settles once its own apps are moved", () => {
+    const hubOnly = [row({ stage: "hub", isCoolifyHub: true })];
+    expect(moveOffSteps(hubOnly, noMoves, "x", { host: 3, runs: 0 })[3].done).toBe(0);
+    expect(moveOffSteps(hubOnly, noMoves, "x", { host: 0, runs: 0 })[3].done).toBe(1);
   });
   it("consolidation completes only after a move ran and none is running or failed", () => {
     expect(moveOffSteps([], { ...noMoves, total: 2, completed: 2 }, null)[2].complete).toBe(true);

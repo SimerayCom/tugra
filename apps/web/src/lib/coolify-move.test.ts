@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type { MoveOffServerRow, MoveOffStatusView } from "@tugra/shared";
-import { anyTeamHasCoolify, currentStep, hasCoolifyMove, moveOffTeamIds, readyToShutDown, rowAction, sortRows, startsTakeoverFlow, stepOf, coolifyRows, takeoverHref, teamProgress, connectHref } from "./coolify-move";
+import { anyTeamHasCoolify, currentStep, hasCoolifyMove, hostOnly, shutdownBlockers, moveOffTeamIds, readyToShutDown, rowAction, sortRows, startsTakeoverFlow, stepOf, coolifyRows, takeoverHref, teamProgress, connectHref } from "./coolify-move";
 
 const row = (o: Partial<MoveOffServerRow>): MoveOffServerRow => ({ serverId: "s1", name: "a", agentOnline: true, coolify: true, isCoolifyHub: false, takeover: "none", cleanup: "none", stage: "takeover", ...o });
 const view = (o: Partial<MoveOffStatusView> = {}): MoveOffStatusView => ({
@@ -9,6 +9,7 @@ const view = (o: Partial<MoveOffStatusView> = {}): MoveOffStatusView => ({
   servers: [],
   campaigns: [],
   projectMoves: { total: 0, active: 0, completed: 0, failed: 0, latestPhase: null },
+  left: { host: 0, runs: 0 },
   steps: [
     { step: "takeover", done: 0, total: 2, complete: false },
     { step: "cleanup", done: 0, total: 2, complete: false },
@@ -22,6 +23,7 @@ describe("rowAction", () => {
   it("sends each stage to the screen where the owner presses the button", () => {
     expect(rowAction(row({ stage: "agent", agentOnline: false }))).toEqual({ href: "/servers/s1", labelKey: "coolifyMove.rowAction.agent" });
     expect(rowAction(row({ stage: "takeover" }))).toEqual({ href: "/import", labelKey: "coolifyMove.rowAction.takeoverStart" });
+    expect(rowAction(row({ stage: "takeover", takeover: "GIVEN_BACK" }))).toEqual({ href: "/import", labelKey: "coolifyMove.rowAction.takeoverStart" });
     expect(rowAction(row({ stage: "takeover", takeover: "FAILED" }))).toEqual({ href: "/import/inplace?serverId=s1", labelKey: "coolifyMove.rowAction.takeoverOpen" });
     expect(rowAction(row({ stage: "cleanup", takeover: "VERIFIED" }))?.href).toBe("/servers/s1");
     expect(rowAction(row({ stage: "hub" }))).toBeNull();
@@ -54,11 +56,30 @@ describe("steps", () => {
     const ab = view({ steps: view().steps.map((s) => (s.step === "takeover" || s.step === "cleanup" ? { ...s, complete: true, done: 2 } : s)) });
     expect(currentStep(ab)).toBe("shutdown");
   });
-  it("readyToShutDown needs A and B complete and no project move running", () => {
-    const done = view().steps.map((s) => (s.step === "takeover" || s.step === "cleanup" ? { ...s, complete: true, done: 2 } : s));
-    expect(readyToShutDown(view({ steps: done }))).toBe(true);
-    expect(readyToShutDown(view({ steps: done, projectMoves: { total: 1, active: 1, completed: 0, failed: 0, latestPhase: "MOVING" } }))).toBe(false);
-    expect(readyToShutDown(view())).toBe(false);
+  it("readyToShutDown needs every server cleaned, nothing on the host, every campaign run complete and no project move running", () => {
+    const hub = { serverId: "h", teamId: "t1", name: "h", readAt: "2026-11-25T00:00:00Z", knownServers: 1, unlinkedServers: 0, secrets: "none", secretsExpiresAt: null, ssh: null } as const;
+    const cleaned = [row({ stage: "done", cleanup: "CLEANED", takeover: "VERIFIED" })];
+    expect(readyToShutDown(view({ hub, servers: cleaned }))).toBe(true);
+    expect(readyToShutDown(view({ hub, servers: cleaned, projectMoves: { total: 1, active: 1, completed: 0, failed: 0, latestPhase: "MOVING" } }))).toBe(false);
+    expect(readyToShutDown(view({ hub, servers: [...cleaned, row({ serverId: "s2", stage: "cleanup" })] }))).toBe(false);
+    expect(readyToShutDown(view({ servers: cleaned }))).toBe(false); // no Coolify host connected
+    expect(readyToShutDown(view({ hub: { ...hub, readAt: null }, servers: cleaned }))).toBe(false); // never read
+  });
+  it("apps still on the Coolify host, a host that was not read and campaign runs that are not complete each block the shutdown, with a count", () => {
+    const hub = { serverId: "h", teamId: "t1", name: "h", readAt: "2026-11-25T00:00:00Z", knownServers: 1, unlinkedServers: 0, secrets: "none", secretsExpiresAt: null, ssh: null } as const;
+    const cleaned = [row({ stage: "done", cleanup: "CLEANED", takeover: "VERIFIED" })];
+    expect(shutdownBlockers(view({ hub, servers: cleaned, left: { host: 3, runs: 0 } }))).toEqual([{ kind: "host", count: 3 }]);
+    expect(shutdownBlockers(view({ hub, servers: cleaned, left: { host: null, runs: 0 } }))).toEqual([{ kind: "hostUnread" }]);
+    expect(shutdownBlockers(view({ hub, servers: cleaned, left: { host: 0, runs: 2 } }))).toEqual([{ kind: "runs", count: 2 }]);
+    expect(readyToShutDown(view({ hub, servers: cleaned, left: { host: 3, runs: 2 } }))).toBe(false);
+  });
+  it("a host-only Coolify (it manages no other server) is told apart, and is ready once its own apps are moved", () => {
+    const hubRow = row({ serverId: "h", isCoolifyHub: true, stage: "hub" });
+    const hub = { serverId: "h", teamId: "t1", name: "h", readAt: "2026-11-25T00:00:00Z", knownServers: 1, unlinkedServers: 0, secrets: "none", secretsExpiresAt: null, ssh: null } as const;
+    expect(hostOnly(view({ hub, servers: [hubRow] }))).toBe(true);
+    expect(hostOnly(view({ hub: null, servers: [] }))).toBe(false);
+    expect(readyToShutDown(view({ hub, servers: [hubRow], left: { host: 2, runs: 0 } }))).toBe(false);
+    expect(readyToShutDown(view({ hub, servers: [hubRow], left: { host: 0, runs: 0 } }))).toBe(true);
   });
   it("stepOf has a safe default", () => {
     expect(stepOf(view({ steps: [] }), "cleanup")).toEqual({ step: "cleanup", done: 0, total: 0, complete: false });

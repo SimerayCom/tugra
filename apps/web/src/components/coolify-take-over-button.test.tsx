@@ -69,12 +69,12 @@ describe("CoolifyTakeOverButton refuses before the click what the hub would refu
     vi.spyOn(api, "listMigrationRuns").mockResolvedValue([run({ topology: "swap-proxy" })] as never);
     vi.spyOn(api, "listServers").mockResolvedValue([{ id: "s1", name: "box", proxyBind: "public" }] as never);
     vi.spyOn(api, "getProxyStatus").mockResolvedValue({ status: "running" });
-    vi.spyOn(api, "getMigrationRun").mockResolvedValue({ opId: "op9" } as never);
     show();
     await waitFor(() => expect(api.listMigrationRuns).toHaveBeenCalled());
     expect(screen.queryByTestId("takeover-start-block")).toBeNull();
     fireEvent.click(startBtn());
-    await waitFor(() => expect(nav.push).toHaveBeenCalledWith("/import/inplace?serverId=s1&opId=op9"));
+    // the run drives its takeover: the button opens the run
+    await waitFor(() => expect(nav.push).toHaveBeenCalledWith("/import/runs/r1"));
   });
 
   it("a takeover already on record is never refused here: it is opened", async () => {
@@ -104,23 +104,23 @@ describe("CoolifyTakeOverButton", () => {
     expect(focus()).toMatchObject({ agentSessionId: "sess-5678abcd", inPlaceServerId: "s1" });
   });
 
-  it("a guided run that already has its import opens the takeover on it and makes no session", async () => {
+  it("a guided run for the server opens the run (it drives the takeover) and makes no session", async () => {
     vi.spyOn(api, "listMigrationRuns").mockResolvedValue([{ id: "r1", targetServerId: "s1", topology: "swap-proxy", dryRun: false, status: "RUNNING", createdAt: "2026-11-25T00:00:00Z" }] as never);
-    vi.spyOn(api, "getMigrationRun").mockResolvedValue({ opId: "op1" } as never);
     const connect = vi.spyOn(api, "importConnectAgent");
     show();
     fireEvent.click(screen.getByRole("button", { name: "Take over in place" }));
-    await waitFor(() => expect(nav.push).toHaveBeenCalledWith("/import/inplace?serverId=s1&opId=op1"));
+    await waitFor(() => expect(nav.push).toHaveBeenCalledWith("/import/runs/r1"));
     expect(connect).not.toHaveBeenCalled();
     expect(focus()).toBeNull();
   });
 
-  it("a run that has not imported yet opens the run itself", async () => {
-    vi.spyOn(api, "listMigrationRuns").mockResolvedValue([{ id: "r1", targetServerId: "s1", topology: "swap-proxy", dryRun: false, status: "WAITING", createdAt: "2026-11-25T00:00:00Z" }] as never);
-    vi.spyOn(api, "getMigrationRun").mockResolvedValue({ opId: null } as never);
-    show();
+  it("a takeover that was given back starts a new one (labelled so) instead of opening a page that cannot", async () => {
+    const connect = vi.spyOn(api, "importConnectAgent").mockResolvedValue({ sessionId: "sess-9999abcd", expiresAt: "x", read: {} } as never);
+    show({ row: { serverId: "s1", name: "box", takeover: "GIVEN_BACK" } });
     fireEvent.click(screen.getByRole("button", { name: "Take over in place" }));
-    await waitFor(() => expect(nav.push).toHaveBeenCalledWith("/import/runs/r1"));
+    await waitFor(() => expect(nav.push).toHaveBeenCalledWith("/import"));
+    expect(connect).toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: "Open takeover" })).toBeNull();
   });
 
   it("a takeover already on record is opened (labelled so), not started again", async () => {

@@ -41,7 +41,7 @@ export function CoolifyTakeOverButton({ row, teamId, hubServerId, hubTeamId }: {
 
   // Before the click: starting a new takeover is refused when another run or takeover holds the server, or Tugra's proxy already serves apps here.
   // A takeover or a guided run that exists is opened, not started again, so it is never refused here.
-  const starting = row.takeover === "none";
+  const starting = row.takeover === "none" || row.takeover === "GIVEN_BACK";
   const runs = useQuery({ queryKey: ["migration-runs", "takeover-start", teamId], queryFn: () => api.listMigrationRuns({ teamId, active: true, limit: 100 }), enabled: starting, staleTime: 15_000, retry: false });
   const carrying = starting && !!runs.data && !!guidedRunFor(runs.data, row.serverId);
   const holdingRun = starting && !carrying ? (busyServers(runs.data).get(row.serverId) ?? null) : null;
@@ -54,7 +54,6 @@ export function CoolifyTakeOverButton({ row, teamId, hubServerId, hubTeamId }: {
     try {
       const next = await decideTakeOver(row, {
         listRuns: () => api.listMigrationRuns({ teamId, limit: 100 }),
-        opIdOf: async (id) => (await api.getMigrationRun(id)).opId,
       });
       if (next.kind === "open") {
         router.push(next.href);
@@ -106,7 +105,7 @@ export function CoolifyTakeOverButton({ row, teamId, hubServerId, hubTeamId }: {
       ) : (
         <div>
           <Btn variant="ghost" onClick={press} disabled={busy || !!block} loading={busy} style={{ minHeight: 44 }}>
-            {busy ? t("coolifyMove.takeOver.working") : row.takeover === "none" ? t("coolifyMove.rowAction.takeoverStart") : t("coolifyMove.rowAction.takeoverOpen")}
+            {busy ? t("coolifyMove.takeOver.working") : starting ? t("coolifyMove.rowAction.takeoverStart") : t("coolifyMove.rowAction.takeoverOpen")}
           </Btn>
         </div>
       )}

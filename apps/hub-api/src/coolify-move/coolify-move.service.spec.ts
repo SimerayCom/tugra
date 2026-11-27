@@ -22,6 +22,12 @@ interface Fx {
   sshTargets?: Array<{ state: string }>;
   role?: string | null;
   verdicts?: unknown[];
+  /** COMPLETED real runs of campaigns (teamId + campaign label), for "campaign runs left". */
+  completedRuns?: Array<{ teamId: string; campaign: string }>;
+  /** The importer's records of Tugra resources made for Coolify resources, and where those resources live. */
+  tasks?: Array<{ itemRef: string; resourceId: string; resourceType: string }>;
+  tugraApps?: Array<{ id: string; serverId: string }>;
+  tugraDbs?: Array<{ id: string; serverId: string }>;
 }
 
 function make(fx: Fx = {}) {
@@ -37,6 +43,10 @@ function make(fx: Fx = {}) {
       findFirst: jest.fn().mockImplementation(({ where }: { where: { kind: string } }) => Promise.resolve(where.kind === "secrets" ? (fx.secretsGrant ?? null) : (fx.sshGrant ?? null))),
     },
     coolifySshTarget: { findMany: jest.fn().mockResolvedValue(fx.sshTargets ?? []) },
+    migrationRun: { findMany: jest.fn().mockResolvedValue(fx.completedRuns ?? []) },
+    bulkTask: { findMany: jest.fn().mockResolvedValue(fx.tasks ?? []) },
+    application: { findMany: jest.fn().mockResolvedValue(fx.tugraApps ?? []) },
+    database: { findMany: jest.fn().mockResolvedValue(fx.tugraDbs ?? []) },
   };
   const access = {
     roleByTeam: jest.fn().mockResolvedValue(new Map([["t1", "OWNER"], ...(fx.otherTeams ?? []).map((t) => [t, "OWNER"] as [string, string]), ["viewer-team", "VIEWER"]])),
@@ -159,6 +169,64 @@ describe("CoolifyMoveService.status", () => {
     expect(m.prisma.migrationCampaign.findMany.mock.calls[0][0].where).toEqual({ OR: [{ teamId: "t1" }, { actorId: "u1", sessionId: { in: ["s1"] } }] });
     expect(m.prisma.importSession.findMany.mock.calls[0][0].where).toEqual({ teamId: "t1", actorId: "u1" });
     expect(v.campaigns.map((c) => [c.teamId, c.label, c.runs])).toEqual([["t1", "move", 1], ["t2", "move", 2]]);
+  });
+
+  describe("what still depends on Coolify besides the managed servers (step D)", () => {
+    const hubServers = [{ id: "hub", name: "coolify-hub", status: "ONLINE" }];
+    const uuidA = "aaaaaaaaaaaaaaaaaaaaaaaa";
+    const uuidB = "bbbbbbbbbbbbbbbbbbbbbbbb";
+    const snapOf = (over: Record<string, unknown> = {}) => ({
+      v: 1,
+      servers: [{ id: "1", ip: "10.0.0.1", isLocal: true }, { id: "2", ip: "10.0.0.2", isLocal: false }],
+      applications: [{ id: "9", uuid: uuidA, serverId: "1" }, { id: "10", uuid: "cccccccccccccccccccccccc", serverId: "2" }],
+      databases: [{ id: "4", uuid: uuidB, serverId: "1" }],
+      services: [],
+      ...over,
+    });
+    const inv = (snapshot: unknown) => [{ serverId: "hub", readAt: earlier, counts: { servers: 2 }, serverLinks: {}, snapshot }];
+
+    it("counts the apps and databases that still run on the Coolify host itself (the box that is shut down), not those on managed servers", async () => {
+      const m = make({ servers: hubServers, inventories: inv(snapOf()) });
+      const v = await m.svc.status("u1", "t1", NOW);
+      expect(v.left).toEqual({ host: 2, runs: 0 });
+      expect(v.steps.find((s) => s.step === "shutdown")?.done).toBe(0);
+    });
+    it("one that was copied to another server no longer counts; a copy on the host's own machine still does", async () => {
+      const m = make({
+        servers: hubServers,
+        inventories: inv(snapOf()),
+        tasks: [{ itemRef: `app:srv:${uuidA}`, resourceId: "ta", resourceType: "application" }, { itemRef: `database:srv:${uuidB}`, resourceId: "tb", resourceType: "database" }],
+        tugraApps: [{ id: "ta", serverId: "elsewhere" }],
+        tugraDbs: [{ id: "tb", serverId: "hub" }],
+      });
+      const v = await m.svc.status("u1", "t1", NOW);
+      expect(v.left.host).toBe(1);
+      const done = await make({ servers: hubServers, inventories: inv(snapOf()), tasks: [{ itemRef: `app:srv:${uuidA}`, resourceId: "ta", resourceType: "application" }, { itemRef: `database:srv:${uuidB}`, resourceId: "tb", resourceType: "database" }], tugraApps: [{ id: "ta", serverId: "elsewhere" }], tugraDbs: [{ id: "tb", serverId: "elsewhere" }] }).svc.status("u1", "t1", NOW);
+      expect(done.left).toEqual({ host: 0, runs: 0 });
+      // a host-only Coolify (no managed server) with nothing left on the host settles step D
+      expect(done.steps.find((s) => s.step === "shutdown")?.done).toBe(1);
+    });
+    it("a read the hub cannot use says unknown, never zero", async () => {
+      expect((await make({ servers: hubServers, inventories: inv({ v: 2 }) }).svc.status("u1", "t1", NOW)).left.host).toBeNull();
+      expect((await make({ servers: hubServers, inventories: [{ serverId: "hub", readAt: earlier, counts: {}, serverLinks: {} }] }).svc.status("u1", "t1", NOW)).left.host).toBeNull();
+      expect((await make({ servers: [] }).svc.status("u1", "t1", NOW)).left.host).toBeNull();
+    });
+    it("counts the campaign runs that are not COMPLETED: runs that never started count, a cancelled campaign does not, a completed run does not", async () => {
+      const m = make({
+        servers: hubServers,
+        inventories: inv(snapOf({ applications: [], databases: [] })),
+        campaigns: [
+          { id: "c1", teamId: "t1", label: "wave-1", status: "running", plan: [{}, {}, {}], createdAt: earlier },
+          { id: "c2", teamId: "t1", label: "wave-2", status: "cancelled", plan: [{}, {}], createdAt: earlier },
+          { id: "c3", teamId: "t1", label: "wave-3", status: "draft", plan: [{}], createdAt: earlier },
+        ],
+        completedRuns: [{ teamId: "t1", campaign: "wave-1" }, { teamId: "t1", campaign: "wave-1" }],
+      });
+      const v = await m.svc.status("u1", "t1", NOW);
+      expect(v.left).toEqual({ host: 0, runs: 2 }); // wave-1: 3 planned, 2 complete -> 1; wave-3: never run -> 1
+      expect(v.steps.find((s) => s.step === "shutdown")?.done).toBe(0);
+      expect(m.prisma.migrationRun.findMany.mock.calls[0][0].where).toMatchObject({ dryRun: false, status: "COMPLETED" });
+    });
   });
 
   describe("servers the owner added by hand (no stored link)", () => {

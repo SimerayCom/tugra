@@ -83,11 +83,15 @@ Each app and database starts under Tugra on the machine it already runs on. The 
 3. **Take over.** You type the server's name. Coolify's proxy stops, Tugra's takes ports 80 and 443, and the sites keep their addresses. Apps that share data with Coolify are switched with a short break. Databases are compared by a fingerprint taken before and after, and any failure puts everything back.
 4. **Verify.** Coolify's certificate is served for a few minutes as a fallback while Tugra gets a new certificate for each domain. The page shows each domain until all of them are verified.
 
-**Give back to Coolify** undoes it with one click: Tugra's proxy stops and Coolify's proxy and containers start again, as they were. It is available until you clean up Coolify on that server.
+**Give back to Coolify** undoes it with one click: Tugra's proxy stops and Coolify's proxy and containers start again, as they were. It is available until you clean up Coolify on that server; after that the hub refuses it. If the hub restarts while the ports are being handed over or given back, the takeover shows as failed once the hub is back, and you press **Give back to Coolify** again. If a swap fails, Tugra puts everything back by itself. While a verified takeover can still be given back, Tugra checks every minute that its proxy still holds ports 80 and 443 and that Coolify's proxy is stopped; if not, the takeover shows that the ports were lost and is no longer counted as verified.
+
+When a guided run does the takeover, only that run moves it: the takeover page shows it and links to the run, and the buttons there are off until the run has ended.
 
 ### B. Clean up Coolify
 
 On the server's page, **Clean up Coolify**:
+
+Cleanup is offered once the takeover is verified, and only when no guided run still holds the server. A takeover that is only swapped, or still being checked, keeps **Give back to Coolify** available, so nothing is removed yet.
 
 1. **Check.** Tugra compares what Coolify has with what Tugra has, one by one: apps, databases, services, domains and traffic, environment variable names, volumes, scheduled tasks, backups and notifications. The checklist must be complete before anything can be removed. Checking removes nothing.
 2. Tugra then lists what Coolify left on the server: its proxy and helper containers, its directories, networks and images. Anything that might hold your data, or that something still uses, is listed as kept.
@@ -107,7 +111,7 @@ A move that has not started moving can be cancelled, and the owner can roll back
 
 ### D. Shut down Coolify
 
-When every server shows as cleaned, the Coolify host is the last one. Take its apps over or move them, check that nothing still needs Coolify, then shut it down yourself. Tugra does not clean the Coolify host in place, because it runs the Coolify dashboard.
+The Coolify host is the last machine. Tugra does not take it over in place, because it runs the Coolify dashboard: apps and databases that still run on the host itself are copied to another server first (an import with a campaign), then Coolify is shut down by you. The page says it is ready only when every server is cleaned, nothing that Coolify ran on the host is left without a copy on another server, and every campaign run is complete. Until then it lists what is still open. If your Coolify manages no other server, the page says so and step D is the whole move.
 
 ## Alternative: connect with an API token
 

@@ -76,7 +76,7 @@ function ManagedLines({ row, teamId, hubServerId, hubTeamId }: { row: MoveOffSer
         testId="line-takeover"
         name={t("coolifyMove.line.takeover.label")}
         tone={row.takeover === "none" ? "muted" : row.takeover === "FAILED" ? "danger" : row.takeover === "VERIFIED" ? "ok" : "lapis"}
-        link={row.takeover === "none" ? { href: "/import", text: t("coolifyMove.rowAction.takeoverStart") } : { href: takeoverHref(row.serverId), text: t("coolifyMove.line.takeover.open") }}
+        link={row.takeover === "none" || row.takeover === "GIVEN_BACK" ? { href: "/import", text: t("coolifyMove.rowAction.takeoverStart") } : { href: takeoverHref(row.serverId), text: t("coolifyMove.line.takeover.open") }}
         action={startsTakeoverFlow(row) ? <CoolifyTakeOverButton row={row} teamId={teamId} hubServerId={hubServerId} hubTeamId={hubTeamId} /> : undefined}
       >
         {row.takeover === "none" ? t("coolifyMove.line.takeover.none") : t(`coolifyInPlace.status.${row.takeover}`)}
