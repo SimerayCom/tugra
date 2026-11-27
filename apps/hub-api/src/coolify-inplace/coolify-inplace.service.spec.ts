@@ -76,6 +76,12 @@ function build(o: { role?: Role | null; apps?: BoxApp[]; dbs?: BoxDb[] } = {}) {
 }
 
 const plan = (t: ReturnType<typeof build>, rebuild: string[] = []) => t.svc.plan(ACTOR, PlanSchema.parse({ serverId: "srv1", opId: "op1", rebuild }));
+/** A takeover that carries a guided run ("run1"), swapped: the way CUTOVER of an in-place run drives it. */
+const swapRun = async (t: ReturnType<typeof build>) => {
+  await t.svc.runPrepare(ACTOR, { runId: "run1", serverId: "srv1", opId: "op1" });
+  await t.svc.runSwap(ACTOR, "run1");
+  return (await t.svc.runView(ACTOR, "run1")).id;
+};
 const swapOk = async (t: ReturnType<typeof build>) => {
   const p = await plan(t);
   await t.svc.test(ACTOR, p.id);
@@ -411,16 +417,50 @@ describe("verify: new certificates", () => {
     const v2 = await t.svc.verify(ACTOR, p.id);
     expect(v2.status).toBe("VERIFIED");
   });
-  it("stops retrying a domain after the attempts are used and never marks it done", async () => {
+  it("stops retrying a domain after the attempts are used and never marks it done (the timer and the run's polls never give new attempts)", async () => {
     const t = build({ apps: [web] });
     t.box.leWorks = false;
-    const p = await swapOk(t);
-    for (let i = 0; i < 5; i++) await t.svc.verify(ACTOR, p.id);
-    const view = await t.svc.get(ACTOR, p.id);
+    const id = await swapRun(t);
+    for (let i = 0; i < 5; i++) await t.svc.runVerify(ACTOR, "run1");
+    const view = await t.svc.get(ACTOR, id);
     expect(view.status).toBe("SWAPPED");
     expect(view.items[0].domains[0].cert).toBe("failed");
     const removes = t.box.events.filter((e) => e === "fallback:remove:web.example.com").length;
     expect(removes).toBe(3);
+  });
+  it("after the owner fixed the cause, a manual check tries again (new attempts) and the new certificate is recognised", async () => {
+    const t = build({ apps: [web] });
+    t.box.leWorks = false;
+    const id = await swapRun(t);
+    for (let i = 0; i < 4; i++) await t.svc.runVerify(ACTOR, "run1");
+    expect((await t.svc.runVerify(ACTOR, "run1")).certWorkLeft).toBe(false); // used up: nothing more on its own
+    expect((await t.svc.get(ACTOR, id)).items[0].domains[0].cert).toBe("failed");
+    t.box.leWorks = true;
+    const v = await t.svc.verify(ACTOR, id);
+    expect(v.status).toBe("VERIFIED");
+    expect(v.items[0].domains[0].cert).toBe("issued");
+  });
+  it("a retry of the run's step gives new attempts too, a plain poll does not", async () => {
+    const t = build({ apps: [web] });
+    t.box.leWorks = false;
+    await swapRun(t);
+    for (let i = 0; i < 4; i++) await t.svc.runVerify(ACTOR, "run1");
+    t.box.leWorks = true;
+    expect((await t.svc.runVerify(ACTOR, "run1")).verified).toBe(false);
+    expect((await t.svc.runVerify(ACTOR, "run1", { retry: true })).verified).toBe(true);
+  });
+  it("a certificate the proxy obtained on its own after the attempts were used is recognised by the timer, without taking anything away", async () => {
+    const t = build({ apps: [web] });
+    t.box.leWorks = false;
+    const id = await swapRun(t);
+    for (let i = 0; i < 4; i++) await t.svc.runVerify(ACTOR, "run1");
+    expect(t.box.events.filter((e) => e === "fallback:remove:web.example.com").length).toBe(3);
+    t.box.leIssued.add("web.example.com"); // the proxy got one by itself
+    expect(await t.svc.sweepFallbacks()).toBe(1);
+    const v = await t.svc.get(ACTOR, id);
+    expect(v.status).toBe("VERIFIED");
+    expect(v.items[0].domains[0].cert).toBe("issued");
+    expect(t.box.events.filter((e) => e === "fallback:remove:web.example.com").length).toBe(4); // only the one that goes once the new certificate stands
   });
   it("handles a few domains per call", async () => {
     const many = Array.from({ length: 7 }, (_, i) => ({ ...web, appId: `app${i}`, itemRef: `app:s1:u${i}`, host: `h${i}.example.com`, ctrId: H(String(i)), ctrName: `u${i}-20261125T101010`, image: `u${i}:1` }));
@@ -469,10 +509,12 @@ describe("verify: new certificates", () => {
     expect(v.status).toBe("SWAPPED");
     expect(v.failureCode).toBe("fallback_overdue");
     expect(t.box.fallback.has("web.example.com")).toBe(true);
-    // attempts are used and the failure is shown: the timer stops, it does not loop forever
+    // attempts are used and the failure is shown: the timer makes no further attempt (it only looks whether a certificate came by itself)
     for (let i = 0; i < 4; i++) await t.svc.sweepFallbacks();
     expect(t.box.events.filter((e) => e === "fallback:remove:web.example.com").length).toBeLessThanOrEqual(3);
-    expect(await t.svc.sweepFallbacks()).toBe(0);
+    const rows = t.audit.log.mock.calls.filter((c) => (c[0] as { action: string }).action === "coolify.takeover.verify").length;
+    await t.svc.sweepFallbacks();
+    expect(t.audit.log.mock.calls.filter((c) => (c[0] as { action: string }).action === "coolify.takeover.verify").length).toBe(rows);
     expect(t.audit.log.mock.calls.some((c) => (c[0] as { meta?: { failure?: string } }).meta?.failure === "fallback_overdue")).toBe(true);
   });
   it("a box without openssl is a failed check that stays visible, not a silent stop", async () => {

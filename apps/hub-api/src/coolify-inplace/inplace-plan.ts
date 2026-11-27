@@ -232,6 +232,9 @@ export function certWorkLeft(items: readonly TakeoverItem[]): boolean {
   return items.some((i) => i.state === "switched" && i.domains.some((d) => d.cert !== "issued" && (i.certAttempts[d.host] ?? 0) < CERT_MAX_ATTEMPTS));
 }
 
+/** Whether a switched domain has no new certificate and has used every attempt: it is left to the owner (a manual check or a CUTOVER retry gives it new attempts). */
+export const certExhausted = (item: TakeoverItem, host: string, cert: string): boolean => item.state === "switched" && cert !== "issued" && (item.certAttempts[host] ?? 0) >= CERT_MAX_ATTEMPTS;
+
 /** Attempts at a new certificate per domain before it is left to the owner. */
 export const CERT_MAX_ATTEMPTS = 3;
 /** Domains whose certificate is handled per verify call, so one request never holds the server for the whole fleet. */

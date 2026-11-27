@@ -74,7 +74,7 @@ function fakeWorld() {
 
 const step = (over: Partial<StepSnapshot> = {}): StepSnapshot => ({ key: "CUTOVER", status: "RUNNING", attempt: 1, gate: null, approval: null, inputHash: null, progress: null, compensation: null, evidence: EMPTY_STEP_EVIDENCE, wait: null, notBefore: null, ...over });
 
-function ctxOf(over: { run?: Partial<RunSnapshot>; step?: Partial<StepSnapshot>; verify?: Partial<StepSnapshot>; now?: Date } = {}) {
+function ctxOf(over: { run?: Partial<RunSnapshot>; step?: Partial<StepSnapshot>; verify?: Partial<StepSnapshot>; now?: Date; trigger?: string } = {}) {
   const comp: Record<string, unknown> = { ...(over.step?.compensation ?? {}) };
   const patches: Array<Record<string, unknown>> = [];
   const events: string[] = [];
@@ -85,7 +85,7 @@ function ctxOf(over: { run?: Partial<RunSnapshot>; step?: Partial<StepSnapshot>;
     step: step({ ...over.step, compensation: comp }),
     actor: { userId: "u1" },
     bootId: "b",
-    trigger: "tick",
+    trigger: over.trigger ?? "tick",
     dryRun: false,
     approval: null,
     signal: new AbortController().signal,
@@ -329,9 +329,34 @@ describe("CUTOVER of an in-place run", () => {
     const { r, s } = await ready();
     r.box.failProxyStop = true;
     const c = ctxOf();
-    await expect(s.cut.act(c.ctx, await obsOf(s, c))).rejects.toMatchObject({ code: "cutover.inplace-swap-stop-failed", retryable: false });
+    await expect(s.cut.act(c.ctx, await obsOf(s, c))).rejects.toMatchObject({ code: "cutover.inplace-swap-stop-failed", retryable: true });
     expect(r.box.coolifyProxy.running).toBe(true);
     expect((await s.world.getSwap(RUN, "srv1"))?.state).toBe("REVERSED");
+  });
+  it("after a clean put-back the owner can retry: the takeover is tested again and the ports are taken with the approval still standing", async () => {
+    const { r, s } = await ready();
+    r.box.failProxyStop = true;
+    const first = ctxOf();
+    await expect(s.cut.act(first.ctx, await obsOf(s, first))).rejects.toMatchObject({ retryable: true });
+    expect(r.box.tugraProxy.published).toBe(false);
+    r.box.failProxyStop = false;
+    const retry = ctxOf({ trigger: "retry" });
+    const res = await s.cut.act(retry.ctx, await obsOf(s, retry));
+    expect(res.outcome).toBe("done");
+    expect(r.box.tugraProxy).toEqual({ state: "running", published: true });
+    expect(r.box.coolifyProxy.running).toBe(false);
+    expect((await s.world.getSwap(RUN, "srv1"))?.state).toBe("LIVE");
+    // a plain poll after the failure (no retry) does not start a new swap
+    const again = rig();
+    const s2 = steps(again);
+    await prepare(s2, ctxOf());
+    again.box.failProxyStop = true;
+    const f = ctxOf();
+    await expect(s2.cut.act(f.ctx, await obsOf(s2, f))).rejects.toMatchObject({ retryable: true });
+    again.box.failProxyStop = false;
+    const poll = ctxOf();
+    await expect(s2.cut.act(poll.ctx, await obsOf(s2, poll))).rejects.toMatchObject({ retryable: true });
+    expect(again.box.coolifyProxy.running).toBe(true);
   });
   it("a domain that fails its check after the switch keeps polling, then fails retryably naming the host once the window is over", async () => {
     const { r, s } = await ready();
@@ -481,7 +506,7 @@ describe("an in-place wave of a campaign takes a compose service over with the a
     const { r, s } = await ready();
     r.box.svcUnhealthy.add("appsvc:ghost");
     const c = ctxOf();
-    await expect(s.cut.act(c.ctx, await obsOf(s, c))).rejects.toMatchObject({ code: "cutover.inplace-service-not-ready", retryable: false });
+    await expect(s.cut.act(c.ctx, await obsOf(s, c))).rejects.toMatchObject({ code: "cutover.inplace-service-not-ready", retryable: true });
     expect(r.box.coolifyProxy.running).toBe(true);
     expect(r.box.tugraSvcRunning.size).toBe(0);
     expect([H("5"), H("6")].map((id) => r.box.ctrs.get(id)!.running)).toEqual([true, true]);

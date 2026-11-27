@@ -36,8 +36,8 @@ export interface InPlaceRunPort {
   runPrepare(userId: string, input: { runId: string; serverId: string; opId: string; rebuild?: readonly string[] }): Promise<RunTakeoverState>;
   /** Take the ports. The takeover must be tested; the run's approval has already been given. */
   runSwap(userId: string, runId: string): Promise<RunTakeoverState>;
-  /** One pass of re-check and new certificates (a few domains per call). */
-  runVerify(userId: string, runId: string): Promise<RunTakeoverState>;
+  /** One pass of re-check and new certificates (a few domains per call). `retry` = the owner asked for another go (a retry of CUTOVER): domains that used their attempts get new ones. */
+  runVerify(userId: string, runId: string, opts?: { retry?: boolean }): Promise<RunTakeoverState>;
   /** Give the server back to Coolify; null when the run has no takeover to give back. */
   runGiveBack(userId: string, runId: string): Promise<RunTakeoverState | null>;
 }

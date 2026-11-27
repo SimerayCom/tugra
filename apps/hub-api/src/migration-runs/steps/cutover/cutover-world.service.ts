@@ -282,6 +282,8 @@ export class CutoverWorld {
     if (to === "STARTING_TARGET_PROXY") data.stoppedAt = at;
     if (to === "LIVE") data.liveAt = at;
     if (to === "REVERSED") data.reversedAt = at;
+    // a swap tried again after a clean put-back starts its record over
+    if (to === "PLANNED") Object.assign(data, { stoppedAt: null, liveAt: null, reversedAt: null });
     const r = await this.prisma.migrationRunSwap.updateMany({ where: { runId, serverId, state: { in: [...from] } }, data });
     return r.count === 1;
   }

@@ -15,7 +15,7 @@ import { RunLeaseLostError, StepFailure, makeGate, type ActResult, type CompResu
 import { INPLACE_RUN_PORT, type InPlaceRunPort, type RunTakeoverState } from "../../../coolify-inplace/inplace-run";
 import { approvalValid, chk, iso } from "./run-cutover-logic";
 import { CutoverWorld, type SwapRow } from "./cutover-world.service";
-import { CUTOVER_FAILURE, INPLACE_CERT_DEADLINE_MS, INPLACE_POLL_MS, INPLACE_VERIFY_DEADLINE_MS, afterSwapFindings, refusalOf } from "../inplace/inplace-run-logic";
+import { CUTOVER_FAILURE, INPLACE_CERT_DEADLINE_MS, INPLACE_POLL_MS, INPLACE_VERIFY_DEADLINE_MS, afterSwapFindings, isCleanPutBack, refusalOf } from "../inplace/inplace-run-logic";
 
 /** What this step reads of CUTOVER's observation (the handler's own type extends it). */
 export interface InPlaceCutoverObs {
@@ -84,13 +84,37 @@ export class InPlaceCutover {
     const userId = ctx.actor.userId;
     let st = obs.inPlace ?? null;
     if (!st) throw new StepFailure("cutover.inplace-not-tested", {}, false);
+    // when the ports were taken (a swap made in this very call counts from now, not from an earlier try the step remembers)
+    let swappedNow = false;
+    let swapRow = obs.swap;
+
+    // A swap that failed and was put back cleanly can be tried again: Coolify serves as before, nothing was lost. The retry plans and tests the
+    // takeover again (the dark test is what the swap rests on), and goes on only with the owner's VERIFY approval still standing and the fresh test passed.
+    if (isCleanPutBack(st) && ctx.trigger === "retry") {
+      const verify = ctx.stepState("VERIFY");
+      if (verify.status !== "PASSED") throw new StepFailure("cutover.verify-not-passed", {}, false);
+      if (!approvalValid(verify.approval, ctx.now())) throw new StepFailure(verify.approval ? "cutover.approval-expired" : "cutover.approval-missing", {}, false);
+      await ctx.assertLease();
+      try {
+        st = await this.port.runPrepare(ctx.actor.userId, { runId: run.id, serverId: run.targetServerId, opId: run.opId as string, rebuild: run.options.rebuild ?? [] });
+      } catch (e) {
+        if (e instanceof RunLeaseLostError) throw e;
+        const r = refusalOf("cutover", e);
+        if (!r) throw e;
+        throw new StepFailure(r.code, r.params, r.retryable);
+      }
+      if (st.status !== "TESTING" || !st.gate.ok || st.pending > 0) throw new StepFailure("cutover.inplace-not-tested", {}, true);
+      // the run's swap record was closed by the put-back: it starts over for this try
+      if (obs.swap?.state === "REVERSED" && (await this.world.setSwapState(run.id, run.targetServerId, ["REVERSED"], "PLANNED"))) swapRow = { ...obs.swap, state: "PLANNED" };
+    }
 
     if (st.status === "PLANNED" || st.status === "TESTING") {
       if (st.status !== "TESTING" || !st.gate.ok) throw new StepFailure("cutover.inplace-not-tested", {}, false);
       await ctx.recordCompensation({ inPlaceSwapAt: iso(ctx.now()) });
+      swappedNow = true;
       await ctx.assertLease();
       // the run's swap record first, then the takeover's swap: a crash in between leaves a record the reverse knows about
-      let swap = obs.swap ?? (await this.world.createSwap(run.id, run.targetServerId, st.proxy, st.bindBefore));
+      let swap = swapRow ?? (await this.world.createSwap(run.id, run.targetServerId, st.proxy, st.bindBefore));
       if (swap.state === "PLANNED") {
         await this.world.setSwapState(run.id, run.targetServerId, ["PLANNED"], "STOPPING_SOURCE_PROXY");
         swap = { ...swap, state: "STOPPING_SOURCE_PROXY" };
@@ -115,19 +139,25 @@ export class InPlaceCutover {
     if (st.status === "GIVEN_BACK") throw new StepFailure("cutover.inplace-reversed", {}, false);
     if (st.status === "FAILED") {
       await this.world.setSwapState(run.id, run.targetServerId, UNDO_FROM, "REVERSED").catch(() => undefined);
-      throw new StepFailure(st.failureCode ? CUTOVER_FAILURE[st.failureCode] : "cutover.inplace-swap-interrupted", {}, false);
+      throw new StepFailure(st.failureCode ? CUTOVER_FAILURE[st.failureCode] : "cutover.inplace-swap-interrupted", {}, isCleanPutBack(st));
     }
+
+    const since = swappedNow ? ctx.now().getTime() : Date.parse(typeof ctx.step.compensation?.inPlaceSwapAt === "string" ? (ctx.step.compensation.inPlaceSwapAt as string) : "") || ctx.now().getTime();
+    const age = ctx.now().getTime() - since;
 
     // SWAPPED or VERIFIED: re-check every domain and work on the new certificates (a few per call)
     if (st.status === "SWAPPED") {
       await ctx.assertLease();
       try {
-        st = await this.port.runVerify(userId, run.id);
+        // a retry of the step is the owner asking for another go: domains that used their certificate attempts get new ones
+        st = await this.port.runVerify(userId, run.id, { retry: ctx.trigger === "retry" });
       } catch (e) {
         if (e instanceof RunLeaseLostError) throw e;
         const r = refusalOf("cutover", e);
         // the sweeper (or another call) is working on it: look again on the next tick
         if (r && r.code === "cutover.inplace-refused" && r.params.reason === "takeover-busy") return { outcome: "continue", pollAfterMs: INPLACE_POLL_MS };
+        // the agent restarted or dropped for a moment: the takeover is healthy and its own timer keeps working, so the step waits for it up to the same deadline
+        if (r && r.code === "cutover.inplace-refused" && r.params.reason === "takeover-server-offline" && age <= INPLACE_CERT_DEADLINE_MS) return { outcome: "continue", pollAfterMs: INPLACE_POLL_MS };
         if (!r) throw e;
         throw new StepFailure(r.code, r.params, r.retryable);
       }
@@ -136,8 +166,6 @@ export class InPlaceCutover {
     if (found.checkFailed.length === 0 && !run.freezeEndedAt) await ctx.patchRun({ freezeEndedAt: ctx.now() });
     if (st.verified) return { outcome: "done" };
 
-    const since = Date.parse(typeof ctx.step.compensation?.inPlaceSwapAt === "string" ? (ctx.step.compensation.inPlaceSwapAt as string) : "") || ctx.now().getTime();
-    const age = ctx.now().getTime() - since;
     if (found.checkFailed.length > 0 && age > INPLACE_VERIFY_DEADLINE_MS) throw new StepFailure("cutover.inplace-host-not-verified", { hosts: found.checkFailed.slice(0, 20), minutes: Math.round(INPLACE_VERIFY_DEADLINE_MS / 60_000) }, true);
     if (st.failureCode && st.failureCode !== "fallback_overdue") throw new StepFailure(CUTOVER_FAILURE[st.failureCode], {}, true);
     // attempts used up (or the deadline passed): Coolify's certificate stays on those domains and the owner decides; never a quiet stop

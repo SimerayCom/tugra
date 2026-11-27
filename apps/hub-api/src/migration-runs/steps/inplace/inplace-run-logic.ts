@@ -113,8 +113,12 @@ export function refusalOf(step: Step, e: unknown): { code: InPlaceRunCode; param
   const reason = raw.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60) || "refused";
   if (status === 403) return { code: OWNER_ONLY[step], params: {}, retryable: false };
   if (status === 409 && raw === "takeover_server_busy") return { code: BUSY[step], params: {}, retryable: true };
-  return { code: REFUSED[step], params: { reason }, retryable: status === 409 };
+  // an agent that is offline right now is a wait, not a verdict: the takeover is as it was and the owner (or the next poll) tries again
+  return { code: REFUSED[step], params: { reason }, retryable: status === 409 || raw === "takeover_server_offline" };
 }
+
+/** The takeover was put back by itself (a failed swap reversed cleanly): Coolify serves as before and nothing was lost, so another try is safe. A failed put-back is never one. */
+export const isCleanPutBack = (st: Pick<RunTakeoverState, "status" | "failureCode">): boolean => st.status === "FAILED" && st.failureCode !== "give_back_failed";
 
 // ───────────────────────────── what the owner reviews in VERIFY ─────────────────────────────
 

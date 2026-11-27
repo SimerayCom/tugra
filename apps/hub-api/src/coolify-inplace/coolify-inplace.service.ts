@@ -14,6 +14,7 @@ import { inspectSourceProxy, reverseSwapOnHost, stopSourceProxy, swapHostState, 
 import {
   CERT_BATCH,
   CERT_MAX_ATTEMPTS,
+  certExhausted,
   adoptTagFor,
   canGiveBack,
   canTakeoverTransition,
@@ -193,8 +194,7 @@ export class CoolifyInPlaceService implements InPlaceRunPort {
     if (!proxy.snapshot.running) throw unprocessable("takeover_proxy_not_running");
     // Tugra's proxy is started with no published port for the test. If it already runs here on a real bind (behind a front proxy, say), restarting
     // it would take the apps it serves down, so the takeover does not start; a proxy that is already dark (bind none) is harmless to restart.
-    const tugraProxy = await this.world.proxyStatus(userId, server.id).catch(() => "unknown" as const);
-    if (server.proxyBind !== "none" && (tugraProxy === "running" || tugraProxy === "unknown")) throw unprocessable("takeover_tugra_proxy_in_use");
+    if (await this.tugraProxyInUse(userId, server)) throw unprocessable("takeover_tugra_proxy_in_use");
 
     // a guided run carries the owner's rebuild choice from its start: an app that shares writable data with Coolify's copy cannot be built beside it,
     // so there the run keeps Coolify's image (marked, never silent) instead of failing after the owner already pressed start
@@ -215,6 +215,24 @@ export class CoolifyInPlaceService implements InPlaceRunPort {
     });
     await this.audit.log({ actor: userId, action: "coolify.takeover.plan", target: row.id, meta: { serverId: server.id, ...(link.runId ? { runId: link.runId } : {}), apps: items.filter((i) => i.kind !== "database" && i.kind !== "service").length, databases: items.filter((i) => i.kind === "database").length, services: items.filter((i) => i.kind === "service").length, skipped: items.filter((i) => i.state === "skipped").length, rebuild: items.filter((i) => i.buildMode === "rebuild-verify").length } });
     return this.fresh((row as Row).id);
+  }
+
+  /** Tugra's own proxy already publishes ports on this server (or cannot be asked): the dark start of the test would take what it serves down. */
+  private async tugraProxyInUse(userId: string, server: { id: string; proxyBind?: string }): Promise<boolean> {
+    const tugraProxy = await this.world.proxyStatus(userId, server.id).catch(() => "unknown" as const);
+    return server.proxyBind !== "none" && (tugraProxy === "running" || tugraProxy === "unknown");
+  }
+
+  /**
+   * Why planning an in-place takeover of this server would be refused for a reason that is known before anything is made: another takeover or
+   * run holds the server, or Tugra's own proxy already serves apps on it. Read-only. The guided-run campaign asks it before it creates a run, so
+   * a refused wave is said at the placement and not at DEPLOY_DARK after the import already made its records. Null = nothing known against it.
+   */
+  async startRefusal(userId: string, serverId: string): Promise<"takeover_server_busy" | "takeover_tugra_proxy_in_use" | null> {
+    const server = await this.world.server(serverId);
+    if (!server) return null;
+    if (await this.world.serverBusy(server.id)) return "takeover_server_busy";
+    return (await this.tugraProxyInUse(userId, server)) ? "takeover_tugra_proxy_in_use" : null;
   }
 
   /** What Coolify runs for each app of the op, mapped to the Tugra app. Read-only on the host. Apps that cannot be taken over are kept, marked skipped, with the reasons. */
@@ -1088,9 +1106,10 @@ export class CoolifyInPlaceService implements InPlaceRunPort {
    * served much past the short window.
    */
   async verify(userId: string, id: string): Promise<TakeoverView> {
+    // pressed by the owner: the cause may be fixed by now (DNS, port 80), so a domain that used its attempts gets new ones
     return this.exclusive(id, async () => {
       await this.requireStandalone((await this.acting(userId, id)).row);
-      return this.verifyPass(userId, id, false);
+      return this.verifyPass(userId, id, false, true);
     });
   }
 
@@ -1106,9 +1125,9 @@ export class CoolifyInPlaceService implements InPlaceRunPort {
     for (const row of rows) {
       seen.add(row.id);
       if (row.status !== "SWAPPED" || this.active.has(row.id)) continue;
-      const items = this.itemsOf(row);
-      // nothing left that a pass could change (attempts used and the failure already shown): leave it to the owner
-      if (!certWorkLeft(items) && row.failureCode) continue;
+      // a takeover whose attempts are used and whose failure is shown is still looked at: the pass makes no new attempt, writes no audit row, and
+      // recognises a certificate that arrived on its own since. One whose box cannot tell a new certificate from the old (no openssl) has nothing to look at.
+      if (row.failureCode === "cert_check_unavailable" && !certWorkLeft(this.itemsOf(row))) continue;
       try {
         await this.exclusive(row.id, () => this.verifyPass(row.actorId, row.id, true));
         done += 1;
@@ -1151,15 +1170,22 @@ export class CoolifyInPlaceService implements InPlaceRunPort {
     return n;
   }
 
-  private async verifyPass(userId: string, id: string, auto: boolean): Promise<TakeoverView> {
+  /**
+   * One pass. `retry` = the owner asked for it (the verify button, or a retry of CUTOVER): the domains that used their certificate attempts
+   * get new ones. A timer or a poll never does, or the attempts would never run out. Either way a domain with no attempts left is looked at
+   * first, without taking anything away: a certificate the proxy obtained on its own since is recognised.
+   */
+  private async verifyPass(userId: string, id: string, auto: boolean, retry = false): Promise<TakeoverView> {
     const { row, server } = await this.acting(userId, id);
     if (row.status !== "SWAPPED" && row.status !== "VERIFIED") throw new ConflictException("takeover_not_swapped");
     const items = this.itemsOf(row);
+    if (retry) for (const i of items) for (const d of i.domains) if (certExhausted(i, d.host, d.cert)) i.certAttempts[d.host] = 0;
     // Who holds :80/:443 right now. The domain probes below go through whichever proxy answers, so they cannot tell Tugra's from Coolify's:
     // when Coolify's proxy runs again (or Tugra's lost the ports) nothing below is judged as if Tugra served it.
     if (await this.portsLost(userId, row, server.id, auto)) return this.fresh(row.id);
     await this.checkFinal(server.id, items);
     await this.checkMembers(server.id, items);
+    const late = await this.recognizeLate(server.id, items);
     const queue = items
       .filter((i) => i.state === "switched")
       .flatMap((i) => i.domains.filter((d) => d.cert !== "issued" && d.finalCheck === "ok" && (i.certAttempts[d.host] ?? 0) < CERT_MAX_ATTEMPTS).map((d) => ({ i, d })))
@@ -1173,6 +1199,8 @@ export class CoolifyInPlaceService implements InPlaceRunPort {
     const svcBad = items.some((i) => i.kind === "service" && i.state === "switched" && (i.members ?? []).some((m) => m.ready === "failed"));
     const failure: TakeoverFailureCode | null = verified ? null : svcBad ? "service_not_ready" : blind ? "cert_check_unavailable" : overdueFallbacks(items, this.world.now()).length > 0 ? "fallback_overdue" : null;
     await this.setStatus(row, verified ? "VERIFIED" : "SWAPPED", failure);
+    // the timer found nothing to do (no attempt made, no late certificate): no audit row per minute for a takeover that waits for the owner
+    if (auto && queue.length === 0 && late === 0) return this.fresh(row.id);
     const all = items.flatMap((i) => i.domains);
     await this.audit.log({
       actor: userId,
@@ -1185,6 +1213,8 @@ export class CoolifyInPlaceService implements InPlaceRunPort {
         failed: all.filter((d) => d.cert === "failed").length,
         checkFailed: all.filter((d) => d.finalCheck === "failed").length,
         ...(failure ? { failure } : {}),
+        ...(late > 0 ? { late } : {}),
+        ...(retry ? { retry: true } : {}),
         ...(auto ? { auto: true } : {}),
       },
     });
@@ -1202,6 +1232,22 @@ export class CoolifyInPlaceService implements InPlaceRunPort {
     await this.setStatus(row, "SWAPPED", "swap_lost");
     await this.audit.log({ actor: userId, action: "coolify.takeover.verify", target: row.id, meta: { failure: "swap_lost", coolifyProxyRunning: held.sourceRunning === true, tugraProxy: held.target, ...(auto ? { auto: true } : {}) } });
     return true;
+  }
+
+  /** Domains that used every attempt: is a new certificate served now anyway? Nothing is taken away here; the fallback goes only once a new one stands. Returns how many were recognised. */
+  private async recognizeLate(serverId: string, items: TakeoverItem[]): Promise<number> {
+    let found = 0;
+    for (const i of items) {
+      for (const d of i.domains) {
+        if (!certExhausted(i, d.host, d.cert) || d.finalCheck !== "ok") continue;
+        const served = await this.run(serverId, buildNewCertCheckScript(d.host), (o) => parseNewCertCheck(o, d.host));
+        if (!served || !isNewLetsEncryptCert(served, i.fallbackSerial[d.host] ?? null)) continue;
+        await this.run(serverId, buildFallbackRemoveScript([d.host]), (o) => (o.includes("TUGRA_IP_FALLBACK_REMOVED") ? true : null));
+        d.cert = "issued";
+        found += 1;
+      }
+    }
+    return found;
   }
 
   /** One domain: is a new certificate already served? If not, take the fallback away and wait for one; put the fallback back when none comes. */
@@ -1396,9 +1442,9 @@ export class CoolifyInPlaceService implements InPlaceRunPort {
     });
   }
 
-  async runVerify(userId: string, runId: string): Promise<RunTakeoverState> {
+  async runVerify(userId: string, runId: string, opts: { retry?: boolean } = {}): Promise<RunTakeoverState> {
     const row = await this.requireRunRow(runId);
-    await this.exclusive(row.id, () => this.verifyPass(userId, row.id, false));
+    await this.exclusive(row.id, () => this.verifyPass(userId, row.id, false, opts.retry === true));
     return this.stateOf(await this.rowOf(row.id));
   }
 
