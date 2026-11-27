@@ -3,6 +3,9 @@ import type { McpService } from "./mcp.service";
 import type { RedisService } from "../redis/redis.service";
 import { teamHiddenByConfinement } from "../common/team-confinement";
 import type { AuthUser } from "../auth/strategies/jwt.strategy";
+import type { MiddlewareConsumer } from "@nestjs/common";
+import { McpModule } from "./mcp.module";
+import { escapeJsonLineSeparators } from "./json-line-separators";
 
 function res() {
   const r = {} as McpHttpResponse & { status: jest.Mock; setHeader: jest.Mock };
@@ -19,6 +22,16 @@ function make(over: { handle?: jest.Mock; incrBy?: jest.Mock } = {}) {
   const ctrl = new McpController({ handle } as unknown as McpService, { incrBy } as unknown as RedisService);
   return { ctrl, handle, incrBy };
 }
+
+describe("McpModule", () => {
+  it("keeps raw U+2028/U+2029 off the wire for every MCP response", () => {
+    const forRoutes = jest.fn();
+    const apply = jest.fn(() => ({ forRoutes }));
+    new McpModule().configure({ apply } as unknown as MiddlewareConsumer);
+    expect(apply).toHaveBeenCalledWith(escapeJsonLineSeparators);
+    expect(forRoutes).toHaveBeenCalledWith(McpController);
+  });
+});
 
 describe("McpController", () => {
   it("GET → 405 with Allow: POST and a JSON-RPC error body", async () => {
