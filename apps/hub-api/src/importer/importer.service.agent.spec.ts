@@ -40,6 +40,8 @@ function make(over: { session?: unknown; optIn?: boolean; server?: unknown; read
     create: jest.fn((_k: string) => new CoolifySource({ get: jest.fn() } as never)),
     createAgent: jest.fn((serverId: string) => new AgentCoolifySource(new AgentCoolifyClient(reads, serverId))),
     label: jest.fn(() => "Coolify"),
+
+    credential: jest.fn(async (_k: string, _u: string, secret: string) => secret),
   };
   const hostMatch = { verdicts: jest.fn().mockResolvedValue(over.verdicts ?? []), identityBetween: jest.fn().mockResolvedValue([]) };
   const svc = new ImporterService({} as never, prisma as never, crypto as never, access as never, audit as never, sources as never, undefined, hostMatch as never);

@@ -11,13 +11,16 @@ import { ImportServerMapSchema } from "./server-map";
  * one list. A new kind is added here AND as an explicit literal entry in the unions below (discriminatedUnion
  * needs literal discriminators) + its adapter in ImportSourceFactory.
  */
-export const REMOTE_SOURCE_KINDS = ["coolify", "dokploy"] as const;
+export const REMOTE_SOURCE_KINDS = ["coolify", "dokploy", "caprover"] as const;
 export type RemoteSourceKind = (typeof REMOTE_SOURCE_KINDS)[number];
+/** The kinds a guided migration run can be created for (its steps are written for these two; CapRover imports run from the wizard). */
+export const RUN_SOURCE_KINDS = ["coolify", "dokploy"] as const;
 export const isRemoteSourceKind = (k: string | undefined | null): k is RemoteSourceKind =>
   !!k && (REMOTE_SOURCE_KINDS as readonly string[]).includes(k);
 
 /** Connect an external source PaaS (store an encrypted, short-lived session). Coolify (Bearer) or Dokploy
- *  (x-api-key) — both carry their key in `token`. */
+ *  (x-api-key) carry their key in `token`. CapRover has no API key: `token` is the dashboard password, which is
+ *  exchanged for a login token right away and never stored (the session keeps only that token). */
 export const ImportConnectSchema = z.object({
   sourceKind: z.enum(REMOTE_SOURCE_KINDS),
   teamId: z.string().min(1),
@@ -68,12 +71,13 @@ export const ImportPlanRequestSchema = z.discriminatedUnion("sourceKind", [
   z.object({ sourceKind: z.literal("local-docker"), serverId: z.string().min(1) }),
   z.object({ sourceKind: z.literal("coolify"), sessionId: z.string().min(1), dbDataModes: ImportDbDataModesSchema.optional() }),
   z.object({ sourceKind: z.literal("dokploy"), sessionId: z.string().min(1), dbDataModes: ImportDbDataModesSchema.optional() }),
+  z.object({ sourceKind: z.literal("caprover"), sessionId: z.string().min(1), dbDataModes: ImportDbDataModesSchema.optional() }),
 ]);
 export type ImportPlanRequestInput = z.infer<typeof ImportPlanRequestSchema>;
 
 /** Apply a previously-previewed plan. `planHash` binds the apply to the exact plan the caller reviewed:
  *  the server re-plans and refuses (409) if the source changed since. local-docker adopts in place; a remote
- *  source (coolify/dokploy) COPIES each app onto `targetServerId` (a fresh Tugra server/cluster). */
+ *  source (coolify/dokploy/caprover) COPIES each app onto `targetServerId` (a fresh Tugra server/cluster). */
 const planHash = z.string().regex(/^[a-f0-9]{32}$/, "invalid planHash");
 /** Operator acknowledgement of an ACKABLE plan blocker (`app.env.unresolved` / `app.env.key.invalid`): "create the
  *  app WITHOUT those variables". Outside planHash (the apply still re-plans and compares the hash exactly). An
@@ -151,6 +155,7 @@ export const ImportApplySchema = z
     z.object({ sourceKind: z.literal("local-docker"), serverId: z.string().min(1), planHash }),
     z.object({ sourceKind: z.literal("coolify"), ...remoteApplyFields }),
     z.object({ sourceKind: z.literal("dokploy"), ...remoteApplyFields }),
+    z.object({ sourceKind: z.literal("caprover"), ...remoteApplyFields }),
   ])
   .superRefine((v, ctx) => {
     if (v.sourceKind === "local-docker") return;

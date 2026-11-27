@@ -43,7 +43,7 @@ export type ImportMappingItem = z.infer<typeof ImportMappingItemSchema>;
 export const ImportMappingDocSchema = z
   .object({
     version: z.literal(1),
-    scope: z.object({ sourceKind: z.enum(["coolify", "dokploy"]), scopeKey: z.string().max(64).optional() }).strict().optional(),
+    scope: z.object({ sourceKind: z.enum(["coolify", "dokploy", "caprover"]), scopeKey: z.string().max(64).optional() }).strict().optional(),
     items: guardedRecord(ITEM_KEY, ImportMappingItemSchema).default({}),
     projects: guardedRecord(REF, z.object({ name: NAME.optional(), environments: guardedRecord(REF, NAME).optional() }).strict()).default({}),
     gitSources: guardedRecord(REF, z.object({ name: NAME }).strict()).default({}),

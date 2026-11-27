@@ -7,11 +7,13 @@ import { AgentCoolifySource } from "./agent-coolify.source";
 import { CoolifyClientFactory } from "./coolify-client.factory";
 import { DokploySource } from "./dokploy.source";
 import { DokployClientFactory } from "./dokploy-client.factory";
+import { CaproverSource } from "./caprover.source";
+import { CaproverClientFactory } from "./caprover-client.factory";
 import type { ImportSource } from "../import-source";
 import type { RemoteSourceKind } from "../dto";
 
 /**
- * Builds a remote {@link ImportSource} (Coolify today; Dokploy/CapRover/… next) for a given source kind.
+ * Builds a remote {@link ImportSource} (Coolify, Dokploy, CapRover) for a given source kind.
  * The ONE place that knows which adapter + HTTP client a remote kind uses, so the importer service and the
  * apply executor stay source-agnostic (they switch on the session's `sourceKind`, never on a concrete class).
  *
@@ -27,6 +29,8 @@ export class ImportSourceFactory {
     @Optional() private readonly agentReads?: AgentCoolifyReader,
     // Optional for the same reason: the sealed secrets of an agent session (a spec without them reads only the secret-free plan).
     @Optional() private readonly agentSecrets?: AgentSecretsAdapter,
+    // Last, with a default: the CapRover clients (a spec that builds the factory without them gets the live ones, which no spec calls).
+    private readonly caproverClients: CaproverClientFactory = new CaproverClientFactory(),
   ) {}
 
   /**
@@ -45,6 +49,14 @@ export class ImportSourceFactory {
     await this.agentSecrets?.stores.finish(agentServerId, sessionId);
   }
 
+  /**
+   * What the session stores for the credential the user typed. Coolify and Dokploy keep their API token as it is. CapRover has no
+   * API key: the dashboard password is exchanged for a login token here, and the token (never the password) is what gets stored.
+   */
+  async credential(kind: RemoteSourceKind, baseUrl: string, secret: string): Promise<string> {
+    return kind === "caprover" ? this.caproverClients.login(baseUrl, secret) : secret;
+  }
+
   /** Construct the adapter for `kind`, with its transport client already wired to `baseUrl` + `token`. */
   create(kind: RemoteSourceKind, baseUrl: string, token: string): ImportSource {
     switch (kind) {
@@ -52,6 +64,8 @@ export class ImportSourceFactory {
         return new CoolifySource(this.coolifyClients.create(baseUrl, token));
       case "dokploy":
         return new DokploySource(this.dokployClients.create(baseUrl, token));
+      case "caprover":
+        return new CaproverSource(this.caproverClients.create(baseUrl, token));
       default: {
         // Exhaustiveness: when a new RemoteSourceKind is added without a case here, this line fails to
         // compile — the compiler is the reminder to register the adapter.
@@ -68,6 +82,8 @@ export class ImportSourceFactory {
         return "Coolify";
       case "dokploy":
         return "Dokploy";
+      case "caprover":
+        return "CapRover";
       default:
         return String(kind);
     }

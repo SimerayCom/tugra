@@ -55,6 +55,8 @@ function make(o: { session?: Record<string, unknown> | null; verdicts?: HostMatc
     finishAgentRun: jest.fn().mockResolvedValue(undefined),
     create: jest.fn(),
     label: jest.fn(() => "Coolify"),
+
+    credential: jest.fn(async (_k: string, _u: string, secret: string) => secret),
   };
   // The direct identity comparison between the Coolify server and a Tugra server (by Tugra server id); nothing reported = no evidence.
   const hostMatch = {

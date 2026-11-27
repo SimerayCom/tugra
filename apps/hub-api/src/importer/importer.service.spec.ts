@@ -50,6 +50,8 @@ function make(over: { session?: unknown; clientGet?: jest.Mock } = {}) {
   const sources = {
     create: jest.fn((_kind: string) => new CoolifySource(client as never)),
     label: jest.fn((k: string) => (k === "coolify" ? "Coolify" : String(k))),
+
+    credential: jest.fn(async (_k: string, _u: string, secret: string) => secret),
   };
   const svc = new ImporterService(migrator as never, prisma, crypto as never, access as never, audit as never, sources as never);
   return { svc, migrator, importSession, crypto, access, audit, sources, client };

@@ -105,11 +105,11 @@ function optStr(args: Record<string, unknown>, key: string): string | undefined 
 }
 /** Shared description of the `dbDataModes` input (import_plan / import_apply / import_mapping_resolve). */
 const DB_DATA_MODES_DESC =
-  'Coolify/Dokploy only: per-database data mode, keyed by the database plan itemRef ("database:<serverRef>:<sourceRef>") with the only value "volume" (a physical copy of a PostgreSQL data directory; any other engine is a plan blocker). Absent = the default logical dump. It is part of the planHash, so import_apply (and import_mapping_resolve) must send EXACTLY the dbDataModes the plan was made with, or the apply is refused with 409. Not accepted for local-docker.';
+  'Coolify/Dokploy/CapRover only: per-database data mode, keyed by the database plan itemRef ("database:<serverRef>:<sourceRef>") with the only value "volume" (a physical copy of a PostgreSQL data directory; any other engine is a plan blocker). Absent = the default logical dump. It is part of the planHash, so import_apply (and import_mapping_resolve) must send EXACTLY the dbDataModes the plan was made with, or the apply is refused with 409. Not accepted for local-docker.';
 /** local-docker adopts in place (no data copy), so a data mode has nothing to act on: refuse it loudly rather than
  *  silently dropping a choice the caller believes is in effect. */
 function rejectLocalDockerDbDataModes(args: Record<string, unknown>): void {
-  if (args.dbDataModes !== undefined) throw new Error("dbDataModes is only for a Coolify/Dokploy source; local-docker adopts containers in place and copies no data");
+  if (args.dbDataModes !== undefined) throw new Error("dbDataModes is only for a Coolify/Dokploy/CapRover source; local-docker adopts containers in place and copies no data");
 }
 /** Parse tool input with a zod schema and surface the issues as a readable message (never a JSON dump). */
 function parseWith<T extends z.ZodTypeAny>(schema: T, value: unknown): z.output<T> {
@@ -788,11 +788,11 @@ export const MCP_TOOLS: McpTool[] = [
     },
   },
 
-  // ── mutate: fleet import (Coolify / Dokploy + local-docker) ──────────────────────────────────
+  // ── mutate: fleet import (Coolify / Dokploy / CapRover + local-docker) ──────────────────────────────────
   {
     name: "import_connect",
     description:
-      "Connect an external source PaaS (Coolify or Dokploy) to import from: verifies the instance is reachable with the given API token/key and stores a short-lived ENCRYPTED session. Returns a sessionId for import_plan/import_apply. The token is never returned or logged.",
+      "Connect an external source PaaS (Coolify, Dokploy or CapRover) to import from: verifies the instance is reachable with the given API token/key and stores a short-lived ENCRYPTED session. For CapRover pass the dashboard password as `token` and the dashboard address as `baseUrl`: the password is exchanged for a login token at once and only the token is kept. Returns a sessionId for import_plan/import_apply. The token is never returned or logged.",
     scope: "write",
     inputSchema: {
       type: "object",
@@ -810,7 +810,7 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "import_plan",
     description:
-      "Dry-run preview of what an import would create in Tugra, with per-item risks. Pass a local-docker serverId (adopt the host's standalone containers) or a Coolify/Dokploy sessionId. Returns a secret-free plan incl. a planHash to pass to import_apply. Optional dbDataModes (Coolify/Dokploy) opts a PostgreSQL database into a physical volume copy; send the same dbDataModes to import_apply. Reveals env KEYS → read:secrets.",
+      "Dry-run preview of what an import would create in Tugra, with per-item risks. Pass a local-docker serverId (adopt the host's standalone containers) or a Coolify/Dokploy/CapRover sessionId. Returns a secret-free plan incl. a planHash to pass to import_apply. Optional dbDataModes (Coolify/Dokploy) opts a PostgreSQL database into a physical volume copy; send the same dbDataModes to import_apply. Reveals env KEYS → read:secrets.",
     scope: "read:secrets",
     inputSchema: {
       type: "object",
@@ -837,7 +837,7 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "import_apply",
     description:
-      "Apply a reviewed import plan. Pass the planHash from import_plan (the apply is refused if the source changed since). local-docker adopts the host's containers in place; a remote source (Coolify/Dokploy) COPIES each app onto targetServerId. Optional mapping (+ the mappingHash from import_mapping_resolve) renames and re-places items; if a saved mapping exists for the source the apply is refused (409) unless you send the mapping or ignoreStoredMapping. Blocked env rows (app.env.unresolved / app.env.key.invalid) are skipped unless acknowledged via acks. dbDataModes (Coolify/Dokploy) must be EXACTLY what import_plan was called with (it is part of the planHash; a mismatch is a 409). Returns an opId to poll with import_status.",
+      "Apply a reviewed import plan. Pass the planHash from import_plan (the apply is refused if the source changed since). local-docker adopts the host's containers in place; a remote source (Coolify/Dokploy/CapRover) COPIES each app onto targetServerId. Optional mapping (+ the mappingHash from import_mapping_resolve) renames and re-places items; if a saved mapping exists for the source the apply is refused (409) unless you send the mapping or ignoreStoredMapping. Blocked env rows (app.env.unresolved / app.env.key.invalid) are skipped unless acknowledged via acks. dbDataModes (Coolify/Dokploy) must be EXACTLY what import_plan was called with (it is part of the planHash; a mismatch is a 409). Returns an opId to poll with import_status.",
     scope: "deploy",
     inputSchema: {
       type: "object",

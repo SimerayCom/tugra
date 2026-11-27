@@ -1,6 +1,7 @@
 import { ImportSourceFactory } from "./import-source.factory";
 import { CoolifySource } from "./coolify.source";
 import { DokploySource } from "./dokploy.source";
+import { CaproverSource } from "./caprover.source";
 import { AgentCoolifySource } from "./agent-coolify.source";
 
 describe("ImportSourceFactory", () => {
@@ -24,6 +25,36 @@ describe("ImportSourceFactory", () => {
     expect(src).toBeInstanceOf(DokploySource);
     expect(src.kind).toBe("dokploy");
     expect(dokployCreate).toHaveBeenCalledWith("https://d.example.com:3000", "KEY");
+  });
+
+  describe("caprover", () => {
+    const build = () => {
+      const create = jest.fn(() => ({ get: jest.fn() }));
+      const login = jest.fn(async () => "LOGIN_TOKEN");
+      const factory = new ImportSourceFactory({ create: jest.fn() } as never, { create: jest.fn() } as never, undefined, undefined, { create, login } as never);
+      return { factory, create, login };
+    };
+
+    it("builds a CaproverSource over a client wired with the baseUrl + login token", () => {
+      const { factory, create } = build();
+      const src = factory.create("caprover", "https://captain.example.com", "LOGIN_TOKEN");
+      expect(src).toBeInstanceOf(CaproverSource);
+      expect(src.kind).toBe("caprover");
+      expect(create).toHaveBeenCalledWith("https://captain.example.com", "LOGIN_TOKEN");
+    });
+
+    it("exchanges the typed password for a login token; the other kinds keep what was typed", async () => {
+      const { factory, login } = build();
+      await expect(factory.credential("caprover", "https://captain.example.com", "dash-pw")).resolves.toBe("LOGIN_TOKEN");
+      expect(login).toHaveBeenCalledWith("https://captain.example.com", "dash-pw");
+      await expect(factory.credential("coolify", "https://c.example.com", "TOK")).resolves.toBe("TOK");
+      await expect(factory.credential("dokploy", "https://d.example.com", "KEY")).resolves.toBe("KEY");
+      expect(login).toHaveBeenCalledTimes(1);
+    });
+
+    it("labels the kind", () => {
+      expect(build().factory.label("caprover")).toBe("CapRover");
+    });
   });
 
   it("builds the agent source for an agent session: a CoolifySource over the agent read, no HTTP client, no token", () => {

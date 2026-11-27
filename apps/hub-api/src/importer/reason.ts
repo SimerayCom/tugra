@@ -103,6 +103,13 @@ export const REASON_EN: Record<ImportReasonCode, string> = {
   dokploy_build_secrets: "build secret values are not read; re-add them as Tugra build secrets",
   dokploy_swarm_labels: "Dokploy Swarm service labels are not carried (Tugra custom labels are container labels)",
   dokploy_domains: "preview or disabled domains are not carried",
+  caprover_registry: "the app image lives in the registry CapRover pushes to; the registry credential is not carried, so add the registry in Tugra before deploying",
+  caprover_nginx_config: "the app has a custom nginx configuration, which Tugra does not carry; re-create its rules as Tugra redirects, domain options or a custom label",
+  caprover_pre_deploy: "the app has a pre-deploy function; Tugra does not run it, so move that step into the build or the start command",
+  caprover_service_override: "the app overrides its Docker service settings (service update override); Tugra does not carry it, so set limits, labels and the command in Tugra",
+  caprover_redirect_domain: "the app redirects all traffic to another domain; Tugra serves every domain of an app, so add a redirect rule in Tugra if you need it",
+  caprover_default_domain: "the app is served on a sub-domain of the CapRover root domain; that name is not carried, so add a domain in Tugra",
+  caprover_captain_definition: "the build is described by a captain-definition file in the repository; Tugra builds the Dockerfile in the repository, so check the first build",
 };
 
 /** A reason by code: the English fallback text rendered from its params, the code and the params themselves. */

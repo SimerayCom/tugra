@@ -28,6 +28,7 @@ import { VxRecoveryService } from "./volume-stream/vx-recovery.service";
 import { VxPartRegistry } from "./volume-stream/vx-part-registry";
 import { CoolifyClientFactory } from "./sources/coolify-client.factory";
 import { DokployClientFactory } from "./sources/dokploy-client.factory";
+import { CaproverClientFactory } from "./sources/caprover-client.factory";
 import { ImportSourceFactory } from "./sources/import-source.factory";
 import { EgressIpService } from "./egress-ip.service";
 import { ImportSettingsService } from "./settings/import-settings.service";
@@ -49,7 +50,7 @@ import { AgentSecretsAdapter } from "./agent-secrets.adapter";
 @Module({
   imports: [MigratorModule, CryptoModule, ApplicationsModule, DatabasesModule, BackupsModule, VolumeBackupsModule, GitSourcesModule, ProjectsModule, AgentGatewayModule, AppMovesModule, NotificationsModule, DestinationsModule, SharedVariablesModule, ScheduledTasksModule, ServerOpsModule, TeamsModule, CoolifyTakeoverModule],
   controllers: [ImporterController, MigrationIngestController, MigrationArtifactController, MigrationVolumeController],
-  providers: [ImporterService, ImportExecutorService, GitLinkResolverService, ImportGitLinksService, MigrationTokenService, MigrationTokenGuard, MigrationIngestService, EgressIpService, CoolifyClientFactory, DokployClientFactory, ImportSourceFactory, AgentCoolifyReader, CutoverCertService, ImportMappingService, VxService, VxApplyService, VxRecoveryService, VxPartRegistry, ImportSettingsService, AgentSecretsAdapter],
+  providers: [ImporterService, ImportExecutorService, GitLinkResolverService, ImportGitLinksService, MigrationTokenService, MigrationTokenGuard, MigrationIngestService, EgressIpService, CoolifyClientFactory, DokployClientFactory, CaproverClientFactory, ImportSourceFactory, AgentCoolifyReader, CutoverCertService, ImportMappingService, VxService, VxApplyService, VxRecoveryService, VxPartRegistry, ImportSettingsService, AgentSecretsAdapter],
   exports: [ImporterService, ImportExecutorService, CutoverCertService, ImportMappingService], // the MCP server wraps these as import_* tools
 })
 export class ImporterModule {}
