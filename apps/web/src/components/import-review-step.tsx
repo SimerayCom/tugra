@@ -13,7 +13,8 @@ import { ImportBulkBar } from "./import-bulk-bar";
 import { ImportConflictsPanel } from "./import-conflicts-panel";
 import { ImportMappingIo } from "./import-mapping-io";
 import { useProjectChoices } from "./project-picker";
-import { applyScopeToDoc, projectChoicesFor, type ImportScope } from "../lib/import-scope";
+import { applyScopeToDoc, mappedTeamsOf, projectChoicesFor, type ImportScope } from "../lib/import-scope";
+import { recoveryOf, type ImportRecovery } from "../lib/import-recovery";
 import {
   applyBulk,
   buildTemplate,
@@ -42,6 +43,8 @@ interface ResolveState {
   key: string | null;
   pending: boolean;
   error: string | null;
+  /** Set when the resolve failed because the source changed or the session ended: the step offers the way out instead of the raw sentence. */
+  recovery?: ImportRecovery | null;
 }
 
 /** The "Review & rename" step: edit names and placement, see conflicts against the target, then apply. The hub's
@@ -58,6 +61,8 @@ export function ImportReviewStep({
   onApplied,
   onBack,
   onConsentRequired,
+  onRecheck,
+  onSessionEnded,
 }: {
   plan: ImportPlan;
   kind: ImportRemoteKind;
@@ -73,6 +78,10 @@ export function ImportReviewStep({
   onBack: () => void;
   /** The hub refused the apply for want of the consent for secret values: the plan step can ask for it again. */
   onConsentRequired?: () => void;
+  /** The source changed since the plan was read: read it again (the screen stays where it is, and resolves again on the new plan). */
+  onRecheck?: () => void;
+  /** The hub session ended: back to the connect form. */
+  onSessionEnded?: () => void;
 }) {
   const t = useT();
   const toast = useToast();
@@ -81,10 +90,26 @@ export function ImportReviewStep({
   const scopeKey = plan.mapping?.scopeKey ?? "";
   const scope = useMemo(() => ({ sourceKind: kind, ...(scopeKey ? { scopeKey } : {}) }), [kind, scopeKey]);
 
-  const inScopeDoc = (d: ImportMappingDoc) => (importScope?.narrowed ? applyScopeToDoc(d, plan, importScope.inScope) : d);
+  // What the first step chose is the move: out-of-scope items start excluded and in-scope ones included, whatever a saved profile of an
+  // earlier (partial) move says. Loading a file, resetting and the bulk "Reset" go back to that choice, not to "everything".
+  const inScopeDoc = (d: ImportMappingDoc) => (importScope ? applyScopeToDoc(d, plan, importScope.inScope) : d);
   const [state, dispatch] = useReducer(mappingReducer, undefined, () => initMappingState(inScopeDoc(plan.mapping?.stored ? { ...plan.mapping.stored, scope } : emptyDoc(scope))));
+  // items the saved profile left out that this move covers: they are in again, and the owner is told
+  const reincluded = useMemo(() => {
+    const stored = plan.mapping?.stored;
+    if (!stored || !importScope) return 0;
+    return Object.entries(stored.items).filter(([ref, v]) => v.include === false && importScope.inScope.has(ref)).length;
+    // the profile is read once, when the step opens
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const doc = state.doc;
-  const [serverId, setServerId] = useState(importScope?.defaultServerId && servers.some((s) => s.id === importScope.defaultServerId) ? importScope.defaultServerId : servers[0]?.id ?? "");
+  const [serverId, setServerId] = useState(() => {
+    const allowedIds = (() => {
+      const teamsOf = importScope ? mappedTeamsOf(plan, importScope.inScope) : [];
+      return teamsOf.length > 0 && !importScope?.serverMap ? servers.filter((s) => teamsOf.includes(s.teamId)) : servers;
+    })();
+    return importScope?.defaultServerId && allowedIds.some((s) => s.id === importScope.defaultServerId) ? importScope.defaultServerId : allowedIds[0]?.id ?? "";
+  });
   const serverMap = importScope?.serverMap;
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<ReviewFilter>("all");
@@ -99,6 +124,9 @@ export function ImportReviewStep({
   const template = useMemo(() => buildTemplate(plan, scope), [plan, scope]);
   const items = useMemo(() => mappableItems(plan), [plan]);
   const nameOf = (ref: string) => items.find((i) => i.itemRef === ref)?.name ?? ref;
+  // With a team mapping, the in-scope items go only to servers of the Tugra team(s) their Coolify team was mapped to.
+  const mappedTeams = useMemo(() => (importScope ? mappedTeamsOf(plan, importScope.inScope) : []), [plan, importScope]);
+  const choosable = useMemo(() => (mappedTeams.length > 0 && !importScope?.serverMap ? servers.filter((s) => mappedTeams.includes(s.teamId)) : servers), [servers, mappedTeams, importScope]);
   const target = servers.find((s) => s.id === serverId);
   const targetTeam = teams.find((x) => x.id === target?.teamId)?.name ?? target?.teamId ?? "";
 
@@ -108,7 +136,8 @@ export function ImportReviewStep({
   const { data: stored } = useQuery({ queryKey: ["import-mapping", sessionId], queryFn: () => api.importMappingGet(sessionId), enabled: bannerShown });
 
   // Debounced, authoritative resolve (instant on entry). A stale response is dropped via `cancelled`.
-  const docKey = useMemo(() => JSON.stringify([doc, serverId, reconcile, nonce, serverMap ?? null]), [doc, serverId, reconcile, nonce, serverMap]);
+  // the plan hash is part of it: a plan read again resolves again
+  const docKey = useMemo(() => JSON.stringify([doc, serverId, reconcile, nonce, serverMap ?? null, plan.planHash]), [doc, serverId, reconcile, nonce, serverMap, plan.planHash]);
   useEffect(() => {
     if (!serverId || ignoreSaved) return;
     let cancelled = false;
@@ -118,7 +147,7 @@ export function ImportReviewStep({
         api
           .importResolve({ sessionId, sourceKind: kind, planHash: plan.planHash, targetServerId: serverId, reconcile, ...(serverMap ? { serverMap } : {}), ...(applyExtras?.acks ? { acks: applyExtras.acks } : {}), ...(applyExtras?.dbDataModes ? { dbDataModes: applyExtras.dbDataModes } : {}), mapping: doc })
           .then((r) => !cancelled && setRs({ resolved: r, key: docKey, pending: false, error: null }))
-          .catch((e) => !cancelled && setRs((s) => ({ ...s, pending: false, error: (e as Error).message })));
+          .catch((e) => !cancelled && setRs((s) => ({ ...s, pending: false, error: (e as Error).message, recovery: recoveryOf(e) })));
       },
       first.current ? 0 : 800,
     );
@@ -176,6 +205,18 @@ export function ImportReviewStep({
         onConsentRequired?.();
         return;
       }
+      const recovery = recoveryOf(e);
+      if (recovery === "plan_changed" && onRecheck) {
+        // the source moved: read it again here (the edits stay) instead of answering the same 409 on every retry
+        toast(t("import.recover.planChanged"), "error");
+        onRecheck();
+        return;
+      }
+      if (recovery === "session_ended" && onSessionEnded) {
+        toast(t("import.recover.sessionEnded"), "error");
+        onSessionEnded();
+        return;
+      }
       toast(errText(e, t), "error");
       if ((e as { code?: string }).code === "import.mapping_changed") setNonce((n) => n + 1); // re-resolve against the new state
     },
@@ -198,9 +239,9 @@ export function ImportReviewStep({
   // Servers grouped by their team (the target team is derived from the chosen server — read-only).
   const byTeam = useMemo(() => {
     const m = new Map<string, typeof servers>();
-    for (const s of servers) m.set(s.teamId, [...(m.get(s.teamId) ?? []), s]);
+    for (const s of choosable) m.set(s.teamId, [...(m.get(s.teamId) ?? []), s]);
     return [...m.entries()];
-  }, [servers]);
+  }, [choosable]);
 
   const applyLabel = ignoreSaved ? t("import.review.apply") : t("import.review.applyCounts", { apps: counts.apps, databases: counts.databases, excluded: counts.excluded });
 
@@ -228,6 +269,8 @@ export function ImportReviewStep({
           </div>
         )}
 
+        {bannerShown && reincluded > 0 && <p role="status" data-testid="profile-reincluded" style={{ fontSize: 12, color: "var(--c-am)", margin: "0 0 12px" }}>{t("import.review.profileReincluded", { count: reincluded })}</p>}
+
         {serverMap ? (
           <>
             <div style={label}>{t("import.review.placement")}</div>
@@ -240,7 +283,7 @@ export function ImportReviewStep({
         ) : (
           <label style={label} htmlFor="imp-review-target">{t("import.review.targetServer")}</label>
         )}
-        {serverMap ? null : servers.length === 0 ? (
+        {serverMap ? null : choosable.length === 0 ? (
           <p style={{ fontSize: 12, color: "var(--c-am)", margin: "0 0 8px" }}>{t("import.review.noTarget")}</p>
         ) : (
           <select id="imp-review-target" style={{ ...field, maxWidth: 360 }} value={serverId} onChange={(e) => setServerId(e.target.value)}>
@@ -281,13 +324,15 @@ export function ImportReviewStep({
                 projects={projectChoices}
                 count={items.length}
                 label={t("import.review.bulk.title")}
-                onApply={(op) =>
-                  edit(applyBulk(doc, items.map((i) => ({ itemRef: i.itemRef, sourceName: i.name, name: doc.items[i.itemRef]?.name ?? i.name, environment: resolved?.effective.find((e) => e.itemRef === i.itemRef)?.environment ?? null })), op))
-                }
+                onApply={(op) => {
+                  const next = applyBulk(doc, items.map((i) => ({ itemRef: i.itemRef, sourceName: i.name, name: doc.items[i.itemRef]?.name ?? i.name, environment: resolved?.effective.find((e) => e.itemRef === i.itemRef)?.environment ?? null })), op);
+                  // "Reset" goes back to what the first step chose; "Include" is the owner bringing everything back on purpose
+                  edit(op.type === "reset" ? inScopeDoc(next) : next);
+                }}
               />
               <Btn variant="ghost" icon={Save} onClick={() => save.mutate()} loading={save.isPending}>{t("import.review.saveProfile")}</Btn>
             </div>
-            <ImportMappingIo doc={doc} template={template} kind={kind} scopeKey={scopeKey} onLoad={(d) => edit({ ...d, scope })} />
+            <ImportMappingIo doc={doc} template={template} kind={kind} scopeKey={scopeKey} onLoad={(d) => edit(inScopeDoc({ ...d, scope }))} />
 
             <div aria-live="polite" style={{ fontSize: 12, color: "var(--c-tx3)", margin: "12px 0" }}>
               {rs.pending ? (
@@ -296,7 +341,19 @@ export function ImportReviewStep({
                 t("import.review.live", { apps: counts.apps, databases: counts.databases, renamed: counts.renamed, moved: counts.moved, excluded: counts.excluded, errors: counts.errors, warnings: counts.warnings })
               )}
             </div>
-            {rs.error && <div role="alert" style={{ fontSize: 12, color: "var(--c-r)", marginBottom: 8 }}>{t("import.review.resolveFailed", { message: rs.error })}</div>}
+            {rs.error && rs.recovery === "plan_changed" && onRecheck ? (
+              <div role="alert" data-testid="review-plan-changed" style={{ fontSize: 12, color: "var(--c-am)", marginBottom: 8, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                <span style={{ flex: "1 1 220px" }}>{t("import.recover.reviewPlanChanged")}</span>
+                <Btn variant="ghost" onClick={onRecheck}>{t("import.recover.readAgain")}</Btn>
+              </div>
+            ) : rs.error && rs.recovery === "session_ended" && onSessionEnded ? (
+              <div role="alert" data-testid="review-session-ended" style={{ fontSize: 12, color: "var(--c-am)", marginBottom: 8, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                <span style={{ flex: "1 1 220px" }}>{t("import.recover.reviewSessionEnded")}</span>
+                <Btn variant="ghost" onClick={onSessionEnded}>{t("import.recover.connectAgain")}</Btn>
+              </div>
+            ) : (
+              rs.error && <div role="alert" style={{ fontSize: 12, color: "var(--c-r)", marginBottom: 8 }}>{t("import.review.resolveFailed", { message: rs.error })}</div>
+            )}
 
             <div style={{ fontSize: 11, color: "var(--c-tx3)", display: "flex", flexDirection: "column", gap: 2, marginBottom: 12 }}>
               <span>{t("import.review.hint.rename")}</span>
@@ -313,8 +370,11 @@ export function ImportReviewStep({
               filter={filter}
               projects={projectChoices}
               onEdit={(ref, f, v, src) => edit(setItemField(doc, ref, f, v, src))}
-              onResetItem={(ref) => edit(resetItem(doc, ref))}
-              onBulk={(rows, op) => edit(applyBulk(doc, rows, op))}
+              onResetItem={(ref) => edit(inScopeDoc(resetItem(doc, ref)))}
+              onBulk={(rows, op) => {
+                const next = applyBulk(doc, rows, op);
+                edit(op.type === "reset" ? inScopeDoc(next) : next);
+              }}
               onMoveGroup={(rows, project) => edit(moveRows(doc, rows, project))}
             />
 

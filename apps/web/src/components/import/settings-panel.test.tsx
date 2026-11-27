@@ -51,6 +51,13 @@ describe("ImportSettingsPanel", () => {
     vi.spyOn(api, "importSettingsPreview").mockResolvedValue(base);
   });
 
+  it("says which Tugra team the settings go into when it is known", async () => {
+    wrap(<ImportSettingsPanel sessionId="s1" kind="coolify" teamId="t9" teamName="Northwind" servers={[]} />);
+    await screen.findByText("Notification channels");
+    expect(screen.getByTestId("settings-team").textContent).toBe("These settings go into the Tugra team Northwind, the one this Coolify team was mapped to.");
+    expect(api.importSettingsPreview).toHaveBeenCalledWith({ sessionId: "s1", sourceKind: "coolify", teamId: "t9" });
+  });
+
   it("lists each section, says plainly when the API does not offer one, and explains a blocked entry", async () => {
     wrap(<ImportSettingsPanel sessionId="s1" kind="coolify" servers={[]} />);
     await screen.findByText("Notification channels");

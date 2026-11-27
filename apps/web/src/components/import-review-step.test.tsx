@@ -384,6 +384,88 @@ describe("ImportReviewStep", () => {
     expect(await screen.findByRole("button", { name: "Apply 2 apps, 1 databases; 0 excluded" }, { timeout: 3000 })).toBeTruthy();
   }, 15000);
 
+  const scopeOf = (inScope: string[], over: Partial<ImportScope> = {}): ImportScope => ({ selection: { mode: "servers", hosts: new Set(), projects: new Set(), extra: new Set(), placement: {} }, inScope: new Set(inScope), narrowed: inScope.length < 3, defaultServerId: "srv1", serverMap: undefined, placed: {}, placementKind: {}, ...over });
+
+  it("uploading a mapping file keeps what the scope left out: the file cannot bring an out-of-scope item back", async () => {
+    mount(plan(), { importScope: scopeOf([APP]) });
+    await screen.findByRole("button", { name: /^Apply 1 apps, 0 databases; 2 excluded/ }, { timeout: 3000 });
+    // a file made before the scope was chosen, with every item included and one renamed
+    const file = new File([JSON.stringify({ version: 1, scope: { sourceKind: "coolify", scopeKey: "team-3" }, items: { [APP]: { name: "Storefront" }, [WORKER]: { name: "Worker2" } }, projects: {}, gitSources: {}, acks: [] })], "m.json", { type: "application/json" });
+    fireEvent.change(screen.getByLabelText("Upload mapping", { selector: "input" }), { target: { files: [file] } });
+    fireEvent.click(await screen.findByRole("button", { name: "Load file" }));
+    await waitFor(() => expect(resolveSpy.mock.calls.at(-1)?.[0]).toMatchObject({ mapping: { items: { [APP]: { name: "Storefront" } } } }), { timeout: 3000 });
+    const sent = resolveSpy.mock.calls.at(-1)![0] as { mapping: ImportMappingDoc };
+    expect(sent.mapping.items[WORKER]).toMatchObject({ include: false }); // still out of the move
+    expect(sent.mapping.items[DB]).toMatchObject({ include: false });
+  }, 15000);
+
+  it("a row's reset on an excluded out-of-scope item puts it back out of the move, not into it", async () => {
+    mount(plan(), { importScope: scopeOf([APP]) });
+    await screen.findByRole("button", { name: /^Apply 1 apps, 0 databases; 2 excluded/ }, { timeout: 3000 });
+    const rowResets = screen.getAllByRole("button", { name: "Reset" }); // the rows of the items the scope left out (not "Reset all")
+    expect(rowResets).toHaveLength(2);
+    for (const r of rowResets) fireEvent.click(r);
+    await waitFor(() => expect(screen.getByRole("button", { name: /^Apply 1 apps, 0 databases; 2 excluded/ })).toBeTruthy(), { timeout: 3000 });
+    const sent = resolveSpy.mock.calls.at(-1)![0] as { mapping: ImportMappingDoc };
+    expect(sent.mapping.items[WORKER]).toMatchObject({ include: false });
+  }, 15000);
+
+  it("a saved profile of an earlier partial move does not carry its exclusions into an everything move: they are included again, and the owner is told", async () => {
+    // the profile of the first move (server A only) left WORKER and the database out
+    const stored: ImportMappingDoc = { version: 1, items: { [WORKER]: { include: false }, [DB]: { include: false } }, projects: {}, gitSources: {}, acks: [] };
+    vi.spyOn(api, "importMappingGet").mockResolvedValue({ doc: stored, version: 2, label: null, lastAppliedAt: "2026-11-01T10:00:00.000Z" });
+    mount(plan({ mapping: { features: ["mapping-v1"], stored, storedVersion: 2, scopeKey: "team-3" } as never }), { importScope: scopeOf([APP, WORKER, DB], { narrowed: false }) });
+    expect(await screen.findByRole("button", { name: "Apply 2 apps, 1 databases; 0 excluded" }, { timeout: 3000 })).toBeTruthy();
+    const first = resolveSpy.mock.calls[0][0] as { mapping: ImportMappingDoc };
+    expect(first.mapping.items[WORKER]).toBeUndefined();
+    expect(first.mapping.items[DB]).toBeUndefined();
+    expect(screen.getByTestId("profile-reincluded").textContent).toContain("2");
+  }, 15000);
+
+  it("a plan that changed while reviewing is a 'Read again' action, not a raw sentence; the new plan resolves again on its own", async () => {
+    const { ApiError } = await import("../lib/api");
+    resolveSpy.mockRejectedValue(new ApiError(409, "the plan changed since it was previewed — re-run the plan and review again", "plan_changed"));
+    const onRecheck = vi.fn();
+    wrap(<ImportReviewStep plan={plan()} kind="coolify" sessionId="s1" servers={servers} teams={teams} onApplied={() => undefined} onBack={() => undefined} onRecheck={onRecheck} />);
+    const note = await screen.findByTestId("review-plan-changed");
+    expect(note.textContent).toContain("The source changed while you were reviewing");
+    expect(screen.queryByText(/re-run the plan/)).toBeNull();
+    fireEvent.click(within(note).getByRole("button", { name: "Read again" }));
+    expect(onRecheck).toHaveBeenCalledTimes(1);
+  });
+
+  it("an apply that finds the plan changed reads the source again and says so", async () => {
+    const { ApiError } = await import("../lib/api");
+    vi.spyOn(api, "importApply").mockRejectedValue(new ApiError(409, "the plan changed", "plan_changed"));
+    const onRecheck = vi.fn();
+    wrap(<ImportReviewStep plan={plan()} kind="coolify" sessionId="s1" servers={servers} teams={teams} onApplied={() => undefined} onBack={() => undefined} onRecheck={onRecheck} />);
+    const apply = await screen.findByRole("button", { name: /^Apply 2 apps/ });
+    await waitFor(() => expect((apply as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(apply);
+    fireEvent.click(await screen.findByRole("button", { name: "Confirm" }));
+    await waitFor(() => expect(onRecheck).toHaveBeenCalledTimes(1));
+    expect(toasts.some((m) => m.startsWith("The source changed since you read it"))).toBe(true);
+  });
+
+  it("an ended session during the review offers 'Connect again'", async () => {
+    const { ApiError } = await import("../lib/api");
+    resolveSpy.mockRejectedValue(new ApiError(400, "import session expired or revoked — reconnect", "session_ended"));
+    const onSessionEnded = vi.fn();
+    wrap(<ImportReviewStep plan={plan()} kind="coolify" sessionId="s1" servers={servers} teams={teams} onApplied={() => undefined} onBack={() => undefined} onSessionEnded={onSessionEnded} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Connect again" }));
+    expect(onSessionEnded).toHaveBeenCalledTimes(1);
+  });
+
+  it("with a team mapping, the target list holds only servers of the Tugra team the items were mapped to", async () => {
+    const mapped = plan({
+      preflight: { databases: [], services: [], appsWithVolumeData: 0, teamMap: { "1": "t2" }, hosts: [{ ref: "srv", name: "box", team: { ref: "1", name: "Acme" } }] } as never,
+    });
+    mount(mapped, { importScope: scopeOf([APP, WORKER, DB], { narrowed: false, defaultServerId: "" }) });
+    const select = (await screen.findByLabelText("Target server")) as HTMLSelectElement;
+    expect(Array.from(select.options).map((o) => o.textContent)).toEqual(["Server B"]);
+    expect(select.value).toBe("srv2");
+  });
+
   it("a row's project is a dropdown of the team's projects with '+ New project' first, and the choice lands in the mapping", async () => {
     mount();
     const apply0 = await screen.findByRole("button", { name: /^Apply 2 apps/ });

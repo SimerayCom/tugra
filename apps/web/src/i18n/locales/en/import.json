@@ -79,7 +79,7 @@
   "rollback": "Roll back",
   "rollingBack": "Rolling back…",
   "rollbackTitle": "Roll back this import?",
-  "rollbackBody": "Removes the apps this import created on the target server. Apps you have deployed since are kept. This cannot be undone.",
+  "rollbackBody": "Removes the apps this import created on the target server, and the databases it created that are still empty. Kept: apps you have deployed since, databases that already have data or backups, and the projects, git sources and settings the import made. This cannot be undone.",
   "coverageTitle": "What isn't carried over",
   "coverageWarn": "Review",
   "coverageInfo": "Note",
@@ -577,7 +577,8 @@
     "excludeGroup": "Exclude this project",
     "placement": "Where each server goes",
     "placementRow": "{from} → {to}",
-    "dragHint": "Drag onto another project to move it"
+    "dragHint": "Drag onto another project to move it",
+    "profileReincluded": "Items the saved profile left out that this move covers are included again: {count}. Leave any out below."
   },
   "conflict": {
     "panelTitle": "Conflicts and notes",
@@ -891,7 +892,9 @@
     "inPlaceNotFound": "Could not tell which of Coolify's servers is {server}. Pick what to move below.",
     "multiTeamNote": "These servers are in {count} teams. Tugra makes one campaign per team and creates them together.",
     "multiTeamGuided": "Servers of several teams move through the guided run below, which makes one campaign per team.",
-    "confirmedMachine": "You confirmed this machine. Change it if that is not right."
+    "confirmedMachine": "You confirmed this machine. Change it if that is not right.",
+    "inPlaceGuided": "A server that stays on its own machine is taken over by the guided run: it tests first, swaps the proxy and can give the machine back. The plain copy is not offered here, because it would only create stopped records on that machine. Use Run guided migration below.",
+    "changeMatch": "Back to matching"
   },
   "settings": {
     "title": "Settings",
@@ -1044,7 +1047,9 @@
     "recovery": {
       "title": "Recovery key",
       "body": "Save it now. It is shown only once."
-    }
+    },
+    "into": "These settings go into the Tugra team {team}, the one this Coolify team was mapped to.",
+    "leftOut": "The Coolify team you read is left out of the move, so its settings (notification channels, variables, invitations) are not carried."
   },
   "tokenMore": {
     "scope": "Create it as a team admin or owner, for the whole team (not limited to some projects or environments).",
@@ -1143,6 +1148,29 @@
     "saveFailed": "Could not save the team mapping: {reason}",
     "noServers": "{team} has no server you can write to yet.",
     "addServer": "Add a server to {team}",
-    "matchedElsewhere": "{server} is the same machine, but it sits in another Tugra team than {team}. Move that server into {team} first, or change the team mapping."
-  }
+    "matchedElsewhere": "{server} is the same machine, but it sits in another Tugra team than {team}. Move that server into {team} first, or change the team mapping.",
+    "moveServer": "Move that server to {team}",
+    "back": "Back"
+  },
+  "recover": {
+    "planChanged": "The source changed since you read it. Reading it again now; your choices stay.",
+    "sessionEnded": "This import session ended. Connect again to continue.",
+    "readAgain": "Read again",
+    "reading": "Reading…",
+    "readNothing": "Read again. Nothing changed in the source.",
+    "readDelta": "Read again. In the source: {added} new, {removed} gone, {changed} changed.",
+    "resumeTitle": "Could not read the source just now",
+    "resumeDesc": "Your import session is still open, with your team mapping, answers and consent. Nothing was lost.",
+    "retry": "Try again",
+    "retrying": "Reading…",
+    "reason": {
+      "forbidden": "You no longer have the access this read needs, or the read was withdrawn for this server.",
+      "server": "The hub could not answer just now. Try again in a moment.",
+      "network": "The hub could not be reached. Check your connection and try again."
+    },
+    "reviewPlanChanged": "The source changed while you were reviewing. Read it again to continue; your edits stay.",
+    "reviewSessionEnded": "This import session ended. Connect again; the review will start from the saved profile.",
+    "connectAgain": "Connect again"
+  },
+  "rollbackDone": "Rolled back."
 }

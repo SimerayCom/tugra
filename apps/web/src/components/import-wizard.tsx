@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { TriangleAlert } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { api } from "../lib/api";
+import { api, ApiError } from "../lib/api";
 import { useT } from "../i18n/provider";
 import { Card, SectionCard, Btn, EmptyState, Spinner } from "./ui";
 import { useToast } from "./toast";
@@ -13,7 +13,8 @@ import { CopyBtn } from "./copy-row";
 import { ImportReviewStep } from "./import-review-step";
 import { ImportScopeStep } from "./import-scope-step";
 import type { SourceServerRow } from "../lib/migration-run";
-import { scopedPlan, scopeServiceSkips, splitByPlacement, type ImportScope, type ScopeSelection } from "../lib/import-scope";
+import { overallPlacement, scopedPlan, scopeServiceSkips, splitByPlacement, type ImportScope, type ScopeSelection } from "../lib/import-scope";
+import { planDelta, recoveryOf, sessionGone } from "../lib/import-recovery";
 import { clearImportResume, loadImportResume, saveImportResume } from "../lib/import-resume";
 import { IMPORT_PREFILL_KEY } from "../lib/coolify-takeover";
 import { focusSelection, focusSubject, lastImportUrl, rememberLastImportUrl, takeImportFocus, type ImportFocus } from "../lib/import-focus";
@@ -28,7 +29,7 @@ import { ImportServicesPanel } from "./import-services-panel";
 import { ConnectionStatus, useConnectionTest } from "./import/connection-test";
 import { AgentConnectPanel } from "./import/agent-connect";
 import { ResumeNote } from "./import/resume-note";
-import { coolifyTeams, teamScope } from "../lib/import-team";
+import { coolifyTeams, settingsTeamOf, teamScope } from "../lib/import-team";
 import { TeamMapStep } from "./import/team-map-step";
 import { AgentMatchStep } from "./import/agent-match-step";
 import { isConsentRequired, needsConsent, needsMatchStep } from "../lib/coolify-agent";
@@ -77,6 +78,21 @@ const WARNINGS_SHOWN = 12;
 /** An operation's source kind (a string from the hub) narrowed to a wizard source; anything unknown reads as Coolify. */
 const asRemoteKind = (k: string | null | undefined): ImportRemoteKind => (k === "dokploy" || k === "caprover" ? k : "coolify");
 
+/** Why a re-read of a kept session failed, in plain words: the agent's own reasons where the hub named one, else its message. */
+function resumeReason(e: unknown, t: (key: string, vars?: Record<string, string | number>) => string): string {
+  if (e instanceof ApiError) {
+    for (const key of [`coolifyAgent.error.${e.code ?? ""}`, `import.recover.reason.${e.code ?? ""}`]) {
+      const text = t(key);
+      if (e.code && text !== key) return text;
+    }
+    if (e.status === 503 || e.status === 409) return t("coolifyAgent.error.agent_offline");
+    if (e.status === 403) return t("import.recover.reason.forbidden");
+    if (e.status >= 500) return t("import.recover.reason.server");
+    return e.message;
+  }
+  return t("import.recover.reason.network");
+}
+
 /** The import wizard: pick a source (Coolify / Dokploy / CapRover) → connect → preview (secret-free plan) → apply onto a
  *  target Tugra server → watch the live timeline. Local-docker container adoption keeps its own UI on a server's page. */
 export function ImportWizard() {
@@ -101,6 +117,7 @@ export function ImportWizard() {
   const [labelTouched, setLabelTouched] = useState(false);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [plan, setPlan] = useState<ImportPlan | null>(null);
+  const planRef = useRef<ImportPlan | null>(null);
   const [opId, setOpId] = useState<string | null>(null);
   // Per-database data mode chosen at review (PostgreSQL volume copy). Part of the plan: changing it re-plans, so the
   // planHash the apply is bound to always reflects what the owner reviewed.
@@ -112,6 +129,12 @@ export function ImportWizard() {
   // The step's live selection (kept in sessionStorage so a refresh resumes at the first step), and why a resume did not work.
   const liveSelection = useRef<ScopeSelection | undefined>(undefined);
   const [resumeNote, setResumeNote] = useState<"expired" | null>(null);
+  // A refresh whose re-read failed while the hub session is still alive (an outage, the agent offline, a stopped Coolify database): the
+  // session is kept and the owner sees why with a retry; only an ended session sends them back to the connect form.
+  const [resumeFailure, setResumeFailure] = useState<string | null>(null);
+  const lastResume = useRef<{ sid: string; kind?: ImportRemoteKind; modes?: Record<string, "volume"> } | null>(null);
+  // Bumped when a re-read ticks the server a visit was waiting for, so the mounted first step starts again on that pick.
+  const [scopeEpoch, setScopeEpoch] = useState(0);
   // True while the step on screen is one a refresh brought back (a one-line note says why); gone once dismissed or the owner moves on.
   const [resumedStep, setResumedStep] = useState(false);
   // The picked Coolify team narrows the match, scope and placement lists; this opens them to every team.
@@ -132,7 +155,9 @@ export function ImportWizard() {
   const writableRef = useRef(writableServers);
   writableRef.current = writableServers;
   const connectTeam = writableServers[0]?.teamId ?? teams[0]?.id ?? "";
-  const effectiveTeam = (scope && servers.find((s) => s.id === scope.defaultServerId)?.teamId) || connectTeam;
+  // The settings of the picked Coolify team go to the Tugra team it was mapped to; without a mapping, to the team of the first placed server.
+  const mappedSettingsTeam = settingsTeamOf(plan);
+  const effectiveTeam = (typeof mappedSettingsTeam === "string" ? mappedSettingsTeam : undefined) || (scope && servers.find((s) => s.id === scope.defaultServerId)?.teamId) || connectTeam;
   const src = SRC[kind];
 
   // The wizard's state is in-memory, so keep the running op in the URL (?op=<id>): a reload or a shared link
@@ -204,6 +229,7 @@ export function ImportWizard() {
     setResumedStep(true);
     setLastSelection(r.selection);
     liveSelection.current = r.selection;
+    lastResume.current = { sid: r.sessionId, kind: r.kind, modes: r.dbModes };
     planM.mutate({ sid: r.sessionId, kind: r.kind, modes: r.dbModes, resume: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -221,20 +247,42 @@ export function ImportWizard() {
     const sid = inPlaceSession.current;
     if (!serversReady || !sid) return;
     inPlaceSession.current = null;
+    lastResume.current = { sid, kind: "coolify" };
     planM.mutate({ sid, kind: "coolify", resume: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [serversReady]);
 
+  /** The hub session is gone: forget it and start from the connect form again, with the address kept. */
+  const sessionEnded = () => {
+    clearImportResume();
+    setSessionId(null);
+    setPlan(null);
+    setScope(null);
+    setLastSelection(undefined);
+    liveSelection.current = undefined;
+    setResumeFailure(null);
+    setResumeNote("expired");
+  };
   const planM = useMutation({
-    mutationFn: (v: { sid: string; kind?: ImportRemoteKind; modes?: Record<string, "volume">; resume?: boolean }) =>
+    mutationFn: (v: { sid: string; kind?: ImportRemoteKind; modes?: Record<string, "volume">; resume?: boolean; notify?: boolean }) =>
       api.importPlan({ sourceKind: v.kind ?? kind, sessionId: v.sid, ...(v.modes && Object.keys(v.modes).length ? { dbDataModes: v.modes } : {}) }),
-    onSuccess: (p) => {
+    onSuccess: (p, v) => {
       setResumeNote(null);
+      setResumeFailure(null);
+      // "Read again": say what the second read found different, so a changed source is not a silent swap.
+      if (v.notify) {
+        const d = planDelta(planRef.current, p);
+        toast(d.added + d.removed + d.changed === 0 ? t("import.recover.readNothing") : t("import.recover.readDelta", { added: d.added, removed: d.removed, changed: d.changed }), "success");
+      }
+      planRef.current = p;
       setPlan(p);
       // Start the first step on what the user came for (one server or project), once.
       const f = focusRef.current;
       const sel = focusSelection(p, f, writableRef.current.map((s) => ({ id: s.id, teamId: s.teamId })));
-      if (sel) setLastSelection(sel);
+      if (sel) {
+        setLastSelection(sel);
+        setScopeEpoch((n) => n + 1);
+      }
       const what = focusSubject(p, sel);
       setStartNote(
         f?.inPlaceServerId
@@ -254,13 +302,17 @@ export function ImportWizard() {
     },
     onError: (e, v) => {
       if (v.resume) {
-        // the hub session ended (it lives for an hour): start from the connect form again, with the address kept
-        clearImportResume();
-        setSessionId(null);
-        setPlan(null);
-        setLastSelection(undefined);
-        liveSelection.current = undefined;
-        setResumeNote("expired");
+        // Only an ended session sends the owner back to the connect form. Anything else (the agent offline, Coolify's database stopped,
+        // the opt-in withdrawn, a 5xx, no network) leaves the session alive on the hub: keep it, say why, and let them try again.
+        if (sessionGone(e)) {
+          sessionEnded();
+          return;
+        }
+        setResumeFailure(resumeReason(e, t));
+        return;
+      }
+      if (recoveryOf(e) === "session_ended") {
+        sessionEnded();
         return;
       }
       toast((e as Error).message, "error");
@@ -311,6 +363,8 @@ export function ImportWizard() {
     clearImportResume();
     liveSelection.current = undefined;
     setResumeNote(null);
+    setResumeFailure(null);
+    planRef.current = null;
     setResumedStep(false);
     setShowAllTeams(false);
     setTeamView(null);
@@ -341,9 +395,9 @@ export function ImportWizard() {
     [sessionId, kind, baseUrl, dbModes, showAllTeams, matchedHosts, teamView],
   );
   // a server was just added or an agent came online: read the servers and the plan again so the matches are current
-  const recheck = () => {
+  const recheck = (notify = false) => {
     void qc.invalidateQueries({ queryKey: ["servers"] });
-    if (sessionId) planM.mutate({ sid: sessionId, modes: dbModes });
+    if (sessionId) planM.mutate({ sid: sessionId, modes: dbModes, ...(notify === true ? { notify: true } : {}) });
   };
 
   const busy = connect.isPending || planM.isPending;
@@ -372,6 +426,8 @@ export function ImportWizard() {
             setPlan((p) => (p ? { ...p, preflight: { ...p.preflight!, teamMap } } : p));
           }}
           onStartOver={startOver}
+          // with a mapping saved the step is a visit (from "Change team mapping"): leaving it keeps what was saved
+          onCancel={plan.preflight?.teamMap !== undefined ? () => setEditingTeamMap(false) : undefined}
         />
       </div>
     );
@@ -410,6 +466,7 @@ export function ImportWizard() {
       <div style={{ display: "grid", gap: 16 }}>
         {resumedStep && <div style={{ maxWidth: 720 }}><ResumeNote onDismiss={() => setResumedStep(false)} /></div>}
       <ImportScopeStep
+        key={scopeEpoch}
         plan={plan}
         servers={writableServers.map((s) => ({ id: s.id, name: s.name, teamId: s.teamId, status: s.status, capabilities: s.capabilities, lastSeenAt: s.lastSeenAt }))}
         teams={teams}
@@ -426,6 +483,8 @@ export function ImportWizard() {
         teamView={teamView}
         onTeamView={setTeamView}
         onChangeTeamMap={() => setEditingTeamMap(true)}
+        // the answers of the match step can be corrected after Continue (a wrong "same machine", an old "not the same")
+        onChangeMatch={needsMatchStep(plan) ? () => { setScope(null); setMatchedHosts(false); } : undefined}
       />
       </div>
     );
@@ -451,12 +510,34 @@ export function ImportWizard() {
         }}
         onApplied={setOpId}
         onReset={startOver}
+        onSessionEnded={sessionEnded}
         agentHost={(() => {
           const h = servers.find((x) => x.id === plan.preflight?.agentRead?.agentServerId);
           return h ? { id: h.id, name: h.name, teamId: h.teamId } : null;
         })()}
         onRecheck={recheck}
       />
+    );
+  }
+
+  // The refresh found the session alive but could not read the source: the reason, a retry, and the way out.
+  if (sessionId && resumeFailure) {
+    return (
+      <SectionCard title={t("import.recover.resumeTitle")} desc={t("import.recover.resumeDesc")} style={{ padding: 20, maxWidth: 560, marginBottom: 0 }}>
+        <p role="alert" data-testid="resume-failure" style={{ fontSize: 13, color: "var(--c-am)", margin: "0 0 14px", lineHeight: 1.5 }}>{resumeFailure}</p>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <Btn
+            loading={planM.isPending}
+            onClick={() => {
+              const again = lastResume.current ?? { sid: sessionId };
+              planM.mutate({ ...again, resume: true });
+            }}
+          >
+            {planM.isPending ? t("import.recover.retrying") : t("import.recover.retry")}
+          </Btn>
+          <Btn variant="ghost" onClick={startOver} disabled={planM.isPending}>{t("import.startOver")}</Btn>
+        </div>
+      </SectionCard>
     );
   }
 
@@ -633,6 +714,7 @@ function PlanView({
   onDbModes,
   onApplied,
   onReset,
+  onSessionEnded,
   agentHost,
   onRecheck,
 }: {
@@ -652,10 +734,12 @@ function PlanView({
   onDbModes: (next: Record<string, "volume">) => void;
   onApplied: (opId: string) => void;
   onReset: () => void;
+  /** The hub says the session ended: back to the connect form (the address is kept). */
+  onSessionEnded: () => void;
   /** Agent session: the Tugra server that reads Coolify, to ask for the consent again where the apply is. */
   agentHost: { id: string; name: string; teamId: string } | null;
-  /** Read the plan again (what consent stands is part of it). */
-  onRecheck: () => void;
+  /** Read the plan again (what consent stands is part of it). `true` = the owner asked for it: the answer says what changed. */
+  onRecheck: (notify?: boolean) => void;
 }) {
   const t = useT();
   const toast = useToast();
@@ -664,6 +748,8 @@ function PlanView({
   const { moved, stays } = splitByPlacement(plan, scope);
   // An agent session cannot be applied without the owner's consent for secret values standing now: the controls stay off until it does.
   const consentMissing = needsConsent(fullPlan);
+  // where the settings of the picked Coolify team go: its mapped Tugra team (null = that Coolify team was left out)
+  const settingsTeam = settingsTeamOf(fullPlan);
   const groups = itemsByKind(plan);
   const [targetServerId, setTargetServerId] = useState("");
   const [reviewing, setReviewing] = useState(false);
@@ -708,9 +794,24 @@ function PlanView({
         onRecheck(); // the plan no longer shows a consent: the card to allow it again appears below
         return;
       }
+      const recovery = recoveryOf(e);
+      if (recovery === "plan_changed") {
+        // the source moved since this plan was read: read it again (the picks stay) instead of answering the same 409 forever
+        toast(t("import.recover.planChanged"), "error");
+        onRecheck(true);
+        return;
+      }
+      if (recovery === "session_ended") {
+        toast(t("import.recover.sessionEnded"), "error");
+        onSessionEnded();
+        return;
+      }
       toast((e as Error).message, "error");
     },
   });
+  // Every source server on its own machine (or some of them): only the guided run takes a machine over, so the plain copy is withheld.
+  const placement = overallPlacement(scope);
+  const guidedOnly = !!scope?.multiTeam || placement === "in-place" || placement === "mixed";
 
   if (reviewing && mappingSupported) {
     return (
@@ -724,6 +825,8 @@ function PlanView({
         applyExtras={applyExtras}
         onApplied={onApplied}
         onBack={() => setReviewing(false)}
+        onRecheck={() => onRecheck(true)}
+        onSessionEnded={onSessionEnded}
         onConsentRequired={() => {
           setReviewing(false);
           onRecheck();
@@ -739,6 +842,7 @@ function PlanView({
         right={
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             {scope && <Btn variant="ghost" onClick={onChangeScope}>{t("import.scope.change")}</Btn>}
+            <Btn variant="ghost" onClick={() => onRecheck(true)} loading={replanning}>{replanning ? t("import.recover.reading") : t("import.recover.readAgain")}</Btn>
             <Btn variant="ghost" onClick={onReset}>{t("import.startOver")}</Btn>
           </div>
         }
@@ -836,9 +940,9 @@ function PlanView({
         )}
 
         <div style={{ borderTop: "1px solid var(--c-bd)", margin: "16px 0 14px" }} />
-        {scope?.multiTeam ? (
-          // one apply (and its mapping review) belongs to one team: servers of several teams move through the guided run, one campaign per team
-          <p role="note" data-testid="multi-team-guided" style={{ fontSize: 12, color: "var(--c-tx2)", margin: "0 0 8px", lineHeight: 1.5 }}>{t("import.scope.multiTeamGuided")}</p>
+        {guidedOnly ? (
+          // one apply (and its mapping review) belongs to one team, and a machine is taken over only by the guided run (dark test, proxy swap, give-back)
+          <p role="note" data-testid={scope?.multiTeam ? "multi-team-guided" : "in-place-guided"} style={{ fontSize: 12, color: "var(--c-tx2)", margin: "0 0 8px", lineHeight: 1.5 }}>{scope?.multiTeam ? t("import.scope.multiTeamGuided") : t("import.scope.inPlaceGuided")}</p>
         ) : mappingSupported ? (
           <>
             {missingTargets > 0 && <p role="alert" style={{ fontSize: 12, color: "var(--c-am)", margin: "0 0 8px" }}>{t("import.services.needsTarget")}</p>}
@@ -869,7 +973,11 @@ function PlanView({
       <EnvBlockers plan={plan} acked={acked} onChange={setAcked} />
       {target && (plan.preflight?.git?.hosts.length ?? 0) > 0 && <GitLinksPanel sessionId={sessionId} targetServerId={target} plan={plan} />}
       <CoverageCard plan={plan} />
-      <ImportSettingsPanel sessionId={sessionId} kind={kind} teamId={writableServers.find((w) => w.id === target)?.teamId} servers={servers} />
+      {settingsTeam === null ? (
+        <p role="note" data-testid="settings-left-out" style={{ fontSize: 12, color: "var(--c-tx2)", margin: 0 }}>{t("import.settings.leftOut")}</p>
+      ) : (
+        <ImportSettingsPanel sessionId={sessionId} kind={kind} teamId={settingsTeam ?? writableServers.find((w) => w.id === target)?.teamId} teamName={settingsTeam ? teams.find((x) => x.id === settingsTeam)?.name : undefined} servers={servers} />
+      )}
       <ImportServicesPanel sessionId={sessionId} kind={kind} plan={plan} servers={servers} choices={choices} onChoice={onChoice} onMissingTargets={setMissingTargets} />
       <Section title={t("import.appsSection")} items={groups.app} />
       <Section title={t("import.databasesSection")} items={groups.database} />
@@ -898,7 +1006,10 @@ function Timeline({ opId, onReset, settings }: { opId: string; onReset: () => vo
   });
   const rollback = useMutation({
     mutationFn: () => api.rollbackImport(opId),
-    onSuccess: (updated) => qc.setQueryData(["import-op", opId], updated),
+    onSuccess: (updated) => {
+      qc.setQueryData(["import-op", opId], updated);
+      toast(t("import.rollbackDone"), "success");
+    },
     onError: (e) => toast((e as Error).message, "error"),
   });
   const onRollback = async () => {
@@ -915,9 +1026,10 @@ function Timeline({ opId, onReset, settings }: { opId: string; onReset: () => vo
   }
 
   const prog = opProgress(op);
-  const canRollback = prog.settled && op.tasks.some((task) => task.status === "DONE" && task.resourceType === "application");
-  // Post-import steps only make sense once apps have actually landed (same condition as rollback).
-  const showPostSteps = canRollback || (prog.settled && op.tasks.some((task) => task.status === "DONE" && task.resourceType === "database"));
+  // The hub undoes created apps and the databases that are still empty, so the button is there whenever either landed (a databases-only import included).
+  const canRollback = prog.settled && op.tasks.some((task) => task.status === "DONE" && (task.resourceType === "application" || task.resourceType === "database"));
+  // Post-import steps only make sense once something has actually landed (same condition as rollback).
+  const showPostSteps = canRollback;
   return (
     <>
     <Card style={{ padding: 20, maxWidth: 720 }}>

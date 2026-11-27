@@ -6,6 +6,7 @@ import { I18nProvider } from "../i18n/provider";
 import { ConfirmProvider } from "./confirm";
 import { ImportWizard } from "./import-wizard";
 import { api, ApiError } from "../lib/api";
+import { subscribeToast } from "../lib/toast-bus";
 import type { ImportPlan, ImportOperation } from "../lib/types";
 import importMessages from "../i18n/locales/en/import.json";
 import { readFileSync } from "node:fs";
@@ -310,8 +311,8 @@ describe("ImportWizard", () => {
     const run = async (focus: Record<string, unknown>) => {
       window.sessionStorage.setItem("tugra.import.focus", JSON.stringify({ kind: "coolify", ...focus }));
       vi.spyOn(api, "listServers").mockResolvedValue([
-        { id: "srv1", name: "Server A", teamId: "t1", status: "ONLINE", clusterId: null, tags: [], canWrite: true },
-        { id: "srv2", name: "Server B", teamId: "t1", status: "ONLINE", clusterId: null, tags: [], canWrite: true },
+        { id: "srv1", name: "Server A", teamId: "t1", status: "ONLINE", clusterId: null, tags: [], canWrite: true, capabilities: ["database", "deploy"] },
+        { id: "srv2", name: "Server B", teamId: "t1", status: "ONLINE", clusterId: null, tags: [], canWrite: true, capabilities: ["database", "deploy"] },
         { id: "ro", name: "Read-only", teamId: "t1", status: "ONLINE", clusterId: null, tags: [], canWrite: false },
       ] as never);
       vi.spyOn(api, "importConnect").mockResolvedValue({ sessionId: "s1", expiresAt: "2026-01-01T00:00:00.000Z" });
@@ -426,6 +427,24 @@ describe("ImportWizard", () => {
     fireEvent.click(screen.getByRole("button", { name: "Confirm" })); // dialog confirm
     await screen.findByText("ROLLED_BACK");
     expect(rb).toHaveBeenCalledWith("op1");
+  });
+
+  it("offers rollback when only databases were created (a databases-only import), and the confirm says what is and is not removed", async () => {
+    const dbOnly: ImportOperation = { ...settledOp, tasks: [{ itemRef: "database:srv:pg", kind: "database", name: "pg", status: "DONE", resourceType: "database", resourceId: "d1", message: null, startedAt: null, finishedAt: null }] };
+    window.history.replaceState(null, "", "/import?op=op1");
+    vi.spyOn(api, "getImportOperation").mockResolvedValue(dbOnly);
+    const rb = vi.spyOn(api, "rollbackImport").mockResolvedValue({ ...dbOnly, tasks: [{ ...dbOnly.tasks[0], status: "ROLLED_BACK" }] });
+    const toasts: string[] = [];
+    const off = subscribeToast((m) => toasts.push(m.message));
+    wrap(<ImportWizard />);
+    fireEvent.click(await screen.findByRole("button", { name: "Roll back" }));
+    const body = await screen.findByText(/and the databases it created that are still empty/);
+    expect(body.textContent).toContain("projects, git sources and settings the import made");
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+    await screen.findByText("ROLLED_BACK");
+    expect(rb).toHaveBeenCalledWith("op1");
+    await waitFor(() => expect(toasts).toContain("Rolled back."));
+    off();
   });
 
   it("post-import: mints the data-migration command, and previews + applies the env remap", async () => {
@@ -703,7 +722,7 @@ describe("ImportWizard", () => {
   });
 
   it("switching source clears the URL and token; the source picker is a radiogroup", async () => {
-    vi.spyOn(api, "listServers").mockResolvedValue([{ id: "srv1", name: "Server A", teamId: "t1", status: "ONLINE", clusterId: null, tags: [], canWrite: true }] as never);
+    vi.spyOn(api, "listServers").mockResolvedValue([{ id: "srv1", name: "Server A", teamId: "t1", status: "ONLINE", clusterId: null, tags: [], canWrite: true, capabilities: ["database", "deploy"] }] as never);
     wrap(<ImportWizard />);
     await openToken();
     await waitFor(() => expect(qc.getQueryData(["teams"])).toBeTruthy());
@@ -725,7 +744,7 @@ describe("ImportWizard", () => {
   });
 
   it("Coolify with no handed-over or remembered address opens on the agent, with the agent hint and no token form", async () => {
-    vi.spyOn(api, "listServers").mockResolvedValue([{ id: "srv1", name: "Server A", teamId: "t1", status: "ONLINE", clusterId: null, tags: [], canWrite: true }] as never);
+    vi.spyOn(api, "listServers").mockResolvedValue([{ id: "srv1", name: "Server A", teamId: "t1", status: "ONLINE", clusterId: null, tags: [], canWrite: true, capabilities: ["database", "deploy"] }] as never);
     wrap(<ImportWizard />);
     await screen.findByLabelText("Tugra server where Coolify runs");
     expect(screen.getByRole("button", { name: "Connect through the agent (recommended)" }).getAttribute("aria-pressed")).toBe("true");
@@ -771,7 +790,7 @@ describe("ImportWizard", () => {
       },
     }) as unknown as ImportPlan;
     beforeEach(() => {
-      vi.spyOn(api, "listServers").mockResolvedValue([{ id: "srv1", name: "Server A", teamId: "t1", status: "ONLINE", clusterId: null, tags: [], canWrite: true }] as never);
+      vi.spyOn(api, "listServers").mockResolvedValue([{ id: "srv1", name: "Server A", teamId: "t1", status: "ONLINE", clusterId: null, tags: [], canWrite: true, capabilities: ["database", "deploy"] }] as never);
       vi.spyOn(api, "coolifyDetect").mockResolvedValue({ found: true, image: null });
     });
 
@@ -880,16 +899,18 @@ describe("ImportWizard", () => {
         expect(screen.getByTestId("resume-note")).toBeTruthy();
       });
 
-      it("the picked Coolify team narrows the match step, the toggle opens every team, and that choice survives a refresh", async () => {
+      it("with a team mapping saved, a team left out is never listed: there is no toggle to open it, on the match step or the first step", async () => {
         keep();
-        vi.spyOn(api, "importPlan").mockResolvedValue(teamPlan());
+        vi.spyOn(api, "importPlan").mockResolvedValue(teamPlan()); // Coolify team 2 is left out
         wrap(<ImportWizard />);
         await screen.findByText("Match servers");
         expect(screen.getByTestId("match-edge")).toBeTruthy();
         expect(screen.queryByTestId("match-lab")).toBeNull();
-        fireEvent.click(screen.getByRole("button", { name: "Show all teams (1 more)" }));
-        expect(screen.getByTestId("match-lab")).toBeTruthy();
-        await waitFor(() => expect(JSON.parse(window.sessionStorage.getItem("tugra.import.resume")!).allTeams).toBe(true));
+        expect(screen.queryByRole("button", { name: /Show all teams/ })).toBeNull();
+        fireEvent.click(screen.getByRole("button", { name: "Continue with 1 to check" }));
+        await screen.findByText("What are you moving?");
+        expect(screen.queryByRole("button", { name: /Show all teams/ })).toBeNull();
+        expect(screen.queryByRole("checkbox", { name: /lab-box/ })).toBeNull();
       });
 
       it("keeps the first step narrowed to the picked team after the match step", async () => {
@@ -962,6 +983,19 @@ describe("ImportWizard", () => {
           expect(ticked()).toBe(1);
         });
 
+        it("'Change team mapping' can be left with Back: what was saved stays and the step the owner was on comes back", async () => {
+          keep();
+          vi.spyOn(api, "importPlan").mockResolvedValue(teamPlan({ "1": "t1", "2": "t9" }));
+          const save = vi.spyOn(api, "importTeamMap");
+          wrap(<ImportWizard />);
+          await screen.findByText("Match servers");
+          fireEvent.click(screen.getByRole("button", { name: "Change team mapping" }));
+          await screen.findByText("Which team does each Coolify team go into?");
+          fireEvent.click(screen.getByRole("button", { name: "Back" }));
+          await screen.findByText("Match servers");
+          expect(save).not.toHaveBeenCalled();
+        });
+
         it("a plan that already carries the mapping skips the step, and 'Change team mapping' reopens it from what was saved", async () => {
           keep();
           vi.spyOn(api, "importPlan").mockResolvedValue(teamPlan({ "1": "t1", "2": "t9" }));
@@ -994,8 +1028,8 @@ describe("ImportWizard", () => {
       }) as unknown as ImportPlan;
       beforeEach(() => {
         vi.spyOn(api, "listServers").mockResolvedValue([
-          { id: "srv1", name: "Server A", teamId: "t1", status: "ONLINE", clusterId: null, tags: [], canWrite: true },
-          { id: "srv2", name: "Server B", teamId: "t1", status: "ONLINE", clusterId: null, tags: [], canWrite: true },
+          { id: "srv1", name: "Server A", teamId: "t1", status: "ONLINE", clusterId: null, tags: [], canWrite: true, capabilities: ["database", "deploy"] },
+          { id: "srv2", name: "Server B", teamId: "t1", status: "ONLINE", clusterId: null, tags: [], canWrite: true, capabilities: ["database", "deploy"] },
         ] as never);
       });
       const open = async (focus: Record<string, unknown>) => {
@@ -1024,6 +1058,43 @@ describe("ImportWizard", () => {
         vi.spyOn(api, "importPlan").mockResolvedValue(inPlacePlan());
         await open({ inPlaceServerId: "srv1", fromServerName: "Server A" });
         expect(screen.getByTestId("scope-note").textContent).toBe("Could not tell which of Coolify's servers is Server A. Pick what to move below.");
+      });
+
+      it("the owner can go back to the match step from the first step and correct an answer", async () => {
+        vi.spyOn(api, "importPlan").mockResolvedValue(inPlacePlan());
+        await open({ inPlaceServerId: "srv2" });
+        fireEvent.click(screen.getByRole("button", { name: "Back to matching" }));
+        await screen.findByText("Match servers");
+        expect(screen.queryByText("What are you moving?")).toBeNull();
+        fireEvent.click(screen.getByRole("button", { name: /^Continue/ }));
+        await screen.findByText("What are you moving?");
+      });
+
+      it("'Check again' on the first step ticks the server a visit was waiting for once it is matched, instead of only changing the note", async () => {
+        const withLab = (edgeMatched: boolean): ImportPlan => {
+          const p = inPlacePlan();
+          return {
+            ...p,
+            items: [...p.items, { itemRef: "app:lab:api", kind: "app", name: "api-app", proposed: {}, risks: [], dependsOn: [] }],
+            preflight: {
+              ...p.preflight!,
+              hosts: [
+                ...p.preflight!.hosts!.map((h) => (h.ref === "edge" && !edgeMatched ? { ref: "edge", name: "edge", match: { status: "none", linkedBy: null, evidence: [] } } : h)),
+                { ref: "lab", name: "lab-box", match: { status: "none", linkedBy: null, evidence: [] } },
+              ],
+            },
+          } as ImportPlan;
+        };
+        const planSpy = vi.spyOn(api, "importPlan").mockResolvedValue(withLab(false));
+        await open({ inPlaceServerId: "srv2" });
+        expect(screen.getByTestId("scope-note").textContent).toContain("Could not tell which");
+        fireEvent.click(screen.getByRole("checkbox", { name: /lab-box/ })); // the owner looks at another server meanwhile; an unmatched one offers Check again
+        planSpy.mockResolvedValue(withLab(true)); // the agent on that machine is now there and proves it is the same machine
+        fireEvent.click(await screen.findByRole("button", { name: "Check again" }));
+        await waitFor(() => expect((screen.getByRole("checkbox", { name: /edge/ }) as HTMLInputElement).checked).toBe(true));
+        expect(screen.getByTestId("scope-note").textContent).toBe("Taking edge over in place. Check where it goes below, then continue.");
+        expect((screen.getByRole("checkbox", { name: /lab-box/ }) as HTMLInputElement).checked).toBe(false);
+        expect((screen.getByLabelText(/edge moves to/) as HTMLSelectElement).value).toBe("srv2");
       });
 
       it("a servers list that cannot be read does not hold the plan back: it is read and the step asks", async () => {
@@ -1092,6 +1163,66 @@ describe("ImportWizard", () => {
         await waitFor(() => expect((screen.getByRole("button", { name: "Import to Tugra" }) as HTMLButtonElement).disabled).toBe(false));
         fireEvent.click(screen.getByRole("button", { name: "Import to Tugra" }));
         await waitFor(() => expect(apply).toHaveBeenCalledTimes(1));
+      });
+
+      it("the settings card goes to the Tugra team the picked Coolify team was mapped to, and says so; a left-out team has none", async () => {
+        const preview = vi.spyOn(api, "importSettingsPreview").mockResolvedValue({ supported: true, sections: [{ section: "tags", available: true, entries: [{ id: "tag:x", section: "tags", name: "x", selectable: true, defaultSelected: true, notes: [], detail: {} }] }] } as never);
+        vi.spyOn(api, "listTeams").mockResolvedValue([{ id: "t1", name: "Team One" }, { id: "t9", name: "Northwind" }] as never);
+        const p = noMatchPlan(true);
+        vi.spyOn(api, "importPlan").mockResolvedValue({ ...p, preflight: { ...p.preflight!, sourceTeamRef: "1", teamMap: { "1": "t9" } } } as ImportPlan);
+        await reachPreview();
+        expect((await screen.findByTestId("settings-team")).textContent).toContain("Northwind");
+        expect(preview).toHaveBeenCalledWith(expect.objectContaining({ teamId: "t9" }));
+        cleanup();
+        preview.mockClear();
+        vi.spyOn(api, "importPlan").mockResolvedValue({ ...p, preflight: { ...p.preflight!, sourceTeamRef: "1", teamMap: { "1": null } } } as ImportPlan);
+        await reachPreview();
+        expect(await screen.findByTestId("settings-left-out")).toBeTruthy();
+        expect(preview).not.toHaveBeenCalled();
+      });
+
+      it("an apply that finds the plan changed reads the source again and says so, instead of answering the same 409 on every retry", async () => {
+        const toasts: string[] = [];
+        const off = subscribeToast((m) => toasts.push(m.message));
+        const planSpy = vi.spyOn(api, "importPlan").mockResolvedValueOnce(noMatchPlan(true));
+        const apply = vi.spyOn(api, "importApply").mockRejectedValue(new ApiError(409, "the plan changed since it was previewed — re-run the plan and review again", "plan_changed"));
+        await reachPreview();
+        planSpy.mockResolvedValue({ ...noMatchPlan(true), planHash: "b".repeat(32) });
+        fireEvent.click(screen.getByRole("button", { name: "Import to Tugra" }));
+        await waitFor(() => expect(planSpy).toHaveBeenCalledTimes(2));
+        expect(toasts.some((m) => m.startsWith("The source changed since you read it"))).toBe(true);
+        expect(toasts.some((m) => m.includes("re-run the plan"))).toBe(false);
+        // the retry carries the new hash
+        apply.mockResolvedValue({ opId: "op1" });
+        await waitFor(() => expect((screen.getByRole("button", { name: "Import to Tugra" }) as HTMLButtonElement).disabled).toBe(false));
+        fireEvent.click(screen.getByRole("button", { name: "Import to Tugra" }));
+        await waitFor(() => expect(apply).toHaveBeenLastCalledWith(expect.objectContaining({ planHash: "b".repeat(32) })));
+        off();
+      });
+
+      it("an apply that finds the session ended goes back to the connect form, with the note", async () => {
+        vi.spyOn(api, "importPlan").mockResolvedValueOnce(noMatchPlan(true));
+        vi.spyOn(api, "importApply").mockRejectedValue(new ApiError(400, "import session expired or revoked — reconnect", "session_ended"));
+        await reachPreview();
+        fireEvent.click(screen.getByRole("button", { name: "Import to Tugra" }));
+        await screen.findByText(/Your earlier import session ended/);
+        expect(screen.queryByText("Import preview")).toBeNull();
+      });
+
+      it("'Read again' on the preview reads the source with progress, keeps the session and says what changed", async () => {
+        const toasts: string[] = [];
+        const off = subscribeToast((m) => toasts.push(m.message));
+        const connect = vi.spyOn(api, "importConnectAgent");
+        const first = noMatchPlan(true);
+        const planSpy = vi.spyOn(api, "importPlan").mockResolvedValueOnce(first);
+        await reachPreview();
+        planSpy.mockResolvedValue({ ...first, items: [...first.items, { itemRef: "app:srv:new", kind: "app", name: "fresh-app", proposed: {}, risks: [], dependsOn: [] }] } as ImportPlan);
+        fireEvent.click(screen.getByRole("button", { name: "Read again" }));
+        await screen.findByText("fresh-app");
+        expect(planSpy).toHaveBeenCalledTimes(2);
+        expect(connect).toHaveBeenCalledTimes(1);
+        expect(toasts).toContain("Read again. In the source: 1 new, 0 gone, 0 changed.");
+        off();
       });
 
       it("a 403 consent_required from the hub reads the plan again and brings the consent card back (no dead end, no new session)", async () => {
@@ -1269,14 +1400,15 @@ describe("ImportWizard", () => {
 
 describe("ImportWizard — editable mapping", () => {
   beforeEach(() => {
+    window.sessionStorage.clear(); // a previous test's resume record would reopen its step
     window.history.replaceState(null, "", "/"); // the wizard mirrors the running op into ?op=
     qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     vi.spyOn(api, "getCutover").mockRejectedValue(new ApiError(404, "not found"));
     vi.spyOn(api, "listDnsCredentials").mockResolvedValue([]);
     vi.spyOn(api, "listTeams").mockResolvedValue([{ id: "t1", name: "Team One" }, { id: "t2", name: "Team Two" }] as never);
     vi.spyOn(api, "listServers").mockResolvedValue([
-      { id: "srv1", name: "Server A", teamId: "t1", status: "ONLINE", clusterId: null, tags: [], canWrite: true },
-      { id: "srv2", name: "Server B", teamId: "t2", status: "ONLINE", clusterId: null, tags: [], canWrite: true },
+      { id: "srv1", name: "Server A", teamId: "t1", status: "ONLINE", clusterId: null, tags: [], canWrite: true, capabilities: ["database", "deploy"] },
+      { id: "srv2", name: "Server B", teamId: "t2", status: "ONLINE", clusterId: null, tags: [], canWrite: true, capabilities: ["database", "deploy"] },
       { id: "srv3", name: "Read-only", teamId: "t2", status: "ONLINE", clusterId: null, tags: [], canWrite: false },
     ] as never);
     vi.spyOn(api, "getMigrateCommand").mockResolvedValue({ opId: "op1", active: false, expiresAt: null, commandTemplate: "run on the source host" });
@@ -1498,6 +1630,26 @@ describe("ImportWizard — editable mapping", () => {
       expect(screen.queryByText(/empty volumes are declared/)).toBeNull();
     });
 
+    it("a server that stays on its own machine is taken over by the guided run only: the plain Review & rename is withheld, with the reason", async () => {
+      await toPreview(["Box One"]);
+      expect(screen.queryByRole("button", { name: "Review & rename" })).toBeNull();
+      expect(screen.getByTestId("in-place-guided").textContent).toContain("taken over by the guided run");
+      expect(screen.getByRole("button", { name: "Run guided migration" })).toBeTruthy();
+    });
+
+    it("a mix of in-place and moved servers is guided only too", async () => {
+      await toPreview(["Box One", "Box Two"], "srv2");
+      expect(screen.queryByRole("button", { name: "Review & rename" })).toBeNull();
+      expect(document.querySelector('[data-testid$="-guided"]')).not.toBeNull(); // in place and moved (here also into another team): one guided run
+      expect(screen.getByRole("button", { name: "Run guided migration" })).toBeTruthy();
+    });
+
+    it("servers that only move keep the plain Review & rename", async () => {
+      await toPreview(["Box Two"], "srv2");
+      expect(screen.getByRole("button", { name: "Review & rename" })).toBeTruthy();
+      expect(screen.queryByTestId("in-place-guided")).toBeNull();
+    });
+
     it("only servers that move: the migrator row, the data mode picker with one line per trade-off, and the volume paragraph stay", async () => {
       await toPreview(["Box Two"], "srv2");
       expect(screen.queryByTestId("in-place-data")).toBeNull();
@@ -1592,12 +1744,48 @@ describe("ImportWizard — editable mapping", () => {
 
     it("an ended hub session falls back to the connect form with the address kept and says why", async () => {
       window.sessionStorage.setItem("tugra.import.resume", JSON.stringify({ v: 1, kind: "coolify", baseUrl: "https://c.example.com", sessionId: SID, dbModes: {} }));
-      vi.spyOn(api, "importPlan").mockRejectedValue(new ApiError(400, "import session expired or revoked — reconnect"));
+      vi.spyOn(api, "importPlan").mockRejectedValue(new ApiError(400, "import session expired or revoked — reconnect", "session_ended"));
       wrap(<ImportWizard />);
       await screen.findByText(/Your earlier import session ended/);
       expect((await screen.findByLabelText("Coolify URL") as HTMLInputElement).value).toBe("https://c.example.com");
       expect((screen.getByLabelText("API token") as HTMLInputElement).value).toBe("");
       expect(window.sessionStorage.getItem("tugra.import.resume")).toBeNull();
+    });
+
+    it("a reload during an outage keeps the live session: it says why, keeps the resume record, and a retry brings the step back", async () => {
+      const record = JSON.stringify({ v: 1, kind: "coolify", baseUrl: "https://c.example.com", sessionId: SID, dbModes: {} });
+      window.sessionStorage.setItem("tugra.import.resume", record);
+      const spy = vi.spyOn(api, "importPlan").mockRejectedValueOnce(new ApiError(409, "The agent on the Coolify server is offline", "agent_offline"));
+      wrap(<ImportWizard />);
+      const failure = await screen.findByTestId("resume-failure");
+      expect(failure.textContent).toContain("The agent is offline");
+      expect(screen.queryByText(/Your earlier import session ended/)).toBeNull();
+      expect(window.sessionStorage.getItem("tugra.import.resume")).not.toBeNull();
+      spy.mockResolvedValue(plan);
+      fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+      await screen.findByRole("option", { name: "Server A" });
+      expect(spy).toHaveBeenCalledTimes(2);
+      expect(spy.mock.calls[1][0]).toMatchObject({ sessionId: SID });
+    });
+
+    it("a 5xx or a network failure on a reload is not an ended session either", async () => {
+      for (const err of [new ApiError(500, "boom"), new TypeError("Failed to fetch")]) {
+        cleanup();
+        window.sessionStorage.setItem("tugra.import.resume", JSON.stringify({ v: 1, kind: "coolify", baseUrl: "https://c.example.com", sessionId: SID, dbModes: {} }));
+        vi.restoreAllMocks();
+        vi.spyOn(api, "importPlan").mockRejectedValue(err);
+        wrap(<ImportWizard />);
+        await screen.findByTestId("resume-failure");
+        expect(screen.queryByText(/Your earlier import session ended/)).toBeNull();
+        expect(window.sessionStorage.getItem("tugra.import.resume")).not.toBeNull();
+      }
+    });
+
+    it("a session the hub no longer knows (404) falls back to the connect form", async () => {
+      window.sessionStorage.setItem("tugra.import.resume", JSON.stringify({ v: 1, kind: "coolify", baseUrl: "https://c.example.com", sessionId: SID, dbModes: {} }));
+      vi.spyOn(api, "importPlan").mockRejectedValue(new ApiError(404, "import session not found"));
+      wrap(<ImportWizard />);
+      await screen.findByText(/Your earlier import session ended/);
     });
 
     it("starting an apply drops the resume record, so a later visit does not reopen the spent picks", async () => {

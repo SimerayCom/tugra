@@ -109,7 +109,7 @@ const entryTitle = (t: T, e: SettingsEntry): string => (e.section === "notificat
  * secret-free preview and sends back ids, plus the few things the source cannot give (S3 keys) and the operator's confirmation
  * for invitations. After the import, each carried channel gets a "Send test message" button.
  */
-export function ImportSettingsPanel({ sessionId, kind, opId, teamId, servers }: { sessionId: string; kind: ImportRemoteKind; opId?: string; teamId?: string; servers: Array<{ id: string; name: string }> }) {
+export function ImportSettingsPanel({ sessionId, kind, opId, teamId, teamName, servers }: { sessionId: string; kind: ImportRemoteKind; opId?: string; teamId?: string; /** The Tugra team these settings go into, when known: said on the card, because notification tokens, variables and invitations are created there. */ teamName?: string; servers: Array<{ id: string; name: string }> }) {
   const t = useT();
   const toast = useToast();
   const q = useQuery({
@@ -190,6 +190,7 @@ export function ImportSettingsPanel({ sessionId, kind, opId, teamId, servers }: 
       right={<Btn variant="ghost" onClick={() => void q.refetch()} disabled={q.isFetching}>{t("import.settings.refresh")}</Btn>}
       style={{ padding: 20, marginBottom: 0 }}
     >
+      {teamName && <p data-testid="settings-team" style={{ fontSize: 12, color: "var(--c-tx2)", margin: "0 0 12px" }}>{t("import.settings.into", { team: teamName })}</p>}
       {preview.sections.map((s) => (
         <Section key={s.section} s={s} t={t} inputs={inputs} dupServers={dupServers} servers={servers} onToggle={toggle} onS3={(id, v) => setS3((p) => ({ ...p, [id]: v }))} onServer={(id, v) => setServerPick((p) => ({ ...p, [id]: v }))} onRole={(id, v) => setRoles((p) => ({ ...p, [id]: v }))} />
       ))}
