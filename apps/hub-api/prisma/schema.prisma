@@ -2316,12 +2316,15 @@ model InstanceSettings {
   // verifies it against TUGRA_LICENSE_PUBLISHER_KEY on every load. Null = no license (env/community edition).
   licenseToken        String?
   // Anonymous usage stats (ON by default, opt-out). `telemetryEnabled` is the owner-UI off-switch; the
-  // env var TUGRA_TELEMETRY=0 is a deployment-level HARD off that overrides it (install --no-telemetry /
-  // headless CI). `telemetryInstanceId` is a random, anonymous id minted once and kept stable across
-  // restarts — the ONLY identifier ever sent; no IP, hostname, domain, email, app name or user data leaves
-  // the box. `telemetryLastSentAt` is the last successful send (drives the UI + avoids double-sends).
+  // env var TUGRA_STATS=0 (legacy name TUGRA_TELEMETRY=0) is a deployment-level HARD off that overrides it
+  // (install --no-stats / headless CI). The hub identity is an ed25519 key pair generated once: the public
+  // key (raw 32 bytes, base64url) and the libsodium-encrypted private key (PKCS8 PEM). hubId = first 32 hex
+  // chars of sha256(public key) — the ONLY identifier ever sent; no IP, hostname, domain, email, app name or
+  // user data leaves the box. `telemetryLastSentAt` is the last successful send (drives the UI + avoids
+  // double-sends).
   telemetryEnabled    Boolean   @default(true)
-  telemetryInstanceId String?
+  hubPublicKey        String?
+  hubPrivateKeyEnc    String?
   telemetryLastSentAt DateTime?
   // Web Push (VAPID, RFC 8292): the hub's P-256 application-server key pair, generated once on first use. The public key
   // (uncompressed point, base64url) is handed to browsers as applicationServerKey; the private key (PKCS8 PEM) is encrypted.

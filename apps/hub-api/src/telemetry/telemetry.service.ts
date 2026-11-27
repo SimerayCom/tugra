@@ -1,42 +1,65 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
-import { randomUUID } from "node:crypto";
+import { createHash, createPrivateKey, generateKeyPairSync, sign, type KeyObject } from "node:crypto";
 import { appVersion, releaseChannel } from "@tugra/shared";
 import { currentEdition } from "../common/edition";
+import { CryptoService } from "../crypto/crypto.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { InstanceSettingsService } from "../instance/instance-settings.service";
 
-/** The exact anonymous payload sent to the telemetry endpoint — ALSO returned to the owner UI verbatim so
- *  what is shown is byte-for-byte what is sent (no hidden fields). Every field is a coarse aggregate or a
- *  random id: there is deliberately NO IP, hostname, domain, public URL, app/server name, email or any
+/** Wire format version of the stats report. */
+export const STATS_REPORT_VERSION = 1;
+/** Request header that carries base64url(ed25519 signature over the exact raw request body). */
+export const STATS_SIGNATURE_HEADER = "x-tugra-signature";
+/** Shown in the owner preview until the identity exists (opening Settings never creates one). */
+export const PENDING_IDENTITY = "(generated on first send)";
+
+/** The hub's stats identity: an ed25519 key pair generated once. */
+export interface HubIdentity {
+  hubId: string; // first 32 hex chars of sha256(raw 32-byte public key)
+  publicKey: string; // base64url raw 32-byte ed25519 public key
+}
+
+/** Derive the public identity (id + raw public key) from an ed25519 public key's raw bytes. */
+export function identityFromRawPublicKey(raw: Buffer): HubIdentity {
+  return { hubId: createHash("sha256").update(raw).digest("hex").slice(0, 32), publicKey: raw.toString("base64url") };
+}
+
+/** The exact anonymous report sent to the stats endpoint — ALSO returned to the owner UI verbatim so what is
+ *  shown is byte-for-byte what is sent (no hidden fields). Every field is a coarse aggregate or the hub id:
+ *  there is deliberately NO IP, hostname, domain, public URL, app/server name, email or any other
  *  user-identifying value anywhere in this shape. */
 export interface TelemetryPayload {
-  instanceId: string; // random, anonymous, stable across restarts — the only identifier
+  v: number; // wire format version
+  hubId: string; // first 32 hex chars of sha256(public key) — the only identifier
+  publicKey: string; // base64url raw ed25519 public key (lets the receiver verify the signature)
+  sentAt: string; // ISO timestamp, set when the payload is built
   version: string; // e.g. "0.1.0"
-  channel: string; // "stable" | "beta" | "dev"
-  edition: string; // "community" | "pro" | "cloud"
-  platform: string; // process.platform, e.g. "linux" (coarse)
-  arch: string; // process.arch, e.g. "x64" (coarse)
-  nodeMajor: number; // Node.js major only, e.g. 22 (never the full version string)
   counts: {
     servers: number;
-    applications: number;
+    applications: number; // apps that are not compose stacks
     databases: number;
-    deployments: number;
+    services: number; // compose stacks
     teams: number;
     users: number;
+  };
+  features: {
+    channel: string; // "stable" | "beta" | "dev"
+    edition: string; // "community" | "pro" | "cloud"
+    platform: string; // process.platform, e.g. "linux" (coarse)
+    arch: string; // process.arch, e.g. "x64" (coarse)
+    nodeMajor: number; // Node.js major only, e.g. 22 (never the full version string)
+    deployments: number;
     clusters: number;
     monitors: number;
-    containers: number; // floor estimate (applications + databases); no Container table to count exactly
   };
-  sentAt: string; // ISO timestamp, set when the payload is built
 }
 
 export interface TelemetryStatus {
   enabled: boolean; // effective: on AND not env-forced-off
-  forcedOff: boolean; // env TUGRA_TELEMETRY=0 — the owner toggle is then inert
+  forcedOff: boolean; // env TUGRA_STATS=0 (or legacy TUGRA_TELEMETRY=0) — the owner toggle is then inert
   dbEnabled: boolean; // the raw owner-UI toggle value (telemetryEnabled)
-  instanceId: string | null; // null until first minted
+  hubId: string | null; // null until the identity is first generated
   lastSentAt: string | null;
   intervalMin: number;
   endpoint: string;
@@ -47,8 +70,9 @@ const SEND_TIMEOUT_MS = 10_000;
 
 /**
  * Anonymous usage stats — ON by default, opt-out. Collects only coarse aggregate counts + build metadata
- * under a random instance id (see TelemetryPayload). Two independent off-switches, both honoured here:
- *  - env TUGRA_TELEMETRY=0  → HARD off (deployment decision: install --no-telemetry / headless CI). The
+ * under a hub id derived from an ed25519 public key (see TelemetryPayload); every report is signed with the
+ * matching private key. Two independent off-switches, both honoured here:
+ *  - env TUGRA_STATS=0 (legacy TUGRA_TELEMETRY=0) → HARD off (deployment decision: install --no-telemetry / headless CI). The
  *    scheduler never even starts, so a forced-off box makes ZERO outbound calls.
  *  - owner-UI toggle (DB telemetryEnabled) → runtime off, flippable without a restart; each send re-checks.
  * The sender NEVER throws and never blocks anything — an unreachable endpoint silently skips the round.
@@ -61,11 +85,12 @@ export class TelemetryService {
     private readonly config: ConfigService,
     private readonly prisma: PrismaService,
     private readonly settings: InstanceSettingsService,
+    private readonly crypto: CryptoService,
   ) {}
 
-  /** A deployment-level hard off: the owner-UI toggle cannot re-enable telemetry while this is set. */
+  /** A deployment-level hard off: the owner-UI toggle cannot re-enable the stats while either variable is "0". */
   isForcedOff(): boolean {
-    return this.config.get<string>("TUGRA_TELEMETRY") === "0";
+    return this.config.get<string>("TUGRA_STATS") === "0" || this.config.get<string>("TUGRA_TELEMETRY") === "0";
   }
 
   /** Effective state: on only when NOT env-forced-off AND the owner toggle is on (DB default true). */
@@ -76,44 +101,58 @@ export class TelemetryService {
   }
 
   endpoint(): string {
-    return this.config.get<string>("TUGRA_TELEMETRY_URL")!;
+    return this.config.get<string>("TUGRA_TELEMETRY_URL") || this.config.get<string>("TUGRA_STATS_URL")!;
   }
 
   intervalMin(): number {
-    return this.config.get<number>("TUGRA_TELEMETRY_INTERVAL_MIN") ?? 1440;
+    return this.config.get<number>("TUGRA_TELEMETRY_INTERVAL_MIN") ?? this.config.get<number>("TUGRA_STATS_INTERVAL_MIN") ?? 1440;
   }
 
-  /** The anonymous instance id, minted once on first access and persisted. Stable across restarts. */
-  async getInstanceId(): Promise<string> {
-    const s = await this.settings.get();
-    if (s.telemetryInstanceId) return s.telemetryInstanceId;
-    // Atomic compare-and-set: the `WHERE telemetryInstanceId IS NULL` means only the first racer's id
-    // sticks, so two concurrent first-time callers can never end up sending two different ids.
-    const id = randomUUID();
+  /** The hub identity, generated once on first use and persisted (public key plain, private key sealed with
+   *  the secrets key). Race-safe: the loser of a concurrent first call re-reads the winner's key pair. */
+  async getIdentity(): Promise<HubIdentity & { privateKey: KeyObject }> {
+    const read = async () => {
+      const s = await this.settings.get();
+      if (!s.hubPublicKey || !s.hubPrivateKeyEnc) return null;
+      const privateKey = createPrivateKey(this.crypto.decrypt(s.hubPrivateKeyEnc));
+      return { ...identityFromRawPublicKey(Buffer.from(s.hubPublicKey, "base64url")), privateKey };
+    };
+    const have = await read();
+    if (have) return have;
+    const gen = this.generateIdentity();
     await this.prisma.instanceSettings.updateMany({
-      where: { id: "singleton", telemetryInstanceId: null },
-      data: { telemetryInstanceId: id },
+      where: { id: "singleton", hubPrivateKeyEnc: null },
+      data: { hubPublicKey: gen.publicKey, hubPrivateKeyEnc: gen.privateKeyEnc },
     });
-    const after = await this.settings.get(); // re-read the persisted value (ours, or the racer's that won)
-    return after.telemetryInstanceId ?? id;
+    const now = await read();
+    if (!now) throw new Error("could not persist the hub identity");
+    return now;
   }
 
-  /** Rotate to a fresh anonymous id (owner "reset identity" action). Returns the new id. */
-  async resetInstanceId(): Promise<string> {
-    const id = randomUUID();
-    await this.settings.update({ telemetryInstanceId: id });
-    return id;
+  /** Replace the key pair with a fresh one (owner "reset identity" action). Returns the new hub id. */
+  async resetIdentity(): Promise<string> {
+    const gen = this.generateIdentity();
+    await this.settings.update({ hubPublicKey: gen.publicKey, hubPrivateKeyEnc: gen.privateKeyEnc });
+    return gen.hubId;
   }
 
-  /** Build the exact payload that would be sent. Pure read; does not send. Container count is a documented
-   *  floor estimate (applications + databases) since there is no Container table to count precisely. Pass
-   *  `instanceId` to render a preview WITHOUT minting a new id (e.g. status() when telemetry is off);
-   *  omit it on the real send path, where the id is minted on first use. */
-  async buildPayload(instanceId?: string): Promise<TelemetryPayload> {
-    const [servers, applications, databases, deployments, teams, users, clusters, monitors] =
+  private generateIdentity(): HubIdentity & { privateKeyEnc: string } {
+    const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+    const raw = Buffer.from(publicKey.export({ format: "jwk" }).x as string, "base64url");
+    const pem = privateKey.export({ type: "pkcs8", format: "pem" }).toString();
+    return { ...identityFromRawPublicKey(raw), privateKeyEnc: this.crypto.encrypt(pem) };
+  }
+
+  /** Build the exact payload that would be sent. Pure read; does not send. Pass `identity` to render a preview
+   *  WITHOUT generating a key pair (e.g. status() before the first send); omit it on the real send path, where
+   *  the identity is generated on first use. Compose stacks are counted as `services`, every other app as
+   *  `applications`. */
+  async buildPayload(identity?: HubIdentity): Promise<TelemetryPayload> {
+    const [servers, applications, services, databases, deployments, teams, users, clusters, monitors] =
       await this.prisma.$transaction([
         this.prisma.server.count(),
-        this.prisma.application.count(),
+        this.prisma.application.count({ where: { source: { not: "COMPOSE" } } }),
+        this.prisma.application.count({ where: { source: "COMPOSE" } }),
         this.prisma.database.count(),
         this.prisma.deployment.count(),
         this.prisma.team.count(),
@@ -121,29 +160,34 @@ export class TelemetryService {
         this.prisma.cluster.count(),
         this.prisma.monitor.count(),
       ]);
-    const id = instanceId ?? (await this.getInstanceId());
+    const id = identity ?? (await this.getIdentity());
     const nodeMajor = Number(process.versions.node.split(".")[0]) || 0;
     return {
-      instanceId: id,
+      v: STATS_REPORT_VERSION,
+      hubId: id.hubId,
+      publicKey: id.publicKey,
+      sentAt: new Date().toISOString(),
       version: appVersion(),
-      channel: releaseChannel(),
-      edition: currentEdition(),
-      platform: process.platform,
-      arch: process.arch,
-      nodeMajor,
-      counts: {
-        servers,
-        applications,
-        databases,
+      counts: { servers, applications, databases, services, teams, users },
+      features: {
+        channel: releaseChannel(),
+        edition: currentEdition(),
+        platform: process.platform,
+        arch: process.arch,
+        nodeMajor,
         deployments,
-        teams,
-        users,
         clusters,
         monitors,
-        containers: applications + databases,
       },
-      sentAt: new Date().toISOString(),
     };
+  }
+
+  /** Serialize the payload once and sign those exact bytes (ed25519). The receiver verifies the signature
+   *  over the raw request body, so the string that is signed is the string that is sent. */
+  async signPayload(payload: TelemetryPayload): Promise<{ body: string; signature: string }> {
+    const { privateKey } = await this.getIdentity();
+    const body = JSON.stringify(payload);
+    return { body, signature: sign(null, Buffer.from(body, "utf8"), privateKey).toString("base64url") };
   }
 
   /**
@@ -176,10 +220,11 @@ export class TelemetryService {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), SEND_TIMEOUT_MS);
     try {
+      const { body, signature } = await this.signPayload(payload);
       const res = await fetch(this.endpoint(), {
         method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(payload),
+        headers: { "content-type": "application/json", [STATS_SIGNATURE_HEADER]: signature },
+        body,
         signal: controller.signal,
       });
       if (!res.ok) {
@@ -196,16 +241,17 @@ export class TelemetryService {
     }
   }
 
-  /** Owner-facing status + a live preview of the exact payload. Does NOT mint an id as a side effect:
+  /** Owner-facing status + a live preview of the exact payload. Does NOT create the identity as a side effect:
    *  when none exists yet, the preview shows a placeholder, so merely opening Settings never creates one. */
   async status(): Promise<TelemetryStatus> {
     const s = await this.settings.get();
-    const payload = await this.buildPayload(s.telemetryInstanceId ?? "(generated on first send)");
+    const known = s.hubPublicKey ? identityFromRawPublicKey(Buffer.from(s.hubPublicKey, "base64url")) : null;
+    const payload = await this.buildPayload(known ?? { hubId: PENDING_IDENTITY, publicKey: PENDING_IDENTITY });
     return {
       enabled: !this.isForcedOff() && s.telemetryEnabled,
       forcedOff: this.isForcedOff(),
       dbEnabled: s.telemetryEnabled,
-      instanceId: s.telemetryInstanceId,
+      hubId: known?.hubId ?? null,
       lastSentAt: s.telemetryLastSentAt ? s.telemetryLastSentAt.toISOString() : null,
       intervalMin: this.intervalMin(),
       endpoint: this.endpoint(),

@@ -29,7 +29,7 @@ export const ENCRYPTED_COLUMNS: ReadonlyArray<{ model: string; columns: string[]
   { model: "secretProvider", columns: ["tokenEnc"] },
   { model: "database", columns: ["credentials", "envEnc", "configFileEnc"] },
   { model: "hubDeadmanConfig", columns: ["urlEnc"] },
-  { model: "instanceSettings", columns: ["oidcClientSecretEnc", "mailPassEnc", "mailResendKeyEnc", "ipTlsKeyEnc", "vapidPrivateKeyEnc"] },
+  { model: "instanceSettings", columns: ["oidcClientSecretEnc", "mailPassEnc", "mailResendKeyEnc", "ipTlsKeyEnc", "vapidPrivateKeyEnc", "hubPrivateKeyEnc"] },
   { model: "pushSubscription", columns: ["authEnc"] },
 ];
 

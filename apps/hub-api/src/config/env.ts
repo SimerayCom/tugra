@@ -274,17 +274,21 @@ export const envSchema = z
     .optional(),
   TUGRA_LICENSE: z.string().min(1).optional(),
   // Anonymous usage stats (ON by default, opt-out — a product decision; the one default-on outbound call,
-  // deliberately exempt from the outbound guard). This env var is the DEPLOYMENT-level switch: "0" is a
-  // HARD off (install.sh --no-telemetry / headless CI writes it) that overrides the owner-UI toggle and
+  // deliberately exempt from the outbound guard). TUGRA_STATS is the DEPLOYMENT-level switch: "0" is a
+  // HARD off (install.sh --no-stats / headless CI writes it) that overrides the owner-UI toggle and
   // stops the scheduler from ever starting; "1" or unset = on, with the owner-UI toggle (DB
   // telemetryEnabled) then governing at runtime. Only "0"/"1" are accepted so a typo fails fast at boot.
+  // TUGRA_TELEMETRY is the older name of the same switch; either one set to "0" turns the stats off.
+  TUGRA_STATS: z.enum(["0", "1"]).optional(),
   TUGRA_TELEMETRY: z.enum(["0", "1"]).optional(),
-  // Where the anonymous stats are sent. Has a default so telemetry is genuinely on-by-default (requiring an
+  // Where the anonymous stats are sent. Has a default so the stats are genuinely on-by-default (requiring an
   // operator to set it would make it opt-in). Override to self-host the receiver or to point at a mirror;
   // an unreachable endpoint just skips the round (the sender never throws, never blocks a deploy).
-  TUGRA_TELEMETRY_URL: z.string().url().default("https://telemetry.tugra.io/v1/ingest"),
+  TUGRA_STATS_URL: z.string().url().default("https://api.tugra.io/v1/hubs/report"),
+  TUGRA_TELEMETRY_URL: z.string().url().optional(), // older name; wins over TUGRA_STATS_URL when set
   // How often (minutes) the anonymous stats are sent. Default daily. The first send runs ~1 min after boot.
-  TUGRA_TELEMETRY_INTERVAL_MIN: z.coerce.number().int().positive().default(1440),
+  TUGRA_STATS_INTERVAL_MIN: z.coerce.number().int().positive().default(1440),
+  TUGRA_TELEMETRY_INTERVAL_MIN: z.coerce.number().int().positive().optional(), // older name; wins when set
   })
   // Fail closed: a stable command-signing identity is required anywhere that is
   // not EXPLICITLY development or test — including an unset NODE_ENV — so a live

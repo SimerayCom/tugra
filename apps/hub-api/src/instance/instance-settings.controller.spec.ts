@@ -96,10 +96,10 @@ function make(current: CurrentSettings, opts: { env?: Record<string, string>; ow
     refresh: jest.fn().mockResolvedValue(undefined),
   } as unknown as LicenseService;
   const telemetry = {
-    status: jest.fn().mockResolvedValue({ enabled: true, forcedOff: false, dbEnabled: true, instanceId: "anon-id", lastSentAt: null, intervalMin: 1440, endpoint: "https://telemetry.tugra.io/v1/ingest", payload: {} }),
+    status: jest.fn().mockResolvedValue({ enabled: true, forcedOff: false, dbEnabled: true, hubId: "0123456789abcdef0123456789abcdef", lastSentAt: null, intervalMin: 1440, endpoint: "https://api.tugra.io/v1/hubs/report", payload: {} }),
     setEnabled: jest.fn().mockResolvedValue(undefined),
     sendNow: jest.fn().mockResolvedValue({ status: "sent" }),
-    resetInstanceId: jest.fn().mockResolvedValue("anon-id-2"),
+    resetIdentity: jest.fn().mockResolvedValue("fedcba9876543210fedcba9876543210"),
   } as unknown as TelemetryService;
   const mail = {
     refresh: jest.fn().mockResolvedValue(undefined),
@@ -451,10 +451,10 @@ describe("InstanceSettingsController — telemetry", () => {
     expect((audit.log as jest.Mock).mock.calls[0][0]).toMatchObject({ action: "instance.telemetry_send" });
   });
 
-  it("resetTelemetry rotates the anonymous id", async () => {
+  it("resetTelemetry replaces the hub identity", async () => {
     const { ctrl, telemetry, audit } = make({ apiEnabled: true, apiAllowedIps: [] });
     await ctrl.resetTelemetry(OWNER);
-    expect(telemetry.resetInstanceId).toHaveBeenCalled();
+    expect(telemetry.resetIdentity).toHaveBeenCalled();
     expect((audit.log as jest.Mock).mock.calls[0][0]).toMatchObject({ action: "instance.telemetry_reset" });
   });
 

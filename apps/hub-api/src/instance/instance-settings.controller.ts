@@ -417,7 +417,7 @@ export class InstanceSettingsController {
   @Post("telemetry/reset")
   @HttpCode(200)
   async resetTelemetry(@CurrentUser() user: AuthUser) {
-    await this.telemetry.resetInstanceId();
+    await this.telemetry.resetIdentity();
     await this.audit.log({ actor: user.userId, action: "instance.telemetry_reset", target: "singleton" });
     return this.telemetry.status();
   }
