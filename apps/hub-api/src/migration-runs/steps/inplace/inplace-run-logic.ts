@@ -49,6 +49,8 @@ export const INPLACE_RUN_CODES = [
   "cutover.inplace-server-busy",
   "cutover.inplace-refused",
   "cutover.inplace-not-tested",
+  "cutover.inplace-plan-changed",
+  "cutover.inplace-agent-offline",
   "cutover.inplace-swap-interrupted",
   "cutover.inplace-host-not-verified",
   "cutover.inplace-certs-pending",
@@ -160,6 +162,25 @@ export function inPlaceSuite(state: RunTakeoverState | null): SuiteCheck[] {
       }
   }
   return out;
+}
+
+/** The hosts a takeover would serve through Tugra's proxy: the domains of every app that is part of it (a left-out app's domains are not). Sorted, no duplicates. */
+export const activeHosts = (state: Pick<RunTakeoverState, "items">): string[] => [...new Set(state.items.filter((i) => !i.skipped).flatMap((i) => i.domains.map((d) => d.host)))].sort();
+
+/**
+ * What a freshly planned takeover does that the owner's VERIFY approval never covered. The approval is bound to the takeover that was reviewed;
+ * a retry after a put-back plans a new one, which is checked again the same way. Anything that would take a site away (an app left out that the owner
+ * did not accept by name) or changes the set of domains served (compared with the hosts the reviewed takeover had) is a drift. The swap stops
+ * Coolify's proxy, so a site that lost its place in the takeover would lose its address.
+ */
+export function planDrift(reviewedHosts: readonly string[], fresh: RunTakeoverState, acks: readonly string[]): { apps: string[]; hosts: string[] } {
+  const apps = inPlaceSuite(fresh)
+    .filter((c) => c.checkId === "inplace-app" && c.status === "fail" && !acks.includes(c.id))
+    .map((c) => String((c.params as { app?: unknown } | undefined)?.app ?? c.subject));
+  const now = new Set(activeHosts(fresh));
+  const was = new Set(reviewedHosts);
+  const hosts = [...new Set([...[...was].filter((h) => !now.has(h)), ...[...now].filter((h) => !was.has(h))])].sort();
+  return { apps, hosts };
 }
 
 /** Hosts that fail their check through the proxy that now owns the box, and the domains that still wait for a new certificate. */

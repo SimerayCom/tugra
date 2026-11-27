@@ -1373,6 +1373,8 @@
     "cutover_inplace-server-busy": "Another takeover or guided run holds this server.",
     "cutover_inplace-refused": "The takeover was refused ({reason}).",
     "cutover_inplace-not-tested": "The takeover has not passed its test, so the ports are not taken.",
+    "cutover_inplace-plan-changed": "The takeover was planned again and no longer matches what you approved. Apps left out: {apps}. Domains that differ: {hosts}. Nothing was switched and the new plan was put back. Retry once the cause is fixed, or undo and review again.",
+    "cutover_inplace-agent-offline": "The server's agent is offline for the moment. The takeover keeps working and this step waits up to {minutes} minutes for it to come back.",
     "cutover_inplace-swap-interrupted": "The switch was interrupted while it was {status}. Undo it to put Coolify back, then run the takeover again.",
     "cutover_inplace-host-not-verified": "After the switch these domains do not answer like they did before: {hosts}. Retry, or undo to give the server back to Coolify.",
     "cutover_inplace-certs-pending": "These domains still serve Coolify's certificate and no new one came: {domains}. Check their DNS and port 80, then retry, or undo to give the server back.",

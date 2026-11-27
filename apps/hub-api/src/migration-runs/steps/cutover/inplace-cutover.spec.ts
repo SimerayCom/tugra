@@ -2,6 +2,7 @@ import { HttpException } from "@nestjs/common";
 import { StepFailure } from "../../core/run-contract";
 import type { RunTakeoverState } from "../../../coolify-inplace/inplace-run";
 import { makeCtx, makeRun } from "../data/testing/fakes";
+import { checkKey } from "../data/data-logic";
 import { InPlaceCutover, type InPlaceCutoverObs } from "./inplace-cutover";
 
 const base: RunTakeoverState = {
@@ -24,6 +25,7 @@ function build() {
     runPrepare: jest.fn(async (..._a: unknown[]) => base),
     runSwap: jest.fn(async (..._a: unknown[]) => swapped),
     runVerify: jest.fn(async (..._a: unknown[]) => swapped),
+    runGiveBack: jest.fn(async (..._a: unknown[]) => st({ status: "GIVEN_BACK" })),
   };
   const world = { createSwap: jest.fn(async () => ({ state: "PLANNED" })), setSwapState: jest.fn(async () => undefined) };
   const h = new InPlaceCutover(port as never, world as never);
@@ -98,5 +100,103 @@ describe("CUTOVER of an in-place run: a retry after the certificates were not is
     const retry = makeCtx({ key: "CUTOVER", run: t.run, steps: t.approved, trigger: "retry" });
     await t.h.act(retry.ctx, obsOf(swapped));
     expect(t.port.runVerify).toHaveBeenLastCalledWith(expect.anything(), expect.anything(), { retry: true });
+  });
+});
+
+describe("CUTOVER of an in-place run: a retry plans a new takeover that the owner never reviewed", () => {
+  const putBack = st({ status: "FAILED", failureCode: "swap_start_failed" });
+  const leftOut = { itemRef: "app:s:blog", name: "blog", buildMode: "reuse-image" as const, skipped: true, issues: ["adopt_failed" as never], domains: [{ host: "blog.example.com", tempCheck: "pending" as const, finalCheck: "pending" as const, cert: "pending" as const }] };
+  const withLeftOut = st({ items: [...base.items, leftOut as never] });
+  const ack = (...acks: string[]) => ({ VERIFY: { status: "PASSED" as const, approval: { ...build().approved.VERIFY.approval, acks } } });
+
+  it("an app left out by a transient failure of the new plan (a domain that would lose its address) is refused, the new plan is given back and the ports stay with Coolify", async () => {
+    const t = build();
+    t.port.runPrepare.mockResolvedValueOnce(withLeftOut);
+    const { ctx } = makeCtx({ key: "CUTOVER", run: t.run, steps: t.approved, trigger: "retry" });
+    await expect(t.h.act(ctx, obsOf(putBack))).rejects.toMatchObject({ code: "cutover.inplace-plan-changed", params: { apps: "blog", hosts: "-" }, retryable: true });
+    expect(t.port.runSwap).not.toHaveBeenCalled();
+    expect(t.port.runGiveBack).toHaveBeenCalledTimes(1);
+  });
+  it("the same app is fine when the owner accepted it by name in VERIFY", async () => {
+    const t = build();
+    t.port.runPrepare.mockResolvedValueOnce(withLeftOut);
+    const { ctx } = makeCtx({ key: "CUTOVER", run: t.run, steps: ack(checkKey("inplace-app", "app:s:blog")), trigger: "retry" });
+    await expect(t.h.act(ctx, obsOf(putBack))).resolves.toMatchObject({ outcome: "continue" });
+    expect(t.port.runSwap).toHaveBeenCalledTimes(1);
+  });
+  it("a different set of domains than the reviewed takeover served is refused as well", async () => {
+    const t = build();
+    t.port.runPrepare.mockResolvedValueOnce(st({ items: [{ ...base.items[0], domains: [{ host: "other.example.com", tempCheck: "ok", finalCheck: "pending", cert: "pending" }] }] }));
+    const { ctx } = makeCtx({ key: "CUTOVER", run: t.run, steps: t.approved, trigger: "retry" });
+    await expect(t.h.act(ctx, obsOf(putBack))).rejects.toMatchObject({ code: "cutover.inplace-plan-changed", params: { apps: "-", hosts: "other.example.com, web.example.com" } });
+    expect(t.port.runSwap).not.toHaveBeenCalled();
+  });
+  it("a refusal that cannot give the new plan back says so and is not retryable", async () => {
+    const t = build();
+    t.port.runPrepare.mockResolvedValueOnce(withLeftOut);
+    t.port.runGiveBack.mockResolvedValueOnce(st({ status: "FAILED", failureCode: "give_back_failed" }));
+    const { ctx } = makeCtx({ key: "CUTOVER", run: t.run, steps: t.approved, trigger: "retry" });
+    await expect(t.h.act(ctx, obsOf(putBack))).rejects.toMatchObject({ code: "cutover.inplace-give-back-failed", retryable: false });
+  });
+  it("after a refusal the next retry plans again and compares with the reviewed hosts, not with the refused plan", async () => {
+    const t = build();
+    const given = st({ status: "GIVEN_BACK", items: withLeftOut.items });
+    const steps = { ...t.approved, CUTOVER: { compensation: { inPlaceDriftRefused: true, inPlaceReviewedHosts: ["web.example.com"] } } };
+    // the app's adoption works this time: the plan is the reviewed one again
+    const { ctx } = makeCtx({ key: "CUTOVER", run: t.run, steps, trigger: "retry" });
+    await expect(t.h.act(ctx, obsOf(given))).resolves.toMatchObject({ outcome: "continue" });
+    expect(t.port.runPrepare).toHaveBeenCalledTimes(1);
+    expect(t.port.runSwap).toHaveBeenCalledTimes(1);
+    // and still failing: refused again
+    const t2 = build();
+    t2.port.runPrepare.mockResolvedValueOnce(withLeftOut);
+    const again = makeCtx({ key: "CUTOVER", run: t2.run, steps, trigger: "retry" });
+    await expect(t2.h.act(again.ctx, obsOf(given))).rejects.toMatchObject({ code: "cutover.inplace-plan-changed" });
+    expect(t2.port.runSwap).not.toHaveBeenCalled();
+  });
+  it("without a retry a given-back takeover stays given back (no new plan is made)", async () => {
+    const t = build();
+    const { ctx } = makeCtx({ key: "CUTOVER", run: t.run, steps: { ...t.approved, CUTOVER: { compensation: { inPlaceDriftRefused: true } } }, trigger: "tick" });
+    await expect(t.h.act(ctx, obsOf(st({ status: "GIVEN_BACK" })))).rejects.toMatchObject({ code: "cutover.inplace-reversed" });
+    expect(t.port.runPrepare).not.toHaveBeenCalled();
+  });
+});
+
+describe("CUTOVER of an in-place run: waiting for the agent and retrying the certificates", () => {
+  it("an offline agent is said once, as an event, while the step waits", async () => {
+    const t = build();
+    t.port.runVerify.mockRejectedValue(httpError(422, "takeover_server_offline"));
+    const { ctx, events } = makeCtx({ key: "CUTOVER", run: t.run, steps: { ...t.approved, CUTOVER: { compensation: { inPlaceSwapAt: "2026-11-19T10:00:00.000Z" } } }, now: new Date("2026-11-19T10:05:00.000Z") });
+    await t.h.act(ctx, obsOf(swapped));
+    expect(events.filter((e) => e.code === "cutover.inplace-agent-offline")).toHaveLength(1);
+    // the next poll (the flag is stored with the step) does not repeat it
+    const next = makeCtx({ key: "CUTOVER", run: t.run, steps: { ...t.approved, CUTOVER: { compensation: { inPlaceSwapAt: "2026-11-19T10:00:00.000Z", inPlaceOfflineNoted: true } } }, now: new Date("2026-11-19T10:06:00.000Z") });
+    await t.h.act(next.ctx, obsOf(swapped));
+    expect(next.events.filter((e) => e.code === "cutover.inplace-agent-offline")).toHaveLength(0);
+  });
+  it("a retry of a swap older than the certificate deadline gets its own time: it is not failed for age before the new attempts are looked at", async () => {
+    const t = build();
+    const pending = st({ ...swapped, certWorkLeft: true });
+    t.port.runVerify.mockResolvedValue(pending);
+    const old = { CUTOVER: { compensation: { inPlaceSwapAt: "2026-11-19T10:00:00.000Z" } } };
+    const { ctx } = makeCtx({ key: "CUTOVER", run: t.run, steps: { ...t.approved, ...old }, now: new Date("2026-11-19T12:00:00.000Z"), trigger: "retry" });
+    await expect(t.h.act(ctx, obsOf(swapped))).resolves.toMatchObject({ outcome: "continue" });
+    expect(t.port.runVerify).toHaveBeenLastCalledWith(expect.anything(), expect.anything(), { retry: true });
+  });
+  it("a retry that met a busy takeover is not lost: the next plain poll still asks for the new attempts", async () => {
+    const t = build();
+    t.port.runVerify.mockRejectedValueOnce(httpError(409, "takeover_busy"));
+    const first = makeCtx({ key: "CUTOVER", run: t.run, steps: t.approved, trigger: "retry" });
+    await expect(t.h.act(first.ctx, obsOf(swapped))).resolves.toMatchObject({ outcome: "continue" });
+    expect(first.comp.inPlaceRetryPending).toBe(true);
+    // the next poll is a plain tick, with the step's stored compensation
+    const next = makeCtx({ key: "CUTOVER", run: t.run, steps: { ...t.approved, CUTOVER: { compensation: { ...first.comp } } }, trigger: "tick" });
+    await t.h.act(next.ctx, obsOf(swapped));
+    expect(t.port.runVerify).toHaveBeenLastCalledWith(expect.anything(), expect.anything(), { retry: true });
+    expect(next.comp.inPlaceRetryPending).toBe(false);
+    // once the pass ran, a further plain poll does not ask again
+    const last = makeCtx({ key: "CUTOVER", run: t.run, steps: { ...t.approved, CUTOVER: { compensation: { ...next.comp } } }, trigger: "tick" });
+    await t.h.act(last.ctx, obsOf(swapped));
+    expect(t.port.runVerify).toHaveBeenLastCalledWith(expect.anything(), expect.anything(), { retry: false });
   });
 });

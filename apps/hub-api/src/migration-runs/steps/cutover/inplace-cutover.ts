@@ -15,7 +15,7 @@ import { RunLeaseLostError, StepFailure, makeGate, type ActResult, type CompResu
 import { INPLACE_RUN_PORT, type InPlaceRunPort, type RunTakeoverState } from "../../../coolify-inplace/inplace-run";
 import { approvalValid, chk, iso } from "./run-cutover-logic";
 import { CutoverWorld, type SwapRow } from "./cutover-world.service";
-import { CUTOVER_FAILURE, INPLACE_CERT_DEADLINE_MS, INPLACE_POLL_MS, INPLACE_VERIFY_DEADLINE_MS, afterSwapFindings, isCleanPutBack, refusalOf } from "../inplace/inplace-run-logic";
+import { CUTOVER_FAILURE, INPLACE_CERT_DEADLINE_MS, INPLACE_POLL_MS, INPLACE_VERIFY_DEADLINE_MS, activeHosts, afterSwapFindings, isCleanPutBack, planDrift, refusalOf } from "../inplace/inplace-run-logic";
 
 /** What this step reads of CUTOVER's observation (the handler's own type extends it). */
 export interface InPlaceCutoverObs {
@@ -89,11 +89,18 @@ export class InPlaceCutover {
     let swapRow = obs.swap;
 
     // A swap that failed and was put back cleanly can be tried again: Coolify serves as before, nothing was lost. The retry plans and tests the
-    // takeover again (the dark test is what the swap rests on), and goes on only with the owner's VERIFY approval still standing and the fresh test passed.
-    if (isCleanPutBack(st) && ctx.trigger === "retry") {
+    // takeover again (the dark test is what the swap rests on), and goes on only with the owner's VERIFY approval still standing, the fresh test passed
+    // and the fresh plan still being what the owner reviewed: the approval was bound to the first takeover, so a new one that leaves an app out or
+    // serves other domains is refused and given back (a transient failure of the app's adoption must never take a site's address away).
+    const driftRefused = ctx.step.compensation?.inPlaceDriftRefused === true;
+    if ((isCleanPutBack(st) || (st.status === "GIVEN_BACK" && driftRefused)) && ctx.trigger === "retry") {
       const verify = ctx.stepState("VERIFY");
       if (verify.status !== "PASSED") throw new StepFailure("cutover.verify-not-passed", {}, false);
       if (!approvalValid(verify.approval, ctx.now())) throw new StepFailure(verify.approval ? "cutover.approval-expired" : "cutover.approval-missing", {}, false);
+      // the hosts the reviewed takeover served, remembered from the first retry on (a refused plan is given back and must not become the reference)
+      const kept = ctx.step.compensation?.inPlaceReviewedHosts;
+      const reviewedHosts = Array.isArray(kept) ? (kept as unknown[]).map(String) : activeHosts(st);
+      if (!Array.isArray(kept)) await ctx.recordCompensation({ inPlaceReviewedHosts: reviewedHosts });
       await ctx.assertLease();
       try {
         st = await this.port.runPrepare(ctx.actor.userId, { runId: run.id, serverId: run.targetServerId, opId: run.opId as string, rebuild: run.options.rebuild ?? [] });
@@ -104,6 +111,22 @@ export class InPlaceCutover {
         throw new StepFailure(r.code, r.params, r.retryable);
       }
       if (st.status !== "TESTING" || !st.gate.ok || st.pending > 0) throw new StepFailure("cutover.inplace-not-tested", {}, true);
+      const drift = planDrift(reviewedHosts, st, verify.approval?.acks ?? []);
+      if (drift.apps.length > 0 || drift.hosts.length > 0) {
+        // the new takeover is not what the owner approved: put it back so nothing waits half-tested, and let the owner try again or undo
+        await ctx.recordCompensation({ inPlaceDriftRefused: true });
+        await ctx.assertLease();
+        let back: RunTakeoverState | null;
+        try {
+          back = await this.port.runGiveBack(userId, run.id);
+        } catch (e) {
+          if (e instanceof RunLeaseLostError) throw e;
+          throw new StepFailure("cutover.inplace-give-back-failed", {}, false);
+        }
+        if (back && back.status !== "GIVEN_BACK") throw new StepFailure("cutover.inplace-give-back-failed", { status: back.status }, false);
+        throw new StepFailure("cutover.inplace-plan-changed", { apps: drift.apps.slice(0, 20).join(", ") || "-", hosts: drift.hosts.slice(0, 20).join(", ") || "-" }, true);
+      }
+      if (driftRefused) await ctx.recordCompensation({ inPlaceDriftRefused: false });
       // the run's swap record was closed by the put-back: it starts over for this try
       if (obs.swap?.state === "REVERSED" && (await this.world.setSwapState(run.id, run.targetServerId, ["REVERSED"], "PLANNED"))) swapRow = { ...obs.swap, state: "PLANNED" };
     }
@@ -142,25 +165,41 @@ export class InPlaceCutover {
       throw new StepFailure(st.failureCode ? CUTOVER_FAILURE[st.failureCode] : "cutover.inplace-swap-interrupted", {}, isCleanPutBack(st));
     }
 
-    const since = swappedNow ? ctx.now().getTime() : Date.parse(typeof ctx.step.compensation?.inPlaceSwapAt === "string" ? (ctx.step.compensation.inPlaceSwapAt as string) : "") || ctx.now().getTime();
+    const comp = ctx.step.compensation;
+    // a retry is the owner asking for another go: it also starts the certificate clock over (one attempt per domain is about a minute, so an old
+    // swap would otherwise run out of time after the first). Remembered, because only the first drive of a retry carries the trigger and a busy
+    // takeover must not lose it on the next poll.
+    const retryNow = ctx.trigger === "retry" && st.status === "SWAPPED";
+    const retryPending = comp?.inPlaceRetryPending === true;
+    if (retryNow && !retryPending) await ctx.recordCompensation({ inPlaceRetryPending: true, inPlaceRetryAt: iso(ctx.now()) });
+    const retryAt = retryNow && !retryPending ? ctx.now().getTime() : Date.parse(typeof comp?.inPlaceRetryAt === "string" ? comp.inPlaceRetryAt : "") || 0;
+    const swapAt = swappedNow ? ctx.now().getTime() : Date.parse(typeof comp?.inPlaceSwapAt === "string" ? comp.inPlaceSwapAt : "") || ctx.now().getTime();
+    const since = Math.max(swapAt, retryAt);
     const age = ctx.now().getTime() - since;
 
     // SWAPPED or VERIFIED: re-check every domain and work on the new certificates (a few per call)
     if (st.status === "SWAPPED") {
       await ctx.assertLease();
       try {
-        // a retry of the step is the owner asking for another go: domains that used their certificate attempts get new ones
-        st = await this.port.runVerify(userId, run.id, { retry: ctx.trigger === "retry" });
+        st = await this.port.runVerify(userId, run.id, { retry: retryNow || retryPending });
       } catch (e) {
         if (e instanceof RunLeaseLostError) throw e;
         const r = refusalOf("cutover", e);
         // the sweeper (or another call) is working on it: look again on the next tick
         if (r && r.code === "cutover.inplace-refused" && r.params.reason === "takeover-busy") return { outcome: "continue", pollAfterMs: INPLACE_POLL_MS };
-        // the agent restarted or dropped for a moment: the takeover is healthy and its own timer keeps working, so the step waits for it up to the same deadline
-        if (r && r.code === "cutover.inplace-refused" && r.params.reason === "takeover-server-offline" && age <= INPLACE_CERT_DEADLINE_MS) return { outcome: "continue", pollAfterMs: INPLACE_POLL_MS };
+        // the agent restarted or dropped for a moment: the takeover is healthy and its own timer keeps working, so the step waits for it up to the same deadline (said once, not every poll)
+        if (r && r.code === "cutover.inplace-refused" && r.params.reason === "takeover-server-offline" && age <= INPLACE_CERT_DEADLINE_MS) {
+          if (comp?.inPlaceOfflineNoted !== true) {
+            await ctx.recordCompensation({ inPlaceOfflineNoted: true });
+            await ctx.emit({ stepKey: "CUTOVER", level: "warn", code: "cutover.inplace-agent-offline", params: { minutes: Math.round(INPLACE_CERT_DEADLINE_MS / 60_000) } });
+          }
+          return { outcome: "continue", pollAfterMs: INPLACE_POLL_MS };
+        }
         if (!r) throw e;
         throw new StepFailure(r.code, r.params, r.retryable);
       }
+      // the pass ran: the retry's new attempts were given, and an offline note no longer holds
+      if (retryNow || retryPending || comp?.inPlaceOfflineNoted === true) await ctx.recordCompensation({ inPlaceRetryPending: false, inPlaceOfflineNoted: false });
     }
     const found = afterSwapFindings(st);
     if (found.checkFailed.length === 0 && !run.freezeEndedAt) await ctx.patchRun({ freezeEndedAt: ctx.now() });
