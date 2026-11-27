@@ -21,6 +21,8 @@ import { SkeletonTable } from "../../../components/skeleton";
 import { useToast } from "../../../components/toast";
 import type { ServerView } from "../../../lib/types";
 import { HelpLink } from "../../../components/help-link";
+import { useOptionalConfirm } from "../../../components/confirm";
+import { heldFromError, heldSummary, inFlightLines } from "../../../lib/in-flight";
 
 export default function ServersPage() {
   // useSearchParams needs a Suspense boundary for the static prerender.
@@ -50,10 +52,34 @@ function ServersPageInner() {
   const { data: version } = useQuery({ queryKey: ["instanceVersion"], queryFn: () => api.getInstanceVersion(), staleTime: 5 * 60_000, retry: false });
   const agentTarget = version ? (version.latest ?? version.current) : null;
   const [updating, setUpdating] = useState<ReadonlySet<string>>(new Set());
+  const confirm = useOptionalConfirm();
   const updateAgent = useMutation({
-    mutationFn: (s: ServerView) => api.updateAgent(s.id),
+    // Work is running on the server (a migration, deploy, backup, ...): the hub answers 409 with the list and the row asks "Update anyway?".
+    mutationFn: async (s: ServerView) => {
+      try {
+        return await api.updateAgent(s.id);
+      } catch (e) {
+        const held = heldFromError(e);
+        if (!held) throw e;
+        const go = confirm
+          ? await confirm({
+              title: t("inFlight.updateAnywayTitle"),
+              body: `${t("inFlight.updateAnywayAgentBody")}\n\n${inFlightLines(t, held)}`,
+              confirmLabel: t("inFlight.updateAnyway"),
+              cancelLabel: t("inFlight.wait"),
+              danger: true,
+            })
+          : false;
+        if (!go) {
+          toast(heldSummary(t, held), "info");
+          return null;
+        }
+        return api.updateAgent(s.id, true);
+      }
+    },
     onMutate: (s) => setUpdating((prev) => new Set(prev).add(s.id)),
     onSuccess: (res, s) => {
+      if (!res) return;
       const sent = res.status === "ok" && res.sent > 0;
       toast(t(sent ? "servers.agentUpdateQueued" : "servers.agentUpdateSkipped", { name: s.name }), sent ? "success" : "info");
       qc.invalidateQueries({ queryKey: ["servers"] });

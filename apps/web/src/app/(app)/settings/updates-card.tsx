@@ -19,6 +19,10 @@ import {
   type UpdateStepState,
 } from "../../../hooks/useUpdateStream";
 import { CheckCircle2, Circle, Loader2, XCircle } from "lucide-react";
+import { InFlightList } from "../../../components/in-flight-list";
+import { UpdateAnywayDialog } from "../../../components/update-anyway-dialog";
+import { heldSummary } from "../../../lib/in-flight";
+import type { InFlightItem } from "../../../lib/types";
 
 const WORKING: UpdatePhase[] = ["starting", "queued", "pulling", "recreating", "reconnecting"];
 
@@ -211,6 +215,18 @@ export function UpdatesCard() {
 
   const upd = useUpdateStream();
   const working = WORKING.includes(upd.phase);
+  // Work is running on the hub: "Update now" asks before cutting it off. `ask` is what the owner saw on the card, `upd.held` what the hub answered.
+  const [ask, setAsk] = useState<InFlightItem[] | null>(null);
+  const running = data?.inFlight ?? [];
+  // "Update anyway" was pressed: the dialog stays up, its button spinning, until the hub has answered.
+  const [forcing, setForcing] = useState(false);
+  const confirmItems = upd.held ?? ask;
+  useEffect(() => {
+    if (forcing && upd.phase !== "starting") {
+      setForcing(false);
+      setAsk(null);
+    }
+  }, [forcing, upd.phase]);
   // The page keeps running the OLD web bundle after the hub updates — celebrate, and the card offers a Reload.
   const phase = upd.phase;
   const target = upd.target;
@@ -296,11 +312,34 @@ export function UpdatesCard() {
         </p>
       )}
 
+      {/* Work is running: an update would cut it off, so it waits (an automatic one retries each check and runs the first time the hub is idle). */}
+      {data?.updateAvailable && running.length > 0 && !working && upd.phase !== "done" && (
+        <div
+          role="status"
+          data-testid="update-held"
+          style={{ border: "1px solid var(--c-bd)", borderLeft: "3px solid var(--c-am)", borderRadius: "var(--r1)", padding: 12, margin: "0 0 14px" }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <Badge tone="warn">{t("inFlight.heldTitle")}</Badge>
+            <span style={{ fontSize: 13, fontWeight: 600 }}>{heldSummary(t, running)}</span>
+          </div>
+          <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "6px 0 0" }}>
+            {data.autoUpdate
+              ? t("settings.updateHeldAuto", { minutes: data.checkIntervalMin })
+              : t("settings.updateHeldManual")}
+            {data.hold ? ` ${t("settings.updateHeldSince", { when: relativeTime(data.hold.since) })}` : ""}
+          </p>
+          <InFlightList items={running} />
+        </div>
+      )}
+
       {!working && upd.phase !== "done" && (
         <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", margin: "0 0 14px" }}>
           {/* Don't invite another update when the stack needs manual recovery. */}
           {data?.updateAvailable && upd.phase !== "recovery_required" && (
-            <Btn onClick={() => upd.start()}>{data.halfUpdate ? t("settings.updateFinish") : t("settings.updateNow")}</Btn>
+            <Btn onClick={() => (running.length > 0 ? setAsk(running) : upd.start())} loading={upd.phase === "starting"}>
+              {data.halfUpdate ? t("settings.updateFinish") : t("settings.updateNow")}
+            </Btn>
           )}
           {/* Non-started outcomes (already up to date, notify-only, in progress…); failures render inside the stepper. */}
           {upd.messageKey && upd.phase !== "failed" && upd.phase !== "recovery_required" && (
@@ -355,6 +394,21 @@ export function UpdatesCard() {
           {check.isPending ? t("settings.updateChecking") : t("settings.updateCheck")}
         </Btn>
       </div>
+
+      {confirmItems && (
+        <UpdateAnywayDialog
+          items={confirmItems}
+          loading={upd.phase === "starting"}
+          onCancel={() => {
+            setAsk(null);
+            upd.dismissHeld();
+          }}
+          onConfirm={() => {
+            setForcing(true);
+            void upd.start({ force: true });
+          }}
+        />
+      )}
     </Card>
   );
 }

@@ -4,6 +4,8 @@ import { useCallback, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { api, ApiError } from "../lib/api";
 import { consumeSseStream } from "../lib/sse";
+import { heldFromError } from "../lib/in-flight";
+import type { InFlightItem } from "../lib/types";
 
 /** `reconnecting` is client-side only: the stream dropped (hub restarting) and we're polling the version. */
 export type UpdatePhase = "idle" | "starting" | "queued" | "pulling" | "recreating" | "reconnecting" | "done" | "failed" | "recovery_required";
@@ -127,6 +129,8 @@ export function useUpdateStream() {
   const [startedAt, setStartedAt] = useState<number | null>(null);
   const [endedAt, setEndedAt] = useState<number | null>(null);
   const [failure, setFailure] = useState<UpdateFailure | null>(null);
+  // The hub answered 409 `migration-active`: what is running. The card asks "Update anyway?" and calls start({ force: true }).
+  const [held, setHeld] = useState<InFlightItem[] | null>(null);
   const abort = useRef<AbortController | null>(null);
   // The last working step reached, so a failure can mark WHICH step failed.
   const lastStep = useRef<UpdateStepId>("queued");
@@ -157,7 +161,8 @@ export function useUpdateStream() {
     [qc, finish],
   );
 
-  const start = useCallback(async () => {
+  const start = useCallback(async (opts?: { force?: boolean }) => {
+    setHeld(null);
     setMessageKey("");
     setFailedStep(null);
     setFailure(null);
@@ -167,8 +172,15 @@ export function useUpdateStream() {
     setPhase("starting");
     let res: Awaited<ReturnType<typeof api.applyInstanceUpdate>>;
     try {
-      res = await api.applyInstanceUpdate();
+      res = await api.applyInstanceUpdate(opts?.force === true);
     } catch (e) {
+      const running = heldFromError(e);
+      if (running) {
+        setPhase("idle");
+        setStartedAt(null);
+        setHeld(running);
+        return;
+      }
       setPhase("idle");
       setMessageKey(e instanceof ApiError && e.status === 409 ? "settings.updateInProgress" : "settings.updateFailed");
       if (!(e instanceof ApiError && e.status === 409)) finish("failed", true);
@@ -241,5 +253,7 @@ export function useUpdateStream() {
     await reconcile(res.targetVersion);
   }, [reconcile, finish, qc]);
 
-  return { phase, target, messageKey, failedStep, failure, startedAt, endedAt, start };
+  const dismissHeld = useCallback(() => setHeld(null), []);
+
+  return { phase, target, messageKey, failedStep, failure, startedAt, endedAt, start, held, dismissHeld };
 }

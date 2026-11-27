@@ -815,5 +815,8 @@
     "openImport": "Open the import",
     "addServer": "Add a server",
     "noOtherServer": "There is no other server in this team."
-  }
+  },
+  "agentFleetHeld": "{n} held while work runs on the server. They are updated once it ends.",
+  "agentFleetHeldBody": "{n} of the agents are held because work is running on their server.",
+  "agentFleetHeldToast": "{n} held while work runs on the server"
 }

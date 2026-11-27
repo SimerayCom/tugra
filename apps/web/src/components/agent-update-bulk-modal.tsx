@@ -1,12 +1,15 @@
 "use client";
 
+import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import { bulkSummary } from "../lib/bulk";
 import { useT } from "../i18n/provider";
-import type { AgentUpdateItem, ServerView } from "../lib/types";
+import type { AgentUpdateItem, AgentUpdateResponse, InFlightItem, ServerView } from "../lib/types";
 import { Modal } from "./modal";
 import { Btn } from "./ui";
+import { InFlightList } from "./in-flight-list";
+import { heldSummary } from "../lib/in-flight";
 
 /**
  * Update the Tugra agent across many selected servers at once (fleet op). The hub signs a digest-pinned
@@ -27,14 +30,36 @@ export function AgentUpdateBulkModal({
   const sum = bulkSummary(servers, new Set(selectedIds));
   const nameOf = (id: string) => servers.find((s) => s.id === id)?.name ?? id;
 
+  // The first pass updates the free servers and reports the held ones (work is in flight on them). "Update held anyway" is a second,
+  // confirmed pass over just those, with force (owner/admin of their team); the two results are shown together.
+  const [first, setFirst] = useState<AgentUpdateResponse | null>(null);
+  const [confirmForce, setConfirmForce] = useState(false);
   const apply = useMutation({
-    mutationFn: () => api.bulkUpdateAgent(selectedIds),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["servers"] }),
+    mutationFn: async (force: boolean): Promise<AgentUpdateResponse> => {
+      if (!force || !first) return api.bulkUpdateAgent(selectedIds);
+      const heldIds = first.results.filter((r) => r.status === "held" && r.reason !== "force-not-permitted").map((r) => r.serverId);
+      const second = await api.bulkUpdateAgent(heldIds, true);
+      const done = first.results.filter((r) => r.status !== "held" || !heldIds.includes(r.serverId));
+      const results = [...done, ...second.results];
+      return { ...second, results, total: results.length, sent: results.filter((r) => r.status === "sent").length, offline: results.filter((r) => r.status === "offline").length, skipped: results.filter((r) => r.status === "skipped").length, held: results.filter((r) => r.status === "held").length };
+    },
+    onSuccess: (res) => {
+      setFirst(res);
+      setConfirmForce(false);
+      void qc.invalidateQueries({ queryKey: ["servers"] });
+      void qc.invalidateQueries({ queryKey: ["agentFleetStatus"] });
+    },
   });
+  const applyError = apply.error as Error | null;
+  const heldRows = (apply.data?.results ?? []).filter((r) => r.status === "held");
+  const heldCanForce = heldRows.some((r) => r.reason !== "force-not-permitted");
+  const heldItems = new Map<string, InFlightItem>();
+  for (const r of heldRows) for (const i of r.inFlight ?? []) heldItems.set(`${i.kind}:${i.id}`, i);
 
   const rowLabel = (r: AgentUpdateItem): string => {
     if (r.status === "sent") return t("bulk.agentSent");
     if (r.status === "offline") return t("bulk.offline");
+    if (r.status === "held") return t(r.reason === "force-not-permitted" ? "bulk.agentForceNotPermitted" : "bulk.agentHeld");
     const reasons: Record<string, string> = {
       "already-current": "bulk.agentCurrent",
       "no-digest-for-arch": "bulk.agentNoDigest",
@@ -65,7 +90,7 @@ export function AgentUpdateBulkModal({
           </div>
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>
             <Btn variant="ghost" type="button" onClick={onClose}>{t("bulk.close")}</Btn>
-            <Btn type="button" onClick={() => apply.mutate()} disabled={apply.isPending || sum.writable === 0}>
+            <Btn type="button" onClick={() => apply.mutate(false)} loading={apply.isPending} disabled={sum.writable === 0}>
               {apply.isPending ? t("bulk.applying") : t("bulk.applyAgentUpdate")}
             </Btn>
           </div>
@@ -84,6 +109,7 @@ export function AgentUpdateBulkModal({
         <div>
           <div style={{ fontSize: 13, marginBottom: 12 }}>
             {t("bulk.agentUpdateResult", { sent: apply.data.sent, offline: apply.data.offline, skipped: apply.data.skipped })}
+            {apply.data.held > 0 && <> {t("bulk.agentHeldResult", { n: apply.data.held })}</>}
           </div>
           <div style={{ marginBottom: 14, maxHeight: 240, overflowY: "auto" }}>
             {apply.data.results.map((r) => (
@@ -93,6 +119,25 @@ export function AgentUpdateBulkModal({
               </div>
             ))}
           </div>
+          {heldRows.length > 0 && (
+            <div role="status" data-testid="agent-update-held" style={{ margin: "0 0 14px", padding: 10, border: "1px solid var(--c-bd)", borderLeft: "3px solid var(--c-am)", borderRadius: "var(--r1)" }}>
+              <div style={{ fontSize: 13, fontWeight: 600 }}>{heldSummary(t, [...heldItems.values()])}</div>
+              <InFlightList items={[...heldItems.values()]} max={4} />
+              {heldCanForce && !confirmForce && (
+                <Btn variant="ghost" style={{ marginTop: 8 }} onClick={() => setConfirmForce(true)}>{t("bulk.agentUpdateHeldAnyway")}</Btn>
+              )}
+              {heldCanForce && confirmForce && (
+                <div data-testid="agent-update-force-confirm" style={{ marginTop: 8 }}>
+                  <p style={{ fontSize: 12, color: "var(--c-tx2)", margin: "0 0 8px", lineHeight: 1.5 }}>{t("inFlight.updateAnywayAgentBody")}</p>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    <Btn variant="danger" onClick={() => apply.mutate(true)} loading={apply.isPending}>{t("inFlight.updateAnyway")}</Btn>
+                    <Btn variant="ghost" onClick={() => setConfirmForce(false)} disabled={apply.isPending}>{t("inFlight.wait")}</Btn>
+                  </div>
+                </div>
+              )}
+              {applyError && <div style={{ color: "var(--c-r)", fontSize: 12, marginTop: 8 }}>{applyError.message}</div>}
+            </div>
+          )}
           <div style={{ display: "flex", justifyContent: "flex-end" }}>
             <Btn variant="ghost" onClick={onClose}>{t("bulk.close")}</Btn>
           </div>

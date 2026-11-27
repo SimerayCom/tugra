@@ -61,5 +61,9 @@
   "patchRestartWarn": "The container engine is updated too: Docker restarts on every selected server, and every app and database on them restarts and is briefly unavailable.",
   "patchRestartConfirmTitle": "Update the container engine too?",
   "patchRestartConfirm": "Docker restarts on {n} server(s), so every app and database on them restarts and is briefly unavailable.",
-  "patchRestartConfirmButton": "Update and restart apps"
+  "patchRestartConfirmButton": "Update and restart apps",
+  "agentHeld": "Held: work is running",
+  "agentForceNotPermitted": "Held: only a team owner or admin can update through running work",
+  "agentHeldResult": "{n} held while work runs on the server.",
+  "agentUpdateHeldAnyway": "Update held servers anyway"
 }

@@ -626,5 +626,8 @@
   "hubWarn_queue_backlog": "Queue {detail} has {value} jobs waiting.",
   "hubHealthMb": "{n} MB",
   "hubHealthHeapVal": "{used} / {limit} MB",
-  "hubHealthQueueDurSep": " · last run {ms} ms"
+  "hubHealthQueueDurSep": " · last run {ms} ms",
+  "updateHeldAuto": "The automatic update is waiting. It checks again every {minutes} minutes and runs the first time the hub is idle.",
+  "updateHeldManual": "Updating now would cut this off. Wait for it to finish, or update anyway.",
+  "updateHeldSince": "Waiting since {when}."
 }

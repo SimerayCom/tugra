@@ -29,6 +29,7 @@ import feedback from "./feedback.json";
 import fleet from "./fleet.json";
 import home from "./home.json";
 import identity from "./identity.json";
+import inFlight from "./inFlight.json";
 import importNs from "./import.json";
 import migrationRun from "./migrationRun.json";
 import monitors from "./monitors.json";
@@ -63,6 +64,6 @@ import traffic from "./traffic.json";
 
 // Split into namespace files (this JSON gets large); merged here.
 
-const en = { apps, audit, auth, backups, beszelImport, bulk, charts, common, coolifyTakeover, coolifyAgent, coolifyCleanup, coolifyInPlace, inPlaceRun, coolifyInstall, coolifyMove, coolifySecrets, hostMatch, placement, projectMove, costs, cutover, dashboard, databases, logdrains, destinations, domains, errors, feedback, fleet, home, identity, import: importNs, migrationRun, monitors, nav, notifications, objectMigration, oauth, oob, onboarding, patching, portal, statusPage, pickers, projects, pwa, reboot, registries, cloudCredentials, secretProviders, clusters, resources, rollouts, servers, settings, sources, shared, tags, teams, templates, terminal, traffic };
+const en = { apps, audit, auth, backups, beszelImport, bulk, charts, common, coolifyTakeover, coolifyAgent, coolifyCleanup, coolifyInPlace, inPlaceRun, coolifyInstall, coolifyMove, coolifySecrets, hostMatch, placement, projectMove, costs, cutover, dashboard, databases, logdrains, destinations, domains, errors, feedback, fleet, home, identity, inFlight, import: importNs, migrationRun, monitors, nav, notifications, objectMigration, oauth, oob, onboarding, patching, portal, statusPage, pickers, projects, pwa, reboot, registries, cloudCredentials, secretProviders, clusters, resources, rollouts, servers, settings, sources, shared, tags, teams, templates, terminal, traffic };
 
 export default en;

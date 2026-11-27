@@ -767,9 +767,10 @@ export const api = {
   checkInstanceUpdate() {
     return apiFetch<InstanceUpdateStatus>("/instance/update/check", { method: "POST" });
   },
-  // Start the updater (owner). Throws ApiError 409 when an update is already in progress.
-  applyInstanceUpdate() {
-    return apiFetch<InstanceUpdateApply>("/instance/update", { method: "POST" });
+  // Start the updater (owner). Throws ApiError 409 when an update is already in progress, or 409 `migration-active`
+  // (body.inFlight lists the work) while something is running; `force` updates anyway.
+  applyInstanceUpdate(force = false) {
+    return apiFetch<InstanceUpdateApply>("/instance/update", { method: "POST", ...(force ? { body: JSON.stringify({ force: true }) } : {}) });
   },
   // Public white-label branding (themes the login page pre-auth). No refresh-retry (unauthenticated).
   getBranding() {
@@ -1325,8 +1326,9 @@ export const api = {
       body: JSON.stringify({ serverIds, scope }),
     });
   },
-  updateAgent(id: string) {
-    return apiFetch<AgentUpdateResponse>(`/servers/${id}/agent-update`, { method: "POST" });
+  // 409 `migration-active` (body.inFlight lists the work) while something runs on the server; `force` goes ahead (owner/admin of the team).
+  updateAgent(id: string, force = false) {
+    return apiFetch<AgentUpdateResponse>(`/servers/${id}/agent-update`, { method: "POST", ...(force ? { body: JSON.stringify({ force: true }) } : {}) });
   },
   listServerAudit(id: string, cursor?: string) {
     const qs = cursor ? `?cursor=${encodeURIComponent(cursor)}` : "";
@@ -1336,13 +1338,13 @@ export const api = {
     return apiFetch<AgentFleetStatus>(`/fleet/agent-update/status`);
   },
   /** One click: update every outdated agent of the teams the caller manages to the hub's release. */
-  updateOutdatedAgents() {
-    return apiFetch<AgentUpdateResponse>(`/fleet/agent-update/outdated`, { method: "POST" });
+  updateOutdatedAgents(force = false) {
+    return apiFetch<AgentUpdateResponse>(`/fleet/agent-update/outdated`, { method: "POST", ...(force ? { body: JSON.stringify({ force: true }) } : {}) });
   },
-  bulkUpdateAgent(serverIds: string[]) {
+  bulkUpdateAgent(serverIds: string[], force = false) {
     return apiFetch<AgentUpdateResponse>(`/fleet/agent-update`, {
       method: "POST",
-      body: JSON.stringify({ serverIds }),
+      body: JSON.stringify(force ? { serverIds, force: true } : { serverIds }),
     });
   },
 

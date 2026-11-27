@@ -286,6 +286,28 @@ export interface InstanceVersionSummary {
   updateAvailable: boolean;
 }
 
+/** One piece of work an update must not interrupt (a migration, takeover, cutover, move, transfer, deploy, backup, restore, rollout, ...). */
+export type InFlightKind =
+  | "migration-run" | "takeover" | "cutover" | "project-move" | "app-move" | "volume-transfer" | "object-migration" | "cleanup" | "import"
+  | "deployment" | "backup" | "restore" | "pitr-restore" | "restore-verify" | "rollout" | "agent-update" | "swarm" | "patch" | "reboot" | "bulk-command";
+export interface InFlightItem {
+  kind: InFlightKind;
+  id: string;
+  /** A name to show next to the kind (an app, a database, a server, a host); never a secret. */
+  label: string;
+  /** The Tugra servers the work touches. */
+  serverIds: string[];
+  teamId: string | null;
+  /** ISO time the work started. */
+  since: string;
+}
+/** An automatic update that is waiting for the hub to be idle: since when, and what it saw on the latest tick. */
+export interface InstanceUpdateHold {
+  since: string;
+  checkedAt: string;
+  items: InFlightItem[];
+}
+
 /** Self-update status (GET /instance/update, PATCH .../update, POST .../update/check). Owner-only. */
 export interface InstanceUpdateStatus {
   /** The running hub version. */
@@ -316,6 +338,10 @@ export interface InstanceUpdateStatus {
   updater: InstanceUpdaterStatus;
   /** A half-finished update the helper found (.env names a newer release than the one running); null when none. */
   halfUpdate: InstanceHalfUpdate | null;
+  /** Work running on the hub right now that an update would cut off (live on every read). Empty when the hub is idle. */
+  inFlight: InFlightItem[];
+  /** Set while an automatic update waits for `inFlight` to end; null otherwise. */
+  hold: InstanceUpdateHold | null;
 }
 
 /**
@@ -340,8 +366,10 @@ export interface InstanceUpdaterStatus {
 
 /** Result of POST /instance/update (starting the updater). `started` = queued for the sidecar. */
 export interface InstanceUpdateApply {
-  status: "started" | "up-to-date" | "in-progress" | "unconfigured" | "error" | "notify-only" | "needs-intermediate";
+  status: "started" | "up-to-date" | "in-progress" | "unconfigured" | "error" | "notify-only" | "needs-intermediate" | "held";
   targetVersion: string | null;
+  /** `started` with force: the work that was updated through. */
+  overridden?: InFlightItem[];
 }
 
 /** The exact anonymous report sent to the stats endpoint — mirrored to the UI so what is shown is
@@ -802,8 +830,9 @@ export type BulkCapabilityResult =
 
 export interface AgentUpdateItem {
   serverId: string;
-  status: "sent" | "offline" | "skipped"; // sent = dispatched; the new version shows once the agent reconnects
-  reason?: string; // skip reason: already-current | no-digest-for-arch | capability-not-granted | not-permitted
+  status: "sent" | "offline" | "skipped" | "held"; // sent = dispatched; the new version shows once the agent reconnects; held = work is in flight on that server
+  reason?: string; // skip reason: already-current | no-digest-for-arch | capability-not-granted | not-permitted; held reason: migration-active | force-not-permitted
+  inFlight?: InFlightItem[]; // held: what is running on the server
 }
 /** How many remote agents run an older version than the hub (the "3/24 agents" notice). */
 export interface AgentFleetStatus {
@@ -813,6 +842,7 @@ export interface AgentFleetStatus {
   outdatedServerIds: string[];
   autoUpdate: boolean; // "Apply updates automatically" is on: the hub rolls them out one by one by itself
   hubBehind: boolean; // a newer release is published than the hub runs: the hub updates first, agents follow
+  held: { serverId: string; inFlight: InFlightItem[] }[]; // servers with work in flight: no agent update starts on them until it ends
 }
 export interface AgentUpdateResponse {
   status: "ok" | "unconfigured" | "error" | "hub-behind"; // unconfigured = no signed manifest; error = couldn't verify it; hub-behind = a newer release is published: update the hub first
@@ -820,6 +850,7 @@ export interface AgentUpdateResponse {
   sent: number;
   offline: number;
   skipped: number;
+  held: number; // servers left alone because work is in flight on them
   results: AgentUpdateItem[];
 }
 

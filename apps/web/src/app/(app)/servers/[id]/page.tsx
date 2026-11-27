@@ -15,7 +15,10 @@ import { InstallTransportNote } from "../../../../components/install-transport-n
 import { useConfirm } from "../../../../components/confirm";
 import { pct, fmtBytesStr, formatUptime } from "../../../../lib/fleet";
 import { diskPctSeries, humanizeRatePair } from "../../../../lib/metrics";
-import type { MetricsRange, PatchInfo, PatchScope, ServerStatus, ServerView, AgentUpdateResponse } from "../../../../lib/types";
+import type { MetricsRange, PatchInfo, PatchScope, ServerStatus, ServerView, AgentUpdateResponse, InFlightItem } from "../../../../lib/types";
+import { InFlightList } from "../../../../components/in-flight-list";
+import { UpdateAnywayDialog } from "../../../../components/update-anyway-dialog";
+import { heldFromError, heldSummary } from "../../../../lib/in-flight";
 import { useT } from "../../../../i18n/provider";
 import { MetricChart, METRIC_GRID_STYLE, METRIC_CHART_HEIGHT } from "../../../../components/charts";
 import { ServerContainersCard } from "../../../../components/server-containers-card";
@@ -497,6 +500,7 @@ function AgentUpdateCard({ id, version }: { id: string; version: string | null }
     if (!item) return { tone: "warn", text: t("patching.agentSkipped") };
     if (item.status === "sent") return { tone: "ok", text: t("patching.agentSent") };
     if (item.status === "offline") return { tone: "warn", text: t("patching.agentOffline") };
+    if (item.status === "held") return { tone: "warn", text: item.reason === "force-not-permitted" ? t("inFlight.forceNotPermitted") : heldSummary(t, item.inFlight ?? []) };
     const reasons: Record<string, string> = {
       "already-current": "patching.agentCurrentAlready",
       "no-digest-for-arch": "patching.agentNoDigest",
@@ -510,14 +514,31 @@ function AgentUpdateCard({ id, version }: { id: string; version: string | null }
   const toast = useToast();
   const [restartingFrom, setRestartingFrom] = useState<{ version: string | null } | null>(null);
   const restarting = restartingFrom !== null;
+  // Work running on this server (a migration, takeover, deploy, backup, ...): the hub holds the update and says what it is.
+  const [heldNow, setHeldNow] = useState<InFlightItem[] | null>(null);
+  const [askForce, setAskForce] = useState(false);
+  const { data: fleet } = useQuery({ queryKey: ["agentFleetStatus"], queryFn: () => api.getAgentFleetStatus(), refetchInterval: 15_000, retry: false });
+  const heldKnown = heldNow ?? fleet?.held.find((h) => h.serverId === id)?.inFlight ?? null;
   const update = useMutation({
-    mutationFn: () => api.updateAgent(id),
+    mutationFn: (force: boolean) => api.updateAgent(id, force),
     onSuccess: (r) => {
       setMsg(buildMsg(r));
+      setHeldNow(null);
+      setAskForce(false);
       if (r.status === "ok" && r.results[0]?.status === "sent") setRestartingFrom({ version });
       qc.invalidateQueries({ queryKey: ["server", id] });
+      qc.invalidateQueries({ queryKey: ["agentFleetStatus"] });
     },
-    onError: (e) => setMsg({ tone: "err", text: (e as Error).message }),
+    onError: (e) => {
+      const running = heldFromError(e);
+      if (running) {
+        setHeldNow(running);
+        setAskForce(true);
+        return;
+      }
+      setAskForce(false);
+      setMsg({ tone: "err", text: (e as Error).message });
+    },
   });
   useEffect(() => {
     if (restartingFrom && version && version !== restartingFrom.version) {
@@ -533,7 +554,12 @@ function AgentUpdateCard({ id, version }: { id: string; version: string | null }
     return () => clearTimeout(h);
   }, [restartingFrom]);
   const run = async () => {
-    if (await confirm({ body: t("patching.agentConfirm") })) update.mutate();
+    if (heldKnown && heldKnown.length > 0) {
+      setHeldNow(heldKnown);
+      setAskForce(true); // already known to be busy: ask "update anyway?" straight away
+      return;
+    }
+    if (await confirm({ body: t("patching.agentConfirm") })) update.mutate(false);
   };
   const toneColor = msg?.tone === "ok" ? "var(--c-g)" : msg?.tone === "warn" ? "var(--c-am)" : "var(--c-r)";
 
@@ -551,6 +577,16 @@ function AgentUpdateCard({ id, version }: { id: string; version: string | null }
         </>
       }
     >
+      {heldKnown && heldKnown.length > 0 && !restarting && (
+        <div role="status" data-testid="agent-update-held" style={{ fontSize: 13, color: "var(--c-am)" }}>
+          {heldSummary(t, heldKnown)}
+          <div style={{ fontSize: 12, color: "var(--c-tx3)", marginTop: 2 }}>{t("patching.agentHeldHint")}</div>
+          <InFlightList items={heldKnown} />
+        </div>
+      )}
+      {askForce && heldNow && (
+        <UpdateAnywayDialog scope="agent" items={heldNow} loading={update.isPending} onCancel={() => setAskForce(false)} onConfirm={() => update.mutate(true)} />
+      )}
       {msg && <div style={{ fontSize: 13, color: toneColor }}>{msg.text}</div>}
       {restarting && <div role="status" style={{ fontSize: 12, color: "var(--c-tx3)", marginTop: 6 }}>{t("patching.agentRestartingHint")}</div>}
     </SectionCard>

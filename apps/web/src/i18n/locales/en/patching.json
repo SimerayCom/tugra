@@ -74,5 +74,6 @@
   "groupKernel": "Kernel (needs reboot)",
   "groupKernelHint": "A new kernel only takes effect after a reboot. Installing it never reboots the server.",
   "groupOther": "Other",
-  "appliedKeepEngine": "{updated} package(s) updated. {remaining} container engine package(s) were left alone so your apps kept running."
+  "appliedKeepEngine": "{updated} package(s) updated. {remaining} container engine package(s) were left alone so your apps kept running.",
+  "agentHeldHint": "The agent is not updated while this runs. It can be updated once the work ends, or anyway if you choose."
 }

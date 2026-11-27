@@ -1,11 +1,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, fireEvent, cleanup, waitFor, act } from "@testing-library/react";
+import { render, screen, fireEvent, cleanup, waitFor, act, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import React from "react";
 import { I18nProvider } from "../../../i18n/provider";
 import { api } from "../../../lib/api";
 import { subscribeToast, type ToastInput } from "../../../lib/toast-bus";
-import type { InstanceUpdateStatus, PublicUser } from "../../../lib/types";
+import { ApiError } from "../../../lib/api";
+import type { InFlightItem, InstanceUpdateStatus, PublicUser } from "../../../lib/types";
 
 const h = vi.hoisted(() => ({ user: { isInstanceOwner: false } as Partial<PublicUser> }));
 vi.mock("../../../lib/auth", () => ({ useAuth: () => ({ user: h.user }) }));
@@ -28,7 +29,12 @@ const STATUS: InstanceUpdateStatus = {
   lastCheckError: null,
   updater: { version: null, behind: false, state: "unknown", checkedAt: null },
   halfUpdate: null,
+  inFlight: [],
+  hold: null,
 };
+
+const RUN: InFlightItem = { kind: "migration-run", id: "run1", label: "coolify.example.com", serverIds: ["s1"], teamId: "t1", since: new Date(Date.now() - 5 * 60_000).toISOString() };
+const BACKUP: InFlightItem = { kind: "backup", id: "b1", label: "orders", serverIds: ["s1"], teamId: "t1", since: new Date(Date.now() - 60_000).toISOString() };
 
 function sseResponse(frames: string[]): Response {
   const body = frames.map((f) => `data: ${f}\n\n`).join("");
@@ -484,6 +490,98 @@ describe("UpdatesCard", () => {
       wrap();
       await screen.findByRole("button", { name: "Update now" });
       expect(screen.queryByTestId("update-half-note")).toBeNull();
+    });
+  });
+
+  describe("work in flight (the hub is held until it is idle)", () => {
+    beforeEach(() => {
+      h.user = { isInstanceOwner: true };
+    });
+
+    it("says what the update is waiting for, with a link to a migration run, and that the automatic update retries", async () => {
+      vi.mocked(api.getInstanceUpdate).mockResolvedValue({
+        ...STATUS,
+        autoUpdate: true,
+        inFlight: [RUN, BACKUP],
+        hold: { since: new Date(Date.now() - 20 * 60_000).toISOString(), checkedAt: new Date().toISOString(), items: [RUN, BACKUP] },
+      });
+      wrap();
+      const held = await screen.findByTestId("update-held");
+      expect(held.textContent).toContain("Held: 1 migration, 1 backup or restore in progress");
+      expect(held.textContent).toContain("The automatic update is waiting. It checks again every 60 minutes and runs the first time the hub is idle.");
+      expect(held.textContent).toContain("Waiting since 20m ago.");
+      expect(held.textContent).toContain("coolify.example.com");
+      expect(within(held).getByRole("link", { name: /View/ }).getAttribute("href")).toBe("/import/runs/run1");
+    });
+
+    it("shows nothing held when the hub is idle, or when no update is waiting", async () => {
+      wrap();
+      await screen.findByText("Updates");
+      expect(screen.queryByTestId("update-held")).toBeNull();
+      cleanup();
+      vi.mocked(api.getInstanceUpdate).mockResolvedValue({ ...STATUS, updateAvailable: false, inFlight: [RUN] });
+      wrap();
+      await screen.findByText("Updates");
+      expect(screen.queryByTestId("update-held")).toBeNull();
+    });
+
+    it("Update now with work running asks first: Wait sends nothing", async () => {
+      vi.mocked(api.getInstanceUpdate).mockResolvedValue({ ...STATUS, inFlight: [RUN] });
+      const apply = vi.spyOn(api, "applyInstanceUpdate").mockResolvedValue({ status: "started", targetVersion: "0.2.0" });
+      wrap();
+      fireEvent.click(await screen.findByRole("button", { name: "Update now" }));
+      const dialog = await screen.findByRole("dialog");
+      expect(dialog.textContent).toContain("may need to be resumed or rolled back");
+      expect(within(dialog).getByText("Migration")).toBeTruthy();
+      fireEvent.click(within(dialog).getByRole("button", { name: "Wait" }));
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+      expect(apply).not.toHaveBeenCalled();
+    });
+
+    it("Update anyway sends force: true and the button shows its pending state meanwhile", async () => {
+      vi.mocked(api.getInstanceUpdate).mockResolvedValue({ ...STATUS, inFlight: [RUN] });
+      let answer!: (v: { status: "started"; targetVersion: string }) => void;
+      const apply = vi.spyOn(api, "applyInstanceUpdate").mockImplementation(() => new Promise((r) => (answer = r)));
+      const savedFetch = global.fetch;
+      global.fetch = vi.fn(async () => sseResponse(['{"phase":"pulling","targetVersion":"0.2.0"}'])) as unknown as typeof fetch;
+      try {
+        wrap();
+        fireEvent.click(await screen.findByRole("button", { name: "Update now" }));
+        const dialog = await screen.findByRole("dialog");
+        fireEvent.click(within(dialog).getByRole("button", { name: "Update anyway" }));
+        await waitFor(() => expect(apply).toHaveBeenCalledWith(true));
+        await waitFor(() => expect(within(screen.getByRole("dialog")).getByRole("button", { name: "Update anyway" }).getAttribute("aria-busy")).toBe("true"));
+        answer({ status: "started", targetVersion: "0.2.0" });
+        await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull()); // the run is under way
+      } finally {
+        global.fetch = savedFetch;
+      }
+    });
+
+    it("a 409 migration-active from the hub (work started after the page loaded) opens the same question with the hub's list", async () => {
+      const apply = vi
+        .spyOn(api, "applyInstanceUpdate")
+        .mockRejectedValueOnce(new ApiError(409, "work is in flight", "migration-active", { inFlight: [BACKUP] }))
+        .mockResolvedValueOnce({ status: "up-to-date", targetVersion: "0.2.0" });
+      wrap();
+      fireEvent.click(await screen.findByRole("button", { name: "Update now" }));
+      const dialog = await screen.findByRole("dialog");
+      expect(within(dialog).getByText("Backup")).toBeTruthy();
+      expect(within(dialog).getByText(/orders/)).toBeTruthy();
+      expect(apply).toHaveBeenCalledTimes(1);
+      expect(apply.mock.calls[0][0]).toBe(false);
+      fireEvent.click(within(dialog).getByRole("button", { name: "Update anyway" }));
+      await waitFor(() => expect(apply).toHaveBeenCalledTimes(2));
+      expect(apply.mock.calls[1][0]).toBe(true);
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    });
+
+    it("a 409 that is not migration-active is still just 'an update is already running'", async () => {
+      vi.spyOn(api, "applyInstanceUpdate").mockRejectedValue(new ApiError(409, "an update is already in progress"));
+      wrap();
+      fireEvent.click(await screen.findByRole("button", { name: "Update now" }));
+      await waitFor(() => expect(screen.getByText(/already/i)).toBeTruthy());
+      expect(screen.queryByRole("dialog")).toBeNull();
     });
   });
 });
