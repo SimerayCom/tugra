@@ -285,6 +285,12 @@ describe("authorization code exchange", () => {
     ({ code } = await approveFor(s, id));
     await expect(exchange(s, other, code)).rejects.toMatchObject({ response: { error: "invalid_grant" } });
   });
+  it("accepts a token request that leaves redirect_uri out", async () => {
+    const s = setup();
+    const id = await registered(s);
+    const { code } = await approveFor(s, id);
+    await expect(exchange(s, id, code, { redirect_uri: undefined as unknown as string })).resolves.toMatchObject({ token_type: "Bearer" });
+  });
   it("fails when the user left the team between consent and exchange", async () => {
     const s = setup();
     const id = await registered(s);
@@ -410,6 +416,17 @@ describe("revocation and connected clients", () => {
     await s.svc.revokeGrant("user1", list[0].id);
     await expect(s.svc.validateAccessToken(t.access_token)).resolves.toBeNull();
     await expect(s.svc.revokeGrant("user1", list[0].id)).rejects.toThrow(/not found/);
+  });
+  it("keeps a grant that has no token yet instead of sweeping it from the list", async () => {
+    const s = setup();
+    const grants = (s.svc as any).prisma.oAuthGrant;
+    const fresh = { id: "g1", clientId: "c", userId: "user1", teamId: "team1", scopes: ["read"], createdAt: new Date(), lastUsedAt: null, client: { name: "C" }, tokens: [] };
+    const old = { ...fresh, id: "g2", createdAt: new Date(Date.now() - 3600_000) };
+    grants.findMany = async () => [fresh, old];
+    grants.deleteMany = jest.fn(async () => ({ count: 1 }));
+    const list = await s.svc.listGrants("user1");
+    expect(list.map((g) => g.id)).toEqual(["g1"]);
+    expect(grants.deleteMany).toHaveBeenCalledWith({ where: { id: { in: ["g2"] } } });
   });
   it("cannot revoke another user's connection", async () => {
     const s = setup();

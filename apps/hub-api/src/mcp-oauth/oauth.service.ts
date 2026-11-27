@@ -147,7 +147,7 @@ export class McpOAuthService {
     const now = Date.now();
     await Promise.all([
       this.prisma.oAuthCode.deleteMany({ where: { expiresAt: { lt: new Date(now - 3600_000) } } }),
-      this.prisma.oAuthClient.deleteMany({ where: { createdAt: { lt: new Date(now - 86_400_000) }, grants: { none: {} } } }),
+      this.prisma.oAuthClient.deleteMany({ where: { createdAt: { lt: new Date(now - 30 * 86_400_000) }, grants: { none: {} } } }),
     ]).catch(() => undefined);
   }
 
@@ -254,7 +254,8 @@ export class McpOAuthService {
     }
     if (row.expiresAt.getTime() < Date.now()) throw invalid();
     if (row.clientId !== input.client_id) throw invalid();
-    if (!input.redirect_uri || input.redirect_uri !== row.redirectUri) throw invalid();
+    // RFC 6749 4.1.3: required, and identical, only when the authorization request carried one.
+    if (input.redirect_uri !== undefined && input.redirect_uri !== row.redirectUri) throw invalid();
     if (!input.code_verifier || !verifyPkceS256(input.code_verifier, row.codeChallenge)) throw invalid();
     // The user may have lost the team since consenting.
     const perms = await this.access.membershipPermissions(row.userId, row.teamId);
@@ -348,9 +349,10 @@ export class McpOAuthService {
       orderBy: { createdAt: "desc" },
       include: { client: { select: { name: true } }, tokens: { where: { refreshExpiresAt: { gt: now } }, select: { id: true }, take: 1 } },
     });
-    const dead = grants.filter((g) => g.tokens.length === 0).map((g) => g.id);
+    // A grant minted a moment ago has no token yet (exchangeCode creates it first): leave it alone.
+    const dead = grants.filter((g) => g.tokens.length === 0 && now.getTime() - g.createdAt.getTime() > 60_000).map((g) => g.id);
     if (dead.length) await this.prisma.oAuthGrant.deleteMany({ where: { id: { in: dead } } }).catch(() => undefined);
-    const live = grants.filter((g) => g.tokens.length > 0);
+    const live = grants.filter((g) => !dead.includes(g.id));
     const teamIds = [...new Set(live.map((g) => g.teamId))];
     const teams = teamIds.length ? await this.prisma.team.findMany({ where: { id: { in: teamIds } }, select: { id: true, name: true } }) : [];
     const names = new Map(teams.map((t) => [t.id, t.name]));
