@@ -57,10 +57,13 @@ describe("ImportSettingsPanel", () => {
     expect(api.importSettingsPreview).toHaveBeenCalledWith({ sessionId: "s1", sourceKind: "coolify" });
     expect(screen.getAllByText("Not available via the Coolify API.").length).toBe(4);
     expect(screen.getByText("Needs a Coolify token with read:sensitive.")).toBeTruthy();
-    const discord = screen.getAllByRole("checkbox")[1] as HTMLInputElement;
-    expect(discord.disabled).toBe(true);
-    // the hub's default is ticked, the rest is not
-    expect((screen.getAllByRole("checkbox")[0] as HTMLInputElement).checked).toBe(true);
+    // the defaults are applied after the preview arrives, so wait for that render
+    await waitFor(() => {
+      const boxes = screen.getAllByRole("checkbox") as HTMLInputElement[];
+      expect(boxes[1].disabled).toBe(true);
+      // the hub's default is ticked, the rest is not
+      expect(boxes[0].checked).toBe(true);
+    });
   });
 
   it("passes the operation id so tasks and tags can find the imported apps", async () => {
