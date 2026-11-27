@@ -15,11 +15,17 @@ function matches(row: Row, where: Row | undefined): boolean {
       if (!(v as Row[]).some((w) => matches(row, w))) return false;
       continue;
     }
+    if (k === "NOT") {
+      if (matches(row, v as Row)) return false;
+      continue;
+    }
     const val = row[k];
     if (v !== null && typeof v === "object" && !(v instanceof Date)) {
       if ("gt" in v && !(val > v.gt)) return false;
       if ("lte" in v && !(val <= v.lte)) return false;
       if ("not" in v && !(val !== v.not)) return false;
+      if ("startsWith" in v && !(typeof val === "string" && val.startsWith(v.startsWith))) return false;
+      if ("in" in v && !(v.in as unknown[]).includes(val)) return false;
     } else if (val !== v) return false;
   }
   return true;
@@ -71,7 +77,10 @@ export async function grantHarness(o: GrantHarnessOpts = {}) {
   const server = { id: "s1", teamId: "t1", name: o.serverName ?? "coolify-host", capabilities: [] as string[] };
   const prisma = {
     ...table,
-    importSession: { findUnique: jest.fn(async ({ where }: { where: { id: string } }) => (o.sessions ?? {})[where.id] ?? null) },
+    importSession: {
+      findUnique: jest.fn(async ({ where }: { where: { id: string } }) => (o.sessions ?? {})[where.id] ?? null),
+      findMany: jest.fn(async ({ where }: { where: { id: { in: string[] } } }) => where.id.in.flatMap((id) => ((o.sessions ?? {})[id] ? [(o.sessions ?? {})[id]] : []))),
+    },
     server: {
       findUnique: jest.fn(async ({ where }: { where: { id: string } }) => (where.id === "s1" ? server : null)),
       findMany: jest.fn(async () => (server.capabilities.includes("coolify_secrets") ? [{ id: "s1" }] : [])),

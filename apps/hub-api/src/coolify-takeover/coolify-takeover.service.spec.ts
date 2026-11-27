@@ -80,8 +80,9 @@ function make(o: Opts = {}) {
     hostIdentityOf: jest.fn(() => undefined),
     getInstall: jest.fn(async (_u: string, id: string) => ({ status: ServerStatus.PENDING, installCommand: `curl https://hub.example.com/install/agent.sh | sh -s -- --token tok-${id}`, expiresAt: new Date("2026-11-24T12:00:00Z") })),
   };
-  const svc = new CoolifyTakeoverService(prisma as never, access as never, audit as never, agentWs as never, servers as never, new HostMatchService(prisma as never, access as never, servers as never));
-  return { svc, access, prisma, audit, sendCommand, servers, getRow: () => row };
+  const grants = { endSecretsForServer: jest.fn(async (_serverId: string) => 1) };
+  const svc = new CoolifyTakeoverService(prisma as never, access as never, audit as never, agentWs as never, servers as never, new HostMatchService(prisma as never, access as never, servers as never), grants as never);
+  return { svc, access, prisma, audit, sendCommand, servers, grants, getRow: () => row };
 }
 
 describe("access: owner/admin only, explicit opt-in", () => {
@@ -186,6 +187,18 @@ describe("detect / disable", () => {
     await svc.disable("u", "s1");
     expect(getRow()).toBeNull();
     expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "coolify.takeover.disable" }));
+  });
+
+  it("disable ends the consent for secret values on that server with the opt-in (Stop and delete leaves no grant standing)", async () => {
+    const { svc, grants } = make({ snapshot: SNAPSHOT });
+    await svc.disable("u", "s1");
+    expect(grants.endSecretsForServer).toHaveBeenCalledWith("s1");
+  });
+
+  it("a refused disable (not an owner/admin) ends nothing", async () => {
+    const { svc, grants } = make({ roles: { t1: Role.VIEWER } });
+    await expect(svc.disable("u", "s1")).rejects.toBeInstanceOf(ForbiddenException);
+    expect(grants.endSecretsForServer).not.toHaveBeenCalled();
   });
 });
 

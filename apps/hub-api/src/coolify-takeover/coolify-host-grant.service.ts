@@ -24,6 +24,8 @@ const OWNER_ONLY: Role[] = [Role.OWNER];
 const READERS: Role[] = [Role.OWNER, Role.ADMIN];
 const SWEEP_MS = 60_000;
 const RUN_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
+/** A consent given without an import session gets a run id that starts like this; every other run id is an import session id. */
+const RUNLESS_PREFIX = "cfy-";
 
 const CAPABILITY: Record<CoolifyGrantKind, string> = { secrets: "coolify_secrets", ssh: "coolify_ssh" };
 
@@ -139,11 +141,14 @@ export class CoolifyHostGrantService implements OnModuleInit, OnModuleDestroy {
     // The consent of an import belongs to ITS session: the run id is the session id, and the session must be the granting owner's own,
     // still active, and connected through the agent of this very server.
     let runIdWanted = input.runId;
+    // The consent of an import never outlives its session (the session is what the owner connected for); a run-less consent has its own window.
+    let sessionEnd: number | null = null;
     if (input.importSessionId !== undefined) {
       const session = await this.prisma.importSession.findUnique({ where: { id: input.importSessionId }, select: { id: true, actorId: true, status: true, expiresAt: true, transport: true, agentServerId: true, teamId: true } });
       if (!session || session.actorId !== userId || session.teamId !== server.teamId || session.transport !== "agent" || session.agentServerId !== server.id) throw new NotFoundException("import session not found");
       if (session.status !== "active" || session.expiresAt.getTime() <= Date.now()) throw new BadRequestException("import session expired or revoked - reconnect");
       runIdWanted = session.id;
+      sessionEnd = session.expiresAt.getTime();
     }
     if (runIdWanted !== undefined && !RUN_ID_RE.test(runIdWanted)) throw new BadRequestException("invalid run id");
 
@@ -164,11 +169,11 @@ export class CoolifyHostGrantService implements OnModuleInit, OnModuleDestroy {
     }
 
     const key = this.sealed.newRunKey();
-    const runId = runIdWanted ?? `cfy-${randomUUID()}`;
+    const runId = runIdWanted ?? `${RUNLESS_PREFIX}${randomUUID()}`;
     const row = await this.prisma.coolifyHostGrant.create({
       data: {
         teamId: server.teamId, serverId: server.id, kind: "secrets", classes, grantedById: userId, runId,
-        recipientPublicKey: key.publicKeyB64, recipientKeyEnc: key.privateKeyEnc, expiresAt: new Date(Date.now() + hours * 3_600_000),
+        recipientPublicKey: key.publicKeyB64, recipientKeyEnc: key.privateKeyEnc, expiresAt: new Date(Math.min(Date.now() + hours * 3_600_000, sessionEnd ?? Number.POSITIVE_INFINITY)),
       },
     });
     await this.servers.applyCoolifyRunCapability(server.id, CAPABILITY.secrets, true);
@@ -204,6 +209,42 @@ export class CoolifyHostGrantService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
+   * The server's opt-in was withdrawn ("Stop and delete"): every secrets grant of that server ends with it, whatever run it was for.
+   * Returns how many grants were ended. Idempotent.
+   */
+  async endSecretsForServer(serverId: string): Promise<number> {
+    const rows = await this.prisma.coolifyHostGrant.findMany({ where: { serverId, kind: "secrets", recipientKeyEnc: { not: null } }, take: 50 });
+    for (const r of rows) {
+      await this.end(r as GrantRow, null);
+      await this.audit.log({ actor: "system", action: "coolify.secrets.revoke", target: serverId, meta: { grantId: r.id, reason: "opt_in_withdrawn" } });
+    }
+    return rows.length;
+  }
+
+  /**
+   * An import's consent belongs to its session: when that session is revoked, expired or gone (deleted by the opportunistic purge) the grant
+   * ends with it, even though its own window is not over. Run-less grants (`cfy-` run ids) have no session and are left alone.
+   */
+  private async endOrphanedSessionGrants(now: Date): Promise<number> {
+    const live = await this.prisma.coolifyHostGrant.findMany({
+      where: { kind: "secrets", revokedAt: null, expiresAt: { gt: now }, recipientKeyEnc: { not: null }, NOT: { runId: { startsWith: RUNLESS_PREFIX } } },
+      take: 200,
+    });
+    const ids = live.flatMap((g) => (g.runId ? [g.runId] : []));
+    if (ids.length === 0) return 0;
+    const sessions = await this.prisma.importSession.findMany({ where: { id: { in: ids } }, select: { id: true, status: true, expiresAt: true } });
+    const ok = new Set(sessions.filter((s) => s.status === "active" && s.expiresAt.getTime() > now.getTime()).map((s) => s.id));
+    let n = 0;
+    for (const g of live) {
+      if (g.runId && ok.has(g.runId)) continue;
+      await this.end(g as GrantRow, null);
+      await this.audit.log({ actor: "system", action: "coolify.secrets.revoke", target: g.serverId, meta: { grantId: g.id, reason: "session_ended" } });
+      n++;
+    }
+    return n;
+  }
+
+  /**
    * Close every grant whose window passed: destroy its key and drop the capability when nothing else keeps it, then reconcile every
    * server that still holds a takeover capability without an active grant (a hub that died between the two steps, or a grant row that
    * was deleted). Runs every minute and at boot, so a hub that was down over a grant's end still closes it. Returns how many grants
@@ -215,8 +256,9 @@ export class CoolifyHostGrantService implements OnModuleInit, OnModuleDestroy {
       await this.end(row as GrantRow, null, now, false); // an expired grant keeps no revokedAt: its status stays "expired"
       await this.audit.log({ actor: "system", action: `coolify.${row.kind}.revoke`, target: row.serverId, meta: { grantId: row.id, reason: "expired" } });
     }
+    const orphaned = await this.endOrphanedSessionGrants(now);
     await this.reconcile();
-    return due.length;
+    return due.length + orphaned;
   }
 
   /** A server that holds `coolify_secrets` with no active secrets grant loses it. */

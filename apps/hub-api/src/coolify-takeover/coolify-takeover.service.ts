@@ -16,6 +16,7 @@ import {
 } from "./coolify-inventory";
 import { defaultTeamFor, sshHint, uniqueNames, type ChecklistRow, type ServerLink } from "./coolify-install-plan";
 import { HostMatchService, linkOf } from "./host-match.service";
+import { CoolifyHostGrantService } from "./coolify-host-grant.service";
 import type { CoolifyHostInput } from "./host-match";
 import type { GenerateInput } from "./dto";
 
@@ -88,6 +89,8 @@ export class CoolifyTakeoverService {
     private readonly agentWs: AgentWsServer,
     private readonly servers: ServersService,
     private readonly hostMatch: HostMatchService,
+    // Trailing + optional so the construction of every pre-existing spec is unchanged.
+    private readonly grants?: CoolifyHostGrantService,
   ) {}
 
   // ---- reads (stored data only) ----------------------------------------------------------------------------------------
@@ -148,6 +151,8 @@ export class CoolifyTakeoverService {
   async disable(userId: string, serverId: string): Promise<{ ok: true }> {
     const server = await this.requireServer(userId, serverId);
     await this.prisma.coolifyInventory.deleteMany({ where: { serverId: server.id } });
+    // The consent for secret values rests on the opt-in: it ends with it (the run key is destroyed and the agent capability drops).
+    await this.grants?.endSecretsForServer(server.id);
     await this.audit.log({ actor: userId, action: "coolify.takeover.disable", target: server.id });
     return { ok: true };
   }
