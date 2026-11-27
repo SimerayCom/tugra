@@ -22,6 +22,11 @@ describe("import resume", () => {
     expect(loadImportResume()!.baseUrl).toBe("");
   });
 
+  it("resumes a CapRover session like the others", () => {
+    saveImportResume({ kind: "caprover", baseUrl: "https://captain.example.com", sessionId: SID, dbModes: {} });
+    expect(loadImportResume()).toMatchObject({ kind: "caprover", baseUrl: "https://captain.example.com", sessionId: SID });
+  });
+
   it("does not store a session id that is not an id", () => {
     saveImportResume({ kind: "coolify", baseUrl: "", sessionId: "x y", dbModes: {} });
     expect(store().getItem(IMPORT_RESUME_KEY)).toBeNull();

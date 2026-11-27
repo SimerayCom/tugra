@@ -150,7 +150,7 @@ export function ImportScopeStep({
   const place = (ref: string, id: string) => setSel((s) => ({ ...s, placement: { ...s.placement, [ref]: id } }));
   // the picks stay: they only count while their server is in the chosen team, so going back to a team finds them again
   const pickTeam = (id: string) => setSel((s) => ({ ...s, teamId: id }));
-  const hostLabel = (ref: string, name?: string) => (ref === UNKNOWN_SOURCE_HOST ? t(plan.sourceKind === "dokploy" ? "import.scope.panelHost" : "import.scope.unknownHost") : name ?? ref);
+  const hostLabel = (ref: string, name?: string) => (ref === UNKNOWN_SOURCE_HOST ? t(plan.sourceKind === "dokploy" ? "import.scope.panelHost" : plan.sourceKind === "caprover" ? "import.scope.panelHostCaprover" : "import.scope.unknownHost") : name ?? ref);
   const countsText = (c: { apps: number; databases: number; services: number }) => t("import.scope.counts", c);
   const teamName = (id: string) => teams.find((x) => x.id === id)?.name ?? "";
   const sourceTeam = plan.preflight?.sourceTeam?.trim() ?? "";

@@ -87,5 +87,12 @@ export const IMPORT_REASON_CODES = [
   "dokploy_build_secrets",
   "dokploy_swarm_labels",
   "dokploy_domains",
+  "caprover_registry",
+  "caprover_nginx_config",
+  "caprover_pre_deploy",
+  "caprover_service_override",
+  "caprover_redirect_domain",
+  "caprover_default_domain",
+  "caprover_captain_definition",
 ] as const;
 export type ImportReasonCode = (typeof IMPORT_REASON_CODES)[number];

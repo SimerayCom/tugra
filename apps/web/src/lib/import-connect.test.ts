@@ -25,6 +25,14 @@ describe("failureKey", () => {
     expect(failureKey(undefined)).toBe("import.test.fail.other");
     expect(failureKey("weird")).toBe("import.test.fail.other");
   });
+  it("a refused CapRover password gets the password sentence, not the token one", () => {
+    expect(failureKey("unauthorized", "caprover")).toBe("import.test.fail.unauthorizedPassword");
+    expect(failureKey("unauthorized", "dokploy")).toBe("import.test.fail.unauthorized");
+    expect(failureKey("rate-limited", "caprover")).toBe("import.test.fail.rate-limited");
+    const text = lookup("import.test.fail.unauthorizedPassword");
+    expect(typeof text).toBe("string");
+    expect((text as string).length).toBeLessThanOrEqual(90);
+  });
   it("every sentence it can return exists in the locale, and none is a paragraph", () => {
     for (const c of ["allowed-ips", "api-disabled", "scoped-token", "exceeds-access", "ability", "forbidden", "unauthorized", "rate-limited", "other"]) {
       const text = lookup(failureKey(c));

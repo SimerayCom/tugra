@@ -339,6 +339,7 @@ export function vxCommandsWithFlags(cmds: VxCommands, o: { stopSource?: boolean;
 
 /** The database items of a plan that may use a volume copy (PostgreSQL only). */
 export function volumeCopyCandidates(plan: ImportPlan): ImportPlanItem[] {
+  if (plan.sourceKind === "caprover") return []; // CapRover offers no volume read, so no physical copy to choose
   return plan.items.filter((it) => it.kind === "database" && it.proposed.engine === "POSTGRES" && !hasBlocker(it));
 }
 

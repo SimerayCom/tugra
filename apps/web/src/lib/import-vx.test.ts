@@ -131,6 +131,9 @@ describe("data mode helpers", () => {
     expect(volumeCopyCandidates(plan).map((i) => i.name)).toEqual(["pg", "pg2"]);
     expect(selectedDbModes(plan)).toEqual({ "database:s:pg": "volume" });
   });
+  it("offers no volume copy for a CapRover plan", () => {
+    expect(volumeCopyCandidates({ ...plan, sourceKind: "caprover" } as ImportPlan)).toEqual([]);
+  });
 });
 
 describe("literal key maps cover every state and phase", () => {

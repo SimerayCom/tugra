@@ -55,12 +55,15 @@ const STALE_RUNNING_MS = 10 * 60_000; // a RUNNING task older than this is treat
  *  migrate data. local-docker is NOT here — it adopts live containers in place (rollback un-adopts). */
 const COPY_MODE_KINDS = new Set<string>(REMOTE_SOURCE_KINDS);
 
-/** The env-remap host-shape gate per source. Dokploy internal hosts are the resource `appName` (e.g.
+/** The env-remap host-shape gate per source. CapRover internal hosts are `srv-captain--<app>`. Dokploy internal hosts are the resource `appName` (e.g.
  *  `diesdigital-db-58tvyg`: hyphens/underscores, not uuid-shaped). Coolify/local-docker pass NOTHING so the
  *  engine's uuid default applies and their output stays byte-identical. The shape only gates which bare
  *  values are considered a host; a rewrite still requires an exact match to a known oldHost. */
 export const DOKPLOY_HOST_SHAPE = /^[a-z0-9][a-z0-9_-]{5,62}$/i;
-const remapHostShapeFor = (sourceKind: string | undefined): RegExp | undefined => (sourceKind === "dokploy" ? DOKPLOY_HOST_SHAPE : undefined);
+/** CapRover internal hosts are always `srv-captain--<app>`. */
+export const CAPROVER_HOST_SHAPE = /^srv-captain--[a-z0-9][a-z0-9-]*$/i;
+const remapHostShapeFor = (sourceKind: string | undefined): RegExp | undefined =>
+  sourceKind === "dokploy" ? DOKPLOY_HOST_SHAPE : sourceKind === "caprover" ? CAPROVER_HOST_SHAPE : undefined;
 /** A DB_IDENT_RE-safe database name derived from a display name (fallback when the source has no database name). */
 const safeDbIdent = (name: string): string => name.toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 63) || "app";
 /** The tag a carried database is created with (R2): deterministic for this op and item, 31 characters of `[a-z0-9-]`, so a retry finds the row. */

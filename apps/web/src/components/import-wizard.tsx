@@ -54,9 +54,11 @@ function statusColor(s: ImportTaskStatus): string {
 const SRC = {
   coolify: { title: "import.sourceCoolify", hint: "import.sourceCoolifyHint", url: "import.baseUrl", ph: "import.baseUrlPlaceholder", tok: "import.token", tokHint: "import.tokenHint", fail: "import.connectFailed", name: "import.sourceNameCoolify", option: "import.sourceCoolifyOption" },
   dokploy: { title: "import.sourceDokploy", hint: "import.sourceDokployHint", url: "import.baseUrlDokploy", ph: "import.baseUrlPlaceholderDokploy", tok: "import.tokenDokploy", tokHint: "import.tokenHintDokploy", fail: "import.connectFailedDokploy", name: "import.sourceNameDokploy", option: "import.sourceDokployOption" },
+  caprover: { title: "import.sourceCaprover", hint: "import.sourceCaproverHint", url: "import.baseUrlCaprover", ph: "import.baseUrlPlaceholderCaprover", tok: "import.tokenCaprover", tokHint: "import.tokenHintCaprover", fail: "import.connectFailedCaprover", name: "import.sourceNameCaprover", option: "import.sourceCaproverOption" },
 } as const;
-/** Where the source panel creates API tokens, from the address typed so far. Null until it is a plain http(s) address. */
+/** Where the source panel creates API tokens, from the address typed so far. Null until it is a plain http(s) address, and for CapRover (a password, no token page). */
 export function tokenPageUrl(kind: ImportRemoteKind, baseUrl: string): string | null {
+  if (kind === "caprover") return null;
   try {
     const u = new URL(baseUrl.trim());
     if (u.protocol !== "https:" && u.protocol !== "http:") return null;
@@ -65,11 +67,12 @@ export function tokenPageUrl(kind: ImportRemoteKind, baseUrl: string): string | 
     return null;
   }
 }
-const SOURCE_KINDS: readonly ImportRemoteKind[] = ["coolify", "dokploy"];
+const NEEDS_KEY = { coolify: "import.needsCoolify", dokploy: "import.needsDokploy", caprover: "import.needsCaprover" } as const;
+const SOURCE_KINDS: readonly ImportRemoteKind[] = ["coolify", "dokploy", "caprover"];
 /** An operation's source kind (a string from the hub) narrowed to a wizard source; anything unknown reads as Coolify. */
-const asRemoteKind = (k: string | null | undefined): ImportRemoteKind => (k === "dokploy" ? "dokploy" : "coolify");
+const asRemoteKind = (k: string | null | undefined): ImportRemoteKind => (k === "dokploy" || k === "caprover" ? k : "coolify");
 
-/** The import wizard: pick a source (Coolify / Dokploy) → connect → preview (secret-free plan) → apply onto a
+/** The import wizard: pick a source (Coolify / Dokploy / CapRover) → connect → preview (secret-free plan) → apply onto a
  *  target Tugra server → watch the live timeline. Local-docker container adoption keeps its own UI on a server's page. */
 export function ImportWizard() {
   const t = useT();
@@ -257,6 +260,7 @@ export function ImportWizard() {
     mutationFn: () => api.importConnect({ sourceKind: kind, teamId: connectTeam, baseUrl: baseUrl.trim(), token: token.trim(), ...(scopeLabel.trim() ? { scopeLabel: scopeLabel.trim() } : {}) }),
     onSuccess: (s) => {
       rememberLastImportUrl(kind, baseUrl.trim());
+      if (kind === "caprover") setToken(""); // the password has been exchanged for a login; nothing keeps it
       setSessionId(s.sessionId);
       setScope(null);
       setLastSelection(undefined);
@@ -419,7 +423,7 @@ export function ImportWizard() {
       {focus?.fromServerName && <p role="note" style={{ fontSize: 12, color: "var(--c-tx2)", margin: "0 0 10px" }}>{t("import.fromServer", { server: focus.fromServerName })}</p>}
       {!(kind === "coolify" && connectMode === "agent") && (
         <>
-      <p data-testid="import-needs" style={{ fontSize: 13, margin: "0 0 4px" }}>{t(kind === "coolify" ? "import.needsCoolify" : "import.needsDokploy")}</p>
+      <p data-testid="import-needs" style={{ fontSize: 13, margin: "0 0 4px" }}>{t(NEEDS_KEY[kind])}</p>
       <MoreInfo label={t("import.needsMore")} style={{ margin: "0 0 14px" }}>
         {tokenPageUrl(kind, baseUrl) && (
           <p style={{ margin: "0 0 6px" }}>
@@ -539,12 +543,17 @@ export function ImportWizard() {
               <a href={guideUrl("move-from-coolify-same-server")} target="_blank" rel="noopener noreferrer" style={{ color: "var(--c-lapis)" }}>{t("import.tokenMore.sameServer")}</a>
             </p>
           </>
+        ) : kind === "caprover" ? (
+          <p style={{ margin: 0 }}>
+            {t("import.tokenMoreCaprover")}{" "}
+            <a href={guideUrl("move-from-caprover")} target="_blank" rel="noopener noreferrer" style={{ color: "var(--c-lapis)" }}>{t("import.tokenMore.guide")}</a>
+          </p>
         ) : (
           <p style={{ margin: 0 }}>{t("import.tokenMoreDokploy")}</p>
         )}
       </MoreInfo>
 
-      <ConnectionStatus test={test} connectError={connect.isError ? (connect.error as Error) : null} source={t(src.name)} />
+      <ConnectionStatus test={test} connectError={connect.isError ? (connect.error as Error) : null} source={t(src.name)} kind={kind} />
 
       <MoreInfo label={t("import.advanced")}>
         <label style={label} htmlFor="imp-scope">{t("import.review.scopeLabel")}</label>
@@ -803,7 +812,7 @@ function PlanView({
         </Btn>
         </>
         )}
-        <GuidedRunLauncher plan={plan} kind={kind} sessionId={sessionId} servers={writableServers} teams={teams} extras={applyExtras} scope={scope} onChangeScope={onChangeScope} onRecheck={onRecheck} disabled={replanning || consentMissing || runnable === 0 || unackedCount > 0 || missingTargets > 0} />
+        {kind !== "caprover" && <GuidedRunLauncher plan={plan} kind={kind} sessionId={sessionId} servers={writableServers} teams={teams} extras={applyExtras} scope={scope} onChangeScope={onChangeScope} onRecheck={onRecheck} disabled={replanning || consentMissing || runnable === 0 || unackedCount > 0 || missingTargets > 0} />}
       </SectionCard>
 
       <EnvBlockers plan={plan} acked={acked} onChange={setAcked} />
@@ -909,8 +918,16 @@ function Timeline({ opId, onReset, settings }: { opId: string; onReset: () => vo
     </Card>
     {showPostSteps && (
       <>
-        <MigrateDataCard opId={opId} sourceKind={asRemoteKind(op.sourceKind)} />
-        <ImportVolumeTransfers opId={opId} />
+        {asRemoteKind(op.sourceKind) === "caprover" ? (
+          <SectionCard title={t("import.caproverDataTitle")} desc={t("import.caproverDataDesc")} style={{ padding: 20, maxWidth: 720, marginTop: 16, marginBottom: 0 }}>
+            <a href={guideUrl("move-from-caprover")} target="_blank" rel="noopener noreferrer" style={{ color: "var(--c-lapis)", fontSize: 13 }}>{t("import.tokenMore.guide")}</a>
+          </SectionCard>
+        ) : (
+          <>
+            <MigrateDataCard opId={opId} sourceKind={asRemoteKind(op.sourceKind)} />
+            <ImportVolumeTransfers opId={opId} />
+          </>
+        )}
         <RemapEnvCard opId={opId} sourceKind={asRemoteKind(op.sourceKind)} />
         {op.tasks.some((task) => task.git && task.git.status !== "linked" && task.git.status !== "public_ok") && <GitRelinkCard opId={opId} />}
         {settings && <ImportSettingsPanel sessionId={settings.sessionId} kind={settings.kind} opId={opId} teamId={settings.teamId} servers={settings.servers} />}

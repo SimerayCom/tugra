@@ -88,7 +88,9 @@ export class ImporterService {
     // Opportunistic GC: expired sessions are dead weight (encrypted + unusable); purge them on connect.
     await this.prisma.importSession.deleteMany({ where: { expiresAt: { lt: new Date() } } });
 
-    const source = this.sources.create(input.sourceKind, input.baseUrl, input.token);
+    // CapRover: the password becomes a login token here; only the token is stored below.
+    const secret = await this.exchangeCredential(input.sourceKind, input.baseUrl, input.token);
+    const source = this.sources.create(input.sourceKind, input.baseUrl, secret);
     let ok: { ok: boolean; detail?: string };
     try {
       ok = await source.verify();
@@ -110,7 +112,7 @@ export class ImporterService {
         actorId: userId,
         sourceKind: input.sourceKind,
         baseUrl: input.baseUrl,
-        tokenEnc: this.crypto.encrypt(input.token), // never stored or returned in the clear
+        tokenEnc: this.crypto.encrypt(secret), // never stored or returned in the clear
         ...(input.scopeLabel ? { scopeKey: input.scopeLabel } : {}),
         status: "active",
         expiresAt,
@@ -118,6 +120,16 @@ export class ImporterService {
     });
     await this.audit.log({ actor: userId, action: "import.connect", target: session.id, meta: { sourceKind: input.sourceKind, teamId: input.teamId, baseUrl: input.baseUrl } });
     return { sessionId: session.id, expiresAt };
+  }
+
+  /** The credential to store for what the user typed (see {@link ImportSourceFactory.credential}); a login failure is a 400 with the same stable `code` as any refused connection. */
+  private async exchangeCredential(kind: RemoteSourceKind, baseUrl: string, typed: string): Promise<string> {
+    try {
+      return await this.sources.credential(kind, baseUrl, typed);
+    } catch (e) {
+      const detail = e instanceof Error ? e.message : "verification failed";
+      throw new BadRequestException({ statusCode: 400, message: `could not reach ${this.sources.label(kind)}: ${detail}`, code: classifyConnectFailure(detail) });
+    }
   }
 
   /**
@@ -190,7 +202,14 @@ export class ImporterService {
       throw new BadRequestException(e instanceof Error ? e.message : "invalid base URL");
     }
     const label = this.sources.label(input.sourceKind);
-    const source = this.sources.create(input.sourceKind, input.baseUrl, input.token);
+    let secret: string;
+    try {
+      secret = await this.sources.credential(input.sourceKind, input.baseUrl, input.token);
+    } catch (e) {
+      const detail = e instanceof Error ? e.message : "verification failed";
+      return { ok: false, code: classifyConnectFailure(detail), message: `could not reach ${label}: ${detail}` };
+    }
+    const source = this.sources.create(input.sourceKind, input.baseUrl, secret);
     try {
       const ok = await source.verify();
       if (!ok.ok) return { ok: false, code: classifyConnectFailure(ok.detail), message: `could not reach ${label}: ${ok.detail ?? "verification failed"}` };

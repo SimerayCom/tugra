@@ -1,3 +1,4 @@
+import type { ImportRemoteKind } from "./types";
 import { restoreSelection, serializeSelection, type ScopeSelection } from "./import-scope";
 
 // What the import wizard keeps in sessionStorage so a refresh resumes at the first step instead of the blank connect form.
@@ -7,7 +8,7 @@ import { restoreSelection, serializeSelection, type ScopeSelection } from "./imp
 export const IMPORT_RESUME_KEY = "tugra.import.resume";
 
 export interface ImportResume {
-  kind: "coolify" | "dokploy";
+  kind: ImportRemoteKind;
   baseUrl: string;
   sessionId: string;
   selection?: ScopeSelection;
@@ -39,7 +40,7 @@ export function loadImportResume(store: Pick<Storage, "getItem"> = window.sessio
     const raw = store.getItem(IMPORT_RESUME_KEY);
     if (!raw) return null;
     const o = JSON.parse(raw) as Record<string, unknown>;
-    if (o.v !== 1 || (o.kind !== "coolify" && o.kind !== "dokploy") || typeof o.sessionId !== "string" || !SESSION_ID_RE.test(o.sessionId)) return null;
+    if (o.v !== 1 || (o.kind !== "coolify" && o.kind !== "dokploy" && o.kind !== "caprover") || typeof o.sessionId !== "string" || !SESSION_ID_RE.test(o.sessionId)) return null;
     const modes: Record<string, "volume"> = {};
     if (o.dbModes && typeof o.dbModes === "object" && !Array.isArray(o.dbModes)) {
       for (const [k, v] of Object.entries(o.dbModes as Record<string, unknown>)) if (v === "volume" && k !== "__proto__") modes[k] = "volume";

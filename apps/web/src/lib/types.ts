@@ -1446,7 +1446,7 @@ export interface ImportServiceTaskView {
   steps: Array<{ name: string; status: string }>;
 }
 /** The remote PaaS sources the wizard can connect to (local-docker adoption has its own UI on a server's page). */
-export type ImportRemoteKind = "coolify" | "dokploy";
+export type ImportRemoteKind = "coolify" | "dokploy" | "caprover";
 /** One field present on the source that Tugra does not carry: a field NAME + a fixed reason, never a value. */
 export interface ImportCoverageEntry {
   field: string;

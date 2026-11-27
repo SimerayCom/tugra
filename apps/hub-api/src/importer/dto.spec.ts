@@ -1,4 +1,4 @@
-import { ImportApplySchema, ImportConnectAgentSchema, ImportConnectSchema, ImportMappingPutSchema, ImportMappingResolveSchema, ImportServicesPreviewSchema, ServiceChoiceSchema, ServiceChoicesSchema } from "./dto";
+import { ImportApplySchema, ImportPlanRequestSchema, ImportTestSchema, RUN_SOURCE_KINDS, REMOTE_SOURCE_KINDS, ImportConnectAgentSchema, ImportConnectSchema, ImportMappingPutSchema, ImportMappingResolveSchema, ImportServicesPreviewSchema, ServiceChoiceSchema, ServiceChoicesSchema } from "./dto";
 
 describe("ServiceChoiceSchema", () => {
   const ok = (v: unknown) => ServiceChoiceSchema.safeParse(v).success;
@@ -132,5 +132,26 @@ describe("ImportConnectAgentSchema (Coolify read through the agent)", () => {
 
   it("keeps the scope label to the same charset as the token path", () => {
     expect(ok({ sourceKind: "coolify", teamId: "t1", serverId: "s1", scopeLabel: "Bad Label!" })).toBe(false);
+  });
+});
+
+describe("CapRover source kind", () => {
+  it("is a remote kind: connect and test take the dashboard password as the token", () => {
+    expect(REMOTE_SOURCE_KINDS).toContain("caprover");
+    const c = { sourceKind: "caprover", teamId: "t1", baseUrl: "https://captain.example.com", token: "dashboard-password" };
+    expect(ImportConnectSchema.safeParse(c).success).toBe(true);
+    expect(ImportTestSchema.safeParse(c).success).toBe(true);
+    expect(ImportConnectSchema.safeParse({ ...c, token: "" }).success).toBe(false);
+    expect(ImportConnectSchema.safeParse({ ...c, baseUrl: "not a url" }).success).toBe(false);
+  });
+
+  it("plans and applies like the other remote kinds", () => {
+    expect(ImportPlanRequestSchema.safeParse({ sourceKind: "caprover", sessionId: "s1" }).success).toBe(true);
+    expect(ImportApplySchema.safeParse({ sourceKind: "caprover", sessionId: "s1", targetServerId: "t1", planHash: "a".repeat(32) }).success).toBe(true);
+    expect(ImportApplySchema.safeParse({ sourceKind: "caprover", sessionId: "s1", targetServerId: "t1", planHash: "short" }).success).toBe(false);
+  });
+
+  it("guided migration runs stay Coolify and Dokploy only", () => {
+    expect([...RUN_SOURCE_KINDS]).toEqual(["coolify", "dokploy"]);
   });
 });

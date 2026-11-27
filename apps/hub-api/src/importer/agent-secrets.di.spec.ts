@@ -4,6 +4,7 @@ import { ImporterModule } from "./importer.module";
 import { AgentSecretsAdapter } from "./agent-secrets.adapter";
 import { ImportSourceFactory } from "./sources/import-source.factory";
 import { AgentCoolifyReader } from "./agent-coolify.reader";
+import { CaproverClientFactory } from "./sources/caprover-client.factory";
 import { CoolifyTakeoverModule } from "../coolify-takeover/coolify-takeover.module";
 import { CoolifySecretsService } from "../coolify-takeover/coolify-secrets.service";
 import { CoolifyHostGrantService } from "../coolify-takeover/coolify-host-grant.service";
@@ -17,7 +18,7 @@ describe("agent secrets dependency-injection wiring", () => {
   it("the adapter and the factory have no undefined constructor token, and the factory takes the adapter after the reader", () => {
     for (const cls of [AgentSecretsAdapter, ImportSourceFactory]) expect(params(cls).every((p) => typeof p === "function")).toBe(true);
     expect(params(AgentSecretsAdapter)).toEqual([CoolifySecretsService, CoolifyHostGrantService, CryptoService]);
-    expect(params(ImportSourceFactory).slice(2)).toEqual([AgentCoolifyReader, AgentSecretsAdapter]);
+    expect(params(ImportSourceFactory).slice(2)).toEqual([AgentCoolifyReader, AgentSecretsAdapter, CaproverClientFactory]);
   });
 
   it("the importer module provides the adapter, and imports the modules that export what it needs", () => {

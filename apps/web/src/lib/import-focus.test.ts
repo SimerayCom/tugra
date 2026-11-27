@@ -37,6 +37,9 @@ describe("import focus hand-over", () => {
     rememberLastImportUrl("dokploy", "ftp://nope");
     expect(lastImportUrl("coolify")).toBe("https://c.example.com");
     expect(lastImportUrl("dokploy")).toBeNull();
+    rememberLastImportUrl("caprover", "https://captain.example.com");
+    expect(lastImportUrl("caprover")).toBe("https://captain.example.com");
+    expect(lastImportUrl("coolify")).toBe("https://c.example.com"); // kept per kind
   });
 });
 

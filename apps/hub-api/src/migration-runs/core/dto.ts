@@ -10,7 +10,7 @@
  */
 import { z } from "zod";
 import { guardedRecord } from "../../common/zod-record";
-import { ImportAckSchema, ImportDbDataModesSchema, REMOTE_SOURCE_KINDS, ServiceChoicesSchema } from "../../importer/dto";
+import { ImportAckSchema, ImportDbDataModesSchema, RUN_SOURCE_KINDS, ServiceChoicesSchema } from "../../importer/dto";
 import { ImportMappingDocSchema } from "../../importer/import-mapping";
 import {
   ATTACH_KINDS,
@@ -409,7 +409,7 @@ export type OwnerInputsRequest = z.infer<typeof OwnerInputsRequestSchema>;
 
 // ───────────────────────────── create ─────────────────────────────
 
-const REMOTE_KINDS = z.enum(REMOTE_SOURCE_KINDS);
+const REMOTE_KINDS = z.enum(RUN_SOURCE_KINDS);
 
 /** The editable-mapping and apply fields shared by the frozen apply input and the create body (same names as importer apply). */
 export const applyFields = {
@@ -734,7 +734,7 @@ export const MigrationRunViewSchema = z.object({
   serverMap: z.record(z.string(), Id),
   /** Every target server of the run (default first, each once) with its display name; what a typed confirmation must name. */
   targetServers: z.array(RunTargetServerSchema),
-  sourceKind: z.enum(REMOTE_SOURCE_KINDS),
+  sourceKind: z.enum(RUN_SOURCE_KINDS),
   sourceHost: z.string().nullable(),
   /** The source's version string, null until known. */
   sourceVersion: z.string().max(64).nullable(),
@@ -791,7 +791,7 @@ export const MigrationRunSummarySchema = z.object({
   targetServerCount: z.number().int().min(1),
   /** Every target server of the run (default first, each once): the servers a live run holds. */
   targetServerIds: z.array(Id).min(1),
-  sourceKind: z.enum(REMOTE_SOURCE_KINDS),
+  sourceKind: z.enum(RUN_SOURCE_KINDS),
   sourceHost: z.string().nullable(),
   sourceVersion: z.string().max(64).nullable(),
   campaign: z.string().nullable(),
@@ -844,7 +844,7 @@ export const RunReportSchema = z.object({
   mode: RunModeSchema,
   topology: RunTopologySchema,
   dryRun: z.boolean(),
-  source: z.object({ kind: z.enum(REMOTE_SOURCE_KINDS), host: z.string().nullable(), version: z.string().max(64).nullable().default(null) }),
+  source: z.object({ kind: z.enum(RUN_SOURCE_KINDS), host: z.string().nullable(), version: z.string().max(64).nullable().default(null) }),
   /** The default target server. */
   target: z.object({ serverId: Id, serverName: z.string().nullable() }),
   /** Every target server of the run (default first); `[]` in reports stored before multi-host runs. */

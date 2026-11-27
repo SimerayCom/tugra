@@ -6,7 +6,7 @@ export const DOCS_URL = `${SITE_URL}/docs`;
 export const SPONSOR_URL = "https://github.com/sponsors/mrcandev";
 
 /** The step-by-step guides a screen can point at. The id is the docs page: docs/<id>.md. */
-export const GUIDE_IDS = ["connect-github", "move-from-coolify", "move-from-coolify-same-server", "move-off-coolify", "add-a-server", "first-setup", "domains-and-cloudflare"] as const;
+export const GUIDE_IDS = ["connect-github", "move-from-coolify", "move-from-coolify-same-server", "move-off-coolify", "move-from-caprover", "add-a-server", "first-setup", "domains-and-cloudflare"] as const;
 export type GuideId = (typeof GUIDE_IDS)[number];
 
 /** The docs page of a guide. Pure. */

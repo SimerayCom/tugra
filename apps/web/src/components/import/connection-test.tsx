@@ -29,7 +29,8 @@ export function useConnectionTest(args: { kind: ImportRemoteKind; teamId: string
 
   useEffect(() => {
     const mine = ++seq.current;
-    if (!teamId || !urlConfirmed || !readyToTest(baseUrl, token)) {
+    // A CapRover password is never tried while it is typed: every try is a login, and a half-typed one is a failed login on their server.
+    if (kind === "caprover" || !teamId || !urlConfirmed || !readyToTest(baseUrl, token)) {
       setState({ status: "idle" });
       return;
     }
@@ -80,20 +81,20 @@ function EgressIpNote() {
 }
 
 /** What the connection test (or a refused connect) says, in one line, and only the help that fits the cause. */
-export function ConnectionStatus({ test, connectError, source }: { test: TestState; connectError: Error | null; source: string }) {
+export function ConnectionStatus({ test, connectError, source, kind }: { test: TestState; connectError: Error | null; source: string; kind?: ImportRemoteKind }) {
   const t = useT();
 
   // A refused connect speaks for itself (its code is the hub's); otherwise the test's answer.
   if (connectError) {
     const code = (connectError instanceof ApiError ? connectError.code : undefined) as ImportConnectFailureCode | undefined;
-    return <Failure code={code} message={connectError.message} source={source} />;
+    return <Failure code={code} message={connectError.message} source={source} kind={kind} />;
   }
   if (test.status === "idle") return null;
   if (test.status === "testing") {
     return <p role="status" style={lineStyle("var(--c-tx3)")}>{t("import.test.checking")}</p>;
   }
   const r = test.result;
-  if (!r.ok) return <Failure code={r.code} message={r.message} source={source} />;
+  if (!r.ok) return <Failure code={r.code} message={r.message} source={source} kind={kind} />;
 
   const parts = testLineParts(r);
   const counts = parts.counts.map((c) => t(`import.test.${c.key}_${c.n === 1 ? "one" : "other"}`, { n: c.n }));
@@ -108,16 +109,16 @@ export function ConnectionStatus({ test, connectError, source }: { test: TestSta
   );
 }
 
-function Failure({ code, message, source }: { code: ImportConnectFailureCode | undefined; message: string; source: string }) {
+function Failure({ code, message, source, kind }: { code: ImportConnectFailureCode | undefined; message: string; source: string; kind?: ImportRemoteKind }) {
   const t = useT();
   return (
     <div data-testid="connection-failure">
-      <div role="alert" style={lineStyle("var(--c-r)")}>{t(failureKey(code), { source })}</div>
+      <div role="alert" style={lineStyle("var(--c-r)")}>{t(failureKey(code, kind), { source })}</div>
       {code === "allowed-ips" && <EgressIpNote />}
       {message && (
         <MoreInfo label={t("import.test.details")} style={{ margin: "2px 0 12px" }}>
           <p style={{ margin: "0 0 6px", overflowWrap: "anywhere" }}>{message}</p>
-          <a href={guideUrl("move-from-coolify")} target="_blank" rel="noopener noreferrer" style={{ color: "var(--c-lapis)" }}>{t("import.test.guide")}</a>
+          <a href={guideUrl(kind === "caprover" ? "move-from-caprover" : "move-from-coolify")} target="_blank" rel="noopener noreferrer" style={{ color: "var(--c-lapis)" }}>{t("import.test.guide")}</a>
         </MoreInfo>
       )}
     </div>
