@@ -50,6 +50,19 @@ import type {
 const PLAN_TTL_MS = 30_000;
 const ZONE_HOST_CAP = 200;
 
+/** Run statuses that still need the import session's consent: anything not settled, and a finished dry run that has not been promoted yet. */
+const CONSENT_HOLDING_STATUSES: Array<"QUEUED" | "RUNNING" | "WAITING" | "PAUSED" | "ABORTING" | "ROLLING_BACK" | "REVERSING" | "FAILED" | "DRY_RUN_DONE"> = [
+  "QUEUED",
+  "RUNNING",
+  "WAITING",
+  "PAUSED",
+  "ABORTING",
+  "ROLLING_BACK",
+  "REVERSING",
+  "FAILED",
+  "DRY_RUN_DONE",
+];
+
 const metaOf = (m: unknown): Record<string, unknown> => (typeof m === "object" && m ? (m as Record<string, unknown>) : {});
 
 @Injectable()
@@ -254,7 +267,22 @@ export class ImportPortService implements ImportStepsPort {
   // ── IMPORT ──
 
   apply(userId: string, input: ImportApplyInput): Promise<{ opId: string }> {
-    return this.executor.apply(userId, input);
+    // A run's runs, retries and promotion share one import session and its one consent for secret values: it ends with the session or with
+    // the last run that uses it (`releaseConsent`), not after each apply.
+    return this.executor.apply(userId, input, { keepConsent: true });
+  }
+
+  async consentState(userId: string, i: { sessionId: string; sourceKind: RemoteSourceKind }): Promise<{ applies: boolean; standing: boolean; classes: string[]; agentServerId: string | null }> {
+    return this.importer.consentState(userId, i.sessionId);
+  }
+
+  async releaseConsent(_userId: string, i: { sessionId: string }): Promise<void> {
+    const rows = await this.prisma.migrationRun.findMany({ where: { sessionId: i.sessionId, status: { in: CONSENT_HOLDING_STATUSES } }, select: { id: true, status: true }, take: 500 });
+    // a finished dry run that was already promoted has nothing left to start
+    const dry = rows.filter((r) => r.status === "DRY_RUN_DONE").map((r) => r.id);
+    const promoted = dry.length ? new Set((await this.prisma.migrationRun.findMany({ where: { promotedFromId: { in: dry } }, select: { promotedFromId: true } })).map((r) => r.promotedFromId)) : new Set<string | null>();
+    const holding = rows.filter((r) => r.status !== "DRY_RUN_DONE" || !promoted.has(r.id));
+    if (holding.length === 0) await this.importer.endSessionConsent(i.sessionId);
   }
 
   async opSnapshot(userId: string, opId: string): Promise<OpSnapshot> {

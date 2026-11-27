@@ -117,6 +117,17 @@ export interface RunImportPort {
    * means the port cannot tell (a rebuild choice is then checked for shape only; the takeover's own plan refuses an app it does not know).
    */
   appRefs?(userId: string, input: { sessionId: string; sourceKind: RemoteSourceKind; scope?: RunScope }): Promise<string[]>;
+  /**
+   * OPTIONAL: does the owner's consent for secret values stand for this import session? `applies` is false for a session that has none to give
+   * (a token session, an ended session). Classes only. Read-only. A missing method means the port cannot tell (nothing is checked then).
+   */
+  consentState?(userId: string, input: { sessionId: string; sourceKind: RemoteSourceKind }): Promise<{ applies: boolean; standing: boolean; classes: string[]; agentServerId: string | null }>;
+  /**
+   * OPTIONAL: a real run that used this session is over. The consent for secret values ends with the LAST run of the session (every run of a
+   * campaign, a retry and a promotion share one consent); a run of the session that is still open or a finished dry run that can still be
+   * promoted keeps it standing. Best effort, idempotent.
+   */
+  releaseConsent?(userId: string, input: { sessionId: string }): Promise<void>;
   /** The coverage ledger of an import op for the final report (secret-free; empty when the op is unknown). */
   opItems(userId: string, opId: string): Promise<RunReport["items"]>;
   /**

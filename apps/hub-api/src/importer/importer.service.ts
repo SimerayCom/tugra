@@ -24,7 +24,7 @@ import { baseUrlHost, matchTugraServer, type MatchCandidate, type TugraMatch } f
 import { classifyConnectFailure, suggestScopeLabel, type ConnectFailureCode } from "./connect-check";
 import { HostMatchService, preflightMatchOf } from "../coolify-takeover/host-match.service";
 import type { CoolifyHostInput } from "../coolify-takeover/host-match";
-import type { HostEvidence } from "@tugra/shared";
+import type { CoolifySecretClass, HostEvidence } from "@tugra/shared";
 
 /** The plan as returned to a client: the (planHash-covered) plan plus the additive, hash-excluded mapping block. */
 export type ImportPlanResponse = ImportPlan & { mapping?: { features: string[]; stored: unknown; storedVersion: number | null; scopeKey: string } };
@@ -99,7 +99,7 @@ export class ImporterService {
       throw new BadRequestException(e instanceof Error ? e.message : "invalid base URL");
     }
     // Opportunistic GC: expired sessions are dead weight (encrypted + unusable); purge them on connect.
-    await this.prisma.importSession.deleteMany({ where: { expiresAt: { lt: new Date() } } });
+    await this.purgeExpiredSessions();
 
     // CapRover: the password becomes a login token here; only the token is stored below.
     const secret = await this.exchangeCredential(input.sourceKind, input.baseUrl, input.token);
@@ -135,6 +135,22 @@ export class ImporterService {
     return { sessionId: session.id, expiresAt };
   }
 
+  /**
+   * Delete the sessions that ran out. An agent session's consent for secret values goes with it (the grant is capped at the session's end and
+   * the sweep ends it too; this closes it at the moment the row disappears, so no grant is ever left pointing at a session that is gone).
+   */
+  private async purgeExpiredSessions(): Promise<void> {
+    const where = { expiresAt: { lt: new Date() } };
+    let agentRuns: Array<{ id: string; agentServerId: string | null }> = [];
+    try {
+      agentRuns = (await this.prisma.importSession.findMany({ where: { ...where, transport: "agent" }, select: { id: true, agentServerId: true }, take: 200 })) ?? [];
+    } catch {
+      agentRuns = []; // the purge below still runs; the sweep ends any grant this misses
+    }
+    await this.prisma.importSession.deleteMany({ where });
+    for (const r of agentRuns) if (r.agentServerId) await Promise.resolve(this.sources.finishAgentRun(r.agentServerId, r.id)).catch(() => undefined);
+  }
+
   /** The credential to store for what the user typed (see {@link ImportSourceFactory.credential}); a login failure is a 400 with the same stable `code` as any refused connection. */
   private async exchangeCredential(kind: RemoteSourceKind, baseUrl: string, typed: string): Promise<string> {
     try {
@@ -157,7 +173,7 @@ export class ImporterService {
     const server = await this.prisma.server.findUnique({ where: { id: input.serverId }, select: { id: true, teamId: true } });
     if (!server || server.teamId !== input.teamId) throw new NotFoundException("server not found");
     await this.requireAgentConsent(input.serverId, input.teamId);
-    await this.prisma.importSession.deleteMany({ where: { expiresAt: { lt: new Date() } } });
+    await this.purgeExpiredSessions();
 
     const source = this.sources.createAgent(input.serverId, { teamRef: input.sourceTeamRef });
     let read: AgentPlanAdditions;
@@ -444,6 +460,25 @@ export class ImporterService {
       await this.audit.log({ actor: userId, action: "import.session.revoke", target: session.id, meta: { sourceKind: session.sourceKind } });
     }
     return { ok: true };
+  }
+
+  /**
+   * Does the owner's consent for secret values stand for this session? `applies` is false for every session that has no such consent (a token
+   * session, a session that is not the caller's, one that ended). Classes only: never a value or a key. Read-only.
+   */
+  async consentState(userId: string, sessionId: string): Promise<{ applies: boolean; standing: boolean; classes: CoolifySecretClass[]; agentServerId: string | null }> {
+    const none = { applies: false, standing: false, classes: [] as CoolifySecretClass[], agentServerId: null };
+    const session = await this.prisma.importSession.findUnique({ where: { id: sessionId } });
+    if (!session || session.actorId !== userId || session.transport !== "agent" || !session.agentServerId) return none;
+    if (session.status !== "active" || session.expiresAt.getTime() <= Date.now()) return none;
+    const classes = await Promise.resolve(this.sources.agentConsentedClasses(session.agentServerId, session.id, userId)).catch(() => [] as CoolifySecretClass[]);
+    return { applies: true, standing: classes.length > 0, classes, agentServerId: session.agentServerId };
+  }
+
+  /** The runs that used this session are over: end its consent for secret values now (the session itself stays until it expires). Idempotent. */
+  async endSessionConsent(sessionId: string): Promise<void> {
+    const session = await this.prisma.importSession.findUnique({ where: { id: sessionId }, select: { transport: true, agentServerId: true } });
+    if (session?.transport === "agent" && session.agentServerId) await Promise.resolve(this.sources.finishAgentRun(session.agentServerId, sessionId)).catch(() => undefined);
   }
 
   /** The saved mapping profile for a session's source scope (`doc` is null when none is saved). */

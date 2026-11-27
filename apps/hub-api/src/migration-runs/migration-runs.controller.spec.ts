@@ -29,7 +29,7 @@ class FakeAuthGuard implements CanActivate {
 const H64 = "c".repeat(64);
 const H32 = "d".repeat(32);
 
-const FACADE_METHODS = ["create", "list", "get", "events", "start", "approve", "retry", "skip", "evidence", "attach", "command", "setInputs", "pause", "resume", "abort", "cleanup", "reverse", "decommission", "sourceSession", "sourceAgents", "report", "reportMarkdown"];
+const FACADE_METHODS = ["create", "list", "get", "events", "start", "approve", "retry", "skip", "evidence", "attach", "command", "setInputs", "pause", "resume", "abort", "cleanup", "reverse", "decommission", "sourceSession", "sourceAgents", "secretsConsent", "report", "reportMarkdown"];
 
 describe("MigrationRunsController (HTTP level: auth, scopes and validation in front of the facade)", () => {
   let app: INestApplication;

@@ -1,4 +1,5 @@
 import { Injectable, Optional } from "@nestjs/common";
+import type { CoolifySecretClass } from "@tugra/shared";
 import { AgentCoolifyReader } from "../agent-coolify.reader";
 import { AgentSecretsAdapter } from "../agent-secrets.adapter";
 import { CoolifySource } from "./coolify.source";
@@ -42,6 +43,11 @@ export class ImportSourceFactory {
     // The import session is the run the owner's consent belongs to: its secrets come from that consent and from no other.
     const store = ctx.run && this.agentSecrets ? this.agentSecrets.stores.forRun(agentServerId, ctx.run.sessionId, ctx.run.userId) : undefined;
     return new AgentCoolifySource(new AgentCoolifyClient(this.agentReads, agentServerId, ctx.teamRef ? { teamRef: ctx.teamRef } : {}), store);
+  }
+
+  /** The secret classes the owner's consent for this agent session covers right now (empty when none stands, or without the sealed pipeline). */
+  async agentConsentedClasses(agentServerId: string, sessionId: string, userId: string): Promise<CoolifySecretClass[]> {
+    return this.agentSecrets ? this.agentSecrets.stores.forRun(agentServerId, sessionId, userId).consentedClasses() : [];
   }
 
   /** An agent import session ended (revoked, applied): end the consent of its run. A no-op without the sealed pipeline. */

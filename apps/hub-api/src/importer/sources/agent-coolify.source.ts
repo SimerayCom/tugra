@@ -1,4 +1,4 @@
-import type { AgentPlanAdditions, CoolifySecretClass } from "@tugra/shared";
+import { COOLIFY_IMPORT_APPLY_CLASSES, type AgentPlanAdditions, type CoolifySecretClass } from "@tugra/shared";
 import { ForbiddenException } from "@nestjs/common";
 import type { ForeignApp, ForeignFleet, ServiceBundle } from "../foreign-fleet";
 import type { FetchedSecrets, ImportSourceCapabilities, SourceAppExtras } from "../import-source";
@@ -8,9 +8,9 @@ import { AgentSensitiveClient, type AgentCoolifyClient } from "./agent-coolify.c
 import { NO_OVERLAY, type AgentSecretStore, type SecretOverlay } from "./agent-secrets";
 
 /** The classes an apply reads: environment values, shared variables (they expand into env values), compose/Dockerfile/label/config text and engine config. */
-const APPLY_CLASSES: readonly CoolifySecretClass[] = ["env", "shared_env", "service_compose", "db_credentials"];
+export const APPLY_CLASSES: readonly CoolifySecretClass[] = COOLIFY_IMPORT_APPLY_CLASSES;
 /** The classes the settings import reads. `notification` is opt-in and is simply absent when the owner did not consent to it. */
-const SETTINGS_CLASSES: Record<SettingsSection, readonly CoolifySecretClass[]> = {
+export const SETTINGS_CLASSES: Record<SettingsSection, readonly CoolifySecretClass[]> = {
   notifications: ["notification"],
   sharedVariables: ["shared_env"],
   storages: [],
@@ -111,9 +111,10 @@ export class AgentCoolifySource extends CoolifySource {
     this.store.reset();
   }
 
-  /** The apply is over: forget what was read and end the owner's consent for this session. */
-  async finishApply(): Promise<void> {
-    await this.store?.finish();
+  /** The apply is over: forget what was read and, unless a guided run still needs it, end the owner's consent for this session. */
+  async finishApply(opts?: { keepConsent?: boolean }): Promise<void> {
+    if (opts?.keepConsent) this.store?.reset();
+    else await this.store?.finish();
   }
 
   // ── the sensitive reads, from the opened values ──────────────────────────────────────────────────

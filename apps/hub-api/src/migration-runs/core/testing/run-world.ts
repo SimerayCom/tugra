@@ -543,6 +543,22 @@ export class ScriptedImportPort implements ImportStepsPort {
   /** Opt-in: a spec sets it to answer the create-time rebuild check; unset = the port cannot tell (shape only). */
   appRefs?: RunImportPort["appRefs"];
 
+  /**
+   * What the consent check answers (default: a session with no such consent to give, so nothing is asked). A spec sets `applies: true` to play an
+   * agent session, and `standing` for whether the owner's consent for secret values stands. Not counted in `reads`.
+   */
+  consent: { applies: boolean; standing: boolean; classes: string[]; agentServerId: string | null } = { applies: false, standing: false, classes: [], agentServerId: null };
+  consentCalls: Array<{ sessionId: string }> = [];
+  async consentState(_u: string, i: { sessionId: string; sourceKind: RemoteSourceKind }): Promise<{ applies: boolean; standing: boolean; classes: string[]; agentServerId: string | null }> {
+    this.consentCalls.push({ sessionId: i.sessionId });
+    return this.consent;
+  }
+  /** The sessions whose consent the run core released (the last run of the session ended). */
+  released: string[] = [];
+  async releaseConsent(_u: string, i: { sessionId: string }): Promise<void> {
+    this.released.push(i.sessionId);
+  }
+
   /** What the source-agent check answers (default: every source server has an online agent). */
   agentGaps: { gaps: Array<{ ref: string; name: string; state: "no_agent" | "offline" }>; unverified: boolean } = { gaps: [], unverified: false };
   agentGapCalls: Array<Parameters<NonNullable<RunImportPort["sourceAgentGaps"]>>[1]> = [];

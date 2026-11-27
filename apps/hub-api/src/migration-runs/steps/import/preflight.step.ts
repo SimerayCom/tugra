@@ -79,6 +79,8 @@ export interface PreflightObs extends Observation {
   hints?: readonly RunHint[];
   /** The stored host reports of the run (the inventory the docker-vs-API cross-check reads); absent = none were read. */
   hosts?: HostView;
+  /** A real run on an agent session: does the owner's consent for secret values stand? `missing` fails the gate (the run page shows the consent card). `undefined` = not asked, or nothing to consent to. */
+  consent?: "ok" | "missing";
   /** The other target servers of a multi-host run (the `serverMap`'s), each with what PREFLIGHT could read of it; `facts: null` = unreadable. */
   extraTargets?: Array<{ serverId: string; facts: TargetFacts | null }>;
 }
@@ -312,6 +314,9 @@ export function preflightChecks(run: RunSnapshot, obs: PreflightObs): GateCheck[
 
   c.push(...sourceVersionChecks(run, obs));
 
+  // a real run on an agent session imports with the owner's consent for secret values; without it nothing can be applied
+  if (obs.consent === "missing" && !run.dryRun) c.push({ id: "preflight.consent", status: "fail", code: "preflight.consent-required", ...ev });
+
   // plan blockers: an ackable approval accepts "the importer skips these items"
   for (const [code, names] of unackedBlockers(plan, run)) {
     c.push({ id: `preflight.blocker.${code}`, status: "fail", code: "preflight.plan-blocker", params: { risk: code, count: names.length, items: names.slice(0, 10) }, ackable: true, ...ev });
@@ -506,7 +511,20 @@ export class PreflightStep implements StepHandler<PreflightObs>, OnModuleInit {
     const baseline = await this.baselineOf(ctx, bypass);
     const hints = this.hintStore ? await this.hintStore.list(run.id, run.promotedFromId).catch(() => []) : [];
     const hostView = this.reports ? await loadHostView(this.reports, run.id).catch(() => emptyHostView()) : undefined;
-    return { session, plan, planError: null, target, mapping, storedMappingBlocks, services, sourceVersion, ...(baseline ? { baseline } : {}), hints, ...(hostView ? { hosts: hostView } : {}), ...(extraTargets.length ? { extraTargets } : {}) };
+    const consent = await this.consentOf(ctx);
+    return { session, plan, planError: null, target, mapping, storedMappingBlocks, services, sourceVersion, ...(baseline ? { baseline } : {}), hints, ...(hostView ? { hosts: hostView } : {}), ...(extraTargets.length ? { extraTargets } : {}), ...(consent ? { consent } : {}) };
+  }
+
+  /** Real runs only (a dry run applies nothing): does the owner's consent for secret values stand for the run's session? */
+  private async consentOf(ctx: StepContext): Promise<PreflightObs["consent"]> {
+    const run = ctx.run;
+    if (run.dryRun || run.inPlace || !run.sessionId || !this.port.consentState) return undefined;
+    try {
+      const c = await this.port.consentState(ctx.actor.userId, { sessionId: run.sessionId, sourceKind: run.sourceKind });
+      return c.applies ? (c.standing ? "ok" : "missing") : undefined;
+    } catch {
+      return undefined;
+    }
   }
 
   /** R7: what PREFLIGHT can read of every OTHER target server of a multi-host run (an unreadable one is `facts: null`, never skipped). */

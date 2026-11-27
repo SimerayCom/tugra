@@ -69,7 +69,16 @@ export interface ImportObs extends Observation {
   autoDeployOn: string[] | null;
   /** R11: how many image apps still have to be pointed at the digest the source runs (0 = none, or already done / not possible with this port). */
   pinsDue: number;
+  /**
+   * An agent session imports with the owner's consent for secret values standing, and only while the import is still to be applied:
+   * `missing` = it does not stand now (never given for a renewed session, ran out, or replaced by another owner's). `undefined` = not
+   * checked (nothing to apply, a session without such consent, or a port that cannot tell).
+   */
+  consent?: "ok" | "missing";
 }
+
+/** The wait code of an IMPORT that cannot start for want of the owner's consent for secret values (the run page shows the consent card). */
+export const CONSENT_REQUIRED_CODE = "import.consent-required";
 
 interface Comp {
   applyStartedAt?: string | null;
@@ -155,7 +164,19 @@ export class ImportStep implements StepHandler<ImportObs>, OnModuleInit {
     const tasks = op ? itemTasks(op) : [];
     const settled = tasks.filter((t) => !["PENDING", "RUNNING", "AWAITING_CUTOVER"].includes(t.status)).length;
     const placement = await this.placementOf(ctx, session, op);
-    return { session, op, wave, build, autoDeployOn, pinsDue, placement, progress: { done: settled, total: tasks.length, unit: "item" } };
+    const consent = await this.consentOf(ctx, session, op);
+    return { session, op, wave, build, autoDeployOn, pinsDue, placement, ...(consent ? { consent } : {}), progress: { done: settled, total: tasks.length, unit: "item" } };
+  }
+
+  /** Does the owner's consent for secret values stand for this run's session? Only asked while the apply is still to come, and only of a port that can say. */
+  private async consentOf(ctx: StepContext, session: SessionState, op: OpSnapshot | null): Promise<ImportObs["consent"]> {
+    if (ctx.run.dryRun || (op && !op.rolledBack) || session !== "active" || !ctx.run.sessionId || !this.port.consentState) return undefined;
+    try {
+      const c = await this.port.consentState(ctx.actor.userId, { sessionId: ctx.run.sessionId, sourceKind: ctx.run.sourceKind });
+      return c.applies ? (c.standing ? "ok" : "missing") : undefined;
+    } catch {
+      return undefined; // not knowing is not a refusal: the apply itself still refuses without the consent
+    }
   }
 
   /** Multi-host: which source servers the serverMap leaves unplaced. Read-only (the adapter memoizes the plan for a short while). */
@@ -212,6 +233,9 @@ export class ImportStep implements StepHandler<ImportObs>, OnModuleInit {
     const willApply = needsApply(obs) && !(comp.applyStartedAt && comp.applyDone !== true);
     if (willApply && obs.session !== "active") {
       return makeGate([{ id: "import.session", status: "fail", code: "import.session-expired", evidence: "hub-verified" }], { wait: { kind: "operator", code: SESSION_EXPIRED_CODE } });
+    }
+    if (willApply && obs.consent === "missing") {
+      return makeGate([{ id: "import.consent", status: "fail", code: CONSENT_REQUIRED_CODE, evidence: "hub-verified" }], { wait: { kind: "operator", code: CONSENT_REQUIRED_CODE } });
     }
     if (willApply && obs.placement && obs.placement.unmapped.length > 0) {
       const u = obs.placement.unmapped;

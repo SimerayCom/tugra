@@ -598,6 +598,25 @@ export const SourceAgentsResultSchema = z.object({
 });
 export type SourceAgentsResult = z.infer<typeof SourceAgentsResultSchema>;
 
+/** `GET /:id/secrets-consent`: the session a start or a promotion would use (the renewed one the screen made), else the run's own. */
+export const SecretsConsentQuerySchema = z.object({ sessionId: Id.optional() });
+export type SecretsConsentQuery = z.infer<typeof SecretsConsentQuerySchema>;
+
+/**
+ * `GET /:id/secrets-consent`: does the owner's consent for reading Coolify's secret values stand for the import session this run uses? `applies` is
+ * false when the session has no such consent to give (a token session, an in-place run, a session that ended). When it applies and does not stand,
+ * the run refuses to start (`consent-required`) and its IMPORT step waits for it. `serverId` is the Tugra server whose agent reads Coolify (the name
+ * the owner types to allow it). Classes only: never a value or a key.
+ */
+export const SecretsConsentResultSchema = z.object({
+  applies: z.boolean(),
+  standing: z.boolean(),
+  classes: z.array(z.string().max(40)).max(20),
+  sessionId: Id.nullable(),
+  serverId: Id.nullable(),
+});
+export type SecretsConsentResult = z.infer<typeof SecretsConsentResultSchema>;
+
 /** `GET /:id/events`: `afterSeq` is the last seq the client has (0 = from the start). */
 export const RunEventsQuerySchema = z.object({
   afterSeq: z.coerce.number().int().min(0).default(0),

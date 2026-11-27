@@ -24,6 +24,8 @@ import {
   RunReportQuerySchema, type RunReportQuery,
   RunReportSchema,
   SetRunInputsSchema, type SetRunInputsInput,
+  SecretsConsentQuerySchema, type SecretsConsentQuery,
+  SecretsConsentResultSchema,
   SourceAgentsQuerySchema, type SourceAgentsQuery,
   SourceAgentsResultSchema,
   SourceSessionResultSchema,
@@ -245,6 +247,13 @@ export class MigrationRunsController {
   @ApiZodResponse(SourceAgentsResultSchema)
   sourceAgents(@CurrentUser() user: AuthUser, @Param("id") id: string, @Query(new ZodValidationPipe(SourceAgentsQuerySchema)) query: SourceAgentsQuery) {
     return this.runs.sourceAgents(runActorFromAuth(user), id, query);
+  }
+
+  /** Does the owner's consent for secret values stand for the import session this run uses? Read-only; classes only, never a value. */
+  @Get(":id/secrets-consent")
+  @ApiZodResponse(SecretsConsentResultSchema)
+  secretsConsent(@CurrentUser() user: AuthUser, @Param("id") id: string, @Query(new ZodValidationPipe(SecretsConsentQuerySchema)) query: SecretsConsentQuery) {
+    return this.runs.secretsConsent(runActorFromAuth(user), id, query);
   }
 
   /** The final, secret-free report: JSON (default) or Markdown (`?format=md`, served as text/markdown). */

@@ -134,8 +134,12 @@ export class ImportExecutorService {
     @Optional() private readonly vxApply?: VxApplyService,
   ) {}
 
-  apply(userId: string, input: ImportApplyInput): Promise<{ opId: string; mappingApplied?: boolean }> {
-    return input.sourceKind === "local-docker" ? this.applyLocalDocker(userId, input) : this.applyRemote(userId, input);
+  /**
+   * `keepConsent`: a guided run applies through here too, and its runs, retries and promotion share one import session and its one consent
+   * for secret values. The consent then ends with the session (or when the run that holds it is over), not with each apply.
+   */
+  apply(userId: string, input: ImportApplyInput, opts: { keepConsent?: boolean } = {}): Promise<{ opId: string; mappingApplied?: boolean }> {
+    return input.sourceKind === "local-docker" ? this.applyLocalDocker(userId, input) : this.applyRemote(userId, input, opts);
   }
 
   /** Re-discover + re-plan, enforce the reviewed plan via planHash, then persist + fan out the adoptions. */
@@ -173,7 +177,7 @@ export class ImportExecutorService {
   }
 
   /** Copy a remote fleet's apps onto a target Tugra server: per app, resolve its secrets and create it. */
-  private async applyRemote(userId: string, input: Extract<ImportApplyInput, { sourceKind: RemoteSourceKind }>): Promise<{ opId: string; mappingApplied: boolean }> {
+  private async applyRemote(userId: string, input: Extract<ImportApplyInput, { sourceKind: RemoteSourceKind }>, opts: { keepConsent?: boolean } = {}): Promise<{ opId: string; mappingApplied: boolean }> {
     const { source, session } = await this.importer.openSession(userId, input.sessionId, input.sourceKind); // session ownership + team authz + kind pin
     try {
       // An agent session needs the owner's consent for its secrets standing NOW (403 `consent_required`, nothing created); other sources have no such step.
@@ -370,8 +374,9 @@ export class ImportExecutorService {
       void this.fanout(op.id, [...runners.keys()], (taskId) => runners.get(taskId)!())
         .catch(() => undefined)
         .finally(async () => {
-          // The import is over: an agent session ends the owner's consent for its secrets here (and forgets every value it read).
-          await source.finishApply?.().catch(() => undefined);
+          // The import is over: an agent session ends the owner's consent for its secrets here (and forgets every value it read),
+          // unless a guided run asked to keep it for the runs that follow on the same session.
+          await (opts.keepConsent ? source.finishApply?.({ keepConsent: true }) : source.finishApply?.())?.catch(() => undefined);
           await source.close(); // close only once the async fan-out is done with the client
         });
       // The op row exists: keep the applied mapping as the editable profile for the next run (best effort).

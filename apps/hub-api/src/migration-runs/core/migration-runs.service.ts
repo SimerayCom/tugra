@@ -35,6 +35,8 @@ import {
   type RunCommandResult,
   type RunEventsPage,
   type RunEventsQuery,
+  type SecretsConsentQuery,
+  type SecretsConsentResult,
   type SourceAgentsQuery,
   type SourceAgentsResult,
   type RunReport,
@@ -211,6 +213,8 @@ export class MigrationRunsService implements MigrationRunsFacade {
     const serverMap = serverMapOf(body.serverMap ?? {});
     this.assertTopology(body.topology, body.sourceKind, [server.id, ...Object.values(serverMap)]);
     const session = await this.requireSession(actor, body.sessionId, body.sourceKind);
+    // a real run imports with the owner's consent for secret values (an agent session): refused here, with its code, not at the IMPORT step
+    if (!body.dryRun && !inPlace) await this.assertConsent(actor, session);
     await this.assertTargetsInTeam(server.teamId, serverMap);
     await this.assertTargetsReady([server.id, ...Object.values(serverMap)]);
     if (body.topology === "swap-proxy") await this.assertSwapPlacement(actor, body, server.id, serverMap);
@@ -446,6 +450,29 @@ export class MigrationRunsService implements MigrationRunsFacade {
     return s;
   }
 
+  /** An agent session imports with the owner's consent for secret values standing: refuse (409 `consent-required`) while it does not. Other sessions have none to give. */
+  private async assertConsent(actor: RunActor, session: RunSessionInfo): Promise<void> {
+    if (!this.imp.consentState) return;
+    const c = await this.imp.consentState(actor.userId, { sessionId: session.id, sourceKind: session.sourceKind }).catch(() => null);
+    if (c && c.applies && !c.standing) throw conflict("consent-required");
+  }
+
+  /**
+   * Does the owner's consent for secret values stand for the session this run uses (or the one a promotion would use)? The screen asks it to show
+   * the consent card where the run is, instead of letting the run fail at its IMPORT step. Read-only.
+   */
+  async secretsConsent(actor: RunActor, id: string, query: SecretsConsentQuery): Promise<SecretsConsentResult> {
+    const run = await this.load(actor, id);
+    const none: SecretsConsentResult = { applies: false, standing: false, classes: [], sessionId: null, serverId: null };
+    if (run.inPlace || !this.imp.consentState) return none;
+    const sessionId = query.sessionId ?? run.sessionId;
+    const session = sessionId ? await this.env.session(actor.userId, sessionId).catch(() => null) : null;
+    if (!session || session.sourceKind !== run.sourceKind) return none;
+    const c = await this.imp.consentState(actor.userId, { sessionId: session.id, sourceKind: session.sourceKind }).catch(() => null);
+    if (!c) return none;
+    return { applies: c.applies, standing: c.standing, classes: c.classes, sessionId: session.id, serverId: c.agentServerId };
+  }
+
   private async assertPlanFresh(actor: RunActor, session: RunSessionInfo, apply: { planHash: string; dbDataModes?: Record<string, "volume"> }): Promise<void> {
     const live = await this.imp.planHash(actor.userId, { sessionId: session.id, sourceKind: session.sourceKind, ...(apply.dbDataModes ? { dbDataModes: apply.dbDataModes } : {}) });
     if (live !== apply.planHash) throw conflict("plan-changed");
@@ -457,6 +484,12 @@ export class MigrationRunsService implements MigrationRunsFacade {
     if (run.status === "DRY_RUN_DONE") return this.promote(actor, run, body);
     if (run.status !== "QUEUED" || run.dryRun) throw conflict("run-not-startable");
     this.assertHandlers(run.mode as RunMode);
+    // The consent was given for the session when the run was made; it may have run out or been replaced since. A session that ended is
+    // the steps' own wait (`step.session-expired`), not judged here.
+    if (!run.inPlace && run.sessionId) {
+      const session = await this.env.session(actor.userId, run.sessionId).catch(() => null);
+      if (session && session.state === "active" && session.expiresAt.getTime() > this.engine.clock.now().getTime()) await this.assertConsent(actor, session);
+    }
     const ok = await this.store.updateRun(run.id, { statusIn: ["QUEUED"] }, { status: "RUNNING" });
     if (!ok) throw conflict("run-not-startable");
     await this.audit(actor, "start", run.id);
@@ -478,6 +511,8 @@ export class MigrationRunsService implements MigrationRunsFacade {
     const sessionId = body.sessionId ?? from.sessionId;
     if (!sessionId) throw bad("session-required");
     const session = await this.requireSession(actor, sessionId, from.sourceKind);
+    // a renewed session starts without the consent the old one held: the screen asks for it, and the promotion refuses without it
+    if (!from.inPlace) await this.assertConsent(actor, session);
     const apply = withServicePins(RunApplyInputSchema.parse(from.applyInput), hints);
     await this.assertPlanFresh(actor, session, apply);
     if (!from.inPlace) await this.assertSourceAgents(actor, session, apply);
@@ -1007,6 +1042,8 @@ export class MigrationRunsService implements MigrationRunsFacade {
     if (!run) return;
     const report = await this.buildFor(run, false);
     await this.store.updateRun(runId, {}, { report });
+    // the run is over: when it was the last one on its import session, the consent for secret values ends with it
+    if (!run.dryRun && run.sessionId && this.imp.releaseConsent) await this.imp.releaseConsent(run.actorId, { sessionId: run.sessionId }).catch(() => undefined);
   }
 }
 

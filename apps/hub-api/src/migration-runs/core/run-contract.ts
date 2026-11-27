@@ -39,6 +39,8 @@ import type {
   RunCommandResult,
   RunEventsPage,
   RunEventsQuery,
+  SecretsConsentQuery,
+  SecretsConsentResult,
   SourceAgentsQuery,
   SourceAgentsResult,
   RunOptions,
@@ -1010,6 +1012,8 @@ export interface MigrationRunsFacade {
   sourceSession(actor: RunActor, id: string, body: SourceSessionInput): Promise<SourceSessionResult>;
   /** `GET /:id/source-agents`: the source servers a promotion of this finished dry run would refuse on (no online agent). 409 `not-a-finished-dry-run` otherwise. */
   sourceAgents(actor: RunActor, id: string, query: SourceAgentsQuery): Promise<SourceAgentsResult>;
+  /** Does the owner's consent for secret values stand for the session this run (or the session a promotion would use) reads through? Read-only. */
+  secretsConsent(actor: RunActor, id: string, query: SecretsConsentQuery): Promise<SecretsConsentResult>;
   /** `GET /:id/report?format=json`: the final, secret-free report (built on demand for a run that is not finished yet). */
   report(actor: RunActor, id: string): Promise<RunReport>;
   /** `GET /:id/report?format=md`: the same report rendered as Markdown (codes rendered with the English locale). */

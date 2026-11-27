@@ -1055,6 +1055,7 @@ export const ERROR_CODE_KEY: Record<string, string> = {
   "session-expired": "migrationRun.errors.session-expired",
   "source-is-agent": "migrationRun.errors.source-is-agent",
   "run-not-startable": "migrationRun.errors.run-not-startable",
+  "consent-required": "migrationRun.errors.consent-required",
 };
 
 /** An error from the hub as one readable line: a known machine code is localized, anything else is the hub's message. */

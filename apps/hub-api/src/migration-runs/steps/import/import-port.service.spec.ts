@@ -3,6 +3,7 @@ import { ImportPortService } from "./import-port.service";
 function make(over: { opMeta?: unknown; cancelRequestedAt?: Date | null; statusView?: unknown } = {}) {
   const prisma = {
     importSession: { findUnique: jest.fn(), update: jest.fn() },
+    migrationRun: { findMany: jest.fn().mockResolvedValue([]) },
     server: { findUnique: jest.fn().mockResolvedValue({ name: "box", proxyBind: "public", dnsCredentialId: "cred1", capabilities: ["deploy", "database"], teamId: "team1", os: "ubuntu", osVersion: "24.04" }) },
     metric: { findFirst: jest.fn().mockResolvedValue({ diskUsed: BigInt(30 * 1024 ** 3), diskTotal: BigInt(100 * 1024 ** 3), ts: new Date(Date.now() - 60_000) }) },
     backupDestination: { count: jest.fn().mockResolvedValue(2) },
@@ -12,7 +13,7 @@ function make(over: { opMeta?: unknown; cancelRequestedAt?: Date | null; statusV
     deployment: { findMany: jest.fn() },
   };
   const source = { discover: jest.fn().mockResolvedValue({ servers: [], apps: [], databases: [], services: [], volumes: [], sharedEnv: [], warnings: [] }), close: jest.fn().mockResolvedValue(undefined), fetchServiceBundle: jest.fn() };
-  const importer = { openSession: jest.fn().mockResolvedValue({ source, session: { sourceKind: "coolify" } }), resolveMapping: jest.fn(), getMapping: jest.fn(), previewServices: jest.fn(), plan: jest.fn() };
+  const importer = { consentState: jest.fn().mockResolvedValue({ applies: true, standing: true, classes: ["env"], agentServerId: "srv" }), endSessionConsent: jest.fn().mockResolvedValue(undefined), openSession: jest.fn().mockResolvedValue({ source, session: { sourceKind: "coolify" } }), resolveMapping: jest.fn(), getMapping: jest.fn(), previewServices: jest.fn(), plan: jest.fn() };
   const executor = {
     apply: jest.fn().mockResolvedValue({ opId: "op-1" }),
     status: jest.fn().mockResolvedValue(over.statusView ?? { tasks: [], plan: null }),
@@ -416,5 +417,45 @@ describe("ImportPortService.appRefs", () => {
     const { svc, importer } = make();
     importer.plan.mockResolvedValueOnce(plan);
     expect(await svc.appRefs("u1", { sessionId: "s1", sourceKind: "coolify", scope: { sourceServers: ["a"] } })).toEqual(["app:a:web"]);
+  });
+
+  describe("the consent for secret values of an agent session", () => {
+    it("a run's apply keeps the consent: the runs, retries and promotion of one session share it", async () => {
+      const { svc, executor } = make();
+      const input = { sourceKind: "coolify", sessionId: "s1", targetServerId: "srv1", planHash: "a".repeat(32) } as never;
+      await svc.apply("u1", input);
+      expect(executor.apply).toHaveBeenCalledWith("u1", input, { keepConsent: true });
+    });
+
+    it("consentState asks the importer for the session", async () => {
+      const { svc, importer } = make();
+      expect(await svc.consentState("u1", { sessionId: "s1", sourceKind: "coolify" })).toMatchObject({ applies: true, standing: true });
+      expect(importer.consentState).toHaveBeenCalledWith("u1", "s1");
+    });
+
+    it("releaseConsent ends the consent when no run of the session is left to need it", async () => {
+      const { svc, importer, prisma } = make();
+      await svc.releaseConsent("u1", { sessionId: "s1" });
+      expect(importer.endSessionConsent).toHaveBeenCalledWith("s1");
+      expect(prisma.migrationRun.findMany.mock.calls[0][0].where.sessionId).toBe("s1");
+    });
+
+    it("releaseConsent keeps it while another run of the session is open or a finished dry run can still be promoted", async () => {
+      const a = make();
+      a.prisma.migrationRun.findMany.mockResolvedValueOnce([{ id: "r2", status: "QUEUED" }]);
+      await a.svc.releaseConsent("u1", { sessionId: "s1" });
+      expect(a.importer.endSessionConsent).not.toHaveBeenCalled();
+      const b = make();
+      b.prisma.migrationRun.findMany.mockResolvedValueOnce([{ id: "d1", status: "DRY_RUN_DONE" }]).mockResolvedValueOnce([]);
+      await b.svc.releaseConsent("u1", { sessionId: "s1" });
+      expect(b.importer.endSessionConsent).not.toHaveBeenCalled();
+    });
+
+    it("a dry run that was already promoted has nothing left to start: it no longer holds the consent", async () => {
+      const { svc, importer, prisma } = make();
+      prisma.migrationRun.findMany.mockResolvedValueOnce([{ id: "d1", status: "DRY_RUN_DONE" }]).mockResolvedValueOnce([{ promotedFromId: "d1" }]);
+      await svc.releaseConsent("u1", { sessionId: "s1" });
+      expect(importer.endSessionConsent).toHaveBeenCalledWith("s1");
+    });
   });
 });

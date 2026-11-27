@@ -750,7 +750,8 @@
     "rebuild-unknown-item": "An app you chose to build is no longer part of this move. Review the plan again.",
     "session-expired": "The connection to the source ended (it lasts one hour). Connect again, then start.",
     "source-is-agent": "This source is read through the agent. Read Coolify again from the Coolify host page.",
-    "run-not-startable": "This run cannot be started in its current state. Reload the page."
+    "run-not-startable": "This run cannot be started in its current state. Reload the page.",
+    "consent-required": "Reading secret values is not allowed for this source connection yet. Allow it on this page, then start."
   },
   "codes": {
     "unknown": "{code}{params}",
@@ -839,6 +840,9 @@
     "preflight_blocked": "Preflight has failing checks. Fix them or accept the ones that can be accepted.",
     "preflight_plan_failed": "The import plan could not be read from the source.",
     "import_session-expired": "The source session expired. Enter the source token again.",
+    "import_consent-required": "The import is waiting for you to allow reading secret values. Allow them on this page and it continues by itself.",
+    "import_apply_consent-required": "The import could not start because reading secret values is not allowed (it was never allowed, it ended, or another owner's permission replaced it). Allow it on this page and retry the step.",
+    "preflight_consent-required": "Reading secret values is not allowed for this source connection. Allow it on this page to continue.",
     "import_ready": "Ready to create the apps and databases on the target.",
     "import_no-op": "This run has no live import operation.",
     "import_applied": "The import was started on the target.",

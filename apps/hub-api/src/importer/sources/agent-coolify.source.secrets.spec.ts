@@ -1,5 +1,6 @@
 import { ForbiddenException } from "@nestjs/common";
-import { AgentCoolifySource } from "./agent-coolify.source";
+import { COOLIFY_IMPORT_READ_CLASSES } from "@tugra/shared";
+import { AgentCoolifySource, APPLY_CLASSES, SETTINGS_CLASSES } from "./agent-coolify.source";
 import { AgentCoolifyClient } from "./agent-coolify.client";
 import { AgentSecretStore } from "./agent-secrets";
 import { planImport } from "../import-planner";
@@ -175,6 +176,21 @@ describe("AgentCoolifySource with the owner's consent: as complete as a read:sen
       await m.source.beginApply();
       await m.source.discover();
       expect(m.port.calls).toHaveLength(2); // read again
+    });
+
+    it("finishApply({ keepConsent }) forgets every value but leaves the consent standing for the next run of the session", async () => {
+      const m = make();
+      await m.source.fetchSecrets("app-web");
+      await m.source.finishApply({ keepConsent: true });
+      expect(m.port.finished).toEqual([]); // the grant of the session is not ended
+      expect(m.store.get("env:ev1", "value")).toBeUndefined();
+      expect(await m.store.consentedClasses()).toEqual([...T1]);
+      await m.source.beginApply(); // the next run's apply still passes the consent check
+    });
+
+    it("the classes the apply and the settings import read are all offered by the consent card (the shared list)", () => {
+      for (const c of [...APPLY_CLASSES, ...Object.values(SETTINGS_CLASSES).flat()]) expect(COOLIFY_IMPORT_READ_CLASSES).toContain(c);
+      for (const c of COOLIFY_IMPORT_READ_CLASSES) expect([...APPLY_CLASSES, ...Object.values(SETTINGS_CLASSES).flat()]).toContain(c);
     });
 
     it("finishApply ends the consent of this run and forgets every value", async () => {

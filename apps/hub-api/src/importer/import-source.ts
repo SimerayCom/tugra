@@ -151,8 +151,12 @@ export interface ImportSource {
   sourceServers?(): Promise<Array<{ ref: string; address: string | null; controlPlane: boolean }>>;
   /** OPTIONAL (agent transport): the apply is about to start. Refuses (403 `consent_required`) when the owner's consent for this import is not standing. */
   beginApply?(): Promise<void>;
-  /** OPTIONAL (agent transport): the apply is over. Ends the owner's consent for this import and forgets every value read for it. */
-  finishApply?(): Promise<void>;
+  /**
+   * OPTIONAL (agent transport): the apply is over. Forgets every value read for it and, unless `keepConsent`, ends the owner's consent for this
+   * import. A guided run keeps it: every run of a campaign, a retry and a promotion share one session and one consent, which ends with the
+   * session or when the last run that uses it is over.
+   */
+  finishApply?(opts?: { keepConsent?: boolean }): Promise<void>;
   /** Dump a database's contents (requires capabilities().dbDataDump). */
   dumpDb?(ref: string): Promise<DumpHandle>;
   /** Open a volume's bytes as a tar stream (requires capabilities().volumeRead). */

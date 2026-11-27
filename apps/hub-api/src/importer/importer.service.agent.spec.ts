@@ -14,12 +14,13 @@ import { fixtureRead } from "./__fixtures__/agent-coolify.fixture";
 
 const SERVER = { id: "srv-agent", teamId: "t1" };
 
-function make(over: { session?: unknown; optIn?: boolean; server?: unknown; read?: () => Promise<ReturnType<typeof fixtureRead>>; verdicts?: HostMatchVerdict[]; roleError?: Error } = {}) {
+function make(over: { expired?: Array<{ id: string; agentServerId: string | null }>; classes?: string[]; session?: unknown; optIn?: boolean; server?: unknown; read?: () => Promise<ReturnType<typeof fixtureRead>>; verdicts?: HostMatchVerdict[]; roleError?: Error } = {}) {
   const importSession = {
     create: jest.fn(async ({ data }: { data: Record<string, unknown> }) => ({ id: "sess-a", ...data })),
     findUnique: jest.fn().mockResolvedValue(over.session ?? null),
     update: jest.fn().mockResolvedValue({}),
     deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+    findMany: jest.fn().mockResolvedValue(over.expired ?? []),
   };
   const prisma = {
     importSession,
@@ -40,6 +41,8 @@ function make(over: { session?: unknown; optIn?: boolean; server?: unknown; read
     create: jest.fn((_k: string) => new CoolifySource({ get: jest.fn() } as never)),
     createAgent: jest.fn((serverId: string) => new AgentCoolifySource(new AgentCoolifyClient(reads, serverId))),
     label: jest.fn(() => "Coolify"),
+    finishAgentRun: jest.fn().mockResolvedValue(undefined),
+    agentConsentedClasses: jest.fn().mockResolvedValue(over.classes ?? []),
 
     credential: jest.fn(async (_k: string, _u: string, secret: string) => secret),
   };
@@ -186,5 +189,53 @@ describe("ImporterService.plan — agent transport matches hosts with the eviden
     const edge = plan.preflight!.hosts!.find((h) => h.ref === "srv-edge")!;
     expect(edge.tugra).toBeUndefined();
     expect(edge.match).toMatchObject({ status: "ambiguous", linkedBy: null });
+  });
+});
+
+describe("ImporterService: the consent for secret values follows the session", () => {
+  it("connectAgent's purge of expired sessions ends the consent of every agent session it deletes (none is left pointing at a deleted session)", async () => {
+    const { svc, sources, importSession } = make({ expired: [{ id: "old-1", agentServerId: "srv-agent" }, { id: "old-2", agentServerId: "srv-other" }] });
+    await svc.connectAgent("u1", { sourceKind: "coolify", teamId: "t1", serverId: "srv-agent" });
+    expect(importSession.deleteMany).toHaveBeenCalled();
+    expect(sources.finishAgentRun).toHaveBeenCalledWith("srv-agent", "old-1");
+    expect(sources.finishAgentRun).toHaveBeenCalledWith("srv-other", "old-2");
+    expect(sources.finishAgentRun).toHaveBeenCalledTimes(2);
+  });
+
+  it("connect (the token path) purges the same way", async () => {
+    const { svc, sources } = make({ expired: [{ id: "old-1", agentServerId: "srv-agent" }] });
+    await svc.connect("u1", { sourceKind: "coolify", teamId: "t1", baseUrl: "https://coolify.example.com", token: "tok" } as never).catch(() => undefined);
+    expect(sources.finishAgentRun).toHaveBeenCalledWith("srv-agent", "old-1");
+  });
+
+  it("a purge that cannot list the sessions still deletes them (the sweep closes any grant it missed)", async () => {
+    const { svc, importSession } = make();
+    importSession.findMany.mockRejectedValue(new Error("db"));
+    await svc.connectAgent("u1", { sourceKind: "coolify", teamId: "t1", serverId: "srv-agent" });
+    expect(importSession.deleteMany).toHaveBeenCalled();
+  });
+
+  it("consentState says whether the owner's consent stands for the caller's own active agent session, classes only", async () => {
+    const m = make({ session: agentSession(), classes: ["env", "db_credentials"] });
+    expect(await m.svc.consentState("u1", "sess-a")).toEqual({ applies: true, standing: true, classes: ["env", "db_credentials"], agentServerId: "srv-agent" });
+    expect(m.sources.agentConsentedClasses).toHaveBeenCalledWith("srv-agent", "sess-a", "u1");
+    const none = make({ session: agentSession(), classes: [] });
+    expect(await none.svc.consentState("u1", "sess-a")).toMatchObject({ applies: true, standing: false, classes: [] });
+  });
+
+  it("consentState does not apply to a token session, someone else's session, or one that ended", async () => {
+    for (const session of [agentSession({ transport: "api", agentServerId: null }), agentSession({ actorId: "u2" }), agentSession({ status: "revoked" }), agentSession({ expiresAt: new Date(Date.now() - 1000) }), null]) {
+      const m = make({ session, classes: ["env"] });
+      expect(await m.svc.consentState("u1", "sess-a")).toMatchObject({ applies: false, standing: false, classes: [] });
+    }
+  });
+
+  it("endSessionConsent ends the consent of an agent session and leaves a token session alone", async () => {
+    const a = make({ session: agentSession() });
+    await a.svc.endSessionConsent("sess-a");
+    expect(a.sources.finishAgentRun).toHaveBeenCalledWith("srv-agent", "sess-a");
+    const t = make({ session: agentSession({ transport: "api", agentServerId: null }) });
+    await t.svc.endSessionConsent("sess-a");
+    expect(t.sources.finishAgentRun).not.toHaveBeenCalled();
   });
 });

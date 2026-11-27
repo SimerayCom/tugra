@@ -26,6 +26,15 @@ export const COOLIFY_SECRET_TIER: Readonly<Record<CoolifySecretClass, CoolifySec
   deploy_key: "T2",
 };
 
+/**
+ * The classes an IMPORT reads: what an apply needs for its apps to arrive complete (variables, shared variables expanded into them, compose and
+ * Dockerfile and label text, engine config), and the two the settings import reads when the owner allows them. The consent card offers exactly
+ * these; the other classes are not read by any import yet, so allowing them would grant nothing the import uses.
+ */
+export const COOLIFY_IMPORT_APPLY_CLASSES: readonly CoolifySecretClass[] = ["env", "shared_env", "service_compose", "db_credentials"];
+export const COOLIFY_IMPORT_SETTINGS_CLASSES: readonly CoolifySecretClass[] = ["notification", "task_command"];
+export const COOLIFY_IMPORT_READ_CLASSES: readonly CoolifySecretClass[] = [...COOLIFY_IMPORT_APPLY_CLASSES, ...COOLIFY_IMPORT_SETTINGS_CLASSES];
+
 /** Fixed codes the agent puts on the wire for one value it could not hand over. Never a message, never a value. */
 export const COOLIFY_SECRET_WIRE_CODES = ["ok", "bad_mac", "bad_payload", "no_key", "key_prev", "unsupported_cipher", "unsupported_serialization", "column_missing", "too_large"] as const;
 export type CoolifySecretWireCode = (typeof COOLIFY_SECRET_WIRE_CODES)[number];

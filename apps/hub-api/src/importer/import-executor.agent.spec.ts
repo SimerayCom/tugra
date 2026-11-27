@@ -76,6 +76,14 @@ describe("ImportExecutorService.apply on an agent session", () => {
     expect(h.apps.create).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps the consent when a guided run asks for it (every run of a campaign, a retry and a promotion share one session and one consent)", async () => {
+    const h = harness();
+    await h.svc.apply("u1", input(), { keepConsent: true });
+    await flush();
+    expect(h.source.finishApply).toHaveBeenCalledWith({ keepConsent: true });
+    expect(h.order).toEqual(["begin", "finish", "close"]);
+  });
+
   it("ends it when every task failed too (a failed import is still over)", async () => {
     const h = harness({ failCreate: true });
     await h.svc.apply("u1", input());

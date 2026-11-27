@@ -34,7 +34,8 @@ export function failureOf(e: unknown, prefix: string): StepFailure {
     const r = e.getResponse();
     const code = typeof r === "object" && r && typeof (r as { code?: unknown }).code === "string" ? (r as { code: string }).code : undefined;
     if (e instanceof ConflictException && /plan changed/i.test(e.message)) return new StepFailure("import.plan-changed", undefined, false);
-    if (code) return new StepFailure(`${prefix}.${frag(code)}`, undefined, status >= 500);
+    // the owner's consent for secret values (403 consent_required) is theirs to give again on the run page: the step can be retried after it
+    if (code) return new StepFailure(`${prefix}.${frag(code)}`, undefined, status >= 500 || code === "consent_required");
     return new StepFailure(`${prefix}.http-${status}`, undefined, status >= 500 || status === 409);
   }
   return new StepFailure(`${prefix}.failed`, undefined, true);
