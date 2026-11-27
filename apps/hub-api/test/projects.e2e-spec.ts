@@ -12,6 +12,7 @@ describe("Projects / Environments (e2e)", () => {
   const password = "supersecret123";
   let teamId = "";
   let token = "";
+  let userId = "";
   let serverId = "";
 
   beforeAll(async () => {
@@ -26,6 +27,7 @@ describe("Projects / Environments (e2e)", () => {
       .send({ email, password, name: "Proj" })
       .expect(201);
     token = reg.body.tokens.accessToken;
+    userId = reg.body.user.id;
     teamId = (await prisma.membership.findFirst({ where: { userId: reg.body.user.id } }))!.teamId;
 
     const srv = await request(app.getHttpServer())
@@ -193,8 +195,7 @@ describe("Projects / Environments (e2e)", () => {
     it("moves an empty project to another team the caller manages, refuses one with resources (409) and a team the caller is not in (403)", async () => {
       const second = await prisma.team.create({ data: { name: "second" } });
       extraTeams.push(second.id);
-      const meId = (await prisma.membership.findFirst({ where: { teamId } }))!.userId;
-      await prisma.membership.create({ data: { teamId: second.id, userId: meId, role: "OWNER" } });
+      await prisma.membership.create({ data: { teamId: second.id, userId, role: "OWNER" } });
       const stranger = await prisma.team.create({ data: { name: "stranger" } });
       extraTeams.push(stranger.id);
 
