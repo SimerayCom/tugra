@@ -26,6 +26,7 @@ import { SafetyCard } from "./safety-card";
 import { SnapshotCard } from "./snapshot-card";
 import { VerifyReportCard } from "./verify-report-card";
 import { StepTimeline } from "./step-timeline";
+import { RunConsentPanel, runNeedsConsent, useRunConsent } from "./run-consent";
 import { runQueryKey } from "./use-run-actions";
 import { useRunEvents } from "./use-run-events";
 
@@ -84,6 +85,7 @@ export function RunDetail({ id }: { id: string }) {
           </>
         ) : (
           <>
+            <RunConsent run={run} />
             <NextActionCard run={run} />
             <RunBody run={run} events={events} error={error} settled={settled} />
           </>
@@ -91,6 +93,13 @@ export function RunDetail({ id }: { id: string }) {
       </div>
     </>
   );
+}
+
+/** A real run on an agent session needs the owner's consent for secret values: when it is missing, the card to give it is right here. */
+function RunConsent({ run }: { run: MigrationRunView }) {
+  const enabled = runNeedsConsent(run);
+  const q = useRunConsent(run, { enabled });
+  return enabled ? <RunConsentPanel run={run} consent={q.data} onChanged={() => void q.refetch()} /> : null;
 }
 
 /** The technical view of a run: steps, facts, placement, inputs, safety, recovery, events and the report. */

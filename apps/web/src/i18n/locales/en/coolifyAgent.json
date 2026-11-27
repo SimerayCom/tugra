@@ -31,7 +31,7 @@
     "unreadable": "Coolify's database could not be read completely.",
     "agent_unavailable": "The agent did not answer.",
     "agent_read_failed": "Coolify could not be read through the agent.",
-    "forbidden": "Only an owner or admin of the team can connect Coolify through the agent.",
+    "forbidden": "Only an owner or admin of the team can connect Coolify through the agent, and only an owner can move from it.",
     "unknown_team": "That Coolify team has no projects."
   },
   "connect": {
@@ -39,6 +39,7 @@
     "serverHint": "Pick the server that runs your Coolify. Its Tugra agent reads Coolify's own database, read-only.",
     "serverPlaceholder": "Pick a server",
     "serverOffline": "{name} (agent offline)",
+    "ownerNeeded": "An owner of {team} has to run this move. It needs the owner's permission to read secret values, and the owner checks and installs on the servers. Ask an owner to run it, or choose a server of a team you own.",
     "noServers": "None of your servers has a connected Tugra agent yet. Add the Coolify server to Tugra first.",
     "optInTitle": "Allow reading this Coolify",
     "optIn": "Tugra will read the Coolify database on this server through its agent. Nothing is changed or stopped, and no secret value is read yet.",

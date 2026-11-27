@@ -203,4 +203,62 @@ describe("AgentConnectPanel", () => {
       expect((screen.getByRole("button", { name: "Continue" }) as HTMLButtonElement).disabled).toBe(false);
     });
   });
+
+  describe("an owner is needed for the move, said before anything is read", () => {
+    it("an admin of the team gets the reason as soon as the server is picked and cannot start the read", async () => {
+      vi.spyOn(api, "listTeams").mockResolvedValue([{ id: "t1", name: "Acme", role: "ADMIN" }] as never);
+      const connect = vi.spyOn(api, "importConnectAgent").mockResolvedValue(SESSION);
+      mount();
+      pick("s1");
+      await screen.findByTestId("agent-owner-needed");
+      expect(screen.getByTestId("agent-owner-needed").textContent).toMatch(/An owner of Acme has to run this move/);
+      await waitFor(() => expect((screen.getByRole("button", { name: "Read Coolify" }) as HTMLButtonElement).disabled).toBe(true));
+      expect(connect).not.toHaveBeenCalled();
+    });
+
+    it("an owner sees no such note", async () => {
+      vi.spyOn(api, "listTeams").mockResolvedValue([{ id: "t1", name: "Acme", role: "OWNER" }] as never);
+      mount();
+      pick("s1");
+      await waitFor(() => expect((screen.getByRole("button", { name: "Read Coolify" }) as HTMLButtonElement).disabled).toBe(false));
+      expect(screen.queryByTestId("agent-owner-needed")).toBeNull();
+    });
+  });
+
+  describe("a session that was read here and never handed on is ended with its consent", () => {
+    const readIt = async () => {
+      pick("s1");
+      await waitFor(() => expect((screen.getByRole("button", { name: "Read Coolify" }) as HTMLButtonElement).disabled).toBe(false));
+      fireEvent.click(screen.getByRole("button", { name: "Read Coolify" }));
+      await screen.findByText("Found in Coolify");
+    };
+
+    it("leaving the panel (another source, the token path, or the page) before Continue revokes the session", async () => {
+      vi.spyOn(api, "importConnectAgent").mockResolvedValue(SESSION);
+      const revoke = vi.spyOn(api, "importRevoke").mockResolvedValue({ ok: true });
+      mount();
+      await readIt();
+      expect(revoke).not.toHaveBeenCalled();
+      cleanup(); // the wizard unmounts the panel when the owner switches the source or the way to connect
+      expect(revoke).toHaveBeenCalledWith("sess-1");
+      expect(revoke).toHaveBeenCalledTimes(1);
+    });
+
+    it("after Continue the wizard owns the session: leaving the panel then revokes nothing", async () => {
+      vi.spyOn(api, "importConnectAgent").mockResolvedValue(SESSION);
+      const revoke = vi.spyOn(api, "importRevoke").mockResolvedValue({ ok: true });
+      mount();
+      await readIt();
+      fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+      cleanup();
+      expect(revoke).not.toHaveBeenCalled();
+    });
+
+    it("a panel that never read anything has nothing to revoke", () => {
+      const revoke = vi.spyOn(api, "importRevoke").mockResolvedValue({ ok: true });
+      mount();
+      cleanup();
+      expect(revoke).not.toHaveBeenCalled();
+    });
+  });
 });

@@ -13,6 +13,7 @@ import { Btn, LinkBtn } from "../ui";
 import { AgentTeamPick } from "../import/agent-team-pick";
 import { AgentGapNotice } from "./agent-gap-notice";
 import { SourceSessionForm } from "./source-session-card";
+import { RunConsentPanel, consentMissing, useRunConsent } from "./run-consent";
 import { sessionQueryKey, useFreshSession } from "./use-run-actions";
 
 const note = { margin: 0, fontSize: 12, lineHeight: 1.5, color: "var(--c-am)", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" } as const;
@@ -42,6 +43,11 @@ export function usePromoteGuard(run: MigrationRunView): { blocked: boolean; node
     staleTime: 15_000,
     retry: false,
   });
+  // The consent for secret values belongs to the session the promotion uses: a renewed session starts without it, and the one the dry run
+  // ran on may have lost it (another owner's consent replaced it). Asked of the hub on that very session.
+  const askConsent = done && !run.inPlace && run.sourceSession?.viaAgent === true && !blocks.some((b) => b.kind === "session");
+  const consent = useRunConsent(run, { enabled: askConsent, sessionId: fresh?.sessionId ?? null });
+  const noConsent = askConsent && consentMissing(consent.data);
   const gaps = askAgents ? (agents.data?.gaps ?? []) : [];
   const unverified = askAgents && agents.data?.unverified === true && gaps.length === 0;
   const node = (
@@ -52,6 +58,11 @@ export function usePromoteGuard(run: MigrationRunView): { blocked: boolean; node
           <AgentGapNotice gaps={gaps} dryRun={false} href={readFirstHref(run.sourceSession?.agentServerId)} />
         </div>
       )}
+      {noConsent && (
+        <div data-testid="promote-consent">
+          <RunConsentPanel run={run} consent={consent.data} onChanged={() => void consent.refetch()} />
+        </div>
+      )}
       {unverified && (
         <p role="alert" data-testid="promote-agents-unverified" style={note}>
           <span style={{ flex: "1 1 240px" }}>{t("coolifyInstall.gap.unverified")}</span>
@@ -60,7 +71,7 @@ export function usePromoteGuard(run: MigrationRunView): { blocked: boolean; node
       )}
     </>
   );
-  const blocked = blocks.length > 0 || gaps.length > 0 || unverified;
+  const blocked = blocks.length > 0 || gaps.length > 0 || unverified || noConsent;
   return { blocked, node: blocked ? node : null };
 }
 

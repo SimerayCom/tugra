@@ -450,7 +450,7 @@ export function ImportWizard() {
           planM.mutate({ sid: sessionId, modes: next });
         }}
         onApplied={setOpId}
-        onReset={reset}
+        onReset={startOver}
         agentHost={(() => {
           const h = servers.find((x) => x.id === plan.preflight?.agentRead?.agentServerId);
           return h ? { id: h.id, name: h.name, teamId: h.teamId } : null;

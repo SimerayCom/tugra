@@ -1,19 +1,30 @@
 // The agent path of the import wizard (Coolify hub takeover): the owner's consent for reading secret values, and the match of each
 // Coolify server to a Tugra server. Pure helpers and the shapes of the hub's answers; nothing here holds a secret, an address or a key.
 // Browser-safe subpaths: the package index also carries Node-only helpers (node:net) that must not reach the web bundle.
-import { COOLIFY_SECRET_CLASSES, COOLIFY_SECRET_TIER, COOLIFY_SECRETS_GRANT_DEFAULT_HOURS } from "@tugra/shared/dist/coolify-secrets";
+import { COOLIFY_IMPORT_APPLY_CLASSES, COOLIFY_IMPORT_READ_CLASSES, COOLIFY_SECRET_CLASSES, COOLIFY_SECRET_TIER } from "@tugra/shared/dist/coolify-secrets";
 import { HOST_EVIDENCE_STRENGTH } from "@tugra/shared/dist/coolify-match";
 import type { CoolifyHostGrantView, CoolifySecretClass, HostEvidence, HostEvidenceStrength } from "@tugra/shared";
 import type { ImportPlan, ServerView } from "./types";
 
 export type { CoolifyHostGrantView, CoolifySecretClass } from "@tugra/shared";
 
-/** The classes ticked when the screen opens: tier 1 on, tier 2 (notification tokens, Git app keys, deploy keys) off until the owner opts in. */
+/** The classes an import really reads (the hub's importer shares this list). The consent card offers these; the others have no reader yet. */
+export const isReadByImport = (c: CoolifySecretClass): boolean => COOLIFY_IMPORT_READ_CLASSES.includes(c);
+
+/** The classes ticked when the screen opens: the tier-1 classes the import reads on, tier 2 (notification tokens) off until the owner opts in. */
 export function defaultClasses(): CoolifySecretClass[] {
-  return COOLIFY_SECRET_CLASSES.filter((c) => COOLIFY_SECRET_TIER[c] === "T1");
+  return COOLIFY_SECRET_CLASSES.filter((c) => COOLIFY_SECRET_TIER[c] === "T1" && isReadByImport(c));
 }
 
-export const CONSENT_HOURS = [1, 4, COOLIFY_SECRETS_GRANT_DEFAULT_HOURS, 72, 168] as const;
+/** The classes an apply needs for its apps and databases to arrive complete, that the owner has NOT ticked: what will be missing. */
+export function missingForApply(chosen: ReadonlySet<CoolifySecretClass>): CoolifySecretClass[] {
+  return COOLIFY_IMPORT_APPLY_CLASSES.filter((c) => !chosen.has(c));
+}
+
+/** A grant that is still in force right now (status and clock): a card never calls a lapsed window "allowed". */
+export function grantLive(g: Pick<CoolifyHostGrantView, "status" | "expiresAt">, now: number = Date.now()): boolean {
+  return g.status === "active" && Date.parse(g.expiresAt) > now;
+}
 
 /** Consent is the name of the Coolify host typed exactly: the owner reads what they are allowing. */
 export function consentReady(typed: string, hostName: string): boolean {

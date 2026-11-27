@@ -17,7 +17,7 @@ Other guides cover the cases this one does not:
 
 ## Before you start
 
-- **You are a team owner.** Reading secrets, taking over, cleaning up and moving projects are owner actions. An admin can see the progress but cannot press those buttons.
+- **You are a team owner.** Reading secrets, taking over, cleaning up and moving projects are owner actions. An admin can see the progress but cannot press those buttons. The wizard tells an admin so as soon as the Coolify server is picked, before anything is read.
 - **Tugra's agent on the server Coolify runs on.** See step 1.
 - Pick the server that matters least for the first take-over, and do the rest once it went well.
 
@@ -39,9 +39,10 @@ You can stop at any time: **Stop and delete** on the Coolify host's page removes
 Apps need their environment variables and databases need their passwords to run under Tugra. Without this step the apps and databases cannot be imported.
 
 - The values are decrypted on the Coolify server and sealed for your hub. They never travel as plain text.
-- You choose what may be read. Environment variables, shared variables, database credentials, basic-auth passwords, compose files, Dockerfiles and labels, scheduled task commands and S3 storage keys are on by default. Notification tokens, Git app keys and deploy keys are off until you tick them.
+- You choose what may be read. Environment variables, shared variables, database credentials, compose files, Dockerfiles and labels, and scheduled task commands are on by default. Notification tokens are off until you tick them. Basic-auth passwords, S3 storage keys, Git app keys and deploy keys are listed as not read by the import yet and cannot be ticked. If you untick something an import needs, the card says what will be missing.
 - The Coolify encryption key, Coolify's own passwords and the SSH private keys are never read.
-- You type the Coolify server's name to allow it (the name is shown in the field with a copy button). The permission lasts 24 hours by default and at most 7 days. **Stop allowing** ends it at once, and it also ends when the import finishes.
+- You type the Coolify server's name to allow it (the name is shown in the field with a copy button). The permission belongs to the connection you just made, so it never lasts longer than that connection (one hour). **Stop allowing** ends it at once. It also ends when the import finishes, when you press **Start over** or leave the connect form, when the connection ends, and when you stop reading this Coolify with **Stop and delete**. If another owner allows reading the same Coolify for a different import, yours ends and the card says so.
+- A guided run keeps the permission for all its runs, retries and the promotion of a dry run, and gives it up when the last run of the connection is over. A run that is started without it (for example after you read Coolify again for a dry run you promote later) is refused with a clear message, and the run page shows the same card so you can allow it there. A running move that loses it waits and continues by itself once you allow it again.
 
 A value that cannot be read is listed by name. Only that item is held back; the rest carries on.
 

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isConsentRequired, needsConsent, canAnswer, candidateServers, classCount, consentReady, defaultClasses, evidenceLines, matchRows, needsMatchStep, standingConsent, unsureCount } from "./coolify-agent";
+import { grantLive, isConsentRequired, isReadByImport, missingForApply, needsConsent, canAnswer, candidateServers, classCount, consentReady, defaultClasses, evidenceLines, matchRows, needsMatchStep, standingConsent, unsureCount } from "./coolify-agent";
 import { agentReadyServers } from "./coolify-agent-connect";
 import type { ImportPlan } from "./types";
 
@@ -8,10 +8,25 @@ const plan = (hosts: unknown[], extra: Record<string, unknown> = {}): ImportPlan
 const READ = { transport: "agent", agentServerId: "s0", schemaVersion: null, coolifyImage: null, readAt: "2026-11-26T00:00:00Z", counts: { teams: 1, projects: 1, servers: 3, applications: 0, databases: 0, services: 0 } };
 
 describe("consent", () => {
-  it("ticks the tier-1 classes and leaves tier 2 (notification tokens, Git app keys, deploy keys) off", () => {
+  it("ticks the tier-1 classes the import reads and leaves tier 2 (notification tokens) and every class with no reader off", () => {
     const d = defaultClasses();
-    expect(d).toEqual(expect.arrayContaining(["env", "shared_env", "db_credentials", "basic_auth", "service_compose", "task_command", "s3"]));
-    for (const t2 of ["notification", "git_app_key", "deploy_key"]) expect(d).not.toContain(t2);
+    expect(d).toEqual(expect.arrayContaining(["env", "shared_env", "db_credentials", "service_compose", "task_command"]));
+    for (const off of ["notification", "git_app_key", "deploy_key", "basic_auth", "s3"]) expect(d).not.toContain(off);
+  });
+
+  it("knows which classes an import reads (the hub's own list), and which a missing one leaves an apply without", () => {
+    for (const c of ["env", "shared_env", "service_compose", "db_credentials", "task_command", "notification"] as const) expect(isReadByImport(c)).toBe(true);
+    for (const c of ["basic_auth", "s3", "git_app_key", "deploy_key"] as const) expect(isReadByImport(c)).toBe(false);
+    expect(missingForApply(new Set(defaultClasses()))).toEqual([]);
+    expect(missingForApply(new Set(["env", "service_compose"]))).toEqual(["shared_env", "db_credentials"]);
+  });
+
+  it("a grant is only 'in force' while it is active and its window has not run out", () => {
+    const now = Date.parse("2026-11-28T10:00:00Z");
+    expect(grantLive({ status: "active", expiresAt: "2026-11-28T10:30:00Z" }, now)).toBe(true);
+    expect(grantLive({ status: "active", expiresAt: "2026-11-28T09:59:59Z" }, now)).toBe(false);
+    expect(grantLive({ status: "revoked", expiresAt: "2026-11-28T10:30:00Z" }, now)).toBe(false);
+    expect(grantLive({ status: "expired", expiresAt: "2026-11-28T10:30:00Z" }, now)).toBe(false);
   });
 
   it("is the host's name typed EXACTLY (no case folding, no trimming, never empty)", () => {

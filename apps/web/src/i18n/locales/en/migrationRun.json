@@ -717,6 +717,11 @@
     },
     "error": "The safety copy could not be updated."
   },
+  "consent": {
+    "needed": "This move reads secret values from Coolify through its agent, and that needs an owner's permission for this connection. Allow it below: the run cannot import without it, and it continues by itself once you do.",
+    "loading": "Checking the permission...",
+    "hostMissing": "The server that reads Coolify is not in your list, so the permission cannot be asked here. Open the Coolify host page and read Coolify again."
+  },
   "errors": {
     "generic": "Something went wrong. Try again.",
     "approval-stale": "What you approved no longer matches the current state. Review it again.",

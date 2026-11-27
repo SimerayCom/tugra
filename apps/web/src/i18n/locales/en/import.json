@@ -1128,7 +1128,7 @@
     "sameName": "Same name as your Tugra team.",
     "createNote": "Tugra creates this team when you continue, with you as its owner. It has no server yet: add one in the next step, then place the servers on it.",
     "skipNote": "Nothing of this Coolify team is moved.",
-    "notOwned": "A Tugra team with this name exists, but you do not own it. Choose a team you own or create a new one.",
+    "notOwned": "A Tugra team with this name exists, but you do not own it, and a move needs its owner. Ask that owner to run this move. Creating a new team here would make a second, empty team with the same name.",
     "issue": {
       "undecided": "Choose a team for every Coolify team, or leave it out.",
       "nothing": "Every Coolify team is left out, so nothing would move.",

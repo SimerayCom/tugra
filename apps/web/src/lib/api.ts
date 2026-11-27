@@ -206,6 +206,7 @@ import type {
   MigrationRunCommandKind,
   MigrationRunCommandResult,
   MigrationRunSafetyHints,
+  MigrationRunSecretsConsent,
   MigrationRunReport,
   VerificationView,
   SnapshotView,
@@ -3080,6 +3081,10 @@ export const api = {
   /** A finished dry run: the source servers without an online agent (what its promotion refuses on). `unverified` while the session ended or the source cannot be read. */
   getMigrationRunSourceAgents(id: string, sessionId?: string) {
     return apiFetch<{ gaps: SourceAgentGap[]; unverified: boolean }>(`/migration-runs/${encodeURIComponent(id)}/source-agents${sessionId ? `?sessionId=${encodeURIComponent(sessionId)}` : ""}`);
+  },
+  /** Does the owner's consent for secret values stand for the import session this run reads through (or the renewed one a promotion would use)? Classes only. */
+  getMigrationRunSecretsConsent(id: string, sessionId?: string) {
+    return apiFetch<MigrationRunSecretsConsent>(`/migration-runs/${encodeURIComponent(id)}/secrets-consent${sessionId ? `?sessionId=${encodeURIComponent(sessionId)}` : ""}`);
   },
   getMigrationRunSafetyHints(id: string) {
     return apiFetch<MigrationRunSafetyHints>(`/migration-runs/${encodeURIComponent(id)}/safety-hints`);

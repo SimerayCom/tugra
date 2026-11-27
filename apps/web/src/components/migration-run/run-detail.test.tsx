@@ -35,6 +35,7 @@ beforeEach(() => {
   vi.spyOn(api, "getMigrationRunEvents").mockResolvedValue({ events: [], lastSeq: 0, hasMore: false });
   vi.spyOn(api, "getMigrationRunReport").mockRejectedValue(new Error("no report"));
   vi.spyOn(api, "getMigrationRunSafetyHints").mockResolvedValue({ imagePins: [], workerMarks: [], warningAcks: [] });
+  vi.spyOn(api, "getMigrationRunSecretsConsent").mockResolvedValue({ applies: false, standing: false, classes: [], sessionId: null, serverId: null });
 });
 afterEach(() => vi.restoreAllMocks());
 
@@ -54,6 +55,61 @@ describe("RunDetail", () => {
     expect(within(list).getByText("Preflight")).toBeTruthy();
     expect(screen.getAllByText("Done").length).toBeGreaterThanOrEqual(2);
     expect(screen.getByText(/Before the point of no return you can abort/)).toBeTruthy();
+  });
+
+  describe("the consent for secret values, on the page of a run that needs it", () => {
+    const missing = { applies: true, standing: false, classes: [], sessionId: "s1", serverId: "host1" };
+    const waiting = (over: Partial<MigrationRunView> = {}) =>
+      mkRun({ status: "WAITING", currentStep: "IMPORT", nextAction: { kind: "gate", stepKey: "IMPORT", code: "import.consent-required", since: "2026-11-16T10:00:00.000Z" }, ...over }, stepsWith({ PREFLIGHT: mkStep("PREFLIGHT", "PASSED") }));
+
+    it("a run that waits for it shows the card to allow it (the owner's name typed), in plain words, and continues by itself after", async () => {
+      vi.spyOn(api, "getMigrationRun").mockResolvedValue(waiting());
+      vi.spyOn(api, "getMigrationRunSecretsConsent").mockResolvedValue(missing);
+      vi.spyOn(api, "listServers").mockResolvedValue([{ id: "host1", name: "Coolify host", teamId: "t9", status: "ONLINE" }] as never);
+      const grant = vi.spyOn(api, "coolifySecretsGrant").mockResolvedValue({ id: "g1", kind: "secrets", serverId: "host1", classes: ["env"], status: "active", grantedById: "u", expiresAt: "2099-01-01T00:00:00Z", revokedAt: null, createdAt: "2026-11-26T10:00:00Z" } as never);
+      wrap();
+      const panel = await screen.findByTestId("run-consent");
+      expect(panel.textContent).toMatch(/continues by itself once you do/);
+      expect(screen.getAllByText(/waiting for you to allow reading secret values/).length).toBeGreaterThan(0); // the step's own code has its sentence
+      fireEvent.change(within(panel).getByLabelText("Type the Coolify server name to allow it"), { target: { value: "Coolify host" } });
+      fireEvent.click(within(panel).getByRole("button", { name: "Allow" }));
+      await waitFor(() => expect(grant).toHaveBeenCalledWith(expect.objectContaining({ serverId: "host1", importSessionId: "s1" })));
+      await screen.findByText("Secret values are allowed for this import");
+    });
+
+    const asks = (answer = missing) => {
+      vi.spyOn(api, "listServers").mockResolvedValue([{ id: "host1", name: "Coolify host", teamId: "t9", status: "ONLINE" }] as never);
+      return vi.spyOn(api, "getMigrationRunSecretsConsent").mockResolvedValue(answer);
+    };
+
+    it("a queued real run shows it before Start", async () => {
+      asks();
+      vi.spyOn(api, "getMigrationRun").mockResolvedValue(mkRun({ status: "QUEUED", currentStep: null }, stepsWith({})));
+      wrap();
+      await screen.findByTestId("run-consent");
+    });
+
+    it("a dry run and a settled run are never asked (they import nothing)", async () => {
+      const ask = asks();
+      vi.spyOn(api, "getMigrationRun").mockResolvedValue(mkRun({ currentStep: null, dryRun: true, status: "RUNNING" }, stepsWith({})));
+      wrap();
+      await screen.findByText("coolify.example.org → tugra-1");
+      cleanup();
+      vi.spyOn(api, "getMigrationRun").mockResolvedValue(mkRun({ currentStep: null, status: "COMPLETED" }, stepsWith({})));
+      wrap();
+      await screen.findByText("coolify.example.org → tugra-1");
+      expect(ask).not.toHaveBeenCalled();
+      expect(screen.queryByTestId("run-consent")).toBeNull();
+    });
+
+    it("a consent that stands shows nothing", async () => {
+      const ask = asks({ ...missing, standing: true, classes: ["env"] });
+      vi.spyOn(api, "getMigrationRun").mockResolvedValue(mkRun({ status: "QUEUED", currentStep: null }, stepsWith({})));
+      wrap();
+      await screen.findByText("coolify.example.org → tugra-1");
+      await waitFor(() => expect(ask).toHaveBeenCalled());
+      expect(screen.queryByTestId("run-consent")).toBeNull();
+    });
   });
 
   it("shows exactly one 'what I am waiting for' card with an operator command that is shown once", async () => {

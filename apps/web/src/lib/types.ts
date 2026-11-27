@@ -3509,6 +3509,15 @@ export interface MigrationRunView {
   /** Only on a finished dry run: can it be promoted with its session, or must the source be reconnected first. */
   sourceSession?: MigrationRunSourceSession | null;
 }
+/** Does the owner's consent for secret values stand for the import session a run reads through? `applies` is false for a token session. Classes only. */
+export interface MigrationRunSecretsConsent {
+  applies: boolean;
+  standing: boolean;
+  classes: string[];
+  sessionId: string | null;
+  /** The Tugra server whose agent reads Coolify (the name the owner types to allow it). */
+  serverId: string | null;
+}
 /** The source session a finished dry run is promoted with (states and ids only). */
 export interface MigrationRunSourceSession {
   state: "active" | "expired" | "missing";

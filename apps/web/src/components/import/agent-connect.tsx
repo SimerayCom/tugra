@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { api, ApiError } from "../../lib/api";
 import { useT } from "../../i18n/provider";
@@ -10,7 +10,7 @@ import type { ImportAgentSession, ServerView } from "../../lib/types";
 import { Btn, Working } from "../ui";
 import { Select } from "../form";
 import { useToast } from "../toast";
-import { AgentConsentCard } from "./agent-consent";
+import { AgentConsentCard, useTeamRoles } from "./agent-consent";
 import { AgentTeamPick } from "./agent-team-pick";
 
 type T = ReturnType<typeof useT>;
@@ -51,6 +51,24 @@ export function AgentConnectPanel({
   // Several Coolify teams: the one whose settings the session reads. Empty until the owner picks; nothing is chosen for them.
   const [teamRef, setTeamRef] = useState("");
   const server = candidates.find((s) => s.id === serverId) ?? null;
+  const roles = useTeamRoles();
+  // Connecting and matching are open to admins, but the move itself (the consent for secret values, the checks and installs on the servers,
+  // the launch) is an owner's: said before anything is read, not after the work is done.
+  const notOwner = !!server && !roles.isOwner(server.teamId);
+
+  // A session made here and never handed to the wizard (the owner switched the source or the way to connect, or left) is ended with its
+  // consent: nothing is left standing for the rest of its hour. Once Continue hands it over, the wizard owns it.
+  const live = useRef<{ id: string | null; handedOver: boolean }>({ id: null, handedOver: false });
+  useEffect(() => {
+    live.current.id = session?.sessionId ?? null;
+  }, [session]);
+  useEffect(
+    () => () => {
+      const l = live.current;
+      if (l.id && !l.handedOver) api.importRevoke(l.id).catch(() => undefined);
+    },
+    [],
+  );
 
   const { data: detect, isFetching: detecting } = useQuery({ queryKey: ["coolify-detect", serverId], queryFn: () => api.coolifyDetect(serverId), enabled: !!serverId && !session, retry: false, staleTime: 30_000 });
 
@@ -80,6 +98,7 @@ export function AgentConnectPanel({
       return { next, ref };
     },
     onSuccess: ({ next, ref }) => {
+      live.current.handedOver = false; // a new session: it is this panel's again until Continue
       setSession(next);
       setTeamRef(ref);
     },
@@ -109,10 +128,15 @@ export function AgentConnectPanel({
         )}
         {pickTeam.isPending && <Working text={t("coolifyAgent.team.reading", { team: session.teams?.find((tm) => tm.ref === pickTeam.variables)?.name ?? "" })} />}
 
-        {!teamOpen && <AgentConsentCard serverId={server.id} serverName={server.name} teamId={server.teamId} sessionId={session.sessionId} secretCounts={session.read.secretCounts} />}
+        {!teamOpen && <AgentConsentCard key={session.sessionId} serverId={server.id} serverName={server.name} teamId={server.teamId} sessionId={session.sessionId} secretCounts={session.read.secretCounts} />}
 
         <div style={{ display: "grid", gap: 6 }}>
-          <Btn onClick={() => onConnected(session, { id: server.id, name: server.name, teamId: server.teamId })} disabled={busy || teamOpen} loading={pickTeam.isPending}>{t("coolifyAgent.connect.continue")}</Btn>
+          <Btn
+            onClick={() => {
+              live.current.handedOver = true;
+              onConnected(session, { id: server.id, name: server.name, teamId: server.teamId });
+            }}
+            disabled={busy || teamOpen} loading={pickTeam.isPending}>{t("coolifyAgent.connect.continue")}</Btn>
           {!pickTeam.isPending && <p style={{ margin: 0, fontSize: 12, color: "var(--c-tx3)" }}>{teamOpen ? t("coolifyAgent.team.pickFirst") : t("coolifyAgent.connect.continueHint")}</p>}
         </div>
       </div>
@@ -144,6 +168,12 @@ export function AgentConnectPanel({
         </div>
       )}
 
+      {notOwner && (
+        <p role="alert" data-testid="agent-owner-needed" style={{ margin: 0, fontSize: 13, color: "var(--c-am)", lineHeight: 1.5 }}>
+          {t("coolifyAgent.connect.ownerNeeded", { team: roles.nameOf(server!.teamId) })}
+        </p>
+      )}
+
       {serverId && detecting && !detect && <Working text={t("coolifyAgent.connect.detecting", { name: server?.name ?? "" })} />}
       {serverId && detect?.found === true && !connect.isPending && (
         <p role="status" style={{ margin: 0, fontSize: 12, color: "var(--c-g)", lineHeight: 1.5 }}>{t("coolifyAgent.connect.detected", { name: server?.name ?? "" })}</p>
@@ -160,7 +190,7 @@ export function AgentConnectPanel({
       )}
 
       <div style={{ display: "grid", gap: 6 }}>
-        <Btn onClick={() => connect.mutate(needsOptIn)} disabled={!serverId || busy || detect?.found !== true} loading={connect.isPending}>
+        <Btn onClick={() => connect.mutate(needsOptIn)} disabled={!serverId || busy || notOwner || detect?.found !== true} loading={connect.isPending}>
           {connect.isPending ? t("coolifyAgent.read.reading") : needsOptIn ? t("coolifyAgent.connect.optInButton") : t("coolifyAgent.read.button")}
         </Btn>
         <p style={{ margin: 0, fontSize: 12, color: "var(--c-tx3)" }}>{t("coolifyAgent.read.nothingChanged")}</p>

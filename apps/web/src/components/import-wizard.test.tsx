@@ -1143,6 +1143,19 @@ describe("ImportWizard", () => {
     expect(screen.getByRole("radio", { name: "Dokploy" }).getAttribute("aria-checked")).toBe("true");
   });
 
+  it("Start over on the preview ends the hub session too (and with it the consent for secret values), like on every other step", async () => {
+    vi.spyOn(api, "importConnect").mockResolvedValue({ sessionId: "s2", expiresAt: "2026-01-01T00:00:00.000Z" });
+    vi.spyOn(api, "importPlan").mockResolvedValue({ ...plan, sourceKind: "dokploy" });
+    const revoke = vi.spyOn(api, "importRevoke").mockResolvedValue({ ok: true });
+    wrap(<ImportWizard />);
+    await connectDokploy();
+    await screen.findByText("Import preview");
+    expect(revoke).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Start over" }));
+    expect(revoke).toHaveBeenCalledWith("s2");
+    await screen.findByLabelText("Dokploy URL");
+  });
+
   it("renders a Dokploy project info risk on its item", async () => {
     vi.spyOn(api, "importConnect").mockResolvedValue({ sessionId: "s2", expiresAt: "2026-01-01T00:00:00.000Z" });
     vi.spyOn(api, "importPlan").mockResolvedValue({

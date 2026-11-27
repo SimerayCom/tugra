@@ -155,3 +155,56 @@ describe("the start of a finished dry run says what would stop it before the cli
     expect(startBtn().disabled).toBe(false);
   });
 });
+
+describe("the start of a finished dry run needs the owner's consent for secret values, asked on the session the promotion uses", () => {
+  const agentActive = { state: "active" as const, expiresAt: "2099-01-01T00:00:00Z", viaAgent: true, agentServerId: "host1", sourceTeamRef: null };
+  const missing = { applies: true, standing: false, classes: [], sessionId: "s1", serverId: "host1" };
+  beforeEach(() => {
+    vi.spyOn(api, "getMigrationRunSafetyHints").mockResolvedValue(hints);
+    vi.spyOn(api, "getMigrationRunSourceAgents").mockResolvedValue({ gaps: [], unverified: false });
+    vi.spyOn(api, "listServers").mockResolvedValue([server(), server({ id: "host1", name: "Coolify host", teamId: "t9" })] as never);
+  });
+
+  it("a session without the consent keeps Start off, says why, and shows the card to allow it; allowing opens Start", async () => {
+    const ask = vi.spyOn(api, "getMigrationRunSecretsConsent").mockResolvedValue(missing);
+    const grant = vi.spyOn(api, "coolifySecretsGrant").mockResolvedValue({ id: "g1", kind: "secrets", serverId: "host1", classes: ["env"], status: "active", grantedById: "u", expiresAt: "2099-01-01T00:00:00Z", revokedAt: null, createdAt: "2026-11-26T10:00:00Z" } as never);
+    mount(run({ sourceSession: agentActive }));
+    const panel = await screen.findByTestId("run-consent");
+    expect(panel.textContent).toMatch(/needs an owner's permission for this connection/);
+    expect(startBtn().disabled).toBe(true);
+    ask.mockResolvedValue({ ...missing, standing: true, classes: ["env"] });
+    fireEvent.change(within(panel).getByLabelText("Type the Coolify server name to allow it"), { target: { value: "Coolify host" } });
+    fireEvent.click(within(panel).getByRole("button", { name: "Allow" }));
+    await waitFor(() => expect(grant).toHaveBeenCalledWith(expect.objectContaining({ serverId: "host1", importSessionId: "s1", confirm: "Coolify host" })));
+    await waitFor(() => expect(startBtn().disabled).toBe(false));
+  });
+
+  it("asks about the renewed session the screen made, not the ended one", async () => {
+    vi.spyOn(api, "importConnectAgent").mockResolvedValue({ sessionId: "s-new", expiresAt: "2099-01-01T00:00:00Z", read: {}, teams: [] } as never);
+    const ask = vi.spyOn(api, "getMigrationRunSecretsConsent").mockResolvedValue({ ...missing, sessionId: "s-new" });
+    mount(run({ sourceSession: { ...agentActive, state: "expired", expiresAt: null } }));
+    const panel = await screen.findByTestId("promote-session-agent");
+    expect(ask).not.toHaveBeenCalled(); // nothing to ask about while the session has ended
+    fireEvent.click(within(panel).getByRole("button", { name: "Read Coolify again" }));
+    await screen.findByTestId("run-consent");
+    expect(ask).toHaveBeenCalledWith("run12345abcdef", "s-new");
+    expect(startBtn().disabled).toBe(true);
+  });
+
+  it("a consent that stands, a token session or an in-place run leave Start open and show no card", async () => {
+    vi.spyOn(api, "getMigrationRunSecretsConsent").mockResolvedValue({ ...missing, standing: true, classes: ["env"] });
+    mount(run({ sourceSession: agentActive }));
+    await waitFor(() => expect(api.getMigrationRunSecretsConsent).toHaveBeenCalled());
+    await waitFor(() => expect(api.listServers).toHaveBeenCalled());
+    expect(screen.queryByTestId("run-consent")).toBeNull();
+    expect(startBtn().disabled).toBe(false);
+    cleanup();
+    const token = vi.spyOn(api, "getMigrationRunSecretsConsent");
+    token.mockClear();
+    mount(run({ sourceSession: { ...agentActive, viaAgent: false } }));
+    await waitFor(() => expect(api.listServers).toHaveBeenCalled());
+    expect(token).not.toHaveBeenCalled(); // a token session has no such consent: nothing is asked
+    expect(startBtn().disabled).toBe(false);
+  });
+});
+
