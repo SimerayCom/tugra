@@ -105,9 +105,11 @@ export const realFaviconTransport: FaviconTransport = (r) =>
   new Promise<FaviconResponse>((resolve, reject) => {
     const https = r.scheme === "https";
     let settled = false;
+    let hardStop: NodeJS.Timeout | undefined;
     const finish = (fn: () => void) => {
       if (settled) return;
       settled = true;
+      if (hardStop) clearTimeout(hardStop);
       fn();
     };
     const req = (https ? httpsRequest : httpRequest)(
@@ -145,6 +147,8 @@ export const realFaviconTransport: FaviconTransport = (r) =>
       },
     );
     req.on("timeout", () => req.destroy(new Error("timeout")));
+    // The socket timeout only fires on silence; this caps the whole request so a slow trickle cannot hold a slot.
+    hardStop = setTimeout(() => req.destroy(new Error("timeout")), FAVICON_TIMEOUT_MS);
     req.on("error", (e) => finish(() => reject(e)));
     req.end();
   });
