@@ -218,11 +218,13 @@ Live logs, metrics and the terminal stream over WebSockets. Full breakdown in [d
 - [x] Deploys survive a hub restart (agent command journal + outcome adoption) · per-deployment detail page (timeline · live log · config diff)
 - [x] Build secrets via BuildKit `--secret` (Dockerfile builds) · master-key rotation (resumable re-encrypt job, nothing re-entered, apps untouched; the hub restarts twice) · digest-pinned, signed self-updates with a pre-update restore point
 - [x] Cloud server provisioning (Hetzner · DigitalOcean · Vultr) · Cloudflare Tunnel · built-in traffic analytics (local GeoIP, no phone-home) · [log drains](docs/log-drains.md) · private registries · Vault secret provider (Pro)
+- [x] MCP OAuth for third-party clients (dynamic client registration, PKCE) · CapRover import · arm64 images for hub, web, updater and agent
 
 **Next**
 
-- [ ] MCP OAuth for third-party clients (dynamic client registration, PKCE)
-- [ ] More migration sources (CapRover)
+- [ ] Tailscale / mesh networking out of the box
+- [ ] Tugra Cloud (managed control plane)
+- [ ] Point-in-time recovery beyond PostgreSQL
 - [ ] Mobile app
 
 ## Community & docs
@@ -241,7 +243,7 @@ Live logs, metrics and the terminal stream over WebSockets. Full breakdown in [d
 
 ## Sponsors
 
-Tugra is built and maintained in the open. If it's useful to you or your team, consider [sponsoring the project on GitHub](https://github.com/sponsors/mrcandev) — there's no sponsor tier yet, so you'd be the first, and every bit helps keep development independent.
+Tugra is built and maintained in the open. If it's useful to you or your team, consider [sponsoring the project on GitHub](https://github.com/sponsors/mrcandev). Every sponsorship helps keep development independent.
 
 ## Star history
 
@@ -253,7 +255,7 @@ Tugra uses an **open-core** model:
 
 - **Core** (this repository) — [GNU AGPLv3](LICENSE). Free to use, self-host, study and modify. If you run a modified version as a network service, you must share your changes under the same license.
 - **Agent & CLI** — [MIT](agent/LICENSE). Use them anywhere, no strings attached.
-- **Tugra Cloud & Pro features** — proprietary, not published yet (see [Self-hosted vs. cloud](#self-hosted-vs-cloud)).
+- **Tugra Cloud & Pro features** — proprietary, under a separate commercial licence (coming) (see [Self-hosted vs. cloud](#self-hosted-vs-cloud)).
 
 **Commercial license:** If you cannot comply with the AGPLv3 (e.g. you want to build a proprietary or SaaS offering on top of Tugra), a commercial license is available. Contact **license@tugra.io**. Full breakdown in [docs/open-core.md](docs/open-core.md).
 

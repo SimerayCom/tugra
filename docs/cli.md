@@ -71,7 +71,6 @@ Sub-commands: `list`, `create`, `status`, `events`, `watch`, `start`, `approve`,
   keys stay in the object migration (`tugra objects create`), which you `attach` by id.
 - `approve` requires the `--hash` that `status` showed you, so an approval is only ever for what you reviewed.
   `abort`, `cleanup` and `reverse` require `--confirm <runId>`; `reverse` also `--acknowledge-data-loss`.
-- The guided run has **not been run against a live Coolify yet** (see the runbook's verification status).
 
 ## API & scopes
 

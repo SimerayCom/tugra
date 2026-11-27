@@ -283,7 +283,7 @@ fresh dump).
   migrator cross-checks), resolves every destination from the operation, re-authorizes the actor on every
   request, and serves the staged artifact to the target agent only over a signed, sha256-bound, short-lived
   URL on a trusted origin.
-- **Caveats.** This is still `curl … | sh`, and the container mounts the Docker socket, which is
+- **Before you run it.** The command is `curl … | sh`, and the container mounts the Docker socket, which is
   **root-equivalent on the source host** — so only run the command from a hub you trust. The one-liner and
   its token land in your shell history unless you prefix it with a space. If you override `AGENT_IMAGE` to a
   mirror, it must be an image that ships the `migrate` subcommand (an older image would exit 0 without

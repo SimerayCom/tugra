@@ -92,6 +92,7 @@ secrets, server names, IPs or personal data unless noted.
 | **Anonymous usage stats** → `TUGRA_STATS_URL` (default `api.tugra.io`) | **On (opt-out)** | `TUGRA_STATS=0` / `install.sh --no-stats` / Settings toggle | `telemetry/telemetry.service.ts` |
 | Signed update-manifest check → `UPDATE_MANIFEST_URL` (default `simeraycom.github.io/tugra/versions.json`) | **On (opt-out)** — hourly + on panel open; ~2 KB GET, no identifiers. Applying an update additionally GETs the release's signed `host/<version>/` compose/script files from the same origin (only on an actual update, no identifiers) | `TUGRA_UPDATE_CHECKS=0` / `install.sh --no-update-checks`; interval `UPDATE_CHECK_INTERVAL_MIN` | `update/update-check.scheduler.service.ts`, `update/update.service.ts`, `scripts/lib/hostfiles.sh` |
 | ACME / Let's Encrypt (issue TLS certs) | Only when you enable SSL for a domain | per-app/domain | `dns/`, `deploy/` |
+| App favicon for the resource icon → the app's own configured domain | Only when the panel shows an app with a domain; cached 7 days | public addresses only, 100 KB cap, 3 s timeout; the browser never contacts the site | `applications/favicon-fetcher.ts` |
 | Remote template catalog | Off — opt-in, signature-verified | `CATALOG_SOURCE_URL` + `CATALOG_PUBLISHER_KEY` | `catalog/` |
 | AI deploy-log analysis → Anthropic | Off — opt-in | `ANTHROPIC_API_KEY` | `deploy/` |
 | Notifications / registries / git / monitors | Only what you configure; SSRF-guarded | per-resource; `NOTIFY_ALLOW_PRIVATE_TARGETS` for LAN | `notifications/`, `registries/`, `git-sources/`, `monitors/` |
@@ -145,8 +146,8 @@ server-side from the operation, so the host never names a target. The migrator i
 database passwords are read locally and used only inside the source container, so **no credential reaches the
 hub**. The hub independently computes each artifact's sha256 + size, re-authorizes the actor on every request,
 and serves the staged dump to the target agent only over a signed, sha256-bound, short-lived URL on a trusted
-origin. The honest caveats (a `curl | sh` bootstrap, a root-equivalent socket mount on the source host) are
-spelled out in the [migration runbook](coolify-migration.md#security-model).
+origin. The `curl | sh` bootstrap and the root-equivalent socket mount on the source host are described in the
+[migration runbook](coolify-migration.md#security-model).
 
 ## App move security
 
@@ -169,7 +170,7 @@ runtime toggle. See [Open-core & editions](open-core.md).
 
 ## Supported versions
 
-Tugra is in early development — only the latest `main` receives security fixes. See the
+Only the latest `main` receives security fixes. See the
 [security policy](../SECURITY.md) for the current support statement.
 
 ## Rotating the secrets key

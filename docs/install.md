@@ -253,7 +253,7 @@ upgrading with `git pull && ./scripts/install.sh` takes a pre-update backup firs
 ### Pinning what you run (curl | sh)
 
 By default `bootstrap.sh` installs the newest published release: the highest `vX.Y.Z` tag (a stable release wins
-over pre-releases; while there is no stable release yet, the newest beta) with its prebuilt images, so the one-line
+over pre-releases) with its prebuilt images, so the one-line
 command never builds unreleased code. `TUGRA_REF` overrides it — a branch (`TUGRA_REF=main` for the development
 branch), a tag or a full commit SHA — and it fails loudly if it cannot fetch it. For a pinned install: `curl -fsSL …/bootstrap.sh | TUGRA_REF=<tag-or-sha> TUGRA_SHA256=<sha256 of
 scripts/install.sh at that ref> sh`. Reading the script first (clone, `less scripts/install.sh`, run it) is still the

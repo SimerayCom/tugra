@@ -39,8 +39,7 @@ moved or re-pushed tag can't change what is pulled), and after the pull it check
 `org.opencontainers.image.version` label equals the target before recreating anything. For a digest-pinned
 update this check fails closed: an image without the label, or one that cannot be inspected, is rolled back
 (every release that publishes digests also carries the label, so an unlabelled image is an older release). Older manifests without digests keep updating by tag, exactly as before, and any previous
-digest pin is cleared so it can't override the new tag. This pins *which bytes* are pulled; it does not yet
-verify a signature on the image itself. The sidecar runs `update.sh` and the compose file from your checkout
+digest pin is cleared so it can't override the new tag. This pins *which bytes* are pulled, and every release image carries a Sigstore-signed provenance attestation you can check with `gh attestation verify`. The sidecar runs `update.sh` and the compose file from your checkout
 (they are bind-mounted), so the digest path takes effect after a `git pull` + installer re-run; a checkout
 without digest support in its compose file safely keeps pulling by tag.
 

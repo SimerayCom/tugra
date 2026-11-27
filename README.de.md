@@ -218,11 +218,13 @@ Live-Logs, Metriken und das Terminal werden per WebSocket gestreamt. Die vollst�
 - [x] Deploys überstehen einen Hub-Neustart (Command-Journal des Agents + Übernahme des Ergebnisses) · Detailseite pro Deployment (Zeitachse · Live-Log · Konfigurations-Diff)
 - [x] Build-Secrets über BuildKit `--secret` (Dockerfile-Builds) · Master-Key-Rotation (fortsetzbarer Re-Encrypt-Job, nichts muss neu eingegeben werden, Apps bleiben unberührt; der Hub startet zweimal neu) · per Digest gepinnte, signierte Self-Updates mit Restore-Punkt vor dem Update
 - [x] Cloud-Server-Provisionierung (Hetzner · DigitalOcean · Vultr) · Cloudflare Tunnel · integrierte Traffic-Analytics (lokales GeoIP, kein Phone-Home) · [Log-Drains](docs/log-drains.md) · private Registries · Vault-Secret-Provider (Pro)
+- [x] MCP-OAuth für Drittanbieter-Clients (dynamische Client-Registrierung, PKCE) · CapRover-Import · arm64-Images für Hub, Web, Updater und Agent
 
 **Als Nächstes**
 
-- [ ] MCP-OAuth für Drittanbieter-Clients (dynamische Client-Registrierung, PKCE)
-- [ ] Weitere Migrationsquellen (CapRover)
+- [ ] Tailscale- / Mesh-Netzwerk ab Werk
+- [ ] Tugra Cloud (verwaltete Control Plane)
+- [ ] Point-in-Time-Recovery über PostgreSQL hinaus
 - [ ] Mobile App
 
 ## Community & Dokumentation
@@ -241,7 +243,7 @@ Live-Logs, Metriken und das Terminal werden per WebSocket gestreamt. Die vollst�
 
 ## Sponsoren
 
-Tugra wird offen entwickelt und gepflegt. Wenn es Ihnen oder Ihrem Team nützt, freuen wir uns über ein [Sponsoring des Projekts auf GitHub](https://github.com/sponsors/mrcandev) — es gibt noch keine Sponsoren-Stufe, Sie wären also der Erste, und jeder Beitrag hilft, die Entwicklung unabhängig zu halten.
+Tugra wird offen entwickelt und gepflegt. Wenn es Ihnen oder Ihrem Team nützt, freuen wir uns über ein [Sponsoring des Projekts auf GitHub](https://github.com/sponsors/mrcandev). Jedes Sponsoring hilft, die Entwicklung unabhängig zu halten.
 
 ## Star-Verlauf
 
@@ -253,7 +255,7 @@ Tugra verwendet ein **Open-Core**-Modell:
 
 - **Core** (dieses Repository) — [GNU AGPLv3](LICENSE). Frei nutzbar, selbst hostbar, einsehbar und veränderbar. Wenn Sie eine modifizierte Version als Netzwerkdienst betreiben, müssen Sie Ihre Änderungen unter derselben Lizenz teilen.
 - **Agent & CLI** — [MIT](agent/LICENSE). Überall einsetzbar, ohne Auflagen.
-- **Tugra Cloud & Pro-Features** — proprietär, noch nicht veröffentlicht (siehe [Selbst gehostet vs. Cloud](#selbst-gehostet-vs-cloud)).
+- **Tugra Cloud & Pro-Features** — proprietär, unter einer separaten kommerziellen Lizenz (in Kürze) (siehe [Selbst gehostet vs. Cloud](#selbst-gehostet-vs-cloud)).
 
 **Kommerzielle Lizenz:** Wenn Sie die AGPLv3 nicht einhalten können (z. B. weil Sie ein proprietäres Produkt oder ein SaaS-Angebot auf Basis von Tugra aufbauen möchten), ist eine kommerzielle Lizenz erhältlich. Kontaktieren Sie **license@tugra.io**. Die vollständige Aufschlüsselung finden Sie in [docs/open-core.md](docs/open-core.md).
 

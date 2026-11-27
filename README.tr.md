@@ -218,11 +218,13 @@ Canlı log'lar, metrikler ve terminal WebSocket'ler üzerinden akar. Tüm ayrın
 - [x] Deploy'lar hub yeniden başlatmasından sağ çıkar (agent command journal + sonuç devralma) · deploy başına ayrıntı sayfası (zaman çizelgesi · canlı log · config diff)
 - [x] BuildKit `--secret` ile build secret'ları (Dockerfile build'leri) · master-key rotation (devam ettirilebilir yeniden şifreleme işi, hiçbir şey yeniden girilmez, uygulamalara dokunulmaz; hub iki kez yeniden başlar) · digest'e sabitlenmiş, imzalı self-update'ler ve güncelleme öncesi restore noktası
 - [x] Cloud sunucu provizyonu (Hetzner · DigitalOcean · Vultr) · Cloudflare Tunnel · yerleşik trafik analitiği (yerel GeoIP, phone-home yok) · [log drain'leri](docs/log-drains.md) · özel registry'ler · Vault secret sağlayıcısı (Pro)
+- [x] Üçüncü taraf client'lar için MCP OAuth (dinamik client kaydı, PKCE) · CapRover'dan içe aktarma · hub, web, updater ve ajan için arm64 imajları
 
 **Sırada**
 
-- [ ] Üçüncü taraf client'lar için MCP OAuth (dinamik client kaydı, PKCE)
-- [ ] Daha fazla migrasyon kaynağı (CapRover)
+- [ ] Kutudan çıktığı gibi Tailscale / mesh ağ
+- [ ] Tuğra Cloud (yönetilen kontrol düzlemi)
+- [ ] PostgreSQL dışındaki motorlarda belirli bir saniyeye geri dönüş
 - [ ] Mobil uygulama
 
 ## Topluluk ve dokümantasyon
@@ -241,7 +243,7 @@ Canlı log'lar, metrikler ve terminal WebSocket'ler üzerinden akar. Tüm ayrın
 
 ## Sponsorlar
 
-Tuğra, herkesin gözü önünde, açık bir şekilde geliştiriliyor ve sürdürülüyor. Size ya da ekibinize faydalıysa [projeye GitHub'da sponsor olmayı](https://github.com/sponsors/mrcandev) düşünebilirsiniz — henüz bir sponsor kademesi yok, yani ilk sponsor siz olursunuz; her destek geliştirmenin bağımsız kalmasına yardımcı olur.
+Tuğra açık geliştiriliyor ve sürdürülüyor. Size ya da ekibinize faydalıysa [projeye GitHub'da sponsor olmayı](https://github.com/sponsors/mrcandev) düşünebilirsiniz. Her sponsorluk geliştirmenin bağımsız kalmasına yardım eder.
 
 ## Yıldız geçmişi
 
@@ -253,7 +255,7 @@ Tuğra, **açık çekirdek** modelini kullanır:
 
 - **Çekirdek** (bu repo) — [GNU AGPLv3](LICENSE). Kullanımı, self-host edilmesi, incelenmesi ve değiştirilmesi ücretsizdir. Değiştirilmiş bir sürümü ağ hizmeti olarak çalıştırırsanız, değişikliklerinizi aynı lisansla paylaşmak zorundasınız.
 - **Agent ve CLI** — [MIT](agent/LICENSE). İstediğiniz yerde kullanın, hiçbir şart yok.
-- **Tuğra Cloud ve Pro özellikleri** — proprietary, henüz yayımlanmadı ([Kendi sunucunuzda barındırma ve bulut](#kendi-sunucunuzda-barındırma-ve-bulut) bölümüne bakın).
+- **Tuğra Cloud ve Pro özellikleri** — proprietary, ayrı bir ticari lisansla (yakında) ([Kendi sunucunuzda barındırma ve bulut](#kendi-sunucunuzda-barındırma-ve-bulut) bölümüne bakın).
 
 **Ticari lisans:** AGPLv3'e uyamıyorsanız (ör. Tuğra'nın üzerine proprietary ya da SaaS bir ürün kurmak istiyorsanız) ticari lisans mevcuttur. **license@tugra.io** adresiyle iletişime geçin. Tüm ayrıntılar [docs/open-core.md](docs/open-core.md) içinde.
 

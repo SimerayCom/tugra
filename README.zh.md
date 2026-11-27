@@ -218,11 +218,13 @@ Pro 和 Cloud 版本（SSO、审计日志导出、白标、托管控制平面）
 - [x] 部署可在 hub 重启后继续完成（agent 命令日志 + 结果接管）· 单次部署详情页（时间线 · 实时日志 · 配置对比）
 - [x] 通过 BuildKit `--secret` 传递构建密钥（Dockerfile 构建） · 主密钥轮换（可恢复的重新加密任务，无需重新输入任何内容，应用不受影响；hub 会重启两次） · 固定到 digest 的签名自更新，并在更新前创建恢复点
 - [x] 云服务器供应（Hetzner · DigitalOcean · Vultr）· Cloudflare Tunnel · 内置流量分析（本地 GeoIP，不回传数据）· [日志转发（log drains）](docs/log-drains.md)· 私有 registry · Vault 密钥提供方（Pro）
+- [x] 面向第三方客户端的 MCP OAuth（动态客户端注册、PKCE）· CapRover 导入 · hub、web、updater 和 agent 的 arm64 镜像
 
 **下一步**
 
-- [ ] 面向第三方客户端的 MCP OAuth（动态客户端注册、PKCE）
-- [ ] 更多迁移来源（CapRover）
+- [ ] 开箱即用的 Tailscale / mesh 网络
+- [ ] Tugra Cloud（托管控制平面）
+- [ ] PostgreSQL 之外的时间点恢复
 - [ ] 移动应用
 
 ## 社区与文档
@@ -241,7 +243,7 @@ Pro 和 Cloud 版本（SSO、审计日志导出、白标、托管控制平面）
 
 ## 赞助者
 
-Tugra 公开开发、公开维护。如果它对您或您的团队有帮助，欢迎[在 GitHub 上赞助本项目](https://github.com/sponsors/mrcandev)——目前还没有赞助者等级，您将成为第一位赞助者，每一份支持都有助于项目保持独立发展。
+Tugra 公开开发、公开维护。如果它对您或您的团队有帮助，欢迎[在 GitHub 上赞助本项目](https://github.com/sponsors/mrcandev)。每一份支持都有助于项目保持独立发展。
 
 ## Star 历史
 
@@ -253,7 +255,7 @@ Tugra 采用**开源核心（open-core）**模式：
 
 - **核心**（本仓库）——[GNU AGPLv3](LICENSE)。可自由使用、自托管、研究和修改。如果您将修改后的版本作为网络服务运行，则必须以相同许可证共享您的修改。
 - **Agent 与 CLI**——[MIT](agent/LICENSE)。可在任何场景下使用，不附带任何条件。
-- **Tugra Cloud 与 Pro 功能**——专有软件，暂未公开发布（参见[自托管与云端](#自托管与云端)）。
+- **Tugra Cloud 与 Pro 功能**——专有软件，将以单独的商业许可提供（参见[自托管与云端](#自托管与云端)）。
 
 **商业许可证：** 如果您无法遵守 AGPLv3（例如想在 Tugra 之上构建闭源产品或 SaaS 服务），我们提供商业许可证。请联系 **license@tugra.io**。完整说明见 [docs/open-core.md](docs/open-core.md)。
 
