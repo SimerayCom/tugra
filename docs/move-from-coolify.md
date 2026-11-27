@@ -44,6 +44,8 @@ To do each piece yourself, the [manual runbook](coolify-migration.md) has every 
 
 ## Roll back
 
+On a plain import (not the guided run), **Roll back** on the timeline removes the apps it created and the databases it created that are still empty. It keeps apps you deployed since, databases that already have data or backups, and the projects, git sources and settings the import made. For a guided run:
+
 - **Before the point of no return:** press **Abort**. Tugra restarts the source containers it stopped, restores DNS time-to-live, stops its copies and undoes its changes. Nothing is deleted on either side.
 - **After the point of no return:** **Reverse** restores DNS from the record Tugra kept. Data written on Tugra after the switch is **not** copied back. Dump it yourself first if it matters.
 - Deleting the Tugra copies is a separate, optional step.
