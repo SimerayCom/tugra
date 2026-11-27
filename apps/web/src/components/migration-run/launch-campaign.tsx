@@ -71,7 +71,7 @@ export function CampaignPreviewCard({
       {preview?.failure && (
         <p role="alert" style={{ margin: 0, fontSize: 12, color: "var(--c-r)", lineHeight: 1.5 }}>
           {t(placementFailureKey(preview.failure.code))}
-          {preview.failure.ref ? ` (${nameOfSource(preview.failure.ref)})` : ""}
+          {preview.failure.ref ? ` (${[preview.failure.withRef, preview.failure.ref].filter((r): r is string => !!r).map(nameOfSource).join(", ")})` : ""}
           {preview.failure.reason ? ` ${t(`placement.lock.${preview.failure.reason}`)}` : ""}
         </p>
       )}

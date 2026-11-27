@@ -19,7 +19,7 @@ import { IMPORT_PREFILL_KEY } from "../lib/coolify-takeover";
 import { focusSelection, focusSubject, lastImportUrl, rememberLastImportUrl, takeImportFocus, type ImportFocus } from "../lib/import-focus";
 import { rememberObjectMigrationContext } from "../lib/object-migration-context";
 import { CutoverPanel } from "./cutover-panel";
-import { planSummary, itemsByKind, riskTone, opProgress, coverageApps, coverageCounts, hasDeferredCoverage, reasonText, ackableItems, buildAcks, runnableAfterAcks, serviceChoicesPayload, volumeCopyCandidates, selectedDbModes, vxCommandsWithFlags } from "../lib/import";
+import { planSummary, itemsByKind, riskTone, opProgress, coverageApps, coverageCounts, hasDeferredCoverage, reasonText, ackableItems, buildAcks, runnableAfterAcks, serviceChoicesPayload, volumeCopyCandidates, vxCommandsWithFlags } from "../lib/import";
 import { ImportVolumeTransfers } from "./import-volume-transfers";
 import { EnvBlockers } from "./import/env-blockers";
 import { GitLinksPanel, GitRelinkCard, DeployKeyBlock } from "./import/git-links-panel";
@@ -694,7 +694,9 @@ function PlanView({
 
   // What every apply (this one-click one AND the review step's) must carry from this screen.
   const acks = buildAcks(plan, acked);
-  const modes = selectedDbModes(plan);
+  // The plan hash covers the data modes of EVERY database the owner chose (re-planned at review), also one the first step left out since: the apply,
+  // the review and the guided run all send these, never the modes of the scoped plan, or the hub would see a changed plan for good.
+  const modes = dbModes;
   const applyExtras: ImportApplyExtras = { ...(acks.length ? { acks } : {}), ...(serviceChoices ? { serviceChoices } : {}), ...(Object.keys(modes).length ? { dbDataModes: modes } : {}) };
 
   const apply = useMutation({

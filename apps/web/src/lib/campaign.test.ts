@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { campaignBody, campaignOpenHref, campaignsOf, groupCampaigns, needsCampaign, placementFailureKey, placementsOf, pruneRebuild, rebuildChoicesOf, runsByWave, sourcesOfRun } from "./campaign";
+import { campaignBody, campaignCancellable, campaignGuide, campaignOpenHref, campaignsOf, groupCampaigns, needsCampaign, placementFailureKey, placementsOf, pruneRebuild, rebuildChoicesOf, runsByWave, sourcesOfRun } from "./campaign";
 import type { MigrationRunCreateInput } from "./types";
 
 describe("placementsOf", () => {
@@ -78,7 +78,7 @@ describe("campaignBody", () => {
     campaign: " wave-1 ",
     acks: [{ code: "app.env.unresolved", itemRef: "app:s:web" }],
   } as unknown as MigrationRunCreateInput;
-  it("keeps the shared run fields and drops what the placement decides", () => {
+  it("keeps the shared run fields, the first step's pick, and drops what the placement decides", () => {
     const b = campaignBody(run, [{ sourceServerRef: "s1", kind: "in-place", targetServerId: "t1" }]);
     expect(b).toEqual({
       sessionId: "s1",
@@ -91,8 +91,9 @@ describe("campaignBody", () => {
       options: { observeMinutes: 30 },
       inputs: { acmeEmail: "unknown" },
       acks: [{ code: "app.env.unresolved", itemRef: "app:s:web" }],
+      scope: { sourceServers: ["s1"] },
     });
-    for (const k of ["targetServerId", "topology", "serverMap", "scope", "mapping", "mappingHash", "campaign"]) expect(b).not.toHaveProperty(k);
+    for (const k of ["targetServerId", "topology", "serverMap", "mapping", "mappingHash", "campaign"]) expect(b).not.toHaveProperty(k);
   });
   it("confirm is the number of source servers placed", () => {
     const b = campaignBody(run, [
@@ -102,6 +103,12 @@ describe("campaignBody", () => {
     ]);
     expect(b.confirm).toBe(3);
     expect(b.placements).toHaveLength(3);
+  });
+  it("carries the data modes and the pick of the first step, and none when the whole servers move", () => {
+    const b = campaignBody({ ...run, dbDataModes: { "database:s:pg": "volume" }, scope: { projects: ["p1"], include: ["app:s:x"] } } as MigrationRunCreateInput, [{ sourceServerRef: "a", kind: "in-place", targetServerId: "t1" }]);
+    expect(b.dbDataModes).toEqual({ "database:s:pg": "volume" });
+    expect(b.scope).toEqual({ projects: ["p1"], include: ["app:s:x"] });
+    expect(campaignBody({ ...run, scope: undefined } as MigrationRunCreateInput, [{ sourceServerRef: "a", kind: "in-place", targetServerId: "t1" }])).not.toHaveProperty("scope");
   });
   it("sends no label when none was typed", () => {
     expect(campaignBody({ ...run, campaign: "  " }, [{ sourceServerRef: "a", kind: "in-place", targetServerId: "t1" }])).not.toHaveProperty("label");
@@ -159,5 +166,43 @@ describe("rebuild choice", () => {
   it("the new refusals have a line of their own", () => {
     expect(placementFailureKey("placement_rebuild_not_in_place")).toBe("placement.failure.placement_rebuild_not_in_place");
     expect(placementFailureKey("placement_rebuild_unknown_item")).toBe("placement.failure.placement_rebuild_unknown_item");
+  });
+});
+
+describe("campaignGuide", () => {
+  const plan = [
+    { sourceServerRef: "b", kind: "other-server" as const, targetServerId: "new1", topology: "two-box" as const, wave: 0 },
+    { sourceServerRef: "a", kind: "in-place" as const, targetServerId: "srv-a", topology: "swap-proxy" as const, wave: 1 },
+    { sourceServerRef: "c", kind: "in-place" as const, targetServerId: "srv-c", topology: "swap-proxy" as const, wave: 2 },
+  ];
+  const run = (id: string, targetServerId: string, inPlace: boolean, status: string, createdAt = "2026-11-28T10:00:00Z") => ({ id, targetServerId, inPlace, status, createdAt });
+  const draft = { plan, status: "draft" as const };
+  it("numbers each run by its wave and points at the first one that can start, once the waves before it completed", () => {
+    const runs = [run("r0", "new1", false, "DRY_RUN_DONE"), run("r1", "srv-a", true, "QUEUED"), run("r2", "srv-c", true, "QUEUED")];
+    const g = campaignGuide([draft], runs);
+    expect([...g.waveOf]).toEqual([["r0", 0], ["r1", 1], ["r2", 2]]);
+    expect([...g.next]).toEqual(["r0"]);
+    const after = campaignGuide([draft], [run("r0", "new1", false, "COMPLETED"), run("r1", "srv-a", true, "QUEUED"), run("r2", "srv-c", true, "QUEUED")]);
+    expect([...after.next]).toEqual(["r1"]);
+  });
+  it("a wave still moving or failed holds the ones after it", () => {
+    expect(campaignGuide([draft], [run("r0", "new1", false, "RUNNING"), run("r1", "srv-a", true, "QUEUED")]).next.size).toBe(0);
+    expect(campaignGuide([draft], [run("r0", "new1", false, "FAILED"), run("r1", "srv-a", true, "QUEUED")]).next.size).toBe(0);
+  });
+  it("a promoted dry run is replaced by the real run it made (the newest run of the wave)", () => {
+    const runs = [run("dry", "srv-a", true, "DRY_RUN_DONE", "2026-11-28T10:00:00Z"), run("real", "srv-a", true, "RUNNING", "2026-11-28T11:00:00Z"), run("r0", "new1", false, "COMPLETED")];
+    const g = campaignGuide([draft], runs);
+    expect(g.next.size).toBe(0);
+    expect(g.waveOf.get("dry")).toBe(1);
+    expect(g.waveOf.get("real")).toBe(1);
+  });
+  it("a cancelled or finished campaign has nothing to start next, and only another one can be cancelled", () => {
+    const runs = [run("r0", "new1", false, "QUEUED")];
+    expect(campaignGuide([{ plan, status: "cancelled" }], runs).next.size).toBe(0);
+    expect(campaignGuide([{ plan, status: "done" }], runs).next.size).toBe(0);
+    expect(campaignCancellable({ status: "draft" })).toBe(true);
+    expect(campaignCancellable({ status: "paused" })).toBe(true);
+    expect(campaignCancellable({ status: "cancelled" })).toBe(false);
+    expect(campaignCancellable({ status: "done" })).toBe(false);
   });
 });

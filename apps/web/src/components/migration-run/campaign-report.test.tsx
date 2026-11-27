@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
-import { render, screen, cleanup, waitFor, within } from "@testing-library/react";
+import { render, screen, cleanup, waitFor, within, fireEvent } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import React from "react";
 import { I18nProvider } from "../../i18n/provider";
@@ -42,6 +42,7 @@ describe("CampaignReport", () => {
   ];
 
   beforeEach(() => {
+    vi.spyOn(api, "listCampaigns").mockResolvedValue([]);
     vi.spyOn(api, "listMigrationRuns").mockResolvedValue(runs);
     vi.spyOn(api, "getMigrationRunReport").mockImplementation(async (id: string) => {
       if (id === "run-bbbb2222") return report(id, { window: { estimatedSec: 300, measuredSec: null }, items: [{ kind: "database", name: "db-big", outcome: "failed", code: "data.dump-too-big", evidence: null }] });
@@ -108,5 +109,53 @@ describe("CampaignReport", () => {
     wrap();
     await screen.findByText(/3 runs/);
     expect(screen.queryByText(/^Teams:/)).toBeNull();
+  });
+
+  describe("waves and cancelling", () => {
+    const plan = [
+      { sourceServerRef: "b", kind: "other-server" as const, targetServerId: "new1", topology: "two-box" as const, wave: 0 },
+      { sourceServerRef: "a", kind: "in-place" as const, targetServerId: "srv-a", topology: "swap-proxy" as const, wave: 1 },
+    ];
+    const view = (over: Record<string, unknown> = {}) => ({ id: "camp1", teamId: "t1", label: "wave-1", sessionId: "s1", status: "draft" as const, plan, runIds: ["run-aaaa1111", "run-bbbb2222"], createdAt: "2026-11-24T08:00:00.000Z", ...over });
+    beforeEach(() => {
+      vi.mocked(api.listMigrationRuns).mockResolvedValue([
+        mkSummary({ id: "run-aaaa1111", campaign: "wave-1", targetServerId: "new1", inPlace: false, status: "COMPLETED", currentStep: null, createdAt: "2026-11-24T09:00:00.000Z" }),
+        mkSummary({ id: "run-bbbb2222", campaign: "wave-1", targetServerId: "srv-a", inPlace: true, topology: "swap-proxy", status: "QUEUED", currentStep: null, createdAt: "2026-11-24T10:00:00.000Z" }),
+      ]);
+    });
+
+    it("shows each run's wave and marks the one to start next", async () => {
+      vi.mocked(api.listCampaigns).mockResolvedValue([view()]);
+      wrap();
+      await screen.findByText("Wave 2");
+      expect(screen.getByText("Wave 1")).toBeTruthy();
+      expect(screen.getAllByText("Start this next")).toHaveLength(1);
+      const next = screen.getByText("Start this next").closest("li")!;
+      expect(next.textContent).toContain("Wave 2");
+      expect(screen.getByText(/Waves run one after the other/)).toBeTruthy();
+    });
+
+    it("cancel needs the typed label, calls the hub once per campaign and says what happened", async () => {
+      vi.mocked(api.listCampaigns).mockResolvedValue([view()]);
+      const cancel = vi.spyOn(api, "cancelCampaign").mockResolvedValue(view({ status: "cancelled" }));
+      wrap();
+      fireEvent.click(await screen.findByRole("button", { name: "Cancel campaign" }));
+      const dialog = await screen.findByRole("dialog");
+      const confirm = within(dialog).getByRole("button", { name: "Cancel campaign" }) as HTMLButtonElement;
+      expect(confirm.disabled).toBe(true);
+      fireEvent.change(within(dialog).getByPlaceholderText("wave-1"), { target: { value: "wave-1" } });
+      await waitFor(() => expect(confirm.disabled).toBe(false));
+      fireEvent.click(confirm);
+      await waitFor(() => expect(cancel).toHaveBeenCalledWith("camp1"));
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    });
+
+    it("a cancelled or finished campaign has no cancel button and nothing to start next", async () => {
+      vi.mocked(api.listCampaigns).mockResolvedValue([view({ status: "cancelled" })]);
+      wrap();
+      await screen.findByText("Wave 2");
+      expect(screen.queryByRole("button", { name: "Cancel campaign" })).toBeNull();
+      expect(screen.queryByText("Start this next")).toBeNull();
+    });
   });
 });

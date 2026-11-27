@@ -756,7 +756,8 @@
     "session-expired": "The connection to the source ended (it lasts one hour). Connect again, then start.",
     "source-is-agent": "This source is read through the agent. Read Coolify again from the Coolify host page.",
     "run-not-startable": "This run cannot be started in its current state. Reload the page.",
-    "consent-required": "Reading secret values is not allowed for this source connection yet. Allow it on this page, then start."
+    "consent-required": "Reading secret values is not allowed for this source connection yet. Allow it on this page, then start.",
+    "campaign-cancelled": "This move was cancelled, so its dry run cannot be started. Start a new guided migration."
   },
   "codes": {
     "unknown": "{code}{params}",
@@ -1475,6 +1476,14 @@
     "loading": "Loading the reports of the runs.",
     "pending": "{count} reports are still loading.",
     "capped": "Only the first {max} runs are read.",
+    "wave": "Wave {n}",
+    "startNext": "Start this next",
+    "waveHint": "Waves run one after the other. Start the run marked \"Start this next\" and wait for it to complete before the next wave.",
+    "cancelButton": "Cancel campaign",
+    "cancelling": "Cancelling...",
+    "cancelTitle": "Cancel this campaign",
+    "cancelBody": "Runs that have not started are aborted, and a finished dry run of this campaign can no longer be started. A run that is already moving is not touched: abort it on its own page. Type the campaign label to confirm.",
+    "cancelled": "Campaign cancelled ({count}).",
     "summaryTitle": "Summary",
     "runs": "{total} runs: {completed} completed, {live} live, {failed} failed, {other} dry-run or stopped",
     "items": "{moved} moved, {failed} failed, {notCutOver} not cut over, {skipped} skipped, {acked} accepted",

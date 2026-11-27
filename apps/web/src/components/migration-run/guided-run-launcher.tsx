@@ -171,9 +171,12 @@ function LaunchDialog({ plan, kind, sessionId, servers, teams, extras, scope, on
   };
   const issues = launchIssues(form).filter((i) => !(campaign && i === "target"));
   const placements = useMemo(() => (scope ? placementsOf(scope) : []), [scope]);
+  // the plan hash covers the data modes chosen at review, and the hub narrows each run to the first step's pick: the preview is read with both, as the create is
+  const dbDataModes = extras.dbDataModes && Object.keys(extras.dbDataModes).length ? extras.dbDataModes : undefined;
+  const campaignScope = useMemo(() => scopePayload(scope), [scope]);
   const preview = useQuery({
-    queryKey: ["campaign-plan", sessionId, plan.planHash, placements],
-    queryFn: () => api.planCampaign({ sessionId, planHash: plan.planHash, placements: placements.map((p) => ({ sourceServerRef: p.sourceServerRef, kind: p.kind, targetServerId: p.targetServerId ?? null })) }),
+    queryKey: ["campaign-plan", sessionId, plan.planHash, placements, dbDataModes, campaignScope],
+    queryFn: () => api.planCampaign({ sessionId, planHash: plan.planHash, placements: placements.map((p) => ({ sourceServerRef: p.sourceServerRef, kind: p.kind, targetServerId: p.targetServerId ?? null })), ...(dbDataModes ? { dbDataModes } : {}), ...(campaignScope ? { scope: campaignScope } : {}) }),
     enabled: campaign && placements.length > 0,
     retry: false,
   });

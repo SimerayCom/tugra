@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { applyScopeToDoc, autoSelection, ownerSaidNotSame, ownerTugra, autoTargetOf, buildScope, defaultTeamId, inPlaceBlock, placementKindOf, restoreSelection, serializeSelection, serverReadiness, targetOf, scopePayload, emptySelection, hostOfItemRef, inScopeRefs, involvedHosts, missingDependencies, projectChoicesFor, scopedPlan, scopedNotes, scopeIssue, scopeServiceSkips, sourceProjectRows, type ScopeSelection } from "./import-scope";
+import { applyScopeToDoc, autoSelection, ownerSaidNotSame, ownerTugra, autoTargetOf, buildScope, defaultTeamId, inPlaceBlock, placementKindOf, restoreSelection, serializeSelection, serverReadiness, targetOf, scopePayload, emptySelection, hostOfItemRef, inScopeRefs, involvedHosts, missingDependencies, projectChoicesFor, scopedPlan, scopedNotes, scopeIssue, scopeServiceSkips, sourceProjectRows, sharedTargetHosts, partialInPlaceHosts, isControlPlaneHost, type ScopeSelection } from "./import-scope";
 import { emptyDoc } from "./import-mapping";
 import type { ImportPlan, ImportPlanItem } from "./types";
 
@@ -450,5 +450,66 @@ describe("everything of one Coolify team", () => {
     expect([...autoSelection(p).hosts]).toEqual([]);
     expect(autoSelection(p).mode).toBe("servers");
     expect([...autoSelection(p, new Set(["s2"])).hosts]).toEqual([]); // one shown server is "everything", nothing ticked
+  });
+});
+
+describe("two source servers on one Tugra machine", () => {
+  const both = (): ImportPlan => {
+    const p = plan();
+    p.preflight!.hosts = [
+      { ref: "s1", name: "Box One", tugra: { serverId: "t1", name: "Target A", teamId: "team1", via: "public-ip", confidence: "certain" } },
+      { ref: "s2", name: "Box Two", tugra: { serverId: "t1", name: "Target A", teamId: "team1", via: "public-ip", confidence: "certain" } },
+    ];
+    return p;
+  };
+  const teamOf = () => "team1";
+  const everything = (placement: Record<string, string>) => buildScope(both(), sel({ mode: "everything", placement }), undefined, teamOf);
+  it("two rows matched to one server, both on their own machine, are refused and name both", () => {
+    const sc = everything({ s1: "t1", s2: "t1" });
+    expect(sc.placementKind).toEqual({ s1: "in-place", s2: "in-place" });
+    expect(sharedTargetHosts(both(), sc)).toEqual(["s1", "s2"]);
+    expect(scopeIssue(both(), sc, teamOf)).toBe("shared");
+  });
+  it("a copy onto the machine another source server stays on is refused too, whichever row is listed first", () => {
+    const p = both();
+    p.preflight!.hosts![1] = { ref: "s2", name: "Box Two" };
+    const sc = buildScope(p, sel({ mode: "everything", placement: { s1: "t1", s2: "t1" } }), undefined, teamOf);
+    expect(sc.placementKind).toEqual({ s1: "in-place", s2: "other-server" });
+    expect(scopeIssue(p, sc, teamOf)).toBe("shared");
+  });
+  it("copies of several source servers onto one other server are fine", () => {
+    const sc = buildScope(plan(), sel({ mode: "everything", placement: { s1: "t9", s2: "t9" } }), undefined, teamOf);
+    expect(sharedTargetHosts(plan(), sc)).toBeNull();
+    expect(scopeIssue(plan(), sc, teamOf)).toBeNull();
+  });
+});
+
+describe("a same-machine server moves whole", () => {
+  const p = matched();
+  const teamOf = () => "team1";
+  it("a project that holds only some of a same-machine server's items blocks Continue", () => {
+    const q = matched();
+    q.items = [...q.items, item("app:s1:extra", "app", "extra")];
+    const sc = buildScope(q, sel({ mode: "projects", projects: new Set(["p-acme"]), placement: { s1: "t1" } }), undefined, teamOf);
+    expect(sc.placementKind.s1).toBe("in-place");
+    expect(partialInPlaceHosts(q, sc)).toEqual(["s1"]);
+    expect(scopeIssue(q, sc, teamOf)).toBe("partial");
+    // the same pick copied to another server is allowed
+    const copied = buildScope(q, sel({ mode: "projects", projects: new Set(["p-acme"]), placement: { s1: "t9" } }), undefined, teamOf);
+    expect(copied.placementKind.s1).toBe("other-server");
+    expect(scopeIssue(q, copied, teamOf)).toBeNull();
+  });
+});
+
+describe("a second row for the machine Coolify runs on", () => {
+  it("is the control plane box too: a row matched to the agent's own server cannot stay in place", () => {
+    const p = matched();
+    p.preflight!.agentRead = { transport: "agent", agentServerId: "t1", schemaVersion: null, coolifyImage: null, readAt: "", counts: { teams: 1, projects: 1, servers: 2, applications: 1, databases: 0, services: 0 } } as never;
+    expect(isControlPlaneHost(p, "s1")).toBe(true);
+    expect(inPlaceBlock(p, "s1")).toBe("control-plane");
+    expect(autoTargetOf(p, "s1")).toBe("");
+    expect(placementKindOf(p, "s1", "t1")).toBe("other-server");
+    expect(isControlPlaneHost(p, "s2")).toBe(false);
+    expect(isControlPlaneHost(matched(), "s1")).toBe(false);
   });
 });

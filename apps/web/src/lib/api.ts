@@ -2962,7 +2962,7 @@ export const api = {
     const q = new URLSearchParams({ sessionId, planHash });
     return apiFetch<{ planHash: string; views: SourceServerPlacementView[] }>(`/migration-campaigns/placement?${q.toString()}`);
   },
-  planCampaign(body: Pick<CampaignCreateBody, "sessionId" | "planHash" | "placements" | "rebuild">) {
+  planCampaign(body: Pick<CampaignCreateBody, "sessionId" | "planHash" | "placements" | "rebuild" | "dbDataModes" | "scope">) {
     return apiFetch<CampaignPreview>("/migration-campaigns/plan", { method: "POST", body: JSON.stringify(body) });
   },
   createCampaign(body: CampaignCreateBody) {
@@ -3131,5 +3131,5 @@ export interface CampaignPreview {
   runs: CampaignRunPlan[] | null;
   /** The same runs per Tugra team (one campaign each). Absent from an older hub. */
   teams?: CampaignTeamPlan[] | null;
-  failure: { code: string; ref?: string; reason?: string } | null;
+  failure: { code: string; ref?: string; withRef?: string; reason?: string } | null;
 }

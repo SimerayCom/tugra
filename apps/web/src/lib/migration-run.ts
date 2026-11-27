@@ -1056,6 +1056,7 @@ export const ERROR_CODE_KEY: Record<string, string> = {
   "source-is-agent": "migrationRun.errors.source-is-agent",
   "run-not-startable": "migrationRun.errors.run-not-startable",
   "consent-required": "migrationRun.errors.consent-required",
+  "campaign-cancelled": "migrationRun.errors.campaign-cancelled",
 };
 
 /** An error from the hub as one readable line: a known machine code is localized, anything else is the hub's message. */

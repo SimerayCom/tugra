@@ -1450,6 +1450,44 @@ describe("ImportWizard — editable mapping", () => {
       await screen.findByText("Import preview");
     };
 
+    it("a data mode chosen for a database the first step then leaves out is still part of the plan hash: apply sends it, or the hub would see a changed plan for good", async () => {
+      const volPlan: ImportPlan = { ...placed, planHash: "b".repeat(32), items: placed.items.map((it) => (it.itemRef === "database:s2:pg2" ? { ...it, proposed: { ...it.proposed, dataMode: "volume" } } : it)) };
+      vi.spyOn(api, "importConnect").mockResolvedValue({ sessionId: "s1", expiresAt: "2026-01-01T00:00:00.000Z" });
+      vi.spyOn(api, "importPlan").mockResolvedValueOnce(placed).mockResolvedValue(volPlan);
+      vi.spyOn(api, "importMappingGet").mockResolvedValue({ doc: null, version: null, label: null, lastAppliedAt: null });
+      const resolveSpy = vi.spyOn(api, "importResolve").mockResolvedValue({ version: 1, effective: [], projects: [], gitSources: [], conflicts: [], orphans: [], mappingHash: "m".repeat(32), counts: { renamed: 0, moved: 0, excluded: 0, aliased: 0, newProjects: 0, newEnvironments: 0 } });
+      wrap(<ImportWizard />);
+      await openToken();
+      await waitFor(() => expect(qc.getQueryData(["teams"])).toBeTruthy());
+      fireEvent.change(screen.getByLabelText("Coolify URL"), { target: { value: "https://c.example.com" } });
+      fireEvent.change(screen.getByLabelText("API token"), { target: { value: "tok" } });
+      fireEvent.click(screen.getByRole("button", { name: "Connect & preview" }));
+      await screen.findByText("What are you moving?");
+      for (const h of ["Box One", "Box Two"]) {
+        const box = screen.getByRole("checkbox", { name: new RegExp(h) }) as HTMLInputElement;
+        if (box.checked !== (h === "Box Two")) fireEvent.click(box);
+      }
+      await chooseTarget("Box Two", "srv2");
+      fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+      await screen.findByText("Import preview");
+      fireEvent.click(within(screen.getByRole("radiogroup", { name: "Data mode: moves-db" })).getByRole("radio", { name: "Volume copy" }));
+      await screen.findByText(/Volume copy keeps the source image/);
+      // change the pick: Box Two (and its database) is left out, Box One moves to another server
+      fireEvent.click(screen.getByRole("button", { name: "Change" }));
+      await screen.findByText("What are you moving?");
+      for (const h of ["Box One", "Box Two"]) {
+        const box = screen.getByRole("checkbox", { name: new RegExp(h) }) as HTMLInputElement;
+        if (box.checked !== (h === "Box One")) fireEvent.click(box);
+      }
+      await chooseTarget("Box One", "srv2");
+      fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+      await screen.findByText("Import preview");
+      expect(screen.queryByRole("radiogroup", { name: "Data mode: moves-db" })).toBeNull(); // the owner cannot clear it here
+      fireEvent.click(screen.getByRole("button", { name: "Review & rename" }));
+      await waitFor(() => expect(resolveSpy).toHaveBeenCalled());
+      expect(resolveSpy.mock.calls[0][0]).toMatchObject({ planHash: "b".repeat(32), dbDataModes: { "database:s2:pg2": "volume" } });
+    });
+
     it("only servers that stay on their own machine: the data stays, and no migrator text, no data mode, no volume paragraph", async () => {
       await toPreview(["Box One"]);
       expect(screen.getByTestId("in-place-data").textContent).toContain("the data stays where it is");

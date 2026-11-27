@@ -1,26 +1,29 @@
 "use client";
 
-import { useMemo } from "react";
-import { useQueries, useQuery } from "@tanstack/react-query";
+import { useMemo, useState } from "react";
+import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { api } from "../../lib/api";
 import { useT } from "../../i18n/provider";
 import { formatDuration } from "../../lib/import";
 import { relativeTime } from "../../lib/fleet";
-import { CAMPAIGN_REPORT_RUN_CAP, CAMPAIGN_ROLLUP_LIMIT, NEXT_KIND_KEY, STEP_TITLE_KEY, buildCampaignReport, codeText, runListRefetchInterval, validCampaign, type CampaignRunRow } from "../../lib/migration-run";
+import { CAMPAIGN_REPORT_RUN_CAP, CAMPAIGN_ROLLUP_LIMIT, NEXT_KIND_KEY, STEP_TITLE_KEY, buildCampaignReport, codeText, errorText, runListRefetchInterval, validCampaign, type CampaignRunRow } from "../../lib/migration-run";
+import { campaignCancellable, campaignGuide } from "../../lib/campaign";
 import type { MigrationRunReport, MigrationRunSummary } from "../../lib/types";
 import { useTeamContext } from "../team-scope";
 import { ErrorState } from "../error-state";
 import { PageTitle } from "../page-header";
 import { SkeletonTable } from "../skeleton";
-import { Badge, BackLink, Card, EmptyState, SectionCard } from "../ui";
+import { Badge, BackLink, Btn, Card, EmptyState, SectionCard } from "../ui";
+import { useToast } from "../toast";
 import { ModeBadges, RunStatusPill } from "./badges";
+import { TypedConfirmDialog } from "./typed-confirm";
 
 const OUTCOME_KEY = { failed: "migrationRun.campaign.outcome.failed", "not-cut-over": "migrationRun.campaign.outcome.not-cut-over" } as const;
 const dash = "-";
 const secs = (n: number | null): string => (n === null ? dash : (formatDuration(n) ?? dash));
 
-function RunCard({ row, teamName }: { row: CampaignRunRow; teamName: string | null }) {
+function RunCard({ row, teamName, wave, next }: { row: CampaignRunRow; teamName: string | null; wave?: number; next: boolean }) {
   const t = useT();
   const hosts = t("migrationRun.campaign.hosts", { source: row.sourceHost ?? dash, targets: row.targetNames.join(", ") });
   return (
@@ -34,6 +37,8 @@ function RunCard({ row, teamName }: { row: CampaignRunRow; teamName: string | nu
         </div>
         <div style={{ marginTop: 6, display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
           {teamName && <Badge tone="muted">{teamName}</Badge>}
+          {wave !== undefined && <Badge tone="muted">{t("migrationRun.campaign.wave", { n: wave + 1 })}</Badge>}
+          {next && <Badge tone="lapis">{t("migrationRun.campaign.startNext")}</Badge>}
           <ModeBadges mode={row.mode} topology={row.topology} dryRun={row.dryRun} inPlace={row.inPlace} />
           <span style={{ fontSize: 12, color: "var(--c-tx3)" }}>{row.currentStep ? t(STEP_TITLE_KEY[row.currentStep]) : t(NEXT_KIND_KEY.none)} · {relativeTime(row.createdAt)}</span>
         </div>
@@ -75,6 +80,31 @@ export function CampaignReport({ campaign }: { campaign: string }) {
   const showTeams = data.teamIds.length > 1;
   const teamNameOf = (id: string): string => teams.find((x) => x.id === id)?.name ?? id;
 
+  // The campaigns of this label (one per team): their plan says the waves, their status says whether there is anything left to cancel. A team the
+  // viewer is no owner or admin of answers nothing; the report then simply has no wave guide.
+  const campaignQs = useQueries({
+    queries: data.teamIds.map((teamId) => ({ queryKey: ["migration-campaigns", teamId], queryFn: () => api.listCampaigns(teamId), retry: false, staleTime: 10_000 })),
+  });
+  const views = useMemo(() => campaignQs.flatMap((q) => q.data ?? []).filter((v) => v.label === campaign), [campaignQs, campaign]);
+  const guide = useMemo(() => campaignGuide(views, runs), [views, runs]);
+  const cancellable = views.filter(campaignCancellable);
+  const [cancelling, setCancelling] = useState(false);
+  const qc = useQueryClient();
+  const toast = useToast();
+  const cancel = useMutation({
+    mutationFn: async () => {
+      for (const v of cancellable) await api.cancelCampaign(v.id);
+      return cancellable.length;
+    },
+    onSuccess: (n) => {
+      toast(t("migrationRun.campaign.cancelled", { count: n }), "success");
+      setCancelling(false);
+      void qc.invalidateQueries({ queryKey: ["migration-campaigns"] });
+      void qc.invalidateQueries({ queryKey: ["migration-runs"] });
+    },
+    onError: (e) => toast(errorText(t, e), "error"),
+  });
+
   return (
     <div style={{ padding: "var(--page-pad)", maxWidth: 1100, margin: "0 auto" }}>
       <BackLink href="/import/runs" label={t("migrationRun.campaign.back")} />
@@ -105,10 +135,15 @@ export function CampaignReport({ campaign }: { campaign: string }) {
             </div>
           </SectionCard>
 
-          <SectionCard title={t("migrationRun.campaign.runsTitle")} style={{ marginBottom: 0 }}>
+          <SectionCard
+            title={t("migrationRun.campaign.runsTitle")}
+            right={cancellable.length > 0 ? <Btn variant="dangerGhost" onClick={() => setCancelling(true)} disabled={cancel.isPending} style={{ minHeight: 44 }}>{cancel.isPending ? t("migrationRun.campaign.cancelling") : t("migrationRun.campaign.cancelButton")}</Btn> : undefined}
+            style={{ marginBottom: 0 }}
+          >
+            {guide.next.size > 0 && <p role="note" style={{ margin: "0 0 10px", fontSize: 12, color: "var(--c-tx2)", lineHeight: 1.5 }}>{t("migrationRun.campaign.waveHint")}</p>}
             <ul style={{ margin: 0, padding: 0, listStyle: "none", display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 320px), 1fr))" }}>
               {data.runs.map((r) => (
-                <RunCard key={r.id} row={r} teamName={showTeams ? teamNameOf(r.teamId) : null} />
+                <RunCard key={r.id} row={r} teamName={showTeams ? teamNameOf(r.teamId) : null} wave={guide.waveOf.get(r.id)} next={guide.next.has(r.id)} />
               ))}
             </ul>
           </SectionCard>
@@ -143,6 +178,17 @@ export function CampaignReport({ campaign }: { campaign: string }) {
             )}
           </SectionCard>
         </div>
+      )}
+      {cancelling && (
+        <TypedConfirmDialog
+          title={t("migrationRun.campaign.cancelTitle")}
+          body={t("migrationRun.campaign.cancelBody")}
+          names={[campaign]}
+          confirmLabel={t("migrationRun.campaign.cancelButton")}
+          busy={cancel.isPending}
+          onConfirm={() => cancel.mutate()}
+          onClose={() => setCancelling(false)}
+        />
       )}
     </div>
   );

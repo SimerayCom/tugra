@@ -148,14 +148,23 @@ describe("ImportScopeStep", () => {
 
   it("choosing another server for a matched one says 'Another server'; mixing it with a same-machine move is allowed and explained as a campaign", () => {
     const p = withMatches([{ ref: "s1", name: "Box One", tugra: hit("t1", "Target A") }, { ref: "s2", name: "Box Two", tugra: hit("t2", "Target B") }]);
-    mount({ plan: p });
+    mount({ plan: p, servers: [...servers, { id: "t3", name: "Target C", teamId: "team1", status: "ONLINE", capabilities: ["deploy"] }] });
     fireEvent.click(screen.getByRole("button", { name: "Select connected (2)" }));
     expect((screen.getByRole("checkbox", { name: /Box Two/ }) as HTMLInputElement).checked).toBe(true);
     expect(continueBtn().disabled).toBe(false);
-    fireEvent.change(screen.getByLabelText("Box Two moves to"), { target: { value: "t1" } });
+    fireEvent.change(screen.getByLabelText("Box Two moves to"), { target: { value: "t3" } });
     expect(screen.getByText(/This is a campaign/)).toBeTruthy();
     expect(screen.queryByText(/cannot go together/)).toBeNull();
     expect(continueBtn().disabled).toBe(false);
+  });
+
+  it("a copy onto the machine another source server stays on is refused, naming both, and Continue stays off", () => {
+    const p = withMatches([{ ref: "s1", name: "Box One", tugra: hit("t1", "Target A") }, { ref: "s2", name: "Box Two", tugra: hit("t2", "Target B") }]);
+    mount({ plan: p });
+    fireEvent.click(screen.getByRole("button", { name: "Select connected (2)" }));
+    fireEvent.change(screen.getByLabelText("Box Two moves to"), { target: { value: "t1" } });
+    expect(screen.getByText(/would land on the same Tugra server.*Box One, Box Two/)).toBeTruthy();
+    expect(continueBtn().disabled).toBe(true);
   });
 
   it("a source server not registered in Tugra says so and offers to add it, with its name and team prefilled", () => {

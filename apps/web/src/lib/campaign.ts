@@ -3,7 +3,7 @@
 import type { CampaignRunPlan, CampaignStatus, CampaignView, PlacementFailureCode, SourcePlacement } from "@tugra/shared";
 import { hostOfItemRef, inPlaceCount, overallPlacement, type ImportScope } from "./import-scope";
 import { campaignReportHref } from "./migration-run";
-import type { ImportPlanItem, MigrationRunCreateInput } from "./types";
+import type { ImportPlanItem, MigrationRunCreateInput, MigrationRunScope } from "./types";
 
 /** The first step's choice as placements, in ref order (the same choice always sends the same body). A server with no target yet is left out. */
 export function placementsOf(scope: Pick<ImportScope, "placed" | "placementKind">): SourcePlacement[] {
@@ -35,13 +35,15 @@ export interface CampaignCreateBody {
   acks?: MigrationRunCreateInput["acks"];
   serviceChoices?: MigrationRunCreateInput["serviceChoices"];
   dbDataModes?: MigrationRunCreateInput["dbDataModes"];
+  /** What the first step picked (absent = every item of the placed source servers). Each run keeps to its own source servers inside it. */
+  scope?: MigrationRunScope;
   /** Apps of the same-machine servers to build with Tugra and verify (plan item refs). Absent = every app reuses Coolify's image. */
   rebuild?: string[];
 }
 
 /**
  * The campaign request from what a single run would have sent: the shared run fields, minus what the placement decides (target, topology, server
- * map, scope). `confirm` is the number of source servers the owner is placing, which the hub checks against the list.
+ * map). The first step's scope rides along; the hub narrows each run to its own source servers inside it. `confirm` is the number of source servers the owner is placing, which the hub checks against the list.
  */
 export function campaignBody(run: MigrationRunCreateInput, placements: readonly SourcePlacement[], rebuild: readonly string[] = []): CampaignCreateBody {
   return {
@@ -57,6 +59,7 @@ export function campaignBody(run: MigrationRunCreateInput, placements: readonly 
     ...(run.acks?.length ? { acks: run.acks } : {}),
     ...(run.serviceChoices ? { serviceChoices: run.serviceChoices } : {}),
     ...(run.dbDataModes && Object.keys(run.dbDataModes).length ? { dbDataModes: run.dbDataModes } : {}),
+    ...(run.scope ? { scope: run.scope } : {}),
     ...(rebuild.length > 0 ? { rebuild: [...new Set(rebuild)] } : {}),
   };
 }
@@ -110,6 +113,12 @@ const KNOWN_FAILURES: readonly PlacementFailureCode[] = [
   "placement_rebuild_not_in_place",
   "placement_rebuild_unknown_item",
   "placement_team_mismatch",
+  "placement_target_shared",
+  "placement_in_place_partial",
+  "placement_scope_empty",
+  "placement_scope_invalid",
+  "placement_takeover_busy",
+  "placement_tugra_proxy_in_use",
 ];
 
 /** What creating a campaign returns: the first campaign (the shape of an older hub) plus every campaign made, one per team. */
@@ -148,3 +157,33 @@ export function groupCampaigns(views: readonly CampaignView[]): CampaignGroup[] 
     }))
     .sort((a, b) => (a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : 0));
 }
+
+/** The run of a campaign that stands for one planned run: the same kind (same machine or copy) on the same target, the newest one (a dry run that was promoted is replaced by the real run it made). */
+type GuideRun = { id: string; targetServerId: string; inPlace: boolean; status: string; createdAt: string };
+
+/**
+ * Which wave each run of a campaign belongs to, and which run to start next. The hub plans the waves (the copy first, then one same-machine server
+ * after the other) but a run does not carry its wave, so it is found by what the plan says: the kind and the target. A run is "next" when it can be
+ * started (queued, or a finished dry run) and every run of an earlier wave of the same campaign has completed. A cancelled campaign has none.
+ */
+export function campaignGuide(views: readonly Pick<CampaignView, "plan" | "status">[], runs: readonly GuideRun[]): { waveOf: Map<string, number>; next: Set<string> } {
+  const waveOf = new Map<string, number>();
+  const next = new Set<string>();
+  const newest = (kind: CampaignRunPlan["kind"], target: string): GuideRun | undefined =>
+    runs.filter((r) => r.inPlace === (kind === "in-place") && r.targetServerId === target).sort((a, b) => (a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : 0))[0];
+  for (const v of views) {
+    const planned = [...v.plan].sort((a, b) => a.wave - b.wave).map((p) => ({ p, run: newest(p.kind, p.targetServerId) }));
+    for (const { p } of planned) for (const r of runs) if (r.inPlace === (p.kind === "in-place") && r.targetServerId === p.targetServerId) waveOf.set(r.id, p.wave);
+    if (v.status === "cancelled" || v.status === "done") continue;
+    for (const { run } of planned) {
+      if (!run) break;
+      if (run.status === "COMPLETED") continue;
+      if (run.status === "QUEUED" || run.status === "DRY_RUN_DONE") next.add(run.id);
+      break;
+    }
+  }
+  return { waveOf, next };
+}
+
+/** Whether a campaign still has something to cancel: not already cancelled or done. */
+export const campaignCancellable = (v: Pick<CampaignView, "status">): boolean => v.status !== "cancelled" && v.status !== "done";

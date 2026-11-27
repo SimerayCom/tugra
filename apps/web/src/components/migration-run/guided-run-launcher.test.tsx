@@ -456,6 +456,31 @@ describe("a mixed placement is a campaign", () => {
     await waitFor(() => expect(push).toHaveBeenCalledWith("/import/runs/campaign?c=campaign-x"));
   });
 
+  it("reads the preview and creates the campaign with the data modes the owner chose and the first step's pick (never a plan changed for good, never every item of the servers)", async () => {
+    const planCampaign = vi.spyOn(api, "planCampaign").mockResolvedValue({ planHash: "a".repeat(32), views: [], runs, failure: null });
+    const createCampaign = vi.spyOn(api, "createCampaign").mockResolvedValue({ id: "c1", label: "campaign-x", sessionId: "s1", status: "draft", plan: runs, runIds: ["r1", "r2"], createdAt: "2026-11-26T10:00:00Z" });
+    const narrowed: ImportScope = { ...mixed, narrowed: true, selection: { ...mixed.selection, mode: "projects", projects: new Set(["p1"]) }, inScope: new Set(["app:s1:web", "app:s2:api"]) };
+    mount({ plan: whole, scope: narrowed, extras: { ...extras, dbDataModes: { "database:s2:pg": "volume" } } });
+    const dialog = await open();
+    await within(dialog).findByTestId("campaign-preview");
+    await waitFor(() => expect(planCampaign).toHaveBeenCalled());
+    expect(planCampaign.mock.calls[0][0]).toMatchObject({ dbDataModes: { "database:s2:pg": "volume" }, scope: { projects: ["p1"] } });
+    await waitFor(() => expect((within(dialog).getByRole("button", { name: "Create campaign (2 runs)" }) as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Create campaign (2 runs)" }));
+    await waitFor(() => expect(createCampaign).toHaveBeenCalledTimes(1));
+    expect(createCampaign.mock.calls[0][0]).toMatchObject({ dbDataModes: { "database:s2:pg": "volume" }, scope: { projects: ["p1"] } });
+  });
+
+  it("a refusal that names two source servers says both", async () => {
+    vi.spyOn(api, "planCampaign").mockResolvedValue({ planHash: "a".repeat(32), views: [], runs: null, failure: { code: "placement_target_shared", ref: "s2", withRef: "s1" } });
+    mount({ plan: whole, scope: mixed });
+    const dialog = await open();
+    const card = await within(dialog).findByTestId("campaign-preview");
+    await waitFor(() => expect(card.textContent).toContain("same Tugra server"));
+    expect(card.textContent).toContain("(Alpha, Beta)");
+    expect((within(dialog).getByRole("button", { name: /Create campaign|Create dry run/ }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
   describe("servers of several teams", () => {
     const teamed = [{ id: "srv1", name: "Server A", teamId: "t1" }, { id: "srv2", name: "Server B", teamId: "t2" }];
     const names = [{ id: "t1", name: "Team One" }, { id: "t2", name: "Team Two" }];

@@ -196,8 +196,16 @@ export function ownerSaidNotSame(plan: ImportPlan, ref: string): boolean {
   return h?.match?.linkedBy === "user" && !h.tugra;
 }
 
-/** True for the box the source's own control plane runs on (Coolify: `is_coolify_host`). */
-export const isControlPlaneHost = (plan: ImportPlan, ref: string): boolean => !!plan.preflight?.hosts?.find((h) => h.ref === ref)?.controlPlane;
+/**
+ * True for the box the source's own control plane runs on (Coolify: `is_coolify_host`). A second Coolify row for that same machine (added once as
+ * localhost and once by its public address) is matched to the server of the agent that read the plan, and is the control plane box too.
+ */
+export const isControlPlaneHost = (plan: ImportPlan, ref: string): boolean => {
+  const h = plan.preflight?.hosts?.find((x) => x.ref === ref);
+  if (!h) return false;
+  const panelServer = plan.preflight?.agentRead?.agentServerId;
+  return !!h.controlPlane || (!!panelServer && h.tugra?.serverId === panelServer);
+};
 
 /**
  * Why a source server cannot be moved onto the machine it runs on, or null when it can. Only Coolify has a proxy swap, and the box that
@@ -309,7 +317,7 @@ export function buildScope(plan: ImportPlan, sel: ScopeSelection, allowed?: Read
   };
 }
 
-export type ScopeIssue = "nothing" | "target" | "teams" | "blocked" | "unready" | "limit";
+export type ScopeIssue = "nothing" | "target" | "teams" | "blocked" | "unready" | "limit" | "shared" | "partial";
 
 /**
  * Why the selection cannot continue yet, or null: nothing picked, a source server without a target, targets in different teams, a
@@ -331,9 +339,48 @@ export function scopeIssue(
   const ids = hosts.map((h) => scope.placed[h.ref]);
   if (!opts.multiTeamOk && new Set(ids.map((id) => teamOf(id) ?? id)).size > 1) return "teams";
   if (hosts.some((h) => hostTugra(plan, h.ref)?.serverId === scope.placed[h.ref] && inPlaceBlock(plan, h.ref))) return "blocked";
+  if (sharedTargetHosts(plan, scope)) return "shared";
+  if (partialInPlaceHosts(plan, scope).length > 0) return "partial";
   if (readinessOf && ids.some((id) => readinessOf(id) !== "ready")) return "unready";
   if (hosts.length > SERVER_MAP_MAX) return "limit";
   return null;
+}
+
+/**
+ * Two source servers that would land on one Tugra machine when one of them stays on it (two same-machine, or a copy onto the machine another
+ * source server stays on): they would fight over the same proxy and ports. The two refs, or null. Copies of several source servers onto one other
+ * server are fine (they travel together in one run).
+ */
+export function sharedTargetHosts(plan: ImportPlan, scope: Pick<ImportScope, "inScope" | "placed" | "placementKind">): [string, string] | null {
+  const hosts = involvedHosts(plan, scope.inScope).map((h) => h.ref);
+  const inPlaceBy = new Map<string, string>();
+  for (const ref of hosts) {
+    const id = scope.placed[ref];
+    if (!id || scope.placementKind[ref] !== "in-place") continue;
+    const first = inPlaceBy.get(id);
+    if (first) return [first, ref];
+    inPlaceBy.set(id, ref);
+  }
+  for (const ref of hosts) {
+    const id = scope.placed[ref];
+    const holder = id && scope.placementKind[ref] !== "in-place" ? inPlaceBy.get(id) : undefined;
+    if (holder) return [holder, ref];
+  }
+  return null;
+}
+
+/**
+ * Same-machine servers of which only part is in scope. The proxy swap takes the machine's ingress, so an app of it left out of the selection would
+ * lose its address: such a server moves whole or goes to another server (the hub refuses the partial one too).
+ */
+export function partialInPlaceHosts(plan: ImportPlan, scope: Pick<ImportScope, "inScope" | "placementKind" | "narrowed">): string[] {
+  if (!scope.narrowed) return [];
+  const out: string[] = [];
+  for (const h of involvedHosts(plan, scope.inScope)) {
+    if (scope.placementKind[h.ref] !== "in-place") continue;
+    if (plan.items.some((i) => isPlaceable(i) && hostOfItemRef(i.itemRef) === h.ref && !scope.inScope.has(i.itemRef))) out.push(h.ref);
+  }
+  return out;
 }
 
 /** Same-machine placements of a scope (how many source servers stay on their own box). */

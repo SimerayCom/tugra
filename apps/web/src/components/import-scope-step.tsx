@@ -16,6 +16,8 @@ import {
   inScopeRefs,
   involvedHosts,
   isControlPlaneHost,
+  partialInPlaceHosts,
+  sharedTargetHosts,
   missingDependencies,
   ownerSaidNotSame,
   ownerTugra,
@@ -192,6 +194,8 @@ export function ImportScopeStep({
       case "team": return t("import.scope.issue.team");
       case "target": return t("import.scope.issue.target", { names: unplaced.slice(0, NAMES_SHOWN).join(", ") + (unplaced.length > NAMES_SHOWN ? ` +${unplaced.length - NAMES_SHOWN}` : "") });
       case "blocked": return t("import.scope.issue.blocked");
+      case "shared": return t("import.scope.issue.shared", { names: (sharedTargetHosts(plan, scope) ?? []).map((r) => hostLabel(r, involved.find((h) => h.ref === r)?.name)).join(", ") });
+      case "partial": return t("import.scope.issue.partial", { names: partialInPlaceHosts(plan, scope).map((r) => hostLabel(r, involved.find((h) => h.ref === r)?.name)).join(", ") });
       case "unready": return t("import.scope.issue.unready");
       case "limit": return t("import.scope.issue.limit", { max: 64 });
       default: return t("import.scope.summary", counts);

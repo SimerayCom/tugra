@@ -829,6 +829,8 @@
       "team": "Choose the team these go to.",
       "target": "Choose a server for: {names}.",
       "blocked": "A server cannot be moved onto the machine Coolify runs on. Choose another server.",
+      "shared": "These source servers would land on the same Tugra server, and one of them stays on it: {names}. Choose a different server for one of them.",
+      "partial": "All apps of a server that stays on its own machine move together, because Tugra takes over the whole machine. Pick everything on {names}, or move it to another server.",
       "unready": "A chosen server is offline, has no agent connected or cannot deploy.",
       "limit": "At most {max} source servers per move. Pick fewer."
     },

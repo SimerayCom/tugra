@@ -54,6 +54,12 @@
     "placement_rebuild_not_in_place": "An app chosen for a rebuild is on a server that is copied to another server. Only apps of servers that stay on their own machine can be rebuilt in place.",
     "placement_rebuild_unknown_item": "An app chosen for a rebuild is not in the plan any more. Read the source again.",
     "placement_team_mismatch": "This server's Coolify team moves into a different Tugra team than the server you picked. Pick a server of that team, or change the team mapping.",
+    "placement_target_shared": "These two source servers would land on the same Tugra server, and one of them stays on it. Choose a different server for one of them.",
+    "placement_in_place_partial": "Only part of this server is picked, but a server that stays on its own machine moves whole, because Tugra takes over the whole machine. Pick everything on it, or move it to another server.",
+    "placement_scope_empty": "Nothing of this server is picked any more. Change the selection or leave the server out.",
+    "placement_scope_invalid": "The selection names something the source no longer has. Read the source again.",
+    "placement_takeover_busy": "Another takeover or guided migration already holds this server. Finish or give it back first.",
+    "placement_tugra_proxy_in_use": "Tugra's own proxy already serves apps on this server, so the test cannot start it without taking them down. Stop what it serves, or move this server elsewhere.",
     "unknown": "This placement was refused."
   }
 }
