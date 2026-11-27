@@ -45,4 +45,13 @@ describe("import resume", () => {
     expect(r.allTeams).toBeUndefined();
     expect(r.matched).toBeUndefined();
   });
+
+  it("keeps the mapped Coolify team the lists were switched to, and drops a value that is not a team ref", () => {
+    saveImportResume({ kind: "coolify", baseUrl: "", sessionId: SID, dbModes: {}, view: "team-2" });
+    expect(loadImportResume()!.view).toBe("team-2");
+    saveImportResume({ kind: "coolify", baseUrl: "", sessionId: SID, dbModes: {}, view: "<script>" });
+    expect(loadImportResume()!.view).toBeUndefined();
+    saveImportResume({ kind: "coolify", baseUrl: "", sessionId: SID, dbModes: {} });
+    expect(loadImportResume()!.view).toBeUndefined();
+  });
 });

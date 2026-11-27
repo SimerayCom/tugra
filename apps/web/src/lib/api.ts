@@ -2657,6 +2657,10 @@ export const api = {
   importHostLink(sessionId: string, input: { coolifyServerUuid: string; serverId: string | null; reset?: boolean }) {
     return apiFetch<{ hostLinks: Record<string, { serverId: string | null }> }>(`/import/sessions/${encodeURIComponent(sessionId)}/host-link`, { method: "PUT", body: JSON.stringify(input) });
   },
+  // The owner's Coolify team to Tugra team mapping for an agent session (null = leave that Coolify team out). Replaces the whole map.
+  importTeamMap(sessionId: string, teams: Array<{ sourceTeamRef: string; teamId: string | null }>) {
+    return apiFetch<{ teamMap: Record<string, string | null> }>(`/import/sessions/${encodeURIComponent(sessionId)}/team-map`, { method: "PUT", body: JSON.stringify({ teams }) });
+  },
   // Consent to the sealed read of Coolify's secret values for ONE import session (team owner; the host's name typed). Ends with the import.
   coolifySecretsGrant(input: { serverId: string; confirm: string; importSessionId?: string; classes?: CoolifySecretClass[] | string[]; hours?: number }) {
     return apiFetch<CoolifyHostGrantView>("/coolify-takeover/secrets/grants", { method: "POST", body: JSON.stringify(input) });
