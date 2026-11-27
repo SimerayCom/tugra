@@ -32,6 +32,8 @@ export interface PlacementHostFact {
   /** The Tugra server that is the same machine (certain and probable only). */
   matchedServerId: string | null;
   agentOnline: boolean;
+  /** The Tugra team the owner mapped this server's Coolify team to (the import's team step); absent when there is no mapping for it. */
+  mappedTeamId?: string;
 }
 
 /** A Tugra server a placement may name as its target. */
@@ -117,6 +119,8 @@ export function checkPlacements(placements: readonly SourcePlacement[], facts: r
     const t = targets.get(targetId);
     if (!t) return { ok: false, code: "placement_target_unknown", ref: f.ref };
     if (!t.ready) return { ok: false, code: "placement_target_not_ready", ref: f.ref };
+    // a server of a mapped Coolify team lands in the Tugra team the owner chose for it, never in another one
+    if (f.mappedTeamId && f.mappedTeamId !== t.teamId) return { ok: false, code: "placement_team_mismatch", ref: f.ref };
     teamOf.set(f.ref, t.teamId);
     out.push({ sourceServerRef: f.ref, kind: p.kind, targetServerId: targetId });
   }

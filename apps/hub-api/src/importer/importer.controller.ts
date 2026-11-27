@@ -19,6 +19,8 @@ import {
   ImportConnectAgentSchema,
   type ImportConnectAgentInput,
   ImportHostLinkSchema,
+  ImportTeamMapSchema,
+  type ImportTeamMapInput,
   type ImportHostLinkInput,
   ImportTestSchema,
   type ImportTestInput,
@@ -247,6 +249,18 @@ export class ImporterController {
     @Body(new ZodValidationPipe(ImportHostLinkSchema)) body: ImportHostLinkInput,
   ) {
     return this.importer.setHostLink(user.userId, sessionId, body);
+  }
+
+  /** The owner's Coolify team to Tugra team mapping for an agent session. `write` scope; the caller must own every Tugra team named. */
+  @Put("sessions/:sessionId/team-map")
+  @RequireScopes("write")
+  @ApiZodBody(ImportTeamMapSchema)
+  setTeamMap(
+    @CurrentUser() user: AuthUser,
+    @Param("sessionId") sessionId: string,
+    @Body(new ZodValidationPipe(ImportTeamMapSchema)) body: ImportTeamMapInput,
+  ) {
+    return this.importer.setTeamMap(user.userId, sessionId, body);
   }
 
   @Delete("sessions/:sessionId")

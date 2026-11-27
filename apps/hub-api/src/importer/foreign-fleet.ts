@@ -425,6 +425,8 @@ export interface ImportPreflight extends AgentPlanAdditions {
   sourceTeam?: string;
   /** The ref of the Coolify team the owner picked for an agent session (several teams): the wizard then shows that team's servers and projects first. Additive; NOT part of planHash. */
   sourceTeamRef?: string;
+  /** The owner's Coolify team to Tugra team mapping (agent session): Coolify team ref to Tugra team id, null = that team is left out. Absent until the owner saved one. Additive; NOT part of planHash. */
+  teamMap?: Record<string, string | null>;
   /** The source projects with the plan items that live in each (apps, databases and services), so the first import step can
    *  select "these projects" without guessing. Absent for a source with no project tree. Additive; NOT part of planHash. */
   projects?: PreflightProject[];

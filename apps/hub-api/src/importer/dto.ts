@@ -56,6 +56,18 @@ export const ImportHostLinkSchema = z.object({
 });
 export type ImportHostLinkInput = z.infer<typeof ImportHostLinkSchema>;
 
+/**
+ * The owner's mapping of Coolify teams to Tugra teams for an agent session. One entry per Coolify team the owner decided about:
+ * `teamId` is the Tugra team it moves into, or null for "leave this Coolify team out". The whole map is replaced on each save.
+ */
+export const ImportTeamMapSchema = z.object({
+  teams: z
+    .array(z.object({ sourceTeamRef: z.string().regex(/^[A-Za-z0-9_-]{1,40}$/), teamId: z.string().min(1).max(60).nullable() }))
+    .min(1)
+    .max(100),
+});
+export type ImportTeamMapInput = z.infer<typeof ImportTeamMapSchema>;
+
 /** The one-line connection test shown as soon as the token is pasted: the same credentials as connect, nothing is stored. */
 export const ImportTestSchema = ImportConnectSchema.omit({ scopeLabel: true });
 export type ImportTestInput = z.infer<typeof ImportTestSchema>;

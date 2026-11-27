@@ -14,7 +14,7 @@ export interface CampaignFacts {
 }
 
 /** One source server of the plan as a placement fact. The verdict comes from the host match when the plan has one, else from the older address verdict. */
-export function hostFactOf(h: PreflightHost, onlineIds: ReadonlySet<string>): PlacementHostFact {
+export function hostFactOf(h: PreflightHost, onlineIds: ReadonlySet<string>, teamMap?: Readonly<Record<string, string | null>>): PlacementHostFact {
   const status = h.match?.status ?? (h.tugra ? (h.tugra.confidence === "certain" ? "certain" : "probable") : "none");
   const matchedServerId = status === "certain" || status === "probable" ? (h.tugra?.serverId ?? null) : null;
   return {
@@ -26,6 +26,7 @@ export function hostFactOf(h: PreflightHost, onlineIds: ReadonlySet<string>): Pl
     evidence: h.match?.evidence ?? [],
     matchedServerId,
     agentOnline: matchedServerId !== null && onlineIds.has(matchedServerId),
+    ...(h.team && teamMap?.[h.team.ref] ? { mappedTeamId: teamMap[h.team.ref] as string } : {}),
   };
 }
 
@@ -49,6 +50,6 @@ export class CampaignFactsService {
     const online = new Set(rows.filter((r) => r.status === "ONLINE").map((r) => r.id));
     const targets = new Map<string, PlacementTarget>();
     for (const r of rows) targets.set(r.id, { id: r.id, teamId: r.teamId, ready: r.status === "ONLINE" && r.capabilities.includes("deploy") });
-    return { planHash: plan.planHash, hosts: (plan.preflight?.hosts ?? []).map((h) => hostFactOf(h, online)), targets, appRefs: new Set(plan.items.filter((i) => i.kind === "app").map((i) => i.itemRef)) };
+    return { planHash: plan.planHash, hosts: (plan.preflight?.hosts ?? []).map((h) => hostFactOf(h, online, plan.preflight?.teamMap)), targets, appRefs: new Set(plan.items.filter((i) => i.kind === "app").map((i) => i.itemRef)) };
   }
 }

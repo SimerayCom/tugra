@@ -14,7 +14,7 @@ import { buildPreflight } from "./preflight";
 import { buildCoverage } from "./coverage";
 import type { ForeignFleet, ImportPlan, PreflightHost } from "./foreign-fleet";
 import type { ImportSource } from "./import-source";
-import { isRemoteSourceKind, type ImportConnectAgentInput, type ImportHostLinkInput, type ImportConnectInput, type ImportTestInput, type ImportMappingPutInput, type ImportMappingResolveInput, type ImportPlanRequestInput, type ImportServicesPreviewInput, type RemoteSourceKind } from "./dto";
+import { isRemoteSourceKind, type ImportConnectAgentInput, type ImportHostLinkInput, type ImportTeamMapInput, type ImportConnectInput, type ImportTestInput, type ImportMappingPutInput, type ImportMappingResolveInput, type ImportPlanRequestInput, type ImportServicesPreviewInput, type RemoteSourceKind } from "./dto";
 import { mapLimit } from "./sources/map-limit";
 import { validateServiceChoices } from "./service-choices";
 import { buildServicePreview, type ServicePreview } from "./service-preview";
@@ -51,6 +51,19 @@ function parseHostLinks(raw: unknown): HostLinks {
     if (id === null || (typeof id === "string" && id.length > 0 && id.length <= 60)) out[uuid] = { serverId: id };
   }
   return out;
+}
+
+/** The owner's Coolify team to Tugra team mapping on a session, read back defensively (ids only; anything malformed is dropped). */
+export type TeamMap = Record<string, string | null>;
+const MAX_TEAM_MAP = 100;
+function parseTeamMap(raw: unknown): TeamMap | undefined {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const out: TeamMap = {};
+  for (const [ref, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (!/^[A-Za-z0-9_-]{1,40}$/.test(ref) || Object.keys(out).length >= MAX_TEAM_MAP) continue;
+    if (v === null || (typeof v === "string" && v.length > 0 && v.length <= 60)) out[ref] = v;
+  }
+  return Object.keys(out).length ? out : undefined;
 }
 
 const SESSION_TTL_MS = 60 * 60_000; // 1h — long enough to review → apply, short enough to limit a stored token
@@ -237,7 +250,7 @@ export class ImporterService {
       const preflight = { ...buildPreflight(fleet, opts), ...(coverage ? { coverage } : {}) };
       const agentAdd = await source.agentPlan?.();
       const placement = await this.placementFacts(userId, session.baseUrl, fleet, preflight.hosts, built.items, source, session.agentServerId, session.hostLinks);
-      return { ...built, preflight: { ...preflight, ...(agentAdd ?? {}), ...(placement.hosts ? { hosts: placement.hosts } : {}), ...(placement.panel ? { panel: placement.panel } : {}), ...(placement.sourceTeam ? { sourceTeam: placement.sourceTeam } : {}), ...(session.sourceTeamRef ? { sourceTeamRef: session.sourceTeamRef } : {}) }, ...(mapping ? { mapping } : {}) };
+      return { ...built, preflight: { ...preflight, ...(agentAdd ?? {}), ...(placement.hosts ? { hosts: placement.hosts } : {}), ...(placement.panel ? { panel: placement.panel } : {}), ...(placement.sourceTeam ? { sourceTeam: placement.sourceTeam } : {}), ...(session.sourceTeamRef ? { sourceTeamRef: session.sourceTeamRef } : {}), ...(session.teamMap ? { teamMap: session.teamMap } : {}) }, ...(mapping ? { mapping } : {}) };
     } finally {
       await source.close();
     }
@@ -361,6 +374,26 @@ export class ImporterService {
     return { hostLinks: links };
   }
 
+  /**
+   * The owner's mapping of Coolify teams to Tugra teams for an agent session. A Tugra team named here must be one the caller OWNS (a
+   * campaign needs the owner of every team it lands in), so a team the move could not run in is refused now, not at the campaign. `null`
+   * leaves a Coolify team out. Replaces the whole map; the next plan carries it. Ids only.
+   */
+  async setTeamMap(userId: string, sessionId: string, input: ImportTeamMapInput): Promise<{ teamMap: TeamMap }> {
+    const row = await this.prisma.importSession.findUnique({ where: { id: sessionId } });
+    if (!row || row.transport !== "agent" || row.sourceKind !== "coolify") throw new NotFoundException("import session not found");
+    if (row.actorId !== userId) throw new ForbiddenException("not your import session");
+    if (row.status !== "active" || row.expiresAt.getTime() < Date.now()) throw new BadRequestException("import session expired or revoked — reconnect");
+    const refs = new Set(input.teams.map((t) => t.sourceTeamRef));
+    if (refs.size !== input.teams.length) throw new BadRequestException({ statusCode: 400, code: "duplicate_team", message: "a Coolify team is listed twice" });
+    for (const id of new Set(input.teams.flatMap((t) => (t.teamId ? [t.teamId] : [])))) await this.access.requireRole(userId, id, [Role.OWNER]);
+    const teamMap: TeamMap = {};
+    for (const t of input.teams) teamMap[t.sourceTeamRef] = t.teamId;
+    await this.prisma.importSession.update({ where: { id: row.id }, data: { teamMap: teamMap as unknown as Prisma.InputJsonValue } });
+    await this.audit.log({ actor: userId, action: "import.team_map", target: row.id, meta: { teams: input.teams.length, left: input.teams.filter((t) => t.teamId === null).length } });
+    return { teamMap };
+  }
+
   /** Authoritative mapping preview: re-discover + re-plan (no fleet caching — it may hold secrets), refuse a stale
    *  planHash, then resolve the document against the target server's team. Read-only. */
   async resolveMapping(userId: string, input: ImportMappingResolveInput): Promise<ResolvedMapping> {
@@ -469,7 +502,7 @@ export class ImporterService {
     userId: string,
     sessionId: string,
     expectedKind?: RemoteSourceKind,
-  ): Promise<{ source: ImportSource; session: MappingSession & { sourceKind: RemoteSourceKind; agentServerId: string | null; hostLinks: HostLinks; /** The Coolify team the agent session was made for (the one the owner picked), when it was. */ sourceTeamRef?: string | null } }> {
+  ): Promise<{ source: ImportSource; session: MappingSession & { sourceKind: RemoteSourceKind; agentServerId: string | null; hostLinks: HostLinks; /** The Coolify team the agent session was made for (the one the owner picked), when it was. */ sourceTeamRef?: string | null; /** The owner's Coolify team to Tugra team mapping, when saved. */ teamMap?: TeamMap } }> {
     const session = await this.prisma.importSession.findUnique({ where: { id: sessionId } });
     const kind = session?.sourceKind;
     if (!session || !isRemoteSourceKind(kind) || (expectedKind && kind !== expectedKind)) {
@@ -488,7 +521,7 @@ export class ImporterService {
       await this.requireAgentConsent(session.agentServerId, session.teamId);
       // The session is the run the owner's consent for secrets belongs to: its values come from that consent and from no other.
       const source = this.sources.createAgent(session.agentServerId, { run: { sessionId: session.id, userId }, teamRef: session.sourceTeamRef });
-      return { source, session: { ...info, agentServerId: session.agentServerId, hostLinks: parseHostLinks(session.hostLinks), sourceTeamRef: session.sourceTeamRef } };
+      return { source, session: { ...info, agentServerId: session.agentServerId, hostLinks: parseHostLinks(session.hostLinks), sourceTeamRef: session.sourceTeamRef, teamMap: parseTeamMap(session.teamMap) } };
     }
     const token = this.crypto.decrypt(session.tokenEnc);
     return { source: this.sources.create(kind, session.baseUrl, token), session: info };

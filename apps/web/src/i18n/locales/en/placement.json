@@ -53,6 +53,7 @@
     "placement_other_is_source_host": "That is the machine the source server already runs on. Choose \"same machine\" or another server.",
     "placement_rebuild_not_in_place": "An app chosen for a rebuild is on a server that is copied to another server. Only apps of servers that stay on their own machine can be rebuilt in place.",
     "placement_rebuild_unknown_item": "An app chosen for a rebuild is not in the plan any more. Read the source again.",
+    "placement_team_mismatch": "This server's Coolify team moves into a different Tugra team than the server you picked. Pick a server of that team, or change the team mapping.",
     "unknown": "This placement was refused."
   }
 }
