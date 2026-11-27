@@ -1,6 +1,6 @@
 import type { AgentPlanAdditions, CoolifySecretClass } from "@tugra/shared";
 import { ForbiddenException } from "@nestjs/common";
-import type { ForeignFleet, ServiceBundle } from "../foreign-fleet";
+import type { ForeignApp, ForeignFleet, ServiceBundle } from "../foreign-fleet";
 import type { FetchedSecrets, ImportSourceCapabilities, SourceAppExtras } from "../import-source";
 import type { RawSettings, SettingsSection } from "../settings/settings-types";
 import { CoolifySource } from "./coolify.source";
@@ -63,8 +63,13 @@ export class AgentCoolifySource extends CoolifySource {
   override async discover(): Promise<ForeignFleet> {
     // The compose text of apps and services is part of what the plan needs: read when the owner consented (otherwise the plan says so).
     await this.ensure(["service_compose"]);
-    const [fleet, view] = await Promise.all([super.discover(), this.agentClient.agentView()]);
-    return { ...fleet, warnings: [...fleet.warnings.map(agentWarning), ...view.warnings] };
+    const [fleet, view, valuesAllowed] = await Promise.all([super.discover(), this.agentClient.agentView(), this.envValuesAllowed()]);
+    return { ...fleet, apps: fleet.apps.map((a) => withAgentEnvReport(a, valuesAllowed)), warnings: [...fleet.warnings.map(agentWarning), ...view.warnings] };
+  }
+
+  /** Does the owner's consent for THIS import session cover the variable values? A cheap grant lookup, nothing is read. */
+  private async envValuesAllowed(): Promise<boolean> {
+    return this.store ? (await this.store.consentedClasses()).includes("env") : false;
   }
 
   /** The block the plan carries on top of the API-path plan. */
@@ -147,6 +152,21 @@ export class AgentCoolifySource extends CoolifySource {
     const view = await this.agentClient.agentView();
     return this.store.ensure(classes, () => view.secretRefs());
   }
+}
+
+/**
+ * The base discover reads every app's variables through the plain client, which never carries a value (like a token without
+ * `read:sensitive`), so its report calls every app "the API token cannot read values". That is the wrong diagnosis on this path, which has
+ * no token, and values are not part of the plan (they are read at apply time, from the owner's consent, one session read).
+ *  - Consent for the values stands: they WILL be carried. Only what is known without a value stays unresolved (LOCKED and Coolify's own
+ *    magic variables); "no value in the plan" is not a missing value. A value the apply cannot open is held back per key by the apply's checks.
+ *  - No consent: the report says the consent is what is missing (`awaitingConsent`), not a token.
+ */
+function withAgentEnvReport(app: ForeignApp, valuesAllowed: boolean): ForeignApp {
+  const r = app.envReport;
+  if (!r || !r.tokenReadOnly) return app;
+  if (!valuesAllowed) return { ...app, envReport: { ...r, tokenReadOnly: false, awaitingConsent: true } };
+  return { ...app, envReport: { ...r, tokenReadOnly: false, unresolved: r.unresolved.filter((u) => u.reason === "LOCKED" || u.reason === "MAGIC") } };
 }
 
 function consentRequired(): ForbiddenException {

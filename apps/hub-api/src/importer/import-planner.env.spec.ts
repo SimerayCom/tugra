@@ -1,4 +1,4 @@
-import { planImport, ENV_RISK_UNRESOLVED, ENV_RISK_INVALID, ENV_RISK_TOKEN_READ_ONLY, ENV_RISK_PREVIEW } from "./import-planner";
+import { planImport, ENV_RISK_UNRESOLVED, ENV_RISK_INVALID, ENV_RISK_TOKEN_READ_ONLY, ENV_RISK_CONSENT_REQUIRED, ENV_RISK_PREVIEW } from "./import-planner";
 import type { ForeignApp, ForeignFleet } from "./foreign-fleet";
 
 const app = (over: Partial<ForeignApp> = {}): ForeignApp => ({ sourceRef: "a1", name: "web", kind: "git", buildPack: "nixpacks", git: { url: "https://github.com/o/r.git" }, serverRef: "s1", env: [], ...over });
@@ -26,6 +26,16 @@ describe("planImport — strict env rows (Coolify envReport only)", () => {
     expect(r.filter((x) => x.level === "blocker" && x.code.startsWith("app.env."))).toEqual([
       { level: "blocker", code: ENV_RISK_TOKEN_READ_ONLY, message: "the API token cannot read variable values; create a Coolify token with the read:sensitive ability and reconnect" },
     ]);
+  });
+
+  it("awaitingConsent (agent session, no consent) is ONE blocker that says to allow secret values, never a token, and wins over per-key rows", () => {
+    const keys = [{ key: "K1", reason: "NO_VALUE" as const }];
+    const r = risksOf(fleet([app({ envReport: report({ awaitingConsent: true, unresolved: keys }) })]));
+    const blockers = r.filter((x) => x.level === "blocker" && x.code.startsWith("app.env."));
+    expect(blockers).toHaveLength(1);
+    expect(blockers[0].code).toBe(ENV_RISK_CONSENT_REQUIRED);
+    expect(blockers[0].message).toMatch(/allow reading secret values/);
+    expect(blockers[0].message).not.toMatch(/token|read:sensitive/i);
   });
 
   it("lists the first 40 names then '+M more'", () => {

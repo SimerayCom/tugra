@@ -187,6 +187,8 @@ export interface ForeignApp {
     unresolved: { key: string; reason: "NO_VALUE" | "SHARED_UNEXPANDED" | "MAGIC" | "LOCKED" }[]; // sorted by key, capped
     invalidKeys: string[]; // fail isValidUserEnvKey (or are denied); sorted, capped
     tokenReadOnly: boolean; // variables exist but no row carried a value: the API token lacks read:sensitive
+    /** Agent path only: the values are not read because the owner's consent for secret values does not stand for this session (the fix is to allow it, not a token). */
+    awaitingConsent?: boolean;
   };
 }
 

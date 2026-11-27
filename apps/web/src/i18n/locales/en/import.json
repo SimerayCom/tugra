@@ -216,6 +216,10 @@
       "locked": "locked in Coolify, value is never returned",
       "invalidKey": "not a valid variable name"
     },
+    "consentRequired": {
+      "title": "Secret values are not allowed for this import yet",
+      "body": "These apps cannot be imported until you allow reading secret values for this import (the consent step on this screen): their variable values are read from Coolify only with that consent."
+    },
     "tokenReadOnly": {
       "title": "The API token cannot read variable values",
       "body": "These apps cannot be imported: create a Coolify token with the read:sensitive ability and reconnect."

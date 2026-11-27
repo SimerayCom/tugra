@@ -8,7 +8,7 @@ describe("ImportApplySchema acks", () => {
     expect(ok.success).toBe(true);
   });
   it("tokenReadOnly and any other blocker code can never be acknowledged (the enum is the allow-list)", () => {
-    for (const code of ["app.env.tokenReadOnly", "app.git.missing", "db.engine.unknown", "app.env.unresolvable"]) {
+    for (const code of ["app.env.tokenReadOnly", "app.env.consentRequired", "app.git.missing", "db.engine.unknown", "app.env.unresolvable"]) {
       expect(ImportAckSchema.safeParse({ code }).success).toBe(false);
     }
   });

@@ -219,10 +219,11 @@ function planApp(app: ForeignApp, dbByRef: Map<string, ForeignDb>, volumesCarrie
   };
 }
 
-/** Env risk codes. `unresolved` and `key.invalid` are ACKABLE blockers (see ImportApplySchema.acks); `tokenReadOnly` never is. */
+/** Env risk codes. `unresolved` and `key.invalid` are ACKABLE blockers (see ImportApplySchema.acks); `tokenReadOnly` and `consentRequired` never are. */
 export const ENV_RISK_UNRESOLVED = "app.env.unresolved";
 export const ENV_RISK_INVALID = "app.env.key.invalid";
 export const ENV_RISK_TOKEN_READ_ONLY = "app.env.tokenReadOnly";
+export const ENV_RISK_CONSENT_REQUIRED = "app.env.consentRequired";
 export const ENV_RISK_PREVIEW = "app.env.preview";
 export const ACKABLE_RISK_CODES: readonly string[] = [ENV_RISK_UNRESOLVED, ENV_RISK_INVALID];
 const ENV_LIST_CAP = 40;
@@ -234,7 +235,10 @@ const nameList = (names: string[]): string => (names.length > ENV_LIST_CAP ? `${
  *  source without one (Dokploy/local) keeps its items — hence its planHash — byte-identical. */
 function envReportRisks(r: NonNullable<ForeignApp["envReport"]>): ImportRisk[] {
   const out: ImportRisk[] = [];
-  if (r.tokenReadOnly) {
+  if (r.awaitingConsent) {
+    // Agent session without the owner's consent for secret values: nothing is wrong with a token (there is none). NOT ackable: without the values there is nothing to carry.
+    out.push({ level: "blocker", code: ENV_RISK_CONSENT_REQUIRED, message: "the variable values are not read yet: allow reading secret values for this import (env vars, shared vars), then the plan carries them" });
+  } else if (r.tokenReadOnly) {
     // One actionable row instead of one per variable. NOT ackable: without values there is nothing to carry.
     out.push({ level: "blocker", code: ENV_RISK_TOKEN_READ_ONLY, message: "the API token cannot read variable values; create a Coolify token with the read:sensitive ability and reconnect" });
   } else if (r.unresolved.length) {

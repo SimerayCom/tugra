@@ -2,7 +2,7 @@
 
 import { SectionCard } from "../ui";
 import { useT } from "../../i18n/provider";
-import { ackableItems, tokenReadOnlyItems } from "../../lib/import";
+import { ackableItems, consentRequiredItems, tokenReadOnlyItems } from "../../lib/import";
 import type { ImportCoverageEnvApp, ImportEnvReason, ImportPlan } from "../../lib/types";
 
 /** Literal keys so static key-usage checks keep working. */
@@ -24,7 +24,8 @@ export function EnvBlockers({ plan, acked, onChange }: { plan: ImportPlan; acked
   const t = useT();
   const items = ackableItems(plan);
   const readOnly = tokenReadOnlyItems(plan);
-  if (items.length === 0 && readOnly.length === 0) return null;
+  const needConsent = consentRequiredItems(plan);
+  if (items.length === 0 && readOnly.length === 0 && needConsent.length === 0) return null;
   const byRef = new Map<string, ImportCoverageEnvApp>((plan.preflight?.coverage?.env?.apps ?? []).map((a) => [a.itemRef, a]));
   const toggle = (ref: string, on: boolean) => {
     const next = new Set(acked);
@@ -35,6 +36,16 @@ export function EnvBlockers({ plan, acked, onChange }: { plan: ImportPlan; acked
   const allAcked = items.length > 0 && items.every((it) => acked.has(it.itemRef));
   return (
     <>
+      {needConsent.length > 0 && (
+        <SectionCard title={t("import.env.consentRequired.title")} style={{ padding: 16, marginBottom: 0, borderColor: "var(--c-r)" }}>
+          <div role="alert" style={{ fontSize: 12, color: "var(--c-r)", marginBottom: 8, lineHeight: 1.5 }}>{t("import.env.consentRequired.body")}</div>
+          <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12 }}>
+            {needConsent.map((it) => (
+              <li key={it.itemRef} className="mono" style={{ wordBreak: "break-all" }}>{it.name}</li>
+            ))}
+          </ul>
+        </SectionCard>
+      )}
       {readOnly.length > 0 && (
         <SectionCard title={t("import.env.tokenReadOnly.title")} style={{ padding: 16, marginBottom: 0, borderColor: "var(--c-r)" }}>
           <div role="alert" style={{ fontSize: 12, color: "var(--c-r)", marginBottom: 8, lineHeight: 1.5 }}>{t("import.env.tokenReadOnly.body")}</div>

@@ -151,6 +151,9 @@ export function reasonText(t: (k: string, v?: Record<string, string | number>) =
  *  same allow-list; `app.env.tokenReadOnly` and every other blocker can never be acknowledged. */
 export const ACKABLE_ENV_CODES = ["app.env.unresolved", "app.env.key.invalid"] as const;
 export const ENV_TOKEN_READ_ONLY_CODE = "app.env.tokenReadOnly";
+/** Agent session without the owner's consent for secret values: allow it (there is no token). Never ackable either. */
+export const ENV_CONSENT_REQUIRED_CODE = "app.env.consentRequired";
+const isValueBlockerCode = (c: string): boolean => c === ENV_TOKEN_READ_ONLY_CODE || c === ENV_CONSENT_REQUIRED_CODE;
 const isAckableCode = (c: string): c is (typeof ACKABLE_ENV_CODES)[number] => (ACKABLE_ENV_CODES as readonly string[]).includes(c);
 
 /** The ackable env codes this item carries. */
@@ -165,12 +168,17 @@ export function blockedAfterAcks(item: ImportPlanItem, acked: ReadonlySet<string
 
 /** Apps whose plan carries an ackable env blocker (the rows the operator must acknowledge or fix). */
 export function ackableItems(plan: ImportPlan): ImportPlanItem[] {
-  return plan.items.filter((it) => it.kind === "app" && ackableCodes(it).length > 0 && !it.risks.some((r) => r.code === ENV_TOKEN_READ_ONLY_CODE));
+  return plan.items.filter((it) => it.kind === "app" && ackableCodes(it).length > 0 && !it.risks.some((r) => isValueBlockerCode(r.code)));
 }
 
 /** Apps whose token cannot read variable values (non-ackable: fix the token and reconnect). */
 export function tokenReadOnlyItems(plan: ImportPlan): ImportPlanItem[] {
   return plan.items.filter((it) => it.kind === "app" && it.risks.some((r) => r.code === ENV_TOKEN_READ_ONLY_CODE));
+}
+
+/** Agent-session apps whose variable values are not read because the secret-values consent does not stand (non-ackable: allow it). */
+export function consentRequiredItems(plan: ImportPlan): ImportPlanItem[] {
+  return plan.items.filter((it) => it.kind === "app" && it.risks.some((r) => r.code === ENV_CONSENT_REQUIRED_CODE));
 }
 
 /** Items that will actually be imported after the acknowledgements. */

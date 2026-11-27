@@ -16,6 +16,8 @@ const unresolvedRisk = { level: "blocker" as const, code: "app.env.unresolved", 
 const invalidRisk = { level: "blocker" as const, code: "app.env.key.invalid", message: "1 variable name(s) are not valid environment keys and will be skipped: A=B" };
 const readOnlyRisk = { level: "blocker" as const, code: "app.env.tokenReadOnly", message: "the API token cannot read variable values" };
 
+const consentRisk = { level: "blocker" as const, code: "app.env.consentRequired", message: "the variable values are not read yet: allow reading secret values for this import" };
+
 const basePlan = (items: ImportPlan["items"], env: NonNullable<NonNullable<ImportPlan["preflight"]>["coverage"]>["env"]): ImportPlan => ({
   sourceKind: "coolify",
   mode: "copy",
@@ -79,6 +81,19 @@ describe("EnvBlockers", () => {
     expect(screen.getByText("locked-app")).toBeTruthy();
     expect(screen.queryByRole("checkbox")).toBeNull();
     expect(ackableItems(ro)).toEqual([]);
+  });
+
+  it("an agent session without the consent says to allow secret values, not to create a token, and offers no ack", () => {
+    const need = basePlan([app("a8", "agent-app", [consentRisk])], undefined);
+    wrap(<Harness p={need} />);
+    expect(screen.getByText("Secret values are not allowed for this import yet")).toBeTruthy();
+    expect(screen.getByText(/until you allow reading secret values for this import/)).toBeTruthy();
+    expect(screen.queryByText("The API token cannot read variable values")).toBeNull();
+    expect(screen.queryByText(/read:sensitive/)).toBeNull();
+    expect(screen.getByText("agent-app")).toBeTruthy();
+    expect(screen.queryByRole("checkbox")).toBeNull();
+    expect(ackableItems(need)).toEqual([]);
+    expect(runnableAfterAcks(need, new Set(["app:s:a8"]))).toBe(0);
   });
 
   it("renders nothing for a plan with no env blockers", () => {
