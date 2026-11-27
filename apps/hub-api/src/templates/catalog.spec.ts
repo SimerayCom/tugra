@@ -93,7 +93,7 @@ describe("template catalog", () => {
   });
 
   it("ships a large catalog (bulk import + curated) including v2-recovered templates", () => {
-    expect(Object.keys(TEMPLATES).length).toBeGreaterThanOrEqual(260); // importer v2 recovered ~31 more
+    expect(Object.keys(TEMPLATES).length).toBeGreaterThanOrEqual(360); // generated + curated + hand-written
   });
 
   it("every generated template carries exposure metadata pointing at a real service + container port", () => {
