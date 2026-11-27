@@ -163,7 +163,7 @@ less scripts/install.sh   # review it first
 - **锁定原始端口。** 当 `HUB_TRUSTED_PROXY=true` 时，hub 会信任 `X-Forwarded-For`（仅限来自私有 / 回环 / docker 对端，或 `HUB_TRUSTED_PROXY_CIDRS` 所列地址），原始的 `:3000`/`:3001` 端口应当**只**对代理开放。全新的 `--domain` 安装会把它们绑定到 `127.0.0.1`（同主机代理），已有安装在切换为 https 时也会被迁移到这种绑定（`--keep-raw-ports` 可选择不迁移）。如果代理运行在另一台主机上，请把 `HUB_BIND`/`WEB_BIND` 设置为本机内网网卡的 IP，并用防火墙限制这些端口——Docker 映射的端口会绕过 `ufw`。
 - **“Sign in with GitHub”** 仅在这种单一 origin 的代理部署下可用（hub 与 web 共用同一个公网 origin，会话 cookie 才能被 SPA 读取）；在普通的双端口快速开始模式下不可用。
 
-> 已发布的镜像（`ghcr.io/simeraycom/tugra-*`）会被自动拉取；在没有对应架构已发布镜像的主机上（目前是 arm64），安装脚本会基于您本地检出的代码构建——命令相同，无需任何改动。每个发布版本都固定到 digest，并附带签名的构建来源证明（provenance）；参见 [docs/upgrade.md](docs/upgrade.md)。
+> 已发布的镜像（`ghcr.io/simeraycom/tugra-*`）会被自动拉取；在没有对应架构已发布镜像的主机上，安装脚本会基于您本地检出的代码构建——命令相同，无需任何改动。每个发布版本都固定到 digest，并附带签名的构建来源证明（provenance）；参见 [docs/upgrade.md](docs/upgrade.md)。
 
 **MCP 快速开始。** Tugra 启动后，创建一个个人访问令牌（**Settings → API tokens**），然后让任意 MCP 客户端指向它：
 

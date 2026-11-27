@@ -44,7 +44,7 @@ applying an update. The pipeline lives in [`.github/workflows/release.yml`](../.
    `min_upgrade_from` (the minimum version required to upgrade directly to this release).
 4. The workflow:
    - builds + pushes `ghcr.io/simeraycom/tugra-{hub,web,agent,updater}:<version>` (and `:latest` for stable).
-     The **agent is multi-arch** (`linux/amd64,linux/arm64`); hub/web/updater are `amd64`. The agent image also vendors a pinned, sha256-verified, unmodified MinIO client (`mc`, AGPL-3.0, see `NOTICE`; the pins are `MC_VERSION` / `MC_SHA256` in `apps/hub-api/src/backups/destination.ts` and a jest drift test keeps `deploy/Dockerfile.agent` equal to them). Each image carries
+     All four images (hub, web, updater, agent) are multi-arch (`linux/amd64,linux/arm64`). The agent image also vendors a pinned, sha256-verified, unmodified MinIO client (`mc`, AGPL-3.0, see `NOTICE`; the pins are `MC_VERSION` / `MC_SHA256` in `apps/hub-api/src/backups/destination.ts` and a jest drift test keeps `deploy/Dockerfile.agent` equal to them). Each image carries
      **two** provenance layers (see [Supply-chain verification](#supply-chain-verification) below):
      - an **unsigned BuildKit SLSA provenance + SPDX SBOM**, attached as OCI attestation manifests in the
        index — inspect with
@@ -134,7 +134,7 @@ curl -fsSI -H "Authorization: Bearer $TOKEN" \
 ```
 
 > Always pin the **index** digest (multi-arch), never a per-arch manifest digest — an arm64 control plane
-> (`install.sh --build` on a Pi) must be able to resolve its own architecture.
+> (a Pi, Graviton or Ampere host) must be able to resolve its own architecture.
 
 **Auto-refresh:** `.github/dependabot.yml` runs the `docker-compose` updater weekly against `/deploy`; it
 rewrites the `@sha256:` digest when the pinned tag is re-pushed and opens a PR. A **major** bump
@@ -153,9 +153,9 @@ empty is exactly the old tag-only ref. The self-update sidecar sets them from th
 
 ## Notes & caveats
 
-- **Control-plane arch:** hub/web/updater are published `amd64`-only. A Raspberry-Pi / arm64 control plane
-  should install with `./scripts/install.sh --build` (builds from source natively). The **agent** runs on
-  managed servers of any arch and is always multi-arch.
+- **Control-plane arch:** hub, web, updater and agent are all published for `linux/amd64` and `linux/arm64`;
+  an arm64 control plane (Raspberry Pi, Graviton, Ampere) pulls the prebuilt images like an amd64 one.
+  Releases before this one have no arm64 hub/web/updater images; there the installer falls back to a source build.
 - **Published web image URL:** the `tugra-web` image bakes no `NEXT_PUBLIC_API_URL`; the SPA resolves the
   hub origin at runtime (`window.location.origin`). This makes the published image work out of the box for
   a single-origin (`--domain`) reverse-proxy deployment. A split-port deployment that needs a fixed

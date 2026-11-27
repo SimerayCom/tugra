@@ -86,21 +86,20 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # hub/web/updater run on the control-plane host (typically amd64). amd64-only keeps releases
-          # fast + reliable; a Pi/arm64 control plane uses `install.sh --build` to build natively.
+          # Every image is multi-arch: the control plane (hub/web/updater) runs on amd64 or arm64 hosts
+          # (Pi, Graviton, Ampere), and the agent runs on managed servers of any arch.
           - name: hub
             image: ghcr.io/simeraycom/tugra-hub
             dockerfile: deploy/Dockerfile.hub
-            platforms: linux/amd64
+            platforms: linux/amd64,linux/arm64
           - name: web
             image: ghcr.io/simeraycom/tugra-web
             dockerfile: deploy/Dockerfile.web
-            platforms: linux/amd64
+            platforms: linux/amd64,linux/arm64
           - name: updater
             image: ghcr.io/simeraycom/tugra-updater
             dockerfile: deploy/Dockerfile.updater
-            platforms: linux/amd64
-          # The agent runs on managed servers of ANY arch, so it must be multi-arch.
+            platforms: linux/amd64,linux/arm64
           - name: agent
             image: ghcr.io/simeraycom/tugra-agent
             dockerfile: deploy/Dockerfile.agent

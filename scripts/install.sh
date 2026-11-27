@@ -555,12 +555,8 @@ preflight() {
   arch="$(uname -m 2>/dev/null || echo '?')"
   case "$arch" in
     x86_64|amd64) ok "Architecture: $arch" ;;
-    aarch64|arm64)
-      # Only the agent image is published multi-arch; the hub/web/updater are amd64-only. So on an arm64
-      # control-plane host `compose pull` finds no matching image and the installer BUILDS them from source
-      # (correct, just slower + a little RAM) rather than failing. Say so up front — not a surprise long build.
-      note "arm64 host: the hub/web images are amd64-only, so they'll be BUILT from source here (a few minutes + ~2GB RAM). Automatic; pass --build to force it, or run the hub on an amd64 box to pull prebuilt images." ;;
-    *) note "Unusual architecture: $arch — prebuilt images target amd64, so the installer will build from source." ;;
+    aarch64|arm64) ok "Architecture: $arch" ;;
+    *) note "Unusual architecture: $arch — prebuilt images exist for amd64 and arm64 only, so the installer will build from source." ;;
   esac
   if [ -r /proc/meminfo ]; then
     memkb="$(awk '/^MemTotal:/{print $2}' /proc/meminfo 2>/dev/null || true)"
@@ -1101,7 +1097,7 @@ if pg_exists; then
   fi
 fi
 
-# Pull failure policy: only a genuinely MISSING image (no arch/tag match — the hub/web images are amd64-only)
+# Pull failure policy: only a genuinely MISSING image (no arch/tag match — e.g. a release published before arm64 images, or an unsupported arch)
 # on an UNPINNED install falls back to building this checkout. Any other failure (rate limit, network, auth),
 # or any pinned TUGRA_VERSION, stops here — it must never silently turn into un-released checkout code.
 pull_image_missing() { grep -qiE 'manifest unknown|not found|no matching manifest|manifest for .* not found' "$LOGDIR/pull.log" 2>/dev/null; }

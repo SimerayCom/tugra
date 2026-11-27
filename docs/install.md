@@ -6,7 +6,7 @@ install reference; the [project README](../README.md) has the short version.
 
 ## Prerequisites
 
-- A **Linux host** you control (amd64; arm64 works but builds from source — see below).
+- A **Linux host** you control (amd64 or arm64).
 - **Docker** + the **Compose v2** plugin. The installer installs Docker for you if it's missing.
 - `curl` (present on virtually every host); `git` is fetched by the installer if needed.
 - **1 vCPU and 1 GB RAM** is the floor (2 GB is comfortable): the installer sizes the whole stack from the host's RAM, see [RAM profiles](#ram-profiles).
@@ -56,8 +56,8 @@ owner account (to recover it later: `grep SETUP_CODE .env`). Then follow the onb
 your first server.
 
 Published images (`ghcr.io/simeraycom/tugra-*`) are public and pulled automatically, so a normal install
-is fast. If a pull can't be satisfied — an **arm64** host (the images are amd64-only) or an offline/mirror
-environment — the installer builds from your checkout instead (same command; it takes several minutes and
+is fast. If a pull can't be satisfied — an offline/mirror environment, or a release published before arm64
+images — the installer builds from your checkout instead (same command; it takes several minutes and
 wants ~2 GB RAM). Force either path with `--pull` or `--build`.
 
 **Classic raw ports.** `--raw-ports` (or `TUGRA_RAW_PORTS=1`) skips the proxy and publishes the panel on the raw
@@ -266,9 +266,9 @@ key and what it does. The stability secrets (`JWT_ACCESS_SECRET`, `JWT_REFRESH_S
 `SECRETS_ENCRYPTION_KEY`, `HUB_SIGNING_KEY`, `POSTGRES_PASSWORD`) are generated once and preserved
 across re-runs — regenerating them would invalidate sessions, encrypted data and the signing identity.
 
-**arm64 control plane:** the published hub/web/updater images are amd64-only. On an arm64 host
-(e.g. a Pi control plane) run `./scripts/install.sh --build` to build natively; the agent image is
-multi-arch, so managed servers of any architecture are supported.
+**arm64 control plane:** the hub, web, updater and agent images are published for amd64 and arm64, so an
+arm64 host (a Pi, Graviton or Ampere machine) pulls prebuilt images like any other. Managed servers of
+either architecture are supported.
 
 ### RAM profiles
 
