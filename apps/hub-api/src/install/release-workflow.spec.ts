@@ -52,13 +52,12 @@ describe(".github/workflows/release.yml", () => {
     }
   });
 
-  it("builds the agent multi-arch (amd64 + arm64) and the others amd64", () => {
+  it("builds every image multi-arch (amd64 + arm64)", () => {
     const include = doc.jobs["build-push"].strategy.matrix.include as Array<{ name: string; platforms: string }>;
-    const agent = include.find((e) => e.name === "agent")!;
-    expect(agent.platforms).toContain("linux/amd64");
-    expect(agent.platforms).toContain("linux/arm64");
-    for (const other of include.filter((e) => e.name !== "agent")) {
-      expect(other.platforms).toBe("linux/amd64");
+    expect(include.map((e) => e.name).sort()).toEqual(["agent", "hub", "updater", "web"]);
+    for (const entry of include) {
+      expect(entry.platforms).toContain("linux/amd64");
+      expect(entry.platforms).toContain("linux/arm64");
     }
   });
 
