@@ -1,0 +1,244 @@
+# Tugra — production stack (hub-api + web + postgres + redis).
+#
+# Managed by scripts/install.sh, which generates a repo-root .env (secrets, URLs) first. Manual use:
+#   docker compose --env-file .env -f deploy/docker-compose.yml pull        # published images (once released)
+#   docker compose --env-file .env -f deploy/docker-compose.yml up -d
+#   # or, from a source checkout when images are not yet published:
+#   docker compose --env-file .env -f deploy/docker-compose.yml up -d --build
+#
+# Each app service declares BOTH `image:` (published registry, the end state) and `build:` (this checkout).
+# `pull` uses the registry image; `up --build` builds from source. The installer picks automatically.
+name: tugra
+
+services:
+  postgres:
+    # Digest-pinned to the MULTI-ARCH manifest-list (OCI index) so a moved/compromised `16-alpine` tag can
+    # never swap the image — reproducible + tamper-evident. The tag stays readable; compose pulls by the
+    # @sha256 digest. Pin is kept fresh (within PG16) by .github/dependabot.yml; refresh manually with the
+    # command in docs/RELEASING.md. Resolved 2026-11-12 via the Docker Hub registry v2 API (index digest,
+    # header == sha256(body) verified): Accept application/vnd.oci.image.index.v1+json on
+    # registry-1.docker.io/v2/library/postgres/manifests/16-alpine.
+    image: postgres:16-alpine@sha256:aa6cb33cf4c19c765cefcf48d96176258800870a9a1e930ad126200f9d825139
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: tugra
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD}"
+      POSTGRES_DB: tugra
+    volumes:
+      - tugra_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tugra -d tugra"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    # Digest-pinned to the MULTI-ARCH manifest-list (OCI index); same rationale + refresh path as postgres
+    # above. Resolved 2026-11-12 via the Docker Hub registry v2 API (index digest, header == sha256(body)
+    # verified): registry-1.docker.io/v2/library/redis/manifests/7-alpine.
+    image: redis:7-alpine@sha256:7f7d30b7fdd09467bac58198a1f166dd69789d348d4fe859cccb20e0cf287fbe
+    restart: unless-stopped
+    volumes:
+      - tugra_redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  hub-api:
+    # Optional digest pin (set by the updater sidecar / installer as BARE 64-hex): `repo:tag@sha256:hex` — the registry
+    # enforces the content hash and ignores the tag. Written as two NON-nested substitutions so it works on every
+    # compose v2: ${TUGRA_HUB_DIGEST:+@sha256:} yields the prefix only when set, ${TUGRA_HUB_DIGEST:-} appends the hex (empty
+    # when unset). Unset/empty = exactly the tag-only ref (legacy). Unpin = set the var to an empty value.
+    image: "ghcr.io/simeraycom/tugra-hub:${TUGRA_VERSION:-latest}${TUGRA_HUB_DIGEST:+@sha256:}${TUGRA_HUB_DIGEST:-}"
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.hub
+    restart: unless-stopped
+    # Container memory ceiling (HUB_MEM_LIMIT, set by the tiny/small RAM profiles; 0 = none). It sits above the heap cap plus the
+    # measured native overhead (query engine, Buffers, code), so the cap bites first and a runaway cannot take Postgres with it.
+    mem_limit: "${HUB_MEM_LIMIT:-0}"
+    # The hub image self-runs `prisma migrate deploy` before boot (see deploy/Dockerfile.hub), so no
+    # separate migration step is needed — only a healthy database first.
+    #
+    # Forward the whole repo-root .env into the container so OPTIONAL operator config actually reaches the
+    # hub: ACME_EMAIL, GITHUB_OAUTH_*, MAIL_*, UPDATE_MANIFEST_URL/PUBLISHER_KEY, CATALOG_*, TUGRA_LICENSE,
+    # AGENT_IMAGE, NOTIFY_ALLOW_PRIVATE_TARGETS, ANTHROPIC_* … Without this, values set in .env are only
+    # used for compose interpolation and never seen by the app. The explicit `environment:` block below
+    # still wins (documents + forces the required keys); blank keys are treated as unset by validateEnv,
+    # and unknown keys are ignored by the env schema. (Path is relative to this compose file's directory.)
+    env_file:
+      - path: ../.env
+        required: false
+    environment:
+      DATABASE_URL: "${DATABASE_URL}"
+      REDIS_URL: "${REDIS_URL}"
+      NODE_ENV: "production"
+      # Cap the hub's V8 heap (MB, default below; override with HUB_MAX_HEAP_MB in .env, see docs/install.md). A burst of panel
+      # traffic then costs garbage collection instead of growing until the kernel OOM-kills the container on a small host
+      # with no swap. The default is >= 2x the heap the hub peaks at under the fleet load harness
+      # (apps/hub-api/scripts/perf); the database driver's native memory is outside this cap by design.
+      #   --max-semi-space-size: the young generation (16 MB is V8's own maximum, i.e. today's behaviour; the tiny/small profiles shrink it).
+      #   MALLOC_ARENA_MAX=2: glibc otherwise keeps up to 8 x cores malloc arenas, which on a busy Node process is tens of MB of RSS.
+      NODE_OPTIONS: "--max-old-space-size=${HUB_MAX_HEAP_MB:-768} --max-semi-space-size=${HUB_SEMI_SPACE_MB:-16}"
+      MALLOC_ARENA_MAX: "${HUB_MALLOC_ARENA_MAX:-2}"
+      # The hub's own Prisma pool, applied to its DATABASE_URL in the process (an explicit connection_limit/pool_timeout already in
+      # the URL wins; pg_dump and the migration step keep the untouched URL). Prisma's default is cpus x 2 + 1 (3 on a 1 vCPU host).
+      HUB_DB_CONNECTION_LIMIT: "${HUB_DB_CONNECTION_LIMIT:-16}"
+      HUB_DB_POOL_TIMEOUT: "${HUB_DB_POOL_TIMEOUT:-20}"
+      # Postgres and Redis sizing of the RAM profile. The hub applies these at boot (ALTER SYSTEM + reload, Redis CONFIG SET)
+      # instead of a `command:` on those services: the in-app updater never recreates the database or Redis, so a compose
+      # change there would block every in-app update. Unset (an install without a profile) = nothing is changed.
+      TUGRA_PG_SHARED_BUFFERS: "${TUGRA_PG_SHARED_BUFFERS:-}"
+      TUGRA_PG_EFFECTIVE_CACHE_SIZE: "${TUGRA_PG_EFFECTIVE_CACHE_SIZE:-}"
+      TUGRA_PG_WORK_MEM: "${TUGRA_PG_WORK_MEM:-}"
+      TUGRA_PG_MAINTENANCE_WORK_MEM: "${TUGRA_PG_MAINTENANCE_WORK_MEM:-}"
+      TUGRA_PG_MAX_CONNECTIONS: "${TUGRA_PG_MAX_CONNECTIONS:-}"
+      TUGRA_PG_PARALLEL_WORKERS: "${TUGRA_PG_PARALLEL_WORKERS:-}"
+      TUGRA_PG_MAX_WAL_SIZE: "${TUGRA_PG_MAX_WAL_SIZE:-}"
+      TUGRA_PG_CHECKPOINT_TIMEOUT: "${TUGRA_PG_CHECKPOINT_TIMEOUT:-}"
+      TUGRA_REDIS_MAXMEMORY: "${TUGRA_REDIS_MAXMEMORY:-}"
+      # No phone-home: stop the Prisma CLI (run at boot for `migrate deploy`) pinging checkpoint.prisma.io.
+      # Set here (not via .env) so it holds even on an already-pulled image and a user .env can't re-enable it.
+      CHECKPOINT_DISABLE: "1"
+      PRISMA_HIDE_UPDATE_MESSAGE: "1"
+      HUB_PUBLIC_URL: "${HUB_PUBLIC_URL}"
+      WEB_PUBLIC_URL: "${WEB_PUBLIC_URL}"
+      COOKIE_SECURE: "${COOKIE_SECURE}"
+      HUB_TRUSTED_PROXY: "${HUB_TRUSTED_PROXY:-false}"
+      JWT_ACCESS_SECRET: "${JWT_ACCESS_SECRET}"
+      JWT_REFRESH_SECRET: "${JWT_REFRESH_SECRET}"
+      SECRETS_ENCRYPTION_KEY: "${SECRETS_ENCRYPTION_KEY}"
+      SECRETS_ENCRYPTION_KEY_PREVIOUS: "${SECRETS_ENCRYPTION_KEY_PREVIOUS:-}"
+      HUB_SIGNING_KEY: "${HUB_SIGNING_KEY}"
+      # In-container listen port is fixed; HUB_PORT in .env only changes the HOST port mapping below.
+      HUB_PORT: "3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:3000/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 40s
+    ports:
+      # HUB_BIND defaults to 0.0.0.0 (quick start: agents dial host:3000). install.sh sets it to 127.0.0.1
+      # for a fresh --domain install, and moves a 0.0.0.0 bind to 127.0.0.1 when an install turns https or the
+      # bundled TLS proxy goes live (opt out: --keep-raw-ports), so the hub is reachable only through the
+      # reverse proxy. Defense in depth: with HUB_TRUSTED_PROXY the hub honors X-Forwarded-For only from
+      # private/loopback/docker peers (or HUB_TRUSTED_PROXY_CIDRS), so a direct public hit cannot forge it;
+      # HUB_TRUSTED_PROXY_STRICT=true narrows that to HUB_TRUSTED_PROXY_CIDRS only (set in .env, passed via env_file).
+      - "${HUB_BIND:-0.0.0.0}:${HUB_PORT:-3000}:3000"
+    networks:
+      # default: reached by the agent/postgres/redis by service name (unchanged). tugra-panel: the dedicated
+      # panel network Traefik joins for the control panel's HTTPS (DİLİM 1) — isolated from untrusted apps.
+      default: {}
+      tugra-panel:
+        aliases:
+          - tugra-panel-hub
+
+  web:
+    # Optional digest pin (set by the updater sidecar / installer as BARE 64-hex): `repo:tag@sha256:hex` — the registry
+    # enforces the content hash and ignores the tag. Written as two NON-nested substitutions so it works on every
+    # compose v2: ${TUGRA_WEB_DIGEST:+@sha256:} yields the prefix only when set, ${TUGRA_WEB_DIGEST:-} appends the hex (empty
+    # when unset). Unset/empty = exactly the tag-only ref (legacy). Unpin = set the var to an empty value.
+    image: "ghcr.io/simeraycom/tugra-web:${TUGRA_VERSION:-latest}${TUGRA_WEB_DIGEST:+@sha256:}${TUGRA_WEB_DIGEST:-}"
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.web
+      args:
+        # Baked into the client bundle at build time — must be the browser-reachable hub URL so the
+        # web terminal / webhook URLs point at the real hub (only applies to the build-from-source path).
+        NEXT_PUBLIC_API_URL: "${HUB_PUBLIC_URL}"
+    restart: unless-stopped
+    mem_limit: "${WEB_MEM_LIMIT:-0}"
+    # Only the internal proxy target — NO secrets in the web container (it never touches the DB or keys).
+    environment:
+      # Heap cap of the Next server (a proxy + SSR holds tens of MB of real heap; the cap only bites a runaway).
+      NODE_OPTIONS: "--max-old-space-size=${WEB_MAX_HEAP_MB:-512}"
+      MALLOC_ARENA_MAX: "${HUB_MALLOC_ARENA_MAX:-2}"
+      # Production mode for Next at runtime (the custom server entry does not go through `next start`, which forced it).
+      NODE_ENV: "production"
+      HUB_INTERNAL_URL: "http://hub-api:3000"
+      # Idle timeout of the web -> hub hop for file uploads/downloads (above the hub's 10-minute apply budget).
+      HUB_PROXY_TIMEOUT_MS: "${HUB_PROXY_TIMEOUT_MS:-660000}"
+      # The web server is the middle hop (reverse proxy -> web -> hub) and forwards the browser's IP to the hub, so it
+      # applies the hub's own trust rules (same variables, same .env): behind a trusted proxy it keeps only the
+      # X-Forwarded-For entry that proxy observed; from any other peer it replaces the chain with the socket address.
+      # A client reaching the web port can therefore never forge its IP (or a CF-Connecting-IP) past the hub.
+      HUB_TRUSTED_PROXY: "${HUB_TRUSTED_PROXY:-false}"
+      HUB_TRUSTED_PROXY_CIDRS: "${HUB_TRUSTED_PROXY_CIDRS:-}"
+      HUB_TRUSTED_PROXY_STRICT: "${HUB_TRUSTED_PROXY_STRICT:-false}"
+    depends_on:
+      - hub-api
+    ports:
+      - "${WEB_BIND:-0.0.0.0}:${WEB_PORT:-3001}:3001"
+    networks:
+      default: {}
+      tugra-panel:
+        aliases:
+          - tugra-panel-web
+
+  # Local agent: brings the "This machine" server ONLINE on a single-box install. It uses the host
+  # docker.sock and enrolls with LOCAL_AGENT_ENROLL_TOKEN (generated by scripts/install.sh).
+  agent:
+    image: "ghcr.io/simeraycom/tugra-agent:${TUGRA_VERSION:-latest}"
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.agent
+    restart: unless-stopped
+    environment:
+      TUGRA_HUB: "ws://hub-api:3000/agent"
+      TUGRA_TOKEN: "${LOCAL_AGENT_ENROLL_TOKEN}"
+      TUGRA_AGENT_IMAGE: "ghcr.io/simeraycom/tugra-agent:${TUGRA_VERSION:-latest}"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - tugra-agent-data:/root/.tugra
+      # Same path on the host: config files the agent writes for app bind-mounts must land on the host.
+      - /etc/tugra:/etc/tugra
+    depends_on:
+      hub-api:
+        condition: service_healthy
+
+  # Self-update sidecar. The hub can't recreate its own container, so it queues a job in Redis that this
+  # sidecar drains, then pulls + recreates hub-api/web (--no-deps, never postgres/redis; it is itself recreated
+  # last, by a detached one-shot helper, once an update is done — a container can't recreate itself). It has
+  # docker.sock but runs only scripts/update.sh's fixed pull/up command set (see SECURITY.md).
+  tugra-updater:
+    image: "ghcr.io/simeraycom/tugra-updater:${TUGRA_VERSION:-latest}"
+    # Without this the project prefix doubles the service name (`tugra-tugra-updater-1`). The SERVICE name is kept
+    # on purpose: update.sh, the hub's stack converge and every installed host-files validator address the service
+    # as `tugra-updater`, so an existing install moves to the new container name through the normal updater
+    # refresh (a changed service definition recreates it from the one-shot helper), never killing the running one.
+    container_name: tugra-updater
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.updater
+    profiles: ["updater"]
+    restart: unless-stopped
+    environment:
+      REDIS_URL: "redis://redis:6379"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ..:/repo
+    working_dir: /repo
+    command: ["bash", "scripts/update.sh", "--watch"]
+    depends_on:
+      - redis
+
+volumes:
+  tugra_pg:
+  tugra_redis:
+  tugra-agent-data:
+
+networks:
+  # `default` kept explicit so hub-api/web (which pin their networks) still share it with the agent + DBs.
+  default:
+  # Dedicated panel network (DİLİM 1): Traefik + hub + web ONLY. A fixed name (not project-prefixed) so the
+  # hub's `docker network connect tugra-panel tugra-proxy` and the panel-router aliases resolve as written.
+  tugra-panel:
+    name: tugra-panel
