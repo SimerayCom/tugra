@@ -15,7 +15,8 @@ export function readyToTest(baseUrl: string, token: string): boolean {
 }
 
 /** The i18n key of the single sentence a refusal gets. Anything the hub did not name falls back to the generic one. */
-export function failureKey(code: ImportConnectFailureCode | string | undefined): string {
+export function failureKey(code: ImportConnectFailureCode | string | undefined, kind?: string): string {
+  if (code === "unauthorized" && kind === "caprover") return "import.test.fail.unauthorizedPassword"; // CapRover has a password, not a token to create
   switch (code) {
     case "allowed-ips":
     case "api-disabled":

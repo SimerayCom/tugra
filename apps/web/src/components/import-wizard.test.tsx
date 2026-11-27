@@ -656,6 +656,26 @@ describe("ImportWizard", () => {
     expect(screen.getByText(/instead of the old CapRover one/)).toBeTruthy();
   });
 
+  it("CapRover: the password is never tried while it is typed, only on Connect", async () => {
+    wrap(<ImportWizard />);
+    await screen.findByRole("radio", { name: "CapRover" });
+    await waitFor(() => expect(qc.getQueryData(["teams"])).toBeTruthy());
+    fireEvent.click(screen.getByRole("radio", { name: "CapRover" }));
+    fireEvent.change(screen.getByLabelText("CapRover URL"), { target: { value: "https://captain.example.com" } });
+    fireEvent.blur(screen.getByLabelText("CapRover URL"));
+    fireEvent.change(screen.getByLabelText("Dashboard password"), { target: { value: "dash-password-1" } });
+    await new Promise((r) => setTimeout(r, 900));
+    expect(api.importTest).not.toHaveBeenCalled();
+  });
+
+  it("CapRover: a refused password reads as a password problem, not a token to create", async () => {
+    vi.spyOn(api, "importConnect").mockRejectedValue(new ApiError(400, "could not reach CapRover: CapRover API error 401", "unauthorized"));
+    wrap(<ImportWizard />);
+    await connectCaprover();
+    await screen.findByText(/did not accept this password/);
+    expect(screen.queryByText(/Create a new one/)).toBeNull();
+  });
+
   it("CapRover: a wrong password shows the hub's refusal and leaves the form to retry", async () => {
     vi.spyOn(api, "importConnect").mockRejectedValue(new Error("could not reach CapRover: CapRover API error 401 (check the dashboard password)"));
     wrap(<ImportWizard />);

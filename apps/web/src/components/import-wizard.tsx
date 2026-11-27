@@ -553,7 +553,7 @@ export function ImportWizard() {
         )}
       </MoreInfo>
 
-      <ConnectionStatus test={test} connectError={connect.isError ? (connect.error as Error) : null} source={t(src.name)} />
+      <ConnectionStatus test={test} connectError={connect.isError ? (connect.error as Error) : null} source={t(src.name)} kind={kind} />
 
       <MoreInfo label={t("import.advanced")}>
         <label style={label} htmlFor="imp-scope">{t("import.review.scopeLabel")}</label>

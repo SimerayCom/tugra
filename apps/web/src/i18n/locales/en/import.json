@@ -1054,6 +1054,7 @@
       "ability": "The token is missing an ability. It needs read and read:sensitive.",
       "forbidden": "{source} refused the token.",
       "unauthorized": "{source} did not accept this token. Create a new one.",
+      "unauthorizedPassword": "{source} did not accept this password. Check it and connect again.",
       "rate-limited": "{source} is limiting requests. Wait a minute and try again.",
       "other": "Could not reach {source}. Check the address."
     }
