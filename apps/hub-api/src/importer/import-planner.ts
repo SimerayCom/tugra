@@ -12,7 +12,7 @@ import type {
 } from "./foreign-fleet";
 import { mapBuildPack } from "./buildpack-map";
 import { validContainerPrefix } from "./container-prefix";
-import { foreignAppToVolumes } from "./apply-map";
+import { foreignAppToIngressPlan, foreignAppToVolumes } from "./apply-map";
 import { transformServiceCompose, type ServiceTransformResult } from "./import-service-map";
 import type { ForeignService } from "./foreign-fleet";
 import { TEMPLATES } from "../templates/catalog";
@@ -50,7 +50,8 @@ export function planImport(fleet: ForeignFleet, options: ImportOptions): ImportP
     }
   }
 
-  const appItems = fleet.apps.map((app) => planApp(app, dbByRef, carried, treeRisk(fleet.projects, app, "app.project")));
+  const svcByRef = new Map((fleet.services ?? []).map((sv) => [sv.sourceRef, sv]));
+  const appItems = fleet.apps.map((app) => planApp(app, dbByRef, svcByRef, carried, treeRisk(fleet.projects, app, "app.project")));
 
   // Services (Coolify stacks) become stopped compose apps. Only the sources that implement `fetchServiceBundle` can carry
   // them, but the plan classifies every discovered service honestly. A fleet without services adds nothing here.
@@ -134,7 +135,32 @@ function planDatabase(db: ForeignDb, tree?: ImportRisk, volumeMode = false, sour
   };
 }
 
-function planApp(app: ForeignApp, dbByRef: Map<string, ForeignDb>, volumesCarried: boolean, tree?: ImportRisk): ImportPlanItem {
+/**
+ * The note for an app with several hostnames, from what the apply will really do (the same {@link foreignAppToIngressPlan} the executor
+ * runs): the primary is the same pick the create step makes, the other hostnames are added to the app, and only the ones Tugra cannot
+ * serve (a different route for a host already taken, a limit, an invalid name) are named as not carried. The www / bare counterpart of
+ * the primary needs no row: Tugra serves both.
+ */
+function multiDomainRisk(app: ForeignApp, domains: NonNullable<ForeignApp["domains"]>): ImportRisk {
+  const lc = (h: string): string => h.trim().replace(/\.+$/, "").toLowerCase();
+  const primary = domains.find((d) => d.primary) ?? domains[0];
+  let ingress: ReturnType<typeof foreignAppToIngressPlan>;
+  try {
+    ingress = foreignAppToIngressPlan(app);
+  } catch {
+    // The plan never fails on a note: the apply reports what it could not carry (its own 'ingress' entry).
+    return { level: "info", code: "app.domain.multi", message: `${domains.length} domains: "${primary.host}" is the primary; the import result lists which of the others were carried` };
+  }
+  const base = lc(primary.host).replace(/^www\./, "");
+  const carried = new Set([lc(primary.host), ...ingress.extraDomains.map(lc), ...ingress.serviceDomains.map((d) => lc(d.hostname))]);
+  const notCarried = [...new Set(domains.map((d) => lc(d.host)))].filter((h) => !carried.has(h) && h !== base && h !== `www.${base}`).sort();
+  const added = carried.size - 1;
+  const head = `${domains.length} domains: "${primary.host}" is the primary${added > 0 ? `, ${added} more ${added === 1 ? "is" : "are"} added to the app` : ""}`;
+  if (notCarried.length === 0) return { level: "info", code: "app.domain.multi", message: head };
+  return { level: "warn", code: "app.domain.multi", message: `${head}; ${notCarried.length} cannot be carried (${notCarried.slice(0, 5).join(", ")}${notCarried.length > 5 ? ", ..." : ""}) - the import result gives the reason for each` };
+}
+
+function planApp(app: ForeignApp, dbByRef: Map<string, ForeignDb>, svcByRef: Map<string, ForeignService>, volumesCarried: boolean, tree?: ImportRisk): ImportPlanItem {
   const risks: ImportRisk[] = [];
   if (tree) risks.push(tree);
   const build = mapBuildPack(app);
@@ -148,7 +174,7 @@ function planApp(app: ForeignApp, dbByRef: Map<string, ForeignDb>, volumesCarrie
   if ((build.source === "GIT" || build.source === "COMPOSE") && app.git?.provider === "github") risks.push({ level: "warn", code: "app.git.private", message: "GitHub source via the source PaaS's GitHub-App install: private repos are linked at apply to the connected GitHub/Gitea source that can actually see the repo; none or several => left unlinked and listed (connect one, then use Re-check or Link now)" });
 
   const domains = app.domains ?? [];
-  if (domains.length > 1) risks.push({ level: "warn", code: "app.domain.multi", message: `${domains.length} domains — the first ("${domains[0].host}") is primary; add the rest after` });
+  if (domains.length > 1) risks.push(multiDomainRisk(app, domains));
   // What runCopyApp will actually declare (same mapper → the plan can't drift from the executor). null for
   // local-docker, which adopts in place and re-attaches the original named volumes by name (not via this mapper).
   const mappedVolumes = volumesCarried ? null : foreignAppToVolumes(app);
@@ -186,13 +212,14 @@ function planApp(app: ForeignApp, dbByRef: Map<string, ForeignDb>, volumesCarrie
   }
   if (app.envReport) risks.push(...envReportRisks(app.envReport));
 
-  // Ordering: the app waits for its linked databases and its volumes. Volume refs are sorted + de-duped so the
+  // Ordering: the app waits for its linked databases and services (stacks) and its volumes. A link to another app is not an ordering
+  // (two apps may point at each other, and each would wait for the other forever). Volume refs are sorted + de-duped so the
   // item (hence planHash) is independent of the source's mount discovery order — the apply-time stale-guard
   // relies on two scans of an unchanged host hashing equal.
   const dependsOn = [
     ...(app.links ?? [])
-      .filter((l) => l.kind === "database")
-      .map((l) => ns("database", dbByRef.get(l.ref)?.serverRef ?? app.serverRef, l.ref)),
+      .filter((l) => (l.kind === "database" && dbByRef.has(l.ref)) || (l.kind === "service" && svcByRef.has(l.ref)))
+      .map((l) => (l.kind === "service" ? ns("service", svcByRef.get(l.ref)!.serverRef ?? app.serverRef, l.ref) : ns("database", dbByRef.get(l.ref)!.serverRef ?? app.serverRef, l.ref))),
     ...[...new Set((app.volumes ?? []).map((v) => ns("volume", app.serverRef, volKey(v))))].sort(),
   ];
 
