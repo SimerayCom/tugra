@@ -55,6 +55,10 @@ local agent, pre-pulls the updater image and then recreates the updater itself o
 install only gains a new updater capability (the snapshot, the compose/script updates below) after that checkout is
 updated once with `git pull && ./scripts/install.sh` (below).
 
+### Updates wait for running work
+
+An update restarts the hub or an agent, so it does not start while work is running that the restart would cut off: migrations, Coolify takeovers, DNS cutovers, project and app moves, volume and object transfers, Coolify cleanups, import applies, deployments, backups and restores (including point-in-time restores and restore checks), staged rollouts, swarm changes, server patching, reboots and agent updates still settling. Work that is only scheduled for later does not count. A hub update waits for anything on the hub; an agent update waits only for work that touches that server. Settings → Updates and the server pages list what is running. An automatic update is skipped on that check, says why in the update status, and runs on the first check after the hub is idle. A manual update answers `409` with code `migration-active` and the list. **Update anyway** (`"force": true` in the API) updates through it: the hub update is for the instance owner, an agent update for an owner or admin of the team, and both are written to the audit log with the list. A run that is cut off may need to be resumed or rolled back afterwards.
+
 ### An update can not leave a half state
 
 The order is built so that no failure can leave `.env` naming a release that is not installed:
