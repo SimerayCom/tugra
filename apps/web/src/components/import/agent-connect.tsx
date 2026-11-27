@@ -52,7 +52,7 @@ export function AgentConnectPanel({
   const [teamRef, setTeamRef] = useState("");
   const server = candidates.find((s) => s.id === serverId) ?? null;
 
-  const { data: detect } = useQuery({ queryKey: ["coolify-detect", serverId], queryFn: () => api.coolifyDetect(serverId), enabled: !!serverId && !session, retry: false, staleTime: 30_000 });
+  const { data: detect, isFetching: detecting } = useQuery({ queryKey: ["coolify-detect", serverId], queryFn: () => api.coolifyDetect(serverId), enabled: !!serverId && !session, retry: false, staleTime: 30_000 });
 
   const connect = useMutation({
     mutationFn: async (optIn: boolean) => {
@@ -105,14 +105,15 @@ export function AgentConnectPanel({
         </section>
 
         {needsTeamChoice(session.teams) && (
-          <AgentTeamPick teams={session.teams ?? []} value={teamRef} onChange={(ref) => pickTeam.mutate(ref)} disabled={pickTeam.isPending} />
+          <AgentTeamPick teams={session.teams ?? []} value={pickTeam.isPending ? pickTeam.variables ?? "" : teamRef} onChange={(ref) => pickTeam.mutate(ref)} disabled={pickTeam.isPending} />
         )}
+        {pickTeam.isPending && <Working text={t("coolifyAgent.team.reading", { team: session.teams?.find((tm) => tm.ref === pickTeam.variables)?.name ?? "" })} />}
 
         {!teamOpen && <AgentConsentCard serverId={server.id} serverName={server.name} teamId={server.teamId} sessionId={session.sessionId} secretCounts={session.read.secretCounts} />}
 
         <div style={{ display: "grid", gap: 6 }}>
-          <Btn onClick={() => onConnected(session, { id: server.id, name: server.name, teamId: server.teamId })} disabled={busy || teamOpen || pickTeam.isPending}>{t("coolifyAgent.connect.continue")}</Btn>
-          <p style={{ margin: 0, fontSize: 12, color: "var(--c-tx3)" }}>{teamOpen ? t("coolifyAgent.team.pickFirst") : t("coolifyAgent.connect.continueHint")}</p>
+          <Btn onClick={() => onConnected(session, { id: server.id, name: server.name, teamId: server.teamId })} disabled={busy || teamOpen} loading={pickTeam.isPending}>{t("coolifyAgent.connect.continue")}</Btn>
+          {!pickTeam.isPending && <p style={{ margin: 0, fontSize: 12, color: "var(--c-tx3)" }}>{teamOpen ? t("coolifyAgent.team.pickFirst") : t("coolifyAgent.connect.continueHint")}</p>}
         </div>
       </div>
     );
@@ -143,6 +144,10 @@ export function AgentConnectPanel({
         </div>
       )}
 
+      {serverId && detecting && !detect && <Working text={t("coolifyAgent.connect.detecting", { name: server?.name ?? "" })} />}
+      {serverId && detect?.found === true && !connect.isPending && (
+        <p role="status" style={{ margin: 0, fontSize: 12, color: "var(--c-g)", lineHeight: 1.5 }}>{t("coolifyAgent.connect.detected", { name: server?.name ?? "" })}</p>
+      )}
       {serverId && detect && !detect.found && (
         <p role="status" style={{ margin: 0, fontSize: 12, color: "var(--c-am)", lineHeight: 1.5 }}>{t(`coolifyAgent.error.${detect.reason === "no_docker" ? "no_docker" : detect.reason === "db_stopped" ? "db_stopped" : "no_coolify"}`)}</p>
       )}
@@ -161,5 +166,15 @@ export function AgentConnectPanel({
         <p style={{ margin: 0, fontSize: 12, color: "var(--c-tx3)" }}>{t("coolifyAgent.read.nothingChanged")}</p>
       </div>
     </div>
+  );
+}
+
+/** A one-line "working on it" status with a small spinner, announced to screen readers. */
+function Working({ text }: { text: string }) {
+  return (
+    <p role="status" aria-live="polite" style={{ margin: 0, display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "var(--c-tx2)", lineHeight: 1.5 }}>
+      <span aria-hidden style={{ width: 12, height: 12, flexShrink: 0, border: "2px solid currentColor", borderTopColor: "transparent", borderRadius: "50%", animation: "spin 0.7s linear infinite", opacity: 0.8 }} />
+      {text}
+    </p>
   );
 }

@@ -172,6 +172,20 @@ describe("AgentConnectPanel", () => {
       expect(onConnected).toHaveBeenCalledWith(PICKED, { id: "s1", name: "coolify-host", teamId: "t1" });
     });
 
+    it("while the picked team is read, the picker keeps the choice and says what is happening", async () => {
+      let finish: (s: ImportAgentSession) => void = () => undefined;
+      vi.spyOn(api, "importConnectAgent").mockResolvedValueOnce(MULTI).mockImplementationOnce(() => new Promise((r) => { finish = r; }));
+      vi.spyOn(api, "importRevoke").mockResolvedValue({ ok: true });
+      mount();
+      await read();
+      fireEvent.change(screen.getByLabelText("Coolify team"), { target: { value: "2" } });
+      await screen.findByText("Reading Beta from Coolify. This takes a few seconds…");
+      expect((screen.getByLabelText("Coolify team") as HTMLSelectElement).value).toBe("2");
+      expect(screen.getByRole("button", { name: "Continue" }).getAttribute("aria-busy")).toBe("true");
+      finish(PICKED);
+      await waitFor(() => expect(screen.queryByText("Reading Beta from Coolify. This takes a few seconds…")).toBeNull());
+    });
+
     it("a failed re-read keeps the owner on the choice with the reason; one team or none shows no picker", async () => {
       vi.spyOn(api, "importConnectAgent").mockResolvedValueOnce(MULTI).mockRejectedValueOnce(new ApiError(400, "x", "unknown_team"));
       mount();
