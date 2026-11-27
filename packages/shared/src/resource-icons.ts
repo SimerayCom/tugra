@@ -387,6 +387,9 @@ const IMAGE_ALIASES: Readonly<Record<string, string>> = {
 /** Registries and namespaces that carry no meaning for the icon. */
 const NAMESPACE_SKIP = new Set(["library", "bitnami", "bitnamilegacy", "linuxserver", "lscr.io"]);
 
+/** A word that only says which build of an engine an image is (a version, a base image, an edition). */
+const VARIANT_WORD = /^(\d[\w.]*|v\d[\w.]*|alpine|slim|ha|server|community|enterprise|oss|ce|ee|lts|latest|stable|bookworm|bullseye|debian|ubuntu|apache|fpm|cluster|standalone|stack|bundle|management|pg\d+)$/;
+
 function stripTag(ref: string): string {
   let s = ref.trim().toLowerCase();
   const at = s.indexOf("@");
@@ -416,11 +419,10 @@ export function iconKeyForImage(image: string | null | undefined): string | null
     if (alias) return KEY_SET.has(alias) ? alias : null;
   }
   if (KEY_SET.has(name)) return name;
-  // postgres-16, postgresql-ha: the leading word names the engine.
-  // Tooling around an engine (exporter, backup, proxy) is not the engine, so it gets no engine icon.
-  const head = name.split(/[-_.]/)[0];
-  if (head !== name && !/(exporter|backup|proxy|admin|operator|cli|sidecar)/.test(name)) {
-    const a = IMAGE_ALIASES[head] ?? head;
+  // postgres-16, postgresql-ha, redis-stack-alpine: the leading word names the engine, the rest only names a variant.
+  const [headWord, ...rest] = name.split(/[-_.]/);
+  if (rest.length > 0 && rest.every((w) => VARIANT_WORD.test(w))) {
+    const a = IMAGE_ALIASES[headWord] ?? headWord;
     if (a && KEY_SET.has(a)) return a;
   }
   return null;

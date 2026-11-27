@@ -62,6 +62,13 @@ describe("iconKeyForImage", () => {
     }
   });
 
+  it("reads a variant name but not a different product that starts with an engine name", () => {
+    expect(iconKeyForImage("acme/postgres-16")).toBe("postgresql");
+    expect(iconKeyForImage("acme/redis-stack-alpine")).toBe("redis");
+    expect(iconKeyForImage("acme/redis-dashboard")).toBeNull();
+    expect(iconKeyForImage("acme/mysql-admin-panel")).toBeNull();
+  });
+
   it("does not give a database icon to tooling around it", () => {
     expect(iconKeyForImage("prometheuscommunity/postgres-exporter")).toBeNull();
     expect(iconKeyForImage("prodrigestivill/postgres-backup-local")).toBeNull();
