@@ -185,7 +185,8 @@ export class TelemetryService {
   /** Serialize the payload once and sign those exact bytes (ed25519). The receiver verifies the signature
    *  over the raw request body, so the string that is signed is the string that is sent. */
   async signPayload(payload: TelemetryPayload): Promise<{ body: string; signature: string }> {
-    const { privateKey } = await this.getIdentity();
+    const { privateKey, hubId } = await this.getIdentity();
+    if (hubId !== payload.hubId) throw new Error("hub identity changed while the report was built"); // reset raced the send
     const body = JSON.stringify(payload);
     return { body, signature: sign(null, Buffer.from(body, "utf8"), privateKey).toString("base64url") };
   }

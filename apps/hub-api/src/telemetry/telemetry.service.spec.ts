@@ -132,6 +132,19 @@ describe("TelemetryService", () => {
     }
   });
 
+  it("counts compose stacks as services and every other app as applications", async () => {
+    const settings = makeSettings();
+    const prisma = makePrisma(0, settings) as unknown as { application: { count: jest.Mock } };
+    prisma.application.count.mockImplementation(({ where }: { where?: { source?: unknown } } = {}) =>
+      Promise.resolve(where?.source === "COMPOSE" ? 4 : 9),
+    );
+    const svc = new TelemetryService(makeConfig(), prisma as unknown as PrismaService, settings, crypto);
+    const p = await svc.buildPayload();
+    expect(p.counts.services).toBe(4);
+    expect(p.counts.applications).toBe(9);
+    expect(prisma.application.count).toHaveBeenCalledWith({ where: { source: { not: "COMPOSE" } } });
+  });
+
   it("hubId is the first 32 hex chars of sha256(raw public key), and the private key is stored sealed", async () => {
     const { svc, settings } = make();
     const id = await svc.getIdentity();
@@ -167,6 +180,13 @@ describe("TelemetryService", () => {
     expect(verify(null, Buffer.from(body, "utf8"), pub, Buffer.from(signature, "base64url"))).toBe(true);
     // any change to the body breaks it
     expect(verify(null, Buffer.from(body.replace('"servers":2', '"servers":3'), "utf8"), pub, Buffer.from(signature, "base64url"))).toBe(false);
+  });
+
+  it("signPayload refuses a report whose hubId no longer matches the stored identity", async () => {
+    const { svc } = make();
+    const payload = await svc.buildPayload();
+    await svc.resetIdentity();
+    await expect(svc.signPayload(payload)).rejects.toThrow(/identity changed/);
   });
 
   it("sendNow posts the signed body to the default URL with the signature header and records lastSentAt on a 2xx", async () => {
