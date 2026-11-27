@@ -12,7 +12,8 @@ import { useConfirm } from "./confirm";
 import { CopyBtn } from "./copy-row";
 import { ImportReviewStep } from "./import-review-step";
 import { ImportScopeStep } from "./import-scope-step";
-import { scopedPlan, scopeServiceSkips, type ImportScope, type ScopeSelection } from "../lib/import-scope";
+import type { SourceServerRow } from "../lib/migration-run";
+import { scopedPlan, scopeServiceSkips, splitByPlacement, type ImportScope, type ScopeSelection } from "../lib/import-scope";
 import { clearImportResume, loadImportResume, saveImportResume } from "../lib/import-resume";
 import { IMPORT_PREFILL_KEY } from "../lib/coolify-takeover";
 import { focusSelection, focusSubject, lastImportUrl, rememberLastImportUrl, takeImportFocus, type ImportFocus } from "../lib/import-focus";
@@ -653,6 +654,8 @@ function PlanView({
   const t = useT();
   const toast = useToast();
   const s = planSummary(plan);
+  // Where the data goes: what stays on its own machine keeps its data (no copy, no migrator, no data mode), only what moves to another server needs those.
+  const { moved, stays } = splitByPlacement(plan, scope);
   // An agent session cannot be applied without the owner's consent for secret values standing now: the controls stay off until it does.
   const consentMissing = needsConsent(fullPlan);
   const groups = itemsByKind(plan);
@@ -750,12 +753,14 @@ function PlanView({
           </div>
         )}
 
+        {stays.length > 0 && <InPlaceDataNote stays={stays} />}
+
         {plan.preflight && (
           <div style={{ marginTop: 14 }}>
             <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 6 }}>{t("import.preflightTitle")}</div>
-            {plan.preflight.databases.length > 0 && (
+            {moved.preflight && moved.preflight.databases.length > 0 && (
               <ul style={{ margin: 0, padding: 0, listStyle: "none", display: "flex", flexDirection: "column", gap: 4 }}>
-                {plan.preflight.databases.map((d, i) => (
+                {moved.preflight?.databases.map((d, i) => (
                   <li key={i} style={{ fontSize: 12, display: "flex", gap: 8, alignItems: "baseline", flexWrap: "wrap" }}>
                     <span
                       style={{
@@ -804,16 +809,16 @@ function PlanView({
                 </ul>
               </div>
             )}
-            {plan.preflight.volumeDataNote && (
+            {plan.preflight.volumeDataNote && movedHasVolumeData(moved, stays.length > 0) && (
               <p style={{ fontSize: 12, color: "var(--c-am)", margin: "10px 0 0" }}>{plan.preflight.volumeDataNote}</p>
             )}
-            {(plan.preflight.volumes ?? []).some((v) => v.dataPlane === "stream") && (
+            {(moved.preflight?.volumes ?? []).some((v) => v.dataPlane === "stream") && (
               <p style={{ fontSize: 11, color: "var(--c-tx3)", margin: "8px 0 0" }}>{t("import.vx.warn.fidelity")}</p>
             )}
           </div>
         )}
 
-        <DbDataModes plan={plan} modes={dbModes} busy={replanning} onChange={onDbModes} />
+        <DbDataModes plan={moved} modes={dbModes} busy={replanning} onChange={onDbModes} />
 
         {consentMissing && (
           <div style={{ marginTop: 14 }}>
@@ -1056,6 +1061,34 @@ function MigrateDataCard({ opId, sourceKind = "coolify" }: { opId: string; sourc
   );
 }
 
+/** The volume-data paragraph (empty volumes, streaming DATA with the migrator) is about what moves to another server. With nothing placed in
+ *  place it stays as the hub wrote it; with some, it shows only while a moved app can still carry volume data. */
+function movedHasVolumeData(moved: ImportPlan, someStay: boolean): boolean {
+  if (!someStay) return true;
+  if (!moved.items.some((i) => i.kind === "app")) return false;
+  const rows = moved.preflight?.volumes;
+  return rows === undefined || rows.length > 0;
+}
+
+/** What the preview says for the source servers that stay on their own machine: the data stays where it is. */
+function InPlaceDataNote({ stays }: { stays: SourceServerRow[] }) {
+  const t = useT();
+  return (
+    <div data-testid="in-place-data" role="note" style={{ marginTop: 14, fontSize: 12, color: "var(--c-tx2)", lineHeight: 1.5 }}>
+      <p style={{ margin: 0 }}>
+        <strong>{t("import.inPlaceData.title")}</strong> {t("import.inPlaceData.body")}
+      </p>
+      <ul style={{ margin: "6px 0 0", paddingLeft: 18, color: "var(--c-tx3)" }}>
+        {stays.map((r) => (
+          <li key={r.ref}>
+            <span className="mono">{r.name ?? r.ref}</span> — {t("import.inPlaceData.counts", { apps: String(r.apps), databases: String(r.databases), services: String(r.services) })}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 /** PostgreSQL databases may be copied as a data DIRECTORY (volume copy) instead of a logical dump. Choosing it re-plans (the
  *  planHash then covers the choice), locks the target to the source image/major/names and says why. */
 function DbDataModes({ plan, modes, busy, onChange }: { plan: ImportPlan; modes: Record<string, "volume">; busy: boolean; onChange: (next: Record<string, "volume">) => void }) {
@@ -1071,6 +1104,10 @@ function DbDataModes({ plan, modes, busy, onChange }: { plan: ImportPlan; modes:
   return (
     <div style={{ marginTop: 14 }}>
       <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 6 }}>{t("import.vx.mode.label")}</div>
+      <ul data-testid="data-mode-tradeoff" style={{ margin: "0 0 8px", paddingLeft: 18, fontSize: 12, color: "var(--c-tx2)", lineHeight: 1.5 }}>
+        <li>{t("import.vx.mode.dumpHint")}</li>
+        <li>{t("import.vx.mode.volumeHint")}</li>
+      </ul>
       <ul style={{ margin: 0, padding: 0, listStyle: "none", display: "flex", flexDirection: "column", gap: 8 }}>
         {cands.map((it) => {
           const volume = it.proposed.dataMode === "volume";

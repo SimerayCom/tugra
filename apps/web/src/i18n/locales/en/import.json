@@ -51,6 +51,11 @@
   "blockers": "Blockers",
   "warnings": "Notes",
   "preflightTitle": "What will migrate",
+  "inPlaceData": {
+    "title": "Same machine: the data stays where it is.",
+    "body": "Tugra takes over the containers and volumes Coolify already runs and swaps the proxy. Nothing is copied: no migrator and no data mode to choose for these.",
+    "counts": "{apps} apps, {databases} databases, {services} services stay in place"
+  },
   "dataAuto": "migrator",
   "dataManual": "manual",
   "dataBlocked": "blocked",
@@ -722,6 +727,8 @@
       "label": "Data mode",
       "dump": "Logical dump",
       "volume": "Volume copy",
+      "dumpHint": "Logical dump (the default): works across versions and images, any size through the checked stream.",
+      "volumeHint": "Volume copy: PostgreSQL only, needs the same image and major, copies the data directory as it is, fastest for big databases.",
       "volumeLocked": "Volume copy keeps the source image, its PostgreSQL major and the carried database and user names, because a physical copy only works with the same image, major and credentials.",
       "volumeOnlyPostgres": "Volume copy is only offered for PostgreSQL.",
       "replanning": "Updating the plan..."

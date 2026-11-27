@@ -1385,6 +1385,90 @@ describe("ImportWizard — editable mapping", () => {
     expect((screen.getByRole("checkbox", { name: /Box Two/ }) as HTMLInputElement).checked).toBe(true);
   });
 
+  describe("the preview follows where each server goes", () => {
+    const MIGRATOR = "migrator-assisted: run the migrator on the source host; a database of any size moves";
+    const VOLNOTE = "empty volumes are declared on the new apps; the migrator streams their DATA";
+    // Box One is the same machine as Server A (a sure match: it stays in place); Box Two has no match (it moves to another server)
+    const placed: ImportPlan = {
+      ...plan,
+      totals: { apps: 2, databases: 2, volumes: 0, blockers: 0 },
+      items: [
+        { itemRef: "app:s1:web", kind: "app", name: "web-app", proposed: {}, risks: [], dependsOn: [] },
+        { itemRef: "database:s1:pg1", kind: "database", name: "stays-db", proposed: { engine: "POSTGRES", version: "16", image: "postgres:16-alpine" }, risks: [], dependsOn: [] },
+        { itemRef: "app:s2:api", kind: "app", name: "api-app", proposed: {}, risks: [], dependsOn: [] },
+        { itemRef: "database:s2:pg2", kind: "database", name: "moves-db", proposed: { engine: "POSTGRES", version: "16", image: "postgres:16-alpine" }, risks: [], dependsOn: [] },
+      ],
+      preflight: {
+        databases: [
+          { name: "stays-db", engine: "POSTGRES", dataPlane: "one-click", reason: MIGRATOR },
+          { name: "moves-db", engine: "POSTGRES", dataPlane: "one-click", reason: MIGRATOR },
+        ],
+        services: [],
+        appsWithVolumeData: 2,
+        volumeDataNote: VOLNOTE,
+        volumes: [
+          { app: "web-app", mountPath: "/data", dataPlane: "stream", reason: "streamed" },
+          { app: "api-app", mountPath: "/data", dataPlane: "stream", reason: "streamed" },
+        ],
+        hosts: [
+          { ref: "s1", name: "Box One", tugra: { serverId: "srv1", name: "Server A", teamId: "t1", via: "public-ip", confidence: "certain" } },
+          { ref: "s2", name: "Box Two" },
+        ],
+      },
+      mapping: { features: ["mapping-v1"], stored: null, storedVersion: null, scopeKey: "team-3" },
+    };
+    const toPreview = async (hosts: string[], target?: string) => {
+      vi.spyOn(api, "importConnect").mockResolvedValue({ sessionId: "s1", expiresAt: "2026-01-01T00:00:00.000Z" });
+      vi.spyOn(api, "importPlan").mockResolvedValue(placed);
+      wrap(<ImportWizard />);
+      await openToken();
+      await waitFor(() => expect(qc.getQueryData(["teams"])).toBeTruthy());
+      fireEvent.change(screen.getByLabelText("Coolify URL"), { target: { value: "https://c.example.com" } });
+      fireEvent.change(screen.getByLabelText("API token"), { target: { value: "tok" } });
+      fireEvent.click(screen.getByRole("button", { name: "Connect & preview" }));
+      await screen.findByText("What are you moving?");
+      // a server the hub is sure about is already ticked: bring each box to the wanted state
+      for (const h of ["Box One", "Box Two"]) {
+        const box = screen.getByRole("checkbox", { name: new RegExp(h) }) as HTMLInputElement;
+        if (box.checked !== hosts.includes(h)) fireEvent.click(box);
+      }
+      if (target) await chooseTarget("Box Two", target);
+      fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+      await screen.findByText("Import preview");
+    };
+
+    it("only servers that stay on their own machine: the data stays, and no migrator text, no data mode, no volume paragraph", async () => {
+      await toPreview(["Box One"]);
+      expect(screen.getByTestId("in-place-data").textContent).toContain("the data stays where it is");
+      expect(screen.getByTestId("in-place-data").textContent).toContain("no migrator");
+      expect(screen.queryByText(/migrator-assisted/)).toBeNull();
+      expect(screen.queryByRole("radiogroup", { name: /Data mode/ })).toBeNull();
+      expect(screen.queryByTestId("data-mode-tradeoff")).toBeNull();
+      expect(screen.queryByText(/empty volumes are declared/)).toBeNull();
+    });
+
+    it("only servers that move: the migrator row, the data mode picker with one line per trade-off, and the volume paragraph stay", async () => {
+      await toPreview(["Box Two"], "srv2");
+      expect(screen.queryByTestId("in-place-data")).toBeNull();
+      expect(screen.getByText(/migrator-assisted/)).toBeTruthy();
+      expect(screen.getByRole("radiogroup", { name: "Data mode: moves-db" })).toBeTruthy();
+      const tradeoff = screen.getByTestId("data-mode-tradeoff").textContent ?? "";
+      expect(tradeoff).toContain("Logical dump (the default): works across versions and images, any size through the checked stream.");
+      expect(tradeoff).toContain("Volume copy: PostgreSQL only, needs the same image and major, copies the data directory as it is, fastest for big databases.");
+      expect(screen.getByText(/empty volumes are declared/)).toBeTruthy();
+    });
+
+    it("a mix: the stay-in-place server says so, and only the moved database gets the migrator row and a data mode", async () => {
+      await toPreview(["Box One", "Box Two"], "srv2");
+      expect(screen.getByTestId("in-place-data").textContent).toContain("Box One");
+      expect(screen.getAllByText(/migrator-assisted/)).toHaveLength(1);
+      expect(screen.getByText(/moves-db \(POSTGRES\)/)).toBeTruthy();
+      expect(screen.queryByText(/stays-db \(POSTGRES\)/)).toBeNull();
+      expect(screen.getByRole("radiogroup", { name: "Data mode: moves-db" })).toBeTruthy();
+      expect(screen.queryByRole("radiogroup", { name: "Data mode: stays-db" })).toBeNull();
+    });
+  });
+
   it("servers of two teams: the first step goes on, and the preview offers only the guided run (one campaign per team), never a one-team apply that would fail", async () => {
     const multi: ImportPlan = {
       ...plan,

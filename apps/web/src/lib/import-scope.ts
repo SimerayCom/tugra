@@ -440,6 +440,28 @@ export function projectChoicesFor(
   return [...out.values()];
 }
 
+/** True when this item's source server stays on its own machine (same machine, proxy swap): its data is not copied. */
+export const isInPlaceItem = (scope: Pick<ImportScope, "placementKind"> | null | undefined, itemRef: string): boolean => scope?.placementKind[hostOfItemRef(itemRef)] === "in-place";
+
+export interface PlacementSplit {
+  /** The plan reduced to what moves to another server: the only part where a copy, the migrator and a data mode apply. */
+  moved: ImportPlan;
+  /** The source servers that stay on their own machine, with what lives on each (in-scope items only). */
+  stays: SourceServerRow[];
+}
+
+/**
+ * Split a (scoped) plan by where its items go. An item whose source server is placed on the machine it already runs on is "in place": the data stays
+ * where it is, so none of the migrator, data-mode or volume-copy text applies to it. Without a scope nothing is known to stay, so everything counts as moved.
+ */
+export function splitByPlacement(plan: ImportPlan, scope: Pick<ImportScope, "placementKind"> | null | undefined): PlacementSplit {
+  const inPlace = plan.items.filter((i) => isInPlaceItem(scope, i.itemRef));
+  if (inPlace.length === 0) return { moved: plan, stays: [] };
+  const stayRefs = new Set(inPlace.map((i) => i.itemRef));
+  const moved = scopedPlan(plan, new Set(plan.items.filter((i) => !stayRefs.has(i.itemRef)).map((i) => i.itemRef)));
+  return { moved, stays: sourceServersOf(inPlace, plan.preflight?.hosts) };
+}
+
 /** One word for the whole move: every placed server in place, every one elsewhere, a mix, or nothing placed yet. */
 export function overallPlacement(scope: Pick<ImportScope, "placementKind"> | null | undefined): "in-place" | "other-server" | "mixed" | null {
   const kinds = new Set(Object.values(scope?.placementKind ?? {}));
