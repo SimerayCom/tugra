@@ -7,6 +7,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.0-beta.36] - 2026-11-28
+
 - **Updates wait for running work.** The hub updates itself only when nothing is running: no migration, takeover,
   cutover, deployment, backup, restore, rollout, swarm change or patch. Agents wait per server. Settings shows what an
   update is waiting for, and an owner can still update anyway.
