@@ -216,7 +216,8 @@ export class ImportPortService implements ImportStepsPort {
       return await mapLimit(services, 4, async (svc) => {
         let bundle;
         try {
-          bundle = await source.fetchServiceBundle?.(svc.sourceRef);
+          // names only (no value is shown): a source that can tell them without a secret read does, so the dry run makes no sealed request for variables
+          bundle = await (source.fetchServiceBundleNames ?? source.fetchServiceBundle)?.call(source, svc.sourceRef);
         } catch {
           bundle = undefined; // a fixed degrade: the card says secretsAvailable:false, never the error text
         }

@@ -102,6 +102,17 @@ export interface AgentView {
   route(path: string, overlay?: SecretOverlay, sensitive?: boolean): unknown;
   /** The `kind:id` refs of the secrets this Coolify holds, per consent class: what the sealed read has to ask for. */
   secretRefs(): SecretRefPlan;
+  /**
+   * The refs the PLAN needs sealed text for, and nothing else: the compose text of compose-based apps and of services (the plan reads
+   * `docker_compose_raw` only). No Dockerfile-only or labels-only app, no config-file content, no variable, no database setting.
+   * `stacks` narrows it to the services with these uuids (and drops the apps): the service preview asks for the stacks in scope only.
+   */
+  planRefs(stacks?: ReadonlySet<string> | null): SecretRefPlan;
+  /**
+   * What is known without reading a value: a variable or a config file that HAS content answers with an empty string, one that has none
+   * answers nothing. The names-only preview of a service stack is built from this, so it needs no sealed read of any value.
+   */
+  presence(): SecretOverlay;
   /** The Coolify team the settings routes answer for, or null when there are several and none was chosen. */
   currentTeam: { ref: string; name: string } | null;
   /** Several Coolify teams have projects and none was chosen: the settings of the team cannot be told apart. */
@@ -550,6 +561,24 @@ export function buildAgentView(read: AgentRead, agentServerId: string, opts: Age
   for (const core of ["servers", "applications"]) if (read.skipped.includes(core)) warnings.push(`this Coolify version has no ${core} table - nothing of that kind was read`);
 
   /** The refs of every secret this Coolify holds, per consent class (only rows the read says have a value). */
+  let presentSets: { env: Set<string>; files: Set<string> } | undefined;
+  const presentRefs = (): { env: Set<string>; files: Set<string> } =>
+    (presentSets ??= {
+      env: new Set(rows("env_vars").filter((e) => e.is_preview !== true && e.value_present === true && typeof e.uuid === "string").map((e) => `env:${e.uuid}`)),
+      files: new Set(rows("file_volumes").filter((v) => kindOf(v.resource_type) === "service" && v.content_present === true && v.id !== undefined).map((v) => `file_volume:${key(v.id)}`)),
+    });
+  const presenceOverlay: SecretOverlay = {
+    get: (ref, field) => (field === "value" && presentRefs().env.has(ref)) || (field === "content" && presentRefs().files.has(ref)) ? "" : undefined,
+  };
+
+  /** The refs of the compose text the plan reads (see {@link AgentView.planRefs}). */
+  const planRefs = (stacks?: ReadonlySet<string> | null): SecretRefPlan => {
+    const uniq = (xs: string[]): string[] => [...new Set(xs.filter((r) => REF_RE.test(r)))];
+    const apps = stacks ? [] : rows("applications").filter((a) => a.docker_compose_raw_present === true && typeof a.uuid === "string").map((a) => `application:${a.uuid}`);
+    const svcs = rows("services").filter((x) => x.docker_compose_raw_present === true && typeof x.uuid === "string" && (!stacks || stacks.has(x.uuid))).map((x) => `service:${x.uuid}`);
+    return { service_compose: uniq([...apps, ...svcs]) };
+  };
+
   const secretRefs = (): SecretRefPlan => {
     const ok = (r: string): boolean => REF_RE.test(r);
     const uniq = (xs: string[]): string[] => [...new Set(xs.filter(ok))];
@@ -570,7 +599,7 @@ export function buildAgentView(read: AgentRead, agentServerId: string, opts: Age
     };
   };
 
-  return { route, secretRefs, currentTeam, needsTeamChoice, versionText: () => imageVersion(read.image), meta, teams, warnings };
+  return { route, secretRefs, planRefs, presence: () => presenceOverlay, currentTeam, needsTeamChoice, versionText: () => imageVersion(read.image), meta, teams, warnings };
 }
 
 /** The version token of an image reference (`ghcr.io/coollabsio/coolify:4.0.0-beta.463` -> `4.0.0-beta.463`). */

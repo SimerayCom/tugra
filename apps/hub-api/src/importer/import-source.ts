@@ -103,11 +103,17 @@ export interface SourceProbe {
  * `verify()` is called before use. `discover()` returns a SECRET-FREE {@link ForeignFleet}; secret values
  * and bulk data are pulled server-side at apply time via the methods below, keyed by source ref.
  */
+/** What a caller may narrow in a discover. */
+export interface DiscoverOptions {
+  /** The uuids (source refs) of the service stacks the caller will look at: a source that reads sealed text reads the compose text of these stacks only, not of every app and service. */
+  stacks?: ReadonlySet<string>;
+}
+
 export interface ImportSource {
   readonly kind: ImportSourceKind;
   capabilities(): ImportSourceCapabilities;
   verify(): Promise<{ ok: boolean; version?: string; detail?: string; /** A stable code for why a read failed (the agent source), so the screen can say what to do. */ code?: string }>;
-  discover(): Promise<ForeignFleet>;
+  discover(opts?: DiscoverOptions): Promise<ForeignFleet>;
   /** OPTIONAL cheap read-only summary for the connection test (team name, resource counts, `read:sensitive`). A source without it
    *  is only verified. A failure of the core reads MUST throw. */
   probe?(): Promise<SourceProbe>;
@@ -138,6 +144,10 @@ export interface ImportSource {
    *  by the discovered service's `sourceRef`. `undefined` when the token cannot read them (403/404). Any other error is
    *  re-thrown with a FIXED message. Dokploy/local-docker do not implement it. */
   fetchServiceBundle?(ref: string): Promise<ServiceBundle | undefined>;
+  /** OPTIONAL: what the PREVIEW of a service stack needs of {@link fetchServiceBundle}: the names of its variables and config files with `""` for a
+   *  value, never a value. A source that can tell without a secret read (the agent source: from the read it already made) implements it, so the
+   *  preview makes no sealed request; one that does not is previewed with `fetchServiceBundle`. */
+  fetchServiceBundleNames?(ref: string): Promise<ServiceBundle | undefined>;
   /** OPTIONAL read-only: how every app, database and service is doing at the source right now (status string + restart
    *  counter), keyed by the same refs as the plan. Called by the run's PREFLIGHT to take the health baseline; a source that does
    *  not implement it simply has no baseline. A failure MUST throw (a half-read baseline would be read as "healthy"). */

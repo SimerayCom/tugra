@@ -1,7 +1,7 @@
 import { COOLIFY_IMPORT_APPLY_CLASSES, type AgentPlanAdditions, type CoolifySecretClass } from "@tugra/shared";
 import { ForbiddenException, HttpException } from "@nestjs/common";
 import type { ForeignApp, ForeignFleet, ServiceBundle } from "../foreign-fleet";
-import type { FetchedSecrets, ImportSourceCapabilities, SourceAppExtras } from "../import-source";
+import type { DiscoverOptions, FetchedSecrets, ImportSourceCapabilities, SourceAppExtras } from "../import-source";
 import type { RawSettings, SettingsSection } from "../settings/settings-types";
 import { CoolifySource } from "./coolify.source";
 import { AgentSensitiveClient, type AgentCoolifyClient } from "./agent-coolify.client";
@@ -68,9 +68,10 @@ export class AgentCoolifySource extends CoolifySource {
     }
   }
 
-  override async discover(): Promise<ForeignFleet> {
+  override async discover(opts?: DiscoverOptions): Promise<ForeignFleet> {
     // The compose text of apps and services is part of what the plan needs: read when the owner consented (otherwise the plan says so).
-    await this.ensure(["service_compose"]);
+    // Only that text: not the variables, not the Dockerfiles, labels or config files of the whole Coolify. A preview of some stacks reads those stacks only.
+    await this.ensureComposeText(opts?.stacks);
     const [fleet, view, valuesAllowed] = await Promise.all([super.discover(), this.agentClient.agentView(), this.envValuesAllowed()]);
     return {
       ...fleet,
@@ -137,6 +138,16 @@ export class AgentCoolifySource extends CoolifySource {
     return this.sensitive.fetchServiceBundle(ref);
   }
 
+  /**
+   * The preview's bundle of one service stack: the names of its variables and config files, no value. Built from what the read already
+   * says (a variable or file that has content), so it makes no sealed request and needs no consent. Everything that has a value counts as
+   * resolved, which is what the card shows; the real values are read at apply time.
+   */
+  async fetchServiceBundleNames(ref: string): Promise<ServiceBundle | undefined> {
+    const view = await this.agentClient.agentView();
+    return new CoolifySource(new AgentSensitiveClient(this.agentClient, view.presence())).fetchServiceBundle(ref);
+  }
+
   override async fetchDbConfigFile(ref: string, engine?: string): Promise<string | undefined> {
     await this.ensure(APPLY_CLASSES);
     return this.sensitive.fetchDbConfigFile(ref, engine);
@@ -159,6 +170,13 @@ export class AgentCoolifySource extends CoolifySource {
       return { ...raw, scheduledTasks: { ok: false, reason: "forbidden" } };
     }
     return raw;
+  }
+
+  /** The compose text the plan reads (see {@link AgentView.planRefs}), for every compose-based app and service, or for these stacks (service uuids) only. */
+  private async ensureComposeText(stacks?: ReadonlySet<string>): Promise<void> {
+    if (!this.store) return;
+    const view = await this.agentClient.agentView();
+    await this.store.ensure(["service_compose"], () => view.planRefs(stacks ?? null));
   }
 
   private async ensure(classes: readonly CoolifySecretClass[]): Promise<Record<string, string>> {

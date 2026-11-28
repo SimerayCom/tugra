@@ -58,6 +58,9 @@ function parseHostLinks(raw: unknown): HostLinks {
 
 export type { TeamMap };
 
+/** The source ref (the service's uuid) of a `service:<server>:<ref>` item ref; a bare ref stands for itself. */
+const stackRefOf = (itemRef: string): string => (itemRef.startsWith("service:") ? itemRef.split(":").slice(2).join(":") : itemRef);
+
 
 /**
  * Importer orchestration — the DRY-RUN side: connect to a remote source (encrypted session) and preview an
@@ -531,17 +534,20 @@ export class ImporterService {
   async previewServices(userId: string, input: ImportServicesPreviewInput): Promise<{ services: ServicePreview[] }> {
     const { source, session } = await this.openSession(userId, input.sessionId, input.sourceKind);
     try {
-      const fleet = await source.discover();
+      // Only the stacks asked for (and the ones the operator made a choice for) are looked at: a source that reads sealed text reads their compose text and nothing else.
+      const only = input.itemRefs ? new Set(input.itemRefs) : null;
+      const stacks = only ? new Set([...only, ...Object.keys(input.choices ?? {})].map(stackRefOf)) : undefined;
+      const fleet = await source.discover(stacks ? { stacks } : undefined);
       const plan = planImport(fleet, { sourceKind: session.sourceKind });
       const choices = validateServiceChoices(fleet, plan.items, input.choices);
-      // Only the stacks asked for are read: every one costs a read of its variables and files through the source (an agent read waits on sealed values).
-      const only = input.itemRefs ? new Set(input.itemRefs) : null;
       const services = fleet.services.filter((s) => !only || only.has(ns("service", s.serverRef, s.sourceRef))).sort((a, b) => (ns("service", a.serverRef, a.sourceRef) < ns("service", b.serverRef, b.sourceRef) ? -1 : 1));
       const clashes = await serviceNameClashes(this.prisma, { sessionTeamId: session.teamId, services, choices, importAppNames: fleet.apps.map((a) => a.name) });
       const cards = await mapLimit(services, 4, async (svc) => {
         let bundle;
         try {
-          bundle = await source.fetchServiceBundle?.(svc.sourceRef);
+          // The card shows names, never a value: a source that can tell the names without a secret read does (the agent source), so the
+          // preview makes no sealed request for variables or files; the values are read when the import is applied.
+          bundle = await (source.fetchServiceBundleNames ?? source.fetchServiceBundle)?.call(source, svc.sourceRef);
         } catch {
           bundle = undefined; // a FIXED degrade: the card shows secretsAvailable:false, never the error text
         }

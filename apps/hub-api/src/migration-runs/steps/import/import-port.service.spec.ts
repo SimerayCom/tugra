@@ -65,6 +65,26 @@ describe("ImportPortService", () => {
     expect(source.close).toHaveBeenCalledTimes(3);
   });
 
+  it("the run's own reads ask not to renew the session (the run keeper does it), and a service preview takes the names-only bundle when the source has one", async () => {
+    const { svc, importer, source, prisma } = make();
+    (prisma.application as Record<string, unknown>).findMany = jest.fn().mockResolvedValue([]);
+    (source as Record<string, unknown>).verify = jest.fn().mockResolvedValue({ ok: true });
+    (source as Record<string, unknown>).discover = jest.fn().mockResolvedValue({
+      servers: [], apps: [], databases: [], volumes: [], sharedEnv: [], warnings: [],
+      services: [{ serverRef: "s", sourceRef: "svc-1", name: "stack", composeFile: "services:\n  a:\n    image: nginx:1\n", memberApps: [], memberDbs: [], members: [{ name: "a", kind: "app", ref: "m1", image: "nginx:1", domains: [] }] }],
+    });
+    const names = jest.fn().mockResolvedValue({ values: {}, unresolved: [] });
+    (source as Record<string, unknown>).fetchServiceBundleNames = names;
+    await svc.plan("u1", { sessionId: "s1", sourceKind: "coolify" });
+    await svc.planHash("u1", { sessionId: "s1", sourceKind: "coolify" });
+    await svc.sourceVersion("u1", { sessionId: "s1", sourceKind: "coolify" });
+    await svc.previewServices("u1", { sessionId: "s1", sourceKind: "coolify" });
+    expect(importer.openSession.mock.calls.length).toBeGreaterThanOrEqual(4);
+    for (const call of importer.openSession.mock.calls) expect(call[3]).toEqual({ renew: false });
+    expect(names).toHaveBeenCalledWith("svc-1");
+    expect(source.fetchServiceBundle).not.toHaveBeenCalled();
+  });
+
   it("sourceVersion reads the version through verify(), closes the source, writes nothing and never returns the token", async () => {
     const { svc, prisma, source } = make();
     (source as Record<string, unknown>).verify = jest.fn().mockResolvedValue({ ok: true, version: "4.1.2" });
