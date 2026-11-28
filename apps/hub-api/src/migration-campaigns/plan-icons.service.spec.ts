@@ -48,4 +48,16 @@ describe("PlanIconService", () => {
     expect(await s.get("site", "gone.example.com")).toBeNull();
     expect(s.fetchSite).not.toHaveBeenCalled();
   });
+  it("caps the fetches one user may start per window, never the answers from memory, and another user is not affected", async () => {
+    const s = new PlanIconService();
+    let clock = 1_000;
+    s.now = () => clock;
+    s.fetchSite = jest.fn(async () => ({ mime: "image/png", data: PNG }));
+    for (let i = 0; i < 400; i++) await s.get("site", `h${i}.example.com`, "u1");
+    await expect(s.get("site", "one-more.example.com", "u1")).rejects.toMatchObject({ status: 429 });
+    expect((await s.get("site", "h1.example.com", "u1"))?.mime).toBe("image/png"); // from memory
+    expect((await s.get("site", "one-more.example.com", "u2"))?.mime).toBe("image/png");
+    clock += 10 * 60_000;
+    expect((await s.get("site", "one-more.example.com", "u1"))?.mime).toBe("image/png"); // a new window
+  });
 });

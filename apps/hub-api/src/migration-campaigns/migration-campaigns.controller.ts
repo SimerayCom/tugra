@@ -38,12 +38,12 @@ export class MigrationCampaignsController {
    * falls back to the brand of the image or a plain icon.
    */
   @Get("icon")
-  @SkipThrottle() // one <img> per app of a plan; a miss is not browser-cached, so the global limit would starve real API calls
+  @SkipThrottle() // one <img> per app of a plan; a miss is not browser-cached, so the global limit would starve real API calls. The fetches a user starts are capped in the service instead.
   @Header("X-Content-Type-Options", "nosniff")
   @Header("Content-Security-Policy", "default-src 'none'; sandbox")
   @Header("Cache-Control", "private, max-age=86400")
-  async icon(@Query(new ZodValidationPipe(PlanIconQuerySchema)) q: PlanIconQuery): Promise<StreamableFile> {
-    const found = await this.icons.get(q.kind, q.name);
+  async icon(@CurrentUser() user: AuthUser, @Query(new ZodValidationPipe(PlanIconQuerySchema)) q: PlanIconQuery): Promise<StreamableFile> {
+    const found = await this.icons.get(q.kind, q.name, user.userId);
     if (!found) throw new NotFoundException("no icon");
     return new StreamableFile(found.data, { type: found.mime });
   }
