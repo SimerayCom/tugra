@@ -1,6 +1,6 @@
 import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from "@nestjs/common";
 import { RunSafetyController } from "./safety.controller";
-import { SafetyHintsSchema, SetImagePinsSchema, SetServicePinsSchema, SetWarningAcksSchema, SetWorkerMarksSchema } from "./hints.dto";
+import { SafetyHintsSchema, SetExactImagesSchema, SetImagePinsSchema, SetServicePinsSchema, SetWarningAcksSchema, SetWorkerMarksSchema } from "./hints.dto";
 import { InMemoryRunHints } from "./run-hints";
 import type { AuthUser } from "../../../../auth/strategies/jwt.strategy";
 
@@ -19,6 +19,65 @@ function setup(run: Record<string, unknown> | null = {}, perms: string[] | null 
   const hints = new InMemoryRunHints();
   return { c: new RunSafetyController(prisma as never, access as never, hints), hints, prisma, access };
 }
+
+describe("RunSafetyController: keep the exact image", () => {
+  const D1 = `sha256:${"1".repeat(64)}`;
+  const rows = (c: ReturnType<typeof setup>) =>
+    c.hints.upsert("r1", [
+      { kind: "exact-image", key: "app:s:a", scope: "", value: `x/y:latest@${D1} 1.2.3`, evidence: "host-loop-reported" },
+      { kind: "exact-image", key: "service:s:z#meili", scope: "", value: `getmeili/meilisearch:v1@${D1}`, evidence: "host-loop-reported" },
+    ]);
+
+  it("lists every recorded exact image with its tag, version and digest, kept by default", async () => {
+    const s = setup();
+    await rows(s);
+    const v = await s.c.get(user(), "r1");
+    expect(v.exactImages).toEqual([
+      { itemRef: "app:s:a", member: "", ref: `x/y:latest@${D1}`, tag: "latest", version: "1.2.3", digest: D1, kept: true },
+      { itemRef: "service:s:z", member: "meili", ref: `getmeili/meilisearch:v1@${D1}`, tag: "v1", version: null, digest: D1, kept: true },
+    ]);
+    expect(SafetyHintsSchema.parse(v)).toEqual(v);
+  });
+
+  it("unticking an item keeps the recorded image but marks it not kept; ticking it again brings it back", async () => {
+    const s = setup();
+    await rows(s);
+    const off = await s.c.setExactImages(user(), "r1", SetExactImagesSchema.parse({ items: [{ itemRef: "app:s:a", keep: false }] }));
+    expect(off.exactImages.map((r) => [r.itemRef, r.kept])).toEqual([["app:s:a", false], ["service:s:z", true]]);
+    const on = await s.c.setExactImages(user(), "r1", SetExactImagesSchema.parse({ items: [{ itemRef: "app:s:a", keep: true }] }));
+    expect(on.exactImages.every((r) => r.kept)).toBe(true);
+  });
+
+  it("a promoted run can tick again what its dry run unticked (its own hint wins)", async () => {
+    const s = setup({ promotedFromId: "dry1" });
+    await s.hints.upsert("dry1", [{ kind: "exact-image", key: "app:s:a", scope: "", value: `x/y:latest@${D1}`, evidence: "host-loop-reported" }, { kind: "exact-off", key: "app:s:a", scope: "", value: "off", evidence: "operator-attested" }]);
+    expect((await s.c.get(user(), "r1")).exactImages[0].kept).toBe(false);
+    expect((await s.c.setExactImages(user(), "r1", SetExactImagesSchema.parse({ items: [{ itemRef: "app:s:a", keep: true }] }))).exactImages[0].kept).toBe(true);
+  });
+
+  it("writing needs the team permissions and an open run; a bad item ref is refused by the schema", async () => {
+    await expect(setup({}, ["databases"]).c.setExactImages(user(), "r1", SetExactImagesSchema.parse({ items: [{ itemRef: "app:s:a", keep: false }] }))).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(setup({ status: "COMPLETED" }).c.setExactImages(user(), "r1", SetExactImagesSchema.parse({ items: [{ itemRef: "app:s:a", keep: false }] }))).rejects.toBeInstanceOf(ConflictException);
+    expect(() => SetExactImagesSchema.parse({ items: [{ itemRef: "volume:s:a", keep: false }] })).toThrow();
+    expect(() => SetExactImagesSchema.parse({ items: [] })).toThrow();
+  });
+
+  it("lists what the inventory covered but gave no exact image for as unknown (never before an inventory arrived)", async () => {
+    const meta = { plan: { items: [{ itemRef: "app:s:a", kind: "app", proposed: { source: "IMAGE", image: "x/y:latest" } }, { itemRef: "app:s:b", kind: "app", proposed: { source: "IMAGE", image: "x/b:2" } }, { itemRef: "database:s:d", kind: "database", proposed: { image: null } }] }, stackImages: [{ itemRef: "service:s:z", images: [{ member: "meili", image: "getmeili/meilisearch:latest" }] }] };
+    const s = setup({ opId: "op1" });
+    const p = s.prisma as unknown as Record<string, unknown>;
+    p.migrationRunHostReport = { count: jest.fn().mockResolvedValue(0) };
+    p.bulkOperation = { findUnique: jest.fn().mockResolvedValue({ meta }) };
+    await s.hints.upsert("r1", [{ kind: "exact-image", key: "app:s:a", scope: "", value: `x/y:latest@${D1}`, evidence: "host-loop-reported" }]);
+    expect((await s.c.get(user(), "r1")).exactUnknown).toEqual([]);
+    (p.migrationRunHostReport as { count: jest.Mock }).count.mockResolvedValue(1);
+    expect((await s.c.get(user(), "r1")).exactUnknown).toEqual([
+      { itemRef: "app:s:b", member: "", image: "x/b:2" },
+      { itemRef: "database:s:d", member: "", image: "" },
+      { itemRef: "service:s:z", member: "meili", image: "getmeili/meilisearch:latest" },
+    ]);
+  });
+});
 
 describe("RunSafetyController", () => {
   it("records and removes image pins, answering the whole set", async () => {
@@ -57,7 +116,7 @@ describe("RunSafetyController", () => {
 
   it("writing needs the team permissions driving the run needs; reading needs membership only", async () => {
     const s = setup({}, ["apps:config"]);
-    await expect(s.c.get(user(), "r1")).resolves.toEqual({ imagePins: [], workerMarks: [], warningAcks: [], servicePins: [], warningsFixed: [] });
+    await expect(s.c.get(user(), "r1")).resolves.toEqual({ imagePins: [], workerMarks: [], warningAcks: [], servicePins: [], exactImages: [], exactUnknown: [], warningsFixed: [] });
     await expect(s.c.setMarks(user(), "r1", SetWorkerMarksSchema.parse({ marks: [{ itemRef: "app:s:q", role: "web" }] }))).rejects.toBeInstanceOf(ForbiddenException);
   });
 

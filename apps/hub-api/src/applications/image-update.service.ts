@@ -12,11 +12,13 @@ import { loadProjectCtx } from "../common/resource-project";
 import type { RegistryAuth } from "../deploy/deploy-script";
 import {
   computeImageUpdateView,
+  exactPinParts,
   isCheckableRef,
   isImageCheckSubject,
   liveBaselineDigest,
   loadLiveImageMany,
   parseImageRef,
+  probeRefOf,
   type ImageUpdateView,
   type LiveImage,
 } from "./image-update";
@@ -165,7 +167,7 @@ export class ImageUpdateService {
         g = { serverId: r.serverId, auth: r.creds.auth, byRef: new Map() };
         targets.set(key, g);
       }
-      const ref = r.app.image!;
+      const ref = probeRefOf(r.app.image!)!; // the registry is asked about the tag; an exact pin's digest is the baseline, not the question
       g.byRef.set(ref, [...(g.byRef.get(ref) ?? []), r.app]);
     }
 
@@ -198,12 +200,13 @@ export class ImageUpdateService {
 
   /** Is this app due for a probe now? */
   private isDue(app: ImageCheckCandidate, live: LiveImage | undefined, intervalMin: number, now: number): boolean {
-    if (!app.image || !isCheckableRef(app.image)) return false;
+    if (!app.image || !probeRefOf(app.image)) return false;
     const ref = parseImageRef(app.image)!;
-    if (!live || !liveBaselineDigest(ref, live)) return false; // no baseline (or the tag was edited since the deploy): nothing to compare against
+    // an exact pin carries its own baseline (the digest it is pinned to); any other ref needs the digest the live deploy recorded
+    if (!exactPinParts(app.image) && (!live || !liveBaselineDigest(ref, live))) return false; // no baseline (or the tag was edited since the deploy): nothing to compare against
     const checkedAt = app.imageUpstreamCheckedAt;
     if (!checkedAt) return true;
-    if (checkedAt.getTime() < live.finishedAt.getTime()) return true; // deployed / rolled back since the last probe
+    if (live && checkedAt.getTime() < live.finishedAt.getTime()) return true; // deployed / rolled back since the last probe
     const interval = app.imageCheckFailures >= BACKOFF_FAILURES ? Math.max(intervalMin * 60_000, BACKOFF_MS) : intervalMin * 60_000;
     return checkedAt.getTime() < now - interval;
   }
@@ -217,7 +220,7 @@ export class ImageUpdateService {
   async checkApp(app: Application, canWrite = true): Promise<{ imageUpdate: ImageUpdateView }> {
     if (!isImageCheckSubject(app)) throw new BadRequestException("image update checks apply to deployed image apps only");
     if (!app.imageUpdateCheck) throw new BadRequestException("image update checks are turned off for this app");
-    if (!isCheckableRef(app.image!)) throw new BadRequestException("this image is pinned to a digest — there is nothing to check");
+    if (!probeRefOf(app.image!)) throw new BadRequestException("this image is pinned to a digest — there is nothing to check");
     if (this.intervalMin() === 0) throw new ConflictException("image update checks are disabled by the operator");
 
     const view = async (): Promise<{ imageUpdate: ImageUpdateView }> => {
@@ -227,10 +230,10 @@ export class ImageUpdateService {
     };
 
     const live = (await loadLiveImageMany(this.prisma, [app.id])).get(app.id);
-    // Nothing recorded to compare against (or the repo/tag changed since the deploy): a probe could not produce a verdict anyway.
-    if (!live || !liveBaselineDigest(parseImageRef(app.image!)!, live)) return view();
+    // Nothing recorded to compare against (or the repo/tag changed since the deploy): a probe could not produce a verdict anyway. An exact pin is its own baseline.
+    if (!exactPinParts(app.image!) && (!live || !liveBaselineDigest(parseImageRef(app.image!)!, live))) return view();
     const recent = app.imageUpstreamCheckedAt && Date.now() - app.imageUpstreamCheckedAt.getTime() < MANUAL_THROTTLE_MS;
-    if (recent && app.imageUpstreamCheckedAt!.getTime() >= live.finishedAt.getTime()) return view(); // cached
+    if (recent && (!live || app.imageUpstreamCheckedAt!.getTime() >= live.finishedAt.getTime())) return view(); // cached
 
     const pending = this.inflight.get(app.id);
     if (pending) {
@@ -247,7 +250,7 @@ export class ImageUpdateService {
     return view();
   }
 
-  private async runManual(app: Application, live: LiveImage): Promise<void> {
+  private async runManual(app: Application, live: LiveImage | undefined): Promise<void> {
     const creds = this.credsOf(app);
     if (creds === "unreadable") throw new BadRequestException("the stored registry credentials could not be read");
     let serverId: string | null = app.serverId;
@@ -255,7 +258,7 @@ export class ImageUpdateService {
     if (!serverId) throw new ConflictException("server is offline");
     const server = await this.prisma.server.findUnique({ where: { id: serverId }, select: { status: true } });
     if (!server || server.status !== "ONLINE" || !this.agentWs.isOnline(serverId)) throw new ConflictException("server is offline");
-    const ref = app.image!;
+    const ref = probeRefOf(app.image!)!;
     const probedAt = new Date();
     const verdicts = new Map<string, ImageProbeVerdict>();
     try {
@@ -320,7 +323,8 @@ export class ImageUpdateService {
     return out;
   }
 
-  private async applyVerdict(app: ImageCheckCandidate, ref: string, verdict: ImageProbeVerdict, probedAt: Date, live: LiveImage | undefined): Promise<void> {
+  private async applyVerdict(app: ImageCheckCandidate, _probed: string, verdict: ImageProbeVerdict, probedAt: Date, live: LiveImage | undefined): Promise<void> {
+    const ref = app.image!; // the app's own ref (an exact pin keeps its digest): the CAS and the notice name what is configured, the probe asked about its tag
     if (verdict.ok) {
       const changed = verdict.digest !== app.imageUpstreamDigest;
       // CAS on `image`: a concurrent source edit can't receive a verdict for the old ref.

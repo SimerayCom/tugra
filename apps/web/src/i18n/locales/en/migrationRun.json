@@ -1250,6 +1250,8 @@
     "deploy-dark_service-failed": "{count} service deploys failed, the first is {name}.",
     "deploy-dark_service_failed": "Starting a service deploy failed.",
     "deploy-dark_image-pinned": "The image of {name} was pinned to the digest the source runs.",
+    "deploy-dark_exact-images-pinned": "{count} apps, databases and services keep the exact image the source runs.",
+    "deploy-dark_exact-image_failed": "The exact image the source runs could not be written into its record, so nothing was started. Retry the step.",
     "import_auto-deploy-pending": "{count} imported apps still deploy on every git push.",
     "import_auto-deploy-held": "Push-to-deploy was switched off for {count} imported apps until after the cutover.",
     "import_auto-deploy_failed": "Switching off push-to-deploy for an imported app failed.",

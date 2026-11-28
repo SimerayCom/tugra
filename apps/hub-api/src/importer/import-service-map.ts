@@ -4,6 +4,7 @@ import { validateConfigMountTarget } from "../templates/template-manifest";
 import type { ForeignService } from "./foreign-fleet";
 import type { ServiceChoice } from "./dto";
 import { VOLUME_NAME_RE } from "./migration-volume";
+import { isDigestPinned, isExactPinFor } from "./exact-image";
 
 /**
  * Pure transform of one Coolify SERVICE's RAW compose (`docker_compose_raw`) into the compose a stopped Tugra COMPOSE app
@@ -90,6 +91,11 @@ export interface ServiceTransformResult {
   floating: string[];
   /** The image each floating service is written with in the source's compose (what a pin has to replace), by service key. */
   floatingRefs: Record<string, string>;
+  /**
+   * The image every KEPT member that is not on a digest is written with in the source's compose, by service key: what an exact-image pin
+   * (`repo:tag@sha256:...`) replaces. Floating and moving tags alike. Additive, outside the plan hash.
+   */
+  images: Record<string, string>;
   pinned: string[];
   hold: boolean;
 }
@@ -184,6 +190,7 @@ function emptyResult(over: Partial<ServiceTransformResult>): ServiceTransformRes
     domainHints: [],
     floating: [],
     floatingRefs: {},
+    images: {},
     pinned: [],
     hold: false,
     ...over,
@@ -452,19 +459,22 @@ export function transformServiceCompose(input: ServiceTransformInput): ServiceTr
   const volOut = processVolumes(services, doc.volumes, svc, bundle, choice, note);
   if ("fail" in volOut) return emptyResult({ gate: volOut.fail, dropped: sortBy(dropped, (x) => x.field), hold });
 
-  // R10 — floating tags.
+  // R10 — exact images. A member that is not on a digest takes the exact-image pin it is given (the digest-pinned ref the source runs, or
+  // the operator's own version), unless the stack opted out (`pinImages: false`). A floating member left without a pin is reported.
   const floating: string[] = [];
   const floatingRefs: Record<string, string> = {};
+  const images: Record<string, string> = {};
   const pinned: string[] = [];
   for (const name of survivorNames) {
     const def = services[name];
-    if (typeof def.image !== "string" || !isFloating(def.image)) continue;
+    if (typeof def.image !== "string" || isDigestPinned(def.image)) continue;
+    images[name] = def.image;
     const pin = input.pins?.[name] ?? choice?.pins?.[name];
-    if (pin && choice?.pinImages !== false && PIN_REF_RE.test(pin) && IMAGE_REPO_RE.test(def.image) && imageRepo(pin) === imageRepo(def.image) && !isFloating(pin)) {
+    if (pin && choice?.pinImages !== false && PIN_REF_RE.test(pin) && IMAGE_REPO_RE.test(def.image) && isExactPinFor(def.image, pin)) {
       def.image = pin;
       pinned.push(name);
-      note(`${name}.image`, "pinned to the version the source is running", "info");
-    } else {
+      note(`${name}.image`, "pinned to the image the source is running", "info");
+    } else if (isFloating(def.image)) {
       floating.push(name);
       floatingRefs[name] = def.image;
     }
@@ -519,6 +529,7 @@ export function transformServiceCompose(input: ServiceTransformInput): ServiceTr
     domainHints: sortBy(domainHints, (h) => `${h.service}:${h.port}`),
     floating: floating.sort(),
     floatingRefs,
+    images,
     pinned: pinned.sort(),
     hold,
   };

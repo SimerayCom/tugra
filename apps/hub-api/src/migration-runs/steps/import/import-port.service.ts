@@ -27,6 +27,9 @@ import { vxEnabled } from "../../../importer/volume-stream/vx-constants";
 import { dbStreamModeRefs, dbVolumeModeRefs, isObjectStoreResult, serviceVolumeStreamable, serviceVolumesOf, volumeItemRef } from "../../../importer/volume-stream/vx-targets";
 import { buildDataIntegrity } from "../data/data-integrity";
 import { pinnedImageRef } from "./baseline/image-pins";
+import { pinDatabaseBeforeStart } from "../../../importer/exact-db-pin";
+import { isExactPinFor } from "../../../importer/exact-image";
+import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import type { ImportMappingDoc, ResolvedMapping } from "../../../importer/import-mapping";
 import type { ServicePreview } from "../../../importer/service-preview";
 import type { RunReport, RunScope } from "../../core/dto";
@@ -62,6 +65,30 @@ const CONSENT_HOLDING_STATUSES: Array<"QUEUED" | "RUNNING" | "WAITING" | "PAUSED
   "FAILED",
   "DRY_RUN_DONE",
 ];
+
+/**
+ * The stored compose with the exact image of each member written in (`services.<member>.image`). Only a member of that repository that is
+ * not on a digest yet changes, so a pin never swaps what a member runs. `null` when nothing changed or the compose does not parse.
+ */
+export function pinComposeMembers(composeFile: string, members: Record<string, string>): string | null {
+  let doc: unknown;
+  try {
+    doc = parseYaml(composeFile, { merge: true, maxAliasCount: 50 });
+  } catch {
+    return null;
+  }
+  const services = (doc as { services?: Record<string, { image?: unknown }> } | null)?.services;
+  if (!services || typeof services !== "object") return null;
+  let changed = false;
+  for (const [member, ref] of Object.entries(members)) {
+    const def = services[member];
+    if (def && typeof def.image === "string" && def.image !== ref && isExactPinFor(def.image, ref)) {
+      def.image = ref;
+      changed = true;
+    }
+  }
+  return changed ? stringifyYaml(doc, { lineWidth: 0 }) : null;
+}
 
 const metaOf = (m: unknown): Record<string, unknown> => (typeof m === "object" && m ? (m as Record<string, unknown>) : {});
 
@@ -472,6 +499,8 @@ export class ImportPortService implements ImportStepsPort {
   }
 
   async startDb(userId: string, dbId: string): Promise<ResourceState> {
+    const op = await this.prisma.bulkTask.findFirst({ where: { resourceId: dbId, kind: "database", status: "DONE" }, select: { opId: true } });
+    if (op) await pinDatabaseBeforeStart({ prisma: this.prisma, databases: this.dbs }, userId, op.opId, dbId);
     const v = await this.dbs.provision(userId, dbId);
     return { exists: true, status: v.status, name: v.name };
   }
@@ -504,6 +533,29 @@ export class ImportPortService implements ImportStepsPort {
     const ref = pinnedImageRef(a.image, digest);
     if (!ref || ref === a.image) return { pinned: false };
     await this.apps.setSource(userId, appId, { image: ref });
+    return { pinned: true };
+  }
+
+  async pinExactImage(
+    userId: string,
+    target: { kind: "app" | "database"; id: string; ref: string } | { kind: "service"; id: string; members: Record<string, string> },
+  ): Promise<{ pinned: boolean }> {
+    if (target.kind === "service") {
+      const c = await this.prisma.application.findUnique({ where: { id: target.id }, select: { source: true, composeFile: true } });
+      if (!c || c.source !== "COMPOSE" || !c.composeFile) return { pinned: false };
+      const next = pinComposeMembers(c.composeFile, target.members);
+      if (!next) return { pinned: false };
+      await this.apps.setComposeFile(userId, target.id, next);
+      return { pinned: true };
+    }
+    if (target.kind === "database") {
+      const d = await this.prisma.database.findUnique({ where: { id: target.id }, select: { image: true, status: true } });
+      if (!d || d.status !== "NEW" || !isExactPinFor(d.image, target.ref)) return { pinned: false };
+      return { pinned: (await this.dbs.setImage(userId, target.id, target.ref)).changed };
+    }
+    const a = await this.prisma.application.findUnique({ where: { id: target.id }, select: { source: true, image: true } });
+    if (!a || a.source !== "IMAGE" || !a.image || a.image === target.ref || !isExactPinFor(a.image, target.ref)) return { pinned: false };
+    await this.apps.setSource(userId, target.id, { image: target.ref });
     return { pinned: true };
   }
 

@@ -2,6 +2,7 @@
 import { resolveOwnerInput, type RunSnapshot } from "../../../core/run-contract";
 import type { ImportStepsPort, OpSnapshot, OpTask } from "../import-ports";
 import { isFloatingImage, pinFor, serverRefOfItem } from "./image-pins";
+import { exactRows } from "./exact-images";
 import type { RunHint } from "./run-hints";
 import { markConflicts, unmatchedMarks, workerMarks, workerSets, type WorkerSets } from "./workers";
 
@@ -58,5 +59,47 @@ export async function pinFloatingImages(port: Pick<ImportStepsPort, "pinImage">,
   if (!port.pinImage) return [];
   const changed: string[] = [];
   for (const d of duePinsOf(op, hints, only)) if ((await port.pinImage(userId, d.appId, d.digest)).pinned) changed.push(d.name);
+  return changed;
+}
+
+/** One exact image still to write into a record the import created: an app, a database, or the members of a compose stack. */
+export type ExactDue = { kind: "app" | "database"; itemRef: string; name: string; id: string; ref: string } | { kind: "service"; itemRef: string; name: string; id: string; members: Record<string, string> };
+
+/**
+ * The records of the op that the run knows an exact image for (recorded from the source host's running containers) and that the owner
+ * keeps. Only a task that is DONE counts. An app, database or stack the host reported nothing for is not in the list: it keeps what the
+ * source writes, and the run says so.
+ */
+export function exactDueOf(op: OpSnapshot, hints: readonly RunHint[]): ExactDue[] {
+  const rows = exactRows(hints).filter((r) => r.kept);
+  if (!rows.length) return [];
+  const out: ExactDue[] = [];
+  for (const t of op.tasks) {
+    if (t.status !== "DONE" || !t.itemRef || !t.resourceId) continue;
+    const own = rows.filter((r) => r.itemRef === t.itemRef);
+    if (!own.length) continue;
+    const name = t.name ?? t.itemRef;
+    if (t.kind === "app" && t.resourceType === "application") {
+      const r = own.find((x) => x.member === "");
+      if (r) out.push({ kind: "app", itemRef: t.itemRef, name, id: t.resourceId, ref: r.ref });
+    } else if (t.kind === "database" && t.resourceType === "database") {
+      const r = own.find((x) => x.member === "");
+      if (r) out.push({ kind: "database", itemRef: t.itemRef, name, id: t.resourceId, ref: r.ref });
+    } else if (t.kind === "service" && t.resourceType === "application") {
+      const members = Object.fromEntries(own.filter((x) => x.member !== "").map((x) => [x.member, x.ref]));
+      if (Object.keys(members).length) out.push({ kind: "service", itemRef: t.itemRef, name, id: t.resourceId, members });
+    }
+  }
+  return out;
+}
+
+/**
+ * R11: write the exact image the source runs into every record the import created, before ANY deploy path starts it. Idempotent: a
+ * record already on that image (or on a digest of its own), or one the port cannot change, is left alone. Returns the names it changed.
+ */
+export async function pinExactImages(port: Pick<ImportStepsPort, "pinExactImage">, userId: string, op: OpSnapshot, hints: readonly RunHint[]): Promise<string[]> {
+  if (!port.pinExactImage) return [];
+  const changed: string[] = [];
+  for (const d of exactDueOf(op, hints)) if ((await port.pinExactImage(userId, d)).pinned) changed.push(d.name);
   return changed;
 }

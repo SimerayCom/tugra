@@ -29,7 +29,9 @@ import { cleanupOpStaging } from "./migration-staging";
 import type { ForeignApp, ForeignDb, ForeignFleet, ForeignGitProvider, ForeignService, ServiceBundle } from "./foreign-fleet";
 import { transformServiceCompose, type ServiceTransformResult } from "./import-service-map";
 import { buildServiceChecklist, type ChecklistItem } from "./service-checklist";
-import { validateServiceChoices } from "./service-choices";
+import { validateImagePins, validateServiceChoices } from "./service-choices";
+import { isExactPinFor } from "./exact-image";
+import { stackImagesOf } from "./stack-images";
 import { generatedOnlyTemplate } from "../templates/catalog";
 import { composeProject } from "../deploy/compose-script";
 import { createHash, randomBytes } from "node:crypto";
@@ -46,7 +48,7 @@ import { assertPlacementTargetReady } from "./placement-target";
 import { planChanged } from "./import-errors";
 import { teamMapViolations } from "./team-map-guard";
 import type { EffectiveItem, ResolvedMapping } from "./import-mapping";
-import { slug as dbSlug } from "../databases/databases.service";
+import { isValidDbImage, slug as dbSlug } from "../databases/databases.service";
 import { resolveImage } from "../databases/database-script";
 import { VX_DATA_PREFIX, isVxDataTask, vxEnabled } from "./volume-stream/vx-constants";
 import { VxApplyService } from "./volume-stream/vx-apply.service";
@@ -192,6 +194,9 @@ export class ImportExecutorService {
       // Per-service choices are validated against the FRESHLY re-planned service items: an unknown itemRef, volume key or
       // member name is a 400 BEFORE any op or task row is written (a choice can only narrow or rename, never add).
       const serviceChoices = validateServiceChoices(fleet, plan.items, input.serviceChoices);
+      // The exact image of an app or a database (what the source runs); NOT part of the plan hash. A bad key is a 400 here, before anything is created.
+      const imagePins = validateImagePins(plan.items, input.imagePins);
+      const stackImages = stackImagesOf(fleet);
       // Authorize the TARGET server up front (fail fast with 403/404, before taking the per-server lock or
       // writing any op/task rows) — openSession only vouches for the session's team, not the import target.
       const server = await this.prisma.server.findUnique({ where: { id: input.targetServerId } });
@@ -301,6 +306,8 @@ export class ImportExecutorService {
           : {}),
         // Secret-free: names, hostnames, volume policies. Never a value.
         ...(Object.keys(serviceChoices).length ? { serviceChoices } : {}),
+        // The image of every member of every stack (names and refs only): the host report matches them to the source's running containers to record the exact image.
+        ...(stackImages.length ? { stackImages } : {}),
         ...(res ? { mapping: mappingSnapshot(res, input.reconcile === true) } : {}),
       });
       // Idempotency: skip app refs a prior op already imported onto this target (and whose app still exists),
@@ -373,8 +380,8 @@ export class ImportExecutorService {
         const ackedCodes = new Set(item.risks.filter((r) => isAcked(input.acks, item.itemRef, r.code)).map((r) => r.code));
         if (reconciles && eff) runners.set(task.id, () => this.runReconcile(task.id, userId, eff, tree.envByItemRef?.get(item.itemRef)));
         else if (runnable && service) runners.set(task.id, () => this.runCopyService(task.id, source, service, userId, targetServerId, input.sourceKind, environmentId, choice));
-        else if (runnable && app) runners.set(task.id, () => this.runCopyApp(task.id, source, app, userId, targetServerId, input.sourceKind, environmentId, gitSourceByRef, ackedCodes, gitLinks, eff));
-        else if (runnable && db) runners.set(task.id, () => this.runCreateDb(task.id, source, db, userId, targetServerId, environmentId, eff));
+        else if (runnable && app) runners.set(task.id, () => this.runCopyApp(task.id, source, app, userId, targetServerId, input.sourceKind, environmentId, gitSourceByRef, ackedCodes, gitLinks, eff, imagePins[item.itemRef]));
+        else if (runnable && db) runners.set(task.id, () => this.runCreateDb(task.id, source, db, userId, targetServerId, environmentId, eff, imagePins[item.itemRef]));
       }
       await this.audit.log({
         actor: userId,
@@ -794,7 +801,7 @@ export class ImportExecutorService {
     }
   }
 
-  private async runCopyApp(taskId: string, source: ImportSource, app: ForeignApp, userId: string, targetServerId: string, sourceKind: RemoteSourceKind, environmentId?: string, gitSourceByRef: ReadonlyMap<string, string> = new Map(), ackedCodes: ReadonlySet<string> = new Set(), gitLinks: ReadonlyMap<string, GitLinkRow> = new Map(), eff?: EffectiveItem): Promise<void> {
+  private async runCopyApp(taskId: string, source: ImportSource, app: ForeignApp, userId: string, targetServerId: string, sourceKind: RemoteSourceKind, environmentId?: string, gitSourceByRef: ReadonlyMap<string, string> = new Map(), ackedCodes: ReadonlySet<string> = new Set(), gitLinks: ReadonlyMap<string, GitLinkRow> = new Map(), eff?: EffectiveItem, exactImage?: string): Promise<void> {
     if (!(await this.claim(taskId))) return;
     try {
       const fetched = await source.fetchSecrets(app.sourceRef); // real env values (server-side only)
@@ -839,6 +846,8 @@ export class ImportExecutorService {
       const mappedFlags = mapSourceEnvFlags(values, flags, mapBuildPack(app).source);
       const createInput = foreignAppToCreateInput(createApp, values, { serverId: targetServerId, environmentId, sourceTag: sourceKind, gitSourceId, ...(eff ? { name: eff.name } : {}) }, flags, mappedFlags);
       const flagWarnings = mappedFlags.warnings;
+      // The exact image the source runs, when one was given for this app and it is a pin of the app's own image (never another repository).
+      if (exactImage && createInput.source === "IMAGE" && createInput.image && isExactPinFor(createInput.image, exactImage)) createInput.image = exactImage;
       const created = await this.apps.create(userId, createInput); // re-checks apps:config on the TARGET team; deploy:false
       // Declare the app's volumes as EMPTY named mounts (their DATA is copied by a later slice). Best-effort,
       // mirroring resolveGitSourceId: a failure here must NEVER reach the outer catch, or it would leave an
@@ -1172,9 +1181,12 @@ export class ImportExecutorService {
    *  DatabasesService.createForImport, so a migrated app reconnects with the SAME password. The credentials flow
    *  source → memory → DatabasesService (encrypted at rest) only: the task result/output carries flags and fixed
    *  strings, never a value. Without credentials it falls back to a freshly minted password + a warning. */
-  private async runCreateDb(taskId: string, source: ImportSource, db: ForeignDb, userId: string, targetServerId: string, environmentId?: string, eff?: EffectiveItem): Promise<void> {
+  private async runCreateDb(taskId: string, source: ImportSource, db: ForeignDb, userId: string, targetServerId: string, environmentId?: string, eff?: EffectiveItem, exactImage?: string): Promise<void> {
     if (!(await this.claim(taskId))) return;
     try {
+      // The exact image the source runs (what its container reports): the database keeps it instead of the engine's stock tag. A pin of
+      // another repository than the source's own image, or a ref the database gate would refuse, is ignored.
+      const dbImage = exactImage && isValidDbImage(exactImage) && (!db.image || isExactPinFor(db.image, exactImage)) ? exactImage : db.image;
       const engine = db.engine as CreateDatabaseInput["engine"]; // PROVISIONABLE_ENGINES-gated before enqueue
       // A source WITHOUT the method (?. → undefined) degrades to fresh credentials. But a source that HAS it and
       // THROWS (a transient / permission read error) must FAIL the task, never silently mint a fresh password the
@@ -1209,7 +1221,7 @@ export class ImportExecutorService {
           serverId: targetServerId,
           engine,
           version: db.version,
-          image: db.image, // verbatim; createForImport validates it as a shell-safe OCI ref and gates it behind apps:config
+          image: dbImage, // verbatim; createForImport validates it as a shell-safe OCI ref and gates it behind apps:config
           username: carried.user || db.credentials?.username || "tugra",
           password: carried.password,
           database: carried.database || db.credentials?.database || safeDbIdent(db.name),
@@ -1217,7 +1229,7 @@ export class ImportExecutorService {
           environmentId,
           ...(wantsTls ? { ssl: true } : {}),
         });
-        flags = { credentialsCarried: true, imageCarried: !!db.image, hostPortCarried: hostPort !== undefined };
+        flags = { credentialsCarried: true, imageCarried: !!dbImage, hostPortCarried: hostPort !== undefined };
         if (carried.rootPassword && carried.rootPassword !== carried.password && (engine === "MYSQL" || engine === "MARIADB")) {
           notes.push("the source has a separate root password — Tugra uses one password for the user and root, so root logins need the user password");
         }
@@ -1228,14 +1240,14 @@ export class ImportExecutorService {
         const identifier = eff ? eff.dbIdentifier ?? dbSlug(db.name).slice(0, 63) : dbSlug(db.name).slice(0, 63);
         // A custom image (pgvector, timescaledb, a Valkey tag) is the database the app was built for: a stock image would start without its
         // extension and a restore that needs it would fail. It is kept even when the credentials are not carried, with a fresh password.
-        const customImage = !!db.image && db.image !== resolveImage(engine, db.version);
+        const customImage = !!dbImage && dbImage !== resolveImage(engine, db.version);
         if (customImage) {
           created = await this.dbs.createForImport(userId, {
             name: input.name,
             serverId: targetServerId,
             engine,
             version: db.version,
-            image: db.image,
+            image: dbImage,
             username: "tugra",
             password: randomBytes(24).toString("base64url"),
             database: identifier,

@@ -5,6 +5,7 @@
  */
 import { WARNING_ACK_KEY } from "../steps/import/baseline/hints.dto";
 import { IMAGE_PARAM_MAX, pinFor, serverRefOfItem, servicePinKey } from "../steps/import/baseline/image-pins";
+import { exactPinOf } from "../steps/import/baseline/exact-images";
 import type { RunHint } from "../steps/import/baseline/run-hints";
 import type { CodeParams } from "./dto";
 
@@ -57,8 +58,8 @@ export function imagesFixed(params: CodeParams | null, hints: readonly RunHint[]
   if (count > IMAGE_PARAM_MAX || items.length !== count || members.length !== count || images.length !== count) return false;
   return items.every((itemRef, i) => {
     const member = members[i];
-    if (member) return hints.some((h) => h.kind === "service-pin" && h.key === servicePinKey(itemRef, member));
-    return images[i] !== "" && pinFor(hints, images[i], serverRefOfItem(itemRef)) !== null;
+    if (member) return hints.some((h) => h.kind === "service-pin" && h.key === servicePinKey(itemRef, member)) || exactPinOf(hints, itemRef, member) !== null;
+    return (images[i] !== "" && pinFor(hints, images[i], serverRefOfItem(itemRef)) !== null) || exactPinOf(hints, itemRef) !== null;
   });
 }
 

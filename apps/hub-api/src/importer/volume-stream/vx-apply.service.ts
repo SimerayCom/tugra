@@ -26,6 +26,7 @@ import { VX_RESTORE_BY_PREFIX, dumpRestoreTimeoutMs } from "./vx-dump";
 import type { VxCtx } from "./vx.service";
 import { pgMajorOf } from "./vx-targets";
 import type { VxInventoryItem } from "./vx.dto";
+import { pinDatabaseBeforeStart } from "../exact-db-pin";
 
 const MiB = 1024 * 1024;
 const WIPE_TIMEOUT_MS = 30 * 60_000;
@@ -407,6 +408,7 @@ export class VxApplyService {
   private async provisionAndWait(ctx: VxCtx, t: MigrationVolumeTransfer): Promise<boolean> {
     const deadline = Date.now() + provisionWaitMs(Number(t.rawBytesFinal ?? 0));
     try {
+      await pinDatabaseBeforeStart({ prisma: this.prisma, databases: this.databases }, ctx.actorId, ctx.opId, ctx.resourceId); // the exact image the source runs, while the database was never started
       const view = await this.databases.provision(ctx.actorId, ctx.resourceId);
       if ((view as { status?: string }).status === "RUNNING") return true;
     } catch {

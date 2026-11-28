@@ -26,6 +26,7 @@ import { VX_409, vxDumpEnabled, vxEnabled } from "./volume-stream/vx-constants";
 import { dbStreamModeRefs, dbVolumeModeRefs, volumeItemRef } from "./volume-stream/vx-targets";
 import type { MigrationTokenContext } from "./migration-token.service";
 import { mintArtifactUrl, verifyArtifactSig } from "./migration-artifact";
+import { pinDatabaseBeforeStart } from "./exact-db-pin";
 import {
   ArtifactTooLargeError,
   assertDiskHeadroom,
@@ -359,6 +360,7 @@ export class MigrationIngestService {
     try {
       if (ctx.db.status !== "RUNNING") {
         steps.push({ name: "provision", status: "RUNNING" });
+        await pinDatabaseBeforeStart({ prisma: this.prisma, databases: this.databases }, ctx.actorId, ctx.opId, ctx.db.id); // the exact image the source runs, while the database was never started
         await this.databases.provision(ctx.actorId, ctx.db.id); // as the actor (re-checks 'databases'); S6 adds PG/Mongo readiness
         const re = await this.prisma.database.findUnique({ where: { id: ctx.db.id }, select: { status: true } });
         if (re?.status !== "RUNNING") {

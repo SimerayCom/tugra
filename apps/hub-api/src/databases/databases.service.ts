@@ -165,6 +165,10 @@ export function slug(name: string): string {
 // a custom image behind apps:config — running one is an app-image-level privilege.)
 const DB_IMAGE_RE =
   /^([a-z0-9][a-z0-9.-]*(:[0-9]{1,5})?\/)?[a-z0-9][a-z0-9._/-]{0,200}(:[a-zA-Z0-9_][a-zA-Z0-9._-]{0,127})?(@sha256:[a-f0-9]{64})?$/;
+/** Is this a database image reference the hub accepts (shell-safe OCI ref)? */
+export function isValidDbImage(image: string): boolean {
+  return image.length <= 255 && DB_IMAGE_RE.test(image);
+}
 function assertValidDbImage(image: string): string {
   if (image.length > 255 || !DB_IMAGE_RE.test(image)) throw new BadRequestException("invalid database image reference");
   return image;
@@ -920,6 +924,21 @@ export class DatabasesService {
     await this.requireWrite(userId, id);
     await this.prisma.database.update({ where: { id }, data: { hostPort } });
     await this.audit.log({ actor: userId, action: "db.port.update", target: id });
+  }
+
+  /**
+   * Point a database that was never started at an exact image (`repo:tag@sha256:...`). An import uses it to keep the image the source runs,
+   * once the host reported the digest; nothing else changes the image of a record behind its owner's back. A started database is edited
+   * through its own version path, never here.
+   */
+  async setImage(userId: string, id: string, image: string): Promise<{ changed: boolean }> {
+    const db = await this.requireWrite(userId, id);
+    if (db.status !== DbStatus.NEW) throw new ConflictException("the image of a database that has been started is not changed here");
+    assertValidDbImage(image);
+    if (image === db.image) return { changed: false };
+    await this.prisma.database.update({ where: { id }, data: { image } });
+    await this.audit.log({ actor: userId, action: "db.image.update", target: id, meta: { exact: true } });
+    return { changed: true };
   }
 
   // ── helpers ──

@@ -1,4 +1,4 @@
-import { ImportPortService } from "./import-port.service";
+import { ImportPortService, pinComposeMembers } from "./import-port.service";
 
 function make(over: { opMeta?: unknown; cancelRequestedAt?: Date | null; statusView?: unknown } = {}) {
   const prisma = {
@@ -11,6 +11,8 @@ function make(over: { opMeta?: unknown; cancelRequestedAt?: Date | null; statusV
     application: { findUnique: jest.fn() },
     database: { findUnique: jest.fn() },
     deployment: { findMany: jest.fn() },
+    bulkTask: { findFirst: jest.fn().mockResolvedValue(null) },
+    migrationRunHint: { findMany: jest.fn().mockResolvedValue([]) },
   };
   const source = { discover: jest.fn().mockResolvedValue({ servers: [], apps: [], databases: [], services: [], volumes: [], sharedEnv: [], warnings: [] }), close: jest.fn().mockResolvedValue(undefined), fetchServiceBundle: jest.fn() };
   const importer = { consentState: jest.fn().mockResolvedValue({ applies: true, standing: true, classes: ["env"], agentServerId: "srv" }), endSessionConsent: jest.fn().mockResolvedValue(undefined), openSession: jest.fn().mockResolvedValue({ source, session: { sourceKind: "coolify" } }), resolveMapping: jest.fn(), getMapping: jest.fn(), previewServices: jest.fn(), plan: jest.fn() };
@@ -25,8 +27,8 @@ function make(over: { opMeta?: unknown; cancelRequestedAt?: Date | null; statusV
     remapEnvApply: jest.fn(),
     remapEnvUndo: jest.fn(),
   };
-  const apps = { stop: jest.fn(), deploy: jest.fn(), cancelDeployment: jest.fn(), setAutoDeploy: jest.fn(), prebuild: jest.fn(), setSource: jest.fn() };
-  const dbs = { provision: jest.fn(), stop: jest.fn() };
+  const apps = { stop: jest.fn(), deploy: jest.fn(), cancelDeployment: jest.fn(), setAutoDeploy: jest.fn(), prebuild: jest.fn(), setSource: jest.fn(), setComposeFile: jest.fn() };
+  const dbs = { provision: jest.fn(), stop: jest.fn(), setImage: jest.fn() };
   const agentWs = { isOnline: jest.fn().mockReturnValue(true) };
   const proxyConfig = { resolveFor: jest.fn().mockResolvedValue({ acmeEmail: "ops@acme-corp.dev" }) };
   const dns = { findZoneFor: jest.fn() };
@@ -465,5 +467,58 @@ describe("ImportPortService.appRefs", () => {
       await svc.releaseConsent("u1", { sessionId: "s1" });
       expect(importer.endSessionConsent).toHaveBeenCalledWith("s1");
     });
+  });
+});
+
+describe("ImportPortService.pinExactImage (R11): the exact image the source runs, written into the record the import created", () => {
+  const D1 = `sha256:${"1".repeat(64)}`;
+  it("an image app: pinned when the ref is a pin of its own image; another repository, a digest-pinned image and a non-image app are left alone", async () => {
+    const { svc, prisma, apps } = make();
+    prisma.application.findUnique.mockResolvedValueOnce({ source: "IMAGE", image: "getmeili/meilisearch:latest" });
+    expect(await svc.pinExactImage("u1", { kind: "app", id: "a1", ref: `getmeili/meilisearch:latest@${D1}` })).toEqual({ pinned: true });
+    expect(apps.setSource).toHaveBeenCalledWith("u1", "a1", { image: `getmeili/meilisearch:latest@${D1}` });
+    prisma.application.findUnique.mockResolvedValueOnce({ source: "IMAGE", image: "getmeili/meilisearch:latest" });
+    expect(await svc.pinExactImage("u1", { kind: "app", id: "a1", ref: `evil/other:latest@${D1}` })).toEqual({ pinned: false });
+    prisma.application.findUnique.mockResolvedValueOnce({ source: "IMAGE", image: `getmeili/meilisearch:latest@sha256:${"2".repeat(64)}` });
+    expect(await svc.pinExactImage("u1", { kind: "app", id: "a1", ref: `getmeili/meilisearch:latest@${D1}` })).toEqual({ pinned: false });
+    prisma.application.findUnique.mockResolvedValueOnce({ source: "GIT", image: null });
+    expect(await svc.pinExactImage("u1", { kind: "app", id: "a1", ref: `x/y:latest@${D1}` })).toEqual({ pinned: false });
+    expect(apps.setSource).toHaveBeenCalledTimes(1);
+  });
+  it("a database: only one that was never started takes it", async () => {
+    const { svc, prisma, dbs } = make();
+    dbs.setImage.mockResolvedValue({ changed: true });
+    prisma.database.findUnique.mockResolvedValueOnce({ image: "postgres:16", status: "NEW" });
+    expect(await svc.pinExactImage("u1", { kind: "database", id: "d1", ref: `postgres:16-alpine@${D1}` })).toEqual({ pinned: true });
+    expect(dbs.setImage).toHaveBeenCalledWith("u1", "d1", `postgres:16-alpine@${D1}`);
+    prisma.database.findUnique.mockResolvedValueOnce({ image: "postgres:16", status: "RUNNING" });
+    expect(await svc.pinExactImage("u1", { kind: "database", id: "d1", ref: `postgres:16-alpine@${D1}` })).toEqual({ pinned: false });
+    expect(dbs.setImage).toHaveBeenCalledTimes(1);
+  });
+  it("a compose stack: each member of that repository gets its pin in the stored compose", async () => {
+    const { svc, prisma, apps } = make();
+    prisma.application.findUnique.mockResolvedValueOnce({ source: "COMPOSE", composeFile: "services:\n  s:\n    image: getmeili/meilisearch:latest\n  r:\n    image: redis:7.2\n" });
+    expect(await svc.pinExactImage("u1", { kind: "service", id: "a1", members: { s: `getmeili/meilisearch:latest@${D1}`, r: `evil/redis:7.2@${D1}` } })).toEqual({ pinned: true });
+    const written = apps.setComposeFile.mock.calls[0][2] as string;
+    expect(written).toContain(`image: getmeili/meilisearch:latest@${D1}`);
+    expect(written).toContain("image: redis:7.2\n");
+  });
+  it("pinComposeMembers: nothing to change, an unparsable compose and a member the compose lacks give null", () => {
+    expect(pinComposeMembers("services:\n  s:\n    image: x/y:1\n", { s: "x/y:1" })).toBeNull();
+    expect(pinComposeMembers("services:\n  s:\n    image: x/y:1\n", { nope: `x/y:1@${D1}` })).toBeNull();
+    expect(pinComposeMembers("::: not yaml [", { s: `x/y:1@${D1}` })).toBeNull();
+  });
+  it("startDb writes the exact image of a never-started database right before it starts it, and still starts it when nothing was recorded", async () => {
+    const { svc, prisma, dbs } = make();
+    dbs.provision.mockResolvedValue({ status: "RUNNING", name: "pg" });
+    prisma.bulkTask.findFirst.mockResolvedValue({ opId: "op-1" });
+    (prisma.migrationRun as unknown as { findUnique: jest.Mock }).findUnique = jest.fn().mockResolvedValue({ id: "run1", promotedFromId: null });
+    prisma.migrationRunHint.findMany.mockResolvedValue([{ runId: "run1", kind: "exact-image", value: `postgres:16-alpine@${D1} 16.4` }]);
+    prisma.bulkTask.findFirst.mockResolvedValueOnce({ opId: "op-1" }).mockResolvedValueOnce({ itemRef: "database:s:d1" });
+    prisma.database.findUnique.mockResolvedValue({ image: "postgres:16", status: "NEW" });
+    dbs.setImage.mockResolvedValue({ changed: true });
+    expect(await svc.startDb("u1", "d1")).toEqual({ exists: true, status: "RUNNING", name: "pg" });
+    expect(dbs.setImage).toHaveBeenCalledWith("u1", "d1", `postgres:16-alpine@${D1}`);
+    expect(dbs.setImage.mock.invocationCallOrder[0]).toBeLessThan(dbs.provision.mock.invocationCallOrder[0]);
   });
 });

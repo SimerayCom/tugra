@@ -59,6 +59,9 @@ describe("exactImageFor: the pin of the image the source runs", () => {
     expect(exactImageFor("x/y:latest", [], "not a version")).toBeNull();
     expect(exactImageFor("x/y:latest", [], "latest")).toBeNull();
   });
+  it("a ref the apply schemas would refuse (a registry with a port) is not offered as a pin", () => {
+    expect(exactImageFor("localhost:5000/app:latest", [`localhost:5000/app@${D1}`])).toBeNull();
+  });
   it("an image already on a digest (the owner's own pin, or an earlier import) is never replaced", () => {
     expect(exactImageFor(`x/y:1@${D1}`, [`x/y@${D2}`], "9")).toBeNull();
     expect(exactImageFor("", [`x/y@${D1}`])).toBeNull();

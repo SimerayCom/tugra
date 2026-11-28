@@ -29,3 +29,20 @@ export function validateServiceChoices(fleet: ForeignFleet, items: Array<{ itemR
   }
   return out;
 }
+
+/**
+ * Validate the exact images of apps and databases (`imagePins`, plan itemRef to `repo:tag@sha256:...`) against the freshly re-planned
+ * items: a key must be an app or a database of this plan. Any other key is a 400 before a single op or task row exists. A pin of another
+ * repository than the item's own is not refused here (a database the source gives no image for has none to compare): the executor only
+ * writes a pin that belongs to the item's own image. Returns a null-prototype copy.
+ */
+export function validateImagePins(items: Array<{ itemRef: string; kind: string }>, raw: Record<string, string> | undefined): Record<string, string> {
+  const out: Record<string, string> = Object.create(null);
+  if (!raw) return out;
+  const known = new Map(items.filter((i) => i.kind === "app" || i.kind === "database").map((i) => [i.itemRef, i.kind]));
+  for (const [ref, pin] of Object.entries(raw)) {
+    if (!known.has(ref)) throw new BadRequestException("imagePins has a key that is not an app or a database in this plan");
+    out[ref] = pin;
+  }
+  return out;
+}

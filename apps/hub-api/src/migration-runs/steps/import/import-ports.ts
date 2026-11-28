@@ -175,4 +175,13 @@ export interface ImportStepsPort extends RunImportPort {
   prebuild?(userId: string, appId: string): Promise<{ built: boolean }>;
   /** Pin an IMAGE app to the digest the source runs (`repo@sha256:...`); `pinned:false` when it was already pinned or is no image app. */
   pinImage?(userId: string, appId: string, digest: string): Promise<{ pinned: boolean }>;
+  /**
+   * Write the exact image the source runs (`repo:tag@sha256:...`) into a record the import created: an app's image, a not-yet-started
+   * database's image, or the member images of a compose stack's stored compose. `pinned:false` when the record already had it, is not
+   * of that repository, or cannot take it any more (a database that was started).
+   */
+  pinExactImage?(
+    userId: string,
+    target: { kind: "app" | "database"; id: string; ref: string } | { kind: "service"; id: string; members: Record<string, string> },
+  ): Promise<{ pinned: boolean }>;
 }

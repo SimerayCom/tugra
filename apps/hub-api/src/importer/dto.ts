@@ -140,6 +140,10 @@ export const ServiceChoiceSchema = z
 export type ServiceChoice = z.infer<typeof ServiceChoiceSchema>;
 export const ServiceChoicesSchema = guardedRecord(z.string().min(1).max(256), ServiceChoiceSchema).refine((r) => Object.keys(r).length <= 64, "at most 64 service choices");
 
+/** The exact image an app or a database is created with, by plan itemRef: `repo:tag@sha256:...` (the image the source runs). NOT part of the
+ *  planHash. A pin of another repository than the item's own is ignored (an app's image) or refused (a database that names one). */
+export const ImagePinsSchema = guardedRecord(z.string().regex(/^(app|database):[\x21-\x7e]{1,280}$/, "invalid item ref"), z.string().regex(IMAGE_REF_RE).max(300)).refine((r) => Object.keys(r).length <= 2000, "too many image pins");
+
 const mappingHash = z.string().regex(/^[a-f0-9]{32}$/, "invalid mappingHash");
 /** The editable-mapping fields of a remote apply. `mapping` and `mappingHash` travel together (refined below). */
 const remoteMappingFields = {
@@ -156,6 +160,8 @@ const remoteApplyFields = {
   planHash,
   acks: z.array(ImportAckSchema).max(2000).optional(),
   serviceChoices: ServiceChoicesSchema.optional(),
+  /** Exact images of apps and databases (plan itemRef to `repo:tag@sha256:...`); the members of a stack are pinned in `serviceChoices[].pins`. */
+  imagePins: ImagePinsSchema.optional(),
   ...remoteMappingFields,
   dbDataModes: ImportDbDataModesSchema.optional(),
   /** Multi-host placement: source server ref to Tugra server id (same team as `targetServerId`, which stays the default for

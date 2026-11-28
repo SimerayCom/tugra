@@ -48,6 +48,7 @@ import { applyInputOf, deployKeyBase, failureOf, hasActive, hasBad, includedItem
 import { appTasksOf, duePinsOf, pinFloatingImages, targetOfTask, workerSetsOfOp } from "./baseline/op-safety";
 import { RUN_HINTS, type RunHint, type RunHintStore } from "./baseline/run-hints";
 import { floatingImages, imageParams } from "./baseline/image-pins";
+import { withExactPins } from "./baseline/exact-images";
 
 /** How long a redo waits for orphaned RUNNING tasks to settle before it gives up (the importer's reaper frees them after 10 min). */
 const REDO_PATIENCE_MS = 15 * 60_000;
@@ -393,7 +394,9 @@ export class ImportStep implements StepHandler<ImportObs>, OnModuleInit {
     let opId: string;
     try {
       // The serverMap lives on the run (not in the frozen applyInput or the plan hash): the importer places each item from it.
-      const input = hasMap(ctx) ? ({ ...applyInputOf(run, run.sessionId), serverMap: run.serverMap } as ImportApplyInput) : applyInputOf(run, run.sessionId);
+      const base = hasMap(ctx) ? ({ ...applyInputOf(run, run.sessionId), serverMap: run.serverMap } as ImportApplyInput) : applyInputOf(run, run.sessionId);
+      // R11: the exact images the run already knows (a promoted dry run, a retried apply) ride along in the apply input, outside the plan hash
+      const input = withExactPins(base as ImportApplyInput & { imagePins?: Record<string, string> }, await this.hints(run)) as ImportApplyInput;
       opId = (await this.port.apply(ctx.actor.userId, input)).opId;
     } catch (e) {
       const f = failureOf(e, "import.apply");

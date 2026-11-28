@@ -78,6 +78,26 @@ export function parseImageRef(ref: string): ParsedImageRef | null {
   return { host, repo: segs.join("/"), tag, digest };
 }
 
+/**
+ * A ref pinned to the exact image (`repo:tag@sha256:...`, what an import writes so a redeploy or a move never pulls a newer image): the
+ * ref the registry is asked about (the same ref without the digest) and the digest it is pinned to, which is what the app runs and so
+ * the baseline of the comparison. Null for a ref that is not pinned, and for a bare `repo@sha256:...` (no tag to follow: the owner's own pin).
+ */
+export function exactPinParts(ref: string): { probeRef: string; digest: string } | null {
+  const p = parseImageRef(ref);
+  if (!p || p.digest === null) return null;
+  const at = ref.indexOf("@");
+  const named = ref.slice(0, at);
+  if (!(named.split("/").pop() ?? "").includes(":")) return null;
+  return isCheckableRef(named) ? { probeRef: named, digest: p.digest } : null;
+}
+
+/** The ref to ask the registry about: the ref itself when it names a moving tag, the tag of an exact pin otherwise; null when there is nothing to follow. */
+export function probeRefOf(ref: string): string | null {
+  if (isCheckableRef(ref)) return ref;
+  return exactPinParts(ref)?.probeRef ?? null;
+}
+
 /** True when the ref names a MOVING tag we can probe (parsable and not pinned to a digest). */
 export function isCheckableRef(ref: string): boolean {
   const p = parseImageRef(ref);
@@ -171,11 +191,14 @@ export function computeImageUpdateView(app: ViewApp, live: LiveImage | null | un
   if (!app.imageUpdateCheck || operatorOff) return mk("disabled"); // per-app opt-out, or the operator kill switch (no probe will ever run)
   const ref = parseImageRef(app.image!);
   if (!ref) return mk("unsupported"); // not a reference we can parse — never claimed to be "pinned"
-  if (ref.digest !== null) return mk("pinned");
-  const deployed = liveBaselineDigest(ref, live);
-  if (!live || !deployed) return mk("no_baseline");
+  // An exact pin (`repo:tag@sha256:...`) still follows its tag: what it runs IS the digest it is pinned to, so that is the baseline (no
+  // deployment record needed), and a newer upstream digest of the tag is reported (never applied: this check only tells).
+  const exact = ref.digest !== null ? exactPinParts(app.image!) : null;
+  if (ref.digest !== null && !exact) return mk("pinned");
+  const deployed = exact ? exact.digest : liveBaselineDigest(ref, live);
+  if (!deployed || (!exact && !live)) return mk("no_baseline");
   if (!app.imageUpstreamCheckedAt) return mk("pending", { deployed });
-  if (app.imageUpstreamCheckedAt.getTime() < live.finishedAt.getTime()) return mk("pending", { deployed }); // post-deploy/rollback staleness guard
+  if (live && app.imageUpstreamCheckedAt.getTime() < live.finishedAt.getTime()) return mk("pending", { deployed }); // post-deploy/rollback staleness guard
   if (app.imageCheckError) {
     const code = (IMAGE_CHECK_ERRORS as readonly string[]).includes(app.imageCheckError) ? (app.imageCheckError as ImageCheckError) : "failed";
     return mk("error", { error: code, deployed });

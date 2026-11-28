@@ -11,8 +11,7 @@ import { PROBE_MAX_BYTES } from "./inventory-script";
 import { mergeFreeze } from "./report-merge";
 import { serverRefOfItem } from "./host-hosts";
 import { RUN_HINTS, type RunHintStore } from "../../import/baseline/run-hints";
-import { validContainerPrefix } from "../../../../importer/container-prefix";
-import { derivePins, pinsToWrite, type PinCandidate } from "./inventory-pins";
+import { deriveExactImages, exactCandidatesOf, type ExactMeta } from "./inventory-pins";
 
 type RawReq = Readable & { headers: Record<string, string | string[] | undefined> };
 
@@ -135,22 +134,21 @@ export class HostReportService {
   }
 
   /**
-   * R11: record, as hints of the run, the digest the host reports for every floating-tag image app of the plan. Best effort: a
-   * failure here never fails the report (the operator can still set a pin by hand). An operator's own pin is never replaced.
+   * R11: record, as `exact-image` hints of the run, the exact image the host reports for every app, database and stack member of the plan
+   * (see `inventory-pins.ts`). Best effort: a failure here never fails the report (the operator can still pin by hand). An operator's own
+   * pin is never replaced, and an item the owner opted out of is left alone.
    */
   private async autoPins(opId: string, runId: string, promotedFromId: string | null, inventories: ReadonlyMap<string, HostInventory>): Promise<void> {
     if (!this.hints) return;
     try {
       const row = await this.prisma.bulkOperation.findUnique({ where: { id: opId }, select: { meta: true } });
-      const meta = typeof row?.meta === "object" && row.meta ? (row.meta as { plan?: { items?: Array<{ itemRef?: unknown; kind?: unknown; proposed?: { source?: unknown; image?: unknown; containerPrefix?: unknown } }> } }) : {};
-      const candidates: PinCandidate[] = (meta.plan?.items ?? []).flatMap((i) =>
-        i.kind === "app" && typeof i.itemRef === "string" && i.proposed?.source === "IMAGE" && typeof i.proposed.image === "string" ? [{ itemRef: i.itemRef, image: i.proposed.image, ...(validContainerPrefix(i.proposed.containerPrefix) ? { containerPrefix: i.proposed.containerPrefix } : {}) }] : [],
-      );
+      const meta = typeof row?.meta === "object" && row.meta ? (row.meta as ExactMeta) : {};
+      const candidates = exactCandidatesOf(meta);
       if (!candidates.length) return;
-      const write = pinsToWrite(derivePins(candidates, inventories), await this.hints.list(runId, promotedFromId));
+      const write = deriveExactImages(candidates, inventories, await this.hints.list(runId, promotedFromId));
       if (write.length) await this.hints.upsert(runId, write);
     } catch (e) {
-      this.logger.warn(`run ${runId}: could not record image pins from the inventory: ${e instanceof Error ? e.constructor.name : "error"}`);
+      this.logger.warn(`run ${runId}: could not record exact images from the inventory: ${e instanceof Error ? e.constructor.name : "error"}`);
     }
   }
 }

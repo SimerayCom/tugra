@@ -69,6 +69,37 @@ describe("transformServiceCompose over the 19 real service shapes", () => {
     expect(pinned.floating).toEqual([]); // bookings-style: already on a version tag
   });
 
+  it("exact images: a floating member and a member on a MOVING tag take the digest-pinned ref the source runs; the opt-out keeps the source's tags", () => {
+    const D1 = `sha256:${"1".repeat(64)}`;
+    const D2 = `sha256:${"2".repeat(64)}`;
+    const compose = "services:\n  app:\n    image: ghcr.io/x/app:latest\n  db:\n    image: postgres:16-alpine\n  cache:\n    image: redis:7.2\n  pinned:\n    image: ghcr.io/x/p:1@" + D2 + "\n";
+    const pins = { app: `ghcr.io/x/app:latest@${D1}`, db: `postgres:16-alpine@${D1}`, pinned: `ghcr.io/x/p:1@${D1}` };
+    const on = run(compose, { pins });
+    expect(doc(on).services.app.image).toBe(`ghcr.io/x/app:latest@${D1}`);
+    expect(doc(on).services.db.image).toBe(`postgres:16-alpine@${D1}`);
+    expect(doc(on).services.cache.image).toBe("redis:7.2"); // no pin given: unchanged
+    expect(doc(on).services.pinned.image).toBe(`ghcr.io/x/p:1@${D2}`); // already on a digest: never replaced
+    expect(on.pinned).toEqual(["app", "db"]);
+    expect(on.floating).toEqual([]);
+    expect(on.images).toEqual({ app: "ghcr.io/x/app:latest", cache: "redis:7.2", db: "postgres:16-alpine" });
+    const off = run(compose, { pins, choice: { pinImages: false } });
+    expect(doc(off).services.app.image).toBe("ghcr.io/x/app:latest");
+    expect(doc(off).services.db.image).toBe("postgres:16-alpine");
+    expect(off.pinned).toEqual([]);
+    expect(off.floating).toEqual(["app"]);
+    const foreign = run(compose, { pins: { db: `evil/postgres:16-alpine@${D1}` } });
+    expect(doc(foreign).services.db.image).toBe("postgres:16-alpine");
+  });
+
+  it("exact images: a version tag pin of a floating member still works, and a plan with no pin is byte-identical to before", () => {
+    const compose = "services:\n  s:\n    image: minio/minio\n";
+    expect(doc(run(compose, { pins: { s: "minio/minio:RELEASE.2024-05-10T01-41-38Z" } })).services.s.image).toBe("minio/minio:RELEASE.2024-05-10T01-41-38Z");
+    const none = run(compose);
+    expect(doc(none).services.s.image).toBe("minio/minio");
+    expect(none.floating).toEqual(["s"]);
+    expect(none.pinned).toEqual([]);
+  });
+
   it("MinIO: strips container_name, rewrites a host bind into a named volume, carries the env references, no ports", () => {
     const f = fixtureByName("delta-storage-minio");
     const r = transformServiceCompose({ svc: f.svc, raw: f.raw.docker_compose_raw!, bundle: bundleFor(["SERVICE_USER_MINIO", "SERVICE_PASSWORD_MINIO", "MINIO_SERVER_URL", "MINIO_BROWSER_REDIRECT_URL"]) });

@@ -1,10 +1,12 @@
 import type { PrismaService } from "../prisma/prisma.service";
 import {
   computeImageUpdateView,
+  exactPinParts,
   isCheckableRef,
   liveFinishedAt,
   loadLiveImageMany,
   parseImageRef,
+  probeRefOf,
   parseRecordedDigest,
   refRepoKey,
 } from "./image-update";
@@ -106,6 +108,36 @@ describe("computeImageUpdateView", () => {
     expect(view(app({ image: `nginx@${D("a")}` }))?.state).toBe("pinned");
     expect(view(app({ image: "bad ref" }))).toMatchObject({ state: "unsupported", updateAvailable: false });
     expect(view(app({ image: "Org/App" }))?.state).toBe("unsupported");
+  });
+  describe("an exact pin (repo:tag@sha256:..., what an import writes)", () => {
+    const pinned = (digest = D("a"), over: Record<string, unknown> = {}) => app({ image: `nginx:1.27@${digest}`, ...over });
+    it("exactPinParts / probeRefOf: the registry is asked about the tag, the digest is the baseline; a bare digest has no tag to follow", () => {
+      expect(exactPinParts(`nginx:1.27@${D("a")}`)).toEqual({ probeRef: "nginx:1.27", digest: D("a") });
+      expect(exactPinParts(`ghcr.io/o/r:latest@${D("a")}`)).toEqual({ probeRef: "ghcr.io/o/r:latest", digest: D("a") });
+      expect(exactPinParts(`nginx@${D("a")}`)).toBeNull();
+      expect(exactPinParts("nginx:1.27")).toBeNull();
+      expect(probeRefOf("nginx:1.27")).toBe("nginx:1.27");
+      expect(probeRefOf(`nginx:1.27@${D("a")}`)).toBe("nginx:1.27");
+      expect(probeRefOf(`nginx@${D("a")}`)).toBeNull();
+      expect(isCheckableRef(`nginx:1.27@${D("a")}`)).toBe(false); // the plain predicate is unchanged
+    });
+    it("up to date when the tag still points at the pinned digest; update available (only a notice) when it moved", () => {
+      expect(view(pinned(D("b")), live())?.state).toBe("up_to_date");
+      const moved = view(pinned(D("a")), live());
+      expect(moved).toMatchObject({ state: "update_available", updateAvailable: true, deployedDigest: D("a"), upstreamDigest: D("b") });
+    });
+    it("needs no deployment record: the pin is its own baseline", () => {
+      expect(view(pinned(D("b")), null)?.state).toBe("up_to_date");
+      expect(computeImageUpdateView(pinned(D("a")), undefined, true)?.state).toBe("update_available");
+    });
+    it("pending until probed, an error stays an error, the post-deploy guard still holds", () => {
+      expect(view(pinned(D("a"), { imageUpstreamCheckedAt: null }))?.state).toBe("pending");
+      expect(view(pinned(D("a"), { imageCheckError: "auth" }))).toMatchObject({ state: "error", error: "auth", updateAvailable: false });
+      expect(view(pinned(D("a"), { imageUpstreamCheckedAt: t("2026-11-01T09:59:59Z") }))?.state).toBe("pending");
+    });
+    it("a bare digest the owner pinned by hand stays `pinned` (nothing to follow)", () => {
+      expect(view(app({ image: `nginx@${D("a")}` }))?.state).toBe("pinned");
+    });
   });
   it("operator kill switch: state disabled (not pending), never an update", () => {
     expect(computeImageUpdateView(app({ imageUpstreamCheckedAt: null }), live(), true, true)).toMatchObject({ state: "disabled", updateAvailable: false });

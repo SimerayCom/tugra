@@ -1,7 +1,7 @@
 import { InventoryHostFake } from "./testing/inventory-host-fake";
 import { inventoryShellLines } from "./inventory-script";
 import { parseReportBody, type HostInventory } from "./host-protocol";
-import { derivePins, normalizedRepo, pinsToWrite } from "./inventory-pins";
+import { deriveExactImages, exactKeyOf, normalizedRepo } from "./inventory-pins";
 import { HostReportService } from "./host-report.service";
 import { FakeHostReports } from "./testing/fake-host-reports";
 import { InMemoryRunHints } from "../../import/baseline/run-hints";
@@ -15,63 +15,95 @@ const D2 = `sha256:${"2".repeat(64)}`;
 const H = (n: string) => n.repeat(64).slice(0, 64);
 
 const inv = (containers: HostInventory["containers"], complete = true): HostInventory => ({ ref: "host-1", host: { name: "h", docker: "27", os: "" }, containers, mounts: [], volumes: [], binds: [], complete, rejected: 0 });
-const ctr = (id: string, name: string, image: string, digests: string[], state = "running") => ({ id, name, image, state, ...(digests.length ? { repoDigests: digests } : {}) });
+const ctr = (id: string, name: string, image: string, digests: string[], state = "running", version?: string) => ({ id, name, image, state, ...(digests.length ? { repoDigests: digests } : {}), ...(version ? { imageVersion: version } : {}) });
 
-describe("derivePins (R11)", () => {
-  const cand = (uuid: string, image: string, host = "host-1") => ({ itemRef: `app:${host}:${uuid}`, image });
+const hint = (key: string, value: string) => ({ kind: "exact-image" as const, key, scope: "", value, evidence: "host-loop-reported" as const });
 
-  it("pins a floating-tag image app to the digest its own running container reports, scoped to its source host", () => {
-    const pins = derivePins([cand(U1, "getmeili/meilisearch:latest")], new Map([["host-1", inv([ctr(H("a"), `${U1}-170000000000`, "getmeili/meilisearch:latest", [`getmeili/meilisearch@${D1}`])])]]));
-    expect(pins).toEqual([{ kind: "image-pin", key: "getmeili/meilisearch:latest", scope: "host-1", value: D1, evidence: "host-loop-reported" }]);
+describe("deriveExactImages (R11): the exact image the source runs", () => {
+  const cand = (uuid: string, image: string | undefined, host = "host-1", kind: "app" | "database" = "app") => ({ itemRef: `${kind}:${host}:${uuid}`, kind, ...(image ? { image } : {}) });
+  const one = (containers: HostInventory["containers"], host = "host-1") => new Map([[host, inv(containers)]]);
+
+  it("pins a floating-tag image app to repo:latest@digest of its own running container, keyed by its itemRef", () => {
+    const out = deriveExactImages([cand(U1, "getmeili/meilisearch:latest")], one([{ ...ctr(H("a"), `${U1}-170000000000`, "getmeili/meilisearch:latest", [`getmeili/meilisearch@${D1}`], "running", "1.11.3") }]));
+    expect(out).toEqual([hint(`app:host-1:${U1}`, `getmeili/meilisearch:latest@${D1} 1.11.3`)]);
+  });
+
+  it("pins an app on a MOVING tag too (redis:7.2 moves under a patch release)", () => {
+    const out = deriveExactImages([cand(U1, "redis:7.2")], one([ctr(H("a"), `${U1}-170000000000`, "redis:7.2", [`redis@${D2}`])]));
+    expect(out).toEqual([hint(`app:host-1:${U1}`, `redis:7.2@${D2}`)]);
   });
 
   it("the candidate's containerPrefix lets its <prefix>-<timestamp> container pin; another app's prefix does not", () => {
-    const inventories = new Map([["host-1", inv([ctr(H("a"), "shop-20261110T153012", "getmeili/meilisearch:latest", [`getmeili/meilisearch@${D1}`])])]]);
-    expect(derivePins([{ ...cand(U1, "getmeili/meilisearch:latest"), containerPrefix: "shop" }], inventories)).toEqual([{ kind: "image-pin", key: "getmeili/meilisearch:latest", scope: "host-1", value: D1, evidence: "host-loop-reported" }]);
-    expect(derivePins([cand(U1, "getmeili/meilisearch:latest")], inventories)).toEqual([]);
-    expect(derivePins([{ ...cand(U1, "getmeili/meilisearch:latest"), containerPrefix: "other" }], inventories)).toEqual([]);
+    const inventories = one([ctr(H("a"), "shop-20261110T153012", "getmeili/meilisearch:latest", [`getmeili/meilisearch@${D1}`])]);
+    expect(deriveExactImages([{ ...cand(U1, "getmeili/meilisearch:latest"), containerPrefix: "shop" }], inventories)).toHaveLength(1);
+    expect(deriveExactImages([cand(U1, "getmeili/meilisearch:latest")], inventories)).toEqual([]);
+    expect(deriveExactImages([{ ...cand(U1, "getmeili/meilisearch:latest"), containerPrefix: "other" }], inventories)).toEqual([]);
   });
 
-  it("a single-host run (label `_`) pins for every server; a tag that is not floating, a stopped container and a foreign container pin nothing", () => {
-    const inventories = new Map([["_", inv([ctr(H("a"), U1, "nginx", [`nginx@${D1}`]), ctr(H("b"), U2, "nginx", [`nginx@${D2}`], "exited"), ctr(H("c"), "other", "nginx", [`nginx@${D2}`])])]]);
-    expect(derivePins([cand(U1, "nginx", "_")], inventories)).toEqual([{ kind: "image-pin", key: "nginx", scope: "", value: D1, evidence: "host-loop-reported" }]);
-    expect(derivePins([cand(U2, "nginx", "_")], inventories)).toEqual([]); // its container is stopped
-    expect(derivePins([cand(U3, "nginx", "_")], inventories)).toEqual([]); // no container of its own
-    expect(derivePins([cand(U1, "nginx:1.27", "_")], inventories)).toEqual([]); // not floating
+  it("a single-host run (label `_`) works; a stopped container and a foreign container pin nothing", () => {
+    const inventories = one([ctr(H("a"), U1, "nginx", [`nginx@${D1}`]), ctr(H("b"), U2, "nginx", [`nginx@${D2}`], "exited"), ctr(H("c"), "other", "nginx", [`nginx@${D2}`])], "_");
+    expect(deriveExactImages([cand(U1, "nginx", "_")], inventories)).toEqual([hint(`app:_:${U1}`, `nginx:latest@${D1}`)]);
+    expect(deriveExactImages([cand(U2, "nginx", "_")], inventories)).toEqual([]); // its container is stopped
+    expect(deriveExactImages([cand(U3, "nginx", "_")], inventories)).toEqual([]); // no container of its own
   });
 
   it("only a digest of the image's own repository counts, with the Docker Hub aliases folded", () => {
-    const inventories = new Map([["host-1", inv([ctr(H("a"), U1, "nginx:latest", [`registry.example.test/mirror/nginx@${D2}`, `nginx@${D1}`])])]]);
-    expect(derivePins([cand(U1, "docker.io/library/nginx:latest")], inventories)[0]).toMatchObject({ value: D1 });
+    const inventories = one([ctr(H("a"), U1, "nginx:latest", [`registry.example.test/mirror/nginx@${D2}`, `nginx@${D1}`])]);
+    expect(deriveExactImages([cand(U1, "docker.io/library/nginx:latest")], inventories)[0].value).toBe(`docker.io/library/nginx:latest@${D1}`);
     expect(normalizedRepo("docker.io/library/nginx:latest")).toBe("nginx");
     expect(normalizedRepo("ghcr.io/Org/App")).toBe("ghcr.io/org/app");
   });
 
-  it("two apps on one host running the same tag with different digests are ambiguous: nothing is pinned; the same digest is one pin", () => {
+  it("a database: the plan's own image when it names one, else the one image its running container has (a stock postgres:16-alpine)", () => {
+    const inventories = one([ctr(H("a"), U1, "postgres:16-alpine", [`postgres@${D1}`]), ctr(H("b"), U2, "pgvector/pgvector:pg16", [`pgvector/pgvector@${D2}`])]);
+    expect(deriveExactImages([cand(U1, undefined, "host-1", "database")], inventories)).toEqual([hint(`database:host-1:${U1}`, `postgres:16-alpine@${D1}`)]);
+    expect(deriveExactImages([cand(U2, "pgvector/pgvector:pg16", "host-1", "database")], inventories)).toEqual([hint(`database:host-1:${U2}`, `pgvector/pgvector:pg16@${D2}`)]);
+  });
+
+  it("a stack member: its container is <member>-<service uuid>; a member of the same stack with another name is not mistaken for it", () => {
+    const svc = `service:host-1:${U1}`;
+    const inventories = one([ctr(H("a"), `meilisearch-${U1}`, "getmeili/meilisearch:latest", [`getmeili/meilisearch@${D1}`], "running", "1.12.3"), ctr(H("b"), `redis-${U1}`, "redis:7.2", [`redis@${D2}`])]);
+    const out = deriveExactImages(
+      [
+        { itemRef: svc, kind: "service", member: "meilisearch", image: "getmeili/meilisearch:latest" },
+        { itemRef: svc, kind: "service", member: "redis", image: "redis:7.2" },
+        { itemRef: svc, kind: "service", member: "worker", image: "x/worker:latest" },
+      ],
+      inventories,
+    );
+    expect(out).toEqual([hint(`${svc}#meilisearch`, `getmeili/meilisearch:latest@${D1} 1.12.3`), hint(`${svc}#redis`, `redis:7.2@${D2}`)]);
+    expect(exactKeyOf({ itemRef: svc, member: "redis" })).toBe(`${svc}#redis`);
+  });
+
+  it("two apps on one host running the same tag with different digests are ambiguous: nothing is pinned; the same digest is fine", () => {
     const a = [ctr(H("a"), U1, "x/y:latest", [`x/y@${D1}`]), ctr(H("b"), U2, "x/y:latest", [`x/y@${D2}`])];
-    expect(derivePins([cand(U1, "x/y:latest"), cand(U2, "x/y:latest")], new Map([["host-1", inv(a)]]))).toEqual([]);
-    const b = [ctr(H("a"), U1, "x/y:latest", [`x/y@${D1}`]), ctr(H("b"), U2, "x/y:latest", [`x/y@${D1}`])];
-    expect(derivePins([cand(U1, "x/y:latest"), cand(U2, "x/y:latest")], new Map([["host-1", inv(b)]]))).toHaveLength(1);
+    expect(deriveExactImages([cand(U1, "x/y:latest"), cand(U2, "x/y:latest")], one(a)).map((h) => h.value)).toEqual([`x/y:latest@${D1}`, `x/y:latest@${D2}`]); // each container is its own app
+    const two = [ctr(H("a"), `${U1}-1`, "x/y:latest", [`x/y@${D1}`]), ctr(H("b"), `${U1}-2`, "x/y:latest", [`x/y@${D2}`])];
+    expect(deriveExactImages([cand(U1, "x/y:latest")], one(two))).toEqual([]); // two containers of ONE app with two digests: ambiguous
   });
 
-  it("an incomplete inventory pins nothing (it cannot prove what the host runs)", () => {
-    expect(derivePins([cand(U1, "x/y:latest")], new Map([["host-1", inv([ctr(H("a"), U1, "x/y:latest", [`x/y@${D1}`])], false)]]))).toEqual([]);
+  it("an incomplete inventory, an old script (no digests, no label) and a locally built image pin nothing", () => {
+    expect(deriveExactImages([cand(U1, "x/y:latest")], new Map([["host-1", inv([ctr(H("a"), U1, "x/y:latest", [`x/y@${D1}`])], false)]]))).toEqual([]);
+    expect(deriveExactImages([cand(U1, "x/y:latest")], one([ctr(H("a"), U1, "x/y:latest", [])]))).toEqual([]);
+    expect(deriveExactImages([cand(U1, "x/y:1.2")], one([ctr(H("a"), U1, "x/y:1.2", [], "running", "1.2.9")]))).toEqual([]); // a label alone never rewrites a tag that is not floating
   });
 
-  it("pinsToWrite never replaces an operator's own pin, but replaces an earlier host-reported one", () => {
-    const derived = [{ kind: "image-pin" as const, key: "x/y:latest", scope: "host-1", value: D1, evidence: "host-loop-reported" as const }];
-    expect(pinsToWrite(derived, [{ kind: "image-pin", key: "x/y:latest", scope: "host-1", value: D2, evidence: "operator-attested" }])).toEqual([]);
-    expect(pinsToWrite(derived, [{ kind: "image-pin", key: "x/y:latest", scope: "host-1", value: D2, evidence: "host-loop-reported" }])).toEqual(derived);
-    expect(pinsToWrite(derived, [{ kind: "image-pin", key: "x/y:latest", scope: "other", value: D2, evidence: "operator-attested" }])).toEqual(derived);
+  it("with no digest, a floating tag whose image labels its version is pinned to that version tag", () => {
+    const out = deriveExactImages([cand(U1, "minio/minio:latest")], one([ctr(H("a"), U1, "minio/minio:latest", [], "running", "RELEASE.2024-05-10T01-41-38Z")]));
+    expect(out).toEqual([hint(`app:host-1:${U1}`, "minio/minio:RELEASE.2024-05-10T01-41-38Z RELEASE.2024-05-10T01-41-38Z")]);
   });
 
-  it("an operator's every-server pin (scope \"\") holds against a host-scoped derived pin: pinFor would otherwise prefer the derived one", () => {
-    const derived = [{ kind: "image-pin" as const, key: "x/y:latest", scope: "host-1", value: D1, evidence: "host-loop-reported" as const }];
-    const operatorAll = { kind: "image-pin" as const, key: "x/y:latest", scope: "", value: D2, evidence: "operator-attested" as const };
-    expect(pinsToWrite(derived, [operatorAll])).toEqual([]);
-    // another image's every-server pin, and a host-reported every-server pin, do not block it
-    expect(pinsToWrite(derived, [{ ...operatorAll, key: "x/z:latest" }])).toEqual(derived);
-    expect(pinsToWrite(derived, [{ ...operatorAll, evidence: "host-loop-reported" }])).toEqual(derived);
+  it("an item the owner opted out of, and an item the operator pinned by hand, are left alone", () => {
+    const inventories = one([ctr(H("a"), U1, "x/y:latest", [`x/y@${D1}`]), ctr(H("b"), `meili-${U2}`, "m/m:latest", [`m/m@${D1}`])]);
+    const cands = [cand(U1, "x/y:latest"), { itemRef: `service:host-1:${U2}`, kind: "service" as const, member: "meili", image: "m/m:latest" }];
+    expect(deriveExactImages(cands, inventories, [{ kind: "exact-off", key: `app:host-1:${U1}`, scope: "", value: "off", evidence: "operator-attested" }])).toHaveLength(1);
+    expect(deriveExactImages(cands, inventories, [{ kind: "image-pin", key: "x/y:latest", scope: "", value: D2, evidence: "operator-attested" }])).toHaveLength(1);
+    expect(deriveExactImages(cands, inventories, [{ kind: "service-pin", key: `service:host-1:${U2}#meili`, scope: "", value: "m/m:1", evidence: "operator-attested" }])).toHaveLength(1);
+    expect(deriveExactImages(cands, inventories, [{ kind: "service-pin", key: `service:host-1:${U2}#meili`, scope: "", value: "m/m:1", evidence: "source-api-reported" }])).toHaveLength(2);
+  });
+
+  it("an image already on a digest is not touched", () => {
+    expect(deriveExactImages([cand(U1, `x/y:1@${D2}`)], one([ctr(H("a"), U1, `x/y:1@${D2}`, [`x/y@${D1}`])]))).toEqual([]);
   });
 });
 
@@ -117,29 +149,42 @@ describe("the whole path: the real inventory script against a fake docker, then 
     return { svc, hints, text: r.stdout };
   }
 
-  it("a floating-tag app gets the digest the host really runs as a host-loop-reported pin; a pinned tag gets none", async () => {
+  it("every image app gets the exact image the host really runs as a host-loop-reported hint, a moving tag included", async () => {
     const { svc, hints, text } = ingestRun();
     await svc.ingest(OP, text);
-    expect(await hints.list("run1")).toEqual([{ kind: "image-pin", key: "getmeili/meilisearch:latest", scope: "host-1", value: D1, evidence: "host-loop-reported" }]);
+    expect(await hints.list("run1")).toEqual([
+      { kind: "exact-image", key: `app:host-1:${U1}`, scope: "", value: `getmeili/meilisearch:latest@${D1}`, evidence: "host-loop-reported" },
+      { kind: "exact-image", key: `app:host-1:${U2}`, scope: "", value: `gotenberg/gotenberg:8@${D2}`, evidence: "host-loop-reported" },
+    ]);
   });
 
   it("an app with a custom container name prefix: its <prefix>-<timestamp> container is found through the plan's containerPrefix (and not without it)", async () => {
     const withPrefix = ingestRun(undefined, { name: "shop", planned: true });
     await withPrefix.svc.ingest(OP, withPrefix.text);
-    expect(await withPrefix.hints.list("run1")).toEqual([{ kind: "image-pin", key: "getmeili/meilisearch:latest", scope: "host-1", value: D1, evidence: "host-loop-reported" }]);
+    expect((await withPrefix.hints.list("run1")).map((h) => h.key)).toEqual([`app:host-1:${U1}`, `app:host-1:${U2}`]);
     const without = ingestRun(undefined, { name: "shop", planned: false });
     await without.svc.ingest(OP, without.text);
-    expect(await without.hints.list("run1")).toEqual([]);
+    expect((await without.hints.list("run1")).map((h) => h.key)).toEqual([`app:host-1:${U2}`]);
   });
 
   it("an operator's own pin survives the report; re-running the inventory refreshes a host-reported one", async () => {
     const own = ingestRun(D2);
     await own.svc.ingest(OP, own.text);
-    expect((await own.hints.list("run1"))[0]).toMatchObject({ value: D2, evidence: "operator-attested" });
+    const list = await own.hints.list("run1");
+    expect(list.find((h) => h.kind === "image-pin")).toMatchObject({ value: D2, evidence: "operator-attested" });
+    expect(list.some((h) => h.kind === "exact-image" && h.key === `app:host-1:${U1}`)).toBe(false); // the operator's pin answers for that app
     const again = ingestRun();
     await again.svc.ingest(OP, again.text);
     await again.svc.ingest(OP, again.text);
-    expect(await again.hints.list("run1")).toHaveLength(1);
+    expect(await again.hints.list("run1")).toHaveLength(2);
+  });
+
+  it("an app the owner opted out of keeps no exact image, and the opt-out holds across a second report", async () => {
+    const r = ingestRun();
+    r.hints.byRun.set("run1", [{ kind: "exact-off", key: `app:host-1:${U1}`, scope: "", value: "off", evidence: "operator-attested" }]);
+    await r.svc.ingest(OP, r.text);
+    await r.svc.ingest(OP, r.text);
+    expect((await r.hints.list("run1")).filter((h) => h.kind === "exact-image").map((h) => h.key)).toEqual([`app:host-1:${U2}`]);
   });
 
   it("without a hint store, or when the plan cannot be read, the report is still stored and nothing throws", async () => {

@@ -99,6 +99,29 @@ export const SetServicePinsSchema = z
   .strict();
 export type SetServicePinsInput = z.infer<typeof SetServicePinsSchema>;
 
+/**
+ * `PUT /migration-runs/:id/exact-images`: tick (`keep: true`, the default) or untick "keep the exact image" for an app, a database or a
+ * compose stack of the plan. An unticked item keeps what the source writes (its tag) instead of the image the source runs; ticking it
+ * again brings the recorded image back. Closed once the run passed the point of no return, like every hint.
+ */
+export const SetExactImagesSchema = z
+  .object({
+    items: z
+      .array(
+        z
+          .object({
+            /** The plan itemRef of the app, database or service. */
+            itemRef: z.string().regex(/^(app|database|service):[\x21-\x7e]{1,280}$/).max(340),
+            keep: z.boolean(),
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(200),
+  })
+  .strict();
+export type SetExactImagesInput = z.infer<typeof SetExactImagesSchema>;
+
 export const SafetyHintsSchema = z.object({
   imagePins: z.array(z.object({ image: z.string(), scope: z.string(), digest: z.string(), evidence: z.string() })),
   workerMarks: z.array(z.object({ itemRef: z.string(), role: z.enum(WORKER_MARKS) })),
@@ -106,6 +129,18 @@ export const SafetyHintsSchema = z.object({
   warningAcks: z.array(z.string()),
   /** The pins of compose-stack members recorded on a dry run (a promoted run carries them into its stack choices). */
   servicePins: z.array(z.object({ itemRef: z.string(), member: z.string(), ref: z.string(), evidence: z.string() })),
+  /**
+   * The exact image the source runs for every app, database and stack member the host reported on (`ref` is `repo:tag@sha256:...`, or
+   * `repo:<version>`), with the image's own version label and digest when known. `kept: false` = the owner unticked "keep the exact image".
+   * `member` is empty for an app or a database.
+   */
+  exactImages: z.array(z.object({ itemRef: z.string(), member: z.string(), ref: z.string(), tag: z.string(), version: z.string().nullable(), digest: z.string().nullable(), kept: z.boolean() })),
+  /**
+   * The apps, databases and stack members the host's inventory covered but reported no exact image for (a locally built image, an older
+   * script, two different digests): they keep the image the source writes, and the screen says "unknown". Empty until an inventory arrived.
+   * `image` is what the plan writes for it ("" for a database the plan names no image for).
+   */
+  exactUnknown: z.array(z.object({ itemRef: z.string(), member: z.string(), image: z.string() })),
   /** The warning keys of a finished dry run that are settled by a fix (every floating image behind them is pinned); empty for any other run. */
   warningsFixed: z.array(z.string()),
 });

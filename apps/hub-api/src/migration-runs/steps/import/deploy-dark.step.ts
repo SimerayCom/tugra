@@ -35,7 +35,7 @@ import {
 import { IMPORT_STEPS_PORT, type DeploymentRef, type ImportStepsPort } from "./import-ports";
 import { deployKeyBase, failureOf, includedItems, isActiveDeploy, stopRunApps } from "./step-utils";
 import { pinFor, isFloatingImage, serverRefOfItem } from "./baseline/image-pins";
-import { appTasksOf, markConflictsOfOp, unmatchedMarksOfOp, workerSetsOfOp } from "./baseline/op-safety";
+import { appTasksOf, markConflictsOfOp, pinExactImages, unmatchedMarksOfOp, workerSetsOfOp } from "./baseline/op-safety";
 import { RUN_HINTS, type RunHint, type RunHintStore } from "./baseline/run-hints";
 import { workerMarks, workerSets } from "./baseline/workers";
 import { resolveOwnerInput } from "../../core/run-contract";
@@ -91,6 +91,8 @@ interface Comp {
   serviceIds?: string[];
   /** dbId -> ISO instant this step first saw the database PROVISIONING (the stuck-provision clock). */
   provisioningSince?: Record<string, string>;
+  /** R11: the exact images the host reported were written into the records of this op (before anything is started). */
+  exactPinned?: boolean;
 }
 const compOf = (ctx: StepContext): Comp => (ctx.step.compensation ?? {}) as Comp;
 
@@ -273,6 +275,18 @@ export class DeployDarkStep implements StepHandler<DeployDarkObs>, OnModuleInit 
     // compensation ids first: a crash right after a side effect still tells abort what to stop
     // (workers are never deployed here, so an abort has nothing of theirs to stop)
     await ctx.recordCompensation({ dbIds: obs.dbs.map((d) => d.id), appIds: obs.apps.filter(required).map((a) => a.id), serviceIds: startedSvcs(obs).map((x) => x.id) });
+
+    // R11: every record the import created runs the exact image the source runs (what the host reported), never what its tag points at today
+    if (compOf(ctx).exactPinned !== true) {
+      let changed: string[];
+      try {
+        changed = await pinExactImages(this.port, userId, await this.port.opSnapshot(userId, run.opId!), await this.hints(run));
+      } catch (e) {
+        throw failureOf(e, "deploy-dark.exact-image");
+      }
+      await ctx.recordCompensation({ exactPinned: true });
+      if (changed.length) await ctx.emit({ level: "info", code: "deploy-dark.exact-images-pinned", params: { count: changed.length } });
+    }
 
     // 1) databases, one at a time
     let started = false;

@@ -161,6 +161,43 @@ describe("ImageUpdateService.runTick — due-gating", () => {
   });
 });
 
+describe("ImageUpdateService — an exact pin (repo:tag@sha256:...) is followed through its tag and only ever notifies", () => {
+  const PIN = `nginx:1.27@${D("a")}`;
+  it("probes the tag (never the digest ref), with no deployment record needed, and writes the verdict with a CAS on the stored ref", async () => {
+    const m = make({ apps: [cand({ image: PIN })], live: {}, results: { "nginx:1.27": `ok ${D("b")}` } });
+    await m.svc.runTick();
+    expect(m.send).toHaveBeenCalledTimes(1);
+    const script = m.send.mock.calls[0][1] as string;
+    expect(script).toContain("chk 0 'nginx:1.27'");
+    expect(script).not.toContain(D("a"));
+    expect(m.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "a1", image: PIN }, data: expect.objectContaining({ imageUpstreamDigest: D("b") }) }));
+  });
+  it("a newer upstream digest fires a notice that names the pinned ref and the pinned digest; it never redeploys or edits the app", async () => {
+    const m = make({ apps: [cand({ image: PIN, imageUpdateNotifiedDigest: D("c") })], live: {}, results: { "nginx:1.27": `ok ${D("b")}` } });
+    await m.svc.runTick();
+    expect(m.fire).toHaveBeenCalledTimes(1);
+    expect(m.fire.mock.calls[0][2]).toMatchObject({ appId: "a1", image: PIN, deployedDigest: D("a"), upstreamDigest: D("b") });
+    for (const c of m.updateMany.mock.calls) expect(Object.keys((c[0] as { data: Row }).data)).not.toContain("image");
+    expect((m.prisma.application as unknown as { update?: unknown }).update).toBeUndefined();
+  });
+  it("no notice when the tag still points at the pinned digest", async () => {
+    const m = make({ apps: [cand({ image: PIN, imageUpdateNotifiedDigest: D("c") })], live: {}, results: { "nginx:1.27": `ok ${D("a")}` } });
+    await m.svc.runTick();
+    expect(m.fire).not.toHaveBeenCalled();
+  });
+  it("a bare digest pin (no tag) is never probed", async () => {
+    const m = make({ apps: [cand({ image: `nginx@${D("a")}` })] });
+    await m.svc.runTick();
+    expect(m.send).not.toHaveBeenCalled();
+  });
+  it("the manual check accepts an exact pin", async () => {
+    const m = make({ apps: [cand({ image: PIN })], live: {}, results: { "nginx:1.27": `ok ${D("b")}` } });
+    const r = await m.svc.checkApp(cand({ source: "IMAGE", isPreview: false, image: PIN }) as never);
+    expect(m.send).toHaveBeenCalledTimes(1);
+    expect(r.imageUpdate).toBeDefined();
+  });
+});
+
 describe("ImageUpdateService.runTick — grouping", () => {
   const scriptsOf = (send: jest.Mock) => send.mock.calls.map((c) => c[1] as string);
   it("same credentials on one server → ONE script; the same ref is deduped and applied to several apps", async () => {

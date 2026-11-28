@@ -12,6 +12,7 @@
 import type { ImportPlanItem } from "../../../../importer/foreign-fleet";
 import type { RunApplyInput } from "../../../core/dto";
 import type { RunHint } from "./run-hints";
+import { exactPinOf } from "./exact-images";
 
 /** `sha256:` plus 64 lower-case hex. The only digest form a pin may take. */
 export const DIGEST_RE = /^sha256:[a-f0-9]{64}$/;
@@ -94,13 +95,13 @@ export function floatingImages(items: readonly PlanItemLike[], applyInput: Pick<
   const out: FloatingImage[] = [];
   for (const it of items) {
     if (it.kind === "app" && it.proposed.source === "IMAGE" && typeof it.proposed.image === "string" && isFloatingImage(it.proposed.image)) {
-      out.push({ itemRef: it.itemRef, name: it.name, kind: "app", image: it.proposed.image, pinned: pinFor(hints, it.proposed.image, serverRefOfItem(it.itemRef)) !== null });
+      out.push({ itemRef: it.itemRef, name: it.name, kind: "app", image: it.proposed.image, pinned: pinFor(hints, it.proposed.image, serverRefOfItem(it.itemRef)) !== null || exactPinOf(hints, it.itemRef) !== null });
     } else if (it.kind === "service" && Array.isArray(it.proposed.imageFloating)) {
       const rows = services?.find((r) => r.itemRef === it.itemRef)?.floating ?? [];
       for (const m of it.proposed.imageFloating) {
         if (typeof m !== "string") continue;
         const row = rows.find((r) => r.member === m);
-        const hinted = hints.some((h) => h.kind === "service-pin" && h.key === servicePinKey(it.itemRef, m));
+        const hinted = hints.some((h) => h.kind === "service-pin" && h.key === servicePinKey(it.itemRef, m)) || exactPinOf(hints, it.itemRef, m) !== null;
         out.push({ itemRef: it.itemRef, name: it.name, kind: "service", member: m, ...(row ? { image: row.image, ...(row.seen ? { seen: row.seen } : {}) } : {}), pinned: hinted || servicePinned(applyInput, it.itemRef, m) });
       }
     }

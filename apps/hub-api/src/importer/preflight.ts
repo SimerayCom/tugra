@@ -215,10 +215,12 @@ export function buildPreflight(fleet: ForeignFleet, options: ImportOptions, inve
       const seen = (s.members ?? []).find((m) => m.name === member)?.image;
       return [{ member, image, ...(seen && isPinFor(image, seen) ? { seen } : {}) }];
     });
+    const images = Object.entries(r?.images ?? {}).sort(([a], [b]) => (a < b ? -1 : 1)).map(([member, image]) => ({ member, image }));
     return {
       name: s.name,
       itemRef: ns("service", s.serverRef, s.sourceRef),
       ...(floating.length ? { floating } : {}),
+      ...(images.length ? { images } : {}),
       members: s.memberApps.length + s.memberDbs.length,
       note: isMinioService(s) ? MINIO_SERVICE_NOTE : serviceNote(a),
       // Only a MinIO service carries the flag (the key is ABSENT otherwise).

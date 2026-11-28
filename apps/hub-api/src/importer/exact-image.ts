@@ -17,8 +17,13 @@ export const DIGEST_RE = /^sha256:[a-f0-9]{64}$/;
 export const REPO_DIGEST_RE = /^[A-Za-z0-9][A-Za-z0-9._/:-]{0,200}@sha256:[a-f0-9]{64}$/;
 /** The version an image labels itself with (`org.opencontainers.image.version`), as far as the hub accepts it. */
 export const VERSION_LABEL_RE = /^[A-Za-z0-9][A-Za-z0-9._+~-]{0,63}$/;
+/** The ref shape the apply input and the service choices accept (no registry port: a pin the schemas refuse would fail a whole apply). */
+export const EXACT_REF_RE = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,200}(:[A-Za-z0-9_][A-Za-z0-9._-]{0,127})?(@sha256:[a-f0-9]{64})?$/;
 /** A tag as docker allows it. */
 const TAG_RE = /^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$/;
+/** The run hint kinds that carry an exact image (see `migration-runs/steps/import/baseline/exact-images.ts`). */
+export const EXACT_IMAGE_KIND = "exact-image" as const;
+export const EXACT_OFF_KIND = "exact-off" as const;
 /** The label key the version is read from. */
 export const OCI_VERSION_LABEL = "org.opencontainers.image.version";
 
@@ -91,9 +96,13 @@ export function exactImageFor(image: string, repoDigests: readonly string[] | un
   const tag = parts.tag ?? "latest";
   const label = version && VERSION_LABEL_RE.test(version) ? version : null;
   const digests = digestsFor(image, repoDigests);
-  if (digests.length === 1) return { ref: `${parts.repo}:${tag}@${digests[0]}`, tag, digest: digests[0], version: label, via: "digest" };
+  if (digests.length === 1) {
+    const ref = `${parts.repo}:${tag}@${digests[0]}`;
+    return EXACT_REF_RE.test(ref) ? { ref, tag, digest: digests[0], version: label, via: "digest" } : null;
+  }
   if (digests.length === 0 && label && isFloatingTag(image) && TAG_RE.test(label) && label !== "latest") {
-    return { ref: `${parts.repo}:${label}`, tag: label, digest: null, version: label, via: "version" };
+    const ref = `${parts.repo}:${label}`;
+    return EXACT_REF_RE.test(ref) ? { ref, tag: label, digest: null, version: label, via: "version" } : null;
   }
   return null;
 }
@@ -112,7 +121,7 @@ export function decodeExact(value: string): { ref: string; version: string | nul
   const ref = sp < 0 ? value : value.slice(0, sp);
   const version = sp < 0 ? null : value.slice(sp + 1);
   if (version !== null && !VERSION_LABEL_RE.test(version)) return null;
-  if (!/^[A-Za-z0-9][A-Za-z0-9._/:-]{0,200}(@sha256:[a-f0-9]{64})?$/.test(ref)) return null;
+  if (!EXACT_REF_RE.test(ref)) return null;
   const p = splitImage(ref);
   if (p.digest !== null && !DIGEST_RE.test(p.digest)) return null;
   return { ref, version, tag: p.tag ?? "latest", digest: p.digest };
