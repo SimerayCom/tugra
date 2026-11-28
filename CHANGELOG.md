@@ -7,6 +7,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.0-beta.39] - 2026-11-28
+
 - **Guided moves start from a page.** The launch is its own page instead of a dialog. For servers that stay on their own
   machine it shows only what applies: the servers, the optional rebuild per app, the certificate email and the observe
   window. Creating the runs shows progress per server, and one button starts the move.
