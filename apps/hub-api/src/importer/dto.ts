@@ -189,6 +189,8 @@ export const ImportServicesPreviewSchema = z.object({
   sessionId: z.string().min(1),
   sourceKind: z.enum(REMOTE_SOURCE_KINDS).optional(),
   choices: ServiceChoicesSchema.optional(),
+  /** Only these service stacks (plan itemRefs) are read and answered; absent = every stack of the source. The first step's scope: a stack nobody is moving is not read. */
+  itemRefs: z.array(z.string().min(1).max(400)).max(5000).optional(),
 });
 export type ImportServicesPreviewInput = z.infer<typeof ImportServicesPreviewSchema>;
 

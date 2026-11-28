@@ -58,6 +58,8 @@ describe("ServiceChoiceSchema", () => {
 
   it("the preview body takes a session and optional choices", () => {
     expect(ImportServicesPreviewSchema.safeParse({ sessionId: "s" }).success).toBe(true);
+    expect(ImportServicesPreviewSchema.safeParse({ sessionId: "s", itemRefs: ["service:a:b"] }).success).toBe(true);
+    expect(ImportServicesPreviewSchema.safeParse({ sessionId: "s", itemRefs: [""] }).success).toBe(false);
     expect(ImportServicesPreviewSchema.safeParse({ sessionId: "s", choices: { "service:s:1": { name: "x" } } }).success).toBe(true);
     expect(ImportServicesPreviewSchema.safeParse({ choices: {} }).success).toBe(false);
   });

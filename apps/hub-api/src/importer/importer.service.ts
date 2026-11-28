@@ -523,7 +523,9 @@ export class ImporterService {
       const fleet = await source.discover();
       const plan = planImport(fleet, { sourceKind: session.sourceKind });
       const choices = validateServiceChoices(fleet, plan.items, input.choices);
-      const services = [...fleet.services].sort((a, b) => (ns("service", a.serverRef, a.sourceRef) < ns("service", b.serverRef, b.sourceRef) ? -1 : 1));
+      // Only the stacks asked for are read: every one costs a read of its variables and files through the source (an agent read waits on sealed values).
+      const only = input.itemRefs ? new Set(input.itemRefs) : null;
+      const services = fleet.services.filter((s) => !only || only.has(ns("service", s.serverRef, s.sourceRef))).sort((a, b) => (ns("service", a.serverRef, a.sourceRef) < ns("service", b.serverRef, b.sourceRef) ? -1 : 1));
       const clashes = await serviceNameClashes(this.prisma, { sessionTeamId: session.teamId, services, choices, importAppNames: fleet.apps.map((a) => a.name) });
       const cards = await mapLimit(services, 4, async (svc) => {
         let bundle;

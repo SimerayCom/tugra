@@ -298,6 +298,8 @@
     "desc": "Each Coolify service becomes one stopped compose app. Secrets are carried, never regenerated, and nothing deploys until you do it.",
     "loading": "Reading the services…",
     "previewFailed": "Could not read the service details",
+    "previewTimeout": "Reading the services is taking too long. Try again.",
+    "retry": "Try again",
     "summary": "{importable} ready · {partial} partial · {skipped} not imported",
     "include": "Import this service",
     "rename": "App name",

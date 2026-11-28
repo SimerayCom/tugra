@@ -7,7 +7,7 @@ import path from "node:path";
 import { I18nProvider } from "../i18n/provider";
 import { ConfirmProvider } from "./confirm";
 import { ImportWizard } from "./import-wizard";
-import { ImportServicesPanel } from "./import-services-panel";
+import { ImportServicesPanel, SERVICES_PREVIEW_DEADLINE_MS } from "./import-services-panel";
 import { ImportChecklist } from "./import-checklist";
 import { api } from "../lib/api";
 import importMessages from "../i18n/locales/en/import.json";
@@ -302,6 +302,42 @@ describe("ImportServicesPanel — a stack that stays on its own machine", () => 
     await screen.findByText("storage-minio");
     expect(screen.queryByTestId("service-in-place")).toBeNull();
     expect(screen.getAllByText(/a host folder bind is carried as a named volume/).length).toBe(2);
+  });
+});
+
+describe("ImportServicesPanel — reading the services always ends", () => {
+  beforeEach(() => {
+    window.history.replaceState(null, "", "/");
+    qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it("a read that never answers ends in a clear error with a way to try again, and the retry reads again", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const spy = vi.spyOn(api, "previewImportServices").mockImplementationOnce(() => new Promise(() => undefined)).mockResolvedValue({ services: previews });
+    renderPanel();
+    expect(screen.getByText("Reading the services…")).toBeTruthy();
+    await vi.advanceTimersByTimeAsync(SERVICES_PREVIEW_DEADLINE_MS + 1000);
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("Reading the services is taking too long.");
+    expect(screen.queryByText("Reading the services…")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    await screen.findByText("1 ready · 1 partial · 1 not imported");
+    expect(spy).toHaveBeenCalledTimes(2);
+    expect(screen.queryByText(/taking too long/)).toBeNull();
+  });
+
+  it("a failed read offers the retry too, and a failure is shown at once (no hidden second wait)", async () => {
+    qc = new QueryClient({ defaultOptions: { queries: { retry: 3 } } }); // the panel decides for itself: it does not retry silently
+    const spy = vi.spyOn(api, "previewImportServices").mockRejectedValueOnce(new Error("boom")).mockResolvedValue({ services: previews });
+    renderPanel();
+    await screen.findByText("Could not read the service details");
+    expect(spy).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    await screen.findByText("1 ready · 1 partial · 1 not imported");
   });
 });
 

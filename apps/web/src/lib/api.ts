@@ -2798,7 +2798,7 @@ export const api = {
     return apiFetch<{ results: ImportRelinkResult[]; linked: number }>(`/import/operations/${encodeURIComponent(opId)}/git-links/relink`, { method: "POST", body: JSON.stringify(choices && Object.keys(choices).length ? { choices } : {}) });
   },
   // Preview the SERVICE import (read-only, secret-free): per service its verdict, members, variable names, volumes, domains.
-  previewImportServices(input: { sessionId: string; sourceKind?: ImportRemoteKind; choices?: Record<string, ImportServiceChoice> }) {
+  previewImportServices(input: { sessionId: string; sourceKind?: ImportRemoteKind; choices?: Record<string, ImportServiceChoice>; /** Only these stacks (plan itemRefs) are read and answered. */ itemRefs?: string[] }) {
     return apiFetch<{ services: ImportServicePreview[] }>("/import/services/preview", { method: "POST", body: JSON.stringify(input) });
   },
   // Settings the source can carry (notification channels, variables, storages, tasks, cleanup, tags, members): read-only, secret-free preview + apply.

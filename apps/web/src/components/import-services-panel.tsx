@@ -50,6 +50,31 @@ const COPY_PATH_RISKS = new Set(["service.volume.name", "service.volume.hostbind
 const isCopyPathField = (field: string): boolean => field === "objectData" || field.startsWith("volume:");
 const RISK_COLOR: Record<ImportRiskLevel, string> = { blocker: "var(--c-r)", warn: "var(--c-am)", info: "var(--c-tx3)" };
 
+/** How long the owner waits for the service details before the card says so and offers another try. */
+export const SERVICES_PREVIEW_DEADLINE_MS = 60_000;
+
+/** Settle with the promise, or reject once `ms` has passed: a read that never answers ends in an error the card can show, not in a spinner for good. */
+export class DeadlineError extends Error {
+  constructor() {
+    super("deadline");
+  }
+}
+export function withDeadline<T>(p: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const id = setTimeout(() => reject(new DeadlineError()), ms);
+    p.then(
+      (v) => {
+        clearTimeout(id);
+        resolve(v);
+      },
+      (e) => {
+        clearTimeout(id);
+        reject(e);
+      },
+    );
+  });
+}
+
 /** Debounce a value (the preview re-runs only after the operator pauses typing). */
 function useDebounced<T>(value: T, ms: number): T {
   const [v, setV] = useState(value);
@@ -91,13 +116,18 @@ export function ImportServicesPanel({
   const t = useT();
   const debounced = useDebounced(choices, 400);
   const items = plan.items.filter((i) => i.kind === "service");
-  const { data, isLoading, isError } = useQuery({
+  const refsKey = items.map((i) => i.itemRef).sort().join("|"); // the stacks in scope: a changed scope reads again
+  const { data, isFetching, isError, error, refetch } = useQuery({
     enabled: items.length > 0, // a plan without services never calls the preview endpoint
-    queryKey: ["import-services-preview", sessionId, JSON.stringify(debounced)],
-    queryFn: () => api.previewImportServices({ sessionId, sourceKind: kind, choices: Object.keys(debounced).length ? debounced : undefined }),
+    queryKey: ["import-services-preview", sessionId, JSON.stringify(debounced), refsKey],
+    // The hub reads the variables and files of the stacks through the source (an agent read can take long): never wait on it for good
+    queryFn: () => withDeadline(api.previewImportServices({ sessionId, sourceKind: kind, choices: Object.keys(debounced).length ? debounced : undefined, itemRefs: items.map((i) => i.itemRef) }), SERVICES_PREVIEW_DEADLINE_MS),
     placeholderData: (prev) => prev,
     staleTime: 0,
+    retry: false, // a failure is shown at once, with its own "Try again", instead of after a silent second wait
   });
+  const loading = isFetching && !data;
+  const failed = isError && !isFetching;
   const staysIn = (ref: string): boolean => !!placementKind && isInPlaceItem({ placementKind }, ref);
   // The hub answers for every service of the source; only the stacks of this (scoped) plan are shown, counted, and able to hold the apply back.
   const inPlan = new Set(items.map((i) => i.itemRef));
@@ -117,12 +147,17 @@ export function ImportServicesPanel({
         {t("import.services.title")} <span style={{ color: "var(--c-tx3)", fontWeight: 400 }}>({items.length})</span>
       </div>
       <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "4px 0 10px", lineHeight: 1.5 }}>{allStay ? t("import.inPlaceService.desc") : t("import.services.desc")}</p>
-      {isLoading && (
-        <div style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 12 }}>
+      {loading && (
+        <div role="status" style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 12 }}>
           <Spinner /> {t("import.services.loading")}
         </div>
       )}
-      {isError && <div style={{ color: "var(--c-r)", fontSize: 12 }}>{t("import.services.previewFailed")}</div>}
+      {failed && (
+        <div role="alert" style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", color: "var(--c-r)", fontSize: 12 }}>
+          <span>{error instanceof DeadlineError ? t("import.services.previewTimeout") : t("import.services.previewFailed")}</span>
+          <button type="button" onClick={() => void refetch()} style={linkBtn}>{t("import.services.retry")}</button>
+        </div>
+      )}
       {cards.length > 0 && (
         <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 10 }}>
           {t("import.services.summary", { importable: count("importable"), partial: count("partial"), skipped: count("skipped") })}

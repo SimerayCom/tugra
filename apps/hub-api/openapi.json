@@ -50042,6 +50042,15 @@
                       },
                       "additionalProperties": false
                     }
+                  },
+                  "itemRefs": {
+                    "maxItems": 5000,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 400
+                    }
                   }
                 },
                 "required": [

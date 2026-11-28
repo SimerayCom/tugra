@@ -290,6 +290,19 @@ describe("ImporterService.previewServices", () => {
     expect(JSON.stringify(res)).not.toContain(SECRET);
   });
 
+  it("reads and answers only the stacks it is asked for: a stack outside the scope costs no read of its variables", async () => {
+    const get = getFrom(routes([{ key: "SERVICE_PASSWORD_MEILISEARCH", value: SECRET }]));
+    const { svc } = make({ session: liveSession, clientGet: get });
+    const all = await svc.previewServices("u1", { sessionId: "sess-1" });
+    const ref = all.services[0].itemRef;
+    get.mockClear();
+    const none = await svc.previewServices("u1", { sessionId: "sess-1", itemRefs: ["service:other:elsewhere"] });
+    expect(none.services).toEqual([]);
+    expect(get.mock.calls.map((c) => c[0])).not.toContain("/services/svc1/envs");
+    const one = await svc.previewServices("u1", { sessionId: "sess-1", itemRefs: [ref] });
+    expect(one.services.map((c) => c.itemRef)).toEqual([ref]);
+  });
+
   it("a name the target team already has is flagged on the card, before the import starts", async () => {
     const { svc } = make({ session: liveSession, clientGet: getFrom(routes([{ key: "SERVICE_PASSWORD_MEILISEARCH", value: SECRET }])), teamApps: [{ teamId: "t1", name: "search" }] });
     expect((await svc.previewServices("u1", { sessionId: "sess-1" })).services[0].nameClash).toBe("team");
