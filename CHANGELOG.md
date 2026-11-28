@@ -7,6 +7,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **In-place takeover test reaches the sites.** The check that compares each site through Coolify and through Tugra ran inside
+  the agent's container and could reach neither proxy, so every site read "does not answer like Coolify". It now runs on the
+  server's network, waits until each app is up, tries again for three minutes before it fails, and shows what each side
+  answered (status, size, redirect) next to each other.
+- **A move on the same server asks less.** PREFLIGHT says once that every app keeps the exact image Coolify runs, the checks
+  cover only this run's servers and apps, and REMAP_ENV names the apps and keys it means and does not ask about references the
+  takeover leaves as they were. Failed steps fill in the names in their sentence, and the attempt counter counts real retries.
+- **Shorter run and campaign pages.** One card says what happens now and what to press; apps show their icons; the campaign has
+  its own address, starts when created, counts "2 of 2 apps switched" for its own server, and hides cancelled runs behind a filter.
+
 - **Checks and clean-ups that look at the server now look at the server.** The agent runs as a container, so a script that
   asked for `127.0.0.1`, the proxy's network or a host folder was answering about the container. The TLS dark check of a
   same-host takeover, the loopback check after a swap and the certificate checks now run on the server's own network. Coolify's
