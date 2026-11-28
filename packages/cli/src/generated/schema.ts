@@ -36250,6 +36250,7 @@ export interface operations {
                             hold?: boolean;
                         };
                     };
+                    itemRefs?: string[];
                 };
             };
         };
