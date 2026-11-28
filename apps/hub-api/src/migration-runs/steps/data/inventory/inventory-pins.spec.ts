@@ -203,3 +203,46 @@ describe("the whole path: the real inventory script against a fake docker, then 
     await expect(failing.ingest(OP, body)).resolves.toMatchObject({ stored: 1 });
   });
 });
+
+describe("the whole path for databases and stack members: real script, fake docker, ingest", () => {
+  const TOKEN = `tugra_mig_${"A".repeat(43)}`;
+  const OP = { opId: "op1", actorId: "user1", expiresAt: new Date() } as MigrationTokenContext;
+  let fake: InventoryHostFake | null = null;
+  afterEach(() => {
+    fake?.dispose();
+    fake = null;
+  });
+
+  it("a database on postgres:16-alpine and a stack's members get their exact image, with the image's own version label", async () => {
+    fake = new InventoryHostFake({
+      containers: [
+        { id: H("a"), name: U1, image: "postgres:16-alpine", repoDigests: [`postgres@${D1}`], versionLabel: "16.4" },
+        { id: H("b"), name: `meilisearch-${U2}`, image: "getmeili/meilisearch:latest", repoDigests: [`getmeili/meilisearch@${D2}`], versionLabel: "1.12.3" },
+        { id: H("c"), name: `redis-${U2}`, image: "redis:7.2", repoDigests: [] },
+      ],
+    });
+    const program = ["set -eu", 'die() { printf "tugra-migrator: %s\\n" "$1" >&2; exit "${2:-2}"; }', ...inventoryShellLines(), `TUGRA_MIGRATION_TOKEN=${TOKEN}`, "export TUGRA_MIGRATION_TOKEN", "tugra_inventory host-1 https://hub.example.test"].join("\n");
+    const r = fake.sh(program, { TUGRA_NO_POST: "1", TUGRA_NO_REACH: "1" });
+    const hints = new InMemoryRunHints();
+    const prisma = {
+      migrationRun: { findUnique: jest.fn(async () => ({ id: "run1", actorId: "user1", status: "RUNNING", targetServerId: "srv-t", serverMap: null, promotedFromId: null })) },
+      server: { findUnique: jest.fn(async () => ({ teamId: "team1" })) },
+      bulkTask: { findMany: jest.fn(async () => [{ itemRef: `database:host-1:${U1}` }, { itemRef: `service:host-1:${U2}` }]) },
+      bulkOperation: {
+        findUnique: jest.fn(async () => ({
+          meta: {
+            plan: { items: [{ itemRef: `database:host-1:${U1}`, kind: "database", proposed: { engine: "POSTGRES", version: "16", image: null } }] },
+            stackImages: [{ itemRef: `service:host-1:${U2}`, images: [{ member: "meilisearch", image: "getmeili/meilisearch:latest" }, { member: "redis", image: "redis:7.2" }] }],
+          },
+        })),
+      },
+    };
+    const svc = new HostReportService(prisma as never, { requirePermission: jest.fn(async () => undefined) } as never, new FakeHostReports(), hints);
+    await svc.ingest(OP, r.stdout);
+    expect(await hints.list("run1")).toEqual([
+      { kind: "exact-image", key: `database:host-1:${U1}`, scope: "", value: `postgres:16-alpine@${D1} 16.4`, evidence: "host-loop-reported" },
+      { kind: "exact-image", key: `service:host-1:${U2}#meilisearch`, scope: "", value: `getmeili/meilisearch:latest@${D2} 1.12.3`, evidence: "host-loop-reported" },
+    ]); // redis reported no digest (a locally built image): it keeps what the source writes, and the run says "unknown"
+  });
+});
+

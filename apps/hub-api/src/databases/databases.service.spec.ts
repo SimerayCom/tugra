@@ -707,6 +707,50 @@ describe("DatabasesService - custom icon", () => {
     });
   });
 
+  describe("setImage (the exact image an import keeps)", () => {
+    const okWrite = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const REF = `postgres:16-alpine@sha256:${"c".repeat(64)}`;
+    const row = (over: Record<string, unknown> = {}) => ({ id: "db1", teamId: "t1", serverId: "s1", status: "NEW", image: "postgres:16", ...over });
+
+    it("writes the exact image of a database that was never started, audits it, and says it changed", async () => {
+      const update = jest.fn().mockResolvedValue({});
+      const prisma = { database: { findUnique: jest.fn().mockResolvedValue(row()), update } } as unknown as PrismaService;
+      (audit.log as jest.Mock).mockClear();
+      await expect(make(prisma, okWrite).setImage("u1", "db1", REF)).resolves.toEqual({ changed: true });
+      expect(update).toHaveBeenCalledWith({ where: { id: "db1" }, data: { image: REF } });
+      expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "db.image.update", target: "db1" }));
+    });
+
+    it("the same image again changes nothing; a started database is never changed behind its owner's back", async () => {
+      const update = jest.fn();
+      const same = { database: { findUnique: jest.fn().mockResolvedValue(row({ image: REF })), update } } as unknown as PrismaService;
+      await expect(make(same, okWrite).setImage("u1", "db1", REF)).resolves.toEqual({ changed: false });
+      const started = { database: { findUnique: jest.fn().mockResolvedValue(row({ status: "RUNNING" })), update } } as unknown as PrismaService;
+      await expect(make(started, okWrite).setImage("u1", "db1", REF)).rejects.toThrow(/has been started/);
+      expect(update).not.toHaveBeenCalled();
+    });
+
+    it("needs write access and a shell-safe image reference", async () => {
+      const update = jest.fn();
+      const prisma = { database: { findUnique: jest.fn().mockResolvedValue(row()), update } } as unknown as PrismaService;
+      const denied = { requirePermission: jest.fn().mockRejectedValue(new ForbiddenException("nope")) } as unknown as TeamAccessService;
+      await expect(make(prisma, denied).setImage("u1", "db1", REF)).rejects.toThrow(/nope/);
+      await expect(make(prisma, okWrite).setImage("u1", "db1", "postgres:16; rm -rf /")).rejects.toBeInstanceOf(BadRequestException);
+      expect(update).not.toHaveBeenCalled();
+    });
+
+    it("a move to another server leaves the stored image alone, so the target pulls the same digest", async () => {
+      const updateMany = jest.fn().mockResolvedValue({ count: 1 });
+      const prisma = {
+        database: { findUnique: jest.fn().mockResolvedValue(row({ image: REF, hostPort: 5433 })), updateMany },
+        server: { findUnique: jest.fn().mockResolvedValue({ id: "s2", teamId: "t1" }) },
+      } as unknown as PrismaService;
+      await make(prisma, okWrite).moveToServer("u1", "db1", "s2");
+      expect(updateMany.mock.calls[0][0].data).toEqual({ serverId: "s2", hostPort: null });
+      expect(Object.keys(updateMany.mock.calls[0][0].data)).not.toContain("image");
+    });
+  });
+
   describe("moveToServer", () => {
     const okWrite = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     const srcRow = { id: "db1", teamId: "t1", serverId: "s1", status: "NEW", hostPort: 5433 };

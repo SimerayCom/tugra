@@ -544,3 +544,48 @@ describe("IMPORT pins floating images before any deploy path (R11)", () => {
     expect(w.port.calls.some((c) => c.startsWith("pin:"))).toBe(false);
   });
 });
+
+describe("IMPORT hands the exact images the run already knows to the importer, outside the plan hash (R11)", () => {
+  const D = `sha256:${"e".repeat(64)}`;
+  const imgItems = [item("app:src-a:img", "proxy", { source: "IMAGE", image: "ghcr.io/example/imageproxy:1.4", domain: "img.example.test" })];
+  const capture = (w: SafetyWorld) => {
+    const seen: Array<Record<string, unknown>> = [];
+    const orig = w.port.apply.bind(w.port);
+    w.port.apply = async (u, input) => {
+      seen.push(input as unknown as Record<string, unknown>);
+      return orig(u, input);
+    };
+    return seen;
+  };
+
+  it("a recorded exact image rides in the apply input as imagePins; the plan hash the run was reviewed on is the one sent", async () => {
+    const hints = new InMemoryRunHints();
+    const { w } = safetyWorld(imgItems, hints);
+    const seen = capture(w);
+    const id = await w.create();
+    await hints.upsert(id, [{ kind: "exact-image", key: "app:src-a:img", scope: "", value: `ghcr.io/example/imageproxy:1.4@${D} 1.4.2`, evidence: "host-loop-reported" }]);
+    await w.start(id);
+    await w.settle(id);
+    expect(seen).toHaveLength(1);
+    expect(seen[0].imagePins).toEqual({ "app:src-a:img": `ghcr.io/example/imageproxy:1.4@${D}` });
+    expect(seen[0].planHash).toBe(w.store.row(id).planHash);
+  });
+
+  it("with nothing recorded (or the owner unticked it) the apply input has no imagePins at all: it is exactly what it was before", async () => {
+    const plain = safetyWorld(imgItems);
+    const seenPlain = capture(plain.w);
+    await plain.w.run();
+    expect(seenPlain[0]).not.toHaveProperty("imagePins");
+    const hints = new InMemoryRunHints();
+    const { w } = safetyWorld(imgItems, hints);
+    const seen = capture(w);
+    const id = await w.create();
+    await hints.upsert(id, [
+      { kind: "exact-image", key: "app:src-a:img", scope: "", value: `ghcr.io/example/imageproxy:1.4@${D}`, evidence: "host-loop-reported" },
+      { kind: "exact-off", key: "app:src-a:img", scope: "", value: "off", evidence: "operator-attested" },
+    ]);
+    await w.start(id);
+    await w.settle(id);
+    expect(seen[0]).not.toHaveProperty("imagePins");
+  });
+});

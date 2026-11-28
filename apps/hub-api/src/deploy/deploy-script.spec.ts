@@ -427,6 +427,21 @@ describe("host bind-mounts", () => {
   });
 });
 
+describe("exact image (what an import stores: repo:tag@sha256:...)", () => {
+  const D = `sha256:${"a".repeat(64)}`;
+  const pinned = { ...base, image: `nginx:1.27@${D}` };
+  it("a redeploy of the stored ref pulls by that digest, never by the tag alone, and runs what it pulled", () => {
+    const s = buildRunScript(pinned, "v1", true);
+    expect(s).toContain(`docker pull -q 'nginx:1.27@${D}'`);
+    expect(s).not.toContain("docker pull -q 'nginx:1.27'");
+    expect(s).toContain(`docker tag 'nginx:1.27@${D}'`);
+    expect(s).toContain(`docker inspect --format '{{index .RepoDigests 0}}' 'nginx:1.27@${D}'`);
+  });
+  it("the same stored ref is what a deploy on another server pulls after a move (the script depends on the record, not on the old host)", () => {
+    expect(buildRunScript({ ...pinned, serverId: "other" } as typeof pinned, "v1", true)).toBe(buildRunScript(pinned, "v1", true));
+  });
+});
+
 describe("digest pin", () => {
   it("an IMAGE deploy resolves + echoes the upstream digest right after pull", () => {
     const s = buildRunScript(base, "v1", true);

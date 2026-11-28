@@ -335,6 +335,14 @@ describe("database-script", () => {
       "docker run -d --name tugra_db_db1 --restart unless-stopped --log-driver json-file --log-opt max-size=10m --log-opt max-file=3 --network tugra-net -v tugra_dbv_db1:/data 'redis:7-alpine' redis-server --requirepass 'p@ss'\n" +
       "docker ps --filter name=tugra_db_db1 --format '{{.Status}}'";
 
+    it("a database stored on the exact image (postgres:16-alpine@sha256:...) pulls and runs that digest, on any server it is started on", () => {
+      const ref = `postgres:16-alpine@sha256:${"b".repeat(64)}`;
+      const s = buildDatabaseRunScript({ ...spec("POSTGRES"), image: ref });
+      expect(s).toContain(`docker pull '${ref}'`);
+      expect(s).toContain(`'${ref}'\n`);
+      expect(s).not.toContain("'postgres:16'");
+    });
+
     it("is byte-identical to the pre-slice script when pitr is off/undefined (POSTGRES + REDIS goldens)", () => {
       expect(buildDatabaseRunScript(spec("POSTGRES"))).toBe(PG_GOLDEN);
       expect(buildDatabaseRunScript(spec("POSTGRES", { pitr: false }))).toBe(PG_GOLDEN);

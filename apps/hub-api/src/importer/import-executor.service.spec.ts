@@ -1403,3 +1403,90 @@ describe("ImportExecutorService — custom labels + inline Dockerfile (G3-C)", (
     }
   });
 });
+
+describe("ImportExecutorService — exact images (the image the source runs) in the apply input", () => {
+  const D1 = `sha256:${"1".repeat(64)}`;
+  const APP_REF = "app:srv-a:img-1";
+  const imgFleet = (image = "getmeili/meilisearch:latest"): ForeignFleet => ({
+    ...fleet(),
+    databases: [],
+    apps: [{ sourceRef: "img-1", name: "search", kind: "image", buildPack: "image", image, serverRef: "srv-a", env: [], volumes: [], domains: [] }],
+  });
+  const dbFleet = (over: Record<string, unknown> = {}): ForeignFleet => ({
+    ...fleet(),
+    apps: [],
+    databases: [{ sourceRef: "db-1", name: "orders", engine: "POSTGRES", version: "16", serverRef: "srv-a", ...over }],
+  });
+  const withPins = (f: ForeignFleet, imagePins: Record<string, string>) => ({ ...input(f), imagePins });
+
+  it("an image app is created on the exact image (repo:tag@sha256) it was given, and the plan hash the caller reviewed is untouched", async () => {
+    const f = imgFleet();
+    const h = harness({ fleet: f });
+    const body = withPins(f, { [APP_REF]: `getmeili/meilisearch:latest@${D1}` });
+    expect(body.planHash).toBe(input(f).planHash);
+    await h.svc.apply("user-1", body);
+    await flush();
+    expect(h.apps.create).toHaveBeenCalledTimes(1);
+    expect(h.apps.create.mock.calls[0][1]).toMatchObject({ source: "IMAGE", image: `getmeili/meilisearch:latest@${D1}` });
+  });
+
+  it("with no pin the image is exactly what the source writes (an old agent, an inventory without digests)", async () => {
+    const f = imgFleet();
+    const h = harness({ fleet: f });
+    await run(h, f);
+    expect(h.apps.create.mock.calls[0][1]).toMatchObject({ image: "getmeili/meilisearch:latest" });
+  });
+
+  it("a pin of another repository is never written into an app", async () => {
+    const f = imgFleet();
+    const h = harness({ fleet: f });
+    await h.svc.apply("user-1", withPins(f, { [APP_REF]: `evil/other:latest@${D1}` }));
+    await flush();
+    expect(h.apps.create.mock.calls[0][1]).toMatchObject({ image: "getmeili/meilisearch:latest" });
+  });
+
+  it("a moving tag is pinned too: postgres:16-alpine of a database the source gives no image for is created on the exact image, not on the stock tag", async () => {
+    const f = dbFleet();
+    const h = harness({ fleet: f });
+    await h.svc.apply("user-1", withPins(f, { [DB_ITEMREF]: `postgres:16-alpine@${D1}` }));
+    await flush();
+    expect(h.dbs.create).not.toHaveBeenCalled();
+    expect(h.dbs.createForImport).toHaveBeenCalledTimes(1);
+    expect(h.dbs.createForImport.mock.calls[0][1]).toMatchObject({ engine: "POSTGRES", version: "16", image: `postgres:16-alpine@${D1}` });
+  });
+
+  it("a database whose credentials are carried keeps the exact image too, and its own custom image's repository is the only one a pin may replace", async () => {
+    const f = dbFleet({ image: "pgvector/pgvector:pg16", credentials: { username: "u", database: "ordersdb", secretRef: "db-1" } });
+    const creds = () => ({ user: "app_user", password: "pw-1", rootPassword: undefined, database: "ordersdb" });
+    const ok = harness({ fleet: f, dbCreds: creds });
+    await ok.svc.apply("user-1", withPins(f, { [DB_ITEMREF]: `pgvector/pgvector:pg16@${D1}` }));
+    await flush();
+    expect(ok.dbs.createForImport.mock.calls[0][1]).toMatchObject({ image: `pgvector/pgvector:pg16@${D1}`, password: "pw-1" });
+    const other = harness({ fleet: f, dbCreds: creds });
+    await other.svc.apply("user-1", withPins(f, { [DB_ITEMREF]: `postgres:16@${D1}` }));
+    await flush();
+    expect(other.dbs.createForImport.mock.calls[0][1]).toMatchObject({ image: "pgvector/pgvector:pg16" });
+  });
+
+  it("a database with no pin is created exactly as before (the engine's stock image)", async () => {
+    const f = dbFleet();
+    const h = harness({ fleet: f });
+    await run(h, f);
+    expect(h.dbs.create).toHaveBeenCalledTimes(1);
+    expect(h.dbs.createForImport).not.toHaveBeenCalled();
+  });
+
+  it("the stale-plan guard still holds with exact images in the input: a changed source is a 409 and nothing is created", async () => {
+    const f = imgFleet();
+    const h = harness({ fleet: f });
+    await expect(h.svc.apply("user-1", { ...withPins(f, { [APP_REF]: `getmeili/meilisearch:latest@${D1}` }), planHash: "0".repeat(32) })).rejects.toMatchObject({ response: { code: "plan_changed" } });
+    expect(h.apps.create).not.toHaveBeenCalled();
+  });
+
+  it("a pin for an item that is not an app or a database of this plan is a 400 before anything is created", async () => {
+    const f = imgFleet();
+    const h = harness({ fleet: f });
+    await expect(h.svc.apply("user-1", withPins(f, { "app:srv-a:nope": `x/y:1@${D1}` }))).rejects.toBeInstanceOf(BadRequestException);
+    expect(h.apps.create).not.toHaveBeenCalled();
+  });
+});

@@ -399,6 +399,86 @@ describe("DEPLOY_DARK image pins (R11)", () => {
   });
 });
 
+describe("DEPLOY_DARK writes the exact image the source runs into the records before anything starts (R11)", () => {
+  const D = `sha256:${"e".repeat(64)}`;
+  const items = [item("app:src-a:img", "proxy", { source: "IMAGE", image: "ghcr.io/example/imageproxy:latest", domain: "img.example.test" })];
+  const exact = (key: string, value: string): RunHint => ({ kind: "exact-image", key, scope: "", value, evidence: "host-loop-reported" });
+  const record = (w: RunWorld, changed: Set<string> = new Set()) => {
+    (w.port as unknown as { pinExactImage: unknown }).pinExactImage = async (_u: string, t: { id: string; kind: string }) => {
+      w.port.calls.push(`exact:${t.kind}:${t.id}`);
+      if (changed.has(t.id)) return { pinned: false };
+      changed.add(t.id);
+      return { pinned: true };
+    };
+  };
+
+  it("the app is handed its exact image before any database starts or app deploys, and the step says how many records kept theirs", async () => {
+    const hints = new InMemoryRunHints();
+    const { w } = safetyWorld(items, hints);
+    record(w);
+    const id = await w.create();
+    await hints.upsert(id, [exact("app:src-a:img", `ghcr.io/example/imageproxy:latest@${D} 1.4.2`)]);
+    await w.start(id);
+    await w.settle(id);
+    expect(w.status(id)).toBe("COMPLETED");
+    const first = w.port.calls.findIndex((c) => c.startsWith("exact:"));
+    expect(first).toBeGreaterThanOrEqual(0);
+    expect(first).toBeLessThan(w.port.calls.findIndex((c) => c.startsWith("deploy:")));
+    expect(w.port.calls.filter((c) => c.startsWith("exact:"))).toEqual([`exact:app:${appIdOf(w, "proxy")}`]);
+    const events = (await w.service.events(ACTOR, id, { afterSeq: 0, limit: 500 })).events;
+    expect(events.find((e) => e.code === "deploy-dark.exact-images-pinned")?.params).toEqual({ count: 1 });
+  });
+
+  it("an item the owner unticked is not handed anything, and a run with no recorded image changes nothing", async () => {
+    const hints = new InMemoryRunHints();
+    const moving = [item("app:src-a:img", "proxy", { source: "IMAGE", image: "ghcr.io/example/imageproxy:1.4", domain: "img.example.test" })]; // a moving tag: the gate has nothing to hold
+    const { w } = safetyWorld(moving, hints);
+    record(w);
+    const id = await w.create();
+    await hints.upsert(id, [exact("app:src-a:img", `ghcr.io/example/imageproxy:1.4@${D}`), { kind: "exact-off", key: "app:src-a:img", scope: "", value: "off", evidence: "operator-attested" }]);
+    await w.start(id);
+    await w.settle(id);
+    expect(w.status(id)).toBe("COMPLETED");
+    expect(w.port.calls.some((c) => c.startsWith("exact:"))).toBe(false);
+    const plain = safetyWorld(moving).w;
+    record(plain);
+    expect(await plain.run()).toBeDefined();
+    expect(plain.port.calls.some((c) => c.startsWith("exact:"))).toBe(false);
+  });
+
+  it("an older port that cannot pin (no pinExactImage) deploys the image as the source writes it", async () => {
+    const hints = new InMemoryRunHints();
+    const { w } = safetyWorld(items, hints);
+    const id = await w.create();
+    await hints.upsert(id, [exact("app:src-a:img", `ghcr.io/example/imageproxy:latest@${D}`)]);
+    await w.start(id);
+    await w.settle(id);
+    expect(w.status(id)).toBe("COMPLETED");
+  });
+
+  it("a failing write fails the step retryably and starts nothing; the retry then goes through", async () => {
+    const hints = new InMemoryRunHints();
+    const { w } = safetyWorld(items, hints);
+    record(w);
+    let fail = true;
+    const orig = (w.port as unknown as { pinExactImage: (u: string, t: unknown) => Promise<{ pinned: boolean }> }).pinExactImage;
+    (w.port as unknown as { pinExactImage: unknown }).pinExactImage = async (u: string, t: unknown) => {
+      if (fail) throw new Error("db down");
+      return orig(u, t);
+    };
+    const id = await w.create();
+    await hints.upsert(id, [exact("app:src-a:img", `ghcr.io/example/imageproxy:latest@${D}`)]);
+    await w.start(id);
+    await w.settle(id);
+    expect(w.store.row(id).failureCode).toBe("deploy-dark.exact-image.failed");
+    expect(w.port.deploys).toEqual([]);
+    fail = false;
+    await w.service.retry(ACTOR, id, "DEPLOY_DARK", {});
+    await w.settle(id, "retry");
+    expect(w.status(id)).toBe("COMPLETED");
+  });
+});
+
 describe("DEPLOY_DARK build concurrency per target server (R25)", () => {
   const items = ["a", "b", "c", "d"].map((n, i) => item(`app:${i < 2 ? "src-a" : "src-b"}:${n}`, `app-${n}`, { source: "GIT", domain: `${n}.example.test` }));
 

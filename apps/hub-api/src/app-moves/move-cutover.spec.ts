@@ -18,6 +18,14 @@ describe("planCutover — the normative field table", () => {
     expect(p.changes).toEqual({ domain: false, compose: false, cpuset: false, gpus: false, privileged: false });
   });
 
+  it("the exact image is never one of the columns a move changes: the target pulls the very ref the source ran (repo:tag@sha256:...)", () => {
+    const image = `nginx:1.27@sha256:${"a".repeat(64)}`;
+    const p = plan({ image, hostPort: 8080, domain: "blog-ab12cd.1-2-3-4.sslip.io", domainKind: "magic" } as Partial<CutoverAppRow>, {}, { acks: { domainChanges: true } });
+    expect(Object.keys(p.data)).not.toContain("image");
+    expect(Object.keys(p.before)).not.toContain("image");
+    expect((CUTOVER_COLUMNS as readonly string[]).includes("image")).toBe(false);
+  });
+
   it("hostPort: kept when free; reallocated (with ack) when busy; refused without the ack or without a free port", () => {
     expect(plan({ hostPort: 8080 }).data).toEqual({ serverId: "s2" });
     const used = new Set([8080]);
