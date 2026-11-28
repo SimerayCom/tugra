@@ -116,3 +116,26 @@ export function classifyHost(host: string): AddressClass {
   }
   return "name";
 }
+
+/**
+ * Does this host mean "the machine I am on" (localhost, 127.0.0.0/8, ::1, an IPv4-mapped 127.x)? The forwarder runs inside the
+ * agent's container, where that is the agent itself and never the server's own Loki, Vector or syslog: such an endpoint can only
+ * be refused at configuration time with a message that says so, not left to fail on every delivery.
+ */
+export function isLoopbackHost(host: string): boolean {
+  const h = normalizeHost(host);
+  if (h === "localhost" || h.endsWith(".localhost")) return true;
+  const kind = isIP(h);
+  if (kind === 4) {
+    const b = v4Bytes(h);
+    return !!b && b[0] === 127;
+  }
+  if (kind === 6) {
+    const b = v6Bytes(h);
+    if (!b) return false;
+    const zeros = (from: number, to: number) => b.slice(from, to).every((x) => x === 0);
+    if (zeros(0, 15) && b[15] === 1) return true; // ::1
+    return zeros(0, 10) && b[10] === 0xff && b[11] === 0xff && b[12] === 127; // ::ffff:127.x.x.x
+  }
+  return false;
+}

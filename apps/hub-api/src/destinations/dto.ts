@@ -1,4 +1,16 @@
 import { z } from "zod";
+import { isLoopbackHost } from "../log-drains/log-drain-address";
+
+// `mc` (backup, restore, the connection test) runs in the agent's container: 127.0.0.1 / localhost there is the agent itself, so a
+// MinIO on the same server answers nobody. It is refused here, with the reason, instead of failing every scheduled backup.
+function endpointIsLoopback(endpoint: string): boolean {
+  try {
+    return isLoopbackHost(new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(endpoint) ? endpoint : `https://${endpoint}`).hostname);
+  } catch {
+    return false;
+  }
+}
+export const LOOPBACK_ENDPOINT_MESSAGE = "localhost means the agent container, not the server: use the server's own address (LAN or public IP) or a hostname";
 
 // Bucket + prefix are spliced (unquoted) into the `mc` object target the agent runs via sh -c, so
 // constrain them to S3-safe characters — no shell metacharacters — as defence-in-depth against
@@ -24,6 +36,10 @@ export const CreateDestinationSchema = z
   .refine((d) => (d.type === "S3" ? !!d.s3Bucket && !!d.s3Endpoint && !!d.s3AccessKey && !!d.s3SecretKey : true), {
     message: "S3 destinations require bucket, endpoint, accessKey and secretKey",
     path: ["type"],
+  })
+  .refine((d) => d.type !== "S3" || !d.s3Endpoint || !endpointIsLoopback(d.s3Endpoint), {
+    message: LOOPBACK_ENDPOINT_MESSAGE,
+    path: ["s3Endpoint"],
   });
 export type CreateDestinationInput = z.infer<typeof CreateDestinationSchema>;
 

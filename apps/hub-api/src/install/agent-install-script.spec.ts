@@ -209,6 +209,21 @@ describe("renderAgentInstallScript", () => {
       expect(dockerRun()).toContain("-e TUGRA_HUB_INSECURE=1");
     });
 
+    it("a hub on this very machine (loopback): the agent shares the host's network, because localhost in a bridge container is the container", () => {
+      for (const hub of ["ws://localhost:3000/agent", "ws://127.0.0.1:3000/agent", "ws://127.1.2.3:3000/agent"]) {
+        const r = run(["--hub", hub]);
+        expect(r.code).toBe(0);
+        expect(dockerRun()).toContain("--network host");
+        expect(r.stderr).toContain("host network");
+      }
+    });
+    it("a hub reached by name or address is NOT given the host network (the default bridge stays)", () => {
+      expect(run(["--hub", "ws://hub-api:3000/agent"]).code).toBe(0);
+      expect(dockerRun()).not.toContain("--network host");
+      expect(run(["--hub", "wss://hub.example.com/agent"]).code).toBe(0);
+      expect(dockerRun()).not.toContain("--network host");
+    });
+
     it("plain ws:// to localhost or a compose-internal name needs no opt-in", () => {
       expect(run(["--hub", "ws://localhost:3000/agent"]).code).toBe(0);
       expect(run(["--hub", "ws://hub-api:3000/agent"]).code).toBe(0);

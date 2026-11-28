@@ -45,7 +45,7 @@
   "containerAdd": "Add",
   "containerRemove": "Remove {name}",
   "allowPrivate": "Allow private network targets",
-  "allowPrivateHelp": "Lets this drain reach private, loopback and internal addresses from the server. Needs server operator permission.",
+  "allowPrivateHelp": "Lets this drain reach private and internal network addresses from the server (not localhost: that is the agent itself, use the server's own address). Needs server operator permission.",
   "appDrainsOnServer": "App drains shipping from this server",
   "appDrainsOnServerEmpty": "No app drains ship logs from this server.",
   "openApp": "Open app {name}",
