@@ -22,6 +22,7 @@ import {
   errorText,
   launchIssues,
   looksLikeEmail,
+  campaignReportHref,
   sourceServersOf,
 } from "../../lib/migration-run";
 import { AdvancedFields, type AdvancedState } from "./launch-advanced";
@@ -76,6 +77,9 @@ export function GuidedLaunchForm({ plan, kind, sessionId, servers, teams, extras
   const qc = useQueryClient();
   const [phase, setPhase] = useState<"form" | "creating" | "starting">("form");
   const submittedAt = useRef(0);
+  // a campaign that failed partway: how many of its runs the hub had already made, so the owner is not left with an unexplained form
+  const [partial, setPartial] = useState<{ made: number; total: number } | null>(null);
+  const madeRef = useRef(0);
   // The run starts from what the first step chose, narrowed or not: its target, and its placement when it used several servers.
   const chosenTarget = scope && servers.some((s) => s.id === scope.defaultServerId) ? scope.defaultServerId : "";
   // Without a first-step choice, the first server that can take the run, never one that is offline or lacks the capabilities.
@@ -237,11 +241,14 @@ export function GuidedLaunchForm({ plan, kind, sessionId, servers, teams, extras
     gcTime: 0,
   });
   const madeCount = (made.data ?? []).filter((r) => Date.parse(r.createdAt) >= submittedAt.current - 30_000).length;
+  madeRef.current = Math.max(madeRef.current, madeCount);
 
   const create = useMutation({
     mutationFn: async (): Promise<{ href: string; campaigns: number; startError: unknown }> => {
       const input = buildLaunchInput(form);
       submittedAt.current = Date.now();
+      madeRef.current = 0;
+      setPartial(null);
       setPhase("creating");
       let startError: unknown = null;
       if (campaign) {
@@ -277,8 +284,20 @@ export function GuidedLaunchForm({ plan, kind, sessionId, servers, teams, extras
       clearLaunchHandoff();
       router.push(href);
     },
-    onError: (e) => {
+    onError: async (e) => {
+      const total = runCount;
+      let madeNow = madeRef.current;
+      if (campaign && label) {
+        // the hub may have made runs before it failed or timed out: count what exists now, so the message is true
+        try {
+          const runs = await api.listMigrationRuns({ campaign: label, limit: 100 });
+          madeNow = Math.max(madeNow, runs.filter((r) => Date.parse(r.createdAt) >= submittedAt.current - 30_000).length);
+        } catch {
+          // keep the count seen while it was being made
+        }
+      }
       setPhase("form");
+      if (campaign && madeNow > 0) setPartial({ made: Math.min(madeNow, total), total });
       toast(errorText(t, e), "error");
     },
   });
@@ -289,13 +308,36 @@ export function GuidedLaunchForm({ plan, kind, sessionId, servers, teams, extras
       ? t(runCount === 1 ? "migrationRun.launch.page.dryOne" : "migrationRun.launch.page.dryMany", { count: runCount })
       : onlyInPlace && runCount === 1
         ? t("migrationRun.launch.page.takeover")
-        : runCount > 0
+        : runCount > 1
           ? t("placement.campaign.create", { count: runCount })
           : t("migrationRun.launch.page.createStart")
     : dryRun
       ? t("migrationRun.launch.page.dryOne", { count: 1 })
       : t("migrationRun.launch.page.createStart");
-  const whyOff = blocked && !working && (emailMissing ? t("migrationRun.launch.page.whyEmail") : issues.length > 0 ? t("migrationRun.launch.page.whyFields") : null);
+  // only wave 1 is started here: said before the click, so the owner knows what starts now and what waits
+  const laterWaves = campaign && runCount > 1;
+  // why the button is off, in the order the owner can fix it; every cause that turns it off has a line, so the sticky bar is never silent
+  const whyOff = !blocked || working
+    ? null
+    : emailMissing
+      ? t("migrationRun.launch.page.whyEmail")
+      : issues.length > 0
+        ? t("migrationRun.launch.page.whyFields")
+        : servers.length === 0 || blockedUsed.length > 0
+          ? t("migrationRun.launch.page.whyServer")
+          : usedBusy.length > 0
+            ? t("migrationRun.launch.page.whyBusy")
+            : campaign && preview.isLoading
+              ? t("migrationRun.launch.page.whyPreviewLoading")
+              : campaignRefused
+                ? t("migrationRun.launch.page.whyPreviewFailed")
+                : freshness
+                  ? t("migrationRun.launch.page.whyChanged")
+                  : guarded
+                    ? t("migrationRun.launch.page.whyNotes")
+                    : !dryRun && agentGaps.length > 0
+                      ? t("migrationRun.launch.page.whyAgent")
+                      : null;
   const section = { display: "flex", flexDirection: "column", gap: 14, padding: 16, marginBottom: 0 } as const;
 
   return (
@@ -320,6 +362,12 @@ export function GuidedLaunchForm({ plan, kind, sessionId, servers, teams, extras
         <LaunchProgress names={runNames} done={campaign ? madeCount : 0} phase={phase === "starting" ? "starting" : "creating"} />
       ) : (
         <>
+          {partial && (
+            <div role="alert" data-testid="launch-partial" style={{ border: "1px solid var(--c-am)", borderRadius: "var(--r2)", padding: 12, fontSize: 13, lineHeight: 1.5, display: "flex", flexDirection: "column", gap: 6 }}>
+              <span>{t("migrationRun.launch.page.partial", { made: partial.made, total: partial.total })}</span>
+              <Link href={campaignReportHref(label)} className="tg-link">{t("migrationRun.launch.page.partialOpen")}</Link>
+            </div>
+          )}
           <SectionCard title={t("migrationRun.launch.page.what")} style={section}>
             {scope?.narrowed && (
               <p role="note" style={{ margin: 0, fontSize: 12, color: "var(--c-tx2)", lineHeight: 1.5 }}>
@@ -427,6 +475,7 @@ export function GuidedLaunchForm({ plan, kind, sessionId, servers, teams, extras
 
       {/* the one primary action of the page, pinned to the bottom so it is in reach wherever the owner stopped reading */}
       <div data-testid="launch-actions" style={{ position: "sticky", bottom: 0, zIndex: 5, display: "flex", flexDirection: "column", gap: 6, padding: "10px 0 calc(10px + env(safe-area-inset-bottom, 0px))", background: "var(--c-sb)", borderTop: "1px solid var(--c-bd)" }}>
+        {laterWaves && !working && <p data-testid="launch-waves-note" style={{ margin: 0, fontSize: 12, color: "var(--c-tx3)", lineHeight: 1.5 }}>{t("migrationRun.launch.page.wavesNote")}</p>}
         {whyOff && <p role="status" data-testid="launch-why" style={{ margin: 0, fontSize: 12, color: "var(--c-am)", lineHeight: 1.5 }}>{whyOff}</p>}
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <Btn type="submit" disabled={blocked || working} loading={working} style={{ minHeight: 44, flex: "1 1 220px", justifyContent: "center" }}>

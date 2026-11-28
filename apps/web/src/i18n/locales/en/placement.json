@@ -27,7 +27,7 @@
     "unreadable": "The placement could not be checked. Try again.",
     "runInPlace": "{source} stays on its own machine. Nothing is copied or rebuilt: Tugra starts the images Coolify already built, checks every domain on a temporary address, then takes the ports and gets new certificates. Giving it back to Coolify is one click.",
     "runOther": "{source} moves to {target} (data is copied, then the address is switched).",
-    "create": "Create and start {count} runs",
+    "create": "Create {count} runs and start the first",
     "rebuild": {
       "title": "Rebuild with Tugra and verify (optional)",
       "hint": "By default Tugra starts the image Coolify already built and nothing is built. Tick an app to build it with Tugra instead: the build must succeed and the app must answer like Coolify's copy before the ports are taken. An app that shares data with Coolify's copy keeps Coolify's image.",

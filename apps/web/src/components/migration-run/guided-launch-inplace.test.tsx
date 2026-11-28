@@ -7,6 +7,7 @@ import { api } from "../../lib/api";
 import { ToastProvider } from "../toast";
 import { GuidedLaunchForm } from "./guided-launch-form";
 import { mkRun } from "./test-fixtures";
+import { LAUNCH_HANDOFF_KEY, saveLaunchHandoff } from "../../lib/launch-handoff";
 import type { ImportPlan } from "../../lib/types";
 import type { ImportScope } from "../../lib/import-scope";
 
@@ -61,6 +62,7 @@ const form = () => screen.findByTestId("guided-launch-form");
 beforeEach(() => {
   qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   push.mockReset();
+  window.sessionStorage.clear();
   vi.spyOn(api, "getInstanceSettings").mockResolvedValue({ acmeEmail: "ops@example.com" } as never);
   vi.spyOn(api, "listMigrationRuns").mockResolvedValue([]);
   vi.spyOn(api, "startMigrationRun").mockResolvedValue(mkRun({ id: "started" }));
@@ -99,7 +101,7 @@ describe("the launch page of a same-machine takeover shows only what applies", (
     vi.spyOn(api, "getInstanceSettings").mockRejectedValue(new Error("forbidden"));
     mount();
     const f = await form();
-    const submit = await within(f).findByRole("button", { name: "Create and start 3 runs" });
+    const submit = await within(f).findByRole("button", { name: "Create 3 runs and start the first" });
     await waitFor(() => expect((submit as HTMLButtonElement).disabled).toBe(true));
     expect((await within(f).findByTestId("launch-why")).textContent).toContain("Enter the certificate email to start.");
     fireEvent.change(within(f).getByLabelText(/certificate email|ACME/i), { target: { value: "me@example.com" } });
@@ -125,7 +127,7 @@ describe("the launch page of a same-machine takeover shows only what applies", (
     mount();
     const f = await form();
     fireEvent.change(within(f).getByLabelText("Name of this move"), { target: { value: "Moving off Coolify - test" } });
-    const submit = await within(f).findByRole("button", { name: "Create and start 3 runs" });
+    const submit = await within(f).findByRole("button", { name: "Create 3 runs and start the first" });
     await waitFor(() => expect((submit as HTMLButtonElement).disabled).toBe(false));
     fireEvent.click(submit);
     await waitFor(() => expect(createCampaign).toHaveBeenCalledTimes(1));
@@ -145,7 +147,7 @@ describe("the launch page of a same-machine takeover shows only what applies", (
     mount();
     const f = await form();
     fireEvent.change(within(f).getByLabelText("Name of this move"), { target: { value: "Mine" } });
-    const submit = await within(f).findByRole("button", { name: "Create and start 3 runs" });
+    const submit = await within(f).findByRole("button", { name: "Create 3 runs and start the first" });
     await waitFor(() => expect((submit as HTMLButtonElement).disabled).toBe(false));
     fireEvent.click(submit);
     const progress = await screen.findByTestId("launch-progress");
@@ -154,7 +156,7 @@ describe("the launch page of a same-machine takeover shows only what applies", (
     expect(states).toEqual(["done", "done", "working"]);
     // the form is replaced by the progress; the button is busy, so a second click cannot make a second campaign
     expect(screen.queryByTestId("in-place-card")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: /Create and start 3 runs/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Create 3 runs and start the first/ }));
     fireEvent.submit(f);
     expect(createCampaign).toHaveBeenCalledTimes(1);
     finish({ id: "c1", label: "Mine", sessionId: "s", status: "draft", plan: threeRuns, runIds: [], createdAt: "2026-11-28T07:48:00Z" } as never);
@@ -167,11 +169,107 @@ describe("the launch page of a same-machine takeover shows only what applies", (
     vi.spyOn(api, "startMigrationRun").mockRejectedValue(new Error("boom"));
     mount();
     const f = await form();
-    const submit = await within(f).findByRole("button", { name: "Create and start 3 runs" });
+    const submit = await within(f).findByRole("button", { name: "Create 3 runs and start the first" });
     await waitFor(() => expect((submit as HTMLButtonElement).disabled).toBe(false));
     fireEvent.click(submit);
     await waitFor(() => expect(push).toHaveBeenCalledWith("/import/runs/campaign?c=Mine"));
     expect(await screen.findByText(/could not be started/)).toBeTruthy();
+  });
+});
+
+describe("the launch page says what starts now, what waits, and why the button is off", () => {
+  beforeEach(() => {
+    vi.spyOn(api, "planCampaign").mockResolvedValue({ planHash: "a".repeat(32), views: [], runs: threeRuns, failure: null });
+  });
+  // the certificate email arrives with the instance settings; the reason that follows it is the one under test
+  const reasonOf = async (part: string) => {
+    await waitFor(() => expect(screen.getByTestId("launch-why").textContent).toContain(part));
+  };
+
+  it("says before the click that only the first server starts and the rest start from the campaign page", async () => {
+    mount();
+    const f = await form();
+    await within(f).findByRole("button", { name: "Create 3 runs and start the first" });
+    expect(within(f).getByTestId("launch-waves-note").textContent).toContain("Only the first server starts now");
+    expect(within(f).getByTestId("launch-waves-note").textContent).toContain("from the campaign page");
+  });
+
+  it("has no waiting servers to explain for a single run", async () => {
+    vi.spyOn(api, "planCampaign").mockResolvedValue({ planHash: "a".repeat(32), views: [], runs: runsOf([["s1", "in-place", "srv1"]]), failure: null });
+    mount({ scope: oneInPlace });
+    const f = await form();
+    await within(f).findByRole("button", { name: "Start the takeover" });
+    expect(within(f).queryByTestId("launch-waves-note")).toBeNull();
+  });
+
+  it("names the reason while the placement is being checked", async () => {
+    vi.spyOn(api, "planCampaign").mockImplementation(() => new Promise(() => undefined));
+    mount();
+    await reasonOf("Checking the placement");
+  });
+
+  it("names the reason when the placement could not be checked", async () => {
+    vi.spyOn(api, "planCampaign").mockRejectedValue(new Error("boom"));
+    mount();
+    await reasonOf("could not be checked");
+  });
+
+  it("names the reason when a server of the move is busy with another run", async () => {
+    vi.spyOn(api, "listMigrationRuns").mockImplementation(((f: { active?: boolean }) => Promise.resolve(f.active ? [{ id: "live1", targetServerId: "srv1", status: "RUNNING", dryRun: false }] : [])) as never);
+    mount();
+    await reasonOf("busy with another run");
+  });
+});
+
+describe("a launch that stops partway does not leave the owner guessing", () => {
+  beforeEach(() => {
+    vi.spyOn(api, "planCampaign").mockResolvedValue({ planHash: "a".repeat(32), views: [], runs: threeRuns, failure: null });
+  });
+  const handoff = () => saveLaunchHandoff({ kind: "coolify", sessionId: "session-abc12345", planHash: "a".repeat(32), extras: {}, scope: allInPlace });
+  const pressStart = async () => {
+    const f = await form();
+    fireEvent.change(within(f).getByLabelText("Name of this move"), { target: { value: "Mine" } });
+    const submit = await within(f).findByRole("button", { name: "Create 3 runs and start the first" });
+    await waitFor(() => expect((submit as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(submit);
+    return f;
+  };
+
+  it("forgets the handoff once the runs exist, so Back from the run page cannot start a second campaign", async () => {
+    handoff();
+    expect(window.sessionStorage.getItem(LAUNCH_HANDOFF_KEY)).not.toBeNull();
+    vi.spyOn(api, "createCampaign").mockResolvedValue({ id: "c1", label: "Mine", sessionId: "s", status: "draft", plan: threeRuns, runIds: ["r1"], createdAt: "2026-11-28T07:48:00Z" } as never);
+    campaignRuns([{ id: "r1", targetServerId: "srv1", inPlace: true, status: "QUEUED", createdAt: "2026-11-28T07:48:01Z", campaign: "Mine" }]);
+    mount();
+    await pressStart();
+    await waitFor(() => expect(push).toHaveBeenCalledWith("/import/runs/campaign?c=Mine"));
+    expect(window.sessionStorage.getItem(LAUNCH_HANDOFF_KEY)).toBeNull();
+  });
+
+  it("says how many runs were created when the create failed partway, links to the campaign and keeps the handoff", async () => {
+    handoff();
+    vi.spyOn(api, "createCampaign").mockRejectedValue(new Error("timeout"));
+    const at = new Date(Date.now() + 5000).toISOString();
+    campaignRuns([{ id: "r1", targetServerId: "srv1", inPlace: true, status: "QUEUED", createdAt: at, campaign: "Mine" }, { id: "r2", targetServerId: "srv2", inPlace: true, status: "QUEUED", createdAt: at, campaign: "Mine" }]);
+    mount();
+    await pressStart();
+    const note = await screen.findByTestId("launch-partial");
+    expect(note.textContent).toContain("2 of 3 runs were created");
+    expect(within(note).getByRole("link", { name: "Open the campaign" }).getAttribute("href")).toBe("/import/runs/campaign?c=Mine");
+    expect(push).not.toHaveBeenCalled();
+    expect(window.sessionStorage.getItem(LAUNCH_HANDOFF_KEY)).not.toBeNull();
+    // nothing was started, and the form is back
+    expect(api.startMigrationRun).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("launch-progress")).toBeNull();
+  });
+
+  it("says nothing extra when no run was made before the failure", async () => {
+    vi.spyOn(api, "createCampaign").mockRejectedValue(new Error("refused"));
+    campaignRuns([]);
+    mount();
+    await pressStart();
+    await waitFor(() => expect(screen.queryByTestId("launch-progress")).toBeNull());
+    expect(screen.queryByTestId("launch-partial")).toBeNull();
   });
 });
 
