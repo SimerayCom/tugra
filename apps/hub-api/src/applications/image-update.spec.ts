@@ -233,3 +233,13 @@ describe("loadLiveImageMany", () => {
     expect((await loadLiveImageMany(mk([{ id: "x" }, null, { appId: "a", createdAt: "not-a-date" }]).prisma, ["a"])).size).toBe(0);
   });
 });
+
+describe("exactPinParts / probeRefOf: pins an import writes", () => {
+  const D = `sha256:${"a".repeat(64)}`;
+  it("a private registry on a port, a v-prefixed tag and a latest pin are all asked about their tag, with the pinned digest as the baseline", () => {
+    expect(exactPinParts(`registry.local:5000/team/app:1.2@${D}`)).toEqual({ probeRef: "registry.local:5000/team/app:1.2", digest: D });
+    expect(exactPinParts(`ghcr.io/willnorris/imageproxy:v0.13.0@${D}`)?.probeRef).toBe("ghcr.io/willnorris/imageproxy:v0.13.0");
+    expect(probeRefOf(`getmeili/meilisearch:latest@${D}`)).toBe("getmeili/meilisearch:latest");
+    expect(probeRefOf(`getmeili/meilisearch@${D}`)).toBeNull(); // a bare digest has no tag to follow
+  });
+});
