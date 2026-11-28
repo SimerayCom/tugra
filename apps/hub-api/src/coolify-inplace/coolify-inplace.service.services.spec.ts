@@ -775,6 +775,13 @@ describe("the exact image of a service's members", () => {
       },
     ]);
   });
+  it("a stack whose members' images cannot be written (the compose names another repository) is left out: nothing is aliased or started", async () => {
+    const t = build({ services: [blog({ members: blog().members.map((m) => ({ ...m, repoDigests: [`${m.image.split(":")[0]}@${D1}`] })) })] });
+    t.box.exactAnswer = "refused";
+    const v = await t.svc.test(ACTOR, (await plan(t)).id);
+    expect(v.items[0]).toMatchObject({ skipped: true, issues: ["prepare_failed"] });
+    expect(t.box.events.some((e) => e.startsWith("svc-alias:") || e.startsWith("tugra-svc:start"))).toBe(false);
+  });
   it("a stack whose images moved since the plan is left out before anything is written", async () => {
     const t = build();
     t.box.imageIds.set("ghost:5", `sha256:${"f".repeat(64)}`);

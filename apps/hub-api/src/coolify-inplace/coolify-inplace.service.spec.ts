@@ -1140,15 +1140,57 @@ describe("the exact image the source runs is kept in the records (digest and ver
     expect(t.box.exactPins).toEqual([{ kind: "app", id: "appweb", image: "webuuid:aaa111" }]);
   });
 
-  it("a world that cannot write the record, or fails to, never stops the takeover", async () => {
-    const t = build({ apps: [{ ...web, repoDigests: [`webuuid@${D1}`] }] });
-    t.box.failExactPin = true;
-    const v = await t.svc.test(ACTOR, (await plan(t)).id);
-    expect(v.status).toBe("TESTING");
-    expect(v.failureCode).toBeNull();
+  it("a world that cannot pin at all, and a host that reported nothing, never stop the takeover (nothing is guessed)", async () => {
     const old = build({ apps: [web] });
     (old.box as unknown as { pinExact?: unknown }).pinExact = undefined;
     expect((await old.svc.test(ACTOR, (await plan(old)).id)).status).toBe("TESTING");
+    const unknown = build({ apps: [{ ...web, repoDigests: [`webuuid@${D1}`] }] });
+    unknown.box.exactAnswer = "unknown";
+    const v = await unknown.svc.test(ACTOR, (await plan(unknown)).id);
+    expect(v.status).toBe("TESTING");
+    expect(v.items[0].skipped).toBeUndefined();
+  });
+
+  it("an app whose exact image cannot be written is left on Coolify: nothing is aliased or started, the other apps go on", async () => {
+    const t = build({ apps: [{ ...web, repoDigests: [`webuuid@${D1}`] }, data] });
+    t.box.failExactPin = true;
+    const v = await t.svc.test(ACTOR, (await plan(t)).id);
+    expect(v.items.map((i) => ({ skipped: i.skipped, issues: i.issues }))).toEqual([
+      { skipped: true, issues: ["prepare_failed"] },
+      { skipped: true, issues: ["prepare_failed"] },
+    ]);
+    expect(t.box.events.filter((e) => e.startsWith("tugra-app:start") || e.startsWith("alias:"))).toEqual([]);
+  });
+
+  it("a record that refuses the image the host reported (another repository, a started database) skips the item before any start", async () => {
+    const t = build({ apps: [{ ...web, repoDigests: [`webuuid@${D1}`] }] });
+    t.box.exactAnswer = "refused";
+    const v = await t.svc.test(ACTOR, (await plan(t)).id);
+    expect(v.items[0]).toMatchObject({ skipped: true, issues: ["prepare_failed"] });
+    expect(t.box.events.some((e) => e.startsWith("tugra-app:start"))).toBe(false);
+  });
+
+  it("a database whose exact image cannot be written is never prepared, so it is never started on the stock image", async () => {
+    const t = withDb({ db: { repoDigests: [`postgres@${D2}`] } });
+    t.box.exactAnswer = "refused";
+    const v = await t.svc.test(ACTOR, (await plan(t)).id);
+    expect(dbItem(v)).toMatchObject({ skipped: true, issues: ["prepare_failed"] });
+    expect(t.box.events.some((e) => e.startsWith("tugra-db:start") || e.startsWith("alias:"))).toBe(false);
+    const down = withDb({ db: { repoDigests: [`postgres@${D2}`] } });
+    down.box.failExactPin = true;
+    expect(dbItem(await down.svc.test(ACTOR, (await plan(down)).id))).toMatchObject({ skipped: true, issues: ["prepare_failed"] });
+  });
+
+  it("prepare writes the exact image first: for an app, a database and a stack the pin comes before every alias and every start", async () => {
+    const t = withDb({ db: { repoDigests: [`postgres@${D2}`] } });
+    const p = await plan(t);
+    await t.svc.test(ACTOR, p.id);
+    const ev = t.box.events;
+    const firstWork = ev.findIndex((e) => e.startsWith("alias:") || e.startsWith("tugra-app:start") || e.startsWith("tugra-db:start") || e.startsWith("dbfp"));
+    expect(ev.indexOf("exact:database:db1")).toBeGreaterThanOrEqual(0);
+    expect(ev.indexOf("exact:database:db1")).toBeLessThan(ev.findIndex((e) => e === "dbfp"));
+    expect(ev.indexOf("exact:app:appweb")).toBeLessThan(ev.findIndex((e) => e.startsWith("tugra-app:start")));
+    expect(firstWork === -1 || ev.indexOf("exact:app:appweb") < firstWork || ev.indexOf("exact:database:db1") < firstWork).toBe(true);
   });
 
   it("a database whose record is pinned to the exact image (postgres:16-alpine@sha256:...) is still the image Coolify's container runs", async () => {

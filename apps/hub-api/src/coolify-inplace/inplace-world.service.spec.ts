@@ -47,24 +47,35 @@ describe("InPlaceWorldService", () => {
     it("an IMAGE app takes repo:tag@digest of the image the container runs; a host that reported nothing changes nothing", async () => {
       const { w, prisma, apps } = make();
       prisma.application.findUnique.mockResolvedValue({ source: "IMAGE", image: "ghcr.io/x/web:latest" });
-      expect(await w.pinExact("u1", { kind: "app", id: "a1", image: "ghcr.io/x/web:latest", repoDigests: [`ghcr.io/x/web@${D1}`] })).toBe(true);
+      expect(await w.pinExact("u1", { kind: "app", id: "a1", image: "ghcr.io/x/web:latest", repoDigests: [`ghcr.io/x/web@${D1}`] })).toBe("pinned");
       expect(apps.setSource).toHaveBeenCalledWith("u1", "a1", { image: `ghcr.io/x/web:latest@${D1}` });
-      expect(await w.pinExact("u1", { kind: "app", id: "a1", image: "ghcr.io/x/web:latest" })).toBe(false);
+      expect(await w.pinExact("u1", { kind: "app", id: "a1", image: "ghcr.io/x/web:latest" })).toBe("unknown");
       expect(apps.setSource).toHaveBeenCalledTimes(1);
     });
     it("a database that was never started takes the tag the source container runs, pinned to its digest; a started one never changes", async () => {
       const { w, prisma, databases } = make();
       prisma.database.findUnique.mockResolvedValueOnce({ image: "postgres:16", status: "NEW" });
-      expect(await w.pinExact("u1", { kind: "database", id: "d1", image: "postgres:16-alpine", repoDigests: [`postgres@${D1}`] })).toBe(true);
+      expect(await w.pinExact("u1", { kind: "database", id: "d1", image: "postgres:16-alpine", repoDigests: [`postgres@${D1}`] })).toBe("pinned");
       expect(databases.setImage).toHaveBeenCalledWith("u1", "d1", `postgres:16-alpine@${D1}`);
       prisma.database.findUnique.mockResolvedValueOnce({ image: "postgres:16", status: "STOPPED" });
-      expect(await w.pinExact("u1", { kind: "database", id: "d1", image: "postgres:16-alpine", repoDigests: [`postgres@${D1}`] })).toBe(false);
+      expect(await w.pinExact("u1", { kind: "database", id: "d1", image: "postgres:16-alpine", repoDigests: [`postgres@${D1}`] })).toBe("refused"); // started: the record cannot take it, and the caller must not start it
       expect(databases.setImage).toHaveBeenCalledTimes(1);
+    });
+    it("a record already on the image answers same; a record of another repository answers refused and is never overwritten", async () => {
+      const { w, prisma, apps } = make();
+      prisma.application.findUnique.mockResolvedValue({ source: "IMAGE", image: `ghcr.io/x/web:latest@${D1}` });
+      expect(await w.pinExact("u1", { kind: "app", id: "a1", image: "ghcr.io/x/web:latest", repoDigests: [`ghcr.io/x/web@${D1}`] })).toBe("same");
+      prisma.application.findUnique.mockResolvedValue({ source: "IMAGE", image: "ghcr.io/other/web:latest" });
+      expect(await w.pinExact("u1", { kind: "app", id: "a1", image: "ghcr.io/x/web:latest", repoDigests: [`ghcr.io/x/web@${D1}`] })).toBe("refused");
+      prisma.application.findUnique.mockResolvedValue({ source: "COMPOSE", composeFile: "services:\n  db:\n    image: mariadb:11\n" });
+      expect(await w.pinExact("u1", { kind: "service", id: "s1", members: [{ service: "db", image: "postgres:16", repoDigests: [`postgres@${D1}`] }] })).toBe("refused");
+      expect(apps.setSource).not.toHaveBeenCalled();
+      expect(apps.setComposeFile).not.toHaveBeenCalled();
     });
     it("a stack's stored compose gets each member's exact image; a member with no digest keeps what it has", async () => {
       const { w, prisma, apps } = make();
       prisma.application.findUnique.mockResolvedValue({ source: "COMPOSE", composeFile: "services:\n  db:\n    image: postgres:16\n  web:\n    image: nginx:1.27\n" });
-      expect(await w.pinExact("u1", { kind: "service", id: "s1", members: [{ service: "db", image: "postgres:16", repoDigests: [`postgres@${D1}`] }, { service: "web", image: "nginx:1.27" }] })).toBe(true);
+      expect(await w.pinExact("u1", { kind: "service", id: "s1", members: [{ service: "db", image: "postgres:16", repoDigests: [`postgres@${D1}`] }, { service: "web", image: "nginx:1.27" }] })).toBe("pinned");
       const written = (apps.setComposeFile.mock.calls[0] as unknown as [string, string, string])[2];
       expect(written).toContain(`image: postgres:16@${D1}`);
       expect(written).toContain("image: nginx:1.27\n");

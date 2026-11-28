@@ -243,7 +243,7 @@ export class InPlaceWorldService implements InPlaceWorld {
   async pinExact(
     userId: string,
     target: { kind: "app" | "database"; id: string; image: string; repoDigests?: string[]; version?: string } | { kind: "service"; id: string; members: Array<{ service: string; image: string; repoDigests?: string[]; version?: string }> },
-  ): Promise<boolean> {
+  ): Promise<"pinned" | "same" | "unknown" | "refused"> {
     const deps = { prisma: this.prisma, apps: this.apps, databases: this.databases };
     if (target.kind === "service") {
       const members: Record<string, string> = {};
@@ -251,10 +251,10 @@ export class InPlaceWorldService implements InPlaceWorld {
         const e = exactImageFor(m.image, m.repoDigests, m.version);
         if (e) members[m.service] = e.ref;
       }
-      return Object.keys(members).length > 0 && (await writeExactImage(deps, userId, { kind: "service", id: target.id, members })).pinned;
+      return Object.keys(members).length > 0 ? (await writeExactImage(deps, userId, { kind: "service", id: target.id, members })).state : "unknown";
     }
     const e = exactImageFor(target.image, target.repoDigests, target.version);
-    return !!e && (await writeExactImage(deps, userId, { kind: target.kind, id: target.id, ref: e.ref })).pinned;
+    return e ? (await writeExactImage(deps, userId, { kind: target.kind, id: target.id, ref: e.ref })).state : "unknown";
   }
 
   async stopApp(userId: string, appId: string): Promise<void> {

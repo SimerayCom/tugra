@@ -574,14 +574,18 @@ export class CoolifyInPlaceService implements InPlaceRunPort {
   }
 
   /**
-   * Keep the exact image the source runs in the record the import created (see `InPlaceWorld.pinExact`). Best effort: a host that reported
-   * no digest, an older world, or a failed write leaves the record as it is and never stops the takeover.
+   * Keep the exact image the source runs in the record the import created (see `InPlaceWorld.pinExact`), BEFORE anything of the item is
+   * aliased or started, so nothing Tugra starts later can run a newer image than the source runs. Returns false when the host reported an
+   * exact image and the record cannot take it (another repository, a database that was started) or the write failed: the item is then
+   * left on Coolify, never started on whatever its record says. A host that reported nothing (an older script, a locally built image)
+   * and a world that cannot pin are not a failure: nothing is guessed.
    */
-  private async keepExactImage(userId: string, target: Parameters<NonNullable<InPlaceWorld["pinExact"]>>[1]): Promise<void> {
+  private async keepExactImage(userId: string, target: Parameters<NonNullable<InPlaceWorld["pinExact"]>>[1]): Promise<boolean> {
+    if (!this.world.pinExact) return true;
     try {
-      await this.world.pinExact?.(userId, target);
+      return (await this.world.pinExact(userId, target)) !== "refused";
     } catch {
-      /* the takeover goes on with the image as the record has it */
+      return false;
     }
   }
 
@@ -627,7 +631,7 @@ export class CoolifyInPlaceService implements InPlaceRunPort {
       item.adoptTag = null;
       return skip(adopt === "missing" ? "image_missing" : "adopt_failed");
     }
-    await this.keepExactImage(userId, { kind: "app", id: item.appId, image: ctr.image, ...exactParts(ctr) });
+    if (!(await this.keepExactImage(userId, { kind: "app", id: item.appId, image: ctr.image, ...exactParts(ctr) }))) return skip("prepare_failed");
     if (item.volumes.length > 0) {
       const targets = item.volumes.map((v) => v.to);
       const res = await this.run(serverId, buildVolumeAliasScript(item.volumes), (o) => parseAlias(o, targets));
@@ -661,7 +665,7 @@ export class CoolifyInPlaceService implements InPlaceRunPort {
     };
     const ctr = item.container;
     if (!ctr || !isFingerprintEngine(item.engine ?? "")) return skip("container_absent");
-    await this.keepExactImage(row.actorId, { kind: "database", id: item.appId, image: ctr.image, ...exactParts(ctr) });
+    if (!(await this.keepExactImage(row.actorId, { kind: "database", id: item.appId, image: ctr.image, ...exactParts(ctr) }))) return skip("prepare_failed");
     if (item.volumes.length > 0) {
       const targets = item.volumes.map((v) => v.to);
       const res = await this.run(row.serverId, buildVolumeAliasScript(item.volumes), (o) => parseAlias(o, targets));
@@ -706,7 +710,7 @@ export class CoolifyInPlaceService implements InPlaceRunPort {
     if (refs.some((r) => ids.get(r) === "missing")) return skip("image_missing");
     if (members.some((m) => ids.get(m.composeImage) !== m.container.imageId)) return skip("service_image_moved");
     // the images are the same: keep exactly the one the containers run in the stored compose, so a later redeploy never pulls a newer one
-    await this.keepExactImage(userId, { kind: "service", id: item.appId, members: members.map((m) => ({ service: m.service, image: m.container.image, ...exactParts(m.container) })) });
+    if (!(await this.keepExactImage(userId, { kind: "service", id: item.appId, members: members.map((m) => ({ service: m.service, image: m.container.image, ...exactParts(m.container) })) }))) return skip("prepare_failed");
 
     // 2. the data: every volume and folder of every container, aliased
     const byTarget = new Map<string, ServiceVolumeAlias>();

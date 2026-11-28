@@ -670,11 +670,13 @@ export class Box implements InPlaceWorld {
   /** What the takeover asked the world to keep (the real world turns it into a record write). */
   exactPins: Array<Record<string, unknown>> = [];
   failExactPin = false;
-  async pinExact(_u: string, target: Parameters<NonNullable<InPlaceWorld["pinExact"]>>[1]): Promise<boolean> {
+  /** What the world answers to a pin: `refused` models a record that cannot take the image (another repository, a database that was started). */
+  exactAnswer: "pinned" | "same" | "unknown" | "refused" = "pinned";
+  async pinExact(_u: string, target: Parameters<NonNullable<InPlaceWorld["pinExact"]>>[1]): Promise<"pinned" | "same" | "unknown" | "refused"> {
     if (this.failExactPin) throw new Error("db down");
     this.exactPins.push(target as unknown as Record<string, unknown>);
     this.events.push(`exact:${target.kind}:${target.id}`);
-    return true;
+    return this.exactAnswer;
   }
   async sleep(): Promise<void> {
     this.sleeps += 1;
