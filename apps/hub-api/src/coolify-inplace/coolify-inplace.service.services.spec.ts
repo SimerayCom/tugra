@@ -340,6 +340,8 @@ describe("test: data and images reused in place", () => {
     const t = build({ services: [stateless()] });
     t.box.differs.add("status.example.com");
     const p = await plan(t);
+    expect((await t.svc.test(ACTOR, p.id)).items[0].domains[0].tempCheck).toBe("pending"); // inside the window it is tested again, not failed
+    t.box.clock = new Date(t.box.clock.getTime() + 4 * 60_000);
     const v = await t.svc.test(ACTOR, p.id);
     expect(v.items[0].domains[0].tempCheck).toBe("failed");
     await expect(t.svc.swap(ACTOR, p.id, { confirm: "edge-box" })).rejects.toMatchObject({ response: { code: "takeover_test_failed", host: "status.example.com" } });

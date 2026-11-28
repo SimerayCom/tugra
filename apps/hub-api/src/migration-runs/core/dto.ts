@@ -686,6 +686,8 @@ export const MigrationRunStepViewSchema = z.object({
   finishedAt: Iso.nullable(),
   /** Fixed failure code, never raw text. */
   lastError: RunCodeSchema.nullable(),
+  /** The params the failure code's sentence needs (`{host}`, `{app}`, ...): ids, names and counts only. Absent or null when none. */
+  lastErrorParams: CodeParamsSchema.nullable().optional(),
   allowed: StepAllowedSchema,
 });
 export type MigrationRunStepView = z.infer<typeof MigrationRunStepViewSchema>;

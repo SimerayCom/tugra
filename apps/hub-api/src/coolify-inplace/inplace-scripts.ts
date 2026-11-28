@@ -25,6 +25,8 @@ export const IP_MARK = {
   alias: "TUGRA_IP_ALIAS",
   probe: "TUGRA_IP_PROBE",
   probeEnd: "TUGRA_IP_PROBE_END",
+  app: "TUGRA_IP_APP",
+  appEnd: "TUGRA_IP_APP_END",
   policy: "TUGRA_IP_POLICY",
   fallback: "TUGRA_IP_FALLBACK",
   cert: "TUGRA_IP_CERT",
@@ -310,8 +312,10 @@ export function buildInPlaceProbeScript(o: { via: ProbeVia; hosts: readonly stri
           `case "$IP" in ''|*[!0-9.]*) echo "${IP_MARK.probe}|NOPROXY"; echo ${IP_MARK.probeEnd}; exit 0;; esac`,
         ]
       : ["IP=127.0.0.1"];
+  // status, size and (for a redirect) where to, as one word each; the query string and fragment of a redirect never leave the host
   const one = (n: number) => [
-    `  c${n}=$(curl -ksS -o "$T" -m 10 -w '%{http_code}' --resolve "$H:443:$IP" "https://$H$P" 2>/dev/null) || c${n}=000`,
+    `  o${n}=$(curl -ksS -o "$T" -m 10 -w '%{http_code} %{size_download} %{redirect_url}' --resolve "$H:443:$IP" "https://$H$P" 2>/dev/null) || o${n}="000 0 "`,
+    `  c${n}=\${o${n}%% *}; r${n}=\${o${n}#* }; z${n}=\${r${n}%% *}; l${n}=\${r${n}#* }`,
     `  h${n}=$(hashfile "$T")`,
   ];
   return [
@@ -330,7 +334,8 @@ export function buildInPlaceProbeScript(o: { via: ProbeVia; hosts: readonly stri
     `for H in ${o.hosts.map(shq).join(" ")}; do`,
     ...one(1),
     ...(o.twice ? one(2) : ["  c2=$c1; h2=$h1"]),
-    `  printf '${IP_MARK.probe}|%s|%s|%s|%s\\n' "$H" "\${c1:-000}" "\${h1:-none}" "\${h2:-none}"`,
+    '  l1=${l1%%[?#]*}; l1=$(printf %s "$l1" | tr -d \'|\\r\\n\' | cut -c1-200)',
+    `  printf '${IP_MARK.probe}|%s|%s|%s|%s|%s|%s\\n' "$H" "\${c1:-000}" "\${h1:-none}" "\${h2:-none}" "\${z1:-0}" "$l1"`,
     "done",
     `echo ${IP_MARK.probeEnd}`,
     "",
@@ -344,6 +349,10 @@ export interface ProbeResult {
   hash: string | null;
   /** Hash of a second fetch; equal to `hash` for a page that does not change. */
   hash2: string | null;
+  /** Bytes of the body of the first fetch, when the host reported it (absent in a record written by an older hub). */
+  size?: number | null;
+  /** Where the first fetch redirected to (no query string, no fragment), when it did. */
+  location?: string | null;
 }
 export type ProbeOutput = { kind: "noproxy" } | { kind: "nocurl" } | { kind: "ok"; hosts: Record<string, ProbeResult> };
 
@@ -359,11 +368,56 @@ export function parseInPlaceProbe(out: string, requested: readonly string[]): Pr
   const h = (v: string): string | null => (HEX64.test(v) ? v : null);
   for (const l of lines) {
     const f = l.split("|");
-    if (f[0] !== IP_MARK.probe || f.length !== 5 || !want.has(f[1]) || !/^\d{3}$/.test(f[2])) continue;
+    if (f[0] !== IP_MARK.probe || (f.length !== 5 && f.length !== 7) || !want.has(f[1]) || !/^\d{3}$/.test(f[2])) continue;
     const status = Number(f[2]);
-    hosts[f[1]] = { status: status === 0 ? null : status, hash: h(f[3]), hash2: h(f[4]) };
+    const size = f.length === 7 && /^\d{1,12}$/.test(f[5]) ? Number(f[5]) : null;
+    const loc = f.length === 7 && /^[\x21-\x7e]{1,200}$/.test(f[6]) ? f[6] : null;
+    hosts[f[1]] = { status: status === 0 ? null : status, hash: h(f[3]), hash2: h(f[4]), size, location: loc };
   }
   return { kind: "ok", hosts };
+}
+
+// ───────────────────────────── is the app's container up? ─────────────────────────────
+
+/** What the box shows of one container: docker's state, its health (`none` = no health check) and its restart count. */
+export interface AppProbe {
+  name: string;
+  /** docker's state: `running`, `restarting`, `exited`, `created`, `dead`, `paused`; `absent` when there is no such container. */
+  state: string;
+  health: "healthy" | "unhealthy" | "starting" | "none";
+  restarts: number;
+}
+
+/** Read-only: the state, health and restart count of each named container (Tugra's copy of an app is `tugra_<appId>`). Prints `absent` for one that does not exist. */
+export function buildAppReadyScript(names: readonly string[]): string {
+  for (const n of names) if (!NAME_RE.test(n)) throw new Error("inplace: invalid container name");
+  const M = IP_MARK.app;
+  return [
+    "set -u",
+    `for N in ${names.map(shq).join(" ")}; do`,
+    `  docker container inspect -f '${M}|{{.Name}}|{{.State.Status}}|{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}|{{.RestartCount}}' "$N" 2>/dev/null || printf '${M}|/%s|absent|none|0\\n' "$N"`,
+    "done",
+    `echo ${IP_MARK.appEnd}`,
+    "",
+  ].join("\n");
+}
+
+/** Parse the containers. `null` for a cut output or one with no END marker; a line that fails any check is dropped (never trusted as a pass). */
+export function parseAppReady(out: string): AppProbe[] | null {
+  if (out.includes("…(truncated)")) return null;
+  const lines = out.split(/\r?\n/);
+  if (!lines.includes(IP_MARK.appEnd)) return null;
+  const res: AppProbe[] = [];
+  for (const l of lines) {
+    const f = l.split("|");
+    if (f[0] !== IP_MARK.app || f.length !== 5) continue;
+    const name = f[1].replace(/^\//, "");
+    if (!NAME_RE.test(name) || !/^[a-z]{3,12}$/.test(f[2]) || !/^\d{1,9}$/.test(f[4])) continue;
+    const health = f[3] === "healthy" || f[3] === "unhealthy" || f[3] === "starting" || f[3] === "none" ? f[3] : null;
+    if (!health) continue;
+    res.push({ name, state: f[2], health, restarts: Number(f[4]) });
+  }
+  return res;
 }
 
 // ───────────────────────────── fallback certificate (Coolify's, short-lived) and the new-certificate check ─────────────────────────────

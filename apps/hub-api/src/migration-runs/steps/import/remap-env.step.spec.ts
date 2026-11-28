@@ -46,6 +46,39 @@ describe("REMAP_ENV", () => {
     expect(w.port.calls.filter((c) => c.startsWith("remapApply"))).toHaveLength(1);
   });
 
+  it("the approval names the apps, keys and reasons that need the owner, as parallel lists, never a value", async () => {
+    const w = new RunWorld();
+    w.port.remapPlan_ = {
+      planHash: "e".repeat(64),
+      appsToWrite: 1,
+      needsManualKeys: 2,
+      needsManualApps: 1,
+      manual: [
+        { app: "api", key: "DATABASE_URL", reason: "unresolved-uuid-host" },
+        { app: "api", key: "REDIS_HOST", reason: "app-link-review" },
+      ],
+    };
+    const id = await w.run();
+    const b = (await w.view(id)).nextAction.approval!;
+    expect(b.review).toMatchObject({ apps: 1, keys: 2, manualApps: ["api", "api"], manualKeys: ["DATABASE_URL", "REDIS_HOST"], manualReasons: ["unresolved-uuid-host", "app-link-review"] });
+    const check = (await remap(w, id)).gate!.checks.find((c) => c.id === "remap.needs-manual");
+    expect(check?.params).toMatchObject({ manualKeys: ["DATABASE_URL", "REDIS_HOST"] });
+  });
+
+  it("an in-place run asks the plan with the in-place flag, and is not asked anything when only unchanged references are left", async () => {
+    const w = new RunWorld();
+    w.port.remapPlan_ = { planHash: "e".repeat(64), appsToWrite: 1, needsManualKeys: 0, needsManualApps: 0, manual: [], infoKeys: 2 };
+    const id = await w.create();
+    const row = w.store.runs.get(id) as unknown as { inPlace: boolean; topology: string };
+    row.inPlace = true;
+    row.topology = "swap-proxy";
+    await w.start(id);
+    await w.settle(id);
+    expect(w.port.remapPlanOpts).toContainEqual({ inPlace: true });
+    expect(w.store.step(id, "REMAP_ENV").approval).toBeNull();
+    expect((await remap(w, id)).status).not.toBe("WAITING_APPROVAL");
+  });
+
   it("nothing to rewrite but manual keys pending: still needs the acknowledgement, and never calls apply", async () => {
     const w = new RunWorld();
     w.port.remapPlan_ = { planHash: "e".repeat(64), appsToWrite: 0, needsManualKeys: 1, needsManualApps: 1 };

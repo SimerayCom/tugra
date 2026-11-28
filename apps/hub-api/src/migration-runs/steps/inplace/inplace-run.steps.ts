@@ -55,7 +55,8 @@ export class InPlaceRunSteps {
 
   /**
    * Plan and test the takeover (the service does both, and re-testing is safe). A refusal of the service is the step's failure with its own
-   * code; a domain that does not answer like Coolify, or a probe that could not run, is a failure the owner can retry after fixing it.
+   * code; a domain that does not answer like Coolify (after the takeover's own waiting for the app and re-testing), or a probe that could not run,
+   * is a failure the owner can retry after fixing it. While an app is still starting or a domain is inside its test window the step waits (`continue`).
    */
   async act(ctx: StepContext): Promise<{ outcome: "done" } | { outcome: "continue"; pollAfterMs: number }> {
     const run = ctx.run;
@@ -74,9 +75,31 @@ export class InPlaceRunSteps {
     }
     if (state.failureCode === "probe_unavailable") throw new StepFailure("deploy-dark.inplace-probe-unavailable", {}, true);
     if (state.pending > 0) return { outcome: "continue", pollAfterMs: INPLACE_TEST_POLL_MS };
-    if (!state.gate.ok) {
-      if (state.gate.code === "no_items") throw new StepFailure("deploy-dark.inplace-no-apps", {}, false);
-      if (state.gate.code === "test_failed") throw new StepFailure("deploy-dark.inplace-test-failed", { host: state.gate.host ?? "", app: state.gate.itemRef ?? "" }, true);
+    const gate = state.gate;
+    if (!gate.ok) {
+      if (gate.code === "no_items") throw new StepFailure("deploy-dark.inplace-no-apps", {}, false);
+      if (gate.code === "test_failed") {
+        // the domain that did not pass, with the app's name and why (what each side answered is on the takeover's item: the run page shows it)
+        const item = state.items.find((i) => i.itemRef === gate.itemRef);
+        const check = item?.domains.find((d) => d.host === gate.host)?.check;
+        throw new StepFailure(
+          "deploy-dark.inplace-test-failed",
+          {
+            host: gate.host ?? "",
+            app: item?.name ?? "",
+            item: gate.itemRef ?? "",
+            reason: check?.reason ?? "",
+            // what each side answered (status, bytes, where a redirect goes): no body, no query string
+            coolifyStatus: check?.coolify?.status ?? null,
+            coolifyBytes: check?.coolify?.bytes ?? null,
+            coolifyLocation: check?.coolify?.location ?? null,
+            tugraStatus: check?.tugra?.status ?? null,
+            tugraBytes: check?.tugra?.bytes ?? null,
+            tugraLocation: check?.tugra?.location ?? null,
+          },
+          true,
+        );
+      }
       return { outcome: "continue", pollAfterMs: INPLACE_TEST_POLL_MS };
     }
     return { outcome: "done" };

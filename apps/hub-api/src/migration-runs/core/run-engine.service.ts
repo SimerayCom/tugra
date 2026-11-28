@@ -516,7 +516,9 @@ export class RunEngineService implements OnModuleDestroy {
     }
 
     // ── act ──
-    const attempt = row.attempt + 1;
+    // `attempt` counts real tries: the first entry, and each time a failed step is entered again (a retry). A step that is still working
+    // (it answered `continue` and is polled) or that waited and resumed is the same attempt: its polls are not tries and never show.
+    const attempt = row.attempt === 0 || row.status === "FAILED" || trigger === "retry" ? row.attempt + 1 : row.attempt;
     await this.store.updateStep(run.id, key, { attempt, status: "RUNNING", wait: null, gate: pre, notBefore: null, lastError: null, finishedAt: null }, this.bootId);
     row.attempt = attempt;
     row.status = "RUNNING";

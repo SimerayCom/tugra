@@ -44,6 +44,13 @@ export interface OpSnapshot {
   planItems: Array<{ itemRef: string; kind: string; dependsOn: string[]; domain?: string | null; image?: string | null }>;
 }
 
+/** One env key that the rewrite cannot settle by itself: the app, the key (the name, never the value) and why (the importer's reason code). */
+export interface RemapManualKey {
+  app: string;
+  key: string;
+  reason: string;
+}
+
 export interface RemapSummary {
   /** The 64-hex confirm token of the reviewed preview. */
   planHash: string;
@@ -52,6 +59,10 @@ export interface RemapSummary {
   /** Variables that need a manual remap (apps x keys). */
   needsManualKeys: number;
   needsManualApps: number;
+  /** The keys behind `needsManualKeys`, by app and key name (never a value). Capped; absent = the port did not say. */
+  manual?: RemapManualKey[];
+  /** In-place only: keys the importer listed that the takeover leaves exactly as Coolify had them (so nothing changes for them): shown, never asked about. */
+  infoKeys?: number;
 }
 
 export interface RemapApplyResult {
@@ -141,7 +152,8 @@ export interface ImportStepsPort extends RunImportPort {
 
   // ── REMAP_ENV ──
   remapPending(userId: string, opId: string): Promise<boolean>;
-  remapPlan(userId: string, opId: string): Promise<RemapSummary>;
+  /** `inPlace`: the run is a takeover on the machine the source runs on (see {@link RemapSummary.infoKeys}). */
+  remapPlan(userId: string, opId: string, opts?: { inPlace?: boolean }): Promise<RemapSummary>;
   remapApply(userId: string, opId: string, confirmToken: string): Promise<RemapApplyResult>;
   /** Revert the applied remap; `true` when nothing remains pending (a transient per-app failure returns false). */
   remapUndo(userId: string, opId: string): Promise<boolean>;

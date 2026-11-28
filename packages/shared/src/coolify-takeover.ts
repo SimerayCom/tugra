@@ -215,6 +215,28 @@ export interface TakeoverMemberView {
   verify?: { level: TakeoverDbVerifyLevel; state: "pending" | "ok" | "failed" };
 }
 
+/** Why a domain's test through Tugra's dark proxy did not pass (or passed with a note). `not_ready`: the app's container never came up. */
+export const TAKEOVER_CHECK_REASONS = ["ok", "status_only", "preexisting", "unreachable", "server_error", "status_differs", "content_differs", "no_answer", "not_ready"] as const;
+export type TakeoverCheckReason = (typeof TAKEOVER_CHECK_REASONS)[number];
+
+/** What one side answered for a domain: the status (null = no answer), the size of the body in bytes and, for a redirect, where to (no query string, no secrets). */
+export interface TakeoverAnswer {
+  status: number | null;
+  bytes: number | null;
+  location: string | null;
+}
+
+/**
+ * The last verdict of a domain's test that did not pass (absent once it passed): why, and what each side answered, so the screen can show
+ * "Coolify answers 200 (4 KB), Tugra answers 502" next to the domain. While the app is still starting the domain stays `pending` and carries
+ * the last verdict too; it becomes `failed` only after the readiness window.
+ */
+export interface TakeoverDomainCheck {
+  reason: TakeoverCheckReason;
+  coolify: TakeoverAnswer | null;
+  tugra: TakeoverAnswer | null;
+}
+
 export interface TakeoverItemView {
   itemRef: string;
   name: string;
@@ -234,7 +256,7 @@ export interface TakeoverItemView {
   /** The app talks to a database that is taken over with it: it starts after the database at the switch and is checked right after. */
   afterSwitch?: boolean;
   issues?: TakeoverIssueCode[];
-  domains: Array<{ host: string; tempCheck: "pending" | "ok" | "failed"; finalCheck: "pending" | "ok" | "failed"; cert: TakeoverCertState }>;
+  domains: Array<{ host: string; tempCheck: "pending" | "ok" | "failed"; finalCheck: "pending" | "ok" | "failed"; cert: TakeoverCertState; check?: TakeoverDomainCheck }>;
 }
 
 /** A takeover of one server. Secret-free. `giveBackAvailable` stays true until the cleanup lane removes Coolify's leftovers. */

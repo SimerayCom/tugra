@@ -210,13 +210,42 @@ describe("ImportPortService", () => {
     expect(executor.reissueMigrationToken).toHaveBeenCalledWith("u1", "op-1", "https://hub", { certs: false });
   });
 
+  it("remap: the summary names each app and key that needs the owner (never a value); in place, a reference that already crossed servers in Coolify is only counted", async () => {
+    const m = make();
+    m.executor.remapEnvPlan.mockResolvedValue({
+      planHash: "e".repeat(64),
+      apps: [
+        { name: "api", changes: [1], needsManual: [{ key: "DATABASE_URL", reason: "unresolved-uuid-host", targetItemRef: "x" }, { key: "CACHE_URL", reason: "cross-server-target", targetItemRef: "y" }] },
+        { name: "web", changes: [], needsManual: [{ key: "REDIS_HOST", reason: "app-link-review" }] },
+        { name: "cron", changes: [], needsManual: [{ key: "DB_HOST", reason: "cross-server-target" }] },
+      ],
+    });
+    expect(await m.svc.remapPlan("u1", "op-1")).toMatchObject({
+      needsManualKeys: 4,
+      needsManualApps: 3,
+      manual: [
+        { app: "api", key: "DATABASE_URL", reason: "unresolved-uuid-host" },
+        { app: "api", key: "CACHE_URL", reason: "cross-server-target" },
+        { app: "web", key: "REDIS_HOST", reason: "app-link-review" },
+        { app: "cron", key: "DB_HOST", reason: "cross-server-target" },
+      ],
+    });
+    const inPlace = await m.svc.remapPlan("u1", "op-1", { inPlace: true });
+    expect(inPlace).toMatchObject({ needsManualKeys: 2, needsManualApps: 2, infoKeys: 2 });
+    expect(inPlace.manual).toEqual([
+      { app: "api", key: "DATABASE_URL", reason: "unresolved-uuid-host" },
+      { app: "web", key: "REDIS_HOST", reason: "app-link-review" },
+    ]);
+    expect(JSON.stringify(inPlace)).not.toMatch(/postgres:|password/i);
+  });
+
   it("remap: pending flag from the undo record, summary counts, apply result and undo outcome", async () => {
     const m = make({ opMeta: { remapUndo: { appliedAt: "x" } } });
     expect(await m.svc.remapPending("u1", "op-1")).toBe(true);
     const m2 = make({ opMeta: { remapUndo: { appliedAt: "x", undoneAt: "y" } } });
     expect(await m2.svc.remapPending("u1", "op-1")).toBe(false);
     m.executor.remapEnvPlan.mockResolvedValue({ planHash: "e".repeat(64), apps: [{ changes: [1], needsManual: [] }, { changes: [], needsManual: [1, 2] }, { changes: [1], needsManual: [1] }] });
-    expect(await m.svc.remapPlan("u1", "op-1")).toEqual({ planHash: "e".repeat(64), appsToWrite: 2, needsManualKeys: 3, needsManualApps: 2 });
+    expect(await m.svc.remapPlan("u1", "op-1")).toEqual({ planHash: "e".repeat(64), appsToWrite: 2, needsManualKeys: 3, needsManualApps: 2, manual: [] });
     m.executor.remapEnvApply.mockResolvedValue({ applied: false, failed: [{}], linkFailed: [{}, {}] });
     expect(await m.svc.remapApply("u1", "op-1", "tok")).toEqual({ applied: false, failed: 1, linkFailed: 2 });
     m.executor.remapEnvApply.mockResolvedValue({ applied: false, failed: [], linkFailed: [{}] });

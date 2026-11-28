@@ -475,6 +475,16 @@ describe("PREFLIGHT safety checks over the plan (R11, R26/C13, R27/C5)", () => {
     expect(byId(preflightChecks(run, baseObs({ plan: p, hints: [] })), "preflight.images")).toMatchObject({ status: "fail", params: { count: 1, items: ["proxy"] } });
   });
 
+  it("an in-place takeover keeps the exact image Coolify runs: no floating-image approval, a pass line instead", () => {
+    const p = plan([
+      { itemRef: "app:s1:img", kind: "app", name: "proxy", proposed: { source: "IMAGE", image: "img/proxy:latest", domain: "p.example.test" } },
+      { itemRef: "service:s1:svc", kind: "service", name: "search", proposed: { imageFloating: ["meili"] } },
+    ]);
+    const check = byId(preflightChecks(baseRun({ inPlace: true, topology: "swap-proxy" } as never), baseObs({ plan: p })), "preflight.images");
+    expect(check).toMatchObject({ status: "pass", code: "preflight.images-kept-exact", params: { count: 2 } });
+    expect(check?.ackable).toBeUndefined();
+  });
+
   it("no floating image, no check", () => {
     expect(byId(preflightChecks(baseRun(), baseObs()), "preflight.images")).toBeUndefined();
   });

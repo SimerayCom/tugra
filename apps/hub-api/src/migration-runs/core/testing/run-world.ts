@@ -721,8 +721,10 @@ export class ScriptedImportPort implements ImportStepsPort {
     this.reads.push("remapPending");
     return this.remapPendingBy.get(opId) === true;
   }
-  async remapPlan(): Promise<RemapSummary> {
+  remapPlanOpts: Array<{ inPlace?: boolean } | undefined> = [];
+  async remapPlan(_u?: string, _o?: string, opts?: { inPlace?: boolean }): Promise<RemapSummary> {
     this.reads.push("remapPlan");
+    this.remapPlanOpts.push(opts);
     if (this.remapNothing) throw new ConflictException("the import provisioned no resources to migrate data into");
     return this.remapPlan_;
   }

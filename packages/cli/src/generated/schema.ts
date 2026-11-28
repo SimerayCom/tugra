@@ -9275,6 +9275,9 @@ export interface components {
                 startedAt: string | null;
                 finishedAt: string | null;
                 lastError: string | null;
+                lastErrorParams?: {
+                    [key: string]: string | number | boolean | (null) | (string | number | boolean | (null))[];
+                } | null;
                 allowed: {
                     approve: boolean;
                     retry: boolean;

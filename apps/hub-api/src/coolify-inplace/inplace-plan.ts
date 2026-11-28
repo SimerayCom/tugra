@@ -4,7 +4,7 @@
  * between "tested" and "take the ports". No database, no agent, no clock: the service feeds these what it read and acts on what they say.
  * Names, ids, counts and codes only; no environment value and no key ever enters this file.
  */
-import type { TakeoverBuildMode, TakeoverCertState, TakeoverIssueCode, TakeoverItemView, TakeoverStatus } from "@tugra/shared";
+import type { TakeoverAnswer, TakeoverBuildMode, TakeoverCertState, TakeoverCheckReason, TakeoverDomainCheck, TakeoverIssueCode, TakeoverItemView, TakeoverStatus } from "@tugra/shared";
 import { appVolumeName } from "../deploy/deploy-script";
 import { dbExtraVolumeName, dbVolumeName } from "../databases/database-script";
 import type { ComposeNetworkRow } from "../deploy/deploy-script";
@@ -64,6 +64,10 @@ export interface TakeoverItem extends Omit<TakeoverItemView, "members"> {
   fallbackSince?: Record<string, string>;
   /** Failed attempts to get a new certificate, per domain. */
   certAttempts: Record<string, number>;
+  /** When Tugra's copy of the app was started next to Coolify's (the clock of the readiness deadline). Plain apps only. */
+  startedAt?: string;
+  /** When its container was first seen running and healthy on two polls in a row; the test through the dark proxy is not judged before this (plus a short settle). */
+  readyAt?: string;
 }
 
 export type TakeoverIssue = TakeoverIssueCode;
@@ -167,11 +171,17 @@ export const adoptTagFor = (appId: string, deploymentId: string): string => `tug
 
 // ───────────────────────────── judging a test ─────────────────────────────
 
-export type CheckReason = "ok" | "status_only" | "preexisting" | "unreachable" | "server_error" | "status_differs" | "content_differs" | "no_answer";
+export type CheckReason = TakeoverCheckReason;
 export interface CheckVerdict {
   ok: boolean;
   reason: CheckReason;
 }
+
+/** What one side answered, as the screen shows it (never a body, never a query string). */
+export const answerOf = (p: ProbeResult | undefined): TakeoverAnswer | null => (p ? { status: p.status, bytes: p.size ?? null, location: p.location ?? null } : null);
+
+/** The verdict of a domain that did not pass, with what each side answered. */
+export const checkOf = (reason: CheckReason, coolify: ProbeResult | undefined, tugra: ProbeResult | undefined): TakeoverDomainCheck => ({ reason, coolify: answerOf(coolify), tugra: answerOf(tugra) });
 
 /**
  * Is the answer through Tugra the answer Coolify gave? The status must be the same one, and not a server error. The content hash must
@@ -329,7 +339,7 @@ export function toItemView(i: TakeoverItem): TakeoverItemView {
     ...(i.rebuildDeclined ? { rebuildDeclined: true } : {}),
     ...(i.afterSwitch ? { afterSwitch: true } : {}),
     ...(i.issues.length ? { issues: i.issues } : {}),
-    domains: i.domains.map((d) => ({ host: d.host, tempCheck: d.tempCheck, finalCheck: d.finalCheck, cert: d.cert })),
+    domains: i.domains.map((d) => ({ host: d.host, tempCheck: d.tempCheck, finalCheck: d.finalCheck, cert: d.cert, ...(d.check ? { check: d.check } : {}) })),
   };
 }
 

@@ -21,9 +21,17 @@ import {
 } from "../../core/run-contract";
 import { applyAcks, hashOf } from "../../core/run-logic";
 import { IMPORT_STEPS_PORT, type ImportStepsPort, type RemapSummary } from "./import-ports";
+import { isInPlaceRun } from "../inplace/inplace-run-logic";
 import { failureOf, isConflict } from "./step-utils";
 
 const MANUAL_ACK = "remap.needs-manual";
+
+/**
+ * Which keys of which apps need the owner, as three parallel lists (the n-th app, key and reason belong together): names and the importer's
+ * reason codes, never a value. Absent when the port did not list them (an older port): the counts are then all the owner sees.
+ */
+const manualParams = (plan: RemapSummary): { manualApps?: string[]; manualKeys?: string[]; manualReasons?: string[] } =>
+  plan.manual && plan.manual.length > 0 ? { manualApps: plan.manual.map((m) => m.app), manualKeys: plan.manual.map((m) => m.key), manualReasons: plan.manual.map((m) => m.reason) } : {};
 
 export interface RemapObs extends Observation {
   /** The run has no op, or the op provisioned nothing: there is nothing to remap. */
@@ -76,7 +84,7 @@ export class RemapEnvStep implements StepHandler<RemapObs>, OnModuleInit {
     const pending = await this.port.remapPending(userId, opId);
     if (pending) return { nothing: false, pending: true, plan: null };
     try {
-      return { nothing: false, pending: false, plan: await this.port.remapPlan(userId, opId) };
+      return { nothing: false, pending: false, plan: await this.port.remapPlan(userId, opId, { inPlace: isInPlaceRun(ctx.run) }) };
     } catch (e) {
       // "the import provisioned no resources to migrate": nothing to remap
       if (isConflict(e)) return { nothing: true, pending: false, plan: null };
@@ -109,7 +117,9 @@ export class RemapEnvStep implements StepHandler<RemapObs>, OnModuleInit {
     if (plan.appsToWrite === 0) out.push({ id: "remap-env.nothing", status: "pass", code: "remap-env.nothing-to-do", ...ev });
     else out.push({ id: "remap-env.plan", status: "fail", code: "remap-env.pending-apply", params: { apps: plan.appsToWrite }, ...ev });
     if (plan.needsManualKeys > 0) {
-      out.push({ id: MANUAL_ACK, status: "fail", code: "remap-env.needs-manual", params: { apps: plan.needsManualApps, keys: plan.needsManualKeys }, ackable: true, ...ev });
+      out.push({ id: MANUAL_ACK, status: "fail", code: "remap-env.needs-manual", params: { apps: plan.needsManualApps, keys: plan.needsManualKeys, ...manualParams(plan) }, ackable: true, ...ev });
+    } else if ((plan.infoKeys ?? 0) > 0) {
+      out.push({ id: "remap-env.info", status: "pass", code: "remap-env.unchanged-refs", params: { keys: plan.infoKeys ?? 0 }, ...ev });
     }
     const acked = applyAcks(out, ctx.approval?.acks ?? []);
     return soft ? acked.map((c) => (c.ackable && !c.acked && c.status === "fail" ? { ...c, status: "warn" as const } : c)) : acked;
@@ -127,7 +137,7 @@ export class RemapEnvStep implements StepHandler<RemapObs>, OnModuleInit {
       requiresDataRisk: false,
       ackable: [MANUAL_ACK],
       requiredAcks: [MANUAL_ACK],
-      review: { apps: plan.needsManualApps, keys: plan.needsManualKeys, rewrites: plan.appsToWrite },
+      review: { apps: plan.needsManualApps, keys: plan.needsManualKeys, rewrites: plan.appsToWrite, ...manualParams(plan) },
     };
   }
 

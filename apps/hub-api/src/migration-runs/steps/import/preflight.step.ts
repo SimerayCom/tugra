@@ -39,6 +39,7 @@ import { preflightCrossCheck } from "./baseline/preflight-crosscheck";
 import { emptyHostView, loadHostView, type HostView } from "../data/inventory/host-view";
 import { HOST_REPORT_PORT, type HostReportPort } from "../data/inventory/inventory-contract";
 import { floatingImages, imageParams } from "./baseline/image-pins";
+import { isInPlaceRun } from "../inplace/inplace-run-logic";
 import { RUN_HINTS, type RunHint, type RunHintStore } from "./baseline/run-hints";
 import { baselineItemRef, buildSourceBaseline, isDegradedAtSource, sameBaseline } from "./baseline/source-health";
 import { isWorker, markConflicts, unmatchedMarks, workerMarks, workerSets } from "./baseline/workers";
@@ -131,7 +132,10 @@ function safetyChecks(run: RunSnapshot, obs: PreflightObs, plan: ImportPlanRespo
 
   // R11: a floating image is whatever the registry serves today, not what the source runs
   const floating = floatingImages(items, run.applyInput, hints, plan.preflight?.services);
-  if (floating.length) {
+  if (floating.length && isInPlaceRun(run)) {
+    // a takeover keeps the image id Coolify runs (the exact image, adopted as it is): nothing is pulled, so there is nothing to pin or accept
+    out.push({ id: "preflight.images", status: "pass", code: "preflight.images-kept-exact", params: { count: items.filter((i) => i.kind === "app" || i.kind === "service").length }, ...ev });
+  } else if (floating.length) {
     const open = floating.filter((f) => !f.pinned);
     out.push(
       open.length
