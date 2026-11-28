@@ -55,3 +55,20 @@ describe("ReportBody: data checks", () => {
     expect(screen.queryByRole("region", { name: "Data checks" })).toBeNull();
   });
 });
+
+describe("ReportBody: the poll counter and the fleet's noise", () => {
+  const base = report();
+  it("never prints 'attempt N' for a step", () => {
+    mount({ ...base, steps: [{ key: "IMPORT", status: "PASSED", attempts: 50, durationSec: 12, code: null }] });
+    expect(document.body.textContent).not.toMatch(/attempt/i);
+    expect(screen.getByText("12 s")).toBeTruthy();
+  });
+  it("an in-place report leaves out the fleet's 'skipped by the importer' lines, the evidence counts and the step table", () => {
+    const items = Array.from({ length: 5 }, (_, i) => ({ kind: "app" as const, name: `other-${i}`, outcome: "skipped" as const, code: "import.task-skipped", evidence: null }));
+    const r = { ...base, items: [...items, { kind: "app" as const, name: "mine", outcome: "not-cut-over" as const, code: "cutover.skipped", evidence: null }], steps: [{ key: "IMPORT" as const, status: "PASSED" as const, attempts: 3, durationSec: 4, code: null }] };
+    render(<I18nProvider><ReportBody report={r} inPlace /></I18nProvider>);
+    expect(screen.queryByText("other-0")).toBeNull();
+    expect(screen.getByText("mine")).toBeTruthy();
+    expect(document.body.textContent).not.toMatch(/Hub-verified|Read your apps from Coolify/);
+  });
+});

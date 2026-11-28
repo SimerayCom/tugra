@@ -240,6 +240,10 @@ export interface TakeoverDomainCheck {
 export interface TakeoverItemView {
   itemRef: string;
   name: string;
+  /** The Tugra app behind the item (for its favicon). Absent for an item that has none. */
+  appId?: string;
+  /** The key of the brand icon of the image the item runs (the image itself is never sent). Absent when no brand fits. */
+  iconKey?: string;
   /** Absent = an app. */
   kind?: TakeoverItemKind;
   /** Databases only: how it is checked and whether it passed after the switch. */

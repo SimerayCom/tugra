@@ -4,7 +4,6 @@
   "badge": "In place",
   "badgeHint": "Same machine, no data copy: Coolify stays on the server until you remove it, and giving it back is one click.",
   "loading": "Reading the takeover...",
-  "none": "The takeover has not been planned yet. It is read from the server when the test step starts; nothing is changed before that.",
   "unreadable": "The takeover could not be read. Try again.",
   "stage": {
     "planned": "Planned",
@@ -18,9 +17,7 @@
     "todo": "next",
     "stopped": "stopped"
   },
-  "rollup": "{apps} apps: {reused} reuse Coolify's image, {rebuilt} rebuilt with Tugra and verified, {rebuilding} still being built, {problems} with a problem, {declined} could not be rebuilt, {skipped} left out.",
-  "databases": "{count} databases are taken over on their own data.",
-  "appsTitle": "What happened to each app",
+  "appsTitle": "Your apps",
   "outcome": {
     "reused": "Reused the image Coolify built",
     "rebuilding": "Rebuilding with Tugra, not verified yet",
@@ -31,7 +28,6 @@
     "skipped": "Left out of the takeover",
     "database": "Database, taken over on its own data"
   },
-  "domains": "{ok} of {total} domains answer like Coolify's copy",
   "stepNote": {
     "DEPLOY_DARK": {
       "planned": "In place: the takeover is planned from what Coolify runs. Nothing was changed.",
@@ -50,5 +46,122 @@
       "gaveBack": "In place: given back, Coolify serves the sites again.",
       "failed": "In place: the switch did not finish and was put back."
     }
+  },
+  "appsEmpty": "Your apps appear here once Tugra has read them from Coolify. Nothing is changed before that.",
+  "stageLine": "Takeover: {stage} ({n} of 4)",
+  "banner": "Coolify keeps serving your sites until you approve. One click gives it back.",
+  "more": "Show all {count}",
+  "less": "Show fewer",
+  "evidence": {
+    "title": "What each side answered",
+    "coolify": "Coolify",
+    "tugra": "Tugra",
+    "status": "Answer {status}",
+    "bytes": "{size}",
+    "redirect": "Sends visitors to {location}",
+    "none": "No answer"
+  },
+  "reason": {
+    "ok": "The two answer the same.",
+    "status_only": "The two answer the same status; the page content was not compared.",
+    "preexisting": "Coolify's copy already answered like this before the move.",
+    "unreachable": "Tugra's copy could not be reached.",
+    "server_error": "Tugra's copy answers with an error.",
+    "status_differs": "The two answer with a different status.",
+    "content_differs": "The two answer with different content.",
+    "no_answer": "Tugra's copy did not answer.",
+    "not_ready": "The app's container is not up yet."
+  },
+  "step": {
+    "PREFLIGHT": "Check Coolify and this server",
+    "IMPORT": "Read your apps from Coolify",
+    "REMAP_ENV": "Point apps at their databases",
+    "DEPLOY_DARK": "Test every site next to Coolify",
+    "VERIFY": "Your go-ahead",
+    "CUTOVER": "Hand over the ports",
+    "OBSERVE": "Watch your sites",
+    "FINALIZE": "Finish"
+  },
+  "state": {
+    "queued": "Ready to start",
+    "moving": "Moving",
+    "goAhead": "Waiting for your go-ahead",
+    "needsLook": "Needs a look",
+    "needsYou": "Needs you",
+    "watching": "Watching your sites",
+    "paused": "Paused",
+    "done": "Moved",
+    "givingBack": "Giving Coolify back",
+    "givenBack": "Given back to Coolify",
+    "testDone": "Test finished"
+  },
+  "next": {
+    "goAhead": "Waiting for your go-ahead",
+    "needsLook": "Something needs a look",
+    "connect": "Tugra needs a connection to Coolify",
+    "paused": "Paused",
+    "watching": "Watching your sites",
+    "checking": "Checking your sites",
+    "switching": "Taking over your sites",
+    "working": "Working on it",
+    "ready": "Ready to start",
+    "readyBody": "Nothing on your server changes yet. Tugra reads your apps from Coolify and tests every site next to it, and asks for your go-ahead before it takes anything over.",
+    "start": "Start",
+    "done": "Moved",
+    "givingBack": "Giving Coolify back",
+    "givenBack": "Coolify serves your sites again",
+    "retry": "Try again",
+    "testAgain": "Test again",
+    "waitNote": "Nothing is needed from you. You can close this page.",
+    "timerNote": "Watching your sites, nothing needed from you. You can close this page.",
+    "failedHintSafe": "Nothing was lost: Coolify still serves your sites.",
+    "failedHintSwitched": "Your sites stay up while this is sorted out. Try again, or give Coolify back."
+  },
+  "app": {
+    "left_out": "Left out of the move",
+    "checking": "Checking...",
+    "same": "Same as Coolify",
+    "needs_look": "Needs a look",
+    "switching": "Switching...",
+    "live_cert": "Live on Tugra, certificate on its way",
+    "live": "Live on Tugra, certificate issued",
+    "no_site": "No site address to compare",
+    "database": "Database, taken over on its own data",
+    "database_checked": "Database, taken over and checked",
+    "service": "Service, taken over",
+    "given_back": "Back on Coolify"
+  },
+  "gate": {
+    "acmeEmail": "This server has no email address for its certificates, so Tugra cannot get new ones. Set the Let's Encrypt email for this server, then check again.",
+    "openServer": "Open the server"
+  },
+  "giveBack": {
+    "button": "Give Coolify back",
+    "title": "Give Coolify back?",
+    "body": "Tugra stops and Coolify serves your sites again. Nothing is lost.",
+    "confirm": "Give Coolify back",
+    "hint": "Coolify can be given back with one click until you clean it up."
+  },
+  "approval": {
+    "sitesSame": "All {count} sites answer the same through Tugra as through Coolify.",
+    "sitesSameOne": "Your site answers the same through Tugra as through Coolify.",
+    "leftOut": "Left out of the move, Coolify keeps running them:",
+    "takes": "Taking over takes about a minute. Coolify can be given back with one click.",
+    "takeOver": "Take over {server}",
+    "continue": "Continue",
+    "confirmTitle": "Take over {server} now?",
+    "confirmBody": "Tugra takes the ports and serves your sites. Coolify can be given back with one click.",
+    "confirmButton": "Take over",
+    "asks": "You confirm these to continue:",
+    "askUnknown": "A finding you need to confirm"
+  },
+  "done": {
+    "body": "{sites} sites answer like before and have a certificate.",
+    "bodyNoSites": "The move is finished.",
+    "another": "Move another server",
+    "campaign": "Back to the move"
+  },
+  "details": {
+    "activity": "Activity"
   }
 }

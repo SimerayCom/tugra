@@ -16,6 +16,7 @@ import { OperatorTools } from "./operator-tools";
 import { AgentSessionReconnect } from "./agent-session-reconnect";
 import { SourceSessionForm } from "./source-session-card";
 import { useRunPlumbing } from "./use-run-actions";
+import { InPlaceNextCard } from "./in-place-next";
 
 /** Re-render once a second while a countdown is shown. */
 function useNow(active: boolean): number {
@@ -28,8 +29,13 @@ function useNow(active: boolean): number {
   return now;
 }
 
-/** "What I am waiting for": exactly one card, naming what is needed, since when, and the controls to provide it. */
+/** "What I am waiting for": exactly one card. An in-place run gets the plain version of it (one heading, one button). */
 export function NextActionCard({ run }: { run: MigrationRunView }) {
+  return run.inPlace && !run.dryRun ? <InPlaceNextCard run={run} /> : <CopyNextCard run={run} />;
+}
+
+/** The card of a run that copies data to another server: what is needed, since when, and the controls to provide it. */
+function CopyNextCard({ run }: { run: MigrationRunView }) {
   const t = useT();
   const na = run.nextAction;
   const { adopt, onError } = useRunPlumbing(run.id);
@@ -90,7 +96,7 @@ export function NextActionCard({ run }: { run: MigrationRunView }) {
 
         {na.kind === "failed" && (
           <>
-            {step?.lastError && <div style={{ fontSize: 13, color: "var(--c-r)", wordBreak: "break-word" }}>{codeText(t, step.lastError)}</div>}
+            {step?.lastError && <div style={{ fontSize: 13, color: "var(--c-r)", wordBreak: "break-word" }}>{codeText(t, step.lastError, step.lastErrorParams)}</div>}
             {step?.gate && blockingChecks(step.gate).length > 0 && <GateChecks checks={blockingChecks(step.gate)} />}
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
               {step?.allowed.retry && <Btn onClick={() => retry.mutate()} loading={retry.isPending}>{t("migrationRun.next.retry")}</Btn>}

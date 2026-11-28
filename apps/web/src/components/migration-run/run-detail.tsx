@@ -10,6 +10,7 @@ import { PageHeader } from "../page-header";
 import { SkeletonCard } from "../skeleton";
 import { isTerminalRun, runRefetchInterval, runStatusColor } from "../../lib/migration-run";
 import { RUN_STATUS_KEY } from "../../lib/migration-run";
+import { runStateKey } from "../../lib/inplace-run";
 import type { MigrationRunView } from "../../lib/types";
 import { ModeBadges } from "./badges";
 import { DryRunDecision } from "./dry-run-decision";
@@ -51,6 +52,8 @@ export function RunDetail({ id }: { id: string }) {
   if (!run) return null;
 
   const settled = isTerminalRun(run.status);
+  // an in-place takeover copies nothing: its page is the short one (one gate decides, so a new card cannot leak into it)
+  if (run.inPlace && !run.dryRun) return <InPlaceRunPage run={run} events={events} error={error} settled={settled} />;
   // a finished dry run answers with a decision screen; the technical steps and events sit behind "Details"
   const decided = run.dryRun && run.status === "DRY_RUN_DONE";
   const extraTargets = Math.max(0, run.targetServers.length - 1);
@@ -93,6 +96,53 @@ export function RunDetail({ id }: { id: string }) {
             </div>
             <RunBody run={run} events={events} error={error} settled={settled} />
           </>
+        )}
+      </div>
+    </>
+  );
+}
+
+/**
+ * The page of an in-place run: the server and its state in plain words, the live step list, the one card that says what happens now or
+ * what is asked, the apps with their domains, and a closed "Details" with the activity, the report and the way back. Everything that
+ * belongs to copying data (owner inputs, freeze, bind mounts, fleet policies, safety copy, mode and topology, the second step list) is
+ * not on this page at all.
+ */
+function InPlaceRunPage({ run, events, error, settled }: { run: MigrationRunView; events: ReturnType<typeof useRunEvents>["events"]; error: ReturnType<typeof useRunEvents>["error"]; settled: boolean }) {
+  const t = useT();
+  const [showDetails, setShowDetails] = useState(false);
+  const inPlace = useRunInPlace(run);
+  const server = run.targetServerName ?? run.targetServerId;
+  const live = !settled && !run.dryRun && run.status !== "QUEUED";
+  return (
+    <>
+      <PageHeader
+        breadcrumb={[
+          { label: t("nav.import"), href: "/import" },
+          { label: t("migrationRun.title"), href: "/import/runs" },
+          { label: server },
+        ]}
+        title={<span style={{ wordBreak: "break-word" }}>{server}</span>}
+        status={{ label: t(runStateKey(run)), color: runStatusColor(run.status) }}
+        actions={<RunHeaderActions run={run} hideStart />}
+      />
+      {live && run.allowed.abort && (
+        <p role="status" data-testid="in-place-banner" style={{ margin: "0 0 14px", fontSize: 13, color: "var(--c-tx2)", lineHeight: 1.5 }}>{t("inPlaceRun.banner")}</p>
+      )}
+      <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+        <RunStepper run={run} />
+        <RunConsent run={run} />
+        <div id="mr-next-action">
+          <NextActionCard run={run} />
+        </div>
+        <InPlaceCard run={run} state={inPlace} />
+        <DetailsToggle open={showDetails} onToggle={() => setShowDetails((v) => !v)} />
+        {showDetails && (
+          <div id="mr-run-details" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+            <EventLog events={events} error={error} inPlace />
+            <RecoveryCard run={run} />
+            <ReportCard runId={run.id} enabled={settled || run.status === "FAILED"} inPlace />
+          </div>
         )}
       </div>
     </>

@@ -10,6 +10,7 @@ import { useConfirm } from "../confirm";
 import { Checkbox, Textarea } from "../form";
 import { confirmNames, joinConfirmNames } from "../../lib/migration-run";
 import type { MigrationRunView } from "../../lib/types";
+import { GiveBackButton } from "./give-back";
 import { TypedConfirmDialog } from "./typed-confirm";
 import { useFreshSession, useRunPlumbing } from "./use-run-actions";
 
@@ -49,7 +50,7 @@ export function useStartRun(run: MigrationRunView) {
 
 /** Start / promote, pause and resume: the run's everyday controls, shown in the page header. A finished dry run is started
  *  from its decision screen instead, which says what the real run would do first. */
-export function RunHeaderActions({ run }: { run: MigrationRunView }) {
+export function RunHeaderActions({ run, hideStart = false }: { run: MigrationRunView; hideStart?: boolean }) {
   const { adopt, onError, t } = useRunPlumbing(run.id);
   const confirm = useConfirm();
   const { onStart, pending: starting, promoting } = useStartRun(run);
@@ -60,7 +61,7 @@ export function RunHeaderActions({ run }: { run: MigrationRunView }) {
   };
   return (
     <>
-      {run.allowed.start && !promoting && <Btn onClick={onStart} loading={starting}>{t("migrationRun.actions.start")}</Btn>}
+      {run.allowed.start && !promoting && !hideStart && <Btn onClick={onStart} loading={starting}>{t("migrationRun.actions.start")}</Btn>}
       {run.allowed.pause && <Btn variant="ghost" onClick={onPause} loading={pause.isPending}>{t("migrationRun.actions.pause")}</Btn>}
       {run.allowed.resume && <Btn onClick={() => resume.mutate()} loading={resume.isPending}>{t("migrationRun.actions.resume")}</Btn>}
     </>
@@ -122,7 +123,9 @@ export function RecoveryCard({ run }: { run: MigrationRunView }) {
 
   return (
     <SectionCard title={t("migrationRun.recovery.title")} desc={t("migrationRun.recovery.desc")} style={{ marginBottom: 0 }}>
-      {a.abort && row(t("migrationRun.recovery.abort"), t("migrationRun.recovery.abortBody"), <Btn variant="dangerGhost" onClick={() => setDialog("abort")}>{t("migrationRun.recovery.abortButton")}</Btn>)}
+      {a.abort && !run.inPlace && row(t("migrationRun.recovery.abort"), t("migrationRun.recovery.abortBody"), <Btn variant="dangerGhost" onClick={() => setDialog("abort")}>{t("migrationRun.recovery.abortButton")}</Btn>)}
+      {/* an in-place run does not "abort": it gives Coolify back, which is the same undo, asked in one short question */}
+      {a.abort && run.inPlace && row(t("inPlaceRun.giveBack.button"), t("inPlaceRun.giveBack.hint"), <GiveBackButton run={run} variant="dangerGhost" />)}
       {!a.abort && pastPonr && live && <div style={{ fontSize: 12, color: "var(--c-am)", padding: "12px 0", borderTop: "1px solid var(--c-bd)", lineHeight: 1.5 }}>{t("migrationRun.recovery.abortRefused")}</div>}
       {a.cleanup && row(t("migrationRun.recovery.cleanup"), t("migrationRun.recovery.cleanupBody"), <Btn variant="dangerGhost" onClick={() => setDialog("cleanup")}>{t("migrationRun.recovery.cleanupButton")}</Btn>)}
       {a.reverse && row(t("migrationRun.recovery.reverse"), t("migrationRun.recovery.reverseBody"), <Btn variant="dangerGhost" onClick={() => setDialog("reverse")}>{t("migrationRun.recovery.reverseButton")}</Btn>)}

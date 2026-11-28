@@ -1,8 +1,9 @@
 // What the run view says about an in-place takeover (Coolify hub takeover, lane F inside the guided run). Pure: no React, no network.
 // The hub states the facts (the takeover's state, per app whether Coolify's image was reused or the app was rebuilt with Tugra and
 // verified); this only turns them into locale keys and counts. Names, refs and codes only.
-import type { RunInPlaceView, TakeoverItemView, TakeoverStatus } from "@tugra/shared";
-import type { MigrationRunStepKey } from "./types";
+import type { RunInPlaceView, TakeoverAnswer, TakeoverCheckReason, TakeoverItemView, TakeoverStatus } from "@tugra/shared";
+import type { MigrationRunNextAction, MigrationRunStatus, MigrationRunStepKey, MigrationRunView } from "./types";
+import { STEP_TITLE_KEY } from "./migration-run";
 
 /** What happened to one app of an in-place run, in the words the owner reads. */
 export type AppOutcome =
@@ -139,4 +140,227 @@ export function stepNoteKey(step: MigrationRunStepKey, status: TakeoverStatus | 
 export function rowsOf(v: Pick<RunInPlaceView, "items">): Array<{ item: TakeoverItemView; outcome: AppOutcome }> {
   const rows = v.items.map((item) => ({ item, outcome: outcomeOf(item) }));
   return [...rows.filter((r) => r.outcome !== "database"), ...rows.filter((r) => r.outcome === "database")];
+}
+
+// ───────────────────────────── the simple in-place page ─────────────────────────────
+
+/** What one app of an in-place run is doing, in the one phrase the owner reads next to it. */
+export type AppState =
+  | "left_out" // not part of the takeover (the issue lines say why)
+  | "checking" // started beside Coolify, not yet judged the same
+  | "same" // every domain answers like Coolify's copy
+  | "needs_look" // a domain answers differently, a rebuild or a database check failed
+  | "switching" // the ports are being handed over
+  | "live_cert" // Tugra serves it, the new certificate is on its way
+  | "live" // Tugra serves it with a new certificate
+  | "no_site" // an app without a domain: nothing to compare
+  | "database" // taken over on its own data
+  | "database_checked" // taken over and the data answers the same
+  | "service" // a compose service taken over
+  | "given_back"; // Coolify serves it again
+
+export const APP_STATE_KEY: Record<AppState, string> = {
+  left_out: "inPlaceRun.app.left_out",
+  checking: "inPlaceRun.app.checking",
+  same: "inPlaceRun.app.same",
+  needs_look: "inPlaceRun.app.needs_look",
+  switching: "inPlaceRun.app.switching",
+  live_cert: "inPlaceRun.app.live_cert",
+  live: "inPlaceRun.app.live",
+  no_site: "inPlaceRun.app.no_site",
+  database: "inPlaceRun.app.database",
+  database_checked: "inPlaceRun.app.database_checked",
+  service: "inPlaceRun.app.service",
+  given_back: "inPlaceRun.app.given_back",
+};
+
+/** Good (green), still going (amber), a problem (red), or nothing to say (muted). */
+export function appStateTone(s: AppState): "ok" | "warn" | "danger" | "muted" {
+  switch (s) {
+    case "same":
+    case "live":
+    case "database_checked":
+      return "ok";
+    case "checking":
+    case "switching":
+    case "live_cert":
+      return "warn";
+    case "needs_look":
+      return "danger";
+    default:
+      return "muted";
+  }
+}
+
+const SWITCHED: ReadonlySet<TakeoverStatus> = new Set(["SWAPPED", "VERIFIED"]);
+
+/** The state of one item, from what the hub measured. Nothing is guessed: a check that has not answered is "checking", never "same". */
+export function appStateOf(item: TakeoverItemView, takeover: TakeoverStatus): AppState {
+  if (item.skipped) return "left_out";
+  if (takeover === "GIVEN_BACK" || takeover === "GIVING_BACK") return "given_back";
+  if (item.kind === "database") {
+    if (item.verify?.state === "failed") return "needs_look";
+    return item.verify?.state === "ok" ? "database_checked" : "database";
+  }
+  if (item.kind === "service") {
+    if (item.members?.some((m) => m.ready === "failed" || m.verify?.state === "failed")) return "needs_look";
+    return "service";
+  }
+  if (item.domains.length === 0) return "no_site";
+  const switched = SWITCHED.has(takeover);
+  if (item.domains.some((d) => d.tempCheck === "failed" || (switched && (d.finalCheck === "failed" || d.cert === "failed")))) return "needs_look";
+  if (switched) {
+    if (item.domains.every((d) => d.finalCheck === "ok")) return item.domains.every((d) => d.cert === "issued") ? "live" : "live_cert";
+    return "switching";
+  }
+  if (takeover === "SWAPPING") return "switching";
+  return item.domains.every((d) => d.tempCheck === "ok") ? "same" : "checking";
+}
+
+/** One side of a probe: what the site answered. Null in the check means that side gave no answer at all. */
+export interface DomainAnswer {
+  status: number | null;
+  bytes: number | null;
+  location: string | null;
+}
+/** What the hub kept of a domain's test that did not pass: why, and what each side answered (null = no answer). */
+export interface DomainEvidence {
+  reason: TakeoverCheckReason;
+  coolify: DomainAnswer | null;
+  tugra: DomainAnswer | null;
+}
+
+type ItemDomain = TakeoverItemView["domains"][number];
+
+const answerOf = (a: TakeoverAnswer | null | undefined): DomainAnswer | null => {
+  if (!a) return null;
+  const answer = { status: a.status ?? null, bytes: a.bytes ?? null, location: a.location ? a.location : null };
+  return answer.status === null && answer.bytes === null && answer.location === null ? null : answer;
+};
+
+/**
+ * Why a domain did not pass and what Coolify and Tugra each answered, from the `check` the hub sends on the domain while its test has not
+ * passed. Null when the hub sent none (the row then says only that it needs a look). A side that did not answer stays null so the row can
+ * say "no answer" for it rather than leave it out.
+ */
+export function domainEvidence(d: ItemDomain): DomainEvidence | null {
+  const c = d.check;
+  if (!c || c.reason === "ok") return null;
+  return { reason: c.reason, coolify: answerOf(c.coolify), tugra: answerOf(c.tugra) };
+}
+
+/** The Tugra app behind an item (for its favicon) and the key of its image's brand icon, when the hub sent them. */
+export function itemIconHints(item: Pick<TakeoverItemView, "appId" | "iconKey">): { appId: string | null; iconKey: string | null } {
+  return { appId: item.appId ? item.appId : null, iconKey: item.iconKey ? item.iconKey : null };
+}
+
+/** Domains that answered like Coolify, out of those that count (apps and their domains only). */
+export function siteCounts(items: readonly TakeoverItemView[]): { sites: number; same: number; live: number; certified: number; leftOut: number; problems: number } {
+  const c = { sites: 0, same: 0, live: 0, certified: 0, leftOut: 0, problems: 0 };
+  for (const i of items) {
+    if (i.skipped) {
+      if (i.kind !== "database") c.leftOut += 1;
+      continue;
+    }
+    if (i.kind === "database" || i.kind === "service") continue;
+    for (const d of i.domains) {
+      c.sites += 1;
+      if (d.tempCheck === "ok") c.same += 1;
+      if (d.tempCheck === "failed" || d.finalCheck === "failed" || d.cert === "failed") c.problems += 1;
+      if (d.finalCheck === "ok") c.live += 1;
+      if (d.finalCheck === "ok" && d.cert === "issued") c.certified += 1;
+    }
+  }
+  return c;
+}
+
+/** The first stage that is not done yet (the one the takeover is in), 1-based; the last stage when all are done. */
+export function stageLine(status: TakeoverStatus, verified: boolean): { stage: Stage; n: number; state: StageState } {
+  const st = stagesOf(status, verified);
+  const idx = st.findIndex((s) => s.state === "current" || s.state === "stopped");
+  const at = idx >= 0 ? idx : st.length - 1;
+  return { stage: st[at].stage, n: at + 1, state: st[at].state };
+}
+
+/** The step names of an in-place run: the owner's words, not the copy flow's. A step that does not apply keeps its general name. */
+export const IN_PLACE_STEP_TITLE_KEY: Partial<Record<MigrationRunStepKey, string>> = {
+  PREFLIGHT: "inPlaceRun.step.PREFLIGHT",
+  IMPORT: "inPlaceRun.step.IMPORT",
+  REMAP_ENV: "inPlaceRun.step.REMAP_ENV",
+  DEPLOY_DARK: "inPlaceRun.step.DEPLOY_DARK",
+  VERIFY: "inPlaceRun.step.VERIFY",
+  CUTOVER: "inPlaceRun.step.CUTOVER",
+  OBSERVE: "inPlaceRun.step.OBSERVE",
+  FINALIZE: "inPlaceRun.step.FINALIZE",
+};
+/** The short in-place page and its words are for a real in-place run; a dry run keeps the current content. */
+export const isSimpleInPlace = (run: Pick<MigrationRunView, "inPlace"> & { dryRun?: boolean }): boolean => run.inPlace && !run.dryRun;
+export const stepTitleKey = (run: Pick<MigrationRunView, "inPlace"> & { dryRun?: boolean }, key: MigrationRunStepKey): string => (isSimpleInPlace(run) ? IN_PLACE_STEP_TITLE_KEY[key] : undefined) ?? STEP_TITLE_KEY[key];
+
+/** The run's state in plain words, as the header pill says it. */
+export function runStateKey(run: Pick<MigrationRunView, "status" | "nextAction">): string {
+  switch (run.status) {
+    case "QUEUED":
+      return "inPlaceRun.state.queued";
+    case "PAUSED":
+      return "inPlaceRun.state.paused";
+    case "FAILED":
+      return "inPlaceRun.state.needsLook";
+    case "COMPLETED":
+      return "inPlaceRun.state.done";
+    case "ABORTING":
+    case "ROLLING_BACK":
+    case "REVERSING":
+      return "inPlaceRun.state.givingBack";
+    case "ABORTED":
+    case "ROLLED_BACK":
+    case "REVERSED":
+      return "inPlaceRun.state.givenBack";
+    case "DRY_RUN_DONE":
+      return "inPlaceRun.state.testDone";
+    default:
+      break;
+  }
+  switch (run.nextAction.kind) {
+    case "approval":
+      return "inPlaceRun.state.goAhead";
+    case "failed":
+    case "gate":
+      return "inPlaceRun.state.needsLook";
+    case "operator":
+    case "session":
+      return "inPlaceRun.state.needsYou";
+    case "timer":
+      return "inPlaceRun.state.watching";
+    default:
+      return "inPlaceRun.state.moving";
+  }
+}
+
+/** The one heading of the "what happens now" card, by situation. */
+export function nextHeadingKey(kind: MigrationRunNextAction["kind"], stepKey: MigrationRunStepKey | null, status: MigrationRunStatus): string {
+  if (status === "QUEUED") return "inPlaceRun.next.ready";
+  if (status === "COMPLETED") return "inPlaceRun.next.done";
+  if (status === "ABORTED" || status === "ROLLED_BACK" || status === "REVERSED") return "inPlaceRun.next.givenBack";
+  if (status === "ABORTING" || status === "ROLLING_BACK" || status === "REVERSING") return "inPlaceRun.next.givingBack";
+  switch (kind) {
+    case "approval":
+      return "inPlaceRun.next.goAhead";
+    case "failed":
+    case "gate":
+      return "inPlaceRun.next.needsLook";
+    case "operator":
+    case "session":
+      return "inPlaceRun.next.connect";
+    case "paused":
+      return "inPlaceRun.next.paused";
+    case "timer":
+      return "inPlaceRun.next.watching";
+    case "none":
+      return "inPlaceRun.next.working";
+    default:
+      if (stepKey === "DEPLOY_DARK" || stepKey === "VERIFY") return "inPlaceRun.next.checking";
+      if (stepKey === "CUTOVER") return "inPlaceRun.next.switching";
+      return "inPlaceRun.next.working";
+  }
 }

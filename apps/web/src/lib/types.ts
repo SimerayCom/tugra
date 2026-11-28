@@ -3380,6 +3380,8 @@ export interface MigrationRunStepView {
   startedAt: string | null;
   finishedAt: string | null;
   lastError: string | null;
+  /** What fills the `{placeholders}` of `lastError`'s sentence (a host, an app); absent when the hub sent none. */
+  lastErrorParams?: MigrationRunParams;
   allowed: MigrationRunStepAllowed;
 }
 export interface MigrationRunNextAction {

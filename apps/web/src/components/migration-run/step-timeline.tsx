@@ -24,7 +24,7 @@ import {
 import type { MigrationRunStepView, MigrationRunView } from "../../lib/types";
 import { EvidenceBadge, StepStatusBadge, StepStatusMark } from "./badges";
 import { GateChecks } from "./gate-checks";
-import { stepNoteKey } from "../../lib/inplace-run";
+import { isSimpleInPlace, stepNoteKey } from "../../lib/inplace-run";
 import type { TakeoverStatus } from "@tugra/shared";
 
 const DRY_COLOR = { block: "var(--c-r)", unknown: "var(--c-am)", warn: "var(--c-am)", info: "var(--c-tx3)" } as const;
@@ -49,7 +49,7 @@ function StepBody({ step, note }: { step: MigrationRunStepView; note: string | n
       <p style={{ margin: 0, fontSize: 12, color: "var(--c-tx3)", lineHeight: 1.5 }}>{t(STEP_DESC_KEY[step.key])}</p>
       {note && <p data-testid="in-place-step-note" style={{ margin: 0, fontSize: 12, color: "var(--c-tx2)", lineHeight: 1.5, fontWeight: 600 }}>{t(note)}</p>}
       {step.skippedCode && <div style={{ fontSize: 13 }}>{t("migrationRun.step.skipped", { why: codeText(t, step.skippedCode) })}</div>}
-      {step.lastError && <div role="alert" style={{ fontSize: 13, color: "var(--c-r)", wordBreak: "break-word" }}>{codeText(t, step.lastError)}</div>}
+      {step.lastError && <div role="alert" style={{ fontSize: 13, color: "var(--c-r)", wordBreak: "break-word" }}>{codeText(t, step.lastError, step.lastErrorParams)}</div>}
       {step.progress && step.progress.total > 0 && (
         <div>
           <MeterBar value={pct} text={pct === null ? "" : `${pct}%`} grow label={t(STEP_TITLE_KEY[step.key])} />
@@ -104,7 +104,6 @@ function StepBody({ step, note }: { step: MigrationRunStepView; note: string | n
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", fontSize: 11, color: "var(--c-tx3)" }}>
         <Badge>{t(STEP_KIND_KEY[step.kind])}</Badge>
         <Badge tone={step.rollbackClass === "LOSSY_AFTER_PONR" ? "danger" : step.rollbackClass === "IRREVERSIBLE" ? "warn" : "muted"}>{t(ROLLBACK_KEY[step.rollbackClass])}</Badge>
-        {step.attempt > 1 && <span>{t("migrationRun.step.attempt", { n: step.attempt })}</span>}
         {step.startedAt && <span>{t("migrationRun.step.started", { when: relativeTime(step.startedAt) })}</span>}
         {durationSec(step) !== null && <span>{t("migrationRun.step.took", { time: formatDuration(durationSec(step)) ?? "-" })}</span>}
       </div>
@@ -152,7 +151,7 @@ function StepRow({ step, index, current, note }: { step: MigrationRunStepView; i
 export function StepTimeline({ run, inPlaceStatus = null }: { run: MigrationRunView; inPlaceStatus?: TakeoverStatus | null }) {
   const t = useT();
   // an in-place takeover copies nothing: the steps it skipped are not drawn (the stepper above says how many)
-  const steps = visibleSteps(run).filter((s) => !run.inPlace || s.status !== "SKIPPED");
+  const steps = visibleSteps(run).filter((s) => !isSimpleInPlace(run) || s.status !== "SKIPPED");
   return (
     <SectionCard title={t("migrationRun.timeline.title")} style={{ marginBottom: 0 }}>
       <ol aria-label={t("migrationRun.timeline.title")} style={{ margin: 0, padding: 0 }}>
@@ -166,7 +165,7 @@ export function StepTimeline({ run, inPlaceStatus = null }: { run: MigrationRunV
                 <span style={{ flex: 1, borderTop: `1px ${run.ponrAt ? "solid" : "dashed"} currentColor`, height: 0 }} />
               </li>
             )}
-            <StepRow step={s} index={i} current={run.currentStep === s.key} note={run.inPlace ? stepNoteKey(s.key, inPlaceStatus) : null} />
+            <StepRow step={s} index={i} current={run.currentStep === s.key} note={isSimpleInPlace(run) ? stepNoteKey(s.key, inPlaceStatus) : null} />
           </Fragment>
         ))}
       </ol>

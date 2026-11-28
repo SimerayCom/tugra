@@ -162,7 +162,14 @@ describe("verified, domains and views", () => {
   it("the view carries no uuid, container id, tag, baseline or serial", () => {
     const v = JSON.stringify(toItemView(item({ itemRef: "a", adoptTag: "tugra_x:y", baseline: { h: { status: 200, hash: H("a"), hash2: H("a") } }, fallbackSerial: { h: "0A" } })));
     expect(v).not.toMatch(/uuid|tugra_x|0A|"id"|sha256/);
-    expect(JSON.parse(v)).toEqual({ itemRef: "a", name: "a", buildMode: "reuse-image", domains: [{ host: "a.example.com", tempCheck: "ok", finalCheck: "pending", cert: "pending" }] });
+    expect(JSON.parse(v)).toEqual({ itemRef: "a", name: "a", appId: "app-a", buildMode: "reuse-image", domains: [{ host: "a.example.com", tempCheck: "ok", finalCheck: "pending", cert: "pending" }] });
+  });
+  it("the view carries the app id and the key of the image's brand icon, never the image", () => {
+    const v = toItemView(item({ itemRef: "a", container: { id: H("a"), name: "n", image: "ghcr.io/acme/postgres:16@sha256:" + H("c"), restart: "no", imageId: "sha256:" + H("b") } }));
+    expect(v).toMatchObject({ appId: "app-a", iconKey: "postgresql" });
+    expect(JSON.stringify(v)).not.toMatch(/ghcr|acme|sha256|"image"/);
+    expect(toItemView(item({ itemRef: "a", container: null }))).not.toHaveProperty("iconKey");
+    expect(toItemView(item({ itemRef: "a" }))).not.toHaveProperty("iconKey"); // x:1 is no known brand
   });
   it("the adopted tag is the one the rollback path runs, and a commit is only kept when it is hex", () => {
     expect(adoptTagFor("app1", "dep9")).toBe("tugra_app1:dep9");
@@ -250,7 +257,7 @@ describe("a takeover with databases", () => {
   it("the screen sees the kind, the check level and state, and the after-switch flag, and no id, container or fingerprint", () => {
     const v = toItemView(dbItem({ container: { id: H("a"), name: "n", image: "i", restart: "no", imageId: "sha256:" + H("b") }, dbBefore: { level: "counts", state: "ok", tables: 1, rows: 2, hash: H("c") }, engine: "POSTGRES" }));
     expect(v).toMatchObject({ kind: "database", verify: { level: "counts", state: "ok" }, exclusive: true });
-    expect(JSON.stringify(v)).not.toMatch(/dbBefore|container|imageId|sha256|fingerprint|appId|uuid/);
+    expect(JSON.stringify(v)).not.toMatch(/dbBefore|container|imageId|sha256|fingerprint|uuid/);
     expect(toItemView({ ...dbItem(), kind: undefined, afterSwitch: true, verify: undefined })).toMatchObject({ afterSwitch: true });
   });
 });

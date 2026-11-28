@@ -4,6 +4,7 @@
  * between "tested" and "take the ports". No database, no agent, no clock: the service feeds these what it read and acts on what they say.
  * Names, ids, counts and codes only; no environment value and no key ever enters this file.
  */
+import { iconKeyForImages } from "@tugra/shared";
 import type { TakeoverAnswer, TakeoverBuildMode, TakeoverCertState, TakeoverCheckReason, TakeoverDomainCheck, TakeoverIssueCode, TakeoverItemView, TakeoverStatus } from "@tugra/shared";
 import { appVolumeName } from "../deploy/deploy-script";
 import { dbExtraVolumeName, dbVolumeName } from "../databases/database-script";
@@ -328,9 +329,12 @@ export const membersVerified = (i: Pick<TakeoverItem, "members">): boolean => (i
 
 /** What the screen is shown: no uuid, no container id, no tag, no baseline. */
 export function toItemView(i: TakeoverItem): TakeoverItemView {
+  const iconKey = iconKeyForImages([i.container?.image, ...(i.members ?? []).map((m) => m.container.image)]);
   return {
     itemRef: i.itemRef,
     name: i.name,
+    ...(i.appId ? { appId: i.appId } : {}),
+    ...(iconKey ? { iconKey } : {}),
     ...(i.kind === "database" ? { kind: i.kind, ...(i.verify ? { verify: i.verify } : {}) } : {}),
     ...(i.kind === "service" ? { kind: i.kind, members: memberViews(i.members ?? []) } : {}),
     buildMode: i.buildMode,
