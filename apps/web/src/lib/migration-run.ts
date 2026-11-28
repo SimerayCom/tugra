@@ -961,7 +961,7 @@ export interface CampaignRunRow {
   estimatedSec: number | null;
   measuredSec: number | null;
   /** What the run's report counted per outcome; null until the report is loaded (or when it could not be read). */
-  items: { moved: number; skipped: number; acked: number; failed: number; notCutOver: number } | null;
+  items: { moved: number; skipped: number; acked: number; failed: number; notCutOver: number; /** Of `skipped`: items an in-place takeover left on Coolify on purpose (they are not part of "N of M switched"). */ leftOut: number } | null;
   /** The code the run itself failed with. */
   failure: { step: MigrationRunStepKey | null; code: string } | null;
   /** The items that failed or were not cut over, with the code that says why (at most 20 per run). */
@@ -1002,11 +1002,14 @@ export function buildCampaignReport(
   const mine = runs.filter((r) => r.campaign === campaign).sort((a, b) => (a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : a.id < b.id ? -1 : 1));
   const rows: CampaignRunRow[] = mine.map((r) => {
     const rep = reports.get(r.id) ?? null;
-    const items = rep ? { moved: 0, skipped: 0, acked: 0, failed: 0, notCutOver: 0 } : null;
+    const items = rep ? { moved: 0, skipped: 0, acked: 0, failed: 0, notCutOver: 0, leftOut: 0 } : null;
     const problems: CampaignRunRow["problemItems"] = [];
     for (const it of rep?.items ?? []) {
       if (it.outcome === "moved") items!.moved += 1;
-      else if (it.outcome === "skipped") items!.skipped += 1;
+      else if (it.outcome === "skipped") {
+        items!.skipped += 1;
+        if (it.code === IN_PLACE_LEFT_OUT_CODE) items!.leftOut += 1;
+      }
       else if (it.outcome === "acked") items!.acked += 1;
       else if (it.outcome === "failed") items!.failed += 1;
       else items!.notCutOver += 1;
@@ -1055,6 +1058,14 @@ export function buildCampaignReport(
     teamIds: distinct(rows.map((r) => r.teamId)),
     pendingReports: rows.filter((r) => reports.get(r.id) === undefined).length,
   };
+}
+
+/** The code of an item an in-place takeover leaves on Coolify (the hub's `inplace-report.ts`). */
+export const IN_PLACE_LEFT_OUT_CODE = "inplace.left-out";
+
+/** "N of M apps switched" of one in-place run: M is what the run itself takes over (its own items, without the ones left on Coolify on purpose). */
+export function appsSwitched(items: NonNullable<CampaignRunRow["items"]>): { moved: number; total: number } {
+  return { moved: items.moved, total: items.moved + items.failed + items.notCutOver + items.skipped + items.acked - items.leftOut };
 }
 
 /** The panel link of a campaign's report. */
