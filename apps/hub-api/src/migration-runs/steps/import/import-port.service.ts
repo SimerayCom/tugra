@@ -31,9 +31,9 @@ import { pinDatabaseBeforeStart } from "../../../importer/exact-db-pin";
 import { restoreSourceImage, writeExactImage, type ExactRestoreTarget, type ExactTarget } from "../../../importer/exact-record";
 import type { ImportMappingDoc, ResolvedMapping } from "../../../importer/import-mapping";
 import type { ServicePreview } from "../../../importer/service-preview";
-import type { RunReport, RunScope } from "../../core/dto";
+import type { RunApplyInput, RunReport, RunScope } from "../../core/dto";
 import { stable } from "../../core/run-logic";
-import { applyScope, hostOfItemRef, resolveScope } from "../../core/run-scope";
+import { applyScope, hostOfItemRef, leftOutRefs, resolveScope, taskLeftOut } from "../../core/run-scope";
 import type { RunImportPort } from "../../core/run-ports";
 import { diskReadingOf } from "./baseline/host-class";
 import type {
@@ -389,10 +389,11 @@ export class ImportPortService implements ImportStepsPort {
     await this.executor.rollback(userId, opId, opts);
   }
 
-  async opItems(userId: string, opId: string): Promise<RunReport["items"]> {
+  async opItems(userId: string, opId: string, applyInput?: Pick<RunApplyInput, "mapping" | "serviceChoices">): Promise<RunReport["items"]> {
     const snap = await this.opSnapshot(userId, opId);
+    const left = applyInput ? leftOutRefs(applyInput) : new Set<string>();
     return snap.tasks
-      .filter((t) => t.kind !== "volume")
+      .filter((t) => t.kind !== "volume" && !taskLeftOut(t.itemRef, left))
       .map((t) => {
         const outcome = t.status === "DONE" ? "moved" : t.status === "FAILED" || t.status === "FAILED_VERIFY" ? "failed" : "skipped";
         const kind = t.kind === "app" || t.kind === "database" || t.kind === "service" ? t.kind : (t.itemRef ?? "").startsWith("data:volume") ? "volume" : "database";

@@ -18,11 +18,18 @@ import type { HostView } from "../../data/inventory/host-view";
 /** The plan item kinds the cross-check accounts containers and volumes against. */
 const ACCOUNTED_KINDS = new Set(["app", "database", "service", "volume"]);
 
-export function preflightCrossCheck(run: RunSnapshot, plan: { items: ReadonlyArray<{ itemRef: string; kind: string; proposed?: Record<string, unknown> | null }> }, view: HostView | undefined): GateCheck[] {
+type PlanItems = ReadonlyArray<{ itemRef: string; kind: string; proposed?: Record<string, unknown> | null }>;
+
+/**
+ * `included` = the run's own items: only the source servers they live on are judged. The accounting still reads every item of the plan, so a
+ * container that belongs to an item of another server on the same host is not reported as unlisted.
+ */
+export function preflightCrossCheck(run: RunSnapshot, plan: { items: PlanItems }, view: HostView | undefined, included: PlanItems = plan.items): GateCheck[] {
   if (!view || view.inventories.size === 0) return [];
   // every plan item carries its source server in its ref (`app:<serverRef|_>:<uuid>`); the unknown `_` is not a host
   const refs = plan.items.filter((i) => ACCOUNTED_KINDS.has(i.kind)).map((i) => i.itemRef);
-  const hosts = [...new Set([...hostLoopTargets(run).map((t) => t.sourceServerRef), ...refs.map(serverRefOfItem).filter((h) => h !== "_")])].sort();
+  const own = included.filter((i) => ACCOUNTED_KINDS.has(i.kind)).map((i) => i.itemRef);
+  const hosts = [...new Set([...hostLoopTargets(run).map((t) => t.sourceServerRef), ...own.map(serverRefOfItem).filter((h) => h !== "_")])].sort();
   return crossCheckChecks({
     hosts,
     required: false,

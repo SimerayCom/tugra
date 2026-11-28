@@ -103,3 +103,26 @@ export function applyScope(
   }
   return { mapping: { ...doc, items }, serviceChoices: Object.keys(choices).length ? choices : undefined };
 }
+
+/**
+ * The plan items a run's frozen apply input leaves out: mapping rows with `include: false` (an app or database outside the scope) and
+ * service stacks it skips. Names nothing the owner typed; refs only.
+ */
+export function leftOutRefs(a: { mapping?: ImportMappingDoc; serviceChoices?: Record<string, ServiceChoice> }): Set<string> {
+  const out = new Set<string>();
+  for (const [ref, row] of Object.entries(a.mapping?.items ?? {})) if (row?.include === false) out.add(ref);
+  for (const [ref, c] of Object.entries(a.serviceChoices ?? {})) if (c?.skip === true) out.add(ref);
+  return out;
+}
+
+/**
+ * Is this import-op task about an item the run leaves out? A task's own itemRef is the plan ref; the data tasks of the copy lane carry the
+ * owner's ref inside (`data:<ref>` for a database, `data:volume:<appRef>:<path>` for a volume).
+ */
+export function taskLeftOut(taskItemRef: string | null, left: ReadonlySet<string>): boolean {
+  if (!taskItemRef || left.size === 0) return false;
+  if (left.has(taskItemRef)) return true;
+  if (!taskItemRef.startsWith("data:")) return false;
+  for (const r of left) if (taskItemRef === `data:${r}` || taskItemRef.includes(`:${r}:`)) return true;
+  return false;
+}

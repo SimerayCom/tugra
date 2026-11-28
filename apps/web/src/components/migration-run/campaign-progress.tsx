@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useT } from "../../i18n/provider";
 import { formatDuration } from "../../lib/import";
 import { Badge, Btn, Card, SectionCard } from "../ui";
-import { STEP_TITLE_KEY, blockingChecks, codeText, type CampaignRunRow } from "../../lib/migration-run";
+import { STEP_TITLE_KEY, appsSwitched, blockingChecks, codeText, type CampaignRunRow } from "../../lib/migration-run";
 import { STATE_COLOR, STATE_KEY, isSwitching, needsYou, stepperModel } from "../../lib/run-stepper";
 import type { MigrationRunView } from "../../lib/types";
 import { RunStatusPill } from "./badges";
@@ -48,8 +48,7 @@ export function WaveRow({ row, teamName = null, view, rank, count, wave }: { row
   const na = view?.nextAction;
   const queued = row.status === "QUEUED";
   const line = current && na && na.stepKey === current.step.key ? codeText(t, na.code, na.params) : null;
-  const switched = row.items && row.inPlace ? row.items.moved : 0;
-  const itemsTotal = row.items ? row.items.moved + row.items.failed + row.items.notCutOver + row.items.skipped + row.items.acked : 0;
+  const counted = row.items && row.inPlace ? appsSwitched(row.items) : null;
   return (
     <li data-testid="wave-row" data-run={row.id}>
       <Card style={{ padding: 12 }}>
@@ -81,7 +80,7 @@ export function WaveRow({ row, teamName = null, view, rank, count, wave }: { row
         )}
         {queued && <div style={{ marginTop: 8, fontSize: 13, color: "var(--c-tx3)", lineHeight: 1.5 }}>{t("migrationRun.campaignRun.notStarted")}</div>}
         {!queued && !view && row.currentStep && <div style={{ marginTop: 8, fontSize: 13, color: "var(--c-tx2)" }}>{t(STEP_TITLE_KEY[row.currentStep])}</div>}
-        {row.inPlace && switched > 0 && <div style={{ marginTop: 6, fontSize: 12, color: "var(--c-tx2)" }}>{t("migrationRun.campaignRun.appsSwitched", { moved: switched, total: itemsTotal })}</div>}
+        {counted && counted.moved > 0 && <div style={{ marginTop: 6, fontSize: 12, color: "var(--c-tx2)" }}>{t("migrationRun.campaignRun.appsSwitched", counted)}</div>}
         {!row.inPlace && (
           <div style={{ marginTop: 6, fontSize: 12, color: "var(--c-tx2)", lineHeight: 1.6 }}>
             {(row.estimatedSec !== null || row.measuredSec !== null) && <div>{t("migrationRun.campaign.window", { estimated: row.estimatedSec === null ? dash : (formatDuration(row.estimatedSec) ?? dash), measured: row.measuredSec === null ? dash : (formatDuration(row.measuredSec) ?? dash) })}</div>}

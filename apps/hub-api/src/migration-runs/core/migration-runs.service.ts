@@ -77,6 +77,8 @@ import {
 } from "./run-contract";
 import { CLEANUP_REQUEST_KEY, RunEngineService, type CleanupRequest } from "./run-engine.service";
 import { swapInFlight } from "./swap-turn";
+import { INPLACE_RUN_PORT, type InPlaceRunPort } from "../../coolify-inplace/inplace-run";
+import { inPlaceReportItems } from "./inplace-report";
 import { ATTACH_STEPS, COMMAND_STEPS, OPEN_STATUSES, approvalExpiry, deriveStepAllowed, hashOf, isTerminal, isWaitingStep, serverMapOf, stripSince } from "./run-logic";
 import { checkSwapPlacement } from "./swap-placement";
 import { RUN_ENV, RUN_IMPORT, RUN_SINK, RUN_STORE, type RunEnvPort, type RunImportPort, type RunSessionInfo, type RunSinkPort } from "./run-ports";
@@ -114,6 +116,8 @@ export class MigrationRunsService implements MigrationRunsFacade {
     @Optional() @Inject(HOST_REPORT_PORT) private readonly hostReports?: HostReportPort,
     // the run hints (accepted warnings, pins): a finished dry run is promoted only with its warnings settled
     @Optional() @Inject(RUN_HINTS) private readonly hints?: RunHintStore,
+    // the takeover that carries an in-place run: its report is what the takeover verified, not the import op's records
+    @Optional() @Inject(INPLACE_RUN_PORT) private readonly inPlace?: InPlaceRunPort,
   ) {
     this.engine.terminalHook = (runId) => this.persistReport(runId);
   }
@@ -1095,10 +1099,26 @@ export class MigrationRunsService implements MigrationRunsFacade {
     const [steps, names, items, integrity] = await Promise.all([
       this.store.steps(run.id),
       this.env.servers(this.targetIds(run)),
-      run.opId ? this.imp.opItems(run.actorId, run.opId).catch(() => []) : Promise.resolve([]),
+      this.itemsOf(run),
       run.opId && this.imp.opDataIntegrity ? this.imp.opDataIntegrity(run.actorId, run.id, run.opId).catch(() => []) : Promise.resolve([]),
     ]);
     return buildReport(run, steps, items, names.get(run.targetServerId) ?? null, this.engine.clock.now(), names, integrity, await this.exactWarnings(run.id));
+  }
+
+  /**
+   * The report's items: only the run's OWN. The import op's tasks cover the whole source (every server a campaign moves, every team), so the
+   * ones the run's scope leaves out are dropped; an in-place run reports what its takeover verified (see `inplace-report.ts`).
+   */
+  private async itemsOf(run: RunRow): Promise<RunReport["items"]> {
+    if (run.inPlace && this.inPlace) {
+      try {
+        const state = await this.inPlace.runState(run.actorId, run.id);
+        if (state) return inPlaceReportItems(state.items, state.status, isTerminal(run.status as RunStatus));
+      } catch {
+        /* fall back to the import op's records */
+      }
+    }
+    return run.opId ? this.imp.opItems(run.actorId, run.opId, run.applyInput as RunApplyInput).catch(() => []) : [];
   }
 
   /**

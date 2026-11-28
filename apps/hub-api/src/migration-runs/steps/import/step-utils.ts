@@ -64,10 +64,20 @@ export function applyInputOf(run: RunSnapshot, sessionId: string): ImportApplyIn
   } as ImportApplyInput;
 }
 
-/** Items the importer actually imports: not excluded by the mapping document. */
+/**
+ * Items the run actually imports: not excluded by the mapping document, not a service stack the run skips (a scope leaves other servers'
+ * stacks out through `serviceChoices[ref].skip`), and no volume that only left-out items depend on. Every check, approval and count of
+ * the run reads this list, never the whole plan, so another server's (or team's) items never reach this run's screens.
+ */
 export function includedItems(plan: ImportPlanResponse, run: RunSnapshot): ImportPlanResponse["items"] {
-  const items = run.applyInput.mapping?.items ?? {};
-  return plan.items.filter((i) => items[i.itemRef]?.include !== false);
+  const mapped = run.applyInput.mapping?.items ?? {};
+  const choices = run.applyInput.serviceChoices ?? {};
+  const kept = plan.items.filter((i) => mapped[i.itemRef]?.include !== false && !(i.kind === "service" && choices[i.itemRef]?.skip === true));
+  if (kept.length === plan.items.length) return kept;
+  const keptRefs = new Set(kept.map((i) => i.itemRef));
+  const needed = new Set(kept.flatMap((i) => [...(i.dependsOn ?? [])]));
+  const leftOutNeeds = new Set(plan.items.filter((i) => !keptRefs.has(i.itemRef)).flatMap((i) => [...(i.dependsOn ?? [])]));
+  return kept.filter((i) => i.kind !== "volume" || needed.has(i.itemRef) || !leftOutNeeds.has(i.itemRef));
 }
 
 /** Plan blockers (per risk code) that no operator ack covers: the importer would skip those items entirely. */

@@ -22,6 +22,7 @@ import {
   humanizeKey,
   campaignRollup,
   buildCampaignReport,
+  appsSwitched,
   campaignReportHref,
   heldWorkersOf,
   sourceHostLabel,
@@ -674,6 +675,17 @@ describe("campaign report (R15/R69)", () => {
     expect(d.pendingReports).toBe(1);
     expect(d.window).toEqual({ measuredTotalSec: null, measuredLongestSec: null, estimatedTotalSec: null });
     expect(buildCampaignReport("none", [run("r1")], new Map()).runs).toEqual([]);
+  });
+
+  it("counts the items an in-place takeover leaves on Coolify apart, so 'N of M switched' is the run's own M", () => {
+    const items = [
+      ...["a", "b", "c"].map((n) => ({ kind: "app", name: n, outcome: "moved", code: null, evidence: null })),
+      { kind: "app", name: "d", outcome: "skipped", code: "inplace.waiting", evidence: null },
+      { kind: "app", name: "e", outcome: "skipped", code: "inplace.left-out", evidence: null },
+    ];
+    const row = buildCampaignReport("wave-1", [run("r1")], new Map([["r1", report("r1", { items })]])).runs[0];
+    expect(row.items).toMatchObject({ moved: 3, skipped: 2, leftOut: 1 });
+    expect(appsSwitched(row.items!)).toEqual({ moved: 3, total: 4 });
   });
 
   it("keeps at most twenty problem items per run and links the report with the label encoded", () => {
