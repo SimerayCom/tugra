@@ -59,12 +59,23 @@ describe("migration runs list page", () => {
     expect(screen.queryByText("coolify.example.org → tugra-1")).toBeNull();
   });
 
-  it("filters to live runs through the hub's `active` flag", async () => {
-    const list = vi.spyOn(api, "listMigrationRuns").mockResolvedValue([]);
+  it("shows live runs first and hides finished and cancelled ones behind tabs that still count them", async () => {
+    vi.spyOn(api, "listMigrationRuns").mockResolvedValue([
+      mkSummary({ id: "r1", status: "WAITING", targetServerName: "live-one" }),
+      mkSummary({ id: "r2", status: "COMPLETED", targetServerName: "done-one" }),
+      mkSummary({ id: "r3", status: "ABORTED", targetServerName: "gone-one" }),
+    ]);
     wrap();
-    await screen.findByText("No guided migrations yet");
-    fireEvent.click(screen.getByRole("checkbox", { name: "Only runs that are still live" }));
-    await waitFor(() => expect(list).toHaveBeenLastCalledWith({ active: true, limit: 100 }));
+    await screen.findByText("coolify.example.org → live-one");
+    expect(screen.queryByText("coolify.example.org → gone-one")).toBeNull();
+    expect(screen.queryByText("coolify.example.org → done-one")).toBeNull();
+    const tabs = screen.getAllByRole("tab").map((x) => x.textContent);
+    expect(tabs).toEqual(["Live1", "Done1", "Cancelled1", "All3"]);
+    fireEvent.click(screen.getByRole("tab", { name: /Cancelled/ }));
+    await screen.findByText("coolify.example.org → gone-one");
+    expect(screen.queryByText("coolify.example.org → live-one")).toBeNull();
+    fireEvent.click(screen.getByRole("tab", { name: /All/ }));
+    await screen.findByText("coolify.example.org → done-one");
   });
 
   it("an empty list points to the import wizard; an error shows the retry state", async () => {
@@ -80,17 +91,18 @@ describe("migration runs list page", () => {
     await screen.findByText("Something went wrong");
   });
 
-  it("shows multi-host runs, campaigns and versions, rolls a campaign up and filters by it", async () => {
-    const list = vi.spyOn(api, "listMigrationRuns").mockResolvedValue([
-      mkSummary({ id: "r1", targetServerCount: 3, campaign: "wave-1", sourceVersion: "4.5.0", status: "COMPLETED" }),
-      mkSummary({ id: "r2", campaign: "wave-1", status: "WAITING" }),
+  it("shows multi-host runs, campaigns and versions, and rolls a campaign up into a chip that is one link to its page", async () => {
+    vi.spyOn(api, "listMigrationRuns").mockResolvedValue([
+      mkSummary({ id: "r1", targetServerCount: 3, campaign: "wave-1", sourceVersion: "4.5.0", status: "WAITING" }),
+      mkSummary({ id: "r2", campaign: "wave-1", status: "COMPLETED" }),
     ]);
     wrap();
     await screen.findByText("coolify.example.org → tugra-1 +2");
     expect(screen.getByText("3 target servers")).toBeTruthy();
     expect(screen.getAllByText("Source 4.5.0").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("2 runs: 1 completed, 1 live, 0 failed, 0 dry-run or stopped")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Show only the runs of campaign wave-1" }));
-    await waitFor(() => expect(list).toHaveBeenLastCalledWith(expect.objectContaining({ campaign: "wave-1" })));
+    // no campaign row is readable here: the chip falls back to the label, as a whole-chip link
+    const chip = screen.getByText("2 runs: 1 completed, 1 live, 0 failed, 0 dry-run or stopped").closest("a");
+    expect(chip?.getAttribute("href")).toBe("/import/runs/campaign?c=wave-1");
   });
 });

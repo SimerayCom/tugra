@@ -240,10 +240,16 @@ function Section({ s, t, agentConsent, inputs, dupServers, servers, onToggle, on
             <p style={{ margin: 0, fontSize: 13, color: "var(--c-tx3)" }}>{t("import.settings.empty")}</p>
           ) : (
             <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "flex", flexDirection: "column", gap: 4 }}>
-              {s.entries.map((e) => (
+              {s.entries.filter((e) => e.blocked !== "not_configured").map((e) => (
                 <EntryRow key={e.id} e={e} t={t} agentConsent={agentConsent} inputs={inputs} duplicate={dupServers.has(e.id)} servers={servers} onToggle={onToggle} onS3={onS3} onServer={onServer} onRole={onRole} />
               ))}
             </ul>
+          )}
+          {/* what was never set up in Coolify has nothing to carry: one quiet line, not a row each that looks like something went wrong */}
+          {s.entries.some((e) => e.blocked === "not_configured") && (
+            <p data-testid="not-configured-line" style={{ margin: "6px 0 0", fontSize: 12, color: "var(--c-tx3)" }}>
+              {t("import.settings.notConfiguredLine", { names: s.entries.filter((e) => e.blocked === "not_configured").map((e) => entryTitle(t, e)).join(", ") })}
+            </p>
           )}
         </>
       )}

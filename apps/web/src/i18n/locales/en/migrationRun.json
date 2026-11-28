@@ -7,17 +7,15 @@
   "dryRun": "Dry run",
   "progressOf": "{done} / {total} {unit}",
   "list": {
-    "activeOnly": "Only runs that are still live",
     "emptyTitle": "No guided migrations yet",
     "empty": "Connect a Coolify or Dokploy source in Import, review the plan, then choose Run guided migration. Start with a dry run: it writes nothing outside the run's own records.",
     "hint": "A run is driven by the hub but needs you at the gates: the source-host command, the freeze, the verification approval and the point of no return.",
-    "campaign": "Campaign",
-    "campaignAll": "All campaigns",
-    "campaignFilter": "Show only the runs of campaign {campaign}",
     "campaignRollup": "{total} runs: {completed} completed, {live} live, {failed} failed, {other} dry-run or stopped",
     "campaignRollupCapped": "At least {total} runs: {completed} completed, {live} live, {failed} failed, {other} dry-run or stopped",
     "servers": "{count} target servers",
-    "version": "Source {version}"
+    "version": "Source {version}",
+    "emptyFilterTitle": "Nothing in this tab",
+    "emptyFilter": "No run here. Try another tab: the finished and cancelled ones are not lost."
   },
   "status": {
     "QUEUED": "Queued",
@@ -629,7 +627,6 @@
       "before": "Before you start",
       "name": "Name of this move",
       "nameHint": "Shown as the title of its report page.",
-      "defaultName": "Moving off Coolify - {when}",
       "emailHint": "Used to get new certificates once Tugra has taken the ports.",
       "emailRequired": "Enter the certificate email.",
       "whyEmail": "Enter the certificate email to start.",
@@ -642,7 +639,7 @@
       "dryOne": "Start a dry run",
       "dryMany": "Start {count} dry runs",
       "takeover": "Start the takeover",
-      "wavesNote": "Only the first server starts now. The next ones start one after another from the campaign page.",
+      "wavesNote": "The hub moves the servers one after the other and asks you before each switch. Once it has started you can close this page.",
       "partial": "{made} of {total} runs were created before it stopped. Nothing else was started. Open the campaign to see them; starting again is refused on a server that already has a run.",
       "partialOpen": "Open the campaign",
       "whyServer": "A server of this move cannot take it yet. See the note above.",
@@ -670,7 +667,9 @@
       "changed": {
         "title": "The source changed",
         "body": "Coolify changed since you reviewed the plan. Go back to the review and read it again, so you start from what is really there."
-      }
+      },
+      "advanced": "Advanced",
+      "namePlaceholder": "Optional. Left empty, the move is named by its date."
     },
     "progress": {
       "title": "Creating your runs",
@@ -1646,7 +1645,10 @@
     },
     "open": "Campaign report",
     "runFailed": "The run failed",
-    "teams": "Teams: {teams}"
+    "teams": "Teams: {teams}",
+    "autoName": "Move of {when}",
+    "autoNameNoDate": "Move",
+    "notFound": "This campaign was not found. It may belong to a team you are not an owner or admin of."
   },
   "campaignRun": {
     "closeNote": "Closing this page does not stop anything. The hub keeps going and stops when it needs you.",
@@ -1662,14 +1664,16 @@
       "needsSub": "The hub is waiting for your answer. Nothing else is held up by this page.",
       "ready": "Ready to start",
       "readySub": "{count} servers move one after the other. Once it has started you can close this page.",
-      "paused": "Paused",
-      "pausedSub": "The servers already started keep going. The hub starts no new one until you continue.",
+      "paused": "Paused by you",
+      "pausedSub": "The servers already started keep going. No new server starts until you press Continue.",
       "moving": "Moving servers: {done} of {total} done",
       "movingSub": "The hub starts the next server by itself when the one before is ready for your approval.",
       "review": "Checks finished",
       "reviewSub": "Open a check to read it and start the real move.",
       "preparing": "Preparing the runs: {made} of {total} made",
-      "preparingSub": "The servers appear below as their runs are made."
+      "preparingSub": "The servers appear below as their runs are made.",
+      "waiting": "Waiting for the next server",
+      "waitingSub": "The hub starts the next server by itself when the one before is ready. You can close this page."
     },
     "startAll": "Start moving {count} servers",
     "continue": "Continue",
@@ -1802,5 +1806,12 @@
     "agents": {
       "recheck": "Check again"
     }
+  },
+  "filter": {
+    "label": "Which moves to show",
+    "live": "Live",
+    "done": "Done",
+    "cancelled": "Cancelled",
+    "all": "All"
   }
 }

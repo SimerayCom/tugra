@@ -73,6 +73,25 @@ describe("ImportSettingsPanel", () => {
     });
   });
 
+  it("a channel never set up in Coolify is one quiet line, not a row that says Coolify did not hand over a value", async () => {
+    const withUnset: SettingsPreview = {
+      ...base,
+      sections: base.sections.map((sec) =>
+        sec.section === "notifications"
+          ? { ...sec, entries: [...sec.entries, { id: "notification:slack", section: "notifications" as const, name: "slack", selectable: false, defaultSelected: false, blocked: "not_configured", notes: [], detail: { kind: "slack", enabled: false, groups: [] } }] }
+          : sec,
+      ),
+    };
+    vi.spyOn(api, "importSettingsPreview").mockResolvedValue(withUnset);
+    wrap(<ImportSettingsPanel sessionId="s1" kind="coolify" servers={[]} agentConsent={{ classes: ["env", "notification"] }} />);
+    const line = await screen.findByTestId("not-configured-line");
+    expect(line.textContent).toContain("Not set up in Coolify");
+    expect(line.textContent).toContain("Slack");
+    // its row is gone; the discord one that Coolify really did not hand over keeps its own text
+    expect(screen.getAllByRole("checkbox")).toHaveLength(base.sections.flatMap((x) => x.entries).length);
+    expect(document.body.textContent).toContain("Coolify did not hand over the value");
+  });
+
   it("an agent session says the notification tokens are not allowed in the consent, and how to allow them, instead of asking for a token scope", async () => {
     wrap(<ImportSettingsPanel sessionId="s1" kind="coolify" servers={[]} agentConsent={{ classes: ["env", "shared_env", "service_compose", "db_credentials"] }} />);
     await screen.findByText("Notification channels");

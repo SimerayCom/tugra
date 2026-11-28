@@ -34,7 +34,7 @@ import { CampaignPreviewCard } from "./launch-campaign";
 import { BusyNote, FreshnessNote, SameHostNote, SwapBlockNote } from "./launch-guard-notes";
 import { busyServers, copyOntoSourceHost, freshnessOf, freshnessOfError, involvedRefs, swapProxyBlock } from "../../lib/launch-guards";
 import { clearImportResume } from "../../lib/import-resume";
-import { campaignBody, campaignGuide, campaignOpenHref, campaignsOf, needsCampaign, placementsOf, pruneRebuild, runsByWave, sourcesOfRun } from "../../lib/campaign";
+import { campaignBody, campaignOpenHref, campaignsOf, needsCampaign, newCampaignLabel, placementsOf, pruneRebuild, runsByWave, sourcesOfRun } from "../../lib/campaign";
 import { LaunchProgress } from "./launch-progress";
 import { clearLaunchHandoff } from "../../lib/launch-handoff";
 import { HelpLink } from "../help-link";
@@ -75,6 +75,7 @@ export function GuidedLaunchForm({ plan, kind, sessionId, servers, teams, extras
   const toast = useToast();
   const router = useRouter();
   const qc = useQueryClient();
+  // "starting" is only the single run's: a campaign is made AND handed to the hub in one request, so there is no second part to wait for here
   const [phase, setPhase] = useState<"form" | "creating" | "starting">("form");
   const submittedAt = useRef(0);
   // a campaign that failed partway: how many of its runs the hub had already made, so the owner is not left with an unexplained form
@@ -108,9 +109,11 @@ export function GuidedLaunchForm({ plan, kind, sessionId, servers, teams, extras
   const [probe, setProbe] = useState(false);
   const [observe, setObserve] = useState("30");
   const [placement, setPlacement] = useState<MigrationRunServerMap | null>(chosenTarget && scope?.serverMap ? { ...scope.serverMap } : null);
+  // A move that nobody named gets a label that says nothing in any language (the day it was made, in UTC); the campaign page shows the date in the
+  // viewer's own language. It is made here, once, so the progress of the creation can find the runs by it.
+  const [autoLabel] = useState(() => newCampaignLabel());
   const [adv, setAdv] = useState<AdvancedState>({
-    // a move through a campaign is named by default, so its report reads as what it is instead of a random label
-    campaign: kind === "coolify" && needsCampaign(scope) ? t("migrationRun.launch.page.defaultName", { when: new Date().toLocaleString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) }) : "",
+    campaign: "",
     sourceRunner: "operator",
     hostLoop: { ...HOST_LOOP_FORM_DEFAULTS },
     deployWaves: "single",
@@ -175,9 +178,10 @@ export function GuidedLaunchForm({ plan, kind, sessionId, servers, teams, extras
     setTarget(id);
   };
 
+  const label = adv.campaign.trim() || (campaign ? autoLabel : "");
   const form = {
     sessionId, sourceKind: kind, targetServerId, planHash: plan.planHash, extras, mode, topology, dryRun, acmeEmail, allowBind, allowLiveShapeProbe: probe, sourceController: controller, observeMinutes: observe,
-    placement, scope: scopePayload(scope), campaign: adv.campaign, sourceRunner: adv.sourceRunner, hostLoop: adv.hostLoop, deployWaves: adv.deployWaves, deployConcurrency: adv.deployConcurrency, largeDbMode: adv.largeDbMode, serviceStart: adv.serviceStart, stopSource: adv.stopSource, policies: adv.policies,
+    placement, scope: scopePayload(scope), campaign: label, sourceRunner: adv.sourceRunner, hostLoop: adv.hostLoop, deployWaves: adv.deployWaves, deployConcurrency: adv.deployConcurrency, largeDbMode: adv.largeDbMode, serviceStart: adv.serviceStart, stopSource: adv.stopSource, policies: adv.policies,
   };
   const issues = launchIssues(form).filter((i) => !(campaign && i === "target"));
   const placements = useMemo(() => (scope ? placementsOf(scope) : []), [scope]);
@@ -231,7 +235,6 @@ export function GuidedLaunchForm({ plan, kind, sessionId, servers, teams, extras
   }, [campaign, plannedRuns, sourceRows]);
 
   // While the hub makes the runs one after the other, the runs of this label that already exist are the progress.
-  const label = adv.campaign.trim();
   const made = useQuery({
     queryKey: ["launch-progress", label],
     queryFn: () => api.listMigrationRuns({ campaign: label, limit: 100 }),
@@ -252,19 +255,9 @@ export function GuidedLaunchForm({ plan, kind, sessionId, servers, teams, extras
       setPhase("creating");
       let startError: unknown = null;
       if (campaign) {
+        // The hub makes the runs and starts the first one in this same request, then drives the rest by itself: closing this tab at any moment changes nothing.
         const c = await api.createCampaign(campaignBody(input, placements, rebuild));
-        // one campaign per team, all under one label: the report of the label holds the runs of every one of them
-        const views = campaignsOf(c);
-        setPhase("starting");
-        try {
-          // wave 1 of every campaign is started now; the next waves are started one after the other from the campaign page
-          const runs = await api.listMigrationRuns({ campaign: c.label, limit: 100 });
-          const { next } = campaignGuide(views, runs);
-          await Promise.all([...next].map((id) => api.startMigrationRun(id)));
-        } catch (e) {
-          startError = e;
-        }
-        return { href: campaignOpenHref(c), campaigns: views.length, startError };
+        return { href: campaignOpenHref(c), campaigns: campaignsOf(c).length, startError };
       }
       const run = await api.createMigrationRun(input);
       setPhase("starting");
@@ -338,6 +331,17 @@ export function GuidedLaunchForm({ plan, kind, sessionId, servers, teams, extras
                     : !dryRun && agentGaps.length > 0
                       ? t("migrationRun.launch.page.whyAgent")
                       : null;
+  const nameField = (
+    <Field label={t("migrationRun.launch.page.name")} hint={t("migrationRun.launch.page.nameHint")} error={issues.includes("campaign") ? t("migrationRun.launch.advanced.campaignInvalid") : undefined}>
+      <TextInput value={adv.campaign} onChange={(e) => setAdv({ ...adv, campaign: e.target.value })} maxLength={80} autoComplete="off" placeholder={t("migrationRun.launch.page.namePlaceholder")} style={{ minHeight: 44 }} />
+    </Field>
+  );
+  const dryRunField = (
+    <div>
+      <Checkbox checked={dryRun} onChange={setDryRun} label={t("migrationRun.launch.dryRun")} />
+      <div style={{ fontSize: 11, color: "var(--c-tx3)", margin: "2px 0 0 24px", lineHeight: 1.5 }}>{onlyInPlace ? t("migrationRun.launch.page.dryRunHintInPlace") : t("migrationRun.launch.dryRunHint")}</div>
+    </div>
+  );
   const section = { display: "flex", flexDirection: "column", gap: 14, padding: 16, marginBottom: 0 } as const;
 
   return (
@@ -384,11 +388,7 @@ export function GuidedLaunchForm({ plan, kind, sessionId, servers, teams, extras
               </div>
             )}
 
-            {campaign && (
-              <Field label={t("migrationRun.launch.page.name")} hint={t("migrationRun.launch.page.nameHint")} error={issues.includes("campaign") ? t("migrationRun.launch.advanced.campaignInvalid") : undefined}>
-                <TextInput value={adv.campaign} onChange={(e) => setAdv({ ...adv, campaign: e.target.value })} maxLength={80} autoComplete="off" style={{ minHeight: 44 }} />
-              </Field>
-            )}
+            {campaign && !onlyInPlace && nameField}
 
             {/* a campaign takes the servers the first step placed: nothing to choose here a second time */}
             {!campaign && (
@@ -430,10 +430,18 @@ export function GuidedLaunchForm({ plan, kind, sessionId, servers, teams, extras
                 <NumberInput min={0} max={4320} value={observe} onChange={(e) => setObserve(e.target.value)} style={{ minHeight: 44 }} />
               </Field>
             </div>
-            <div>
-              <Checkbox checked={dryRun} onChange={setDryRun} label={t("migrationRun.launch.dryRun")} />
-              <div style={{ fontSize: 11, color: "var(--c-tx3)", margin: "2px 0 0 24px", lineHeight: 1.5 }}>{onlyInPlace ? t("migrationRun.launch.page.dryRunHintInPlace") : t("migrationRun.launch.dryRunHint")}</div>
-            </div>
+            {onlyInPlace ? (
+              // a same-machine move asks for the email and the watch window, nothing else: the name and the dry run are folded away
+              <details data-testid="launch-advanced">
+                <summary style={{ cursor: "pointer", minHeight: 44, display: "flex", alignItems: "center", fontSize: 13, color: "var(--c-tx2)" }}>{t("migrationRun.launch.page.advanced")}</summary>
+                <div style={{ display: "flex", flexDirection: "column", gap: 14, paddingTop: 6 }}>
+                  {campaign && nameField}
+                  {dryRunField}
+                </div>
+              </details>
+            ) : (
+              dryRunField
+            )}
           </SectionCard>
 
           {!onlyInPlace && (

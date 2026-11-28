@@ -999,7 +999,8 @@
       "invalid_schedule": "The schedule cannot be converted.",
       "invalid_name": "Not a valid tag name.",
       "no_imported_resources": "No imported app or database has it.",
-      "self": "That is you."
+      "self": "That is you.",
+      "not_configured": "Not set up in Coolify."
     },
     "note": {
       "events_not_carried": "Not carried, Tugra has no event for: {events}.",
@@ -1062,7 +1063,8 @@
       "body": "Save it now. It is shown only once."
     },
     "into": "These settings go into the Tugra team {team}, the one this Coolify team was mapped to.",
-    "leftOut": "The Coolify team you read is left out of the move, so its settings (notification channels, variables, invitations) are not carried."
+    "leftOut": "The Coolify team you read is left out of the move, so its settings (notification channels, variables, invitations) are not carried.",
+    "notConfiguredLine": "Not set up in Coolify, so there is nothing to carry: {names}."
   },
   "tokenMore": {
     "scope": "Create it as a team admin or owner, for the whole team (not limited to some projects or environments).",

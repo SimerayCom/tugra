@@ -26,6 +26,15 @@ describe("campaignHeadline", () => {
     expect(h).toMatchObject({ kind: "paused", action: "continue" });
   });
 
+  it("the hub is driving and the next server is queued while none is moving: waiting for the next server, not paused", () => {
+    const h = campaignHeadline([view({ driving: true, status: "running" })], [run("1", "COMPLETED"), run("2", "QUEUED"), run("3", "QUEUED")], []);
+    expect(h).toMatchObject({ kind: "waiting", action: null, canPause: true });
+  });
+
+  it("only the owner's own pause reads as paused: not driving, something already started, servers still queued", () => {
+    expect(campaignHeadline([view({ status: "paused" })], [run("1", "COMPLETED"), run("2", "QUEUED"), run("3", "QUEUED")], []).kind).toBe("paused");
+  });
+
   it("something waits for the owner: needs you, whatever else is going on", () => {
     const h = campaignHeadline([view({ driving: true, status: "running" })], [run("1", "WAITING"), run("2", "QUEUED"), run("3", "QUEUED")], ["1"]);
     expect(h).toMatchObject({ kind: "needs", needs: ["1"], canPause: true });

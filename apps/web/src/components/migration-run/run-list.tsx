@@ -3,15 +3,16 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useQuery } from "@tanstack/react-query";
+import { useQueries, useQuery } from "@tanstack/react-query";
 import { Route } from "lucide-react";
 import { api } from "../../lib/api";
 import { useT } from "../../i18n/provider";
 import { scopeByTeam } from "../../lib/team-scope";
 import { useTeamScope } from "../team-scope";
 import { relativeTime } from "../../lib/fleet";
-import { CAMPAIGN_ROLLUP_LIMIT, NEXT_KIND_KEY, STEP_TITLE_KEY, campaignReportHref, campaignRollup, codeText, runListRefetchInterval, runTitleParts, validCampaign } from "../../lib/migration-run";
-import { Checkbox, Field, TextInput } from "../form";
+import { CAMPAIGN_ROLLUP_LIMIT, NEXT_KIND_KEY, STEP_TITLE_KEY, campaignReportHref, campaignRollup, codeText, runListRefetchInterval, runTitleParts } from "../../lib/migration-run";
+import { CAMPAIGN_BUCKETS, campaignBucket, campaignHref, campaignTitle, groupCampaigns, rollupBucket, runBucket, type CampaignFilter } from "../../lib/campaign";
+import { CampaignFilterTabs } from "../campaign-filter";
 import { Badge, EmptyState, LinkBtn } from "../ui";
 import { ErrorState } from "../error-state";
 import { ListCard, ListRow } from "../list";
@@ -33,7 +34,7 @@ function RunRow({ r, index, onOpen }: { r: MigrationRunSummary; index: number; o
           <div style={{ marginTop: 4, display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
             <ModeBadges mode={r.mode} topology={r.topology} dryRun={r.dryRun} inPlace={r.inPlace} />
             {r.targetServerCount > 1 && <Badge tone="lapis">{t("migrationRun.list.servers", { count: r.targetServerCount })}</Badge>}
-            {r.campaign && <Badge tone="gold">{r.campaign}</Badge>}
+            {r.campaign && <Badge tone="gold">{campaignTitle(t, r.campaign, r.createdAt)}</Badge>}
             {r.sourceVersion && <Badge>{t("migrationRun.list.version", { version: r.sourceVersion })}</Badge>}
           </div>
           <div style={{ fontSize: 12, color: "var(--c-tx3)", marginTop: 4, wordBreak: "break-word" }}>
@@ -48,56 +49,51 @@ function RunRow({ r, index, onOpen }: { r: MigrationRunSummary; index: number; o
   );
 }
 
-/** `/import/runs`: the operator's guided migrations, newest first. Live runs refresh every few seconds. */
+/** `/import/runs`: the operator's guided migrations, newest first. Live runs refresh every few seconds. What is going on, or waits for the owner, is shown;
+ *  finished and cancelled moves are one tab away (with their count), so a list of old attempts never buries the one that matters. */
 export function RunList() {
   const t = useT();
   const router = useRouter();
   const { teamId } = useTeamScope();
-  const [activeOnly, setActiveOnly] = useState(false);
-  const [campaignText, setCampaignText] = useState("");
-  // the hub filters by the exact label; an invalid or empty text lists every run
-  const campaign = validCampaign(campaignText) ? campaignText.trim() : "";
+  const teamsQ = useQuery({ queryKey: ["teams"], queryFn: () => api.listTeams(), retry: false });
+  const teams = teamsQ.data ?? [];
+  const [filter, setFilter] = useState<CampaignFilter>("live");
+  // every run the page counts and lists comes from one query (the newest CAMPAIGN_ROLLUP_LIMIT): the chips, the counts of the tabs and the rows agree
   const { data, isLoading, isError, refetch } = useQuery({
-    queryKey: ["migration-runs", activeOnly, campaign],
-    queryFn: () => api.listMigrationRuns({ ...(activeOnly ? { active: true } : {}), ...(campaign ? { campaign } : {}), limit: 100 }),
-    refetchInterval: (q) => runListRefetchInterval(q.state.data as MigrationRunSummary[] | undefined),
-  });
-  const scoped = scopeByTeam(data ?? [], teamId);
-  // the chips count every run of a campaign: they come from their own query, not from the page above, which is cut by
-  // "Active only", by the campaign filter and by its own limit
-  const all = useQuery({
     queryKey: ["migration-runs", "rollup"],
     queryFn: () => api.listMigrationRuns({ limit: CAMPAIGN_ROLLUP_LIMIT }),
     refetchInterval: (q) => runListRefetchInterval(q.state.data as MigrationRunSummary[] | undefined),
   });
-  const rollupRuns = scopeByTeam(all.data ?? [], teamId);
-  const rollup = campaignRollup(rollupRuns);
-  const rollupCapped = (all.data?.length ?? 0) >= CAMPAIGN_ROLLUP_LIMIT;
+  const scoped = scopeByTeam(data ?? [], teamId);
+  const rollup = campaignRollup(scoped);
+  const rollupCapped = (data?.length ?? 0) >= CAMPAIGN_ROLLUP_LIMIT;
+  // the campaigns themselves (their id is the address of their page); a person who is not an owner or admin of a team reads none, and the chip then falls back to the label
+  const eligible = teams.filter((tm) => tm.role === "OWNER" || tm.role === "ADMIN");
+  const campaignQs = useQueries({ queries: eligible.map((tm) => ({ queryKey: ["migration-campaigns", tm.id], queryFn: () => api.listCampaigns(tm.id), retry: false, staleTime: 10_000 })) });
+  const groups = groupCampaigns(campaignQs.flatMap((q) => q.data ?? []));
+  const chips = rollup.map((c) => {
+    const g = groups.find((x) => x.label === c.campaign);
+    return { ...c, group: g ?? null, bucket: g ? campaignBucket(g.status) : rollupBucket(c) };
+  });
+  const counts = { all: scoped.length, ...Object.fromEntries(CAMPAIGN_BUCKETS.map((b) => [b, scoped.filter((r) => runBucket(r.status) === b).length])) } as Record<CampaignFilter, number>;
+  const shownRuns = scoped.filter((r) => filter === "all" || runBucket(r.status) === filter);
+  const shownChips = chips.filter((c) => filter === "all" || c.bucket === filter);
   return (
     <div style={{ padding: "var(--page-pad)" }}>
       <PageTitle title={t("migrationRun.title")} subtitle={t("migrationRun.subtitle")} actions={<LinkBtn href="/import">{t("migrationRun.new")}</LinkBtn>} />
-      <div style={{ marginBottom: 12, display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-end" }}>
-        <Checkbox checked={activeOnly} onChange={setActiveOnly} label={t("migrationRun.list.activeOnly")} />
-        <Field label={t("migrationRun.list.campaign")} style={{ flex: "1 1 220px", maxWidth: 320 }}>
-          <TextInput value={campaignText} onChange={(e) => setCampaignText(e.target.value)} placeholder={t("migrationRun.list.campaignAll")} maxLength={80} autoComplete="off" style={{ minHeight: 44 }} />
-        </Field>
-      </div>
-      {rollup.length > 0 && (
+      {data && <CampaignFilterTabs value={filter} onChange={setFilter} counts={counts} />}
+      {shownChips.length > 0 && (
         <ul style={{ margin: "0 0 12px", padding: 0, listStyle: "none", display: "flex", gap: 8, flexWrap: "wrap" }}>
-          {rollup.map((c) => (
-            <li key={c.campaign} style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-              <button
-                type="button"
+          {shownChips.map((c) => (
+            <li key={c.campaign} style={{ flex: "1 1 240px", maxWidth: 420, minWidth: 0 }}>
+              {/* the whole chip is the link to the campaign's page */}
+              <Link
+                href={c.group ? campaignHref(c.group.id) : campaignReportHref(c.campaign)}
                 className="tg-btn"
-                onClick={() => setCampaignText(c.campaign)}
-                aria-label={t("migrationRun.list.campaignFilter", { campaign: c.campaign })}
-                style={{ minHeight: 44, padding: "6px 12px", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", background: "var(--c-el)", color: "var(--c-tx)", textAlign: "left", cursor: "pointer", fontSize: 12 }}
+                style={{ display: "block", minHeight: 44, padding: "6px 12px", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", background: "var(--c-el)", color: "var(--c-tx)", textDecoration: "none", fontSize: 12 }}
               >
-                <strong style={{ display: "block", wordBreak: "break-word" }}>{c.campaign}</strong>
+                <strong style={{ display: "block", wordBreak: "break-word" }}>{campaignTitle(t, c.campaign, c.group?.createdAt ?? scoped.filter((r) => r.campaign === c.campaign).map((r) => r.createdAt).sort()[0])}</strong>
                 <span style={{ color: "var(--c-tx3)" }}>{t(rollupCapped ? "migrationRun.list.campaignRollupCapped" : "migrationRun.list.campaignRollup", { total: c.total, completed: c.completed, live: c.live, failed: c.failed, other: c.other })}</span>
-              </button>
-              <Link href={campaignReportHref(c.campaign)} className="tg-link" style={{ fontSize: 12, minHeight: 28, display: "inline-flex", alignItems: "center", padding: "0 4px" }}>
-                {t("migrationRun.campaign.open")}
               </Link>
             </li>
           ))}
@@ -107,12 +103,12 @@ export function RunList() {
       {isError && !data && <ErrorState onRetry={() => refetch()} />}
       {data && (
         <ListCard>
-          {scoped.length === 0 ? (
-            <EmptyState icon={Route} title={t("migrationRun.list.emptyTitle")} action={<LinkBtn href="/import">{t("migrationRun.new")}</LinkBtn>}>
-              {t("migrationRun.list.empty")}
+          {shownRuns.length === 0 ? (
+            <EmptyState icon={Route} title={t(scoped.length === 0 ? "migrationRun.list.emptyTitle" : "migrationRun.list.emptyFilterTitle")} action={scoped.length === 0 ? <LinkBtn href="/import">{t("migrationRun.new")}</LinkBtn> : undefined}>
+              {t(scoped.length === 0 ? "migrationRun.list.empty" : "migrationRun.list.emptyFilter")}
             </EmptyState>
           ) : (
-            scoped.map((r, i) => <RunRow key={r.id} r={r} index={i} onOpen={() => router.push(`/import/runs/${r.id}`)} />)
+            shownRuns.map((r, i) => <RunRow key={r.id} r={r} index={i} onOpen={() => router.push(`/import/runs/${r.id}`)} />)
           )}
         </ListCard>
       )}
