@@ -6,7 +6,7 @@ pre-issue, verification and the cutover. It sits **above** the pieces described 
 them. Those manual paths keep working and remain the way to do anything a run does not cover.
 
 Where it lives: the API under `/migration-runs`, the CLI `tugra import run ...`, the `migration_run_*` MCP tools and the panel pages
-under `/import/runs` (or "Run guided migration" in the import wizard).
+under `/import/runs` (or the start button of the import review, which opens `/import/guided/new`).
 
 A project that spans several source servers, large databases, a proxy that caps uploads and workers that must not start
 early is covered by the [fleet runs](#fleet-runs-several-source-hosts-one-run) section below. Everything in it is opt-in

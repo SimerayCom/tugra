@@ -23,7 +23,7 @@ Start with [Move off Coolify](move-off-coolify.md). It covers the whole move: re
 2. Choose what moves: everything, only the apps on one source server, or whole projects.
 3. Read the **preview**. Blockers must be fixed or acknowledged; notes are things Tugra cannot carry over. Open **Review & rename** to change names, projects and environments.
 4. Choose the **target server**.
-5. Press **Run guided migration**. Leave **Dry run first** ticked and create the run. It walks through every step, writes nothing, and lists what would block you. Fix those and repeat until it is clean. Run a dry run before every real run, and make the first real run something that does not matter much.
+5. Press the start button at the top of the review, or the same one pinned at its end (it says what it moves, for example **Move to Server A**). It opens its own page, not a dialog. Leave **Dry run first** ticked and start the run. It walks through every step, writes nothing, and lists what would block you. Fix those and repeat until it is clean. Run a dry run before every real run, and make the first real run something that does not matter much.
 6. Start the real run from the finished dry run. The run then asks for you at a few points:
    - **Data copy:** it prints one command per source host. Paste it on the Coolify host. The first pass copies while Coolify still serves traffic.
    - **Freeze:** you approve the list of containers to stop. This opens the downtime window. The final data copy runs next.

@@ -33,7 +33,7 @@ Both stacks run side by side while the data is copied, then the proxy is swapped
 ### Steps
 
 1. Do steps 1 to 4 of [Move from Coolify](move-from-coolify.md#steps): connect to Coolify, choose what moves, read the preview, review names. The target is **this** server.
-2. Press **Run guided migration**. In the dialog choose **Topology: Same server**. Choose **Mode: Copy** to keep Coolify installed, or **Takeover** if you intend to retire it later. Leave **Dry run first** ticked.
+2. Press **Move this server in place** (or **Move N servers in place**), at the top of the review or pinned at its end. It opens a page that asks only what a same-machine move needs: the servers (with the choice to build some apps with Tugra), the certificate email and the observe window. Nothing about copying data is asked, because nothing is copied. **Dry run first** is off by default here: nothing touches your traffic until you approve the check. Tick it if you want a walk-through first.
 3. Read the dry run. It reports the same checks as any run, plus whether certificates can be ready and whether this box runs the Coolify control plane.
 4. Start the real run. The data copy, freeze, dark deploy and certificate steps work as in the other guide. The dark deploy starts your apps without public traffic and tests them through Tugra's proxy from inside the host, while Coolify keeps serving.
 5. **Approve the swap.** After verification you type the server name and approve. Tugra then:
