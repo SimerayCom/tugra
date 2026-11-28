@@ -10,6 +10,9 @@ import { GitLinksPanel, GitRelinkCard, DeployKeyBlock, bucketGitLinks } from "./
 import { api } from "../../lib/api";
 import type { ImportGitLinkRow, ImportGitLinksView, ImportPlan } from "../../lib/types";
 
+// the review's start action opens the launch page through the router
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
+
 afterEach(cleanup);
 
 const row = (i: number, over: Partial<ImportGitLinkRow> = {}): ImportGitLinkRow => ({ itemRef: `app:s:a${i}`, name: `app-${i}`, repo: { host: "github.com", owner: "acme", name: `r${i}` }, status: "linked", sourceName: "Acme App", reason: "x", ...over });

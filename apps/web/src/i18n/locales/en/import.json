@@ -902,7 +902,7 @@
     "multiTeamNote": "These servers are in {count} teams. Tugra makes one campaign per team and creates them together.",
     "multiTeamGuided": "Servers of several teams move through the guided run below, which makes one campaign per team.",
     "confirmedMachine": "You confirmed this machine. Change it if that is not right.",
-    "inPlaceGuided": "A server that stays on its own machine is taken over by the guided run: it tests first, swaps the proxy and can give the machine back. The plain copy is not offered here, because it would only create stopped records on that machine. Use Run guided migration below.",
+    "inPlaceGuided": "A server that stays on its own machine is taken over by the guided run: it tests first, swaps the proxy and can give the machine back. The plain copy is not offered here, because it would only create stopped records on that machine. Use the button below.",
     "changeMatch": "Back to matching"
   },
   "settings": {

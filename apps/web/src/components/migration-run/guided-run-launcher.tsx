@@ -1,346 +1,71 @@
 "use client";
 
-import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Route } from "lucide-react";
-import { api } from "../../lib/api";
 import { useT } from "../../i18n/provider";
-import { Btn, Working } from "../ui";
-import { Modal } from "../modal";
-import { BlockedNote } from "../cta-parts";
-import { blockTag, serverBlock, type CtaBlock } from "../../lib/cta-readiness";
-import { Checkbox, Field, NumberInput, Select, TextInput } from "../form";
+import { Btn } from "../ui";
 import { useToast } from "../toast";
-import {
-  EMPTY_POLICIES,
-  HOST_LOOP_FORM_DEFAULTS,
-  MODE_HINT_KEY,
-  MODE_KEY,
-  TOPOLOGY_HINT_KEY,
-  TOPOLOGY_KEY,
-  buildLaunchInput,
-  errorText,
-  launchIssues,
-  looksLikeEmail,
-  sourceServersOf,
-} from "../../lib/migration-run";
-import { AdvancedFields, type AdvancedState } from "./launch-advanced";
-import { PlacementFields } from "./launch-placement";
-import { AgentGapNotice } from "./agent-gap-notice";
-import { TakeoverStartNote, useTakeoverStartBlock } from "../takeover-start-guard";
-import { sourceAgentGapsOf } from "../../lib/coolify-ssh";
-import { CampaignPreviewCard } from "./launch-campaign";
-import { BusyNote, FreshnessNote, SameHostNote, SwapBlockNote } from "./launch-guard-notes";
-import { busyServers, copyOntoSourceHost, freshnessOf, freshnessOfError, involvedRefs, swapProxyBlock } from "../../lib/launch-guards";
-import { clearImportResume } from "../../lib/import-resume";
-import { campaignBody, campaignOpenHref, campaignsOf, needsCampaign, placementsOf, pruneRebuild } from "../../lib/campaign";
-import { HelpLink } from "../help-link";
-import { scopePayload, type ImportScope, overallPlacement, involvedHosts } from "../../lib/import-scope";
-import type { ImportApplyExtras, ImportPlan, ImportRemoteKind, MigrationRunMode, MigrationRunServerMap, MigrationRunTopology } from "../../lib/types";
+import { launchPageHref, saveLaunchHandoff } from "../../lib/launch-handoff";
+import { startBlock, startLabel, type StartInput } from "../../lib/launch-start";
+import type { ImportApplyExtras, ImportPlan, ImportRemoteKind } from "../../lib/types";
+import type { ImportScope } from "../../lib/import-scope";
 
-/** A server the run may land on: what the launcher needs to say, before the click, that one cannot take it. */
-type LaunchServer = { id: string; name: string; teamId: string; status?: "PENDING" | "ONLINE" | "OFFLINE"; capabilities?: string[]; canWrite?: boolean };
-
-/** The run's target (and every placement target) runs the deploy and database steps through its agent. */
-const RUN_CAPS = ["deploy", "database"] as const;
-const blockOf = (s: LaunchServer | undefined): CtaBlock | null => (s && s.status !== undefined && s.capabilities !== undefined ? serverBlock({ status: s.status, canWrite: true, capabilities: s.capabilities }, RUN_CAPS, { write: false }) : null);
-
-interface Props {
+export interface GuidedStartProps extends Omit<StartInput, "targetName"> {
   plan: ImportPlan;
   kind: ImportRemoteKind;
   sessionId: string;
-  servers: LaunchServer[];
-  /** Team names, so a campaign per team is headed by its team (absent = the preview numbers them). */
-  teams?: ReadonlyArray<{ id: string; name: string }>;
   extras: ImportApplyExtras;
-  /** The import's first step: when it narrowed the move, the run carries it, so it moves exactly what was chosen. */
-  scope?: ImportScope | null;
-  /** Back to the import's first step (the "Change" link of the summary). */
-  onChangeScope?: () => void;
-  /** Read the source again (the plan the owner reviewed is no longer what the source says). */
-  onRecheck?: () => void;
-  disabled?: boolean;
+  /** The first step's choice: it travels to the launch page, which shows only what applies to it. */
+  scope: ImportScope | null;
+  /** Tugra server names, for "Move to <server>". */
+  serverNames?: Record<string, string>;
 }
 
-/** The wizard's "Run guided migration" entry. It sits next to the manual apply, which stays untouched: the guided run
- *  freezes the same reviewed plan (the plan hash plus the acknowledgements and choices made above), then drives the
- *  whole flow with gates and approvals. A dry-run is the default and writes nothing outside the run's own records. */
-export function GuidedRunLauncher(props: Props) {
+/** The preview's one start action. It opens the launch PAGE (never a modal): the choices made here travel with it, and it says in one line
+ *  why it is off, with a link to the place that answers it. */
+export function GuidedStartAction({ props, testId, compact = false, variant = "primary" }: { props: GuidedStartProps; testId: string; compact?: boolean; variant?: "primary" | "ghost" }) {
   const t = useT();
-  const [open, setOpen] = useState(false);
+  const toast = useToast();
+  const router = useRouter();
+  const targets = new Set(Object.values(props.scope?.placed ?? {}));
+  const targetName = targets.size === 1 ? props.serverNames?.[[...targets][0]] : undefined;
+  const label = startLabel({ scope: props.scope, targetName });
+  const block = startBlock(props);
+  const go = () => {
+    if (!saveLaunchHandoff({ kind: props.kind, sessionId: props.sessionId, planHash: props.plan.planHash, extras: props.extras, scope: props.scope })) {
+      toast(t("migrationRun.launch.start.saveFailed"), "error");
+      return;
+    }
+    router.push(launchPageHref(props.sessionId));
+  };
   return (
-    <div style={{ marginTop: 18, paddingTop: 16, borderTop: "1px solid var(--c-bd)" }}>
-      <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>{t("migrationRun.launch.title")}</div>
-      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 10px", lineHeight: 1.5 }}>{t("migrationRun.launch.desc")}</p>
-      <Btn variant="ghost" icon={Route} onClick={() => setOpen(true)} disabled={props.disabled}>{t("migrationRun.launch.button")}</Btn>
-      {open && <LaunchDialog {...props} onClose={() => setOpen(false)} />}
+    <div data-testid={testId} style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: 0 }}>
+      <Btn variant={variant} icon={Route} onClick={go} disabled={!!block} style={{ minHeight: 44, width: compact ? "100%" : undefined, justifyContent: "center" }}>
+        {t(label.key, label.params)}
+      </Btn>
+      {block && (
+        <p role="status" data-testid="start-why" style={{ margin: 0, fontSize: 12, color: "var(--c-am)", lineHeight: 1.5 }}>
+          {t(block.key, block.params)}
+          {block.anchor && (
+            <>
+              {" "}
+              <a className="tg-link" href={`#${block.anchor}`}>{t("migrationRun.launch.start.why.go")}</a>
+            </>
+          )}
+        </p>
+      )}
     </div>
   );
 }
 
-function LaunchDialog({ plan, kind, sessionId, servers, teams, extras, scope, onChangeScope, onRecheck, onClose }: Props & { onClose: () => void }) {
-  const t = useT();
-  const toast = useToast();
-  const router = useRouter();
-  const qc = useQueryClient();
-  // The run starts from what the first step chose, narrowed or not: its target, and its placement when it used several servers.
-  const chosenTarget = scope && servers.some((s) => s.id === scope.defaultServerId) ? scope.defaultServerId : "";
-  // Without a first-step choice, the first server that can take the run, never one that is offline or lacks the capabilities.
-  const fallbackTarget = servers.find((s) => !blockOf(s))?.id ?? "";
-  const [targetServerId, setTarget] = useState(chosenTarget || fallbackTarget);
-  const [dryRun, setDryRun] = useState(true);
-  const [mode, setMode] = useState<MigrationRunMode>("copy");
-  // In place (same machine, proxy swap) is only for Coolify, and only when the first step says every source is on its own target.
-  const [topology, setTopology] = useState<MigrationRunTopology>(kind === "coolify" && overallPlacement(scope) === "in-place" ? "swap-proxy" : "two-box");
-  const [acmeEmail, setAcmeEmail] = useState("");
-  const [controller, setController] = useState<"manual" | "api" | "agent">("manual");
-  const [allowBind, setAllowBind] = useState(false);
-  const [probe, setProbe] = useState(false);
-  const [observe, setObserve] = useState("30");
-  const [placement, setPlacement] = useState<MigrationRunServerMap | null>(chosenTarget && scope?.serverMap ? { ...scope.serverMap } : null);
-  const [adv, setAdv] = useState<AdvancedState>({
-    campaign: "",
-    sourceRunner: "operator",
-    hostLoop: { ...HOST_LOOP_FORM_DEFAULTS },
-    deployWaves: "single",
-    deployConcurrency: "",
-    largeDbMode: "stream-logical",
-    serviceStart: "dependencies",
-    stopSource: false,
-    policies: { ...EMPTY_POLICIES },
-  });
-
-  // Only servers of the target's team can take part in the run (the hub refuses another team's server).
-  const teamId = servers.find((s) => s.id === targetServerId)?.teamId;
-  const placeable = useMemo(() => servers.filter((s) => !teamId || s.teamId === teamId), [servers, teamId]);
-  // A run chosen in the first step stays in that step's team; to use another team, go back and change it.
-  const targetChoices = scope && chosenTarget ? placeable : servers;
-  // a server that already carries a live guided migration cannot take another one (the hub refuses it at create)
-  const live = useQuery({ queryKey: ["migration-runs", "live-targets", teamId ?? ""], queryFn: () => api.listMigrationRuns({ teamId, active: true, limit: 100 }), enabled: !!teamId, staleTime: 15_000, retry: false });
-  const busy = useMemo(() => busyServers(live.data), [live.data]);
-  const tagOf = (s: LaunchServer): string | null => {
-    const b = blockOf(s);
-    return b ? blockTag(t, b) : busy.has(s.id) ? t("migrationRun.launch.guard.busyTag") : null;
-  };
-  const targetOptions = targetChoices.map((s) => {
-    const tag = tagOf(s);
-    return { value: s.id, label: tag ? `${s.name} (${tag})` : s.name, disabled: !!tag && s.id !== targetServerId };
-  });
-  const placeableOptions = placeable.map((s) => {
-    const tag = tagOf(s);
-    return { id: s.id, name: tag ? `${s.name} (${tag})` : s.name };
-  });
-  // Same-machine and copied moves together, several same-machine servers, or servers of several teams: the hub makes a campaign of runs (one per team, then
-  // one per same-machine server and one for the rest), so the target, the topology and the placement are its to decide and are not asked here.
-  const campaign = kind === "coolify" && needsCampaign(scope);
-  // every server the run would use must be able to take it (a campaign uses the servers the first step placed)
-  const used = [...new Set((campaign ? Object.values(scope?.placed ?? {}) : [targetServerId, ...Object.values(placement ?? {})]).filter(Boolean))];
-  const blockedUsed = used.flatMap((id) => {
-    const b = blockOf(servers.find((s) => s.id === id));
-    return b ? [{ id, name: servers.find((s) => s.id === id)?.name ?? id, block: b }] : [];
-  });
-  // the summary of the first step's choice
-  const counts = useMemo(() => {
-    const c = { apps: 0, databases: 0, services: 0 };
-    for (const it of plan.items) {
-      if (scope && !scope.inScope.has(it.itemRef)) continue;
-      if (it.kind === "app") c.apps += 1;
-      else if (it.kind === "database") c.databases += 1;
-      else if (it.kind === "service") c.services += 1;
-    }
-    return c;
-  }, [plan.items, scope]);
-  const targetNames = [...new Set([targetServerId, ...Object.values(placement ?? {})].map((id) => servers.find((s) => s.id === id)?.name).filter(Boolean))] as string[];
-  const sourceRows = useMemo(() => sourceServersOf(plan.items ?? [], plan.preflight?.hosts), [plan.items, plan.preflight?.hosts]);
-  // A move needs an agent on both ends: the source servers it takes something from that have none (Coolify; the hub refuses a real run too).
-  const agentGaps = useMemo(() => {
-    if (kind !== "coolify") return [];
-    const used = new Set(sourceRows.filter((r) => r.apps + r.databases + r.services > 0 && (!scope || involvedHosts(plan, scope.inScope).some((h) => h.ref === r.ref))).map((r) => r.ref));
-    return sourceAgentGapsOf(plan.preflight?.hosts, used);
-  }, [kind, plan, scope, sourceRows]);
-  const changeTarget = (id: string) => {
-    // a host that was on the old default follows the new default; hosts the operator moved elsewhere stay where they are
-    if (placement) setPlacement(Object.fromEntries(Object.entries(placement).map(([ref, sid]) => [ref, sid === targetServerId ? id : sid])));
-    setTarget(id);
-  };
-
-  const form = {
-    sessionId, sourceKind: kind, targetServerId, planHash: plan.planHash, extras, mode, topology, dryRun, acmeEmail, allowBind, allowLiveShapeProbe: probe, sourceController: controller, observeMinutes: observe,
-    placement, scope: scopePayload(scope), campaign: adv.campaign, sourceRunner: adv.sourceRunner, hostLoop: adv.hostLoop, deployWaves: adv.deployWaves, deployConcurrency: adv.deployConcurrency, largeDbMode: adv.largeDbMode, serviceStart: adv.serviceStart, stopSource: adv.stopSource, policies: adv.policies,
-  };
-  const issues = launchIssues(form).filter((i) => !(campaign && i === "target"));
-  const placements = useMemo(() => (scope ? placementsOf(scope) : []), [scope]);
-  // the plan hash covers the data modes chosen at review, and the hub narrows each run to the first step's pick: the preview is read with both, as the create is
-  const dbDataModes = extras.dbDataModes && Object.keys(extras.dbDataModes).length ? extras.dbDataModes : undefined;
-  const campaignScope = useMemo(() => scopePayload(scope), [scope]);
-  const preview = useQuery({
-    queryKey: ["campaign-plan", sessionId, plan.planHash, placements, dbDataModes, campaignScope],
-    queryFn: () => api.planCampaign({ sessionId, planHash: plan.planHash, placements: placements.map((p) => ({ sourceServerRef: p.sourceServerRef, kind: p.kind, targetServerId: p.targetServerId ?? null })), ...(dbDataModes ? { dbDataModes } : {}), ...(campaignScope ? { scope: campaignScope } : {}) }),
-    enabled: campaign && placements.length > 0,
-    retry: false,
-  });
-  // The apps the owner chose to build with Tugra. Only a same-machine wave of the campaign builds anything; a choice for an app no such wave offers any more
-  // (the placement changed) is not sent, so the hub never refuses a stale one.
-  const [rebuildChoice, setRebuild] = useState<string[]>([]);
-  const rebuild = useMemo(() => (campaign ? pruneRebuild(rebuildChoice, preview.data?.runs, plan.items, scope?.inScope) : []), [campaign, rebuildChoice, preview.data?.runs, plan.items, scope?.inScope]);
-  // what the owner chose here cannot work: said at the choice, with the way out, not after the click
-  const refs = useMemo(() => involvedRefs(plan, scope), [plan, scope]);
-  const swapPossible = swapProxyBlock({ plan, targetId: targetServerId, placement, refs });
-  const swapBlock = !campaign && topology === "swap-proxy" ? swapPossible : null;
-  const sameHost = !campaign && topology !== "swap-proxy" ? copyOntoSourceHost({ plan, targetId: targetServerId, placement, refs }) : [];
-  const sameHostNames = [...new Set(sameHost.map((r) => sourceRows.find((x) => x.ref === r)?.name ?? plan.preflight?.hosts?.find((h) => h.ref === r)?.name ?? r))];
-  const campaignTargets = campaign ? placements.flatMap((p) => (p.targetServerId ? [p.targetServerId] : [])) : [];
-  const usedBusy = [...new Set([...used, ...campaignTargets])].filter((id) => busy.has(id));
-  // the plan and the connection the owner reviewed must still stand; a campaign preview reads them already, a single run re-reads the plan
-  const reread = useQuery({
-    queryKey: ["launch-fresh", sessionId, plan.planHash],
-    queryFn: () => api.importPlan({ sourceKind: kind, sessionId, ...(extras.dbDataModes && Object.keys(extras.dbDataModes).length ? { dbDataModes: extras.dbDataModes } : {}) }),
-    enabled: !campaign,
-    retry: false,
-    staleTime: 0,
-    gcTime: 0,
-    refetchOnWindowFocus: false,
-  });
-  const freshness = campaign ? freshnessOfError(preview.error) : freshnessOf(plan.planHash, { hash: reread.data?.planHash, error: reread.error });
-  // a same-machine move starts an in-place takeover: a takeover already on the server, or Tugra's own proxy already serving apps there, is refused at its plan
-  const takeoverBlock = useTakeoverStartBlock(targetServerId, !campaign && topology === "swap-proxy" && !swapBlock && !!targetServerId, busy.get(targetServerId) ?? null);
-  // a server held by a live run already has its own note above
-  const takeoverNote = takeoverBlock === "server_busy" && busy.has(targetServerId) ? null : takeoverBlock;
-  const guarded = !!swapBlock || sameHost.length > 0 || usedBusy.length > 0 || !!freshness || !!takeoverNote;
-  const campaignRefused = campaign && (preview.isLoading || preview.isError || !!preview.data?.failure || !preview.data?.runs);
-  const create = useMutation({
-    mutationFn: async (): Promise<{ href: string; campaigns: number }> => {
-      const input = buildLaunchInput(form);
-      if (campaign) {
-        const c = await api.createCampaign(campaignBody(input, placements, rebuild));
-        // one campaign per team, all under one label: the report of the label holds the runs of every one of them
-        return { href: campaignOpenHref(c), campaigns: campaignsOf(c).length };
-      }
-      const run = await api.createMigrationRun(input);
-      return { href: `/import/runs/${run.id}`, campaigns: 0 };
-    },
-    onSuccess: ({ href, campaigns }) => {
-      if (campaigns > 1) toast(t("placement.campaign.createdMany", { count: campaigns }), "success");
-      void qc.invalidateQueries({ queryKey: ["migration-runs"] });
-      void qc.invalidateQueries({ queryKey: ["migration-campaigns"] });
-      router.push(href);
-    },
-    onError: (e) => toast(errorText(t, e), "error"),
-  });
-
+/** The same action pinned to the bottom of the long review, full width on a phone, so it is in reach wherever the owner stopped reading. */
+export function GuidedStartBar({ props }: { props: GuidedStartProps }) {
   return (
-    <Modal onClose={() => !create.isPending && onClose()} ariaLabel={t("migrationRun.launch.title")} width={560} closeOnBackdrop={false}>
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (issues.length === 0 && !campaignRefused && !guarded && !create.isPending) create.mutate();
-        }}
-        style={{ display: "flex", flexDirection: "column", gap: 14 }}
-      >
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-          <h2 style={{ fontSize: 15, fontWeight: 700, margin: 0 }}>{t("migrationRun.launch.title")}</h2>
-          <HelpLink guide={topology === "swap-proxy" ? "move-from-coolify-same-server" : "move-from-coolify"} />
-        </div>
-        <p style={{ margin: 0, fontSize: 12, color: "var(--c-tx3)", lineHeight: 1.5 }}>{t("migrationRun.launch.dialogDesc")}</p>
-        {scope?.narrowed && (
-          <p role="note" style={{ margin: 0, fontSize: 12, color: "var(--c-tx2)", lineHeight: 1.5 }}>
-            {t("migrationRun.launch.scoped", { count: plan.items.filter((i) => i.kind === "app" || i.kind === "database" || i.kind === "service").length })}
-          </p>
-        )}
-        {scope && (
-          <div role="note" data-testid="launch-summary" style={{ display: "flex", gap: 8, alignItems: "baseline", flexWrap: "wrap", fontSize: 12, color: "var(--c-tx2)", lineHeight: 1.5 }}>
-            <span style={{ flex: "1 1 240px" }}>
-              {t("migrationRun.launch.summary", { targets: targetNames.join(", ") || "-", apps: counts.apps, databases: counts.databases, services: counts.services })}{" "}
-              {overallPlacement(scope) === "in-place" ? t("migrationRun.launch.sameMachine") : t("migrationRun.launch.otherServer")}
-            </span>
-            {onChangeScope && <Btn variant="ghost" onClick={() => { onClose(); onChangeScope(); }} disabled={create.isPending}>{t("import.scope.change")}</Btn>}
-          </div>
-        )}
-
-        {/* a campaign takes the servers the first step placed: nothing to choose here a second time */}
-        {!campaign && (
-          <Field label={t("migrationRun.launch.target")} hint={t("migrationRun.launch.targetHint")} error={issues.includes("target") ? t("migrationRun.launch.targetMissing") : undefined}>
-            <Select value={targetServerId} onChange={changeTarget} options={targetOptions} style={{ minHeight: 44 }} />
-          </Field>
-        )}
-        {blockedUsed.map((b) => (
-          <p key={b.id} style={{ margin: 0 }}>
-            <strong style={{ fontSize: 12 }}>{b.name}: </strong>
-            <BlockedNote block={b.block} serverId={b.id} />
-          </p>
-        ))}
-
-        {usedBusy.map((id) => (
-          <BusyNote key={id} name={servers.find((s) => s.id === id)?.name ?? id} runId={busy.get(id) as string} />
-        ))}
-        {takeoverNote && <TakeoverStartNote block={takeoverNote} serverId={targetServerId} />}
-        {freshness && <FreshnessNote freshness={freshness} onRead={() => { onClose(); onRecheck?.(); }} onConnect={() => { clearImportResume(); window.location.reload(); }} />}
-
-        {((!!teamId && live.isFetching && !live.data) || (!campaign && reread.isFetching && !reread.data)) && <Working text={t("migrationRun.launch.checking")} />}
-
-        <AgentGapNotice gaps={agentGaps} dryRun={dryRun} />
-
-        {campaign ? (
-          <CampaignPreviewCard preview={preview.data ?? null} loading={preview.isLoading} failed={preview.isError} rows={sourceRows} servers={servers} items={plan.items} inScope={scope?.inScope} rebuild={rebuild} onRebuild={setRebuild} disabled={create.isPending} teams={teams} />
-        ) : (
-          <PlacementFields rows={sourceRows} servers={placeableOptions} defaultId={targetServerId} value={placement} onChange={setPlacement} invalid={issues.includes("placement")} />
-        )}
-
-        <div>
-          <Checkbox checked={dryRun} onChange={setDryRun} label={t("migrationRun.launch.dryRun")} />
-          <div style={{ fontSize: 11, color: "var(--c-tx3)", margin: "2px 0 0 24px", lineHeight: 1.5 }}>{t("migrationRun.launch.dryRunHint")}</div>
-        </div>
-
-        <div style={{ display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 220px), 1fr))" }}>
-          <Field label={t("migrationRun.launch.mode")} hint={t(MODE_HINT_KEY[mode])}>
-            <Select value={mode} onChange={(v) => setMode(v as MigrationRunMode)} options={(["copy", "takeover"] as const).map((m) => ({ value: m, label: t(MODE_KEY[m]) }))} style={{ minHeight: 44 }} />
-          </Field>
-          {!campaign && (
-            <Field label={t("migrationRun.launch.topology")} hint={t(TOPOLOGY_HINT_KEY[topology])}>
-              <Select value={topology} onChange={(v) => setTopology(v as MigrationRunTopology)} options={(kind === "coolify" ? (["two-box", "swap-proxy"] as const) : (["two-box"] as const)).map((m) => {
-                const off = m === "swap-proxy" && !!swapPossible && topology !== m;
-                return { value: m, label: off ? `${t(TOPOLOGY_KEY[m])} (${t("migrationRun.launch.guard.notHere")})` : t(TOPOLOGY_KEY[m]), disabled: off };
-              })} style={{ minHeight: 44 }} />
-            </Field>
-          )}
-        </div>
-        {swapBlock && <SwapBlockNote block={swapBlock} onUseOther={() => setTopology("two-box")} disabled={create.isPending} />}
-        {sameHost.length > 0 && <SameHostNote names={sameHostNames} />}
-
-        <div style={{ display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 220px), 1fr))" }}>
-          <Field label={t("migrationRun.inputs.acmeEmail")} hint={t("migrationRun.launch.acmeHint")} error={acmeEmail.trim() && !looksLikeEmail(acmeEmail) ? t("migrationRun.inputs.emailInvalid") : undefined}>
-            <TextInput type="email" value={acmeEmail} onChange={(e) => setAcmeEmail(e.target.value)} autoComplete="off" style={{ minHeight: 44 }} />
-          </Field>
-          <Field label={t("migrationRun.inputs.sourceController")} hint={t("migrationRun.inputs.sourceControllerHint")}>
-            <Select
-              value={controller}
-              onChange={(v) => setController(v as "manual" | "api" | "agent")}
-              options={[
-                { value: "manual", label: t("migrationRun.inputs.controller.manual") },
-                { value: "api", label: t("migrationRun.inputs.controller.api") },
-                { value: "agent", label: t("migrationRun.inputs.controller.agent") },
-              ]}
-              style={{ minHeight: 44 }}
-            />
-          </Field>
-          <Field label={t("migrationRun.launch.observe")} hint={t("migrationRun.launch.observeHint")} error={issues.includes("observe") ? t("migrationRun.launch.observeInvalid") : undefined}>
-            <NumberInput min={0} max={4320} value={observe} onChange={(e) => setObserve(e.target.value)} style={{ minHeight: 44 }} />
-          </Field>
-        </div>
-
-        <Checkbox checked={allowBind} onChange={setAllowBind} label={t("migrationRun.inputs.allowBind")} />
-        <Checkbox checked={probe} onChange={setProbe} label={t("migrationRun.inputs.allowLiveShapeProbe")} />
-
-        <AdvancedFields value={adv} onChange={setAdv} issues={issues} />
-
-        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>
-          <Btn variant="ghost" onClick={onClose} disabled={create.isPending}>{t("common.cancel")}</Btn>
-          <Btn type="submit" disabled={issues.length > 0 || servers.length === 0 || blockedUsed.length > 0 || guarded || !!campaignRefused || (!dryRun && agentGaps.length > 0)} loading={create.isPending}>
-            {campaign ? t("placement.campaign.create", { count: preview.data?.runs?.length ?? 0 }) : dryRun ? t("migrationRun.launch.createDry") : t("migrationRun.launch.create")}
-          </Btn>
-        </div>
-      </form>
-    </Modal>
+    <div
+      data-testid="guided-start-bar"
+      style={{ position: "sticky", bottom: 0, zIndex: 5, padding: "10px 0 calc(10px + env(safe-area-inset-bottom, 0px))", background: "var(--c-sb)", borderTop: "1px solid var(--c-bd)" }}
+    >
+      <GuidedStartAction props={props} testId="guided-start-end" compact />
+    </div>
   );
 }

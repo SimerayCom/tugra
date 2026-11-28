@@ -10,6 +10,9 @@ import { api } from "../../lib/api";
 import { buildAcks, runnableAfterAcks, ackableItems } from "../../lib/import";
 import type { ImportPlan } from "../../lib/types";
 
+// the review's start action opens the launch page through the router
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
+
 afterEach(cleanup);
 
 const unresolvedRisk = { level: "blocker" as const, code: "app.env.unresolved", message: "2 variable(s) cannot be carried and will be missing in the new app: SHARED_TOKEN (SHARED_UNEXPANDED), SERVICE_FQDN_WEB (MAGIC)" };

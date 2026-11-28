@@ -27,19 +27,22 @@
     "unreadable": "The placement could not be checked. Try again.",
     "runInPlace": "{source} stays on its own machine. Nothing is copied or rebuilt: Tugra starts the images Coolify already built, checks every domain on a temporary address, then takes the ports and gets new certificates. Giving it back to Coolify is one click.",
     "runOther": "{source} moves to {target} (data is copied, then the address is switched).",
-    "create": "Create campaign ({count} runs)",
+    "create": "Create and start {count} runs",
     "rebuild": {
       "title": "Rebuild with Tugra and verify (optional)",
       "hint": "By default Tugra starts the image Coolify already built and nothing is built. Tick an app to build it with Tugra instead: the build must succeed and the app must answer like Coolify's copy before the ports are taken. An app that shares data with Coolify's copy keeps Coolify's image.",
       "none": "This server has no apps to rebuild.",
       "option": "Rebuild {name} with Tugra and verify",
       "chosen": "{count} to rebuild, the rest reuse Coolify's image.",
-      "default": "None chosen: every app reuses Coolify's image."
+      "default": "None chosen: every app reuses Coolify's image.",
+      "summary": "Apps reuse Coolify's image (default). Build some with Tugra instead"
     },
     "teamsNote": "Your servers are in {count} teams. Tugra creates one campaign per team, all together. Each team's runs are listed below.",
     "team": "{name} ({count})",
     "teamN": "Team {n}",
-    "createdMany": "{count} campaigns created, one per team."
+    "createdMany": "{count} campaigns created, one per team.",
+    "serversTitle": "Servers to move in place",
+    "cardInPlace": "Stays on its own machine. Nothing is copied: Tugra starts the images Coolify built, tests them on a temporary address, then takes the ports."
   },
   "failure": {
     "placement_empty": "Pick at least one source server.",

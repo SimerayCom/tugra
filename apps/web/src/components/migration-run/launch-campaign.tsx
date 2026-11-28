@@ -7,6 +7,7 @@ import { placementFailureKey, rebuildChoicesOf, runsByWave, sourcesOfRun } from 
 import { toggleChoice } from "../../lib/inplace";
 import type { ImportPlanItem } from "../../lib/types";
 import { UNKNOWN_SOURCE_HOST, type SourceServerRow } from "../../lib/migration-run";
+import { hostOfItemRef } from "../../lib/import-scope";
 
 /**
  * What a mixed placement becomes, shown before anything is created: one run for the servers that move to another server, then one run per server
@@ -24,6 +25,7 @@ export function CampaignPreviewCard({
   onRebuild,
   disabled = false,
   teams = [],
+  inPlaceOnly = false,
 }: {
   preview: CampaignPreview | null;
   loading: boolean;
@@ -39,6 +41,8 @@ export function CampaignPreviewCard({
   disabled?: boolean;
   /** Team names, so a campaign per team is headed by the team it belongs to. */
   teams?: ReadonlyArray<{ id: string; name: string }>;
+  /** Every server stays on its own machine: one card per server (what it holds, what happens to it), the rebuild choice folded away. */
+  inPlaceOnly?: boolean;
 }) {
   const t = useT();
   const nameOfSource = (ref: string): string => {
@@ -46,7 +50,42 @@ export function CampaignPreviewCard({
     return ref === UNKNOWN_SOURCE_HOST ? t("migrationRun.launch.placement.unknownHost") : (r?.name ?? ref);
   };
   const nameOfServer = (id: string): string => servers.find((s) => s.id === id)?.name ?? id;
-  const renderRuns = (runs: CampaignRunPlan[]) => (
+  const countsOf = (refs: string[]) => {
+    const c = { apps: 0, databases: 0, services: 0 };
+    for (const it of items) {
+      if ((inScope && !inScope.has(it.itemRef)) || !refs.includes(hostOfItemRef(it.itemRef))) continue;
+      if (it.kind === "app") c.apps += 1;
+      else if (it.kind === "database") c.databases += 1;
+      else if (it.kind === "service") c.services += 1;
+    }
+    return c;
+  };
+  const renderCards = (runs: CampaignRunPlan[]) => (
+    <ol style={{ margin: 0, padding: 0, listStyle: "none", display: "flex", flexDirection: "column", gap: 8 }}>
+      {runsByWave(runs).flatMap((w) =>
+        w.runs.map((r) => {
+          const name = sourcesOfRun(r).map(nameOfSource).join(", ");
+          return (
+            <li key={`${w.wave}:${r.sourceServerRef}`} data-testid="in-place-card" style={{ border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: "10px 12px", display: "flex", flexDirection: "column", gap: 4, minWidth: 0 }}>
+              <div style={{ display: "flex", gap: 8, alignItems: "baseline", flexWrap: "wrap" }}>
+                <strong style={{ fontSize: 13, overflowWrap: "anywhere" }}>{name}</strong>
+                <span style={{ fontSize: 11, color: "var(--c-tx3)" }}>{t("placement.campaign.wave", { n: w.wave + 1 })}</span>
+              </div>
+              <span style={{ fontSize: 12, color: "var(--c-tx2)" }}>{t("import.scope.counts", countsOf(sourcesOfRun(r)))}</span>
+              <span style={{ fontSize: 12, color: "var(--c-tx3)", lineHeight: 1.5 }}>{t("placement.campaign.cardInPlace")}</span>
+              {onRebuild && (
+                <details>
+                  <summary style={{ cursor: "pointer", fontSize: 12, minHeight: 28, display: "flex", alignItems: "center" }}>{t("placement.campaign.rebuild.summary")}</summary>
+                  <RebuildPicker choices={rebuildChoicesOf(r, items, inScope)} chosen={rebuild} onChange={onRebuild} disabled={disabled} serverName={name} />
+                </details>
+              )}
+            </li>
+          );
+        }),
+      )}
+    </ol>
+  );
+  const renderRuns = (runs: CampaignRunPlan[]) => inPlaceOnly ? renderCards(runs) : (
     <ol style={{ margin: 0, paddingLeft: 18, display: "flex", flexDirection: "column", gap: 6, fontSize: 12, lineHeight: 1.5 }}>
       {runsByWave(runs).flatMap((w) =>
         w.runs.map((r) => (
@@ -64,8 +103,8 @@ export function CampaignPreviewCard({
   );
   return (
     <fieldset data-testid="campaign-preview" style={{ border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: 12, margin: 0, display: "flex", flexDirection: "column", gap: 8, minWidth: 0 }}>
-      <legend style={{ fontSize: 12, fontWeight: 700, color: "var(--c-tx2)", padding: "0 6px" }}>{t("placement.campaign.title")}</legend>
-      <p style={{ margin: 0, fontSize: 12, color: "var(--c-tx3)", lineHeight: 1.5 }}>{t("placement.campaign.hint")}</p>
+      <legend style={{ fontSize: 12, fontWeight: 700, color: "var(--c-tx2)", padding: "0 6px" }}>{inPlaceOnly ? t("placement.campaign.serversTitle") : t("placement.campaign.title")}</legend>
+      {!inPlaceOnly && <p style={{ margin: 0, fontSize: 12, color: "var(--c-tx3)", lineHeight: 1.5 }}>{t("placement.campaign.hint")}</p>}
       {loading && <p role="status" style={{ margin: 0, fontSize: 12 }}>{t("placement.campaign.checking")}</p>}
       {failed && <p role="alert" style={{ margin: 0, fontSize: 12, color: "var(--c-r)" }}>{t("placement.campaign.unreadable")}</p>}
       {preview?.failure && (

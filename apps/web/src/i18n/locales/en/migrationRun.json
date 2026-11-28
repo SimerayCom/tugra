@@ -602,6 +602,77 @@
       "freshRead": "Read the source again",
       "freshConnect": "Connect again",
       "freshCheckFailed": "Tugra could not check the source right now. The start will check again."
+    },
+    "start": {
+      "generic": "Start the guided move",
+      "inPlaceOne": "Move this server in place",
+      "inPlaceMany": "Move {count} servers in place",
+      "mixed": "Start moving: {copy} copy + {inPlace} in place",
+      "toServer": "Move to {server}",
+      "toServers": "Move to {count} servers",
+      "saveFailed": "Could not open the next page. Let this site keep session data and try again.",
+      "why": {
+        "reading": "Reading the plan again...",
+        "consent": "Allow Tugra to read the secret values first.",
+        "warnings": "{count} warnings need your answer.",
+        "services": "{count} services need a target server.",
+        "nothing": "Nothing in this plan can be moved.",
+        "go": "Show me"
+      }
+    },
+    "page": {
+      "back": "Back to the review",
+      "title": "Start the guided move",
+      "titleInPlace": "Take over your servers in place",
+      "leadInPlace": "Nothing is copied: each server keeps its own machine. Tugra starts what Coolify built, tests it next to Coolify, and takes the ports only after you approve the check.",
+      "what": "What will happen",
+      "before": "Before you start",
+      "name": "Name of this move",
+      "nameHint": "Shown as the title of its report page.",
+      "defaultName": "Moving off Coolify - {when}",
+      "emailHint": "Used to get new certificates once Tugra has taken the ports.",
+      "emailRequired": "Enter the certificate email.",
+      "whyEmail": "Enter the certificate email to start.",
+      "whyFields": "Fix the fields marked above to start.",
+      "dryRunHintInPlace": "Walks through the steps without changing anything. Off by default here: nothing touches your traffic until you approve the check.",
+      "moves": "Moves to another server",
+      "moveSettings": "Move settings",
+      "movesHint": "Only for servers whose data is copied to another server.",
+      "createStart": "Create and start run",
+      "dryOne": "Start a dry run",
+      "dryMany": "Start {count} dry runs",
+      "takeover": "Start the takeover",
+      "startFailed": "The runs were created, but one could not be started: {reason}. Start it from its page.",
+      "gone": {
+        "title": "Nothing to start here",
+        "body": "This page needs the choices you made on the review. Go back to the review and start again from there."
+      },
+      "reading": "Reading the plan again...",
+      "ended": {
+        "title": "The connection ended",
+        "body": "The connection to Coolify ended. Connect again from the review; your choices are kept where possible."
+      },
+      "unreadable": {
+        "title": "Could not read the plan",
+        "body": "The plan could not be read from Coolify. Try again, or go back to the review."
+      },
+      "retry": "Try again",
+      "changed": {
+        "title": "The source changed",
+        "body": "Coolify changed since you reviewed the plan. Go back to the review and read it again, so you start from what is really there."
+      }
+    },
+    "progress": {
+      "title": "Creating your runs",
+      "creating": "Creating run {current} of {total}: {name}",
+      "creatingOne": "Creating the run...",
+      "starting": "Starting the first run...",
+      "state": {
+        "done": "Created",
+        "working": "Creating",
+        "waiting": "Waiting"
+      },
+      "note": "The hub creates the runs one after the other, so many servers take a minute."
     }
   },
   "units": {

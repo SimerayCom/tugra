@@ -13,6 +13,9 @@ import { api } from "../lib/api";
 import importMessages from "../i18n/locales/en/import.json";
 import type { ImportPlan, ImportServiceChoice, ImportServicePreview, ImportChecklistItem } from "../lib/types";
 
+// the review's start action opens the launch page through the router
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
+
 afterEach(cleanup);
 
 let qc: QueryClient;

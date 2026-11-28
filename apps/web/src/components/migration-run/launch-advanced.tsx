@@ -33,7 +33,7 @@ export function PolicySelect({ policy, value, onChange }: { policy: OwnerPolicyK
 
 /** The launch form's "Advanced options": campaign, who runs the migrator (with the host-loop tuning), build timing and
  *  concurrency, large databases and the fleet policy answers. Every default is the hub's safe one. */
-export function AdvancedFields({ value, onChange, issues }: { value: AdvancedState; onChange: (next: AdvancedState) => void; issues: LaunchIssue[] }) {
+export function AdvancedFields({ value, onChange, issues, hideCampaign = false }: { value: AdvancedState; onChange: (next: AdvancedState) => void; issues: LaunchIssue[]; /** The campaign name is asked at the top of the page. */ hideCampaign?: boolean }) {
   const t = useT();
   const set = <K extends keyof AdvancedState>(k: K, v: AdvancedState[K]) => onChange({ ...value, [k]: v });
   const setLoop = (k: keyof HostLoopForm, v: string) => set("hostLoop", { ...value.hostLoop, [k]: v });
@@ -45,9 +45,11 @@ export function AdvancedFields({ value, onChange, issues }: { value: AdvancedSta
       <div style={{ display: "flex", flexDirection: "column", gap: 14, marginTop: 12 }}>
         <p style={{ margin: 0, fontSize: 12, color: "var(--c-tx3)", lineHeight: 1.5 }}>{t("migrationRun.launch.advanced.desc")}</p>
 
-        <Field label={t("migrationRun.launch.advanced.campaign")} hint={t("migrationRun.launch.advanced.campaignHint")} error={issues.includes("campaign") ? t("migrationRun.launch.advanced.campaignInvalid") : undefined}>
-          <TextInput value={value.campaign} onChange={(e) => set("campaign", e.target.value)} maxLength={80} autoComplete="off" style={{ minHeight: 44 }} />
-        </Field>
+        {!hideCampaign && (
+          <Field label={t("migrationRun.launch.advanced.campaign")} hint={t("migrationRun.launch.advanced.campaignHint")} error={issues.includes("campaign") ? t("migrationRun.launch.advanced.campaignInvalid") : undefined}>
+            <TextInput value={value.campaign} onChange={(e) => set("campaign", e.target.value)} maxLength={80} autoComplete="off" style={{ minHeight: 44 }} />
+          </Field>
+        )}
 
         <Field label={t("migrationRun.launch.advanced.runner")} hint={t("migrationRun.launch.advanced.runnerHint")}>
           <Select

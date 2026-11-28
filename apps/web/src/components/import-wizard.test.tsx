@@ -7,10 +7,14 @@ import { ConfirmProvider } from "./confirm";
 import { ImportWizard } from "./import-wizard";
 import { api, ApiError } from "../lib/api";
 import { subscribeToast } from "../lib/toast-bus";
+import { saveLaunchHandoff } from "../lib/launch-handoff";
 import type { ImportPlan, ImportOperation } from "../lib/types";
 import importMessages from "../i18n/locales/en/import.json";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+
+const push = vi.fn();
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push }) }));
 
 afterEach(cleanup);
 
@@ -398,7 +402,9 @@ describe("ImportWizard", () => {
     fireEvent.click(screen.getByRole("button", { name: "Connect & preview" }));
     await screen.findByText("Import preview");
 
-    expect(screen.getByRole("button", { name: "Run guided migration" })).toBeTruthy();
+    // one start action at the top of the review and the same one pinned at its end (no dialog opens)
+    expect(screen.getAllByRole("button", { name: /^(Start the guided move|Start moving|Move )/ })).toHaveLength(2);
+    expect(screen.getByTestId("guided-start-end")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Import to Tugra" })).toBeTruthy(); // the manual flow is untouched
   });
 
@@ -1523,7 +1529,9 @@ describe("ImportWizard — editable mapping", () => {
     await screen.findByText("Import preview");
     expect(screen.getByText("api-app")).toBeTruthy();
     expect(screen.queryByText("web-app")).toBeNull();
-    expect(screen.getByRole("button", { name: "Run guided migration" })).toBeTruthy();
+    // one start action at the top of the review and the same one pinned at its end (no dialog opens)
+    expect(screen.getAllByRole("button", { name: /^(Start the guided move|Start moving|Move )/ })).toHaveLength(2);
+    expect(screen.getByTestId("guided-start-end")).toBeTruthy();
     // Change reopens the first step as it was left
     fireEvent.click(screen.getByRole("button", { name: "Change" }));
     await screen.findByText("What are you moving?");
@@ -1562,8 +1570,8 @@ describe("ImportWizard — editable mapping", () => {
       },
       mapping: { features: ["mapping-v1"], stored: null, storedVersion: null, scopeKey: "team-3" },
     };
-    const toPreview = async (hosts: string[], target?: string) => {
-      vi.spyOn(api, "importConnect").mockResolvedValue({ sessionId: "s1", expiresAt: "2026-01-01T00:00:00.000Z" });
+    const toPreview = async (hosts: string[], target?: string, sessionId = "s1") => {
+      vi.spyOn(api, "importConnect").mockResolvedValue({ sessionId, expiresAt: "2026-01-01T00:00:00.000Z" });
       vi.spyOn(api, "importPlan").mockResolvedValue(placed);
       wrap(<ImportWizard />);
       await openToken();
@@ -1634,14 +1642,41 @@ describe("ImportWizard — editable mapping", () => {
       await toPreview(["Box One"]);
       expect(screen.queryByRole("button", { name: "Review & rename" })).toBeNull();
       expect(screen.getByTestId("in-place-guided").textContent).toContain("taken over by the guided run");
-      expect(screen.getByRole("button", { name: "Run guided migration" })).toBeTruthy();
+      // one start action at the top of the review and the same one pinned at its end (no dialog opens)
+      expect(screen.getAllByRole("button", { name: /^(Start the guided move|Start moving|Move )/ })).toHaveLength(2);
+      expect(screen.getByTestId("guided-start-end")).toBeTruthy();
+    });
+
+    it("the start action is the primary button, says what it moves, and opens the launch page with the choices instead of a dialog", async () => {
+      push.mockReset();
+      window.sessionStorage.removeItem("tugra.import.launch");
+      await toPreview(["Box One"], undefined, "session-abc12345");
+      const [top] = screen.getAllByRole("button", { name: "Move this server in place" }) as HTMLButtonElement[];
+      expect(top.className).not.toContain("ghost");
+      fireEvent.click(top);
+      expect(screen.queryByRole("dialog")).toBeNull();
+      expect(push).toHaveBeenCalledWith("/import/guided/new?s=session-abc12345");
+      const saved = JSON.parse(window.sessionStorage.getItem("tugra.import.launch") ?? "{}");
+      expect(saved).toMatchObject({ sessionId: "session-abc12345", kind: "coolify", planHash: placed.planHash });
+      expect(saved.scope.placementKind).toEqual({ s1: "in-place" });
+    });
+
+    it("the start action is also the last thing on the long review, pinned to the bottom", async () => {
+      await toPreview(["Box One"]);
+      const bar = screen.getByTestId("guided-start-bar");
+      expect(bar.style.position).toBe("sticky");
+      expect(within(bar).getByRole("button", { name: "Move this server in place" })).toBeTruthy();
+      // nothing is left of the old heading block in the middle of the card
+      expect(screen.queryByText("Let the hub drive the whole move, with approvals along the way. The manual apply above stays available.")).toBeNull();
     });
 
     it("a mix of in-place and moved servers is guided only too", async () => {
       await toPreview(["Box One", "Box Two"], "srv2");
       expect(screen.queryByRole("button", { name: "Review & rename" })).toBeNull();
       expect(document.querySelector('[data-testid$="-guided"]')).not.toBeNull(); // in place and moved (here also into another team): one guided run
-      expect(screen.getByRole("button", { name: "Run guided migration" })).toBeTruthy();
+      // one start action at the top of the review and the same one pinned at its end (no dialog opens)
+      expect(screen.getAllByRole("button", { name: /^(Start the guided move|Start moving|Move )/ })).toHaveLength(2);
+      expect(screen.getByTestId("guided-start-end")).toBeTruthy();
     });
 
     it("servers that only move keep the plain Review & rename", async () => {
@@ -1745,7 +1780,9 @@ describe("ImportWizard — editable mapping", () => {
     await screen.findByText("Import preview");
     expect(screen.getByTestId("multi-team-guided")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Review & rename" })).toBeNull();
-    expect(screen.getByRole("button", { name: "Run guided migration" })).toBeTruthy();
+    // one start action at the top of the review and the same one pinned at its end (no dialog opens)
+    expect(screen.getAllByRole("button", { name: /^(Start the guided move|Start moving|Move )/ })).toHaveLength(2);
+    expect(screen.getByTestId("guided-start-end")).toBeTruthy();
   });
 
   describe("a refresh resumes the first step", () => {
@@ -1783,6 +1820,36 @@ describe("ImportWizard — editable mapping", () => {
       expect(planSpy).toHaveBeenLastCalledWith({ sourceKind: "coolify", sessionId: SID });
       expect((screen.getByRole("checkbox", { name: /Box Two/ }) as HTMLInputElement).checked).toBe(true);
       expect((screen.getByRole("checkbox", { name: /Box One/ }) as HTMLInputElement).checked).toBe(false);
+    });
+
+    it("coming back from the launch page opens the review as it was (the choices are in the session), and 'Change' forgets them", async () => {
+      const scope = {
+        selection: { mode: "servers" as const, hosts: new Set(["s2"]), projects: new Set<string>(), extra: new Set<string>(), placement: { s2: "srv2" } },
+        inScope: new Set(["app:s2:api"]),
+        narrowed: true,
+        defaultServerId: "srv2",
+        serverMap: undefined,
+        placed: { s2: "srv2" },
+        placementKind: { s2: "other-server" as const },
+      };
+      window.sessionStorage.setItem("tugra.import.resume", JSON.stringify({ v: 1, kind: "coolify", baseUrl: "", sessionId: SID, dbModes: {} }));
+      saveLaunchHandoff({ kind: "coolify", sessionId: SID, planHash: multi.planHash, extras: {}, scope });
+      vi.spyOn(api, "importPlan").mockResolvedValue(multi);
+      wrap(<ImportWizard />);
+      await screen.findByText("Import preview");
+      expect(screen.getByText("api-app")).toBeTruthy();
+      expect(screen.queryByText("web-app")).toBeNull();
+      fireEvent.click(screen.getByRole("button", { name: "Change" }));
+      await screen.findByText("What are you moving?");
+      expect(window.sessionStorage.getItem("tugra.import.launch")).toBeNull();
+    });
+
+    it("a source that changed while the owner was away does not bring the old choices back", async () => {
+      window.sessionStorage.setItem("tugra.import.resume", JSON.stringify({ v: 1, kind: "coolify", baseUrl: "", sessionId: SID, dbModes: {} }));
+      saveLaunchHandoff({ kind: "coolify", sessionId: SID, planHash: "c".repeat(32), extras: {}, scope: { selection: { mode: "everything", hosts: new Set(), projects: new Set(), extra: new Set(), placement: {} }, inScope: new Set(["app:s2:api"]), narrowed: true, defaultServerId: "srv2", serverMap: undefined, placed: { s2: "srv2" }, placementKind: { s2: "other-server" } } });
+      vi.spyOn(api, "importPlan").mockResolvedValue(multi);
+      wrap(<ImportWizard />);
+      await screen.findByText("What are you moving?");
     });
 
     it("an ended hub session falls back to the connect form with the address kept and says why", async () => {

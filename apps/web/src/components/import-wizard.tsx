@@ -16,6 +16,7 @@ import type { SourceServerRow } from "../lib/migration-run";
 import { isInPlaceItem, overallPlacement, scopedPlan, scopeServiceSkips, splitByPlacement, withoutInPlaceCopyNotes, type ImportScope, type ScopeSelection } from "../lib/import-scope";
 import { planDelta, recoveryOf, sessionGone } from "../lib/import-recovery";
 import { clearImportResume, loadImportResume, saveImportResume } from "../lib/import-resume";
+import { clearLaunchHandoff, loadLaunchHandoff } from "../lib/launch-handoff";
 import { IMPORT_PREFILL_KEY } from "../lib/coolify-takeover";
 import { focusSelection, focusSubject, lastImportUrl, rememberLastImportUrl, takeImportFocus, type ImportFocus } from "../lib/import-focus";
 import { rememberObjectMigrationContext } from "../lib/object-migration-context";
@@ -37,7 +38,8 @@ import { AgentConsentGate } from "./import/agent-consent-gate";
 import { MoreInfo } from "./help-link";
 import { guideUrl } from "../lib/help-links";
 import { ImportChecklist } from "./import-checklist";
-import { GuidedRunLauncher } from "./migration-run/guided-run-launcher";
+import { GuidedStartAction, GuidedStartBar, type GuidedStartProps } from "./migration-run/guided-run-launcher";
+import { START_ANCHOR } from "../lib/launch-start";
 import type { Team, ImportApplyExtras, ImportPlan, ImportPlanItem, ImportRiskLevel, ImportOperation, ImportOpTask, ImportRemoteKind, ImportServiceChoice, ImportTaskStatus, MintedMigrationToken, ImportRemapPlan, ImportRemapResult, VxCommands } from "../lib/types";
 
 const toneColor: Record<"danger" | "warning" | "info", string> = {
@@ -255,6 +257,7 @@ export function ImportWizard() {
   /** The hub session is gone: forget it and start from the connect form again, with the address kept. */
   const sessionEnded = () => {
     clearImportResume();
+    clearLaunchHandoff();
     setSessionId(null);
     setPlan(null);
     setScope(null);
@@ -276,6 +279,12 @@ export function ImportWizard() {
       }
       planRef.current = p;
       setPlan(p);
+      // Back from the launch page: the choices made on the review are still in the session, so the review opens again as it was
+      // (as long as the source says the same thing it said then).
+      if (v.resume) {
+        const back = loadLaunchHandoff();
+        if (back?.scope && back.sessionId === v.sid && back.planHash === p.planHash) setScope(back.scope);
+      }
       // Start the first step on what the user came for (one server or project), once.
       const f = focusRef.current;
       const sel = focusSelection(p, f, writableRef.current.map((s) => ({ id: s.id, teamId: s.teamId })));
@@ -361,6 +370,7 @@ export function ImportWizard() {
 
   const reset = () => {
     clearImportResume();
+    clearLaunchHandoff();
     liveSelection.current = undefined;
     setResumeNote(null);
     setResumeFailure(null);
@@ -496,7 +506,7 @@ export function ImportWizard() {
         plan={scope ? scopedPlan(plan, scope.inScope) : plan}
         fullPlan={plan}
         scope={scope}
-        onChangeScope={() => setScope(null)}
+        onChangeScope={() => { clearLaunchHandoff(); setScope(null); }}
         kind={kind}
         servers={servers.filter((s) => s.teamId === effectiveTeam).map((s) => ({ id: s.id, name: s.name }))}
         writableServers={servers.filter((s) => s.canWrite).map((s) => ({ id: s.id, name: s.name, teamId: s.teamId, status: s.status, capabilities: s.capabilities, canWrite: s.canWrite }))}
@@ -790,6 +800,20 @@ function PlanView({
   const modes = dbModes;
   const applyExtras: ImportApplyExtras = { ...(acks.length ? { acks } : {}), ...(serviceChoices ? { serviceChoices } : {}), ...(Object.keys(modes).length ? { dbDataModes: modes } : {}) };
 
+  const startProps: GuidedStartProps = {
+    plan,
+    kind,
+    sessionId,
+    extras: applyExtras,
+    scope,
+    serverNames: Object.fromEntries(writableServers.map((w) => [w.id, w.name])),
+    replanning,
+    consentMissing,
+    runnable,
+    unackedCount,
+    missingTargets,
+  };
+
   const apply = useMutation({
     mutationFn: () => api.importApply({ sourceKind: kind, sessionId, targetServerId: target, planHash: plan.planHash, ...applyExtras }),
     onSuccess: (r) => onApplied(r.opId),
@@ -953,7 +977,7 @@ function PlanView({
         <DbDataModes plan={moved} modes={dbModes} busy={replanning} onChange={onDbModes} />
 
         {consentMissing && (
-          <div style={{ marginTop: 14 }}>
+          <div id={START_ANCHOR.consent} style={{ marginTop: 14 }}>
             <AgentConsentGate plan={fullPlan} sessionId={sessionId} host={agentHost} onChanged={onRecheck} />
           </div>
         )}
@@ -986,10 +1010,17 @@ function PlanView({
         </Btn>
         </>
         )}
-        {kind !== "caprover" && <GuidedRunLauncher plan={plan} kind={kind} sessionId={sessionId} servers={writableServers} teams={teams} extras={applyExtras} scope={scope} onChangeScope={onChangeScope} onRecheck={onRecheck} disabled={replanning || consentMissing || runnable === 0 || unackedCount > 0 || missingTargets > 0} />}
+        {kind !== "caprover" && (
+          // the guided move starts on its own page; the one action is here and again at the end of the review
+          <div style={{ marginTop: guidedOnly ? 4 : 14 }}>
+            <GuidedStartAction props={startProps} testId="guided-start-top" variant={guidedOnly ? "primary" : "ghost"} />
+          </div>
+        )}
       </SectionCard>
 
-      <EnvBlockers plan={plan} acked={acked} onChange={setAcked} />
+      <div id={START_ANCHOR.warnings}>
+        <EnvBlockers plan={plan} acked={acked} onChange={setAcked} />
+      </div>
       {target && (plan.preflight?.git?.hosts.length ?? 0) > 0 && <GitLinksPanel sessionId={sessionId} targetServerId={target} plan={plan} />}
       <CoverageCard plan={withoutInPlaceCopyNotes(plan, scope)} />
       {settingsTeam === null ? (
@@ -997,10 +1028,13 @@ function PlanView({
       ) : (
         <ImportSettingsPanel sessionId={sessionId} kind={kind} teamId={settingsTeam ?? writableServers.find((w) => w.id === target)?.teamId} teamName={settingsTeam ? teams.find((x) => x.id === settingsTeam)?.name : undefined} servers={servers} agentConsent={agentConsentOf(fullPlan)} />
       )}
-      <ImportServicesPanel sessionId={sessionId} kind={kind} plan={plan} placementKind={scope?.placementKind} servers={servers} choices={choices} onChoice={onChoice} onMissingTargets={setMissingTargets} />
+      <div id={START_ANCHOR.services}>
+        <ImportServicesPanel sessionId={sessionId} kind={kind} plan={plan} placementKind={scope?.placementKind} servers={servers} choices={choices} onChoice={onChoice} onMissingTargets={setMissingTargets} />
+      </div>
       <Section title={t("import.appsSection")} items={groups.app} />
       <Section title={t("import.databasesSection")} items={groups.database} />
       {groups.volume.length > 0 && <Section title={t("import.volumesSection")} items={groups.volume} />}
+      {kind !== "caprover" && <GuidedStartBar props={startProps} />}
     </div>
   );
 }
