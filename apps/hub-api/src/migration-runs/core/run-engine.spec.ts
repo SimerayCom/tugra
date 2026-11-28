@@ -235,6 +235,8 @@ describe("RunEngine: parking and re-observing", () => {
     expect(n).toBe(4);
     expect(w.status(id)).toBe("COMPLETED");
     expect(w.clock.sleeps).toBeGreaterThanOrEqual(3);
+    // four polls are one try: "attempt N" is for real retries only
+    expect(w.store.step(id, "DATA_SEED").attempt).toBe(1);
   });
 
   it("a step whose applicable() is false is SKIPPED with a code", async () => {
@@ -637,6 +639,9 @@ describe("RunEngine: failures, retry and skip", () => {
     const id = await w.run();
     const s = (await w.view(id)).steps.find((x) => x.key === "DATA_SEED")!;
     expect(s.lastError).toBe("data.volume-diverged");
+    // the sentence's placeholders are filled from the failure's own params, in the step and in "what I am waiting for"
+    expect(s.lastErrorParams).toEqual({ volume: "v1" });
+    expect((await w.view(id)).nextAction).toMatchObject({ kind: "failed", code: "data.volume-diverged", params: { volume: "v1" } });
     expect(s.allowed.retry).toBe(false);
     await expect(w.service.retry(ACTOR, id, "DATA_SEED", {})).rejects.toThrow(/step-not-retryable/);
     await w.service.abort(ACTOR, id, { confirmName: id });

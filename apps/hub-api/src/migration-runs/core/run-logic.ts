@@ -19,6 +19,7 @@ import {
 import { ServerMapSchema, SourceBaselineSchema } from "./dto";
 import type {
   ApprovalBinding,
+  CodeParams,
   DryRunItem,
   GateCheck,
   GateResult,
@@ -170,6 +171,18 @@ export function failureGate(code: string, params: GateCheck["params"] | undefine
   };
 }
 
+/**
+ * The interpolation params of a failed step's code (`{host}`, `{app}`, ...), read back from its failure check: the engine stores the params
+ * there next to `retryable` and nowhere else, so a view that shows the code alone would print the placeholders unfilled. Undefined when none.
+ */
+export const failureParamsOf = (gate: GateResult | null): CodeParams | undefined => {
+  const c = gate?.checks.find((x) => x.id === FAILURE_CHECK_ID);
+  if (!c?.params) return undefined;
+  const { retryable: _retryable, ...rest } = c.params;
+  void _retryable;
+  return Object.keys(rest).length > 0 ? rest : undefined;
+};
+
 /** Is a FAILED step retryable (its failure check says so; a failed gate without one is retryable)? */
 export const isRetryable = (gate: GateResult | null): boolean => {
   const c = gate?.checks.find((x) => x.id === FAILURE_CHECK_ID);
@@ -232,10 +245,12 @@ export function deriveNextAction(run: RunFacts, steps: ReadonlyMap<StepKey, Step
   if (isTerminal(run.status)) return { kind: "none", stepKey: null, code: statusCode(run.status), since: iso(run.finishedAt, run.updatedAt) };
   if (run.status === "PAUSED") return { kind: "paused", stepKey: run.currentStep, code: "run.paused", since: run.updatedAt.toISOString() };
   if (run.status === "FAILED") {
+    const params = failureParamsOf((run.failureStep ? steps.get(run.failureStep)?.gate : null) ?? null);
     return {
       kind: "failed",
       stepKey: run.failureStep,
       code: run.failureCode && isRunCode(run.failureCode) ? run.failureCode : "run.failed",
+      ...(params ? { params } : {}),
       since: run.updatedAt.toISOString(),
     };
   }

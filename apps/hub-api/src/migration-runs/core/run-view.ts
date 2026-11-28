@@ -31,7 +31,7 @@ import {
   type StepStatus,
   type RollbackClass,
 } from "./run-contract";
-import { deriveNextAction, deriveRunAllowed, deriveStepAllowed, flowKeys, measuredDowntimeSec, serverMapOf, sourceBaselineOf, stripSince, type RunFacts, type StepFacts } from "./run-logic";
+import { deriveNextAction, deriveRunAllowed, deriveStepAllowed, failureParamsOf, flowKeys, measuredDowntimeSec, serverMapOf, sourceBaselineOf, stripSince, type RunFacts, type StepFacts } from "./run-logic";
 import type { RunRow, StepRow } from "./run-store";
 
 const iso = (d: Date | null): string | null => (d ? d.toISOString() : null);
@@ -96,6 +96,7 @@ function stepView(run: RunFacts, s: StepRow, facts: StepFacts): MigrationRunStep
     startedAt: iso(s.startedAt),
     finishedAt: iso(s.finishedAt),
     lastError: status === "FAILED" ? code(s.lastError) : null,
+    lastErrorParams: status === "FAILED" ? (failureParamsOf(facts.gate) ?? null) : null,
     allowed: deriveStepAllowed(run, facts),
   };
 }
