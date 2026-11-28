@@ -267,13 +267,35 @@ describe("a launch that stops partway does not leave the owner guessing", () => 
     mount();
     await pressStart();
     const note = await screen.findByTestId("launch-partial");
-    expect(note.textContent).toContain("2 of 3 runs were created");
+    expect(note.textContent).toContain("2 of 3 runs had been created")
+    expect(note.textContent).not.toContain("Nothing else was started");
     expect(within(note).getByRole("link", { name: "Open the campaign" }).getAttribute("href")).toBe("/import/runs/campaign?c=Mine");
     expect(push).not.toHaveBeenCalled();
     expect(window.sessionStorage.getItem(LAUNCH_HANDOFF_KEY)).not.toBeNull();
-    // nothing was started, and the form is back
+    // the form is back, and this page started nothing itself (the hub starts the first run in the create request)
     expect(api.startMigrationRun).not.toHaveBeenCalled();
     expect(screen.queryByTestId("launch-progress")).toBeNull();
+  });
+
+  it("a retry after a failed create makes a new neutral name, since the hub keeps the first one", async () => {
+    const create = vi.spyOn(api, "createCampaign").mockRejectedValueOnce(new Error("timeout")).mockResolvedValue({ id: "c1", label: "x", sessionId: "s", status: "draft", plan: threeRuns, runIds: ["r1"], createdAt: "2026-11-28T07:48:00Z" } as never);
+    campaignRuns([]);
+    mount();
+    const f = await form();
+    const press = async () => {
+      const submit = await within(f).findByRole("button", { name: "Create 3 runs and start" });
+      await waitFor(() => expect((submit as HTMLButtonElement).disabled).toBe(false));
+      fireEvent.click(submit);
+    };
+    await press();
+    await waitFor(() => expect(create).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(screen.queryByTestId("launch-progress")).toBeNull());
+    await press();
+    await waitFor(() => expect(create).toHaveBeenCalledTimes(2));
+    const [first, second] = create.mock.calls.map((c) => (c[0] as { label?: string }).label);
+    expect(first).toMatch(/^campaign-\d{8}-\d{4}-[a-z0-9]{4}$/);
+    expect(second).toMatch(/^campaign-\d{8}-\d{4}-[a-z0-9]{4}$/);
+    expect(second).not.toBe(first);
   });
 
   it("says nothing extra when no run was made before the failure", async () => {

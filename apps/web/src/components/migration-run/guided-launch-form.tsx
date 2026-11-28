@@ -79,7 +79,7 @@ export function GuidedLaunchForm({ plan, kind, sessionId, servers, teams, extras
   const [phase, setPhase] = useState<"form" | "creating" | "starting">("form");
   const submittedAt = useRef(0);
   // a campaign that failed partway: how many of its runs the hub had already made, so the owner is not left with an unexplained form
-  const [partial, setPartial] = useState<{ made: number; total: number } | null>(null);
+  const [partial, setPartial] = useState<{ made: number; total: number; label: string } | null>(null);
   const madeRef = useRef(0);
   // The run starts from what the first step chose, narrowed or not: its target, and its placement when it used several servers.
   const chosenTarget = scope && servers.some((s) => s.id === scope.defaultServerId) ? scope.defaultServerId : "";
@@ -111,7 +111,7 @@ export function GuidedLaunchForm({ plan, kind, sessionId, servers, teams, extras
   const [placement, setPlacement] = useState<MigrationRunServerMap | null>(chosenTarget && scope?.serverMap ? { ...scope.serverMap } : null);
   // A move that nobody named gets a label that says nothing in any language (the day it was made, in UTC); the campaign page shows the date in the
   // viewer's own language. It is made here, once, so the progress of the creation can find the runs by it.
-  const [autoLabel] = useState(() => newCampaignLabel());
+  const [autoLabel, setAutoLabel] = useState(() => newCampaignLabel());
   const [adv, setAdv] = useState<AdvancedState>({
     campaign: "",
     sourceRunner: "operator",
@@ -290,7 +290,10 @@ export function GuidedLaunchForm({ plan, kind, sessionId, servers, teams, extras
         }
       }
       setPhase("form");
-      if (campaign && madeNow > 0) setPartial({ made: Math.min(madeNow, total), total });
+      // A failed create may have left campaign rows under this label (the hub keeps them, cancelled), and a label is unique per team: a retry with the
+      // same made-up label would be refused. A name the owner typed stays as typed.
+      if (campaign) setAutoLabel(newCampaignLabel());
+      if (campaign && madeNow > 0) setPartial({ made: Math.min(madeNow, total), total, label });
       toast(errorText(t, e), "error");
     },
   });
@@ -369,7 +372,7 @@ export function GuidedLaunchForm({ plan, kind, sessionId, servers, teams, extras
           {partial && (
             <div role="alert" data-testid="launch-partial" style={{ border: "1px solid var(--c-am)", borderRadius: "var(--r2)", padding: 12, fontSize: 13, lineHeight: 1.5, display: "flex", flexDirection: "column", gap: 6 }}>
               <span>{t("migrationRun.launch.page.partial", { made: partial.made, total: partial.total })}</span>
-              <Link href={campaignReportHref(label)} className="tg-link">{t("migrationRun.launch.page.partialOpen")}</Link>
+              <Link href={campaignReportHref(partial.label)} className="tg-link">{t("migrationRun.launch.page.partialOpen")}</Link>
             </div>
           )}
           <SectionCard title={t("migrationRun.launch.page.what")} style={section}>

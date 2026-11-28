@@ -640,7 +640,7 @@
       "dryMany": "Start {count} dry runs",
       "takeover": "Start the takeover",
       "wavesNote": "The hub moves the servers one after the other and asks you before each switch. Once it has started you can close this page.",
-      "partial": "{made} of {total} runs were created before it stopped. Nothing else was started. Open the campaign to see them; starting again is refused on a server that already has a run.",
+      "partial": "{made} of {total} runs had been created when the request ended. The hub may still be working on the move, so open the campaign to see where it is. Starting again is refused on a server that already has a run.",
       "partialOpen": "Open the campaign",
       "whyServer": "A server of this move cannot take it yet. See the note above.",
       "whyBusy": "A server of this move is busy with another run. See the note above.",
@@ -875,7 +875,8 @@
     "consent-required": "Reading secret values is not allowed for this source connection yet. Allow it on this page, then start.",
     "campaign-cancelled": "This move was cancelled, so its dry run cannot be started. Start a new guided migration.",
     "campaign-swap-busy": "Another server is switching now. Approve this one when it has finished.",
-    "campaign-creator-only": "Only the person who created this campaign can start it."
+    "campaign-creator-only": "Only the person who created this campaign can start it.",
+    "campaign-label-taken": "A campaign with this name already exists. Open it from the campaign list, or choose another name."
   },
   "codes": {
     "unknown": "{code}{params}",
