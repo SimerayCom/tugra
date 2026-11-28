@@ -171,6 +171,31 @@ describe("image digests (R11)", () => {
     ]);
   });
 
+  it("reports the version label of the image, only when it is a plain token, and an older report without it parses unchanged", () => {
+    const r = run({
+      containers: [
+        { id: A, name: "meili0aaaaaaaaaaaaaaaaaaaaa", image: "getmeili/meilisearch:latest", repoDigests: [`getmeili/meilisearch@${D1}`], versionLabel: "1.11.3" },
+        { id: B, name: "odd-label", image: "x/y:latest", repoDigests: [`x/y@${D2}`], versionLabel: "1.0 beta (rc)" },
+        { id: C, name: "no-label", image: "nginx:1.27", repoDigests: [`nginx@${D2}`] },
+      ],
+    });
+    const inv = r.parsed.inventory.get("srv-1")!;
+    expect(inv.complete).toBe(true);
+    expect(inv.rejected).toBe(0);
+    expect(inv.containers.map((c) => [c.name, c.imageVersion])).toEqual([
+      ["meili0aaaaaaaaaaaaaaaaaaaaa", "1.11.3"],
+      ["odd-label", undefined],
+      ["no-label", undefined],
+    ]);
+  });
+
+  it("a version line that is not a plain token, or names an unknown container, is dropped and counted", () => {
+    const text = ["ctr\t" + [A, "x", "postgres:16", "running"].join("\t"), "rver\t" + [A, "1.0 beta"].join("\t"), "rver\t" + [B, "1.0"].join("\t"), "rver\t" + [A, "2.4.1"].join("\t"), "end\t4"].map((l) => `TUGRA_AT\tsrv-1\tTUGRA_INV\t${l}`).join("\n");
+    const inv = parseReportBody(text).inventory.get("srv-1")!;
+    expect(inv.rejected).toBe(2);
+    expect(inv.containers[0].imageVersion).toBe("2.4.1");
+  });
+
   it("a locally built image has no RepoDigests: nothing is reported for it and the inventory is still whole", () => {
     const r = run({ containers: [{ id: A, name: "built-here", image: "app:local" }] });
     expect(r.parsed.inventory.get("srv-1")).toMatchObject({ complete: true, rejected: 0, containers: [expect.objectContaining({ name: "built-here" })] });

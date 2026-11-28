@@ -171,6 +171,52 @@ const writeBin = (name: string, body: string) => {
 };
 const run = (script: string, env: Record<string, string> = {}) => spawnSync("/bin/sh", ["-c", script], { env: { PATH: `${bin}:/usr/bin:/bin`, HOME: dir, ...env }, encoding: "utf8" });
 
+describe("the exact image of a container (digests and version label), executed against a fake docker", () => {
+  const DG = `sha256:${"d".repeat(64)}`;
+  const fakeDocker = `
+case "$1" in
+  inspect)
+    case "$3" in
+      *RestartPolicy*) echo "always";;
+      *.Name*) echo "/${ctr.name}|${ctr.image}";;
+      *Image*) echo "sha256:${"c".repeat(64)}";;
+      *) ;;
+    esac;;
+  image)
+    case "$4" in
+      *RepoDigests*) [ -n "\${DIGESTS:-}" ] && printf '%s\\n' $DIGESTS;;
+      *Labels*) printf '%s\\n' "\${VERSION:-}";;
+    esac;;
+esac
+exit 0
+`;
+  it("reads the registry digests and the version label of the image the container runs, and parses them", () => {
+    writeBin("docker", fakeDocker);
+    const r = run(buildContainerDetailScript([ctr]), { DIGESTS: `abc@${DG} mirror/abc@${DG}`, VERSION: "1.11.3" });
+    expect(r.stdout).toContain(`TUGRA_IP_RDIG|${ID}|abc@${DG}`);
+    expect(r.stdout).toContain(`TUGRA_IP_IMGVER|${ID}|1.11.3`);
+    const d = parseContainerDetail(r.stdout, [ID])!.get(ID)!;
+    expect(d.repoDigests).toEqual([`abc@${DG}`, `mirror/abc@${DG}`]);
+    expect(d.imageVersion).toBe("1.11.3");
+  });
+  it("a host that reports no digest and no label gives a detail with neither (unknown, never a failure)", () => {
+    writeBin("docker", fakeDocker);
+    const d = parseContainerDetail(run(buildContainerDetailScript([ctr])).stdout, [ID])!.get(ID)!;
+    expect(d.restart).toBe("always");
+    expect(d.repoDigests).toBeUndefined();
+    expect(d.imageVersion).toBeUndefined();
+  });
+  it("a version label that is not a plain token is never printed; a digest line of another shape is dropped", () => {
+    writeBin("docker", fakeDocker);
+    const r = run(buildContainerDetailScript([ctr]), { VERSION: "1.0 (beta)" });
+    expect(r.stdout).not.toContain("IMGVER");
+    const out = [`TUGRA_IP_RESTART|${ID}|always`, `TUGRA_IP_IMAGE|${ID}|sha256:${"c".repeat(64)}`, `TUGRA_IP_RDIG|${ID}|abc@sha256:short`, `TUGRA_IP_RDIG|${ID2}|abc@${DG}`, `TUGRA_IP_IMGVER|${ID}|bad value`, "TUGRA_IP_DETAIL_END"].join("\n");
+    const d = parseContainerDetail(out, [ID])!.get(ID)!;
+    expect(d.repoDigests).toBeUndefined();
+    expect(d.imageVersion).toBeUndefined();
+  });
+});
+
 describe("probe, executed against a fake curl", () => {
   const fakeCurl = `
 out=""; res=""; url=""

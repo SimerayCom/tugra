@@ -12,6 +12,7 @@
  * Nothing in this protocol can carry a secret: names, ids, sizes and fixed codes only.
  */
 import type { RecordedContainer } from "../data-contract";
+import { VERSION_LABEL_RE } from "../../../../importer/exact-image";
 
 export const AT_MARK = "TUGRA_AT";
 export const HOST_MARK = "TUGRA_HOST";
@@ -113,6 +114,8 @@ export interface InvContainer {
   state: string;
   /** R11: the registry digests (`repo@sha256:<64 hex>`) of the image a RUNNING container uses, as the host's docker reports them. */
   repoDigests?: string[];
+  /** The version the running image labels itself with (`org.opencontainers.image.version`); absent when it has none or the script is older. */
+  imageVersion?: string;
   /** R2: only for a container whose image looks like a database. */
   db?: InvDbMeta;
 }
@@ -276,6 +279,11 @@ export function parseReportBody(text: string): ParsedReport {
         if (!c || !REPO_DIGEST_RE.test(a[2])) bad();
         else if ((c.repoDigests?.length ?? 0) >= 8) bad();
         else if (!c.repoDigests?.includes(a[2])) c.repoDigests = [...(c.repoDigests ?? []), a[2]];
+      } else if (kind === "rver") {
+        // ctrId, version (the image's own version label; only a plain token)
+        const c = a.length === 3 ? i.containers.find((x) => x.id === a[1]) : undefined;
+        if (!c || !VERSION_LABEL_RE.test(a[2])) bad();
+        else c.imageVersion = a[2];
       } else if (kind === "dbmeta") {
         // ctrId, user|-, database|-, cred, version|-
         const c = a.length === 6 ? i.containers.find((x) => x.id === a[1]) : undefined;

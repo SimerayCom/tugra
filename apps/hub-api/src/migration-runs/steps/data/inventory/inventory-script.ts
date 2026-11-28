@@ -12,7 +12,8 @@
  *    volume mountpoint is measured with `du -skx`. A path `du` cannot read (or that takes longer than TUGRA_DU_TIMEOUT seconds,
  *    default 300) is reported as `unknown`, never as 0.
  *  - IMAGE DIGESTS (R11): for every RUNNING container it reports the registry digests of the image it runs (`docker image inspect`
- *    RepoDigests), so the hub can pin a floating tag (`latest`) to what the source really runs.
+ *    RepoDigests) and the version the image labels itself with (`org.opencontainers.image.version`, when it is a plain token), so the
+ *    hub can pin an image to exactly what the source really runs.
  *  - DATABASE FACTS (R2): for a container whose image is a database it reads the container's environment to report the NON-secret
  *    identity a carry needs (user, database name, version) and whether a password the migrator can use exists (`env`, `file`,
  *    `none`, `acl`). It never prints, stores or sends a password: presence is tested with `grep -q` on a temp file in the 0700 work
@@ -83,6 +84,12 @@ tugra_inventory() {
       emit rdig "$1" "$(clean "$rd")"
     done < "$W/rd"
     rm -f "$W/rd"
+    # the version the image labels itself with (org.opencontainers.image.version), only when it is a plain token the hub accepts
+    iv=$(docker image inspect -f '{{index .Config.Labels "org.opencontainers.image.version"}}' "$imgid" 2>/dev/null </dev/null)
+    case "$iv" in
+      ''|*[!A-Za-z0-9._+~-]*|[!A-Za-z0-9]*) ;;
+      *) if [ "$(printf '%s' "$iv" | wc -c | tr -cd '0-9')" -le 64 ]; then emit rver "$1" "$iv"; fi ;;
+    esac
   }
   # a database identifier the hub accepts (alphanumerics . _ -, at most 63 characters), else "-" (unknown)
   dbident() {

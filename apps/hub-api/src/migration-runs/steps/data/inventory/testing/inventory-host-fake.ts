@@ -34,6 +34,8 @@ export interface FakeInvContainer {
   args?: string[];
   /** `RepoDigests` of the container's image (`repo@sha256:<hex>`); the fake answers them for `docker image inspect`. */
   repoDigests?: string[];
+  /** The image's `org.opencontainers.image.version` label; the fake answers it for `docker image inspect -f '{{index .Config.Labels ...}}'`. */
+  versionLabel?: string;
   /** Every database the engine in this container lists (system ones included): what `psql` / `mysql` print when `docker exec` asks. */
   databases?: string[];
   /** `docker exec` into this container fails (a login the container does not give). */
@@ -89,7 +91,9 @@ else if (cmd === "ps") {
   const imgId = args[args.length - 1].replace(/^sha256:/, "");
   const c = st.containers.find((x) => x.id === imgId);
   if (!c) { console.error("No such image"); process.exit(1); }
-  for (const d of c.repoDigests || []) console.log(d);
+  const ifmt = args[args.indexOf("-f") + 1] || "";
+  if (ifmt.includes(".Config.Labels")) { console.log(c.versionLabel || ""); }
+  else for (const d of c.repoDigests || []) console.log(d);
 } else if (cmd === "volume" && args[1] === "ls") {
   for (const v of st.volumes) console.log(v.name);
 } else if (cmd === "volume" && args[1] === "inspect") {

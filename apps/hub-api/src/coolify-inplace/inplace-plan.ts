@@ -21,7 +21,7 @@ export interface TakeoverItem extends Omit<TakeoverItemView, "members"> {
   /** Git commit Coolify built (hex), when the app is git-based; carried onto the adopted deployment. */
   commitSha: string | null;
   /** The container Coolify runs for it, recorded with its identity; null when none runs (nothing to take over). */
-  container: { id: string; name: string; image: string; restart: InPlaceRestartPolicy; imageId: string } | null;
+  container: { id: string; name: string; image: string; restart: InPlaceRestartPolicy; imageId: string; repoDigests?: string[]; imageVersion?: string } | null;
   /** Mounts Coolify's container had that the Tugra app must see: its volume aliases and the bind mounts. */
   volumes: Array<{ from: string; to: string }>;
   binds: number;
@@ -138,11 +138,27 @@ export function mapDbMounts(
   return { volumes, issues: [...new Set(issues)] };
 }
 
-/** The same image, spelled the same way docker would (the default registry and the implicit `latest` do not make two images different). */
-export const sameImageRef = (a: string, b: string): boolean => normImage(a) === normImage(b);
+/**
+ * The same image, spelled the same way docker would (the default registry and the implicit `latest` do not make two images different).
+ * A record pinned to the exact image (`repo:tag@sha256:...`) is the same image as the container that runs `repo:tag`: the digest is
+ * what the pin adds, never a difference. When both sides carry a digest they must agree.
+ */
+export const sameImageRef = (a: string, b: string): boolean => {
+  const [ra, da] = splitDigest(normImage(a));
+  const [rb, db] = splitDigest(normImage(b));
+  return ra === rb && (da === null || db === null || da === db);
+};
+function splitDigest(ref: string): [string, string | null] {
+  const at = ref.indexOf("@");
+  return at < 0 ? [ref, null] : [ref.slice(0, at), ref.slice(at + 1)];
+}
 function normImage(ref: string): string {
   let r = ref.trim().toLowerCase().replace(/^docker\.io\//, "").replace(/^library\//, "");
   if (!r.includes("@") && !/:[^/]+$/.test(r)) r += ":latest";
+  if (r.includes("@")) {
+    const [repo, digest] = [r.slice(0, r.indexOf("@")), r.slice(r.indexOf("@"))];
+    return /:[^/]+$/.test(repo) ? r : `${repo}:latest${digest}`;
+  }
   return r;
 }
 

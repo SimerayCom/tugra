@@ -24,10 +24,11 @@ describe("source safety", () => {
       expect(s).not.toMatch(/rm\s+-[a-z]*r/);
     }
   });
-  it("the detail script reads one label only: the compose service name", () => {
+  it("the detail script reads two labels only: the compose service name and the image's own version", () => {
     const s = buildServiceDetailScript([ctr]);
     expect(s).toContain("com.docker.compose.service");
-    expect(s.match(/\.Config\.Labels/g)).toHaveLength(1);
+    expect(s).toContain("org.opencontainers.image.version");
+    expect(s.match(/\.Config\.Labels/g)).toHaveLength(2);
     expect(s).not.toMatch(/\.Config\.Cmd|\.Config\.Entrypoint/);
   });
 });

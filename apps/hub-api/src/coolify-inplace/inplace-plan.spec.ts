@@ -224,6 +224,14 @@ describe("sameImageRef", () => {
     expect(sameImageRef("postgres:16", "ghcr.io/x/postgres:16")).toBe(false);
     expect(sameImageRef("a@sha256:" + "a".repeat(64), "a@sha256:" + "b".repeat(64))).toBe(false);
   });
+  it("a record pinned to the exact image is the image the container runs by its tag; two different digests are not", () => {
+    const d = "sha256:" + "a".repeat(64);
+    expect(sameImageRef(`postgres:16-alpine@${d}`, "postgres:16-alpine")).toBe(true);
+    expect(sameImageRef("postgres:16-alpine", `docker.io/library/postgres:16-alpine@${d}`)).toBe(true);
+    expect(sameImageRef(`redis:latest@${d}`, "redis")).toBe(true);
+    expect(sameImageRef(`postgres:16-alpine@${d}`, "postgres:17-alpine")).toBe(false);
+    expect(sameImageRef(`postgres:16@${d}`, `postgres:16@sha256:${"b".repeat(64)}`)).toBe(false);
+  });
 });
 
 describe("a takeover with databases", () => {

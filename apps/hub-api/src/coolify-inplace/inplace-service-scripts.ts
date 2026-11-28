@@ -7,7 +7,7 @@
  * label value); every value that reaches a shell is validated first and then single-quoted.
  */
 import { shq } from "../deploy/deploy-script";
-import { IP_MARK, isHex64, parseContainerDetail, type CtrDetail, type RecordedCtr } from "./inplace-scripts";
+import { EXACT_IMAGE_LINES, IP_MARK, isHex64, parseContainerDetail, type CtrDetail, type RecordedCtr } from "./inplace-scripts";
 import type { CtrNetwork, MemberProbe, ServiceCtrFacts } from "./inplace-service";
 
 export const SVC_MARK = {
@@ -55,6 +55,7 @@ export function buildServiceDetailScript(containers: readonly RecordedCtr[]): st
     '  ident "$1" "$2" "$3" || return 0',
     `  printf '${IP_MARK.restart}|%s|%s\\n' "$1" "$(docker inspect -f '{{.HostConfig.RestartPolicy.Name}}' "$1" 2>/dev/null)"`,
     `  printf '${IP_MARK.image}|%s|%s\\n' "$1" "$(docker inspect -f '{{.Image}}' "$1" 2>/dev/null)"`,
+    ...EXACT_IMAGE_LINES,
     `  docker inspect -f '{{range .Mounts}}${IP_MARK.mount}|{{$.Id}}|{{.Type}}|{{.Name}}|{{.Source}}|{{.Destination}}|{{.RW}}{{"\\n"}}{{end}}' "$1" 2>/dev/null`,
     `  printf '${SVC_MARK.ctr}|%s|%s|%s\\n' "$1" "$(docker inspect -f '{{index .Config.Labels "com.docker.compose.service"}}' "$1" 2>/dev/null)" "$(docker inspect -f '{{len .HostConfig.PortBindings}}' "$1" 2>/dev/null)"`,
     `  docker inspect -f '{{range $k, $v := .NetworkSettings.Networks}}${SVC_MARK.net}|{{$.Id}}|{{$k}}|{{range $v.Aliases}}{{.}},{{end}}{{"\\n"}}{{end}}' "$1" 2>/dev/null`,
@@ -88,7 +89,7 @@ export function parseServiceDetail(out: string, containers: readonly RecordedCtr
   for (const c of containers) {
     const d: CtrDetail | undefined = base.get(c.id);
     if (!d || !svc.has(c.id)) continue; // a container whose service line is missing is unreadable, not "has no service"
-    res.set(c.id, { id: c.id, name: c.name, image: c.image, imageId: d.imageId, restart: d.restart, service: svc.get(c.id) ?? null, mounts: d.mounts, networks: nets.get(c.id) ?? [], published: published.get(c.id) ?? 0 });
+    res.set(c.id, { id: c.id, name: c.name, image: c.image, imageId: d.imageId, ...(d.repoDigests ? { repoDigests: d.repoDigests } : {}), ...(d.imageVersion ? { imageVersion: d.imageVersion } : {}), restart: d.restart, service: svc.get(c.id) ?? null, mounts: d.mounts, networks: nets.get(c.id) ?? [], published: published.get(c.id) ?? 0 });
   }
   return res;
 }

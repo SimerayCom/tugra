@@ -117,6 +117,9 @@ interface Rollback {
 
 type UndoResult = { ok: true; networksLeft: number } | { ok: false; step: string };
 
+/** The exact image a container runs (registry digests, version label), as the host reported it; nothing when it reported none (an older host, a locally built image). */
+const exactOf = (d: { repoDigests?: string[]; imageVersion?: string }): { repoDigests?: string[]; imageVersion?: string } => ({ ...(d.repoDigests?.length ? { repoDigests: d.repoDigests } : {}), ...(d.imageVersion ? { imageVersion: d.imageVersion } : {}) });
+
 const emptyRollback = (): Rollback => ({ bindBefore: "public", proxyBefore: "unknown", darkStarted: false, exclusiveStopped: false, swapStarted: false });
 
 const unprocessable = (code: string, extra: Record<string, unknown> = {}): UnprocessableEntityException => new UnprocessableEntityException({ statusCode: 422, message: code, code, ...extra });
@@ -314,7 +317,7 @@ export class CoolifyInPlaceService implements InPlaceRunPort {
         if (!declineExclusive) throw unprocessable("takeover_rebuild_needs_side_by_side", { itemRef: a.itemRef });
         declined = true;
       }
-      items.push({ ...base, ...(declined ? { buildMode: "reuse-image" as const, rebuildDeclined: true } : {}), container: { id: list[0].id, name: list[0].name, image: list[0].image, restart: d.restart, imageId: d.imageId }, volumes: m.volumes, binds: m.binds, exclusive: m.exclusive });
+      items.push({ ...base, ...(declined ? { buildMode: "reuse-image" as const, rebuildDeclined: true } : {}), container: { id: list[0].id, name: list[0].name, image: list[0].image, restart: d.restart, imageId: d.imageId, ...exactOf(d) }, volumes: m.volumes, binds: m.binds, exclusive: m.exclusive });
     }
     const dbItems = await this.readDbItems(teamId, serverId, dbs, byRef, detail);
     items.push(...dbItems);
@@ -382,7 +385,7 @@ export class CoolifyInPlaceService implements InPlaceRunPort {
         out.push({ ...base, state: "skipped", issues: m.issues });
         continue;
       }
-      out.push({ ...base, verify: { level: checkLevelOf(db.engine), state: "pending" }, container: { id: list[0].id, name: list[0].name, image: list[0].image, restart: dt.restart, imageId: dt.imageId }, volumes: m.volumes });
+      out.push({ ...base, verify: { level: checkLevelOf(db.engine), state: "pending" }, container: { id: list[0].id, name: list[0].name, image: list[0].image, restart: dt.restart, imageId: dt.imageId, ...exactOf(dt) }, volumes: m.volumes });
     }
     return out;
   }
@@ -489,7 +492,7 @@ export class CoolifyInPlaceService implements InPlaceRunPort {
         const engine = engineOfImage(f.image);
         members.push({
           service: k,
-          container: { id: f.id, name: f.name, image: f.image, restart: f.restart, imageId: f.imageId },
+          container: { id: f.id, name: f.name, image: f.image, restart: f.restart, imageId: f.imageId, ...exactOf(f) },
           composeImage: compose[k].image as string,
           volumes: m.volumes,
           binds: m.binds,

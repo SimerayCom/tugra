@@ -116,6 +116,9 @@ export interface ServiceCtrFacts {
   name: string;
   image: string;
   imageId: string;
+  /** The registry digests and the version label of the image it runs, when the host reported them. */
+  repoDigests?: string[];
+  imageVersion?: string;
   restart: InPlaceRestartPolicy;
   /** The compose service name Coolify's container carries, or null when it carries none. */
   service: string | null;
@@ -134,7 +137,7 @@ export interface VolumeAlias {
 export interface ServiceMemberRecord {
   /** The compose service name (the Tugra compose app's key). */
   service: string;
-  container: { id: string; name: string; image: string; restart: InPlaceRestartPolicy; imageId: string };
+  container: { id: string; name: string; image: string; restart: InPlaceRestartPolicy; imageId: string; repoDigests?: string[]; imageVersion?: string };
   /** The image the Tugra compose app runs this service on (its reference, as written there). */
   composeImage: string;
   /** Volume aliases: Coolify's named volume becomes the Tugra compose app's volume (`key` is its compose volume key). */

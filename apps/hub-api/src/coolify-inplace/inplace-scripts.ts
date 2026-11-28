@@ -14,6 +14,7 @@
 import { shq } from "../deploy/deploy-script";
 import { PROXY_DYNAMIC_DIR } from "../deploy/panel-router";
 import { CUTOVER_HOSTNAME_RE, PROBE_PATH_RE } from "../cutover/cutover.logic";
+import { OCI_VERSION_LABEL, REPO_DIGEST_RE, VERSION_LABEL_RE } from "../importer/exact-image";
 
 export const IP_MARK = {
   restart: "TUGRA_IP_RESTART",
@@ -28,6 +29,9 @@ export const IP_MARK = {
   fallback: "TUGRA_IP_FALLBACK",
   cert: "TUGRA_IP_CERT",
   dbfp: "TUGRA_IP_DBFP",
+  /** A registry digest (`repo@sha256:...`) of the image a container runs, and the version the image labels itself with. */
+  rdig: "TUGRA_IP_RDIG",
+  imgver: "TUGRA_IP_IMGVER",
 } as const;
 
 /** Where Coolify keeps its proxy's ACME store on the host when nothing says otherwise. */
@@ -70,10 +74,23 @@ const IDENT = [
   "}",
 ];
 
+/**
+ * The shell lines of `detail()` that read the EXACT image a container runs: the registry digests docker recorded for its image id (at most
+ * eight) and the image's own version label (only a plain token). Read-only; a host with no digest (a locally built image) prints none, which
+ * the hub reads as "unknown", never as a failure.
+ */
+export const EXACT_IMAGE_LINES: readonly string[] = [
+  `  iid="$(docker inspect -f '{{.Image}}' "$1" 2>/dev/null)"`,
+  `  docker image inspect -f '{{range .RepoDigests}}{{println .}}{{end}}' "$iid" 2>/dev/null | head -n 8 | while IFS= read -r d; do [ -n "$d" ] && printf '${IP_MARK.rdig}|%s|%s\\n' "$1" "$d"; done`,
+  `  iv="$(docker image inspect -f '{{index .Config.Labels "${OCI_VERSION_LABEL}"}}' "$iid" 2>/dev/null)"`,
+  `  case "$iv" in ''|*[!A-Za-z0-9._+~-]*|[!A-Za-z0-9]*) ;; *) printf '${IP_MARK.imgver}|%s|%s\\n' "$1" "$iv";; esac`,
+];
+
 // ───────────────────────────── what a Coolify container looks like (read-only) ─────────────────────────────
 
 /**
- * Per recorded container: its restart policy, the id of the image it runs and its mounts. No environment, no labels, no command line.
+ * Per recorded container: its restart policy, the id of the image it runs, the exact image it runs (registry digests and the image's own
+ * version label) and its mounts. No environment, no other label, no command line.
  * A container that is gone or whose identity changed prints nothing and the parser reports it missing.
  */
 export function buildContainerDetailScript(containers: readonly RecordedCtr[]): string {
@@ -85,6 +102,7 @@ export function buildContainerDetailScript(containers: readonly RecordedCtr[]): 
     '  ident "$1" "$2" "$3" || return 0',
     `  printf '${IP_MARK.restart}|%s|%s\\n' "$1" "$(docker inspect -f '{{.HostConfig.RestartPolicy.Name}}' "$1" 2>/dev/null)"`,
     `  printf '${IP_MARK.image}|%s|%s\\n' "$1" "$(docker inspect -f '{{.Image}}' "$1" 2>/dev/null)"`,
+    ...EXACT_IMAGE_LINES,
     `  docker inspect -f '{{range .Mounts}}${IP_MARK.mount}|{{$.Id}}|{{.Type}}|{{.Name}}|{{.Source}}|{{.Destination}}|{{.RW}}{{"\\n"}}{{end}}' "$1" 2>/dev/null`,
     "}",
     ...containers.map((c) => `detail ${shq(c.id)} ${shq(c.name)} ${shq(c.image)}`),
@@ -105,6 +123,10 @@ export interface CtrDetail {
   restart: InPlaceRestartPolicy;
   /** `sha256:<64 hex>` of the image the container runs. */
   imageId: string;
+  /** The registry digests (`repo@sha256:...`) docker recorded for that image; absent when the host reported none (a locally built image). */
+  repoDigests?: string[];
+  /** The image's own `org.opencontainers.image.version` label; absent when it has none. */
+  imageVersion?: string;
   mounts: CtrMount[];
 }
 
@@ -120,6 +142,8 @@ export function parseContainerDetail(out: string, ids: readonly string[]): Map<s
   const restart = new Map<string, InPlaceRestartPolicy>();
   const image = new Map<string, string>();
   const mounts = new Map<string, CtrMount[]>();
+  const digests = new Map<string, string[]>();
+  const versions = new Map<string, string>();
   for (const l of lines) {
     const f = l.split("|");
     if (f[0] === IP_MARK.restart && f.length === 3 && want.has(f[1])) {
@@ -127,6 +151,11 @@ export function parseContainerDetail(out: string, ids: readonly string[]): Map<s
       if ((POLICIES as readonly string[]).includes(p)) restart.set(f[1], p as InPlaceRestartPolicy);
     } else if (f[0] === IP_MARK.image && f.length === 3 && want.has(f[1]) && /^sha256:[0-9a-f]{64}$/.test(f[2])) {
       image.set(f[1], f[2]);
+    } else if (f[0] === IP_MARK.rdig && f.length === 3 && want.has(f[1]) && REPO_DIGEST_RE.test(f[2])) {
+      const have = digests.get(f[1]) ?? [];
+      if (have.length < 8 && !have.includes(f[2])) digests.set(f[1], [...have, f[2]]);
+    } else if (f[0] === IP_MARK.imgver && f.length === 3 && want.has(f[1]) && VERSION_LABEL_RE.test(f[2])) {
+      versions.set(f[1], f[2]);
     } else if (f[0] === IP_MARK.mount && f.length === 7 && want.has(f[1])) {
       const [, , type, name, source, dest, rw] = f;
       if (!PATH_RE.test(dest) || (rw !== "true" && rw !== "false")) continue;
@@ -141,7 +170,7 @@ export function parseContainerDetail(out: string, ids: readonly string[]): Map<s
   for (const id of ids) {
     const r = restart.get(id);
     const i = image.get(id);
-    if (r && i) out2.set(id, { id, restart: r, imageId: i, mounts: mounts.get(id) ?? [] });
+    if (r && i) out2.set(id, { id, restart: r, imageId: i, ...(digests.has(id) ? { repoDigests: digests.get(id) } : {}), ...(versions.has(id) ? { imageVersion: versions.get(id) } : {}), mounts: mounts.get(id) ?? [] });
   }
   return out2;
 }
