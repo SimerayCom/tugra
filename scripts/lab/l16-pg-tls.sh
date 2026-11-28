@@ -42,6 +42,9 @@ lab_wait 300 "the TLS destination database to be RUNNING" bash -c "[ \"\$(node $
 CTR="tugra_db_$DB_ID"
 U="$(lab_ctr_env "$CTR" POSTGRES_USER)"; D="$(lab_ctr_env "$CTR" POSTGRES_DB)"; PGPW="$(lab_ctr_env "$CTR" POSTGRES_PASSWORD)"
 lab_wait 120 "the TLS destination to accept connections" docker exec "$CTR" pg_isready -U "$U"
+# a fresh data dir: the image first runs a temporary server for init, then restarts it; checks only count after that restart
+for _ in $(seq 1 120); do docker logs "$CTR" 2>&1 | grep -q "init process complete" && break; sleep 1; done
+lab_wait 120 "the TLS destination to accept connections after init" docker exec "$CTR" pg_isready -U "$U"
 lab_check "the server reports ssl = on" test "$(lab_pg_q "$CTR" "$U" "$D" 'show ssl')" = on
 lab_check "the self-signed pair is on the host, key 0600, directory 0700" bash -c "[ \"\$(docker exec ${LAB_AGENT:-lab-agent} stat -c '%a' /etc/tugra/dbssl/$DB_ID/server.key)\" = 600 ] && [ \"\$(docker exec ${LAB_AGENT:-lab-agent} stat -c '%a' /etc/tugra/dbssl/$DB_ID)\" = 700 ]"
 export LAB_PG_TLS=1
