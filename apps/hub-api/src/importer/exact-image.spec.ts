@@ -44,9 +44,9 @@ describe("exactImageFor: the pin of the image the source runs", () => {
     expect(exactImageFor("redis:7.2", [`redis@${D2}`])?.ref).toBe(`redis:7.2@${D2}`);
     expect(exactImageFor("ghcr.io/x/y:1.2.3", [`ghcr.io/x/y@${D2}`])?.ref).toBe(`ghcr.io/x/y:1.2.3@${D2}`);
   });
-  it("with no digest, a floating tag whose image labels its version is pinned to that version tag", () => {
-    expect(exactImageFor("minio/minio:latest", [], "RELEASE.2024-05-10T01-41-38Z")).toMatchObject({ ref: "minio/minio:RELEASE.2024-05-10T01-41-38Z", via: "version", digest: null });
-    expect(exactImageFor("x/y", undefined, "2.4.1")).toMatchObject({ ref: "x/y:2.4.1", via: "version" });
+  it("with no digest nothing is guessed, even when the image labels its version (a label is not a tag)", () => {
+    expect(exactImageFor("minio/minio:latest", [], "RELEASE.2024-05-10T01-41-38Z")).toBeNull();
+    expect(exactImageFor("ghcr.io/willnorris/imageproxy:latest", undefined, "0.13.0")).toBeNull();
   });
   it("with no digest, a tag that is not floating is not rewritten to the label (the label may name another variant)", () => {
     expect(exactImageFor("postgres:16-alpine", [], "16.4")).toBeNull();

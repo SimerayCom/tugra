@@ -100,10 +100,7 @@ export function exactImageFor(image: string, repoDigests: readonly string[] | un
     const ref = `${parts.repo}:${tag}@${digests[0]}`;
     return EXACT_REF_RE.test(ref) ? { ref, tag, digest: digests[0], version: label, via: "digest" } : null;
   }
-  if (digests.length === 0 && label && isFloatingTag(image) && TAG_RE.test(label) && label !== "latest") {
-    const ref = `${parts.repo}:${label}`;
-    return EXACT_REF_RE.test(ref) ? { ref, tag: label, digest: null, version: label, via: "version" } : null;
-  }
+  // No digest: nothing is guessed. A version label is not a tag (imageproxy labels 0.13.0 and tags v0.13.0), so the item stays "unknown".
   return null;
 }
 
