@@ -28,7 +28,7 @@ import { dbStreamModeRefs, dbVolumeModeRefs, isObjectStoreResult, serviceVolumeS
 import { buildDataIntegrity } from "../data/data-integrity";
 import { pinnedImageRef } from "./baseline/image-pins";
 import { pinDatabaseBeforeStart } from "../../../importer/exact-db-pin";
-import { writeExactImage, type ExactTarget } from "../../../importer/exact-record";
+import { restoreSourceImage, writeExactImage, type ExactRestoreTarget, type ExactTarget } from "../../../importer/exact-record";
 import type { ImportMappingDoc, ResolvedMapping } from "../../../importer/import-mapping";
 import type { ServicePreview } from "../../../importer/service-preview";
 import type { RunReport, RunScope } from "../../core/dto";
@@ -513,6 +513,10 @@ export class ImportPortService implements ImportStepsPort {
 
   pinExactImage(userId: string, target: ExactTarget): Promise<{ pinned: boolean; state: "pinned" | "same" | "refused" }> {
     return writeExactImage({ prisma: this.prisma, apps: this.apps, databases: this.dbs }, userId, target);
+  }
+
+  restoreExactImage(userId: string, target: ExactRestoreTarget): Promise<{ restored: boolean }> {
+    return restoreSourceImage({ prisma: this.prisma, apps: this.apps, databases: this.dbs }, userId, target);
   }
 
   async deployments(appId: string, keyPrefix: string): Promise<DeploymentRef[]> {

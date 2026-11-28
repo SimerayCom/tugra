@@ -1,4 +1,4 @@
-import { BadRequestException, Body, ConflictException, Controller, ForbiddenException, Get, HttpCode, Inject, NotFoundException, Param, Put, UseGuards } from "@nestjs/common";
+import { BadRequestException, Body, ConflictException, Controller, ForbiddenException, Get, HttpCode, Inject, NotFoundException, Optional, Param, Put, UseGuards } from "@nestjs/common";
 import { ApiSecurity, ApiTags } from "@nestjs/swagger";
 import { ApiZodBody, ApiZodResponse } from "../../../../openapi/openapi";
 import { ZodValidationPipe } from "../../../../common/zod-validation.pipe";
@@ -12,7 +12,8 @@ import { TeamAccessService } from "../../../../common/team-access.service";
 import { SafetyHintsSchema, SetExactImagesSchema, SetImagePinsSchema, SetServicePinsSchema, SetWarningAcksSchema, SetWorkerMarksSchema, type SafetyHints, type SetExactImagesInput, type SetImagePinsInput, type SetServicePinsInput, type SetWarningAcksInput, type SetWorkerMarksInput } from "./hints.dto";
 import { fixedKeys, warningKeysOf, warningsOf } from "../../../core/dry-run-warnings";
 import { imageRepoOf, isFloatingImage, servicePinKey } from "./image-pins";
-import { EXACT_OFF_KIND, exactRows, isExactOff } from "./exact-images";
+import { EXACT_OFF_KIND, exactRows, isExactOff, restoreTargets } from "./exact-images";
+import { IMPORT_STEPS_PORT, type ImportStepsPort } from "../import-ports";
 import { exactCandidatesOf, exactKeyOf, type ExactMeta } from "../../data/inventory/inventory-pins";
 import { isDigestPinned } from "../../../../importer/exact-image";
 import { EXACT_UNAPPLIED_CODE } from "../../../../importer/exact-db-pin";
@@ -44,6 +45,7 @@ export class RunSafetyController {
     private readonly prisma: PrismaService,
     private readonly access: TeamAccessService,
     @Inject(RUN_HINTS) private readonly hints: RunHintStore,
+    @Optional() @Inject(IMPORT_STEPS_PORT) private readonly port?: Pick<ImportStepsPort, "restoreExactImage">,
   ) {}
 
   /** The digests and job-runner marks recorded for the run (and, for a promoted run, the dry-run it came from). */
@@ -160,7 +162,23 @@ export class RunSafetyController {
     if (total.size > MAX_EXACT_OFF) throw new BadRequestException("too-many-exact-images");
     // `on` (not a removal) so that ticking the box again also overrides an `off` of the dry run this run was promoted from (the run's own hint wins)
     await this.hints.upsert(v.id, body.items.map((i) => ({ kind: EXACT_OFF_KIND, key: i.itemRef, scope: "", value: i.keep ? "on" : "off", evidence: "operator-attested" as const })));
+    await this.restoreUnticked(user.userId, v, body.items.filter((i) => !i.keep).map((i) => i.itemRef));
     return this.viewOf(v, await this.hints.list(v.id, v.promotedFromId));
+  }
+
+  /**
+   * An item unticked after its record already holds the exact image the run wrote (the apply of a promoted run, an early deploy, a database
+   * started on it) goes back to the image the source writes, so "leave the tag" is true and not just recorded. Best effort: a record that
+   * changed since or a started database is left as it is.
+   */
+  private async restoreUnticked(userId: string, v: { id: string; opId?: string | null; promotedFromId?: string | null }, itemRefs: string[]): Promise<void> {
+    if (!itemRefs.length || !v.opId || !this.port?.restoreExactImage) return;
+    try {
+      const [meta, tasks] = await Promise.all([this.opMeta(v.opId), this.prisma.bulkTask.findMany({ where: { opId: v.opId, itemRef: { in: itemRefs }, status: "DONE" }, select: { itemRef: true, kind: true, resourceId: true } })]);
+      for (const t of restoreTargets(itemRefs, await this.hints.list(v.id, v.promotedFromId), meta, tasks)) await this.port.restoreExactImage(userId, t).catch(() => undefined);
+    } catch {
+      /* the box is recorded either way: the deploy step skips the item */
+    }
   }
 
   private async stepsOf(runId: string): Promise<Array<{ progress: unknown }>> {

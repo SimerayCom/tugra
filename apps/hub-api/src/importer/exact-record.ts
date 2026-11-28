@@ -80,3 +80,45 @@ export async function writeExactImage(deps: ExactRecordDeps, userId: string, tar
   await deps.apps.setSource(userId, target.id, { image: target.ref });
   return out("pinned");
 }
+
+export type ExactRestoreTarget = { kind: "app" | "database"; id: string; from: string; to: string } | { kind: "service"; id: string; members: Record<string, { from: string; to: string }> };
+
+/**
+ * The owner unticked "keep the exact image" after the run already wrote it: put the image the source WRITES (its tag) back. Only a record
+ * that still holds exactly the pin this run wrote (`from`) changes, so an operator's own digest or a later edit is never overwritten; a
+ * database that was started cannot change (its version is edited through its own path) and is reported as not restored.
+ */
+export async function restoreSourceImage(deps: ExactRecordDeps, userId: string, t: ExactRestoreTarget): Promise<{ restored: boolean }> {
+  if (t.kind === "service") {
+    const c = await deps.prisma.application.findUnique({ where: { id: t.id }, select: { source: true, composeFile: true } });
+    if (!c || c.source !== "COMPOSE" || !c.composeFile) return { restored: false };
+    let doc: unknown;
+    try {
+      doc = parseYaml(c.composeFile, { merge: true, maxAliasCount: 50 });
+    } catch {
+      return { restored: false };
+    }
+    const services = (doc as { services?: Record<string, { image?: unknown }> } | null)?.services;
+    if (!services || typeof services !== "object") return { restored: false };
+    let changed = false;
+    for (const [member, m] of Object.entries(t.members)) {
+      const def = services[member];
+      if (def && def.image === m.from) {
+        def.image = m.to;
+        changed = true;
+      }
+    }
+    if (!changed) return { restored: false };
+    await deps.apps.setComposeFile(userId, t.id, stringifyYaml(doc, { lineWidth: 0 }));
+    return { restored: true };
+  }
+  if (t.kind === "database") {
+    const d = await deps.prisma.database.findUnique({ where: { id: t.id }, select: { image: true, status: true } });
+    if (!d || d.image !== t.from || d.status !== "NEW") return { restored: false };
+    return { restored: (await deps.databases.setImage(userId, t.id, t.to)).changed };
+  }
+  const a = await deps.prisma.application.findUnique({ where: { id: t.id }, select: { source: true, image: true } });
+  if (!a || a.source !== "IMAGE" || a.image !== t.from) return { restored: false };
+  await deps.apps.setSource(userId, t.id, { image: t.to });
+  return { restored: true };
+}

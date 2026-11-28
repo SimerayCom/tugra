@@ -184,4 +184,12 @@ export interface ImportStepsPort extends RunImportPort {
     userId: string,
     target: { kind: "app" | "database"; id: string; ref: string } | { kind: "service"; id: string; members: Record<string, string> },
   ): Promise<{ pinned: boolean; /** `refused`: the record cannot run the image the source runs (another repository, a database that was started). */ state?: "pinned" | "same" | "refused" }>;
+  /**
+   * The owner unticked "keep the exact image": put the image the source writes back into a record that still holds the pin this run wrote.
+   * `restored:false` when the record changed since (an operator's own digest), or is a database that was started.
+   */
+  restoreExactImage?(
+    userId: string,
+    target: { kind: "app" | "database"; id: string; from: string; to: string } | { kind: "service"; id: string; members: Record<string, { from: string; to: string }> },
+  ): Promise<{ restored: boolean }>;
 }

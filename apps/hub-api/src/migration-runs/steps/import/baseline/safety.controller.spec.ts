@@ -48,6 +48,25 @@ describe("RunSafetyController: keep the exact image", () => {
     expect(on.exactImages.every((r) => r.kept)).toBe(true);
   });
 
+  it("unticking an item whose record already holds the pin puts the source's tag back; ticking, or an item with no record, restores nothing", async () => {
+    const meta = { plan: { items: [{ itemRef: "app:s:a", name: "api", kind: "app", proposed: { source: "IMAGE", image: "x/y:latest" } }] }, stackImages: [{ itemRef: "service:s:z", images: [{ member: "meili", image: "getmeili/meilisearch:latest" }] }] };
+    const s = setup({ opId: "op1" });
+    const p = s.prisma as unknown as Record<string, unknown>;
+    p.bulkOperation = { findUnique: jest.fn().mockResolvedValue({ meta }) };
+    p.bulkTask = { findMany: jest.fn().mockResolvedValue([{ itemRef: "app:s:a", kind: "app", resourceId: "A1" }, { itemRef: "service:s:z", kind: "service", resourceId: "S1" }]) };
+    const restore = jest.fn().mockResolvedValue({ restored: true });
+    const c = new RunSafetyController(s.prisma as never, { membershipPermissions: jest.fn().mockResolvedValue(new Set(["apps:config", "databases"])) } as never, s.hints, { restoreExactImage: restore } as never);
+    await rows(s);
+    await c.setExactImages(user(), "r1", SetExactImagesSchema.parse({ items: [{ itemRef: "app:s:a", keep: true }] }));
+    expect(restore).not.toHaveBeenCalled();
+    await c.setExactImages(user(), "r1", SetExactImagesSchema.parse({ items: [{ itemRef: "app:s:a", keep: false }, { itemRef: "service:s:z", keep: false }, { itemRef: "app:s:none", keep: false }] }));
+    expect(restore).toHaveBeenCalledWith("u1", { kind: "app", id: "A1", from: `x/y:latest@${D1}`, to: "x/y:latest" });
+    expect(restore).toHaveBeenCalledWith("u1", { kind: "service", id: "S1", members: { meili: { from: `getmeili/meilisearch:v1@${D1}`, to: "getmeili/meilisearch:latest" } } });
+    expect(restore).toHaveBeenCalledTimes(2);
+    restore.mockRejectedValue(new Error("down"));
+    await expect(c.setExactImages(user(), "r1", SetExactImagesSchema.parse({ items: [{ itemRef: "app:s:a", keep: false }] }))).resolves.toBeDefined(); // the box is recorded either way
+  });
+
   it("a promoted run can tick again what its dry run unticked (its own hint wins)", async () => {
     const s = setup({ promotedFromId: "dry1" });
     await s.hints.upsert("dry1", [{ kind: "exact-image", key: "app:s:a", scope: "", value: `x/y:latest@${D1}`, evidence: "host-loop-reported" }, { kind: "exact-off", key: "app:s:a", scope: "", value: "off", evidence: "operator-attested" }]);

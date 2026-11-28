@@ -15,6 +15,7 @@
  */
 import { EXACT_IMAGE_KIND, EXACT_OFF_KIND, decodeExactHint, isExactPinFor } from "../../../../importer/exact-image";
 import type { ServiceChoice } from "../../../../importer/dto";
+import type { ExactRestoreTarget } from "../../../../importer/exact-record";
 import type { RunHint } from "./run-hints";
 
 export { EXACT_IMAGE_KIND, EXACT_OFF_KIND };
@@ -105,3 +106,34 @@ export function withExactPins<T extends ApplyWithPins>(input: T, hints: readonly
 
 /** May a recorded pin replace the image the plan shows for an app or a stack member? (Same repository, nothing already on a digest.) */
 export const pinReplaces = (planImage: string | null | undefined, pin: string): boolean => (planImage ? isExactPinFor(planImage, pin) : false);
+
+/** What the op's meta says of the image the source WRITES for each item: an app's or database's own, and each stack member's. */
+export interface SourceImages {
+  plan?: { items?: Array<{ itemRef?: unknown; proposed?: { image?: unknown } }> };
+  stackImages?: Array<{ itemRef?: unknown; images?: Array<{ member?: unknown; image?: unknown }> }>;
+}
+
+/**
+ * The records to put back on the image the source writes, for the items the owner just unticked: each item's recorded pin (`from`, what the
+ * run wrote) and the source's own ref (`to`), with the Tugra record of the item (a DONE task). An item with no recorded pin, no source
+ * image or no record has nothing to restore.
+ */
+export function restoreTargets(itemRefs: readonly string[], hints: readonly RunHint[], meta: SourceImages, tasks: ReadonlyArray<{ itemRef: string | null; kind: string; resourceId: string | null }>): ExactRestoreTarget[] {
+  const out: ExactRestoreTarget[] = [];
+  const rows = exactRows(hints);
+  for (const itemRef of new Set(itemRefs)) {
+    const t = tasks.find((x) => x.itemRef === itemRef && x.resourceId);
+    if (!t?.resourceId) continue;
+    const own = rows.filter((r) => r.itemRef === itemRef);
+    if (itemRef.startsWith("service:")) {
+      const src = new Map((meta.stackImages ?? []).filter((s) => s.itemRef === itemRef).flatMap((s) => s.images ?? []).flatMap((m) => (typeof m.member === "string" && typeof m.image === "string" ? [[m.member, m.image] as const] : [])));
+      const members = Object.fromEntries(own.filter((r) => r.member && src.has(r.member)).map((r) => [r.member, { from: r.ref, to: src.get(r.member)! }]));
+      if (Object.keys(members).length) out.push({ kind: "service", id: t.resourceId, members });
+    } else {
+      const r = own.find((x) => x.member === "");
+      const image = (meta.plan?.items ?? []).find((i) => i.itemRef === itemRef)?.proposed?.image;
+      if (r && typeof image === "string" && image) out.push({ kind: itemRef.startsWith("database:") ? "database" : "app", id: t.resourceId, from: r.ref, to: image });
+    }
+  }
+  return out;
+}
