@@ -4,6 +4,8 @@ import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  buildAppReadyScript,
+  parseAppReady,
   FALLBACK_CERT_DIR,
   buildAdoptImageScript,
   buildContainerDetailScript,
@@ -135,13 +137,13 @@ describe("parsers fail closed", () => {
   it("the probe parser: markers, status 000, a bad hash, a host nobody asked for", () => {
     const h = "d".repeat(64);
     const r = parseInPlaceProbe(["TUGRA_IP_PROBE|a.example.com|200|" + h + "|" + h, "TUGRA_IP_PROBE|b.example.com|000|none|none", "TUGRA_IP_PROBE|evil.example.com|200|" + h + "|" + h, "TUGRA_IP_PROBE_END"].join("\n"), ["a.example.com", "b.example.com"]);
-    expect(r).toEqual({ kind: "ok", hosts: { "a.example.com": { status: 200, hash: h, hash2: h }, "b.example.com": { status: null, hash: null, hash2: null } } });
+    expect(r).toEqual({ kind: "ok", hosts: { "a.example.com": { status: 200, hash: h, hash2: h, size: null, location: null }, "b.example.com": { status: null, hash: null, hash2: null, size: null, location: null } } });
     expect(parseInPlaceProbe("TUGRA_IP_PROBE|NOPROXY\nTUGRA_IP_PROBE_END", ["a.example.com"])).toEqual({ kind: "noproxy" });
     expect(parseInPlaceProbe("TUGRA_IP_PROBE|NOCURL\nTUGRA_IP_PROBE_END", ["a.example.com"])).toEqual({ kind: "nocurl" });
     expect(parseInPlaceProbe("TUGRA_IP_PROBE|a.example.com|200|" + h + "|" + h, ["a.example.com"])).toBeNull(); // no END
   });
   it("a body can never forge a marker: only the shell prints them and the parser ignores non-marker lines", () => {
-    expect(parseInPlaceProbe("hello\nTUGRA_IP_PROBE|a.example.com|200|zz|zz\nTUGRA_IP_PROBE_END", ["a.example.com"])).toEqual({ kind: "ok", hosts: { "a.example.com": { status: 200, hash: null, hash2: null } } });
+    expect(parseInPlaceProbe("hello\nTUGRA_IP_PROBE|a.example.com|200|zz|zz\nTUGRA_IP_PROBE_END", ["a.example.com"])).toEqual({ kind: "ok", hosts: { "a.example.com": { status: 200, hash: null, hash2: null, size: null, location: null } } });
   });
   it("the served-certificate parser and the new-certificate rule", () => {
     const served = parseNewCertCheck("TUGRA_IP_CERT|a.example.com|served|0ABC|C=US, O=Let's Encrypt, CN=R11", "a.example.com")!;
@@ -227,7 +229,7 @@ done
 echo "$res $url" >> "$FAKE_LOG"
 n=$(cat "$FAKE_DIR/count" 2>/dev/null || echo 0); n=$((n+1)); echo $n > "$FAKE_DIR/count"
 if [ -n "\${DYN:-}" ]; then echo "page $n" > "$out"; else echo "same page" > "$out"; fi
-printf '%s' "\${CODE:-200}"
+printf '%s %s %s' "\${CODE:-200}" "\${SIZE:-10}" "\${LOC:-}"
 `;
   it("prints status and the sha256 of the body, never the body, and goes to the chosen address", () => {
     writeBin("curl", fakeCurl);
@@ -236,7 +238,7 @@ printf '%s' "\${CODE:-200}"
     const want = createHash("sha256").update("same page\n").digest("hex");
     expect(parseInPlaceProbe(r.stdout, ["a.example.com", "b.example.com"])).toEqual({
       kind: "ok",
-      hosts: { "a.example.com": { status: 200, hash: want, hash2: want }, "b.example.com": { status: 200, hash: want, hash2: want } },
+      hosts: { "a.example.com": { status: 200, hash: want, hash2: want, size: 10, location: null }, "b.example.com": { status: 200, hash: want, hash2: want, size: 10, location: null } },
     });
     expect(r.stdout).not.toContain("same page");
     const log = readFileSync(join(dir, "log"), "utf8");
@@ -252,7 +254,28 @@ printf '%s' "\${CODE:-200}"
   it("a failing curl is status 000, not a pass", () => {
     writeBin("curl", "exit 7");
     const r = run(buildInPlaceProbeScript({ via: "local", hosts: ["a.example.com"], path: "/" }), { FAKE_LOG: join(dir, "log"), FAKE_DIR: dir });
-    expect(parseInPlaceProbe(r.stdout, ["a.example.com"])).toEqual({ kind: "ok", hosts: { "a.example.com": { status: null, hash: expect.any(String), hash2: expect.any(String) } } });
+    expect(parseInPlaceProbe(r.stdout, ["a.example.com"])).toEqual({ kind: "ok", hosts: { "a.example.com": { status: null, hash: expect.any(String), hash2: expect.any(String), size: 0, location: null } } });
+  });
+  it("reports the size and where a redirect goes, without its query string or fragment", () => {
+    writeBin("curl", fakeCurl);
+    const s = buildInPlaceProbeScript({ via: "local", hosts: ["a.example.com"], path: "/" });
+    const r = run(s, { FAKE_LOG: join(dir, "log"), FAKE_DIR: dir, CODE: "301", SIZE: "0", LOC: "https://www.example.com/en?token=SECRET#frag" });
+    expect(parseInPlaceProbe(r.stdout, ["a.example.com"])).toMatchObject({ kind: "ok", hosts: { "a.example.com": { status: 301, size: 0, location: "https://www.example.com/en" } } });
+    expect(r.stdout).not.toContain("SECRET");
+  });
+  it("an older host's five-field line still parses (no size, no location)", () => {
+    const h = "e".repeat(64);
+    expect(parseInPlaceProbe(`TUGRA_IP_PROBE|a.example.com|200|${h}|${h}\nTUGRA_IP_PROBE_END`, ["a.example.com"])).toMatchObject({ hosts: { "a.example.com": { status: 200, size: null, location: null } } });
+  });
+  it("the app readiness script reads state, health and restarts of each named container and prints absent for a missing one", () => {
+    writeBin("docker", `[ "$1" = container ] && [ "$5" = tugra_a ] && { echo "TUGRA_IP_APP|/tugra_a|running|healthy|2"; exit 0; }; exit 1`);
+    const out = run(buildAppReadyScript(["tugra_a", "tugra_b"])).stdout;
+    expect(parseAppReady(out)).toEqual([
+      { name: "tugra_a", state: "running", health: "healthy", restarts: 2 },
+      { name: "tugra_b", state: "absent", health: "none", restarts: 0 },
+    ]);
+    expect(parseAppReady("TUGRA_IP_APP|/x|running|healthy|0")).toBeNull(); // no END
+    expect(() => buildAppReadyScript(["a; rm -rf /"])).toThrow();
   });
   it("no curl on the box is reported, not guessed", () => {
     const r = run(buildInPlaceProbeScript({ via: "local", hosts: ["a.example.com"], path: "/" }), { PATH: bin });

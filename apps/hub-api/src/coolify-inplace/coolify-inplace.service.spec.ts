@@ -204,14 +204,83 @@ describe("test", () => {
     expect(v.items[1].domains[0].tempCheck).toBe("pending");
     expect(t.box.ctrs.get(H("b"))!.running).toBe(true);
   });
-  it("a domain whose content differs through Tugra fails, and the swap is then refused", async () => {
+  it("a domain whose content differs through Tugra is tested again for a while, then fails with what each side answered, and the swap is then refused", async () => {
     const t = build();
     t.box.differs.add("web.example.com");
     const p = await plan(t);
+    const first = await t.svc.test(ACTOR, p.id);
+    // inside the window it is not failed: a server that answers wrongly for a minute is not a verdict
+    expect(first.items[0].domains[0]).toMatchObject({ tempCheck: "pending", check: { reason: "content_differs" } });
+    expect(t.box.events.filter((e) => e === "probe:dark").length).toBe(3); // several tries, with a growing pause
+    await expect(t.svc.swap(ACTOR, p.id, { confirm: "edge-box" })).rejects.toMatchObject({ response: { code: "takeover_not_tested", host: "web.example.com" } });
+    t.box.clock = new Date(t.box.clock.getTime() + 4 * 60_000);
     const v = await t.svc.test(ACTOR, p.id);
     expect(v.items[0].domains[0].tempCheck).toBe("failed");
+    expect(v.items[0].domains[0].check).toEqual({ reason: "content_differs", coolify: { status: 200, bytes: 1015, location: null }, tugra: { status: 200, bytes: 1015, location: null } });
     await expect(t.svc.swap(ACTOR, p.id, { confirm: "edge-box" })).rejects.toMatchObject({ response: { code: "takeover_test_failed", host: "web.example.com" } });
     expect(t.box.coolifyProxy.running).toBe(true);
+  });
+  it("a redirect through Tugra that Coolify does not give is shown with where it goes, without its query string", async () => {
+    const t = build();
+    t.box.redirects.set("web.example.com", "https://web.example.com/login");
+    const p = await plan(t);
+    await t.svc.test(ACTOR, p.id);
+    t.box.clock = new Date(t.box.clock.getTime() + 4 * 60_000);
+    const d = (await t.svc.test(ACTOR, p.id)).items[0].domains[0];
+    expect(d).toMatchObject({ tempCheck: "failed", check: { reason: "status_differs", coolify: { status: 200 }, tugra: { status: 301, location: "https://web.example.com/login" } } });
+  });
+  it("an app that is still starting is not judged: its domain waits for the container to be running and healthy on two polls, then passes", async () => {
+    const t = build();
+    t.box.booting.set("appweb", 3);
+    const p = await plan(t);
+    const v = await t.svc.test(ACTOR, p.id);
+    expect(v.items[0].domains[0]).toMatchObject({ host: "web.example.com", tempCheck: "ok" });
+    expect(v.items[0].domains[0].check).toBeUndefined();
+    expect(t.box.events.filter((e) => e === "appready").length).toBeGreaterThanOrEqual(4);
+  });
+  it("a server that listens a moment after its container turned healthy passes on a later try instead of failing on the first", async () => {
+    const t = build();
+    t.box.warm.set("web.example.com", 2); // 502 for the first two probes
+    const p = await plan(t);
+    const v = await t.svc.test(ACTOR, p.id);
+    expect(v.items[0].domains[0].tempCheck).toBe("ok");
+    expect(t.box.events.filter((e) => e === "probe:dark").length).toBe(3);
+  });
+  it("one that is slower than a call is left pending and passes on the next call (the run's poll loop)", async () => {
+    const t = build();
+    t.box.warm.set("web.example.com", 4);
+    const p = await plan(t);
+    expect((await t.svc.test(ACTOR, p.id)).items[0].domains[0]).toMatchObject({ tempCheck: "pending", check: { reason: "server_error", tugra: { status: 502 } } });
+    expect((await t.svc.test(ACTOR, p.id)).items[0].domains[0].tempCheck).toBe("ok");
+  });
+  it("an app whose container never comes up stays pending, reported as not ready, and fails only after the readiness deadline", async () => {
+    const t = build();
+    t.box.booting.set("appweb", 10_000);
+    const p = await plan(t);
+    const first = await t.svc.test(ACTOR, p.id);
+    expect(first.items[0].domains[0]).toMatchObject({ tempCheck: "pending", check: { reason: "not_ready", coolify: null, tugra: null } });
+    expect(t.box.events.filter((e) => e === "probe:dark").length).toBe(0); // never judged while it is not up
+    t.box.clock = new Date(t.box.clock.getTime() + 6 * 60_000);
+    expect((await t.svc.test(ACTOR, p.id)).items[0].domains[0]).toMatchObject({ tempCheck: "failed", check: { reason: "not_ready" } });
+  });
+  it("an app whose container exited fails at once as not ready", async () => {
+    const t = build();
+    t.box.appExits.add("appweb");
+    const p = await plan(t);
+    expect((await t.svc.test(ACTOR, p.id)).items[0].domains[0]).toMatchObject({ tempCheck: "failed", check: { reason: "not_ready" } });
+  });
+  it("a probe that cannot be read is tried again before it is a failure code", async () => {
+    const t = build();
+    const exec = t.box.exec.bind(t.box);
+    let bad = 1;
+    t.box.exec = async (s: string, c: string) => {
+      if (c.includes("tugra-proxy") && c.includes("TUGRA_IP_PROBE") && bad-- > 0) return { exitCode: 0, output: "garbage" };
+      return exec(s, c);
+    };
+    const p = await plan(t);
+    const v = await t.svc.test(ACTOR, p.id);
+    expect(v.failureCode).toBeNull();
+    expect(v.items[0].domains[0].tempCheck).toBe("ok");
   });
   it("a page that changes on every request is judged by status only", async () => {
     const t = build();

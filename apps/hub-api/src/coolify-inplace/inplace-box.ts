@@ -151,6 +151,13 @@ export class Box implements InPlaceWorld {
   /** hosts whose page differs through Tugra, and hosts whose page changes on every request */
   differs = new Set<string>();
   dynamic = new Set<string>();
+  /** apps (by id) that report `starting` for the next N readiness polls, and apps whose container exits */
+  booting = new Map<string, number>();
+  appExits = new Set<string>();
+  /** hosts whose app answers 502 through Tugra for the next N probes even though its container is up (a server that listens late) */
+  warm = new Map<string, number>();
+  /** hosts that answer a redirect through Tugra */
+  redirects = new Map<string, string>();
   noCurl = false;
   noOpenssl = false;
   failProxyStop = false;
@@ -255,6 +262,7 @@ export class Box implements InPlaceWorld {
   }
 
   private route(s: string): string {
+    if (s.includes("TUGRA_IP_APP_END")) return this.appReadyOut(s);
     if (s.includes("TUGRA_SWAP_END")) {
       return ["TUGRA_SWAP_ID=" + PROXY_ID, "TUGRA_SWAP_NAME=/coolify-proxy", "TUGRA_SWAP_IMAGE=traefik:v3.1", `TUGRA_SWAP_RESTART=${this.coolifyProxy.restart}`, `TUGRA_SWAP_RUNNING=${this.coolifyProxy.running}`, "TUGRA_SWAP_PORTS=80>80/tcp,443>443/tcp,", `TUGRA_SWAP_CONTROL_PLANE=${this.controlPlane}`, "TUGRA_SWAP_END"].join("\n");
     }
@@ -440,6 +448,28 @@ export class Box implements InPlaceWorld {
     return null;
   }
 
+  /** Tugra's copy of each named app (`tugra_<appId>`): up when the takeover started it, `starting` for the first `booting` polls, `exited` when a spec made it die. */
+  private appReadyOut(s: string): string {
+    const names = /^for N in ([^;]+); do/m.exec(s)?.[1].match(/'([^']+)'/g)?.map((x) => x.slice(1, -1)) ?? [];
+    const out: string[] = [];
+    for (const n of names) {
+      const id = n.replace(/^tugra_/, "");
+      if (!this.tugraRunning.has(id)) {
+        out.push(`TUGRA_IP_APP|/${n}|absent|none|0`);
+        continue;
+      }
+      if (this.appExits.has(id)) {
+        out.push(`TUGRA_IP_APP|/${n}|exited|none|0`);
+        continue;
+      }
+      const left = this.booting.get(id) ?? 0;
+      if (left > 0) this.booting.set(id, left - 1);
+      out.push(`TUGRA_IP_APP|/${n}|running|${left > 0 ? "starting" : "healthy"}|0`);
+    }
+    this.events.push("appready");
+    return [...out, "TUGRA_IP_APP_END"].join("\n");
+  }
+
   /** Every container of Tugra's compose project as the box shows it: a started service shows its members running unless a spec made one exit, restart or turn unhealthy. */
   private readyOut(s: string): string {
     const project = /^P='([^']+)'/m.exec(s)?.[1] ?? "";
@@ -502,9 +532,16 @@ export class Box implements InPlaceWorld {
     const hosts = /for H in ([^;]+); do/.exec(s)?.[1].match(/'([^']+)'/g)?.map((x) => x.slice(1, -1)) ?? [];
     const who: "coolify" | "tugra" = dark || this.tugraOwnsPorts() ? "tugra" : "coolify";
     const out = hosts.map((h) => {
-      const a = this.answer(h, who, 1);
+      let a = this.answer(h, who, 1);
+      if (dark && (this.warm.get(h) ?? 0) > 0) {
+        this.warm.set(h, (this.warm.get(h) as number) - 1);
+        a = { status: 502, hash: sha("bad gateway") };
+      }
       const b = twice ? this.answer(h, who, 2) : a;
-      return `TUGRA_IP_PROBE|${h}|${a.status}|${a.hash}|${b.hash}`;
+      const redirect = dark ? this.redirects.get(h) : undefined;
+      const status = redirect ? 301 : a.status;
+      const size = status === 502 ? 11 : redirect ? 0 : 1000 + h.length;
+      return `TUGRA_IP_PROBE|${h}|${status}|${a.hash}|${b.hash}|${size}|${redirect ?? ""}`;
     });
     this.events.push(`probe:${dark ? "dark" : who === "tugra" ? "local" : "coolify"}`);
     return [...out, "TUGRA_IP_PROBE_END"].join("\n");

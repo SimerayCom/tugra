@@ -5,7 +5,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { TeamAccessService } from "../common/team-access.service";
 import { CUTOVER_HOSTNAME_RE } from "../cutover/cutover.logic";
-import { buildProxyStopScript } from "../deploy/deploy-script";
+import { buildProxyStopScript, containerName } from "../deploy/deploy-script";
 import { dbContainerName } from "../databases/database-script";
 import { coolifyRefOf } from "../importer/sources/coolify-control";
 import { buildSourceInspectScript, buildSourceStartScript, buildSourceStopScript, parseSourceInspect, parseStartOutput, parseStopOutput } from "../migration-runs/steps/data/source-control/source-scripts";
@@ -24,6 +24,7 @@ import {
   stopCtrs,
   domainsOf,
   certWorkLeft,
+  checkOf,
   isVerified,
   overdueFallbacks,
   judgeProbe,
@@ -36,6 +37,7 @@ import {
 } from "./inplace-plan";
 import {
   buildAdoptImageScript,
+  buildAppReadyScript,
   buildContainerDetailScript,
   buildDbFingerprintScript,
   buildFallbackInstallScript,
@@ -49,6 +51,7 @@ import {
   isNewLetsEncryptCert,
   parseDbFingerprint,
   parseAdopt,
+  parseAppReady,
   parseAlias,
   parseContainerDetail,
   parseFallbackInstall,
@@ -77,6 +80,17 @@ const PROBE_CHUNK = 10;
 /** How long a service's containers are waited for to be ready (polls of 5 s, two minutes). */
 const READY_POLLS = 24;
 const READY_POLL_MS = 5_000;
+/** How long one call waits for Tugra's copy of an app to be running and healthy (polls of 5 s; the run's poll loop calls again after that). */
+const APP_READY_POLLS = 12;
+/** An app whose container is still not up this long after it was started is reported as not ready (the test fails: it will not come up by itself). */
+const APP_READY_DEADLINE_MS = 5 * 60_000;
+/** A short pause once an app is up, before it is judged (a server that listens a moment after its container turned healthy). */
+const SETTLE_MS = 5_000;
+/** How long a domain that answers differently through Tugra keeps being tested again before the test fails, counted from when the app was up. */
+const TEST_WINDOW_MS = 3 * 60_000;
+/** Tests of a domain that does not pass yet per call, with a pause that doubles (5 s, 10 s); the run's poll loop calls again until {@link TEST_WINDOW_MS} is over. */
+const PROBE_ATTEMPTS = 3;
+const PROBE_BACKOFF_MS = 5_000;
 /** How long a new certificate is waited for per domain (polls of 5 s). */
 const CERT_POLLS = 12;
 const CERT_POLL_MS = 5_000;
@@ -121,6 +135,9 @@ type UndoResult = { ok: true; networksLeft: number } | { ok: false; step: string
 const exactOf = (d: { repoDigests?: string[]; imageVersion?: string }): { repoDigests?: string[]; imageVersion?: string } => ({ ...(d.repoDigests?.length ? { repoDigests: d.repoDigests } : {}), ...(d.imageVersion ? { imageVersion: d.imageVersion } : {}) });
 
 const exactParts = (c: { repoDigests?: string[]; imageVersion?: string }): { repoDigests?: string[]; version?: string } => ({ ...(c.repoDigests?.length ? { repoDigests: c.repoDigests } : {}), ...(c.imageVersion ? { version: c.imageVersion } : {}) });
+
+/** A plain app (not a database, not a service, not one that is switched rather than tested alongside) whose container has to be up before its domains are judged. */
+const needsReadyGate = (i: TakeoverItem): boolean => (i.kind === undefined || i.kind === "app") && !i.exclusive && !i.afterSwitch;
 
 const emptyRollback = (): Rollback => ({ bindBefore: "public", proxyBefore: "unknown", darkStarted: false, exclusiveStopped: false, swapStarted: false });
 
@@ -612,6 +629,7 @@ export class CoolifyInPlaceService implements InPlaceRunPort {
       if (st === "FAILED") return skip("rebuild_failed");
       if (st === "SUCCESS") {
         item.state = "prepared";
+        item.startedAt = this.world.now().toISOString();
         await save();
       }
       return;
@@ -646,6 +664,7 @@ export class CoolifyInPlaceService implements InPlaceRunPort {
     if (!item.exclusive && !item.afterSwitch) {
       const r = await this.world.runAdopted(userId, item.appId, item.adoptDeploymentId);
       if (!r.ok) return skip("prepare_failed");
+      item.startedAt = this.world.now().toISOString();
     }
     item.state = "prepared";
     await save();
@@ -908,9 +927,55 @@ export class CoolifyInPlaceService implements InPlaceRunPort {
   }
 
   /**
+   * Is Tugra's copy of each plain app up? Judged like a service's containers: running, healthy where it has a health check and the same
+   * on two polls 5 s apart, then a short settle. An app that is not up yet is not judged at all (its domains stay `pending`, saying it is
+   * still starting); one whose container exited, or that has not come up long after it was started, is `not_ready` and fails. Recomputed
+   * on every call, so a retry after a fix starts from what the box shows now.
+   */
+  private async settle(serverId: string, side: TakeoverItem[]): Promise<void> {
+    const gated = side.filter(needsReadyGate);
+    const waiting = gated.filter((i) => !i.readyAt);
+    if (waiting.length === 0) return;
+    const nameOf = (i: TakeoverItem): string => containerName({ id: i.appId });
+    const order = waiting.map(nameOf);
+    const dead = new Set<string>();
+    let prev: MemberProbe[] | null = null;
+    let fresh = false;
+    for (let n = 0; n < APP_READY_POLLS; n++) {
+      const probes = await this.run(serverId, buildAppReadyScript(order), parseAppReady);
+      if (probes) {
+        const cur: MemberProbe[] = probes.map((p) => ({ service: p.name, ...p }));
+        const verdict = judgeReady(prev, cur, order);
+        prev = cur;
+        for (const i of waiting) {
+          if (!i.readyAt && !verdict.notReady.includes(nameOf(i))) {
+            i.readyAt = this.world.now().toISOString();
+            fresh = true;
+          }
+        }
+        for (const d of verdict.dead) dead.add(d);
+        if (waiting.every((i) => i.readyAt || dead.has(nameOf(i)))) break;
+      }
+      await this.world.sleep(READY_POLL_MS);
+    }
+    if (fresh) await this.world.sleep(SETTLE_MS);
+    const now = this.world.now().getTime();
+    for (const i of waiting) {
+      if (i.readyAt) continue;
+      i.startedAt ??= this.world.now().toISOString();
+      const over = dead.has(nameOf(i)) || now - new Date(i.startedAt).getTime() > APP_READY_DEADLINE_MS;
+      for (const d of i.domains) {
+        d.tempCheck = over ? "failed" : "pending";
+        d.check = checkOf("not_ready", undefined, undefined);
+      }
+    }
+  }
+
+  /**
    * What Coolify serves now (the yardstick, fetched twice so a page that changes every time is known) and, for the apps that run alongside,
-   * what Tugra's proxy answers on its own address. Returns a failure code when a probe could not run at all; a domain that answers wrongly is
-   * just `failed`. An app still building is left `pending`.
+   * what Tugra's proxy answers on its own address, once the app is up. A domain that does not pass is tested again with a growing pause, and
+   * again on the run's next call, until the window after the app came up is over: only then it is `failed`, with what each side answered.
+   * Returns a failure code when a probe could not run at all. An app still starting or building is left `pending`.
    */
   private async measure(serverId: string, active: TakeoverItem[]): Promise<TakeoverFailureCode | null> {
     const ready = active.filter((i) => i.state === "prepared");
@@ -920,12 +985,44 @@ export class CoolifyInPlaceService implements InPlaceRunPort {
     if ("fail" in baseline) return "probe_unavailable";
     for (const i of ready) for (const d of i.domains) if (baseline.hosts[d.host]) i.baseline[d.host] = baseline.hosts[d.host];
     const side = ready.filter((i) => !i.exclusive && !i.afterSwitch);
-    const hosts = [...new Set(side.flatMap((i) => i.domains.map((d) => d.host)))];
-    if (hosts.length === 0) return null;
-    const dark = await this.probe(serverId, "tugra-dark", hosts, false);
-    if ("fail" in dark) return "probe_unavailable";
-    for (const i of side) {
-      for (const d of i.domains) d.tempCheck = judgeProbe(i.baseline[d.host], dark.hosts[d.host]).ok ? "ok" : "failed";
+    await this.settle(serverId, side);
+    const judged = side.filter((i) => !needsReadyGate(i) || i.readyAt);
+    const clock = this.world.now().toISOString();
+    for (const i of judged) i.readyAt ??= clock; // a service was waited for already: its window starts now
+    let todo = [...new Set(judged.flatMap((i) => i.domains.map((d) => d.host)))];
+    for (let attempt = 0; attempt < PROBE_ATTEMPTS && todo.length > 0; attempt++) {
+      if (attempt > 0) {
+        await this.world.sleep(PROBE_BACKOFF_MS * 2 ** (attempt - 1));
+        const again = await this.probe(serverId, "coolify", todo, true);
+        if ("fail" in again) return "probe_unavailable";
+        for (const i of judged) for (const d of i.domains) if (again.hosts[d.host]) i.baseline[d.host] = again.hosts[d.host];
+      }
+      const dark = await this.probe(serverId, "tugra-dark", todo, false);
+      if ("fail" in dark) {
+        // a probe that could not be read at all is tried again; a missing proxy or curl will not get better by waiting
+        if (dark.fail !== "unreadable" || attempt === PROBE_ATTEMPTS - 1) return "probe_unavailable";
+        continue;
+      }
+      const failing = new Set<string>();
+      for (const i of judged) {
+        for (const d of i.domains) {
+          if (!todo.includes(d.host)) continue;
+          const v = judgeProbe(i.baseline[d.host], dark.hosts[d.host]);
+          if (v.ok) {
+            d.tempCheck = "ok";
+            delete d.check;
+          } else {
+            failing.add(d.host);
+            d.check = checkOf(v.reason, i.baseline[d.host], dark.hosts[d.host]);
+          }
+        }
+      }
+      todo = todo.filter((h) => failing.has(h));
+    }
+    const now = this.world.now().getTime();
+    for (const i of judged) {
+      const within = now - new Date(i.readyAt as string).getTime() < TEST_WINDOW_MS;
+      for (const d of i.domains) if (todo.includes(d.host)) d.tempCheck = within ? "pending" : "failed";
     }
     return null;
   }

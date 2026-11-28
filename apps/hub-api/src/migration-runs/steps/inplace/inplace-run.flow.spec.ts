@@ -175,10 +175,26 @@ describe("DEPLOY_DARK of an in-place run", () => {
     expect(err.code).toBe("deploy-dark.inplace-refused");
     expect(err.params.reason).toBe("takeover-control-plane");
   });
-  it("a domain that answers differently through Tugra fails the step, retryable, naming the host", async () => {
+  it("a domain that answers differently through Tugra is tested again for a while, then fails the step, retryable, naming the host and the app", async () => {
     const r = rig();
+    const s = steps(r);
     r.box.differs.add("web.example.com");
-    await expect(prepare(steps(r), ctxOf())).rejects.toMatchObject({ code: "deploy-dark.inplace-test-failed", params: { host: "web.example.com" }, retryable: true });
+    // inside the window the step waits and the poll loop calls it again
+    expect(await prepare(s, ctxOf())).toMatchObject({ outcome: "continue" });
+    r.box.clock = new Date(r.box.clock.getTime() + 4 * 60_000);
+    await expect(prepare(s, ctxOf())).rejects.toMatchObject({ code: "deploy-dark.inplace-test-failed", params: { host: "web.example.com", app: "web", reason: "content_differs" }, retryable: true });
+    // what each side answered is on the takeover's item, for the page
+    const web = (await s.dark.state(ctxOf().ctx))!.items.find((i) => i.name === "web")!;
+    expect(web.domains[0].check).toMatchObject({ reason: "content_differs", coolify: { status: 200 }, tugra: { status: 200 } });
+  });
+  it("an app that answers 502 while it is still booting passes once it is ready: the step never fails on the first look", async () => {
+    const r = rig();
+    const s = steps(r);
+    r.box.booting.set("appweb", 3);
+    r.box.warm.set("web.example.com", 4);
+    let out = await prepare(s, ctxOf());
+    for (let n = 0; n < 6 && out.outcome === "continue"; n++) out = await prepare(s, ctxOf());
+    expect(out).toEqual({ outcome: "done" });
   });
   it("a probe that could not run fails retryably, never a pass", async () => {
     const r = rig();
