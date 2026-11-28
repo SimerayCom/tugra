@@ -67,6 +67,13 @@ const CONSENT_HOLDING_STATUSES: Array<"QUEUED" | "RUNNING" | "WAITING" | "PAUSED
 
 const metaOf = (m: unknown): Record<string, unknown> => (typeof m === "object" && m ? (m as Record<string, unknown>) : {});
 
+/**
+ * Reasons the env rewrite lists that a takeover on the machine the source runs on does not change. `cross-server-target`: the app and the
+ * database it names sit on different servers, so the old uuid host did not resolve in Coolify either; the takeover keeps the value as it
+ * was and the app behaves as before. Every other reason stays a question for the owner (a lab check decides which more may join).
+ */
+export const IN_PLACE_INFO_REASONS: ReadonlySet<string> = new Set(["cross-server-target"]);
+
 @Injectable()
 export class ImportPortService implements ImportStepsPort {
   private readonly planCache = new Map<string, { at: number; plan: ImportPlanResponse }>();
@@ -440,14 +447,20 @@ export class ImportPortService implements ImportStepsPort {
     return !!undo && !undo.undoneAt;
   }
 
-  async remapPlan(userId: string, opId: string): Promise<RemapSummary> {
+  async remapPlan(userId: string, opId: string, opts: { inPlace?: boolean } = {}): Promise<RemapSummary> {
     const pub = await this.executor.remapEnvPlan(userId, opId);
-    const apps = pub.apps as Array<{ changes: unknown[]; needsManual: unknown[] }>;
+    const apps = pub.apps as Array<{ name?: string; changes: unknown[]; needsManual: Array<{ key?: unknown; reason?: unknown }> }>;
+    const rows = apps.flatMap((a, ai) => a.needsManual.map((n) => ({ ai, app: a.name ?? "", key: typeof n.key === "string" ? n.key : "", reason: typeof n.reason === "string" ? n.reason : "" })));
+    // a takeover leaves a reference that already pointed across servers in Coolify exactly where it was: nothing changes for it, so it is shown but never asked about
+    const info = opts.inPlace ? rows.filter((r) => IN_PLACE_INFO_REASONS.has(r.reason)) : [];
+    const manual = rows.filter((r) => !info.includes(r));
     return {
       planHash: pub.planHash,
       appsToWrite: apps.filter((a) => a.changes.length > 0).length,
-      needsManualKeys: apps.reduce((n, a) => n + a.needsManual.length, 0),
-      needsManualApps: apps.filter((a) => a.needsManual.length > 0).length,
+      needsManualKeys: manual.length,
+      needsManualApps: new Set(manual.map((r) => r.ai)).size,
+      manual: manual.filter((r) => r.key && r.app).slice(0, 100).map((r) => ({ app: r.app.slice(0, 120), key: r.key.slice(0, 120), reason: r.reason.slice(0, 60) })),
+      ...(opts.inPlace ? { infoKeys: info.length } : {}),
     };
   }
 

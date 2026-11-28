@@ -20,6 +20,7 @@ const CODE_RE = /^[a-z0-9-]+(\.[a-z0-9-]+)+$/;
 const OPAQUE = new Set<string>([
   "steps/cutover/cutover.handler.ts: cutover.flip-halted",
   "steps/import/import.step.ts: import.risk-warning",
+  "steps/import/remap-env.step.ts: remap-env.needs-manual",
   "steps/import/preflight.step.ts: preflight.images-unpinned",
   "steps/import/preflight.step.ts: preflight.hosts-classified",
   "steps/cutover/cutover.handler.ts: cutover.webhooks-repoint",
