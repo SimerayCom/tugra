@@ -641,7 +641,7 @@ describe("RunDetail", () => {
       const marks = vi.spyOn(api, "setMigrationRunWorkerMarks").mockResolvedValue({ ...hints, workerMarks: [...hints.workerMarks, { itemRef: "app:host-a:cron", role: "job-runner" }] });
       const pins = vi.spyOn(api, "setMigrationRunImagePins").mockResolvedValue(hints);
       wrap();
-      await screen.findByText("Held workers and image pins");
+      await screen.findByText("Exact images, held workers and image pins");
       expect(get).not.toHaveBeenCalled();
       await open();
       expect(get).toHaveBeenCalledWith("run12345abcdef");

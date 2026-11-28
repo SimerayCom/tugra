@@ -168,17 +168,27 @@ export class RunSafetyController {
 
   private async viewOf(v: { id: string; status: string; opId?: string | null; promotedFromId?: string | null }, hints: readonly RunHint[]): Promise<SafetyHints> {
     const fixed = v.status === "DRY_RUN_DONE" ? fixedKeys(await this.stepsOf(v.id), hints) : [];
-    return view(hints, fixed, await this.unknownExact(v, hints));
+    const meta = await this.opMeta(v.opId);
+    return view(hints, fixed, await this.unknownExact(v, hints, meta), namesOf(meta));
+  }
+
+  /** The op's meta (the plan the run applied), or `{}` when the run has no op yet or it cannot be read. */
+  private async opMeta(opId: string | null | undefined): Promise<ExactMeta & { services?: Array<{ itemRef?: unknown; name?: unknown }> }> {
+    if (!opId) return {};
+    try {
+      const op = await this.prisma.bulkOperation.findUnique({ where: { id: opId }, select: { meta: true } });
+      return typeof op?.meta === "object" && op.meta ? (op.meta as ExactMeta) : {};
+    } catch {
+      return {};
+    }
   }
 
   /** The items of the op's plan an inventory covered and still has no exact image for (see `SafetyHintsSchema.exactUnknown`). Best effort: an unreadable plan lists none. */
-  private async unknownExact(v: { id: string; opId?: string | null; promotedFromId?: string | null }, hints: readonly RunHint[]): Promise<SafetyHints["exactUnknown"]> {
+  private async unknownExact(v: { id: string; opId?: string | null; promotedFromId?: string | null }, hints: readonly RunHint[], meta: ExactMeta): Promise<Array<{ itemRef: string; member: string; image: string }>> {
     if (!v.opId) return [];
     try {
       const reported = await this.prisma.migrationRunHostReport.count({ where: { runId: { in: [v.id, ...(v.promotedFromId ? [v.promotedFromId] : [])] }, kind: "inventory", state: "complete" } });
       if (reported === 0) return [];
-      const op = await this.prisma.bulkOperation.findUnique({ where: { id: v.opId }, select: { meta: true } });
-      const meta = typeof op?.meta === "object" && op.meta ? (op.meta as ExactMeta) : {};
       const have = new Set(exactRows(hints).map((r) => (r.member ? `${r.itemRef}#${r.member}` : r.itemRef)));
       return exactCandidatesOf(meta)
         .filter((c) => !(c.image && isDigestPinned(c.image)) && !have.has(exactKeyOf(c)) && !isExactOff(hints, c.itemRef))
@@ -223,7 +233,14 @@ function listedMembers(steps: ReadonlyArray<{ progress: unknown }>): Map<string,
   return out;
 }
 
-function view(hints: readonly RunHint[], fixed: readonly string[] = [], exactUnknown: SafetyHints["exactUnknown"] = []): SafetyHints {
+/** itemRef to the item's name in the plan the op applied (apps, databases and, for Coolify, stacks). */
+function namesOf(meta: { plan?: { items?: Array<{ itemRef?: unknown; name?: unknown }> }; services?: Array<{ itemRef?: unknown; name?: unknown }> }): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const i of [...(meta.plan?.items ?? []), ...(meta.services ?? [])]) if (typeof i.itemRef === "string" && typeof i.name === "string") out.set(i.itemRef, i.name.slice(0, 120));
+  return out;
+}
+
+function view(hints: readonly RunHint[], fixed: readonly string[] = [], exactUnknown: Array<{ itemRef: string; member: string; image: string }> = [], names: ReadonlyMap<string, string> = new Map()): SafetyHints {
   return {
     imagePins: hints.filter((h) => h.kind === "image-pin").map((h) => ({ image: h.key, scope: h.scope, digest: h.value, evidence: h.evidence })),
     workerMarks: hints.filter((h) => h.kind === "worker-mark" && (h.value === "job-runner" || h.value === "web")).map((h) => ({ itemRef: h.key, role: h.value as "job-runner" | "web" })),
@@ -235,8 +252,8 @@ function view(hints: readonly RunHint[], fixed: readonly string[] = [], exactUnk
         return { itemRef: h.key.slice(0, at), member: h.key.slice(at + 1), ref: h.value, evidence: h.evidence };
       })
       .sort((a, b) => (a.itemRef + a.member < b.itemRef + b.member ? -1 : 1)),
-    exactImages: exactRows(hints),
-    exactUnknown,
+    exactImages: exactRows(hints).map((r) => ({ ...r, name: names.get(r.itemRef) ?? "" })),
+    exactUnknown: exactUnknown.map((u) => ({ ...u, name: names.get(u.itemRef) ?? "" })),
     warningsFixed: [...fixed],
   };
 }

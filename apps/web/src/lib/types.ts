@@ -3666,6 +3666,24 @@ export interface MigrationRunSafetyHints {
   servicePins?: Array<{ itemRef: string; member: string; ref: string; evidence: string }>;
   /** Warning keys of a finished dry run that a pin fixed: they need no acceptance (absent on a hub that predates them). */
   warningsFixed?: string[];
+  /**
+   * The exact image the source runs for every app, database and stack member the source host reported on (absent on a hub that predates
+   * it). `ref` is `repo:tag@sha256:...` (or `repo:<version>`); `member` is empty for an app or a database; `kept` is false when the owner
+   * unticked "keep the exact image" for the item.
+   */
+  exactImages?: MigrationRunExactImage[];
+  /** Items the host's inventory covered but reported no exact image for: they keep the image the source writes ("unknown"). */
+  exactUnknown?: Array<{ itemRef: string; name: string; member: string; image: string }>;
+}
+export interface MigrationRunExactImage {
+  itemRef: string;
+  name: string;
+  member: string;
+  ref: string;
+  tag: string;
+  version: string | null;
+  digest: string | null;
+  kept: boolean;
 }
 
 // ───────────── migration safety: verification report (92) and pre-migration snapshot (93) ─────────────

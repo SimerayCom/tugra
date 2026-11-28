@@ -132,15 +132,15 @@ export const SafetyHintsSchema = z.object({
   /**
    * The exact image the source runs for every app, database and stack member the host reported on (`ref` is `repo:tag@sha256:...`, or
    * `repo:<version>`), with the image's own version label and digest when known. `kept: false` = the owner unticked "keep the exact image".
-   * `member` is empty for an app or a database.
+   * `member` is empty for an app or a database; `name` is the item's name in the plan ("" when the plan is not at hand).
    */
-  exactImages: z.array(z.object({ itemRef: z.string(), member: z.string(), ref: z.string(), tag: z.string(), version: z.string().nullable(), digest: z.string().nullable(), kept: z.boolean() })),
+  exactImages: z.array(z.object({ itemRef: z.string(), name: z.string(), member: z.string(), ref: z.string(), tag: z.string(), version: z.string().nullable(), digest: z.string().nullable(), kept: z.boolean() })),
   /**
    * The apps, databases and stack members the host's inventory covered but reported no exact image for (a locally built image, an older
    * script, two different digests): they keep the image the source writes, and the screen says "unknown". Empty until an inventory arrived.
    * `image` is what the plan writes for it ("" for a database the plan names no image for).
    */
-  exactUnknown: z.array(z.object({ itemRef: z.string(), member: z.string(), image: z.string() })),
+  exactUnknown: z.array(z.object({ itemRef: z.string(), name: z.string(), member: z.string(), image: z.string() })),
   /** The warning keys of a finished dry run that are settled by a fix (every floating image behind them is pinned); empty for any other run. */
   warningsFixed: z.array(z.string()),
 });

@@ -33,8 +33,8 @@ describe("RunSafetyController: keep the exact image", () => {
     await rows(s);
     const v = await s.c.get(user(), "r1");
     expect(v.exactImages).toEqual([
-      { itemRef: "app:s:a", member: "", ref: `x/y:latest@${D1}`, tag: "latest", version: "1.2.3", digest: D1, kept: true },
-      { itemRef: "service:s:z", member: "meili", ref: `getmeili/meilisearch:v1@${D1}`, tag: "v1", version: null, digest: D1, kept: true },
+      { itemRef: "app:s:a", name: "", member: "", ref: `x/y:latest@${D1}`, tag: "latest", version: "1.2.3", digest: D1, kept: true },
+      { itemRef: "service:s:z", name: "", member: "meili", ref: `getmeili/meilisearch:v1@${D1}`, tag: "v1", version: null, digest: D1, kept: true },
     ]);
     expect(SafetyHintsSchema.parse(v)).toEqual(v);
   });
@@ -63,7 +63,7 @@ describe("RunSafetyController: keep the exact image", () => {
   });
 
   it("lists what the inventory covered but gave no exact image for as unknown (never before an inventory arrived)", async () => {
-    const meta = { plan: { items: [{ itemRef: "app:s:a", kind: "app", proposed: { source: "IMAGE", image: "x/y:latest" } }, { itemRef: "app:s:b", kind: "app", proposed: { source: "IMAGE", image: "x/b:2" } }, { itemRef: "database:s:d", kind: "database", proposed: { image: null } }] }, stackImages: [{ itemRef: "service:s:z", images: [{ member: "meili", image: "getmeili/meilisearch:latest" }] }] };
+    const meta = { plan: { items: [{ itemRef: "app:s:a", name: "api", kind: "app", proposed: { source: "IMAGE", image: "x/y:latest" } }, { itemRef: "app:s:b", name: "worker", kind: "app", proposed: { source: "IMAGE", image: "x/b:2" } }, { itemRef: "database:s:d", name: "orders", kind: "database", proposed: { image: null } }] }, services: [{ itemRef: "service:s:z", name: "search stack" }], stackImages: [{ itemRef: "service:s:z", images: [{ member: "meili", image: "getmeili/meilisearch:latest" }] }] };
     const s = setup({ opId: "op1" });
     const p = s.prisma as unknown as Record<string, unknown>;
     p.migrationRunHostReport = { count: jest.fn().mockResolvedValue(0) };
@@ -72,9 +72,9 @@ describe("RunSafetyController: keep the exact image", () => {
     expect((await s.c.get(user(), "r1")).exactUnknown).toEqual([]);
     (p.migrationRunHostReport as { count: jest.Mock }).count.mockResolvedValue(1);
     expect((await s.c.get(user(), "r1")).exactUnknown).toEqual([
-      { itemRef: "app:s:b", member: "", image: "x/b:2" },
-      { itemRef: "database:s:d", member: "", image: "" },
-      { itemRef: "service:s:z", member: "meili", image: "getmeili/meilisearch:latest" },
+      { itemRef: "app:s:b", name: "worker", member: "", image: "x/b:2" },
+      { itemRef: "database:s:d", name: "orders", member: "", image: "" },
+      { itemRef: "service:s:z", name: "search stack", member: "meili", image: "getmeili/meilisearch:latest" },
     ]);
   });
 });

@@ -676,3 +676,24 @@ describe("campaign report (R15/R69)", () => {
     expect(campaignReportHref("wave 1/a")).toBe("/import/runs/campaign?c=wave%201%2Fa");
   });
 });
+
+describe("exact images (the image the source runs)", () => {
+  const D = `sha256:${"a".repeat(64)}`;
+  const base = { itemRef: "app:s:a", name: "web", member: "", ref: `x/y:latest@${D}`, tag: "latest", version: "1.2.3" as string | null, digest: D as string | null, kept: true };
+  it("shortDigest keeps sha256: and twelve hex digits", async () => {
+    const { shortDigest } = await import("./migration-run");
+    expect(shortDigest(D)).toBe("sha256:aaaaaaaaaaaa");
+  });
+  it("exactImageLine picks the line by what is known", async () => {
+    const { exactImageLine } = await import("./migration-run");
+    expect(exactImageLine(base)).toEqual({ key: "migrationRun.safety.exactLine", params: { tag: "latest", version: "1.2.3", digest: "sha256:aaaaaaaaaaaa" } });
+    expect(exactImageLine({ ...base, version: null }).key).toBe("migrationRun.safety.exactLineNoVersion");
+    expect(exactImageLine({ ...base, version: "latest" }).key).toBe("migrationRun.safety.exactLineNoVersion");
+    expect(exactImageLine({ ...base, digest: null, tag: "2.4.1", version: "2.4.1" })).toEqual({ key: "migrationRun.safety.exactLineTagOnly", params: { tag: "2.4.1", version: "2.4.1", digest: "" } });
+  });
+  it("groupExactImages puts a stack's members under one item and names an item by its plan name, else by its ref", async () => {
+    const { groupExactImages } = await import("./migration-run");
+    const g = groupExactImages([base, { ...base, itemRef: "service:s:z", name: "", member: "meili" }, { ...base, itemRef: "service:s:z", name: "", member: "redis", kept: true }]);
+    expect(g.map((x) => [x.itemRef, x.name, x.rows.length])).toEqual([["app:s:a", "web", 1], ["service:s:z", "z", 2]]);
+  });
+});

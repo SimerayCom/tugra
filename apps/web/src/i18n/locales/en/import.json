@@ -365,8 +365,8 @@
     "image": {
       "pin": "Pin {service} to",
       "pinPlaceholder": "repository:version",
-      "unpinned": "{services} run a floating tag. Pin the version the source runs, or the registry's latest is pulled.",
-      "keepFloating": "Do not pin the images"
+      "unpinned": "{services} run a floating tag. A guided move keeps the exact image the source host reports for them, and nothing is upgraded. Pin a version here only when you want to choose it yourself, or the registry's latest is pulled.",
+      "keepFloating": "Do not keep the exact image (leave the tags as the source writes them)"
     },
     "blockers": "Why it is not imported",
     "risk": {

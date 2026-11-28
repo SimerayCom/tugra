@@ -3105,6 +3105,10 @@ export const api = {
   setMigrationRunServicePins(id: string, body: { pins: Array<{ itemRef: string; member: string; ref: string | null }> }) {
     return apiFetch<MigrationRunSafetyHints>(`/migration-runs/${encodeURIComponent(id)}/service-pins`, { method: "PUT", body: JSON.stringify(body) });
   },
+  /** Tick (`keep: true`, the default) or untick "keep the exact image" per app, database or stack of the run. */
+  setMigrationRunExactImages(id: string, body: { items: Array<{ itemRef: string; keep: boolean }> }) {
+    return apiFetch<MigrationRunSafetyHints>(`/migration-runs/${encodeURIComponent(id)}/exact-images`, { method: "PUT", body: JSON.stringify(body) });
+  },
   getMigrationRunReport(id: string) {
     return apiFetch<MigrationRunReport>(`/migration-runs/${encodeURIComponent(id)}/report`);
   },

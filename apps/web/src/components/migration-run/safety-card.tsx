@@ -9,6 +9,7 @@ import { Field, Select, TextInput } from "../form";
 import { hintsClosed, validAppItemRef, validDigest, validImageRef, validPinScope } from "../../lib/migration-run";
 import type { MigrationRunSafetyHints, MigrationRunView } from "../../lib/types";
 import { runHintsKey as hintsKey, useRunPlumbing } from "./use-run-actions";
+import { ExactImagesSection } from "./exact-images-section";
 
 function useHints(runId: string, enabled: boolean) {
   return useQuery<MigrationRunSafetyHints>({ queryKey: hintsKey(runId), queryFn: () => api.getMigrationRunSafetyHints(runId), enabled, staleTime: 15_000 });
@@ -31,6 +32,7 @@ export function SafetyCard({ run, focusToken = 0 }: { run: MigrationRunView; foc
   }, [focusToken]);
   const closed = hintsClosed(run);
   const q = useHints(run.id, open);
+  const { ok: saved } = useSave(run.id);
   return (
     <SectionCard title={t("migrationRun.safety.title")} desc={t("migrationRun.safety.desc")} style={{ marginBottom: 0 }}>
       <details ref={detailsRef} onToggle={(e) => setOpen((e.currentTarget as HTMLDetailsElement).open)}>
@@ -41,6 +43,7 @@ export function SafetyCard({ run, focusToken = 0 }: { run: MigrationRunView; foc
           {open && q.isError && <div role="alert" style={{ fontSize: 13, color: "var(--c-r)" }}>{t("migrationRun.errors.generic")}</div>}
           {q.data && (
             <>
+              <ExactImagesSection runId={run.id} hints={q.data} closed={closed} onSaved={saved} />
               <MarksSection runId={run.id} hints={q.data} closed={closed} />
               <PinsSection runId={run.id} hints={q.data} closed={closed} />
             </>

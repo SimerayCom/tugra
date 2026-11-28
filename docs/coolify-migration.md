@@ -74,6 +74,8 @@ Rules that trip people up:
 
 ## What moves how
 
+Tugra keeps the exact image each app, database and service runs. Nothing is upgraded during the move.
+
 | What | How |
 |---|---|
 | App definitions, env vars, domains | Coolify **import** (`connect → plan → apply`) — creates the apps and the **empty** destination DBs |

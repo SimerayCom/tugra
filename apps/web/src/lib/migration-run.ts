@@ -1,6 +1,7 @@
 import type {
   ImportPlanItem,
   MigrationRunApprovalBinding,
+  MigrationRunExactImage,
   MigrationRunCheckStatus,
   MigrationRunConfirmKind,
   MigrationRunCreateInput,
@@ -862,6 +863,38 @@ export const validPinScope = (v: string): boolean => v.length <= 200 && /^[\x21-
 /** The plan item ref of an app (`app:<host>:<ref>`). */
 export const validAppItemRef = (v: string): boolean => /^app:[\x21-\x7e]{1,200}:[\x21-\x7e]{1,130}$/.test(v) && v.length <= 340;
 /** Runs that can no longer take safety facts (finished, or past the point of no return). */
+/** `sha256:` and the first twelve hex digits of a digest, for a line a person reads. */
+export const shortDigest = (digest: string): string => digest.slice(0, 19);
+
+/** One app, database or stack with the exact images recorded for it (a stack lists one row per member). */
+export interface ExactGroup {
+  itemRef: string;
+  name: string;
+  kept: boolean;
+  rows: MigrationRunExactImage[];
+}
+
+/** The recorded exact images grouped by item, in the order the hub lists them. The item name falls back to the last part of its ref. */
+export function groupExactImages(rows: readonly MigrationRunExactImage[]): ExactGroup[] {
+  const out = new Map<string, ExactGroup>();
+  for (const r of rows) {
+    const g = out.get(r.itemRef) ?? { itemRef: r.itemRef, name: r.name || r.itemRef.split(":").slice(2).join(":") || r.itemRef, kept: r.kept, rows: [] };
+    g.rows.push(r);
+    out.set(r.itemRef, g);
+  }
+  return [...out.values()];
+}
+
+/**
+ * The i18n key and params of the preview line of one exact image: "Pinned to the image the source runs: <tag> (<version>), <short digest>".
+ * A pin by version tag has no digest; an image that labels no version has no parentheses.
+ */
+export function exactImageLine(r: Pick<MigrationRunExactImage, "tag" | "version" | "digest">): { key: string; params: Record<string, string> } {
+  const params = { tag: r.tag, version: r.version ?? "", digest: r.digest ? shortDigest(r.digest) : "" };
+  if (r.digest) return { key: r.version && r.version !== r.tag ? "migrationRun.safety.exactLine" : "migrationRun.safety.exactLineNoVersion", params };
+  return { key: "migrationRun.safety.exactLineTagOnly", params };
+}
+
 export const hintsClosed = (run: Pick<MigrationRunView, "status" | "ponrAt">): boolean =>
   !!run.ponrAt || ["COMPLETED", "ABORTED", "ROLLING_BACK", "ROLLED_BACK", "REVERSING", "REVERSED"].includes(run.status);
 
