@@ -1,4 +1,5 @@
 import { INestApplication } from "@nestjs/common";
+import { unwrapHostScript } from "../src/common/host-exec";
 import { Test } from "@nestjs/testing";
 import { generateKeyPairSync } from "node:crypto";
 import type { AddressInfo } from "node:net";
@@ -87,7 +88,7 @@ describe("Bulk ops (e2e)", () => {
     }
     expect(task?.status).toBe("DONE");
     expect(task?.exitCode).toBe(0);
-    expect(task?.output).toContain("echo hi");
+    expect(unwrapHostScript(task?.output?.replace(/^ran: /, "") ?? "")).toContain("echo hi"); // the command runs in the host's namespaces
   });
 
   it("skips servers the user cannot write to", async () => {
