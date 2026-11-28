@@ -23,7 +23,7 @@ Start with [Move off Coolify](move-off-coolify.md). It covers the whole move: re
 2. Choose what moves: everything, only the apps on one source server, or whole projects.
 3. Read the **preview**. Blockers must be fixed or acknowledged; notes are things Tugra cannot carry over. Open **Review & rename** to change names, projects and environments.
 4. Choose the **target server**.
-5. Press the start button at the top of the review, or the same one pinned at its end (it says what it moves, for example **Move to Server A**). It opens its own page, not a dialog. Leave **Dry run first** ticked and start the run. It walks through every step, writes nothing, and lists what would block you. Fix those and repeat until it is clean. Run a dry run before every real run, and make the first real run something that does not matter much.
+5. Press the start button at the top of the review, or the same one pinned at its end (it says what it moves, for example **Move to Server A**). It opens its own page, not a dialog. Leave **Dry run first** ticked and start the run. It walks through every step, writes nothing, and lists what would block you. Fix those and repeat until it is clean. Run a dry run before every real run that copies data, and make the first real run something that does not matter much. (A move where every server stays on its own machine is different: nothing is copied, so that page starts with the dry run off. See [same-server move](move-from-coolify-same-server.md).)
 6. Start the real run from the finished dry run. The run then asks for you at a few points:
    - **Data copy:** it prints one command per source host. Paste it on the Coolify host. The first pass copies while Coolify still serves traffic.
    - **Freeze:** you approve the list of containers to stop. This opens the downtime window. The final data copy runs next.
@@ -60,7 +60,7 @@ When the run is done, use the **Move off Coolify** page to clean up what Coolify
 
 **How long does it take?** Setup and the dry run take minutes. The downtime window is the final data copy plus the start of the apps. It is estimated before you approve the freeze and measured afterwards.
 
-**My database is large.** A dump over 256 MiB is refused by default, and the dry run names the blocker. In the run dialog's **Advanced options** you can opt in to a streamed copy. It runs inside the downtime window, so it adds to it. See [large databases](runbooks/guided-migration.md#large-databases).
+**My database is large.** A dump over 256 MiB is refused by default, and the dry run names the blocker. On the launch page, under **Moves to another server**, in **Advanced options** you can opt in to a streamed copy. It runs inside the downtime window, so it adds to it. See [large databases](runbooks/guided-migration.md#large-databases).
 
 **My Tugra session expired.** With an API token, the connection to Coolify lasts one hour. The run waits and asks you to paste the token again.
 

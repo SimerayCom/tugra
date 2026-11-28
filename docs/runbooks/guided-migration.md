@@ -14,7 +14,9 @@ and every default is the safe one: a run created without those options behaves a
 
 ## Before you start
 
-- Start with a **dry run**, then a real run on a non-critical team, before the fleet that matters.
+- Start with a **dry run**, then a real run on a non-critical team, before the fleet that matters. The one exception is a
+  move where every server stays on its own machine (Coolify, in place): nothing is copied and every step is gated, so
+  the launch page leaves **Dry run first** off there. Tick it if you want a walk-through first.
 - Every time or rate shown before the run is an **estimate**. The measured downtime of your own run is in its report.
 - A hub only starts a **real** run when every step of the flow has a registered handler. A dry run always works (it
   projects, it writes nothing outside its own rows). If a real `start` is refused for a missing step, your build does
@@ -246,7 +248,7 @@ tugra import run create --dry-run --session <sessionId> --server <defaultTargetS
   --map <sourceServerUuidA>=<tugraServerId1> --map <sourceServerUuidB>=<tugraServerId2> --campaign wave-1
 ```
 
-In the panel the launch dialog lists the plan's source hosts once the target team has two or more servers; turn on
+In the panel the launch page lists the plan's source hosts once the target team has two or more servers; turn on
 "Place source hosts on different Tugra servers" and choose a server per host. Rules, all enforced by the hub:
 
 - **List every source server.** A source server missing from a non-empty map **stops the run** instead of landing on the
