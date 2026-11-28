@@ -15,7 +15,7 @@ afterEach(cleanup);
 const row = (i: number, over: Partial<ImportGitLinkRow> = {}): ImportGitLinkRow => ({ itemRef: `app:s:a${i}`, name: `app-${i}`, repo: { host: "github.com", owner: "acme", name: `r${i}` }, status: "linked", sourceName: "Acme App", reason: "x", ...over });
 const plan = (hosts: Array<{ host: string; apps: number }> = [{ host: "github.com", apps: 3 }]): ImportPlan => ({
   sourceKind: "coolify", mode: "copy", planHash: "a".repeat(32), warnings: [], totals: { apps: 1, databases: 0, volumes: 0, blockers: 0 },
-  items: [{ itemRef: "app:s:a1", kind: "app", name: "app-1", proposed: {}, risks: [], dependsOn: [] }],
+  items: [1, 2, 3, 4, 5].map((i) => ({ itemRef: `app:s:a${i}`, kind: "app" as const, name: `app-${i}`, proposed: {}, risks: [], dependsOn: [] })),
   preflight: { databases: [], services: [], appsWithVolumeData: 0, git: { hosts } },
 });
 // Coolify opens on the agent path by default; these tests drive the token form, one click away.
@@ -57,6 +57,24 @@ describe("GitLinksPanel", () => {
     for (const d of Array.from(document.querySelectorAll("details"))) d.setAttribute("open", "");
     expect(screen.getAllByText("github.com/acme").length).toBeGreaterThan(0);
     expect(screen.getByText(/SSH URL will be converted to https/)).toBeTruthy();
+  });
+
+  it("lists and counts only the apps of the scoped plan: the hub answers for the whole Coolify, the card is about what is being moved", async () => {
+    // 5 git apps in the whole source; the scoped plan holds only app:s:a1 and app:s:a3
+    const scoped: ImportPlan = { ...plan([{ host: "github.com", apps: 4 }, { host: "gitlab.com", apps: 1 }]), items: ["a1", "a3"].map((k) => ({ itemRef: `app:s:${k}`, kind: "app" as const, name: k, proposed: {}, risks: [], dependsOn: [] })) };
+    wrap(<GitLinksPanel sessionId="s1" targetServerId="srv1" plan={scoped} />);
+    await screen.findByText("Will be linked");
+    expect(screen.getByText("Will be linked").parentElement!.textContent).toContain("(1)");
+    expect(screen.getByText("No connected source can see these").parentElement!.textContent).toContain("(1)");
+    expect(screen.queryByText("Unsupported host")).toBeNull();
+    expect(screen.getByText("Git hosts: github.com x2")).toBeTruthy();
+  });
+
+  it("says so when none of the apps in scope clones from git (and never lists the others)", async () => {
+    const scoped: ImportPlan = { ...plan(), items: [{ itemRef: "app:s:other", kind: "app", name: "x", proposed: {}, risks: [], dependsOn: [] }] };
+    wrap(<GitLinksPanel sessionId="s1" targetServerId="srv1" plan={scoped} />);
+    await screen.findByTestId("git-none-in-scope");
+    expect(screen.queryByText("Will be linked")).toBeNull();
   });
 
   it("Re-check calls the resolver again; Connect GitHub opens the Git sources page in a NEW tab (the wizard session survives)", async () => {

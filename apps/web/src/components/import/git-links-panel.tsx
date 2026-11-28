@@ -56,6 +56,19 @@ export function bucketGitLinks(rows: ImportGitLinkRow[]): Array<{ status: Import
   return out;
 }
 
+/** Pure: only the git apps of the (scoped) plan. The hub answers for every app of the source; what is out of scope is neither listed nor counted. */
+export function gitLinksInScope(rows: ImportGitLinkRow[], plan: Pick<ImportPlan, "items">): ImportGitLinkRow[] {
+  const inScope = new Set(plan.items.map((i) => i.itemRef));
+  return rows.filter((r) => inScope.has(r.itemRef));
+}
+
+/** Pure: the git hosts of these rows with their app counts, the largest first. */
+export function gitHostsOf(rows: ImportGitLinkRow[]): Array<{ host: string; apps: number }> {
+  const n = new Map<string, number>();
+  for (const r of rows) if (r.repo) n.set(r.repo.host, (n.get(r.repo.host) ?? 0) + 1);
+  return [...n.entries()].map(([host, apps]) => ({ host, apps })).sort((a, b) => b.apps - a.apps || (a.host < b.host ? -1 : 1));
+}
+
 /**
  * Before Apply: how each git app would be linked on the target team (repo-visibility matching), grouped by status
  * then by owner, with "Connect GitHub" (opens the Git sources page in a NEW tab so the wizard session survives) and
@@ -71,8 +84,10 @@ export function GitLinksPanel({ sessionId, targetServerId, plan }: { sessionId: 
     staleTime: Infinity,
     retry: false,
   });
-  const hosts = plan.preflight?.git?.hosts ?? [];
-  const buckets = bucketGitLinks(q.data?.rows ?? []);
+  // the hub resolves every git app of the source; this card is about the ones in scope (the plan it is given is the scoped one)
+  const rows = gitLinksInScope(q.data?.rows ?? [], plan);
+  const hosts = gitHostsOf(rows);
+  const buckets = bucketGitLinks(rows);
   return (
     <SectionCard
       title={t("import.git.title")}
@@ -92,6 +107,8 @@ export function GitLinksPanel({ sessionId, targetServerId, plan }: { sessionId: 
         <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "var(--c-tx3)" }}><Spinner /> {t("import.git.loading")}</div>
       ) : q.isError ? (
         <div role="alert" style={{ fontSize: 12, color: "var(--c-r)" }}>{t("import.git.error")}</div>
+      ) : q.data && rows.length === 0 ? (
+        <p data-testid="git-none-in-scope" style={{ fontSize: 12, color: "var(--c-tx3)", margin: 0 }}>{t("import.git.noneInScope")}</p>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           {buckets.map((b) => (

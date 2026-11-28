@@ -243,6 +243,7 @@
     "body": "Private repositories link to the connected source that can see them. Connect a GitHub App once, then re-check.",
     "loading": "Checking which connected sources can see each repository…",
     "error": "Could not check the repositories",
+    "noneInScope": "None of the apps you are moving clones from a Git repository.",
     "group": {
       "linked": "Will be linked",
       "publicOk": "Public (no source needed)",
