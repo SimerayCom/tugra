@@ -18,7 +18,7 @@ function CheckIcon({ status }: { status: MigrationRunGateCheck["status"] }) {
 
 /** A step's gate: one row per check with a status word, the localized code, its subject, its evidence kind and, for a
  *  check an owner input would resolve, a link to the inputs card. `unknown` reads as a failure, as the hub treats it. */
-export function GateChecks({ checks, dense = false }: { checks: MigrationRunGateCheck[]; dense?: boolean }) {
+export function GateChecks({ checks, dense = false, hideInputLinks = false }: { checks: MigrationRunGateCheck[]; dense?: boolean; hideInputLinks?: boolean }) {
   const t = useT();
   if (checks.length === 0) return null;
   return (
@@ -35,7 +35,7 @@ export function GateChecks({ checks, dense = false }: { checks: MigrationRunGate
               {c.subject && <span className="mono" style={{ fontSize: 11, color: "var(--c-tx3)", wordBreak: "break-all" }}>{c.subject}</span>}
               {c.evidence && <EvidenceBadge kind={c.evidence} />}
               {c.acked && <span style={{ fontSize: 11, color: "var(--c-tx3)" }}>{t("migrationRun.check.acked")}</span>}
-              {c.ownerInput && !c.acked && c.status !== "pass" && (
+              {!hideInputLinks && c.ownerInput && !c.acked && c.status !== "pass" && (
                 <a href={`#${INPUTS_ANCHOR}`} className="tg-link" style={{ fontSize: 11 }}>
                   {t("migrationRun.check.needsInput", { input: t(OWNER_INPUT_LABEL_KEY[c.ownerInput]) })}
                 </a>

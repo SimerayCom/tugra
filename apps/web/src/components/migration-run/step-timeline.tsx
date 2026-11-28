@@ -49,7 +49,7 @@ function StepBody({ step, note }: { step: MigrationRunStepView; note: string | n
       <p style={{ margin: 0, fontSize: 12, color: "var(--c-tx3)", lineHeight: 1.5 }}>{t(STEP_DESC_KEY[step.key])}</p>
       {note && <p data-testid="in-place-step-note" style={{ margin: 0, fontSize: 12, color: "var(--c-tx2)", lineHeight: 1.5, fontWeight: 600 }}>{t(note)}</p>}
       {step.skippedCode && <div style={{ fontSize: 13 }}>{t("migrationRun.step.skipped", { why: codeText(t, step.skippedCode) })}</div>}
-      {step.lastError && <div role="alert" style={{ fontSize: 13, color: "var(--c-r)", wordBreak: "break-word" }}>{codeText(t, step.lastError)}</div>}
+      {step.lastError && <div role="alert" style={{ fontSize: 13, color: "var(--c-r)", wordBreak: "break-word" }}>{codeText(t, step.lastError, step.lastErrorParams)}</div>}
       {step.progress && step.progress.total > 0 && (
         <div>
           <MeterBar value={pct} text={pct === null ? "" : `${pct}%`} grow label={t(STEP_TITLE_KEY[step.key])} />
@@ -104,7 +104,6 @@ function StepBody({ step, note }: { step: MigrationRunStepView; note: string | n
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", fontSize: 11, color: "var(--c-tx3)" }}>
         <Badge>{t(STEP_KIND_KEY[step.kind])}</Badge>
         <Badge tone={step.rollbackClass === "LOSSY_AFTER_PONR" ? "danger" : step.rollbackClass === "IRREVERSIBLE" ? "warn" : "muted"}>{t(ROLLBACK_KEY[step.rollbackClass])}</Badge>
-        {step.attempt > 1 && <span>{t("migrationRun.step.attempt", { n: step.attempt })}</span>}
         {step.startedAt && <span>{t("migrationRun.step.started", { when: relativeTime(step.startedAt) })}</span>}
         {durationSec(step) !== null && <span>{t("migrationRun.step.took", { time: formatDuration(durationSec(step)) ?? "-" })}</span>}
       </div>

@@ -6,8 +6,8 @@ import { useT } from "../../i18n/provider";
 import { SectionCard } from "../ui";
 import { MeterBar } from "../meter-bar";
 import { formatDuration } from "../../lib/import";
-import { STEP_TITLE_KEY, codeText, isTerminalRun, progressPct, progressText } from "../../lib/migration-run";
-import { stepNoteKey } from "../../lib/inplace-run";
+import { codeText, isTerminalRun, progressPct, progressText } from "../../lib/migration-run";
+import { stageLine, stepNoteKey, stepTitleKey } from "../../lib/inplace-run";
 import { STATE_COLOR, STATE_KEY, stepElapsedSec, stepperModel, type StepperRow, type StepperState } from "../../lib/run-stepper";
 import type { MigrationRunView } from "../../lib/types";
 import { useRunInPlace } from "./in-place-card";
@@ -67,10 +67,11 @@ function Row({ run, row, note, now, index, total }: { run: MigrationRunView; row
   const elapsed = stepElapsedSec(step, now);
   // the one line that says what is going on: the hub's own words for the step it is on, the in-place note, the failure, or how long it took
   let line: string | null = null;
-  if (state === "failed" && step.lastError) line = codeText(t, step.lastError);
+  if (state === "failed" && step.lastError) line = codeText(t, step.lastError, step.lastErrorParams);
+  // an in-place step says what the takeover is doing in its own words before the hub's generic "working on this step"
+  else if (note && (state === "working" || state === "waiting")) line = t(note);
   // a step that waits for the owner says what in the "what I am waiting for" card right below; the link takes him there
   else if (na.stepKey === step.key && (state === "working" || state === "waiting" || state === "paused" || state === "failed")) line = codeText(t, na.code, na.params);
-  else if (note && (state === "working" || state === "waiting")) line = t(note);
   else if (state === "done" && elapsed !== null && elapsed >= 1) line = t("migrationRun.stepper.took", { time: formatDuration(elapsed) ?? "-" });
   return (
     <li data-step={step.key} data-state={state} data-current={current ? "true" : undefined} style={{ display: "flex", gap: 10, alignItems: "flex-start", padding: "10px 0", borderTop: index === 0 ? "none" : "1px solid var(--c-bd)", minWidth: 0 }}>
@@ -81,7 +82,7 @@ function Row({ run, row, note, now, index, total }: { run: MigrationRunView; row
         <div style={{ display: "flex", flexWrap: "wrap", gap: "2px 10px", alignItems: "baseline" }}>
           <span style={{ fontSize: 14, fontWeight: current || state === "needs-you" ? 700 : 600, color: state === "todo" ? "var(--c-tx2)" : "var(--c-tx)", flex: "1 1 160px", minWidth: 0, wordBreak: "break-word" }}>
             <span className="mono" style={{ color: "var(--c-tx3)", fontSize: 11, marginRight: 8 }}>{`${index + 1}/${total}`}</span>
-            {t(STEP_TITLE_KEY[step.key])}
+            {t(stepTitleKey(run, step.key))}
           </span>
           <span style={{ fontSize: 12, fontWeight: 600, color: STATE_COLOR[state] }}>
             {t(STATE_KEY[state])}
@@ -96,7 +97,7 @@ function Row({ run, row, note, now, index, total }: { run: MigrationRunView; row
         )}
         {step.progress && step.progress.total > 0 && state === "working" && (
           <div style={{ marginTop: 6 }}>
-            <MeterBar value={pct} text={pct === null ? "" : `${pct}%`} grow label={t(STEP_TITLE_KEY[step.key])} />
+            <MeterBar value={pct} text={pct === null ? "" : `${pct}%`} grow label={t(stepTitleKey(run, step.key))} />
             <div style={{ fontSize: 12, color: "var(--c-tx3)", marginTop: 4 }}>{progressText(t, step.progress)}</div>
           </div>
         )}
@@ -138,6 +139,14 @@ export function RunStepper({ run }: { run: MigrationRunView }) {
             <span style={{ position: "absolute", top: 0, bottom: 0, width: "40%", borderRadius: 2, background: "var(--c-a)" }} />
           </div>
         )}
+        {run.inPlace && inPlace.data && (
+          <p data-testid="run-stepper-stage" style={{ margin: 0, fontSize: 12, color: "var(--c-tx3)", lineHeight: 1.5 }}>
+            {t(inPlace.data.status === "FAILED" || inPlace.data.status === "GIVEN_BACK" || inPlace.data.status === "GIVING_BACK" ? `coolifyInPlace.status.${inPlace.data.status}` : "inPlaceRun.stageLine", {
+              stage: t(`inPlaceRun.stage.${stageLine(inPlace.data.status, inPlace.data.verified).stage}`),
+              n: stageLine(inPlace.data.status, inPlace.data.verified).n,
+            })}
+          </p>
+        )}
         {note && (
           <p role="note" data-testid="run-stepper-note" style={{ margin: 0, fontSize: 13, color: "var(--c-tx2)", lineHeight: 1.5 }}>{note}</p>
         )}
@@ -146,9 +155,9 @@ export function RunStepper({ run }: { run: MigrationRunView }) {
             <Row key={r.step.key} run={run} row={r} note={run.inPlace ? stepNoteKey(r.step.key, takeover) : null} now={now} index={i} total={total} />
           ))}
         </ol>
-        {model.hidden > 0 && (
+        {model.hidden > 0 && !run.inPlace && (
           <p data-testid="run-stepper-hidden" style={{ margin: 0, fontSize: 12, color: "var(--c-tx3)", lineHeight: 1.5 }}>
-            {t(run.inPlace ? "migrationRun.stepper.hiddenInPlace" : "migrationRun.stepper.hidden", { count: model.hidden })}
+            {t("migrationRun.stepper.hidden", { count: model.hidden })}
           </p>
         )}
       </div>

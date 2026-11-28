@@ -10,6 +10,7 @@ import { useConfirm } from "../confirm";
 import { Checkbox, Textarea } from "../form";
 import { confirmNames, joinConfirmNames } from "../../lib/migration-run";
 import type { MigrationRunView } from "../../lib/types";
+import { GiveBackButton } from "./give-back";
 import { TypedConfirmDialog } from "./typed-confirm";
 import { useFreshSession, useRunPlumbing } from "./use-run-actions";
 
@@ -122,7 +123,9 @@ export function RecoveryCard({ run }: { run: MigrationRunView }) {
 
   return (
     <SectionCard title={t("migrationRun.recovery.title")} desc={t("migrationRun.recovery.desc")} style={{ marginBottom: 0 }}>
-      {a.abort && row(t("migrationRun.recovery.abort"), t("migrationRun.recovery.abortBody"), <Btn variant="dangerGhost" onClick={() => setDialog("abort")}>{t("migrationRun.recovery.abortButton")}</Btn>)}
+      {a.abort && !run.inPlace && row(t("migrationRun.recovery.abort"), t("migrationRun.recovery.abortBody"), <Btn variant="dangerGhost" onClick={() => setDialog("abort")}>{t("migrationRun.recovery.abortButton")}</Btn>)}
+      {/* an in-place run does not "abort": it gives Coolify back, which is the same undo, asked in one short question */}
+      {a.abort && run.inPlace && row(t("inPlaceRun.giveBack.button"), t("inPlaceRun.giveBack.hint"), <GiveBackButton run={run} variant="dangerGhost" />)}
       {!a.abort && pastPonr && live && <div style={{ fontSize: 12, color: "var(--c-am)", padding: "12px 0", borderTop: "1px solid var(--c-bd)", lineHeight: 1.5 }}>{t("migrationRun.recovery.abortRefused")}</div>}
       {a.cleanup && row(t("migrationRun.recovery.cleanup"), t("migrationRun.recovery.cleanupBody"), <Btn variant="dangerGhost" onClick={() => setDialog("cleanup")}>{t("migrationRun.recovery.cleanupButton")}</Btn>)}
       {a.reverse && row(t("migrationRun.recovery.reverse"), t("migrationRun.recovery.reverseBody"), <Btn variant="dangerGhost" onClick={() => setDialog("reverse")}>{t("migrationRun.recovery.reverseButton")}</Btn>)}

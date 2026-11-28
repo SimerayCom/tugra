@@ -56,7 +56,10 @@ describe("the live step list at the top of a run page", () => {
     expect(within(rows[0]).getByText("Done")).toBeTruthy();
     expect(within(rows[4]).getByText("Not started")).toBeTruthy();
     expect(within(stepper).getByText("Step 4 of 8")).toBeTruthy();
-    expect(screen.getByTestId("run-stepper-hidden").textContent).toBe("5 steps do not apply because nothing is copied.");
+    // the steps that do not apply are simply not there: no line counting them, and the steps carry the owner's words
+    expect(screen.queryByTestId("run-stepper-hidden")).toBeNull();
+    expect(within(rows[3]).getByText("Test every site next to Coolify")).toBeTruthy();
+    expect(within(rows[1]).getByText("Read your apps from Coolify")).toBeTruthy();
     // the steps that copy nothing are not drawn anywhere on the page, not even in the timeline
     expect(screen.queryByText("Freeze the source")).toBeNull();
     expect(screen.queryByText("Rehearse data copy")).toBeNull();
@@ -82,7 +85,7 @@ describe("the live step list at the top of a run page", () => {
     expect(verify.getAttribute("data-state")).toBe("needs-you");
     expect(within(verify).getByText("Needs you")).toBeTruthy();
     expect(within(verify).getByRole("link", { name: "See what is needed" }).getAttribute("href")).toBe("#mr-next-action");
-    expect(document.getElementById("mr-next-action")?.textContent).toMatch(/What I am waiting for/);
+    expect(document.getElementById("mr-next-action")?.textContent).toMatch(/Waiting for your go-ahead/);
   });
 
   it("a failed step names its failure in the list, in words", async () => {
@@ -114,5 +117,39 @@ describe("the live step list at the top of a run page", () => {
     fireEvent.click(screen.getByRole("button", { name: "Start run" }));
     await waitFor(() => expect(start).toHaveBeenCalledWith("run12345abcdef"));
     expect(screen.queryByRole("dialog")).toBeNull();
+  });
+});
+
+describe("what the current step says", () => {
+  it("an in-place step says what the takeover does in its own words, not the hub's generic 'working on this step'", async () => {
+    vi.spyOn(api, "getMigrationRun").mockResolvedValue(
+      inPlaceRun({ status: "RUNNING", currentStep: "DEPLOY_DARK", nextAction: { kind: "engine", stepKey: "DEPLOY_DARK", code: "run.started", since: "2026-11-16T10:00:00.000Z" } }, inPlaceSteps({ PREFLIGHT: "PASSED", IMPORT: "PASSED", REMAP_ENV: "PASSED", DEPLOY_DARK: "RUNNING" })),
+    );
+    vi.spyOn(api, "getRunInPlace").mockResolvedValue({ id: "tk1", status: "TESTING", failureCode: null, pending: 0, verified: false, items: [] });
+    wrap();
+    const row = (await screen.findByTestId("run-stepper")).querySelector('[data-step="DEPLOY_DARK"]') as HTMLElement;
+    await waitFor(() => expect(within(row).getByText("In place: Tugra's proxy runs with no public port and every site was checked on it.")).toBeTruthy());
+    expect(screen.getByTestId("run-stepper-stage").textContent).toBe("Takeover: Tested beside Coolify (2 of 4)");
+  });
+
+  it("a failed step fills the host into its sentence when the hub sends it", async () => {
+    vi.spyOn(api, "getMigrationRun").mockResolvedValue(
+      inPlaceRun(
+        { status: "FAILED", currentStep: "DEPLOY_DARK", nextAction: { kind: "failed", stepKey: "DEPLOY_DARK", code: "step.failed", since: "2026-11-16T10:00:00.000Z" } },
+        inPlaceSteps({ PREFLIGHT: "PASSED", IMPORT: "PASSED", REMAP_ENV: "PASSED", DEPLOY_DARK: "FAILED" }, { DEPLOY_DARK: { lastError: "deploy-dark.inplace-test-failed", lastErrorParams: { host: "app.example.com", app: "web" } } }),
+      ),
+    );
+    wrap();
+    const stepper = await screen.findByTestId("run-stepper");
+    const row = stepper.querySelector('[data-step="DEPLOY_DARK"]') as HTMLElement;
+    expect(row.textContent).toMatch(/app\.example\.com does not answer through Tugra/);
+    expect(row.textContent).not.toMatch(/\{host\}/);
+  });
+
+  it("never prints the hub's poll counter as 'attempt N'", async () => {
+    vi.spyOn(api, "getMigrationRun").mockResolvedValue(inPlaceRun({ status: "RUNNING", currentStep: "IMPORT" }, inPlaceSteps({ PREFLIGHT: "PASSED", IMPORT: "RUNNING" }, { IMPORT: { attempt: 50 } })));
+    wrap();
+    await screen.findByTestId("run-stepper");
+    expect(document.body.textContent).not.toMatch(/attempt/i);
   });
 });

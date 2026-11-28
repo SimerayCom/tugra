@@ -5,7 +5,8 @@ import { api, migrationRunReportMdUrl } from "../../lib/api";
 import { useI18n, useT } from "../../i18n/provider";
 import { Badge, SectionCard, Spinner } from "../ui";
 import { formatBytes, formatDuration } from "../../lib/import";
-import { EVIDENCE_KINDS, STEP_TITLE_KEY, codeText } from "../../lib/migration-run";
+import { EVIDENCE_KINDS, codeText } from "../../lib/migration-run";
+import { stepTitleKey } from "../../lib/inplace-run";
 import type { MigrationRunDataIntegrity, MigrationRunReport } from "../../lib/types";
 import { EvidenceBadge } from "./badges";
 import { CommandBlock } from "./command-block";
@@ -44,7 +45,7 @@ const OUTCOME_TONE = { moved: "ok", skipped: "muted", acked: "warn", failed: "da
 
 /** The secret-free run report: what moved, what did not and why, which evidence the run relied on, and the measured
  *  window against the estimate. Loaded on demand; a Markdown copy can be downloaded. */
-export function ReportCard({ runId, enabled }: { runId: string; enabled: boolean }) {
+export function ReportCard({ runId, enabled, inPlace = false }: { runId: string; enabled: boolean; inPlace?: boolean }) {
   const t = useT();
   const q = useQuery<MigrationRunReport>({ queryKey: ["migration-run-report", runId], queryFn: () => api.getMigrationRunReport(runId), enabled, staleTime: 30_000 });
   return (
@@ -56,14 +57,18 @@ export function ReportCard({ runId, enabled }: { runId: string; enabled: boolean
       {!enabled && <div style={{ fontSize: 13, color: "var(--c-tx3)" }}>{t("migrationRun.report.notYet")}</div>}
       {enabled && q.isLoading && <Spinner />}
       {enabled && q.isError && <div role="alert" style={{ fontSize: 13, color: "var(--c-r)" }}>{t("migrationRun.errors.generic")}</div>}
-      {q.data && <ReportBody report={q.data} />}
+      {q.data && <ReportBody report={q.data} inPlace={inPlace} />}
     </SectionCard>
   );
 }
 
-export function ReportBody({ report }: { report: MigrationRunReport }) {
+/** The import op lists every task of the whole fleet; an item the importer skipped without a reason of its own is noise on one server's report. */
+const FLEET_NOISE_CODE = "import.task-skipped";
+
+export function ReportBody({ report, inPlace = false }: { report: MigrationRunReport; inPlace?: boolean }) {
   const t = useT();
   const ev = report.evidenceSummary;
+  const items = inPlace ? report.items.filter((it) => !(it.outcome === "skipped" && it.code === FLEET_NOISE_CODE)) : report.items;
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       {(report.source.version || (report.targets?.length ?? 0) > 1 || report.campaign) && (
@@ -77,6 +82,7 @@ export function ReportBody({ report }: { report: MigrationRunReport }) {
         <span>{t("migrationRun.report.estimated", { time: report.window.estimatedSec === null ? t("migrationRun.window.none") : (formatDuration(report.window.estimatedSec) ?? "-") })}</span>
         <span>{t("migrationRun.report.measured", { time: report.window.measuredSec === null ? t("migrationRun.window.none") : (formatDuration(report.window.measuredSec) ?? "-") })}</span>
       </div>
+      {!inPlace && (
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
         <span style={{ fontSize: 12, color: "var(--c-tx3)" }}>{t("migrationRun.report.evidence")}</span>
         {/* the three classic kinds always, the two newer ones (source API, host script) only when the run relied on them */}
@@ -86,15 +92,16 @@ export function ReportBody({ report }: { report: MigrationRunReport }) {
           </span>
         ))}
       </div>
-      {report.items.length > 0 && (
+      )}
+      {items.length > 0 && (
         <ul style={{ margin: 0, padding: 0, listStyle: "none", display: "flex", flexDirection: "column", gap: 8 }}>
-          {report.items.map((it, i) => (
+          {items.map((it, i) => (
             <li key={`${it.kind}:${it.name}:${i}`} style={{ display: "flex", flexWrap: "wrap", gap: "4px 10px", alignItems: "center", fontSize: 13, minWidth: 0 }}>
               <span style={{ fontSize: 11, color: "var(--c-tx3)", minWidth: 64 }}>{t(KIND_KEY[it.kind])}</span>
               <span className="mono" style={{ flex: "1 1 160px", minWidth: 0, wordBreak: "break-all" }}>{it.name}</span>
               <Badge tone={OUTCOME_TONE[it.outcome]}>{t(OUTCOME_KEY[it.outcome])}</Badge>
               {it.code && <span style={{ fontSize: 12, color: "var(--c-tx3)" }}>{codeText(t, it.code)}</span>}
-              {it.evidence && <EvidenceBadge kind={it.evidence} />}
+              {it.evidence && !inPlace && <EvidenceBadge kind={it.evidence} />}
             </li>
           ))}
         </ul>
@@ -117,15 +124,17 @@ export function ReportBody({ report }: { report: MigrationRunReport }) {
           </ul>
         </div>
       )}
-      <ul style={{ margin: 0, padding: 0, listStyle: "none", display: "flex", flexDirection: "column", gap: 4 }}>
-        {report.steps.map((s) => (
-          <li key={s.key} style={{ display: "flex", gap: 10, fontSize: 12, color: "var(--c-tx3)", flexWrap: "wrap" }}>
-            <span style={{ flex: "1 1 140px" }}>{t(STEP_TITLE_KEY[s.key])}</span>
-            <span>{s.durationSec === null ? "-" : formatDuration(s.durationSec)}</span>
-            <span>{t("migrationRun.step.attempt", { n: s.attempts })}</span>
-          </li>
-        ))}
-      </ul>
+      {/* how long each step took; the hub's own poll counter (`attempts`) is not a retry count and is not shown */}
+      {!inPlace && (
+        <ul style={{ margin: 0, padding: 0, listStyle: "none", display: "flex", flexDirection: "column", gap: 4 }}>
+          {report.steps.map((s) => (
+            <li key={s.key} style={{ display: "flex", gap: 10, fontSize: 12, color: "var(--c-tx3)", flexWrap: "wrap" }}>
+              <span style={{ flex: "1 1 140px" }}>{t(stepTitleKey({ inPlace }, s.key))}</span>
+              <span>{s.durationSec === null ? "-" : formatDuration(s.durationSec)}</span>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

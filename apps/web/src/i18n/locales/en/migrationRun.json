@@ -164,7 +164,6 @@
     "queuedNote": "Nothing touches production traffic until you approve the verification.",
     "goToAction": "See what is needed",
     "hidden": "{count} steps do not apply to this run and are not shown.",
-    "hiddenInPlace": "{count} steps do not apply because nothing is copied.",
     "state": {
       "todo": "Not started",
       "working": "Working",
@@ -184,7 +183,6 @@
     "approvedAt": "Approved {when}",
     "approvalExpiresAt": "approval valid until {when}",
     "attestations": "{n} operator attestation(s) recorded",
-    "attempt": "attempt {n}",
     "started": "started {when}",
     "took": "took {time}"
   },
