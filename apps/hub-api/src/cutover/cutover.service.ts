@@ -13,6 +13,7 @@ import { APPLICATIONS_SERVICE } from "../applications/applications.tokens";
 import type { ApplicationsService } from "../applications/applications.service";
 import { validateAcmeEmail } from "../deploy/panel-router";
 import { isAlwaysBlockedIp, isIpv6, isPublicIp } from "../common/observed-ip";
+import { onHostNetwork } from "../common/host-exec";
 import { NetProbe } from "./net-probe";
 import { buildAcmeDiagScript, buildCutoverLoopbackProbeScript, parseAcmeDiagMarkers, parseCutoverProbeMarkers } from "./cutover-scripts";
 import {
@@ -594,7 +595,7 @@ export class CutoverService {
     let h443: { status: number | null; traefik404: boolean } = { status: null, traefik404: false };
     let h80: { status: number | null; location: string | null } = { status: null, location: null };
     if (via === "agent") {
-      const r = await this.agentWs.sendCommand(app.serverId, buildCutoverLoopbackProbeScript({ host: e.hostname, path }), "deploy", 20_000).catch(() => null);
+      const r = await this.agentWs.sendCommand(app.serverId, onHostNetwork(buildCutoverLoopbackProbeScript({ host: e.hostname, path })), "deploy", 30_000).catch(() => null);
       const parsed = r ? parseCutoverProbeMarkers(r.output) : null;
       h443 = { status: parsed?.status ?? null, traefik404: false };
     } else {

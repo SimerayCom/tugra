@@ -7,6 +7,24 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **Checks and clean-ups that look at the server now look at the server.** The agent runs as a container, so a script that
+  asked for `127.0.0.1`, the proxy's network or a host folder was answering about the container. The TLS dark check of a
+  same-host takeover, the loopback check after a swap and the certificate checks now run on the server's own network. Coolify's
+  certificates (the fallback while Let's Encrypt issues), service bind folders, the Coolify leftovers scan and removal, the
+  move preflight's host folders and the port allocator's listening ports read the real host.
+- **Fleet "Run command" runs on the server.** Uptime, disk, memory and the other diagnostics answer for the box, not the agent
+  container; when the host cannot be entered the command fails with a reason instead of running in the container.
+- **Network graph shows the server's traffic**, not the agent's own. The proxy access log (Traffic Analytics) is rotated by the
+  agent at 50 MB, three compressed copies kept, instead of a host logrotate file that could never be installed. A disk path set
+  with `TUGRA_DISK_PATH` survives agent updates.
+- **Localhost is refused where it means the agent.** S3 backup destinations and log drains cannot point at `localhost`
+  (use the server's own address), and an agent installed against a hub on the same machine uses the host network.
+- A large Coolify clean-up no longer fails to start: the removal script is a few dozen bytes per leftover instead of about
+  1.3 KB, and a script too big for one command is refused with a clear message instead of a silent `E2BIG`. The host-folder
+  probes keep the capability to look inside another account's private home, so such a folder is no longer reported missing.
+- Build tools (Nixpacks, Railpack, pack) are kept under `/etc/tugra/bin` so an agent update no longer downloads them again;
+  the agent image ships `jq`.
+
 ## [0.1.0-beta.39] - 2026-11-28
 
 - **Guided moves start from a page.** The launch is its own page instead of a dialog. For servers that stay on their own

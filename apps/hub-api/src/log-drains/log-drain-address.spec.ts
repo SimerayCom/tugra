@@ -1,4 +1,4 @@
-import { classifyHost, v6Bytes } from "./log-drain-address";
+import { classifyHost, isLoopbackHost, v6Bytes } from "./log-drain-address";
 
 describe("classifyHost (hub literal-address pre-check)", () => {
   it.each([
@@ -38,5 +38,14 @@ describe("classifyHost (hub literal-address pre-check)", () => {
     expect(v6Bytes("fe80::")?.slice(0, 2)).toEqual([0xfe, 0x80]);
     expect(v6Bytes("not-ip")).toBeNull();
     expect(v6Bytes("1.2.3.4")).toBeNull();
+  });
+});
+
+describe("isLoopbackHost: 'this machine' means the agent's container for a forwarder that runs in it", () => {
+  it.each(["localhost", "LOCALHOST", "db.localhost", "127.0.0.1", "127.9.9.9", "[::1]", "::1", "::ffff:127.0.0.1", "localhost."])("%s is loopback", (h) => {
+    expect(isLoopbackHost(h)).toBe(true);
+  });
+  it.each(["10.0.0.5", "192.168.1.1", "100.64.0.1", "203.0.113.7", "logs.example.com", "127.evil.example.com", "::ffff:10.0.0.1", "fc00::1", "2001:db8::1"])("%s is not", (h) => {
+    expect(isLoopbackHost(h)).toBe(false);
   });
 });

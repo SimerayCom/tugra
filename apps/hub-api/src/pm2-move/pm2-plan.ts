@@ -232,7 +232,11 @@ export function mountDirProblem(dir: string, home: string): "cwd-unsafe" | null 
 const CONTROL = /[\u0000-\u001f\u007f]/;
 const MAX_GROUPS = 16;
 
-/** The docker options of the container (host network, the process's own account and groups, its folder at the same path). */
+/**
+ * The docker options of the container (host network, the process's own account and groups, its folder at the same path).
+ * `--network host` is what keeps the carried environment valid: a DB or Redis at 127.0.0.1/localhost, and the health gate's probe
+ * of 127.0.0.1:PORT, are the SAME host the process ran on under PM2 (a bridge container would see only itself).
+ */
 export function buildDockerOptions(o: { uid: number; gid: number; groups: number[]; workDir: string; mountDir: string }): string {
   return ["--network host", `-u ${o.uid}:${o.gid}`, ...o.groups.map((g) => `--group-add ${g}`), `-w ${o.workDir}`, `-v ${o.mountDir}:${o.mountDir}`].join(" ");
 }

@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildImageIdsScript, buildServiceDetailScript, buildServiceReadyScript, buildServiceVolumeScript, parseImageIds, parseServiceDetail, parseServiceReady } from "./inplace-service-scripts";
@@ -18,7 +18,10 @@ describe("source safety", () => {
       buildServiceReadyScript("tugra_a"),
     ];
     for (const s of all) {
-      expect(s).not.toMatch(/docker\s+(rm|kill|prune|rmi|system|stop|start|update|run|exec|container\s+rm)\b/);
+      // the one `docker run` is the read-only existence test of a host folder (tugra_host_test): no network, no capabilities, read-only bind, `test` as the entrypoint
+      const runs = s.split("\n").filter((l) => /docker\s+run\b/.test(l));
+      for (const l of runs) expect(l).toMatch(/--network none .*--cap-drop ALL .*,readonly".*--entrypoint test /);
+      expect(s.replace(/^.*docker\s+run\b.*$/gm, "")).not.toMatch(/docker\s+(rm|kill|prune|rmi|system|stop|start|update|run|exec|container\s+rm)\b/);
       expect(s).not.toMatch(/docker\s+volume\s+(rm|prune)/);
       expect(s).not.toMatch(/\.Config\.Env|\.Env\b|--env|printenv/);
       expect(s).not.toMatch(/rm\s+-[a-z]*r/);
@@ -122,10 +125,21 @@ const writeBin = (name: string, body: string) => {
   writeFileSync(join(bin, name), `#!/bin/sh\n${body}\n`);
   chmodSync(join(bin, name), 0o755);
 };
-const run = (script: string, env: Record<string, string> = {}) => spawnSync("/bin/sh", ["-c", script], { env: { PATH: `${bin}:/usr/bin:/bin`, HOME: dir, FAKE_DIR: dir, ...env }, encoding: "utf8" });
+const run = (script: string, env: Record<string, string> = {}) => spawnSync("/bin/sh", ["-c", script], { env: { PATH: `${bin}:/usr/bin:/bin`, HOME: dir, FAKE_DIR: dir, TUGRA_AGENT_IMAGE: "tugra-agent:test", ...env }, encoding: "utf8" });
 
 /** A docker that knows volumes (name -> mountpoint, device option) and logs every create. */
 const fakeDocker = `
+case "$1" in
+  run)
+    # the host-folder existence test: the daemon of the HOST binds <src> (a missing source is refused) and runs \`test <flag> /x/<base>\`
+    src=$(printf '%s' "$*" | sed -n 's/.*src=\\([^,]*\\),dst=.*/\\1/p')
+    # /host-only/svc exists on the HOST (the daemon sees it) and nowhere in this shell
+    [ -d "$src" ] || [ "$src" = /host-only ] || { echo "docker: Error response from daemon: invalid mount config for type \\"bind\\": bind source path does not exist: $src" >&2; exit 125; }
+    while [ "$1" != "test" ]; do shift; done; shift 2; base="\${2#/x/}"
+    [ "$src/$base" = /host-only/svc ] && exit 0
+    case "$1" in -d) [ -d "$src/$base" ];; *) [ -e "$src/$base" ];; esac
+    exit $?;;
+esac
 case "$1 $2" in
   "volume inspect")
     shift 2; fmt=""; if [ "$1" = "-f" ]; then fmt="$2"; shift 2; fi
@@ -172,6 +186,20 @@ describe("volume alias, executed against a fake docker", () => {
     expect(readFileSync(join(dir, "vol-tugra_a_up"), "utf8")).toBe(join(dir, "up"));
     const gone = run(buildServiceVolumeScript([{ kind: "bind", from: join(dir, "nope"), to: "tugra_a_x", project: "tugra_a", key: "x" }]));
     expect(parseAlias(gone.stdout, ["tugra_a_x"])!.get("tugra_a_x")).toBe("nosource");
+  });
+  it("a host folder the agent's own filesystem cannot see is found through the daemon (the bug: /data/coolify/services/... was always nosource)", () => {
+    writeBin("docker", fakeDocker);
+    // /host-only/svc exists for the daemon only: this shell's own [ -d ] would say no
+    expect(existsSync("/host-only/svc")).toBe(false);
+    const r = run(buildServiceVolumeScript([{ kind: "bind", from: "/host-only/svc", to: "tugra_a_svc", project: "tugra_a", key: "svc" }]), {});
+    expect(parseAlias(r.stdout, ["tugra_a_svc"])!.get("tugra_a_svc")).toBe("created");
+    expect(readFileSync(join(dir, "vol-tugra_a_svc"), "utf8")).toBe("/host-only/svc");
+  });
+  it("no agent image to ask with: the answer is failed (could not tell), never nosource (missing)", () => {
+    writeBin("docker", fakeDocker);
+    mkdirSync(join(dir, "up2"));
+    const r = spawnSync("/bin/sh", ["-c", buildServiceVolumeScript([{ kind: "bind", from: join(dir, "up2"), to: "tugra_a_up2", project: "tugra_a", key: "up2" }])], { env: { PATH: `${bin}:/usr/bin:/bin`, HOME: dir, FAKE_DIR: dir }, encoding: "utf8" });
+    expect(parseAlias(r.stdout, ["tugra_a_up2"])!.get("tugra_a_up2")).toBe("failed");
   });
   it("a Tugra volume that exists and points elsewhere is foreign and is left alone; a Coolify volume that is gone is nosource", () => {
     writeBin("docker", fakeDocker);

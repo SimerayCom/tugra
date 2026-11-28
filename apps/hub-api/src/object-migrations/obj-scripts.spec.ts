@@ -102,7 +102,12 @@ describe("builders: golden strings + hostile input", () => {
       buildObjDiffScript(sides, [{ src: "bk1", dst: "bk1" }]),
       buildObjConfigApplyScript(sides, [{ dst: "bk1", policy: "{}", ilm: "{}", tags: [["a", "b"]] }]),
     ];
-    for (const s of scripts) {
+    for (const full of scripts) {
+      // The probe's one exception: the free space of the docker root (a HOST path the agent cannot see) is measured with the root bound
+      // read-only into a helper with no network and no capabilities; it is the only run without $HELPER_FLAGS and the only mount.
+      const df = full.split("\n").filter((l) => l.startsWith("DFK="));
+      for (const l of df) expect(l).toMatch(/docker run --rm --pull never --network none --cap-drop ALL --mount "type=bind,src=\$DR,dst=\/x,readonly" --entrypoint df /);
+      const s = full.split("\n").filter((l) => !l.startsWith("DFK=")).join("\n");
       // every `docker run ...` (up to its --entrypoint, across the line continuation) carries the shared hardening flags
       const runs = s.match(/docker run[\s\S]*?--entrypoint/g) ?? [];
       expect(runs.length).toBeGreaterThan(0);
@@ -316,5 +321,31 @@ exit 0
     const r = run(buildObjCleanupScript(ID));
     expect(r.stdout).toContain("TUGRA_OBJ_CLEAN_END");
     expect(dockerLog()).toContain("rm -f cid1");
+  });
+});
+
+describe("the probe's free-space line measures the HOST's docker root (the agent's container has no /var/lib/docker)", () => {
+  const dfLines = () => buildObjProbeScript(sides).split("\n").filter((l) => /^(DR|DFK)=|TUGRA_OBJ_DF/.test(l)).join("\n");
+  const runDf = (docker: string) => {
+    const d = mkdtempSync(join(tmpdir(), "obj-df-"));
+    try {
+      writeFileSync(join(d, "docker"), `#!/bin/bash\n${docker}\n`);
+      chmodSync(join(d, "docker"), 0o755);
+      return spawnSync("bash", ["-c", `IMG=agent-image\n${dfLines()}`], { env: { PATH: `${d}:/usr/bin:/bin` }, encoding: "utf8" }).stdout.trim();
+    } finally {
+      rmSync(d, { recursive: true, force: true });
+    }
+  };
+  it("binds the daemon's DockerRootDir into a helper and reads its free KiB", () => {
+    const out = runDf([
+      'case "$1" in',
+      "  info) echo /srv/docker-data;;",
+      '  run) case "$*" in *"src=/srv/docker-data,dst=/x,readonly"*"--entrypoint df"*) printf "Filesystem 1024-blocks Used Available Capacity Mounted\\nov 100 40 63000000 40%% /x\\n";; *) exit 1;; esac;;',
+      "esac",
+    ].join("\n"));
+    expect(out).toBe("TUGRA_OBJ_DF 63000000");
+  });
+  it("a helper that fails is `-` (unknown), never a wrong number", () => {
+    expect(runDf('case "$1" in info) echo /var/lib/docker;; *) exit 1;; esac')).toBe("TUGRA_OBJ_DF -");
   });
 });

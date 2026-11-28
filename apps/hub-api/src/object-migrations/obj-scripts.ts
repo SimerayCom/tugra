@@ -92,7 +92,10 @@ export function buildObjProbeScript(sides: ObjSides): string {
     "done",
     // Informational only: mc streams source -> destination through the helper's memory, so the target host's disk is
     // not used by the copy itself. A same-host destination MinIO keeps its data under the docker root.
-    'echo "TUGRA_OBJ_DF $(df -k /var/lib/docker 2>/dev/null | awk \'NR==2{print $4}\' || echo -)"',
+    // The docker root is a HOST path the agent's own filesystem does not have: measured through a helper with it bound read-only.
+    `DR="$(docker info --format '{{.DockerRootDir}}' 2>/dev/null)"; [ -n "$DR" ] || DR=/var/lib/docker`,
+    `DFK="$(docker run --rm --pull never --network none --cap-drop ALL --mount "type=bind,src=$DR,dst=/x,readonly" --entrypoint df "$IMG" -Pk /x 2>/dev/null | awk 'NR==2{print $4}')"`,
+    'echo "TUGRA_OBJ_DF ${DFK:--}"',
     'echo "TUGRA_OBJ_PROBE_END"',
   ].join("\n");
 }

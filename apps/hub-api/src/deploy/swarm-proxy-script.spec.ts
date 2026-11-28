@@ -51,7 +51,8 @@ describe("swarm-proxy-script builders", () => {
     expect(buildSwarmProxyCertDirScript(false, true)).toContain("mkdir -p /etc/tugra/proxy-logs");
     expect(buildSwarmProxyCertDirScript(false, true)).toContain("chmod 700 /etc/tugra/proxy-logs");
     expect(buildSwarmProxyCertDirScript(false, true)).toContain("chmod 600 /etc/tugra/proxy-logs/access.json");
-    expect(buildSwarmProxyCertDirScript(false, true)).toContain("copytruncate"); // bounded on every pool node
+    // the size bound is the agent's (agent/internal/traffic/rotate.go) on every pool node: a host logrotate drop-in cannot be installed from the agent's container
+    expect(buildSwarmProxyCertDirScript(false, true)).not.toContain("logrotate");
     expect(buildSwarmProxyCertDirScript(false)).not.toContain("logrotate");
     expect(buildSwarmProxyCertDirScript(false)).not.toContain("proxy-logs");
     expect(buildSwarmProxyCertDirScript(true, false)).not.toContain("proxy-logs");

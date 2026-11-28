@@ -63,6 +63,12 @@ func (c *Collector) ingestNew() {
 	if d := c.tail.dropped - before; d > 0 {
 		log.Printf("traffic: access-log backlog exceeded the per-pass bound; dropped %d span(s) of the oldest entries (counts for this window are low)", d)
 	}
+	// Size bound of the log (50 MB, three gzip copies): the proxy never rotates it and the host's logrotate is not ours to configure.
+	if rotated, err := c.tail.rotateIfLarge(accessLogMaxBytes, accessLogKeep); err != nil {
+		log.Printf("traffic: access-log rotation failed: %v", err)
+	} else if rotated {
+		log.Printf("traffic: access log rotated (over %d MB)", accessLogMaxBytes>>20)
+	}
 }
 
 // Flush closes the current window and returns its summary, or nil when it held no countable request.

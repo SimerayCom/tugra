@@ -72,9 +72,10 @@ describe("renderMigratorInstallScript", () => {
     // the opt-in --certs path adds exactly one more mount: the proxy's acme.json, READ-ONLY, only when the flag is given
     for (const m of mounts) {
       const mm = m.replace(/"$/, "");
-      expect(m.includes("docker.sock") || mm === "--mount type=bind,src=$ACME,dst=/acme/acme.json,readonly" || mm === '--mount "type=volume,dst=/dump-spool').toBe(true);
+      expect(m.includes("docker.sock") || mm === "--mount type=bind,src=$ACME,dst=/acme/acme.json,readonly" || mm === '--mount "type=volume,dst=/dump-spool' || mm === '--mount "type=bind,src=$d,dst=/a,readonly').toBe(true);
     }
-    expect(mounts.filter((m) => m.includes("type=bind") && !m.includes("docker.sock") && !m.includes("$ACME"))).toEqual([]);
+    // (the one other bind: the --certs existence check, a throwaway container with the acme directory read-only, no network, no capabilities)
+    expect(mounts.filter((m) => m.includes("type=bind") && !m.includes("docker.sock") && !m.includes("$ACME") && !m.includes("dst=/a,readonly"))).toEqual([]);
     expect(script).not.toMatch(/docker run[\s\S]*?\s-v /); // no short -v volume flag in the run
   });
 
@@ -360,7 +361,47 @@ describe("renderMigratorInstallScript --certs", () => {
   });
   it("mounts acme.json only under --certs, read-only, regular non-symlink file", () => {
     expect(script).toContain('if [ -n "$WANT_CERTS" ]; then');
-    expect(script).toContain('[ -f "$ACME" ] && [ ! -L "$ACME" ]');
+    expect(script).toContain('[ -f "$1" ] && [ ! -L "$1" ]');
     expect(script).toContain("dst=/acme/acme.json,readonly");
+  });
+  describe("acme_ok: the file is on the HOST, the shell may be the agent's container", () => {
+    // run the function as it is in the script, against a fake docker standing in for the daemon of the host
+    const fn = /  acme_ok\(\) \{\n[\s\S]*?\n  \}\n/.exec(script)![0];
+    const withDir = (body: (dir: string) => void) => {
+      const d = mkdtempSync(join(tmpdir(), "mig-acme-"));
+      try {
+        body(d);
+      } finally {
+        rmSync(d, { recursive: true, force: true });
+      }
+    };
+    const ok = (dir: string, path: string, docker: string): boolean => {
+      writeFileSync(join(dir, "docker"), `#!/bin/sh\n${docker}\n`);
+      chmodSync(join(dir, "docker"), 0o755);
+      try {
+        execFileSync("sh", ["-c", `${fn}\nacme_ok '${path}'`], { env: { PATH: `${dir}:/usr/bin:/bin`, IMAGE }, stdio: "pipe" });
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    it("a path the shell can see is judged by the shell (file yes, symlink no, missing no) and docker is not asked", () => {
+      withDir((d) => {
+        writeFileSync(join(d, "acme.json"), "{}");
+        execFileSync("ln", ["-s", join(d, "acme.json"), join(d, "link.json")]);
+        const never = 'echo asked >> "$0.log"; exit 0';
+        expect(ok(d, join(d, "acme.json"), never)).toBe(true);
+        expect(ok(d, join(d, "link.json"), never)).toBe(false);
+      });
+    });
+    it("a path only the host has (the agent's container cannot see /data/coolify) is judged by the daemon", () => {
+      withDir((d) => {
+        // a path this shell cannot see, while the daemon of the host can bind its parent directory
+        const hostOnly = "/data/coolify-test-hostonly/proxy/acme.json";
+        const asHost = `case "$*" in *src=/data/coolify-test-hostonly/proxy,*) exit 0;; *) exit 125;; esac`;
+        expect(ok(d, hostOnly, asHost)).toBe(true);
+        expect(ok(d, "/data/coolify-test-hostonly/other/acme.json", asHost)).toBe(false); // the daemon refuses: no such directory
+      });
+    });
   });
 });

@@ -231,3 +231,18 @@ describe("DestinationsService.testConnection — encryption check", () => {
     expect(res).toMatchObject({ ok: true, encryption: "SKIPPED" });
   });
 });
+
+describe("CreateDestinationSchema: a loopback S3 endpoint is refused (mc runs in the agent's container, where localhost is the agent)", () => {
+  const base = { teamId: "t1", name: "d", type: "S3" as const, s3Bucket: "bk", s3AccessKey: "a", s3SecretKey: "s" };
+  it.each(["http://127.0.0.1:9000", "http://localhost:9000", "localhost:9000", "https://[::1]:9000", "http://127.1.2.3"])("refuses %s with the reason", (s3Endpoint) => {
+    const r = CreateDestinationSchema.safeParse({ ...base, s3Endpoint });
+    expect(r.success).toBe(false);
+    if (!r.success) expect(r.error.issues[0].message).toMatch(/agent container/);
+  });
+  it.each(["https://s3.eu-west-1.amazonaws.com", "http://10.0.0.5:9000", "https://minio.example.com", "minio.example.com:9000", "http://192.168.1.20:9000"])("keeps %s (a LAN, public or named address)", (s3Endpoint) => {
+    expect(CreateDestinationSchema.safeParse({ ...base, s3Endpoint }).success).toBe(true);
+  });
+  it("a LOCAL destination has no endpoint to judge", () => {
+    expect(CreateDestinationSchema.safeParse({ teamId: "t1", name: "d", type: "LOCAL" }).success).toBe(true);
+  });
+});

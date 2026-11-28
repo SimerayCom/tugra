@@ -1196,14 +1196,16 @@ function prepSteps(app: AppSpec, version: string, noCache = false): string[] {
       // Railpack (Railway's modern builder) — builds an OCI image via BuildKit.
       steps.push(...secretsIgnoredNote);
       steps.push(
-        "command -v railpack >/dev/null 2>&1 || curl -sSL https://railpack.com/install.sh | sh",
+        ...BUILDER_TOOLS_PATH,
+        `command -v railpack >/dev/null 2>&1 || curl -sSL https://railpack.com/install.sh | RAILPACK_BIN_DIR=${BUILDER_TOOLS_DIR} sh`,
         `railpack build ${base} --name ${tag}${buildEnvFlagsC}`,
       );
     } else if (app.buildType === "HEROKU") {
       // Heroku / Cloud Native Buildpacks via the pack CLI.
       steps.push(...secretsIgnoredNote);
       steps.push(
-        "command -v pack >/dev/null 2>&1 || { curl -sSL https://github.com/buildpacks/pack/releases/download/v0.36.0/pack-v0.36.0-linux.tgz | tar -C /usr/local/bin -xz pack; }",
+        ...BUILDER_TOOLS_PATH,
+        `command -v pack >/dev/null 2>&1 || { curl -sSL https://github.com/buildpacks/pack/releases/download/v0.36.0/pack-v0.36.0-linux.tgz | tar -C ${BUILDER_TOOLS_DIR} -xz pack; }`,
         `pack build ${tag} --path ${base} --builder heroku/builder:24 --pull-policy if-not-present${noCache ? " --clear-cache" : ""}${buildEnvFlagsC}`,
       );
     } else {
@@ -1231,7 +1233,8 @@ function prepSteps(app: AppSpec, version: string, noCache = false): string[] {
         .join(" ");
       const nixEnv = nixpacksCmdEnv ? `${buildEnvFlagsC} ${nixpacksCmdEnv}` : buildEnvFlagsC;
       steps.push(
-        "command -v nixpacks >/dev/null 2>&1 || curl -sSL https://nixpacks.com/install.sh | bash",
+        ...BUILDER_TOOLS_PATH,
+        `command -v nixpacks >/dev/null 2>&1 || curl -sSL https://nixpacks.com/install.sh | NIXPACKS_BIN_DIR=${BUILDER_TOOLS_DIR} bash`,
         `nixpacks plan -f json${nixEnv} ${base} > ${plan}`,
         "if command -v jq >/dev/null 2>&1; then",
         `  jq '.phases.setup.aptPkgs = ((.phases.setup.aptPkgs // []) + ["curl","wget"] | unique)' ${plan} > ${plan}.tmp && mv ${plan}.tmp ${plan}`,
@@ -1733,6 +1736,14 @@ export function buildPostDeployScript(app: AppSpec): string {
     `docker exec ${name} sh -c ${shq(cmd)} && echo "TUGRA_POSTDEPLOY: ok" || echo "TUGRA_POSTDEPLOY: failed (ignored)"`,
   ].join("\n");
 }
+
+/**
+ * Where nixpacks / railpack / pack live. The build scripts run in the agent's container, whose own layer is discarded at every
+ * self-update: installed under /usr/local/bin each first build after an update downloaded them again (and failed behind an egress
+ * allow-list). /etc/tugra is the host directory the agent mounts, so they are installed there once and put first on PATH.
+ */
+export const BUILDER_TOOLS_DIR = "/etc/tugra/bin";
+const BUILDER_TOOLS_PATH = [`mkdir -p ${BUILDER_TOOLS_DIR}`, `export PATH="${BUILDER_TOOLS_DIR}:$PATH"`];
 
 /**
  * Hard-cutover deploy: `docker rm -f` the old container, then run the new one under
@@ -2283,17 +2294,16 @@ export function proxyAccessLogFlags(): string[] {
   ];
 }
 
-// Traefik never rotates its access log and the container log driver does not see the file, so the host
-// owns the size bound: a logrotate drop-in (copytruncate — Traefik appends, no USR1 needed). Best-effort:
-// a host without logrotate just skips it (never fails the proxy script).
-export const PROXY_ACCESSLOG_LOGROTATE_PATH = "/etc/logrotate.d/tugra-proxy-access";
+// Traefik never rotates its access log and the container log driver does not see the file. The size bound is NOT a host logrotate
+// drop-in: the script below runs inside the agent's container, which has no logrotate and whose /etc/logrotate.d is not the host's,
+// so such a file could never be installed. The agent, the only reader of the file (agent/internal/traffic/rotate.go), rotates it
+// itself: at 50 MB it copies the fully read log to access.json.1.gz (three copies kept) and truncates it in place.
 
 /**
  * Shell lines that create the access-log dir and lock it down BEFORE the proxy starts: the raw User-Agent and
  * Referer URL (path/query) land in access.json, so dir 0700 + file 0600 (root only; the agent reads it as root
  * in its container). The file is pre-created so Traefik appends to it instead of creating it with its default
- * (group/world-readable) mode; logrotate's copytruncate copies keep the source file's mode, and the 0700 dir
- * keeps the rotated .gz files root-only as well. Idempotent: also tightens a dir/file from an older install.
+ * (group/world-readable) mode; the agent's rotated .gz copies are written 0600, and the 0700 dir keeps them root-only as well. Idempotent: also tightens a dir/file from an older install.
  */
 export function proxyAccessLogDirSteps(): string[] {
   return [
@@ -2301,30 +2311,12 @@ export function proxyAccessLogDirSteps(): string[] {
     `chmod 700 ${PROXY_ACCESSLOG_DIR}`,
     `touch ${PROXY_ACCESSLOG_DIR}/access.json && chmod 600 ${PROXY_ACCESSLOG_DIR}/access.json`,
     `chmod 600 ${PROXY_ACCESSLOG_DIR}/access.json.* 2>/dev/null || true`,
-    ...proxyAccessLogRotateSteps(),
   ];
 }
 
-/** Shell lines that install the size-bounded rotation for the proxy access log. Only used when analytics is ON. */
-export function proxyAccessLogRotateSteps(): string[] {
-  const conf = [
-    `${PROXY_ACCESSLOG_DIR}/access.json {`,
-    "  size 50M",
-    "  rotate 3",
-    "  compress",
-    "  missingok",
-    "  notifempty",
-    "  copytruncate",
-    "}",
-  ];
-  return [
-    `if command -v logrotate >/dev/null 2>&1 && [ -d /etc/logrotate.d ]; then printf '%s\\n' ${conf.map(shq).join(" ")} > ${PROXY_ACCESSLOG_LOGROTATE_PATH} || true; fi`,
-  ];
-}
-
-/** Remove the access log (it holds client IPs) + its rotation config. Run after Traffic Analytics is turned OFF. */
+/** Remove the access log (it holds client IPs) and its rotated copies. Run after Traffic Analytics is turned OFF. */
 export function buildProxyAccessLogCleanupScript(): string {
-  return `rm -f ${PROXY_ACCESSLOG_DIR}/access.json ${PROXY_ACCESSLOG_DIR}/access.json.* ${PROXY_ACCESSLOG_LOGROTATE_PATH}`;
+  return `rm -f ${PROXY_ACCESSLOG_DIR}/access.json ${PROXY_ACCESSLOG_DIR}/access.json.*`;
 }
 
 export interface ProxySetupOpts {

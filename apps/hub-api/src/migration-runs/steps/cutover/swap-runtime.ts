@@ -86,7 +86,7 @@ export async function verifySwapHosts(deps: { world: Pick<CutoverWorld, "exec">;
         const cls = classifyHealth(http.status, http.traefik404);
         out[h] = { ok: cls.pass, reason: cls.pass ? "ok" : `health-${cls.kind}` };
       } else {
-        const r = await deps.world.exec(facts.id, buildCutoverLoopbackProbeScript({ host: h, path }), 30_000);
+        const r = await deps.world.exec(facts.id, buildCutoverLoopbackProbeScript({ host: h, path }), 30_000, { hostNetwork: true });
         const cls = classifyHealth(parseCutoverProbeMarkers(r.output)?.status ?? null, false);
         out[h] = { ok: cls.pass, reason: cls.pass ? "ok" : `health-${cls.kind}` };
       }

@@ -237,6 +237,8 @@ describe("TLS_PREISSUE (swap-proxy, dark phase)", () => {
     expect(check).not.toHaveBeenCalled();
     expect(rig.host.log.some((l) => l.kind === "dark-probe")).toBe(true);
     expect(rig.host.log.some((l) => l.kind === "loopback-probe")).toBe(false);
+    // on the box's own network: from the agent's bridge the proxy's isolated network never answers (the rig answers 000 there)
+    expect(rig.host.log.some((l) => l.kind === "dark-probe-on-bridge")).toBe(false);
     expect(rig.net.httpAt).not.toHaveBeenCalled();
     expect(rig.writes).toEqual([]);
   });

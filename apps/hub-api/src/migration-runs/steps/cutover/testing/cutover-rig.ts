@@ -204,7 +204,22 @@ export class FakeWorld {
     });
   }
   /** Read-only scripts (inspect/status/probes) are never crash points; every script that changes the box is. */
-  async exec(_serverId: string, script: string): Promise<{ exitCode: number; output: string }> {
+  async exec(_serverId: string, script: string, _timeoutMs?: number, opts?: { hostNetwork?: boolean; hostNamespaces?: boolean }): Promise<{ exitCode: number; output: string }> {
+    // The agent's own shell is a container on the default bridge: 127.0.0.1 is the agent and the proxy's bridge is isolated, so a probe that
+    // does not ask for the host network never connects (curl 000), whatever the box serves. The rig behaves the same, so a regression shows.
+    if (!opts?.hostNetwork && !opts?.hostNamespaces) {
+      if (script.includes("TUGRA_DARK_PROBE_END")) {
+        this.calls.push("exec:read");
+        this.host.log.push({ kind: "dark-probe-on-bridge", ponr: false });
+        const hosts = [...script.matchAll(/for H in ([^;]+); do/g)][0][1].split(" ").map((h) => h.replace(/'/g, ""));
+        return { exitCode: 0, output: [...hosts.map((h) => `TUGRA_DARK_PROBE host=${h} verify=x status=000 traefik404=0`), "TUGRA_DARK_PROBE_END"].join("\n") };
+      }
+      if (script.includes("TUGRA_CUTOVER_PROBE")) {
+        this.calls.push("exec:read");
+        this.host.log.push({ kind: "loopback-probe-on-bridge", ponr: false });
+        return { exitCode: 0, output: "TUGRA_CUTOVER_PROBE status=000\n" };
+      }
+    }
     const mutating = script.includes("docker update") || script.includes("docker stop") || script.includes("docker start");
     if (!mutating) {
       this.calls.push("exec:read");

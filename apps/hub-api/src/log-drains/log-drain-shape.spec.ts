@@ -42,6 +42,12 @@ describe("validateDrainShape: http / loki / datadog", () => {
     bad(() => validateDrainShape({ scope: "app", allowPrivate: false, type: "http", endpoint: "http://127.0.0.1:8080/" }), /allowPrivate/);
     bad(() => validateDrainShape({ scope: "app", allowPrivate: false, type: "http", endpoint: "http://10.1.2.3/" }), /allowPrivate/);
     bad(() => validateDrainShape({ scope: "app", allowPrivate: false, type: "http", endpoint: "http://localhost:3100/" }), /allowPrivate/);
+    // even WITH allowPrivate (or at server scope) localhost is refused: the forwarder runs in the agent's container, where it is the agent itself
+    for (const e of ["http://127.0.0.1:3100/", "http://localhost:3100/", "http://[::1]:3100/", "http://127.9.9.9/", "http://[::ffff:127.0.0.1]/"]) {
+      bad(() => validateDrainShape({ scope: "app", allowPrivate: true, type: "http", endpoint: e }), /agent container/);
+      bad(() => validateDrainShape({ ...base, type: "http", endpoint: e }), /agent container/);
+    }
+    bad(() => validateDrainShape({ scope: "app", allowPrivate: true, type: "syslog", endpoint: "localhost:514", options: { proto: "udp" } }), /agent container/);
     // server scope and allowPrivate keep today's reach
     expect(validateDrainShape({ ...base, type: "http", endpoint: "http://10.1.2.3/" })).toEqual({ options: null });
     expect(validateDrainShape({ scope: "app", allowPrivate: true, type: "http", endpoint: "http://10.1.2.3/" })).toEqual({ options: null });

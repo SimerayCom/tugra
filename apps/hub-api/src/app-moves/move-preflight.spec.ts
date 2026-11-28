@@ -241,6 +241,13 @@ describe("assemblePreflight — acknowledgement blockers", () => {
     expect(acked.ok).toBe(true);
   });
 
+  it("host bind paths: only a path the probe SAW missing is listed as missing on the target; one it could not tell about (null) is never claimed missing", () => {
+    const app = { hostMounts: [{ hostPath: "/mnt/media", containerPath: "/m" }, { hostPath: "/srv/up", containerPath: "/u" }, { hostPath: "/opt/x", containerPath: "/x" }] };
+    const r = assemblePreflight(facts({ app, targetProbe: probe({ hostPaths: { "/mnt/media": false, "/srv/up": null, "/opt/x": true } }) }));
+    const b = r.blockers.find((x) => x.code === "host_mounts")!;
+    expect(b.details).toMatchObject({ count: 3, missingOnTarget: ["/mnt/media"] });
+  });
+
   it("privileged options: the INSTANCE OWNER gets an ack; a non-owner is hard-blocked", () => {
     const over = { app: { allowPrivilegedDockerOptions: true } };
     const owner = assemblePreflight(facts({ ...over, callerIsOwner: true }));

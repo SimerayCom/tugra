@@ -3,7 +3,7 @@ import { X509Certificate } from "node:crypto";
 import { isIP } from "node:net";
 import { z } from "zod";
 import { HTTP_DRAIN_TYPES, NET_DRAIN_TYPES } from "../server-ops/dto";
-import { classifyHost, normalizeHost } from "./log-drain-address";
+import { classifyHost, isLoopbackHost, normalizeHost } from "./log-drain-address";
 
 export type DrainScope = "server" | "app";
 export type NormalizedOptions = Record<string, unknown>;
@@ -73,6 +73,8 @@ function guardHost(host: string, scope: DrainScope, allowPrivate: boolean): void
   const cls = classifyHost(host);
   if (cls === "blocked") bad("endpoint address is not allowed (metadata, link-local, unspecified or multicast)");
   if (cls === "private" && scope === "app" && !allowPrivate) bad("private address needs allowPrivate");
+  // The forwarder runs in the agent's container: "localhost" there is the agent itself, so a collector on the same server must be named by the server's own address.
+  if (isLoopbackHost(host)) bad("localhost means the agent container, not the server: use the server's own address (LAN or public IP) or a hostname");
 }
 
 // ---- per-transport options ----

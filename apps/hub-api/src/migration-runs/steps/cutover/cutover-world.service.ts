@@ -7,6 +7,7 @@ import { AuditService } from "../../../audit/audit.service";
 import { InstanceSettingsService } from "../../../instance/instance-settings.service";
 import { CryptoService } from "../../../crypto/crypto.service";
 import { containerName } from "../../../deploy/deploy-script";
+import { withHostContext, type HostContext } from "../../../common/host-exec";
 import { serviceDataVolumes } from "../../../cutover/cutover.logic";
 import { isObjectStoreResult } from "../../../importer/volume-stream/vx-targets";
 import { objectStoreKeys, type ObjectsVerification } from "./cutover-holds";
@@ -199,9 +200,13 @@ export class CutoverWorld {
     await this.prisma.server.update({ where: { id: serverId }, data: { proxyBind: bind } });
   }
 
-  /** Run a hub-built script on the host through the agent (`deploy` capability, like every proxy script). */
-  async exec(serverId: string, script: string, timeoutMs = 60_000): Promise<{ exitCode: number; output: string }> {
-    return this.agentWs.sendCommand(serverId, script, "deploy", timeoutMs);
+  /**
+   * Run a hub-built script on the host through the agent (`deploy` capability, like every proxy script). The agent's own shell is a
+   * container on the default bridge: a script that dials 127.0.0.1:443 or the proxy's bridge address passes `hostNetwork`, one that
+   * reads host files `hostNamespaces` (see common/host-exec).
+   */
+  async exec(serverId: string, script: string, timeoutMs = 60_000, opts?: HostContext): Promise<{ exitCode: number; output: string }> {
+    return this.agentWs.sendCommand(serverId, withHostContext(script, opts), "deploy", timeoutMs);
   }
 
   /** Other RUNNING apps on the server that this op did not create: restarting the proxy would drop their ingress. */

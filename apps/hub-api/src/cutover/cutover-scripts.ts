@@ -12,6 +12,8 @@ export const ACME_READ_CAP = 2 * 1024 * 1024;
  * Agent-side loopback probe: the proxy's routing for `host` seen from the server itself (curl --resolve to
  * 127.0.0.1). It verifies the router, NOT public reachability, and prints only a status marker, never a body, so
  * app output can never forge a marker. host/path pass through shq() after the DTO regex has limited them.
+ * 127.0.0.1 is the BOX only on the host's network: the agent's shell is a container on the default bridge, where it is the
+ * agent itself. Send this through `onHostNetwork` (or `world.exec(..., { hostNetwork: true })`), never as it is.
  */
 export function buildCutoverLoopbackProbeScript(o: { host: string; path: string }): string {
   return [

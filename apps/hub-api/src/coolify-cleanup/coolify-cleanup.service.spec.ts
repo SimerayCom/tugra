@@ -1,3 +1,4 @@
+import { unwrapHostScript } from "../common/host-exec";
 import { BadRequestException, ConflictException, ForbiddenException, ServiceUnavailableException } from "@nestjs/common";
 import { CoolifyCleanupService } from "./coolify-cleanup.service";
 import { listHash } from "./remnant-scan";
@@ -101,7 +102,10 @@ function make(o: Opts = {}) {
   const audit = { log: jest.fn(async (a: { action: string; meta?: Record<string, unknown> }) => void audits.push(a)) };
   const agentWs = {
     isOnline: jest.fn(() => o.online !== false),
-    sendCommand: jest.fn(async (_id: string, script: string, capability: string) => {
+    sendCommand: jest.fn(async (_id: string, raw: string, capability: string) => {
+      // /data/coolify is the HOST's: every script travels in the host namespaces; the specs read the script inside
+      expect(raw).toContain("nsenter -t 1 -m");
+      const script = unwrapHostScript(raw);
       sent.push({ script, capability });
       const r = o.scripts ? o.scripts(script, sent.length) : { exitCode: 0, output: SCAN_OK() };
       if (r instanceof Error) throw r;
@@ -299,6 +303,12 @@ describe("CoolifyCleanupService.check", () => {
 
   it("an unreadable scan fails the check instead of reading as empty", async () => {
     const t = make({ scripts: () => ({ exitCode: 0, output: "TUGRA_CU_BEGIN\nTUGRA_CU_C|coolify-proxy|x|exited|true" }) });
+    const v = await t.svc.check("u1", "s1");
+    expect(v).toMatchObject({ status: "FAILED", failureCode: "scan_unreadable" });
+  });
+
+  it("a host that could not be entered (no agent image) is unreadable, not 'nothing left': the directories of /data/coolify are unknown, never empty", async () => {
+    const t = make({ scripts: () => ({ exitCode: 1, output: "TUGRA_HOST_UNAVAILABLE reason=no-image\n" }) });
     const v = await t.svc.check("u1", "s1");
     expect(v).toMatchObject({ status: "FAILED", failureCode: "scan_unreadable" });
   });

@@ -1,4 +1,8 @@
-import { DARK_PROBE_MAX_HOSTS, buildDarkProbeScript, classifyDarkHost, parseDarkProbe } from "./dark-probe";
+import { spawnSync } from "node:child_process";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { DARK_PROBE_CHUNK, DARK_PROBE_MAX_HOSTS, buildDarkProbeScript, classifyDarkHost, darkProbeChunks, parseDarkProbe } from "./dark-probe";
 import { expectGolden } from "./testing/golden";
 
 const hosts = ["a.example.com", "b.example.com"];
@@ -26,8 +30,55 @@ describe("buildDarkProbeScript", () => {
     expect(() => buildDarkProbeScript({ hosts: ["a.example.com"], path: "/$(id)" as string })).not.toThrow(); // printable ASCII; shq()-quoted
     expect(buildDarkProbeScript({ hosts: ["a.example.com"], path: "/$(id)" })).toContain("P='/$(id)'");
     expect(() => buildDarkProbeScript({ hosts: [], path: "/" })).toThrow();
-    expect(() => buildDarkProbeScript({ hosts: Array.from({ length: DARK_PROBE_MAX_HOSTS + 1 }, (_, i) => `h${i}.example.com`), path: "/" })).toThrow();
+    expect(() => buildDarkProbeScript({ hosts: Array.from({ length: DARK_PROBE_CHUNK + 1 }, (_, i) => `h${i}.example.com`), path: "/" })).toThrow();
   });
+
+  it("a long list is split into commands of at most DARK_PROBE_CHUNK hosts (2 x 8 s of timeouts stay far under the command timeout), at most DARK_PROBE_MAX_HOSTS in all", () => {
+    const hosts = Array.from({ length: 130 }, (_, i) => `h${i}.example.com`);
+    const chunks = darkProbeChunks(hosts);
+    expect(chunks.every((c) => c.length > 0 && c.length <= DARK_PROBE_CHUNK)).toBe(true);
+    expect(chunks.flat()).toEqual(hosts.slice(0, DARK_PROBE_MAX_HOSTS));
+    expect(darkProbeChunks([])).toEqual([]);
+    for (const c of chunks) expect(() => buildDarkProbeScript({ hosts: c, path: "/" })).not.toThrow();
+  });
+});
+
+describe("buildDarkProbeScript, executed (bash, fake docker and curl)", () => {
+  let dir: string;
+  let bin: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "dark-probe-"));
+    bin = join(dir, "bin");
+    mkdirSync(bin);
+    const put = (n: string, body: string) => {
+      writeFileSync(join(bin, n), `#!/bin/bash\n${body}\n`);
+      chmodSync(join(bin, n), 0o755);
+    };
+    put("docker", "echo 172.20.0.2 ");
+    // every curl takes 2 s (a stand-in for the 8 s timeout): sequentially 2 hosts x 2 curls would need 8 s; in parallel 2 s
+    put("curl", [
+      'out=""; fmt=""; while [ $# -gt 0 ]; do case "$1" in -o) out=$2; shift;; -w) fmt=$2; shift;; esac; shift; done',
+      "sleep 2",
+      '[ "$out" = /dev/null ] || printf "404 page not found" > "$out"',
+      'case "$fmt" in *ssl_verify_result*) printf 0;; *http_code*) printf 200;; esac',
+    ].join("\n"));
+  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  it("probes the hosts in parallel and prints one marker line each, in a complete output", () => {
+    const hosts = Array.from({ length: 6 }, (_, i) => `h${i}.example.com`);
+    const t0 = Date.now();
+    const r = spawnSync("bash", ["-c", buildDarkProbeScript({ hosts, path: "/" })], { env: { PATH: `${bin}:/usr/bin:/bin` }, encoding: "utf8" });
+    const took = Date.now() - t0;
+    const parsed = parseDarkProbe(r.stdout, hosts);
+    expect(parsed).toMatchObject({ kind: "ok" });
+    if (parsed?.kind === "ok") {
+      expect(Object.keys(parsed.hosts).sort()).toEqual([...hosts].sort());
+      expect(parsed.hosts["h3.example.com"]).toEqual({ verify: 0, status: 200, traefik404: true });
+    }
+    // 6 hosts x 2 curls x 2 s = 24 s one after the other; in parallel about 4 s
+    expect(took).toBeLessThan(12_000);
+  }, 30_000);
 });
 
 describe("parseDarkProbe", () => {

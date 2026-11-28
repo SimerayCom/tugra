@@ -1160,6 +1160,26 @@ describe("deploy-script", () => {
     expect(s).toContain("railpack build /etc/tugra/builds/abc --name tugra_abc:v1");
   });
 
+  it("the build tools are installed under /etc/tugra/bin (the host directory the agent mounts), not into the agent container's own layer that every self-update throws away", () => {
+    for (const buildType of ["RAILPACK", "HEROKU", "NIXPACKS"] as const) {
+      const s2 = buildRunScript({ ...base, source: "GIT", gitUrl: "https://x/y.git", buildType }, "v1");
+      expect(s2).toContain("mkdir -p /etc/tugra/bin");
+      expect(s2).toContain('export PATH="/etc/tugra/bin:$PATH"');
+      expect(s2).not.toContain("/usr/local/bin");
+      // the PATH is set before the tool is looked up
+      expect(s2.indexOf('export PATH="/etc/tugra/bin')).toBeLessThan(s2.indexOf("command -v"));
+    }
+    expect(buildRunScript({ ...base, source: "GIT", gitUrl: "https://x/y.git", buildType: "RAILPACK" }, "v1")).toContain("RAILPACK_BIN_DIR=/etc/tugra/bin sh");
+    expect(buildRunScript({ ...base, source: "GIT", gitUrl: "https://x/y.git", buildType: "NIXPACKS" }, "v1")).toContain("NIXPACKS_BIN_DIR=/etc/tugra/bin bash");
+    expect(buildRunScript({ ...base, source: "GIT", gitUrl: "https://x/y.git", buildType: "HEROKU" }, "v1")).toContain("tar -C /etc/tugra/bin -xz pack");
+  });
+
+  it("the agent image ships jq (the Nixpacks plan edit needs it)", () => {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const dockerfile = require("node:fs").readFileSync(require("node:path").join(__dirname, "../../../../deploy/Dockerfile.agent"), "utf8") as string;
+    expect(dockerfile).toMatch(/apt-get install[^\n]*\bjq\b/);
+  });
+
   it("HEROKU: builds via the pack CLI with the heroku builder", () => {
     const s = buildRunScript({ ...base, source: "GIT", gitUrl: "https://x/y.git", buildType: "HEROKU" }, "v1");
     expect(s).toContain("command -v pack");
@@ -1752,16 +1772,13 @@ describe("deploy-script", () => {
     expect(s.indexOf("mkdir -p /etc/tugra/proxy-logs")).toBeLessThan(s.indexOf("docker run -d"));
   });
 
-  it("accessLog ON: installs a size-bounded logrotate drop-in (copytruncate); OFF cleanup removes log + config", () => {
+  it("accessLog ON: no host logrotate drop-in (the agent's container cannot install one; the agent rotates the file itself); OFF cleanup removes the log and its rotated copies", () => {
     const s = buildProxySetupScript({ acmeEmail: "me@x.com", accessLog: true });
-    expect(s).toContain("/etc/logrotate.d/tugra-proxy-access");
-    expect(s).toContain("copytruncate");
-    expect(s).toContain("size 50M");
-    expect(s).toContain("rotate 3");
-    expect(s.indexOf("logrotate")).toBeLessThan(s.indexOf("docker run -d"));
+    expect(s).not.toContain("logrotate");
     const c = buildProxyAccessLogCleanupScript();
-    expect(c).toContain("/etc/tugra/proxy-logs/access.json");
-    expect(c).toContain("/etc/logrotate.d/tugra-proxy-access");
+    expect(c).toContain("/etc/tugra/proxy-logs/access.json ");
+    expect(c).toContain("/etc/tugra/proxy-logs/access.json.*");
+    expect(c).not.toContain("logrotate");
   });
 
   it("accessLog ON: the access-log dir/file are locked down to root (0700/0600) BEFORE the proxy starts (raw UA/Referer on disk)", () => {

@@ -1,3 +1,4 @@
+import { unwrapHostScript } from "../../../common/host-exec";
 import { Prisma } from "@prisma/client";
 import { CutoverWorld, isMinioResult, sanitizeRepo } from "./cutover-world.service";
 import type { CoolifyProxySnapshot } from "./proxy-swap";
@@ -204,6 +205,17 @@ describe("CutoverWorld", () => {
     const m = make();
     await m.world.exec("srv1", "echo hi", 5000);
     expect(m.agentWs.sendCommand).toHaveBeenCalledWith("srv1", "echo hi", "deploy", 5000);
+  });
+
+  it("the host-context flags wrap the script (host network / host namespaces); no flag sends it as it is", async () => {
+    const m = make();
+    await m.world.exec("srv1", "echo hi", 5000, { hostNetwork: true });
+    await m.world.exec("srv1", "echo hi", 5000, { hostNamespaces: true });
+    const [net, ns] = m.agentWs.sendCommand.mock.calls.map((c: unknown[]) => String(c[1]));
+    expect(net).toContain("--network host");
+    expect(unwrapHostScript(net)).toBe("echo hi");
+    expect(ns).toContain("nsenter -t 1 -m");
+    expect(unwrapHostScript(ns)).toBe("echo hi");
   });
 
   it("the swap row: create is idempotent (a second call or a lost race returns the existing row, never overwrites its snapshot)", async () => {
