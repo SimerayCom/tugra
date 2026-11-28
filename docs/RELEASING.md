@@ -41,10 +41,14 @@ applying an update. The pipeline lives in [`.github/workflows/release.yml`](../.
 
    A pre-release tag (`v0.2.0-beta.1`) ships to the **beta** channel and never moves `latest`. You can also
    run the workflow manually (Actions → *Release* → *Run workflow*) with a `version` and an optional
-   `min_upgrade_from` (the minimum version required to upgrade directly to this release).
+   `min_upgrade_from` (the minimum version required to upgrade directly to this release). Tick `dry_run` (run it
+   from `main`) to exercise the whole build path under a scratch `ci-<run_id>` tag: it builds, merges and signs the
+   four images, then stops — no `latest`, no `versions.json`, no GitHub Release.
 4. The workflow:
    - builds + pushes `ghcr.io/simeraycom/tugra-{hub,web,agent,updater}:<version>` (and `:latest` for stable).
-     All four images (hub, web, updater, agent) are multi-arch (`linux/amd64,linux/arm64`). The agent image also vendors a pinned, sha256-verified, unmodified MinIO client (`mc`, AGPL-3.0, see `NOTICE`; the pins are `MC_VERSION` / `MC_SHA256` in `apps/hub-api/src/backups/destination.ts` and a jest drift test keeps `deploy/Dockerfile.agent` equal to them). Each image carries
+     All four images (hub, web, updater, agent) are multi-arch (`linux/amd64,linux/arm64`), built natively per
+     architecture (amd64 and arm64 runners, no QEMU) and pushed by digest, then joined into one manifest list per
+     image by the `merge` job. The agent image also vendors a pinned, sha256-verified, unmodified MinIO client (`mc`, AGPL-3.0, see `NOTICE`; the pins are `MC_VERSION` / `MC_SHA256` in `apps/hub-api/src/backups/destination.ts` and a jest drift test keeps `deploy/Dockerfile.agent` equal to them). Each image carries
      **two** provenance layers (see [Supply-chain verification](#supply-chain-verification) below):
      - an **unsigned BuildKit SLSA provenance + SPDX SBOM**, attached as OCI attestation manifests in the
        index — inspect with
@@ -54,7 +58,7 @@ applying an update. The pipeline lives in [`.github/workflows/release.yml`](../.
        `actions/attest-build-provenance`), pushed as an OCI referrer — publicly verifiable with
        `gh attestation verify` (no key to distribute).
    - stamps every image with an `org.opencontainers.image.version=<version>` label and records each image's
-     **OCI index digest** (the `docker/build-push-action` `digest` output, the same value the provenance
+     **OCI index digest** (the manifest list the `merge` job creates, the same value the provenance
      attestation signs) as a per-image `image-digest-<name>` artifact;
    - signs a merged `versions.json` (updating only the released channel, preserving the other) and pushes
      it + its `.sig` to `gh-pages`. The entry carries `imageDigests` (`hub`, `web`, `updater`, `agent`; bare
@@ -104,8 +108,8 @@ gh attestation verify oci://ghcr.io/simeraycom/tugra-hub:<version> --repo Simera
 ```
 
 A pass proves the image was built by this repo's release workflow from the attested commit. The permissions
-for this (`id-token: write` + `attestations: write`) live **only on the `build-push` job** — `ci`/`guard`
-run read-only, so unvetted test code on a tagged commit can never mint a signing token.
+for this (`id-token: write` + `attestations: write`) live **only on the `merge` job** — `ci`/`guard`/`build`
+run without them, so unvetted test code on a tagged commit can never mint a signing token.
 
 ### Pinned third-party images
 

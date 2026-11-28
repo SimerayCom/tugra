@@ -6,6 +6,8 @@ name: Release
 # origin/main, so a red or off-main commit cannot be released. NOTE: an in-workflow guard is a safety
 # net, not a security boundary (the tagged commit supplies this very file) — enforce who may push
 # `v*` tags / to main with repo rulesets + a protected `release` Environment for UPDATE_SIGNING_KEY.
+# Images are built natively per arch (build), joined into a multi-arch index + signed (merge). A manual
+# dispatch with dry_run=true runs ci/guard/build/merge under a scratch `ci-<run_id>` tag and publishes nothing.
 on:
   push:
     tags: ["v*.*.*"]
@@ -17,9 +19,13 @@ on:
       min_upgrade_from:
         description: "Optional: minimum version required to upgrade directly to this release"
         required: false
+      dry_run:
+        description: "Dry run: build + merge + sign under a scratch ci-<run_id> tag, then stop (no latest, no manifest, no GitHub Release)"
+        type: boolean
+        default: false
 
-# Least privilege at the top: only build-push needs packages:write (GHCR push) and the publishing jobs
-# declare their own contents:write. ci + guard then run with contents:read only, so test code on an
+# Least privilege at the top: only build/merge need packages:write (GHCR push; merge alone holds the
+# Sigstore id-token/attestations) and the publishing jobs declare their own contents:write. ci + guard then run with contents:read only, so test code on an
 # unvetted commit never holds a token that can publish.
 permissions:
   contents: read
@@ -71,57 +77,77 @@ jobs:
       - name: Require the root and CLI package versions to agree
         run: node scripts/check-versions.mjs
 
-  build-push:
+  # Version/channel/tag derivation, done ONCE here and handed to every build and merge job (they used to
+  # each re-derive it). dry_run (workflow_dispatch only) swaps the release tag for a scratch `ci-<run_id>`
+  # tag and forbids `latest`; publish-manifest and github-release are skipped for a dry run below.
+  meta:
     needs: [ci, guard]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
-      packages: write # push images to GHCR (also carries the attestation referrer)
-      id-token: write # mint the OIDC token for keyless Sigstore (Fulcio) signing
-      attestations: write # write the signed SLSA provenance attestation to GitHub's attestation store
     outputs:
       version: ${{ steps.ver.outputs.version }}
       channel: ${{ steps.ver.outputs.channel }}
+      dry_run: ${{ steps.tag.outputs.dry_run }}
+      tag: ${{ steps.tag.outputs.tag }} # the tag the images are published under (version, or ci-<run_id>)
+      latest: ${{ steps.tag.outputs.latest }} # "true" only for a real stable release
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }} # the exact commit ci + guard vetted (a tag could be moved mid-run)
+          persist-credentials: false
+      - id: ver
+        name: Derive version + channel
+        env:
+          REF: ${{ github.event.inputs.version || github.ref_name }}
+        run: bash scripts/release-version.sh "$REF" >> "$GITHUB_OUTPUT"
+      - id: tag
+        name: Pick the publish tag
+        env:
+          DRY_RUN: ${{ github.event.inputs.dry_run == 'true' }}
+          VERSION: ${{ steps.ver.outputs.version }}
+          LATEST: ${{ steps.ver.outputs.latest }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          if [ "$DRY_RUN" = "true" ]; then
+            tag="ci-$RUN_ID"; latest=false
+          else
+            tag="$VERSION"; latest="$LATEST"
+          fi
+          { echo "dry_run=$DRY_RUN"; echo "tag=$tag"; echo "latest=$latest"; } >> "$GITHUB_OUTPUT"
+
+  # One native build per image and architecture (no QEMU): amd64 on an x64 runner, arm64 on a GitHub-hosted
+  # arm64 runner. Each leg pushes its image BY DIGEST only (no tag, so nothing is publicly addressable until
+  # the merge job runs) and hands the digest to `merge` as an artifact. BuildKit provenance (mode=max) and the
+  # SPDX SBOM are still attached here, per architecture: each leg's pushed digest is a small OCI index holding
+  # the image manifest plus its attestation manifest, which `merge` carries into the final index.
+  # Only packages:write is held here; the Sigstore signing permissions (id-token, attestations) live in merge.
+  build:
+    needs: [meta]
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write # push the per-arch image (by digest) to GHCR
     strategy:
       fail-fast: false
       matrix:
         include:
           # Every image is multi-arch: the control plane (hub/web/updater) runs on amd64 or arm64 hosts
           # (Pi, Graviton, Ampere), and the agent runs on managed servers of any arch.
-          - name: hub
-            image: ghcr.io/simeraycom/tugra-hub
-            dockerfile: deploy/Dockerfile.hub
-            platforms: linux/amd64,linux/arm64
-          - name: web
-            image: ghcr.io/simeraycom/tugra-web
-            dockerfile: deploy/Dockerfile.web
-            platforms: linux/amd64,linux/arm64
-          - name: updater
-            image: ghcr.io/simeraycom/tugra-updater
-            dockerfile: deploy/Dockerfile.updater
-            platforms: linux/amd64,linux/arm64
-          - name: agent
-            image: ghcr.io/simeraycom/tugra-agent
-            dockerfile: deploy/Dockerfile.agent
-            platforms: linux/amd64,linux/arm64
+          - { name: hub, image: ghcr.io/simeraycom/tugra-hub, dockerfile: deploy/Dockerfile.hub, arch: amd64, platform: linux/amd64, runner: ubuntu-24.04 }
+          - { name: hub, image: ghcr.io/simeraycom/tugra-hub, dockerfile: deploy/Dockerfile.hub, arch: arm64, platform: linux/arm64, runner: ubuntu-24.04-arm }
+          - { name: web, image: ghcr.io/simeraycom/tugra-web, dockerfile: deploy/Dockerfile.web, arch: amd64, platform: linux/amd64, runner: ubuntu-24.04 }
+          - { name: web, image: ghcr.io/simeraycom/tugra-web, dockerfile: deploy/Dockerfile.web, arch: arm64, platform: linux/arm64, runner: ubuntu-24.04-arm }
+          - { name: updater, image: ghcr.io/simeraycom/tugra-updater, dockerfile: deploy/Dockerfile.updater, arch: amd64, platform: linux/amd64, runner: ubuntu-24.04 }
+          - { name: updater, image: ghcr.io/simeraycom/tugra-updater, dockerfile: deploy/Dockerfile.updater, arch: arm64, platform: linux/arm64, runner: ubuntu-24.04-arm }
+          - { name: agent, image: ghcr.io/simeraycom/tugra-agent, dockerfile: deploy/Dockerfile.agent, arch: amd64, platform: linux/amd64, runner: ubuntu-24.04 }
+          - { name: agent, image: ghcr.io/simeraycom/tugra-agent, dockerfile: deploy/Dockerfile.agent, arch: arm64, platform: linux/arm64, runner: ubuntu-24.04-arm }
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }} # the exact commit ci + guard vetted (a tag could be moved mid-run)
-      - id: ver
-        name: Derive version + channel
-        env:
-          REF: ${{ github.event.inputs.version || github.ref_name }}
-        run: bash scripts/release-version.sh "$REF" >> "$GITHUB_OUTPUT"
-      - id: tags
-        name: Compute image tags
-        run: |
-          tags="${{ matrix.image }}:${{ steps.ver.outputs.version }}"
-          if [ "${{ steps.ver.outputs.latest }}" = "true" ]; then
-            tags="$tags"$'\n'"${{ matrix.image }}:latest"
-          fi
-          { echo "tags<<EOF"; echo "$tags"; echo "EOF"; } >> "$GITHUB_OUTPUT"
-      - uses: docker/setup-qemu-action@v3
+          persist-credentials: false
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
         with:
@@ -133,50 +159,149 @@ jobs:
         with:
           context: .
           file: ${{ matrix.dockerfile }}
-          platforms: ${{ matrix.platforms }}
-          push: true
-          # SLSA build provenance (max detail) + an SPDX SBOM, attached as OCI attestation manifests in the
-          # image index (registry-stored, verifiable by digest). These add `unknown/unknown` entries to the
-          # index; the agent's per-arch digest extraction below filters on platform os/arch (and skips the
-          # attestation-manifest entry explicitly), so they never match it. Only non-secret build-args are
-          # passed, so mode=max records nothing sensitive.
+          platforms: ${{ matrix.platform }}
+          # Push by digest, untagged; `merge` stitches the two arch digests into the tagged manifest list.
+          outputs: type=image,name=${{ matrix.image }},push-by-digest=true,name-canonical=true,push=true
+          # SLSA build provenance (max detail) + an SPDX SBOM, attached as OCI attestation manifests next to the
+          # image (registry-stored, verifiable by digest). `merge` keeps them in the final index as
+          # `unknown/unknown` entries; the agent's per-arch digest extraction there filters on platform os/arch
+          # (and skips the attestation-manifest entries explicitly), so they never match it. Only non-secret
+          # build-args are passed, so mode=max records nothing sensitive.
           provenance: mode=max
           sbom: true
           # hub consumes all four; agent consumes TUGRA_VERSION (via ldflags); web/updater ignore the
           # unused ones. web's NEXT_PUBLIC_API_URL is intentionally left unset → SPA resolves the hub
-          # origin at runtime (window.location.origin).
+          # origin at runtime (window.location.origin). GEOIP_CACHE_BUST only reaches the agent's geoip
+          # stage (undeclared args are ignored elsewhere): it re-downloads the DB-IP file once per release so
+          # a layer cached from a failed/offline bake is never reused.
           build-args: |
-            TUGRA_VERSION=${{ steps.ver.outputs.version }}
-            TUGRA_CHANNEL=${{ steps.ver.outputs.channel }}
+            TUGRA_VERSION=${{ needs.meta.outputs.version }}
+            TUGRA_CHANNEL=${{ needs.meta.outputs.channel }}
             GIT_SHA=${{ github.sha }}
             TUGRA_EDITION=community
-          tags: ${{ steps.tags.outputs.tags }}
+            GEOIP_CACHE_BUST=${{ needs.meta.outputs.version }}
           # The release version stamped into the image config. The updater reads it back after a
           # digest-pinned pull and refuses an image whose label != the requested target (defeats a swapped
           # digest of an older release). The hub/agent images additionally bake TUGRA_VERSION via build-args.
           labels: |
-            org.opencontainers.image.version=${{ steps.ver.outputs.version }}
+            org.opencontainers.image.version=${{ needs.meta.outputs.version }}
+          # Layer cache, one scope per image and arch (native layers are not shareable across arch). The
+          # cache holds only layers produced from the repo context + the non-secret build-args above (.env and
+          # .git are .dockerignored, so neither can reach a layer). A cache-service hiccup must not fail a
+          # release, hence ignore-error on the write.
+          cache-from: type=gha,scope=${{ matrix.name }}-${{ matrix.arch }}
+          cache-to: type=gha,scope=${{ matrix.name }}-${{ matrix.arch }},mode=max,ignore-error=true
+      - name: Export digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          NAME: ${{ matrix.name }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          if ! printf '%s' "$DIGEST" | grep -Eq '^sha256:[0-9a-f]{64}$'; then
+            echo "::error::build step produced no valid digest for $NAME/$ARCH: '$DIGEST'" >&2
+            exit 1
+          fi
+          mkdir -p digests
+          printf '%s\n' "$DIGEST" > "digests/$ARCH"
+          cat "digests/$ARCH"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ matrix.name }}-${{ matrix.arch }}
+          path: digests/${{ matrix.arch }}
+          if-no-files-found: error
+          retention-days: 1
+
+  # One merge per image: stitch the amd64 + arm64 digests into the tagged multi-arch manifest list, check the
+  # result, sign it, and hand the digests to publish-manifest under the same artifact names as before.
+  merge:
+    needs: [meta, build]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write # create the tagged index in GHCR (also carries the attestation referrer)
+      id-token: write # mint the OIDC token for keyless Sigstore (Fulcio) signing
+      attestations: write # write the signed SLSA provenance attestation to GitHub's attestation store
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: hub, image: ghcr.io/simeraycom/tugra-hub }
+          - { name: web, image: ghcr.io/simeraycom/tugra-web }
+          - { name: updater, image: ghcr.io/simeraycom/tugra-updater }
+          - { name: agent, image: ghcr.io/simeraycom/tugra-agent }
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: digests-${{ matrix.name }}-*
+          path: digests
+          merge-multiple: true
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: index
+        name: Create the manifest list
+        env:
+          IMAGE: ${{ matrix.image }}
+          TAG: ${{ needs.meta.outputs.tag }}
+          LATEST: ${{ needs.meta.outputs.latest }}
+        run: |
+          set -euo pipefail
+          sources=()
+          for arch in amd64 arm64; do
+            d=$(tr -d '[:space:]' < "digests/$arch")
+            printf '%s' "$d" | grep -Eq '^sha256:[0-9a-f]{64}$' || { echo "::error::missing/invalid $arch digest for $IMAGE: '$d'" >&2; exit 1; }
+            sources+=("$IMAGE@$d")
+          done
+          # Same tags as the single-job build pushed: the version (or the dry-run scratch tag), plus `latest`
+          # for a stable release only.
+          tags=(-t "$IMAGE:$TAG")
+          if [ "$LATEST" = "true" ]; then tags+=(-t "$IMAGE:latest"); fi
+          docker buildx imagetools create "${tags[@]}" "${sources[@]}"
+          docker buildx imagetools inspect "$IMAGE:$TAG" --format '{{json .Manifest}}' > index.json
+          digest=$(jq -r '.digest // empty' index.json)
+          printf '%s' "$digest" | grep -Eq '^sha256:[0-9a-f]{64}$' || { echo "::error::no valid index digest for $IMAGE: '$digest'" >&2; exit 1; }
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          echo "$IMAGE:$TAG -> $digest"
+      # Fail closed unless the index has exactly what the single-job build produced: the linux/amd64 and
+      # linux/arm64 image manifests plus ONE BuildKit attestation manifest (provenance + SBOM) for each of
+      # them, each pointing at its image through vnd.docker.reference.digest. A merge that silently dropped
+      # an arch or its attestations must not be signed or published.
+      - name: Verify index shape (arches + per-arch attestations)
+        run: |
+          set -euo pipefail
+          # index.json is the descriptor-less manifest body: .manifests[] are the index entries.
+          jq -e '
+            def isatt: ((.annotations["vnd.docker.reference.type"] // "") == "attestation-manifest");
+            [.manifests[] | select(isatt | not)] as $imgs
+            | [.manifests[] | select(isatt)] as $atts
+            | (($imgs | map(.platform.os + "/" + .platform.architecture) | sort) == ["linux/amd64", "linux/arm64"])
+              and ($atts | length) == 2
+              and ($atts | all(.annotations["vnd.docker.reference.digest"] as $d | $imgs | any(.digest == $d)))
+          ' index.json >/dev/null || { echo "::error::index for ${{ matrix.image }} lacks both arches with their attestation manifests" >&2; jq . index.json >&2; exit 1; }
       # Sigstore-signed, Rekor-logged SLSA provenance (the deferred "Option B"). This COMPLEMENTS the
       # unsigned BuildKit provenance/SBOM above: it adds a keyless-signed (Fulcio cert) attestation, stored
       # in GitHub's attestation store AND as an OCI referrer on the image (push-to-registry). Runs once per
-      # matrix leg → all four GHCR images. Publicly verifiable:
+      # image → all four GHCR images. Publicly verifiable:
       #   gh attestation verify oci://ghcr.io/simeraycom/tugra-<name>:<version> --repo SimerayCom/tugra
-      # subject-digest is the pushed image/index digest, so the attestation is a referrer (not an index
+      # subject-digest is the pushed INDEX digest, so the attestation is a referrer (not an index
       # .manifests[] entry) and the agent per-arch digest capture below is unaffected. Fails closed.
       - name: Attest build provenance (Sigstore-signed)
         uses: actions/attest-build-provenance@v4.2.2
         with:
           subject-name: ${{ matrix.image }}
-          subject-digest: ${{ steps.build.outputs.digest }}
+          subject-digest: ${{ steps.index.outputs.digest }}
           push-to-registry: true
       - name: Capture agent per-arch digests
         if: matrix.name == 'agent'
         run: |
-          docker buildx imagetools inspect "${{ matrix.image }}:${{ steps.ver.outputs.version }}" --format '{{json .Manifest}}' \
-            | jq '{
-                amd64: (.manifests[] | select((.annotations["vnd.docker.reference.type"] // "") != "attestation-manifest" and .platform.os=="linux" and .platform.architecture=="amd64") | .digest),
-                arm64: (.manifests[] | select((.annotations["vnd.docker.reference.type"] // "") != "attestation-manifest" and .platform.os=="linux" and .platform.architecture=="arm64") | .digest)
-              }' > agent-digests.json
+          jq '{
+              amd64: (.manifests[] | select((.annotations["vnd.docker.reference.type"] // "") != "attestation-manifest" and .platform.os=="linux" and .platform.architecture=="amd64") | .digest),
+              arm64: (.manifests[] | select((.annotations["vnd.docker.reference.type"] // "") != "attestation-manifest" and .platform.os=="linux" and .platform.architecture=="arm64") | .digest)
+            }' index.json > agent-digests.json
           cat agent-digests.json
       - uses: actions/upload-artifact@v4
         if: matrix.name == 'agent'
@@ -184,19 +309,19 @@ jobs:
           name: agent-digests
           path: agent-digests.json
       # The pushed INDEX digest of THIS image (the same value the attest step above uses as its subject).
-      # Matrix job outputs are last-writer-wins, so each leg hands its digest over as its own artifact
-      # (image-digest-<name>), exactly like agent-digests. publish-manifest records all four in versions.json
-      # (imageDigests) so the updater can pull hub/web by digest. The value is passed through env (never
-      # interpolated into the script) and must be a well-formed sha256 — a malformed/empty digest fails the leg,
-      # so a manifest can never advertise a digest the build step did not produce.
+      # Each matrix leg hands its digest over as its own artifact (image-digest-<name>), exactly like
+      # agent-digests. publish-manifest records all four in versions.json (imageDigests) so the updater can
+      # pull hub/web by digest. The value is passed through env (never interpolated into the script) and must
+      # be a well-formed sha256 — a malformed/empty digest fails the leg, so a manifest can never advertise a
+      # digest the merge step did not produce.
       - name: Record image index digest
         env:
-          DIGEST: ${{ steps.build.outputs.digest }}
+          DIGEST: ${{ steps.index.outputs.digest }}
           NAME: ${{ matrix.name }}
         run: |
           set -euo pipefail
           if ! printf '%s' "$DIGEST" | grep -Eq '^sha256:[0-9a-f]{64}$'; then
-            echo "::error::build step produced no valid index digest for $NAME: '$DIGEST'" >&2
+            echo "::error::merge step produced no valid index digest for $NAME: '$DIGEST'" >&2
             exit 1
           fi
           printf '%s\n' "$DIGEST" > "$NAME.digest"
@@ -205,6 +330,18 @@ jobs:
         with:
           name: image-digest-${{ matrix.name }}
           path: ${{ matrix.name }}.digest
+
+  # Join point that keeps the old job id: every image is built, merged, verified and signed. publish-manifest
+  # and github-release depend on this job and read the version/channel from it exactly as before.
+  build-push:
+    needs: [meta, merge]
+    runs-on: ubuntu-24.04
+    permissions: {}
+    outputs:
+      version: ${{ needs.meta.outputs.version }}
+      channel: ${{ needs.meta.outputs.channel }}
+    steps:
+      - run: echo "All four images built natively, merged and signed (tag ${{ needs.meta.outputs.tag }})."
 
   # Generate + sign versions.json and publish it (with the detached .sig) to the gh-pages branch, the
   # single stable URL the self-update chain reads. The signer self-verifies against the real consumer
@@ -215,6 +352,7 @@ jobs:
   # advertise host files that are not yet published.
   publish-manifest:
     needs: build-push
+    if: ${{ github.event.inputs.dry_run != 'true' }}
     runs-on: ubuntu-latest
     # Serialize with the manual notice workflow (same group) so the two gh-pages manifest writers never
     # race the non-force push — a loser hard-fails instead of corrupting.
@@ -327,6 +465,7 @@ jobs:
   # Runs after the manifest so a release-notes hiccup can never block the image/manifest publish.
   github-release:
     needs: [build-push, publish-manifest]
+    if: ${{ github.event.inputs.dry_run != 'true' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write # create/edit releases
