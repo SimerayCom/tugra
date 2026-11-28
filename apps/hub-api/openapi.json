@@ -101317,6 +101317,56 @@
                   "maxLength": 80,
                   "pattern": "^[a-z0-9]+([.-][a-z0-9]+)*$"
                 },
+                "lastErrorParams": {
+                  "nullable": true,
+                  "type": "object",
+                  "additionalProperties": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 500
+                      },
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "boolean"
+                      },
+                      {
+                        "type": "string",
+                        "nullable": true,
+                        "enum": [
+                          null
+                        ]
+                      },
+                      {
+                        "maxItems": 200,
+                        "type": "array",
+                        "items": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "maxLength": 300
+                            },
+                            {
+                              "type": "number"
+                            },
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "string",
+                              "nullable": true,
+                              "enum": [
+                                null
+                              ]
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                },
                 "allowed": {
                   "type": "object",
                   "properties": {
