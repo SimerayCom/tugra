@@ -53,6 +53,14 @@ describe("parseCoolifyChannel", () => {
     expect(ch.config).toEqual({});
   });
 
+  it("says whether the channel was ever set up: switched on, or holding a credential or a destination", () => {
+    expect(parseCoolifyChannel("slack", { slack_enabled: false, slack_webhook_url: null })).toMatchObject({ configured: false, enabled: false });
+    expect(parseCoolifyChannel("slack", { slack_enabled: false, slack_webhook_url: "https://hooks.slack.test/x" })).toMatchObject({ configured: true });
+    expect(parseCoolifyChannel("telegram", { telegram_enabled: true })).toMatchObject({ configured: true, secretsReadable: false });
+    expect(parseCoolifyChannel("email", { smtp_enabled: false, resend_enabled: false, smtp_host: "", use_instance_email_settings: false })).toMatchObject({ configured: false });
+    expect(parseCoolifyChannel("email", { smtp_enabled: false, smtp_host: "mail.test" })).toMatchObject({ configured: true });
+  });
+
   it("returns null for an empty body (an older Coolify)", () => {
     expect(parseCoolifyChannel("slack", {})).toBeNull();
     expect(parseCoolifyChannel("slack", null)).toBeNull();

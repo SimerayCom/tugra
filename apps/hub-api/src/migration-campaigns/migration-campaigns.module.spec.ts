@@ -11,6 +11,7 @@ import { MIGRATION_RUNS_FACADE } from "../migration-runs/core/run-contract";
 import { PrismaService } from "../prisma/prisma.service";
 import { CampaignAdvancerService } from "./campaign-advancer.service";
 import { CampaignFactsService } from "./campaign-facts.service";
+import { PlanIconService } from "./plan-icons.service";
 import { MigrationCampaignsController } from "./migration-campaigns.controller";
 import { MigrationCampaignsService } from "./migration-campaigns.service";
 
@@ -22,6 +23,7 @@ describe("MigrationCampaignsModule wiring", () => {
         MigrationCampaignsService,
         CampaignFactsService,
         CampaignAdvancerService,
+        PlanIconService,
         { provide: PrismaService, useValue: {} },
         { provide: TeamAccessService, useValue: {} },
         { provide: AuditService, useValue: {} },

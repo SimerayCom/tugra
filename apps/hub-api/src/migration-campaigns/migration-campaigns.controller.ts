@@ -1,4 +1,5 @@
-import { Body, Controller, Get, HttpCode, Logger, Param, Post, Query, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, Header, HttpCode, Logger, NotFoundException, Param, Post, Query, StreamableFile, UseGuards } from "@nestjs/common";
+import { SkipThrottle } from "@nestjs/throttler";
 import type { CampaignView } from "@tugra/shared";
 import { ApiSecurity, ApiTags } from "@nestjs/swagger";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
@@ -9,8 +10,9 @@ import { RequireScopes } from "../api-tokens/require-scopes.decorator";
 import { AuthUser } from "../auth/strategies/jwt.strategy";
 import { runActorFromAuth } from "../migration-runs/core/run-contract";
 import { CampaignAdvancerService } from "./campaign-advancer.service";
+import { PlanIconService } from "./plan-icons.service";
 import { MigrationCampaignsService } from "./migration-campaigns.service";
-import { CampaignCreateSchema, CampaignListQuerySchema, CampaignPlanSchema, CampaignViewsQuerySchema, type CampaignViewsQuery, type CampaignCreateInput, type CampaignListQuery, type CampaignPlanInput } from "./dto";
+import { CampaignCreateSchema, CampaignListQuerySchema, CampaignPlanSchema, CampaignViewsQuerySchema, PlanIconQuerySchema, type CampaignViewsQuery, type PlanIconQuery, type CampaignCreateInput, type CampaignListQuery, type CampaignPlanInput } from "./dto";
 import { z } from "zod";
 
 /**
@@ -27,7 +29,24 @@ export class MigrationCampaignsController {
   constructor(
     private readonly campaigns: MigrationCampaignsService,
     private readonly advancer: CampaignAdvancerService,
+    private readonly icons: PlanIconService,
   ) {}
+
+  /**
+   * The icon of an app in a move plan, before it exists in Tugra: a site's favicon (`kind=site`, a host name) or the avatar of its repository's GitHub
+   * owner (`kind=github`). The hub fetches it (public addresses only), so the browser contacts neither site. 404 when there is none; the page then
+   * falls back to the brand of the image or a plain icon.
+   */
+  @Get("icon")
+  @SkipThrottle() // one <img> per app of a plan; a miss is not browser-cached, so the global limit would starve real API calls
+  @Header("X-Content-Type-Options", "nosniff")
+  @Header("Content-Security-Policy", "default-src 'none'; sandbox")
+  @Header("Cache-Control", "private, max-age=86400")
+  async icon(@Query(new ZodValidationPipe(PlanIconQuerySchema)) q: PlanIconQuery): Promise<StreamableFile> {
+    const found = await this.icons.get(q.kind, q.name);
+    if (!found) throw new NotFoundException("no icon");
+    return new StreamableFile(found.data, { type: found.mime });
+  }
 
   /** What each source server of a session offers (in place or another server, and why not), with no choice made. */
   @Get("placement")

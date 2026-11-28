@@ -4,6 +4,7 @@ import { ImporterModule } from "../importer/importer.module";
 import { MigrationRunsModule } from "../migration-runs/migration-runs.module";
 import { CampaignAdvancerService } from "./campaign-advancer.service";
 import { CampaignFactsService } from "./campaign-facts.service";
+import { PlanIconService } from "./plan-icons.service";
 import { MigrationCampaignsController } from "./migration-campaigns.controller";
 import { MigrationCampaignsService } from "./migration-campaigns.service";
 
@@ -11,7 +12,7 @@ import { MigrationCampaignsService } from "./migration-campaigns.service";
 @Module({
   imports: [ImporterModule, MigrationRunsModule, CoolifyInPlaceModule],
   controllers: [MigrationCampaignsController],
-  providers: [CampaignFactsService, MigrationCampaignsService, CampaignAdvancerService],
+  providers: [CampaignFactsService, MigrationCampaignsService, CampaignAdvancerService, PlanIconService],
   exports: [MigrationCampaignsService],
 })
 export class MigrationCampaignsModule {}

@@ -19,7 +19,7 @@ const view = (id: string, over: Partial<CampaignView> = {}): CampaignView => ({
 function build(created: CampaignView[]) {
   const campaigns = { create: jest.fn(async () => ({ ...created[0], campaigns: created })), startFirstRun: jest.fn(async () => undefined) };
   const advancer = { start: jest.fn(async (_a: unknown, id: string) => view(id, { driving: true, status: "running" })) };
-  const ctrl = new MigrationCampaignsController(campaigns as never, advancer as never);
+  const ctrl = new MigrationCampaignsController(campaigns as never, advancer as never, {} as never);
   return { ctrl, campaigns, advancer };
 }
 

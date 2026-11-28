@@ -77,6 +77,32 @@ function readEvents(r: Record<string, unknown>, prefix: string): RawChannelEvent
 export function parseCoolifyChannel(kind: ChannelKind, body: unknown): RawChannel | null {
   const r = row(body);
   if (Object.keys(r).length === 0) return null;
+  const channel = parseChannelRow(kind, r);
+  return channel ? { ...channel, configured: channelConfigured(kind, r, channel.enabled) } : null;
+}
+
+/** A column that holds something: a non-empty text, a number other than 0, or a true flag (an unset column, "", 0 and false do not count). */
+const filled = (v: unknown): boolean => (typeof v === "boolean" ? v : typeof v === "number" ? v !== 0 : str(v) !== undefined && v !== "0" && v !== "false");
+
+/** The columns that only hold something once the channel was set up (a credential or where it posts). Their presence is read, never their value. */
+const SETUP_FIELDS: Record<ChannelKind, readonly string[]> = {
+  telegram: ["telegram_token", "telegram_chat_id"],
+  discord: ["discord_webhook_url"],
+  slack: ["slack_webhook_url"],
+  webhook: ["webhook_url"],
+  pushover: ["pushover_api_token", "pushover_user_key"],
+  email: ["smtp_host", "smtp_recipients", "smtp_from_address", "smtp_username", "resend_api_key", "resend_enabled", "smtp_enabled", "use_instance_email_settings"],
+};
+
+/**
+ * Whether the channel was ever set up in Coolify: it is switched on, or it holds a credential or a destination. A channel that is off and empty is
+ * simply not there: saying "Coolify did not hand over the value" about it would send the owner looking for something that does not exist.
+ */
+function channelConfigured(kind: ChannelKind, r: Record<string, unknown>, enabled: boolean): boolean {
+  return enabled || SETUP_FIELDS[kind].some((k) => filled(r[k]));
+}
+
+function parseChannelRow(kind: ChannelKind, r: Record<string, unknown>): RawChannel | null {
   const p = PREFIX[kind];
   const events = readEvents(r, p);
   const base = { kind, events, config: {} as Record<string, string> };

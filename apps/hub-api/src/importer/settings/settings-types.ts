@@ -72,6 +72,8 @@ export interface RawChannel {
   enabled: boolean;
   /** The bot token / webhook URL / key were returned (a token without read:sensitive gets none of them). */
   secretsReadable: boolean;
+  /** The channel was set up in the source (switched on, or it holds a credential or a destination). Absent = not known, treated as set up. */
+  configured?: boolean;
   /** The channel sends through the source instance's own mail settings, which Tugra cannot read. */
   instanceEmail?: boolean;
   events: RawChannelEvent[];

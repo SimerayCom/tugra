@@ -86,7 +86,7 @@ const notifications: Builder = (raw, ctx, planned) => {
     if (unmapped.length) notes.push(note("warn", "events_not_carried", { events: unmapped.join(", ") }));
     if (groups.length > 1) notes.push(note("info", "topics_split", { n: groups.length }));
     if (!ch.enabled) notes.push(note("info", "source_disabled"));
-    const blocked = ch.instanceEmail ? "email_instance_settings" : !ch.secretsReadable ? "needs_sensitive" : names.every((n) => ctx.channelNames.has(n)) ? "exists" : undefined;
+    const blocked = ch.instanceEmail ? "email_instance_settings" : !ch.secretsReadable ? (ch.configured === false ? "not_configured" : "needs_sensitive") : names.every((n) => ctx.channelNames.has(n)) ? "exists" : undefined;
     if (!blocked) {
       notes.push(note("info", "double_send"));
       planned.set(id, { section: "notifications", channel: ch, groups });

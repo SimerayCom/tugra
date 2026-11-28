@@ -93,3 +93,7 @@ export const CampaignViewsQuerySchema = z
   })
   .strict();
 export type CampaignViewsQuery = z.infer<typeof CampaignViewsQuerySchema>;
+
+/** `GET /migration-campaigns/icon`: what to find an icon for. The name is checked again by the service (a DNS name or a GitHub login, nothing else). */
+export const PlanIconQuerySchema = z.object({ kind: z.enum(["site", "github"]), name: z.string().min(1).max(253) }).strict();
+export type PlanIconQuery = z.infer<typeof PlanIconQuerySchema>;
