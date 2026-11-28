@@ -50,7 +50,8 @@ export function WaveRow({ row, teamName = null, view, rank, count, wave }: { row
   const line = current && na && na.stepKey === current.step.key ? codeText(t, na.code, na.params) : null;
   const switched = row.items && row.inPlace ? row.items.moved : 0;
   // "N of M apps switched": M is what this server's move was about. The import also lists every other task of the whole Coolify session as skipped
-  // (they are not part of this run), so a same-machine run leaves the skipped ones out instead of reading "2 of 132".
+  // (they are not part of this run), so a same-machine run leaves the skipped ones out instead of reading "2 of 132". This is a stopgap for
+  // finding 10 (the importer's skipped list is not scoped to the run); once that is scoped, drop it so a server's own skipped apps count again.
   const itemsTotal = row.items ? row.items.moved + row.items.failed + row.items.notCutOver + row.items.acked + (row.inPlace ? 0 : row.items.skipped) : 0;
   return (
     <li data-testid="wave-row" data-run={row.id}>
