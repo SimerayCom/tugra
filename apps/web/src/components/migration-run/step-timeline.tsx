@@ -151,7 +151,8 @@ function StepRow({ step, index, current, note }: { step: MigrationRunStepView; i
  *  drawn as a divider before the step that crosses it, and turns solid once it was reached. */
 export function StepTimeline({ run, inPlaceStatus = null }: { run: MigrationRunView; inPlaceStatus?: TakeoverStatus | null }) {
   const t = useT();
-  const steps = visibleSteps(run);
+  // an in-place takeover copies nothing: the steps it skipped are not drawn (the stepper above says how many)
+  const steps = visibleSteps(run).filter((s) => !run.inPlace || s.status !== "SKIPPED");
   return (
     <SectionCard title={t("migrationRun.timeline.title")} style={{ marginBottom: 0 }}>
       <ol aria-label={t("migrationRun.timeline.title")} style={{ margin: 0, padding: 0 }}>

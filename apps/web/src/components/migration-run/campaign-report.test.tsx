@@ -5,8 +5,9 @@ import React from "react";
 import { I18nProvider } from "../../i18n/provider";
 import { api } from "../../lib/api";
 import { CampaignReport } from "./campaign-report";
-import { mkSummary } from "./test-fixtures";
-import type { MigrationRunReport, MigrationRunSummary } from "../../lib/types";
+import { binding, mkRun, mkStep, mkSummary } from "./test-fixtures";
+import { MIGRATION_RUN_STEP_KEYS } from "../../lib/migration-run";
+import type { MigrationRunReport, MigrationRunStepKey, MigrationRunStepView, MigrationRunSummary, MigrationRunView } from "../../lib/types";
 
 vi.mock("next/link", () => ({ default: ({ href, children, ...rest }: { href: string; children: React.ReactNode }) => <a href={href} {...rest}>{children}</a> }));
 vi.mock("../team-scope", () => ({ useTeamContext: () => ({ teams: [{ id: "t-a", name: "Team A" }, { id: "t-b", name: "Team B" }] }) }));
@@ -124,15 +125,14 @@ describe("CampaignReport", () => {
       ]);
     });
 
-    it("shows each run's wave and marks the one to start next", async () => {
+    it("shows each run's wave, says that closing the page stops nothing, and no longer sends the owner to start every run by hand", async () => {
       vi.mocked(api.listCampaigns).mockResolvedValue([view()]);
       wrap();
-      await screen.findByText("Wave 2");
-      expect(screen.getByText("Wave 1")).toBeTruthy();
-      expect(screen.getAllByText("Start this next")).toHaveLength(1);
-      const next = screen.getByText("Start this next").closest("li")!;
-      expect(next.textContent).toContain("Wave 2");
-      expect(screen.getByText(/Waves run one after the other/)).toBeTruthy();
+      await screen.findByText("Wave 2 of 2");
+      expect(screen.getByText("Wave 1 of 2")).toBeTruthy();
+      expect(screen.queryByText("Start this next")).toBeNull();
+      expect(screen.queryByText(/Start the run marked/)).toBeNull();
+      expect(screen.getByTestId("campaign-close-note").textContent).toMatch(/Closing this page does not stop anything/);
     });
 
     it("cancel needs the typed label, calls the hub once per campaign and says what happened", async () => {
@@ -153,9 +153,122 @@ describe("CampaignReport", () => {
     it("a cancelled or finished campaign has no cancel button and nothing to start next", async () => {
       vi.mocked(api.listCampaigns).mockResolvedValue([view({ status: "cancelled" })]);
       wrap();
-      await screen.findByText("Wave 2");
+      await screen.findByText("Wave 2 of 2");
       expect(screen.queryByRole("button", { name: "Cancel campaign" })).toBeNull();
-      expect(screen.queryByText("Start this next")).toBeNull();
+      expect(screen.queryByRole("button", { name: /Start moving/ })).toBeNull();
+    });
+  });
+
+  describe("Start all and the live progress of every server", () => {
+    const plan = [
+      { sourceServerRef: "a", kind: "in-place" as const, targetServerId: "srv-a", topology: "swap-proxy" as const, wave: 0 },
+      { sourceServerRef: "b", kind: "in-place" as const, targetServerId: "srv-b", topology: "swap-proxy" as const, wave: 1 },
+    ];
+    const camp = (over: Record<string, unknown> = {}) => ({ id: "camp1", teamId: "t1", label: "wave-1", sessionId: "s1", status: "draft" as const, plan, runIds: ["run-aaaa1111", "run-bbbb2222"], driving: false, createdAt: "2026-11-24T08:00:00.000Z", ...over });
+    const NOT_APPLICABLE = ["DNS_PREPARE", "DATA_SEED", "FREEZE", "DATA_FINAL", "TLS_PREISSUE"];
+    /** The 13 steps of an in-place run as the hub makes them: the five that copy nothing are skipped. */
+    const steps = (status: Partial<Record<MigrationRunStepKey, MigrationRunStepView["status"]>>, over: Partial<Record<MigrationRunStepKey, Partial<MigrationRunStepView>>> = {}) =>
+      MIGRATION_RUN_STEP_KEYS.filter((k) => k !== "DECOMMISSION").map((k) => mkStep(k, NOT_APPLICABLE.includes(k) ? "SKIPPED" : (status[k] ?? "PENDING"), over[k] ?? {}));
+    const view = (id: string, target: string, name: string, over: Partial<MigrationRunView> = {}) => mkRun({ id, targetServerId: target, targetServerName: name, campaign: "wave-1", inPlace: true, topology: "swap-proxy", ...over });
+    const approvalNext = { kind: "approval" as const, stepKey: "VERIFY" as const, code: "verify.review", since: "2026-11-24T10:00:00.000Z", approval: binding({ confirm: "target-server" }) };
+    const waiting = (id: string, target: string, name: string) =>
+      view(id, target, name, { status: "WAITING", currentStep: "VERIFY", nextAction: approvalNext, steps: steps({ PREFLIGHT: "PASSED", IMPORT: "PASSED", REMAP_ENV: "PASSED", DEPLOY_DARK: "PASSED", VERIFY: "WAITING_APPROVAL" }) });
+    const queued = (id: string, target: string, name: string) => view(id, target, name, { status: "QUEUED", currentStep: null, steps: steps({}), nextAction: { kind: "none", stepKey: null, code: "run.queued", since: "2026-11-24T10:00:00.000Z" }, allowed: { ...mkRun().allowed, start: true } });
+    const summaries = (a: Partial<MigrationRunSummary>, b: Partial<MigrationRunSummary>) => [
+      mkSummary({ id: "run-aaaa1111", campaign: "wave-1", targetServerId: "srv-a", targetServerName: "Olgu Server", inPlace: true, topology: "swap-proxy", createdAt: "2026-11-24T09:00:00.000Z", ...a }),
+      mkSummary({ id: "run-bbbb2222", campaign: "wave-1", targetServerId: "srv-b", targetServerName: "Section Server", inPlace: true, topology: "swap-proxy", createdAt: "2026-11-24T10:00:00.000Z", ...b }),
+    ];
+    const setup = (views: Record<string, MigrationRunView>, sums: MigrationRunSummary[], campaigns = [camp()]) => {
+      vi.mocked(api.listMigrationRuns).mockResolvedValue(sums);
+      vi.mocked(api.listCampaigns).mockResolvedValue(campaigns);
+      vi.mocked(api.getMigrationRunReport).mockRejectedValue(new Error("no report"));
+      vi.spyOn(api, "getMigrationRun").mockImplementation(async (id: string) => views[id]);
+    };
+
+    it("queued servers: one clear button hands the campaign to the hub, nothing else to press", async () => {
+      setup({ "run-aaaa1111": queued("run-aaaa1111", "srv-a", "Olgu Server"), "run-bbbb2222": queued("run-bbbb2222", "srv-b", "Section Server") }, summaries({ status: "QUEUED", currentStep: null }, { status: "QUEUED", currentStep: null }));
+      const start = vi.spyOn(api, "startCampaign").mockResolvedValue(camp({ driving: true }));
+      wrap();
+      const btn = await screen.findByRole("button", { name: "Start moving 2 servers" });
+      expect(screen.getByTestId("campaign-headline").getAttribute("data-kind")).toBe("ready");
+      expect(screen.getAllByText("Not started")).toHaveLength(2);
+      expect(screen.queryByRole("button", { name: /Pause/ })).toBeNull();
+      fireEvent.click(btn);
+      await waitFor(() => expect(start).toHaveBeenCalledWith("camp1"));
+      expect(start).toHaveBeenCalledTimes(1);
+    });
+
+    it("while the hub drives it there is no start button, only a way to hold back the servers that have not started", async () => {
+      setup({ "run-aaaa1111": queued("run-aaaa1111", "srv-a", "Olgu Server"), "run-bbbb2222": queued("run-bbbb2222", "srv-b", "Section Server") }, summaries({ status: "RUNNING", currentStep: "PREFLIGHT" }, { status: "QUEUED", currentStep: null }), [camp({ driving: true, status: "running" })]);
+      const pause = vi.spyOn(api, "pauseCampaign").mockResolvedValue(camp({ driving: false }));
+      wrap();
+      const btn = await screen.findByRole("button", { name: "Pause starting new servers" });
+      expect(screen.queryByRole("button", { name: /Start moving/ })).toBeNull();
+      fireEvent.click(btn);
+      await waitFor(() => expect(pause).toHaveBeenCalledWith("camp1"));
+    });
+
+    it("a paused campaign says so and offers Continue", async () => {
+      setup({ "run-aaaa1111": view("run-aaaa1111", "srv-a", "Olgu Server", { status: "COMPLETED", currentStep: null }), "run-bbbb2222": queued("run-bbbb2222", "srv-b", "Section Server") }, summaries({ status: "COMPLETED", currentStep: null }, { status: "QUEUED", currentStep: null }), [camp({ driving: false, status: "paused" })]);
+      wrap();
+      await screen.findByRole("button", { name: "Continue" });
+      expect(screen.getByTestId("campaign-headline").getAttribute("data-kind")).toBe("paused");
+    });
+
+    it("each server shows only the steps that apply to an in-place move, with the step it is on in words", async () => {
+      setup({ "run-aaaa1111": waiting("run-aaaa1111", "srv-a", "Olgu Server"), "run-bbbb2222": queued("run-bbbb2222", "srv-b", "Section Server") }, summaries({ status: "WAITING", currentStep: "VERIFY", nextActionKind: "approval" }, { status: "QUEUED", currentStep: null }), [camp({ driving: true, status: "running" })]);
+      wrap();
+      const row = (await screen.findAllByTestId("wave-row"))[0];
+      await waitFor(() => expect(within(row).getByTestId("mini-steps")).toBeTruthy());
+      const marks = within(row).getByTestId("mini-steps").querySelectorAll("li");
+      expect(marks).toHaveLength(8);
+      expect([...marks].map((m) => m.getAttribute("data-step"))).toEqual(["PREFLIGHT", "IMPORT", "REMAP_ENV", "DEPLOY_DARK", "VERIFY", "CUTOVER", "OBSERVE", "FINALIZE"]);
+      expect(within(row).queryByText(/Freeze the source/)).toBeNull();
+      expect(within(row).getAllByText(/Needs you/).length).toBeGreaterThanOrEqual(1);
+      expect(within(row).getByText(/4 of 8 steps/)).toBeTruthy();
+      // in place there is no copy badge and no window or move counters
+      expect(within(row).queryByText("Copy")).toBeNull();
+      expect(within(row).queryByText(/Window/)).toBeNull();
+      expect(within(row).queryByText(/not cut over/)).toBeNull();
+    });
+
+    it("an approval is a clear 'Needs you' item with the review and Approve right there", async () => {
+      setup({ "run-aaaa1111": waiting("run-aaaa1111", "srv-a", "Olgu Server"), "run-bbbb2222": queued("run-bbbb2222", "srv-b", "Section Server") }, summaries({ status: "WAITING", currentStep: "VERIFY", nextActionKind: "approval" }, { status: "QUEUED", currentStep: null }), [camp({ driving: true, status: "running" })]);
+      wrap();
+      const item = await screen.findByTestId("needs-you-item");
+      expect(within(item).getByText("Approve the check of Olgu Server")).toBeTruthy();
+      expect(screen.getByTestId("campaign-headline").getAttribute("data-kind")).toBe("needs");
+      expect(screen.queryByRole("button", { name: "Approve" })).toBeNull();
+      fireEvent.click(within(item).getByRole("button", { name: "Review and approve" }));
+      expect(await within(item).findByRole("button", { name: "Approve" })).toBeTruthy();
+      expect(within(item).getByLabelText("Type Olgu Server to confirm")).toBeTruthy();
+    });
+
+    it("an approval waits its turn while another server of the campaign is switching", async () => {
+      const switching = view("run-aaaa1111", "srv-a", "Olgu Server", { status: "RUNNING", currentStep: "CUTOVER", steps: steps({ PREFLIGHT: "PASSED", IMPORT: "PASSED", REMAP_ENV: "PASSED", DEPLOY_DARK: "PASSED", VERIFY: "PASSED", CUTOVER: "RUNNING" }) });
+      setup({ "run-aaaa1111": switching, "run-bbbb2222": waiting("run-bbbb2222", "srv-b", "Section Server") }, summaries({ status: "RUNNING", currentStep: "CUTOVER" }, { status: "WAITING", currentStep: "VERIFY", nextActionKind: "approval" }), [camp({ driving: true, status: "running" })]);
+      wrap();
+      const item = await screen.findByTestId("needs-you-item");
+      expect(within(item).getByText(/Another server is switching now/)).toBeTruthy();
+      expect(within(item).queryByRole("button", { name: "Review and approve" })).toBeNull();
+    });
+
+    it("a failed server stops the line in plain words and points at it", async () => {
+      const failed = view("run-aaaa1111", "srv-a", "Olgu Server", { status: "FAILED", currentStep: "DEPLOY_DARK", nextAction: { kind: "failed", stepKey: "DEPLOY_DARK", code: "step.failed", since: "2026-11-24T10:00:00.000Z" }, steps: steps({ PREFLIGHT: "PASSED", IMPORT: "PASSED", REMAP_ENV: "PASSED", DEPLOY_DARK: "FAILED" }) });
+      setup({ "run-aaaa1111": failed, "run-bbbb2222": queued("run-bbbb2222", "srv-b", "Section Server") }, summaries({ status: "FAILED", currentStep: "DEPLOY_DARK", failure: { step: "DEPLOY_DARK", code: "deploy-dark.failed" } }, { status: "QUEUED", currentStep: null }), [camp({ driving: true, status: "paused" })]);
+      wrap();
+      await screen.findByText("Stopped: Olgu Server needs attention");
+      expect(screen.getByTestId("campaign-headline").getAttribute("data-kind")).toBe("failed");
+      expect(screen.getAllByRole("link", { name: "Open the run" })[0].getAttribute("href")).toBe("/import/runs/run-aaaa1111");
+    });
+
+    it("a finished move says so, with nothing left to press", async () => {
+      setup({ "run-aaaa1111": view("run-aaaa1111", "srv-a", "Olgu Server", { status: "COMPLETED", currentStep: null }), "run-bbbb2222": view("run-bbbb2222", "srv-b", "Section Server", { status: "COMPLETED", currentStep: null }) }, summaries({ status: "COMPLETED", currentStep: null }, { status: "COMPLETED", currentStep: null }), [camp({ status: "done" })]);
+      wrap();
+      await screen.findByText("Move finished");
+      expect(screen.queryByRole("button", { name: /Start moving|Continue|Pause/ })).toBeNull();
+      // nothing failed: no failures card
+      expect(screen.queryByText("What failed or was not cut over")).toBeNull();
     });
   });
 });

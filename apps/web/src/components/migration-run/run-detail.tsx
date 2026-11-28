@@ -26,6 +26,7 @@ import { SafetyCard } from "./safety-card";
 import { SnapshotCard } from "./snapshot-card";
 import { VerifyReportCard } from "./verify-report-card";
 import { StepTimeline } from "./step-timeline";
+import { RunStepper } from "./run-stepper";
 import { RunConsentPanel, runNeedsConsent, useRunConsent } from "./run-consent";
 import { runQueryKey } from "./use-run-actions";
 import { useRunEvents } from "./use-run-events";
@@ -85,8 +86,11 @@ export function RunDetail({ id }: { id: string }) {
           </>
         ) : (
           <>
+            <RunStepper run={run} />
             <RunConsent run={run} />
-            <NextActionCard run={run} />
+            <div id="mr-next-action">
+              <NextActionCard run={run} />
+            </div>
             <RunBody run={run} events={events} error={error} settled={settled} />
           </>
         )}

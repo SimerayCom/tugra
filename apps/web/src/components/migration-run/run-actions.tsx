@@ -35,10 +35,12 @@ export function useStartRun(run: MigrationRunView) {
     onError,
   });
   const onStart = async () => {
+    // a plain start has nothing to confirm: the page above it says that nothing touches production before the owner's approval
+    if (!promoting) return start.mutate();
     const ok = await confirm({
-      title: promoting ? t("migrationRun.actions.promoteTitle") : t("migrationRun.actions.startTitle"),
-      body: promoting ? t("migrationRun.actions.promoteBody") : t("migrationRun.actions.startBody"),
-      confirmLabel: promoting ? t("migrationRun.actions.promote") : t("migrationRun.actions.start"),
+      title: t("migrationRun.actions.promoteTitle"),
+      body: t("migrationRun.actions.promoteBody"),
+      confirmLabel: t("migrationRun.actions.promote"),
     });
     if (ok) start.mutate();
   };

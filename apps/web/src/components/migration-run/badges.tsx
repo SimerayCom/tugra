@@ -88,7 +88,7 @@ export function ModeBadges({ mode, topology, dryRun, inPlace = false }: { mode: 
     <span style={{ display: "inline-flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
       {dryRun && <Badge tone="lapis">{t("migrationRun.dryRun")}</Badge>}
       {inPlace && <InPlaceBadge />}
-      <Badge tone={mode === "takeover" ? "warn" : "muted"}>{t(MODE_KEY[mode])}</Badge>
+      {!inPlace && <Badge tone={mode === "takeover" ? "warn" : "muted"}>{t(MODE_KEY[mode])}</Badge>}
       <Badge>{t(TOPOLOGY_KEY[topology])}</Badge>
     </span>
   );

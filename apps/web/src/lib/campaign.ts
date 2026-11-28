@@ -187,3 +187,64 @@ export function campaignGuide(views: readonly Pick<CampaignView, "plan" | "statu
 
 /** Whether a campaign still has something to cancel: not already cancelled or done. */
 export const campaignCancellable = (v: Pick<CampaignView, "status">): boolean => v.status !== "cancelled" && v.status !== "done";
+
+// ───────────────────────────── the campaign's home: one headline, one action ─────────────────────────────
+
+export type CampaignHeadlineKind = "done" | "cancelled" | "failed" | "preparing" | "needs" | "ready" | "paused" | "moving" | "review";
+
+export interface CampaignHeadline {
+  kind: CampaignHeadlineKind;
+  /** Runs the plan calls for (the runs made so far when the plan is not readable). */
+  total: number;
+  made: number;
+  completed: number;
+  /** The first failed run, and the runs that wait for the owner (the hub's own next-action kind says so). */
+  failedRunId: string | null;
+  needs: string[];
+  /** Queued real runs: what "Start all" would hand to the hub. */
+  queued: number;
+  /** The one action of the page: start (nothing moved yet), continue (the hub was paused or stopped), or none. */
+  action: "start" | "continue" | null;
+  /** The hub is driving the waves now: offer to hold back the servers that have not started. */
+  canPause: boolean;
+}
+
+/** The state of the whole campaign in one word, and the one thing to do about it. Pure: summaries of the runs, the campaigns of the label (when the viewer may read them) and the ids of the runs that wait for the owner. */
+export function campaignHeadline(
+  views: readonly Pick<CampaignView, "plan" | "status" | "driving">[],
+  runs: ReadonlyArray<{ id: string; status: string; dryRun: boolean; createdAt?: string }>,
+  needsRunIds: readonly string[],
+): CampaignHeadline {
+  const planned = views.reduce((n, v) => n + v.plan.length, 0);
+  const made = runs.length;
+  const total = planned > 0 ? planned : made;
+  const completed = runs.filter((r) => r.status === "COMPLETED").length;
+  const queued = runs.filter((r) => r.status === "QUEUED" && !r.dryRun).length;
+  const driving = views.some((v) => v.driving === true);
+  const cancelled = views.length > 0 && views.every((v) => v.status === "cancelled");
+  const failed = runs.find((r) => r.status === "FAILED") ?? null;
+  const started = runs.some((r) => r.status !== "QUEUED" && r.status !== "DRY_RUN_DONE");
+  const base = { total, made, completed, failedRunId: failed?.id ?? null, needs: [...needsRunIds], queued };
+  const pick = (kind: CampaignHeadlineKind): CampaignHeadline => {
+    const startable = queued > 0 && !driving && !cancelled && kind !== "done" && kind !== "preparing";
+    return { kind, ...base, action: startable ? (started ? "continue" : "start") : null, canPause: driving && queued > 0 && !cancelled };
+  };
+  if (cancelled) return pick("cancelled");
+  if (made > 0 && completed === made && made >= total) return pick("done");
+  if (failed) return pick("failed");
+  if (made < total) return pick("preparing");
+  if (needsRunIds.length > 0) return pick("needs");
+  // queued servers the hub is not driving: ready (nothing started) or paused; a viewer who cannot read the campaigns cannot tell, and is not told either
+  if (queued > 0 && !driving && views.length > 0) return pick(started ? "paused" : "ready");
+  if (runs.some((r) => r.status === "DRY_RUN_DONE") && !runs.some((r) => !["DRY_RUN_DONE", "COMPLETED"].includes(r.status))) return pick("review");
+  return pick("moving");
+}
+
+/** The position of each run among the campaign's waves ("wave 2 of 6"): the plan's wave numbers, ranked. Absent when the viewer cannot read the plan. */
+export function waveRanks(views: readonly Pick<CampaignView, "plan" | "status">[], runs: readonly GuideRun[]): { rankOf: Map<string, number>; count: number } {
+  const { waveOf } = campaignGuide(views, runs);
+  const waves = [...new Set(views.flatMap((v) => v.plan.map((p) => p.wave)))].sort((a, b) => a - b);
+  const rankOf = new Map<string, number>();
+  for (const [id, w] of waveOf) rankOf.set(id, waves.indexOf(w) + 1);
+  return { rankOf, count: waves.length };
+}

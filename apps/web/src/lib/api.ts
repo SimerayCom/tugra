@@ -2977,6 +2977,14 @@ export const api = {
   cancelCampaign(id: string) {
     return apiFetch<CampaignView>(`/migration-campaigns/${encodeURIComponent(id)}/cancel`, { method: "POST" });
   },
+  /** "Start all": the hub starts each queued run in wave order and goes on by itself while the earlier waves are safe. */
+  startCampaign(id: string) {
+    return apiFetch<CampaignView>(`/migration-campaigns/${encodeURIComponent(id)}/start`, { method: "POST" });
+  },
+  /** Stop starting new servers; runs already started keep going. */
+  pauseCampaign(id: string) {
+    return apiFetch<CampaignView>(`/migration-campaigns/${encodeURIComponent(id)}/pause`, { method: "POST" });
+  },
   // ── Coolify hub takeover: guided "Move off Coolify" progress and the consent to read secrets ──
   coolifyMoveStatus(teamId: string) {
     return apiFetch<MoveOffStatusView>(`/coolify-move/status?teamId=${encodeURIComponent(teamId)}`);
