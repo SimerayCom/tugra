@@ -11,6 +11,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   database and service to it (`repo:tag@sha256:…`). A service on `:latest` keeps running the version it ran on
   Coolify after the takeover, a move to another server and any redeploy. The preview shows each pin with its version,
   and you can untick it per item. Nothing is guessed when the source does not report a digest.
+- **In-place preview.** Service stacks that stay on their own machine say their data stays where it is, copy-path
+  notes show only for what moves, the Git repositories card lists only the apps you move, and the notification
+  channels of an agent import say how to allow their tokens. Reading the service stacks always ends in content or an
+  error with a retry.
 - **Faster releases.** Images build natively for amd64 and arm64 and are signed as one release.
 
 ## [0.1.0-beta.36] - 2026-11-28
