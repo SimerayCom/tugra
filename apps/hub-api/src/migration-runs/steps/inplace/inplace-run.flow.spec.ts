@@ -182,7 +182,7 @@ describe("DEPLOY_DARK of an in-place run", () => {
     // inside the window the step waits and the poll loop calls it again
     expect(await prepare(s, ctxOf())).toMatchObject({ outcome: "continue" });
     r.box.clock = new Date(r.box.clock.getTime() + 4 * 60_000);
-    await expect(prepare(s, ctxOf())).rejects.toMatchObject({ code: "deploy-dark.inplace-test-failed", params: { host: "web.example.com", app: "web", reason: "content_differs" }, retryable: true });
+    await expect(prepare(s, ctxOf())).rejects.toMatchObject({ code: "deploy-dark.inplace-test-failed", params: { host: "web.example.com", app: "web", reason: "content_differs", coolifyStatus: 200, tugraStatus: 200, coolifyLocation: null }, retryable: true });
     // what each side answered is on the takeover's item, for the page
     const web = (await s.dark.state(ctxOf().ctx))!.items.find((i) => i.name === "web")!;
     expect(web.domains[0].check).toMatchObject({ reason: "content_differs", coolify: { status: 200 }, tugra: { status: 200 } });

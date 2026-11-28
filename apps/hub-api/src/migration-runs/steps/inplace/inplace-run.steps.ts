@@ -82,7 +82,23 @@ export class InPlaceRunSteps {
         // the domain that did not pass, with the app's name and why (what each side answered is on the takeover's item: the run page shows it)
         const item = state.items.find((i) => i.itemRef === gate.itemRef);
         const check = item?.domains.find((d) => d.host === gate.host)?.check;
-        throw new StepFailure("deploy-dark.inplace-test-failed", { host: gate.host ?? "", app: item?.name ?? "", item: gate.itemRef ?? "", reason: check?.reason ?? "" }, true);
+        throw new StepFailure(
+          "deploy-dark.inplace-test-failed",
+          {
+            host: gate.host ?? "",
+            app: item?.name ?? "",
+            item: gate.itemRef ?? "",
+            reason: check?.reason ?? "",
+            // what each side answered (status, bytes, where a redirect goes): no body, no query string
+            coolifyStatus: check?.coolify?.status ?? null,
+            coolifyBytes: check?.coolify?.bytes ?? null,
+            coolifyLocation: check?.coolify?.location ?? null,
+            tugraStatus: check?.tugra?.status ?? null,
+            tugraBytes: check?.tugra?.bytes ?? null,
+            tugraLocation: check?.tugra?.location ?? null,
+          },
+          true,
+        );
       }
       return { outcome: "continue", pollAfterMs: INPLACE_TEST_POLL_MS };
     }
