@@ -94,12 +94,24 @@ const SETUP_FIELDS: Record<ChannelKind, readonly string[]> = {
   email: ["smtp_host", "smtp_recipients", "smtp_from_address", "smtp_username", "resend_api_key", "resend_enabled", "smtp_enabled", "use_instance_email_settings"],
 };
 
+/** The columns a token without `read:sensitive` does not see AT ALL (the key is left out; a token that may read them sees an empty one as null). */
+const HIDDEN_FIELDS: Record<ChannelKind, readonly string[]> = {
+  telegram: ["telegram_token"],
+  discord: ["discord_webhook_url"],
+  slack: ["slack_webhook_url"],
+  webhook: ["webhook_url"],
+  pushover: ["pushover_api_token", "pushover_user_key"],
+  email: ["smtp_password", "resend_api_key"],
+};
+
 /**
  * Whether the channel was ever set up in Coolify: it is switched on, or it holds a credential or a destination. A channel that is off and empty is
  * simply not there: saying "Coolify did not hand over the value" about it would send the owner looking for something that does not exist.
+ * The empty case is only believed when the credential columns were readable (their keys are there, empty): with a key left out we cannot tell
+ * "never set up" from "set up but switched off and hidden", and the safe answer is the one that sends the owner to a token that can read it.
  */
 function channelConfigured(kind: ChannelKind, r: Record<string, unknown>, enabled: boolean): boolean {
-  return enabled || SETUP_FIELDS[kind].some((k) => filled(r[k]));
+  return enabled || SETUP_FIELDS[kind].some((k) => filled(r[k])) || HIDDEN_FIELDS[kind].some((k) => !(k in r));
 }
 
 function parseChannelRow(kind: ChannelKind, r: Record<string, unknown>): RawChannel | null {

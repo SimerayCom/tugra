@@ -173,6 +173,13 @@ describe("agent view with the opened secrets (the answers of a token that may re
       expect(() => sens("/notifications/__proto__", overlayOf(), "1")).toThrow(AgentApiNotFound);
     });
 
+    it("tells a column that holds nothing (null) from one that is hidden (left out)", () => {
+      // team 2's Slack was never set up: its webhook column is visible and empty, like the API of a token that may read it
+      expect(sens("/notifications/slack", overlayOf({}), "2")).toMatchObject({ slack_enabled: false, slack_webhook_url: null });
+      // team 1's Telegram has a token the overlay did not open: left out
+      expect(sens("/notifications/telegram", overlayOf({}), "1")).not.toHaveProperty("telegram_token");
+    });
+
     it("serves the tags of each resource kind", () => {
       expect(sens("/applications/app-web/tags")).toEqual([{ name: "prod" }]);
       expect(sens("/databases/db-pg/tags")).toEqual([{ name: "prod" }]);

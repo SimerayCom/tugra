@@ -53,6 +53,7 @@ export function secretsRead(): AgentRead {
   ]);
   set("notify_telegram", [{ id: 1, team_id: 1, telegram_enabled: true, telegram_chat_id: "424242", telegram_notifications_deployment_success: true, telegram_notifications_deployment_failure: false, telegram_token_present: true }]);
   set("notify_discord", [{ id: 1, team_id: 2, discord_enabled: true, discord_webhook_url_present: true }]);
+  set("notify_slack", [{ id: 1, team_id: 2, slack_enabled: false, slack_webhook_url_present: false }]);
   set("tags", [{ id: 1, name: "prod", team_id: 1 }, { id: 2, name: "lab", team_id: 2 }]);
   set("taggables", [
     { tag_id: 1, taggable_id: 7, taggable_type: `${T}Application` },
