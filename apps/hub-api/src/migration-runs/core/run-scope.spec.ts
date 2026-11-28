@@ -1,4 +1,4 @@
-import { applyScope, hostOfItemRef, resolveScope, type ScopePlan } from "./run-scope";
+import { applyScope, hostOfItemRef, leftOutRefs, resolveScope, taskLeftOut, type ScopePlan } from "./run-scope";
 import { CreateMigrationRunSchema, RunScopeSchema } from "./dto";
 
 const plan: ScopePlan = {
@@ -98,5 +98,27 @@ describe("the create body", () => {
     const mapping = { version: 1, items: {}, projects: {}, gitSources: {}, acks: [] };
     expect(CreateMigrationRunSchema.safeParse({ ...base, scope: { projects: ["p"] }, mapping, mappingHash: "a".repeat(32) }).success).toBe(false);
     expect(CreateMigrationRunSchema.safeParse({ ...base, mapping, mappingHash: "a".repeat(32) }).success).toBe(true);
+  });
+});
+
+describe("leftOutRefs / taskLeftOut", () => {
+  const left = leftOutRefs({
+    mapping: { version: 1, items: { "app:hb:b": { include: false }, "app:ha:a": { include: true } }, projects: {}, gitSources: {}, acks: [] },
+    serviceChoices: { "service:hb:s": { skip: true }, "service:ha:t": { skip: false } },
+  });
+
+  it("collects the mapping rows that exclude an item and the stacks that are skipped, nothing else", () => {
+    expect([...left].sort()).toEqual(["app:hb:b", "service:hb:s"]);
+    expect(leftOutRefs({}).size).toBe(0);
+  });
+
+  it("knows a task by its own ref and by the owner ref inside a data task's", () => {
+    expect(taskLeftOut("app:hb:b", left)).toBe(true);
+    expect(taskLeftOut("data:app:hb:b", left)).toBe(true);
+    expect(taskLeftOut("data:volume:app:hb:b:/x", left)).toBe(true);
+    expect(taskLeftOut("app:ha:a", left)).toBe(false);
+    expect(taskLeftOut("data:volume:app:ha:a:/x", left)).toBe(false);
+    expect(taskLeftOut("app:hb:bb", left)).toBe(false);
+    expect(taskLeftOut(null, left)).toBe(false);
   });
 });

@@ -36,6 +36,7 @@ import { IMPORT_STEPS_PORT, type ImportStepsPort, type SessionState, type Target
 import { Memo, failureOf, includedItems, isPassive, itemsFromChecks, softenAckable, unackedBlockers } from "./step-utils";
 import { deployWindow } from "./baseline/build-window";
 import { preflightCrossCheck } from "./baseline/preflight-crosscheck";
+import { scopedPreflight } from "./scoped-preflight";
 import { emptyHostView, loadHostView, type HostView } from "../data/inventory/host-view";
 import { HOST_REPORT_PORT, type HostReportPort } from "../data/inventory/inventory-contract";
 import { floatingImages, imageParams } from "./baseline/image-pins";
@@ -129,9 +130,12 @@ function safetyChecks(run: RunSnapshot, obs: PreflightObs, plan: ImportPlanRespo
     }
   }
 
-  // R11: a floating image is whatever the registry serves today, not what the source runs
+  // R11: a floating image is whatever the registry serves today, not what the source runs. An in-place takeover runs the image Coolify
+  // runs (by its id, never a tag), so there is nothing to pin and nothing to approve: it says so once.
   const floating = floatingImages(items, run.applyInput, hints, plan.preflight?.services);
-  if (floating.length) {
+  if (floating.length && run.inPlace === true) {
+    out.push({ id: "preflight.images", status: "pass", code: "preflight.images-exact", params: { count: floating.length }, ...ev });
+  } else if (floating.length) {
     const open = floating.filter((f) => !f.pinned);
     out.push(
       open.length
@@ -139,6 +143,9 @@ function safetyChecks(run: RunSnapshot, obs: PreflightObs, plan: ImportPlanRespo
         : { id: "preflight.images", status: "pass", code: "preflight.images-pinned", params: { count: floating.length }, ...ev },
     );
   }
+
+  // nothing is held, marked or built inside a window when the machine is taken over in place: the worker and build checks do not apply
+  if (run.inPlace === true) return out;
 
   // R26/C13: workers
   const policy = resolveOwnerInput(run.inputs, "workerPolicy") ?? "hold-dark";
@@ -250,7 +257,9 @@ export function targetChecks(run: RunSnapshot, obs: PreflightObs, items: ImportP
       continue;
     }
     const subject = facts.serverName || sid;
-    if (facts.disk !== undefined) {
+    // an in-place takeover copies and builds nothing: free disk and a backup destination are not needed to move, so neither is asked
+    const copies = run.inPlace !== true;
+    if (copies && facts.disk !== undefined) {
       const d = facts.disk;
       if (d === null || d.ageSec > DISK_READING_MAX_AGE_SEC) out.push({ id: `preflight.disk.${sid}`, status: "warn", code: "preflight.disk-unknown", subject, ...ev });
       else if (lowDisk(d)) out.push({ id: `preflight.disk.${sid}`, status: "fail", code: "preflight.disk-low", params: { server: subject, freeGib: gib(d.freeBytes), totalGib: gib(d.totalBytes), minGib: gib(TARGET_MIN_FREE_BYTES) }, subject, ackable: true, ...ev });
@@ -259,7 +268,7 @@ export function targetChecks(run: RunSnapshot, obs: PreflightObs, items: ImportP
     const release = parseOsRelease(facts.os, facts.osVersion);
     if (release && isNewerThanTested(release)) out.push({ id: `preflight.target-os.${sid}`, status: "warn", code: "preflight.target-os-new", params: { server: subject, os: osLabel(release), tested: testedOsLabel() }, subject, ...ev });
     const dbs = dbsOn.get(sid) ?? [];
-    if (dbs.length) {
+    if (copies && dbs.length) {
       if (!facts.capabilities.includes("backup")) {
         out.push({ id: `preflight.backup-capability.${sid}`, status: "fail", code: "preflight.backup-capability-missing", params: { server: subject, count: dbs.length, items: names(dbs) }, subject, ackable: true, ...ev });
       } else if (facts.backupDestinations === null) {
@@ -301,8 +310,10 @@ export function preflightChecks(run: RunSnapshot, obs: PreflightObs): GateCheck[
     c.push({ id: "preflight.plan", status: "fail", code: "preflight.plan-unavailable", ...(obs.planError ? { params: { reason: obs.planError } } : {}), ...ev });
     return c;
   }
-  const plan = obs.plan;
-  const items = includedItems(plan, run);
+  const items = includedItems(obs.plan, run);
+  // every check below reads the run's own items and the plan's rows narrowed to them, never the whole fleet the source plan covers
+  const plan: ImportPlanResponse = { ...obs.plan, preflight: scopedPreflight(obs.plan, items) };
+  const inPlace = run.inPlace === true;
   c.push({ id: "preflight.plan-fresh", status: plan.planHash === run.planHash ? "pass" : "fail", code: plan.planHash === run.planHash ? "preflight.plan-fresh" : "preflight.plan-changed", ...ev });
   c.push({
     id: "preflight.plan",
@@ -336,16 +347,16 @@ export function preflightChecks(run: RunSnapshot, obs: PreflightObs): GateCheck[
   const blockedDbs = pf?.databases.filter((d) => d.dataPlane === "blocked") ?? [];
   const manualDbs = pf?.databases.filter((d) => d.dataPlane === "manual") ?? [];
   if (blockedDbs.length) c.push({ id: "preflight.db-blocked", status: "warn", code: "preflight.db-blocked", params: { count: blockedDbs.length, items: blockedDbs.map((d) => d.name).slice(0, 10) }, ...ev });
-  if (manualDbs.length) c.push({ id: "preflight.db-manual", status: "warn", code: "preflight.db-manual", params: { count: manualDbs.length, items: manualDbs.map((d) => d.name).slice(0, 10) }, ...ev });
+  if (manualDbs.length && !inPlace) c.push({ id: "preflight.db-manual", status: "warn", code: "preflight.db-manual", params: { count: manualDbs.length, items: manualDbs.map((d) => d.name).slice(0, 10) }, ...ev });
   const skippedServices = pf?.services.filter((s) => s.verdict === "skipped") ?? [];
   if (skippedServices.length) c.push({ id: "preflight.services-skipped", status: "warn", code: "preflight.services-skipped", params: { count: skippedServices.length, items: skippedServices.map((s) => s.name).slice(0, 10) }, ...ev });
   const objectStores = pf?.services.filter((s) => s.objectStore) ?? [];
-  if (objectStores.length) c.push({ id: "preflight.object-store", status: "warn", code: "preflight.object-store", params: { count: objectStores.length }, ...ev });
+  if (objectStores.length && !inPlace) c.push({ id: "preflight.object-store", status: "warn", code: "preflight.object-store", params: { count: objectStores.length }, ...ev });
   const manualVolumes = pf?.volumes?.filter((v) => v.dataPlane === "manual" || v.dataPlane === "manual-large") ?? [];
-  if (manualVolumes.length) c.push({ id: "preflight.volumes-manual", status: "warn", code: "preflight.volumes-manual", params: { count: manualVolumes.length }, ...ev });
+  if (manualVolumes.length && !inPlace) c.push({ id: "preflight.volumes-manual", status: "warn", code: "preflight.volumes-manual", params: { count: manualVolumes.length }, ...ev });
   // host-path binds of apps AND of services (a MinIO data directory): each needs the same acknowledgement
   const bindCount = (pf?.volumes?.filter((v) => v.type === "bind").length ?? 0) + (pf?.services.reduce((n, sv) => n + (sv.volumes?.filter((v) => v.origin === "host-bind").length ?? 0), 0) ?? 0);
-  if (bindCount > 0) {
+  if (bindCount > 0 && !inPlace) {
     const allow = resolveOwnerInput(run.inputs, "allowBind");
     c.push({
       id: "preflight.bind-mounts",
@@ -357,16 +368,16 @@ export function preflightChecks(run: RunSnapshot, obs: PreflightObs): GateCheck[
     });
   }
   const generated = pf?.cutover?.generatedHosts ?? [];
-  if (generated.length) c.push({ id: "preflight.generated-hosts", status: "warn", code: "preflight.generated-hosts", params: { count: generated.length }, ...ev });
+  if (generated.length && !inPlace) c.push({ id: "preflight.generated-hosts", status: "warn", code: "preflight.generated-hosts", params: { count: generated.length }, ...ev });
 
   c.push(...safetyChecks(run, obs, plan));
   // R2/C6: the docker-vs-API inventory cross-check, as a warning only (DATA_SEED stays the gate that blocks on it)
-  c.push(...preflightCrossCheck(run, plan, obs.hosts));
+  if (!inPlace) c.push(...preflightCrossCheck(run, plan, obs.hosts, items));
   c.push(...hostChecks(plan, items));
 
   // live service probe (owner question 7)
-  const hasServices = plan.items.some((i) => i.kind === "service");
-  if (hasServices) {
+  const hasServices = items.some((i) => i.kind === "service");
+  if (hasServices && !inPlace) {
     const consent = resolveOwnerInput(run.inputs, "allowLiveShapeProbe") === true;
     if (!consent) c.push({ id: "preflight.live-probe", status: "pass", code: "preflight.live-probe-off", ownerInput: "allowLiveShapeProbe", ...ev });
     else if (obs.services) {
@@ -384,6 +395,7 @@ export function preflightChecks(run: RunSnapshot, obs: PreflightObs): GateCheck[
   if (!t) {
     c.push({ id: "preflight.target", status: "unknown", code: "preflight.target-unreadable", ...ev });
     c.push(...targetChecks(run, obs, items));
+    c.push(...inPlaceNotes(run, items));
     return c;
   }
   c.push({ id: "preflight.agent", status: t.agentOnline ? "pass" : "fail", code: t.agentOnline ? "preflight.agent-online" : "preflight.agent-offline", ...ev });
@@ -401,18 +413,31 @@ export function preflightChecks(run: RunSnapshot, obs: PreflightObs): GateCheck[
         : { id: "preflight.acme-email", status: "warn", code: answered ? "preflight.acme-email-invalid" : "preflight.acme-email-missing", ownerInput: "acmeEmail", ...ev },
   );
   if (run.topology === "two-box" && t.proxyBind !== "public") c.push({ id: "preflight.proxy-bind", status: "warn", code: "preflight.proxy-not-public", params: { bind: t.proxyBind ?? "unknown" }, ...ev });
-  if (!t.dnsCredential) c.push({ id: "preflight.dns", status: "warn", code: "preflight.dns-manual", ...ev });
-  else {
+  if (!t.dnsCredential) {
+    // an in-place takeover keeps every address and writes no DNS: there is nothing to do by hand
+    if (!inPlace) c.push({ id: "preflight.dns", status: "warn", code: "preflight.dns-manual", ...ev });
+  } else {
     const noZone = t.zones.filter((z) => !z.lookupFailed && !z.zone).map((z) => z.host);
     const failed = t.zones.filter((z) => z.lookupFailed).map((z) => z.host);
-    c.push({ id: "preflight.dns", status: "pass", code: "preflight.dns-credential", params: { hosts: t.zones.length }, ...ev });
-    if (noZone.length) c.push({ id: "preflight.dns-zone", status: "warn", code: "preflight.dns-zone-missing", params: { count: noZone.length, hosts: noZone.slice(0, 10) }, ...ev });
-    if (failed.length) c.push({ id: "preflight.dns-lookup", status: "warn", code: "preflight.dns-lookup-failed", params: { count: failed.length, hosts: failed.slice(0, 10) }, ...ev });
+    if (!inPlace) c.push({ id: "preflight.dns", status: "pass", code: "preflight.dns-credential", params: { hosts: t.zones.length }, ...ev });
+    if (noZone.length && !inPlace) c.push({ id: "preflight.dns-zone", status: "warn", code: "preflight.dns-zone-missing", params: { count: noZone.length, hosts: noZone.slice(0, 10) }, ...ev });
+    if (failed.length && !inPlace) c.push({ id: "preflight.dns-lookup", status: "warn", code: "preflight.dns-lookup-failed", params: { count: failed.length, hosts: failed.slice(0, 10) }, ...ev });
     const risky = [...new Set(t.zones.filter((z) => z.sslMode === "flexible" || z.sslMode === "off").map((z) => `${z.zone}:${z.sslMode}`))];
     if (risky.length) c.push({ id: "preflight.cf-ssl-mode", status: "fail", code: "preflight.cf-ssl-mode", params: { zones: risky.slice(0, 10) }, ackable: true, ...ev });
   }
   c.push(...targetChecks(run, obs, items));
+  c.push(...inPlaceNotes(run, items));
   return c;
+}
+
+/**
+ * What an in-place takeover says in place of the copy checks it does not make: ONE plain line, never a question. Backups are not part of
+ * the move itself, so the databases that will need one are named by count, to be set up in Tugra once they are taken over.
+ */
+function inPlaceNotes(run: RunSnapshot, items: ImportPlanResponse["items"]): GateCheck[] {
+  if (run.inPlace !== true) return [];
+  const dbs = items.filter((i) => i.kind === "database").length;
+  return dbs > 0 ? [{ id: "preflight.backups", status: "pass", code: "preflight.backups-after-move", params: { count: dbs }, ...ev }] : [];
 }
 
 @Injectable()
@@ -459,7 +484,9 @@ export class PreflightStep implements StepHandler<PreflightObs>, OnModuleInit {
     } catch (e) {
       return { ...empty, planError: failureOf(e, "preflight.plan").code };
     }
-    const hosts = plan.items.filter((i) => i.kind === "app").map((i) => i.proposed.domain).filter((d): d is string => typeof d === "string" && d.length > 0);
+    // only this run's own apps' domains are looked up in DNS (an in-place takeover writes no DNS but still needs each zone's SSL mode for the new certificates)
+    const included = includedItems(plan, run);
+    const hosts = included.filter((i) => i.kind === "app").map((i) => i.proposed.domain).filter((d): d is string => typeof d === "string" && d.length > 0);
 
     const target = await this.targets
       .get(`${run.id}|${run.targetServerId}`, bypass, now, () => this.port.target(userId, { serverId: run.targetServerId, ...(run.options.dnsCredentialId ? { dnsCredentialId: run.options.dnsCredentialId } : {}), hosts }))
@@ -502,7 +529,7 @@ export class PreflightStep implements StepHandler<PreflightObs>, OnModuleInit {
     }
 
     let services: ServicePreview[] | null = null;
-    if (plan.items.some((i) => i.kind === "service") && resolveOwnerInput(run.inputs, "allowLiveShapeProbe") === true) {
+    if (run.inPlace !== true && included.some((i) => i.kind === "service") && resolveOwnerInput(run.inputs, "allowLiveShapeProbe") === true) {
       services = await this.probes
         .get(run.id, bypass, now, () => this.port.previewServices(userId, { sessionId: run.sessionId!, sourceKind: run.sourceKind, ...(a.serviceChoices ? { choices: a.serviceChoices } : {}) }))
         .catch(() => null);

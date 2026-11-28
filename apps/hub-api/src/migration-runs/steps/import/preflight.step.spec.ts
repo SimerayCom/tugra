@@ -696,10 +696,11 @@ describe("PREFLIGHT source host classification (R5)", () => {
     expect(byId(idle, "preflight.host-control-plane")).toMatchObject({ status: "pass", code: "preflight.host-control-plane", params: { host: "host-cp", items: 0 } });
   });
 
-  it("a host the mapping excludes carries nothing of this run; a plan without host facts says nothing", () => {
+  it("a host the mapping leaves out is not part of this run at all (not even as an empty one); a plan without host facts says nothing", () => {
     const run = baseRun({ applyInput: { sourceKind: "coolify", targetServerId: "srv1", planHash: H32, mapping: { version: 1, items: { "app:hb:b": { include: false }, "app:hc:c": { include: false } }, projects: {}, gitSources: {}, acks: [] }, mappingHash: "f".repeat(32) } as never });
     const cs = preflightChecks(run, baseObs({ plan: plan([{ ref: "ha", name: "host-1" }, { ref: "hb", name: "host-2" }, { ref: "hc", name: "host-3" }], two) }));
-    expect(byId(cs, "preflight.host-empty")).toMatchObject({ params: { count: 2, items: ["host-2", "host-3"] } });
+    expect(byId(cs, "preflight.host-empty")).toBeUndefined();
+    expect(byId(cs, "preflight.hosts")).toMatchObject({ params: { hosts: 1, empty: 0, refs: ["ha"], names: ["host-1"] } });
     expect(preflightChecks(baseRun(), baseObs()).some((c) => c.id.startsWith("preflight.host"))).toBe(false);
   });
 
@@ -710,5 +711,130 @@ describe("PREFLIGHT source host classification (R5)", () => {
     expect((w.params as { items: string[] }).items).toHaveLength(10);
     expect((w.params as { workers: string[] }).workers).toHaveLength(14);
     expect(w.params).toMatchObject({ count: 14, policy: "hold-dark" });
+  });
+});
+
+describe("PREFLIGHT judges the run's own items only (scoped runs)", () => {
+  const D = `sha256:${"c".repeat(64)}`;
+  void D;
+  const byId = (cs: ReturnType<typeof preflightChecks>, id: string) => cs.find((c) => c.id === id);
+  // server `ha` is this run's; server `hb` (another team's) is left out by the scope: its apps by mapping rows, its stacks by `skip`
+  const items = [
+    { itemRef: "app:ha:web", kind: "app", name: "web", proposed: { domain: "web.example.test", source: "IMAGE", image: "ghcr.io/x/web@sha256:" + "a".repeat(64) }, risks: [], dependsOn: [] },
+    { itemRef: "database:ha:db", kind: "database", name: "pg", proposed: { engine: "POSTGRES" }, risks: [], dependsOn: [] },
+    { itemRef: "app:hb:other", kind: "app", name: "other", proposed: { domain: "other.example.test", source: "IMAGE", image: "nginx:latest" }, risks: [], dependsOn: ["volume:hb:v1"] },
+    { itemRef: "volume:hb:v1", kind: "volume", name: "v1", proposed: {}, risks: [], dependsOn: [] },
+    { itemRef: "service:hb:stack", kind: "service", name: "stack", proposed: { imageFloating: ["redis"] }, risks: [], dependsOn: [] },
+  ];
+  const pf = {
+    databases: [
+      { name: "pg", itemRef: "database:ha:db", engine: "POSTGRES", dataPlane: "one-click" as const, reason: "" },
+      { name: "pg", itemRef: "database:hb:db", engine: "CLICKHOUSE", dataPlane: "manual" as const, reason: "" },
+    ],
+    services: [{ name: "stack", itemRef: "service:hb:stack", members: 1, note: "", verdict: "skipped" as const, objectStore: true as const, volumes: [{ key: "d", dataPlane: "n", origin: "host-bind" as const }] }],
+    appsWithVolumeData: 0,
+    volumes: [{ app: "other", itemRef: "app:hb:other", mountPath: "/data", type: "bind" as const, dataPlane: "manual" as const, reason: "" }],
+    cutover: { hosts: 2, generatedHosts: ["app-zzz.sslip.io"], counterpartHosts: [] },
+    hosts: [
+      { ref: "ha", name: "host-a" },
+      { ref: "hb", name: "host-b", controlPlane: true, unreachableCount: 99 },
+    ],
+  };
+  const plan = () => defaultPlan({ items: items as never, preflight: pf as never });
+  const scoped = (over: Partial<RunSnapshot> = {}) =>
+    baseRun({
+      applyInput: {
+        sourceKind: "coolify",
+        targetServerId: "srv1",
+        planHash: H32,
+        mapping: { version: 1, items: { "app:hb:other": { include: false } }, projects: {}, gitSources: {}, acks: [] },
+        mappingHash: "f".repeat(32),
+        serviceChoices: { "service:hb:stack": { skip: true } },
+      } as never,
+      ...over,
+    });
+
+  it("another server's images, stacks, binds, manual data and hosts never reach the checks", () => {
+    const cs = preflightChecks(scoped(), baseObs({ plan: plan() }));
+    const ids = cs.map((c) => c.id);
+    expect(ids).not.toContain("preflight.images");
+    expect(ids).not.toContain("preflight.bind-mounts");
+    expect(ids).not.toContain("preflight.db-manual");
+    expect(ids).not.toContain("preflight.services-skipped");
+    expect(ids).not.toContain("preflight.object-store");
+    expect(ids).not.toContain("preflight.volumes-manual");
+    expect(ids).not.toContain("preflight.generated-hosts");
+    expect(ids).not.toContain("preflight.host-control-plane");
+    expect(ids).not.toContain("preflight.host-flaky");
+    expect(byId(cs, "preflight.hosts")).toMatchObject({ params: { hosts: 1, refs: ["ha"] } });
+    expect(byId(cs, "preflight.plan")).toMatchObject({ params: { apps: 1, databases: 1, services: 0, volumes: 0 } });
+    expect(cs.filter((c) => c.ackable)).toEqual([]);
+  });
+
+  it("the same plan without a scope still reports all of it (nothing is hidden from a whole-fleet run)", () => {
+    const cs = preflightChecks(baseRun(), baseObs({ plan: plan() }));
+    const ids = cs.map((c) => c.id);
+    expect(ids).toEqual(expect.arrayContaining(["preflight.images", "preflight.bind-mounts", "preflight.db-manual", "preflight.services-skipped", "preflight.object-store", "preflight.volumes-manual", "preflight.generated-hosts", "preflight.host-control-plane"]));
+  });
+
+  it("a row without an itemRef is matched by name to the kept items; a name no item has stays", () => {
+    const old = { ...pf, databases: [{ name: "pg", engine: "POSTGRES", dataPlane: "manual" as const, reason: "" }, { name: "ghost", engine: "X", dataPlane: "blocked" as const, reason: "" }] };
+    const cs = preflightChecks(scoped(), baseObs({ plan: defaultPlan({ items: items as never, preflight: old as never }) }));
+    expect(byId(cs, "preflight.db-manual")).toMatchObject({ params: { count: 1, items: ["pg"] } });
+    expect(byId(cs, "preflight.db-blocked")).toMatchObject({ params: { count: 1, items: ["ghost"] } });
+  });
+
+  it("the plan blockers of a left-out service are not asked either", () => {
+    const withBlocker = items.map((i) => (i.itemRef === "service:hb:stack" ? { ...i, risks: [{ level: "blocker", code: "service.x", message: "x" }] } : i));
+    const cs = preflightChecks(scoped(), baseObs({ plan: defaultPlan({ items: withBlocker as never, preflight: pf as never }) }));
+    expect(cs.some((c) => c.id.startsWith("preflight.blocker."))).toBe(false);
+  });
+
+  describe("an in-place takeover", () => {
+    const floating = [
+      { itemRef: "app:ha:web", kind: "app", name: "web", proposed: { domain: "web.example.test", source: "IMAGE", image: "nginx:latest" }, risks: [], dependsOn: [] },
+      { itemRef: "app:ha:api", kind: "app", name: "api", proposed: { domain: null }, risks: [], dependsOn: [] },
+      { itemRef: "database:ha:db", kind: "database", name: "pg", proposed: { engine: "POSTGRES" }, risks: [], dependsOn: [] },
+    ];
+    const ppf = {
+      databases: [{ name: "pg", itemRef: "database:ha:db", engine: "POSTGRES", dataPlane: "manual" as const, reason: "" }],
+      services: [{ name: "s", itemRef: "service:ha:s", members: 1, note: "", objectStore: true as const, volumes: [{ key: "d", dataPlane: "n", origin: "host-bind" as const }] }],
+      appsWithVolumeData: 0,
+      volumes: [{ app: "web", itemRef: "app:ha:web", mountPath: "/m", type: "bind" as const, dataPlane: "manual" as const, reason: "" }],
+      cutover: { hosts: 1, generatedHosts: ["web.example.test"], counterpartHosts: [] },
+    };
+    const iplan = () => defaultPlan({ items: floating as never, preflight: ppf as never });
+    const dns = { serverName: "box", agentOnline: true, capabilities: ["deploy", "database"], acmeEmailOk: true, proxyBind: "public" as const, dnsCredential: false, zones: [], disk: { freeBytes: 1, totalBytes: 100 * 1024 ** 3, ageSec: 5 }, backupDestinations: 0 };
+    const cs = () => preflightChecks(baseRun({ inPlace: true, topology: "swap-proxy" } as never), baseObs({ plan: iplan(), target: dns }));
+
+    it("asks nothing about floating images, workers, builds, binds, copied data, DNS, disk or backup destinations", () => {
+      const out = cs();
+      const ids = out.map((c) => c.id);
+      for (const gone of ["preflight.workers", "preflight.deploy-window", "preflight.bind-mounts", "preflight.db-manual", "preflight.volumes-manual", "preflight.object-store", "preflight.generated-hosts", "preflight.dns", "preflight.live-probe"]) expect(ids).not.toContain(gone);
+      expect(ids.some((i) => i.startsWith("preflight.disk.") || i.startsWith("preflight.backup-"))).toBe(false);
+      expect(out.filter((c) => c.ackable || c.status === "fail")).toEqual([]);
+    });
+
+    it("says in one line that every app keeps Coolify's exact image, and in one that backups come after the move", () => {
+      const out = cs();
+      expect(byId(out, "preflight.images")).toMatchObject({ status: "pass", code: "preflight.images-exact", params: { count: 1 } });
+      expect(byId(out, "preflight.backups")).toMatchObject({ status: "pass", code: "preflight.backups-after-move", params: { count: 1 } });
+      expect(out.find((c) => c.code === "preflight.images-unpinned")).toBeUndefined();
+    });
+
+    it("still needs the Cloudflare SSL mode of a zone (new certificates) and a working agent", () => {
+      const t = { ...dns, agentOnline: false, dnsCredential: true, zones: [{ host: "web.example.test", zone: "example.test", sslMode: "flexible" }] } as never;
+      const out = preflightChecks(baseRun({ inPlace: true, topology: "swap-proxy" } as never), baseObs({ plan: iplan(), target: t }));
+      expect(byId(out, "preflight.agent")).toMatchObject({ status: "fail" });
+      expect(byId(out, "preflight.cf-ssl-mode")).toMatchObject({ status: "fail", ackable: true });
+      expect(byId(out, "preflight.dns")).toBeUndefined();
+    });
+
+    it("a copy run on the same plan keeps asking all of it", () => {
+      const out = preflightChecks(baseRun(), baseObs({ plan: iplan(), target: dns }));
+      const ids = out.map((c) => c.id);
+      expect(ids).toEqual(expect.arrayContaining(["preflight.images", "preflight.bind-mounts", "preflight.db-manual", "preflight.dns"]));
+      expect(byId(out, "preflight.images")).toMatchObject({ code: "preflight.images-unpinned" });
+    });
   });
 });
