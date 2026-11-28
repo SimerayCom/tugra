@@ -576,6 +576,28 @@ export function splitByPlacement(plan: ImportPlan, scope: Pick<ImportScope, "pla
   return { moved, stays: sourceServersOf(inPlace, plan.preflight?.hosts) };
 }
 
+/** The "not carried" fields of a service stack that describe the copy path: its data volumes and an object store's buckets. For a stack that stays on its own machine
+ *  none of it is true (the takeover maps the same data in place), so only a stack that moves keeps them. */
+const isCopyPathField = (field: string): boolean => field === "objectData" || field.startsWith("volume:");
+
+/**
+ * The plan with the copy-path review notes of the service stacks that stay in place taken out of its "not carried" list (a stack that moves keeps them).
+ * What else the stack does not carry (dropped members, ports, config files) stays. Returns the same plan when nothing changes.
+ */
+export function withoutInPlaceCopyNotes(plan: ImportPlan, scope: Pick<ImportScope, "placementKind"> | null | undefined): ImportPlan {
+  const cov = plan.preflight?.coverage;
+  if (!cov || !scope) return plan;
+  let changed = false;
+  const apps = cov.apps.flatMap((a) => {
+    if (!a.itemRef.startsWith("service:") || !isInPlaceItem(scope, a.itemRef)) return [a];
+    const kept = a.notCarried.filter((n) => !isCopyPathField(n.field));
+    if (kept.length === a.notCarried.length) return [a];
+    changed = true;
+    return kept.length ? [{ ...a, notCarried: kept }] : [];
+  });
+  return changed ? { ...plan, preflight: { ...plan.preflight!, coverage: { ...cov, apps } } } : plan;
+}
+
 /** One word for the whole move: every placed server in place, every one elsewhere, a mix, or nothing placed yet. */
 export function overallPlacement(scope: Pick<ImportScope, "placementKind"> | null | undefined): "in-place" | "other-server" | "mixed" | null {
   const kinds = new Set(Object.values(scope?.placementKind ?? {}));

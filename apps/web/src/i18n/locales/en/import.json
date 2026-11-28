@@ -57,6 +57,12 @@
     "body": "Tugra takes over the containers and volumes Coolify already runs and swaps the proxy. Nothing is copied: no migrator and no data mode to choose for these.",
     "counts": "{apps} apps, {databases} databases, {services} services stay in place"
   },
+  "inPlaceService": {
+    "heading": "{count} service stack(s) stay on their own machine (containers and data are taken over where they are, nothing is copied):",
+    "note": "the stack and its data stay where they are; Tugra takes over its containers and maps its volumes and host folders onto the same data",
+    "partial": "the stack and its data stay where they are; some members are left out, see Service stacks below",
+    "desc": "These stacks stay on their own machine. Tugra takes over their containers and keeps their data where it is: volumes and host folders are mapped onto the same files, so nothing is copied and no data step is needed."
+  },
   "dataAuto": "migrator",
   "dataManual": "manual",
   "dataBlocked": "blocked",

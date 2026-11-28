@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { applyScopeToDoc, autoSelection, hostLeftOut, itemTeamRef, leftOutItemRefs, mappedTeamsOf, ownerSaidNotSame, ownerTugra, autoTargetOf, buildScope, defaultTeamId, inPlaceBlock, placementKindOf, restoreSelection, serializeSelection, serverReadiness, targetOf, scopePayload, emptySelection, hostOfItemRef, inScopeRefs, involvedHosts, missingDependencies, projectChoicesFor, scopedPlan, scopedNotes, scopeIssue, scopeServiceSkips, sourceProjectRows, sharedTargetHosts, partialInPlaceHosts, isControlPlaneHost, type ScopeSelection } from "./import-scope";
+import { applyScopeToDoc, autoSelection, hostLeftOut, itemTeamRef, leftOutItemRefs, mappedTeamsOf, ownerSaidNotSame, ownerTugra, autoTargetOf, buildScope, defaultTeamId, inPlaceBlock, placementKindOf, restoreSelection, serializeSelection, serverReadiness, targetOf, scopePayload, emptySelection, hostOfItemRef, inScopeRefs, involvedHosts, missingDependencies, projectChoicesFor, scopedPlan, scopedNotes, scopeIssue, scopeServiceSkips, sourceProjectRows, sharedTargetHosts, partialInPlaceHosts, isControlPlaneHost, withoutInPlaceCopyNotes, type ScopeSelection } from "./import-scope";
 import { emptyDoc } from "./import-mapping";
 import type { ImportPlan, ImportPlanItem } from "./types";
 
@@ -626,5 +626,37 @@ describe("a second row for the machine Coolify runs on", () => {
     expect(isControlPlaneHost(p, "s1")).toBe(false);
     h.match = { status: "probable", linkedBy: null, evidence: [] } as never;
     expect(isControlPlaneHost(p, "s1")).toBe(true);
+  });
+});
+
+describe("withoutInPlaceCopyNotes", () => {
+  const cov = (): ImportPlan => {
+    const p = plan();
+    p.preflight!.coverage = {
+      apps: [
+        { itemRef: "service:s1:minio", name: "storage-minio", notCarried: [{ field: "objectData", reason: "the store's data volume is not streamed", level: "warn" }, { field: "volume:minio-data", reason: "a host folder bind is carried as a named volume", level: "warn" }] },
+        { itemRef: "service:s1:meili", name: "meili", notCarried: [{ field: "volume:meili", reason: "starts empty", level: "info" }, { field: "agent.ports", reason: "published ports are not carried", level: "warn" }] },
+        { itemRef: "service:s2:minio", name: "other-minio", notCarried: [{ field: "objectData", reason: "x", level: "warn" }] },
+        { itemRef: "app:s1:web", name: "web", notCarried: [{ field: "volume:data", reason: "kept", level: "info" }] },
+      ],
+    } as never;
+    return p;
+  };
+  const scope = { placementKind: { s1: "in-place", s2: "other-server" } } as never;
+
+  it("takes the copy-path notes (object data, volumes) out of a stack that stays in place and keeps the rest", () => {
+    const out = withoutInPlaceCopyNotes(cov(), scope).preflight!.coverage!.apps;
+    expect(out.find((a) => a.itemRef === "service:s1:minio")).toBeUndefined();
+    expect(out.find((a) => a.itemRef === "service:s1:meili")!.notCarried.map((n) => n.field)).toEqual(["agent.ports"]);
+  });
+  it("keeps every note of a stack that moves to another server, and of an app", () => {
+    const out = withoutInPlaceCopyNotes(cov(), scope).preflight!.coverage!.apps;
+    expect(out.find((a) => a.itemRef === "service:s2:minio")!.notCarried.map((n) => n.field)).toEqual(["objectData"]);
+    expect(out.find((a) => a.itemRef === "app:s1:web")!.notCarried.map((n) => n.field)).toEqual(["volume:data"]);
+  });
+  it("changes nothing without a scope or when nothing stays", () => {
+    const p = cov();
+    expect(withoutInPlaceCopyNotes(p, null)).toBe(p);
+    expect(withoutInPlaceCopyNotes(p, { placementKind: { s1: "other-server" } } as never)).toBe(p);
   });
 });

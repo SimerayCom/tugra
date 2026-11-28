@@ -13,7 +13,7 @@ import { CopyBtn } from "./copy-row";
 import { ImportReviewStep } from "./import-review-step";
 import { ImportScopeStep } from "./import-scope-step";
 import type { SourceServerRow } from "../lib/migration-run";
-import { overallPlacement, scopedPlan, scopeServiceSkips, splitByPlacement, type ImportScope, type ScopeSelection } from "../lib/import-scope";
+import { isInPlaceItem, overallPlacement, scopedPlan, scopeServiceSkips, splitByPlacement, withoutInPlaceCopyNotes, type ImportScope, type ScopeSelection } from "../lib/import-scope";
 import { planDelta, recoveryOf, sessionGone } from "../lib/import-recovery";
 import { clearImportResume, loadImportResume, saveImportResume } from "../lib/import-resume";
 import { IMPORT_PREFILL_KEY } from "../lib/coolify-takeover";
@@ -746,6 +746,11 @@ function PlanView({
   const s = planSummary(plan);
   // Where the data goes: what stays on its own machine keeps its data (no copy, no migrator, no data mode), only what moves to another server needs those.
   const { moved, stays } = splitByPlacement(plan, scope);
+  // A service stack that stays on its own machine keeps its containers and data where they are: the copy-path text (a stopped compose app, volume data copied
+  // separately, object data not copied, host folder carried as a named volume) is about the stacks that move to another server, and shows only for those.
+  const importedServices = (plan.preflight?.services ?? []).filter((sv) => sv.verdict !== "skipped");
+  const stayingServices = importedServices.filter((sv) => isInPlaceItem(scope, sv.itemRef ?? ""));
+  const movedServices = importedServices.filter((sv) => !isInPlaceItem(scope, sv.itemRef ?? ""));
   // An agent session cannot be applied without the owner's consent for secret values standing now: the controls stay off until it does.
   const consentMissing = needsConsent(fullPlan);
   // where the settings of the picked Coolify team go: its mapped Tugra team (null = that Coolify team was left out)
@@ -890,13 +895,13 @@ function PlanView({
                 ))}
               </ul>
             )}
-            {plan.preflight.services.some((sv) => sv.verdict !== "skipped") && (
+            {movedServices.length > 0 && (
               <div style={{ marginTop: 10 }}>
                 <div style={{ fontSize: 12, color: "var(--c-g)", marginBottom: 4 }}>
-                  {t("import.servicesImported", { count: String(plan.preflight.services.filter((sv) => sv.verdict !== "skipped").length) })}
+                  {t("import.servicesImported", { count: String(movedServices.length) })}
                 </div>
                 <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12, color: "var(--c-tx3)" }}>
-                  {plan.preflight.services.filter((sv) => sv.verdict !== "skipped").map((sv, i) => (
+                  {movedServices.map((sv, i) => (
                     <li key={i}>
                       <span className="mono">{sv.name}{sv.members > 0 ? ` (${sv.members})` : ""}</span> — {sv.note}
                       {sv.objectStore && (
@@ -905,6 +910,20 @@ function PlanView({
                           <a href="/migrations/objects/new" target="_blank" rel="noopener noreferrer" title={t("objectMigration.migrateObjectsHint")} onClick={() => rememberObjectMigrationContext({ ...(target ? { targetServerId: target } : {}), serviceName: sv.name })}>{t("objectMigration.migrateObjects")}</a>
                         </>
                       )}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {stayingServices.length > 0 && (
+              <div data-testid="in-place-services" style={{ marginTop: 10 }}>
+                <div style={{ fontSize: 12, color: "var(--c-g)", marginBottom: 4 }}>
+                  {t("import.inPlaceService.heading", { count: String(stayingServices.length) })}
+                </div>
+                <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12, color: "var(--c-tx3)" }}>
+                  {stayingServices.map((sv, i) => (
+                    <li key={i}>
+                      <span className="mono">{sv.name}{sv.members > 0 ? ` (${sv.members})` : ""}</span> — {sv.verdict === "partial" ? t("import.inPlaceService.partial") : t("import.inPlaceService.note")}
                     </li>
                   ))}
                 </ul>
@@ -972,13 +991,13 @@ function PlanView({
 
       <EnvBlockers plan={plan} acked={acked} onChange={setAcked} />
       {target && (plan.preflight?.git?.hosts.length ?? 0) > 0 && <GitLinksPanel sessionId={sessionId} targetServerId={target} plan={plan} />}
-      <CoverageCard plan={plan} />
+      <CoverageCard plan={withoutInPlaceCopyNotes(plan, scope)} />
       {settingsTeam === null ? (
         <p role="note" data-testid="settings-left-out" style={{ fontSize: 12, color: "var(--c-tx2)", margin: 0 }}>{t("import.settings.leftOut")}</p>
       ) : (
         <ImportSettingsPanel sessionId={sessionId} kind={kind} teamId={settingsTeam ?? writableServers.find((w) => w.id === target)?.teamId} teamName={settingsTeam ? teams.find((x) => x.id === settingsTeam)?.name : undefined} servers={servers} agentConsent={agentConsentOf(fullPlan)} />
       )}
-      <ImportServicesPanel sessionId={sessionId} kind={kind} plan={plan} servers={servers} choices={choices} onChoice={onChoice} onMissingTargets={setMissingTargets} />
+      <ImportServicesPanel sessionId={sessionId} kind={kind} plan={plan} placementKind={scope?.placementKind} servers={servers} choices={choices} onChoice={onChoice} onMissingTargets={setMissingTargets} />
       <Section title={t("import.appsSection")} items={groups.app} />
       <Section title={t("import.databasesSection")} items={groups.database} />
       {groups.volume.length > 0 && <Section title={t("import.volumesSection")} items={groups.volume} />}

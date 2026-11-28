@@ -7,6 +7,7 @@ import { api } from "../lib/api";
 import { useT } from "../i18n/provider";
 import { Badge, Card, Spinner } from "./ui";
 import { needsExplicitTarget } from "../lib/import";
+import { isInPlaceItem, type ImportScope } from "../lib/import-scope";
 import { importServiceIcon } from "../lib/import-icon";
 import { ResourceIcon } from "./resource-icon";
 import type { ImportPlan, ImportRemoteKind, ImportRiskLevel, ImportServiceChoice, ImportServicePreview, ImportServiceVerdict } from "../lib/types";
@@ -42,6 +43,11 @@ const RISK_KEY: Record<string, string> = {
   "service.secrets.unverified": "import.services.risk.secrets-unverified",
   "service.type.unsupported": "import.services.risk.type-unsupported",
 };
+/** Plan risks that are about the copy path (a data volume copied to another server, a stopped app you deploy yourself). A stack that stays on its own machine
+ *  has none of them: its containers and data are taken over where they are. */
+const COPY_PATH_RISKS = new Set(["service.volume.name", "service.volume.hostbind", "service.volume.size-unknown", "service.data.manual-large", "service.data.not-carried", "service.deploy.manual"]);
+/** The not-carried fields of the same copy path (data volumes, an object store's buckets). */
+const isCopyPathField = (field: string): boolean => field === "objectData" || field.startsWith("volume:");
 const RISK_COLOR: Record<ImportRiskLevel, string> = { blocker: "var(--c-r)", warn: "var(--c-am)", info: "var(--c-tx3)" };
 
 /** Debounce a value (the preview re-runs only after the operator pauses typing). */
@@ -65,6 +71,7 @@ export function ImportServicesPanel({
   sessionId,
   kind,
   plan,
+  placementKind,
   servers,
   choices,
   onChoice,
@@ -73,6 +80,8 @@ export function ImportServicesPanel({
   sessionId: string;
   kind: ImportRemoteKind;
   plan: ImportPlan;
+  /** Where each source server goes (`in-place` = it stays on its own machine). A stack that stays keeps its containers and data where they are. */
+  placementKind?: ImportScope["placementKind"];
   servers: { id: string; name: string }[];
   choices: Choices;
   onChoice: (itemRef: string, patch: ImportServiceChoice | null) => void;
@@ -89,22 +98,25 @@ export function ImportServicesPanel({
     placeholderData: (prev) => prev,
     staleTime: 0,
   });
+  const staysIn = (ref: string): boolean => !!placementKind && isInPlaceItem({ placementKind }, ref);
   // The hub answers for every service of the source; only the stacks of this (scoped) plan are shown, counted, and able to hold the apply back.
   const inPlan = new Set(items.map((i) => i.itemRef));
   const cards = (data?.services ?? []).filter((c) => inPlan.has(c.itemRef));
-  const missing = cards.filter((c) => needsExplicitTarget(c, choices[c.itemRef])).length;
+  // a stack that stays on its own machine has its place already: it never waits for a target server to be picked
+  const missing = cards.filter((c) => !staysIn(c.itemRef) && needsExplicitTarget(c, choices[c.itemRef])).length;
   useEffect(() => {
     onMissingTargets?.(missing);
   }, [missing, onMissingTargets]);
   if (items.length === 0) return null;
   const count = (v: ImportServiceVerdict) => cards.filter((c) => c.verdict === v).length;
+  const allStay = items.every((i) => staysIn(i.itemRef));
 
   return (
     <Card style={{ padding: 16 }}>
       <div style={{ fontWeight: 600, fontSize: 13 }}>
         {t("import.services.title")} <span style={{ color: "var(--c-tx3)", fontWeight: 400 }}>({items.length})</span>
       </div>
-      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "4px 0 10px", lineHeight: 1.5 }}>{t("import.services.desc")}</p>
+      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "4px 0 10px", lineHeight: 1.5 }}>{allStay ? t("import.inPlaceService.desc") : t("import.services.desc")}</p>
       {isLoading && (
         <div style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 12 }}>
           <Spinner /> {t("import.services.loading")}
@@ -118,7 +130,7 @@ export function ImportServicesPanel({
       )}
       <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
         {cards.map((card) => (
-          <ServiceCard key={card.itemRef} card={card} item={items.find((i) => i.itemRef === card.itemRef)} servers={servers} choice={choices[card.itemRef]} onChoice={(patch) => onChoice(card.itemRef, patch)} />
+          <ServiceCard key={card.itemRef} card={card} item={items.find((i) => i.itemRef === card.itemRef)} inPlace={staysIn(card.itemRef)} servers={servers} choice={choices[card.itemRef]} onChoice={(patch) => onChoice(card.itemRef, patch)} />
         ))}
       </div>
     </Card>
@@ -128,12 +140,15 @@ export function ImportServicesPanel({
 function ServiceCard({
   card,
   item,
+  inPlace,
   servers,
   choice,
   onChoice,
 }: {
   card: ImportServicePreview;
   item: ImportPlan["items"][number] | undefined;
+  /** The stack stays on its own machine: no copy path, no target server to pick. */
+  inPlace: boolean;
   servers: { id: string; name: string }[];
   choice: ImportServiceChoice | undefined;
   onChoice: (patch: ImportServiceChoice | null) => void;
@@ -143,11 +158,14 @@ function ServiceCard({
   const skipped = card.verdict === "skipped";
   const included = !choice?.skip && !skipped;
   const target = choice?.targetServerId ?? "";
-  const needsTarget = needsExplicitTarget(card, choice);
+  const needsTarget = !inPlace && needsExplicitTarget(card, choice);
   const keptMembers = card.members.filter((m) => m.status === "kept");
   const svcIcon = importServiceIcon(card.name, card.members);
   const dropSet = new Set(choice?.dropMembers ?? []);
   const rows = choice?.serviceDomains ?? card.domains;
+  // what is said about copying data is for a stack that moves; one that stays says where its data stays instead
+  const risks = (item?.risks ?? []).filter((r) => !inPlace || !COPY_PATH_RISKS.has(r.code));
+  const notCarried = inPlace ? card.notCarried.filter((n) => !isCopyPathField(n.field)) : card.notCarried;
 
   const setDomains = (next: Array<{ service: string; hostname: string; port: number }>) => set({ serviceDomains: next });
   const toggleDrop = (name: string) => {
@@ -204,6 +222,7 @@ function ServiceCard({
             <input id={`svc-name-${card.itemRef}`} style={input} value={choice?.name ?? card.name} onChange={(e) => set({ name: e.target.value })} maxLength={63} autoComplete="off" spellCheck={false} />
             {card.nameClash && <div role="alert" style={{ fontSize: 11, color: "var(--c-am)", marginTop: 2 }}>{t(card.nameClash === "team" ? "import.services.nameClash.team" : "import.services.nameClash.import")}</div>}
           </div>
+          {!inPlace && (
           <div>
             <label style={lbl} htmlFor={`svc-target-${card.itemRef}`}>{t("import.services.targetServer")}</label>
             <select id={`svc-target-${card.itemRef}`} style={input} value={target} onChange={(e) => set({ targetServerId: e.target.value || undefined })}>
@@ -214,6 +233,7 @@ function ServiceCard({
             </select>
             {needsTarget && <div role="alert" style={{ fontSize: 11, color: "var(--c-am)", marginTop: 2 }}>{t("import.services.needsTarget")}</div>}
           </div>
+          )}
         </div>
       )}
 
@@ -239,7 +259,18 @@ function ServiceCard({
       {!skipped && (
         <>
           <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 4 }}>{t("import.services.volumes")}</div>
-          {card.volumes.length === 0 ? (
+          {inPlace ? (
+            <div data-testid="service-in-place" style={{ fontSize: 12, color: "var(--c-tx2)", marginBottom: 10, lineHeight: 1.5 }}>
+              {t("import.inPlaceService.note")}
+              {card.volumes.length > 0 && (
+                <ul style={{ margin: "4px 0 0", paddingLeft: 16, color: "var(--c-tx3)" }}>
+                  {card.volumes.map((v) => (
+                    <li key={v.key}><span className="mono">{v.key}</span></li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          ) : card.volumes.length === 0 ? (
             <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 10 }}>{t("import.services.noVolumes")}</div>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 10 }}>
@@ -329,11 +360,11 @@ function ServiceCard({
             {card.files.available.length > 0 && <span>{t("import.services.files.available", { n: card.files.available.length })}</span>}
           </div>
 
-          {card.notCarried.length > 0 && (
+          {notCarried.length > 0 && (
             <details style={{ marginTop: 8 }}>
-              <summary style={{ cursor: "pointer", fontSize: 12, color: "var(--c-tx3)" }}>{t("import.services.notCarried", { n: card.notCarried.length })}</summary>
+              <summary style={{ cursor: "pointer", fontSize: 12, color: "var(--c-tx3)" }}>{t("import.services.notCarried", { n: notCarried.length })}</summary>
               <ul style={{ margin: "4px 0 0", paddingLeft: 16, fontSize: 11 }}>
-                {card.notCarried.map((n, i) => (
+                {notCarried.map((n, i) => (
                   <li key={`${n.field}-${i}`} style={{ color: n.level === "warn" ? "var(--c-am)" : "var(--c-tx3)", wordBreak: "break-word" }}>
                     <span className="mono" style={{ wordBreak: "break-all" }}>{n.field}</span>: {n.reason}
                   </li>
@@ -344,9 +375,9 @@ function ServiceCard({
         </>
       )}
 
-      {item && item.risks.length > 0 && !skipped && (
+      {risks.length > 0 && !skipped && (
         <ul style={{ margin: "8px 0 0", paddingLeft: 16, fontSize: 11 }}>
-          {item.risks.map((r) => (
+          {risks.map((r) => (
             <li key={r.code} style={{ color: RISK_COLOR[r.level as ImportRiskLevel] }}>{RISK_KEY[r.code] ? t(RISK_KEY[r.code]) : r.code}</li>
           ))}
         </ul>

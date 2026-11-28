@@ -239,6 +239,72 @@ describe("ImportServicesPanel", () => {
   });
 });
 
+describe("ImportServicesPanel — a stack that stays on its own machine", () => {
+  const STAY = "service:box1:minio";
+  const MOVE = "service:box2:minio";
+  const hostBindRisk = [{ level: "warn" as const, code: "service.volume.hostbind", message: "x" }, { level: "warn" as const, code: "service.deploy.manual", message: "x" }, { level: "info" as const, code: "service.reach", message: "x" }];
+  const stayPlan: ImportPlan = { ...plan, items: [item(STAY, "storage-minio", "importable", hostBindRisk), item(MOVE, "other-minio", "importable", hostBindRisk)] };
+  const minio = (ref: string, name: string, src: string): ImportServicePreview =>
+    base({
+      itemRef: ref,
+      name,
+      sourceServer: src,
+      volumes: [{ key: "minio-data", origin: "host-bind", policy: "copy", dataPlane: "manual-large", mounts: [{ service: "minio", path: "/data" }] }],
+      notCarried: [
+        { field: "objectData", reason: "the store's data volume is not streamed with the service", level: "warn" },
+        { field: "volume:minio-data", reason: "a host folder bind is carried as a named volume; the host path is not mounted on the target", level: "warn" },
+        { field: "agent.ports", reason: "published ports are not carried; use service domains", level: "warn" },
+      ],
+    });
+  const open = (placementKind: Record<string, "in-place" | "other-server">, onMissing = vi.fn()) => {
+    vi.spyOn(api, "previewImportServices").mockResolvedValue({ services: [minio(STAY, "storage-minio", "localhost"), minio(MOVE, "other-minio", "localhost")] });
+    wrap(<ImportServicesPanel sessionId="s1" kind="coolify" plan={stayPlan} placementKind={placementKind} servers={[{ id: "srv-a", name: "Server A" }]} choices={{}} onChoice={vi.fn()} onMissingTargets={onMissing} />);
+    return onMissing;
+  };
+  beforeEach(() => {
+    window.history.replaceState(null, "", "/");
+    qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  it("says the stack and its data stay where they are: no volume copy choices, no host-bind or object-data notes, no target server to pick", async () => {
+    const onMissing = open({ box1: "in-place", box2: "other-server" });
+    await screen.findByText("storage-minio");
+    const stay = screen.getByTestId("service-in-place");
+    expect(stay.textContent).toContain("the stack and its data stay where they are");
+    expect(stay.textContent).toContain("minio-data");
+    // only the stack that moves shows the copy path
+    expect(screen.getAllByLabelText("minio-data Data").length).toBe(1);
+    expect(screen.getAllByText("Host folder, carried as a named volume").length).toBe(1);
+    expect(screen.getAllByText(/a host folder bind is carried as a named volume/).length).toBe(1);
+    expect(screen.getAllByText(/the store's data volume is not streamed/).length).toBe(1);
+    expect(screen.getAllByText("A host folder is carried as a named volume.").length).toBe(1);
+    expect(screen.getAllByText("Created stopped: you deploy it yourself.").length).toBe(1);
+    // what is not about the copy path stays for both
+    expect(screen.getAllByText(/published ports are not carried/).length).toBe(2);
+    // a stack on the source's own host that stays has its place already: it never holds the apply back; the one that moves still does
+    await waitFor(() => expect(onMissing).toHaveBeenLastCalledWith(1));
+  });
+
+  it("when every stack stays, the panel intro and every card say so and nothing waits for a target", async () => {
+    vi.spyOn(api, "previewImportServices").mockResolvedValue({ services: [minio(STAY, "storage-minio", "localhost")] });
+    const onMissing = vi.fn();
+    wrap(<ImportServicesPanel sessionId="s1" kind="coolify" plan={{ ...stayPlan, items: [stayPlan.items[0]] }} placementKind={{ box1: "in-place" }} servers={[]} choices={{}} onChoice={vi.fn()} onMissingTargets={onMissing} />);
+    await screen.findByText("storage-minio");
+    expect(document.body.textContent).toContain("These stacks stay on their own machine.");
+    expect(document.body.textContent).not.toContain("Each Coolify service becomes one stopped compose app");
+    expect(screen.queryByLabelText("Target server")).toBeNull();
+    expect(onMissing).toHaveBeenLastCalledWith(0);
+  });
+
+  it("without a placement everything keeps the copy path as before", async () => {
+    open({});
+    await screen.findByText("storage-minio");
+    expect(screen.queryByTestId("service-in-place")).toBeNull();
+    expect(screen.getAllByText(/a host folder bind is carried as a named volume/).length).toBe(2);
+  });
+});
+
 describe("ImportWizard — services", () => {
   beforeEach(() => {
     window.history.replaceState(null, "", "/"); // a previous apply mirrored its op into ?op=
