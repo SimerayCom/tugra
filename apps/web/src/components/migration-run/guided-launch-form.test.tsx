@@ -427,6 +427,8 @@ describe("a mixed placement is a campaign", () => {
     await waitFor(() => expect(card.textContent).toContain("Wave 2"));
     expect(card.textContent).toContain("Beta moves to Server B");
     expect(card.textContent).toContain("Alpha stays on its own machine");
+    // the apps of each server are listed under its run, whether it stays or moves
+    expect(within(card).getAllByTestId("plan-app-row").map((r) => r.textContent)).toEqual(["app:s2:api", "app:s1:web"]);
     expect(planCampaign.mock.calls[0][0]).toEqual({
       sessionId: "s1",
       planHash: "a".repeat(32),
@@ -438,7 +440,7 @@ describe("a mixed placement is a campaign", () => {
     expect(createCampaign.mock.calls[0][0]).not.toHaveProperty("targetServerId");
     expect(createCampaign.mock.calls[0][0]).not.toHaveProperty("topology");
     expect(createRun).not.toHaveBeenCalled();
-    await waitFor(() => expect(push).toHaveBeenCalledWith("/import/runs/campaign?c=campaign-x"));
+    await waitFor(() => expect(push).toHaveBeenCalledWith("/import/runs/campaign?id=c1"));
   });
 
   it("reads the preview and creates the campaign with the data modes the owner chose and the first step's pick (never a plan changed for good, never every item of the servers)", async () => {
@@ -507,7 +509,7 @@ describe("a mixed placement is a campaign", () => {
       expect(createCampaign.mock.calls[0][0]).toMatchObject({ confirm: 2, placements: [{ sourceServerRef: "s1", targetServerId: "srv1" }, { sourceServerRef: "s2", targetServerId: "srv2" }] });
       expect(createRun).not.toHaveBeenCalled();
       await waitFor(() => expect(push).toHaveBeenCalledTimes(1));
-      expect(push).toHaveBeenCalledWith("/import/runs/campaign?c=campaign-x");
+      expect(push).toHaveBeenCalledWith("/import/runs/campaign?id=c1");
     });
 
     it("a hub that still answers with one campaign opens it the same way", async () => {
@@ -518,7 +520,7 @@ describe("a mixed placement is a campaign", () => {
       expect((await within(dialog).findByTestId("campaign-preview")).querySelector("[data-testid=campaign-team]")).toBeNull();
       fireEvent.click(await within(dialog).findByRole("button", { name: "Start 2 dry runs" }));
       await waitFor(() => expect(createCampaign).toHaveBeenCalled());
-      await waitFor(() => expect(push).toHaveBeenCalledWith("/import/runs/campaign?c=campaign-x"));
+      await waitFor(() => expect(push).toHaveBeenCalledWith("/import/runs/campaign?id=c1"));
     });
 
     it("a server that cannot take the move still blocks the button, in any team", async () => {

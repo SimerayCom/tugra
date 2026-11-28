@@ -158,6 +158,7 @@ export const BLOCKED_KEY: Record<string, string> = {
   invalid_name: "import.settings.blocked.invalid_name",
   no_imported_resources: "import.settings.blocked.no_imported_resources",
   self: "import.settings.blocked.self",
+  not_configured: "import.settings.blocked.not_configured",
 };
 
 /** Which consent class a settings section reads its secret values with (agent session). */

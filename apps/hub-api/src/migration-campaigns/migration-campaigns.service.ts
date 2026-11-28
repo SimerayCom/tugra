@@ -134,6 +134,16 @@ export class MigrationCampaignsService {
     return { ...views[0], campaigns: views };
   }
 
+  /**
+   * Start the first run of a campaign this call just made (a dry run: the hub's advancer holds behind it, so it is started once, here). The campaign's
+   * runs come back in plan order, which is how the first planned run is found. A run that cannot start stays queued and is started from its page.
+   */
+  async startFirstRun(actor: RunActor, view: CampaignView): Promise<void> {
+    const first = view.plan.reduce((best, p, i) => (p.wave < view.plan[best].wave ? i : best), 0);
+    const id = view.runIds[first];
+    if (id) await this.runs.start(actor, id, {});
+  }
+
   async list(userId: string, teamId: string): Promise<CampaignView[]> {
     await this.access.requireRole(userId, teamId, [Role.OWNER, Role.ADMIN]);
     const rows = await this.prisma.migrationCampaign.findMany({ where: { teamId }, orderBy: { createdAt: "desc" }, take: 100 });
@@ -205,7 +215,7 @@ export class MigrationCampaignsService {
 
   private async hydrate(row: CampaignRow): Promise<CampaignView> {
     const runs = await this.runsOf(row);
-    const status = deriveCampaignStatus(row.status as CampaignStatus, runs.map((r) => r.status));
+    const status = deriveCampaignStatus(row.status as CampaignStatus, runs.map((r) => r.status), row.driving === true);
     if (status !== row.status) await this.prisma.migrationCampaign.update({ where: { id: row.id }, data: { status } }).catch(() => undefined);
     return this.view({ ...row, status }, runs.map((r) => r.id));
   }

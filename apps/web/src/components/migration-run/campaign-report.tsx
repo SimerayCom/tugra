@@ -7,7 +7,7 @@ import { api } from "../../lib/api";
 import { useT } from "../../i18n/provider";
 import { formatDuration } from "../../lib/import";
 import { CAMPAIGN_REPORT_RUN_CAP, CAMPAIGN_ROLLUP_LIMIT, STEP_TITLE_KEY, buildCampaignReport, codeText, errorText, runListRefetchInterval, runRefetchInterval, validCampaign } from "../../lib/migration-run";
-import { campaignCancellable, campaignHeadline, waveRanks } from "../../lib/campaign";
+import { campaignCancellable, campaignHeadline, campaignTitle, isGeneratedLabel, waveRanks } from "../../lib/campaign";
 import { needsYou } from "../../lib/run-stepper";
 import type { MigrationRunReport, MigrationRunSummary, MigrationRunView } from "../../lib/types";
 import { useTeamContext } from "../team-scope";
@@ -31,6 +31,7 @@ const HEADLINE_KEY = {
   needsMany: "migrationRun.campaignRun.headline.needsMany",
   ready: "migrationRun.campaignRun.headline.ready",
   paused: "migrationRun.campaignRun.headline.paused",
+  waiting: "migrationRun.campaignRun.headline.waiting",
   moving: "migrationRun.campaignRun.headline.moving",
   review: "migrationRun.campaignRun.headline.review",
 } as const;
@@ -42,6 +43,7 @@ const HEADLINE_SUB_KEY = {
   needs: "migrationRun.campaignRun.headline.needsSub",
   ready: "migrationRun.campaignRun.headline.readySub",
   paused: "migrationRun.campaignRun.headline.pausedSub",
+  waiting: "migrationRun.campaignRun.headline.waitingSub",
   moving: "migrationRun.campaignRun.headline.movingSub",
   review: "migrationRun.campaignRun.headline.reviewSub",
 } as const;
@@ -139,6 +141,8 @@ export function CampaignReport({ campaign }: { campaign: string }) {
     },
     onError: (e) => toast(errorText(t, e), "error"),
   });
+  // when the move was made: the campaign's own date, else the first run's (a viewer who cannot read the campaigns still sees a date)
+  const madeAt = views.map((v) => v.createdAt).sort()[0] ?? [...runs].map((r) => r.createdAt).sort()[0] ?? null;
   const rows = [...data.runs].sort((a, b) => (ranks.rankOf.get(a.id) ?? 999) - (ranks.rankOf.get(b.id) ?? 999) || (a.createdAt < b.createdAt ? -1 : 1));
   const h = headline;
   const headParams = { name: h.failedRunId ? nameOf(h.failedRunId) : h.needs[0] ? nameOf(h.needs[0]) : "", count: h.needs.length || h.queued, total: h.total, made: h.made, done: h.completed };
@@ -148,7 +152,7 @@ export function CampaignReport({ campaign }: { campaign: string }) {
   return (
     <div style={{ padding: "var(--page-pad)", maxWidth: 1100, margin: "0 auto" }}>
       <BackLink href="/import/runs" label={t("migrationRun.campaign.back")} />
-      <PageTitle title={`${t("migrationRun.campaign.title")}${valid ? `: ${campaign}` : ""}`} subtitle={t("migrationRun.campaign.subtitle")} />
+      <PageTitle title={valid ? campaignTitle(t, campaign, madeAt) : t("migrationRun.campaign.title")} subtitle={t("migrationRun.campaign.subtitle")} />
       {!valid && <EmptyState title={t("migrationRun.campaign.title")}>{t("migrationRun.campaign.noLabel")}</EmptyState>}
       {valid && list.isLoading && <SkeletonTable rows={3} />}
       {valid && list.isError && !list.data && <ErrorState onRetry={() => list.refetch()} />}
@@ -259,7 +263,8 @@ export function CampaignReport({ campaign }: { campaign: string }) {
         <TypedConfirmDialog
           title={t("migrationRun.campaign.cancelTitle")}
           body={t("migrationRun.campaign.cancelBody")}
-          names={[campaign]}
+          // a name nobody typed (a generated label) is not something to retype: the confirmation is the button
+          names={isGeneratedLabel(campaign) ? [] : [campaign]}
           confirmLabel={t("migrationRun.campaign.cancelButton")}
           busy={cancel.isPending}
           onConfirm={() => cancel.mutate()}

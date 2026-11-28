@@ -36,6 +36,25 @@ describe("buildSettingsPlan", () => {
     expect(plan.planned.size).toBe(0);
   });
 
+  it("notifications: a channel that was never set up in Coolify is not_configured, a set up one that gave no value stays needs_sensitive", () => {
+    const plan = buildSettingsPlan(
+      baseRaw({
+        notifications: {
+          ok: true,
+          items: [
+            { kind: "slack", enabled: false, configured: false, secretsReadable: false, providerType: "slack", config: {}, events: [] },
+            { kind: "discord", enabled: true, configured: true, secretsReadable: false, providerType: "discord", config: {}, events: [] },
+            { kind: "webhook", enabled: false, secretsReadable: false, providerType: "webhook", config: {}, events: [] },
+          ],
+        },
+      }),
+      ctx(),
+    );
+    expect(find(plan, "notification:slack")).toMatchObject({ selectable: false, blocked: "not_configured" });
+    expect(find(plan, "notification:discord")).toMatchObject({ blocked: "needs_sensitive" });
+    expect(find(plan, "notification:webhook")).toMatchObject({ blocked: "needs_sensitive" });
+  });
+
   it("notifications: topics split into channels, unmapped events noted, preview is secret-free", () => {
     const plan = buildSettingsPlan(
       baseRaw({

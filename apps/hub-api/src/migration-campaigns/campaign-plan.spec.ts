@@ -240,6 +240,12 @@ describe("campaign label and status", () => {
     expect(deriveCampaignStatus("running", ["COMPLETED", "QUEUED"])).toBe("paused");
     expect(deriveCampaignStatus("draft", ["WAITING"])).toBe("running");
   });
+  it("a campaign the hub drives is running between two servers, not paused; a failed run still pauses it", () => {
+    expect(deriveCampaignStatus("running", ["COMPLETED", "QUEUED"], true)).toBe("running");
+    expect(deriveCampaignStatus("running", ["COMPLETED", "QUEUED"], false)).toBe("paused");
+    expect(deriveCampaignStatus("running", ["FAILED", "QUEUED"], true)).toBe("paused");
+    expect(deriveCampaignStatus("draft", ["QUEUED", "QUEUED"], true)).toBe("running");
+  });
   it("a cancelled campaign stays cancelled", () => {
     expect(deriveCampaignStatus("cancelled", ["COMPLETED"])).toBe("cancelled");
   });

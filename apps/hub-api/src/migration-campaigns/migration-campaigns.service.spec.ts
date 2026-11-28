@@ -184,6 +184,22 @@ describe("MigrationCampaignsService.create", () => {
   });
 });
 
+describe("MigrationCampaignsService.startFirstRun and the start flag", () => {
+  it("starts the run of the earliest planned wave, as the creator, through the run facade", async () => {
+    const t = build();
+    const v = await t.svc.create(actor, input({ label: "wave-one", dryRun: true }));
+    (t.runs as unknown as { start: jest.Mock }).start = jest.fn(async () => ({}));
+    await t.svc.startFirstRun(actor, v);
+    const first = v.plan.reduce((best, p, i) => (p.wave < v.plan[best].wave ? i : best), 0);
+    expect((t.runs as unknown as { start: jest.Mock }).start).toHaveBeenCalledWith(actor, v.runIds[first], {});
+  });
+  it("the create body takes an optional start flag and nothing else new", () => {
+    expect(input({ start: false }).start).toBe(false);
+    expect(input().start).toBeUndefined();
+    expect(() => input({ start: "yes" })).toThrow();
+  });
+});
+
 describe("MigrationCampaignsService across teams", () => {
   /** `a` is taken over in place (server srv-a, team t1), `b` moves to new1 (team t2), `c` to new2 (team t3). */
   const three = () => ({

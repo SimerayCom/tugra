@@ -157,7 +157,9 @@
     "runs": "{count} runs",
     "open": "Open report",
     "error": "Could not load the campaigns.",
-    "teams": "{count} teams"
+    "teams": "{count} teams",
+    "noneInFilter": "Nothing in this tab. The others are one click away.",
+    "openNamed": "Open {name}"
   },
   "consent": {
     "open": "Allow or stop reading secret values",

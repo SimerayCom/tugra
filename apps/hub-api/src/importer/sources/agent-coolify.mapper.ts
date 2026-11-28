@@ -405,6 +405,8 @@ export function buildAgentView(read: AgentRead, agentServerId: string, opts: Age
       for (const field of NOTIFY_SECRET_FIELDS) {
         const v = overlay.get(`notification:${currentTeamId}`, field);
         if (v !== undefined) out[field] = v;
+        // a column the row says holds nothing is visible but empty (null), like the API of a token that may read it: not a hidden one
+        else if (row[`${field}_present`] === false) out[field] = null;
       }
       return out;
     }

@@ -208,6 +208,27 @@ describe("CampaignReport", () => {
       await waitFor(() => expect(pause).toHaveBeenCalledWith("camp1"));
     });
 
+    it("between two servers the hub is driving: 'Waiting for the next server', no start button, never 'Paused'", async () => {
+      setup({ "run-aaaa1111": view("run-aaaa1111", "srv-a", "Olgu Server", { status: "COMPLETED", currentStep: null }), "run-bbbb2222": queued("run-bbbb2222", "srv-b", "Section Server") }, summaries({ status: "COMPLETED", currentStep: null }, { status: "QUEUED", currentStep: null }), [camp({ driving: true, status: "running" })]);
+      wrap();
+      await screen.findByText("Waiting for the next server");
+      expect(screen.getByTestId("campaign-headline").getAttribute("data-kind")).toBe("waiting");
+      expect(screen.queryByRole("button", { name: "Continue" })).toBeNull();
+      expect(screen.queryByText("Paused by you")).toBeNull();
+    });
+
+    it("a generated label is shown as a move of its date, never as the raw label, and cancelling it asks for a click, not a retyped name", async () => {
+      const label = "campaign-20261128-1105-ab12";
+      setup({ "run-aaaa1111": queued("run-aaaa1111", "srv-a", "Olgu Server"), "run-bbbb2222": queued("run-bbbb2222", "srv-b", "Section Server") }, summaries({ status: "QUEUED", currentStep: null, campaign: label }, { status: "QUEUED", currentStep: null, campaign: label }), [camp({ label })]);
+      wrap(label);
+      await waitFor(() => expect(screen.getByRole("heading", { level: 1 }).textContent).toMatch(/^Move of /));
+      expect(document.body.textContent).not.toContain(label);
+      fireEvent.click(screen.getByText("More actions"));
+      fireEvent.click(await screen.findByRole("button", { name: "Cancel campaign" }));
+      const dialog = await screen.findByRole("dialog");
+      expect(within(dialog).queryByRole("textbox")).toBeNull();
+    });
+
     it("a paused campaign says so and offers Continue", async () => {
       setup({ "run-aaaa1111": view("run-aaaa1111", "srv-a", "Olgu Server", { status: "COMPLETED", currentStep: null }), "run-bbbb2222": queued("run-bbbb2222", "srv-b", "Section Server") }, summaries({ status: "COMPLETED", currentStep: null }, { status: "QUEUED", currentStep: null }), [camp({ driving: false, status: "paused" })]);
       wrap();

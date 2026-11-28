@@ -290,16 +290,19 @@ describe("CampaignReportList", () => {
   it("lists each campaign with its status, run count and a link to its report", async () => {
     vi.spyOn(api, "listCampaigns").mockResolvedValue([campaign(), campaign({ id: "c2", label: "a&b", status: "done", runIds: [] })]);
     wrap(<CampaignReportList teamId="t1" />);
+    // the finished one is one tab away: the list opens on what is live
+    fireEvent.click(await screen.findByRole("tab", { name: /All/ }));
     const list = await screen.findByTestId("campaign-list");
     const items = within(list).getAllByRole("listitem");
     expect(items).toHaveLength(2);
     // the list is newest first; both fixtures are made "now", so find each line by its label rather than its position
     const wave = items.find((li) => within(li).queryByText("wave 1"))!;
     const ab = items.find((li) => within(li).queryByText("a&b"))!;
-    expect(within(wave).getByText("Running")).toBeTruthy();
+    expect(within(wave).getByText("Moving")).toBeTruthy();
     expect(within(wave).getByText("2 runs")).toBeTruthy();
-    expect(within(wave).getByRole("link", { name: "Open report" }).getAttribute("href")).toBe("/import/runs/campaign?c=wave%201");
-    expect(within(ab).getByRole("link", { name: "Open report" }).getAttribute("href")).toBe("/import/runs/campaign?c=a%26b");
+    // the whole row is the link, and it goes by the campaign's id, not its label
+    expect(within(wave).getByRole("link").getAttribute("href")).toBe("/import/runs/campaign?id=c1");
+    expect(within(ab).getByRole("link").getAttribute("href")).toBe("/import/runs/campaign?id=c2");
   });
 
   it("the campaigns of several teams under one label are one line: runs added up, the teams counted, the state that needs the owner first", async () => {
@@ -311,10 +314,10 @@ describe("CampaignReportList", () => {
     const items = within(list).getAllByRole("listitem");
     expect(items).toHaveLength(1);
     expect(spy.mock.calls.map((c) => c[0]).sort()).toEqual(["t1", "t2"]);
-    expect(within(items[0]).getByText("Paused")).toBeTruthy();
+    expect(within(items[0]).getByText("Waiting for you")).toBeTruthy();
     expect(within(items[0]).getByText("3 runs")).toBeTruthy();
     expect(within(items[0]).getByText("2 teams")).toBeTruthy();
-    expect(within(items[0]).getByRole("link", { name: "Open report" }).getAttribute("href")).toBe("/import/runs/campaign?c=move");
+    expect(within(items[0]).getByRole("link").getAttribute("href")).toBe("/import/runs/campaign?id=c1");
   });
 
   it("a team that refuses the list adds nothing; the page team's own failure is the error", async () => {

@@ -2,7 +2,7 @@
 // The hub decides the runs; this only turns the first step's choice into the request and groups the answer for display.
 import type { CampaignRunPlan, CampaignStatus, CampaignView, PlacementFailureCode, SourcePlacement } from "@tugra/shared";
 import { hostOfItemRef, inPlaceCount, overallPlacement, type ImportScope } from "./import-scope";
-import { campaignReportHref } from "./migration-run";
+import { formatDateTime } from "./format-time";
 import type { ImportPlanItem, MigrationRunCreateInput, MigrationRunScope } from "./types";
 
 /** The first step's choice as placements, in ref order (the same choice always sends the same body). A server with no target yet is left out. */
@@ -127,11 +127,58 @@ export type CampaignCreated = CampaignView & { campaigns?: CampaignView[] };
 /** Every campaign a create made (an older hub answers with the one). */
 export const campaignsOf = (created: CampaignCreated): CampaignView[] => (created.campaigns && created.campaigns.length > 0 ? created.campaigns : [created]);
 
-/** Where the owner lands after a create: the report of the label, which holds the runs of every campaign made under it. */
-export const campaignOpenHref = (created: CampaignCreated): string => campaignReportHref(created.label);
+/**
+ * The campaign page, by the campaign's id (never by its label: a label is free text with spaces and any language's month names). A move onto servers
+ * of several teams is one campaign per team under one label; the page opened by the first id also lists the others of its label.
+ */
+export const campaignHref = (id: string): string => `/import/runs/campaign?id=${encodeURIComponent(id)}`;
+
+/** Where the owner lands after a create: the page of the campaign (the first one when there are several; it lists its label's others). */
+export const campaignOpenHref = (created: CampaignCreated): string => campaignHref(created.id);
+
+/**
+ * A fresh label that says nothing in any language: `campaign-YYYYMMDD-HHMM-xxxx` in UTC, the form the hub makes when none is given. The page shows
+ * the date of creation in the viewer's own language instead of this text (see {@link campaignTitle}).
+ */
+export function newCampaignLabel(now: Date = new Date(), rand: () => number = Math.random): string {
+  const p = (n: number) => String(n).padStart(2, "0");
+  const stamp = `${now.getUTCFullYear()}${p(now.getUTCMonth() + 1)}${p(now.getUTCDate())}-${p(now.getUTCHours())}${p(now.getUTCMinutes())}`;
+  return `campaign-${stamp}-${Math.floor(rand() * 36 ** 4).toString(36).padStart(4, "0")}`;
+}
+
+/** Whether a label is one the hub or the launch page made (nobody named it). */
+export const isGeneratedLabel = (label: string): boolean => /^campaign-\d{8}-\d{4}-[a-z0-9]{4}$/.test(label);
+
+/** What a campaign is called on screen: the name the owner typed, or, for a generated label, "Move of <date>" with the date in the viewer's locale. */
+export function campaignTitle(t: (key: string, vars?: Record<string, string | number>) => string, label: string, createdAt: string | null | undefined): string {
+  if (!isGeneratedLabel(label)) return label;
+  const when = createdAt ? formatDateTime(createdAt) : "";
+  return when ? t("migrationRun.campaign.autoName", { when }) : t("migrationRun.campaign.autoNameNoDate");
+}
+
+/** Which tab of the campaign list a status belongs to: still going or waiting for the owner (live), finished (done) or stopped for good (cancelled). */
+export type CampaignBucket = "live" | "done" | "cancelled";
+export const CAMPAIGN_BUCKETS: readonly CampaignBucket[] = ["live", "done", "cancelled"];
+export const campaignBucket = (status: CampaignStatus): CampaignBucket => (status === "done" ? "done" : status === "cancelled" ? "cancelled" : "live");
+export type CampaignFilter = CampaignBucket | "all";
+/** The same three tabs for a single run: finished, stopped for good (aborted, rolled back, reversed), or anything else (moving, waiting, failed: it still needs a look). */
+export const runBucket = (status: string): CampaignBucket => (status === "COMPLETED" ? "done" : status === "ABORTED" || status === "ROLLED_BACK" || status === "REVERSED" ? "cancelled" : "live");
+
+/**
+ * The tab of a label that is known only by its runs (no campaign row to ask): live while any run is open, done when something finished, cancelled
+ * when every run was stopped for good. A label of dry runs only is live, as the run list says of the same runs ({@link runBucket}).
+ */
+export function rollupBucket(r: { total: number; completed: number; live: number; failed: number; other: number; stopped: number }): CampaignBucket {
+  if (r.live > 0 || r.failed > 0) return "live";
+  if (r.completed > 0) return "done";
+  return r.other > 0 && r.stopped === r.other ? "cancelled" : "live";
+}
+export const matchesCampaignFilter = (status: CampaignStatus, f: CampaignFilter): boolean => f === "all" || campaignBucket(status) === f;
 
 /** The campaigns of one label (one per team) as one line: runs added up, the teams counted, the state that needs attention first. */
 export interface CampaignGroup {
+  /** The first campaign of the label: the page is opened by its id. */
+  id: string;
   label: string;
   status: CampaignStatus;
   runs: number;
@@ -148,6 +195,7 @@ export function groupCampaigns(views: readonly CampaignView[]): CampaignGroup[] 
   for (const v of views) by.set(v.label, [...(by.get(v.label) ?? []), v]);
   return [...by.entries()]
     .map(([label, vs]) => ({
+      id: [...vs].sort((a, b) => (a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0))[0].id,
       label,
       status: STATUS_RANK.find((s) => vs.some((v) => v.status === s)) as CampaignStatus,
       runs: vs.reduce((n, v) => n + v.runIds.length, 0),
@@ -190,7 +238,8 @@ export const campaignCancellable = (v: Pick<CampaignView, "status">): boolean =>
 
 // ───────────────────────────── the campaign's home: one headline, one action ─────────────────────────────
 
-export type CampaignHeadlineKind = "done" | "cancelled" | "failed" | "preparing" | "needs" | "ready" | "paused" | "moving" | "review";
+export type CampaignHeadlineKind = "done" | "cancelled" | "failed" | "preparing" | "needs" | "ready" | "paused" | "waiting" | "moving" | "review";
+const LIVE_RUN_STATUSES = new Set(["RUNNING", "WAITING", "PAUSED", "ABORTING", "ROLLING_BACK", "REVERSING"]);
 
 export interface CampaignHeadline {
   kind: CampaignHeadlineKind;
@@ -236,6 +285,8 @@ export function campaignHeadline(
   if (needsRunIds.length > 0) return pick("needs");
   // queued servers the hub is not driving: ready (nothing started) or paused; a viewer who cannot read the campaigns cannot tell, and is not told either
   if (queued > 0 && !driving && views.length > 0) return pick(started ? "paused" : "ready");
+  // the hub is driving and the next server is queued while none is moving: between two servers, which is waiting, not paused
+  if (queued > 0 && driving && started && !runs.some((r) => LIVE_RUN_STATUSES.has(r.status))) return pick("waiting");
   if (runs.some((r) => r.status === "DRY_RUN_DONE") && !runs.some((r) => !["DRY_RUN_DONE", "COMPLETED"].includes(r.status))) return pick("review");
   return pick("moving");
 }

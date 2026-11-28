@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { campaignBody, campaignCancellable, campaignGuide, campaignOpenHref, campaignsOf, groupCampaigns, needsCampaign, placementFailureKey, placementsOf, pruneRebuild, rebuildChoicesOf, runsByWave, sourcesOfRun } from "./campaign";
+import { campaignBody, campaignBucket, campaignCancellable, campaignHref, campaignTitle, isGeneratedLabel, matchesCampaignFilter, newCampaignLabel, rollupBucket, runBucket, campaignGuide, campaignOpenHref, campaignsOf, groupCampaigns, needsCampaign, placementFailureKey, placementsOf, pruneRebuild, rebuildChoicesOf, runsByWave, sourcesOfRun } from "./campaign";
 import type { MigrationRunCreateInput } from "./types";
 
 describe("placementsOf", () => {
@@ -39,8 +39,9 @@ describe("several campaigns from one create", () => {
     expect(campaignsOf(a).map((c) => c.id)).toEqual(["c1"]);
     expect(campaignsOf({ ...a, campaigns: [] }).map((c) => c.id)).toEqual(["c1"]);
   });
-  it("opens the report of the label (it holds the runs of every campaign under it)", () => {
-    expect(campaignOpenHref(view({ label: "a&b" }))).toBe("/import/runs/campaign?c=a%26b");
+  it("opens the page of the campaign by its id, never by its label (the label is free text in any language)", () => {
+    expect(campaignOpenHref(view({ id: "c 1", label: "28 Kas 14:05" }))).toBe("/import/runs/campaign?id=c%201");
+    expect(campaignHref("abc")).toBe("/import/runs/campaign?id=abc");
   });
   it("groups the campaigns of one label into one line: runs added, teams counted, the state that needs the owner first, newest first", () => {
     const rows = groupCampaigns([
@@ -204,5 +205,47 @@ describe("campaignGuide", () => {
     expect(campaignCancellable({ status: "paused" })).toBe(true);
     expect(campaignCancellable({ status: "cancelled" })).toBe(false);
     expect(campaignCancellable({ status: "done" })).toBe(false);
+  });
+});
+
+describe("neutral names and dates in the viewer's language", () => {
+  const t = (k: string, v?: Record<string, string | number>) => (v ? `${k}:${JSON.stringify(v)}` : k);
+  it("makes a label that says nothing in any language, from the UTC day", () => {
+    const l = newCampaignLabel(new Date("2026-11-28T14:05:00Z"), () => 0.5);
+    expect(l).toMatch(/^campaign-20261128-1405-[a-z0-9]{4}$/);
+    expect(isGeneratedLabel(l)).toBe(true);
+    expect(isGeneratedLabel("Moving off Coolify - 28 Kas 14:05")).toBe(false);
+    expect(l.length).toBeLessThanOrEqual(80);
+  });
+  it("shows a generated label as 'Move of <date>' with the date formatted for the viewer, and a name somebody typed as it is", () => {
+    expect(campaignTitle(t, "campaign-20261128-1405-ab12", "2026-11-28T14:05:00Z")).toContain("migrationRun.campaign.autoName");
+    expect(campaignTitle(t, "campaign-20261128-1405-ab12", null)).toBe("migrationRun.campaign.autoNameNoDate");
+    expect(campaignTitle(t, "Olgu servers", "2026-11-28T14:05:00Z")).toBe("Olgu servers");
+  });
+});
+
+describe("what the lists hide by default", () => {
+  const st = (s: "draft" | "running" | "paused" | "done" | "cancelled") => campaignBucket(s);
+  it("puts the moves that are going or wait for the owner in Live, and finished and cancelled ones in their own tabs", () => {
+    expect(["draft", "running", "paused"].map((s) => st(s as "draft"))).toEqual(["live", "live", "live"]);
+    expect(st("done")).toBe("done");
+    expect(st("cancelled")).toBe("cancelled");
+    expect(matchesCampaignFilter("cancelled", "live")).toBe(false);
+    expect(matchesCampaignFilter("cancelled", "all")).toBe(true);
+    expect(matchesCampaignFilter("paused", "live")).toBe(true);
+  });
+  it("sorts a single run the same way: only a finished one is Done, only a stopped one is Cancelled, a failed one still needs a look", () => {
+    expect(runBucket("COMPLETED")).toBe("done");
+    expect(["ABORTED", "ROLLED_BACK", "REVERSED"].map(runBucket)).toEqual(["cancelled", "cancelled", "cancelled"]);
+    expect(["RUNNING", "WAITING", "FAILED", "QUEUED", "DRY_RUN_DONE"].map(runBucket)).toEqual(["live", "live", "live", "live", "live"]);
+  });
+  it("sorts a label known only by its runs: live while anything is open, done when something finished, else cancelled", () => {
+    expect(rollupBucket({ total: 3, completed: 1, live: 1, failed: 0, other: 1, stopped: 1 })).toBe("live");
+    expect(rollupBucket({ total: 2, completed: 1, live: 0, failed: 1, other: 0, stopped: 0 })).toBe("live");
+    expect(rollupBucket({ total: 2, completed: 1, live: 0, failed: 0, other: 1, stopped: 1 })).toBe("done");
+    expect(rollupBucket({ total: 2, completed: 0, live: 0, failed: 0, other: 2, stopped: 2 })).toBe("cancelled");
+    // dry runs only: the run list shows them as live, so the label is live too
+    expect(rollupBucket({ total: 2, completed: 0, live: 0, failed: 0, other: 2, stopped: 0 })).toBe("live");
+    expect(rollupBucket({ total: 2, completed: 0, live: 0, failed: 0, other: 2, stopped: 1 })).toBe("live");
   });
 });

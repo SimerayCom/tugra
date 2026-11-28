@@ -298,12 +298,15 @@ const FAILED_RUN = new Set(["FAILED", "ABORTED", "ROLLED_BACK", "REVERSED"]);
 /**
  * The campaign's status from its runs. A cancelled campaign stays cancelled. Every run COMPLETED is done; any run still moving is running;
  * a failed or aborted run with others not finished pauses the campaign (the owner decides); otherwise it is a draft (runs created, none started).
+ * A campaign the hub is driving whose next server is still queued is running too (it is between two servers), not paused.
  */
-export function deriveCampaignStatus(stored: CampaignStatus, runStatuses: readonly string[]): CampaignStatus {
+export function deriveCampaignStatus(stored: CampaignStatus, runStatuses: readonly string[], driving = false): CampaignStatus {
   if (stored === "cancelled") return "cancelled";
   if (runStatuses.length === 0) return stored;
   if (runStatuses.every((s) => s === "COMPLETED")) return "done";
   if (runStatuses.some((s) => LIVE_RUN.has(s))) return "running";
+  // between two servers: the hub is driving the campaign and the next server is queued, which is moving on, not stopped (no run failed or ended)
+  if (driving && runStatuses.includes("QUEUED") && !runStatuses.some((s) => FAILED_RUN.has(s))) return "running";
   if (runStatuses.some((s) => FAILED_RUN.has(s) || s === "COMPLETED")) return "paused";
   return "draft";
 }

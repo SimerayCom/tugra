@@ -1,4 +1,6 @@
-import { Body, Controller, Get, HttpCode, Param, Post, Query, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, Header, HttpCode, Logger, NotFoundException, Param, Post, Query, StreamableFile, UseGuards } from "@nestjs/common";
+import { SkipThrottle } from "@nestjs/throttler";
+import type { CampaignView } from "@tugra/shared";
 import { ApiSecurity, ApiTags } from "@nestjs/swagger";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
@@ -8,8 +10,9 @@ import { RequireScopes } from "../api-tokens/require-scopes.decorator";
 import { AuthUser } from "../auth/strategies/jwt.strategy";
 import { runActorFromAuth } from "../migration-runs/core/run-contract";
 import { CampaignAdvancerService } from "./campaign-advancer.service";
+import { PlanIconService } from "./plan-icons.service";
 import { MigrationCampaignsService } from "./migration-campaigns.service";
-import { CampaignCreateSchema, CampaignListQuerySchema, CampaignPlanSchema, CampaignViewsQuerySchema, type CampaignViewsQuery, type CampaignCreateInput, type CampaignListQuery, type CampaignPlanInput } from "./dto";
+import { CampaignCreateSchema, CampaignListQuerySchema, CampaignPlanSchema, CampaignViewsQuerySchema, PlanIconQuerySchema, type CampaignViewsQuery, type PlanIconQuery, type CampaignCreateInput, type CampaignListQuery, type CampaignPlanInput } from "./dto";
 import { z } from "zod";
 
 /**
@@ -21,10 +24,29 @@ import { z } from "zod";
 @Controller("migration-campaigns")
 @UseGuards(ApiAuthGuard, ScopesGuard)
 export class MigrationCampaignsController {
+  private readonly logger = new Logger(MigrationCampaignsController.name);
+
   constructor(
     private readonly campaigns: MigrationCampaignsService,
     private readonly advancer: CampaignAdvancerService,
+    private readonly icons: PlanIconService,
   ) {}
+
+  /**
+   * The icon of an app in a move plan, before it exists in Tugra: a site's favicon (`kind=site`, a host name) or the avatar of its repository's GitHub
+   * owner (`kind=github`). The hub fetches it (public addresses only), so the browser contacts neither site. 404 when there is none; the page then
+   * falls back to the brand of the image or a plain icon.
+   */
+  @Get("icon")
+  @SkipThrottle() // one <img> per app of a plan; a miss is not browser-cached, so the global limit would starve real API calls. The fetches a user starts are capped in the service instead.
+  @Header("X-Content-Type-Options", "nosniff")
+  @Header("Content-Security-Policy", "default-src 'none'; sandbox")
+  @Header("Cache-Control", "private, max-age=86400")
+  async icon(@CurrentUser() user: AuthUser, @Query(new ZodValidationPipe(PlanIconQuerySchema)) q: PlanIconQuery): Promise<StreamableFile> {
+    const found = await this.icons.get(q.kind, q.name, user.userId);
+    if (!found) throw new NotFoundException("no icon");
+    return new StreamableFile(found.data, { type: found.mime });
+  }
 
   /** What each source server of a session offers (in place or another server, and why not), with no choice made. */
   @Get("placement")
@@ -51,11 +73,32 @@ export class MigrationCampaignsController {
     return this.campaigns.get(user.userId, id);
   }
 
-  /** Create the campaign and its runs (201). Owner only. */
+  /**
+   * Create the campaign and its runs (201), and hand it to the hub (unless `start` is false): the creation and the first start are one request, so a closed
+   * tab cannot leave the runs queued. A campaign that cannot be handed over stays as made (its runs queued) and the page offers "Start all". Owner only.
+   */
   @Post()
   @RequireScopes("deploy", "read:secrets")
-  create(@CurrentUser() user: AuthUser, @Body(new ZodValidationPipe(CampaignCreateSchema)) body: CampaignCreateInput) {
-    return this.campaigns.create(runActorFromAuth(user), body);
+  async create(@CurrentUser() user: AuthUser, @Body(new ZodValidationPipe(CampaignCreateSchema)) body: CampaignCreateInput) {
+    const actor = runActorFromAuth(user);
+    const made = await this.campaigns.create(actor, body);
+    if (body.start === false) return made;
+    const views: CampaignView[] = [];
+    for (const v of made.campaigns) {
+      try {
+        if (body.dryRun) {
+          // a dry run is looked at, not driven: the hub holds the later servers behind it, so only the first one is started
+          await this.campaigns.startFirstRun(actor, v);
+          views.push(v);
+        } else {
+          views.push(await this.advancer.start(actor, v.id));
+        }
+      } catch (e) {
+        this.logger.warn(`campaign ${v.id} was made but not handed over: ${e instanceof Error ? e.message : String(e)}`);
+        views.push(v);
+      }
+    }
+    return { ...views[0], campaigns: views };
   }
 
   /** Abort the runs that have not started and cancel the campaign. Owner only. */

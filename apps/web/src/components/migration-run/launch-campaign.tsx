@@ -6,6 +6,7 @@ import type { CampaignPreview } from "../../lib/api";
 import { placementFailureKey, rebuildChoicesOf, runsByWave, sourcesOfRun } from "../../lib/campaign";
 import { toggleChoice } from "../../lib/inplace";
 import type { ImportPlanItem } from "../../lib/types";
+import { PlanAppRows } from "../plan-app-rows";
 import { UNKNOWN_SOURCE_HOST, type SourceServerRow } from "../../lib/migration-run";
 import { hostOfItemRef } from "../../lib/import-scope";
 
@@ -33,7 +34,7 @@ export function CampaignPreviewCard({
   rows: SourceServerRow[];
   servers: Array<{ id: string; name: string }>;
   /** The plan's items: the apps of a same-machine run are offered for a rebuild (absent = no picker). */
-  items?: ReadonlyArray<Pick<ImportPlanItem, "itemRef" | "kind" | "name">>;
+  items?: ReadonlyArray<Pick<ImportPlanItem, "itemRef" | "kind" | "name"> & Partial<Pick<ImportPlanItem, "proposed">>>;
   inScope?: ReadonlySet<string>;
   /** The apps the owner chose to build with Tugra and verify (plan item refs). */
   rebuild?: readonly string[];
@@ -60,6 +61,8 @@ export function CampaignPreviewCard({
     }
     return c;
   };
+  /** The apps of a run's servers (in scope), with what the plan says about how each looks. */
+  const appsOf = (refs: string[]) => items.filter((it) => it.kind === "app" && (!inScope || inScope.has(it.itemRef)) && refs.includes(hostOfItemRef(it.itemRef))).map((it) => ({ itemRef: it.itemRef, name: it.name, proposed: it.proposed ?? {} }));
   const renderCards = (runs: CampaignRunPlan[]) => (
     <ol style={{ margin: 0, padding: 0, listStyle: "none", display: "flex", flexDirection: "column", gap: 8 }}>
       {runsByWave(runs).flatMap((w) =>
@@ -72,6 +75,7 @@ export function CampaignPreviewCard({
                 <span style={{ fontSize: 11, color: "var(--c-tx3)" }}>{t("placement.campaign.wave", { n: w.wave + 1 })}</span>
               </div>
               <span style={{ fontSize: 12, color: "var(--c-tx2)" }}>{t("import.scope.counts", countsOf(sourcesOfRun(r)))}</span>
+              <PlanAppRows apps={appsOf(sourcesOfRun(r))} />
               <span style={{ fontSize: 12, color: "var(--c-tx3)", lineHeight: 1.5 }}>{t("placement.campaign.cardInPlace")}</span>
               {onRebuild && (
                 <details>
@@ -93,6 +97,7 @@ export function CampaignPreviewCard({
             <strong>{t("placement.campaign.wave", { n: w.wave + 1 })}</strong>
             {": "}
             {r.kind === "in-place" ? t("placement.campaign.runInPlace", { source: sourcesOfRun(r).map(nameOfSource).join(", ") }) : t("placement.campaign.runOther", { source: sourcesOfRun(r).map(nameOfSource).join(", "), target: nameOfServer(r.targetServerId) })}
+            <PlanAppRows apps={appsOf(sourcesOfRun(r))} />
             {r.kind === "in-place" && onRebuild && (
               <RebuildPicker choices={rebuildChoicesOf(r, items, inScope)} chosen={rebuild} onChange={onRebuild} disabled={disabled} serverName={sourcesOfRun(r).map(nameOfSource).join(", ")} />
             )}

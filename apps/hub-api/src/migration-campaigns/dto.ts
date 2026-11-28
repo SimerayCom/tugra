@@ -48,6 +48,11 @@ export type CampaignPlanInput = z.infer<typeof CampaignPlanSchema>;
 
 export const CampaignCreateSchema = CampaignPlanSchema.extend({
   label: CampaignSchema.optional(),
+  /**
+   * Hand the campaign to the hub as soon as it is made (default true): the hub starts the first server and goes on by itself, so closing the page between
+   * "create" and "start" changes nothing. `false` leaves every run queued for the owner's "Start all".
+   */
+  start: z.boolean().optional(),
   /** The owner types the number of source servers being placed (a deliberate click, the same idea as the typed counts elsewhere). */
   confirm: z.number().int().min(1).max(SERVER_MAP_MAX),
   environmentId: runFields.environmentId,
@@ -88,3 +93,7 @@ export const CampaignViewsQuerySchema = z
   })
   .strict();
 export type CampaignViewsQuery = z.infer<typeof CampaignViewsQuerySchema>;
+
+/** `GET /migration-campaigns/icon`: what to find an icon for. The name is checked again by the service (a DNS name or a GitHub login, nothing else). */
+export const PlanIconQuerySchema = z.object({ kind: z.enum(["site", "github"]), name: z.string().min(1).max(253) }).strict();
+export type PlanIconQuery = z.infer<typeof PlanIconQuerySchema>;

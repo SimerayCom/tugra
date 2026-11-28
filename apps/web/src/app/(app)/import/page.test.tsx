@@ -23,10 +23,10 @@ describe("Import page entry points", () => {
     expect(screen.getAllByRole("link", { name: "Read this Coolify" }).some((a) => a.getAttribute("href") === "/import/coolify-host")).toBe(true);
   });
 
-  it("lists the campaign reports under the wizard", async () => {
+  it("lists the campaign reports under the wizard, each row a link to the campaign by its id", async () => {
     show();
     const list = await screen.findByTestId("campaign-list");
-    expect(list.querySelector("a")?.getAttribute("href")).toBe("/import/runs/campaign?c=wave%201");
+    expect(list.querySelector("a")?.getAttribute("href")).toBe("/import/runs/campaign?id=c1");
     await waitFor(() => expect(api.listCampaigns).toHaveBeenCalledWith("t1"));
   });
 });
