@@ -109,7 +109,7 @@ const HOSTNAME = z
   .regex(/^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$/, "invalid hostname (lowercase, dotted)");
 /** A pinned image reference supplied for one compose service (from the source probe, or typed by the operator). The
  *  transform additionally refuses a pin whose repository differs from the service's own image. */
-export const IMAGE_REF_RE = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,200}(:[A-Za-z0-9_][A-Za-z0-9._-]{0,127})?(@sha256:[a-f0-9]{64})?$/;
+export const IMAGE_REF_RE = /^(?:[A-Za-z0-9][A-Za-z0-9.-]{0,100}:[0-9]{1,5}\/)?[A-Za-z0-9][A-Za-z0-9._/-]{0,200}(:[A-Za-z0-9_][A-Za-z0-9._-]{0,127})?(@sha256:[a-f0-9]{64})?$/;
 /** Per-service operator choices. Keys of `serviceChoices` are plan itemRefs. NOT part of the planHash. Everything here can
  *  only NARROW or rename what the importer does: it can never keep a member the safety gate rejects. */
 export const ServiceChoiceSchema = z

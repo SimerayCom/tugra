@@ -1,4 +1,4 @@
-import { decodeExact, digestsFor, encodeExact, exactImageFor, isDigestPinned, isExactPinFor, isFloatingTag, normalizedRepo, shortDigest, splitImage } from "./exact-image";
+import { EXACT_REF_RE, decodeExact, decodeExactHint, digestsFor, encodeExact, exactImageFor, isDigestPinned, isExactPinFor, isFloatingTag, normalizedRepo, shortDigest, splitImage } from "./exact-image";
 
 const D1 = `sha256:${"1".repeat(64)}`;
 const D2 = `sha256:${"2".repeat(64)}`;
@@ -59,9 +59,6 @@ describe("exactImageFor: the pin of the image the source runs", () => {
     expect(exactImageFor("x/y:latest", [], "not a version")).toBeNull();
     expect(exactImageFor("x/y:latest", [], "latest")).toBeNull();
   });
-  it("a ref the apply schemas would refuse (a registry with a port) is not offered as a pin", () => {
-    expect(exactImageFor("localhost:5000/app:latest", [`localhost:5000/app@${D1}`])).toBeNull();
-  });
   it("an image already on a digest (the owner's own pin, or an earlier import) is never replaced", () => {
     expect(exactImageFor(`x/y:1@${D1}`, [`x/y@${D2}`], "9")).toBeNull();
     expect(exactImageFor("", [`x/y@${D1}`])).toBeNull();
@@ -99,5 +96,30 @@ describe("isExactPinFor: a pin may only replace its own repository", () => {
     expect(isExactPinFor("x/y:latest", "x/y:latest")).toBe(false);
     expect(isExactPinFor(`x/y:1@${D1}`, `x/y:1@${D2}`)).toBe(false);
     expect(isExactPinFor("x/y:latest", "x/y; id")).toBe(false);
+  });
+});
+
+describe("a private registry on a port pins like any other (its items are not left unknown)", () => {
+  it("the pin keeps the registry host and port, and every schema that carries a pin accepts it", async () => {
+    const e = exactImageFor("registry.local:5000/team/app:1.2", [`registry.local:5000/team/app@${D1}`]);
+    expect(e?.ref).toBe(`registry.local:5000/team/app:1.2@${D1}`);
+    expect(EXACT_REF_RE.test(e!.ref)).toBe(true);
+    expect(exactImageFor("localhost:5000/app", [`localhost:5000/app@${D1}`])?.ref).toBe(`localhost:5000/app:latest@${D1}`);
+    const { IMAGE_REF_RE } = await import("./dto");
+    expect(IMAGE_REF_RE.test(e!.ref)).toBe(true);
+    expect(isExactPinFor("registry.local:5000/team/app:1.2", e!.ref)).toBe(true);
+    expect(isExactPinFor("registry.local:5000/team/app:1.2", `registry.local:5001/team/app:1.2@${D1}`)).toBe(false); // another registry is another image
+  });
+  it("still refuses what is not a ref", () => {
+    for (const bad of ["a b", "reg:99999999/x", "-x:1", "reg:5000/x;id", `reg:5000/x@sha256:short`]) expect(EXACT_REF_RE.test(bad)).toBe(false);
+  });
+});
+
+describe("decodeExactHint: a recorded exact image always carries its digest", () => {
+  it("accepts repo:tag@digest, with or without the version label; ignores a tag-only value (nothing is guessed)", () => {
+    expect(decodeExactHint(`x/y:latest@${D1} 1.2.3`)).toMatchObject({ ref: `x/y:latest@${D1}`, digest: D1, version: "1.2.3" });
+    expect(decodeExactHint(`x/y:latest@${D1}`)?.version).toBeNull();
+    expect(decodeExactHint("x/y:1.2.3")).toBeNull();
+    expect(decodeExactHint("x/y; id")).toBeNull();
   });
 });

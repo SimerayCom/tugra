@@ -7,16 +7,15 @@ export interface StackImages {
   images: Array<{ member: string; image: string }>;
 }
 
-const MAX_STACKS = 200;
-const MAX_MEMBERS = 64;
-
+/**
+ * No count cap on purpose: a stack or a member past any limit would silently keep a moving tag. The compose of a stack is at most 256 KiB
+ * (`MAX_SERVICE_COMPOSE_BYTES`), which bounds every list here.
+ */
 export function stackImagesOf(fleet: Pick<ForeignFleet, "services">): StackImages[] {
   const out: StackImages[] = [];
   for (const svc of fleet.services) {
-    if (out.length >= MAX_STACKS) break;
     const images = Object.entries(analyzeService(svc).result?.images ?? {})
       .sort(([a], [b]) => (a < b ? -1 : 1))
-      .slice(0, MAX_MEMBERS)
       .map(([member, image]) => ({ member, image }));
     if (images.length) out.push({ itemRef: ns("service", svc.serverRef, svc.sourceRef), images });
   }

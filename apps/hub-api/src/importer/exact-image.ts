@@ -3,9 +3,10 @@
  * keeps the image the source runs, not whatever its tag points at on the day of a redeploy or a move to another server.
  *
  * The source tells it from the RUNNING container: the image's `RepoDigests` (`repo@sha256:...`) and, when the image carries it, the
- * `org.opencontainers.image.version` label. The pin is `repo:tag@sha256:...` (the tag stays readable, docker pulls by the digest). When
- * only the label is known and the source runs a floating tag, the pin is the exact version tag `repo:<version>`. A digest is never
- * guessed: two different digests for the repository, or none, leave the item unpinned and the preview says so.
+ * `org.opencontainers.image.version` label. The pin is `repo:tag@sha256:...` (the tag stays readable, docker pulls by the digest, an index
+ * digest on any platform). The label is only shown to the owner: it is never turned into a tag (imageproxy labels 0.13.0 and tags
+ * v0.13.0). A digest is never guessed: two different digests for the repository, or none, leave the item unpinned and the preview says
+ * "unknown".
  *
  * Leaf module (no imports from the importer or the migration runs): the host inventory, the in-place scripts, the run's safety hints and
  * the executor all use it.
@@ -17,8 +18,8 @@ export const DIGEST_RE = /^sha256:[a-f0-9]{64}$/;
 export const REPO_DIGEST_RE = /^[A-Za-z0-9][A-Za-z0-9._/:-]{0,200}@sha256:[a-f0-9]{64}$/;
 /** The version an image labels itself with (`org.opencontainers.image.version`), as far as the hub accepts it. */
 export const VERSION_LABEL_RE = /^[A-Za-z0-9][A-Za-z0-9._+~-]{0,63}$/;
-/** The ref shape the apply input and the service choices accept (no registry port: a pin the schemas refuse would fail a whole apply). */
-export const EXACT_REF_RE = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,200}(:[A-Za-z0-9_][A-Za-z0-9._-]{0,127})?(@sha256:[a-f0-9]{64})?$/;
+/** The ref shape the apply input and the service choices accept: an optional registry `host:port/`, then the repository, tag and digest. A private registry on a port must pin like any other, or its items would stay "unknown". */
+export const EXACT_REF_RE = /^(?:[A-Za-z0-9][A-Za-z0-9.-]{0,100}:[0-9]{1,5}\/)?[A-Za-z0-9][A-Za-z0-9._/-]{0,200}(:[A-Za-z0-9_][A-Za-z0-9._-]{0,127})?(@sha256:[a-f0-9]{64})?$/;
 /** A tag as docker allows it. */
 const TAG_RE = /^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$/;
 /** The run hint kinds that carry an exact image (see `migration-runs/steps/import/baseline/exact-images.ts`). */
@@ -74,15 +75,15 @@ export function digestsFor(image: string, repoDigests: readonly string[] | undef
 }
 
 export interface ExactImage {
-  /** The ref the record stores: `repo:tag@sha256:...`, or `repo:<version>` when only the label is known. */
+  /** The ref the record stores: `repo:tag@sha256:...`. */
   ref: string;
   /** The tag as the source runs it (`latest` for an untagged image). */
   tag: string;
-  /** The pinned digest; null when the pin is the version tag. */
-  digest: string | null;
+  /** The pinned digest. */
+  digest: string;
   /** The image's own version label, when it has one. */
   version: string | null;
-  via: "digest" | "version";
+  via: "digest";
 }
 
 /**
@@ -110,6 +111,15 @@ export const shortDigest = (digest: string): string => digest.slice(0, 19);
 /** The recorded form of a pin in a run hint: the ref, then a space and the version label when there is one. */
 export function encodeExact(e: Pick<ExactImage, "ref" | "version">): string {
   return e.version ? `${e.ref} ${e.version}` : e.ref;
+}
+
+/**
+ * The recorded pin of an `exact-image` hint: {@link decodeExact} that insists on the digest. A hint without one (nothing writes such a
+ * hint any more: a version label is never a tag) is not a pin and is ignored, so nothing is ever pinned by a guess.
+ */
+export function decodeExactHint(value: string): { ref: string; version: string | null; tag: string; digest: string } | null {
+  const d = decodeExact(value);
+  return d && d.digest !== null ? { ...d, digest: d.digest } : null;
 }
 
 /** Parse {@link encodeExact}; null when the ref or the version is not one the hub accepts. */

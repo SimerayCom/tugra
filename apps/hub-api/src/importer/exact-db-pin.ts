@@ -13,7 +13,7 @@
 import { DbStatus } from "@prisma/client";
 import type { PrismaService } from "../prisma/prisma.service";
 import type { DatabasesService } from "../databases/databases.service";
-import { EXACT_IMAGE_KIND, EXACT_OFF_KIND, decodeExact, isDigestPinned, isExactPinFor } from "./exact-image";
+import { EXACT_IMAGE_KIND, EXACT_OFF_KIND, decodeExactHint, isDigestPinned, isExactPinFor } from "./exact-image";
 
 /** The run event of an item that starts on an image the source does not necessarily run. Params: `kind`, `name`, `itemRef`, `reason`. */
 export const EXACT_UNAPPLIED_CODE = "import.exact-image-unapplied";
@@ -59,7 +59,7 @@ export async function pinDatabaseBeforeStart(deps: ExactDbPinDeps, actorId: stri
     if (!db) return false;
     const mine = { itemRef, name: db.name };
     const hint = rows.filter((r) => r.kind === EXACT_IMAGE_KIND).sort(ownFirst)[0];
-    const pin = hint ? decodeExact(hint.value) : null;
+    const pin = hint ? decodeExactHint(hint.value) : null;
     if (!pin) {
       if (!isDigestPinned(db.image)) {
         const reported = await deps.prisma.migrationRunHostReport.count({ where: { runId: { in: runIds }, kind: "inventory", state: "complete" } });

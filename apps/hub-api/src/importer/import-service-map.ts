@@ -29,7 +29,7 @@ const MAGIC_URL_RE = /^SERVICE_(URL|FQDN)_([A-Za-z0-9_]+)$/;
 const MAGIC_SECRET_RE = /^SERVICE_(PASSWORD|USER|BASE64|REALBASE64)_/;
 const SECRET_KEY_RE = /PASSWORD|SECRET|TOKEN|KEY/i;
 const IMAGE_REPO_RE = /^[A-Za-z0-9][A-Za-z0-9._/:-]{0,200}$/;
-const PIN_REF_RE = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,200}(:[A-Za-z0-9_][A-Za-z0-9._-]{0,127})?(@sha256:[a-f0-9]{64})?$/;
+const PIN_REF_RE = /^(?:[A-Za-z0-9][A-Za-z0-9.-]{0,100}:[0-9]{1,5}\/)?[A-Za-z0-9][A-Za-z0-9._/-]{0,200}(:[A-Za-z0-9_][A-Za-z0-9._-]{0,127})?(@sha256:[a-f0-9]{64})?$/;
 
 /** A MinIO object-store service: by its one-click template slug, or by a MinIO image in its compose file. */
 export function isMinioService(s: { templateSlug?: string; composeFile?: string }): boolean {

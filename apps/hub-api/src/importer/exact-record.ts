@@ -63,7 +63,8 @@ export async function writeExactImage(deps: ExactRecordDeps, userId: string, tar
     if (!c || c.source !== "COMPOSE" || !c.composeFile) return out("refused");
     const { compose, refused } = pinComposeMembersDetailed(c.composeFile, target.members);
     if (compose) await deps.apps.setComposeFile(userId, target.id, compose);
-    return out(refused.length ? "refused" : compose ? "pinned" : "same");
+    // some members may have been written while another is refused: `pinned` says a record changed, `state` says whether it now runs the source's images
+    return { pinned: !!compose, state: refused.length ? "refused" : compose ? "pinned" : "same" };
   }
   if (target.kind === "database") {
     const d = await deps.prisma.database.findUnique({ where: { id: target.id }, select: { image: true, status: true } });
