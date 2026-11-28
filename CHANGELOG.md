@@ -7,6 +7,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **Guided moves start from a page.** The launch is its own page instead of a dialog. For servers that stay on their own
+  machine it shows only what applies: the servers, the optional rebuild per app, the certificate email and the observe
+  window. Creating the runs shows progress per server, and one button starts the move.
+- **Start all, with live steps.** A campaign starts with one action: the hub starts each wave when the earlier ones are
+  safe, and swaps still happen one at a time behind their own approval. The campaign and run pages show a live step
+  list like the updater's, say what needs you, and say that closing the page stops nothing.
+- **Import sessions stay alive while you work.** Every action renews the session, open runs keep theirs alive, and a
+  run whose Coolify session ended offers one Reconnect to Coolify button. A queued run no longer asks for an API token.
+- **Faster service preview.** The service stacks preview reads names, images and volumes only; values are read at apply.
+
 ## [0.1.0-beta.38] - 2026-11-28
 
 - **Moves keep the exact image.** Tugra reads the image each source container runs and pins the imported app,
