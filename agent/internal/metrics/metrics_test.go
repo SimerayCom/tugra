@@ -2,7 +2,9 @@ package metrics
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestCollect(t *testing.T) {
@@ -100,6 +102,21 @@ func TestCollectorFirstSampleNetZero(t *testing.T) {
 
 func TestResolveDiskPath(t *testing.T) {
 	tmp := os.TempDir() // a real, statfs-able path on the test host
+	old := diskPathFile
+	diskPathFile = filepath.Join(t.TempDir(), "disk-path")
+	t.Cleanup(func() { diskPathFile = old })
+
+	t.Run("an env override is remembered and used after a self-update dropped the env", func(t *testing.T) {
+		t.Setenv("TUGRA_DISK_PATH", tmp)
+		if got := resolveDiskPath(func() string { return "" }); got != tmp {
+			t.Fatalf("want %q, got %q", tmp, got)
+		}
+		t.Setenv("TUGRA_DISK_PATH", "") // the re-created container: no env, same /etc/tugra
+		if got := resolveDiskPath(func() string { return "/should-not-be-consulted" }); got != tmp {
+			t.Fatalf("remembered override lost: got %q", got)
+		}
+		_ = os.Remove(diskPathFile)
+	})
 
 	t.Run("usable env override wins", func(t *testing.T) {
 		t.Setenv("TUGRA_DISK_PATH", tmp)
@@ -178,5 +195,61 @@ func TestSampleCarriesLoadAndSwap(t *testing.T) {
 	}
 	if (s.Load1 != nil && *s.Load1 < 0) || (s.SwapUsed != nil && *s.SwapUsed < 0) || (s.SwapTotal != nil && *s.SwapTotal < 0) {
 		t.Fatalf("load/swap must be non-negative: %+v", s)
+	}
+}
+
+func TestParseNetDevSumsOnlyRealInterfaces(t *testing.T) {
+	const dev = `Inter-|   Receive                                                |  Transmit
+ face |bytes    packets errs drop fifo frame compressed multicast|bytes    packets errs drop fifo colls carrier compressed
+    lo: 5000 10 0 0 0 0 0 0 5000 10 0 0 0 0 0 0
+  eth0: 1000 10 0 0 0 0 0 0 2000 10 0 0 0 0 0 0
+ ens3: 300 3 0 0 0 0 0 0 400 4 0 0 0 0 0 0
+docker0: 9999 9 0 0 0 0 0 0 9999 9 0 0 0 0 0 0
+vethabc: 7777 7 0 0 0 0 0 0 7777 7 0 0 0 0 0 0
+br-1234: 8888 8 0 0 0 0 0 0 8888 8 0 0 0 0 0 0
+`
+	rx, tx, err := parseNetDev(dev)
+	if err != nil || rx != 1300 || tx != 2400 {
+		t.Fatalf("rx=%d tx=%d err=%v", rx, tx, err)
+	}
+	if _, _, err := parseNetDev("garbage"); err == nil {
+		t.Fatal("no interfaces must be an error, not zero traffic")
+	}
+}
+
+// In the agent's container the rate comes from the HOST's counters (through the helper), never from the container's own interface.
+func TestCollectorUsesHostCountersInAContainer(t *testing.T) {
+	oldEn, oldFetch := hostNetEnabled, hostNetFetch
+	t.Cleanup(func() { hostNetEnabled, hostNetFetch = oldEn, oldFetch })
+	hostNetEnabled = func() bool { return true }
+	fetched := make(chan struct{}, 4)
+	hostNetFetch = func() (uint64, uint64, error) {
+		fetched <- struct{}{}
+		return 11_000_000, 22_000_000, nil
+	}
+
+	// the first sample has no baseline and asks for a reading in the background
+	c := NewCollector()
+	if s, _ := c.Sample(); s.NetRx != 0 || s.NetTx != 0 {
+		t.Fatalf("first sample has no baseline, got %v %v", s.NetRx, s.NetTx)
+	}
+	select {
+	case <-fetched:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the host counters were never asked for")
+	}
+
+	// a baseline 5 s older than the cached host reading: 10 MB rx / 20 MB tx in 5 s
+	t0 := time.Now().Add(-5 * time.Second)
+	c = NewCollector()
+	c.hasPrevNet, c.prevRx, c.prevTx, c.prevTimeNet = true, 1_000_000, 2_000_000, t0
+	c.netOK, c.netRx, c.netTx, c.netCountersAt, c.netAt = true, 11_000_000, 22_000_000, t0.Add(5*time.Second), time.Now()
+	s, _ := c.Sample()
+	if s.NetRx < 1_999_000 || s.NetRx > 2_001_000 || s.NetTx < 3_999_000 || s.NetTx > 4_001_000 {
+		t.Fatalf("host rate wrong: rx=%v tx=%v", s.NetRx, s.NetTx)
+	}
+	// the same reading sampled again does not move the baseline (no zero-length interval, no spike) and repeats the rate (no flicker to 0)
+	if s2, _ := c.Sample(); s2.NetRx != s.NetRx || s2.NetTx != s.NetTx {
+		t.Fatalf("a repeated reading must repeat the rate, got %v %v want %v %v", s2.NetRx, s2.NetTx, s.NetRx, s.NetTx)
 	}
 }

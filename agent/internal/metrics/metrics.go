@@ -70,8 +70,15 @@ func diskProbePath() string {
 
 // resolveDiskPath walks the probe chain. dockerRoot is injected so tests don't exec docker.
 func resolveDiskPath(dockerRoot func() string) string {
-	// 1. Explicit operator override — the escape hatch for exotic storage layouts.
-	if p := strings.TrimSpace(os.Getenv("TUGRA_DISK_PATH")); p != "" && diskUsable(p) {
+	// 1. Explicit operator override — the escape hatch for exotic storage layouts. The env is only what `docker run` set: a
+	//    self-update re-creates the container without it, so a usable override is remembered under /etc/tugra (mounted into
+	//    the agent, like traffic-ip-mode) and read back when the env is absent.
+	if p := strings.TrimSpace(os.Getenv("TUGRA_DISK_PATH")); p != "" {
+		if diskUsable(p) {
+			persistDiskPath(p)
+			return p
+		}
+	} else if p := readDiskPathFile(); p != "" && diskUsable(p) {
 		return p
 	}
 	// 2. Docker's own data-root, when it happens to be visible inside the agent container.
@@ -87,6 +94,32 @@ func resolveDiskPath(dockerRoot func() string) string {
 	}
 	// 4. Original behaviour.
 	return "/"
+}
+
+// diskPathFile remembers TUGRA_DISK_PATH across self-updates (a var so the tests can point it elsewhere).
+var diskPathFile = "/etc/tugra/disk-path"
+
+func readDiskPathFile() string {
+	b, err := os.ReadFile(diskPathFile)
+	if err != nil || len(b) > 4096 {
+		return ""
+	}
+	p := strings.TrimSpace(string(b))
+	if !strings.HasPrefix(p, "/") || strings.ContainsAny(p, "\n\r\x00") {
+		return ""
+	}
+	return p
+}
+
+// persistDiskPath is best effort and only writes into an existing /etc/tugra (never creates it, never fails a sample).
+func persistDiskPath(p string) {
+	if readDiskPathFile() == p {
+		return
+	}
+	if st, err := os.Stat(filepath.Dir(diskPathFile)); err != nil || !st.IsDir() {
+		return
+	}
+	_ = os.WriteFile(diskPathFile, []byte(p+"\n"), 0o644)
 }
 
 // diskUsable reports whether gopsutil can statfs the path (so it's a real mount we can measure).
@@ -157,6 +190,17 @@ type Collector struct {
 	prevTimeDisk                time.Time
 	hasPrevDisk                 bool
 
+	// The host's cumulative network counters, refreshed off the hot path (see nethost.go) because the agent's own
+	// /proc/net/dev is its container's namespace. netCountersAt is when the cached counters were read.
+	netMu         sync.Mutex
+	netInflight   atomic.Bool
+	netAt         time.Time
+	netCountersAt time.Time
+	netOK         bool
+	netRx, netTx  uint64
+	// the last computed rate, repeated while no newer host reading has arrived (the heartbeat can be faster than the refresh)
+	lastRateRx, lastRateTx float64
+
 	// Slow/optional sensors (temperature + GPU) are refreshed OFF the hot path: gopsutil's sensor read
 	// can block and nvidia-smi can hang, while Sample() runs inline right before the heartbeat, so a
 	// synchronous call could make the server flap OFFLINE. kickSlow() launches at most one background
@@ -189,6 +233,31 @@ func (c *Collector) kickSlow() {
 	}()
 }
 
+// netCounters returns the cumulative rx/tx bytes of the REAL interfaces of the server. In the agent's container that is the
+// host's, read through a host-network helper (cached, see nethost.go); a binary running directly on a host reads its own
+// namespace. pernic=true so only the real external interfaces are summed: the "all" aggregate would fold in loopback and
+// Docker bridge/veth traffic.
+func (c *Collector) netCounters(now time.Time) (rx, tx uint64, at time.Time, ok bool) {
+	if hostNetEnabled() {
+		c.kickNet()
+		c.netMu.Lock()
+		defer c.netMu.Unlock()
+		return c.netRx, c.netTx, c.netCountersAt, c.netOK && !c.netCountersAt.IsZero()
+	}
+	cs, err := net.IOCounters(true)
+	if err != nil {
+		return 0, 0, now, false
+	}
+	for _, nic := range cs {
+		if isVirtualNIC(nic.Name) {
+			continue
+		}
+		rx += nic.BytesRecv
+		tx += nic.BytesSent
+	}
+	return rx, tx, now, true
+}
+
 // NewCollector returns a Collector whose first Sample reports zero network rate.
 func NewCollector() *Collector { return &Collector{} }
 
@@ -200,22 +269,17 @@ func (c *Collector) Sample() (protocol.MetricsSample, error) {
 		return s, err
 	}
 	now := time.Now()
-	// pernic=true so we can sum only the real external interfaces — the "all"
-	// aggregate would fold in loopback and Docker bridge/veth traffic.
-	if cs, e := net.IOCounters(true); e == nil {
-		var rx, tx uint64
-		for _, nic := range cs {
-			if isVirtualNIC(nic.Name) {
-				continue
+	if rx, tx, at, ok := c.netCounters(now); ok {
+		// Only a NEW reading advances the baseline (the cache may be re-read within one interval): elapsed always spans
+		// exactly the counters' own interval.
+		if !c.hasPrevNet || at.After(c.prevTimeNet) {
+			if c.hasPrevNet {
+				c.lastRateRx, c.lastRateTx = ioRate(c.prevRx, c.prevTx, rx, tx, at.Sub(c.prevTimeNet).Seconds())
 			}
-			rx += nic.BytesRecv
-			tx += nic.BytesSent
+			// Advance baseline + time ATOMICALLY: elapsed must always match the counter span.
+			c.prevRx, c.prevTx, c.prevTimeNet, c.hasPrevNet = rx, tx, at, true
 		}
-		if c.hasPrevNet {
-			s.NetRx, s.NetTx = ioRate(c.prevRx, c.prevTx, rx, tx, now.Sub(c.prevTimeNet).Seconds())
-		}
-		// Advance baseline + time ATOMICALLY: elapsed must always match the counter span.
-		c.prevRx, c.prevTx, c.prevTimeNet, c.hasPrevNet = rx, tx, now, true
+		s.NetRx, s.NetTx = c.lastRateRx, c.lastRateTx
 	}
 	// Disk I/O throughput: sum ReadBytes/WriteBytes over whole physical disks only (partitions and
 	// LVM/loop layers would double-count). First sample has no baseline → rate stays 0.

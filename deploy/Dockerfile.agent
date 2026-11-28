@@ -80,8 +80,9 @@ LABEL org.opencontainers.image.source="https://github.com/SimerayCom/tugra" \
 # gnupg (gpg) is required for encrypted backups: the backup/restore pipeline pipes the
 # dump through `gpg --symmetric` (and `gpg -d` on restore); without it an encrypted
 # destination's backup fails with "gpg: command not found".
+# jq is required by the Nixpacks build step (it adds curl/wget to the plan's setup phase); without it that step is skipped.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends git git-lfs openssh-client ca-certificates curl bash gnupg \
+ && apt-get install -y --no-install-recommends git git-lfs openssh-client ca-certificates curl bash gnupg jq \
  && rm -rf /var/lib/apt/lists/*
 COPY --from=dockercli /usr/local/bin/docker /usr/local/bin/docker
 COPY --from=dockercli /usr/local/libexec/docker/cli-plugins/docker-compose /usr/local/libexec/docker/cli-plugins/docker-compose
