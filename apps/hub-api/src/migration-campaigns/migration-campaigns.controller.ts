@@ -1,4 +1,5 @@
-import { Body, Controller, Get, HttpCode, Param, Post, Query, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, HttpCode, Logger, Param, Post, Query, UseGuards } from "@nestjs/common";
+import type { CampaignView } from "@tugra/shared";
 import { ApiSecurity, ApiTags } from "@nestjs/swagger";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
@@ -21,6 +22,8 @@ import { z } from "zod";
 @Controller("migration-campaigns")
 @UseGuards(ApiAuthGuard, ScopesGuard)
 export class MigrationCampaignsController {
+  private readonly logger = new Logger(MigrationCampaignsController.name);
+
   constructor(
     private readonly campaigns: MigrationCampaignsService,
     private readonly advancer: CampaignAdvancerService,
@@ -51,11 +54,32 @@ export class MigrationCampaignsController {
     return this.campaigns.get(user.userId, id);
   }
 
-  /** Create the campaign and its runs (201). Owner only. */
+  /**
+   * Create the campaign and its runs (201), and hand it to the hub (unless `start` is false): the creation and the first start are one request, so a closed
+   * tab cannot leave the runs queued. A campaign that cannot be handed over stays as made (its runs queued) and the page offers "Start all". Owner only.
+   */
   @Post()
   @RequireScopes("deploy", "read:secrets")
-  create(@CurrentUser() user: AuthUser, @Body(new ZodValidationPipe(CampaignCreateSchema)) body: CampaignCreateInput) {
-    return this.campaigns.create(runActorFromAuth(user), body);
+  async create(@CurrentUser() user: AuthUser, @Body(new ZodValidationPipe(CampaignCreateSchema)) body: CampaignCreateInput) {
+    const actor = runActorFromAuth(user);
+    const made = await this.campaigns.create(actor, body);
+    if (body.start === false) return made;
+    const views: CampaignView[] = [];
+    for (const v of made.campaigns) {
+      try {
+        if (body.dryRun) {
+          // a dry run is looked at, not driven: the hub holds the later servers behind it, so only the first one is started
+          await this.campaigns.startFirstRun(actor, v);
+          views.push(v);
+        } else {
+          views.push(await this.advancer.start(actor, v.id));
+        }
+      } catch (e) {
+        this.logger.warn(`campaign ${v.id} was made but not handed over: ${e instanceof Error ? e.message : String(e)}`);
+        views.push(v);
+      }
+    }
+    return { ...views[0], campaigns: views };
   }
 
   /** Abort the runs that have not started and cancel the campaign. Owner only. */
