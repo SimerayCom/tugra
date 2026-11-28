@@ -76939,18 +76939,37 @@
           "content": {
             "application/json": {
               "schema": {
-                "type": "object",
-                "properties": {
-                  "token": {
-                    "type": "string",
-                    "minLength": 1,
-                    "maxLength": 4096
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "token": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 4096
+                      }
+                    },
+                    "required": [
+                      "token"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "agent": {
+                        "type": "boolean",
+                        "enum": [
+                          true
+                        ]
+                      }
+                    },
+                    "required": [
+                      "agent"
+                    ],
+                    "additionalProperties": false
                   }
-                },
-                "required": [
-                  "token"
-                ],
-                "additionalProperties": false
+                ]
               }
             }
           }

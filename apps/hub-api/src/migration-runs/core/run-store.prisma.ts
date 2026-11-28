@@ -1,6 +1,7 @@
 import { Injectable } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { PrismaService } from "../../prisma/prisma.service";
+import { OPEN_STATUSES } from "./run-logic";
 import { RunLeaseLostError, LIVE_RUN_STATUSES, type RunStatus, type StepKey, type StepStatus } from "./run-contract";
 import {
   ServerHasLiveRunError,
@@ -123,6 +124,11 @@ export class PrismaRunStore implements RunStore {
     return this.prisma.migrationRun.findMany({ where: { status: { in: ["RUNNING", "WAITING", "ABORTING", "ROLLING_BACK", "REVERSING"] } }, orderBy: { createdAt: "asc" } });
   }
 
+  async openSessionIds(): Promise<string[]> {
+    const rows = await this.prisma.migrationRun.findMany({ where: { status: { in: [...OPEN_STATUSES] }, sessionId: { not: null } }, select: { sessionId: true }, distinct: ["sessionId"], take: 500 });
+    return rows.flatMap((r) => (r.sessionId ? [r.sessionId] : []));
+  }
+
   manualInFlight(): Promise<StepRow[]> {
     return this.prisma.migrationRunStep.findMany({
       where: { key: "DECOMMISSION", status: { in: ["RUNNING", "WAITING_OPERATOR", "WAITING_APPROVAL", "WAITING_TIMER"] }, run: { status: "COMPLETED" } },
@@ -134,6 +140,7 @@ export class PrismaRunStore implements RunStore {
       id,
       ...(guard.bootId ? { ownerId: guard.bootId } : {}),
       ...(guard.statusIn ? { status: { in: [...guard.statusIn] } } : {}),
+      ...(guard.sessionId ? { sessionId: guard.sessionId } : {}),
       ...(guard.ponrUnset === true ? { ponrAt: null } : guard.ponrUnset === false ? { ponrAt: { not: null } } : {}),
       ...(guard.orphanOf ? { OR: [{ ownerId: null }, { ownerId: { not: guard.orphanOf } }] } : {}),
     };

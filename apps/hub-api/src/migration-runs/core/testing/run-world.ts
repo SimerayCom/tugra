@@ -249,6 +249,10 @@ export class InMemoryRunStore implements RunStore {
   async drivable(): Promise<RunRow[]> {
     return [...this.runs.values()].filter((r) => ["RUNNING", "WAITING", "ABORTING", "ROLLING_BACK", "REVERSING"].includes(r.status)).map(clone);
   }
+  async openSessionIds(): Promise<string[]> {
+    const open = ["QUEUED", "RUNNING", "WAITING", "PAUSED", "FAILED"];
+    return [...new Set([...this.runs.values()].filter((r) => open.includes(r.status) && r.sessionId).map((r) => r.sessionId as string))];
+  }
   async manualInFlight(): Promise<StepRow[]> {
     return [...this.stepRows.entries()].flatMap(([runId, rows]) =>
       this.runs.get(runId)?.status === "COMPLETED" ? rows.filter((s) => s.key === "DECOMMISSION" && ["RUNNING", "WAITING_OPERATOR", "WAITING_APPROVAL", "WAITING_TIMER"].includes(s.status)).map(clone) : [],
@@ -263,6 +267,7 @@ export class InMemoryRunStore implements RunStore {
       !!r &&
       leaseOk &&
       (!guard.statusIn || guard.statusIn.includes(r.status as RunStatus)) &&
+      (!guard.sessionId || r.sessionId === guard.sessionId) &&
       (guard.ponrUnset === undefined || (guard.ponrUnset ? r.ponrAt === null : r.ponrAt !== null)) &&
       (!guard.orphanOf || r.ownerId === null || r.ownerId !== guard.orphanOf);
     if (!ok) {
@@ -411,6 +416,30 @@ export class FakeEnv implements RunEnvPort {
     const expiresAt = new Date(this.clock.t + 3_600_000);
     this.sessions.set(id, { ...this.session0(id), baseUrl: input.baseUrl, expiresAt });
     return { sessionId: id, expiresAt };
+  }
+  /** Every call of the keeper / an action, in order. A renewal moves a live session's end to one hour past the fake clock, like the real one. */
+  renewals: string[][] = [];
+  async renewSessions(ids: readonly string[]): Promise<void> {
+    this.renewals.push([...ids]);
+    for (const id of ids) {
+      const s = this.sessions.get(id);
+      if (s && s.state === "active" && s.expiresAt.getTime() > this.clock.t) s.expiresAt = new Date(this.clock.t + 3_600_000);
+    }
+  }
+  /** Agent sessions the run page asked for (the reconnect), and the sessions given back. */
+  agentConnects: Array<{ teamId: string; serverId: string; sourceTeamRef?: string | null; scopeLabel?: string }> = [];
+  endedSessions: string[] = [];
+  async connectAgentSession(_u: string, input: { teamId: string; serverId: string; sourceTeamRef?: string | null; scopeLabel?: string }) {
+    this.agentConnects.push(input);
+    const id = `s-agent-${++this.n}`;
+    const expiresAt = new Date(this.clock.t + 3_600_000);
+    this.sessions.set(id, { ...this.session0(id), baseUrl: `agent://${input.serverId}`, expiresAt, sourceTeamRef: input.sourceTeamRef ?? null });
+    return { sessionId: id, expiresAt };
+  }
+  async endSession(_u: string, id: string): Promise<void> {
+    this.endedSessions.push(id);
+    const s = this.sessions.get(id);
+    if (s) s.state = "revoked";
   }
   async objectMigration(id: string) {
     return this.objectMigrations.get(id) ?? null;
@@ -890,7 +919,7 @@ export class RunWorld {
     this.engine.options = { heartbeatMs: 0 };
     if (!this.opts.autoKick) this.engine.kick = () => undefined;
     this.service = new MigrationRunsService(this.store, this.engine, this.registry, this.env, this.sink, this.port, undefined, undefined, this.hints);
-    this.recovery = new RunRecoveryService(this.store, this.engine, this.sink);
+    this.recovery = new RunRecoveryService(this.store, this.engine, this.sink, this.env);
   }
 
   /** The process dies: the old engine is dropped, fan-outs stop, then a new boot starts. */

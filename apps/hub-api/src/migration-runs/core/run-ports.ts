@@ -46,6 +46,12 @@ export interface RunEnvPort {
   connectSession(userId: string, input: { teamId: string; sourceKind: RemoteSourceKind; baseUrl: string; token: string; scopeLabel?: string }): Promise<{ sessionId: string; expiresAt: Date }>;
   /** An object migration the operator wants to attach to a step. */
   objectMigration(id: string): Promise<{ id: string; teamId: string; createdById: string } | null>;
+  /** OPTIONAL: an action on a run touched these import sessions, or the run keeper is keeping them alive: move their end (sliding expiry). Best effort; never throws. */
+  renewSessions?(sessionIds: readonly string[]): Promise<void>;
+  /** OPTIONAL: connect a NEW import session through the agent on the Coolify host the run's source session read (no token). The hub does what the owner's "reconnect" does. */
+  connectAgentSession?(userId: string, input: { teamId: string; serverId: string; sourceTeamRef?: string | null; scopeLabel?: string }): Promise<{ sessionId: string; expiresAt: Date }>;
+  /** OPTIONAL: end an import session the caller made and will not use (a reconnect whose plan changed). Best effort. */
+  endSession?(userId: string, sessionId: string): Promise<void>;
   /** OPTIONAL: the campaign of this label on the team was cancelled (a finished dry run of it must not be promoted any more). A port that cannot tell never blocks. */
   campaignCancelled?(teamId: string, label: string): Promise<boolean>;
 }

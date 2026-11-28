@@ -51388,6 +51388,9 @@ export interface operations {
             content: {
                 "application/json": {
                     token: string;
+                } | {
+                    /** @enum {boolean} */
+                    agent: true;
                 };
             };
         };

@@ -237,6 +237,20 @@ describe("PrismaRunStore", () => {
     expect(step.findMany.mock.calls[0][0].where).toMatchObject({ key: "DECOMMISSION", run: { status: "COMPLETED" } });
     expect(await store.stepsOf([])).toEqual([]);
   });
+
+  it("the keeper's query: the distinct import sessions of the open runs, queued and paused ones included", async () => {
+    const { store, run } = fake();
+    run.findMany.mockResolvedValue([{ sessionId: "a" }, { sessionId: null }, { sessionId: "b" }]);
+    expect(await store.openSessionIds()).toEqual(["a", "b"]);
+    expect(run.findMany.mock.calls[0][0]).toMatchObject({ where: { status: { in: ["QUEUED", "RUNNING", "WAITING", "PAUSED", "FAILED"] }, sessionId: { not: null } }, distinct: ["sessionId"] });
+  });
+
+  it("a rebind to a renewed session is guarded by the session the run is bound to now", async () => {
+    const { store, run } = fake();
+    run.updateMany.mockResolvedValue({ count: 1 });
+    await store.updateRun("r1", { statusIn: ["QUEUED"], sessionId: "old" }, { sessionId: "new" });
+    expect(run.updateMany.mock.calls[0][0].where).toMatchObject({ id: "r1", sessionId: "old", status: { in: ["QUEUED"] } });
+  });
 });
 
 /**

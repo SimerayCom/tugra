@@ -1,9 +1,9 @@
-import { Inject, Injectable, Logger, OnApplicationBootstrap, OnModuleDestroy } from "@nestjs/common";
+import { Inject, Injectable, Logger, OnApplicationBootstrap, OnModuleDestroy, Optional } from "@nestjs/common";
 import { RunOptionsSchema, type WaitSpec } from "./dto";
 import type { RunMode, StepKey } from "./run-contract";
 import { RunEngineService } from "./run-engine.service";
 import { WAIT_STUCK_KEY, isWaitingStep, waitSince } from "./run-logic";
-import { RUN_SINK, RUN_STORE, type RunSinkPort } from "./run-ports";
+import { RUN_ENV, RUN_SINK, RUN_STORE, type RunEnvPort, type RunSinkPort } from "./run-ports";
 import type { RunStore } from "./run-store";
 
 const TICK_MS = 15_000;
@@ -27,6 +27,8 @@ export class RunRecoveryService implements OnApplicationBootstrap, OnModuleDestr
     @Inject(RUN_STORE) private readonly store: RunStore,
     private readonly engine: RunEngineService,
     @Inject(RUN_SINK) private readonly sink: RunSinkPort,
+    // Optional so a world without import sessions (and every older spec) is unchanged.
+    @Optional() @Inject(RUN_ENV) private readonly env?: RunEnvPort,
   ) {}
 
   onApplicationBootstrap(): void {
@@ -44,6 +46,7 @@ export class RunRecoveryService implements OnApplicationBootstrap, OnModuleDestr
 
   /** One pass. Resolves once the passes it started settled; returns the run ids it handed to the engine (for tests). */
   async tick(now: Date = this.engine.clock.now()): Promise<string[]> {
+    await this.keepSessions();
     const rows = await this.store.drivable();
     const driven: Promise<void>[] = [];
     const ids: string[] = [];
@@ -60,6 +63,21 @@ export class RunRecoveryService implements OnApplicationBootstrap, OnModuleDestr
     }
     await Promise.all(driven);
     return ids;
+  }
+
+  /**
+   * The run keeper: an import session lives an hour after its last action, but a campaign's later waves sit QUEUED, PAUSED or waiting for
+   * the owner for hours. Every open run keeps its import session alive here (a session that is not bound to an open run is left to run out),
+   * so a wave that starts late finds a live session without any browser staying open. The session's own hard end still bounds it.
+   */
+  private async keepSessions(): Promise<void> {
+    if (!this.env?.renewSessions) return;
+    try {
+      const ids = await this.store.openSessionIds();
+      if (ids.length) await this.env.renewSessions(ids);
+    } catch (e) {
+      this.logger.warn(`session keeper failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
   }
 
   /** Notify (once per wait) when an operator or approval wait outlives `stuckOperatorMinutes`. */

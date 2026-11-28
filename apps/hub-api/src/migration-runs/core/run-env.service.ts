@@ -60,6 +60,19 @@ export class RunEnvService implements RunEnvPort {
     return this.importer.connect(userId, input);
   }
 
+  async renewSessions(sessionIds: readonly string[]): Promise<void> {
+    await this.importer.renewSessions(sessionIds);
+  }
+
+  async connectAgentSession(userId: string, input: { teamId: string; serverId: string; sourceTeamRef?: string | null; scopeLabel?: string }): Promise<{ sessionId: string; expiresAt: Date }> {
+    const r = await this.importer.connectAgent(userId, { sourceKind: "coolify", teamId: input.teamId, serverId: input.serverId, ...(input.scopeLabel ? { scopeLabel: input.scopeLabel } : {}), ...(input.sourceTeamRef ? { sourceTeamRef: input.sourceTeamRef } : {}) });
+    return { sessionId: r.sessionId, expiresAt: r.expiresAt };
+  }
+
+  async endSession(userId: string, sessionId: string): Promise<void> {
+    await this.importer.revokeSession(userId, sessionId).catch(() => undefined);
+  }
+
   objectMigration(id: string): Promise<{ id: string; teamId: string; createdById: string } | null> {
     return this.prisma.objectMigration.findUnique({ where: { id }, select: { id: true, teamId: true, createdById: true } });
   }

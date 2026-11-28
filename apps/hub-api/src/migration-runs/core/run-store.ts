@@ -120,6 +120,8 @@ export interface RunGuard {
   statusIn?: readonly RunStatus[];
   /** `true`: ponrAt must be null; `false`: must be set. */
   ponrUnset?: boolean;
+  /** The run must still be bound to this import session (a rebind to a renewed session cannot cross another one). */
+  sessionId?: string;
   /** `ownerId` must be null (never claimed) or differ from this boot id (an orphan). */
   orphanOf?: string;
 }
@@ -159,6 +161,8 @@ export interface RunStore {
   list(filter: ListRunsFilter): Promise<RunRow[]>;
   /** Non-terminal runs the scheduler must tick (QUEUED excluded: only an explicit start/dry-run kick drives those). */
   drivable(): Promise<RunRow[]>;
+  /** The import sessions that open runs (queued, running, waiting, paused or failed and retryable) are bound to: the run keeper keeps them alive. */
+  openSessionIds(): Promise<string[]>;
   /** Steps of finished takeover runs that a decommission left in flight (re-driven after a hub restart). */
   manualInFlight(): Promise<StepRow[]>;
 

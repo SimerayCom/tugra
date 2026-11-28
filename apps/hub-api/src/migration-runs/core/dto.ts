@@ -563,8 +563,12 @@ export type ReverseRunInput = z.infer<typeof ReverseRunSchema>;
 export const DecommissionRunSchema = z.object({ confirmName: z.string().trim().min(1).max(253) }).strict();
 export type DecommissionRunInput = z.infer<typeof DecommissionRunSchema>;
 
-/** `POST /:id/source-session`: re-enter the source token (never returned, stored encrypted in the ImportSession). */
-export const SourceSessionSchema = z.object({ token: z.string().min(1).max(4096) }).strict();
+/**
+ * `POST /:id/source-session`: give the run a live source session again. Either re-enter the source token (never returned, stored encrypted
+ * in the ImportSession), or `{ agent: true }` for a source read through the agent: the hub reconnects through the agent of the run's own
+ * Coolify host (no token), as the same owner, and binds the new session only if the source is still the one the run was planned on.
+ */
+export const SourceSessionSchema = z.union([z.object({ token: z.string().min(1).max(4096) }).strict(), z.object({ agent: z.literal(true) }).strict()]);
 export type SourceSessionInput = z.infer<typeof SourceSessionSchema>;
 export const SourceSessionResultSchema = z.object({ sessionId: Id, expiresAt: Iso });
 export type SourceSessionResult = z.infer<typeof SourceSessionResultSchema>;

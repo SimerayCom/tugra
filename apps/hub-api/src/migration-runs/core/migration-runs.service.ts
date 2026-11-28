@@ -214,6 +214,7 @@ export class MigrationRunsService implements MigrationRunsFacade {
     const serverMap = serverMapOf(body.serverMap ?? {});
     this.assertTopology(body.topology, body.sourceKind, [server.id, ...Object.values(serverMap)]);
     const session = await this.requireSession(actor, body.sessionId, body.sourceKind);
+    await this.touchSession(session.id);
     // a real run imports with the owner's consent for secret values (an agent session): refused here, with its code, not at the IMPORT step
     if (!body.dryRun && !inPlace) await this.assertConsent(actor, session);
     await this.assertTargetsInTeam(server.teamId, serverMap);
@@ -444,6 +445,12 @@ export class MigrationRunsService implements MigrationRunsFacade {
     }
   }
 
+  /** An action on a run is an action on its import session: it keeps living (sliding expiry). Best effort, never fails the action. */
+  private async touchSession(sessionId: string | null | undefined): Promise<void> {
+    if (!sessionId || !this.env.renewSessions) return;
+    await this.env.renewSessions([sessionId]).catch(() => undefined);
+  }
+
   private async requireSession(actor: RunActor, sessionId: string, kind: string): Promise<RunSessionInfo> {
     const s = await this.env.session(actor.userId, sessionId);
     if (!s || s.sourceKind !== kind) throw new NotFoundException("session-not-found");
@@ -487,6 +494,7 @@ export class MigrationRunsService implements MigrationRunsFacade {
     if (run.status === "DRY_RUN_DONE") return this.promote(actor, run, body);
     if (run.status !== "QUEUED" || run.dryRun) throw conflict("run-not-startable");
     this.assertHandlers(run.mode as RunMode);
+    await this.touchSession(run.sessionId);
     // The consent was given for the session when the run was made; it may have run out or been replaced since. A session that ended is
     // the steps' own wait (`step.session-expired`), not judged here.
     if (!run.inPlace && run.sessionId) {
@@ -514,6 +522,7 @@ export class MigrationRunsService implements MigrationRunsFacade {
     const sessionId = body.sessionId ?? from.sessionId;
     if (!sessionId) throw bad("session-required");
     const session = await this.requireSession(actor, sessionId, from.sourceKind);
+    await this.touchSession(session.id);
     // a renewed session starts without the consent the old one held: the screen asks for it, and the promotion refuses without it
     if (!from.inPlace) await this.assertConsent(actor, session);
     const apply = withServicePins(RunApplyInputSchema.parse(from.applyInput), hints);
@@ -620,6 +629,7 @@ export class MigrationRunsService implements MigrationRunsFacade {
     this.scope(actor, "deploy");
     const run = await this.loadActing(actor, id);
     this.requireOpen(run);
+    await this.touchSession(run.sessionId);
     const rows = await this.store.steps(run.id);
     const step = this.stepOf(rows, key);
     if (step.status !== "WAITING_APPROVAL") throw conflict("step-not-waiting-approval");
@@ -993,26 +1003,62 @@ export class MigrationRunsService implements MigrationRunsFacade {
       if (run.dryRun) throw conflict("run-is-dry-run");
     }
     const old = run.sessionId ? await this.env.session(actor.userId, run.sessionId) : null;
-    // A session that reads through the agent has no token to renew: it is reconnected through the agent, not here.
+    const next = "agent" in body ? await this.reconnectViaAgent(actor, run, old) : await this.reconnectWithToken(actor, run, old, body.token);
+    if (!promotable) {
+      // Compare-and-set on the session the run is bound to now: two tabs reconnecting at once cannot cross each other's session.
+      const ok = await this.store.updateRun(run.id, { statusIn: OPEN_STATUSES, ...(run.sessionId ? { sessionId: run.sessionId } : {}) }, { sessionId: next.sessionId });
+      if (!ok) {
+        if ("agent" in body) await this.env.endSession?.(actor.userId, next.sessionId);
+        throw conflict("run-not-open");
+      }
+      await this.event(run.id, actor, "run.session.refreshed", "info", null, "agent" in body ? { via: "agent" } : {});
+    }
+    await this.audit(actor, "source-session", run.id, { sessionId: next.sessionId, ...("agent" in body ? { via: "agent" } : {}), ...(promotable ? { dryRun: true } : {}) });
+    if (!promotable) this.engine.kick(run.id, "tick");
+    return { sessionId: next.sessionId, expiresAt: next.expiresAt.toISOString() };
+  }
+
+  /** A source read with an API token: ask for the token again. A session that reads through the agent is reconnected through the agent, not here. */
+  private async reconnectWithToken(actor: RunActor, run: RunRow, old: RunSessionInfo | null, token: string): Promise<{ sessionId: string; expiresAt: Date }> {
     if (old && isAgentSessionBaseUrl(old.baseUrl)) throw conflict("source-is-agent");
     // A purged (expired) session row cannot tell us its URL any more: the run only kept the host, so fall back to https.
     const baseUrl = old?.baseUrl ?? (run.sourceHost ? `https://${run.sourceHost}` : null);
     if (!baseUrl) throw conflict("source-unknown");
-    const next = await this.env.connectSession(actor.userId, {
+    return this.env.connectSession(actor.userId, {
       teamId: old?.teamId ?? run.teamId,
       sourceKind: run.sourceKind as "coolify" | "dokploy",
       baseUrl,
-      token: body.token,
+      token,
       ...(old?.scopeKey ? { scopeLabel: old.scopeKey } : {}),
     });
-    if (!promotable) {
-      const ok = await this.store.updateRun(run.id, { statusIn: OPEN_STATUSES }, { sessionId: next.sessionId });
-      if (!ok) throw conflict("run-not-open");
-      await this.event(run.id, actor, "run.session.refreshed", "info", null);
+  }
+
+  /**
+   * A source read through the agent: connect a new session through the SAME agent and Coolify team the run was made for (the run stores both),
+   * as its owner, and only then trust it: the plan it reads must still hash to the plan the run was frozen on, or nothing is bound
+   * (409 `plan-changed`: the source moved, the owner looks again). Consent for secret values is bound to the session id and is never carried
+   * over: a copy run asks for it again on the new session, an in-place run needs none.
+   */
+  private async reconnectViaAgent(actor: RunActor, run: RunRow, old: RunSessionInfo | null): Promise<{ sessionId: string; expiresAt: Date }> {
+    if (old && !isAgentSessionBaseUrl(old.baseUrl)) throw conflict("source-not-agent");
+    const serverId = run.agentServerId ?? (old ? old.baseUrl.slice(AGENT_SESSION_URL_PREFIX.length) : null);
+    if (!serverId || !this.env.connectAgentSession) throw conflict("source-unknown");
+    const connected = await this.env.connectAgentSession(actor.userId, {
+      teamId: old?.teamId ?? run.teamId,
+      serverId,
+      sourceTeamRef: run.sourceTeamRef ?? old?.sourceTeamRef ?? null,
+      ...(old?.scopeKey ? { scopeLabel: old.scopeKey } : {}),
+    });
+    try {
+      const fresh = await this.env.session(actor.userId, connected.sessionId);
+      if (!fresh) throw conflict("session-expired");
+      const apply = RunApplyInputSchema.parse(run.applyInput);
+      await this.assertPlanFresh(actor, fresh, { planHash: run.planHash, ...(apply.dbDataModes ? { dbDataModes: apply.dbDataModes } : {}) });
+    } catch (e) {
+      await this.env.endSession?.(actor.userId, connected.sessionId);
+      throw e;
     }
-    await this.audit(actor, "source-session", run.id, { sessionId: next.sessionId, ...(promotable ? { dryRun: true } : {}) });
-    if (!promotable) this.engine.kick(run.id, "tick");
-    return { sessionId: next.sessionId, expiresAt: next.expiresAt.toISOString() };
+    return connected;
   }
 
   // ───────────────────────────── report ─────────────────────────────
