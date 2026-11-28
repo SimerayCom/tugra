@@ -240,9 +240,12 @@ describe("what the lists hide by default", () => {
     expect(["RUNNING", "WAITING", "FAILED", "QUEUED", "DRY_RUN_DONE"].map(runBucket)).toEqual(["live", "live", "live", "live", "live"]);
   });
   it("sorts a label known only by its runs: live while anything is open, done when something finished, else cancelled", () => {
-    expect(rollupBucket({ total: 3, completed: 1, live: 1, failed: 0, other: 1 })).toBe("live");
-    expect(rollupBucket({ total: 2, completed: 1, live: 0, failed: 1, other: 0 })).toBe("live");
-    expect(rollupBucket({ total: 2, completed: 1, live: 0, failed: 0, other: 1 })).toBe("done");
-    expect(rollupBucket({ total: 2, completed: 0, live: 0, failed: 0, other: 2 })).toBe("cancelled");
+    expect(rollupBucket({ total: 3, completed: 1, live: 1, failed: 0, other: 1, stopped: 1 })).toBe("live");
+    expect(rollupBucket({ total: 2, completed: 1, live: 0, failed: 1, other: 0, stopped: 0 })).toBe("live");
+    expect(rollupBucket({ total: 2, completed: 1, live: 0, failed: 0, other: 1, stopped: 1 })).toBe("done");
+    expect(rollupBucket({ total: 2, completed: 0, live: 0, failed: 0, other: 2, stopped: 2 })).toBe("cancelled");
+    // dry runs only: the run list shows them as live, so the label is live too
+    expect(rollupBucket({ total: 2, completed: 0, live: 0, failed: 0, other: 2, stopped: 0 })).toBe("live");
+    expect(rollupBucket({ total: 2, completed: 0, live: 0, failed: 0, other: 2, stopped: 1 })).toBe("live");
   });
 });

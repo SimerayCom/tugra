@@ -401,6 +401,7 @@ describe("errors", () => {
   it("localizes the contract's machine codes and passes other messages through", () => {
     expect(errorText(t, new Error("409 approval-stale"))).toBe("What you approved no longer matches the current state. Review it again.");
     expect(errorText(t, new Error("run-past-ponr"))).toContain("point of no return");
+    expect(errorText(t, new Error("409 campaign-label-taken"))).toContain("already exists");
     expect(errorText(t, new Error("source-not-agent"))).toContain("API token");
     expect(errorText(t, new Error("409 source-is-agent"))).toContain("Reconnect to Coolify");
     expect(errorText(t, new Error("human-confirmation-required"))).toContain("person");
@@ -569,8 +570,8 @@ describe("run list helpers", () => {
       { campaign: null, status: "RUNNING" as const },
     ];
     expect(campaignRollup(rows)).toEqual([
-      { campaign: "wave-1", total: 1, completed: 0, live: 1, failed: 0, other: 0 },
-      { campaign: "wave-2", total: 6, completed: 1, live: 1, failed: 1, other: 3 },
+      { campaign: "wave-1", total: 1, completed: 0, live: 1, failed: 0, other: 0, stopped: 0 },
+      { campaign: "wave-2", total: 6, completed: 1, live: 1, failed: 1, other: 3, stopped: 2 },
     ]);
     for (const c of campaignRollup(rows)) expect(c.completed + c.live + c.failed + c.other).toBe(c.total);
   });

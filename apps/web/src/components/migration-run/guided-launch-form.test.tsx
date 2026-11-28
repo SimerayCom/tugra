@@ -427,6 +427,8 @@ describe("a mixed placement is a campaign", () => {
     await waitFor(() => expect(card.textContent).toContain("Wave 2"));
     expect(card.textContent).toContain("Beta moves to Server B");
     expect(card.textContent).toContain("Alpha stays on its own machine");
+    // the apps of each server are listed under its run, whether it stays or moves
+    expect(within(card).getAllByTestId("plan-app-row").map((r) => r.textContent)).toEqual(["app:s2:api", "app:s1:web"]);
     expect(planCampaign.mock.calls[0][0]).toEqual({
       sessionId: "s1",
       planHash: "a".repeat(32),

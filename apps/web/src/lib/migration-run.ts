@@ -917,6 +917,8 @@ export interface CampaignRollup {
   failed: number;
   /** Dry runs and runs that were aborted, rolled back or reversed: settled, but not a migration that completed. */
   other: number;
+  /** Of `other`, the runs stopped for good (aborted, rolled back, reversed); the rest of `other` are dry runs that finished, which still wait for the owner. */
+  stopped: number;
 }
 /** How many runs the roll-up asks the hub for; a list this long may be cut off, so its counts are then a lower bound. */
 export const CAMPAIGN_ROLLUP_LIMIT = 200;
@@ -927,11 +929,14 @@ export function campaignRollup(rows: ReadonlyArray<Pick<MigrationRunSummary, "ca
   const by = new Map<string, CampaignRollup>();
   for (const r of rows) {
     if (!r.campaign) continue;
-    const row = by.get(r.campaign) ?? { campaign: r.campaign, total: 0, completed: 0, live: 0, failed: 0, other: 0 };
+    const row = by.get(r.campaign) ?? { campaign: r.campaign, total: 0, completed: 0, live: 0, failed: 0, other: 0, stopped: 0 };
     row.total += 1;
     if (r.status === "COMPLETED") row.completed += 1;
     else if (r.status === "FAILED") row.failed += 1;
-    else if (isTerminalRun(r.status)) row.other += 1;
+    else if (isTerminalRun(r.status)) {
+      row.other += 1;
+      if (r.status === "ABORTED" || r.status === "ROLLED_BACK" || r.status === "REVERSED") row.stopped += 1;
+    }
     else row.live += 1;
     by.set(r.campaign, row);
   }
@@ -972,7 +977,7 @@ export interface CampaignRunRow {
 export interface CampaignReportData {
   campaign: string;
   runs: CampaignRunRow[];
-  rollup: Omit<CampaignRollup, "campaign">;
+  rollup: Omit<CampaignRollup, "campaign" | "stopped">;
   /** Items over the runs whose report is loaded. */
   totals: { moved: number; skipped: number; acked: number; failed: number; notCutOver: number };
   window: {
@@ -1106,6 +1111,7 @@ export const ERROR_CODE_KEY: Record<string, string> = {
   "campaign-cancelled": "migrationRun.errors.campaign-cancelled",
   "campaign-swap-busy": "migrationRun.errors.campaign-swap-busy",
   "campaign-creator-only": "migrationRun.errors.campaign-creator-only",
+  "campaign-label-taken": "migrationRun.errors.campaign-label-taken",
 };
 
 /** An error from the hub as one readable line: a known machine code is localized, anything else is the hub's message. */

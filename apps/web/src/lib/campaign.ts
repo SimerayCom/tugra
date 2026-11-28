@@ -164,10 +164,14 @@ export type CampaignFilter = CampaignBucket | "all";
 /** The same three tabs for a single run: finished, stopped for good (aborted, rolled back, reversed), or anything else (moving, waiting, failed: it still needs a look). */
 export const runBucket = (status: string): CampaignBucket => (status === "COMPLETED" ? "done" : status === "ABORTED" || status === "ROLLED_BACK" || status === "REVERSED" ? "cancelled" : "live");
 
-/** The tab of a label that is known only by its runs (no campaign row to ask): live while any run is open, done when something finished, else cancelled. */
-export function rollupBucket(r: { total: number; completed: number; live: number; failed: number; other: number }): CampaignBucket {
+/**
+ * The tab of a label that is known only by its runs (no campaign row to ask): live while any run is open, done when something finished, cancelled
+ * when every run was stopped for good. A label of dry runs only is live, as the run list says of the same runs ({@link runBucket}).
+ */
+export function rollupBucket(r: { total: number; completed: number; live: number; failed: number; other: number; stopped: number }): CampaignBucket {
   if (r.live > 0 || r.failed > 0) return "live";
-  return r.completed > 0 ? "done" : r.other > 0 ? "cancelled" : "live";
+  if (r.completed > 0) return "done";
+  return r.other > 0 && r.stopped === r.other ? "cancelled" : "live";
 }
 export const matchesCampaignFilter = (status: CampaignStatus, f: CampaignFilter): boolean => f === "all" || campaignBucket(status) === f;
 

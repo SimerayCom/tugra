@@ -97,6 +97,7 @@ export function CampaignPreviewCard({
             <strong>{t("placement.campaign.wave", { n: w.wave + 1 })}</strong>
             {": "}
             {r.kind === "in-place" ? t("placement.campaign.runInPlace", { source: sourcesOfRun(r).map(nameOfSource).join(", ") }) : t("placement.campaign.runOther", { source: sourcesOfRun(r).map(nameOfSource).join(", "), target: nameOfServer(r.targetServerId) })}
+            <PlanAppRows apps={appsOf(sourcesOfRun(r))} />
             {r.kind === "in-place" && onRebuild && (
               <RebuildPicker choices={rebuildChoicesOf(r, items, inScope)} chosen={rebuild} onChange={onRebuild} disabled={disabled} serverName={sourcesOfRun(r).map(nameOfSource).join(", ")} />
             )}
