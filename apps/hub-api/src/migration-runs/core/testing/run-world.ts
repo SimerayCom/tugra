@@ -8,6 +8,7 @@
  * Lanes B and C can build on it: register their real handlers with `world.registry` (or keep the stubs for the steps they
  * do not own) and drive them through the real engine and service.
  */
+import type { InPlaceRunPort, RunTakeoverState } from "../../../coolify-inplace/inplace-run";
 import { ConflictException, ForbiddenException, HttpException, NotFoundException } from "@nestjs/common";
 import type { ImportApplyInput, ImportMappingResolveInput, RemoteSourceKind } from "../../../importer/dto";
 import type { ImportPlanResponse } from "../../../importer/importer.service";
@@ -704,8 +705,12 @@ export class ScriptedImportPort implements ImportStepsPort {
       t.status = "ROLLED_BACK";
     }
   }
-  async opItems(): Promise<RunReport["items"]> {
-    return [];
+  /** What the report lists of the import op, and the run input it was asked with (the run's own items are the port's business). */
+  opItemsOut: RunReport["items"] = [];
+  opItemsInput: unknown = undefined;
+  async opItems(_u?: string, _op?: string, applyInput?: unknown): Promise<RunReport["items"]> {
+    this.opItemsInput = applyInput;
+    return this.opItemsOut;
   }
   /** What the report's data section shows; a spec sets it to prove the report carries it (and the markdown prints it). */
   dataIntegrity: RunReport["dataIntegrity"] = [];
@@ -897,6 +902,8 @@ export class RunWorld {
   recovery!: RunRecoveryService;
   bootId!: string;
   readonly opts: WorldOptions;
+  /** The takeover an in-place run's report reads (null = none planned). */
+  takeover: RunTakeoverState | null = null;
 
   constructor(opts: WorldOptions = {}) {
     this.opts = opts;
@@ -918,7 +925,7 @@ export class RunWorld {
     this.engine.clock = this.clock;
     this.engine.options = { heartbeatMs: 0 };
     if (!this.opts.autoKick) this.engine.kick = () => undefined;
-    this.service = new MigrationRunsService(this.store, this.engine, this.registry, this.env, this.sink, this.port, undefined, undefined, this.hints);
+    this.service = new MigrationRunsService(this.store, this.engine, this.registry, this.env, this.sink, this.port, undefined, undefined, this.hints, { runState: async () => this.takeover } as unknown as InPlaceRunPort);
     this.recovery = new RunRecoveryService(this.store, this.engine, this.sink, this.env);
   }
 

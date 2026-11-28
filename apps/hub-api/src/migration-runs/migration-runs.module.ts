@@ -1,5 +1,6 @@
 import { Module } from "@nestjs/common";
 import { ApplicationsModule } from "../applications/applications.module";
+import { CoolifyInPlaceModule } from "../coolify-inplace/coolify-inplace.module";
 import { ImporterModule } from "../importer/importer.module";
 import { MigrationRunsController } from "./migration-runs.controller";
 import { MigrationRunsService } from "./core/migration-runs.service";
@@ -21,7 +22,7 @@ import { RunImportStepsModule } from "./steps/import/run-import-steps.module";
  * `RunRecoveryService` re-drives them after a restart.
  */
 @Module({
-  imports: [StepRegistryModule, ImporterModule, ApplicationsModule, RunImportStepsModule, RunDataStepsModule, RunCutoverStepsModule],
+  imports: [StepRegistryModule, ImporterModule, ApplicationsModule, RunImportStepsModule, RunDataStepsModule, RunCutoverStepsModule, CoolifyInPlaceModule],
   controllers: [MigrationRunsController],
   providers: [
     PrismaRunStore,

@@ -202,6 +202,30 @@ describe("ImportPortService", () => {
     expect(JSON.stringify(items)).not.toContain("secret reason text");
   });
 
+  it("opItems lists only the run's own items: tasks of apps, stacks and data the run leaves out are not part of its report", async () => {
+    const view = {
+      tasks: [
+        { itemRef: "app:ha:a", kind: "app", status: "DONE", resourceType: "application", resourceId: "a", name: "a" },
+        { itemRef: "app:hb:b", kind: "app", status: "SKIPPED", resourceType: null, resourceId: null, name: "b" },
+        { itemRef: "service:hb:s", kind: "service", status: "SKIPPED", resourceType: null, resourceId: null, name: "s" },
+        { itemRef: "database:hb:d", kind: "database", status: "SKIPPED", resourceType: null, resourceId: null, name: "d" },
+        { itemRef: "data:database:hb:d", kind: "data", status: "SKIPPED", resourceType: null, resourceId: null, name: null },
+        { itemRef: "data:volume:app:hb:b:/x", kind: "data", status: "SKIPPED", resourceType: null, resourceId: null, name: null },
+        { itemRef: "data:volume:app:ha:a:/y", kind: "data", status: "DONE", resourceType: null, resourceId: null, name: null },
+      ],
+      plan: null,
+    };
+    const { svc } = make({ statusView: view });
+    const apply = {
+      mapping: { version: 1 as const, items: { "app:hb:b": { include: false }, "database:hb:d": { include: false } }, projects: {}, gitSources: {}, acks: [] },
+      serviceChoices: { "service:hb:s": { skip: true } },
+    };
+    const items = await svc.opItems("u1", "op-1", apply as never);
+    expect(items.map((i) => i.name)).toEqual(["a", "data:volume:app:ha:a:/y"]);
+    // without the run's input nothing is dropped (callers that do not know a run)
+    expect(await svc.opItems("u1", "op-1")).toHaveLength(7);
+  });
+
   it("mintCommand mints or reissues and passes the certs flag", async () => {
     const { svc, executor } = make();
     expect(await svc.mintCommand("u1", "op-1", "https://hub", { reissue: false, certs: true })).toMatchObject({ command: "CMD", commands: { run: "b" } });

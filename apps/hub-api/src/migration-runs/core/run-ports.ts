@@ -5,7 +5,7 @@
  */
 import type { ImportAck, RemoteSourceKind, ServiceChoice } from "../../importer/dto";
 import type { ImportMappingDoc } from "../../importer/import-mapping";
-import type { RunReport, RunScope } from "./dto";
+import type { RunApplyInput, RunReport, RunScope } from "./dto";
 import type { ScopeFailure } from "./run-scope";
 import type { RunMode } from "./run-contract";
 
@@ -136,8 +136,12 @@ export interface RunImportPort {
    * promoted keeps it standing. Best effort, idempotent.
    */
   releaseConsent?(userId: string, input: { sessionId: string }): Promise<void>;
-  /** The coverage ledger of an import op for the final report (secret-free; empty when the op is unknown). */
-  opItems(userId: string, opId: string): Promise<RunReport["items"]>;
+  /**
+   * The coverage ledger of an import op for the final report (secret-free; empty when the op is unknown). With the run's `applyInput`, only
+   * the run's OWN items are listed: the op's tasks cover the whole source, and the ones the run leaves out (another server, a skipped stack)
+   * are not part of its report.
+   */
+  opItems(userId: string, opId: string, applyInput?: Pick<RunApplyInput, "mapping" | "serviceChoices">): Promise<RunReport["items"]>;
   /**
    * OPTIONAL: how each migrated database's data travelled, its checksum and its row-count check, for the final report
    * (secret-free; empty when the op is unknown or the adapter does not know).

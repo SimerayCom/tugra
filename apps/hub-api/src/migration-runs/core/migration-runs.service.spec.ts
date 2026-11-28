@@ -505,6 +505,25 @@ describe("decommission (takeover only, armed by its own route)", () => {
 });
 
 describe("report", () => {
+  it("asks the import op for the run's own items only, with the run's frozen apply input", async () => {
+    const w = new RunWorld();
+    w.port.opItemsOut = [{ kind: "app", name: "web", outcome: "moved", code: null, evidence: "hub-verified" }];
+    const id = await w.run();
+    const rep = await w.service.report(ACTOR, id);
+    expect(rep.items).toEqual(w.port.opItemsOut);
+    expect(w.port.opItemsInput).toMatchObject({ sourceKind: "coolify", planHash: expect.any(String) });
+  });
+
+  it("an in-place run reports what its takeover verified, not the import op's records", async () => {
+    const w = new RunWorld();
+    w.port.opItemsOut = [{ kind: "app", name: "from-the-op", outcome: "moved", code: null, evidence: "hub-verified" }];
+    const id = (await w.service.create(ACTOR, w.createBody({ topology: "swap-proxy", mode: "takeover", dryRun: true }), { inPlace: true })).id;
+    const ok = { host: "a.example.test", tempCheck: "ok" as const, finalCheck: "ok" as const, cert: "issued" as const };
+    w.takeover = { status: "SWAPPED", items: [{ itemRef: "app:h:web", name: "web", buildMode: "reuse-image", domains: [ok] }, { itemRef: "app:h:old", name: "old", buildMode: "reuse-image", skipped: true, domains: [] }] } as never;
+    const rep = await w.service.report(ACTOR, id);
+    expect(rep.items.map((i) => [i.name, i.outcome, i.code])).toEqual([["web", "moved", null], ["old", "skipped", "inplace.left-out"]]);
+  });
+
   it("is persisted at the end, secret-free, and the markdown carries the same facts", async () => {
     const w = new RunWorld();
     const id = await w.run();
