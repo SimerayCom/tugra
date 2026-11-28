@@ -551,6 +551,22 @@ describe("report", () => {
     expect(rep.steps.find((s) => s.key === "DATA_FINAL")?.status).toBe("WAITING_OPERATOR");
   });
 
+  it("lists, as operator lines, every item that started on an image the source does not necessarily run (one line per item, named)", async () => {
+    const w = new RunWorld({ stubs: { DATA_FINAL: { blocked: () => true } } });
+    const id = await w.run();
+    const ev = (itemRef: string, name: string, reason: string) => w.store.appendEvent(id, { stepKey: null, level: "warn", code: "import.exact-image-unapplied", params: { kind: "database", name, itemRef, reason }, actorId: null });
+    await ev("database:s:a", "orders", "no-inventory");
+    await ev("database:s:a", "orders", "started");
+    await ev("database:s:b", "sessions", "started");
+    const rep = await w.service.report(ACTOR, id);
+    expect(rep.manual).toEqual([
+      { code: "import.exact-image-unapplied", params: { kind: "database", name: "orders", reason: "no-inventory" } },
+      { code: "import.exact-image-unapplied", params: { kind: "database", name: "sessions", reason: "started" } },
+    ]);
+    expect(RunReportSchema.parse(JSON.parse(JSON.stringify(rep))).manual).toHaveLength(2);
+    expect(await w.service.reportMarkdown(ACTOR, id)).toContain("import.exact-image-unapplied (kind=database, name=orders, reason=no-inventory)");
+  });
+
   it("reports the measured downtime against the estimate", async () => {
     const w = new RunWorld({
       stubs: {

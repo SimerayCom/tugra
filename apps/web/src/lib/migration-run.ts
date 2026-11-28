@@ -312,11 +312,22 @@ const LANE_WORD_KEY: Record<string, string> = {
   blocked: "migrationRun.lane.blocked",
 };
 
+/** Why an item started without the exact image the source runs, in words: the `reason` param of `import.exact-image-unapplied`. */
+export const EXACT_REASON_KEY: Record<string, string> = {
+  "no-inventory": "migrationRun.exactReason.no-inventory",
+  "no-digest": "migrationRun.exactReason.no-digest",
+  started: "migrationRun.exactReason.started",
+  "other-repository": "migrationRun.exactReason.other-repository",
+  "write-failed": "migrationRun.exactReason.write-failed",
+  refused: "migrationRun.exactReason.refused",
+};
+
 /** Localize a hub code. An unknown code is shown humanized plus its params rather than hidden or guessed at. */
 export function codeText(t: T, code: string, params?: MigrationRunParams | null): string {
   const key = codeKey(code);
   const vars = paramVars(params);
   if (typeof vars.lane === "string" && vars.lane in LANE_WORD_KEY) vars.lane = t(LANE_WORD_KEY[vars.lane]);
+  if (typeof vars.reason === "string" && vars.reason in EXACT_REASON_KEY) vars.reason = t(EXACT_REASON_KEY[vars.reason]);
   const text = t(key, vars);
   if (text !== key) return text;
   const extra = Object.entries(vars).map(([k, v]) => `${k}=${v}`).join(", ");
@@ -1067,6 +1078,7 @@ export const ERROR_CODE_KEY: Record<string, string> = {
   "unknown-image": "migrationRun.errors.unknown-image",
   "invalid-pin": "migrationRun.errors.invalid-pin",
   "too-many-service-pins": "migrationRun.errors.too-many-service-pins",
+  "too-many-exact-images": "migrationRun.errors.too-many-exact-images",
   "too-many-service-choices": "migrationRun.errors.too-many-service-choices",
   "scope-unknown-server": "migrationRun.errors.scope-unknown",
   "scope-unknown-project": "migrationRun.errors.scope-unknown",

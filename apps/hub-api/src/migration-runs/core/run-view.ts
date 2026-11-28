@@ -216,7 +216,7 @@ export function evidenceSummary(steps: readonly StepRow[]): RunReport["evidenceS
   return out;
 }
 
-export function buildReport(r: RunRow, steps: readonly StepRow[], items: readonly ReportItem[], serverName: string | null, now: Date, names: ReadonlyMap<string, string> = new Map(), dataIntegrity: RunReport["dataIntegrity"] = []): RunReport {
+export function buildReport(r: RunRow, steps: readonly StepRow[], items: readonly ReportItem[], serverName: string | null, now: Date, names: ReadonlyMap<string, string> = new Map(), dataIntegrity: RunReport["dataIntegrity"] = [], warned: RunReport["manual"] = []): RunReport {
   const allNames = new Map(names);
   if (serverName !== null && !allNames.has(r.targetServerId)) allNames.set(r.targetServerId, serverName);
   const est = r.windowEstimate ? WindowEstimateSchema.parse(r.windowEstimate) : null;
@@ -245,7 +245,7 @@ export function buildReport(r: RunRow, steps: readonly StepRow[], items: readonl
     items: items.slice(0, 5000).map((i) => ({ ...i })),
     dataIntegrity: dataIntegrity.slice(0, 2000).map((d) => ({ ...d, rows: { ...d.rows, names: [...d.rows.names] } })),
     evidenceSummary: evidenceSummary(steps),
-    manual: manualOf(r).map((m) => ({ code: m.code, ...(m.params ? { params: m.params } : {}) })),
+    manual: [...manualOf(r).map((m) => ({ code: m.code, ...(m.params ? { params: m.params } : {}) })), ...warned].slice(0, 200),
   };
 }
 

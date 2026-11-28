@@ -70,12 +70,13 @@ export type ExactDue = { kind: "app" | "database"; itemRef: string; name: string
  * keeps. Only a task that is DONE counts. An app, database or stack the host reported nothing for is not in the list: it keeps what the
  * source writes, and the run says so.
  */
-export function exactDueOf(op: OpSnapshot, hints: readonly RunHint[]): ExactDue[] {
+export function exactDueOf(op: OpSnapshot, hints: readonly RunHint[], only?: ReadonlySet<string>): ExactDue[] {
   const rows = exactRows(hints).filter((r) => r.kept);
   if (!rows.length) return [];
   const out: ExactDue[] = [];
   for (const t of op.tasks) {
     if (t.status !== "DONE" || !t.itemRef || !t.resourceId) continue;
+    if (only && !only.has(t.resourceId)) continue;
     const own = rows.filter((r) => r.itemRef === t.itemRef);
     if (!own.length) continue;
     const name = t.name ?? t.itemRef;
@@ -93,13 +94,30 @@ export function exactDueOf(op: OpSnapshot, hints: readonly RunHint[]): ExactDue[
   return out;
 }
 
+/** What {@link pinExactImagesDetailed} did: the names it changed, and the records that could not take the image the source runs. */
+export interface ExactPinResult {
+  changed: string[];
+  /** Records the run knows an exact image for that cannot run it (another repository, a database that was started): they would run something else. */
+  refused: ExactDue[];
+}
+
 /**
- * R11: write the exact image the source runs into every record the import created, before ANY deploy path starts it. Idempotent: a
- * record already on that image (or on a digest of its own), or one the port cannot change, is left alone. Returns the names it changed.
+ * R11: write the exact image the source runs into every record the import created, before ANY deploy path starts it. Idempotent: a record
+ * already on that image (or on a digest of its own), or one the port cannot change, is left alone. Only the records in `only` (resource
+ * ids) when given. A record that cannot take the image is reported in `refused`, never skipped silently.
  */
-export async function pinExactImages(port: Pick<ImportStepsPort, "pinExactImage">, userId: string, op: OpSnapshot, hints: readonly RunHint[]): Promise<string[]> {
-  if (!port.pinExactImage) return [];
-  const changed: string[] = [];
-  for (const d of exactDueOf(op, hints)) if ((await port.pinExactImage(userId, d)).pinned) changed.push(d.name);
-  return changed;
+export async function pinExactImagesDetailed(port: Pick<ImportStepsPort, "pinExactImage">, userId: string, op: OpSnapshot, hints: readonly RunHint[], only?: ReadonlySet<string>): Promise<ExactPinResult> {
+  const out: ExactPinResult = { changed: [], refused: [] };
+  if (!port.pinExactImage) return out;
+  for (const d of exactDueOf(op, hints, only)) {
+    const r = await port.pinExactImage(userId, d);
+    if (r.pinned) out.changed.push(d.name);
+    else if (r.state === "refused") out.refused.push(d);
+  }
+  return out;
+}
+
+/** {@link pinExactImagesDetailed}, the names of the records it changed only. */
+export async function pinExactImages(port: Pick<ImportStepsPort, "pinExactImage">, userId: string, op: OpSnapshot, hints: readonly RunHint[], only?: ReadonlySet<string>): Promise<string[]> {
+  return (await pinExactImagesDetailed(port, userId, op, hints, only)).changed;
 }

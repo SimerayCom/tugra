@@ -207,6 +207,10 @@ export class PrismaRunStore implements RunStore {
     return this.prisma.migrationRunEvent.findMany({ where: { runId, seq: { gt: afterSeq } }, orderBy: { seq: "asc" }, take: limit });
   }
 
+  eventsWithCode(runId: string, code: string, limit: number): Promise<EventRow[]> {
+    return this.prisma.migrationRunEvent.findMany({ where: { runId, code }, orderBy: { seq: "asc" }, take: limit });
+  }
+
   async setPonr(runId: string, bootId: string, at: Date, byUserId: string): Promise<Date | "abort"> {
     const r = await this.prisma.migrationRun.updateMany({
       where: { id: runId, ownerId: bootId, ponrAt: null, abortRequested: false, status: { in: ["RUNNING", "WAITING"] } },

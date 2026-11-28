@@ -51810,6 +51810,13 @@ export interface operations {
                             member: string;
                             image: string;
                         }[];
+                        exactSkipped: {
+                            itemRef: string;
+                            name: string;
+                            /** @enum {string} */
+                            kind: "app" | "database" | "service";
+                            reason: string;
+                        }[];
                         warningsFixed: string[];
                     };
                 };
@@ -51927,6 +51934,13 @@ export interface operations {
                             name: string;
                             member: string;
                             image: string;
+                        }[];
+                        exactSkipped: {
+                            itemRef: string;
+                            name: string;
+                            /** @enum {string} */
+                            kind: "app" | "database" | "service";
+                            reason: string;
                         }[];
                         warningsFixed: string[];
                     };
@@ -52049,6 +52063,13 @@ export interface operations {
                             member: string;
                             image: string;
                         }[];
+                        exactSkipped: {
+                            itemRef: string;
+                            name: string;
+                            /** @enum {string} */
+                            kind: "app" | "database" | "service";
+                            reason: string;
+                        }[];
                         warningsFixed: string[];
                     };
                 };
@@ -52168,6 +52189,13 @@ export interface operations {
                             name: string;
                             member: string;
                             image: string;
+                        }[];
+                        exactSkipped: {
+                            itemRef: string;
+                            name: string;
+                            /** @enum {string} */
+                            kind: "app" | "database" | "service";
+                            reason: string;
                         }[];
                         warningsFixed: string[];
                     };
@@ -52290,6 +52318,13 @@ export interface operations {
                             member: string;
                             image: string;
                         }[];
+                        exactSkipped: {
+                            itemRef: string;
+                            name: string;
+                            /** @enum {string} */
+                            kind: "app" | "database" | "service";
+                            reason: string;
+                        }[];
                         warningsFixed: string[];
                     };
                 };
@@ -52409,6 +52444,13 @@ export interface operations {
                             name: string;
                             member: string;
                             image: string;
+                        }[];
+                        exactSkipped: {
+                            itemRef: string;
+                            name: string;
+                            /** @enum {string} */
+                            kind: "app" | "database" | "service";
+                            reason: string;
                         }[];
                         warningsFixed: string[];
                     };

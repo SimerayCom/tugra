@@ -3,7 +3,7 @@
 import { useMutation } from "@tanstack/react-query";
 import { api } from "../../lib/api";
 import { useT } from "../../i18n/provider";
-import { exactImageLine, groupExactImages } from "../../lib/migration-run";
+import { EXACT_REASON_KEY, exactImageLine, groupExactImages } from "../../lib/migration-run";
 import type { MigrationRunSafetyHints } from "../../lib/types";
 import { useRunPlumbing } from "./use-run-actions";
 
@@ -21,13 +21,16 @@ export function ExactImagesSection({ runId, hints, closed, onSaved }: { runId: s
   const save = useMutation({ mutationFn: (item: { itemRef: string; keep: boolean }) => api.setMigrationRunExactImages(runId, { items: [item] }), onSuccess: (v) => onSaved(v), onError });
   const groups = groupExactImages(hints.exactImages ?? []);
   const unknown = hints.exactUnknown ?? [];
+  const skipped = hints.exactSkipped ?? [];
+  // the box shows what was just asked for while the hub answers, so a click is never a silent no-op
+  const asked = save.isPending ? save.variables : undefined;
   return (
     <section style={{ display: "flex", flexDirection: "column", gap: 10 }}>
       <div>
         <div style={heading}>{t("migrationRun.safety.exactTitle")}</div>
         <p style={hint}>{t("migrationRun.safety.exactHint")}</p>
       </div>
-      {groups.length === 0 && unknown.length === 0 && <div style={{ fontSize: 13, color: "var(--c-tx3)" }}>{t("migrationRun.safety.exactEmpty")}</div>}
+      {groups.length === 0 && unknown.length === 0 && skipped.length === 0 && <div style={{ fontSize: 13, color: "var(--c-tx3)" }}>{t("migrationRun.safety.exactEmpty")}</div>}
       {groups.length > 0 && (
         <ul style={{ margin: 0, padding: 0, listStyle: "none", display: "flex", flexDirection: "column", gap: 10 }}>
           {groups.map((g) => (
@@ -35,8 +38,9 @@ export function ExactImagesSection({ runId, hints, closed, onSaved }: { runId: s
               <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 13, fontWeight: 600, minHeight: 28, minWidth: 0 }}>
                 <input
                   type="checkbox"
-                  checked={g.kept}
+                  checked={asked?.itemRef === g.itemRef ? asked.keep : g.kept}
                   disabled={closed || save.isPending}
+                  aria-busy={asked?.itemRef === g.itemRef}
                   aria-label={t("migrationRun.safety.exactKeep", { name: g.name })}
                   onChange={(e) => save.mutate({ itemRef: g.itemRef, keep: e.target.checked })}
                 />
@@ -62,7 +66,19 @@ export function ExactImagesSection({ runId, hints, closed, onSaved }: { runId: s
           <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12, color: "var(--c-tx3)", lineHeight: 1.5 }}>
             {unknown.map((u) => (
               <li key={`${u.itemRef}#${u.member}`} style={{ wordBreak: "break-word" }}>
-                {t("migrationRun.safety.exactUnknown", { name: u.member ? `${u.name || u.itemRef} / ${u.member}` : u.name || u.itemRef, image: u.image || "-" })}
+                {t("migrationRun.safety.exactUnknown", { name: u.member ? `${u.name || u.itemRef} / ${u.member}` : u.name || u.itemRef, image: u.image || t("migrationRun.safety.exactDash") })}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {skipped.length > 0 && (
+        <div role="alert" style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          <div style={{ fontSize: 12, fontWeight: 600, color: "var(--c-r)" }}>{t("migrationRun.safety.exactSkippedTitle")}</div>
+          <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12, color: "var(--c-tx2)", lineHeight: 1.5 }}>
+            {skipped.map((u) => (
+              <li key={u.itemRef} style={{ wordBreak: "break-word" }}>
+                {t("migrationRun.safety.exactSkipped", { name: u.name || u.itemRef, reason: t(EXACT_REASON_KEY[u.reason] ?? "migrationRun.exactReason.refused") })}
               </li>
             ))}
           </ul>

@@ -62,6 +62,21 @@ describe("RunSafetyController: keep the exact image", () => {
     expect(() => SetExactImagesSchema.parse({ items: [] })).toThrow();
   });
 
+  it("lists, once per item and named, what started on an image the source does not necessarily run (a database started before the pin arrived)", async () => {
+    const s = setup({ opId: "op1" });
+    const p = s.prisma as unknown as Record<string, unknown>;
+    const params = (kind: string, itemRef: string, name: string, reason: string) => ({ params: { kind, itemRef, name, reason } });
+    p.migrationRunEvent = { findMany: jest.fn().mockResolvedValue([params("database", "database:s:d", "orders", "no-inventory"), params("database", "database:s:d", "orders", "started"), params("app", "app:s:a", "api", "refused"), { params: { kind: "volume", itemRef: "x" } }]) };
+    const v = await s.c.get(user(), "r1");
+    expect(v.exactSkipped).toEqual([
+      { itemRef: "database:s:d", kind: "database", name: "orders", reason: "no-inventory" },
+      { itemRef: "app:s:a", kind: "app", name: "api", reason: "refused" },
+    ]);
+    expect(SafetyHintsSchema.parse(v)).toEqual(v);
+    expect((p.migrationRunEvent as { findMany: jest.Mock }).findMany.mock.calls[0][0].where).toEqual({ runId: "r1", code: "import.exact-image-unapplied" });
+    expect((await setup().c.get(user(), "r1")).exactSkipped).toEqual([]); // no event table to read: nothing is invented
+  });
+
   it("lists what the inventory covered but gave no exact image for as unknown (never before an inventory arrived)", async () => {
     const meta = { plan: { items: [{ itemRef: "app:s:a", name: "api", kind: "app", proposed: { source: "IMAGE", image: "x/y:latest" } }, { itemRef: "app:s:b", name: "worker", kind: "app", proposed: { source: "IMAGE", image: "x/b:2" } }, { itemRef: "database:s:d", name: "orders", kind: "database", proposed: { image: null } }] }, services: [{ itemRef: "service:s:z", name: "search stack" }], stackImages: [{ itemRef: "service:s:z", images: [{ member: "meili", image: "getmeili/meilisearch:latest" }] }] };
     const s = setup({ opId: "op1" });
@@ -116,7 +131,7 @@ describe("RunSafetyController", () => {
 
   it("writing needs the team permissions driving the run needs; reading needs membership only", async () => {
     const s = setup({}, ["apps:config"]);
-    await expect(s.c.get(user(), "r1")).resolves.toEqual({ imagePins: [], workerMarks: [], warningAcks: [], servicePins: [], exactImages: [], exactUnknown: [], warningsFixed: [] });
+    await expect(s.c.get(user(), "r1")).resolves.toEqual({ imagePins: [], workerMarks: [], warningAcks: [], servicePins: [], exactImages: [], exactUnknown: [], exactSkipped: [], warningsFixed: [] });
     await expect(s.c.setMarks(user(), "r1", SetWorkerMarksSchema.parse({ marks: [{ itemRef: "app:s:q", role: "web" }] }))).rejects.toBeInstanceOf(ForbiddenException);
   });
 

@@ -15,6 +15,7 @@ import { imageRepoOf, isFloatingImage, servicePinKey } from "./image-pins";
 import { EXACT_OFF_KIND, exactRows, isExactOff } from "./exact-images";
 import { exactCandidatesOf, exactKeyOf, type ExactMeta } from "../../data/inventory/inventory-pins";
 import { isDigestPinned } from "../../../../importer/exact-image";
+import { EXACT_UNAPPLIED_CODE } from "../../../../importer/exact-db-pin";
 import { RUN_HINTS, type RunHint, type RunHintStore } from "./run-hints";
 
 /** The most warning keys one run keeps accepted. */
@@ -169,7 +170,27 @@ export class RunSafetyController {
   private async viewOf(v: { id: string; status: string; opId?: string | null; promotedFromId?: string | null }, hints: readonly RunHint[]): Promise<SafetyHints> {
     const fixed = v.status === "DRY_RUN_DONE" ? fixedKeys(await this.stepsOf(v.id), hints) : [];
     const meta = await this.opMeta(v.opId);
-    return view(hints, fixed, await this.unknownExact(v, hints, meta), namesOf(meta));
+    return view(hints, fixed, await this.unknownExact(v, hints, meta), namesOf(meta), await this.skippedExact(v.id));
+  }
+
+  /** The items the run raised an "exact image not applied" warning for, once per item (the first reason it gave). Best effort: unreadable events list none. */
+  private async skippedExact(runId: string): Promise<SafetyHints["exactSkipped"]> {
+    try {
+      const rows = await this.prisma.migrationRunEvent.findMany({ where: { runId, code: EXACT_UNAPPLIED_CODE }, orderBy: { seq: "asc" }, take: 500, select: { params: true } });
+      const seen = new Set<string>();
+      const out: SafetyHints["exactSkipped"] = [];
+      for (const r of rows) {
+        const p = (r.params ?? {}) as Record<string, unknown>;
+        const itemRef = typeof p.itemRef === "string" ? p.itemRef : "";
+        const kind = p.kind === "app" || p.kind === "database" || p.kind === "service" ? p.kind : null;
+        if (!itemRef || !kind || seen.has(itemRef)) continue;
+        seen.add(itemRef);
+        out.push({ itemRef, kind, name: typeof p.name === "string" ? p.name : "", reason: typeof p.reason === "string" ? p.reason : "" });
+      }
+      return out;
+    } catch {
+      return [];
+    }
   }
 
   /** The op's meta (the plan the run applied), or `{}` when the run has no op yet or it cannot be read. */
@@ -240,7 +261,7 @@ function namesOf(meta: { plan?: { items?: Array<{ itemRef?: unknown; name?: unkn
   return out;
 }
 
-function view(hints: readonly RunHint[], fixed: readonly string[] = [], exactUnknown: Array<{ itemRef: string; member: string; image: string }> = [], names: ReadonlyMap<string, string> = new Map()): SafetyHints {
+function view(hints: readonly RunHint[], fixed: readonly string[] = [], exactUnknown: Array<{ itemRef: string; member: string; image: string }> = [], names: ReadonlyMap<string, string> = new Map(), exactSkipped: SafetyHints["exactSkipped"] = []): SafetyHints {
   return {
     imagePins: hints.filter((h) => h.kind === "image-pin").map((h) => ({ image: h.key, scope: h.scope, digest: h.value, evidence: h.evidence })),
     workerMarks: hints.filter((h) => h.kind === "worker-mark" && (h.value === "job-runner" || h.value === "web")).map((h) => ({ itemRef: h.key, role: h.value as "job-runner" | "web" })),
@@ -254,6 +275,7 @@ function view(hints: readonly RunHint[], fixed: readonly string[] = [], exactUnk
       .sort((a, b) => (a.itemRef + a.member < b.itemRef + b.member ? -1 : 1)),
     exactImages: exactRows(hints).map((r) => ({ ...r, name: names.get(r.itemRef) ?? "" })),
     exactUnknown: exactUnknown.map((u) => ({ ...u, name: names.get(u.itemRef) ?? "" })),
+    exactSkipped,
     warningsFixed: [...fixed],
   };
 }

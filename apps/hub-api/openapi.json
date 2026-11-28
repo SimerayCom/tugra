@@ -78050,6 +78050,38 @@
                         "additionalProperties": false
                       }
                     },
+                    "exactSkipped": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "itemRef": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "app",
+                              "database",
+                              "service"
+                            ]
+                          },
+                          "reason": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "itemRef",
+                          "name",
+                          "kind",
+                          "reason"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
                     "warningsFixed": {
                       "type": "array",
                       "items": {
@@ -78064,6 +78096,7 @@
                     "servicePins",
                     "exactImages",
                     "exactUnknown",
+                    "exactSkipped",
                     "warningsFixed"
                   ],
                   "additionalProperties": false
@@ -78364,6 +78397,38 @@
                         "additionalProperties": false
                       }
                     },
+                    "exactSkipped": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "itemRef": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "app",
+                              "database",
+                              "service"
+                            ]
+                          },
+                          "reason": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "itemRef",
+                          "name",
+                          "kind",
+                          "reason"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
                     "warningsFixed": {
                       "type": "array",
                       "items": {
@@ -78378,6 +78443,7 @@
                     "servicePins",
                     "exactImages",
                     "exactUnknown",
+                    "exactSkipped",
                     "warningsFixed"
                   ],
                   "additionalProperties": false
@@ -78676,6 +78742,38 @@
                         "additionalProperties": false
                       }
                     },
+                    "exactSkipped": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "itemRef": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "app",
+                              "database",
+                              "service"
+                            ]
+                          },
+                          "reason": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "itemRef",
+                          "name",
+                          "kind",
+                          "reason"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
                     "warningsFixed": {
                       "type": "array",
                       "items": {
@@ -78690,6 +78788,7 @@
                     "servicePins",
                     "exactImages",
                     "exactUnknown",
+                    "exactSkipped",
                     "warningsFixed"
                   ],
                   "additionalProperties": false
@@ -78984,6 +79083,38 @@
                         "additionalProperties": false
                       }
                     },
+                    "exactSkipped": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "itemRef": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "app",
+                              "database",
+                              "service"
+                            ]
+                          },
+                          "reason": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "itemRef",
+                          "name",
+                          "kind",
+                          "reason"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
                     "warningsFixed": {
                       "type": "array",
                       "items": {
@@ -78998,6 +79129,7 @@
                     "servicePins",
                     "exactImages",
                     "exactUnknown",
+                    "exactSkipped",
                     "warningsFixed"
                   ],
                   "additionalProperties": false
@@ -79299,6 +79431,38 @@
                         "additionalProperties": false
                       }
                     },
+                    "exactSkipped": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "itemRef": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "app",
+                              "database",
+                              "service"
+                            ]
+                          },
+                          "reason": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "itemRef",
+                          "name",
+                          "kind",
+                          "reason"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
                     "warningsFixed": {
                       "type": "array",
                       "items": {
@@ -79313,6 +79477,7 @@
                     "servicePins",
                     "exactImages",
                     "exactUnknown",
+                    "exactSkipped",
                     "warningsFixed"
                   ],
                   "additionalProperties": false
@@ -79606,6 +79771,38 @@
                         "additionalProperties": false
                       }
                     },
+                    "exactSkipped": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "itemRef": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "app",
+                              "database",
+                              "service"
+                            ]
+                          },
+                          "reason": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "itemRef",
+                          "name",
+                          "kind",
+                          "reason"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
                     "warningsFixed": {
                       "type": "array",
                       "items": {
@@ -79620,6 +79817,7 @@
                     "servicePins",
                     "exactImages",
                     "exactUnknown",
+                    "exactSkipped",
                     "warningsFixed"
                   ],
                   "additionalProperties": false

@@ -12,6 +12,7 @@ import { BadRequestException, ConflictException, ForbiddenException, Inject, Inj
 import { AGENT_SESSION_URL_PREFIX, isAgentSessionBaseUrl } from "@tugra/shared";
 import { scopeSatisfies, type Scope } from "../../api-tokens/scopes";
 import type { ServiceChoice } from "../../importer/dto";
+import { EXACT_UNAPPLIED_CODE } from "../../importer/exact-db-pin";
 import type { ImportMappingDoc } from "../../importer/import-mapping";
 import {
   OwnerInputsSchema,
@@ -1036,7 +1037,29 @@ export class MigrationRunsService implements MigrationRunsFacade {
       run.opId ? this.imp.opItems(run.actorId, run.opId).catch(() => []) : Promise.resolve([]),
       run.opId && this.imp.opDataIntegrity ? this.imp.opDataIntegrity(run.actorId, run.id, run.opId).catch(() => []) : Promise.resolve([]),
     ]);
-    return buildReport(run, steps, items, names.get(run.targetServerId) ?? null, this.engine.clock.now(), names, integrity);
+    return buildReport(run, steps, items, names.get(run.targetServerId) ?? null, this.engine.clock.now(), names, integrity, await this.exactWarnings(run.id));
+  }
+
+  /**
+   * The items that started on an image the source does not necessarily run (see `exact-db-pin.ts`), as report lines: one per item, named.
+   * Best effort: a store that cannot answer leaves the report as it was.
+   */
+  private async exactWarnings(runId: string): Promise<RunReport["manual"]> {
+    try {
+      const rows = await this.store.eventsWithCode(runId, EXACT_UNAPPLIED_CODE, 200);
+      const seen = new Set<string>();
+      const out: RunReport["manual"] = [];
+      for (const e of rows) {
+        const p = (e.params ?? {}) as Record<string, unknown>;
+        const key = String(p.itemRef ?? "");
+        if (!key || seen.has(key)) continue;
+        seen.add(key);
+        out.push({ code: EXACT_UNAPPLIED_CODE, params: { kind: String(p.kind ?? ""), name: String(p.name ?? "").slice(0, 300), reason: String(p.reason ?? "") } });
+      }
+      return out;
+    } catch {
+      return [];
+    }
   }
 
   /** Persist the final report once a run settles (engine hook; best effort). */

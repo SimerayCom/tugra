@@ -141,6 +141,12 @@ export const SafetyHintsSchema = z.object({
    * `image` is what the plan writes for it ("" for a database the plan names no image for).
    */
   exactUnknown: z.array(z.object({ itemRef: z.string(), name: z.string(), member: z.string(), image: z.string() })),
+  /**
+   * The apps, databases and stacks that started (or will start) on an image the source does not necessarily run: a database started before
+   * the host's inventory arrived, one whose record could not take the image, and so on. `reason` is one of `EXACT_UNAPPLIED_REASONS`.
+   * Raised as run events; this lists them once per item. Empty when nothing of the kind happened.
+   */
+  exactSkipped: z.array(z.object({ itemRef: z.string(), name: z.string(), kind: z.enum(["app", "database", "service"]), reason: z.string() })),
   /** The warning keys of a finished dry run that are settled by a fix (every floating image behind them is pinned); empty for any other run. */
   warningsFixed: z.array(z.string()),
 });

@@ -172,6 +172,8 @@ export interface RunStore {
   /** Append an event with the next sequence number; returns the seq. `bootId` makes it an owned write. */
   appendEvent(runId: string, event: EventInput, bootId?: string): Promise<number>;
   events(runId: string, afterSeq: number, limit: number): Promise<EventRow[]>;
+  /** The events of one code, oldest first (the run report lists the warnings the run raised). */
+  eventsWithCode(runId: string, code: string, limit: number): Promise<EventRow[]>;
 
   /**
    * Persist `ponrAt` once (monotonic). Applies only while the lease is ours and no abort is in flight. Returns the

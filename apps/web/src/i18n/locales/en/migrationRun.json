@@ -401,6 +401,14 @@
       "error": "Error"
     }
   },
+  "exactReason": {
+    "no-inventory": "the source host's inventory had not arrived when it started",
+    "no-digest": "the source host reported no exact image for it",
+    "started": "it was already started before the exact image arrived",
+    "other-repository": "the image the source runs belongs to another repository than its record",
+    "write-failed": "the exact image could not be written into its record",
+    "refused": "its record could not take the exact image"
+  },
   "lane": {
     "logical": "one dump",
     "stream": "checked stream, any size",
@@ -737,6 +745,7 @@
     "unknown-image": "That image is not listed in this dry run. Reload the page.",
     "invalid-pin": "Pin a version of the same image, and not latest.",
     "too-many-service-pins": "Too many pinned images for one dry run.",
+    "too-many-exact-images": "Too many items are set to keep the tag instead of the exact image for one run.",
     "too-many-service-choices": "This move has more per-service settings than one run takes. Narrow what you move.",
     "scope-unknown": "Something you picked is no longer in the source. Review the plan again.",
     "scope-empty": "Nothing is left to move. Pick at least one item.",
@@ -1251,6 +1260,7 @@
     "deploy-dark_service_failed": "Starting a service deploy failed.",
     "deploy-dark_image-pinned": "The image of {name} was pinned to the digest the source runs.",
     "deploy-dark_exact-images-pinned": "{count} apps, databases and services keep the exact image the source runs.",
+    "import_exact-image-unapplied": "{name} may start on a different image than the source runs: {reason}.",
     "deploy-dark_exact-image_failed": "The exact image the source runs could not be written into its record, so nothing was started. Retry the step.",
     "import_auto-deploy-pending": "{count} imported apps still deploy on every git push.",
     "import_auto-deploy-held": "Push-to-deploy was switched off for {count} imported apps until after the cutover.",
@@ -1444,6 +1454,9 @@
     "exactOff": "Not kept: this runs whatever its tag points at when it is deployed.",
     "exactUnknownTitle": "Unknown: the source host did not report the exact image",
     "exactUnknown": "{name} keeps the image as the source writes it ({image}).",
+    "exactSkippedTitle": "Started without the exact image the source runs",
+    "exactSkipped": "{name}: {reason}.",
+    "exactDash": "-",
     "closed": "This run can no longer take these facts: it is finished or past the point of no return.",
     "loading": "Loading the recorded facts.",
     "marksTitle": "Job runners and web apps",

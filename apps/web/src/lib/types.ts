@@ -3674,6 +3674,8 @@ export interface MigrationRunSafetyHints {
   exactImages?: MigrationRunExactImage[];
   /** Items the host's inventory covered but reported no exact image for: they keep the image the source writes ("unknown"). */
   exactUnknown?: Array<{ itemRef: string; name: string; member: string; image: string }>;
+  /** Items that started (or will start) on an image the source does not necessarily run, named once each, with why (`reason` is a hub code, see `migrationRun.exactReason`). */
+  exactSkipped?: Array<{ itemRef: string; name: string; kind: "app" | "database" | "service"; reason: string }>;
 }
 export interface MigrationRunExactImage {
   itemRef: string;

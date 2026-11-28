@@ -83,4 +83,33 @@ describe("ExactImagesSection: Tugra keeps the exact image each item runs", () =>
     show({ imagePins: [], workerMarks: [], warningAcks: [] });
     expect(screen.getByText(/No exact image is recorded yet/)).toBeTruthy();
   });
+
+  it("lists, named and with the reason, what started without the exact image the source runs", () => {
+    show(hints({ exactSkipped: [{ itemRef: "database:s:d", name: "orders", kind: "database", reason: "no-inventory" }, { itemRef: "app:s:b", name: "worker", kind: "app", reason: "started" }] }));
+    expect(screen.getByText("Started without the exact image the source runs")).toBeTruthy();
+    expect(screen.getByText("orders: the source host's inventory had not arrived when it started.")).toBeTruthy();
+    expect(screen.getByText("worker: it was already started before the exact image arrived.")).toBeTruthy();
+    cleanup();
+    show(hints({ exactImages: [], exactSkipped: [{ itemRef: "database:s:d", name: "orders", kind: "database", reason: "refused" }] }));
+    expect(screen.queryByText(/No exact image is recorded yet/)).toBeNull(); // a warning is not "nothing recorded"
+  });
+
+  it("while the hub answers, the box shows what was asked for and says it is busy (a click is never a silent no-op)", async () => {
+    let done: (v: MigrationRunSafetyHints) => void = () => undefined;
+    vi.spyOn(api, "setMigrationRunExactImages").mockReturnValue(new Promise((r) => (done = r)));
+    show(hints());
+    const box = screen.getByRole("checkbox", { name: "Keep the exact image of search" }) as HTMLInputElement;
+    fireEvent.click(box);
+    await waitFor(() => expect((screen.getByRole("checkbox") as HTMLInputElement).checked).toBe(false));
+    expect((screen.getByRole("checkbox") as HTMLInputElement).getAttribute("aria-busy")).toBe("true");
+    expect((screen.getByRole("checkbox") as HTMLInputElement).disabled).toBe(true);
+    done(hints({ exactImages: [row({ kept: false })] }));
+  });
+
+  it("a failed save puts the box back to what the hub has", async () => {
+    vi.spyOn(api, "setMigrationRunExactImages").mockRejectedValue(new Error("boom"));
+    show(hints());
+    fireEvent.click(screen.getByRole("checkbox"));
+    await waitFor(() => expect((screen.getByRole("checkbox") as HTMLInputElement).checked).toBe(true));
+  });
 });

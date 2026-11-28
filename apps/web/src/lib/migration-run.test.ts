@@ -137,6 +137,10 @@ describe("codes and params", () => {
     expect(codeText(t, "run.ponr.reached")).toBe("Point of no return reached.");
     expect(codeText(t, "step.failed")).toBe("Step failed.");
   });
+  it("says in words which item may start on another image than the source runs, and why (the report line and the event)", () => {
+    expect(codeText(t, "import.exact-image-unapplied", { kind: "database", name: "orders", reason: "no-inventory" })).toBe("orders may start on a different image than the source runs: the source host's inventory had not arrived when it started.");
+    expect(codeText(t, "import.exact-image-unapplied", { kind: "app", name: "api", reason: "something-new" })).toBe("api may start on a different image than the source runs: something-new.");
+  });
   it("shows an unknown code humanized with its params instead of hiding it", () => {
     expect(codeText(t, "data-final.transfer-diverged", { volume: "db-data", n: 2 })).toBe("data final: transfer diverged (volume=db-data, n=2)");
     expect(codeText(t, "oddity")).toBe("oddity");

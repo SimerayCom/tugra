@@ -456,6 +456,21 @@ describe("DEPLOY_DARK writes the exact image the source runs into the records be
     expect(w.status(id)).toBe("COMPLETED");
   });
 
+  it("a record that cannot run the image the source runs is named in a warning event (item, reason), and the run still goes on", async () => {
+    const hints = new InMemoryRunHints();
+    const { w } = safetyWorld(items, hints);
+    (w.port as unknown as { pinExactImage: unknown }).pinExactImage = async () => ({ pinned: false, state: "refused" });
+    const id = await w.create();
+    await hints.upsert(id, [exact("app:src-a:img", `ghcr.io/example/imageproxy:latest@${D}`)]);
+    await w.start(id);
+    await w.settle(id);
+    expect(w.status(id)).toBe("COMPLETED");
+    const events = (await w.service.events(ACTOR, id, { afterSeq: 0, limit: 500 })).events;
+    const warn = events.filter((e) => e.code === "import.exact-image-unapplied");
+    expect(warn).toHaveLength(1);
+    expect(warn[0]).toMatchObject({ level: "warn", stepKey: "DEPLOY_DARK", params: { kind: "app", name: "proxy", itemRef: "app:src-a:img", reason: "refused" } });
+  });
+
   it("a failing write fails the step retryably and starts nothing; the retry then goes through", async () => {
     const hints = new InMemoryRunHints();
     const { w } = safetyWorld(items, hints);

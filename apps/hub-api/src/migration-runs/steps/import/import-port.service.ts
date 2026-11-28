@@ -511,7 +511,7 @@ export class ImportPortService implements ImportStepsPort {
     return { pinned: true };
   }
 
-  pinExactImage(userId: string, target: ExactTarget): Promise<{ pinned: boolean }> {
+  pinExactImage(userId: string, target: ExactTarget): Promise<{ pinned: boolean; state: "pinned" | "same" | "refused" }> {
     return writeExactImage({ prisma: this.prisma, apps: this.apps, databases: this.dbs }, userId, target);
   }
 

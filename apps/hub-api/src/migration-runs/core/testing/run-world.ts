@@ -310,6 +310,10 @@ export class InMemoryRunStore implements RunStore {
     return this.eventRows.filter((e) => e.runId === runId && e.seq > afterSeq).slice(0, limit).map(clone);
   }
 
+  async eventsWithCode(runId: string, code: string, limit: number): Promise<EventRow[]> {
+    return this.eventRows.filter((e) => e.runId === runId && e.code === code).slice(0, limit).map(clone);
+  }
+
   async setPonr(runId: string, bootId: string, at: Date, byUserId: string): Promise<Date | "abort"> {
     this.owned(bootId);
     this.checkLease(runId, bootId);

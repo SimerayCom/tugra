@@ -183,5 +183,5 @@ export interface ImportStepsPort extends RunImportPort {
   pinExactImage?(
     userId: string,
     target: { kind: "app" | "database"; id: string; ref: string } | { kind: "service"; id: string; members: Record<string, string> },
-  ): Promise<{ pinned: boolean }>;
+  ): Promise<{ pinned: boolean; /** `refused`: the record cannot run the image the source runs (another repository, a database that was started). */ state?: "pinned" | "same" | "refused" }>;
 }

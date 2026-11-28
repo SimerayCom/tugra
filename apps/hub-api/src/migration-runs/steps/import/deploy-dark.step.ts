@@ -35,7 +35,8 @@ import {
 import { IMPORT_STEPS_PORT, type DeploymentRef, type ImportStepsPort } from "./import-ports";
 import { deployKeyBase, failureOf, includedItems, isActiveDeploy, stopRunApps } from "./step-utils";
 import { pinFor, isFloatingImage, serverRefOfItem } from "./baseline/image-pins";
-import { appTasksOf, markConflictsOfOp, pinExactImages, unmatchedMarksOfOp, workerSetsOfOp } from "./baseline/op-safety";
+import { appTasksOf, markConflictsOfOp, pinExactImagesDetailed, unmatchedMarksOfOp, workerSetsOfOp } from "./baseline/op-safety";
+import { EXACT_UNAPPLIED_CODE } from "../../../importer/exact-db-pin";
 import { RUN_HINTS, type RunHint, type RunHintStore } from "./baseline/run-hints";
 import { workerMarks, workerSets } from "./baseline/workers";
 import { resolveOwnerInput } from "../../core/run-contract";
@@ -278,14 +279,16 @@ export class DeployDarkStep implements StepHandler<DeployDarkObs>, OnModuleInit 
 
     // R11: every record the import created runs the exact image the source runs (what the host reported), never what its tag points at today
     if (compOf(ctx).exactPinned !== true) {
-      let changed: string[];
+      let pinned: Awaited<ReturnType<typeof pinExactImagesDetailed>>;
       try {
-        changed = await pinExactImages(this.port, userId, await this.port.opSnapshot(userId, run.opId!), await this.hints(run));
+        pinned = await pinExactImagesDetailed(this.port, userId, await this.port.opSnapshot(userId, run.opId!), await this.hints(run));
       } catch (e) {
         throw failureOf(e, "deploy-dark.exact-image");
       }
       await ctx.recordCompensation({ exactPinned: true });
-      if (changed.length) await ctx.emit({ level: "info", code: "deploy-dark.exact-images-pinned", params: { count: changed.length } });
+      if (pinned.changed.length) await ctx.emit({ level: "info", code: "deploy-dark.exact-images-pinned", params: { count: pinned.changed.length } });
+      // a record that cannot run the image the source runs (another repository, a database that was started before the pin arrived) is named, never skipped silently
+      for (const r of pinned.refused.slice(0, 50)) await ctx.emit({ level: "warn", code: EXACT_UNAPPLIED_CODE, params: { kind: r.kind, name: r.name.slice(0, 300), itemRef: r.itemRef.slice(0, 300), reason: "refused" } });
     }
 
     // 1) databases, one at a time
