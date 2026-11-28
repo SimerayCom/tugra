@@ -45,7 +45,7 @@ import { SESSION_EXPIRED_CODE } from "../../core/run-logic";
 import { UNKNOWN_SERVER_REF, serverRefOfItemRef } from "../../../importer/server-map";
 import { IMPORT_STEPS_PORT, type DeploymentRef, type ImportStepsPort, type OpSnapshot, type SessionState } from "./import-ports";
 import { applyInputOf, deployKeyBase, failureOf, hasActive, hasBad, includedItems, isConflict, itemTasks, stopRunApps, unackedBlockers, warningRisks } from "./step-utils";
-import { appTasksOf, duePinsOf, pinFloatingImages, targetOfTask, workerSetsOfOp } from "./baseline/op-safety";
+import { appTasksOf, duePinsOf, earlyHeldForImage, pinExactImages, pinFloatingImages, targetOfTask, workerSetsOfOp } from "./baseline/op-safety";
 import { RUN_HINTS, type RunHint, type RunHintStore } from "./baseline/run-hints";
 import { floatingImages, imageParams } from "./baseline/image-pins";
 import { withExactPins } from "./baseline/exact-images";
@@ -58,7 +58,7 @@ export interface ImportObs extends Observation {
   session: SessionState;
   op: OpSnapshot | null;
   /** earlyStateless: stateless apps still to deploy / already deployed / failed. */
-  wave: { candidates: Array<{ appId: string; name: string }>; deployed: number; failed: number; active: number } | null;
+  wave: { candidates: Array<{ appId: string; name: string }>; deployed: number; failed: number; active: number; /** Image apps kept out of the wave until DEPLOY_DARK: the exact image the source runs is not known yet. */ held: string[] } | null;
   /**
    * Multi-host runs only, and only while the import is still to be applied: the source servers the run's `serverMap` does not
    * place. Any of them would silently land on the default target, so the pre-gate fails closed. null = not checked.
@@ -90,6 +90,8 @@ interface Comp {
   redoAt?: string;
   /** earlyStateless: the apps the early wave may have deployed (written before the first deploy). */
   earlyAppIds?: string[];
+  /** earlyStateless: the image apps kept out of the wave (their exact image is not known yet), as last announced. */
+  earlyHeld?: string[];
   /** The apps this run switched push-to-deploy off for (written BEFORE the switch; the release restores them after the PONR). */
   autoDeployHeld?: string[];
   /** earlyBuild: the apps whose image build finished (or that have nothing to build). */
@@ -213,7 +215,9 @@ export class ImportStep implements StepHandler<ImportObs>, OnModuleInit {
   private async waveState(ctx: StepContext, op: OpSnapshot, hints: readonly RunHint[]): Promise<NonNullable<ImportObs["wave"]>> {
     const userId = ctx.actor.userId;
     const sets = workerSetsOfOp(ctx.run, op, hints); // a worker never starts before the cutover, whatever it depends on
-    const stateless = new Set(op.planItems.filter((p) => p.kind === "app" && p.dependsOn.length === 0 && !sets.held.has(p.itemRef) && !sets.excluded.has(p.itemRef)).map((p) => p.itemRef));
+    // an image app whose exact image is not known yet waits for DEPLOY_DARK: started now it could pull a newer image than the source runs
+    const heldImg = earlyHeldForImage(op, hints, !!this.port.pinExactImage);
+    const stateless = new Set(op.planItems.filter((p) => p.kind === "app" && p.dependsOn.length === 0 && !sets.held.has(p.itemRef) && !sets.excluded.has(p.itemRef) && !heldImg.has(p.itemRef)).map((p) => p.itemRef));
     const candidates = op.tasks.filter((t) => t.kind === "app" && t.status === "DONE" && t.resourceType === "application" && !!t.resourceId && !!t.itemRef && stateless.has(t.itemRef));
     let deployed = 0;
     let failed = 0;
@@ -226,7 +230,9 @@ export class ImportStep implements StepHandler<ImportObs>, OnModuleInit {
       else if (last) active++;
     }
     void userId;
-    return { candidates: candidates.map((t) => ({ appId: t.resourceId!, name: t.name ?? t.itemRef ?? "" })), deployed, failed, active };
+    const nameOf = new Map(op.tasks.filter((t) => !!t.itemRef).map((t) => [t.itemRef as string, t.name ?? (t.itemRef as string)]));
+    const held = op.planItems.filter((p) => p.kind === "app" && p.dependsOn.length === 0 && !sets.held.has(p.itemRef) && !sets.excluded.has(p.itemRef) && heldImg.has(p.itemRef)).map((p) => nameOf.get(p.itemRef) ?? p.itemRef);
+    return { candidates: candidates.map((t) => ({ appId: t.resourceId!, name: t.name ?? t.itemRef ?? "" })), deployed, failed, active, held };
   }
 
   preGate(ctx: StepContext, obs: ImportObs): GateResult {
@@ -445,6 +451,14 @@ export class ImportStep implements StepHandler<ImportObs>, OnModuleInit {
   /** earlyStateless: deploy the apps that depend on nothing right after the import settled. Idempotent per `migrun:` key. */
   private async earlyWave(ctx: StepContext, obs: ImportObs): Promise<ActResult> {
     const w = obs.wave;
+    if (w) {
+      // the image apps kept out of the wave are said once, by name: they start at DEPLOY_DARK, after the host's inventory wrote the image the source runs
+      const heldNow = [...w.held].sort();
+      if (heldNow.length && heldNow.join("\u0000") !== [...(compOf(ctx).earlyHeld ?? [])].sort().join("\u0000")) {
+        await ctx.recordCompensation({ earlyHeld: heldNow });
+        await ctx.emit({ level: "info", code: "import.early-wave-held", params: { count: heldNow.length, items: heldNow.slice(0, 10) } });
+      }
+    }
     if (!w || w.deployed === w.candidates.length) return { outcome: "done" };
     const userId = ctx.actor.userId;
     if (w.failed > 0 && ctx.trigger !== "retry") return { outcome: "fail", code: "import.early-deploy-failed", params: { failed: w.failed }, retryable: true };
@@ -457,6 +471,12 @@ export class ImportStep implements StepHandler<ImportObs>, OnModuleInit {
       else if ((last.status === "FAILED" || last.status === "CANCELLED") && ctx.trigger === "retry") todo.push({ appId: c.appId, key: `${deployKeyBase(ctx.run.id, c.appId)}:${deps.length}` });
     }
     if (!todo.length) return { outcome: "continue", pollAfterMs: 3000 };
+    // whatever exact image the run already knows is written into the records right before they start (a promoted dry run, a retried apply)
+    try {
+      await pinExactImages(this.port, userId, obs.op!, await this.hints(ctx.run), new Set(todo.map((t) => t.appId)));
+    } catch (e) {
+      throw failureOf(e, "import.exact-image");
+    }
     for (const t of todo.slice(0, 3)) {
       await ctx.assertLease();
       let d: DeploymentRef | null;

@@ -468,6 +468,77 @@ describe("IMPORT earlyStateless never starts a held worker (R26/C13)", () => {
   });
 });
 
+describe("IMPORT earlyStateless never starts an image app on an image the source may not run (R11)", () => {
+  const D = `sha256:${"e".repeat(64)}`;
+  const search = item("app:src-a:search", "search", { source: "IMAGE", image: "getmeili/meilisearch:latest", domain: "s.example.test" });
+  const site = item("app:src-a:site", "site", { source: "GIT", domain: "site.example.test" });
+  const exact = (key: string, value: string) => ({ kind: "exact-image" as const, key, scope: "", value, evidence: "host-loop-reported" as const });
+  const early = (w: SafetyWorld, id: string) => ((w.store.step(id, "IMPORT").compensation ?? {}) as { earlyAppIds?: string[] }).earlyAppIds ?? [];
+  const events = async (w: SafetyWorld, id: string) => (await w.service.events(ACTOR, id, { afterSeq: 0, limit: 500 })).events;
+  const recordExact = (w: SafetyWorld) => {
+    (w.port as unknown as { pinExactImage: unknown }).pinExactImage = async (_u: string, t: { id: string }) => {
+      w.port.calls.push(`exact:${t.id}`);
+      return { pinned: true, state: "pinned" };
+    };
+  };
+  /** The run of a floating image app: PREFLIGHT asks the owner to accept the open floating tag, then the run goes on. */
+  const go = async (w: SafetyWorld, hints: InMemoryRunHints, recorded: Parameters<InMemoryRunHints["upsert"]>[1] = []) => {
+    const id = await w.create({ options: earlyOpts(w, { deployWaves: "earlyStateless" }) });
+    await hints.upsert(id, recorded);
+    await w.start(id);
+    await w.settle(id);
+    if (w.stepStatus(id, "PREFLIGHT") === "WAITING_APPROVAL") {
+      const b = (await w.view(id)).nextAction.approval!;
+      await w.service.approve(ACTOR, id, "PREFLIGHT", { boundHash: b.inputHash, acks: b.requiredAcks });
+      await w.settle(id, "approve");
+    }
+    return id;
+  };
+
+  it("a floating tag with no exact image yet is kept out of the early wave (named once) and starts at DEPLOY_DARK, after the inventory could write its image", async () => {
+    const hints = new InMemoryRunHints();
+    const { w } = safetyWorld([search, site], hints);
+    recordExact(w);
+    const id = await go(w, hints);
+    expect(w.status(id)).toBe("COMPLETED");
+    expect(early(w, id)).toEqual([idOf(w, "site")]);
+    const held = (await events(w, id)).filter((e) => e.code === "import.early-wave-held");
+    expect(held).toHaveLength(1);
+    expect(held[0].params).toEqual({ count: 1, items: ["search"] });
+    expect(w.port.deploys.map((d) => d.appId).sort()).toEqual([idOf(w, "search"), idOf(w, "site")].sort()); // each exactly once, the image app by DEPLOY_DARK
+    expect(w.port.deploys[0].appId).toBe(idOf(w, "site"));
+  });
+
+  it("with the exact image already known it is written into the record first and the app goes early", async () => {
+    const hints = new InMemoryRunHints();
+    const { w } = safetyWorld([search, site], hints);
+    recordExact(w);
+    const id = await go(w, hints, [exact("app:src-a:search", `getmeili/meilisearch:latest@${D}`)]);
+    expect(w.status(id)).toBe("COMPLETED");
+    expect(early(w, id).sort()).toEqual([idOf(w, "search"), idOf(w, "site")].sort());
+    const firstExact = w.port.calls.findIndex((c) => c === `exact:${idOf(w, "search")}`);
+    expect(firstExact).toBeGreaterThanOrEqual(0);
+    expect(firstExact).toBeLessThan(w.port.calls.findIndex((c) => c.startsWith(`deploy:${idOf(w, "search")}`)));
+  });
+
+  it("an item the owner unticked, an image already on a digest and an app with no image need no wait", async () => {
+    const off = new InMemoryRunHints();
+    const a = safetyWorld([search], off);
+    const id = await go(a.w, off, [{ kind: "exact-off", key: "app:src-a:search", scope: "", value: "off", evidence: "operator-attested" }]);
+    expect(early(a.w, id)).toEqual([idOf(a.w, "search")]);
+    const c = safetyWorld([item("app:src-a:pinned", "pinned", { source: "IMAGE", image: `getmeili/meilisearch:v1.40.0@${D}`, domain: "p.example.test" }), site]);
+    const id3 = await c.w.run({ options: earlyOpts(c.w, { deployWaves: "earlyStateless" }) });
+    expect(early(c.w, id3).sort()).toEqual([idOf(c.w, "pinned"), idOf(c.w, "site")].sort());
+  });
+
+  it("a hint a port cannot write holds nothing back: the app still waits for DEPLOY_DARK", async () => {
+    const hints = new InMemoryRunHints();
+    const { w } = safetyWorld([search], hints); // no pinExactImage on this port
+    const id = await go(w, hints, [exact("app:src-a:search", `getmeili/meilisearch:latest@${D}`)]);
+    expect(early(w, id)).toEqual([]);
+  });
+});
+
 describe("IMPORT pins floating images before any deploy path (R11)", () => {
   const DIGEST = `sha256:${"e".repeat(64)}`;
   const imgItems = [

@@ -2,7 +2,8 @@
 import { resolveOwnerInput, type RunSnapshot } from "../../../core/run-contract";
 import type { ImportStepsPort, OpSnapshot, OpTask } from "../import-ports";
 import { isFloatingImage, pinFor, serverRefOfItem } from "./image-pins";
-import { exactRows } from "./exact-images";
+import { exactPinOf, exactRows, isExactOff } from "./exact-images";
+import { isDigestPinned } from "../../../../importer/exact-image";
 import type { RunHint } from "./run-hints";
 import { markConflicts, unmatchedMarks, workerMarks, workerSets, type WorkerSets } from "./workers";
 
@@ -62,6 +63,26 @@ export async function pinFloatingImages(port: Pick<ImportStepsPort, "pinImage">,
   return changed;
 }
 
+/**
+ * The image apps the EARLY wave must not start yet: an app whose image is not on a digest and for which the run holds no pin to write before
+ * the first start (no exact image from the source host, no digest the operator recorded for a floating tag) and whose owner did not untick
+ * "keep the exact image". Started now it would pull whatever the registry serves today, which can be newer than what the source runs
+ * (meilisearch `latest` is v1.58 on the registry and v1.40 on the source); DEPLOY_DARK starts it after the host's inventory wrote its image.
+ * An app whose image the op does not say (a git app, a port that cannot say) is never held. `canPinExact` is false for a port that cannot
+ * write an exact image: its hints would not be applied, so they hold nothing back.
+ */
+export function earlyHeldForImage(op: OpSnapshot, hints: readonly RunHint[], canPinExact: boolean): Set<string> {
+  const held = new Set<string>();
+  for (const p of op.planItems) {
+    if (p.kind !== "app" || typeof p.image !== "string" || !p.image) continue;
+    if (isDigestPinned(p.image) || isExactOff(hints, p.itemRef)) continue;
+    if (canPinExact && exactPinOf(hints, p.itemRef) !== null) continue;
+    if (isFloatingImage(p.image) && pinFor(hints, p.image, serverRefOfItem(p.itemRef)) !== null) continue;
+    held.add(p.itemRef);
+  }
+  return held;
+}
+
 /** One exact image still to write into a record the import created: an app, a database, or the members of a compose stack. */
 export type ExactDue = { kind: "app" | "database"; itemRef: string; name: string; id: string; ref: string } | { kind: "service"; itemRef: string; name: string; id: string; members: Record<string, string> };
 
@@ -112,7 +133,7 @@ export async function pinExactImagesDetailed(port: Pick<ImportStepsPort, "pinExa
   for (const d of exactDueOf(op, hints, only)) {
     const r = await port.pinExactImage(userId, d);
     if (r.pinned) out.changed.push(d.name);
-    else if (r.state === "refused") out.refused.push(d);
+    if (r.state === "refused") out.refused.push(d);
   }
   return out;
 }

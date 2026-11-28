@@ -13,7 +13,7 @@
  * The pins are part of the APPLY INPUT (`imagePins` for apps and databases, `serviceChoices[].pins` for members), never of the plan hash:
  * a plan with no pins hashes exactly as before, and the stale-plan guard compares the same plan it always did.
  */
-import { EXACT_IMAGE_KIND, EXACT_OFF_KIND, decodeExact, isExactPinFor } from "../../../../importer/exact-image";
+import { EXACT_IMAGE_KIND, EXACT_OFF_KIND, decodeExactHint, isExactPinFor } from "../../../../importer/exact-image";
 import type { ServiceChoice } from "../../../../importer/dto";
 import type { RunHint } from "./run-hints";
 
@@ -35,11 +35,11 @@ export const itemRefOfKey = (key: string): string => {
 export const isExactOff = (hints: readonly RunHint[], itemRef: string): boolean => hints.some((h) => h.kind === EXACT_OFF_KIND && h.key === itemRef && h.value === "off");
 
 /** The recorded pin of an app / database (`member` empty) or a stack member, unless the owner opted the item out. */
-export function exactPinOf(hints: readonly RunHint[], itemRef: string, member = ""): ReturnType<typeof decodeExact> {
+export function exactPinOf(hints: readonly RunHint[], itemRef: string, member = ""): ReturnType<typeof decodeExactHint> {
   if (isExactOff(hints, itemRef)) return null;
   const key = member ? memberKey(itemRef, member) : itemRef;
   const h = hints.find((x) => x.kind === EXACT_IMAGE_KIND && x.key === key);
-  return h ? decodeExact(h.value) : null;
+  return h ? decodeExactHint(h.value) : null;
 }
 
 export interface ExactRow {
@@ -59,7 +59,7 @@ export function exactRows(hints: readonly RunHint[]): ExactRow[] {
   const out: ExactRow[] = [];
   for (const h of hints) {
     if (h.kind !== EXACT_IMAGE_KIND) continue;
-    const d = decodeExact(h.value);
+    const d = decodeExactHint(h.value);
     if (!d) continue;
     const itemRef = itemRefOfKey(h.key);
     const member = h.key.length > itemRef.length ? h.key.slice(itemRef.length + 1) : "";

@@ -476,30 +476,30 @@ describe("ImportPortService.pinExactImage (R11): the exact image the source runs
   it("an image app: pinned when the ref is a pin of its own image; another repository, a digest-pinned image and a non-image app are left alone", async () => {
     const { svc, prisma, apps } = make();
     prisma.application.findUnique.mockResolvedValueOnce({ source: "IMAGE", image: "getmeili/meilisearch:latest" });
-    expect(await svc.pinExactImage("u1", { kind: "app", id: "a1", ref: `getmeili/meilisearch:latest@${D1}` })).toEqual({ pinned: true });
+    expect(await svc.pinExactImage("u1", { kind: "app", id: "a1", ref: `getmeili/meilisearch:latest@${D1}` })).toEqual({ pinned: true, state: "pinned" });
     expect(apps.setSource).toHaveBeenCalledWith("u1", "a1", { image: `getmeili/meilisearch:latest@${D1}` });
     prisma.application.findUnique.mockResolvedValueOnce({ source: "IMAGE", image: "getmeili/meilisearch:latest" });
-    expect(await svc.pinExactImage("u1", { kind: "app", id: "a1", ref: `evil/other:latest@${D1}` })).toEqual({ pinned: false });
+    expect(await svc.pinExactImage("u1", { kind: "app", id: "a1", ref: `evil/other:latest@${D1}` })).toEqual({ pinned: false, state: "refused" }); // another repository would run something else: said, not skipped
     prisma.application.findUnique.mockResolvedValueOnce({ source: "IMAGE", image: `getmeili/meilisearch:latest@sha256:${"2".repeat(64)}` });
-    expect(await svc.pinExactImage("u1", { kind: "app", id: "a1", ref: `getmeili/meilisearch:latest@${D1}` })).toEqual({ pinned: false });
+    expect(await svc.pinExactImage("u1", { kind: "app", id: "a1", ref: `getmeili/meilisearch:latest@${D1}` })).toEqual({ pinned: false, state: "same" }); // the owner's own digest
     prisma.application.findUnique.mockResolvedValueOnce({ source: "GIT", image: null });
-    expect(await svc.pinExactImage("u1", { kind: "app", id: "a1", ref: `x/y:latest@${D1}` })).toEqual({ pinned: false });
+    expect(await svc.pinExactImage("u1", { kind: "app", id: "a1", ref: `x/y:latest@${D1}` })).toEqual({ pinned: false, state: "same" });
     expect(apps.setSource).toHaveBeenCalledTimes(1);
   });
   it("a database: only one that was never started takes it", async () => {
     const { svc, prisma, dbs } = make();
     dbs.setImage.mockResolvedValue({ changed: true });
     prisma.database.findUnique.mockResolvedValueOnce({ image: "postgres:16", status: "NEW" });
-    expect(await svc.pinExactImage("u1", { kind: "database", id: "d1", ref: `postgres:16-alpine@${D1}` })).toEqual({ pinned: true });
+    expect(await svc.pinExactImage("u1", { kind: "database", id: "d1", ref: `postgres:16-alpine@${D1}` })).toEqual({ pinned: true, state: "pinned" });
     expect(dbs.setImage).toHaveBeenCalledWith("u1", "d1", `postgres:16-alpine@${D1}`);
     prisma.database.findUnique.mockResolvedValueOnce({ image: "postgres:16", status: "RUNNING" });
-    expect(await svc.pinExactImage("u1", { kind: "database", id: "d1", ref: `postgres:16-alpine@${D1}` })).toEqual({ pinned: false });
+    expect(await svc.pinExactImage("u1", { kind: "database", id: "d1", ref: `postgres:16-alpine@${D1}` })).toEqual({ pinned: false, state: "refused" }); // started before the pin arrived
     expect(dbs.setImage).toHaveBeenCalledTimes(1);
   });
   it("a compose stack: each member of that repository gets its pin in the stored compose", async () => {
     const { svc, prisma, apps } = make();
     prisma.application.findUnique.mockResolvedValueOnce({ source: "COMPOSE", composeFile: "services:\n  s:\n    image: getmeili/meilisearch:latest\n  r:\n    image: redis:7.2\n" });
-    expect(await svc.pinExactImage("u1", { kind: "service", id: "a1", members: { s: `getmeili/meilisearch:latest@${D1}`, r: `evil/redis:7.2@${D1}` } })).toEqual({ pinned: true });
+    expect(await svc.pinExactImage("u1", { kind: "service", id: "a1", members: { s: `getmeili/meilisearch:latest@${D1}`, r: `evil/redis:7.2@${D1}` } })).toEqual({ pinned: true, state: "refused" }); // s is pinned, r (another repository) is refused and named
     const written = apps.setComposeFile.mock.calls[0][2] as string;
     expect(written).toContain(`image: getmeili/meilisearch:latest@${D1}`);
     expect(written).toContain("image: redis:7.2\n");
