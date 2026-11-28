@@ -7,7 +7,7 @@ import { SectionCard } from "../ui";
 import { MeterBar } from "../meter-bar";
 import { formatDuration } from "../../lib/import";
 import { codeText, isTerminalRun, progressPct, progressText } from "../../lib/migration-run";
-import { stageLine, stepNoteKey, stepTitleKey } from "../../lib/inplace-run";
+import { isSimpleInPlace, stageLine, stepNoteKey, stepTitleKey } from "../../lib/inplace-run";
 import { STATE_COLOR, STATE_KEY, stepElapsedSec, stepperModel, type StepperRow, type StepperState } from "../../lib/run-stepper";
 import type { MigrationRunView } from "../../lib/types";
 import { useRunInPlace } from "./in-place-card";
@@ -114,7 +114,9 @@ function Row({ run, row, note, now, index, total }: { run: MigrationRunView; row
 export function RunStepper({ run }: { run: MigrationRunView }) {
   const t = useT();
   const inPlace = useRunInPlace(run);
-  const model = stepperModel(run);
+  // an in-place dry run keeps the current content: only a real in-place run gets the short list, its words and its notes
+  const simple = isSimpleInPlace(run);
+  const model = stepperModel({ ...run, inPlace: simple });
   const settled = isTerminalRun(run.status);
   // the hub works on by itself only while the run runs or waits (a failed or paused run waits for the owner, a queued one for its start)
   const moving = run.status === "RUNNING" || run.status === "WAITING";
@@ -139,7 +141,7 @@ export function RunStepper({ run }: { run: MigrationRunView }) {
             <span style={{ position: "absolute", top: 0, bottom: 0, width: "40%", borderRadius: 2, background: "var(--c-a)" }} />
           </div>
         )}
-        {run.inPlace && inPlace.data && (
+        {simple && inPlace.data && (
           <p data-testid="run-stepper-stage" style={{ margin: 0, fontSize: 12, color: "var(--c-tx3)", lineHeight: 1.5 }}>
             {t(inPlace.data.status === "FAILED" || inPlace.data.status === "GIVEN_BACK" || inPlace.data.status === "GIVING_BACK" ? `coolifyInPlace.status.${inPlace.data.status}` : "inPlaceRun.stageLine", {
               stage: t(`inPlaceRun.stage.${stageLine(inPlace.data.status, inPlace.data.verified).stage}`),
@@ -152,10 +154,10 @@ export function RunStepper({ run }: { run: MigrationRunView }) {
         )}
         <ol aria-label={t("migrationRun.stepper.title")} aria-live="polite" style={{ listStyle: "none", margin: 0, padding: 0 }}>
           {model.rows.map((r, i) => (
-            <Row key={r.step.key} run={run} row={r} note={run.inPlace ? stepNoteKey(r.step.key, takeover) : null} now={now} index={i} total={total} />
+            <Row key={r.step.key} run={run} row={r} note={simple ? stepNoteKey(r.step.key, takeover) : null} now={now} index={i} total={total} />
           ))}
         </ol>
-        {model.hidden > 0 && !run.inPlace && (
+        {model.hidden > 0 && !simple && (
           <p data-testid="run-stepper-hidden" style={{ margin: 0, fontSize: 12, color: "var(--c-tx3)", lineHeight: 1.5 }}>
             {t("migrationRun.stepper.hidden", { count: model.hidden })}
           </p>

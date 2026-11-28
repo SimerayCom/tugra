@@ -65,6 +65,19 @@ describe("the live step list at the top of a run page", () => {
     expect(screen.queryByText("Rehearse data copy")).toBeNull();
   });
 
+  it("an in-place dry run keeps the current content: general step names, no in-place notes, and the steps that do not apply are counted", async () => {
+    vi.spyOn(api, "getMigrationRun").mockResolvedValue(
+      inPlaceRun({ dryRun: true, status: "RUNNING", currentStep: "DEPLOY_DARK", nextAction: { kind: "engine", stepKey: "DEPLOY_DARK", code: "run.started", since: "2026-11-16T10:00:00.000Z" } }, inPlaceSteps({ PREFLIGHT: "PASSED", IMPORT: "PASSED", REMAP_ENV: "PASSED", DEPLOY_DARK: "RUNNING" })),
+    );
+    vi.spyOn(api, "getRunInPlace").mockResolvedValue({ id: "tk", status: "TESTING", failureCode: null, pending: 0, verified: false, items: [] });
+    wrap();
+    const stepper = await screen.findByTestId("run-stepper");
+    expect(within(stepper).queryByText("Test every site next to Coolify")).toBeNull();
+    expect(within(stepper).queryByText(/^In place:/)).toBeNull();
+    expect(within(stepper).queryByTestId("run-stepper-stage")).toBeNull();
+    expect(within(stepper).getByTestId("run-stepper-hidden").textContent).toMatch(/do not apply/);
+  });
+
   it("says plainly that closing the page stops nothing while the run is live", async () => {
     vi.spyOn(api, "getMigrationRun").mockResolvedValue(inPlaceRun({ status: "RUNNING", currentStep: "IMPORT" }, inPlaceSteps({ PREFLIGHT: "PASSED", IMPORT: "RUNNING" })));
     wrap();
@@ -108,13 +121,13 @@ describe("the live step list at the top of a run page", () => {
     expect(screen.queryByTestId("run-stepper-hidden")).toBeNull();
   });
 
-  it("a queued run starts with one click, no confirmation window, and says nothing touches production before the approval", async () => {
+  it("a queued run starts with one click, no confirmation window, and says nothing touches production before the approval (Start is in the card, not the header)", async () => {
     const queued = inPlaceRun({ status: "QUEUED", currentStep: null, allowed: { ...mkRun().allowed, start: true, pause: false } }, inPlaceSteps({}));
     vi.spyOn(api, "getMigrationRun").mockResolvedValue(queued);
     const start = vi.spyOn(api, "startMigrationRun").mockResolvedValue({ ...queued, status: "RUNNING" });
     wrap();
     expect((await screen.findByTestId("run-stepper-note")).textContent).toBe("Nothing touches production traffic until you approve the verification.");
-    fireEvent.click(screen.getByRole("button", { name: "Start run" }));
+    fireEvent.click(screen.getByRole("button", { name: "Start" }));
     await waitFor(() => expect(start).toHaveBeenCalledWith("run12345abcdef"));
     expect(screen.queryByRole("dialog")).toBeNull();
   });

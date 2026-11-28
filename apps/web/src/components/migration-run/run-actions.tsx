@@ -50,7 +50,7 @@ export function useStartRun(run: MigrationRunView) {
 
 /** Start / promote, pause and resume: the run's everyday controls, shown in the page header. A finished dry run is started
  *  from its decision screen instead, which says what the real run would do first. */
-export function RunHeaderActions({ run }: { run: MigrationRunView }) {
+export function RunHeaderActions({ run, hideStart = false }: { run: MigrationRunView; hideStart?: boolean }) {
   const { adopt, onError, t } = useRunPlumbing(run.id);
   const confirm = useConfirm();
   const { onStart, pending: starting, promoting } = useStartRun(run);
@@ -61,7 +61,7 @@ export function RunHeaderActions({ run }: { run: MigrationRunView }) {
   };
   return (
     <>
-      {run.allowed.start && !promoting && <Btn onClick={onStart} loading={starting}>{t("migrationRun.actions.start")}</Btn>}
+      {run.allowed.start && !promoting && !hideStart && <Btn onClick={onStart} loading={starting}>{t("migrationRun.actions.start")}</Btn>}
       {run.allowed.pause && <Btn variant="ghost" onClick={onPause} loading={pause.isPending}>{t("migrationRun.actions.pause")}</Btn>}
       {run.allowed.resume && <Btn onClick={() => resume.mutate()} loading={resume.isPending}>{t("migrationRun.actions.resume")}</Btn>}
     </>

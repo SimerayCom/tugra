@@ -58,7 +58,19 @@
     "tugra": "Tugra",
     "status": "Answer {status}",
     "bytes": "{size}",
-    "redirect": "Sends visitors to {location}"
+    "redirect": "Sends visitors to {location}",
+    "none": "No answer"
+  },
+  "reason": {
+    "ok": "The two answer the same.",
+    "status_only": "The two answer the same status; the page content was not compared.",
+    "preexisting": "Coolify's copy already answered like this before the move.",
+    "unreachable": "Tugra's copy could not be reached.",
+    "server_error": "Tugra's copy answers with an error.",
+    "status_differs": "The two answer with a different status.",
+    "content_differs": "The two answer with different content.",
+    "no_answer": "Tugra's copy did not answer.",
+    "not_ready": "The app's container is not up yet."
   },
   "step": {
     "PREFLIGHT": "Check Coolify and this server",
@@ -93,6 +105,8 @@
     "switching": "Taking over your sites",
     "working": "Working on it",
     "ready": "Ready to start",
+    "readyBody": "Nothing on your server changes yet. Tugra reads your apps from Coolify and tests every site next to it, and asks for your go-ahead before it takes anything over.",
+    "start": "Start",
     "done": "Moved",
     "givingBack": "Giving Coolify back",
     "givenBack": "Coolify serves your sites again",
@@ -117,6 +131,10 @@
     "service": "Service, taken over",
     "given_back": "Back on Coolify"
   },
+  "gate": {
+    "acmeEmail": "This server has no email address for its certificates, so Tugra cannot get new ones. Set the Let's Encrypt email for this server, then check again.",
+    "openServer": "Open the server"
+  },
   "giveBack": {
     "button": "Give Coolify back",
     "title": "Give Coolify back?",
@@ -134,7 +152,8 @@
     "confirmTitle": "Take over {server} now?",
     "confirmBody": "Tugra takes the ports and serves your sites. Coolify can be given back with one click.",
     "confirmButton": "Take over",
-    "asks": "This needs your go-ahead to continue without:"
+    "asks": "You confirm these to continue:",
+    "askUnknown": "A finding you need to confirm"
   },
   "done": {
     "body": "{sites} sites answer like before and have a certificate.",

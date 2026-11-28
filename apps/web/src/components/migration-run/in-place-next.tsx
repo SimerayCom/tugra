@@ -18,6 +18,7 @@ import { useRunInPlace } from "./in-place-card";
 import { OperatorTools } from "./operator-tools";
 import { SourceSessionForm } from "./source-session-card";
 import { useRunPlumbing } from "./use-run-actions";
+import { useStartRun } from "./run-actions";
 
 /** Re-render once a second while a countdown is shown. */
 function useNow(active: boolean): number {
@@ -69,7 +70,10 @@ export function InPlaceNextCard({ run }: { run: MigrationRunView }) {
   const ended = ["ABORTED", "ROLLED_BACK", "REVERSED"].includes(run.status);
   const switched = takeover.data?.status === "SWAPPING" || takeover.data?.status === "SWAPPED" || takeover.data?.status === "VERIFIED";
   const heading = t(nextHeadingKey(na.kind, na.stepKey, run.status));
-  const busy = na.kind === "engine" || (na.kind === "none" && run.status === "RUNNING");
+  const queued = run.status === "QUEUED";
+  const busy = !queued && (na.kind === "engine" || (na.kind === "none" && run.status === "RUNNING"));
+  const { onStart, pending: starting } = useStartRun(run);
+  const serverHref = `/servers/${run.targetServerId}`;
 
   return (
     <SectionCard style={{ marginBottom: 0 }}>
@@ -83,7 +87,18 @@ export function InPlaceNextCard({ run }: { run: MigrationRunView }) {
 
         {!done && !ended && (
           <>
-            {(na.kind === "engine" || na.kind === "none") && run.status !== "QUEUED" && (
+            {queued && (
+              <>
+                <p data-testid="in-place-ready" style={{ margin: 0, fontSize: 14, lineHeight: 1.5 }}>{t("inPlaceRun.next.readyBody")}</p>
+                {run.allowed.start && (
+                  <div>
+                    <Btn onClick={onStart} loading={starting}>{t("inPlaceRun.next.start")}</Btn>
+                  </div>
+                )}
+              </>
+            )}
+
+            {!queued && (na.kind === "engine" || na.kind === "none") && (
               <>
                 <p style={{ margin: 0, fontSize: 14, lineHeight: 1.5, wordBreak: "break-word" }}>{codeText(t, na.code, na.params)}</p>
                 <p style={{ margin: 0, fontSize: 12, color: "var(--c-tx3)", lineHeight: 1.5 }}>{t("inPlaceRun.next.waitNote")}</p>
@@ -108,7 +123,7 @@ export function InPlaceNextCard({ run }: { run: MigrationRunView }) {
             {na.kind === "gate" && step && (
               <>
                 <p style={{ margin: 0, fontSize: 14, lineHeight: 1.5, wordBreak: "break-word" }}>{codeText(t, na.code, na.params)}</p>
-                <GateChecks checks={blockingChecks(step.gate)} hideInputLinks />
+                <GateChecks checks={blockingChecks(step.gate)} hideInputLinks inPlaceServerHref={serverHref} />
                 {step.allowed.retry && (
                   <div>
                     <Btn onClick={() => retry.mutate()} loading={retry.isPending}>{t("migrationRun.next.recheck")}</Btn>
@@ -128,12 +143,12 @@ export function InPlaceNextCard({ run }: { run: MigrationRunView }) {
             {na.kind === "failed" && (
               <>
                 {step?.lastError && <p role="alert" style={{ margin: 0, fontSize: 14, color: "var(--c-r)", lineHeight: 1.5, wordBreak: "break-word" }}>{codeText(t, step.lastError, step.lastErrorParams)}</p>}
-                {step?.gate && blockingChecks(step.gate).length > 0 && <GateChecks checks={blockingChecks(step.gate)} hideInputLinks />}
+                {step?.gate && blockingChecks(step.gate).length > 0 && <GateChecks checks={blockingChecks(step.gate)} hideInputLinks inPlaceServerHref={serverHref} />}
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                   {step?.allowed.retry && <Btn onClick={() => retry.mutate()} loading={retry.isPending}>{t(step.key === "DEPLOY_DARK" ? "inPlaceRun.next.testAgain" : "inPlaceRun.next.retry")}</Btn>}
                   <GiveBackButton run={run} />
                 </div>
-                <p style={{ margin: 0, fontSize: 12, color: "var(--c-tx3)", lineHeight: 1.5 }}>{t(switched ? "inPlaceRun.next.failedHintSwitched" : "inPlaceRun.next.failedHintSafe")}</p>
+                {takeover.data && <p style={{ margin: 0, fontSize: 12, color: "var(--c-tx3)", lineHeight: 1.5 }}>{t(switched ? "inPlaceRun.next.failedHintSwitched" : "inPlaceRun.next.failedHintSafe")}</p>}
               </>
             )}
           </>

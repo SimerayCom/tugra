@@ -119,17 +119,20 @@ describe("appStateOf: one phrase per app, from what was measured", () => {
   });
 });
 
-describe("domainEvidence and icon hints read what the hub may send, and nothing else", () => {
-  it("returns both sides only when both were measured", () => {
-    const d = { ...dom("failed"), evidence: { coolify: { status: 200, bytes: 10 }, tugra: { status: 502, bytes: 0, location: "x" } } };
-    expect(domainEvidence(d)).toEqual({ coolify: { status: 200, bytes: 10, location: null }, tugra: { status: 502, bytes: 0, location: "x" } });
-    expect(domainEvidence(dom("failed"))).toBeNull();
-    expect(domainEvidence({ evidence: { coolify: { status: 200 } } })).toBeNull();
-    expect(domainEvidence({ evidence: { coolify: {}, tugra: {} } })).toBeNull();
+describe("domainEvidence and icon hints read what the hub sends (check, appId, iconKey)", () => {
+  it("reads the reason and both answers from the hub's check; a side with no answer stays null", () => {
+    const d = { ...dom("failed"), check: { reason: "status_differs" as const, coolify: { status: 200, bytes: 10, location: null }, tugra: { status: 502, bytes: 0, location: "x" } } };
+    expect(domainEvidence(d)).toEqual({ reason: "status_differs", coolify: { status: 200, bytes: 10, location: null }, tugra: { status: 502, bytes: 0, location: "x" } });
+    expect(domainEvidence({ ...dom("failed"), check: { reason: "not_ready", coolify: { status: 200, bytes: null, location: null }, tugra: null } })).toEqual({ reason: "not_ready", coolify: { status: 200, bytes: null, location: null }, tugra: null });
+    expect(domainEvidence({ ...dom("failed"), check: { reason: "unreachable", coolify: { status: null, bytes: null, location: null }, tugra: null } })).toEqual({ reason: "unreachable", coolify: null, tugra: null });
   });
-  it("takes the app id and the image from an item that carries them", () => {
-    expect(itemIconHints({ appId: "a1", image: "nginx:1" })).toEqual({ appId: "a1", image: "nginx:1" });
-    expect(itemIconHints(it0())).toEqual({ appId: null, image: null });
+  it("says nothing when the hub kept no check, or the check passed", () => {
+    expect(domainEvidence(dom("failed"))).toBeNull();
+    expect(domainEvidence({ ...dom("ok"), check: { reason: "ok", coolify: null, tugra: null } })).toBeNull();
+  });
+  it("takes the app id and the icon key from an item that carries them", () => {
+    expect(itemIconHints({ appId: "a1", iconKey: "nginx" })).toEqual({ appId: "a1", iconKey: "nginx" });
+    expect(itemIconHints(it0())).toEqual({ appId: null, iconKey: null });
   });
 });
 
@@ -149,6 +152,8 @@ describe("the words of the simple page", () => {
     expect(stepTitleKey({ inPlace: true }, "DEPLOY_DARK")).toBe("inPlaceRun.step.DEPLOY_DARK");
     expect(stepTitleKey({ inPlace: true }, "FREEZE")).toBe("migrationRun.steps.FREEZE.title");
     expect(stepTitleKey({ inPlace: false }, "DEPLOY_DARK")).toBe("migrationRun.steps.DEPLOY_DARK.title");
+    // an in-place dry run keeps the current content
+    expect(stepTitleKey({ inPlace: true, dryRun: true }, "DEPLOY_DARK")).toBe("migrationRun.steps.DEPLOY_DARK.title");
   });
   it("one state word for the header and one heading for the card", () => {
     const na = (kind: "approval" | "failed" | "engine" | "timer") => ({ kind, stepKey: null, code: "x", since: "" });
@@ -160,5 +165,8 @@ describe("the words of the simple page", () => {
     expect(nextHeadingKey("engine", "CUTOVER", "RUNNING")).toBe("inPlaceRun.next.switching");
     expect(nextHeadingKey("failed", "IMPORT", "FAILED")).toBe("inPlaceRun.next.needsLook");
     expect(nextHeadingKey("none", null, "COMPLETED")).toBe("inPlaceRun.next.done");
+    // the hub says kind engine / code run.queued for a queued run: that is "Ready to start", never "Working on it"
+    expect(nextHeadingKey("engine", null, "QUEUED")).toBe("inPlaceRun.next.ready");
+    expect(nextHeadingKey("none", null, "QUEUED")).toBe("inPlaceRun.next.ready");
   });
 });

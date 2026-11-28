@@ -24,7 +24,7 @@ import {
 import type { MigrationRunStepView, MigrationRunView } from "../../lib/types";
 import { EvidenceBadge, StepStatusBadge, StepStatusMark } from "./badges";
 import { GateChecks } from "./gate-checks";
-import { stepNoteKey } from "../../lib/inplace-run";
+import { isSimpleInPlace, stepNoteKey } from "../../lib/inplace-run";
 import type { TakeoverStatus } from "@tugra/shared";
 
 const DRY_COLOR = { block: "var(--c-r)", unknown: "var(--c-am)", warn: "var(--c-am)", info: "var(--c-tx3)" } as const;
@@ -151,7 +151,7 @@ function StepRow({ step, index, current, note }: { step: MigrationRunStepView; i
 export function StepTimeline({ run, inPlaceStatus = null }: { run: MigrationRunView; inPlaceStatus?: TakeoverStatus | null }) {
   const t = useT();
   // an in-place takeover copies nothing: the steps it skipped are not drawn (the stepper above says how many)
-  const steps = visibleSteps(run).filter((s) => !run.inPlace || s.status !== "SKIPPED");
+  const steps = visibleSteps(run).filter((s) => !isSimpleInPlace(run) || s.status !== "SKIPPED");
   return (
     <SectionCard title={t("migrationRun.timeline.title")} style={{ marginBottom: 0 }}>
       <ol aria-label={t("migrationRun.timeline.title")} style={{ margin: 0, padding: 0 }}>
@@ -165,7 +165,7 @@ export function StepTimeline({ run, inPlaceStatus = null }: { run: MigrationRunV
                 <span style={{ flex: 1, borderTop: `1px ${run.ponrAt ? "solid" : "dashed"} currentColor`, height: 0 }} />
               </li>
             )}
-            <StepRow step={s} index={i} current={run.currentStep === s.key} note={run.inPlace ? stepNoteKey(s.key, inPlaceStatus) : null} />
+            <StepRow step={s} index={i} current={run.currentStep === s.key} note={isSimpleInPlace(run) ? stepNoteKey(s.key, inPlaceStatus) : null} />
           </Fragment>
         ))}
       </ol>

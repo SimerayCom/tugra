@@ -124,7 +124,7 @@ function InPlaceRunPage({ run, events, error, settled }: { run: MigrationRunView
         ]}
         title={<span style={{ wordBreak: "break-word" }}>{server}</span>}
         status={{ label: t(runStateKey(run)), color: runStatusColor(run.status) }}
-        actions={<RunHeaderActions run={run} />}
+        actions={<RunHeaderActions run={run} hideStart />}
       />
       {live && run.allowed.abort && (
         <p role="status" data-testid="in-place-banner" style={{ margin: "0 0 14px", fontSize: 13, color: "var(--c-tx2)", lineHeight: 1.5 }}>{t("inPlaceRun.banner")}</p>

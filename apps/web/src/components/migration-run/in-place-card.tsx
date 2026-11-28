@@ -9,7 +9,7 @@ import { useT } from "../../i18n/provider";
 import { Badge, SectionCard } from "../ui";
 import { ResourceIcon } from "../resource-icon";
 import { formatBytes } from "../../lib/import";
-import { APP_STATE_KEY, OUTCOME_KEY, appStateOf, appStateTone, domainEvidence, inPlaceBusy, itemIconHints, outcomeOf, rowsOf, type AppState, type DomainAnswer } from "../../lib/inplace-run";
+import { APP_STATE_KEY, OUTCOME_KEY, appStateOf, appStateTone, domainEvidence, inPlaceBusy, itemIconHints, outcomeOf, rowsOf, type AppState, type DomainAnswer, type DomainEvidence } from "../../lib/inplace-run";
 import type { MigrationRunView } from "../../lib/types";
 
 const POLL_MS = 5000;
@@ -43,22 +43,28 @@ function StateMark({ state }: { state: AppState }) {
 }
 
 /** What each side answered, side by side, so the owner sees the difference instead of being told there is one. */
-function Evidence({ coolify, tugra }: { coolify: DomainAnswer; tugra: DomainAnswer }) {
+function Evidence({ reason, coolify, tugra }: { reason: DomainEvidence["reason"]; coolify: DomainAnswer | null; tugra: DomainAnswer | null }) {
   const t = useT();
-  const side = (name: string, a: DomainAnswer) => (
+  const side = (name: string, a: DomainAnswer | null) => (
     <div style={{ minWidth: 0, flex: "1 1 160px" }}>
       <div style={{ fontSize: 11, fontWeight: 700, color: "var(--c-tx3)", textTransform: "uppercase", letterSpacing: "0.05em" }}>{name}</div>
       <div className="mono" style={{ fontSize: 12, lineHeight: 1.6, wordBreak: "break-all" }}>
-        {a.status !== null && <div>{t("inPlaceRun.evidence.status", { status: a.status })}</div>}
-        {a.bytes !== null && <div>{t("inPlaceRun.evidence.bytes", { size: formatBytes(a.bytes) })}</div>}
-        {a.location && <div>{t("inPlaceRun.evidence.redirect", { location: a.location })}</div>}
+        {!a && <div>{t("inPlaceRun.evidence.none")}</div>}
+        {a && a.status !== null && <div>{t("inPlaceRun.evidence.status", { status: a.status })}</div>}
+        {a && a.bytes !== null && <div>{t("inPlaceRun.evidence.bytes", { size: formatBytes(a.bytes) })}</div>}
+        {a && a.location && <div>{t("inPlaceRun.evidence.redirect", { location: a.location })}</div>}
       </div>
     </div>
   );
   return (
-    <div data-testid="in-place-evidence" role="group" aria-label={t("inPlaceRun.evidence.title")} style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 4 }}>
-      {side(t("inPlaceRun.evidence.coolify"), coolify)}
-      {side(t("inPlaceRun.evidence.tugra"), tugra)}
+    <div data-testid="in-place-evidence" role="group" aria-label={t("inPlaceRun.evidence.title")} style={{ marginTop: 4 }}>
+      <div data-testid="in-place-reason" style={{ fontSize: 12, color: "var(--c-tx2)", lineHeight: 1.5 }}>{t(`inPlaceRun.reason.${reason}`)}</div>
+      {(coolify || tugra) && (
+        <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 4 }}>
+          {side(t("inPlaceRun.evidence.coolify"), coolify)}
+          {side(t("inPlaceRun.evidence.tugra"), tugra)}
+        </div>
+      )}
     </div>
   );
 }
@@ -78,7 +84,7 @@ function AppRow({ item, takeover }: { item: TakeoverItemView; takeover: Takeover
       <span style={{ paddingTop: 1, flexShrink: 0 }}>
         <ResourceIcon
           faviconUrl={hints.appId && first ? appFaviconUrl(hints.appId, first) : null}
-          image={hints.image}
+          iconKey={hints.iconKey}
           name={item.name}
           size={28}
           fallback={<Fallback size={28} color="var(--c-tx3)" aria-hidden />}
@@ -95,11 +101,11 @@ function AppRow({ item, takeover }: { item: TakeoverItemView; takeover: Takeover
         {item.kind !== "database" && item.kind !== "service" && item.domains.length > 0 && (
           <ul style={{ margin: 0, padding: 0, listStyle: "none", display: "flex", flexDirection: "column", gap: 2 }}>
             {item.domains.map((d) => {
-              const ev = d.tempCheck === "failed" ? domainEvidence(d) : null;
+              const ev = d.tempCheck !== "ok" ? domainEvidence(d) : null;
               return (
                 <li key={d.host} style={{ minWidth: 0 }}>
                   <span className="mono" style={{ fontSize: 12, color: d.tempCheck === "failed" ? "var(--c-r)" : "var(--c-tx2)", overflowWrap: "anywhere" }}>{d.host}</span>
-                  {ev && <Evidence coolify={ev.coolify} tugra={ev.tugra} />}
+                  {ev && <Evidence reason={ev.reason} coolify={ev.coolify} tugra={ev.tugra} />}
                 </li>
               );
             })}

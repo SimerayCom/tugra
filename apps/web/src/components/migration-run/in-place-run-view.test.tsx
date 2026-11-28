@@ -106,17 +106,46 @@ describe("the page of an in-place run is short", () => {
     expect(screen.queryByTestId("in-place-rollup")).toBeNull();
   });
 
-  it("shows what Coolify and Tugra each answered for a domain that differs, side by side", async () => {
+  it("shows why a domain differs and what Coolify and Tugra each answered, side by side, from the hub's check", async () => {
     vi.spyOn(api, "getMigrationRun").mockResolvedValue(inPlaceRun({ currentStep: "DEPLOY_DARK", status: "FAILED", nextAction: { kind: "failed", stepKey: "DEPLOY_DARK", code: "step.failed", since: "2026-11-16T10:00:00.000Z" } }));
-    const bad = { ...dom("app.example.com", "failed"), evidence: { coolify: { status: 200, bytes: 5120, location: null }, tugra: { status: 302, bytes: 0, location: "https://app.example.com/login" } } };
+    const bad = { ...dom("app.example.com", "failed"), check: { reason: "status_differs" as const, coolify: { status: 200, bytes: 5120, location: null }, tugra: { status: 302, bytes: 0, location: "https://app.example.com/login" } } };
     vi.spyOn(api, "getRunInPlace").mockResolvedValue(view({ items: [item({ itemRef: "app:s:a", name: "app", domains: [bad] })] }));
     wrap();
     const ev = await screen.findByTestId("in-place-evidence");
+    expect(within(ev).getByTestId("in-place-reason").textContent).toBe("The two answer with a different status.");
     expect(within(ev).getByText("Coolify")).toBeTruthy();
     expect(within(ev).getByText("Tugra")).toBeTruthy();
     expect(within(ev).getByText("Answer 200")).toBeTruthy();
     expect(within(ev).getByText("Answer 302")).toBeTruthy();
     expect(within(ev).getByText("Sends visitors to https://app.example.com/login")).toBeTruthy();
+  });
+
+  it("a domain whose app never came up says so and shows 'No answer' for the side that did not answer", async () => {
+    vi.spyOn(api, "getMigrationRun").mockResolvedValue(inPlaceRun({ currentStep: "DEPLOY_DARK" }));
+    const bad = { ...dom("app.example.com", "pending"), check: { reason: "not_ready" as const, coolify: { status: 200, bytes: 10, location: null }, tugra: null } };
+    vi.spyOn(api, "getRunInPlace").mockResolvedValue(view({ items: [item({ itemRef: "app:s:a", name: "app", domains: [bad] })] }));
+    wrap();
+    const ev = await screen.findByTestId("in-place-evidence");
+    expect(within(ev).getByTestId("in-place-reason").textContent).toBe("The app's container is not up yet.");
+    expect(within(ev).getByText("No answer")).toBeTruthy();
+    expect(within(ev).getByText("Answer 200")).toBeTruthy();
+  });
+
+  it("a domain that passed draws no evidence", async () => {
+    vi.spyOn(api, "getMigrationRun").mockResolvedValue(inPlaceRun({ currentStep: "VERIFY" }));
+    vi.spyOn(api, "getRunInPlace").mockResolvedValue(view({ items: [item({ itemRef: "a", name: "a" })] }));
+    wrap();
+    await screen.findByTestId("in-place-app");
+    expect(screen.queryByTestId("in-place-evidence")).toBeNull();
+  });
+
+  it("an app carries its site's favicon from the app id the hub sends, and a database its brand from the icon key", async () => {
+    vi.spyOn(api, "getMigrationRun").mockResolvedValue(inPlaceRun({ currentStep: "VERIFY" }));
+    vi.spyOn(api, "getRunInPlace").mockResolvedValue(view({ items: [item({ itemRef: "a", name: "shop", appId: "app-9" }), item({ itemRef: "d", name: "db", kind: "database", iconKey: "postgresql", domains: [] })] }));
+    wrap();
+    const rows = await screen.findAllByTestId("in-place-app");
+    expect(rows[0].querySelector("img")?.getAttribute("src")).toMatch(/\/apps\/app-9\/favicon\?v=shop\.example\.com/);
+    expect(rows[1].querySelector("svg, img")).toBeTruthy();
   });
 
   it("after the switch an app is 'Live on Tugra' with a certificate, or still getting it", async () => {
@@ -164,7 +193,7 @@ describe("the one card of an in-place run", () => {
     const card = (await screen.findByTestId("in-place-next-heading")).closest(".tg-card") as HTMLElement;
     expect(within(card).getByText("Something needs a look")).toBeTruthy();
     expect(card.textContent).toMatch(/app\.example\.com does not answer through Tugra/);
-    expect(card.textContent).toMatch(/Nothing was lost: Coolify still serves your sites\./);
+    await waitFor(() => expect(card.textContent).toMatch(/Nothing was lost: Coolify still serves your sites\./));
     expect(within(card).queryByText("A failure")).toBeNull(); // the technical kind label is gone
     expect(within(card).queryByText(/since/)).toBeNull();
     expect(within(card).getByRole("button", { name: "Give Coolify back" })).toBeTruthy();
@@ -216,10 +245,59 @@ describe("the one card of an in-place run", () => {
     const approve = vi.spyOn(api, "approveMigrationRunStep").mockResolvedValue(inPlaceRun({ status: "RUNNING" }));
     wrap();
     expect((await screen.findByTestId("in-place-asks")).querySelectorAll("li")).toHaveLength(1);
+    expect(text()).not.toMatch(/continue without/);
+    expect(text()).toMatch(/Left out of the move, Coolify keeps running them/);
     expect(screen.queryByRole("checkbox")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Take over tugra-1" }));
     fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Take over" }));
     await waitFor(() => expect(approve).toHaveBeenCalledWith("run12345abcdef", "VERIFY", expect.objectContaining({ acks: ["verify.app-left-out"] })));
+  });
+
+  it("an approval that is not the take-over says plainly what is confirmed, and never prints a raw check id", async () => {
+    const waiting = steps().map((s) => (s.key === "IMPORT" ? mkStep("IMPORT", "WAITING_APPROVAL") : s));
+    vi.spyOn(api, "getMigrationRun").mockResolvedValue(
+      inPlaceRun({ status: "WAITING", currentStep: "IMPORT", nextAction: { kind: "approval", stepKey: "IMPORT", code: "import.review", since: "2026-11-16T10:00:00.000Z", approval: binding({ confirm: "none", ackable: ["import.mystery-check"], requiredAcks: ["import.mystery-check"] }) } }, waiting),
+    );
+    vi.spyOn(api, "getRunInPlace").mockResolvedValue(view());
+    wrap();
+    const asks = await screen.findByTestId("in-place-asks");
+    expect(asks.textContent).toBe("A finding you need to confirm");
+    expect(text()).toMatch(/You confirm these to continue:/);
+    expect(text()).not.toMatch(/import\.mystery-check|continue without/);
+    expect(screen.getByRole("button", { name: "Continue" })).toBeTruthy();
+  });
+
+  it("a queued run says it is ready, with one sentence and Start inside the card (and not in the header)", async () => {
+    vi.spyOn(api, "getMigrationRun").mockResolvedValue(inPlaceRun({ status: "QUEUED", currentStep: null, allowed: { ...mkRun({}, steps()).allowed, start: true }, nextAction: { kind: "engine", stepKey: null, code: "run.queued", since: "2026-11-16T10:00:00.000Z" } }));
+    vi.spyOn(api, "getRunInPlace").mockResolvedValue(null);
+    const start = vi.spyOn(api, "startMigrationRun").mockResolvedValue(inPlaceRun({ status: "RUNNING" }));
+    wrap();
+    const heading = await screen.findByTestId("in-place-next-heading");
+    expect(heading.textContent).toBe("Ready to start");
+    const card = heading.closest(".tg-card") as HTMLElement;
+    expect(within(card).getByTestId("in-place-ready").textContent).toMatch(/Nothing on your server changes yet/);
+    expect(within(card).queryByText("Working on it")).toBeNull();
+    expect(card.querySelector('[aria-busy="true"], .tg-spin')).toBeNull();
+    expect(screen.getAllByRole("button", { name: /^Start/ })).toHaveLength(1);
+    fireEvent.click(within(card).getByRole("button", { name: "Start" }));
+    await waitFor(() => expect(start).toHaveBeenCalledWith("run12345abcdef"));
+  });
+
+  it("a missing certificate email says where to set it and offers check again; no hint about Coolify while the takeover is unread", async () => {
+    const blocked = steps().map((s) =>
+      s.key === "CUTOVER"
+        ? mkStep("CUTOVER", "PENDING", { gate: { passed: false, checks: [{ id: "cutover.acme-email", status: "unknown", code: "cutover.acme-email", ownerInput: "acmeEmail" }] } as never, allowed: { ...s.allowed, retry: true } })
+        : s,
+    );
+    vi.spyOn(api, "getMigrationRun").mockResolvedValue(inPlaceRun({ status: "WAITING", currentStep: "CUTOVER", nextAction: { kind: "gate", stepKey: "CUTOVER", code: "step.gate-blocked", since: "2026-11-16T10:00:00.000Z" } }, blocked));
+    vi.spyOn(api, "getRunInPlace").mockRejectedValue(new ApiError(500, "boom"));
+    wrap();
+    const heading = await screen.findByTestId("in-place-next-heading");
+    const card = heading.closest(".tg-card") as HTMLElement;
+    expect(card.textContent).toMatch(/no email address for its certificates/);
+    expect(within(card).getByRole("link", { name: "Open the server" }).getAttribute("href")).toBe("/servers/srv1");
+    expect(within(card).getByRole("button", { name: "Check again" })).toBeTruthy();
+    expect(card.textContent).not.toMatch(/Nothing was lost/);
   });
 
   it("watching: the window is reassurance, with the time left, and nothing is asked", async () => {

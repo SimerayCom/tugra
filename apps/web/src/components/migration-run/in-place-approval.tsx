@@ -70,7 +70,7 @@ export function InPlaceApproval({ run, stepKey, binding, gate }: { run: Migratio
           <ul data-testid="in-place-asks" style={{ margin: 0, paddingLeft: 18, fontSize: 13, lineHeight: 1.6, display: "flex", flexDirection: "column", gap: 2 }}>
             {rows.map((r) => {
               const first = r.checks[0];
-              return <li key={r.id} style={{ wordBreak: "break-word" }}>{first ? codeText(t, first.code, first.params) : r.id}</li>;
+              return <li key={r.id} style={{ wordBreak: "break-word" }}>{first ? codeText(t, first.code, first.params) : t("inPlaceRun.approval.askUnknown")}</li>;
             })}
           </ul>
         </div>

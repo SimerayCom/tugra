@@ -1,7 +1,7 @@
 // What the run view says about an in-place takeover (Coolify hub takeover, lane F inside the guided run). Pure: no React, no network.
 // The hub states the facts (the takeover's state, per app whether Coolify's image was reused or the app was rebuilt with Tugra and
 // verified); this only turns them into locale keys and counts. Names, refs and codes only.
-import type { RunInPlaceView, TakeoverItemView, TakeoverStatus } from "@tugra/shared";
+import type { RunInPlaceView, TakeoverAnswer, TakeoverCheckReason, TakeoverItemView, TakeoverStatus } from "@tugra/shared";
 import type { MigrationRunNextAction, MigrationRunStatus, MigrationRunStepKey, MigrationRunView } from "./types";
 import { STEP_TITLE_KEY } from "./migration-run";
 
@@ -217,39 +217,41 @@ export function appStateOf(item: TakeoverItemView, takeover: TakeoverStatus): Ap
   return item.domains.every((d) => d.tempCheck === "ok") ? "same" : "checking";
 }
 
-/** One side of a probe: what the site answered. The hub states these only when it measured them (absent = it did not). */
+/** One side of a probe: what the site answered. Null in the check means that side gave no answer at all. */
 export interface DomainAnswer {
   status: number | null;
   bytes: number | null;
   location: string | null;
 }
+/** What the hub kept of a domain's test that did not pass: why, and what each side answered (null = no answer). */
 export interface DomainEvidence {
-  coolify: DomainAnswer;
-  tugra: DomainAnswer;
+  reason: TakeoverCheckReason;
+  coolify: DomainAnswer | null;
+  tugra: DomainAnswer | null;
 }
 
-const answerOf = (v: unknown): DomainAnswer | null => {
-  if (!v || typeof v !== "object") return null;
-  const o = v as Record<string, unknown>;
-  const num = (x: unknown): number | null => (typeof x === "number" && Number.isFinite(x) ? x : null);
-  const answer = { status: num(o.status), bytes: num(o.bytes), location: typeof o.location === "string" && o.location !== "" ? o.location : null };
+type ItemDomain = TakeoverItemView["domains"][number];
+
+const answerOf = (a: TakeoverAnswer | null | undefined): DomainAnswer | null => {
+  if (!a) return null;
+  const answer = { status: a.status ?? null, bytes: a.bytes ?? null, location: a.location ? a.location : null };
   return answer.status === null && answer.bytes === null && answer.location === null ? null : answer;
 };
 
-/** What Coolify and Tugra each answered for a domain, when the hub kept it; null otherwise (the row then says only that it differs). */
-export function domainEvidence(d: unknown): DomainEvidence | null {
-  if (!d || typeof d !== "object") return null;
-  const e = (d as { evidence?: unknown }).evidence;
-  if (!e || typeof e !== "object") return null;
-  const coolify = answerOf((e as Record<string, unknown>).coolify);
-  const tugra = answerOf((e as Record<string, unknown>).tugra);
-  return coolify && tugra ? { coolify, tugra } : null;
+/**
+ * Why a domain did not pass and what Coolify and Tugra each answered, from the `check` the hub sends on the domain while its test has not
+ * passed. Null when the hub sent none (the row then says only that it needs a look). A side that did not answer stays null so the row can
+ * say "no answer" for it rather than leave it out.
+ */
+export function domainEvidence(d: ItemDomain): DomainEvidence | null {
+  const c = d.check;
+  if (!c || c.reason === "ok") return null;
+  return { reason: c.reason, coolify: answerOf(c.coolify), tugra: answerOf(c.tugra) };
 }
 
-/** An optional extra the hub may know about an item: the Tugra app behind it and the image it runs (for the icon). */
-export function itemIconHints(item: unknown): { appId: string | null; image: string | null } {
-  const o = (item ?? {}) as { appId?: unknown; image?: unknown };
-  return { appId: typeof o.appId === "string" && o.appId !== "" ? o.appId : null, image: typeof o.image === "string" && o.image !== "" ? o.image : null };
+/** The Tugra app behind an item (for its favicon) and the key of its image's brand icon, when the hub sent them. */
+export function itemIconHints(item: Pick<TakeoverItemView, "appId" | "iconKey">): { appId: string | null; iconKey: string | null } {
+  return { appId: item.appId ? item.appId : null, iconKey: item.iconKey ? item.iconKey : null };
 }
 
 /** Domains that answered like Coolify, out of those that count (apps and their domains only). */
@@ -291,7 +293,9 @@ export const IN_PLACE_STEP_TITLE_KEY: Partial<Record<MigrationRunStepKey, string
   OBSERVE: "inPlaceRun.step.OBSERVE",
   FINALIZE: "inPlaceRun.step.FINALIZE",
 };
-export const stepTitleKey = (run: Pick<MigrationRunView, "inPlace">, key: MigrationRunStepKey): string => (run.inPlace ? IN_PLACE_STEP_TITLE_KEY[key] : undefined) ?? STEP_TITLE_KEY[key];
+/** The short in-place page and its words are for a real in-place run; a dry run keeps the current content. */
+export const isSimpleInPlace = (run: Pick<MigrationRunView, "inPlace"> & { dryRun?: boolean }): boolean => run.inPlace && !run.dryRun;
+export const stepTitleKey = (run: Pick<MigrationRunView, "inPlace"> & { dryRun?: boolean }, key: MigrationRunStepKey): string => (isSimpleInPlace(run) ? IN_PLACE_STEP_TITLE_KEY[key] : undefined) ?? STEP_TITLE_KEY[key];
 
 /** The run's state in plain words, as the header pill says it. */
 export function runStateKey(run: Pick<MigrationRunView, "status" | "nextAction">): string {
@@ -335,6 +339,7 @@ export function runStateKey(run: Pick<MigrationRunView, "status" | "nextAction">
 
 /** The one heading of the "what happens now" card, by situation. */
 export function nextHeadingKey(kind: MigrationRunNextAction["kind"], stepKey: MigrationRunStepKey | null, status: MigrationRunStatus): string {
+  if (status === "QUEUED") return "inPlaceRun.next.ready";
   if (status === "COMPLETED") return "inPlaceRun.next.done";
   if (status === "ABORTED" || status === "ROLLED_BACK" || status === "REVERSED") return "inPlaceRun.next.givenBack";
   if (status === "ABORTING" || status === "ROLLING_BACK" || status === "REVERSING") return "inPlaceRun.next.givingBack";
@@ -352,7 +357,7 @@ export function nextHeadingKey(kind: MigrationRunNextAction["kind"], stepKey: Mi
     case "timer":
       return "inPlaceRun.next.watching";
     case "none":
-      return status === "QUEUED" ? "inPlaceRun.next.ready" : "inPlaceRun.next.working";
+      return "inPlaceRun.next.working";
     default:
       if (stepKey === "DEPLOY_DARK" || stepKey === "VERIFY") return "inPlaceRun.next.checking";
       if (stepKey === "CUTOVER") return "inPlaceRun.next.switching";

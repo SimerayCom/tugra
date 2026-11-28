@@ -17,8 +17,9 @@ function CheckIcon({ status }: { status: MigrationRunGateCheck["status"] }) {
 }
 
 /** A step's gate: one row per check with a status word, the localized code, its subject, its evidence kind and, for a
- *  check an owner input would resolve, a link to the inputs card. `unknown` reads as a failure, as the hub treats it. */
-export function GateChecks({ checks, dense = false, hideInputLinks = false }: { checks: MigrationRunGateCheck[]; dense?: boolean; hideInputLinks?: boolean }) {
+ *  check an owner input would resolve, a link to the inputs card. `unknown` reads as a failure, as the hub treats it. An in-place run
+ *  has no inputs card: a missing certificate email says where to set it (the server) instead. */
+export function GateChecks({ checks, dense = false, hideInputLinks = false, inPlaceServerHref }: { checks: MigrationRunGateCheck[]; dense?: boolean; hideInputLinks?: boolean; inPlaceServerHref?: string }) {
   const t = useT();
   if (checks.length === 0) return null;
   return (
@@ -29,12 +30,17 @@ export function GateChecks({ checks, dense = false, hideInputLinks = false }: { 
           <div style={{ minWidth: 0, flex: 1 }}>
             <div style={{ wordBreak: "break-word", color: "var(--c-tx)" }}>
               <span style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em", color: checkStatusColor(c.status), marginRight: 6 }}>{t(CHECK_STATUS_KEY[c.status])}</span>
-              {codeText(t, c.code, c.params)}
+              {inPlaceServerHref && c.ownerInput === "acmeEmail" && c.status !== "pass" && !c.acked ? t("inPlaceRun.gate.acmeEmail") : codeText(t, c.code, c.params)}
             </div>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginTop: 3 }}>
               {c.subject && <span className="mono" style={{ fontSize: 11, color: "var(--c-tx3)", wordBreak: "break-all" }}>{c.subject}</span>}
               {c.evidence && <EvidenceBadge kind={c.evidence} />}
               {c.acked && <span style={{ fontSize: 11, color: "var(--c-tx3)" }}>{t("migrationRun.check.acked")}</span>}
+              {inPlaceServerHref && c.ownerInput === "acmeEmail" && c.status !== "pass" && !c.acked && (
+                <a href={inPlaceServerHref} className="tg-link" style={{ fontSize: 12 }}>
+                  {t("inPlaceRun.gate.openServer")}
+                </a>
+              )}
               {!hideInputLinks && c.ownerInput && !c.acked && c.status !== "pass" && (
                 <a href={`#${INPUTS_ANCHOR}`} className="tg-link" style={{ fontSize: 11 }}>
                   {t("migrationRun.check.needsInput", { input: t(OWNER_INPUT_LABEL_KEY[c.ownerInput]) })}
