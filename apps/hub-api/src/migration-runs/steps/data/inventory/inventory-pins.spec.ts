@@ -88,9 +88,9 @@ describe("deriveExactImages (R11): the exact image the source runs", () => {
     expect(deriveExactImages([cand(U1, "x/y:1.2")], one([ctr(H("a"), U1, "x/y:1.2", [], "running", "1.2.9")]))).toEqual([]); // a label alone never rewrites a tag that is not floating
   });
 
-  it("with no digest, a floating tag whose image labels its version is pinned to that version tag", () => {
+  it("with no digest nothing is guessed from the version label (a label is not a tag)", () => {
     const out = deriveExactImages([cand(U1, "minio/minio:latest")], one([ctr(H("a"), U1, "minio/minio:latest", [], "running", "RELEASE.2024-05-10T01-41-38Z")]));
-    expect(out).toEqual([hint(`app:host-1:${U1}`, "minio/minio:RELEASE.2024-05-10T01-41-38Z RELEASE.2024-05-10T01-41-38Z")]);
+    expect(out.some((h) => String(h.value).startsWith("minio/minio:RELEASE"))).toBe(false);
   });
 
   it("an item the owner opted out of, and an item the operator pinned by hand, are left alone", () => {
