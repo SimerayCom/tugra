@@ -269,6 +269,27 @@ export function parsePolicy(out: string, ids: readonly string[]): Map<string, Po
   return res;
 }
 
+/**
+ * Run `script` on the box's own network. The agent runs in a container on Docker's default bridge, so inside it 127.0.0.1 is the agent
+ * itself and the bridge of Tugra's proxy is isolated from it: a probe of the box's :443 or of the proxy's bridge address never connects.
+ * The script is handed to a throwaway container of the agent's own image (already on the box, nothing is pulled) on the host network,
+ * with the Docker socket so `docker inspect` still works. When the agent's image cannot be found the script runs as it is.
+ */
+export function onHostNetwork(script: string): string {
+  const b64 = Buffer.from(script, "utf8").toString("base64");
+  return [
+    'IMG=""',
+    'if command -v docker >/dev/null 2>&1; then IMG=$(docker inspect -f "{{.Image}}" "$(hostname)" 2>/dev/null || true); fi',
+    '[ -n "$IMG" ] || IMG="${TUGRA_AGENT_IMAGE:-}"',
+    'if [ -n "$IMG" ]; then',
+    `  printf '%s' '${b64}' | base64 -d | docker run --rm -i --network host -v /var/run/docker.sock:/var/run/docker.sock --entrypoint bash "$IMG" -s`,
+    "else",
+    `  printf '%s' '${b64}' | base64 -d | bash -s`,
+    "fi",
+    "",
+  ].join("\n");
+}
+
 // ───────────────────────────── test every domain by Host header: status and content hash ─────────────────────────────
 
 /** Which proxy a probe talks to. `coolify`: the box's :443 while Coolify's proxy owns it. `tugra-dark`: Tugra's proxy by its own bridge address, no host port. `local`: the box's :443 once Tugra's proxy owns it. */

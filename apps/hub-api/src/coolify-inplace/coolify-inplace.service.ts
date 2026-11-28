@@ -1265,7 +1265,7 @@ export class CoolifyInPlaceService implements InPlaceRunPort {
     for (const i of items) {
       for (const d of i.domains) {
         if (!certExhausted(i, d.host, d.cert) || d.finalCheck !== "ok") continue;
-        const served = await this.run(serverId, buildNewCertCheckScript(d.host), (o) => parseNewCertCheck(o, d.host));
+        const served = await this.run(serverId, buildNewCertCheckScript(d.host), (o) => parseNewCertCheck(o, d.host), { hostNetwork: true });
         if (!served || !isNewLetsEncryptCert(served, i.fallbackSerial[d.host] ?? null)) continue;
         await this.run(serverId, buildFallbackRemoveScript([d.host]), (o) => (o.includes("TUGRA_IP_FALLBACK_REMOVED") ? true : null));
         d.cert = "issued";
@@ -1278,7 +1278,7 @@ export class CoolifyInPlaceService implements InPlaceRunPort {
   /** One domain: is a new certificate already served? If not, take the fallback away and wait for one; put the fallback back when none comes. */
   private async renew(serverId: string, item: TakeoverItem, d: TakeoverItem["domains"][number]): Promise<"noopenssl" | void> {
     const fbSerial = item.fallbackSerial[d.host] ?? null;
-    const check = () => this.run(serverId, buildNewCertCheckScript(d.host), (o) => parseNewCertCheck(o, d.host));
+    const check = () => this.run(serverId, buildNewCertCheckScript(d.host), (o) => parseNewCertCheck(o, d.host), { hostNetwork: true });
     const removeFallback = () => this.run(serverId, buildFallbackRemoveScript([d.host]), (o) => (o.includes("TUGRA_IP_FALLBACK_REMOVED") ? true : null));
     const served = await check();
     if (served && isNewLetsEncryptCert(served, fbSerial)) {
@@ -1547,9 +1547,9 @@ export class CoolifyInPlaceService implements InPlaceRunPort {
   }
 
   /** Run a script and parse it; any failure to run or parse is `null`, never a pass. */
-  private async run<T>(serverId: string, script: string, parse: (out: string) => T | null): Promise<T | null> {
+  private async run<T>(serverId: string, script: string, parse: (out: string) => T | null, opts?: { hostNetwork?: boolean }): Promise<T | null> {
     try {
-      const r = await this.world.exec(serverId, script, HOST_T);
+      const r = await this.world.exec(serverId, script, HOST_T, opts);
       return parse(r.output);
     } catch {
       return null;
@@ -1562,7 +1562,7 @@ export class CoolifyInPlaceService implements InPlaceRunPort {
       const chunk = hosts.slice(n, n + PROBE_CHUNK);
       let parsed: ReturnType<typeof parseInPlaceProbe> = null;
       try {
-        const r = await this.world.exec(serverId, buildInPlaceProbeScript({ via, hosts: chunk, path: "/", twice }), probeTimeout(chunk.length));
+        const r = await this.world.exec(serverId, buildInPlaceProbeScript({ via, hosts: chunk, path: "/", twice }), probeTimeout(chunk.length), { hostNetwork: true });
         parsed = parseInPlaceProbe(r.output, chunk);
       } catch {
         parsed = null;

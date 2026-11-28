@@ -109,7 +109,8 @@ export interface InPlaceWorld {
    */
   appMentions(appId: string, needles: readonly string[]): Promise<boolean | null>;
   /** Run a hub-built script on the host through the agent (`deploy` capability). */
-  exec(serverId: string, script: string, timeoutMs?: number): Promise<{ exitCode: number; output: string }>;
+  /** `hostNetwork`: the script must reach the box's own :443 or a proxy bridge address (see `onHostNetwork`). */
+  exec(serverId: string, script: string, timeoutMs?: number, opts?: { hostNetwork?: boolean }): Promise<{ exitCode: number; output: string }>;
   setProxyBind(serverId: string, bind: "public" | "loopback" | "none"): Promise<void>;
   /** Recreate Tugra's proxy from the server's current settings (the same action as the Start button). */
   startProxy(userId: string, serverId: string): Promise<void>;

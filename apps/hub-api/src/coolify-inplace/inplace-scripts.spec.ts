@@ -10,6 +10,7 @@ import {
   buildFallbackInstallScript,
   buildFallbackRemoveScript,
   buildInPlaceProbeScript,
+  onHostNetwork,
   buildNewCertCheckScript,
   buildRestartPolicyScript,
   buildVolumeAliasScript,
@@ -507,5 +508,27 @@ esac
   it("which engines are counted and which only asked", () => {
     expect(["POSTGRES", "MYSQL", "MARIADB"].map((e) => checkLevelOf(e as never))).toEqual(["counts", "counts", "counts"]);
     expect(["REDIS", "KEYDB", "DRAGONFLY", "MONGO"].map((e) => checkLevelOf(e as never))).toEqual(["alive", "alive", "alive", "alive"]);
+  });
+});
+
+describe("onHostNetwork: probes leave the agent's bridge and run on the box's own network", () => {
+  it("in a container: the script runs in a throwaway container of the agent's image on the host network, with the Docker socket", () => {
+    writeBin("docker", `
+case "$1" in
+  inspect) echo "sha256:agentimage";;
+  run) echo "$@" > "$FAKE_DIR/run-args"; shift; while [ "$1" != "bash" ]; do shift; done; shift 2; bash "$@";;
+esac`);
+    const r = run(onHostNetwork("echo inner-ran; echo $((2+3))"), { FAKE_DIR: dir });
+    expect(r.stdout).toContain("inner-ran");
+    expect(r.stdout).toContain("5");
+    const args = readFileSync(join(dir, "run-args"), "utf8");
+    expect(args).toContain("--network host");
+    expect(args).toContain("/var/run/docker.sock:/var/run/docker.sock");
+    expect(args).toContain("sha256:agentimage");
+  });
+  it("no agent image to be found: the script runs as it is", () => {
+    writeBin("docker", 'exit 1');
+    const r = run(onHostNetwork("echo direct"), {});
+    expect(r.stdout).toContain("direct");
   });
 });
