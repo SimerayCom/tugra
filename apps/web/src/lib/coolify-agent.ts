@@ -44,6 +44,11 @@ export function standingConsent(plan: Pick<ImportPlan, "preflight"> | null | und
   return known.length ? known : null;
 }
 
+/** What the consent of an agent-read session allows right now (the classes it covers; none when no consent stands). Undefined for any other session (an API token has no consent). */
+export function agentConsentOf(plan: Pick<ImportPlan, "preflight"> | null | undefined): { classes: CoolifySecretClass[] } | undefined {
+  return plan?.preflight?.agentRead ? { classes: standingConsent(plan) ?? [] } : undefined;
+}
+
 /** An agent-read session: the one apply of it needs the owner's consent for secret values standing at that moment. */
 export function needsConsent(plan: Pick<ImportPlan, "preflight"> | null | undefined): boolean {
   return !!plan?.preflight?.agentRead && standingConsent(plan) === null;

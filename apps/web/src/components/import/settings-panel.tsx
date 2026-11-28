@@ -9,7 +9,7 @@ import { useToast } from "../toast";
 import { CopyBtn } from "../copy-row";
 import type { ImportRemoteKind } from "../../lib/types";
 import {
-  BLOCKED_KEY,
+  blockedKey,
   INLINE_NOTE_CODES,
   NOTE_KEY,
   RESULT_CODE_KEY,
@@ -109,11 +109,12 @@ const entryTitle = (t: T, e: SettingsEntry): string => (e.section === "notificat
  * secret-free preview and sends back ids, plus the few things the source cannot give (S3 keys) and the operator's confirmation
  * for invitations. After the import, each carried channel gets a "Send test message" button.
  */
-export function ImportSettingsPanel({ sessionId, kind, opId, teamId, teamName, servers }: { sessionId: string; kind: ImportRemoteKind; opId?: string; teamId?: string; /** The Tugra team these settings go into, when known: said on the card, because notification tokens, variables and invitations are created there. */ teamName?: string; servers: Array<{ id: string; name: string }> }) {
+export function ImportSettingsPanel({ sessionId, kind, opId, teamId, teamName, servers, agentConsent }: { sessionId: string; kind: ImportRemoteKind; opId?: string; teamId?: string; /** The Tugra team these settings go into, when known: said on the card, because notification tokens, variables and invitations are created there. */ teamName?: string; servers: Array<{ id: string; name: string }>; /** Agent session: what the owner's consent allows now. Undefined on the API-token path. */ agentConsent?: { classes: readonly string[] } }) {
   const t = useT();
   const toast = useToast();
   const q = useQuery({
-    queryKey: ["import-settings", sessionId, opId ?? null, teamId ?? null],
+    // the consent is part of the key: allowing more reads the settings again, so a channel that needed it becomes readable
+    queryKey: ["import-settings", sessionId, opId ?? null, teamId ?? null, agentConsent ? [...agentConsent.classes].sort().join(",") : null],
     queryFn: () => api.importSettingsPreview({ sessionId, sourceKind: kind, ...(opId ? { opId } : {}), ...(teamId ? { teamId } : {}) }),
     enabled: !!sessionId && kind === "coolify",
     refetchOnWindowFocus: false, // every read goes to the source's rate-limited API: only on the operator's "Refresh"
@@ -192,7 +193,7 @@ export function ImportSettingsPanel({ sessionId, kind, opId, teamId, teamName, s
     >
       {teamName && <p data-testid="settings-team" style={{ fontSize: 12, color: "var(--c-tx2)", margin: "0 0 12px" }}>{t("import.settings.into", { team: teamName })}</p>}
       {preview.sections.map((s) => (
-        <Section key={s.section} s={s} t={t} inputs={inputs} dupServers={dupServers} servers={servers} onToggle={toggle} onS3={(id, v) => setS3((p) => ({ ...p, [id]: v }))} onServer={(id, v) => setServerPick((p) => ({ ...p, [id]: v }))} onRole={(id, v) => setRoles((p) => ({ ...p, [id]: v }))} />
+        <Section key={s.section} s={s} t={t} agentConsent={agentConsent} inputs={inputs} dupServers={dupServers} servers={servers} onToggle={toggle} onS3={(id, v) => setS3((p) => ({ ...p, [id]: v }))} onServer={(id, v) => setServerPick((p) => ({ ...p, [id]: v }))} onRole={(id, v) => setRoles((p) => ({ ...p, [id]: v }))} />
       ))}
 
       {invites && (
@@ -214,9 +215,10 @@ export function ImportSettingsPanel({ sessionId, kind, opId, teamId, teamName, s
   );
 }
 
-function Section({ s, t, inputs, dupServers, servers, onToggle, onS3, onServer, onRole }: {
+function Section({ s, t, agentConsent, inputs, dupServers, servers, onToggle, onS3, onServer, onRole }: {
   s: SettingsSectionPreview;
   t: T;
+  agentConsent?: { classes: readonly string[] };
   inputs: SettingsInputs;
   dupServers: ReadonlySet<string>;
   servers: Array<{ id: string; name: string }>;
@@ -239,7 +241,7 @@ function Section({ s, t, inputs, dupServers, servers, onToggle, onS3, onServer, 
           ) : (
             <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "flex", flexDirection: "column", gap: 4 }}>
               {s.entries.map((e) => (
-                <EntryRow key={e.id} e={e} t={t} inputs={inputs} duplicate={dupServers.has(e.id)} servers={servers} onToggle={onToggle} onS3={onS3} onServer={onServer} onRole={onRole} />
+                <EntryRow key={e.id} e={e} t={t} agentConsent={agentConsent} inputs={inputs} duplicate={dupServers.has(e.id)} servers={servers} onToggle={onToggle} onS3={onS3} onServer={onServer} onRole={onRole} />
               ))}
             </ul>
           )}
@@ -249,9 +251,10 @@ function Section({ s, t, inputs, dupServers, servers, onToggle, onS3, onServer, 
   );
 }
 
-function EntryRow({ e, t, inputs, duplicate, servers, onToggle, onS3, onServer, onRole }: {
+function EntryRow({ e, t, agentConsent, inputs, duplicate, servers, onToggle, onS3, onServer, onRole }: {
   e: SettingsEntry;
   t: T;
+  agentConsent?: { classes: readonly string[] };
   inputs: SettingsInputs;
   duplicate: boolean;
   servers: Array<{ id: string; name: string }>;
@@ -273,7 +276,7 @@ function EntryRow({ e, t, inputs, duplicate, servers, onToggle, onS3, onServer, 
         <input id={boxId} type="checkbox" checked={checked && e.selectable} disabled={!e.selectable} onChange={(ev) => onToggle(e.id, ev.target.checked)} style={{ width: 20, height: 20, marginTop: 12, flexShrink: 0 }} />
         <label htmlFor={boxId} style={{ flex: 1, minHeight: 44, display: "flex", flexDirection: "column", justifyContent: "center", cursor: e.selectable ? "pointer" : "not-allowed", opacity: e.selectable ? 1 : 0.7 }}>
           <span className="mono" style={{ fontSize: 13, fontWeight: 600, overflowWrap: "anywhere" }}>{entryTitle(t, e)}</span>
-          <span style={{ fontSize: 12, color: "var(--c-tx3)", overflowWrap: "anywhere" }}>{e.blocked ? t(BLOCKED_KEY[e.blocked] ?? "import.settings.blocked.exists") : entrySummary(t, e)}</span>
+          <span style={{ fontSize: 12, color: "var(--c-tx3)", overflowWrap: "anywhere" }}>{e.blocked ? t(blockedKey(e, agentConsent)) : entrySummary(t, e)}</span>
         </label>
       </div>
 

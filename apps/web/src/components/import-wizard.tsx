@@ -32,7 +32,7 @@ import { ResumeNote } from "./import/resume-note";
 import { coolifyTeams, settingsTeamOf, teamScope } from "../lib/import-team";
 import { TeamMapStep } from "./import/team-map-step";
 import { AgentMatchStep } from "./import/agent-match-step";
-import { isConsentRequired, needsConsent, needsMatchStep } from "../lib/coolify-agent";
+import { agentConsentOf, isConsentRequired, needsConsent, needsMatchStep } from "../lib/coolify-agent";
 import { AgentConsentGate } from "./import/agent-consent-gate";
 import { MoreInfo } from "./help-link";
 import { guideUrl } from "../lib/help-links";
@@ -976,7 +976,7 @@ function PlanView({
       {settingsTeam === null ? (
         <p role="note" data-testid="settings-left-out" style={{ fontSize: 12, color: "var(--c-tx2)", margin: 0 }}>{t("import.settings.leftOut")}</p>
       ) : (
-        <ImportSettingsPanel sessionId={sessionId} kind={kind} teamId={settingsTeam ?? writableServers.find((w) => w.id === target)?.teamId} teamName={settingsTeam ? teams.find((x) => x.id === settingsTeam)?.name : undefined} servers={servers} />
+        <ImportSettingsPanel sessionId={sessionId} kind={kind} teamId={settingsTeam ?? writableServers.find((w) => w.id === target)?.teamId} teamName={settingsTeam ? teams.find((x) => x.id === settingsTeam)?.name : undefined} servers={servers} agentConsent={agentConsentOf(fullPlan)} />
       )}
       <ImportServicesPanel sessionId={sessionId} kind={kind} plan={plan} servers={servers} choices={choices} onChoice={onChoice} onMissingTargets={setMissingTargets} />
       <Section title={t("import.appsSection")} items={groups.app} />

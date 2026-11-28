@@ -73,6 +73,29 @@ describe("ImportSettingsPanel", () => {
     });
   });
 
+  it("an agent session says the notification tokens are not allowed in the consent, and how to allow them, instead of asking for a token scope", async () => {
+    wrap(<ImportSettingsPanel sessionId="s1" kind="coolify" servers={[]} agentConsent={{ classes: ["env", "shared_env", "service_compose", "db_credentials"] }} />);
+    await screen.findByText("Notification channels");
+    expect(screen.queryByText("Needs a Coolify token with read:sensitive.")).toBeNull();
+    const text = document.body.textContent ?? "";
+    expect(text).toContain("Notification tokens are not allowed in this import's consent.");
+    expect(text).toContain("allow them again with Notification tokens ticked");
+  });
+
+  it("when the consent already covers the notification tokens, it does not ask for them again", async () => {
+    wrap(<ImportSettingsPanel sessionId="s1" kind="coolify" servers={[]} agentConsent={{ classes: ["env", "notification"] }} />);
+    await screen.findByText("Notification channels");
+    const text = document.body.textContent ?? "";
+    expect(text).not.toContain("are not allowed in this import's consent");
+    expect(text).toContain("Coolify did not hand over the value");
+  });
+
+  it("an API-token session keeps the read:sensitive text", async () => {
+    wrap(<ImportSettingsPanel sessionId="s1" kind="coolify" servers={[]} />);
+    await screen.findByText("Needs a Coolify token with read:sensitive.");
+    expect(document.body.textContent).not.toContain("consent");
+  });
+
   it("passes the operation id so tasks and tags can find the imported apps", async () => {
     wrap(<ImportSettingsPanel sessionId="s1" kind="coolify" opId="op-9" servers={[]} />);
     await screen.findByText("Notification channels");

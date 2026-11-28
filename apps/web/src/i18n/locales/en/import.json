@@ -972,6 +972,10 @@
     },
     "blocked": {
       "needs_sensitive": "Needs a Coolify token with read:sensitive.",
+      "consent_notification": "Notification tokens are not allowed in this import's consent. Stop allowing secret values in the matching step, then allow them again with Notification tokens ticked.",
+      "consent_shared_env": "Shared variables are not allowed in this import's consent. Stop allowing secret values in the matching step, then allow them again with Shared variables ticked.",
+      "consent_not_read": "Tugra does not read this from Coolify in an import yet.",
+      "consent_unreadable": "Coolify did not hand over the value, although it is allowed in this import's consent.",
       "email_instance_settings": "Uses Coolify's own mail settings, which cannot be read.",
       "exists": "Already in Tugra.",
       "locked": "The value is hidden in Coolify.",

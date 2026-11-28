@@ -3,6 +3,7 @@
  * the preview never holds a token, a webhook URL, a key or a variable value). Pure helpers for the review panel.
  */
 import type { ImportRemoteKind } from "./types";
+import { isReadByImport, type CoolifySecretClass } from "./coolify-agent";
 
 export const SETTINGS_SECTIONS = ["notifications", "sharedVariables", "storages", "scheduledTasks", "serverSettings", "tags", "members"] as const;
 export type SettingsSection = (typeof SETTINGS_SECTIONS)[number];
@@ -158,6 +159,24 @@ export const BLOCKED_KEY: Record<string, string> = {
   no_imported_resources: "import.settings.blocked.no_imported_resources",
   self: "import.settings.blocked.self",
 };
+
+/** Which consent class a settings section reads its secret values with (agent session). */
+const SECTION_CLASS: Partial<Record<string, CoolifySecretClass>> = { notifications: "notification", sharedVariables: "shared_env" };
+const CONSENT_KEY: Partial<Record<string, string>> = { notifications: "import.settings.blocked.consent_notification", sharedVariables: "import.settings.blocked.consent_shared_env" };
+
+/**
+ * The text of a blocked entry. "needs_sensitive" is a token scope on the API-token path; an agent session has no token, so the reason is the owner's consent:
+ * the class is not allowed (say how to allow it, only when the import reads that class), or it is allowed and Coolify still gave no value.
+ */
+export function blockedKey(e: Pick<SettingsEntry, "blocked" | "section">, agentConsent: { classes: readonly string[] } | undefined): string {
+  const code = e.blocked ?? "exists";
+  if (code !== "needs_sensitive" || !agentConsent) return BLOCKED_KEY[code] ?? "import.settings.blocked.exists";
+  const cls = SECTION_CLASS[e.section];
+  const offer = cls ? CONSENT_KEY[e.section] : undefined;
+  if (!cls || !offer) return BLOCKED_KEY[code];
+  if (!isReadByImport(cls)) return "import.settings.blocked.consent_not_read"; // never offer a tick that would grant nothing the import uses
+  return agentConsent.classes.includes(cls) ? "import.settings.blocked.consent_unreadable" : offer;
+}
 
 export const NOTE_KEY: Record<string, string> = {
   events_not_carried: "import.settings.note.events_not_carried",
