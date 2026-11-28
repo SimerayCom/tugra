@@ -19,7 +19,7 @@ import { AgentCommandTimeoutException, AgentDisconnectedException, AgentOfflineE
 import { NotificationsService } from "../notifications/notifications.service";
 import { DatabasesService, type ReapOutcome } from "../databases/databases.service";
 import { loadProjectCtx } from "../common/resource-project";
-import { resolveImage, type DbEngine, type DbSpec } from "../databases/database-script";
+import { isStandardDbImage, type DbEngine, type DbSpec } from "../databases/database-script";
 import { type DestinationSpec } from "./destination";
 import { BackupRunnerService } from "./backup-runner.service";
 import { PitrClaimsService } from "./pitr-claims.service";
@@ -539,7 +539,7 @@ export class PitrRestoreService implements OnApplicationBootstrap, OnModuleDestr
     if (!db) throw new NotFoundException("database not found");
     await this.access.requirePermission(userId, db.teamId, "databases");
     await this.access.requirePermission(userId, db.teamId, "backups");
-    if (db.image !== resolveImage(db.engine as DbEngine, db.version)) await this.access.requirePermission(userId, db.teamId, "apps:config");
+    if (!isStandardDbImage(db.engine as DbEngine, db.version, db.image)) await this.access.requirePermission(userId, db.teamId, "apps:config");
     return db;
   }
 }

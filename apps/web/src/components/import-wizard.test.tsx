@@ -1665,19 +1665,19 @@ describe("ImportWizard — editable mapping", () => {
       const COPY = "imported as a stopped compose app; volume data is copied separately and you deploy it yourself";
       const svc = (ref: string, name: string) => ({ itemRef: ref, kind: "service" as const, name, proposed: { verdict: "importable" }, risks: [], dependsOn: [] });
       const keep = { items: placed.items, preflight: placed.preflight, totals: placed.totals };
-      placed.items = [...placed.items, svc("service:s1:meili", "vidivada-meilisearch"), svc("service:s1:minio", "vidivada-storage-minio"), svc("service:s2:meili", "moved-meilisearch"), svc("service:s2:minio", "moved-minio")];
+      placed.items = [...placed.items, svc("service:s1:meili", "shop-search"), svc("service:s1:minio", "shop-storage-minio"), svc("service:s2:meili", "moved-meilisearch"), svc("service:s2:minio", "moved-minio")];
       placed.totals = { ...placed.totals, services: 4 };
       placed.preflight = {
         ...placed.preflight!,
         services: [
-          { name: "vidivada-meilisearch", itemRef: "service:s1:meili", members: 1, note: COPY, verdict: "importable" },
-          { name: "vidivada-storage-minio", itemRef: "service:s1:minio", members: 1, note: "object data is not copied by this import - use Object migration", objectStore: true, verdict: "importable" },
+          { name: "shop-search", itemRef: "service:s1:meili", members: 1, note: COPY, verdict: "importable" },
+          { name: "shop-storage-minio", itemRef: "service:s1:minio", members: 1, note: "object data is not copied by this import - use Object migration", objectStore: true, verdict: "importable" },
           { name: "moved-meilisearch", itemRef: "service:s2:meili", members: 1, note: COPY, verdict: "importable" },
           { name: "moved-minio", itemRef: "service:s2:minio", members: 1, note: "object data is not copied by this import - use Object migration", objectStore: true, verdict: "importable" },
         ],
         coverage: {
           apps: [
-            { itemRef: "service:s1:minio", name: "vidivada-storage-minio", notCarried: [{ field: "objectData", reason: "the store's data volume is not streamed with the service", level: "warn" }, { field: "volume:minio-data", reason: "a host folder bind is carried as a named volume; the host path is not mounted on the target", level: "warn" }] },
+            { itemRef: "service:s1:minio", name: "shop-storage-minio", notCarried: [{ field: "objectData", reason: "the store's data volume is not streamed with the service", level: "warn" }, { field: "volume:minio-data", reason: "a host folder bind is carried as a named volume; the host path is not mounted on the target", level: "warn" }] },
             { itemRef: "service:s2:minio", name: "moved-minio", notCarried: [{ field: "objectData", reason: "the store's data volume is not streamed with the service", level: "warn" }, { field: "volume:minio-data", reason: "a host folder bind is carried as a named volume; the host path is not mounted on the target", level: "warn" }] },
           ],
         } as never,
@@ -1687,8 +1687,8 @@ describe("ImportWizard — editable mapping", () => {
         await toPreview(["Box One", "Box Two"], "srv2");
         const stays = screen.getByTestId("in-place-services");
         expect(stays.textContent).toContain("2 service stack(s) stay on their own machine");
-        expect(stays.textContent).toContain("vidivada-meilisearch");
-        expect(stays.textContent).toContain("vidivada-storage-minio");
+        expect(stays.textContent).toContain("shop-search");
+        expect(stays.textContent).toContain("shop-storage-minio");
         expect(stays.textContent).toContain("the stack and its data stay where they are");
         // the copy path is said once per stack that MOVES, never for the ones that stay
         expect(screen.getAllByText(/volume data is copied separately/)).toHaveLength(1);
@@ -1698,7 +1698,7 @@ describe("ImportWizard — editable mapping", () => {
         expect(screen.getAllByText(/the store's data volume is not streamed/)).toHaveLength(1);
         expect(screen.getAllByText(/a host folder bind is carried as a named volume/)).toHaveLength(1);
         expect(screen.getByText("moved-minio")).toBeTruthy(); // its Review note stays
-        expect(screen.queryByText("vidivada-storage-minio")).toBeNull(); // no Review note for the stack that stays (its line of the stays list reads "name (1)")
+        expect(screen.queryByText("shop-storage-minio")).toBeNull(); // no Review note for the stack that stays (its line of the stays list reads "name (1)")
       } finally {
         Object.assign(placed, keep);
       }

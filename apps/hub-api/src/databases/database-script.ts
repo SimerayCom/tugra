@@ -351,6 +351,14 @@ function shq(v: string): string {
   return `'${v.replaceAll("'", "'\\''")}'`;
 }
 
+/**
+ * Is `image` the standard image for this engine and version? An exact pin of it (`<standard>@sha256:...`, written when an import keeps
+ * the image the source ran) is still the standard image: the digest only freezes which build of it runs.
+ */
+export function isStandardDbImage(engine: DbEngine, version: string | null | undefined, image: string | null | undefined): boolean {
+  return (image ?? "").replace(/@sha256:[0-9a-f]{64}$/, "") === resolveImage(engine, version);
+}
+
 export function resolveImage(engine: DbEngine, version?: string | null): string {
   const def = ENGINES[engine];
   const ver = version || def.defaultVersion;

@@ -23,7 +23,7 @@ import {
   credentialEnv,
   engineCommand,
   enginePort,
-  resolveImage,
+  resolveImage, isStandardDbImage,
   supportsBackup,
   walHostDir,
   pgArchiveCommand,
@@ -747,5 +747,18 @@ describe("database-script: custom config file (Redis redis.conf)", () => {
   it("the remove script drops the host copy only when asked", () => {
     expect(buildDbRemoveScript({ id: "db1" })).not.toContain("dbconf");
     expect(buildDbRemoveScript({ id: "db1" }, { configFile: true })).toContain(`rm -rf ${dbConfigHostDir("db1")}`);
+  });
+});
+
+describe("isStandardDbImage", () => {
+  const std = resolveImage("POSTGRES", "16");
+  it("an exact pin of the standard image is still the standard image", () => {
+    expect(isStandardDbImage("POSTGRES", "16", std)).toBe(true);
+    expect(isStandardDbImage("POSTGRES", "16", `${std}@sha256:${"a".repeat(64)}`)).toBe(true);
+  });
+  it("another repository or tag is not, pinned or not", () => {
+    expect(isStandardDbImage("POSTGRES", "16", "pgvector/pgvector:pg16")).toBe(false);
+    expect(isStandardDbImage("POSTGRES", "16", `pgvector/pgvector:pg16@sha256:${"b".repeat(64)}`)).toBe(false);
+    expect(isStandardDbImage("POSTGRES", "16", `${std}@sha256:short`)).toBe(false);
   });
 });

@@ -1,28 +1,28 @@
 import { buildCoolifyFleet } from "./coolify-map";
 import { planImport } from "../import-planner";
 
-/** Two source servers: the one the owner moves (Olgu) and one he leaves out (the other team's). */
+/** Two source servers: the one the owner moves (North) and one he leaves out (the other team's). */
 const apps = [
-  { uuid: "a-olgu", name: "olgu-api", build_pack: "nixpacks", git_repository: "o/r", status: "exited:unhealthy", restart_count: 3 },
-  { uuid: "a-sf", name: "shortframes-api", build_pack: "nixpacks", git_repository: "o/r", status: "exited:unhealthy", restart_count: 126368 },
+  { uuid: "a-north", name: "north-api", build_pack: "nixpacks", git_repository: "o/r", status: "exited:unhealthy", restart_count: 3 },
+  { uuid: "a-sf", name: "reelhub-api", build_pack: "nixpacks", git_repository: "o/r", status: "exited:unhealthy", restart_count: 126368 },
   { uuid: "a-ok", name: "fine", build_pack: "nixpacks", git_repository: "o/r", status: "running:healthy", restart_count: 0 },
 ];
 const dbs = [
-  { uuid: "d-olgu", name: "db-olgu", database_type: "standalone-postgresql", image: "postgres:16" },
-  { uuid: "d-decl", name: "db-declareall", database_type: "standalone-postgresql", image: "postgres:16" },
+  { uuid: "d-north", name: "db-north", database_type: "standalone-postgresql", image: "postgres:16" },
+  { uuid: "d-decl", name: "db-ledger", database_type: "standalone-postgresql", image: "postgres:16" },
 ];
 const backup = { enabled: true, save_s3: true, frequency: "daily", s3_storage_id: 7 };
 
 const fleet = () =>
   buildCoolifyFleet({
-    servers: [{ uuid: "s-olgu", name: "olgu" }, { uuid: "s-other", name: "other" }] as never,
-    resourcesByServer: { "s-olgu": ["a-olgu", "d-olgu"], "s-other": ["a-sf", "a-ok", "d-decl"] },
+    servers: [{ uuid: "s-north", name: "north" }, { uuid: "s-other", name: "other" }] as never,
+    resourcesByServer: { "s-north": ["a-north", "d-north"], "s-other": ["a-sf", "a-ok", "d-decl"] },
     apps,
     databases: dbs,
     services: [],
     envsByResource: {},
     volumesByResource: {},
-    backupsByResource: { "d-olgu": [backup], "d-decl": [backup] },
+    backupsByResource: { "d-north": [backup], "d-decl": [backup] },
     s3Storages: [{ id: 7, name: "Infra Simeray" }] as never,
   });
 
@@ -30,10 +30,10 @@ describe("the plan's notes know which items they are about (a narrowed review sh
   it("an unhealthy app and a database's S3 backup each carry the itemRef of their own item", () => {
     const f = fleet();
     const refs = (re: RegExp) => f.scopedWarnings!.filter((w) => re.test(w.text)).map((w) => [w.text.split(" ").slice(0, 2).join(" "), w.itemRefs]);
-    expect(refs(/not healthy at the source/)).toEqual([["app olgu-api", ["app:s-olgu:a-olgu"]], ["app shortframes-api", ["app:s-other:a-sf"]]]);
-    expect(refs(/uploads to S3/)).toEqual([["database db-olgu", ["database:s-olgu:d-olgu"]], ["database db-declareall", ["database:s-other:d-decl"]]]);
+    expect(refs(/not healthy at the source/)).toEqual([["app north-api", ["app:s-north:a-north"]], ["app reelhub-api", ["app:s-other:a-sf"]]]);
+    expect(refs(/uploads to S3/)).toEqual([["database db-north", ["database:s-north:d-north"]], ["database db-ledger", ["database:s-other:d-decl"]]]);
     // the shared explanation belongs to every database it applies to
-    expect(f.scopedWarnings!.find((w) => /does not carry the backup schedules/.test(w.text))!.itemRefs).toEqual(["database:s-olgu:d-olgu", "database:s-other:d-decl"]);
+    expect(f.scopedWarnings!.find((w) => /does not carry the backup schedules/.test(w.text))!.itemRefs).toEqual(["database:s-north:d-north", "database:s-other:d-decl"]);
   });
 
   it("every scoped note is also in `warnings`, and the plan carries them (outside the hash)", () => {

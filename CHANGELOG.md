@@ -7,16 +7,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-## [0.1.0-beta.37] - 2026-11-28
+## [0.1.0-beta.38] - 2026-11-28
 
 - **Moves keep the exact image.** Tugra reads the image each source container runs and pins the imported app,
   database and service to it (`repo:tag@sha256:…`). A service on `:latest` keeps running the version it ran on
   Coolify after the takeover, a move to another server and any redeploy. The preview shows each pin with its version,
   and you can untick it per item. Nothing is guessed when the source does not report a digest.
+  On a move to another server, an image app waits until the image the source runs is known, and a database or
+  service that would start without it is named in the run events, the report and the safety card.
 - **In-place preview.** Service stacks that stay on their own machine say their data stays where it is, copy-path
   notes show only for what moves, the Git repositories card lists only the apps you move, and the notification
   channels of an agent import say how to allow their tokens. Reading the service stacks always ends in content or an
   error with a retry.
+- A database pinned to the exact build of its standard image still counts as standard, so backup drills and point-in-time
+  restores ask for the same permissions as before.
 - **Faster releases.** Images build natively for amd64 and arm64 and are signed as one release.
 
 ## [0.1.0-beta.36] - 2026-11-28

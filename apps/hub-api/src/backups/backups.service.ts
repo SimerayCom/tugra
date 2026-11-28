@@ -14,7 +14,7 @@ import { TeamAccessService } from "../common/team-access.service";
 import { loadProjectCtx } from "../common/resource-project";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
 import { NotificationsService } from "../notifications/notifications.service";
-import { resolveImage, supportsBackup, type DbEngine } from "../databases/database-script";
+import { isStandardDbImage, supportsBackup, type DbEngine } from "../databases/database-script";
 import { buildBackupExportUrlScript, buildDeleteBackupScript, buildImportScript, buildRestoreScript } from "./backup-script";
 import { baseNs } from "./base-backup-script";
 import { parseShareUrl } from "./destination";
@@ -247,7 +247,7 @@ export class BackupsService {
     // enforce implicitly must be asserted HERE: 'databases' always, plus 'apps:config' when reproducing a
     // NON-standard source image (running a custom image is an app-image-level privilege).
     await this.access.requirePermission(userId, src.teamId, "databases");
-    if (src.image !== resolveImage(src.engine as DbEngine, src.version)) {
+    if (!isStandardDbImage(src.engine as DbEngine, src.version, src.image)) {
       await this.access.requirePermission(userId, src.teamId, "apps:config");
     }
     const row = await this.runner.verifyBackup(src, backup, userId);
@@ -355,7 +355,7 @@ export class BackupsService {
     // Mirror the on-demand drill's bar exactly: arming a recurring drill on a NON-standard image means the
     // scheduler will reproduce that image every tick, so require the same 'apps:config' privilege the
     // on-demand drill (verifyBackupNow) demands. Only when enabling — disarming never provisions.
-    if (cfg.enabled && existing.image !== resolveImage(existing.engine as DbEngine, existing.version)) {
+    if (cfg.enabled && !isStandardDbImage(existing.engine as DbEngine, existing.version, existing.image)) {
       await this.access.requirePermission(userId, existing.teamId, "apps:config");
     }
     if (cfg.enabled && !supportsBackup(existing.engine as DbEngine)) {
