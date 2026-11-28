@@ -1,3 +1,4 @@
+import { unwrapHostScript } from "../common/host-exec";
 import { ConflictException, ForbiddenException } from "@nestjs/common";
 import { CutoverService } from "./cutover.service";
 import { DnsAutomationService } from "../dns/dns-automation.service";
@@ -182,6 +183,21 @@ describe("CutoverService.check", () => {
     await m.seedEntry("a1", H(1), { state: "PLANNED", challenge: "http01", certState: "unknown", precheckAt: null });
     await m.svc.check(U, OP, {});
     expect(m.row(H(1)).state).toBe("READY");
+  });
+
+  it("probeVia agent: the loopback probe runs on the box's own network (127.0.0.1 in the agent's container is the agent itself)", async () => {
+    const m = make({ zone: [rec("r1", H(1))] });
+    m.addApp("a1", { domain: H(1) });
+    m.tasks.push(m.appTask("a1"));
+    await m.seedEntry("a1", H(1), { state: "PLANNED", certState: "unknown", precheckAt: null, precheck: null });
+    m.agentWs.sendCommand.mockResolvedValueOnce({ exitCode: 0, output: "TUGRA_CUTOVER_PROBE status=200\n" });
+    await m.svc.check(U, OP, { probeVia: "agent" });
+    const probeCall = (m.agentWs.sendCommand.mock.calls as unknown as unknown[][]).find((c) => String(c[1]).includes("--network host"));
+    expect(probeCall).toBeDefined();
+    const sent = String(probeCall![1]);
+    expect(sent).toContain("--pull never");
+    expect(unwrapHostScript(sent)).toContain('--resolve "$H:443:127.0.0.1"'); // the probe itself is unchanged
+    expect(probeCall![2]).toBe("deploy");
   });
 
   it("a probe that cannot connect never promotes", async () => {

@@ -79,7 +79,8 @@ export interface MoveProbe {
   vols: Record<string, { exists: boolean; kb: number | null; label: string | null }>;
   /** Every TCP port listening in the HOST network namespace (a probe that could not list them parses to null). */
   ports: Set<number>;
-  hostPaths: Record<string, boolean>;
+  /** Per host path: exists on this box, or `null` when the probe could not tell (never read as missing). */
+  hostPaths: Record<string, boolean | null>;
 }
 
 export interface MoveProbeInput {
@@ -128,7 +129,7 @@ const HOST_DF_INNER_SH = `a=$(df -Pk /x 2>/dev/null | awk 'NR==2{print $4}'); d=
  *   TUGRA_VOL <dockerName> ABSENT | EXISTS <kb|-> <label|->
  *   TUGRA_PORT <n>                              every TCP port listening on the HOST (netstat, else /proc/net/tcp{,6})
  *   TUGRA_PORT -                                the ports could NOT be listed: the parser fails closed (probe_failed)
- *   TUGRA_HOSTPATH <path> <0|1>
+ *   TUGRA_HOSTPATH <path> <0|1|?>              ? = could not tell (no host-view image): never read as missing
  *   TUGRA_PROBE_END                             always last (a truncated output is detected by its absence)
  */
 export function buildMoveProbeScript(input: MoveProbeInput): string {
@@ -154,7 +155,7 @@ export function buildMoveProbeScript(input: MoveProbeInput): string {
     // Host view: $1 = marker key, $2 = the HOST path (a --mount bind never creates a missing host dir, unlike -v).
     "host_df() {",
     "  o=",
-    `  [ -n "$HI" ] && o=$(docker run --rm --pull=never --mount "type=bind,src=$2,dst=/x,readonly" "$HI" sh -c ${shq(HOST_DF_INNER_SH)} 2>/dev/null)`,
+    `  [ -n "$HI" ] && o=$(docker run --rm --pull=never --mount "type=bind,src=$2,dst=/x,readonly" --entrypoint sh "$HI" -c ${shq(HOST_DF_INNER_SH)} 2>/dev/null)`,
     `  if printf '%s\\n' "$o" | grep -Eq '^[0-9]+ [0-9]+$'; then echo "TUGRA_DF $1 $o"; else probe_df "$1"; fi`,
     "}",
     `DR=$(docker info --format '{{.DockerRootDir}}' 2>/dev/null); [ -n "$DR" ] || DR=${DOCKER_ROOT}`,
@@ -169,7 +170,7 @@ export function buildMoveProbeScript(input: MoveProbeInput): string {
       `if docker volume inspect ${q} >/dev/null 2>&1; then`,
       // Sized through the host-view image (helper, else the agent's own image; probing never pulls); last resort: du on
       // the volume's mountpoint, which only an agent that can see the docker root (not a stock container) can read.
-      `  kb=; [ -n "$HI" ] && kb=$(docker run --rm --pull=never -v ${q}:/d:ro "$HI" du -sk /d 2>/dev/null | awk '{print $1}')`,
+      `  kb=; [ -n "$HI" ] && kb=$(docker run --rm --pull=never -v ${q}:/d:ro --entrypoint du "$HI" -sk /d 2>/dev/null | awk '{print $1}')`,
       `  [ -n "$kb" ] || kb=$(du -sk "$(docker volume inspect -f '{{.Mountpoint}}' ${q} 2>/dev/null)" 2>/dev/null | awk '{print $1}')`,
       `  lb=$(docker volume inspect -f '{{index .Labels "tugra.move"}}' ${q} 2>/dev/null)`,
       `  echo "TUGRA_VOL ${v} EXISTS \${kb:--} \${lb:--}"`,
@@ -181,13 +182,27 @@ export function buildMoveProbeScript(input: MoveProbeInput): string {
   // Ports of the HOST namespace, through the host-view container; the agent's own namespace is not the host's and the
   // agent image ships neither ss nor netstat. No image, or neither source worked → `TUGRA_PORT -` (fail closed).
   lines.push(
-    `PL=; [ -n "$HI" ] && PL=$(docker run --rm --pull=never --network host "$HI" sh -c ${shq(PORTS_INNER_SH)} 2>/dev/null)`,
+    `PL=; [ -n "$HI" ] && PL=$(docker run --rm --pull=never --network host --entrypoint sh "$HI" -c ${shq(PORTS_INNER_SH)} 2>/dev/null)`,
     `case "$PL" in *${PORTS_END_MARKER}) printf '%s\\n' "$PL" | grep -E '^[0-9]+$' | sort -un | head -n 4000 | while read -r p; do echo "TUGRA_PORT $p"; done ;; *) echo "TUGRA_PORT -" ;; esac`,
   );
-  for (const h of hostPaths) lines.push(`if [ -e ${shq(h)} ]; then echo "TUGRA_HOSTPATH ${h.replace(/[\s"\\$`]/g, "_")} 1"; else echo "TUGRA_HOSTPATH ${h.replace(/[\s"\\$`]/g, "_")} 0"; fi`);
+  // Does each HOST path exist on this box? The agent's own filesystem cannot say (it sees only /etc/tugra), so the daemon is asked
+  // through the host-view image: a --mount bind of a missing host path fails (and never creates it). 1 yes, 0 no, ? could not tell.
+  if (hostPaths.length > 0) lines.push(HOSTPATH_FN);
+  for (const h of hostPaths) lines.push(`echo "TUGRA_HOSTPATH ${h.replace(/[\s"\\$`]/g, "_")} $(host_has ${shq(h)})"`);
   lines.push("echo TUGRA_PROBE_END");
   return lines.join("\n");
 }
+
+/** Shell function `host_has <path>`: prints 1 (exists), 0 (missing) or ? (no host-view image, a path --mount cannot take, a daemon error). */
+const HOSTPATH_FN = [
+  "host_has() {",
+  '  [ -n "$HI" ] || { echo "?"; return; }',
+  `  case "$1" in *,*|*'"'*) echo "?"; return;; esac`,
+  '  e=$(docker run --rm --pull=never --network none --cap-drop ALL --mount "type=bind,src=$1,dst=/x,readonly" --entrypoint true "$HI" 2>&1 >/dev/null); rc=$?',
+  '  if [ $rc -eq 0 ]; then echo 1; return; fi',
+  `  case "$e" in *"does not exist"*|*"No such file"*) echo 0;; *) echo "?";; esac`,
+  "}",
+].join("\n");
 
 /** Marker-safe form of a host path (what buildMoveProbeScript prints), so callers can look the result up. */
 export function probeHostPathKey(h: string): string {
@@ -199,7 +214,7 @@ const TOOL_RE = /^TUGRA_TOOL (curl|split|sha256sum|gzip|helper) ([01])$/;
 const VOL_ABSENT_RE = /^TUGRA_VOL (\S+) ABSENT$/;
 const VOL_EXISTS_RE = /^TUGRA_VOL (\S+) EXISTS (\d+|-) (\S+)$/;
 const PORT_RE = /^TUGRA_PORT (\d{1,5})$/;
-const HOSTPATH_RE = /^TUGRA_HOSTPATH (\S+) ([01])$/;
+const HOSTPATH_RE = /^TUGRA_HOSTPATH (\S+) ([01?])$/;
 
 /**
  * Strictly parse a probe's output. Returns null (the caller reports `probe_failed`) when ANY required marker is
@@ -241,7 +256,7 @@ export function parseMoveProbe(output: string, expected: MoveProbeInput): MovePr
       probe.ports.add(n);
     } else if ((m = HOSTPATH_RE.exec(line))) {
       if (!wantHost.has(m[1]) || m[1] in probe.hostPaths) return null;
-      probe.hostPaths[m[1]] = m[2] === "1";
+      probe.hostPaths[m[1]] = m[2] === "?" ? null : m[2] === "1";
     } else {
       return null; // a TUGRA_ line we do not recognise: malformed
     }

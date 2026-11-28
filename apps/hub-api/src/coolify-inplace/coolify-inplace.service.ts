@@ -66,6 +66,7 @@ import {
 import { INPLACE_WORLD, type InPlaceWorld, type OpService } from "./inplace-world";
 import { buildImageIdsScript, buildServiceDetailScript, buildServiceReadyScript, buildServiceVolumeScript, parseImageIds, parseServiceDetail, parseServiceReady, type ServiceVolumeAlias } from "./inplace-service-scripts";
 import { engineOfImage, judgeReady, mapNetworks, mapServiceMounts, memberLevel, memberSame, parseServiceCompose, sameNetworkRows, startOrder, type MemberProbe, type ServiceCtrFacts, type ServiceMemberRecord } from "./inplace-service";
+import type { HostContext } from "../common/host-exec";
 import type { GiveBackInput, PlanInput, SwapInput } from "./dto";
 import type { InPlaceRunPort, RunTakeoverState } from "./inplace-run";
 
@@ -1061,7 +1062,9 @@ export class CoolifyInPlaceService implements InPlaceRunPort {
 
     // 2. Coolify's certificates as the fallback, before Tugra's proxy takes the ports
     const hosts = domainsOf(active).map((d) => d.host);
-    const fb = await this.run(server.id, buildFallbackInstallScript({ hosts }), (o) => parseFallbackInstall(o, hosts));
+    const fb = await this.run(server.id, buildFallbackInstallScript({ hosts }), (o) => parseFallbackInstall(o, hosts), { hostNamespaces: true });
+    // the store could not be read (or the host could not be entered): every host then serves the proxy's default certificate until a new one is issued, and the audit row says so
+    const fallbackUnread = fb ? hosts.filter((h) => fb.get(h)?.outcome === "noacme").length : hosts.length;
     const now = this.world.now().toISOString();
     for (const i of active) {
       for (const d of i.domains) {
@@ -1095,7 +1098,7 @@ export class CoolifyInPlaceService implements InPlaceRunPort {
     await this.setStatus(row, "SWAPPED", null);
     await this.checkFinal(server.id, items);
     await this.saveItems(row.id, items);
-    await this.audit.log({ actor: userId, action: "coolify.takeover.swap", target: row.id, meta: { apps: active.length, switched: ex.length, domains: hosts.length, fallbacks: items.flatMap((i) => i.domains).filter((d) => d.cert === "fallback").length, ...(row.runId ? { runId: row.runId } : {}) } });
+    await this.audit.log({ actor: userId, action: "coolify.takeover.swap", target: row.id, meta: { apps: active.length, switched: ex.length, domains: hosts.length, fallbacks: items.flatMap((i) => i.domains).filter((d) => d.cert === "fallback").length, ...(fallbackUnread > 0 ? { fallbackUnread } : {}), ...(row.runId ? { runId: row.runId } : {}) } });
     return this.fresh(row.id);
   }
 
@@ -1304,7 +1307,7 @@ export class CoolifyInPlaceService implements InPlaceRunPort {
     }
     // no new certificate in time: Coolify's goes back so the domain keeps a valid one, and the failure stays visible
     item.certAttempts[d.host] = (item.certAttempts[d.host] ?? 0) + 1;
-    const back = await this.run(serverId, buildFallbackInstallScript({ hosts: [d.host] }), (o) => parseFallbackInstall(o, [d.host]));
+    const back = await this.run(serverId, buildFallbackInstallScript({ hosts: [d.host] }), (o) => parseFallbackInstall(o, [d.host]), { hostNamespaces: true });
     const r = back?.get(d.host);
     if (r?.outcome === "installed") {
       item.fallbackSerial[d.host] = r.serial;
@@ -1547,7 +1550,7 @@ export class CoolifyInPlaceService implements InPlaceRunPort {
   }
 
   /** Run a script and parse it; any failure to run or parse is `null`, never a pass. */
-  private async run<T>(serverId: string, script: string, parse: (out: string) => T | null, opts?: { hostNetwork?: boolean }): Promise<T | null> {
+  private async run<T>(serverId: string, script: string, parse: (out: string) => T | null, opts?: HostContext): Promise<T | null> {
     try {
       const r = await this.world.exec(serverId, script, HOST_T, opts);
       return parse(r.output);

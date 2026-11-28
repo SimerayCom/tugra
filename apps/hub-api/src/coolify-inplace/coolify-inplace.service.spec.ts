@@ -391,6 +391,27 @@ describe("swap", () => {
     const call = t.audit.log.mock.calls.map((c) => c[0] as { action: string; meta: Record<string, unknown> }).find((c) => c.action === "coolify.takeover.swap")!;
     expect(call.meta).toMatchObject({ apps: 2, switched: 1, domains: 2, fallbacks: 2 });
     expect(JSON.stringify(call)).not.toMatch(/example\.com|webuuid|[0-9a-f]{64}/);
+    expect(call.meta).not.toHaveProperty("fallbackUnread"); // every store was read
+  });
+  it("Coolify's certificate store is read in the HOST's namespaces (the agent's container has no /data/coolify), probes and certificate checks on the host network", async () => {
+    const t = build();
+    await swapOk(t);
+    const sent = t.box.execOpts;
+    const fallback = sent.filter((x) => x.script.includes("TUGRA_IP_FALLBACK") && !x.script.includes("TUGRA_IP_FALLBACK_REMOVED"));
+    expect(fallback.length).toBeGreaterThan(0);
+    for (const f of fallback) expect(f.hostNamespaces).toBe(true);
+    const probes = sent.filter((x) => x.script.includes("TUGRA_IP_PROBE"));
+    expect(probes.length).toBeGreaterThan(0);
+    for (const p of probes) expect(p.hostNetwork).toBe(true);
+  });
+  it("a store that cannot be read is said in the swap audit (every host would serve the proxy's default certificate until a new one is issued)", async () => {
+    const t = build();
+    // as if the store were not there for the helper: the install answers noacme for every host
+    const exec = t.box.exec.bind(t.box);
+    t.box.exec = (async (srv: string, script: string, ms?: number) => exec(srv, script, ms, undefined)) as typeof t.box.exec;
+    await swapOk(t);
+    const call = t.audit.log.mock.calls.map((c) => c[0] as { action: string; meta: Record<string, unknown> }).find((c) => c.action === "coolify.takeover.swap")!;
+    expect(call.meta).toMatchObject({ fallbacks: 0, fallbackUnread: 2 });
   });
 });
 

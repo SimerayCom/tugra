@@ -1,4 +1,4 @@
-import { onHostNetwork } from "./inplace-scripts";
+import { withHostContext, type HostContext } from "../common/host-exec";
 import { Injectable, Optional } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
@@ -183,8 +183,8 @@ export class InPlaceWorldService implements InPlaceWorld {
     }
   }
 
-  exec(serverId: string, script: string, timeoutMs = 60_000, opts?: { hostNetwork?: boolean }): Promise<{ exitCode: number; output: string }> {
-    return this.agentWs.sendCommand(serverId, opts?.hostNetwork ? onHostNetwork(script) : script, "deploy", timeoutMs);
+  exec(serverId: string, script: string, timeoutMs = 60_000, opts?: HostContext): Promise<{ exitCode: number; output: string }> {
+    return this.agentWs.sendCommand(serverId, withHostContext(script, opts), "deploy", timeoutMs);
   }
 
   async setProxyBind(serverId: string, bind: "public" | "loopback" | "none"): Promise<void> {

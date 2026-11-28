@@ -26,7 +26,7 @@ import { CutoverStepBase, POLL_MS, rethrowLeaseLost, requireOpId } from "./cutov
 import { CutoverWorld, type OpApp } from "./cutover-world.service";
 import { HTTP01_GAP_ATTEST, LEFT_OUT_ATTEST, gapAccepted, isLeftOut } from "./cutover-holds";
 import { degradedAtSourceHosts, excuseDarkVerdicts } from "./baseline-hosts";
-import { buildDarkProbeScript, classifyDarkHost, parseDarkProbe, type DarkVerdict } from "./dark-probe";
+import { buildDarkProbeScript, classifyDarkHost, darkProbeChunks, parseDarkProbe, type DarkHostResult, type DarkVerdict } from "./dark-probe";
 import { appHosts, cutoverInit } from "./dns-prepare.handler";
 import { actionableEntries, capHosts, chk, compDate, compStrings, isDns01Blocked, iso, PRE_FLIP_STATES, trackedEntries, type Entry } from "./run-cutover-logic";
 import type { CutoverView } from "../../../cutover/cutover.dto";
@@ -133,12 +133,18 @@ export class TlsPreissueHandler extends CutoverStepBase implements StepHandler<T
   /** One dark probe of the Tugra proxy on the swap host. Any transport trouble is `error` (unknown, never a pass). */
   private async darkProbe(serverId: string, hosts: string[], path: string): Promise<{ state: TlsObs["darkState"]; verdicts: Record<string, DarkVerdict> | null }> {
     try {
-      const batch = hosts.slice(0, 100);
-      const r = await this.world.exec(serverId, buildDarkProbeScript({ hosts: batch, path }), 120_000);
-      const parsed = parseDarkProbe(r.output, batch);
-      if (!parsed) return { state: "error", verdicts: null };
-      if (parsed.kind !== "ok") return { state: parsed.kind, verdicts: null };
-      return { state: "ok", verdicts: Object.fromEntries(batch.map((h) => [h, classifyDarkHost(parsed.hosts[h])])) };
+      const batch = darkProbeChunks(hosts);
+      const all = batch.flat();
+      const answers: Record<string, DarkHostResult> = {};
+      for (const chunk of batch) {
+        // On the box's own network: from the agent's bridge, tugra-proxy's isolated network never answers.
+        const r = await this.world.exec(serverId, buildDarkProbeScript({ hosts: chunk, path }), 120_000, { hostNetwork: true });
+        const parsed = parseDarkProbe(r.output, chunk);
+        if (!parsed) return { state: "error", verdicts: null };
+        if (parsed.kind !== "ok") return { state: parsed.kind, verdicts: null };
+        Object.assign(answers, parsed.hosts);
+      }
+      return { state: "ok", verdicts: Object.fromEntries(all.map((h) => [h, classifyDarkHost(answers[h])])) };
     } catch (e) {
       rethrowLeaseLost(e);
       return { state: "error", verdicts: null };

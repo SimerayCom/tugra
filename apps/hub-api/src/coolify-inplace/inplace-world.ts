@@ -4,6 +4,7 @@
  * the specs bind this to an in-memory fake and the module binds it to `InPlaceWorldService`.
  */
 import type { ComposeNetworkRow } from "../deploy/deploy-script";
+import type { HostContext } from "../common/host-exec";
 
 export const INPLACE_WORLD = Symbol("INPLACE_WORLD");
 
@@ -109,8 +110,8 @@ export interface InPlaceWorld {
    */
   appMentions(appId: string, needles: readonly string[]): Promise<boolean | null>;
   /** Run a hub-built script on the host through the agent (`deploy` capability). */
-  /** `hostNetwork`: the script must reach the box's own :443 or a proxy bridge address (see `onHostNetwork`). */
-  exec(serverId: string, script: string, timeoutMs?: number, opts?: { hostNetwork?: boolean }): Promise<{ exitCode: number; output: string }>;
+  /** `hostNetwork`: the script must reach the box's own :443 or a proxy bridge address. `hostNamespaces`: it reads host files (see common/host-exec). */
+  exec(serverId: string, script: string, timeoutMs?: number, opts?: HostContext): Promise<{ exitCode: number; output: string }>;
   setProxyBind(serverId: string, bind: "public" | "loopback" | "none"): Promise<void>;
   /** Recreate Tugra's proxy from the server's current settings (the same action as the Start button). */
   startProxy(userId: string, serverId: string): Promise<void>;

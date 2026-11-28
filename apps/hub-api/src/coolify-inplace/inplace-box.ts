@@ -245,8 +245,26 @@ export class Box implements InPlaceWorld {
 
   // ───────────── the agent shell ─────────────
 
-  async exec(_serverId: string, script: string): Promise<{ exitCode: number; output: string }> {
+  /** The host context each script was sent with (the agent's own shell is a container: see common/host-exec). */
+  execOpts: Array<{ script: string; hostNetwork: boolean; hostNamespaces: boolean }> = [];
+
+  async exec(_serverId: string, script: string, _timeoutMs?: number, opts?: { hostNetwork?: boolean; hostNamespaces?: boolean }): Promise<{ exitCode: number; output: string }> {
     this.scripts.push(script);
+    const hostNamespaces = !!opts?.hostNamespaces;
+    const hostNetwork = !!opts?.hostNetwork || hostNamespaces;
+    this.execOpts.push({ script, hostNetwork, hostNamespaces });
+    // Like the agent's container: 127.0.0.1 is the agent and the proxy's bridge is isolated (a probe never connects), the host's /data/coolify is not there (no store to read).
+    if (!hostNetwork) {
+      if (script.includes("TUGRA_IP_PROBE") && !script.includes("TUGRA_IP_PROBE|NOCURL")) {
+        const hosts = /for H in ([^;]+); do/.exec(script)?.[1].match(/'([^']+)'/g)?.map((x) => x.slice(1, -1)) ?? [];
+        return { exitCode: 0, output: [...hosts.map((h) => `TUGRA_IP_PROBE|${h}|000|none|none`), "TUGRA_IP_PROBE_END"].join("\n") };
+      }
+      if (script.includes("TUGRA_IP_CERT")) return { exitCode: 0, output: `TUGRA_IP_CERT|${/^H='([^']+)'/m.exec(script)?.[1] ?? ""}|none|-|-` };
+    }
+    if (!hostNamespaces && script.includes("TUGRA_IP_FALLBACK") && !script.includes("TUGRA_IP_FALLBACK_REMOVED")) {
+      const hosts = [...script.matchAll(/^one '([^']+)' '[^']+'/gm)].map((m) => m[1]);
+      return { exitCode: 0, output: hosts.map((h) => `TUGRA_IP_FALLBACK|${h}|noacme|-`).join("\n") };
+    }
     return { exitCode: 0, output: this.route(script) };
   }
 

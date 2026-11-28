@@ -1,3 +1,4 @@
+import { unwrapHostScript } from "../common/host-exec";
 import { InPlaceWorldService } from "./inplace-world.service";
 
 function make() {
@@ -85,6 +86,16 @@ describe("InPlaceWorldService", () => {
     const { w, agentWs } = make();
     await w.exec("srv1", "echo hi", 5000);
     expect(agentWs.sendCommand).toHaveBeenCalledWith("srv1", "echo hi", "deploy", 5000);
+  });
+  it("the host-context flags wrap the script (host network / host namespaces)", async () => {
+    const { w, agentWs } = make();
+    await w.exec("srv1", "echo hi", 5000, { hostNetwork: true });
+    await w.exec("srv1", "echo hi", 5000, { hostNamespaces: true });
+    const [net, ns] = agentWs.sendCommand.mock.calls.map((c: unknown[]) => String(c[1]));
+    expect(net).toContain("--network host");
+    expect(ns).toContain("nsenter -t 1 -m");
+    expect(unwrapHostScript(net)).toBe("echo hi");
+    expect(unwrapHostScript(ns)).toBe("echo hi");
   });
   it("a server is busy while a takeover or a guided run holds it", async () => {
     const { w, prisma } = make();

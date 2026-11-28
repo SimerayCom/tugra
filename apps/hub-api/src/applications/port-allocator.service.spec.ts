@@ -1,3 +1,8 @@
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { unwrapHostScript } from "../common/host-exec";
 import { PortAllocatorService, parseProbe } from "./port-allocator.service";
 
 function make(opts: {
@@ -30,13 +35,34 @@ function make(opts: {
   };
 }
 
+describe("the probe script, executed against host-like /proc/net/tcp files", () => {
+  it("a listening socket of a NON-docker host process (state 0A) is seen; an established one is not", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ports-"));
+    try {
+      const hdr = "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n";
+      writeFileSync(join(dir, "tcp"), hdr + "   0: 00000000:4E21 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 1 1 0 100 0 0 10 0\n   1: 0100007F:4E22 0100007F:C7A2 01 00000000:00000000 00:00000000 00000000     0        0 2 1 0 100 0 0 10 0\n");
+      writeFileSync(join(dir, "tcp6"), hdr + "   0: 00000000000000000000000000000000:4E23 00000000000000000000000000000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 3 1 0 100 0 0 10 0\n");
+      writeFileSync(join(dir, "docker"), '#!/bin/sh\necho "0.0.0.0:20009->80/tcp"\n', { mode: 0o755 });
+      const { svc, agentWs } = make({ online: true, probeOutput: "" });
+      void svc.probeUsedPorts("s1");
+      const wrapped = String(agentWs.sendCommand.mock.calls[0][1]);
+      const inner = unwrapHostScript(wrapped).replace("/proc/net/tcp /proc/net/tcp6", `${dir}/tcp ${dir}/tcp6`);
+      const out = execFileSync("sh", ["-c", inner], { env: { PATH: `${dir}:/usr/bin:/bin` }, encoding: "utf8" });
+      expect([...parseProbe(out)].sort((a, b) => a - b)).toEqual([20001, 20003, 20009]); // 0x4E21 listening, 0x4E23 (v6) listening, docker's; NOT 0x4E22 (established)
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("parseProbe", () => {
-  it("extracts host ports from `ss -ltnH` local addresses and docker published mappings", () => {
+  it("extracts host ports: one bare port per line (the host's /proc/net/tcp), `ss`-style addresses and docker published mappings", () => {
     const out = [
+      "22",
+      "20005",
       "LISTEN 0 128 0.0.0.0:22 0.0.0.0:*",
       "LISTEN 0 128 127.0.0.1:20001 0.0.0.0:*",
       "LISTEN 0 128 [::]:20002 [::]:*",
-      "LISTEN 0 128 *:20005 *:*",
       "0.0.0.0:20003->80/tcp, :::20003->80/tcp",
       "20004/tcp", // container-only, NOT host-published → ignored
       "", // blank
@@ -68,17 +94,22 @@ describe("PortAllocatorService.allocate", () => {
   it("probes the agent (deploy cap, fixed command) when online and skips listening ports", async () => {
     const { svc, agentWs } = make({
       online: true,
-      probeOutput: "LISTEN 0 128 0.0.0.0:20000 0.0.0.0:*\n0.0.0.0:20001->80/tcp",
+      probeOutput: "20000\n0.0.0.0:20001->80/tcp",
     });
     expect(await svc.allocate("s1", 2)).toEqual([20002, 20003]);
     expect(agentWs.sendCommand).toHaveBeenCalledTimes(1);
     const [serverId, cmd, cap] = agentWs.sendCommand.mock.calls[0];
     expect(serverId).toBe("s1");
     expect(cap).toBe("deploy");
-    expect(cmd).toContain("ss -ltn");
-    expect(cmd).toContain("docker ps");
+    // the box's own network and its /proc/net/tcp (the agent's container has neither `ss` nor the host's sockets), not the agent's namespace
+    expect(cmd).toContain("--network host");
+    expect(cmd).toContain("--pull never");
+    const inner = unwrapHostScript(cmd);
+    expect(inner).toContain("/proc/net/tcp /proc/net/tcp6");
+    expect(inner).toContain("docker ps -a");
+    expect(inner).not.toContain("ss -ltn");
     // command carries no interpolated serverId/count → injection-proof
-    expect(cmd).not.toContain("s1");
+    expect(inner).not.toContain("s1");
   });
 
   it("does NOT probe when the agent is offline (DB-only reservation)", async () => {

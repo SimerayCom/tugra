@@ -7,6 +7,7 @@ import { ConfigService } from "@nestjs/config";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { TeamAccessService } from "../common/team-access.service";
+import { onHostNamespaces } from "../common/host-exec";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
 
 const CONCURRENCY = 10;
@@ -98,7 +99,11 @@ export class BulkService {
       data: { status: "RUNNING", startedAt: new Date() },
     });
     try {
-      const r = await this.agentWs.sendCommand(t.serverId, command, "bulk", this.config.get<number>("BULK_COMMAND_TIMEOUT_MS") ?? 300_000);
+      const timeoutMs = this.config.get<number>("BULK_COMMAND_TIMEOUT_MS") ?? 300_000;
+      // The operator means the SERVER: `df`, `free`, `uptime`, `systemctl`, `ss`, `apt`, `hostname` in the agent's own container would
+      // answer about the container (or not exist there). The command runs in the host's namespaces; when they cannot be entered it
+      // fails with TUGRA_HOST_UNAVAILABLE, never as a command that quietly ran in the container.
+      const r = await this.agentWs.sendCommand(t.serverId, onHostNamespaces(command, { deadlineSec: Math.min(3600, Math.max(5, Math.floor(timeoutMs / 1000) - 5)) }), "bulk", timeoutMs);
       await this.prisma.bulkTask.update({
         where: { id: taskId },
         data: {

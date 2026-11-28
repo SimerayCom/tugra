@@ -5,7 +5,10 @@ import { CUTOVER_HOSTNAME_RE, PROBE_PATH_RE, classifyHealth, type HealthClass } 
  * The DARK probe of a same-host takeover (`swap-proxy`, design 6): while Coolify's proxy still owns :80/:443 of the box,
  * Tugra's own proxy runs with `proxyBind: "none"` (no published port). The existing loopback probe
  * (`curl --resolve host:443:127.0.0.1`) would verify COOLIFY's router there, so this probe targets the Tugra proxy
- * container's own bridge address instead (`curl --resolve host:443:<container ip>`), run by the agent on the host.
+ * container's own bridge address instead (`curl --resolve host:443:<container ip>`). It must run on the BOX's network
+ * (`world.exec(..., { hostNetwork: true })`): the agent's shell is a container on Docker's default bridge, which cannot reach the
+ * proxy's user-defined bridge, so every curl there times out. The hosts are probed in parallel (one command is capped at
+ * {@link DARK_PROBE_CHUNK} hosts, so 2 x 8 s of curl timeouts stay far under the command's timeout); {@link darkProbeChunks} splits a longer list.
  *
  * It prints only status markers, never a response body, so app output can never forge a marker. Two requests per host:
  * one that VERIFIES the certificate (no `-k`: a Traefik default cert or an untrusted one fails verification) and one
@@ -14,7 +17,18 @@ import { CUTOVER_HOSTNAME_RE, PROBE_PATH_RE, classifyHealth, type HealthClass } 
  */
 
 const PROXY = "tugra-proxy";
+/** Hosts one probe command takes: they run in parallel, so the worst case is about 2 x 8 s whatever the count. */
+export const DARK_PROBE_CHUNK = 25;
+/** Hosts one gate observation looks at (several commands). */
 export const DARK_PROBE_MAX_HOSTS = 100;
+
+/** The host list split into the batches one command takes (at most {@link DARK_PROBE_MAX_HOSTS} in all). */
+export function darkProbeChunks(hosts: readonly string[]): string[][] {
+  const all = hosts.slice(0, DARK_PROBE_MAX_HOSTS);
+  const out: string[][] = [];
+  for (let i = 0; i < all.length; i += DARK_PROBE_CHUNK) out.push(all.slice(i, i + DARK_PROBE_CHUNK));
+  return out;
+}
 
 /** Per-host result of one dark probe. */
 export interface DarkHostResult {
@@ -32,7 +46,7 @@ export type DarkProbeResult =
   | { kind: "ok"; hosts: Record<string, DarkHostResult> };
 
 export function buildDarkProbeScript(o: { hosts: readonly string[]; path: string }): string {
-  if (o.hosts.length === 0 || o.hosts.length > DARK_PROBE_MAX_HOSTS) throw new Error("dark probe: host count out of range");
+  if (o.hosts.length === 0 || o.hosts.length > DARK_PROBE_CHUNK) throw new Error("dark probe: host count out of range");
   for (const h of o.hosts) if (!CUTOVER_HOSTNAME_RE.test(h)) throw new Error("dark probe: invalid hostname");
   if (!PROBE_PATH_RE.test(o.path)) throw new Error("dark probe: invalid path");
   return [
@@ -41,15 +55,22 @@ export function buildDarkProbeScript(o: { hosts: readonly string[]; path: string
     `IP=$(docker container inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}' ${PROXY} 2>/dev/null | awk '{print $1}')`,
     'case "$IP" in \'\'|*[!0-9.]*) echo "TUGRA_DARK_PROBE_NOPROXY"; exit 0;; esac',
     'command -v curl >/dev/null 2>&1 || { echo "TUGRA_DARK_PROBE_UNAVAILABLE"; exit 0; }',
-    'T=$(mktemp) || exit 0',
-    `trap 'rm -f "$T"' EXIT`,
+    "D=$(mktemp -d) || exit 0",
+    `trap 'rm -rf "$D"' EXIT`,
+    "n=0",
     `for H in ${o.hosts.map(shq).join(" ")}; do`,
-    `  v=$(curl -sS -o /dev/null -m 8 -w '%{ssl_verify_result}' --resolve "$H:443:$IP" "https://$H/" 2>/dev/null)`,
-    `  code=$(curl -ksS -o "$T" -m 8 -w '%{http_code}' --resolve "$H:443:$IP" "https://$H$P" 2>/dev/null)`,
-    "  t=0",
-    '  [ "$(head -c 18 "$T" 2>/dev/null)" = "404 page not found" ] && t=1',
-    `  printf 'TUGRA_DARK_PROBE host=%s verify=%s status=%s traefik404=%s\\n' "$H" "\${v:-x}" "\${code:-000}" "$t"`,
+    "  n=$((n + 1))",
+    "  (",
+    '    T="$D/b$n"',
+    `    v=$(curl -sS -o /dev/null -m 8 -w '%{ssl_verify_result}' --resolve "$H:443:$IP" "https://$H/" 2>/dev/null)`,
+    `    code=$(curl -ksS -o "$T" -m 8 -w '%{http_code}' --resolve "$H:443:$IP" "https://$H$P" 2>/dev/null)`,
+    "    t=0",
+    '    [ "$(head -c 18 "$T" 2>/dev/null)" = "404 page not found" ] && t=1',
+    `    printf 'TUGRA_DARK_PROBE host=%s verify=%s status=%s traefik404=%s\\n' "$H" "\${v:-x}" "\${code:-000}" "$t" > "$D/r$n"`,
+    "  ) &",
     "done",
+    "wait",
+    'cat "$D"/r* 2>/dev/null',
     'echo "TUGRA_DARK_PROBE_END"',
   ].join("\n");
 }

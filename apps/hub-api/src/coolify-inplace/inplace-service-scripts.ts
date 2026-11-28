@@ -6,6 +6,7 @@
  * images and volumes are only read; no environment is asked for; only the compose service name label of a container is read (never another
  * label value); every value that reaches a shell is validated first and then single-quoted.
  */
+import { HOST_TEST_FN } from "../common/host-exec";
 import { shq } from "../deploy/deploy-script";
 import { EXACT_IMAGE_LINES, IP_MARK, isHex64, parseContainerDetail, type CtrDetail, type RecordedCtr } from "./inplace-scripts";
 import type { CtrNetwork, MemberProbe, ServiceCtrFacts } from "./inplace-service";
@@ -155,10 +156,12 @@ export function buildServiceVolumeScript(aliases: readonly ServiceVolumeAlias[])
   const M = IP_MARK.alias;
   return [
     "set -u",
+    HOST_TEST_FN,
     "alias_one() {",
     // $1 kind, $2 source, $3 volume, $4 project, $5 key
     '  if [ "$1" = bind ]; then',
-    '    src="$2"; [ -d "$src" ] || { printf \'' + M + "|%s|nosource\\n' \"$3\"; return; }",
+    // The folder is on the HOST: the agent's own filesystem cannot see it, so the daemon is asked (tugra_host_test). Unknown is not "missing".
+    `    src="$2"; tugra_host_test -d "$src"; case $? in 0) ;; 1) printf '${M}|%s|nosource\\n' "$3"; return;; *) printf '${M}|%s|failed\\n' "$3"; return;; esac`,
     "  else",
     `    src="$(docker volume inspect -f '{{.Mountpoint}}' "$2" 2>/dev/null)" || { printf '${M}|%s|nosource\\n' "$3"; return; }`,
     `    case "$src" in /*) ;; *) printf '${M}|%s|nosource\\n' "$3"; return;; esac`,

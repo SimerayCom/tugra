@@ -87,13 +87,16 @@ describe("buildMoveProbeScript", () => {
     const s = buildMoveProbeScript({ dockerVolumes: ["tugra_appv_a1_data"], hostPaths: ["/mnt/media"] });
     // host view: the daemon's real docker root and host /etc/tugra, measured through a bind into the host-view image
     expect(s).toContain(`DR=$(docker info --format '{{.DockerRootDir}}' 2>/dev/null); [ -n "$DR" ] || DR=/var/lib/docker\nhost_df /var/lib/docker "$DR"\nhost_df /etc/tugra/app-moves /etc/tugra\n`);
-    expect(s).toContain(`docker run --rm --pull=never --mount "type=bind,src=$2,dst=/x,readonly" "$HI" sh -c 'a=$(df -Pk /x 2>/dev/null | awk '\\''NR==2{print $4}'\\''); d=$(stat -c %d /x 2>/dev/null); echo "\${a:--} \${d:--}"' 2>/dev/null`);
+    expect(s).toContain(`docker run --rm --pull=never --mount "type=bind,src=$2,dst=/x,readonly" --entrypoint sh "$HI" -c 'a=$(df -Pk /x 2>/dev/null | awk '\\''NR==2{print $4}'\\''); d=$(stat -c %d /x 2>/dev/null); echo "\${a:--} \${d:--}"' 2>/dev/null`);
     expect(s).toContain(`if docker image inspect ${BACKUP_HELPER_IMAGE} >/dev/null 2>&1; then HI=${BACKUP_HELPER_IMAGE}; HELPER=1; elif [ -n "$TUGRA_AGENT_IMAGE" ] && docker image inspect "$TUGRA_AGENT_IMAGE" >/dev/null 2>&1; then HI="$TUGRA_AGENT_IMAGE"; fi`);
     expect(s).toContain(`echo "TUGRA_VOL tugra_appv_a1_data EXISTS \${kb:--} \${lb:--}"`);
     expect(s).toContain(`echo "TUGRA_VOL tugra_appv_a1_data ABSENT"`);
-    expect(s).toContain(`if [ -e '/mnt/media' ]; then echo "TUGRA_HOSTPATH /mnt/media 1"; else echo "TUGRA_HOSTPATH /mnt/media 0"; fi`);
+    // host paths: asked through the host-view image (the agent's own filesystem has none of them), never a local [ -e ]
+    expect(s).toContain(`echo "TUGRA_HOSTPATH /mnt/media $(host_has '/mnt/media')"`);
+    expect(s).toContain('--mount "type=bind,src=$1,dst=/x,readonly" --entrypoint true "$HI"');
+    expect(s).not.toContain("[ -e '/mnt/media' ]");
     // ports: host namespace through the host-view image, netstat first, /proc/net/tcp{,6} second, fail closed third
-    expect(s).toContain(`PL=; [ -n "$HI" ] && PL=$(docker run --rm --pull=never --network host "$HI" sh -c '`);
+    expect(s).toContain(`PL=; [ -n "$HI" ] && PL=$(docker run --rm --pull=never --network host --entrypoint sh "$HI" -c '`);
     expect(s).toContain(`netstat -tln 2>/dev/null) && [ -n "$L" ]; then printf '\\''%s\\n'\\'' "$L" | awk '\\''${NETSTAT_PORTS_AWK}'\\''; echo TUGRA_PORTS_END;`);
     expect(s).toContain(`elif [ -r /proc/net/tcp ]; then cat /proc/net/tcp /proc/net/tcp6 2>/dev/null | awk '\\''${PROC_TCP_PORTS_AWK}'\\''; echo TUGRA_PORTS_END; fi' 2>/dev/null`);
     expect(s).toContain(`case "$PL" in *TUGRA_PORTS_END) printf '%s\\n' "$PL" | grep -E '^[0-9]+$' | sort -un | head -n 4000 | while read -r p; do echo "TUGRA_PORT $p"; done ;; *) echo "TUGRA_PORT -" ;; esac`);
@@ -287,13 +290,20 @@ case "$1 $2" in
     [ "$3" = "tugra_appv_a1_data" ] && exit 0 || exit 1 ;;
   "run --rm")
     echo "$*" >> "$STUB/docker.log"
+    # The agent image's ENTRYPOINT is tugra-agent: without --entrypoint docker runs \`tugra-agent sh -c ...\`, which prints this and exits 0.
+    case "$*" in *"${AGENT_IMG}"*) case "$*" in *--entrypoint*) ;; *) echo "no --hub provided; nothing to do"; exit 0 ;; esac ;; esac
     case "$*" in
+      *"--entrypoint true"*)
+        src=$(printf '%s' "$*" | sed -n 's/.*src=\\([^,]*\\),dst=.*/\\1/p')
+        if [ -e "$src" ]; then exit 0; fi
+        [ -e "$STUB/daemon-broken" ] && { echo "Cannot connect to the Docker daemon" >&2; exit 125; }
+        echo "docker: Error response from daemon: invalid mount config for type \"bind\": bind source path does not exist: $src" >&2; exit 125 ;;
       *"--mount type=bind,src=/var/lib/docker,dst=/x,readonly"*) echo "36547504 2049"; exit 0 ;;
       *"--mount type=bind,src=/etc/tugra,dst=/x,readonly"*) echo "36547500 2049"; exit 0 ;;
       *"--network host"*)
         [ -e "$STUB/ports-broken" ] && exit 1
         PATH="$STUB/innerbin:/usr/bin:/bin" sh -c "\${!#}"; exit $? ;;
-      *" du -sk /d") echo "2048	/d"; exit 0 ;;
+      *"--entrypoint du"*) echo "2048	/d"; exit 0 ;;
     esac ;;
 esac
 exit 1`,
@@ -301,13 +311,13 @@ exit 1`,
   stub(dir, "stat", `echo 2049`);
   stub(innerBin, "netstat", `printf '%s\\n' ${shq(BUSYBOX_NETSTAT)}`);
   const INPUT = { dockerVolumes: ["tugra_appv_a1_data", "tugra_appv_a1_cache"], hostPaths: ["/definitely/not/here"] };
-  const run = (flags: string[], env: Record<string, string> = {}): { out: string; log: string } => {
-    for (const f of ["helper-present", "agent-present", "ports-broken", "docker.log"]) rmSync(join(dir, f), { force: true });
+  const run = (flags: string[], env: Record<string, string> = {}, input: typeof INPUT = INPUT): { out: string; log: string } => {
+    for (const f of ["helper-present", "agent-present", "ports-broken", "daemon-broken", "docker.log"]) rmSync(join(dir, f), { force: true });
     for (const f of flags) writeFileSync(join(dir, f), "");
     const e = { ...process.env, PATH: `${dir}:${process.env.PATH}`, ...env };
     delete (e as Record<string, string | undefined>).TUGRA_AGENT_IMAGE;
     Object.assign(e, env);
-    const out = execFileSync("bash", ["-c", buildMoveProbeScript(INPUT)], { env: e, encoding: "utf8" });
+    const out = execFileSync("bash", ["-c", buildMoveProbeScript(input)], { env: e, encoding: "utf8" });
     let log = "";
     try {
       log = readFileSync(join(dir, "docker.log"), "utf8");
@@ -329,8 +339,8 @@ exit 1`,
     expect([...p!.ports].sort((a, b) => a - b)).toEqual(LAB_PORTS_WITH_RELAY);
     expect(p!.hostPaths["/definitely/not/here"]).toBe(false);
     expect(out).not.toContain("TUGRA_PORT -");
-    expect(log).toContain(`--network host ${BACKUP_HELPER_IMAGE} sh -c`);
-    expect(log).toContain(`--pull=never --mount type=bind,src=/var/lib/docker,dst=/x,readonly ${BACKUP_HELPER_IMAGE} sh -c`);
+    expect(log).toContain(`--network host --entrypoint sh ${BACKUP_HELPER_IMAGE} -c`);
+    expect(log).toContain(`--pull=never --mount type=bind,src=/var/lib/docker,dst=/x,readonly --entrypoint sh ${BACKUP_HELPER_IMAGE} -c`);
     expect(log).not.toContain("pull ");
   });
 
@@ -341,11 +351,35 @@ exit 1`,
     expect(p!.tools.helper).toBe(false);
     expect(p!.df["/var/lib/docker"]).toEqual({ availKb: 36547504, dev: "2049" });
     expect([...p!.ports].sort((a, b) => a - b)).toEqual(LAB_PORTS_WITH_RELAY);
-    expect(log).toContain(`--network host ${AGENT_IMG} sh -c`);
-    expect(log).toContain(`src=/etc/tugra,dst=/x,readonly ${AGENT_IMG} sh -c`);
-    expect(log).toContain(`-v tugra_appv_a1_data:/d:ro ${AGENT_IMG} du -sk /d`); // volume sizing too, not just df/ports
+    expect(log).toContain(`--network host --entrypoint sh ${AGENT_IMG} -c`);
+    expect(log).toContain(`src=/etc/tugra,dst=/x,readonly --entrypoint sh ${AGENT_IMG} -c`);
+    expect(log).toContain(`-v tugra_appv_a1_data:/d:ro --entrypoint du ${AGENT_IMG} -sk /d`); // volume sizing too, not just df/ports
     expect(log).not.toContain(BACKUP_HELPER_IMAGE);
     expect(p!.vols.tugra_appv_a1_data.kb).toBe(2048);
+  });
+
+  it("host bind paths are asked through the host-view image: a missing one is 0, an existing one 1, never a guess from the agent's own filesystem", () => {
+    const here = mkdtempSync(join(tmpdir(), "tugra-hostpath-"));
+    try {
+      const input = { dockerVolumes: INPUT.dockerVolumes, hostPaths: [here, "/definitely/not/here", "/mnt/with space"] };
+      const { out, log } = run(["agent-present"], { TUGRA_AGENT_IMAGE: AGENT_IMG }, input);
+      const p = parseMoveProbe(out, input)!;
+      expect(p).not.toBeNull();
+      expect(p.hostPaths[here]).toBe(true);
+      expect(p.hostPaths["/definitely/not/here"]).toBe(false);
+      expect(log).toContain(`--entrypoint true ${AGENT_IMG}`);
+      // a daemon trouble is "could not tell", not "missing"
+      const broken = run(["agent-present", "daemon-broken"], { TUGRA_AGENT_IMAGE: AGENT_IMG }, input);
+      expect(parseMoveProbe(broken.out, input)!.hostPaths["/definitely/not/here"]).toBeNull();
+    } finally {
+      rmSync(here, { recursive: true, force: true });
+    }
+  });
+
+  it("the agent image without --entrypoint would run tugra-agent: every helper run names its entrypoint (the stub fails the probe otherwise)", () => {
+    const { out } = run(["agent-present"], { TUGRA_AGENT_IMAGE: AGENT_IMG });
+    expect(out).not.toContain("no --hub provided");
+    expect(parseMoveProbe(out, INPUT)).not.toBeNull();
   });
 
   it("no image at all: df falls back to the agent's own view, ports are `TUGRA_PORT -` and the parser fails closed", () => {
@@ -357,6 +391,8 @@ exit 1`,
     expect(log).toBe(""); // no image → no `docker run` at all (and still no pull)
     expect(out).toContain("TUGRA_VOL tugra_appv_a1_data EXISTS - ckmovelabel"); // mountpoint du is not readable from a container
     expect(parseMoveProbe(out, INPUT)).toBeNull();
+    // and the host path is unknown, not missing
+    expect(out).toContain("TUGRA_HOSTPATH /definitely/not/here ?");
   });
 
   it("helper present but the port listing fails inside the container: `TUGRA_PORT -`, never an empty port list", () => {

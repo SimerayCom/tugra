@@ -3,6 +3,8 @@ import { ConfigService } from "@nestjs/config";
 import { Prisma } from "@prisma/client";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
 import { PrismaService } from "../prisma/prisma.service";
+import { PROC_TCP_PORTS_AWK } from "../app-moves/app-move-scripts";
+import { hostUnavailableReason, onHostNetwork } from "../common/host-exec";
 
 /** One published port of an app's service, allocated at install time. */
 export interface PortMapping {
@@ -12,17 +14,20 @@ export interface PortMapping {
   mode: string;
 }
 
-// A fixed, input-free probe: list listening TCP sockets and docker-published ports. Both halves
-// tolerate their tool being absent (`2>/dev/null`). No value is interpolated, so it is injection-proof.
-const PROBE_CMD = "ss -ltnH 2>/dev/null; docker ps --format '{{.Ports}}' 2>/dev/null";
-const PROBE_TIMEOUT_MS = 10_000;
+// A fixed, input-free probe, run on the box's OWN network (see common/host-exec: the agent's shell is a container with its own
+// network namespace, where neither `ss` (not in the image) nor /proc/net/tcp is the host's): the listening TCP ports from the
+// host's /proc/net/tcp{,6} (state 0A, the same awk the app-move probe uses) plus the docker-published ports of every container,
+// stopped ones included. No value is interpolated, so it is injection-proof.
+const PROBE_CMD = `awk '${PROC_TCP_PORTS_AWK}' /proc/net/tcp /proc/net/tcp6 2>/dev/null; docker ps -a --format '{{.Ports}}' 2>/dev/null`;
+const PROBE_TIMEOUT_MS = 20_000;
 
-/** Extract host ports in use from the combined `ss -ltnH` + `docker ps --format '{{.Ports}}'` output.
- *  Grabs each docker `:PORT->` published mapping and each `ss` local-address `:PORT` at a token end.
- *  Malformed lines are skipped; out-of-range ports are harmless (allocate only draws from its range). */
+/** Extract host ports in use from the probe output: one bare port per line (a listening socket) and each docker
+ *  `:PORT->` published mapping (also `ss`-style `addr:PORT` tokens). Malformed lines are skipped; out-of-range ports are
+ *  harmless (allocate only draws from its range). */
 export function parseProbe(output: string): Set<number> {
   const ports = new Set<number>();
   for (const line of output.split("\n")) {
+    if (/^\d{1,5}\s*$/.test(line)) ports.add(Number(line)); // a listening host socket
     for (const m of line.matchAll(/:(\d{1,5})->/g)) ports.add(Number(m[1])); // docker published host port
     for (const tok of line.split(/\s+/)) {
       const mm = tok.match(/:(\d{1,5})$/); // ss local address ...:PORT
@@ -80,7 +85,9 @@ export class PortAllocatorService {
   async probeUsedPorts(serverId: string): Promise<Set<number>> {
     if (!this.agentWs.isOnline(serverId)) return new Set();
     try {
-      const { output } = await this.agentWs.sendCommand(serverId, PROBE_CMD, "deploy", PROBE_TIMEOUT_MS);
+      const { output } = await this.agentWs.sendCommand(serverId, onHostNetwork(PROBE_CMD), "deploy", PROBE_TIMEOUT_MS);
+      const why = hostUnavailableReason(output);
+      if (why) this.logger.warn(`port probe could not enter the host network of ${serverId} (${why}): DB-only reservation`);
       return parseProbe(output);
     } catch (e) {
       this.logger.warn(`port probe failed for ${serverId}: ${e instanceof Error ? e.message : e}`);

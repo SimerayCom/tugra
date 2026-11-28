@@ -12,6 +12,7 @@ import { composeServiceNames, composeVolumes } from "../deploy/compose-script";
 import type { CoolifyInventoryData } from "../coolify-takeover/coolify-inventory";
 import { compareCompleteness, isComplete, type TugraApp, type TugraDb, type TugraSide } from "./completeness";
 import { coolifyServerFor, coolifySideFor, withHostVolumes } from "./coolify-side";
+import { onHostNamespaces } from "../common/host-exec";
 import { buildScanScript, classifyScan, listHash, parseScan, removable, ScanError, type ScanResult } from "./remnant-scan";
 import { DnsLookupService } from "../dns/dns-lookup.service";
 import { NetProbe } from "../cutover/net-probe";
@@ -22,6 +23,9 @@ import type { ConfirmInput } from "./dto";
 const CAPABILITY = "coolify_cleanup" as const;
 const SCAN_TIMEOUT_MS = 60_000;
 const REMOVE_TIMEOUT_MS = 240_000;
+// /data/coolify is on the HOST: both scripts run in the host's namespaces (see common/host-exec), bounded just under the command's own timeout.
+const SCAN_DEADLINE_SEC = 55;
+const REMOVE_DEADLINE_SEC = 235;
 /** A CHECKING or CLEANING row nobody finished (hub restarted) stops blocking a new check after this long. The removal is idempotent. */
 const STALE_MS = 15 * 60_000;
 /**
@@ -188,8 +192,8 @@ export class CoolifyCleanupService {
     let failureCode: string | null = null;
     try {
       const out = await this.withCapability(serverId, async () => {
-        const removal = items.length ? await this.agentWs.sendCommand(serverId, buildRemoveScript(items), CAPABILITY, REMOVE_TIMEOUT_MS) : { exitCode: 0, output: "TUGRA_CU_DONE" };
-        const verify = await this.agentWs.sendCommand(serverId, buildScanScript(), CAPABILITY, SCAN_TIMEOUT_MS);
+        const removal = items.length ? await this.agentWs.sendCommand(serverId, onHostNamespaces(buildRemoveScript(items), { deadlineSec: REMOVE_DEADLINE_SEC }), CAPABILITY, REMOVE_TIMEOUT_MS) : { exitCode: 0, output: "TUGRA_CU_DONE" };
+        const verify = await this.agentWs.sendCommand(serverId, onHostNamespaces(buildScanScript(), { deadlineSec: SCAN_DEADLINE_SEC }), CAPABILITY, SCAN_TIMEOUT_MS);
         return { removal, verify };
       });
       results = items.length ? parseRemoveOutput(out.removal.output, items) : [];
@@ -252,7 +256,7 @@ export class CoolifyCleanupService {
 
   /** The host's side: the parsed listing (containers, volume names and mounts). Classification needs the checklist first, see {@link judge}. */
   private async scan(serverId: string): Promise<ScanResult> {
-    const out = await this.withCapability(serverId, () => this.agentWs.sendCommand(serverId, buildScanScript(), CAPABILITY, SCAN_TIMEOUT_MS));
+    const out = await this.withCapability(serverId, () => this.agentWs.sendCommand(serverId, onHostNamespaces(buildScanScript(), { deadlineSec: SCAN_DEADLINE_SEC }), CAPABILITY, SCAN_TIMEOUT_MS));
     return parseScan(out.output);
   }
 
