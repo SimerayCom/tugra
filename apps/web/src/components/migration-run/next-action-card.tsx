@@ -79,7 +79,8 @@ export function NextActionCard({ run }: { run: MigrationRunView }) {
           </>
         )}
 
-        {(na.kind === "session" || run.allowed.sourceSession) && (run.sourceSession?.viaAgent === true && !run.dryRun ? <AgentSessionReconnect runId={run.id} /> : <SourceSessionForm runId={run.id} />)}
+        {/* a dry run waiting to be promoted, or a session that really ended; a queued run with a live session shows nothing */}
+        {run.allowed.sourceSession && (run.status === "DRY_RUN_DONE" || na.kind === "session" || (run.sourceSession != null && run.sourceSession.state !== "active")) && (run.sourceSession?.viaAgent === true && !run.dryRun ? <AgentSessionReconnect runId={run.id} /> : <SourceSessionForm runId={run.id} />)}
 
         {na.kind === "paused" && run.allowed.resume && (
           <div>

@@ -153,6 +153,15 @@ describe("RunDetail", () => {
     expect(screen.getByRole("timer").textContent).toMatch(/remaining/);
   });
 
+  it("a queued run whose session was never found ended shows no token form and no reconnect", async () => {
+    vi.spyOn(api, "getMigrationRun").mockResolvedValue(mkRun({ status: "QUEUED", allowed: { ...mkRun().allowed, sourceSession: true, start: true }, nextAction: { kind: "engine", stepKey: null, code: "run.queued", since: "2026-11-16T10:00:00.000Z" } }));
+    wrap();
+    await screen.findAllByText(/./);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(screen.queryByLabelText("Source API token")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Reconnect to Coolify" })).toBeNull();
+  });
+
   it("an expired source session offers the token form, which never echoes the token", async () => {
     vi.spyOn(api, "getMigrationRun").mockResolvedValue(mkRun({ allowed: { ...mkRun().allowed, sourceSession: true }, nextAction: { kind: "session", stepKey: null, code: "run.session-expired", since: "2026-11-16T10:00:00.000Z" } }));
     const refresh = vi.spyOn(api, "migrationRunSourceSession").mockResolvedValue({ sessionId: "s2", expiresAt: "2026-11-16T12:00:00.000Z" });
