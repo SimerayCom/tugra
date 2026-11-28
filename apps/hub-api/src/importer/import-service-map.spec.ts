@@ -79,6 +79,7 @@ describe("transformServiceCompose over the 19 real service shapes", () => {
     expect(doc(on).services.db.image).toBe(`postgres:16-alpine@${D1}`);
     expect(doc(on).services.cache.image).toBe("redis:7.2"); // no pin given: unchanged
     expect(doc(on).services.pinned.image).toBe(`ghcr.io/x/p:1@${D2}`); // already on a digest: never replaced
+    expect(on.gate).toBe("ok"); // the safety gate accepts repo:tag@sha256:...
     expect(on.pinned).toEqual(["app", "db"]);
     expect(on.floating).toEqual([]);
     expect(on.images).toEqual({ app: "ghcr.io/x/app:latest", cache: "redis:7.2", db: "postgres:16-alpine" });
