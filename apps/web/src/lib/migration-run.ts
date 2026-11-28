@@ -1099,6 +1099,8 @@ export const ERROR_CODE_KEY: Record<string, string> = {
   "rebuild-unknown-item": "migrationRun.errors.rebuild-unknown-item",
   "session-expired": "migrationRun.errors.session-expired",
   "source-is-agent": "migrationRun.errors.source-is-agent",
+  "source-not-agent": "migrationRun.errors.source-not-agent",
+  "source-unknown": "migrationRun.errors.source-unknown",
   "run-not-startable": "migrationRun.errors.run-not-startable",
   "consent-required": "migrationRun.errors.consent-required",
   "campaign-cancelled": "migrationRun.errors.campaign-cancelled",

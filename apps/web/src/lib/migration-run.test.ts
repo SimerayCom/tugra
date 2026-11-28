@@ -401,6 +401,8 @@ describe("errors", () => {
   it("localizes the contract's machine codes and passes other messages through", () => {
     expect(errorText(t, new Error("409 approval-stale"))).toBe("What you approved no longer matches the current state. Review it again.");
     expect(errorText(t, new Error("run-past-ponr"))).toContain("point of no return");
+    expect(errorText(t, new Error("source-not-agent"))).toContain("API token");
+    expect(errorText(t, new Error("409 source-is-agent"))).toContain("Reconnect to Coolify");
     expect(errorText(t, new Error("human-confirmation-required"))).toContain("person");
     expect(errorText(t, new Error("409 dry-run-warnings-open"))).toBe("Some warnings are still open. Fix or accept each one, then start.");
     // the refusals a run create or a promotion can give, each in words with the way out

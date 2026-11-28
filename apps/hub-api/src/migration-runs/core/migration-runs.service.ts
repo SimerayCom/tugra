@@ -144,8 +144,9 @@ export class MigrationRunsService implements MigrationRunsFacade {
     const fresh = (await this.store.get(run.id)) ?? run;
     const [steps, names] = await Promise.all([this.store.steps(run.id), this.env.servers(this.targetIds(fresh))]);
     const view = toView(fresh, steps, names.get(fresh.targetServerId) ?? null, names);
-    // a finished dry run is promoted with a live source session: say so BEFORE the start click instead of refusing it
-    return fresh.status === "DRY_RUN_DONE" ? { ...view, sourceSession: await this.sourceSessionFact(fresh) } : view;
+    // a finished dry run is promoted with a live source session: say so BEFORE the start click instead of refusing it; a run parked on its
+    // session ("session ended") says where the session reads from, so the screen offers the reconnect that fits (agent or token)
+    return fresh.status === "DRY_RUN_DONE" || view.nextAction.kind === "session" ? { ...view, sourceSession: await this.sourceSessionFact(fresh) } : view;
   }
 
   /**

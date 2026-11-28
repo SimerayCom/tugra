@@ -13,6 +13,7 @@ import { relativeTime } from "../../lib/fleet";
 import { ApprovalForm } from "./approval-form";
 import { GateChecks } from "./gate-checks";
 import { OperatorTools } from "./operator-tools";
+import { AgentSessionReconnect } from "./agent-session-reconnect";
 import { SourceSessionForm } from "./source-session-card";
 import { useRunPlumbing } from "./use-run-actions";
 
@@ -78,7 +79,7 @@ export function NextActionCard({ run }: { run: MigrationRunView }) {
           </>
         )}
 
-        {(na.kind === "session" || run.allowed.sourceSession) && <SourceSessionForm runId={run.id} />}
+        {(na.kind === "session" || run.allowed.sourceSession) && (run.sourceSession?.viaAgent === true && !run.dryRun ? <AgentSessionReconnect runId={run.id} /> : <SourceSessionForm runId={run.id} />)}
 
         {na.kind === "paused" && run.allowed.resume && (
           <div>

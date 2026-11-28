@@ -72,7 +72,9 @@ describe("migration run api client", () => {
     await api.reverseMigrationRun("r1", { confirmName: "r1", acknowledgeDataLoss: true });
     await api.decommissionMigrationRun("r1", { confirmName: "coolify.example.org" });
     await api.migrationRunSourceSession("r1", { token: "t" });
-    expect(calls.map((c) => c.url.replace("/api/v1/migration-runs/r1", ""))).toEqual(["/inputs", "/pause", "/resume", "/abort", "/cleanup", "/reverse", "/decommission", "/source-session"]);
+    await api.migrationRunSourceSession("r1", { agent: true });
+    expect(calls.map((c) => c.url.replace("/api/v1/migration-runs/r1", ""))).toEqual(["/inputs", "/pause", "/resume", "/abort", "/cleanup", "/reverse", "/decommission", "/source-session", "/source-session"]);
+    expect(calls[8].body).toEqual({ agent: true });
     expect(calls[4].body).toEqual({ confirmName: "r1", includeData: true, dataConfirmNames: ["db"] });
     expect(calls[5].body).toEqual({ confirmName: "r1", acknowledgeDataLoss: true });
   });

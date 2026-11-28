@@ -287,7 +287,10 @@
     "hint": "Sent to the hub only; the page does not keep it.",
     "button": "Refresh the session",
     "refreshed": "The source session was refreshed.",
-    "active": "A fresh source session is ready (valid until {when})."
+    "active": "A fresh source session is ready (valid until {when}).",
+    "agentBody": "The connection to Coolify ended after an hour without activity. Reconnect through the agent on the Coolify host. The run continues once Coolify is read again and has not changed.",
+    "agentButton": "Reconnect to Coolify",
+    "reconnected": "Reconnected to Coolify. The run continues."
   },
   "inputs": {
     "title": "Owner inputs",
@@ -763,7 +766,9 @@
     "rebuild-needs-in-place": "Building with Tugra is only for a same-server move.",
     "rebuild-unknown-item": "An app you chose to build is no longer part of this move. Review the plan again.",
     "session-expired": "The connection to the source ended (it lasts one hour). Connect again, then start.",
-    "source-is-agent": "This source is read through the agent. Read Coolify again from the Coolify host page.",
+    "source-is-agent": "This source is read through the agent. Reconnect it with the Reconnect to Coolify button.",
+    "source-not-agent": "This source is read with an API token, not through an agent. Enter the token again.",
+    "source-unknown": "Tugra no longer knows where this source reads from. Start a new guided migration.",
     "run-not-startable": "This run cannot be started in its current state. Reload the page.",
     "consent-required": "Reading secret values is not allowed for this source connection yet. Allow it on this page, then start.",
     "campaign-cancelled": "This move was cancelled, so its dry run cannot be started. Start a new guided migration."

@@ -114,6 +114,24 @@ describe("a run re-binds to a renewed session of the same source through the age
     expect(JSON.stringify(w.sink.audits)).not.toMatch(/token/i);
   });
 
+  it("a run parked on its ended session says where the session reads from, so the screen offers the reconnect that fits; a run that is not, carries nothing", async () => {
+    const w = new RunWorld();
+    const s = w.env.sessions.get("s1")!;
+    s.baseUrl = "agent://srv-agent";
+    s.sourceTeamRef = "team-ref";
+    const quiet = await w.create();
+    expect((await w.view(quiet)).sourceSession).toBeUndefined();
+    const w2 = new RunWorld();
+    const s2 = w2.env.sessions.get("s1")!;
+    s2.baseUrl = "agent://srv-agent";
+    s2.sourceTeamRef = "team-ref";
+    w2.port.session = "expired";
+    const id = await w2.run();
+    const v = await w2.view(id);
+    expect(v.nextAction.kind).toBe("session");
+    expect(v.sourceSession).toMatchObject({ viaAgent: true, agentServerId: "srv-agent", sourceTeamRef: "team-ref" });
+  });
+
   it("works when the old session row is gone: the run stored the agent server and the team", async () => {
     const { w, id } = await agentWorld();
     w.env.sessions.delete("s1");

@@ -3074,8 +3074,8 @@ export const api = {
   decommissionMigrationRun(id: string, body: { confirmName: string }) {
     return apiFetch<MigrationRunView>(`/migration-runs/${encodeURIComponent(id)}/decommission`, { method: "POST", body: JSON.stringify(body) });
   },
-  /** Re-enter the source token when the 1 h import session expired (never returned). */
-  migrationRunSourceSession(id: string, body: { token: string }) {
+  /** Give the run a live source session again: re-enter the source token (never returned), or `{ agent: true }` to reconnect through the agent on the Coolify host (no token). */
+  migrationRunSourceSession(id: string, body: { token: string } | { agent: true }) {
     return apiFetch<{ sessionId: string; expiresAt: string }>(`/migration-runs/${encodeURIComponent(id)}/source-session`, { method: "POST", body: JSON.stringify(body) });
   },
   /** A finished dry run: the source servers without an online agent (what its promotion refuses on). `unverified` while the session ended or the source cannot be read. */

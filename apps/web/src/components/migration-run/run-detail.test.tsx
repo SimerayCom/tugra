@@ -165,6 +165,38 @@ describe("RunDetail", () => {
     expect(document.body.textContent).not.toContain("tok-secret");
   });
 
+  it("an ended session of a run that reads through the agent offers one reconnect button and no token field", async () => {
+    vi.spyOn(api, "getMigrationRun").mockResolvedValue(
+      mkRun({
+        allowed: { ...mkRun().allowed, sourceSession: true },
+        nextAction: { kind: "session", stepKey: null, code: "run.session-expired", since: "2026-11-16T10:00:00.000Z" },
+        sourceSession: { state: "expired", expiresAt: null, viaAgent: true, agentServerId: "host1", sourceTeamRef: "team-a" },
+      }),
+    );
+    const reconnect = vi.spyOn(api, "migrationRunSourceSession").mockResolvedValue({ sessionId: "s-agent", expiresAt: new Date(Date.now() + 3600_000).toISOString() });
+    wrap();
+    const button = await screen.findByRole("button", { name: "Reconnect to Coolify" });
+    expect(screen.queryByLabelText("Source API token")).toBeNull();
+    fireEvent.click(button);
+    await waitFor(() => expect(reconnect).toHaveBeenCalledWith("run12345abcdef", { agent: true }));
+  });
+
+  it("a reconnect the hub refuses because the source changed binds nothing: the page asks the hub again and keeps the button", async () => {
+    const get = vi.spyOn(api, "getMigrationRun").mockResolvedValue(
+      mkRun({
+        allowed: { ...mkRun().allowed, sourceSession: true },
+        nextAction: { kind: "session", stepKey: null, code: "run.session-expired", since: "2026-11-16T10:00:00.000Z" },
+        sourceSession: { state: "expired", expiresAt: null, viaAgent: true, agentServerId: "host1", sourceTeamRef: null },
+      }),
+    );
+    const reconnect = vi.spyOn(api, "migrationRunSourceSession").mockRejectedValue(new Error("plan-changed"));
+    wrap();
+    fireEvent.click(await screen.findByRole("button", { name: "Reconnect to Coolify" }));
+    await waitFor(() => expect(reconnect).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(get.mock.calls.length).toBeGreaterThan(1));
+    expect(screen.getByRole("button", { name: "Reconnect to Coolify" })).toBeTruthy();
+  });
+
   it("promoting a dry run whose session expired: the token form is offered and the fresh session id is sent to start", async () => {
     vi.spyOn(api, "getMigrationRun").mockResolvedValue(
       mkRun({ dryRun: true, status: "DRY_RUN_DONE", currentStep: null, allowed: { ...mkRun().allowed, start: true, pause: false, abort: false, sourceSession: true }, nextAction: { kind: "none", stepKey: null, code: "run.dry-run-done", since: "2026-11-16T10:00:00.000Z" } }),
