@@ -7,6 +7,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.0-beta.37] - 2026-11-28
+
 - **Moves keep the exact image.** Tugra reads the image each source container runs and pins the imported app,
   database and service to it (`repo:tag@sha256:…`). A service on `:latest` keeps running the version it ran on
   Coolify after the takeover, a move to another server and any redeploy. The preview shows each pin with its version,
