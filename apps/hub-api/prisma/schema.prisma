@@ -3205,6 +3205,7 @@ model MigrationCampaign {
   sessionId String? // the ImportSession the plan was read through
   status    String   @default("draft") // see CAMPAIGN_STATUSES
   plan      Json     @default("[]") // CampaignRunPlan[] (names/refs/ids only)
+  driving   Boolean  @default(false) // the owner pressed "Start all": the hub starts the next wave by itself when the earlier ones reached a safe point
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

@@ -131,6 +131,8 @@ export interface CampaignView {
   status: CampaignStatus;
   plan: CampaignRunPlan[];
   runIds: string[];
+  /** The owner pressed "Start all": the hub starts each wave itself (absent on an older hub = false). */
+  driving?: boolean;
   createdAt: string;
 }
 

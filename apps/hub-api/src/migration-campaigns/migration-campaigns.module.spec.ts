@@ -9,6 +9,7 @@ import { CoolifyInPlaceService } from "../coolify-inplace/coolify-inplace.servic
 import { ImporterService } from "../importer/importer.service";
 import { MIGRATION_RUNS_FACADE } from "../migration-runs/core/run-contract";
 import { PrismaService } from "../prisma/prisma.service";
+import { CampaignAdvancerService } from "./campaign-advancer.service";
 import { CampaignFactsService } from "./campaign-facts.service";
 import { MigrationCampaignsController } from "./migration-campaigns.controller";
 import { MigrationCampaignsService } from "./migration-campaigns.service";
@@ -20,6 +21,7 @@ describe("MigrationCampaignsModule wiring", () => {
       providers: [
         MigrationCampaignsService,
         CampaignFactsService,
+        CampaignAdvancerService,
         { provide: PrismaService, useValue: {} },
         { provide: TeamAccessService, useValue: {} },
         { provide: AuditService, useValue: {} },
@@ -41,5 +43,7 @@ describe("MigrationCampaignsModule wiring", () => {
     const src = readFileSync(join(__dirname, "migration-campaigns.controller.ts"), "utf8");
     expect(src).toMatch(/@Post\(\)\s+@RequireScopes\("deploy", "read:secrets"\)/);
     expect(src).toMatch(/@Post\(":id\/cancel"\)\s+@HttpCode\(200\)\s+@RequireScopes\("deploy"\)/);
+    expect(src).toMatch(/@Post\(":id\/start"\)\s+@HttpCode\(200\)\s+@RequireScopes\("deploy"\)/);
+    expect(src).toMatch(/@Post\(":id\/pause"\)\s+@HttpCode\(200\)\s+@RequireScopes\("deploy"\)/);
   });
 });

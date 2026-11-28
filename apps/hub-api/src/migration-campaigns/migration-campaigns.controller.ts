@@ -7,6 +7,7 @@ import { ScopesGuard } from "../api-tokens/scopes.guard";
 import { RequireScopes } from "../api-tokens/require-scopes.decorator";
 import { AuthUser } from "../auth/strategies/jwt.strategy";
 import { runActorFromAuth } from "../migration-runs/core/run-contract";
+import { CampaignAdvancerService } from "./campaign-advancer.service";
 import { MigrationCampaignsService } from "./migration-campaigns.service";
 import { CampaignCreateSchema, CampaignListQuerySchema, CampaignPlanSchema, CampaignViewsQuerySchema, type CampaignViewsQuery, type CampaignCreateInput, type CampaignListQuery, type CampaignPlanInput } from "./dto";
 import { z } from "zod";
@@ -20,7 +21,10 @@ import { z } from "zod";
 @Controller("migration-campaigns")
 @UseGuards(ApiAuthGuard, ScopesGuard)
 export class MigrationCampaignsController {
-  constructor(private readonly campaigns: MigrationCampaignsService) {}
+  constructor(
+    private readonly campaigns: MigrationCampaignsService,
+    private readonly advancer: CampaignAdvancerService,
+  ) {}
 
   /** What each source server of a session offers (in place or another server, and why not), with no choice made. */
   @Get("placement")
@@ -60,5 +64,21 @@ export class MigrationCampaignsController {
   @RequireScopes("deploy")
   cancel(@CurrentUser() user: AuthUser, @Param("id") id: string) {
     return this.campaigns.cancel(runActorFromAuth(user), id);
+  }
+
+  /** "Start all": the hub starts each queued run in wave order and goes on by itself while the earlier waves are safe. Creator and team owner only. */
+  @Post(":id/start")
+  @HttpCode(200)
+  @RequireScopes("deploy")
+  start(@CurrentUser() user: AuthUser, @Param("id") id: string) {
+    return this.advancer.start(runActorFromAuth(user), id);
+  }
+
+  /** Stop starting new servers; a run already started keeps going. Creator and team owner only. */
+  @Post(":id/pause")
+  @HttpCode(200)
+  @RequireScopes("deploy")
+  pause(@CurrentUser() user: AuthUser, @Param("id") id: string) {
+    return this.advancer.pause(runActorFromAuth(user), id);
   }
 }

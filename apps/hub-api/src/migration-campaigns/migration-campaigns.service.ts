@@ -162,7 +162,7 @@ export class MigrationCampaignsService {
     const runs = await this.runsOf(row);
     const queued = runs.filter((r) => r.status === "QUEUED").map((r) => r.id);
     await this.abortQueued(actor, queued);
-    const updated = await this.prisma.migrationCampaign.update({ where: { id }, data: { status: "cancelled" } });
+    const updated = await this.prisma.migrationCampaign.update({ where: { id }, data: { status: "cancelled", driving: false } });
     await this.audit.log({ actor: actor.userId, action: "migration.campaign.cancel", target: id, meta: { aborted: queued.length, dryRuns: runs.filter((r) => r.status === "DRY_RUN_DONE").length } });
     return this.hydrate(updated);
   }
@@ -211,7 +211,7 @@ export class MigrationCampaignsService {
   }
 
   private view(row: CampaignRow, runIds: string[]): CampaignView {
-    return { id: row.id, teamId: row.teamId, label: row.label, sessionId: row.sessionId, status: row.status as CampaignStatus, plan: Array.isArray(row.plan) ? (row.plan as unknown as CampaignRunPlan[]) : [], runIds, createdAt: row.createdAt.toISOString() };
+    return { id: row.id, teamId: row.teamId, label: row.label, sessionId: row.sessionId, status: row.status as CampaignStatus, plan: Array.isArray(row.plan) ? (row.plan as unknown as CampaignRunPlan[]) : [], runIds, driving: row.driving === true, createdAt: row.createdAt.toISOString() };
   }
 
   private async abortQueued(actor: RunActor, ids: readonly string[]): Promise<void> {
@@ -232,6 +232,7 @@ interface CampaignRow {
   sessionId: string | null;
   status: string;
   plan: Prisma.JsonValue;
+  driving?: boolean;
   createdAt: Date;
 }
 

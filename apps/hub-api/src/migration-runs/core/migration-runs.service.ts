@@ -76,6 +76,7 @@ import {
   type StepStatus,
 } from "./run-contract";
 import { CLEANUP_REQUEST_KEY, RunEngineService, type CleanupRequest } from "./run-engine.service";
+import { swapInFlight } from "./swap-turn";
 import { ATTACH_STEPS, COMMAND_STEPS, OPEN_STATUSES, approvalExpiry, deriveStepAllowed, hashOf, isTerminal, isWaitingStep, serverMapOf, stripSince } from "./run-logic";
 import { checkSwapPlacement } from "./swap-placement";
 import { RUN_ENV, RUN_IMPORT, RUN_SINK, RUN_STORE, type RunEnvPort, type RunImportPort, type RunSessionInfo, type RunSinkPort } from "./run-ports";
@@ -487,6 +488,17 @@ export class MigrationRunsService implements MigrationRunsFacade {
     if (live !== apply.planHash) throw conflict("plan-changed");
   }
 
+  /** 409 `campaign-swap-busy` while another in-place run of the same campaign is switching traffic or approved to. */
+  private async assertSwapTurn(run: RunRow): Promise<void> {
+    const others = (await this.store.list({ actorId: run.actorId, teamIds: [run.teamId], campaign: run.campaign as string, limit: 200 })).filter((r) => r.id !== run.id && r.inPlace);
+    if (others.length === 0) return;
+    const steps = await this.store.stepsOf(others.map((r) => r.id));
+    for (const o of others) {
+      const mine = steps.filter((s) => s.runId === o.id).map((s) => ({ key: s.key, status: s.status as string, approved: s.approval != null }));
+      if (swapInFlight({ status: o.status, inPlace: o.inPlace, steps: mine })) throw conflict("campaign-swap-busy");
+    }
+  }
+
   async start(actor: RunActor, id: string, body: StartRunInput): Promise<MigrationRunView> {
     this.scope(actor, "deploy");
     const run = await this.loadActing(actor, id);
@@ -634,6 +646,8 @@ export class MigrationRunsService implements MigrationRunsFacade {
     const rows = await this.store.steps(run.id);
     const step = this.stepOf(rows, key);
     if (step.status !== "WAITING_APPROVAL") throw conflict("step-not-waiting-approval");
+    // the servers of one campaign switch one at a time: the next approval waits until the one switching now is done
+    if (key === "VERIFY" && run.inPlace && run.campaign) await this.assertSwapTurn(run);
 
     const stored = (step.wait as WaitSpec | null) ? (stripSince(step.wait as object) as WaitSpec) : null;
     if (actor.channel === "mcp" && stored?.kind === "approval" && stored.binding.ponr) throw new ForbiddenException("human-confirmation-required");

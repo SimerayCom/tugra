@@ -2,6 +2,7 @@ import { Module } from "@nestjs/common";
 import { CoolifyInPlaceModule } from "../coolify-inplace/coolify-inplace.module";
 import { ImporterModule } from "../importer/importer.module";
 import { MigrationRunsModule } from "../migration-runs/migration-runs.module";
+import { CampaignAdvancerService } from "./campaign-advancer.service";
 import { CampaignFactsService } from "./campaign-facts.service";
 import { MigrationCampaignsController } from "./migration-campaigns.controller";
 import { MigrationCampaignsService } from "./migration-campaigns.service";
@@ -10,7 +11,7 @@ import { MigrationCampaignsService } from "./migration-campaigns.service";
 @Module({
   imports: [ImporterModule, MigrationRunsModule, CoolifyInPlaceModule],
   controllers: [MigrationCampaignsController],
-  providers: [CampaignFactsService, MigrationCampaignsService],
+  providers: [CampaignFactsService, MigrationCampaignsService, CampaignAdvancerService],
   exports: [MigrationCampaignsService],
 })
 export class MigrationCampaignsModule {}
