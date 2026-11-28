@@ -1,4 +1,5 @@
-import { ImportPortService, pinComposeMembers } from "./import-port.service";
+import { ImportPortService } from "./import-port.service";
+import { pinComposeMembers } from "../../../importer/exact-record";
 
 function make(over: { opMeta?: unknown; cancelRequestedAt?: Date | null; statusView?: unknown } = {}) {
   const prisma = {

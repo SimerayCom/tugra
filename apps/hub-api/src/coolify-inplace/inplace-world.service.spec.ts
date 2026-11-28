@@ -13,9 +13,9 @@ function make() {
     deployment: { create: jest.fn(async () => ({ id: "dep1" })), update: jest.fn(async () => ({})), deleteMany: jest.fn(async () => ({ count: 1 })), findUnique: jest.fn() },
   };
   const agentWs = { sendCommand: jest.fn(async () => ({ exitCode: 0, output: "ok" })) };
-  const apps = { rollback: jest.fn(), deploy: jest.fn(), stop: jest.fn() };
+  const apps = { rollback: jest.fn(), deploy: jest.fn(), stop: jest.fn(), setSource: jest.fn(async () => ({ warnings: [] })), setComposeFile: jest.fn(async () => undefined) };
   const proxyOps = { start: jest.fn(), status: jest.fn(async () => ({ status: "running" })) };
-  const databases = { provision: jest.fn(async () => ({ status: "RUNNING" })), stop: jest.fn(async () => undefined) };
+  const databases = { provision: jest.fn(async () => ({ status: "RUNNING" })), stop: jest.fn(async () => undefined), setImage: jest.fn(async () => ({ changed: true })) };
   const crypto = { decrypt: jest.fn((s: string) => s) };
   const w = new InPlaceWorldService(prisma as never, agentWs as never, apps as never, proxyOps as never, databases as never, crypto as never);
   return { w, prisma, agentWs, apps, proxyOps, databases, crypto };
@@ -41,6 +41,34 @@ describe("InPlaceWorldService", () => {
     const { w, prisma } = make();
     prisma.application.findUnique.mockResolvedValue({ id: "a1", teamId: "t", serverId: "s", name: "web", domain: "a.example.com", extraDomains: ["b.example.com"], volumes: [{ name: "data", path: "/data" }, { bad: 1 }], hostMounts: [{ hostPath: "/srv", containerPath: "/m" }] });
     expect(await w.app("a1")).toEqual({ id: "a1", teamId: "t", serverId: "s", name: "web", hosts: ["a.example.com", "b.example.com", "svc.example.com"], volumes: [{ name: "data", path: "/data" }], hostMounts: [{ hostPath: "/srv", containerPath: "/m" }] });
+  });
+  describe("pinExact: the record keeps the exact image the Coolify container runs", () => {
+    const D1 = `sha256:${"1".repeat(64)}`;
+    it("an IMAGE app takes repo:tag@digest of the image the container runs; a host that reported nothing changes nothing", async () => {
+      const { w, prisma, apps } = make();
+      prisma.application.findUnique.mockResolvedValue({ source: "IMAGE", image: "ghcr.io/x/web:latest" });
+      expect(await w.pinExact("u1", { kind: "app", id: "a1", image: "ghcr.io/x/web:latest", repoDigests: [`ghcr.io/x/web@${D1}`] })).toBe(true);
+      expect(apps.setSource).toHaveBeenCalledWith("u1", "a1", { image: `ghcr.io/x/web:latest@${D1}` });
+      expect(await w.pinExact("u1", { kind: "app", id: "a1", image: "ghcr.io/x/web:latest" })).toBe(false);
+      expect(apps.setSource).toHaveBeenCalledTimes(1);
+    });
+    it("a database that was never started takes the tag the source container runs, pinned to its digest; a started one never changes", async () => {
+      const { w, prisma, databases } = make();
+      prisma.database.findUnique.mockResolvedValueOnce({ image: "postgres:16", status: "NEW" });
+      expect(await w.pinExact("u1", { kind: "database", id: "d1", image: "postgres:16-alpine", repoDigests: [`postgres@${D1}`] })).toBe(true);
+      expect(databases.setImage).toHaveBeenCalledWith("u1", "d1", `postgres:16-alpine@${D1}`);
+      prisma.database.findUnique.mockResolvedValueOnce({ image: "postgres:16", status: "STOPPED" });
+      expect(await w.pinExact("u1", { kind: "database", id: "d1", image: "postgres:16-alpine", repoDigests: [`postgres@${D1}`] })).toBe(false);
+      expect(databases.setImage).toHaveBeenCalledTimes(1);
+    });
+    it("a stack's stored compose gets each member's exact image; a member with no digest keeps what it has", async () => {
+      const { w, prisma, apps } = make();
+      prisma.application.findUnique.mockResolvedValue({ source: "COMPOSE", composeFile: "services:\n  db:\n    image: postgres:16\n  web:\n    image: nginx:1.27\n" });
+      expect(await w.pinExact("u1", { kind: "service", id: "s1", members: [{ service: "db", image: "postgres:16", repoDigests: [`postgres@${D1}`] }, { service: "web", image: "nginx:1.27" }] })).toBe(true);
+      const written = (apps.setComposeFile.mock.calls[0] as unknown as [string, string, string])[2];
+      expect(written).toContain(`image: postgres:16@${D1}`);
+      expect(written).toContain("image: nginx:1.27\n");
+    });
   });
   it("runs scripts through the agent's deploy capability and nothing else", async () => {
     const { w, agentWs } = make();

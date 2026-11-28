@@ -9,6 +9,8 @@ import { DatabasesService } from "../databases/databases.service";
 import { composeProject, composeVolumes } from "../deploy/compose-script";
 import { dataMountFor, dbContainerName, pgDataLayout, resolveImage, type DbEngine } from "../databases/database-script";
 import { isLiveRunStatus } from "../migration-runs/core/run-contract";
+import { exactImageFor } from "../importer/exact-image";
+import { writeExactImage } from "../importer/exact-record";
 import type { ComposeNetworkRow } from "../deploy/deploy-script";
 import type { DeployState, InPlaceWorld, OpApp, OpDatabase, OpService, WorldApp, WorldDatabase, WorldServer, WorldService } from "./inplace-world";
 
@@ -236,6 +238,23 @@ export class InPlaceWorldService implements InPlaceWorld {
     const d = await this.prisma.deployment.findUnique({ where: { id: deploymentId }, select: { status: true } });
     if (!d) return "unknown";
     return d.status === "QUEUED" || d.status === "RUNNING" || d.status === "SUCCESS" || d.status === "FAILED" ? d.status : "FAILED";
+  }
+
+  async pinExact(
+    userId: string,
+    target: { kind: "app" | "database"; id: string; image: string; repoDigests?: string[]; version?: string } | { kind: "service"; id: string; members: Array<{ service: string; image: string; repoDigests?: string[]; version?: string }> },
+  ): Promise<boolean> {
+    const deps = { prisma: this.prisma, apps: this.apps, databases: this.databases };
+    if (target.kind === "service") {
+      const members: Record<string, string> = {};
+      for (const m of target.members) {
+        const e = exactImageFor(m.image, m.repoDigests, m.version);
+        if (e) members[m.service] = e.ref;
+      }
+      return Object.keys(members).length > 0 && (await writeExactImage(deps, userId, { kind: "service", id: target.id, members })).pinned;
+    }
+    const e = exactImageFor(target.image, target.repoDigests, target.version);
+    return !!e && (await writeExactImage(deps, userId, { kind: target.kind, id: target.id, ref: e.ref })).pinned;
   }
 
   async stopApp(userId: string, appId: string): Promise<void> {

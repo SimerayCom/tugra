@@ -755,3 +755,30 @@ describe("verify and give back", () => {
     await expect(plan(b)).rejects.toMatchObject({ status: 404 });
   });
 });
+
+describe("the exact image of a service's members", () => {
+  const D1 = `sha256:${"1".repeat(64)}`;
+  const D2 = `sha256:${"2".repeat(64)}`;
+  it("each member is handed to the world with the image it runs and what the host reported for it, once the stack's images are known to be the same", async () => {
+    const t = build({ services: [blog({ members: blog().members.map((m) => ({ ...m, repoDigests: m.service === "db" ? [`postgres@${D2}`] : [`ghost@${D1}`], version: m.service === "ghost" ? "5.82.0" : undefined })) })] });
+    const p = await plan(t);
+    expect(t.box.exactPins).toEqual([]);
+    await t.svc.test(ACTOR, p.id);
+    expect(t.box.exactPins).toEqual([
+      {
+        kind: "service",
+        id: "appsvc",
+        members: [
+          { service: "db", image: "postgres:16", repoDigests: [`postgres@${D2}`] },
+          { service: "ghost", image: "ghost:5", repoDigests: [`ghost@${D1}`], version: "5.82.0" },
+        ],
+      },
+    ]);
+  });
+  it("a stack whose images moved since the plan is left out before anything is written", async () => {
+    const t = build();
+    t.box.imageIds.set("ghost:5", `sha256:${"f".repeat(64)}`);
+    await t.svc.test(ACTOR, (await plan(t)).id);
+    expect(t.box.exactPins).toEqual([]);
+  });
+});

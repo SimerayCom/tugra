@@ -120,6 +120,8 @@ type UndoResult = { ok: true; networksLeft: number } | { ok: false; step: string
 /** The exact image a container runs (registry digests, version label), as the host reported it; nothing when it reported none (an older host, a locally built image). */
 const exactOf = (d: { repoDigests?: string[]; imageVersion?: string }): { repoDigests?: string[]; imageVersion?: string } => ({ ...(d.repoDigests?.length ? { repoDigests: d.repoDigests } : {}), ...(d.imageVersion ? { imageVersion: d.imageVersion } : {}) });
 
+const exactParts = (c: { repoDigests?: string[]; imageVersion?: string }): { repoDigests?: string[]; version?: string } => ({ ...(c.repoDigests?.length ? { repoDigests: c.repoDigests } : {}), ...(c.imageVersion ? { version: c.imageVersion } : {}) });
+
 const emptyRollback = (): Rollback => ({ bindBefore: "public", proxyBefore: "unknown", darkStarted: false, exclusiveStopped: false, swapStarted: false });
 
 const unprocessable = (code: string, extra: Record<string, unknown> = {}): UnprocessableEntityException => new UnprocessableEntityException({ statusCode: 422, message: code, code, ...extra });
@@ -571,6 +573,18 @@ export class CoolifyInPlaceService implements InPlaceRunPort {
     });
   }
 
+  /**
+   * Keep the exact image the source runs in the record the import created (see `InPlaceWorld.pinExact`). Best effort: a host that reported
+   * no digest, an older world, or a failed write leaves the record as it is and never stops the takeover.
+   */
+  private async keepExactImage(userId: string, target: Parameters<NonNullable<InPlaceWorld["pinExact"]>>[1]): Promise<void> {
+    try {
+      await this.world.pinExact?.(userId, target);
+    } catch {
+      /* the takeover goes on with the image as the record has it */
+    }
+  }
+
   /** Adopt the image, alias the volumes and, when the data allows it, start Tugra's copy. A failure marks the app skipped with its reason; the rest go on. */
   private async prepare(userId: string, row: Row, items: TakeoverItem[], item: TakeoverItem): Promise<void> {
     const serverId = row.serverId;
@@ -613,6 +627,7 @@ export class CoolifyInPlaceService implements InPlaceRunPort {
       item.adoptTag = null;
       return skip(adopt === "missing" ? "image_missing" : "adopt_failed");
     }
+    await this.keepExactImage(userId, { kind: "app", id: item.appId, image: ctr.image, ...exactParts(ctr) });
     if (item.volumes.length > 0) {
       const targets = item.volumes.map((v) => v.to);
       const res = await this.run(serverId, buildVolumeAliasScript(item.volumes), (o) => parseAlias(o, targets));
@@ -646,6 +661,7 @@ export class CoolifyInPlaceService implements InPlaceRunPort {
     };
     const ctr = item.container;
     if (!ctr || !isFingerprintEngine(item.engine ?? "")) return skip("container_absent");
+    await this.keepExactImage(row.actorId, { kind: "database", id: item.appId, image: ctr.image, ...exactParts(ctr) });
     if (item.volumes.length > 0) {
       const targets = item.volumes.map((v) => v.to);
       const res = await this.run(row.serverId, buildVolumeAliasScript(item.volumes), (o) => parseAlias(o, targets));
@@ -689,6 +705,8 @@ export class CoolifyInPlaceService implements InPlaceRunPort {
     if (!ids) return skip("prepare_failed");
     if (refs.some((r) => ids.get(r) === "missing")) return skip("image_missing");
     if (members.some((m) => ids.get(m.composeImage) !== m.container.imageId)) return skip("service_image_moved");
+    // the images are the same: keep exactly the one the containers run in the stored compose, so a later redeploy never pulls a newer one
+    await this.keepExactImage(userId, { kind: "service", id: item.appId, members: members.map((m) => ({ service: m.service, image: m.container.image, ...exactParts(m.container) })) });
 
     // 2. the data: every volume and folder of every container, aliased
     const byTarget = new Map<string, ServiceVolumeAlias>();

@@ -128,6 +128,16 @@ export interface InPlaceWorld {
   rebuild(userId: string, appId: string): Promise<{ deploymentId: string }>;
   deployState(deploymentId: string): Promise<DeployState>;
   stopApp(userId: string, appId: string): Promise<void>;
+  /**
+   * Keep the exact image the source runs in the record the import created: an IMAGE app's image, a never-started database's image, or the
+   * member images of a stack's stored compose. `image` is what the Coolify container runs (its tag), `repoDigests` and `version` what its
+   * image reports. Writes nothing when the host reported no digest and no version (unknown), when the record is of another repository, is
+   * already on a digest, or (a database) was started. OPTIONAL: a world without it pins nothing. Returns whether a record changed.
+   */
+  pinExact?(
+    userId: string,
+    target: { kind: "app" | "database"; id: string; image: string; repoDigests?: string[]; version?: string } | { kind: "service"; id: string; members: Array<{ service: string; image: string; repoDigests?: string[]; version?: string }> },
+  ): Promise<boolean>;
   sleep(ms: number): Promise<void>;
   now(): Date;
 }

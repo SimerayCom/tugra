@@ -26,6 +26,9 @@ export interface BoxApp {
   volumes?: Array<{ name: string; path: string }>;
   ctrRunning?: boolean;
   restart?: string;
+  /** What the host reports for the image the container runs: registry digests and the image's version label (none = an older host / a local image). */
+  repoDigests?: string[];
+  version?: string;
 }
 
 export interface BoxDb {
@@ -45,6 +48,8 @@ export interface BoxDb {
   dataMount?: string;
   rows?: number;
   restart?: string;
+  repoDigests?: string[];
+  version?: string;
 }
 
 /** One container of a Coolify service on the box. */
@@ -63,6 +68,8 @@ export interface BoxSvcMember {
   restart?: string;
   /** The compose service label is missing from Coolify's container. */
   noLabel?: boolean;
+  repoDigests?: string[];
+  version?: string;
 }
 
 export interface BoxService {
@@ -87,6 +94,8 @@ interface Ctr {
   running: boolean;
   restart: string;
   mounts: NonNullable<BoxApp["mounts"]>;
+  repoDigests?: string[];
+  version?: string;
   svc?: { itemRef: string; service: string; imageId: string; networks: Array<{ name: string; aliases: string[] }>; published: number; appId: string; noLabel: boolean };
 }
 
@@ -164,7 +173,7 @@ export class Box implements InPlaceWorld {
 
   add(a: BoxApp): this {
     this.apps.push(a);
-    this.ctrs.set(a.ctrId, { name: a.ctrName, image: a.image, running: a.ctrRunning ?? true, restart: a.restart ?? "unless-stopped", mounts: a.mounts ?? [] });
+    this.ctrs.set(a.ctrId, { name: a.ctrName, image: a.image, running: a.ctrRunning ?? true, restart: a.restart ?? "unless-stopped", mounts: a.mounts ?? [], repoDigests: a.repoDigests, version: a.version });
     this.images.add(a.image);
     for (const m of a.mounts ?? []) if (m.type === "volume") this.volumes.add(m.source);
     this.acme.add(a.host);
@@ -174,7 +183,7 @@ export class Box implements InPlaceWorld {
   addDb(d: BoxDb): this {
     this.dbs.push(d);
     const mounts = d.mounts ?? [{ type: "volume" as const, source: `${d.ctrName}-data`, dest: d.dataMount ?? "/var/lib/postgresql/data", rw: true }];
-    this.ctrs.set(d.ctrId, { name: d.ctrName, image: d.image, running: true, restart: d.restart ?? "unless-stopped", mounts });
+    this.ctrs.set(d.ctrId, { name: d.ctrName, image: d.image, running: true, restart: d.restart ?? "unless-stopped", mounts, repoDigests: d.repoDigests, version: d.version });
     this.images.add(d.image);
     for (const m of mounts) if (m.type === "volume") this.volumes.add(m.source);
     return this;
@@ -190,6 +199,8 @@ export class Box implements InPlaceWorld {
         running: true,
         restart: m.restart ?? "unless-stopped",
         mounts,
+        repoDigests: m.repoDigests,
+        version: m.version,
         svc: { itemRef: v.itemRef, service: m.service, imageId: m.imageId ?? `sha256:${H("e")}`, networks: m.networks ?? [], published: m.published ?? 0, appId: v.appId, noLabel: !!m.noLabel },
       });
       this.images.add(m.image);
@@ -276,7 +287,7 @@ export class Box implements InPlaceWorld {
       for (const id of this.hostsIn(s, /^detail '([0-9a-f]{64})'/gm)) {
         const c = this.ctrs.get(id);
         if (!c?.svc) continue;
-        out.push(`TUGRA_IP_RESTART|${id}|${c.restart}`, `TUGRA_IP_IMAGE|${id}|${c.svc.imageId}`);
+        out.push(`TUGRA_IP_RESTART|${id}|${c.restart}`, `TUGRA_IP_IMAGE|${id}|${c.svc.imageId}`, ...this.exactLines(id, c));
         for (const m of c.mounts) out.push(`TUGRA_IP_MOUNT|${id}|${m.type}|${m.type === "volume" ? m.source : ""}|${m.type === "volume" ? `/var/lib/docker/volumes/${m.source}/_data` : m.source}|${m.dest}|${m.rw}`);
         out.push(`TUGRA_IP_SVCCTR|${id}|${c.svc.noLabel ? "" : c.svc.service}|${c.svc.published}`);
         for (const n of c.svc.networks) out.push(`TUGRA_IP_NET|${id}|${n.name}|${n.aliases.map((a) => `${a},`).join("")}`);
@@ -311,7 +322,7 @@ export class Box implements InPlaceWorld {
       for (const id of this.hostsIn(s, /^detail '([0-9a-f]{64})'/gm)) {
         const c = this.ctrs.get(id);
         if (!c) continue;
-        out.push(`TUGRA_IP_RESTART|${id}|${c.restart}`, `TUGRA_IP_IMAGE|${id}|sha256:${H("e")}`);
+        out.push(`TUGRA_IP_RESTART|${id}|${c.restart}`, `TUGRA_IP_IMAGE|${id}|sha256:${H("e")}`, ...this.exactLines(id, c));
         for (const m of c.mounts) out.push(`TUGRA_IP_MOUNT|${id}|${m.type}|${m.type === "volume" ? m.source : ""}|${m.type === "volume" ? `/var/lib/docker/volumes/${m.source}/_data` : m.source}|${m.dest}|${m.rw}`);
       }
       out.push("TUGRA_IP_DETAIL_END");
@@ -651,6 +662,19 @@ export class Box implements InPlaceWorld {
     this.tugraSvcRunning.delete(appId);
     this.stoppedApps.push(appId);
     this.events.push(`tugra-app:stop:${appId}`);
+  }
+  /** The lines the container-detail script prints for the exact image of a container (none when the host reports none). */
+  private exactLines(id: string, c: Ctr): string[] {
+    return [...(c.repoDigests ?? []).map((d) => `TUGRA_IP_RDIG|${id}|${d}`), ...(c.version ? [`TUGRA_IP_IMGVER|${id}|${c.version}`] : [])];
+  }
+  /** What the takeover asked the world to keep (the real world turns it into a record write). */
+  exactPins: Array<Record<string, unknown>> = [];
+  failExactPin = false;
+  async pinExact(_u: string, target: Parameters<NonNullable<InPlaceWorld["pinExact"]>>[1]): Promise<boolean> {
+    if (this.failExactPin) throw new Error("db down");
+    this.exactPins.push(target as unknown as Record<string, unknown>);
+    this.events.push(`exact:${target.kind}:${target.id}`);
+    return true;
   }
   async sleep(): Promise<void> {
     this.sleeps += 1;

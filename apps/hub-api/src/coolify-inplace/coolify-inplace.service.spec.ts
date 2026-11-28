@@ -1116,3 +1116,53 @@ describe("what the view says after a put-back", () => {
     expect((await plan(t)).reversed).toBe(false);
   });
 });
+
+describe("the exact image the source runs is kept in the records (digest and version label read from the container)", () => {
+  const D1 = `sha256:${"1".repeat(64)}`;
+  const D2 = `sha256:${"2".repeat(64)}`;
+
+  it("an app: the digest and version label the host reports are handed to the world after the image was adopted, with the image as Coolify runs it", async () => {
+    const t = build({ apps: [{ ...web, image: "ghcr.io/example/web:latest", repoDigests: [`ghcr.io/example/web@${D1}`], version: "2.4.1" }] });
+    const p = await plan(t);
+    expect(t.box.exactPins).toEqual([]); // reading changes nothing
+    await t.svc.test(ACTOR, p.id);
+    expect(t.box.exactPins).toEqual([{ kind: "app", id: "appweb", image: "ghcr.io/example/web:latest", repoDigests: [`ghcr.io/example/web@${D1}`], version: "2.4.1" }]);
+    expect(t.box.events.indexOf("tag:tugra_appweb:dep1")).toBeLessThan(t.box.events.indexOf("exact:app:appweb"));
+    const stored = JSON.stringify([...t.rows.values()][0].items);
+    expect(stored).toContain(D1); // the recorded container keeps what the host reported
+  });
+
+  it("a host that reports no digest and no label (an older script, a locally built image) still takes over; the world is asked with nothing to pin", async () => {
+    const t = build({ apps: [web] });
+    const p = await plan(t);
+    const v = await t.svc.test(ACTOR, p.id);
+    expect(v.status).toBe("TESTING");
+    expect(t.box.exactPins).toEqual([{ kind: "app", id: "appweb", image: "webuuid:aaa111" }]);
+  });
+
+  it("a world that cannot write the record, or fails to, never stops the takeover", async () => {
+    const t = build({ apps: [{ ...web, repoDigests: [`webuuid@${D1}`] }] });
+    t.box.failExactPin = true;
+    const v = await t.svc.test(ACTOR, (await plan(t)).id);
+    expect(v.status).toBe("TESTING");
+    expect(v.failureCode).toBeNull();
+    const old = build({ apps: [web] });
+    (old.box as unknown as { pinExact?: unknown }).pinExact = undefined;
+    expect((await old.svc.test(ACTOR, (await plan(old)).id)).status).toBe("TESTING");
+  });
+
+  it("a database whose record is pinned to the exact image (postgres:16-alpine@sha256:...) is still the image Coolify's container runs", async () => {
+    const t = withDb({ db: { tugraImage: `postgres:16-alpine@${D2}`, repoDigests: [`postgres@${D2}`] } });
+    expect(dbItem(await plan(t))).toMatchObject({ kind: "database" });
+    expect(dbItem(await plan(t)).skipped).toBeUndefined();
+    const other = withDb({ db: { tugraImage: `postgres:17-alpine@${D2}` } });
+    expect(dbItem(await plan(other))).toMatchObject({ skipped: true, issues: ["db_image_differs"] });
+  });
+
+  it("a database is handed its digest before it is prepared", async () => {
+    const t = withDb({ db: { repoDigests: [`postgres@${D2}`], version: "16.4" } });
+    const p = await plan(t);
+    await t.svc.test(ACTOR, p.id);
+    expect(t.box.exactPins).toContainEqual({ kind: "database", id: "db1", image: "postgres:16-alpine", repoDigests: [`postgres@${D2}`], version: "16.4" });
+  });
+});
