@@ -47,6 +47,18 @@ const b64 = (s: string): string => {
   return v;
 };
 
+/**
+ * The agent runs a hub command as `bash -c <command>` and the kernel refuses one argument longer than 128 KiB (E2BIG: the command
+ * would not start at all, with an error that says nothing about the size). The wrapped script is base64 (4/3 of the script), so a
+ * script that would not fit is refused HERE with a message that names the problem; a caller with a long list batches it.
+ */
+export const MAX_WRAPPED_BYTES = 120_000;
+
+const fits = (wrapped: string): string => {
+  if (Buffer.byteLength(wrapped, "utf8") > MAX_WRAPPED_BYTES) throw new Error("host-exec: script too large for one command: split the work into batches");
+  return wrapped;
+};
+
 /** The image check, shared by both helpers. */
 const IMAGE_LINES = ['IMG="${TUGRA_AGENT_IMAGE:-}"', `[ -n "$IMG" ] || { echo "${HOST_UNAVAILABLE_MARK} reason=no-image"; exit 1; }`];
 /** A unique helper name, removed when the command ends in a way the shell can still see (a SIGKILL cannot be trapped: `timeout` inside bounds it). */
@@ -58,14 +70,14 @@ const NAME_LINES = ['HN="tugra-hx-$$-$(date +%s)"', `trap 'docker rm -f "$HN" >/
  */
 export function onHostNetwork(script: string, opts?: { deadlineSec?: number }): string {
   const d = deadline(opts);
-  return [
+  return fits([
     ...IMAGE_LINES,
     ...NAME_LINES,
     `printf '%s' '${b64(script)}' | base64 -d | docker run --rm -i --pull never --name "$HN" --label tugra.role=host-net-helper \\`,
     `  --network host -v /var/run/docker.sock:/var/run/docker.sock -e TUGRA_AGENT_IMAGE="$IMG" --entrypoint bash "$IMG" \\`,
     `  -c 'cat > /tmp/tugra-host.sh; exec timeout -k 5 ${d} bash /tmp/tugra-host.sh </dev/null'`,
     "",
-  ].join("\n");
+  ].join("\n"));
 }
 
 // What the privileged helper runs inside the host's namespaces: decode the script and run it with the host's bash (else sh).
@@ -78,7 +90,7 @@ const NS_RUNNER = 'export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
  */
 export function onHostNamespaces(script: string, opts?: { deadlineSec?: number }): string {
   const d = deadline(opts);
-  return [
+  return fits([
     ...IMAGE_LINES,
     ...NAME_LINES,
     `docker run --rm --pull never --name "$HN" --label tugra.role=host-ns-helper \\`,
@@ -90,7 +102,7 @@ export function onHostNamespaces(script: string, opts?: { deadlineSec?: number }
     `exec timeout -k 5 ${d} nsenter -t 1 -m -u -i -n -p -- /bin/sh -c "$(printf %s "$TUGRA_HX_RUN" | base64 -d)"`,
     `'`,
     "",
-  ].join("\n");
+  ].join("\n"));
 }
 
 /** Wrap `script` for the requested host context; the script as it is when none is asked for. */
@@ -118,6 +130,9 @@ export function hostUnavailableReason(output: string): string | null {
  * with the PARENT of the path bind-mounted read-only (a `--mount` bind of a missing source fails and never creates it). The parent is
  * mounted, not the path, so a symlink stays a symlink (`-L` is answerable). Returns 0 yes, 1 no, 2 unknown (no image, a path docker
  * cannot take, a daemon error): callers must not read 2 as "no".
+ *
+ * Every capability is dropped except DAC_READ_SEARCH: root without it cannot traverse a parent owned by someone else with mode 700
+ * (/home/alice), and `test` would then fail silently and read as "missing".
  */
 export const HOST_TEST_FN = [
   "tugra_host_test() {",
@@ -126,7 +141,7 @@ export const HOST_TEST_FN = [
   // a comma or a quote would end the --mount value early (a second mount option): such a path is not asked about
   `  case "$2" in *,*|*'"'*|*"'"*) return 2 ;; esac`,
   '  if [ "$2" = "/" ]; then par=/; base=.; else par=$(dirname "$2"); base=$(basename "$2"); fi',
-  '  e=$(docker run --rm --pull never --network none --cap-drop ALL --label tugra.role=host-probe --mount "type=bind,src=$par,dst=/x,readonly" --entrypoint test "$TUGRA_AGENT_IMAGE" "$1" "/x/$base" 2>&1 >/dev/null); rc=$?',
+  '  e=$(docker run --rm --pull never --network none --cap-drop ALL --cap-add DAC_READ_SEARCH --label tugra.role=host-probe --mount "type=bind,src=$par,dst=/x,readonly" --entrypoint test "$TUGRA_AGENT_IMAGE" "$1" "/x/$base" 2>&1 >/dev/null); rc=$?',
   "  [ $rc -eq 0 ] && return 0",
   '  case "$e" in *"does not exist"*|*"No such file"*) return 1 ;; esac',
   "  [ -z \"$e\" ] && return 1",

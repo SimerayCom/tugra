@@ -52,7 +52,14 @@ describe("the removal script: what it can and cannot do", () => {
   it("uses rm -rf only on the validated, quoted directory variable list", () => {
     const rms = script.split("\n").filter((l) => /rm -rf/.test(l));
     expect(rms).toHaveLength(1);
-    expect(rms[0]).toContain("rm -rf -- '/data/coolify/proxy'");
+    expect(rms[0]).toContain('rm -rf -- "$p"');
+    expect(script.split("\n")).toContain("rm_directory '/data/coolify/proxy'");
+  });
+  it("stays small per item: a large fleet's list fits under the per-argument limit of the host wrapper", () => {
+    const many = Array.from({ length: 600 }, (_, i) => rem("container", `app-${String(i).padStart(4, "0")}-170000`));
+    const big = buildRemoveScript(many);
+    // base64 inside the wrapper is 4/3 of this, and one argument may not pass 128 KiB (131072 bytes)
+    expect(Math.ceil((big.length * 4) / 3)).toBeLessThan(100_000);
   });
 });
 

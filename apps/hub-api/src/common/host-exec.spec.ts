@@ -192,7 +192,20 @@ exit 1`;
     expect(log).toContain("--pull never");
     expect(log).toContain("--network none");
     expect(log).toContain("--cap-drop ALL");
+    // root without DAC_READ_SEARCH cannot traverse a 0700 parent owned by another account: that would read as "missing"
+    expect(log).toContain("--cap-add DAC_READ_SEARCH");
     expect(log).toContain(`type=bind,src=${dir},dst=/x,readonly`);
     expect(log).toContain("--entrypoint test");
+  });
+});
+
+describe("the size guard", () => {
+  it("refuses a script that would not fit one command argument, naming the problem", () => {
+    const huge = `echo ${"x".repeat(100_000)}`; // base64 of this alone is over the limit
+    expect(() => onHostNamespaces(huge)).toThrow(/too large/);
+    expect(() => onHostNetwork(huge)).toThrow(/too large/);
+  });
+  it("accepts a script comfortably under the limit", () => {
+    expect(() => onHostNamespaces(`echo ${"x".repeat(60_000)}`)).not.toThrow();
   });
 });

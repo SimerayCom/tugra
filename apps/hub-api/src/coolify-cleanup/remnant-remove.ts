@@ -36,64 +36,58 @@ export function assertRemovable(r: CleanupRemnant): void {
   throw new UnsafeRemnantError(r.kind);
 }
 
-function containerBlock(name: string): string {
-  const n = q(name);
-  return [
-    `# container ${name}`,
-    `if ! docker inspect ${n} >/dev/null 2>&1; then r container ${n} absent; else`,
-    `  img=$(docker inspect -f '{{.Config.Image}}' ${n} 2>/dev/null); lbl=$(docker inspect -f '{{index .Config.Labels "coolify.managed"}}' ${n} 2>/dev/null); run=$(docker inspect -f '{{.State.Running}}' ${n} 2>/dev/null)`,
-    `  own=0`,
-    `  [ ${n} = 'coolify-proxy' ] && own=1`,
-    `  sent=0; if [ ${n} = 'coolify-sentinel' ]; then sent=1; fi; case "$img" in *coollabsio/sentinel*) sent=1;; esac`,
-    `  [ "$sent" = 1 ] && own=1`,
-    `  case "$img" in *coollabsio/coolify-helper*) own=1;; esac`,
-    `  [ "$lbl" = "true" ] && own=1`,
-    `  if [ "$own" != 1 ]; then r container ${n} refused`,
-    `  elif [ "$run" = "true" ] && [ "$sent" != 1 ]; then r container ${n} running`,
-    `  elif [ "$sent" = 1 ] && [ "$run" = "true" ]; then if docker rm -f ${n} >/dev/null 2>&1; then r container ${n} ok; else r container ${n} failed; fi`,
-    `  elif docker rm ${n} >/dev/null 2>&1; then r container ${n} ok; else r container ${n} failed; fi`,
-    `fi`,
-  ].join("\n");
-}
+// Each kind of object is handled by ONE shell function (defined once), and every item is a single call line: the script stays a few
+// dozen bytes per item, so a large fleet's list never nears the kernel's per-argument limit the wrapper has to fit under.
+const CONTAINER_FN = [
+  "rm_container() {",
+  '  n="$1"',
+  '  if ! docker inspect "$n" >/dev/null 2>&1; then r container "$n" absent; return; fi',
+  `  img=$(docker inspect -f '{{.Config.Image}}' "$n" 2>/dev/null); lbl=$(docker inspect -f '{{index .Config.Labels "coolify.managed"}}' "$n" 2>/dev/null); run=$(docker inspect -f '{{.State.Running}}' "$n" 2>/dev/null)`,
+  "  own=0",
+  `  [ "$n" = 'coolify-proxy' ] && own=1`,
+  `  sent=0; if [ "$n" = 'coolify-sentinel' ]; then sent=1; fi; case "$img" in *coollabsio/sentinel*) sent=1;; esac`,
+  '  [ "$sent" = 1 ] && own=1',
+  "  case \"$img\" in *coollabsio/coolify-helper*) own=1;; esac",
+  '  [ "$lbl" = "true" ] && own=1',
+  '  if [ "$own" != 1 ]; then r container "$n" refused',
+  '  elif [ "$run" = "true" ] && [ "$sent" != 1 ]; then r container "$n" running',
+  '  elif [ "$sent" = 1 ] && [ "$run" = "true" ]; then if docker rm -f "$n" >/dev/null 2>&1; then r container "$n" ok; else r container "$n" failed; fi',
+  '  elif docker rm "$n" >/dev/null 2>&1; then r container "$n" ok; else r container "$n" failed; fi',
+  "}",
+].join("\n");
 
-function networkBlock(name: string): string {
-  const n = q(name);
-  return [
-    `# network ${name}`,
-    `if ! docker network inspect ${n} >/dev/null 2>&1; then r network ${n} absent; else`,
-    `  c=$(docker network inspect -f '{{len .Containers}}' ${n} 2>/dev/null)`,
-    `  if [ "\${c:-1}" != "0" ]; then r network ${n} in_use`,
-    `  elif docker network rm ${n} >/dev/null 2>&1; then r network ${n} ok; else r network ${n} failed; fi`,
-    `fi`,
-  ].join("\n");
-}
+const NETWORK_FN = [
+  "rm_network() {",
+  '  n="$1"',
+  '  if ! docker network inspect "$n" >/dev/null 2>&1; then r network "$n" absent; return; fi',
+  `  c=$(docker network inspect -f '{{len .Containers}}' "$n" 2>/dev/null)`,
+  '  if [ "${c:-1}" != "0" ]; then r network "$n" in_use',
+  '  elif docker network rm "$n" >/dev/null 2>&1; then r network "$n" ok; else r network "$n" failed; fi',
+  "}",
+].join("\n");
 
-function imageBlock(ref: string): string {
-  const n = q(ref);
-  return [
-    `# image ${ref}`,
-    `if ! docker image inspect ${n} >/dev/null 2>&1; then r image ${n} absent`,
-    `elif docker rmi ${n} >/dev/null 2>&1; then r image ${n} ok`,
-    `else r image ${n} in_use; fi`, // docker refuses to remove an image a container uses: that is the guard, no -f
-  ].join("\n");
-}
+const IMAGE_FN = [
+  "rm_image() {",
+  '  n="$1"',
+  '  if ! docker image inspect "$n" >/dev/null 2>&1; then r image "$n" absent',
+  '  elif docker rmi "$n" >/dev/null 2>&1; then r image "$n" ok',
+  '  else r image "$n" in_use; fi', // docker refuses to remove an image a container uses: that is the guard, no -f
+  "}",
+].join("\n");
 
-function directoryBlock(path: string): string {
-  const p = q(path);
-  return [
-    `# directory ${path}`,
-    `if [ -L ${p} ]; then r directory ${p} refused`,
-    `elif [ ! -e ${p} ]; then r directory ${p} absent`,
-    `else`,
-    `  real=$(cd -P ${p} 2>/dev/null && pwd -P)`,
-    `  if [ "$real" != ${p} ]; then r directory ${p} refused`,
-    `  elif mounted ${p}; then r directory ${p} mounted`,
-    `  elif hasdata ${p}; then r directory ${p} refused`,
-    `  elif rm -rf -- ${p} 2>/dev/null && [ ! -e ${p} ]; then r directory ${p} ok`,
-    `  else r directory ${p} failed; fi`,
-    `fi`,
-  ].join("\n");
-}
+const DIRECTORY_FN = [
+  "rm_directory() {",
+  '  p="$1"',
+  '  if [ -L "$p" ]; then r directory "$p" refused; return; fi',
+  '  if [ ! -e "$p" ]; then r directory "$p" absent; return; fi',
+  '  real=$(cd -P "$p" 2>/dev/null && pwd -P)',
+  '  if [ "$real" != "$p" ]; then r directory "$p" refused',
+  '  elif mounted "$p"; then r directory "$p" mounted',
+  '  elif hasdata "$p"; then r directory "$p" refused',
+  '  elif rm -rf -- "$p" 2>/dev/null && [ ! -e "$p" ]; then r directory "$p" ok',
+  '  else r directory "$p" failed; fi',
+  "}",
+].join("\n");
 
 /** The removal script for a validated list (containers first, then networks, images, directories). */
 export function buildRemoveScript(items: readonly CleanupRemnant[]): string {
@@ -124,10 +118,14 @@ export function buildRemoveScript(items: readonly CleanupRemnant[]): string {
     `  *) return 1;;`,
     `  esac`,
     `}`,
-    ...by("container").map(containerBlock),
-    ...by("network").map(networkBlock),
-    ...by("image").map(imageBlock),
-    ...by("directory").map(directoryBlock),
+    CONTAINER_FN,
+    NETWORK_FN,
+    IMAGE_FN,
+    DIRECTORY_FN,
+    ...by("container").map((n) => `rm_container ${q(n)}`),
+    ...by("network").map((n) => `rm_network ${q(n)}`),
+    ...by("image").map((n) => `rm_image ${q(n)}`),
+    ...by("directory").map((n) => `rm_directory ${q(n)}`),
     // Empty parents only: rmdir refuses a directory that still holds anything.
     `rmdir ${COOLIFY_ROOT}/applications ${COOLIFY_ROOT}/services ${COOLIFY_ROOT} 2>/dev/null || true`,
     `echo ${REMOVE_DONE}`,

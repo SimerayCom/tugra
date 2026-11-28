@@ -19,6 +19,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   with `TUGRA_DISK_PATH` survives agent updates.
 - **Localhost is refused where it means the agent.** S3 backup destinations and log drains cannot point at `localhost`
   (use the server's own address), and an agent installed against a hub on the same machine uses the host network.
+- A large Coolify clean-up no longer fails to start: the removal script is a few dozen bytes per leftover instead of about
+  1.3 KB, and a script too big for one command is refused with a clear message instead of a silent `E2BIG`. The host-folder
+  probes keep the capability to look inside another account's private home, so such a folder is no longer reported missing.
 - Build tools (Nixpacks, Railpack, pack) are kept under `/etc/tugra/bin` so an agent update no longer downloads them again;
   the agent image ships `jq`.
 
