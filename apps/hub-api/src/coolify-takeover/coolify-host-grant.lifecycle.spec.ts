@@ -4,17 +4,28 @@ const ok = { serverId: "s1", confirm: "coolify-host" };
 const HOUR = 3_600_000;
 const session = (over: Record<string, any> = {}) => ({ id: "sess1", actorId: "u1", teamId: "t1", status: "active", expiresAt: new Date(Date.now() + HOUR), transport: "agent", agentServerId: "s1", ...over });
 
-describe("CoolifyHostGrantService: the consent of an import never outlives its session", () => {
-  it("caps the window at the session's own end, whatever hours the owner asked for", async () => {
-    const end = new Date(Date.now() + 20 * 60_000);
-    const h = await grantHarness({ sessions: { sess1: session({ expiresAt: end }) } });
+describe("CoolifyHostGrantService: the consent of an import has its own window and never outlives its session", () => {
+  it("is not capped at the session's current end any more (the session lives on while it is used): its own window, capped at the session's hard end", async () => {
+    const createdAt = new Date(Date.now() - 2 * HOUR);
+    const h = await grantHarness({ sessions: { sess1: session({ createdAt, expiresAt: new Date(Date.now() + 20 * 60_000) }) } });
     const v = await h.svc.createSecretsGrant("u1", { ...ok, importSessionId: "sess1", hours: 168 });
-    expect(new Date(v.expiresAt).getTime()).toBe(end.getTime());
-    expect(h.table.rows[0].expiresAt.getTime()).toBe(end.getTime());
+    // 12 h from the session's creation (default hard end), 2 h of which are behind us
+    expect(new Date(v.expiresAt).getTime()).toBe(createdAt.getTime() + 12 * HOUR);
+    const short = await grantHarness({ sessions: { sess1: session({ createdAt, expiresAt: new Date(Date.now() + 20 * 60_000) }) } });
+    const s = await short.svc.createSecretsGrant("u1", { ...ok, importSessionId: "sess1", hours: 2 });
+    expect((new Date(s.expiresAt).getTime() - Date.now()) / HOUR).toBeGreaterThan(1.99); // longer than the 20 minutes the session had left
   });
 
-  it("keeps the asked window when it is shorter than the session, and a run-less consent keeps its own window", async () => {
-    const h = await grantHarness({ sessions: { sess1: session({ expiresAt: new Date(Date.now() + 5 * HOUR) }) } });
+  it("giving the consent is an action on the session: its end moves to now plus an hour", async () => {
+    const h = await grantHarness({ sessions: { sess1: session({ createdAt: new Date(), expiresAt: new Date(Date.now() + 10 * 60_000) }) } });
+    await h.svc.createSecretsGrant("u1", { ...ok, importSessionId: "sess1" });
+    expect(h.prisma.importSession.updateMany).toHaveBeenCalledTimes(1);
+    const end = (await h.prisma.importSession.findUnique({ where: { id: "sess1" } })).expiresAt.getTime();
+    expect((end - Date.now()) / 60_000).toBeGreaterThan(59);
+  });
+
+  it("keeps the asked window when it is shorter than the hard end, and a run-less consent keeps its own window", async () => {
+    const h = await grantHarness({ sessions: { sess1: session({ createdAt: new Date(), expiresAt: new Date(Date.now() + 5 * HOUR) }) } });
     const v = await h.svc.createSecretsGrant("u1", { ...ok, importSessionId: "sess1", hours: 1 });
     expect((new Date(v.expiresAt).getTime() - Date.now()) / HOUR).toBeLessThan(1.01);
     const free = await grantHarness();

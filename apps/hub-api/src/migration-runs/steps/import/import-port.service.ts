@@ -91,7 +91,7 @@ export class ImportPortService implements ImportStepsPort {
 
   private async discoverPlan(userId: string, i: { sessionId: string; sourceKind: RemoteSourceKind; dbDataModes?: Record<string, "volume"> }): Promise<ImportPlanResponse> {
     // Mirrors ImporterService.plan WITHOUT its `lastUsedAt` touch: a dry-run must write nothing outside its own rows.
-    const { source } = await this.importer.openSession(userId, i.sessionId, i.sourceKind);
+    const { source } = await this.importer.openSession(userId, i.sessionId, i.sourceKind, { renew: false });
     try {
       const fleet = await source.discover();
       const opts = { sourceKind: i.sourceKind, ...(i.dbDataModes && Object.keys(i.dbDataModes).length ? { dbDataModes: i.dbDataModes } : {}) };
@@ -118,7 +118,7 @@ export class ImportPortService implements ImportStepsPort {
 
   /** The source's own version string (`GET /version` of the source adapter), or null when it did not report one. Writes nothing. */
   async sourceVersion(userId: string, i: { sessionId: string; sourceKind: RemoteSourceKind }): Promise<string | null> {
-    const { source } = await this.importer.openSession(userId, i.sessionId, i.sourceKind);
+    const { source } = await this.importer.openSession(userId, i.sessionId, i.sourceKind, { renew: false });
     try {
       const v = await source.verify();
       return v.ok && v.version ? v.version : null;
@@ -153,7 +153,7 @@ export class ImportPortService implements ImportStepsPort {
 
   /** Health of every source resource right now, or null when the source offers no such read. Writes nothing. */
   async sourceHealth(userId: string, i: { sessionId: string; sourceKind: RemoteSourceKind }): Promise<SourceHealthRow[] | null> {
-    const { source } = await this.importer.openSession(userId, i.sessionId, i.sourceKind);
+    const { source } = await this.importer.openSession(userId, i.sessionId, i.sourceKind, { renew: false });
     try {
       return source.healthBaseline ? await source.healthBaseline() : null;
     } finally {
@@ -206,7 +206,7 @@ export class ImportPortService implements ImportStepsPort {
 
   /** Mirrors ImporterService.previewServices WITHOUT its `lastUsedAt` touch (a dry-run writes nothing outside its own rows). */
   async previewServices(userId: string, input: { sessionId: string; sourceKind: RemoteSourceKind; choices?: Record<string, ServiceChoice> }): Promise<ServicePreview[]> {
-    const { source, session } = await this.importer.openSession(userId, input.sessionId, input.sourceKind);
+    const { source, session } = await this.importer.openSession(userId, input.sessionId, input.sourceKind, { renew: false });
     try {
       const fleet = await source.discover();
       const plan = planImport(fleet, { sourceKind: session.sourceKind });

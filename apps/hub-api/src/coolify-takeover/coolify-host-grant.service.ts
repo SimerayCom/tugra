@@ -19,6 +19,7 @@ import { TeamAccessService } from "../common/team-access.service";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
 import { ServersService } from "../servers/servers.service";
 import { SealedChannelService } from "./sealed-channel.service";
+import { renewImportSession, sessionHardEnd } from "../importer/session-renewal";
 
 const OWNER_ONLY: Role[] = [Role.OWNER];
 const READERS: Role[] = [Role.OWNER, Role.ADMIN];
@@ -141,14 +142,16 @@ export class CoolifyHostGrantService implements OnModuleInit, OnModuleDestroy {
     // The consent of an import belongs to ITS session: the run id is the session id, and the session must be the granting owner's own,
     // still active, and connected through the agent of this very server.
     let runIdWanted = input.runId;
-    // The consent of an import never outlives its session (the session is what the owner connected for); a run-less consent has its own window.
+    // The consent of an import has its own window (`hours`) and never outlives the session's hard end (the session is what the owner connected
+    // for, and it now lives on while it is used); the orphan sweep ends it earlier when the session itself ends. A run-less consent has its own window.
     let sessionEnd: number | null = null;
     if (input.importSessionId !== undefined) {
-      const session = await this.prisma.importSession.findUnique({ where: { id: input.importSessionId }, select: { id: true, actorId: true, status: true, expiresAt: true, transport: true, agentServerId: true, teamId: true } });
+      const session = await this.prisma.importSession.findUnique({ where: { id: input.importSessionId }, select: { id: true, actorId: true, status: true, expiresAt: true, createdAt: true, transport: true, agentServerId: true, teamId: true } });
       if (!session || session.actorId !== userId || session.teamId !== server.teamId || session.transport !== "agent" || session.agentServerId !== server.id) throw new NotFoundException("import session not found");
       if (session.status !== "active" || session.expiresAt.getTime() <= Date.now()) throw new BadRequestException("import session expired or revoked - reconnect");
       runIdWanted = session.id;
-      sessionEnd = session.expiresAt.getTime();
+      sessionEnd = sessionHardEnd(session.createdAt);
+      await renewImportSession(this.prisma, session); // giving the consent is an action on the session
     }
     if (runIdWanted !== undefined && !RUN_ID_RE.test(runIdWanted)) throw new BadRequestException("invalid run id");
 

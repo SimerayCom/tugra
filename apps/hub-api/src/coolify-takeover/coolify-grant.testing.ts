@@ -80,6 +80,12 @@ export async function grantHarness(o: GrantHarnessOpts = {}) {
     importSession: {
       findUnique: jest.fn(async ({ where }: { where: { id: string } }) => (o.sessions ?? {})[where.id] ?? null),
       findMany: jest.fn(async ({ where }: { where: { id: { in: string[] } } }) => where.id.in.flatMap((id) => ((o.sessions ?? {})[id] ? [(o.sessions ?? {})[id]] : []))),
+      updateMany: jest.fn(async ({ where, data }: { where: { id: string }; data: Record<string, any> }) => {
+        const row = (o.sessions ?? {})[where.id];
+        if (!row) return { count: 0 };
+        Object.assign(row, data);
+        return { count: 1 };
+      }),
     },
     server: {
       findUnique: jest.fn(async ({ where }: { where: { id: string } }) => (where.id === "s1" ? server : null)),

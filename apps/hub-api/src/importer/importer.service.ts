@@ -11,6 +11,7 @@ import { ImportSourceFactory } from "./sources/import-source.factory";
 import { assertAllowedUrl } from "./sources/ssrf-guard";
 import { ns, planImport } from "./import-planner";
 import { planChanged, sessionEnded } from "./import-errors";
+import { SESSION_TTL_MS, renewImportSession, renewImportSessionsById } from "./session-renewal";
 import { parseTeamMap, type TeamMap } from "./team-map-guard";
 import { buildPreflight } from "./preflight";
 import { buildCoverage } from "./coverage";
@@ -57,7 +58,6 @@ function parseHostLinks(raw: unknown): HostLinks {
 
 export type { TeamMap };
 
-const SESSION_TTL_MS = 60 * 60_000; // 1h — long enough to review → apply, short enough to limit a stored token
 
 /**
  * Importer orchestration — the DRY-RUN side: connect to a remote source (encrypted session) and preview an
@@ -370,6 +370,7 @@ export class ImporterService {
     if (row.status !== "active" || row.expiresAt.getTime() < Date.now()) throw sessionEnded();
     await this.access.requireRole(userId, row.teamId, [Role.OWNER, Role.ADMIN]);
     await this.requireAgentConsent(row.agentServerId, row.teamId);
+    await renewImportSession(this.prisma, row);
 
     const links = parseHostLinks(row.hostLinks);
     const source = this.sources.createAgent(row.agentServerId);
@@ -416,6 +417,7 @@ export class ImporterService {
     if (!row || row.transport !== "agent" || row.sourceKind !== "coolify") throw new NotFoundException("import session not found");
     if (row.actorId !== userId) throw new ForbiddenException("not your import session");
     if (row.status !== "active" || row.expiresAt.getTime() < Date.now()) throw sessionEnded();
+    await renewImportSession(this.prisma, row);
     const refs = new Set(input.teams.map((t) => t.sourceTeamRef));
     if (refs.size !== input.teams.length) throw new BadRequestException({ statusCode: 400, code: "duplicate_team", message: "a Coolify team is listed twice" });
     for (const id of new Set(input.teams.flatMap((t) => (t.teamId ? [t.teamId] : [])))) await this.access.requireRole(userId, id, [Role.OWNER]);
@@ -443,6 +445,14 @@ export class ImporterService {
     } finally {
       await source.close();
     }
+  }
+
+  /**
+   * Keep the sessions that open runs are bound to alive (sliding expiry, capped by the session's hard end). The run keeper calls this
+   * every tick, so a later wave of a campaign finds a live session when its turn comes and no browser has to stay open.
+   */
+  async renewSessions(sessionIds: readonly string[]): Promise<void> {
+    await renewImportSessionsById(this.prisma, sessionIds);
   }
 
   /** End a session now ("Start over"): the stored token stops being usable instead of waiting for its expiry. Owner only; idempotent. */
@@ -508,6 +518,7 @@ export class ImporterService {
       throw sessionEnded();
     }
     await this.access.requirePermission(userId, session.teamId, "apps:config");
+    await renewImportSession(this.prisma, session);
     return { id: session.id, teamId: session.teamId, sourceKind: kind, baseUrl: session.baseUrl, scopeKey: session.scopeKey ?? "" };
   }
 
@@ -556,6 +567,7 @@ export class ImporterService {
     userId: string,
     sessionId: string,
     expectedKind?: RemoteSourceKind,
+    opts: { renew?: boolean } = {},
   ): Promise<{ source: ImportSource; session: MappingSession & { sourceKind: RemoteSourceKind; agentServerId: string | null; hostLinks: HostLinks; /** The Coolify team the agent session was made for (the one the owner picked), when it was. */ sourceTeamRef?: string | null; /** The owner's Coolify team to Tugra team mapping, when saved. */ teamMap?: TeamMap } }> {
     const session = await this.prisma.importSession.findUnique({ where: { id: sessionId } });
     const kind = session?.sourceKind;
@@ -567,6 +579,8 @@ export class ImporterService {
       throw sessionEnded();
     }
     await this.access.requirePermission(userId, session.teamId, "apps:config");
+    // Every use of the session moves its end (a run's own reads pass `renew: false`: the run keeper renews for them, and a dry run stays read-only).
+    if (opts.renew !== false) await renewImportSession(this.prisma, session);
     const info = { id: session.id, teamId: session.teamId, sourceKind: kind, baseUrl: session.baseUrl, scopeKey: session.scopeKey ?? "", agentServerId: null as string | null, hostLinks: {} as HostLinks };
     if (session.transport === "agent") {
       // Agent transport: no token. Still owner/admin of the team, and the server's opt-in must still stand (fail closed).
